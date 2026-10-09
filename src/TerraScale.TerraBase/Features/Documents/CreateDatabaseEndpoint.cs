@@ -9,7 +9,7 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Documents;
 
 /// <summary>Database as returned by the client API.</summary>
-/// <param name="Id">Database id (a lowercase hyphenated UUID), for keys narrowed to it.</param>
+/// <param name="Id">Database id (a canonical uppercase ULID), for keys narrowed to it.</param>
 /// <param name="ProjectId">Owning project.</param>
 /// <param name="Name">Database name, unique within the project.</param>
 public sealed record DatabaseBody(string Id, string ProjectId, string Name);

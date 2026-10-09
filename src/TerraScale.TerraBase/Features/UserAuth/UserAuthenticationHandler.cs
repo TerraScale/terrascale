@@ -6,6 +6,7 @@ using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
 using TerraBase.Configuration;
 using TerraBase.Hosting;
+using TerraBase.Primitives;
 
 namespace TerraBase.Features.UserAuth;
 
@@ -27,8 +28,6 @@ internal sealed class UserAuthenticationHandler(
 
     /// <summary>Tolerance for clock differences with ts-auth on <c>exp</c> and <c>nbf</c>.</summary>
     public static readonly TimeSpan ClockSkew = TimeSpan.FromSeconds(30);
-
-    private const int MaxUserIdLength = 256;
 
     private static readonly JsonWebTokenHandler Tokens = new();
 
@@ -79,9 +78,9 @@ internal sealed class UserAuthenticationHandler(
         }
 
         var user = jwt.TryGetPayloadValue<string>(JwtRegisteredClaimNames.Sub, out var sub) ? sub : null;
-        if (string.IsNullOrEmpty(user) || user.Length > MaxUserIdLength || user.Any(char.IsControl))
+        if (!EntityIds.IsValid(user))
         {
-            return AuthenticateResult.Fail("the token's sub must be 1 to 256 characters without control characters");
+            return AuthenticateResult.Fail("the token's sub must be a canonical uppercase ULID");
         }
 
         if (jwt.TryGetPayloadValue<bool>("is_anonymous", out var anonymous) && anonymous)
@@ -101,7 +100,7 @@ internal sealed class UserAuthenticationHandler(
 
         if (jwt.TryGetPayloadValue<string>("project_id", out var project))
         {
-            if (!Guid.TryParseExact(project, "D", out var id) || id.ToString("D") != project
+            if (!EntityIds.IsValid(project)
                 || jwt.Alg != SecurityAlgorithms.EcdsaSha256 || string.IsNullOrEmpty(jwt.Kid))
             {
                 return AuthenticateResult.Fail("invalid project access token");

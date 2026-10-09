@@ -295,7 +295,7 @@ after every active replica of its database acknowledged it, bounded by `write-wa
   the batch that carries the write releases them, so these keep today's semantics: a conditional transaction is
   serializable against every other owner operation, as on today's single writer, and `ts-auth` and the dashboard keep
   their stores' guarantees.
-- Creates with server-generated UUIDv7 ids and unconditional `PUT`, `PATCH` and `DELETE` need no owner: any replica
+- Creates with server-generated ULID ids and unconditional `PUT`, `PATCH` and `DELETE` need no owner: any replica
   accepts them and they join as last-writer-wins.
 - An owner operation that reaches another member is forwarded to the primary.
 
@@ -420,7 +420,7 @@ every push to `main`.
 | 7 | Causal consistency per request; interval and tombstone GC on applied vectors |
 
 Step 4 runs as expand, switch, contract, because every merge rolls out to production member by member (the `deploy`
-job, `TS_AUTO_DEPLOY_CELLS`) and peers refuse any other protocol or format version
+job on every green main push) and peers refuse any other protocol or format version
 (`ReplicationProtocol.Accept`/`Accepts`): until the last sub-step, members of the old and the new build replicate with
 each other. Unknown protobuf fields are ignored by older members, so the new state travels beside today's group.
 

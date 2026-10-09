@@ -553,8 +553,14 @@ internal sealed partial class EngineManagementService : IAccessService
             // The order follows the sequence, and a clock step back can put an older occurredAt after a newer one,
             // so retention is checked per event; expired events not purged yet are skipped, not paged over.
             var cutoff = await AuditCutoffAsync(transaction, organizationId, cancellationToken).ConfigureAwait(false);
-            var page = await transaction.ListAsync(Audit(organizationId), after, limit, MaxPageBytes, cancellationToken).ConfigureAwait(false);
-            var events = page.Documents.Select(document => JsonSerializer.Deserialize(document.Json.Span, TerraBaseJsonContext.Default.AuditEvent)!);
+            var page = await transaction.ListAsync(AuditOrder(organizationId), after, limit, MaxPageBytes, cancellationToken).ConfigureAwait(false);
+            var events = new List<AuditEvent>(page.Documents.Count);
+            foreach (var entry in page.Documents)
+            {
+                var eventId = JsonSerializer.Deserialize(entry.Json.Span, Id)!;
+                events.Add(await GetAsync(transaction, Audit(organizationId), eventId, TerraBaseJsonContext.Default.AuditEvent, cancellationToken)
+                    .ConfigureAwait(false) ?? throw new InvalidDataException("audit order names a missing event"));
+            }
             return new ManagementPage<AuditEvent>([.. events.Where(auditEvent => auditEvent.OccurredAt >= cutoff)], page.HasMore ? page.Documents[^1].Id : null);
         }, cancellationToken);
 
@@ -692,7 +698,8 @@ internal sealed partial class EngineManagementService : IAccessService
         var sequence = await NextSequenceAsync(transaction, State(organizationId), AuditSequences, cancellationToken).ConfigureAwait(false);
         var key = DescendingKey(sequence);
         var auditEvent = new AuditEvent(NewId(), userId, action, target, detail, now);
-        await PutAsync(transaction, Audit(organizationId), key, auditEvent, TerraBaseJsonContext.Default.AuditEvent, cancellationToken).ConfigureAwait(false);
+        await PutAsync(transaction, Audit(organizationId), auditEvent.Id, auditEvent, TerraBaseJsonContext.Default.AuditEvent, cancellationToken).ConfigureAwait(false);
+        await PutAsync(transaction, AuditOrder(organizationId), key, auditEvent.Id, Id, cancellationToken).ConfigureAwait(false);
         await PutAsync(transaction, AuditExpiry(organizationId), TicksKey(now) + AscendingKey(sequence), key, Id, cancellationToken).ConfigureAwait(false);
 
         // An entry sorts before the bare prefix of the cutoff exactly when its ticks are smaller.
@@ -700,7 +707,11 @@ internal sealed partial class EngineManagementService : IAccessService
         var oldest = await transaction.ListAsync(AuditExpiry(organizationId), afterId: null, AuditPurgeBatch, MaxPageBytes, cancellationToken).ConfigureAwait(false);
         foreach (var entry in oldest.Documents.TakeWhile(entry => string.CompareOrdinal(entry.Id, cutoff) < 0))
         {
-            await transaction.DeleteAsync(Audit(organizationId), JsonSerializer.Deserialize(entry.Json.Span, Id)!, cancellationToken).ConfigureAwait(false);
+            var order = JsonSerializer.Deserialize(entry.Json.Span, Id)!;
+            var eventId = await GetAsync(transaction, AuditOrder(organizationId), order, Id, cancellationToken).ConfigureAwait(false)
+                ?? throw new InvalidDataException("audit expiry names a missing order entry");
+            await transaction.DeleteAsync(Audit(organizationId), eventId, cancellationToken).ConfigureAwait(false);
+            await transaction.DeleteAsync(AuditOrder(organizationId), order, cancellationToken).ConfigureAwait(false);
             await transaction.DeleteAsync(AuditExpiry(organizationId), entry.Id, cancellationToken).ConfigureAwait(false);
         }
     }
@@ -735,7 +746,7 @@ internal sealed partial class EngineManagementService : IAccessService
 
         foreach (var collection in (string[])[
             Owners(organizationId), Invitations(organizationId), InvitationOrder(organizationId), InvitationEmails(organizationId),
-            Audit(organizationId), AuditExpiry(organizationId), State(organizationId), OrganizationTokens(organizationId)])
+            Audit(organizationId), AuditOrder(organizationId), AuditExpiry(organizationId), State(organizationId), OrganizationTokens(organizationId)])
         {
             DocumentPage page;
             do
@@ -790,6 +801,8 @@ internal sealed partial class EngineManagementService : IAccessService
     private static string InvitationEmails(string organizationId) => $"organizations/{organizationId}/invitation_emails";
 
     private static string Audit(string organizationId) => $"organizations/{organizationId}/audit";
+
+    private static string AuditOrder(string organizationId) => $"organizations/{organizationId}/audit_order";
 
     // Single documents of an organization: its pending transfer, audit retention and counters.
     internal static string State(string organizationId) => $"organizations/{organizationId}/state";

@@ -250,7 +250,7 @@ internal sealed partial class ReplicationService(
             Welcome = new Welcome
             {
                 LocalIdentity = member,
-                ProtocolVersion = new ProtocolVersion { Major = 1 },
+                ProtocolVersion = new ProtocolVersion { Major = ReplicationProtocol.Major },
                 EventFormatVersion = ReplicationProtocol.FormatVersion,
                 RecordFormatVersion = ReplicationProtocol.FormatVersion,
                 MergePolicyVersion = ReplicationProtocol.FormatVersion,

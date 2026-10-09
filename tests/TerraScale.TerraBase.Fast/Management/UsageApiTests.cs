@@ -8,6 +8,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Features.Management;
 using TerraBase.Features.Management.Usage;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -262,7 +263,7 @@ public sealed class UsageApiTests
         await using var api = await ManagementApi.StartAsync(time: new FakeTimeProvider(Instant("2026-11-11T11:30:00Z")));
         var meter = api.Server.Services.GetRequiredService<UsageMeter>();
         var hour = Hour("2026-11-11T11:00:00Z");
-        var owners = Enumerable.Range(0, 50).Select(_ => new DatabaseOwner(Guid.NewGuid().ToString(), Guid.NewGuid().ToString(), Guid.NewGuid().ToString())).ToArray();
+        var owners = Enumerable.Range(0, 50).Select(_ => new DatabaseOwner(EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString())).ToArray();
         long sent = 0;
         Task<bool> Send(long sequence, KeyValuePair<UsageKey, OpCounts>[] batch, CancellationToken cancellationToken)
         {
@@ -415,7 +416,7 @@ public sealed class UsageApiTests
         await using var api = await ManagementApi.StartAsync(time: time, services: services =>
             services.Remove(services.Single(service => service.ImplementationType == typeof(UsageFlushService))));
         var meter = api.Server.Services.GetRequiredService<UsageMeter>();
-        var owner = new DatabaseOwner(Guid.NewGuid().ToString(), Guid.NewGuid().ToString(), Guid.NewGuid().ToString());
+        var owner = new DatabaseOwner(EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString());
         List<(long Sequence, KeyValuePair<UsageKey, OpCounts>[] Batch)> sent = [];
         var reachable = false;
         Task<bool> Send(long sequence, KeyValuePair<UsageKey, OpCounts>[] batch, CancellationToken cancellationToken)
@@ -445,7 +446,7 @@ public sealed class UsageApiTests
     {
         await using var api = await ManagementApi.StartAsync(time: new FakeTimeProvider(Instant("2026-11-11T11:30:00Z")));
         var meter = api.Server.Services.GetRequiredService<UsageMeter>();
-        var owner = new DatabaseOwner(Guid.NewGuid().ToString(), Guid.NewGuid().ToString(), Guid.NewGuid().ToString());
+        var owner = new DatabaseOwner(EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString());
         List<(long Sequence, KeyValuePair<UsageKey, OpCounts>[] Batch)> sent = [];
         Task<bool> Send(long sequence, KeyValuePair<UsageKey, OpCounts>[] batch, CancellationToken cancellationToken)
         {
@@ -511,7 +512,7 @@ public sealed class UsageApiTests
         var meter = api.Server.Services.GetRequiredService<UsageMeter>();
         var hour = Instant("2026-11-11T11:00:00Z").ToUnixTimeSeconds() / 3600;
         var keys = Enumerable.Range(0, UsageMeter.MaxBatch + 904)
-            .Select(_ => new UsageKey(new DatabaseOwner(Guid.NewGuid().ToString(), Guid.NewGuid().ToString(), Guid.NewGuid().ToString()), hour))
+            .Select(_ => new UsageKey(new DatabaseOwner(EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString()), hour))
             .ToList();
         foreach (var key in keys)
         {
@@ -624,7 +625,7 @@ public sealed class UsageApiTests
     public async Task Project_usage_sums_every_database()
     {
         // A fake clock: on a slow machine the request's 5 seconds of wall-clock time would end it early. It moves between
-        // creations, so database ids (UUIDv7) keep their creation order.
+        // creations, so database ULIDs keep their creation order.
         var time = new FakeTimeProvider();
         await using var api = await ManagementApi.StartAsync(time: time);
         var first = await api.CreateManagedDatabaseAsync("first");
@@ -653,7 +654,7 @@ public sealed class UsageApiTests
     public async Task Project_usage_reads_every_database_across_catalog_pages()
     {
         // A fake clock: on a slow machine the request's 5 seconds of wall-clock time would end it early. It moves between
-        // creations, so database ids (UUIDv7) keep their creation order.
+        // creations, so database ULIDs keep their creation order.
         var time = new FakeTimeProvider();
         await using var api = await ManagementApi.StartAsync(time: time);
         var first = await api.CreateManagedDatabaseAsync("db-0");
@@ -883,6 +884,8 @@ public sealed class UsageApiTests
     [Arguments(true)]
     public async Task Overlapping_flushes_count_interleaved_operations_once_and_retry_failed_commits(bool failFirstCommit)
     {
+        // These handshakes assert ordering, not a ten-second performance contract; the suite timeout bounds them.
+        var cancellationToken = TestContext.Current!.Execution.CancellationToken;
         var hook = new UsageCommitHook();
         await using var api = await ManagementApi.StartAsync(time: new FakeTimeProvider(), services: hook.Install);
         var database = await api.CreateManagedDatabaseAsync();
@@ -893,7 +896,7 @@ public sealed class UsageApiTests
 
         using var firstGate = hook.PauseCommit(failFirstCommit);
         var firstFlush = meter.FlushAsync(CancellationToken.None).AsTask();
-        await firstGate.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await firstGate.Entered.Task.WaitAsync(cancellationToken);
         await WriteAsync(data, database, "people", 2);
         for (var i = 0; i < 2; i++)
         {
@@ -912,10 +915,10 @@ public sealed class UsageApiTests
         }
         else
         {
-            await firstFlush.WaitAsync(TimeSpan.FromSeconds(10));
+            await firstFlush.WaitAsync(cancellationToken);
         }
 
-        await secondGate.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await secondGate.Entered.Task.WaitAsync(cancellationToken);
         if (failFirstCommit)
         {
             await Assert.That(await ReadSavedOpsAsync(api.Server.DataDirectory, database.Id)).IsNull();
@@ -930,7 +933,7 @@ public sealed class UsageApiTests
         (await data.GetAsync(Uri(Document(database, "people", "d1")))).EnsureSuccessStatusCode();
         var usageRead = api.Client.GetFromJsonAsync<JsonElement>(Uri(database.Path + "/usage"));
         secondGate.Dispose();
-        await secondFlush.WaitAsync(TimeSpan.FromSeconds(10));
+        await secondFlush.WaitAsync(cancellationToken);
         var usage = await usageRead;
         await Assert.That(usage.GetProperty("reads").GetInt64()).IsEqualTo(4);
         await Assert.That(usage.GetProperty("writes").GetInt64()).IsEqualTo(6);
@@ -1132,11 +1135,11 @@ public sealed class UsageApiTests
     {
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
-        var organization = $"/v1/management/organizations/{Guid.NewGuid()}/projects/{database.Project}";
+        var organization = $"/v1/management/organizations/{EntityIds.New()}/projects/{database.Project}";
 
-        using var unknownDatabase = await api.Client.GetAsync(Uri($"{database.ProjectPath}/databases/{Guid.NewGuid()}/usage"));
-        using var unknownProjectDatabase = await api.Client.GetAsync(Uri($"/v1/management/organizations/{database.Organization}/projects/{Guid.NewGuid()}/databases/{database.Id}/usage"));
-        using var unknownProject = await api.Client.GetAsync(Uri($"/v1/management/organizations/{database.Organization}/projects/{Guid.NewGuid()}/usage"));
+        using var unknownDatabase = await api.Client.GetAsync(Uri($"{database.ProjectPath}/databases/{EntityIds.New()}/usage"));
+        using var unknownProjectDatabase = await api.Client.GetAsync(Uri($"/v1/management/organizations/{database.Organization}/projects/{EntityIds.New()}/databases/{database.Id}/usage"));
+        using var unknownProject = await api.Client.GetAsync(Uri($"/v1/management/organizations/{database.Organization}/projects/{EntityIds.New()}/usage"));
         using var unknownOrganization = await api.Client.GetAsync(Uri(organization + "/usage"));
 
         await Assert.That(unknownDatabase.StatusCode).IsEqualTo(HttpStatusCode.NotFound);

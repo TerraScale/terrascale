@@ -15,7 +15,7 @@ format and open questions: [0007](decisions/0007-lz4-application-envelope-replic
 - Every write transaction on a client database is captured, whether or not `peer-addresses` is
   set, so the change log has no holes when peers are added, removed or the node restarts. Nothing
   truncates the log.
-- A database missing on the receiver is created under the exact organization, project and database UUIDs in the stream. Display names never address peer storage.
+- A database missing on the receiver is created under the exact organization, project and database ULIDs in the stream. Display names never address peer storage.
 - The persisted incarnation (`IDatabaseStore.Incarnation`) is the origin. Document ETags do not use it: they hash the
   replicated state under the database's organization, project and database ids, so every member answers the same ETag
   for the same state and a version read on one member satisfies `If-Match` on another (TS-574). Schema v8 retains
@@ -48,8 +48,8 @@ Database-wide placement currently has one shard (zero).
 Invalid membership peer addresses are logged without their values and skipped; a failed peer does
 not stop reconciliation with the remaining members or configured peers.
 The closed-beta `terrabase.alpha.AntiEntropy` gRPC contract uses the existing mutual-TLS listener and
-LZ4 application envelopes; it adds no public HTTP API. Schema 9 adds two partial key indexes so
-excluded empty or oversized legacy keys do not lengthen document or retained-deletion scans.
+LZ4 application envelopes; it adds no public HTTP API. Fresh schema 11 includes two partial key indexes so
+excluded empty or oversized keys do not lengthen document or retained-deletion scans.
 
 A transient Merkle tree has 16 leaves, selected by the high nibble of SHA-256 of each length-framed
 collection/id key. Each leaf hashes current states in key order, including versions, exact JSON bytes,
@@ -106,8 +106,8 @@ Unary responses are explicitly flushed before application completion, keeping bl
 writes inside admission. Reservations remain held through application response completion
 or cancellation; this does not establish peer consumption or final network delivery. Reads return
 their SQLite sessions before network waits, except the local digest scan, which holds a consistent
-read snapshot without network I/O. Oversized legacy keys excluded by baseline replication are also
-excluded from repair. Other inadmissible legacy keys are skipped before body materialization, local
+read snapshot without network I/O. Oversized keys excluded by baseline replication are also
+excluded from repair. Other inadmissible keys are skipped before body materialization, local
 repair or hashing. Scan cursors retain the last examined key, even for empty pages, and allow at
 most 63 collection bytes and 1024 id bytes so scans advance past these keys. Transferred states
 retain the normal collection/id validation. The system catalog continues to use its existing primary/follower protocol.
@@ -150,7 +150,7 @@ follows it. Design, limits and failover: [0009](decisions/0009-catalog-replicati
   A primary that cannot be reached answers `503 catalog_primary_unavailable` with `Retry-After: 1`. The
   administrative listener is never forwarded: on a follower its catalog writes (`POST /admin/api-keys`, the
   service credential's Management writes) answer `503 not_primary`. A follower runs no catalog writer of its own
-  (intent recovery, migration, backups, usage flushes); it sends its usage counts to the primary every 10 seconds
+  (intent recovery, bootstrap, backups, usage flushes); it sends its usage counts to the primary every 10 seconds
   over `CatalogUsage.Add`, numbered per process, which the primary adds once per sequence.
 - A follower authenticates API keys and resolves organizations, projects and databases from its replica, and
   serves a registered database before any of its documents arrived (an empty local file that client replication
@@ -269,7 +269,7 @@ A third node adds its address to both lists, for example
 
 One `Replication.Sync` stream carries one database from one origin to one peer.
 
-1. Sender → `Hello`: organization, project and database UUIDs (16 bytes each in RFC order), origin (as both member id and incarnation), protocol 1.0,
+1. Sender → `Hello`: organization, project and database ULIDs (16 bytes each in network byte order), origin (as both member id and incarnation), protocol 2.0,
    format 1, LZ4 codec, limits.
 2. Receiver → `Welcome` with its applied prefix of that origin and the negotiated limits: each the
    minimum of both sides. It refuses an incompatible `Hello` (a range without 1.0, no LZ4, a zero
@@ -287,7 +287,7 @@ One `Replication.Sync` stream carries one database from one origin to one peer.
    protocol, format or codec with a
    non-retryable `STREAM_ERROR_UNSUPPORTED_FORMAT`.
 5. Once every group it has is durably acknowledged, the sender completes the stream. It fails
-   closed on a `Welcome` that is not exactly an answer to its `Hello`: protocol 1.0, event and
+   closed on a `Welcome` that is not exactly an answer to its `Hello`: protocol 2.0, event and
    record format 1, merge policy 1, LZ4, this database in this epoch, and limits equal to the
    minimum of both sides (a peer may lower a limit, never raise one). Before releasing anything,
    an acknowledgment must name the peer from `Welcome`,
@@ -367,7 +367,7 @@ independent of sender journal sequences (see `shape-reads.md`).
 | Frontier reconciliation | Every 5 s discovers persisted client databases and retries failed opens; pending requests coalesce |
 | Retry backoff | Per database incarnation: 100 ms doubling to 10 s, full jitter, reset after a successful sync |
 
-Startup discovery isolates database open, migration, baseline and head-read failures. Peer workers run
+Startup discovery isolates database open, bootstrap, baseline and head-read failures. Peer workers run
 alongside the initial scan, so healthy commits do not wait for the whole scan. Each database open
 and head read shares one 15-second discovery budget; incomplete discovery is retried on reconciliation. Healthy
 stores continue replicating; the next reconciliation retries failed discovery without a separate

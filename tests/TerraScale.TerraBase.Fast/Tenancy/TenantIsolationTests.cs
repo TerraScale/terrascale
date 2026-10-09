@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Features.Management;
 using TerraBase.Hosting;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Tenancy;
@@ -21,8 +22,8 @@ public sealed class TenantIsolationTests
     private static readonly string[] NameField = ["name"];
     private static readonly string[] OwnerField = ["owner"];
 
-    // The id of every document these tests write; documents are created with UUID ids.
-    private const string DocumentId = "0199a000-0000-7000-8000-000000000001";
+    // The id of every document these tests write; documents are created with ULID keys.
+    private const string DocumentId = "01K6G00000E008000000000001";
 
     private static readonly string[] CallerOnlyRoutes =
     [
@@ -44,7 +45,7 @@ public sealed class TenantIsolationTests
         // A token hash names one invitation, as the accept route's token does.
         "POST /v1/management/invitations/lookup",
         // The dashboard document space belongs to the dashboard, not to a tenant; API keys never reach it.
-        "GET /v1/management/documents/{collection}/{id}",
+        "GET /v1/management/documents/{collection}/by-key",
         "POST /v1/management/documents/{collection}/query",
         "GET /management/query-shapes",
     ];
@@ -141,7 +142,7 @@ public sealed class TenantIsolationTests
         // Every client scope, shapes:read included, so each route answers past its scope check.
         using var a = await api.CreateTenantAsync("documents:read", "documents:write", "shapes:read");
         using var b = await api.CreateTenantAsync("documents:read", "documents:write", "shapes:read");
-        var document = $"/collections/people/documents/{DocumentId}";
+        var document = $"/collections/people/documents/by-key?id={DocumentId}";
 
         var aApp = await CreateDatabaseAsync(a, "app");
         var bApp = await CreateDatabaseAsync(b, "app");
@@ -180,7 +181,7 @@ public sealed class TenantIsolationTests
         using var project = api.DataClient(await api.Server.IssueNarrowedAsync(tenant.OrganizationId, tenant.ProjectId, null, "documents:read", "documents:write"));
         using var database = api.DataClient(await api.Server.IssueNarrowedAsync(tenant.OrganizationId, tenant.ProjectId, app, "documents:read", "documents:write"));
         var body = new { value = 1 };
-        var document = $"/collections/c/documents/{DocumentId}";
+        var document = $"/collections/c/documents/by-key?id={DocumentId}";
 
         List<(string Request, HttpStatusCode Expected, HttpStatusCode Actual)> checks =
         [
@@ -215,7 +216,7 @@ public sealed class TenantIsolationTests
         foreach (var request in new object[]
         {
             new { name = "k", scopes = ReadScope },
-            new { name = "k", scopes = ReadScope, organizationId = Guid.NewGuid().ToString() },
+            new { name = "k", scopes = ReadScope, organizationId = EntityIds.New().ToString() },
             new { name = "k", scopes = ReadScope, organizationId = tenant.OrganizationId, projectId = other.ProjectId },
             new { name = "k", scopes = ReadScope, organizationId = tenant.OrganizationId, databaseId = app },
             new { name = "k", scopes = ReadScope, organizationId = tenant.OrganizationId, projectId = tenant.ProjectId, databaseId = secondAppId },
@@ -285,6 +286,11 @@ public sealed class TenantIsolationTests
                 .Replace("{recommendation}", tooling.Recommendation, StringComparison.Ordinal);
             // A new route parameter needs a value here.
             await Assert.That(path).DoesNotContain("{");
+            if (pattern.EndsWith("/documents/by-key", StringComparison.Ordinal))
+            {
+                path += "?id=" + System.Uri.EscapeDataString(DocumentId);
+            }
+
             using var request = new HttpRequestMessage(new HttpMethod(method), new Uri(path, UriKind.Relative));
             if (method is "POST" or "PUT" or "PATCH")
             {
@@ -307,7 +313,7 @@ public sealed class TenantIsolationTests
                 });
             }
 
-            var client = projectManagement || pattern.EndsWith("/subscribe", StringComparison.Ordinal) ? projectToken : IsManagement(pattern) ? dashboard : data;
+            var client = projectManagement || pattern.EndsWith("/subscribe", StringComparison.Ordinal) || pattern.EndsWith("/changes", StringComparison.Ordinal) ? projectToken : IsManagement(pattern) ? dashboard : data;
             using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead,
                 TUnit.Core.TestContext.Current!.Execution.CancellationToken);
             sent.Add(($"{method} {path}", response.StatusCode));
@@ -320,7 +326,7 @@ public sealed class TenantIsolationTests
     private static async Task<string> SeedAsync(ManagementApi api, Tenant tenant, HttpClient dashboard)
     {
         var id = await CreateDatabaseAsync(tenant, "secret");
-        (await tenant.Data.PutAsJsonAsync(tenant.Database("secret", $"/collections/people/documents/{DocumentId}"), new { owner = tenant.OrganizationId }))
+        (await tenant.Data.PutAsJsonAsync(tenant.Database("secret", $"/collections/people/documents/by-key?id={DocumentId}"), new { owner = tenant.OrganizationId }))
             .EnsureSuccessStatusCode();
         await InviteAsync(tenant, dashboard);
         var nominee = await api.AddMemberAsync(dashboard, tenant.OrganizationId, "member");
@@ -359,7 +365,7 @@ public sealed class TenantIsolationTests
     {
         using var invited = await dashboard.PostAsJsonAsync(
             new Uri($"/v1/management/organizations/{tenant.OrganizationId}/invitations", UriKind.Relative),
-            new { email = $"{Guid.NewGuid():N}@example.com", role = "member" });
+            new { email = $"{EntityIds.New()}@example.com", role = "member" });
         invited.EnsureSuccessStatusCode();
         return (await invited.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("invitation").GetProperty("id").GetString()!;
     }

@@ -12,7 +12,8 @@ namespace TerraBase.Engine;
 /// <param name="Scope">Identity that scopes the document's ETag: the same on every member serving its database.</param>
 /// <param name="Deleted">Whether this is a tombstone left by a delete.</param>
 /// <param name="HistoryOffset">Local commit offset when read from shape history; separate from the merge version.</param>
-public sealed record StoredDocument(string Id, long Version, ReadOnlyMemory<byte> Json, Guid Scope, bool Deleted = false, long? HistoryOffset = null);
+/// <param name="UniqueConflict">The retained state lost a replicated uniqueness conflict and is excluded from queries.</param>
+public sealed record StoredDocument(string Id, long Version, ReadOnlyMemory<byte> Json, Guid Scope, bool Deleted = false, long? HistoryOffset = null, bool UniqueConflict = false);
 
 /// <summary>One page of documents in id order.</summary>
 /// <param name="Documents">The documents of this page.</param>
@@ -49,11 +50,12 @@ public sealed record SnapshotPage(IReadOnlyList<QueryRow> Rows, bool HasMore, st
 /// <summary>A collection of one database.</summary>
 /// <param name="Name">Collection name.</param>
 /// <param name="CreatedAt">Creation time in Unix milliseconds.</param>
+/// <param name="Id">Canonical uppercase ULID of this collection creation.</param>
 /// <param name="Generation">
 /// Random 64-bit value the engine draws on every creation, so a dropped and recreated collection is a
 /// different lineage; set by the engine, ignored on create.
 /// </param>
-public sealed record CollectionInfo(string Name, long CreatedAt, long Generation = 0);
+public sealed record CollectionInfo(string Name, long CreatedAt, long Generation = 0, string Id = "");
 
 /// <summary>One replicated document write: a JSON object, or a deletion, at the version it was written with.</summary>
 /// <param name="Collection">Collection name.</param>
@@ -71,11 +73,13 @@ public sealed record DocumentChange(string Collection, string Id, long Version, 
     /// <summary>Reserved collection of a client database's secondary indexes: one definition per index, a tombstone once dropped.</summary>
     internal const string Indexes = "_indexes";
 
+    internal const string Unique = "_unique";
+
     private static readonly UTF8Encoding Utf8 = new(false, true);
 
     internal static bool HasValidKey(string collection, string id)
     {
-        if (!(DatabaseName.TryParse(collection, out _) || collection is Collections or Indexes) || id.Length is 0 or > 256 || id.Any(char.IsControl))
+        if (!(DatabaseName.TryParse(collection, out _) || collection is Collections or Indexes or Unique) || id.Length is 0 or > 256 || id.Any(char.IsControl))
         {
             return false;
         }
@@ -182,6 +186,23 @@ public interface IStorageTransaction : IAsyncDisposable
         string collection, DocumentFilter? filter, long after, long through, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Reads every retained write and tombstone of the current collection generation, including repeated writes,
+    /// in local (history offset, append sequence) order strictly after
+    /// (<paramref name="afterOffset"/>, <paramref name="afterSequence"/>). Both cursor parts are nonnegative;
+    /// resume with the last returned change's offset and sequence. This order is local to this database instance.
+    /// </summary>
+    /// <remarks>
+    /// <paramref name="limit"/> is 1 to 1000 and <paramref name="maxBytes"/> is 2 to 8 MiB, inclusive.
+    /// The page stays within both bounds, charging each row 2048 framing bytes plus its UTF-8 id and body bytes.
+    /// Sizes are checked before materializing ids or bodies; an oversized first row throws
+    /// <see cref="InvalidDataException"/>. Live JSON is validated without rewriting its stored bytes.
+    /// The caller reserves memory and validates database scope, incarnation, collection generation, head and
+    /// history floor. No history is pruned. A missing collection returns an empty page.
+    /// </remarks>
+    ValueTask<CollectionChangePage> ReadCollectionChangesAsync(
+        string collection, long afterOffset, long afterSequence, int limit, long maxBytes, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Counts live documents matching <paramref name="filter"/> while reading at most <paramref name="maxExamined"/> + 1
     /// rows (documents and tombstones) in id order. <c>Complete</c> is <see langword="false"/> when the collection holds
     /// more rows, so the count is a lower bound.
@@ -250,6 +271,12 @@ public interface IStorageTransaction : IAsyncDisposable
 
     /// <summary>Drops a secondary index; <see langword="false"/> when it did not exist.</summary>
     ValueTask<bool> DropIndexAsync(string name, CancellationToken cancellationToken);
+
+    /// <summary>Reads the unique keys declared for a collection.</summary>
+    ValueTask<IReadOnlyList<UniqueConstraint>> GetUniqueConstraintsAsync(string collection, CancellationToken cancellationToken);
+
+    /// <summary>Declares unique keys for an empty collection; an unchanged declaration is idempotent.</summary>
+    ValueTask SetUniqueConstraintsAsync(string collection, IReadOnlyList<UniqueConstraint> constraints, CancellationToken cancellationToken);
 
     /// <summary>
     /// Makes every change of this transaction visible atomically and returns the database offset:

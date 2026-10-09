@@ -275,7 +275,7 @@ public sealed class UsageAnalyticsTests
         await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var client = ProjectClient(api, database.Project);
         var lagging = new ReplicationDatabaseStatus(0, database.Organization, database.Project, database.Id,
-            Guid.NewGuid(), 3, 1, 2, true, 14, 0.25);
+            Ulid.NewUlid(), 3, 1, 2, true, 14, 0.25);
         var healthy = lagging with { Acknowledged = 3, DurableLag = 0, Diverged = false, CatchupSeconds = 0, ConvergenceSeconds = 1.5 };
         peers.State = new(true, true, 1, 0, [new(0, 2, [lagging], "sfo-1"), new(1, 0, [healthy], "sfo-1")]);
         clock.Advance(TimeSpan.FromSeconds(10));
@@ -310,7 +310,7 @@ public sealed class UsageAnalyticsTests
         using var client = ProjectClient(api, database.Project);
         var flush = api.Server.Services.GetServices<IHostedService>().OfType<UsageFlushService>().Single();
         var route = ManagementApi.Uri($"/projects/{database.Project}/replication?range=1h&region=gru-1");
-        var synced = new ReplicationDatabaseStatus(0, database.Organization, database.Project, database.Id, Guid.NewGuid(), 3, 3, 0, false, 0, null);
+        var synced = new ReplicationDatabaseStatus(0, database.Organization, database.Project, database.Id, Ulid.NewUlid(), 3, 3, 0, false, 0, null);
 
         peers.State = new(true, true, 1, 0, [new(0, 0, [synced], "sfo-1"), new(1, 0, [synced], "iad-1")]);
         await Assert.That((await ObserveAsync(TimeSpan.FromSeconds(10))).GetProperty("status").GetString()).IsEqualTo("healthy");
@@ -594,7 +594,7 @@ public sealed class UsageAnalyticsTests
 
         var minute = DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 60;
         var key = new UsageKey(new(database.Organization, database.Project, database.Id), minute / 60, TerraBase.Features.Management.Usage.UsageScope.Minute, (int)(minute % 60));
-        _ = await meter.AcceptAsync("saturated", Guid.NewGuid().ToString(), 1, [KeyValuePair.Create(key, new OpCounts(0, 0, meters))], CancellationToken.None);
+        _ = await meter.AcceptAsync("saturated", Ulid.NewUlid().ToString(), 1, [KeyValuePair.Create(key, new OpCounts(0, 0, meters))], CancellationToken.None);
         var saturated = (await ReadAsync(client, analytics)).GetProperty("items")[0].GetProperty("series").EnumerateArray()
             .Single(point => point.GetProperty("latency").GetProperty("p99Ms").ValueKind == JsonValueKind.Number
                 && point.GetProperty("latency").GetProperty("p50Ms").GetDouble() == UsageReading.LatencyBounds[5]);

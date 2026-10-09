@@ -42,7 +42,7 @@ internal sealed partial class EngineManagementService : IProjectCatalog
                 return null;
             }
 
-            // Legacy commits let users choose organization UUIDs; equality is not authority over a signed project.
+            // Legacy commits let users choose organization ULIDs; equality is not authority over a signed project.
             var namespaceId = NewId();
             if (await transaction.GetVersionAsync(Organizations, namespaceId, cancellationToken).ConfigureAwait(false) is not null)
             {

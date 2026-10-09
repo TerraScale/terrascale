@@ -5,6 +5,7 @@ using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Features.Memory;
 using TerraBase.Hosting;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using static TerraBase.Features.Management.SystemCatalog;
 
@@ -507,7 +508,7 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
             return;
         }
 
-        var id = Guid.NewGuid().ToString("N");
+        var id = EntityIds.New().ToString();
         int dropped;
         try
         {

@@ -3,6 +3,7 @@ using System.Text.Json;
 using Bogus;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Slow.Management;
@@ -229,7 +230,7 @@ public sealed class AccessExpiryTests
     // The path of one organization; access routes hang below it.
     private static string Org(string organization) => $"{Organizations}/{organization}";
 
-    private static string User() => Faker.Random.Guid().ToString();
+    private static string User() => EntityIds.New().ToString();
 
     private static string Escape(string cursor) => System.Uri.EscapeDataString(cursor);
 

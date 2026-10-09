@@ -126,7 +126,7 @@ public sealed class ReplicationObservabilityTests
                 created.EnsureSuccessStatusCode();
                 if (offset == 128)
                 {
-                    omittedId = ByteString.CopyFrom(Guid.Parse(tenant.Database(name).DatabaseId!).ToByteArray(bigEndian: true));
+                    omittedId = ByteString.CopyFrom(Ulid.Parse(tenant.Database(name).DatabaseId!).ToByteArray());
                 }
             }
         }

@@ -10,6 +10,7 @@ using Microsoft.Extensions.Time.Testing;
 using TerraBase.Features.Management;
 using TerraBase.Features.Management.Queries;
 using TerraBase.Hosting;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Management;
@@ -49,7 +50,7 @@ public sealed class QueryShapeApiTests
         using var noScope = ProjectClient(api, database.Project, "documents:read");
         using var forbidden = await noScope.GetAsync(canonical);
         await Assert.That(forbidden.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
-        using var foreign = ProjectClient(api, new Faker().Random.Guid().ToString(), "databases:read");
+        using var foreign = ProjectClient(api, EntityIds.New().ToString(), "databases:read");
         using var inaccessible = await foreign.GetAsync(canonical);
         await Assert.That(inaccessible.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
     }
@@ -135,7 +136,7 @@ public sealed class QueryShapeApiTests
                 id = (await ShapesAsync(api.Client, database))[0].GetProperty("id").GetString()!;
                 var other = await api.CreateManagedDatabaseAsync();
                 await Assert.That((await ShapesAsync(api.Client, other)).Length).IsEqualTo(0);
-                using var stranger = api.As(Guid.NewGuid().ToString());
+                using var stranger = api.As(EntityIds.New().ToString());
                 using var denied = await stranger.GetAsync(ManagementApi.Uri(Stats(database)));
                 await Assert.That(denied.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
             }
@@ -164,10 +165,10 @@ public sealed class QueryShapeApiTests
     {
         await using var api = await ManagementApi.StartAsync(managementCredential: true);
         using var service = api.Service(api.User);
-        var document = Guid.NewGuid().ToString();
+        var document = EntityIds.New().ToString();
         await PostAsync(service, "/v1/management/commits", new
         {
-            id = Guid.NewGuid().ToString(),
+            id = EntityIds.New().ToString(),
             ops = new[] { new { op = "create", collection = "notes", id = document, document = new { text = new Faker().Lorem.Word() } } },
         });
         await PostAsync(service, "/v1/management/documents/notes/query", new { filter = Eq("/text", "private-dashboard-value") });
@@ -449,7 +450,7 @@ public sealed class QueryShapeApiTests
     private static string Stats(ManagedDatabaseRef database) => database.Path[3..] + "/query-shapes";
 
     private static HttpClient ProjectClient(ManagementApi api, string project, string scopes) =>
-        api.WithToken(api.Issuer.Mint(new Faker().Random.Guid().ToString(), token =>
+        api.WithToken(api.Issuer.Mint(EntityIds.New().ToString(), token =>
         {
             token.Claims["project_id"] = project;
             token.Claims["scope"] = scopes;

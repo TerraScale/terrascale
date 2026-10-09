@@ -32,6 +32,12 @@ public interface IStorageEngine : IAsyncDisposable
     long CommittedWrites { get; }
 
     /// <summary>
+    /// Current admitted storage transactions and maintenance operations, including work waiting for a worker or writer.
+    /// Null when admission is unavailable or closed; this is neither device queue depth nor IOPS.
+    /// </summary>
+    long? IoAdmittedCount { get; }
+
+    /// <summary>
     /// Refreshes physical storage from file metadata, including unopened databases. Invoke periodically off the request
     /// path: scanning runs synchronously on the caller's thread. Concurrent refreshes are skipped, not queued.
     /// A failed or cancelled scan publishes an unknown snapshot; cancellation is propagated.
@@ -119,7 +125,7 @@ public interface IStorageEngine : IAsyncDisposable
     /// When set, deletes only that incarnation, checked under the lifecycle lock: nothing when no open store of it holds the
     /// database (another incarnation replaced it, or it is gone).
     /// </param>
-    ValueTask<bool> DeleteDatabaseAsync(TenantContext database, CancellationToken cancellationToken, bool retainIntentOwnership = false, Guid? incarnation = null);
+    ValueTask<bool> DeleteDatabaseAsync(TenantContext database, CancellationToken cancellationToken, bool retainIntentOwnership = false, Ulid? incarnation = null);
 
     /// <summary>
     /// Streams files and directory-shaped database artifacts, excluding exact root system and ownership files and without

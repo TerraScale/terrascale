@@ -3,7 +3,7 @@ using TerraBase.Tenancy;
 namespace TerraBase.Features.Management;
 
 /// <summary>An organization: the tenant, which owns billing, and the top-level owner of projects.</summary>
-/// <param name="Id">Lowercase hyphenated UUID.</param>
+/// <param name="Id">Canonical uppercase ULID.</param>
 /// <param name="Name">Display name, unique among the organizations created by <paramref name="CreatedBy"/> (case-insensitive).</param>
 /// <param name="CreatedBy">User id (from ts-auth) of the creator, its first member.</param>
 /// <param name="CreatedAt">Creation time.</param>
@@ -11,14 +11,14 @@ namespace TerraBase.Features.Management;
 public sealed record Organization(string Id, string Name, string CreatedBy, DateTimeOffset CreatedAt, PlanTier Plan = PlanTier.Hobby);
 
 /// <summary>A project inside an organization: a folder of databases.</summary>
-/// <param name="Id">Lowercase hyphenated UUID.</param>
+/// <param name="Id">Canonical uppercase ULID.</param>
 /// <param name="OrganizationId">Owning organization.</param>
 /// <param name="Name">Display name, unique within the organization (case-insensitive).</param>
 /// <param name="CreatedAt">Creation time.</param>
 public sealed record Project(string Id, string OrganizationId, string Name, DateTimeOffset CreatedAt);
 
 /// <summary>A database registered in a project.</summary>
-/// <param name="Id">Lowercase hyphenated UUID.</param>
+/// <param name="Id">Canonical uppercase ULID.</param>
 /// <param name="ProjectId">Owning project.</param>
 /// <param name="Name">
 /// Database name (same rules as data API database names), unique within the project. The data API addresses the

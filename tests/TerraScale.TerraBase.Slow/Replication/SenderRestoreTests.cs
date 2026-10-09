@@ -7,154 +7,13 @@ using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.Alpha;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Slow.Replication;
 
 public sealed class SenderRestoreTests
 {
-    [Test]
-    public async Task A_schema_7_journal_gains_matching_prefix_proofs_without_losing_shape_history_or_reusing_unproven_frontiers()
-    {
-        using var peerTls = new PeerTls();
-        using var clientTls = new ClientTls();
-        await using var receiver = await TerraBaseTestServer.StartAsync(settings =>
-        {
-            peerTls.Apply(settings);
-            clientTls.Apply(settings);
-        });
-        var data = Directory.CreateTempSubdirectory("terrabase-journal-migration-").FullName;
-        void Configure(Dictionary<string, string> settings)
-        {
-            peerTls.Apply(settings);
-            clientTls.Apply(settings);
-            settings["data-directory"] = data;
-        }
-
-        try
-        {
-            ReplicationTenant tenant;
-            ReadOnlyMemory<byte> origin, originalDigest;
-            Guid incarnation;
-            long offset;
-            var history = new List<(string Id, long Version, long? HistoryOffset, bool Deleted, string Body)>();
-            var id = Guid.CreateVersion7().ToString("D");
-            var deleted = Guid.CreateVersion7().ToString("D");
-            await using (var seed = await TerraBaseTestServer.StartAsync(Configure))
-            {
-                tenant = await ReplicationTenant.CreateAsync(seed, "migrated");
-                await tenant.BindAsync(receiver);
-                var path = tenant.Path("migrated");
-                using var writer = clientTls.CreateClient(seed.ClientAddress!, await tenant.KeyAsync(seed, "documents:write"));
-                using var collection = await writer.PostAsJsonAsync(new Uri($"{path}/collections", UriKind.Relative), new { name = "items" });
-                collection.EnsureSuccessStatusCode();
-                await PutAsync(writer, path, id, "retained");
-                await PutAsync(writer, path, deleted, "deleted");
-                using var response = await writer.DeleteAsync(new Uri($"{path}/collections/items/documents/{deleted}", UriKind.Relative));
-                response.EnsureSuccessStatusCode();
-                var store = (await seed.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(tenant.Database("migrated"), CancellationToken.None))!;
-                using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-                await using var read = await store.BeginTransactionAsync(write: false, deadline.Token);
-                origin = await read.GetOriginAsync(deadline.Token);
-                incarnation = store.Incarnation;
-                offset = await read.GetOffsetAsync(deadline.Token);
-                // The collection's creation, two writes and a delete.
-                await Assert.That(await read.GetLastChangeSequenceAsync(deadline.Token)).IsEqualTo(4);
-                originalDigest = (await read.GetChangeDigestAsync(4, deadline.Token))!.Value;
-                await foreach (var document in read.ChangesAsync("items", null, 0, offset, deadline.Token))
-                {
-                    history.Add((document.Id, document.Version, document.HistoryOffset, document.Deleted,
-                        System.Text.Encoding.UTF8.GetString(document.Json.Span)));
-                }
-            }
-
-            var databaseFile = Path.Combine(data, tenant.OrganizationId, tenant.ProjectId, tenant.Database("migrated").DatabaseId + ".db");
-            var legacyOrigin = Guid.NewGuid().ToByteArray(bigEndian: true);
-            await using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder
-            {
-                DataSource = databaseFile,
-                Mode = SqliteOpenMode.ReadWrite,
-                Pooling = false,
-            }.ToString()))
-            {
-                await connection.OpenAsync();
-                await using var legacy = connection.CreateCommand();
-                legacy.CommandText = """
-                    DROP INDEX documents_replication_keys;
-                    DROP INDEX changes_replication_deleted;
-                    DROP TABLE journal_prefixes;
-                    DROP TABLE applied;
-                    CREATE TABLE applied (origin BLOB PRIMARY KEY, sequence INTEGER NOT NULL) WITHOUT ROWID;
-                    INSERT INTO applied (origin, sequence) VALUES ($origin, 42);
-                    PRAGMA user_version = 7;
-                    """;
-                legacy.Parameters.AddWithValue("$origin", legacyOrigin);
-                await legacy.ExecuteNonQueryAsync();
-            }
-
-            await using var sender = await TerraBaseTestServer.StartAsync(settings =>
-            {
-                Configure(settings);
-                settings["peer-addresses"] = receiver.PeerAddress!.ToString();
-            });
-            await TerraBaseTestServer.ReplicatedAsync(sender);
-            var source = (await sender.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(tenant.Database("migrated"), CancellationToken.None))!;
-            var target = (await receiver.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(tenant.Database("migrated"), CancellationToken.None))!;
-            using (var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30)))
-            {
-                await using var read = await source.BeginTransactionAsync(write: false, deadline.Token);
-                await using var remote = await target.BeginTransactionAsync(write: false, deadline.Token);
-                await Assert.That(source.Incarnation).IsEqualTo(incarnation);
-                await Assert.That(await read.GetOffsetAsync(deadline.Token)).IsEqualTo(offset);
-                await Assert.That(await read.GetAppliedSequenceAsync(legacyOrigin, deadline.Token)).IsEqualTo(0);
-                var (resetSequence, resetDigest) = await read.GetAppliedFrontierAsync(legacyOrigin, deadline.Token);
-                await Assert.That(resetSequence).IsEqualTo(0);
-                await Assert.That(resetDigest.Span.SequenceEqual(JournalDigest.Initial(legacyOrigin))).IsTrue();
-                await Assert.That((await read.GetChangeDigestAsync(4, deadline.Token))!.Value.Span.SequenceEqual(originalDigest.Span)).IsTrue();
-                var migratedHistory = new List<(string Id, long Version, long? HistoryOffset, bool Deleted, string Body)>();
-                await foreach (var document in read.ChangesAsync("items", null, 0, offset, deadline.Token))
-                {
-                    migratedHistory.Add((document.Id, document.Version, document.HistoryOffset, document.Deleted,
-                        System.Text.Encoding.UTF8.GetString(document.Json.Span)));
-                }
-
-                await Assert.That(migratedHistory.SequenceEqual(history)).IsTrue();
-                var (applied, digest) = await remote.GetAppliedFrontierAsync(origin, deadline.Token);
-                await Assert.That(applied).IsEqualTo(4);
-                await Assert.That(digest.Span.SequenceEqual(originalDigest.Span)).IsTrue();
-                await Assert.That((await read.GetVersionAsync("items", deleted, deadline.Token))!.Value.Deleted).IsTrue();
-                await Assert.That((await remote.GetVersionAsync("items", deleted, deadline.Token))!.Value.Deleted).IsTrue();
-                using var reader = clientTls.CreateClient(receiver.ClientAddress!, await tenant.KeyAsync(receiver, "documents:read"));
-                await AssertBodyAsync(reader, tenant.Path("migrated"), id, "retained", deadline.Token);
-            }
-
-            using (var writer = clientTls.CreateClient(sender.ClientAddress!, await tenant.KeyAsync(sender, "documents:write")))
-            {
-                await PutAsync(writer, tenant.Path("migrated"), id, "following");
-            }
-
-            await TerraBaseTestServer.ReplicatedAsync(sender);
-            using (var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30)))
-            {
-                await using var read = await source.BeginTransactionAsync(write: false, deadline.Token);
-                await using var remote = await target.BeginTransactionAsync(write: false, deadline.Token);
-                await Assert.That(await read.GetLastChangeSequenceAsync(deadline.Token)).IsEqualTo(5);
-                var changes = (await read.ReadChangesAsync(5, deadline.Token))!;
-                var expected = JournalDigest.Compute(origin.Span, 5, originalDigest.Span, changes);
-                await Assert.That((await read.GetChangeDigestAsync(5, deadline.Token))!.Value.Span.SequenceEqual(expected)).IsTrue();
-                var (applied, digest) = await remote.GetAppliedFrontierAsync(origin, deadline.Token);
-                await Assert.That(applied).IsEqualTo(5);
-                await Assert.That(digest.Span.SequenceEqual(expected)).IsTrue();
-                using var reader = clientTls.CreateClient(receiver.ClientAddress!, await tenant.KeyAsync(receiver, "documents:read"));
-                await AssertBodyAsync(reader, tenant.Path("migrated"), id, "following", deadline.Token);
-            }
-        }
-        finally
-        {
-            Directory.Delete(data, recursive: true);
-        }
-    }
-
     [Test]
     [Arguments(100)]
     [Arguments(101)]
@@ -192,7 +51,7 @@ public sealed class SenderRestoreTests
             var database = tenant.Database("restored");
             var databaseFile = tenant.File(sender, "restored");
             var path = tenant.Path("restored");
-            var id = Guid.CreateVersion7().ToString("D");
+            var id = EntityIds.New().ToString();
             var snapshot = Path.Combine(data, "sequence-90.snapshot");
             using (var writer = clientTls.CreateClient(sender.ClientAddress!, await tenant.KeyAsync(sender, "documents:write")))
             {
@@ -216,7 +75,7 @@ public sealed class SenderRestoreTests
 
             ReadOnlyMemory<byte> origin;
             ReadOnlyMemory<byte> acknowledgedDigest;
-            Guid incarnation;
+            Ulid incarnation;
             var source = (await sender.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(database, CancellationToken.None))!;
             var target = (await receiver.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(database, CancellationToken.None))!;
             using (var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30)))
@@ -388,13 +247,13 @@ public sealed class SenderRestoreTests
 
     private static async Task PutAsync(HttpClient writer, string path, string id, string value)
     {
-        using var response = await writer.PutAsJsonAsync(new Uri($"{path}/collections/items/documents/{id}", UriKind.Relative), new { value });
+        using var response = await writer.PutAsJsonAsync(new Uri($"{path}/collections/items/documents/by-key?id={id}", UriKind.Relative), new { value });
         response.EnsureSuccessStatusCode();
     }
 
     private static async Task AssertBodyAsync(HttpClient reader, string path, string id, string expected, CancellationToken token)
     {
-        using var response = await reader.GetAsync(new Uri($"{path}/collections/items/documents/{id}", UriKind.Relative), token);
+        using var response = await reader.GetAsync(new Uri($"{path}/collections/items/documents/by-key?id={id}", UriKind.Relative), token);
         response.EnsureSuccessStatusCode();
         using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync(token));
         await Assert.That(body.RootElement.GetProperty("document").GetProperty("value").GetString()).IsEqualTo(expected);

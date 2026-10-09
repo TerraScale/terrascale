@@ -175,7 +175,6 @@ public sealed record TerraBaseOptions : IDisposable
 
     private const string EnvironmentPrefix = "TERRABASE_";
 
-    private const int MaxUserIdLength = 256;
 
     private const int MinManagementCredentialLength = 32;
     private const int DefaultStorageQueue = 1024;
@@ -187,7 +186,7 @@ public sealed record TerraBaseOptions : IDisposable
 
     private static readonly FrozenSet<string> Keys = FrozenSet.Create(
         StringComparer.Ordinal,
-        ["admin-port", "data-directory", "region", "node-name", "memory-budget", "client-port", .. ClientTlsKeys, "auth-issuer", "auth-audience", "management-credential-file", "management-legacy-owner", "peer-port", .. PeerTlsKeys, "peer-addresses", "peers", "catalog-primary", "write-wait-ms", "shutdown-grace-seconds", "readiness-cache-seconds", "query-budget-seconds", "storage-threads", "storage-queue", .. BackupSettings.Keys, .. NatsSettings.Keys, .. WanSettings.Keys]);
+        ["admin-port", "data-directory", "region", "node-name", "instance-id", "memory-budget", "client-port", .. ClientTlsKeys, "auth-issuer", "auth-audience", "management-credential-file", "peer-port", .. PeerTlsKeys, "peer-addresses", "peers", "catalog-primary", "write-wait-ms", "shutdown-grace-seconds", "readiness-cache-seconds", "query-budget-seconds", "storage-threads", "storage-queue", .. BackupSettings.Keys, .. NatsSettings.Keys, .. WanSettings.Keys]);
 
     /// <summary>Every setting name, in <c>--name=value</c> form without the dashes.</summary>
     public static IReadOnlySet<string> SettingNames => Keys;
@@ -208,6 +207,9 @@ public sealed record TerraBaseOptions : IDisposable
 
     /// <summary>Operator node identity; defaults to the machine name. This is not membership evidence.</summary>
     public string NodeName { get; init; } = Environment.MachineName;
+
+    /// <summary>Operator-supplied cloud instance identity; absent identity remains unknown.</summary>
+    public string? InstanceId { get; init; }
 
     internal static bool IsRegion(string region) => region.Length is >= 1 and <= 63 && region[0] is >= 'a' and <= 'z'
         && region[^1] != '-' && region.All(character => character is >= 'a' and <= 'z' or >= '0' and <= '9' or '-');
@@ -237,12 +239,6 @@ public sealed record TerraBaseOptions : IDisposable
     /// disables it. The secret itself is not kept.
     /// </summary>
     public ReadOnlyMemory<byte> ManagementCredentialHash { get; init; }
-
-    /// <summary>
-    /// User id (from ts-auth) that becomes the creator and only member of organizations stored before the
-    /// Management API had membership (catalog version 1). Read once, when such a catalog is migrated.
-    /// </summary>
-    public string? ManagementLegacyOwner { get; init; }
 
     /// <summary>
     /// Port of the inter-node gRPC listener (mutual TLS, HTTP/2); <c>0</c> picks a free port.
@@ -406,6 +402,13 @@ public sealed record TerraBaseOptions : IDisposable
         }
 
         var dataDirectory = values.GetValueOrDefault("data-directory", DefaultDataDirectory);
+        var instanceId = values.GetValueOrDefault("instance-id");
+        if (instanceId is not null && (instanceId.Length is < 1 or > 128
+            || !instanceId.All(character => char.IsAsciiLetterOrDigit(character) || character is '.' or '_' or ':' or '+' or '-')))
+        {
+            throw new TerraBaseConfigurationException("instance-id must be 1 to 128 ASCII letters, digits, dots, underscores, colons, pluses or hyphens");
+        }
+
         var nodeName = values.GetValueOrDefault("node-name", Environment.MachineName);
         if (nodeName.Length is < 1 or > 128 || nodeName.Any(character => !char.IsAsciiLetterOrDigit(character) && character is not ('.' or '_' or ':' or '+' or '-')))
         {
@@ -429,13 +432,6 @@ public sealed record TerraBaseOptions : IDisposable
         var clientPort = ParsePort(values, "client-port");
         RequireGroup(values, "client-port", clientPort, ClientTlsKeys);
         var (authIssuer, authAudiences) = ParseAuth(values, clientPort);
-
-        var legacyOwner = values.GetValueOrDefault("management-legacy-owner");
-        if (legacyOwner is not null && (string.IsNullOrWhiteSpace(legacyOwner) || legacyOwner.Length > MaxUserIdLength || legacyOwner.Any(char.IsControl)))
-        {
-            throw new TerraBaseConfigurationException(
-                "management-legacy-owner must be a non-blank user id of at most 256 characters without control characters");
-        }
 
         var peerPort = ParsePort(values, "peer-port");
         RequireGroup(values, "peer-port", peerPort, PeerTlsKeys);
@@ -501,6 +497,7 @@ public sealed record TerraBaseOptions : IDisposable
                 DataDirectory = dataDirectory,
                 Region = region,
                 NodeName = nodeName,
+                InstanceId = instanceId,
                 MemoryBudget = ParseInteger(values, "memory-budget", MinMemoryBudget, long.MaxValue) ?? DefaultMemoryBudget(),
                 StorageThreads = (int)(ParseInteger(values, "storage-threads", 1, 1024) ?? Math.Clamp(Environment.ProcessorCount, 1, 1024)),
                 StorageQueue = (int)(ParseInteger(values, "storage-queue", 1, 1_000_000) ?? DefaultStorageQueue),
@@ -511,7 +508,6 @@ public sealed record TerraBaseOptions : IDisposable
                 ManagementCredentialHash = values.TryGetValue("management-credential-file", out var credentialFile)
                     ? ReadCredentialHash(credentialFile)
                     : ReadOnlyMemory<byte>.Empty,
-                ManagementLegacyOwner = legacyOwner,
                 PeerPort = peerPort,
                 PeerTls = peerTls,
                 PeerCredentialSnapshot = peerCredentialSnapshot,

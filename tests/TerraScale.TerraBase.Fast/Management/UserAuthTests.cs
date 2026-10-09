@@ -2,8 +2,10 @@ using System.Net;
 using System.Text.Json;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using Microsoft.IdentityModel.Tokens;
 using TerraBase.Features.UserAuth;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Management;
@@ -18,9 +20,9 @@ public sealed class UserAuthTests
     [Test]
     public async Task Tokens_signed_with_a_published_ec_or_rsa_key_act_as_their_sub()
     {
-        await using var api = await ManagementApi.StartAsync();
+        await using var api = await ManagementApi.StartAsync(services: TerraBaseTestServer.EnableConnectionDiagnostics);
         var rsa = api.Issuer.AddKey(SecurityAlgorithms.RsaSha256);
-        var user = Faker.Random.Guid().ToString();
+        var user = EntityIds.New().ToString();
         using var ec = api.WithToken(api.Issuer.Mint(user));
         using var rs = api.WithToken(api.Issuer.Mint(user, token => token.SigningCredentials = rsa));
 
@@ -38,7 +40,7 @@ public sealed class UserAuthTests
     public async Task Tokens_outside_their_lifetime_or_for_another_issuer_or_audience_are_rejected()
     {
         await using var api = await ManagementApi.StartAsync();
-        var user = Faker.Random.Guid().ToString();
+        var user = EntityIds.New().ToString();
         var now = DateTime.UtcNow;
         Action<SecurityTokenDescriptor>[] invalid =
         [
@@ -69,7 +71,7 @@ public sealed class UserAuthTests
     public async Task Unsigned_symmetric_tampered_and_non_access_tokens_are_rejected()
     {
         await using var api = await ManagementApi.StartAsync();
-        var user = Faker.Random.Guid().ToString();
+        var user = EntityIds.New().ToString();
         // An HMAC key published in the JWKS: anyone holding it could sign, so it must never be accepted. Two layers
         // refuse it (the key filter and the algorithm list); this checks the outcome, not each layer on its own.
         var hmac = api.Issuer.AddKey(SecurityAlgorithms.HmacSha256);
@@ -96,8 +98,15 @@ public sealed class UserAuthTests
     [Test]
     public async Task Tokens_without_a_usable_sub_or_of_a_guest_are_rejected()
     {
-        await using var api = await ManagementApi.StartAsync();
-        string?[] subjects = [null, "", new string('u', 257), "bad\u0001user"];
+        await using var api = await ManagementApi.StartAsync(services: TerraBaseTestServer.EnableConnectionDiagnostics);
+        string?[] subjects =
+        [
+            null, "", new string('u', 257), "bad\u0001user",
+            "00112233-4455-6677-8899-aabbccddeeff",
+            "01arz3ndektsv4rrffq69g5fav",
+            "01ARZ3NDEKTSV4RRFFQ69G5FAI",
+            "81ARZ3NDEKTSV4RRFFQ69G5FAV",
+        ];
 
         var statuses = new List<HttpStatusCode>();
         foreach (var subject in subjects)
@@ -105,7 +114,7 @@ public sealed class UserAuthTests
             statuses.Add(await SendOnceAsync(api.WithToken(api.Issuer.Mint(subject))));
         }
 
-        var user = Faker.Random.Guid().ToString();
+        var user = EntityIds.New().ToString();
         statuses.Add(await SendOnceAsync(api.WithToken(api.Issuer.Mint(user, token => token.Claims["is_anonymous"] = true))));
         var member = await SendOnceAsync(api.WithToken(api.Issuer.Mint(user, token => token.Claims["is_anonymous"] = false)));
 
@@ -116,22 +125,23 @@ public sealed class UserAuthTests
     [Test]
     public async Task A_rotated_key_is_fetched_once_and_unknown_keys_refresh_at_most_every_30_seconds()
     {
-        var clock = new ShiftedTime();
-        await using var api = await ManagementApi.StartAsync(services: services => services.AddSingleton<TimeProvider>(clock));
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        await using var api = await ManagementApi.StartAsync(services: TerraBaseTestServer.EnableConnectionDiagnostics, time: clock);
         var fetchedAtStartup = api.Issuer.JwksFetches;
 
         // ts-auth publishes a new key and signs with it: concurrent requests share one refresh and all pass.
         api.Issuer.Rotate();
-        var rotated = await Task.WhenAll(Enumerable.Range(0, 8).Select(_ => SendOnceAsync(api.As(Faker.Random.Guid().ToString()))));
+        var rotated = await Task.WhenAll(Enumerable.Range(0, 8).Select(_ => SendOnceAsync(api.As(EntityIds.New().ToString()))));
         var fetchedAfterRotation = api.Issuer.JwksFetches;
         // Within 30 s of that refresh, another unknown key (unpublished, then published) costs no fetch and fails.
+        clock.Advance(TsAuthKeys.UnknownKeyInterval - TimeSpan.FromTicks(1));
         var unpublished = api.Issuer.AddKey(SecurityAlgorithms.EcdsaSha256, publish: false);
-        var forged = await SendOnceAsync(api.WithToken(api.Issuer.Mint("user", token => token.SigningCredentials = unpublished)));
+        var forged = await SendOnceAsync(api.WithToken(api.Issuer.Mint(EntityIds.New().ToString(), token => token.SigningCredentials = unpublished)));
         api.Issuer.Rotate();
-        var tooSoon = await SendOnceAsync(api.As("user"));
+        var tooSoon = await SendOnceAsync(api.As(EntityIds.New().ToString()));
         var fetchedWithinInterval = api.Issuer.JwksFetches;
-        clock.Offset = TimeSpan.FromSeconds(31);
-        var later = await SendOnceAsync(api.As("user"));
+        clock.Advance(TimeSpan.FromTicks(1));
+        var later = await SendOnceAsync(api.As(EntityIds.New().ToString()));
 
         await Assert.That(fetchedAtStartup).IsEqualTo(1);
         await Assert.That(rotated).All().Satisfy(status => status.IsEqualTo(HttpStatusCode.OK));
@@ -148,7 +158,7 @@ public sealed class UserAuthTests
     {
         var timers = new ManualTimers();
         await using var api = await ManagementApi.StartAsync(services: services => services.AddSingleton<TimeProvider>(timers));
-        var user = Faker.Random.Guid().ToString();
+        var user = EntityIds.New().ToString();
         var withdrawn = api.Issuer.Signing;
         var oldToken = api.Issuer.Mint(user);
         var before = await SendOnceAsync(api.WithToken(oldToken));
@@ -211,8 +221,8 @@ public sealed class UserAuthTests
         var unknown = api.Issuer.AddKey(SecurityAlgorithms.EcdsaSha256, publish: false);
 
         // The unknown key's refresh fails; the cached keys keep validating and the server stays ready.
-        var refreshFailed = await SendOnceAsync(api.WithToken(api.Issuer.Mint("user", token => token.SigningCredentials = unknown)));
-        var cached = await SendOnceAsync(api.As(Faker.Random.Guid().ToString()));
+        var refreshFailed = await SendOnceAsync(api.WithToken(api.Issuer.Mint(EntityIds.New().ToString(), token => token.SigningCredentials = unknown)));
+        var cached = await SendOnceAsync(api.As(EntityIds.New().ToString()));
         using var ready = await api.Server.Client.GetAsync(Uri("/readyz"));
 
         await Assert.That(refreshFailed).IsEqualTo(HttpStatusCode.Unauthorized);
@@ -239,7 +249,7 @@ public sealed class UserAuthTests
             });
         var attempts = issuer.DiscoveryFetches;
         issuer.Rotate();
-        using var client = tls.CreateClient(server.ClientAddress!, issuer.Mint(Faker.Random.Guid().ToString()));
+        using var client = tls.CreateClient(server.ClientAddress!, issuer.Mint(EntityIds.New().ToString()));
 
         var statuses = await Task.WhenAll(Enumerable.Range(0, 10).Select(_ => StatusAsync(client)));
         using var adminReady = await server.Client.GetAsync(Uri("/readyz"));
@@ -269,7 +279,7 @@ public sealed class UserAuthTests
                 issuer.Route(services);
                 services.AddSingleton<TimeProvider>(new StoppedTimers());
             });
-        using var client = tls.CreateClient(server.ClientAddress!, issuer.Mint(Faker.Random.Guid().ToString()));
+        using var client = tls.CreateClient(server.ClientAddress!, issuer.Mint(EntityIds.New().ToString()));
 
         var status = await StatusAsync(client);
         using var ready = await server.Client.GetAsync(Uri("/readyz"));
@@ -294,7 +304,7 @@ public sealed class UserAuthTests
                 TestIssuer.Configure(settings);
             },
             transport.Route);
-        using var client = tls.CreateClient(server.ClientAddress!, issuer.Mint(Faker.Random.Guid().ToString()));
+        using var client = tls.CreateClient(server.ClientAddress!, issuer.Mint(EntityIds.New().ToString()));
 
         var status = await StatusAsync(client);
         using var ready = await server.Client.GetAsync(Uri("/readyz"));
@@ -328,7 +338,7 @@ public sealed class UserAuthTests
                 transport.Route(services);
                 services.AddSingleton<TimeProvider>(new StoppedTimers());
             });
-        using var client = tls.CreateClient(server.ClientAddress!, issuer.Mint(Faker.Random.Guid().ToString()));
+        using var client = tls.CreateClient(server.ClientAddress!, issuer.Mint(EntityIds.New().ToString()));
 
         var status = await StatusAsync(client);
         using var ready = await server.Client.GetAsync(Uri("/readyz"));
@@ -345,7 +355,7 @@ public sealed class UserAuthTests
         await using var api = await ManagementApi.StartAsync();
         var organization = await api.CreateOrganizationAsync(Faker.Company.CompanyName());
         var project = await api.CreateProjectAsync(organization, "Web");
-        using var mallory = api.As(Faker.Random.Guid().ToString());
+        using var mallory = api.As(EntityIds.New().ToString());
         // Headers that once named the acting user and organization: ignored, never trusted.
         mallory.DefaultRequestHeaders.Add("X-TerraBase-User-Id", api.User);
         mallory.DefaultRequestHeaders.Add("X-TerraBase-Organization-Id", organization);
@@ -375,7 +385,7 @@ public sealed class UserAuthTests
         var email = Faker.Internet.Email();
         using var invited = await api.Client.PostAsJsonAsync(Uri($"{Organizations}/{organization}/invitations"), new { email, role = "member" });
         var token = (await invited.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("token").GetString();
-        var user = Faker.Random.Guid().ToString();
+        var user = EntityIds.New().ToString();
         string[] refused =
         [
             api.Issuer.Mint(user),
@@ -415,14 +425,6 @@ public sealed class UserAuthTests
         {
             return await StatusAsync(client);
         }
-    }
-
-    /// <summary>The system clock moved by <see cref="Offset"/>.</summary>
-    private sealed class ShiftedTime : TimeProvider
-    {
-        public TimeSpan Offset { get; set; }
-
-        public override DateTimeOffset GetUtcNow() => base.GetUtcNow() + Offset;
     }
 
     /// <summary>The system clock with timers that fire only through <see cref="FireAsync"/>.</summary>

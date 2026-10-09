@@ -16,7 +16,7 @@ included; at least 1 MiB) is the memory TerraBase plans for caches. `IMemoryBudg
 ## Document and list-page cache
 
 Read-through, in front of `IStorageEngine`, for `GET` of one document (keyed by organization, project
-and database UUIDs, collection and id) and list/query pages (keyed by the same tenant identity, collection,
+and database ULIDs, collection and id) and list/query pages (keyed by the same tenant identity, collection,
 normalized typed filter, sort, cursor,
 limit, byte bound and optional count limit). Projection happens after the cache, so projections
 share raw pages; a count is cached with the page from the same transaction. Cache admission reserves
@@ -56,7 +56,7 @@ read before its storage read and is served only while that stamp is unchanged, s
 - a read never returns a version older than a write this node acknowledged;
 - a write invalidates every cached page of its collection.
 
-Tenant stamps hash organization, project and database UUIDs, independently of plan changes; system
+Tenant stamps hash organization, project and database ULIDs, independently of plan changes; system
 stamps use a separate identity. All wrapper transaction reads, writes and commits join the same ordered
 gate. Disposal closes admission and shares one cleanup task that drains already admitted operations.
 

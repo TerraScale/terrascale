@@ -120,10 +120,10 @@ public sealed class BackupKeyCacheTests
                     var path = $"/v1/projects/{database.Project}/databases/{name}";
                     using var restored = await owner.PostAsJsonAsync(ManagementApi.Uri(database.Path + "/point-in-time/restore"), new { pointInTime = point.At, name }, cancellationToken);
                     await Assert.That(restored.StatusCode).IsEqualTo(HttpStatusCode.Created);
-                    using var before = await reader.GetAsync(ManagementApi.Uri($"{path}/collections/items/documents/{ManagementApi.DocumentId("before")}"), cancellationToken);
+                    using var before = await reader.GetAsync(ManagementApi.Uri($"{path}/collections/items/documents/by-key?id={ManagementApi.DocumentId("before")}"), cancellationToken);
                     before.EnsureSuccessStatusCode();
                     await Assert.That((await before.Content.ReadFromJsonAsync<JsonElement>(cancellationToken)).GetProperty("document").GetProperty("text").GetString()).IsEqualTo(text);
-                    using var state = await reader.GetAsync(ManagementApi.Uri($"{path}/collections/items/documents/{ManagementApi.DocumentId("state")}"), cancellationToken);
+                    using var state = await reader.GetAsync(ManagementApi.Uri($"{path}/collections/items/documents/by-key?id={ManagementApi.DocumentId("state")}"), cancellationToken);
                     state.EnsureSuccessStatusCode();
                     await Assert.That((await state.Content.ReadFromJsonAsync<JsonElement>(cancellationToken)).GetProperty("document").GetProperty("index").GetInt32()).IsEqualTo(point.Index);
                     using var deleted = await owner.DeleteAsync(restored.Headers.Location, cancellationToken);
@@ -271,7 +271,7 @@ public sealed class BackupKeyCacheTests
             {
                 using var restored = await owner.PostAsJsonAsync(ManagementApi.Uri(database.Path + "/point-in-time/restore"), new { pointInTime, name }, cancellationToken);
                 await Assert.That(restored.StatusCode).IsEqualTo(HttpStatusCode.Created);
-                using var read = await reader.GetAsync(ManagementApi.Uri($"/v1/projects/{database.Project}/databases/{name}/collections/items/documents/{ManagementApi.DocumentId("before")}"), cancellationToken);
+                using var read = await reader.GetAsync(ManagementApi.Uri($"/v1/projects/{database.Project}/databases/{name}/collections/items/documents/by-key?id={ManagementApi.DocumentId("before")}"), cancellationToken);
                 read.EnsureSuccessStatusCode();
                 await Assert.That((await read.Content.ReadFromJsonAsync<JsonElement>(cancellationToken)).GetProperty("document").GetProperty("text").GetString()).IsEqualTo(text);
                 return restored.Headers.Location!;

@@ -36,7 +36,7 @@ public sealed class PeerChainTests
         using var reader = tls.CreateClient(receiver.ClientAddress!, await tenant.KeyAsync(receiver, "documents:read"));
         using var collection = await writer.PostAsJsonAsync(new Uri($"{tenant.Path("db")}/collections", UriKind.Relative), new { name = "items" });
         collection.EnsureSuccessStatusCode();
-        var path = $"{tenant.Path("db")}/collections/items/documents/{ReplicationDocuments.Id("chain")}";
+        var path = $"{tenant.Path("db")}/collections/items/documents/by-key?id={ReplicationDocuments.Id("chain")}";
         using var before = await writer.PutAsJsonAsync(new Uri(path, UriKind.Relative), new { value = "before" });
         before.EnsureSuccessStatusCode();
         await TerraBaseTestServer.ReplicatedAsync(sender);

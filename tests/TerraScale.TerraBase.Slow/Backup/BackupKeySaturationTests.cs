@@ -36,7 +36,7 @@ public sealed class BackupKeySaturationTests
                 database = await live.CreateManagedDatabaseAsync();
                 user = live.User;
                 using var data = await live.CreateClientAsync(database.Organization, "documents:read", "documents:write");
-                await ManagementApi.CreateCollectionAsync(data, database, "items");
+                await ManagementApi.CreateCollectionAsync(data, database, "items", cancellationToken);
                 using var written = await data.PutAsJsonAsync(ManagementApi.Uri(ManagementApi.DocumentPath(database, "items", "before")), new { text }, cancellationToken);
                 written.EnsureSuccessStatusCode();
                 time.Advance(TimeSpan.FromSeconds(10));
@@ -184,7 +184,7 @@ public sealed class BackupKeySaturationTests
             {
                 using var restored = await owner.PostAsJsonAsync(ManagementApi.Uri(database.Path + "/point-in-time/restore"), new { pointInTime, name }, cancellationToken);
                 await Assert.That(restored.StatusCode).IsEqualTo(HttpStatusCode.Created);
-                using var read = await reader.GetAsync(ManagementApi.Uri($"/v1/projects/{database.Project}/databases/{name}/collections/items/documents/{ManagementApi.DocumentId("before")}"), cancellationToken);
+                using var read = await reader.GetAsync(ManagementApi.Uri($"/v1/projects/{database.Project}/databases/{name}/collections/items/documents/by-key?id={ManagementApi.DocumentId("before")}"), cancellationToken);
                 read.EnsureSuccessStatusCode();
                 await Assert.That((await read.Content.ReadFromJsonAsync<JsonElement>(cancellationToken)).GetProperty("document").GetProperty("text").GetString()).IsEqualTo(text);
                 using var deleted = await owner.DeleteAsync(restored.Headers.Location, cancellationToken);

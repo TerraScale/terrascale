@@ -13,6 +13,7 @@ using TerraBase.Engine.Sqlite;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -66,15 +67,15 @@ public sealed class SyncProtocolTests
     }
 
     [Test]
-    public async Task Equal_project_and_database_UUIDs_in_different_organizations_keep_separate_files_and_applied_frontiers()
+    public async Task Equal_project_and_database_ULIDs_in_different_organizations_keep_separate_files_and_applied_frontiers()
     {
         using var tls = new PeerTls();
         await using var server = await TerraBaseTestServer.StartAsync(tls.Apply);
         using var channel = tls.CreateChannel(server.PeerAddress!);
         var client = new Features.Replication.V1.Replication.ReplicationClient(channel);
-        var first = new TenantContext(Guid.NewGuid().ToString("D"), PlanTier.Hobby,
-            Guid.NewGuid().ToString("D"), Guid.NewGuid().ToString("D"));
-        var second = first with { OrganizationId = Guid.NewGuid().ToString("D") };
+        var first = new TenantContext(EntityIds.New().ToString(), PlanTier.Hobby,
+            EntityIds.New().ToString(), EntityIds.New().ToString());
+        var second = first with { OrganizationId = EntityIds.New().ToString() };
         TenantContext[] databases = [await server.RegisterAsync(first), await server.RegisterAsync(second)];
         var origin = RandomNumberGenerator.GetBytes(16);
         var engine = server.Services.GetRequiredService<IStorageEngine>();
@@ -85,7 +86,7 @@ public sealed class SyncProtocolTests
             using var call = client.Sync(cancellationToken: TUnit.Core.TestContext.Current!.Execution.CancellationToken);
             var welcome = await HelloAsync(call, database, origin);
             await Assert.That(welcome.Frontiers.Single().HasDurableSequence).IsFalse();
-            await Assert.That(welcome.LocalIdentity.TenantId.Span.SequenceEqual(Guid.Parse(database.OrganizationId).ToByteArray(bigEndian: true))).IsTrue();
+            await Assert.That(welcome.LocalIdentity.TenantId.Span.SequenceEqual(Ulid.Parse(database.OrganizationId).ToByteArray())).IsTrue();
             await SendAsync(call, Batch(database, origin, 1, [Put("items", "same", 1, database.OrganizationId)]));
             await Assert.That((await NextAsync(call)).Durable.DurablePrefix).IsEqualTo(1UL);
             await Assert.That((await NextAsync(call)).Applied.AppliedPrefix).IsEqualTo(1UL);
@@ -123,7 +124,7 @@ public sealed class SyncProtocolTests
         await using var node = await Node.StartAsync("json");
         using var writer = await node.ClientAsync("documents:write");
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
-        var id = Guid.CreateVersion7().ToString("D");
+        var id = EntityIds.New().ToString();
         var json = scenario switch
         {
             "duplicate" => """{"x":1,"x":2}""",
@@ -150,7 +151,7 @@ public sealed class SyncProtocolTests
         }
 
         using var body = new StringContent(json, Encoding.UTF8, "application/json");
-        using var response = await writer.PutAsync(new Uri($"{node.Tenant.Path("json")}/collections/items/documents/{id}", UriKind.Relative), body, deadline.Token);
+        using var response = await writer.PutAsync(new Uri($"{node.Tenant.Path("json")}/collections/items/documents/by-key?id={id}", UriKind.Relative), body, deadline.Token);
         await Assert.That(response.StatusCode).IsEqualTo(scenario switch
         {
             "validBoundary" => HttpStatusCode.Created,
@@ -377,7 +378,7 @@ public sealed class SyncProtocolTests
         await using var read = await store.BeginTransactionAsync(write: false, deadline.Token);
         await Assert.That(await read.GetAppliedSequenceAsync(origin, deadline.Token)).IsEqualTo(0);
         await Assert.That(await read.GetAsync("items", "x", deadline.Token)).IsNull();
-        using var missing = await node.Http.GetAsync(new Uri($"{node.Tenant.Path("vault")}/collections/items/documents/x", UriKind.Relative));
+        using var missing = await node.Http.GetAsync(new Uri($"{node.Tenant.Path("vault")}/collections/items/documents/by-key?id=x", UriKind.Relative));
         await Assert.That(missing.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(await node.Server.MetricAsync("terrabase_replication_received_groups_total", "result=\"rejected\"")).IsEqualTo(10);
     }
@@ -487,7 +488,7 @@ public sealed class SyncProtocolTests
             await seed.ExecuteNonQueryAsync(CancellationToken.None);
         }
         using var writer = await node.ClientAsync("documents:write");
-        var document = new Uri($"{node.Tenant.Path("limits")}/collections/docs/documents/max", UriKind.Relative);
+        var document = new Uri($"{node.Tenant.Path("limits")}/collections/docs/documents/by-key?id=max", UriKind.Relative);
 
         using var deleted = await writer.DeleteAsync(document);
         using var replaced = await writer.PutAsJsonAsync(document, new { text = "newer" });

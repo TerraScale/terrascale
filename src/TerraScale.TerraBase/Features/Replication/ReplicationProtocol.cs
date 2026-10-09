@@ -7,9 +7,9 @@ using TerraBase.Tenancy;
 namespace TerraBase.Features.Replication;
 
 /// <summary>
-/// Protocol 1.0 of the <c>Replication.Sync</c> stream between TerraBase nodes. One stream carries the
+/// Protocol 2.0 of the <c>Replication.Sync</c> stream between TerraBase nodes. One stream carries the
 /// change groups of one database from one origin: <c>Hello</c> names its organization, project and database
-/// by their 16 UUID bytes in RFC order, and the origin (its 16 bytes in <c>member_id</c> and <c>member_incarnation</c>);
+/// by their 16 ULID bytes in network order, and the origin (its 16 bytes in <c>member_id</c> and <c>member_incarnation</c>);
 /// <c>Welcome</c> reports the receiver's applied prefix of that origin, and the sender resumes after it.
 /// Every group travels in an LZ4 <see cref="ApplicationEnvelope"/>; gRPC transport compression stays off.
 /// </summary>
@@ -39,7 +39,7 @@ public static class ReplicationProtocol
     /// </summary>
     public const ulong MembershipEpoch = 0;
 
-    private const uint Major = 1;
+    internal const uint Major = 2;
 
     /// <summary>A receiver ends a stream on which nothing arrives for this long.</summary>
     public static TimeSpan IdleTimeout { get; } = TimeSpan.FromSeconds(30);
@@ -116,7 +116,7 @@ public static class ReplicationProtocol
     }
 
     /// <summary>
-    /// A database's identity on a stream: its tenant-qualified UUIDs, and its origin bytes as both member id and incarnation
+    /// A database's identity on a stream: its tenant-qualified ULIDs, and its origin bytes as both member id and incarnation
     /// (no node-level member id exists before membership), in <see cref="MembershipEpoch"/>.
     /// </summary>
     internal static PeerIdentity Member(TenantContext database, ReadOnlyMemory<byte> origin, string region = "") => new()
@@ -142,7 +142,7 @@ public static class ReplicationProtocol
 
     /// <summary>
     /// The database, origin and negotiated limits a valid <paramref name="hello"/> opens, or a reason to refuse it.
-    /// Protocol 1.0 and format 1 must be in the offered ranges; the identity must be a <see cref="Member"/> in
+    /// Protocol 2.0 and format 1 must be in the offered ranges; the identity must be a <see cref="Member"/> in
     /// <see cref="MembershipEpoch"/>; every advertised limit is positive and the result is the minimum of both sides.
     /// </summary>
     internal static StreamErrorCode Accept(Hello hello, out TenantContext database, out ReadOnlyMemory<byte> origin, out TransferLimits limits)
@@ -257,7 +257,7 @@ public static class ReplicationProtocol
     }
 
     /// <summary>
-    /// Whether a <paramref name="welcome"/> answers <see cref="CreateHello"/> for <paramref name="database"/>: protocol 1.0,
+    /// Whether a <paramref name="welcome"/> answers <see cref="CreateHello"/> for <paramref name="database"/>: protocol 2.0,
     /// format and merge policy 1, LZ4, a <see cref="Member"/> identity in this epoch, and limits that are exactly the
     /// minimum of ours and its own (a peer cannot raise a limit we offered).
     /// </summary>
@@ -276,9 +276,9 @@ public static class ReplicationProtocol
         identity.TenantId.Equals(Id(database.OrganizationId)) && identity.ProjectId.Equals(Id(database.ProjectId!))
         && identity.DatabaseId.Equals(Id(database.DatabaseId!));
 
-    private static ByteString Id(string value) => ByteString.CopyFrom(Guid.ParseExact(value, "D").ToByteArray(bigEndian: true));
+    private static ByteString Id(string value) => ByteString.CopyFrom(Ulid.Parse(value).ToByteArray());
 
-    private static string Text(ByteString value) => new Guid(value.Span, bigEndian: true).ToString("D");
+    private static string Text(ByteString value) => new Ulid(value.Span).ToString();
 
     // Complete (major, minor) versions: a range of 1.1 to 1.2 does not include 1.0.
     private static bool Includes(VersionRange? range, uint major) =>

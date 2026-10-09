@@ -21,7 +21,7 @@ service ownership decided by the user on 2026-10-06
    /v1/projects/{project}
    /v1/projects/{project}/databases/{database}
    /v1/projects/{project}/databases/{database}/collections/{collection}
-   /v1/projects/{project}/databases/{database}/collections/{collection}/documents/{id}
+   /v1/projects/{project}/databases/{database}/collections/{collection}/documents/by-key?id={id}
    ```
 
    There is no `/management`, `/data` or organization segment. The OpenAPI tag says which group a route
@@ -33,7 +33,6 @@ service ownership decided by the user on 2026-10-06
    | `{project}` | ts-auth project id. It must equal the token's project claim. |
    | `{database}` | Database **name**, unique in its project and never renamed (`[a-z][a-z0-9_-]{0,62}`). Management routes took the database id until now. |
    | `{collection}` | Collection name, same rules as a database name. |
-   | `{id}` | Document id. |
    | `{index}` | Index name. |
    | `{backup}`, `{recommendation}`, `{query}` | Id of the backup, index recommendation or saved query. |
 3. **Authentication: ts-auth JWTs only** (ts-auth `docs/platform-contract.md` sections 3 and 6, TS-598). Every route
@@ -45,7 +44,7 @@ service ownership decided by the user on 2026-10-06
      project tenants' issuers are never trusted: those customer end-user tokens authenticate customer
      applications, while a **project access token** for TerraBase uses the trusted platform issuer and carries `project_id`;
    - `aud` includes TerraBase's audience, and `exp` and `nbf` hold with 30 seconds of skew;
-   - `project_id` (a lowercase UUID) equals the route's `{project}`. A token for another project, or one without
+   - `project_id` (a canonical uppercase ULID) equals the route's `{project}`. A token for another project, or one without
      `project_id` (organization, sign-in and service tokens), answers `404`, the same answer as a database that
      does not exist;
    - with a `database` claim (a key narrowed to one database), only that database is reachable: every other
@@ -180,14 +179,19 @@ Ranges, regional ownership, response fields, wire-byte accounting and limits:
 
 ### Documents
 
+Point routes require exactly one UTF-8 query-encoded `id`, with no other query parameters. Encode the
+raw key once (for example `a/b` as `id=a%2Fb`, and literal `a%2Fb` as `id=a%252Fb`). Dot segments,
+punctuation and Unicode remain distinct keys. `+` encodes space; `%2B` encodes a literal plus. Invalid
+UTF-8 or percent escapes return `400 invalid_request`. See [the key contract](id-contract.md).
+
 | Method | Route | operationId | Scope |
 | --- | --- | --- | --- |
 | POST | `C/documents` | `createDocument` | `documents:write` |
 | GET | `C/documents` | `listDocuments` | `documents:read` |
-| GET | `C/documents/{id}` | `getDocument` | `documents:read` |
-| PUT | `C/documents/{id}` | `putDocument` | `documents:write` |
-| PATCH | `C/documents/{id}` | `patchDocument` | `documents:write` |
-| DELETE | `C/documents/{id}` | `deleteDocument` | `documents:write` |
+| GET | `C/documents/by-key?id={id}` | `getDocument` | `documents:read` |
+| PUT | `C/documents/by-key?id={id}` | `putDocument` | `documents:write` |
+| PATCH | `C/documents/by-key?id={id}` | `patchDocument` | `documents:write` |
+| DELETE | `C/documents/by-key?id={id}` | `deleteDocument` | `documents:write` |
 
 ### Queries
 
@@ -250,7 +254,7 @@ These are not operations in the document ([API reference](api-reference.md)). Un
 
 | Method | Route | Old route | Use |
 | --- | --- | --- | --- |
-| GET | `/admin/node/pressure` | `/v1/node/pressure` | Node pressure ([node pressure](node-pressure.md)) |
+| GET | `/admin/node/pressure` | — | Node pressure ([node pressure](node-pressure.md)) |
 | GET | `/metrics` | unchanged | Prometheus scrape |
 
 ## Hidden legacy identity and dashboard routes
@@ -278,7 +282,6 @@ Old management database, backup, index, schema, usage, SQL and saved-query paths
 still address databases by catalog id and require their existing organization membership or loopback service
 credential. Canonical routes address database names and require project JWT scopes. Existing `tb_` keys still
 reach document routes and the hidden data-plane database `PUT` under their existing scope and tenant rules.
-The old `/v1/node/pressure` path aliases `/admin/node/pressure` on the administrative listener.
 
 Keep these compatibility paths until COS confirms that the SDKs and production callers have migrated. No
 production wipe, re-foundation or storage reset is part of TS-589. Existing documents, versions, snapshots and

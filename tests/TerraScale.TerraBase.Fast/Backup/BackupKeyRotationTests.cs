@@ -74,12 +74,12 @@ public sealed class BackupKeyRotationTests
             await Assert.That(restored.StatusCode).IsEqualTo(HttpStatusCode.Created);
             foreach (var name in new[] { "before", "refresh" })
             {
-                using var read = await data.GetAsync(ManagementApi.Uri($"/v1/projects/{database.Project}/databases/restored/collections/people/documents/{ManagementApi.DocumentId(name)}"), cancellationToken);
+                using var read = await data.GetAsync(ManagementApi.Uri($"/v1/projects/{database.Project}/databases/restored/collections/people/documents/by-key?id={ManagementApi.DocumentId(name)}"), cancellationToken);
                 await Assert.That(read.StatusCode).IsEqualTo(HttpStatusCode.OK);
                 await Assert.That((await read.Content.ReadFromJsonAsync<JsonElement>(cancellationToken)).GetProperty("document").GetProperty("text").GetString()).IsEqualTo(before);
             }
 
-            using var later = await data.GetAsync(ManagementApi.Uri($"/v1/projects/{database.Project}/databases/restored/collections/people/documents/{ManagementApi.DocumentId("after")}"), cancellationToken);
+            using var later = await data.GetAsync(ManagementApi.Uri($"/v1/projects/{database.Project}/databases/restored/collections/people/documents/by-key?id={ManagementApi.DocumentId("after")}"), cancellationToken);
             await Assert.That(later.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
             await Assert.That(oldRequests.Gets).IsEqualTo(0);
             await Assert.That(oldRequests.Unwraps).IsEqualTo(0);
@@ -152,7 +152,7 @@ public sealed class BackupKeyRotationTests
                 using var restored = await owner.PostAsJsonAsync(ManagementApi.Uri(database.Path + "/point-in-time/restore"), new { pointInTime, name = "restored" }, cancellationToken);
                 await Assert.That(restored.StatusCode).IsEqualTo(HttpStatusCode.Created);
                 using var reader = await cold.CreateClientAsync(database.Organization, "documents:read");
-                using var read = await reader.GetAsync(ManagementApi.Uri($"/v1/projects/{database.Project}/databases/restored/collections/people/documents/{ManagementApi.DocumentId("before")}"), cancellationToken);
+                using var read = await reader.GetAsync(ManagementApi.Uri($"/v1/projects/{database.Project}/databases/restored/collections/people/documents/by-key?id={ManagementApi.DocumentId("before")}"), cancellationToken);
                 await Assert.That(read.StatusCode).IsEqualTo(HttpStatusCode.OK);
                 await Assert.That((await read.Content.ReadFromJsonAsync<JsonElement>(cancellationToken)).GetProperty("document").GetProperty("text").GetString()).IsEqualTo(text);
                 await Assert.That(oldRequests.Gets).IsEqualTo(1);
@@ -330,7 +330,7 @@ public sealed class BackupKeyRotationTests
             await Assert.That(prefetched.Task.IsCompletedSuccessfully).IsTrue();
             foreach (var (name, text) in new[] { ("before", before), ("after", after) }.Concat(extraDocuments))
             {
-                using var read = await reader.GetAsync(ManagementApi.Uri($"/v1/projects/{database.Project}/databases/restored/collections/people/documents/{ManagementApi.DocumentId(name)}"));
+                using var read = await reader.GetAsync(ManagementApi.Uri($"/v1/projects/{database.Project}/databases/restored/collections/people/documents/by-key?id={ManagementApi.DocumentId(name)}"));
                 await Assert.That(read.StatusCode).IsEqualTo(HttpStatusCode.OK);
                 await Assert.That((await read.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("document").GetProperty("text").GetString()).IsEqualTo(text);
             }

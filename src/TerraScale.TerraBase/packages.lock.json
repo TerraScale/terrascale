@@ -119,6 +119,12 @@
           "NATS.Client.JetStream": "3.3.0"
         }
       },
+      "NUlid": {
+        "type": "Direct",
+        "requested": "[1.7.3, )",
+        "resolved": "1.7.3",
+        "contentHash": "AXxv7eF+3REXlGLojlN4zXzvesgxiC0/Jq66Qn5L+hhw+NBCK60douGZBI+6ZTAZHRE2xg7AyCEj8cqCKp/U5w=="
+      },
       "OpenTelemetry.Exporter.Prometheus.AspNetCore": {
         "type": "Direct",
         "requested": "[1.15.3-beta.1, )",

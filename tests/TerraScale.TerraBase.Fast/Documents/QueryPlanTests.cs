@@ -1,5 +1,6 @@
 using Bogus;
 using TerraBase.Engine.Sqlite;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Documents;
@@ -14,9 +15,10 @@ public sealed class QueryPlanTests
     private static readonly Dictionary<string, string> Expected = new(StringComparer.Ordinal)
     {
         ["Get"] = "SEARCH documents USING PRIMARY KEY (collection=? AND id=?)",
-        ["ReplicationRetainedBody"] = "CO-ROUTINE latest | SEARCH change_log USING INDEX change_log_by_document (collection=? AND generation=? AND id=?) | SCALAR SUBQUERY 1 | SEARCH collections USING PRIMARY KEY (name=?) | SCAN latest | SEARCH d USING PRIMARY KEY (collection=? AND id=?) | CORRELATED SCALAR SUBQUERY 3 | SEARCH changes USING INDEX changes_deleted (collection=? AND id=? AND version>?)",
+        ["UniqueRawDocument"] = "SEARCH d USING PRIMARY KEY (collection=? AND id=?) | SEARCH c USING PRIMARY KEY (collection=? AND id=?) LEFT-JOIN",
+        ["ReplicationRetainedBody"] = "CO-ROUTINE latest | SEARCH change_log USING INDEX change_log_by_document (collection=? AND generation=? AND id=?) | SCALAR SUBQUERY 1 | SEARCH collections USING PRIMARY KEY (name=?) | SCAN latest | SCALAR SUBQUERY 3 | SEARCH unique_conflicts USING PRIMARY KEY (collection=? AND id=?) | SEARCH d USING PRIMARY KEY (collection=? AND id=?) | CORRELATED SCALAR SUBQUERY 4 | SEARCH changes USING INDEX changes_deleted (collection=? AND id=? AND version>?)",
         ["ReplicationRetainedBodyBytes"] = "SEARCH change_log USING INTEGER PRIMARY KEY (rowid=?)",
-        ["RestoreReplicationBody"] = "SEARCH documents USING PRIMARY KEY (collection=? AND id=?)",
+        ["RestoreReplicationBody"] = "SEARCH documents USING PRIMARY KEY (collection=? AND id=?) | SCALAR SUBQUERY 1 | SEARCH unique_conflicts USING PRIMARY KEY (collection=? AND id=?)",
         ["Version"] = "SEARCH documents USING PRIMARY KEY (collection=? AND id=?)",
         // Inserts have no plan; the upsert's conflict check is a primary-key lookup.
         ["Put"] = "",
@@ -71,8 +73,8 @@ public sealed class QueryPlanTests
         ["BaselineDocumentsAfter"] = "SEARCH documents USING INDEX documents_live ((collection,id)>(?,?))",
         ["BaselineTombstonesFirst"] = "SCAN documents",
         ["BaselineTombstonesAfter"] = "SEARCH documents USING PRIMARY KEY ((collection,id)>(?,?))",
-        ["ReplicationStateFirst"] = "MATERIALIZE evidence | CO-ROUTINE keys | MERGE (UNION) | LEFT | SCAN documents USING COVERING INDEX documents_replication_keys | RIGHT | CO-ROUTINE deleted_keys | SETUP | SCAN CONSTANT ROW | SCALAR SUBQUERY 1 | SCAN changes USING INDEX changes_replication_deleted | SCALAR SUBQUERY 2 | SCAN changes USING INDEX changes_replication_deleted | RECURSIVE STEP | SCAN deleted_keys | CORRELATED SCALAR SUBQUERY 4 | SEARCH changes USING INDEX changes_replication_deleted (collection=? AND id>?) | CORRELATED SCALAR SUBQUERY 5 | SEARCH changes USING INDEX changes_replication_deleted (collection>?) | CORRELATED SCALAR SUBQUERY 6 | SEARCH changes USING INDEX changes_replication_deleted (collection=? AND id>?) | CORRELATED SCALAR SUBQUERY 7 | SEARCH changes USING INDEX changes_replication_deleted (collection>?) | SCAN deleted_keys | USE TEMP B-TREE FOR ORDER BY | SCAN keys | SEARCH documents USING PRIMARY KEY (collection=? AND id=?) LEFT-JOIN | CORRELATED SCALAR SUBQUERY 11 | SEARCH changes USING INDEX changes_deleted (collection=? AND id=?) | SCAN evidence | USE TEMP B-TREE FOR ORDER BY",
-        ["ReplicationStateAfter"] = "MATERIALIZE evidence | CO-ROUTINE keys | MERGE (UNION) | LEFT | SEARCH documents USING COVERING INDEX documents_replication_keys ((collection,id)>(?,?)) | RIGHT | CO-ROUTINE deleted_keys | SETUP | SCAN CONSTANT ROW | SCALAR SUBQUERY 1 | SEARCH changes USING INDEX changes_replication_deleted (collection=? AND id>?) | SCALAR SUBQUERY 2 | SEARCH changes USING INDEX changes_replication_deleted (collection>?) | SCALAR SUBQUERY 3 | SEARCH changes USING INDEX changes_replication_deleted (collection=? AND id>?) | SCALAR SUBQUERY 4 | SEARCH changes USING INDEX changes_replication_deleted (collection>?) | RECURSIVE STEP | SCAN deleted_keys | CORRELATED SCALAR SUBQUERY 6 | SEARCH changes USING INDEX changes_replication_deleted (collection=? AND id>?) | CORRELATED SCALAR SUBQUERY 7 | SEARCH changes USING INDEX changes_replication_deleted (collection>?) | CORRELATED SCALAR SUBQUERY 8 | SEARCH changes USING INDEX changes_replication_deleted (collection=? AND id>?) | CORRELATED SCALAR SUBQUERY 9 | SEARCH changes USING INDEX changes_replication_deleted (collection>?) | SCAN deleted_keys | USE TEMP B-TREE FOR ORDER BY | SCAN keys | SEARCH documents USING PRIMARY KEY (collection=? AND id=?) LEFT-JOIN | CORRELATED SCALAR SUBQUERY 13 | SEARCH changes USING INDEX changes_deleted (collection=? AND id=?) | SCAN evidence | USE TEMP B-TREE FOR ORDER BY",
+        ["ReplicationStateFirst"] = "MATERIALIZE evidence | CO-ROUTINE keys | MERGE (UNION) | LEFT | SCAN documents USING COVERING INDEX documents_replication_keys | RIGHT | CO-ROUTINE deleted_keys | SETUP | SCAN CONSTANT ROW | SCALAR SUBQUERY 1 | SCAN changes USING INDEX changes_replication_deleted | SCALAR SUBQUERY 2 | SCAN changes USING INDEX changes_replication_deleted | RECURSIVE STEP | SCAN deleted_keys | CORRELATED SCALAR SUBQUERY 4 | SEARCH changes USING INDEX changes_replication_deleted (collection=? AND id>?) | CORRELATED SCALAR SUBQUERY 5 | SEARCH changes USING INDEX changes_replication_deleted (collection>?) | CORRELATED SCALAR SUBQUERY 6 | SEARCH changes USING INDEX changes_replication_deleted (collection=? AND id>?) | CORRELATED SCALAR SUBQUERY 7 | SEARCH changes USING INDEX changes_replication_deleted (collection>?) | SCAN deleted_keys | USE TEMP B-TREE FOR ORDER BY | SCAN keys | SEARCH documents USING PRIMARY KEY (collection=? AND id=?) LEFT-JOIN | SEARCH unique_conflicts USING PRIMARY KEY (collection=? AND id=?) LEFT-JOIN | CORRELATED SCALAR SUBQUERY 11 | SEARCH changes USING INDEX changes_deleted (collection=? AND id=?) | SCAN evidence | USE TEMP B-TREE FOR ORDER BY",
+        ["ReplicationStateAfter"] = "MATERIALIZE evidence | CO-ROUTINE keys | MERGE (UNION) | LEFT | SEARCH documents USING COVERING INDEX documents_replication_keys ((collection,id)>(?,?)) | RIGHT | CO-ROUTINE deleted_keys | SETUP | SCAN CONSTANT ROW | SCALAR SUBQUERY 1 | SEARCH changes USING INDEX changes_replication_deleted (collection=? AND id>?) | SCALAR SUBQUERY 2 | SEARCH changes USING INDEX changes_replication_deleted (collection>?) | SCALAR SUBQUERY 3 | SEARCH changes USING INDEX changes_replication_deleted (collection=? AND id>?) | SCALAR SUBQUERY 4 | SEARCH changes USING INDEX changes_replication_deleted (collection>?) | RECURSIVE STEP | SCAN deleted_keys | CORRELATED SCALAR SUBQUERY 6 | SEARCH changes USING INDEX changes_replication_deleted (collection=? AND id>?) | CORRELATED SCALAR SUBQUERY 7 | SEARCH changes USING INDEX changes_replication_deleted (collection>?) | CORRELATED SCALAR SUBQUERY 8 | SEARCH changes USING INDEX changes_replication_deleted (collection=? AND id>?) | CORRELATED SCALAR SUBQUERY 9 | SEARCH changes USING INDEX changes_replication_deleted (collection>?) | SCAN deleted_keys | USE TEMP B-TREE FOR ORDER BY | SCAN keys | SEARCH documents USING PRIMARY KEY (collection=? AND id=?) LEFT-JOIN | SEARCH unique_conflicts USING PRIMARY KEY (collection=? AND id=?) LEFT-JOIN | CORRELATED SCALAR SUBQUERY 13 | SEARCH changes USING INDEX changes_deleted (collection=? AND id=?) | SCAN evidence | USE TEMP B-TREE FOR ORDER BY",
         // System database replication: snapshot pages, group pages, prefix drops, replica writes, journal tail.
         ["SystemDocumentsFirst"] = "SCAN documents USING INDEX documents_live",
         ["SystemDocumentsAfter"] = "SEARCH documents USING INDEX documents_live ((collection,id)>(?,?))",
@@ -95,7 +97,7 @@ public sealed class QueryPlanTests
         var plans = (await created.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>()).GetProperty("id").GetString()!;
         (await tenant.Data.PostAsJsonAsync(tenant.Database("plans", "/collections"), new { name = "items" })).EnsureSuccessStatusCode();
         (await tenant.Data.PutAsJsonAsync(
-            tenant.Database("plans", $"/collections/items/documents/{Guid.CreateVersion7()}"),
+            tenant.Database("plans", $"/collections/items/documents/by-key?id={EntityIds.New()}"),
             new { title = Faker.Commerce.ProductName() })).EnsureSuccessStatusCode();
         // Every statement the engine runs must have a recorded plan.
         await Assert.That(SqliteStatements.All.Keys).IsEquivalentTo(Expected.Keys);
@@ -110,7 +112,7 @@ public sealed class QueryPlanTests
             foreach (var (name, sql) in SqliteStatements.All)
             {
                 var plan = await QueryPlan.ExplainAsync(path, sql);
-                await Assert.That($"{database} {name}: {plan}").IsEqualTo($"{database} {name}: {Expected[name]}");
+                await Assert.That($"{database} {name}: {plan}").IsEqualTo($"{database} {name}: {Expected[name]}").Because(plan);
             }
         }
     }
@@ -124,7 +126,7 @@ public sealed class QueryPlanTests
             .Status.ShouldBe(System.Net.HttpStatusCode.OK);
         (await api.TransactAsync([.. ids.Select(id => new { op = "delete", collection = "items", id })]))
             .Status.ShouldBe(System.Net.HttpStatusCode.OK);
-        var live = "ffffffff-ffff-7fff-8fff-ffffffffffff";
+        var live = "7ZZZZZZZZZFZZRZZZZZZZZZZZZ";
         (await api.PutAsync(live, new { n = 2 })).Status.ShouldBe(System.Net.HttpStatusCode.Created);
         var listed = await api.SendAsync(HttpMethod.Get, api.Documents + "?limit=1");
         var queried = await api.QueryAsync(new { limit = 1 });

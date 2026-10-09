@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using Google.Protobuf;
 using Grpc.Core;
@@ -8,6 +9,7 @@ using TerraBase.Engine;
 using TerraBase.Fast.Storage;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Replication;
@@ -79,8 +81,10 @@ public sealed class SenderLifecycleTests
         await TerraBaseTestServer.EventuallyAsync(async token =>
             await sender.MetricAsync("terrabase_replication_sender_durable_lag", "", token) == 2
             && await sender.MetricAsync("terrabase_replication_database_catchup_seconds", "", token) > 0);
+        await TerraBaseTestServer.EventuallyAsync(async token => await ReplicationPressure.ReadAsync(sender, token) == 2);
         Volatile.Write(ref reject, 0);
         await TerraBaseTestServer.ReplicatedAsync(sender);
+        await TerraBaseTestServer.EventuallyAsync(async token => await ReplicationPressure.ReadAsync(sender, token) == 0);
         await Assert.That(applied).IsEqualTo(2UL);
         await Assert.That(await sender.MetricAsync("terrabase_replication_database_catchup_seconds")).IsEqualTo(0);
         await Assert.That(await sender.MetricAsync("terrabase_replication_convergence_seconds_count")).IsGreaterThan(convergences);
@@ -121,7 +125,7 @@ public sealed class SenderLifecycleTests
                         welcome.Welcome.Frontiers[0].DurableSequence = ulong.MaxValue;
                         break;
                     case "origin":
-                        welcome.Welcome.Frontiers[0].Origin.ReplicaId = ByteString.CopyFrom(Guid.NewGuid().ToByteArray(bigEndian: true));
+                        welcome.Welcome.Frontiers[0].Origin.ReplicaId = ByteString.CopyFrom(EntityIds.New().ToByteArray());
                         break;
                     case "identity":
                         welcome.Welcome.LocalIdentity.MemberId = ByteString.Empty;
@@ -226,11 +230,11 @@ public sealed class SenderLifecycleTests
             collection.EnsureSuccessStatusCode();
         }
 
-        using var broken = await writer.PutAsJsonAsync(new Uri($"{tenant.Path("broken")}/collections/items/documents/{ReplicationDocuments.Id("b")}", UriKind.Relative), new { value = "broken" });
+        using var broken = await writer.PutAsJsonAsync(new Uri($"{tenant.Path("broken")}/collections/items/documents/by-key?id={ReplicationDocuments.Id("b")}", UriKind.Relative), new { value = "broken" });
         broken.EnsureSuccessStatusCode();
         await clock.Scheduled.Task.WaitAsync(TimeSpan.FromSeconds(30));
         // The retry timer is deliberately held. A fresh healthy commit must wake the peer worker itself.
-        using var healthy = await writer.PutAsJsonAsync(new Uri($"{tenant.Path("healthy")}/collections/items/documents/{ReplicationDocuments.Id("h")}", UriKind.Relative), new { value = "healthy" });
+        using var healthy = await writer.PutAsJsonAsync(new Uri($"{tenant.Path("healthy")}/collections/items/documents/by-key?id={ReplicationDocuments.Id("h")}", UriKind.Relative), new { value = "healthy" });
         healthy.EnsureSuccessStatusCode();
         await received.Task.WaitAsync(TimeSpan.FromSeconds(30));
         await TerraBaseTestServer.EventuallyAsync(async token =>
@@ -302,7 +306,7 @@ public sealed class SenderLifecycleTests
         await TerraBaseTestServer.ReplicatedAsync(sender);
         foreach (var id in new[] { "a", "b" })
         {
-            using var response = await reader.GetAsync(new Uri($"{tenant.Path("backlog")}/collections/items/documents/{ReplicationDocuments.Id(id)}", UriKind.Relative), deadline.Token);
+            using var response = await reader.GetAsync(new Uri($"{tenant.Path("backlog")}/collections/items/documents/by-key?id={ReplicationDocuments.Id(id)}", UriKind.Relative), deadline.Token);
             response.EnsureSuccessStatusCode();
             using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync(deadline.Token));
             await Assert.That(body.RootElement.GetProperty("document").GetProperty("value").GetString()).IsEqualTo(id);
@@ -383,6 +387,7 @@ public sealed class SenderLifecycleTests
             await TerraBaseTestServer.EventuallyAsync(async token =>
                 await sender.MetricAsync("terrabase_replication_sender_initialized", "", token) == 1);
             await Assert.That(await sender.MetricAsync("terrabase_replication_sender_durable_lag")).IsEqualTo(300);
+            await TerraBaseTestServer.EventuallyAsync(async token => await ReplicationPressure.ReadAsync(sender, token) == 300);
             allowFirst.SetResult();
             await secondHello.Task.WaitAsync(TimeSpan.FromSeconds(30));
             await Assert.That(groups).IsEqualTo(256);
@@ -393,9 +398,11 @@ public sealed class SenderLifecycleTests
             await secondWelcome.Task.WaitAsync(TimeSpan.FromSeconds(30));
             await TerraBaseTestServer.EventuallyAsync(async token =>
                 await sender.MetricAsync("terrabase_replication_sender_durable_lag", "", token) == 44);
+            await TerraBaseTestServer.EventuallyAsync(async token => await ReplicationPressure.ReadAsync(sender, token) == 44);
             allowSecondTransfer.SetResult();
             await TerraBaseTestServer.ReplicatedAsync(sender);
             await Assert.That(groups).IsEqualTo(300);
+            await TerraBaseTestServer.EventuallyAsync(async token => await ReplicationPressure.ReadAsync(sender, token) == 0);
         }
         finally
         {
@@ -603,9 +610,22 @@ public sealed class SenderLifecycleTests
         await CreateAsync(tenant, writer);
         await PutAsync(tenant, writer, "first");
         var heldRpc = await waiting.Task.WaitAsync(TimeSpan.FromSeconds(30));
-        for (var index = 0; index < 16; index++)
+        var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
+        var output = TUnit.Core.TestContext.Current!.OutputWriter;
+        var writesStarted = Stopwatch.GetTimestamp();
+        var writesCompleted = 0;
+        try
         {
-            await PutAsync(tenant, writer, "later");
+            // All 16 writes must commit while the original RPC is held; overlap their HTTP round trips.
+            await Task.WhenAll(Enumerable.Range(0, 16).Select(async _ =>
+            {
+                await PutAsync(tenant, writer, "later", token);
+                Interlocked.Increment(ref writesCompleted);
+            }));
+        }
+        finally
+        {
+            output.WriteLine($"WAL backlog writes: {writesCompleted}/16 completed in {Stopwatch.GetElapsedTime(writesStarted).TotalMilliseconds:F0} ms; held RPC cancelled: {heldRpc.IsCancellationRequested}");
         }
 
         await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
@@ -621,21 +641,31 @@ public sealed class SenderLifecycleTests
         command.CommandText = "PRAGMA wal_checkpoint(TRUNCATE);";
         long busy = -1;
         long frames = -1;
+        var checkpointStarted = Stopwatch.GetTimestamp();
+        var attempts = 0;
         // Discovery can briefly read the same WAL. The original held RPC must survive every attempt,
         // so a sender timeout cannot release a leaked transaction and falsely let the checkpoint pass.
-        await TerraBaseTestServer.EventuallyAsync(async token =>
+        try
         {
+            await TerraBaseTestServer.EventuallyAsync(async checkpointToken =>
+            {
+                heldRpc.ThrowIfCancellationRequested();
+                attempts++;
+                await using var result = await command.ExecuteReaderAsync(checkpointToken);
+                await Assert.That(await result.ReadAsync(checkpointToken)).IsTrue();
+                busy = result.GetInt64(0);
+                frames = result.GetInt64(1);
+                heldRpc.ThrowIfCancellationRequested();
+                return busy == 0;
+            });
+            await Assert.That(busy).IsEqualTo(0);
+            await Assert.That(frames).IsEqualTo(0);
             heldRpc.ThrowIfCancellationRequested();
-            await using var result = await command.ExecuteReaderAsync(token);
-            await Assert.That(await result.ReadAsync(token)).IsTrue();
-            busy = result.GetInt64(0);
-            frames = result.GetInt64(1);
-            heldRpc.ThrowIfCancellationRequested();
-            return busy == 0;
-        });
-        await Assert.That(busy).IsEqualTo(0);
-        await Assert.That(frames).IsEqualTo(0);
-        heldRpc.ThrowIfCancellationRequested();
+        }
+        finally
+        {
+            output.WriteLine($"WAL checkpoint: {attempts} attempts in {Stopwatch.GetElapsedTime(checkpointStarted).TotalMilliseconds:F0} ms; busy: {busy}; frames: {frames}; held RPC cancelled: {heldRpc.IsCancellationRequested}");
+        }
 
         release.SetResult();
         await TerraBaseTestServer.ReplicatedAsync(sender);
@@ -663,9 +693,9 @@ public sealed class SenderLifecycleTests
         collection.EnsureSuccessStatusCode();
     }
 
-    private static async Task PutAsync(ReplicationTenant tenant, HttpClient client, string id)
+    private static async Task PutAsync(ReplicationTenant tenant, HttpClient client, string id, CancellationToken cancellationToken = default)
     {
-        using var response = await client.PutAsJsonAsync(new Uri($"{tenant.Path("backlog")}/collections/items/documents/{ReplicationDocuments.Id(id)}", UriKind.Relative), new { value = id });
+        using var response = await client.PutAsJsonAsync(new Uri($"{tenant.Path("backlog")}/collections/items/documents/by-key?id={ReplicationDocuments.Id(id)}", UriKind.Relative), new { value = id }, cancellationToken);
         response.EnsureSuccessStatusCode();
     }
 }

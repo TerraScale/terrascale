@@ -2,6 +2,7 @@ using System.Buffers.Binary;
 using System.Runtime.CompilerServices;
 using TerraBase.Configuration;
 using TerraBase.Engine;
+using TerraBase.Primitives;
 
 namespace TerraBase.Features.Backup;
 
@@ -39,7 +40,7 @@ internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKe
         string file, string scope, SnapshotKey snapshot, DateTimeOffset at, long? until, CancellationToken cancellationToken)
     {
         Directory.CreateDirectory(_scratch);
-        var restored = Path.Combine(_scratch, Guid.NewGuid().ToString("N") + ".db");
+        var restored = Path.Combine(_scratch, EntityIds.New().ToString() + ".db");
         try
         {
             await using (var copy = new FileStream(restored, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None, 1 << 16, FileOptions.Asynchronous))
@@ -148,7 +149,7 @@ internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKe
 
     private async Task<FileStream> DownloadSegmentAsync(string key, string scope, int frameBytes, CancellationToken cancellationToken)
     {
-        var frames = new FileStream(Path.Combine(_scratch, Guid.NewGuid().ToString("N") + ".frames"), FileMode.CreateNew, FileAccess.ReadWrite,
+        var frames = new FileStream(Path.Combine(_scratch, EntityIds.New().ToString() + ".frames"), FileMode.CreateNew, FileAccess.ReadWrite,
             FileShare.None, 1 << 16, FileOptions.Asynchronous | FileOptions.DeleteOnClose);
         try
         {

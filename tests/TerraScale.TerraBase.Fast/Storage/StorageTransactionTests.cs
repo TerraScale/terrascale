@@ -1,5 +1,6 @@
 using System.Diagnostics.Metrics;
 using System.Text;
+using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -9,6 +10,7 @@ using TerraBase.Engine;
 using TerraBase.Engine.Sqlite;
 using TerraBase.Fast.Documents;
 using TerraBase.Hosting;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -21,7 +23,7 @@ namespace TerraBase.Fast.Storage;
 public sealed class StorageTransactionTests
 {
     // Every test runs its own server and data directory, so they can share the ids.
-    private static readonly TenantContext Database = Tenant(Guid.NewGuid().ToString());
+    private static readonly TenantContext Database = Tenant(EntityIds.New().ToString());
 
     [Test]
     [Arguments("put", false)]
@@ -47,9 +49,9 @@ public sealed class StorageTransactionTests
         }
 
         var engine = server.Services.GetRequiredService<IStorageEngine>();
-        var id = Guid.CreateVersion7().ToString("D");
+        var id = EntityIds.New().ToString();
         var json = "{\"n\":1}"u8.ToArray();
-        var origin = Guid.NewGuid().ToByteArray(bigEndian: true);
+        var origin = EntityIds.New().ToByteArray();
         foreach (var store in new[]
         {
             (await engine.OpenDatabaseAsync(tenant.Database("pool"), token))!,
@@ -144,7 +146,7 @@ public sealed class StorageTransactionTests
             }
         }
 
-        using var visible = await client.GetAsync(new Uri($"{tenant.Path("pool")}/collections/items/documents/{id}", UriKind.Relative), token);
+        using var visible = await client.GetAsync(new Uri($"{tenant.Path("pool")}/collections/items/documents/by-key?id={id}", UriKind.Relative), token);
         visible.EnsureSuccessStatusCode();
         await Assert.That(await visible.Content.ReadAsStringAsync(token)).Contains("\"n\":1");
     }
@@ -270,17 +272,17 @@ public sealed class StorageTransactionTests
         using var cancelled = new CancellationTokenSource();
         SqliteStorageEngine? engine = null;
         SqliteDatabaseStore? unpublished = null;
-        SqliteSession? migratedSession = null;
+        SqliteSession? bootstrappedSession = null;
         var inserts = 0;
         var inject = true;
-        var name = Tenant(Guid.NewGuid().ToString());
+        var name = Tenant(EntityIds.New().ToString());
         await using var server = await TerraBaseTestServer.StartAsync(services: services => services.AddSingleton(provider =>
         {
             var options = provider.GetRequiredService<TerraBaseOptions>();
             engine = new SqliteStorageEngine(options.DataDirectory, options.StorageThreads, options.StorageQueue, options.MemoryBudget,
                 provider.GetRequiredService<IMeterFactory>().Create(Telemetry.MeterName),
                 provider.GetRequiredService<ILogger<SqliteStorageEngine>>(), options.ShutdownGrace, readinessCacheTtl: options.ReadinessCacheTtl,
-                checkpoint: provider.GetRequiredService<DatabaseLifecycleCheckpoint>(), afterMigration: store =>
+                checkpoint: provider.GetRequiredService<DatabaseLifecycleCheckpoint>(), afterBootstrap: store =>
                 {
                     if (!inject || store.Tenant?.DatabaseId != name.DatabaseId)
                     {
@@ -288,10 +290,10 @@ public sealed class StorageTransactionTests
                     }
 
                     unpublished = store;
-                    migratedSession = engine!.Pool.Rent(store) ?? throw new InvalidOperationException("migration left no idle session");
+                    bootstrappedSession = engine!.Pool.Rent(store) ?? throw new InvalidOperationException("bootstrap left no idle session");
                     try
                     {
-                        migratedSession.Connection.CreateFunction("interrupt_seed", () =>
+                        bootstrappedSession.Connection.CreateFunction("interrupt_seed", () =>
                         {
                             inserts++;
                             if (cancel)
@@ -302,30 +304,20 @@ public sealed class StorageTransactionTests
 
                             throw new InvalidOperationException("seed insertion failed");
                         });
-                        using var trigger = migratedSession.Connection.CreateCommand();
+                        using var trigger = bootstrappedSession.Connection.CreateCommand();
                         trigger.CommandText = "CREATE TEMP TRIGGER interrupt_seed AFTER INSERT ON changes BEGIN SELECT interrupt_seed(); END;";
                         trigger.ExecuteNonQuery();
                     }
                     finally
                     {
-                        store.Return(migratedSession);
+                        store.Return(bootstrappedSession);
                     }
                 });
             return engine;
         }));
         var directory = Directory.CreateDirectory(Path.Combine(server.DataDirectory, name.OrganizationId, name.ProjectId!)).FullName;
         var path = Path.Combine(directory, name.DatabaseId + ".db");
-        await using (var legacy = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Pooling = false }.ToString()))
-        {
-            await legacy.OpenAsync();
-            await using var create = legacy.CreateCommand();
-            create.CommandText = """
-                CREATE TABLE documents (collection TEXT NOT NULL, id TEXT NOT NULL, version INTEGER NOT NULL, body TEXT NOT NULL, PRIMARY KEY (collection, id)) WITHOUT ROWID;
-                INSERT INTO documents VALUES ('items', 'a', 1, '{}'), ('items', 'b', 1, '{}');
-                PRAGMA user_version = 1;
-                """;
-            await create.ExecuteNonQueryAsync();
-        }
+        await DocumentFiles.WriteAsync(path, ("items", StorageFixture.Id("a"), "{}"), ("items", StorageFixture.Id("b"), "{}"));
 
         _ = server.Services.GetRequiredService<IStorageEngine>();
         var idleBefore = engine!.Pool.IdleCount;
@@ -342,7 +334,7 @@ public sealed class StorageTransactionTests
         await Assert.That(unpublished!.IsClosed).IsTrue();
         await Assert.That(unpublished.IdleCount).IsEqualTo(0);
         await Assert.That(engine.Pool.IdleCount).IsEqualTo(idleBefore);
-        await Assert.That(migratedSession!.Connection.State).IsEqualTo(System.Data.ConnectionState.Closed);
+        await Assert.That(bootstrappedSession!.Connection.State).IsEqualTo(System.Data.ConnectionState.Closed);
         // Retrying uses a new store, completes the baseline, and keeps the original documents intact.
         inject = false;
         var retry = await engine.OpenDatabaseAsync(name, CancellationToken.None);
@@ -356,7 +348,7 @@ public sealed class StorageTransactionTests
     {
         await using var server = await TerraBaseTestServer.StartAsync(services: ConfigurePool);
         var (_, store) = await OpenAsync(server);
-        // Creation leaves the migration session idle.
+        // Creation leaves the bootstrap session idle.
         await Assert.That(store.IdleCount).IsEqualTo(1);
 
         var first = await store.BeginTransactionAsync(write: true, CancellationToken.None);
@@ -436,7 +428,7 @@ public sealed class StorageTransactionTests
         var stores = new List<SqliteDatabaseStore>();
         for (var i = 0; i < engine.Pool.MaxIdle + 8; i++)
         {
-            var name = Database with { DatabaseId = Guid.NewGuid().ToString() };
+            var name = Database with { DatabaseId = EntityIds.New().ToString() };
             await engine.CreateDatabaseAsync(name, CancellationToken.None);
             var store = (SqliteDatabaseStore)(await engine.OpenDatabaseAsync(name, CancellationToken.None))!;
             await (await store.BeginTransactionAsync(write: false, CancellationToken.None)).DisposeAsync();
@@ -498,7 +490,7 @@ public sealed class StorageTransactionTests
             await seed.ExecuteNonQueryAsync(CancellationToken.None);
         }
 
-        var origin = Guid.NewGuid().ToByteArray();
+        var origin = EntityIds.New().ToByteArray();
 
         // A caller that catches an exhausted-version write must not commit its partial state or other work.
         await using (var writer = await store.BeginTransactionAsync(write: true, CancellationToken.None))
@@ -603,8 +595,12 @@ public sealed class StorageTransactionTests
         await Assert.That(Encoding.UTF8.GetString(document!.Json.Span)).IsEqualTo("""{"n":1}""");
         await Assert.That(await reader.GetAsync("items", "b", CancellationToken.None)).IsNull();
         var original = await reader.ReadChangesAsync(1, CancellationToken.None);
-        await Assert.That(original?.Count).IsEqualTo(1);
+        await Assert.That(original?.Count).IsEqualTo(2);
         await Assert.That(Encoding.UTF8.GetString(original![0].Json!.Value.Span)).IsEqualTo("""{"n":1}""");
+        await Assert.That((original[1].Collection, original[1].Id)).IsEqualTo((DocumentChange.Collections, "items"));
+        using var metadata = JsonDocument.Parse(original[1].Json!.Value);
+        await Assert.That(metadata.RootElement.GetProperty("entity_id").GetString())
+            .IsEqualTo((await reader.GetCollectionAsync("items", CancellationToken.None))!.Id);
         await Assert.That(await reader.ReadChangesAsync(2, CancellationToken.None)).IsNull();
     }
 
@@ -616,7 +612,7 @@ public sealed class StorageTransactionTests
         (await api.SendAsync(HttpMethod.Put, api.DatabasePath("probe"))).Status.ShouldBe(System.Net.HttpStatusCode.Created);
         var probe = await api.TenantOfAsync("probe");
         var id = DocumentApi.NewId();
-        await api.ReplaceWithOlderFileAsync("db", path => DocumentFiles.WriteAsync(path, ("items", id, "{}")));
+        await api.ReplaceFileAsync("db", path => DocumentFiles.WriteAsync(path, ("items", id, "{}")));
         var engine = api.Server.Services.GetRequiredService<IStorageEngine>();
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var operations = new List<Task<bool>>(2);
@@ -751,7 +747,7 @@ public sealed class StorageTransactionTests
         for (var i = 0; i < Rows; i++)
         {
             using var written = await client.PutAsJsonAsync(
-                new Uri($"/v1/projects/{tenant.ProjectId}/databases/pool/collections/items/documents/{StorageFixture.Id($"d{i:D3}")}", UriKind.Relative), new { n = i }, deadline.Token);
+                new Uri($"/v1/projects/{tenant.ProjectId}/databases/pool/collections/items/documents/by-key?id={StorageFixture.Id($"d{i:D3}")}", UriKind.Relative), new { n = i }, deadline.Token);
             written.EnsureSuccessStatusCode();
         }
 
@@ -800,7 +796,7 @@ public sealed class StorageTransactionTests
         }
 
         await Assert.That(engine.Io.Admitted).IsEqualTo(0);
-        using var recovered = await client.GetAsync(new Uri($"/v1/projects/{tenant.ProjectId}/databases/pool/collections/items/documents/{StorageFixture.Id("d000")}", UriKind.Relative), deadline.Token);
+        using var recovered = await client.GetAsync(new Uri($"/v1/projects/{tenant.ProjectId}/databases/pool/collections/items/documents/by-key?id={StorageFixture.Id("d000")}", UriKind.Relative), deadline.Token);
         recovered.EnsureSuccessStatusCode();
     }
 
@@ -955,7 +951,7 @@ public sealed class StorageTransactionTests
         }
     }
 
-    private static TenantContext Tenant(string database) => new(Guid.NewGuid().ToString(), PlanTier.Hobby, Guid.NewGuid().ToString(), database);
+    private static TenantContext Tenant(string database) => new(EntityIds.New().ToString(), PlanTier.Hobby, EntityIds.New().ToString(), database);
 
     private static async Task<(IStorageEngine Engine, SqliteDatabaseStore Store)> OpenAsync(TerraBaseTestServer server)
     {

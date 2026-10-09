@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Features.Management;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Testing;
@@ -53,7 +54,7 @@ internal sealed class ReplicationTenant
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(
             TUnit.Core.TestContext.Current!.Execution.CancellationToken, cancellationToken);
         var token = deadline.Token;
-        var user = Guid.NewGuid().ToString("D");
+        var user = EntityIds.New().ToString();
         var management = seed.Services.GetRequiredService<IManagementService>();
         var organization = (await management.CreateOrganizationAsync(user, "replication", token)).Value
             ?? throw new InvalidOperationException("could not create the replication organization");

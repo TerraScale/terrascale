@@ -13,6 +13,7 @@ using TerraBase.Fast.Documents;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.Alpha;
 using TerraBase.Hosting;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Replication;
@@ -41,7 +42,7 @@ public sealed class AntiEntropyTests
         {
             return MerkleTree.Range(new DocumentChange("items", id, 1, null));
         }
-        var small = Enumerable.Range(0, 10_000).Select(i => $"00000000-0000-7000-8000-{i:x12}")
+        var small = Enumerable.Range(0, 10_000).Select(i => $"00000000000000{i:000000000000}")
             .Where(id => Range(id) != selected).Take(130).ToArray();
         var faker = new Faker();
         using (var transaction = await writer.PostAsJsonAsync(new Uri($"{tenant.Path("repair")}/transactions", UriKind.Relative),
@@ -55,8 +56,8 @@ public sealed class AntiEntropyTests
         {
             var last = i == 3;
             cursor = Enumerable.Range(cursor + 1, 10_000 - cursor - 1)
-                .First(n => Range($"ffffffff-ffff-7fff-8fff-{n:x12}") == selected == last);
-            using var created = await writer.PutAsJsonAsync(Document(tenant, $"ffffffff-ffff-7fff-8fff-{cursor:x12}"),
+                .First(n => Range($"7ZZZZZZZZZZZZZ{n:000000000000}") == selected == last);
+            using var created = await writer.PutAsJsonAsync(Document(tenant, $"7ZZZZZZZZZZZZZ{cursor:000000000000}"),
                 new { payload = faker.Random.AlphaNumeric(650_000) }, token);
             created.EnsureSuccessStatusCode();
         }
@@ -67,7 +68,7 @@ public sealed class AntiEntropyTests
         using var digestCall = client.DigestAsync(identity, cancellationToken: token);
         var digest = await digestCall.ResponseAsync;
         identity.Incarnation = digest.Incarnation;
-        identity.Origin = ByteString.CopyFrom(Guid.NewGuid().ToByteArray(bigEndian: true));
+        identity.Origin = ByteString.CopyFrom(EntityIds.New().ToByteArray());
         identity.SourceProof = new JournalProof { Origin = identity.Origin, Digest = ByteString.CopyFrom(JournalDigest.Initial(identity.Origin.Span)) };
         identity.TargetProof = new JournalProof { Origin = digest.Origin, Digest = ByteString.CopyFrom(JournalDigest.Initial(digest.Origin.Span)) };
         foreach (var ranges in new[] { (uint)ushort.MaxValue, 1U << selected })
@@ -138,7 +139,7 @@ public sealed class AntiEntropyTests
         using var digestCall = repair.DigestAsync(identity, cancellationToken: cancellationToken);
         var digest = await digestCall.ResponseAsync;
         identity.Incarnation = digest.Incarnation;
-        identity.Origin = ByteString.CopyFrom(Guid.NewGuid().ToByteArray(bigEndian: true));
+        identity.Origin = ByteString.CopyFrom(EntityIds.New().ToByteArray());
         identity.SourceProof = new JournalProof { Origin = identity.Origin, Digest = ByteString.CopyFrom(JournalDigest.Initial(identity.Origin.Span)) };
         identity.TargetProof = new JournalProof { Origin = digest.Origin, Digest = ByteString.CopyFrom(JournalDigest.Initial(digest.Origin.Span)) };
         // The drop cannot remove a tied live document or the newer concurrent row, so the generation remains.
@@ -691,7 +692,7 @@ public sealed class AntiEntropyTests
         {
             var digest = await call.ResponseAsync;
             identity.Incarnation = digest.Incarnation;
-            identity.Origin = ByteString.CopyFrom(Guid.NewGuid().ToByteArray(bigEndian: true));
+            identity.Origin = ByteString.CopyFrom(EntityIds.New().ToByteArray());
             identity.SourceProof = new JournalProof { Origin = identity.Origin, Digest = ByteString.CopyFrom(JournalDigest.Initial(identity.Origin.Span)) };
             identity.TargetProof = new JournalProof { Origin = digest.Origin, Digest = ByteString.CopyFrom(JournalDigest.Initial(digest.Origin.Span)) };
         }
@@ -885,13 +886,36 @@ public sealed class AntiEntropyTests
         await tenant.BindAsync(receiver);
         var ids = Enumerable.Range(0, 3).Select(_ => DocumentApi.NewId()).ToArray();
         var name = new Faker().Name.FullName();
+        using (var writer = clientTls.CreateClient(source.ClientAddress!, await tenant.KeyAsync(source, ["documents:write"], cancellationToken)))
+        using (var collection = await writer.PostAsJsonAsync(new Uri($"{tenant.Path("repair")}/collections", UriKind.Relative),
+            new { name = "items" }, cancellationToken))
+        {
+            collection.EnsureSuccessStatusCode();
+        }
+
+        using var sourceChannel = peerTls.CreateChannel(source.PeerAddress!);
+        using var receiverChannel = peerTls.CreateChannel(receiver.PeerAddress!);
+        var sourceRpc = new AntiEntropy.AntiEntropyClient(sourceChannel);
+        var receiverRpc = new AntiEntropy.AntiEntropyClient(receiverChannel);
+        // Share the generated collection identity before writing identical document histories.
+        using (var seed = sourceRpc.ReadRangeAsync(new RangeRequest
+        {
+            Identity = await ProofIdentityAsync(receiver, source, tenant, cancellationToken),
+            Ranges = ushort.MaxValue,
+        }, cancellationToken: cancellationToken))
+        using (var imported = receiverRpc.MergeAsync(new StateRequest
+        {
+            Identity = await ProofIdentityAsync(source, receiver, tenant, cancellationToken),
+            Envelope = (await seed.ResponseAsync).Envelope,
+        }, cancellationToken: cancellationToken))
+        {
+            await Assert.That((await imported.ResponseAsync).RepairedKeys).IsEqualTo(1U);
+        }
+
         long deletionVersion = 0;
         foreach (var node in new[] { source, receiver })
         {
             using var writer = clientTls.CreateClient(node.ClientAddress!, await tenant.KeyAsync(node, ["documents:write"], cancellationToken));
-            using var collection = await writer.PostAsJsonAsync(new Uri($"{tenant.Path("repair")}/collections", UriKind.Relative),
-                new { name = "items" }, cancellationToken);
-            collection.EnsureSuccessStatusCode();
             _ = await TransactAsync(writer, tenant, ids.Select(id => (object)new { op = "create", collection = "items", id, document = new { name } }), cancellationToken);
             var version = await TransactAsync(writer, tenant, ids.Select(id => (object)new { op = "delete", collection = "items", id }), cancellationToken);
             if (deletionVersion == 0)
@@ -904,11 +928,7 @@ public sealed class AntiEntropyTests
             newer.EnsureSuccessStatusCode();
         }
 
-        // Equal clocks make metadata identical too. Digest any physical deletions before injecting the fault.
-        using var sourceChannel = peerTls.CreateChannel(source.PeerAddress!);
-        using var receiverChannel = peerTls.CreateChannel(receiver.PeerAddress!);
-        var sourceRpc = new AntiEntropy.AntiEntropyClient(sourceChannel);
-        var receiverRpc = new AntiEntropy.AntiEntropyClient(receiverChannel);
+        // Equal clocks and shared metadata produce identical digests before injecting the fault.
         var identity = new ShardIdentity { Organization = tenant.OrganizationId, Project = tenant.ProjectId, Database = tenant.Database("repair").DatabaseId! };
         using (var sourceDigest = sourceRpc.DigestAsync(identity, cancellationToken: cancellationToken))
         using (var receiverDigest = receiverRpc.DigestAsync(identity, cancellationToken: cancellationToken))
@@ -1021,7 +1041,7 @@ public sealed class AntiEntropyTests
         using var digestCall = client.DigestAsync(identity, cancellationToken: cancellationToken);
         var digest = await digestCall.ResponseAsync;
         identity.Incarnation = digest.Incarnation;
-        identity.Origin = ByteString.CopyFrom(Guid.NewGuid().ToByteArray(bigEndian: true));
+        identity.Origin = ByteString.CopyFrom(EntityIds.New().ToByteArray());
         identity.SourceProof = new JournalProof { Origin = identity.Origin, Digest = ByteString.CopyFrom(JournalDigest.Initial(identity.Origin.Span)) };
         identity.TargetProof = new JournalProof { Origin = digest.Origin, Digest = ByteString.CopyFrom(JournalDigest.Initial(digest.Origin.Span)) };
         var request = new RangeRequest { Identity = identity, Ranges = ushort.MaxValue };
@@ -1091,7 +1111,7 @@ public sealed class AntiEntropyTests
     }
 
     private static Uri Document(ReplicationTenant tenant, string id) =>
-        new($"{tenant.Path("repair")}/collections/items/documents/{id}", UriKind.Relative);
+        new($"{tenant.Path("repair")}/collections/items/documents/by-key?id={id}", UriKind.Relative);
 
     private static async Task<bool> MatchesAsync(HttpClient reader, Uri path, string? expected, CancellationToken token)
     {
@@ -1229,7 +1249,7 @@ public sealed class AntiEntropyTests
             Organization = tenant.OrganizationId,
             Project = tenant.ProjectId,
             Database = database.DatabaseId!,
-            Incarnation = ByteString.CopyFrom(targetStore.Incarnation.ToByteArray(bigEndian: true)),
+            Incarnation = ByteString.CopyFrom(targetStore.Incarnation.ToByteArray()),
             Origin = ByteString.CopyFrom(sourceOrigin.Span),
             SourceProof = new JournalProof
             {

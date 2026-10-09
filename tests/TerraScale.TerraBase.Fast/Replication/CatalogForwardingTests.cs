@@ -14,6 +14,7 @@ using TerraBase.Features.Management;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -40,8 +41,8 @@ public sealed class CatalogForwardingTests
         await using var follower = await StartFollowerAsync(peers, tls, issuer, primary.PeerAddress!);
         await ReadyAsync(follower);
 
-        var project = faker.Random.Guid().ToString();
-        var actor = "tsk_" + faker.Random.Guid().ToString("N");
+        var project = EntityIds.New().ToString();
+        var actor = EntityIds.New().ToString();
         const string allScopes = "databases:read databases:write documents:read documents:write shapes:read";
         string Token(string target, string? scope)
         {
@@ -72,7 +73,7 @@ public sealed class CatalogForwardingTests
         }
 
         // The primary must receive the original aliases, or it would require project claims from this dashboard token.
-        var signIn = issuer.Mint(faker.Random.Guid().ToString());
+        var signIn = issuer.Mint(EntityIds.New().ToString());
         using var dashboard = tls.CreateClient(follower.ClientAddress!, signIn);
         var organization = await CreatedIdAsync(dashboard, "/v1/management/organizations", new { name = faker.Company.CompanyName() });
         var legacyProject = await CreatedIdAsync(dashboard, $"/v1/management/organizations/{organization}/projects", new { name = "Legacy" });
@@ -117,7 +118,7 @@ public sealed class CatalogForwardingTests
             }
 
             await Assert.That((await data.GetFromJsonAsync<JsonElement>(Relative(collection))).GetProperty("name").GetString()).IsEqualTo("people");
-            var document = collection + "/documents/" + faker.Random.Guid();
+            var document = collection + "/documents/by-key?id=" + EntityIds.New();
             var name = faker.Name.FullName();
             using (var written = await data.PutAsJsonAsync(Relative(document), new { name, count = 1 }))
             {
@@ -157,7 +158,7 @@ public sealed class CatalogForwardingTests
                 await Assert.That(await CodeAsync(denied)).IsEqualTo("forbidden_scope");
             }
 
-            using var wrongProject = tls.CreateClient(address, Token(faker.Random.Guid().ToString(), allScopes));
+            using var wrongProject = tls.CreateClient(address, Token(EntityIds.New().ToString(), allScopes));
             foreach (var path in new[] { database, document })
             {
                 using var denied = await wrongProject.GetAsync(Relative(path));
@@ -210,7 +211,7 @@ public sealed class CatalogForwardingTests
             await ReadyAsync(follower);
 
             // ts-dashboard's calls through the follower, pinned to its region: an organization, a project, a database and a key.
-            var user = Guid.NewGuid().ToString();
+            var user = EntityIds.New().ToString();
             using var dashboard = tls.CreateClient(follower.ClientAddress!, issuer.Mint(user));
             dashboard.DefaultRequestHeaders.Add("X-TerraScale-Region-Pin", "follower-region");
             var organization = await CreatedIdAsync(dashboard, "/v1/management/organizations", new { name = "Forwarded" });
@@ -268,7 +269,7 @@ public sealed class CatalogForwardingTests
             using var service = new HttpClient { BaseAddress = follower.BaseAddress };
             service.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", ManagementApi.ServiceCredential);
             service.DefaultRequestHeaders.Add("X-TerraBase-User-Id", user);
-            using (var member = await service.PutAsJsonAsync(Relative($"/v1/management/organizations/{organization}/members/{Guid.NewGuid()}"), new { email = "m@example.com" }))
+            using (var member = await service.PutAsJsonAsync(Relative($"/v1/management/organizations/{organization}/members/{EntityIds.New()}"), new { email = "m@example.com" }))
             {
                 await NotPrimaryAsync(member);
             }
@@ -324,7 +325,7 @@ public sealed class CatalogForwardingTests
             peers.Apply(settings);
             tls.Apply(settings);
         });
-        var user = Guid.NewGuid().ToString();
+        var user = EntityIds.New().ToString();
         var management = primary.Services.GetRequiredService<IManagementService>();
         var organization = (await management.CreateOrganizationAsync(user, "Forwarded", CancellationToken.None)).Value!;
         var project = (await management.CreateProjectAsync(user, organization.Id, "main", CancellationToken.None)).Value!;
@@ -341,7 +342,7 @@ public sealed class CatalogForwardingTests
         foreach (var request in new[]
         {
             Request("POST", "/admin/api-keys", JsonSerializer.SerializeToUtf8Bytes(new { name = "forwarded", scopes = Scopes, organizationId = organization.Id })),
-            Request("PUT", $"/v1/management/organizations/{organization.Id}/members/{Guid.NewGuid()}", JsonSerializer.SerializeToUtf8Bytes(new { email = "m@example.com" })),
+            Request("PUT", $"/v1/management/organizations/{organization.Id}/members/{EntityIds.New()}", JsonSerializer.SerializeToUtf8Bytes(new { email = "m@example.com" })),
             Request("GET", "/healthz"),
             Request("GET", "/readyz"),
             documents,
@@ -377,7 +378,7 @@ public sealed class CatalogForwardingTests
         tampered[^1] ^= 1;
         var invalid = new (string Case, ForwardRequest Request)[]
         {
-            ("protocol", Request("GET", "/", protocol: 2)),
+            ("protocol", Request("GET", "/", protocol: 1)),
             ("region", Request("GET", "/", region: "Not A Region")),
             ("method", Request("GE T", "/")),
             ("path", Request("GET", "v1/management/organizations")),
@@ -419,7 +420,7 @@ public sealed class CatalogForwardingTests
         var calls = 0;
         await using var fake = await FakePeer.StartCatalogAsync(peers, async (_, responses, context) =>
         {
-            await responses.WriteAsync(new FollowResponse { Welcome = new CatalogWelcome { Protocol = 1, Origin = ByteString.CopyFrom(origin), Head = 1 } });
+            await responses.WriteAsync(new FollowResponse { Welcome = new CatalogWelcome { Protocol = CatalogProtocol.Version, Origin = ByteString.CopyFrom(origin), Head = 1 } });
             await responses.WriteAsync(new FollowResponse { SnapshotBegin = new SnapshotBegin { Sequence = 0, Digest = ByteString.CopyFrom(initial) } });
             await WriteGroupAsync(responses, 1, [first], firstDigest);
             await responses.WriteAsync(new FollowResponse { SnapshotEnd = new SnapshotEnd { Sequence = 1, Digest = ByteString.CopyFrom(firstDigest), CommitOffset = 3 } });
@@ -460,7 +461,7 @@ public sealed class CatalogForwardingTests
         });
         await using var follower = await StartFollowerAsync(peers, tls, issuer, fake.Address, services => services.AddSingleton<TimeProvider>(time));
         await ReadyAsync(follower);
-        using var client = tls.CreateClient(follower.ClientAddress!, issuer.Mint(Guid.NewGuid().ToString()));
+        using var client = tls.CreateClient(follower.ClientAddress!, issuer.Mint(EntityIds.New().ToString()));
 
         // Group 2 leaves the primary only after its whole response did: the follower answers once it applied it.
         var answer = client.PostAsJsonAsync(Relative("/v1/management/organizations"), new { name = "Waits" });
@@ -543,7 +544,7 @@ public sealed class CatalogForwardingTests
         var body = Encoding.UTF8.GetBytes(new string('x', 3 * 1024 * 1024));
         await using var fake = await FakePeer.StartCatalogAsync(peers, async (_, responses, context) =>
         {
-            await responses.WriteAsync(new FollowResponse { Welcome = new CatalogWelcome { Protocol = 1, Origin = ByteString.CopyFrom(origin), Head = 0 } });
+            await responses.WriteAsync(new FollowResponse { Welcome = new CatalogWelcome { Protocol = CatalogProtocol.Version, Origin = ByteString.CopyFrom(origin), Head = 0 } });
             await responses.WriteAsync(new FollowResponse { SnapshotBegin = new SnapshotBegin { Sequence = 0, Digest = ByteString.CopyFrom(initial) } });
             await responses.WriteAsync(new FollowResponse { SnapshotEnd = new SnapshotEnd { Sequence = 0, Digest = ByteString.CopyFrom(initial), CommitOffset = 1 } });
             await responses.WriteAsync(new FollowResponse { Heartbeat = new CatalogHeartbeat { Head = 0 } });
@@ -624,7 +625,7 @@ public sealed class CatalogForwardingTests
         });
         await using var follower = await StartFollowerAsync(peers, tls, issuer, fake.Address);
         await ReadyAsync(follower);
-        var token = issuer.Mint(Guid.NewGuid().ToString());
+        var token = issuer.Mint(EntityIds.New().ToString());
         using var client = tls.CreateClient(follower.ClientAddress!, token);
         client.DefaultRequestHeaders.Add("X-TerraScale-Region-Pin", "test-region");
 
@@ -696,7 +697,7 @@ public sealed class CatalogForwardingTests
         using var tls = new ClientTls();
         using var issuer = new TestIssuer();
         await using var follower = await StartFollowerAsync(peers, tls, issuer, new Uri($"https://localhost:{TerraBaseTestServer.FreePort()}"));
-        using var client = tls.CreateClient(follower.ClientAddress!, issuer.Mint(Guid.NewGuid().ToString()));
+        using var client = tls.CreateClient(follower.ClientAddress!, issuer.Mint(EntityIds.New().ToString()));
 
         using (var unreachable = await client.PostAsJsonAsync(Relative("/v1/management/organizations"), new { name = "Partitioned" }))
         {
@@ -731,8 +732,8 @@ public sealed class CatalogForwardingTests
         await using var follower = await StartFollowerAsync(peers, tls, issuer, primary.PeerAddress!, region: "gru-1");
         await ReadyAsync(follower);
         var faker = new Faker();
-        var project = faker.Random.Guid().ToString();
-        var token = issuer.Mint("tsk_" + faker.Random.Guid().ToString("N"), claims =>
+        var project = Ulid.NewUlid().ToString();
+        var token = issuer.Mint(EntityIds.New().ToString(), claims =>
         {
             claims.Claims["project_id"] = project;
             claims.Claims["scope"] = "databases:read databases:write";
@@ -778,7 +779,7 @@ public sealed class CatalogForwardingTests
         try
         {
             await ReadyAsync(follower);
-            var user = Guid.NewGuid().ToString();
+            var user = EntityIds.New().ToString();
             using var dashboard = tls.CreateClient(primary.ClientAddress!, issuer.Mint(user));
             var organization = await CreatedIdAsync(dashboard, "/v1/management/organizations", new { name = "Metered" });
             var project = await CreatedIdAsync(dashboard, $"/v1/management/organizations/{organization}/projects", new { name = "main" });
@@ -803,14 +804,14 @@ public sealed class CatalogForwardingTests
             var (writes, reads, later) = (faker.Random.Int(1, 4), faker.Random.Int(1, 4), faker.Random.Int(1, 4));
             for (var i = 0; i < writes; i++)
             {
-                (await data.PutAsJsonAsync(Relative($"{orders}/items/documents/{ManagementApi.DocumentId($"d{i}")}"), new { total = i })).EnsureSuccessStatusCode();
+                (await data.PutAsJsonAsync(Relative($"{orders}/items/documents/by-key?id={ManagementApi.DocumentId($"d{i}")}"), new { total = i })).EnsureSuccessStatusCode();
             }
 
             async Task ReadAsync(int count)
             {
                 for (var i = 0; i < count; i++)
                 {
-                    (await data.GetAsync(Relative($"{orders}/items/documents/{ManagementApi.DocumentId("d0")}"))).EnsureSuccessStatusCode();
+                    (await data.GetAsync(Relative($"{orders}/items/documents/by-key?id={ManagementApi.DocumentId("d0")}"))).EnsureSuccessStatusCode();
                 }
             }
 
@@ -848,11 +849,11 @@ public sealed class CatalogForwardingTests
             await Assert.That(sent.Sequences).IsEquivalentTo([1UL, 1UL, 2UL], TUnit.Assertions.Enums.CollectionOrdering.Matching);
 
             // The follower's client reports a batch the primary refuses, here an hour two days ahead of its clock, as refused.
-            var ahead = Batch(ByteString.CopyFrom(Guid.NewGuid().ToByteArray()), 1, organization, project, database, hour + 48, reads: 1, sender: "ahead");
+            var ahead = Batch(ByteString.CopyFrom(EntityIds.New().ToByteArray()), 1, organization, project, database, hour + 48, reads: 1, sender: "ahead");
             await Assert.That(await follower.Services.GetRequiredService<CatalogPrimaryClient>().AddUsageAsync(ahead, CancellationToken.None)).IsFalse();
 
             // Byte aggregates outgrow the operation-count bound (10^12): an hour of 20 GB storage samples folded during an outage is valid.
-            var folded = Batch(ByteString.CopyFrom(Guid.NewGuid().ToByteArray()), 1, organization, project, database, hour, reads: 0, sender: "folded");
+            var folded = Batch(ByteString.CopyFrom(Ulid.NewUlid().ToByteArray()), 1, organization, project, database, hour, reads: 0, sender: "folded");
             var storage = new UsageDimension("storage_bytes", "gru-1", "", "sample");
             folded.Counts[0].Measurements = ByteString.CopyFrom(JsonSerializer.SerializeToUtf8Bytes(
                 new OpCounts(0, 0, new Dictionary<string, UsageReading> { [storage.Key] = new(storage, 60, 60 * 20_000_000_000L) }),
@@ -863,7 +864,7 @@ public sealed class CatalogForwardingTests
             var sentBytes = new UsageDimension("client_bytes", "gru-1", "", "sent");
             foreach (var sender in new[] { "large-a", "large-b" })
             {
-                var large = Batch(ByteString.CopyFrom(Guid.NewGuid().ToByteArray()), 1, organization, project, database, hour, reads: 0, sender: sender);
+                var large = Batch(ByteString.CopyFrom(Ulid.NewUlid().ToByteArray()), 1, organization, project, database, hour, reads: 0, sender: sender);
                 large.Counts[0].Measurements = ByteString.CopyFrom(JsonSerializer.SerializeToUtf8Bytes(
                     new OpCounts(0, 0, new Dictionary<string, UsageReading> { [sentBytes.Key] = new(sentBytes, (long.MaxValue / 2) + 1) }),
                     TerraBase.Hosting.TerraBaseJsonContext.Default.OpCounts));
@@ -878,10 +879,10 @@ public sealed class CatalogForwardingTests
             // A clean shutdown sends every pending batch, not only the first 4,096 database hours: here 4,097, one of them this
             // database's. The others belong to a project the primary does not have, which it checks once and drops.
             meter.Add(new UsageKey(new DatabaseOwner(organization, project, database), hour), new OpCounts(1, 0));
-            var gone = Guid.NewGuid().ToString();
+            var gone = EntityIds.New().ToString();
             for (var i = 0; i < UsageMeter.MaxBatch; i++)
             {
-                meter.Add(new UsageKey(new DatabaseOwner(organization, gone, Guid.NewGuid().ToString()), hour), new OpCounts(1, 0));
+                meter.Add(new UsageKey(new DatabaseOwner(organization, gone, EntityIds.New().ToString()), hour), new OpCounts(1, 0));
             }
 
             await follower.DisposeAsync();
@@ -891,7 +892,7 @@ public sealed class CatalogForwardingTests
 
             // A batch at or below the highest sequence of its sender's process counts once, also when an attempt arrives after
             // a later batch; a new process starts over. Only valid batches are taken.
-            var epoch = ByteString.CopyFrom(Guid.NewGuid().ToByteArray());
+            var epoch = ByteString.CopyFrom(EntityIds.New().ToByteArray());
             using var channel = peers.CreateChannel(primary.PeerAddress!);
             var client = new CatalogUsage.CatalogUsageClient(channel);
             var (beforeReads, beforeWrites) = await UsageAsync(dashboard);
@@ -899,7 +900,7 @@ public sealed class CatalogForwardingTests
             await client.AddAsync(Batch(epoch, 2, organization, project, database, hour, reads: 2));
             await client.AddAsync(Batch(epoch, 1, organization, project, database, hour, reads: 7));
             // A restarted process (a new epoch) starts over; a delayed attempt of the previous process still counts once.
-            var restarted = ByteString.CopyFrom(Guid.NewGuid().ToByteArray());
+            var restarted = ByteString.CopyFrom(EntityIds.New().ToByteArray());
             await client.AddAsync(Batch(restarted, 1, organization, project, database, hour, reads: 1));
             await client.AddAsync(Batch(epoch, 2, organization, project, database, hour, reads: 2));
             await client.AddAsync(Batch(restarted, 1, organization, project, database, hour, reads: 1));
@@ -938,7 +939,7 @@ public sealed class CatalogForwardingTests
             var flood = Batch(epoch, 4, organization, project, database, hour, reads: 1);
             for (var i = 1; i < UsageMeter.MaxBatch; i++)
             {
-                flood.Counts.Add(new UsageCount { OrganizationId = organization, ProjectId = project, DatabaseId = Guid.NewGuid().ToString(), Hour = hour, Reads = 1 });
+                flood.Counts.Add(new UsageCount { OrganizationId = organization, ProjectId = project, DatabaseId = EntityIds.New().ToString(), Hour = hour, Reads = 1 });
             }
 
             await client.AddAsync(flood);
@@ -971,8 +972,8 @@ public sealed class CatalogForwardingTests
                 settings["data-directory"] = directory;
             }
 
-            var user = Guid.NewGuid().ToString();
-            var epoch = ByteString.CopyFrom(Guid.NewGuid().ToByteArray());
+            var user = EntityIds.New().ToString();
+            var epoch = ByteString.CopyFrom(EntityIds.New().ToByteArray());
             var hour = DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 3600;
             string organization, project, database, usagePath;
             await using (var primary = await TerraBaseTestServer.StartAsync(Configure, issuer.Route))
@@ -1016,7 +1017,7 @@ public sealed class CatalogForwardingTests
         using var channel = peers.CreateChannel(follower.PeerAddress!);
 
         var notPrimary = await Assert.ThrowsAsync<RpcException>(async () => await new CatalogUsage.CatalogUsageClient(channel)
-            .AddAsync(Batch(ByteString.CopyFrom(Guid.NewGuid().ToByteArray()), 1, "o", "p", "d", 0, reads: 1)));
+            .AddAsync(Batch(ByteString.CopyFrom(EntityIds.New().ToByteArray()), 1, "o", "p", "d", 0, reads: 1)));
 
         await Assert.That(notPrimary!.StatusCode).IsEqualTo(StatusCode.FailedPrecondition);
     }
@@ -1024,7 +1025,7 @@ public sealed class CatalogForwardingTests
     private static UsageBatch Batch(
         ByteString epoch, ulong sequence, string organization, string project, string database, long hour, ulong reads, string sender = "test")
     {
-        var batch = new UsageBatch { Protocol = 1, Epoch = epoch, Sequence = sequence, Sender = sender };
+        var batch = new UsageBatch { Protocol = Features.Management.Usage.UsageReceiver.Protocol, Epoch = epoch, Sequence = sequence, Sender = sender };
         batch.Counts.Add(new UsageCount { OrganizationId = organization, ProjectId = project, DatabaseId = database, Hour = hour, Reads = reads });
         return batch;
     }
@@ -1124,7 +1125,7 @@ public sealed class CatalogForwardingTests
 
     // A request a follower of follower-region would forward; length -1 declares the body's own length.
     private static ForwardRequest Request(
-        string method, string path, byte[]? body = null, uint protocol = 1, string query = "", string region = "follower-region", byte[]? envelope = null,
+        string method, string path, byte[]? body = null, uint protocol = ForwardingProtocol.Version, string query = "", string region = "follower-region", byte[]? envelope = null,
         int? length = -1)
     {
         var request = new ForwardRequest { Protocol = protocol, Method = method, Path = path, Query = query, Region = region };

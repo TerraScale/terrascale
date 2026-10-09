@@ -28,6 +28,8 @@ internal sealed class StampingStorageEngine(IStorageEngine inner, ISystemReplica
 
     public long CommittedWrites => inner.CommittedWrites;
 
+    public long? IoAdmittedCount => inner.IoAdmittedCount;
+
     public ValueTask RefreshStoragePressureAsync(CancellationToken cancellationToken) =>
         inner.RefreshStoragePressureAsync(cancellationToken);
 
@@ -66,7 +68,7 @@ internal sealed class StampingStorageEngine(IStorageEngine inner, ISystemReplica
     public ValueTask<bool> IsReadyAsync(CancellationToken cancellationToken) => inner.IsReadyAsync(cancellationToken);
 
     public long Document(TenantContext? database, string collection, string id) =>
-        Volatile.Read(ref _epoch) + Volatile.Read(ref _stripes[DocumentStripe(database, collection, id)]);
+        Collection(database, collection) + Volatile.Read(ref _stripes[DocumentStripe(database, collection, id)]);
 
     public long Collection(TenantContext? database, string collection) =>
         Volatile.Read(ref _epoch) + Volatile.Read(ref _stripes[CollectionStripe(database, collection)]);
@@ -86,7 +88,7 @@ internal sealed class StampingStorageEngine(IStorageEngine inner, ISystemReplica
     public ValueTask<bool> CopyDatabaseAsync(TenantContext source, TenantContext target, CancellationToken cancellationToken) =>
         inner.CopyDatabaseAsync(source, target, cancellationToken);
 
-    public async ValueTask<bool> DeleteDatabaseAsync(TenantContext database, CancellationToken cancellationToken, bool retainIntentOwnership = false, Guid? incarnation = null)
+    public async ValueTask<bool> DeleteDatabaseAsync(TenantContext database, CancellationToken cancellationToken, bool retainIntentOwnership = false, Ulid? incarnation = null)
     {
         Interlocked.Increment(ref _epoch);
         try
@@ -136,7 +138,7 @@ internal sealed class StampingStorageEngine(IStorageEngine inner, ISystemReplica
 
     private sealed class Store(StampingStorageEngine engine, TenantContext? database, IDatabaseStore inner) : IDatabaseStore
     {
-        public Guid Incarnation => inner.Incarnation;
+        public Ulid Incarnation => inner.Incarnation;
 
         public TenantContext? Tenant => inner.Tenant;
 
@@ -264,6 +266,10 @@ internal sealed class StampingStorageEngine(IStorageEngine inner, ISystemReplica
         public ValueTask<long> GetHistoryFloorAsync(CancellationToken cancellationToken) =>
             RunAsync(() => inner.GetHistoryFloorAsync(cancellationToken), cancellationToken);
 
+        public ValueTask<CollectionChangePage> ReadCollectionChangesAsync(
+            string collection, long afterOffset, long afterSequence, int limit, long maxBytes, CancellationToken cancellationToken) =>
+            RunAsync(() => inner.ReadCollectionChangesAsync(collection, afterOffset, afterSequence, limit, maxBytes, cancellationToken), cancellationToken);
+
         public async IAsyncEnumerable<StoredDocument> ChangesAsync(
             string collection, DocumentFilter? filter, long after, long through, [EnumeratorCancellation] CancellationToken cancellationToken)
         {
@@ -328,6 +334,16 @@ internal sealed class StampingStorageEngine(IStorageEngine inner, ISystemReplica
 
         public ValueTask<bool> DropIndexAsync(string name, CancellationToken cancellationToken) =>
             RunAsync(() => inner.DropIndexAsync(name, cancellationToken), cancellationToken, mutation: true);
+
+        public ValueTask<IReadOnlyList<UniqueConstraint>> GetUniqueConstraintsAsync(string collection, CancellationToken cancellationToken) =>
+            RunAsync(() => inner.GetUniqueConstraintsAsync(collection, cancellationToken), cancellationToken);
+
+        public async ValueTask SetUniqueConstraintsAsync(string collection, IReadOnlyList<UniqueConstraint> constraints, CancellationToken cancellationToken) =>
+            await WriteCollectionAsync(async () =>
+            {
+                await inner.SetUniqueConstraintsAsync(collection, constraints, cancellationToken).ConfigureAwait(false);
+                return true;
+            }, cancellationToken).ConfigureAwait(false);
 
         public ValueTask<CollectionInfo?> GetCollectionAsync(string name, CancellationToken cancellationToken) =>
             RunAsync(() => inner.GetCollectionAsync(name, cancellationToken), cancellationToken);
@@ -400,7 +416,7 @@ internal sealed class StampingStorageEngine(IStorageEngine inner, ISystemReplica
         public ValueTask<bool> ApplyAsync(DocumentChange change, CancellationToken cancellationToken)
         {
             ArgumentNullException.ThrowIfNull(change);
-            if (change.Collection is DocumentChange.Collections or DocumentChange.Indexes)
+            if (change.Collection is DocumentChange.Collections or DocumentChange.Indexes or DocumentChange.Unique)
             {
                 return WriteCollectionAsync(() => inner.ApplyAsync(change, cancellationToken), cancellationToken);
             }
@@ -412,7 +428,7 @@ internal sealed class StampingStorageEngine(IStorageEngine inner, ISystemReplica
         public ValueTask<bool> RepairReplicationStateAsync(DocumentChange change, CancellationToken cancellationToken)
         {
             ArgumentNullException.ThrowIfNull(change);
-            if (change.Collection is DocumentChange.Collections or DocumentChange.Indexes)
+            if (change.Collection is DocumentChange.Collections or DocumentChange.Indexes or DocumentChange.Unique)
             {
                 return WriteCollectionAsync(() => inner.RepairReplicationStateAsync(change, cancellationToken), cancellationToken);
             }

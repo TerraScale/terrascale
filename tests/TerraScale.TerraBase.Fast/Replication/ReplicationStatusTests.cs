@@ -5,6 +5,7 @@ using Google.Protobuf;
 using TerraBase.Engine;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Replication;
@@ -85,7 +86,7 @@ public sealed class ReplicationStatusTests
         await Assert.That(database.OrganizationId).IsEqualTo(tenant.OrganizationId);
         await Assert.That(database.ProjectId).IsEqualTo(tenant.ProjectId);
         await Assert.That(database.DatabaseId).IsEqualTo(tenant.Database("backlog").DatabaseId);
-        await Assert.That(database.Incarnation).IsNotEqualTo(Guid.Empty);
+        await Assert.That(database.Incarnation).IsNotEqualTo(Ulid.Empty);
         await Assert.That(database.Head).IsEqualTo(3);
         await Assert.That(database.Acknowledged).IsEqualTo(0);
         await Assert.That(database.DurableLag).IsEqualTo(3);
@@ -247,7 +248,7 @@ public sealed class ReplicationStatusTests
     {
         var faker = new Faker();
         using var response = await writer.PutAsJsonAsync(
-            new Uri($"{tenant.Path("backlog")}/collections/items/documents/{faker.Random.Guid():D}", UriKind.Relative),
+            new Uri($"{tenant.Path("backlog")}/collections/items/documents/by-key?id={EntityIds.New()}", UriKind.Relative),
             new { value = faker.Lorem.Sentence() }, token);
         response.EnsureSuccessStatusCode();
     }

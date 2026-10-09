@@ -170,8 +170,8 @@ public sealed class CollectionSchemaAdmissionTests
         var overDepthLimit = $$"""{"examples":[{{string.Concat(Enumerable.Repeat("{\"a\":", 14))}}0{{new string('}', 14)}}]}""";
         await RejectedAttachmentAsync(api, overDepthLimit, atDepthLimit);
 
-        // One root object + one examples array + 4091 numbers = 4093 schema values; the metadata envelope consumes three more.
-        var values = string.Join(',', Enumerable.Repeat("0", 4091));
+        // One root object + one examples array + 4090 numbers = 4092 schema values; the metadata envelope consumes four more.
+        var values = string.Join(',', Enumerable.Repeat("0", 4090));
         var atValueLimit = $$"""{"examples":[{{values}}]}""";
         await AttachAsync(api, atValueLimit);
         await RejectedAttachmentAsync(api, $$"""{"examples":[{{values}},0]}""", atValueLimit);

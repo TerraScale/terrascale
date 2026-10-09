@@ -1,8 +1,8 @@
 using System.Net;
 using System.Text.Json;
 using Bogus;
-using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Time.Testing;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Management;
@@ -77,7 +77,7 @@ public sealed class CredentialApiTests
         var first = await api.Client.GetFromJsonAsync<JsonElement>(Uri(path + "?limit=5"));
         var listed = first.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("id").GetString()!).ToList();
         var next = first.GetProperty("next").GetString();
-        // Cursors are the persisted sequence, not random UUID bits.
+        // Cursors follow the persisted sequence independently of the key ULID.
         await Assert.That(next).IsEqualTo("0000000000000000004");
         time.AdjustTime(time.GetUtcNow().AddDays(-1));
         using var appended = await api.Client.PostAsJsonAsync(Uri(path), new { name = "after-first-page", scopes = ReadOnly });
@@ -167,7 +167,7 @@ public sealed class CredentialApiTests
         await Assert.That(await PutAsync(project, otherProject, document)).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(await PutAsync(project, foreign, document)).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(await GetAsync(project, foreign)).IsEqualTo(HttpStatusCode.NotFound);
-        await Assert.That(await StatusAsync(project.GetAsync(Uri($"/v1/projects/{own.Project}/databases/nowhere/collections/items/documents/{ManagementApi.DocumentId("a")}"))))
+        await Assert.That(await StatusAsync(project.GetAsync(Uri($"/v1/projects/{own.Project}/databases/nowhere/collections/items/documents/by-key?id={ManagementApi.DocumentId("a")}"))))
             .IsEqualTo(HttpStatusCode.NotFound);
         // A project key creates databases only in its project.
         await Assert.That(await StatusAsync(project.PutAsync(Uri($"/v1/projects/{own.Project}/databases/fresh"), null))).IsEqualTo(HttpStatusCode.Created);
@@ -193,7 +193,7 @@ public sealed class CredentialApiTests
         var database = await api.CreateManagedDatabaseAsync();
         var foreign = await api.CreateManagedDatabaseAsync();
         var keys = $"{database.ProjectPath}/api-keys";
-        var unknownProject = $"/v1/management/organizations/{database.Organization}/projects/{Guid.NewGuid()}";
+        var unknownProject = $"/v1/management/organizations/{database.Organization}/projects/{EntityIds.New()}";
         const string BadName = "name must be 1 to 128 characters, include a letter or digit and have no control characters";
         const string BadScopes = "scopes must be a non-empty subset of: documents:read, documents:write";
         const string BadLimit = "limit must be an integer between 1 and 100";
@@ -210,7 +210,7 @@ public sealed class CredentialApiTests
         await ErrorAssert.ErrorAsync(
             api.Client.PostAsJsonAsync(Uri(keys), new { name = "ci", scopes = ReadOnly, databaseId = foreign.Id }), HttpStatusCode.NotFound, "not_found");
         await ErrorAssert.ErrorAsync(
-            api.Client.PostAsJsonAsync(Uri($"/v1/management/organizations/{Guid.NewGuid()}/projects/{database.Project}/api-keys"), new { name = "ci", scopes = ReadOnly }),
+            api.Client.PostAsJsonAsync(Uri($"/v1/management/organizations/{EntityIds.New()}/projects/{database.Project}/api-keys"), new { name = "ci", scopes = ReadOnly }),
             HttpStatusCode.NotFound, "not_found");
         await ErrorAssert.ErrorAsync(
             api.Client.PostAsJsonAsync(Uri($"/v1/management/organizations/{foreign.Organization}/projects/{database.Project}/api-keys"), new { name = "ci", scopes = ReadOnly }),
@@ -218,8 +218,8 @@ public sealed class CredentialApiTests
         await ErrorAssert.ErrorAsync(api.Client.GetAsync(Uri($"{unknownProject}/api-keys")), HttpStatusCode.NotFound, "not_found");
         await ErrorAssert.ErrorAsync(api.Client.GetAsync(Uri($"{keys}?limit=0")), HttpStatusCode.BadRequest, "invalid_request", BadLimit);
         await ErrorAssert.ErrorAsync(api.Client.GetAsync(Uri($"{keys}?limit=ten")), HttpStatusCode.BadRequest, "invalid_request", BadLimit);
-        await ErrorAssert.ErrorAsync(api.Client.DeleteAsync(Uri($"{keys}/{Guid.NewGuid()}")), HttpStatusCode.NotFound, "not_found");
-        await ErrorAssert.ErrorAsync(api.Client.DeleteAsync(Uri($"{unknownProject}/api-keys/{Guid.NewGuid()}")), HttpStatusCode.NotFound, "not_found");
+        await ErrorAssert.ErrorAsync(api.Client.DeleteAsync(Uri($"{keys}/{EntityIds.New()}")), HttpStatusCode.NotFound, "not_found");
+        await ErrorAssert.ErrorAsync(api.Client.DeleteAsync(Uri($"{unknownProject}/api-keys/{EntityIds.New()}")), HttpStatusCode.NotFound, "not_found");
 
         // A viewer reads the project's keys but can neither issue nor revoke one.
         using var created = await api.Client.PostAsJsonAsync(Uri(keys), new { name = "ci", scopes = ReadOnly });
@@ -230,7 +230,7 @@ public sealed class CredentialApiTests
         await Assert.That(listed.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await ErrorAssert.ErrorAsync(viewer.PostAsJsonAsync(Uri(keys), new { name = "ci", scopes = ReadOnly }), HttpStatusCode.Forbidden, "forbidden_role", RoleTooLow);
         await ErrorAssert.ErrorAsync(viewer.DeleteAsync(Uri($"{keys}/{id}")), HttpStatusCode.Forbidden, "forbidden_role", RoleTooLow);
-        await ErrorAssert.ErrorAsync(viewer.DeleteAsync(Uri($"{keys}/{Guid.NewGuid()}")), HttpStatusCode.NotFound, "not_found");
+        await ErrorAssert.ErrorAsync(viewer.DeleteAsync(Uri($"{keys}/{EntityIds.New()}")), HttpStatusCode.NotFound, "not_found");
     }
 
     [Test]
@@ -278,7 +278,7 @@ public sealed class CredentialApiTests
     }
 
     [Test]
-    public async Task Operator_project_keys_stored_before_they_were_listed_are_listed_after_an_upgrade()
+    public async Task Operator_project_keys_remain_listed_and_revocable_after_restart()
     {
         var directory = Directory.CreateTempSubdirectory("terrabase-key-listing-").FullName;
         try
@@ -288,17 +288,10 @@ public sealed class CredentialApiTests
             {
                 user = api.User;
                 var organization = await api.CreateOrganizationAsync(Faker.Company.CompanyName());
-                var project = await api.CreateProjectAsync(organization, "Older keys");
+                var project = await api.CreateProjectAsync(organization, "Persistent keys");
                 path = $"/v1/management/organizations/{organization}/projects/{project}";
                 (id, secret) = await IssueOperatorKeyAsync(api, organization, project);
-                // As an older build left it: only the authentication document, and no backfill marker.
-                await using var catalog = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = Path.Combine(directory, "_system.db"), Pooling = false }.ToString());
-                await catalog.OpenAsync();
-                await using var unlist = catalog.CreateCommand();
-                unlist.CommandText = "DELETE FROM documents WHERE collection IN ($keys, $order) OR (collection = 'catalog' AND id = 'backfill_project_keys_listed');";
-                unlist.Parameters.AddWithValue("$keys", $"projects/{project}/api_keys");
-                unlist.Parameters.AddWithValue("$order", $"projects/{project}/api_key_order");
-                await Assert.That(await unlist.ExecuteNonQueryAsync()).IsEqualTo(3);
+
             }
 
             await using (var api = await ManagementApi.StartAsync(settings => settings["data-directory"] = directory))
@@ -312,8 +305,7 @@ public sealed class CredentialApiTests
                 using var afterRevoke = await client.GetAsync(Uri("/v1/projects/any/databases/main/collections"));
 
                 await Assert.That(item.GetProperty("id").GetString()).IsEqualTo(id);
-                // Only the secret's hash is stored, so its last four characters are unknown.
-                await Assert.That(item.GetProperty("lastFour").GetString()).IsEqualTo("");
+                await Assert.That(item.GetProperty("lastFour").GetString()).IsEqualTo(secret[^4..]);
                 await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
                 await Assert.That(revoked.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
                 await Assert.That(afterRevoke.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);

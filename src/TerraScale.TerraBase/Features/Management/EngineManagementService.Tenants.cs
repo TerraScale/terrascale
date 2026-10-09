@@ -3,6 +3,7 @@ using System.Text.Json;
 using TerraBase.Engine;
 using TerraBase.Features.Management.Backups;
 using TerraBase.Hosting;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Management;
@@ -126,7 +127,7 @@ internal sealed partial class EngineManagementService
     public ValueTask<TenantDatabasePage> ReadDatabaseRecordsAsync(string homeRegion, TenantContext? after, CancellationToken cancellationToken) =>
         ReadAsync(async transaction =>
         {
-            // At most 100 identities, each with three UUIDs: under 22 KiB of character data. Storage scan pages are
+            // At most 100 identities, each with three ULIDs: under 22 KiB of character data. Storage scan pages are
             // separately bounded to 100 documents and 1 MiB. Release the reader before WAN requests or cleanup writes.
             var records = new List<TenantContext>(MemberPage);
             string? afterProject = after?.ProjectId;
@@ -164,7 +165,7 @@ internal sealed partial class EngineManagementService
                     databases = await transaction.ListAsync(Databases(project), afterDatabase, MemberPage, MaxPageBytes, cancellationToken).ConfigureAwait(false);
                     foreach (var document in databases.Documents)
                     {
-                        var database = JsonSerializer.Deserialize(document.Json.Span, TerraBaseJsonContext.Default.ManagedDatabase)!;
+                        var database = EntityPayload.Read(document, TerraBaseJsonContext.Default.ManagedDatabase)!;
                         if (database.Home(options.Region) == homeRegion)
                         {
                             records.Add(new TenantContext(organizationId, PlanTier.Hobby, project, database.Id));
@@ -372,14 +373,8 @@ internal sealed partial class EngineManagementService
                 cancellationToken);
     }
 
-    // Whether this member reads registrations of a catalog at version: a primary every version it migrates from, which keep
-    // the registration rows, as its startup audit does; a follower, which migrates nothing, only its own.
-    private bool Interprets(string? version)
-    {
-        return options.CatalogPrimary is null
-            ? version is null or MembershipCatalogVersion or "3" or IntentCatalogVersion or CatalogVersion
-            : version == CatalogVersion;
-    }
+    // Only current registrations are interpreted; old catalog shapes are refused.
+    private static bool Interprets(string? version) => version == CatalogVersion;
 
     /// <summary>
     /// Whether an organization, one of its projects and one database of that project (each optional after the first)

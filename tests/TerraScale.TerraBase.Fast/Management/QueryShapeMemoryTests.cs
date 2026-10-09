@@ -8,6 +8,7 @@ using Microsoft.Extensions.Time.Testing;
 using TerraBase.Features.Management.Queries;
 using TerraBase.Features.Memory;
 using TerraBase.Hosting;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -90,8 +91,8 @@ public sealed class QueryShapeMemoryTests
         var text = new Faker().Lorem.Word();
         using (var seeded = await service.PostAsJsonAsync(ManagementApi.Uri("/v1/management/commits"), new
         {
-            id = Guid.NewGuid().ToString(),
-            ops = new[] { new { op = "create", collection = "notes", id = Guid.NewGuid().ToString(), document = new { text } } },
+            id = EntityIds.New().ToString(),
+            ops = new[] { new { op = "create", collection = "notes", id = EntityIds.New().ToString(), document = new { text } } },
         }))
         {
             seeded.EnsureSuccessStatusCode();

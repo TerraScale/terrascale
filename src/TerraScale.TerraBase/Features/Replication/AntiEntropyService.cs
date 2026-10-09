@@ -33,7 +33,7 @@ internal sealed class AntiEntropyService(
         var digest = await state.DigestAsync(store, token).ConfigureAwait(false);
         return Sent(request, new MerkleDigest
         {
-            Incarnation = ByteString.CopyFrom(store.Incarnation.ToByteArray(bigEndian: true)),
+            Incarnation = ByteString.CopyFrom(store.Incarnation.ToByteArray()),
             Envelope = ByteString.CopyFrom(ApplicationEnvelope.Encode(digest).Span),
             Origin = origin,
             AppliedSource = applied,

@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -68,8 +69,8 @@ public sealed class ShutdownStreamTests
         try
         {
             var fake = new Faker();
-            var database = await server.RegisterAsync(new TenantContext(fake.Random.Guid().ToString("D"), PlanTier.Hobby,
-                fake.Random.Guid().ToString("D"), fake.Random.Guid().ToString("D")));
+            var database = await server.RegisterAsync(new TenantContext(EntityIds.New().ToString(), PlanTier.Hobby,
+                EntityIds.New().ToString(), EntityIds.New().ToString()));
             using var channel = tls.CreateChannel(server.PeerAddress!);
             using var call = new Features.Replication.V1.Replication.ReplicationClient(channel).Sync(cancellationToken: token);
             await call.RequestStream.WriteAsync(new SyncRequest

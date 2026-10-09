@@ -99,6 +99,7 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
         public string Name => inner.Name;
         public StoragePressure StoragePressure => inner.StoragePressure;
         public long CommittedWrites => inner.CommittedWrites;
+        public long? IoAdmittedCount => inner.IoAdmittedCount;
         public ValueTask RefreshStoragePressureAsync(CancellationToken cancellationToken) => inner.RefreshStoragePressureAsync(cancellationToken);
         public ValueTask<bool> CreateDatabaseAsync(TenantContext database, CancellationToken cancellationToken) => inner.CreateDatabaseAsync(database, cancellationToken);
         public async ValueTask<IDatabaseStore?> OpenDatabaseAsync(TenantContext database, CancellationToken cancellationToken) =>
@@ -127,7 +128,7 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
             return await inner.CreateDatabaseWithIntentAsync(database, source, recordIntent, cancellationToken);
         }
 
-        public async ValueTask<bool> DeleteDatabaseAsync(TenantContext database, CancellationToken cancellationToken, bool retainIntentOwnership = false, Guid? incarnation = null)
+        public async ValueTask<bool> DeleteDatabaseAsync(TenantContext database, CancellationToken cancellationToken, bool retainIntentOwnership = false, Ulid? incarnation = null)
         {
             if (hook.BeforeDelete is { } beforeDelete)
             {
@@ -198,10 +199,12 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
 
     private sealed class Store(IDatabaseStore inner, UsageCommitHook hook) : IDatabaseStore
     {
-        public Guid Incarnation => inner.Incarnation;
+        public Ulid Incarnation => inner.Incarnation;
         public TenantContext? Tenant => inner.Tenant;
         public bool IsClosed => inner.IsClosed;
         public long CommitSequence => inner.CommitSequence;
+
+
         public Task WaitForCommitAsync(long sequence, CancellationToken cancellationToken) => inner.WaitForCommitAsync(sequence, cancellationToken);
         public async ValueTask<IStorageTransaction> BeginDurableTransactionAsync(CancellationToken cancellationToken)
         {
@@ -227,10 +230,12 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
 
     private sealed class Opened(IDatabaseStore inner, TenantContext database, UsageCommitHook hook) : IDatabaseStore
     {
-        public Guid Incarnation => inner.Incarnation;
+        public Ulid Incarnation => inner.Incarnation;
         public TenantContext? Tenant => inner.Tenant;
         public bool IsClosed => inner.IsClosed;
         public long CommitSequence => inner.CommitSequence;
+
+
         public Task WaitForCommitAsync(long sequence, CancellationToken cancellationToken) => inner.WaitForCommitAsync(sequence, cancellationToken);
         public ValueTask<IStorageTransaction> BeginDurableTransactionAsync(CancellationToken cancellationToken) => inner.BeginDurableTransactionAsync(cancellationToken);
 
@@ -249,6 +254,7 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
     {
         private bool _intercepted;
 
+        public ValueTask<CollectionChangePage> ReadCollectionChangesAsync(string collection, long afterOffset, long afterSequence, int limit, long maxBytes, CancellationToken cancellationToken) => inner.ReadCollectionChangesAsync(collection, afterOffset, afterSequence, limit, maxBytes, cancellationToken);
         public ValueTask<SnapshotPage> SnapshotAsync(DocumentQuery query, long offset, CancellationToken cancellationToken) => inner.SnapshotAsync(query, offset, cancellationToken);
         public ValueTask<long> GetHistoryFloorAsync(CancellationToken cancellationToken) => inner.GetHistoryFloorAsync(cancellationToken);
         public ValueTask<long> GetOffsetAsync(CancellationToken cancellationToken) => inner.GetOffsetAsync(cancellationToken);
@@ -291,6 +297,8 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
         public ValueTask<IReadOnlyList<IndexDefinition>> ListIndexesAsync(CancellationToken cancellationToken) => inner.ListIndexesAsync(cancellationToken);
         public ValueTask<bool> CreateIndexAsync(IndexDefinition index, CancellationToken cancellationToken) => inner.CreateIndexAsync(index, cancellationToken);
         public ValueTask<bool> DropIndexAsync(string name, CancellationToken cancellationToken) => inner.DropIndexAsync(name, cancellationToken);
+        public ValueTask<IReadOnlyList<UniqueConstraint>> GetUniqueConstraintsAsync(string collection, CancellationToken cancellationToken) => inner.GetUniqueConstraintsAsync(collection, cancellationToken);
+        public ValueTask SetUniqueConstraintsAsync(string collection, IReadOnlyList<UniqueConstraint> constraints, CancellationToken cancellationToken) => inner.SetUniqueConstraintsAsync(collection, constraints, cancellationToken);
         public ValueTask<ReadOnlyMemory<byte>> GetOriginAsync(CancellationToken cancellationToken) => inner.GetOriginAsync(cancellationToken);
         public ValueTask<long> GetLastChangeSequenceAsync(CancellationToken cancellationToken) => inner.GetLastChangeSequenceAsync(cancellationToken);
         public ValueTask<IReadOnlyList<DocumentChange>?> ReadChangesAsync(long sequence, CancellationToken cancellationToken) => inner.ReadChangesAsync(sequence, cancellationToken);

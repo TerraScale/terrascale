@@ -9,6 +9,7 @@ using TerraBase.Engine;
 using TerraBase.Features.Management.Queries;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Replication.V1;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -30,8 +31,8 @@ public sealed class UsageCancellationShutdownTests
             services.AddGrpc(options => options.Interceptors.Add<UsageAcknowledgementHold>());
         });
         var fake = new Faker();
-        var tenant = await primary.RegisterAsync(new TenantContext(fake.Random.Guid().ToString("D"), PlanTier.Hobby,
-            fake.Random.Guid().ToString("D"), fake.Random.Guid().ToString("D")));
+        var tenant = await primary.RegisterAsync(new TenantContext(EntityIds.New().ToString(), PlanTier.Hobby,
+            EntityIds.New().ToString(), EntityIds.New().ToString()));
         var time = new UsageClock();
         var follower = await TerraBaseTestServer.StartAsync(settings =>
         {

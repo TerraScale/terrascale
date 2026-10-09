@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
+using TerraBase.Engine;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Backup;
 using TerraBase.Features.Documents;
@@ -20,6 +21,7 @@ using TerraBase.Tenancy;
 namespace TerraBase.Hosting;
 
 /// <summary>Source-generated JSON metadata for every request and response type (fast startup, no reflection-based serialization).</summary>
+[JsonSerializable(typeof(Ulid))]
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web, MaxDepth = RequestJson.StoredDocumentMaxDepth + 8)]
 [JsonSerializable(typeof(AcceptInvitationRequest))]
 [JsonSerializable(typeof(AddMemberRequest))]
@@ -27,6 +29,8 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(AppliedIndexRecommendation))]
 [JsonSerializable(typeof(AuditEvent))]
 [JsonSerializable(typeof(AuditRetention))]
+[JsonSerializable(typeof(AutoIndexPolicy))]
+[JsonSerializable(typeof(AutoIndexPolicyRequest))]
 [JsonSerializable(typeof(BackupPolicy))]
 [JsonSerializable(typeof(BackupStatus))]
 [JsonSerializable(typeof(BackupStatusRecord))]
@@ -35,6 +39,8 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(BackupSchedule))]
 [JsonSerializable(typeof(CollectionList))]
 [JsonSerializable(typeof(CollectionSchema))]
+[JsonSerializable(typeof(UniqueSchema))]
+[JsonSerializable(typeof(UniqueSchemaRequest))]
 [JsonSerializable(typeof(CreateApiKeyRequest))]
 [JsonSerializable(typeof(CreatedApiKeyBody))]
 [JsonSerializable(typeof(CreatedInvitation))]
@@ -44,6 +50,7 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(DatabaseBackup))]
 [JsonSerializable(typeof(ErrorBody))]
 [JsonSerializable(typeof(ShapeBody))]
+[JsonSerializable(typeof(ChangeFeedBody))]
 [JsonSerializable(typeof(DatabaseBody))]
 [JsonSerializable(typeof(DatabaseOwner))]
 [JsonSerializable(typeof(DatabaseUsage))]

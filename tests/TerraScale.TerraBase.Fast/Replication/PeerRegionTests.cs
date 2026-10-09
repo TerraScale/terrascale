@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -27,12 +28,12 @@ public sealed class PeerRegionTests
             tls.Apply(settings);
             settings["region"] = "gru-1";
         });
-        var database = await receiver.RegisterAsync(new TenantContext(Guid.NewGuid().ToString(), PlanTier.Hobby, Guid.NewGuid().ToString(), Guid.NewGuid().ToString()));
+        var database = await receiver.RegisterAsync(new TenantContext(EntityIds.New().ToString(), PlanTier.Hobby, EntityIds.New().ToString(), EntityIds.New().ToString()));
         using var channel = tls.CreateChannel(receiver.PeerAddress!);
         using var call = new Features.Replication.V1.Replication.ReplicationClient(channel).Sync(cancellationToken: TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         await call.RequestStream.WriteAsync(new SyncRequest
         {
-            Hello = ReplicationProtocol.CreateHello(database, Guid.NewGuid().ToByteArray(bigEndian: true), region == "too-long" ? new string('a', 64) : region),
+            Hello = ReplicationProtocol.CreateHello(database, EntityIds.New().ToByteArray(), region == "too-long" ? new string('a', 64) : region),
         });
         await Assert.That(await call.ResponseStream.MoveNext(CancellationToken.None)).IsTrue();
         if (region is "" or "iad-1")
@@ -74,7 +75,7 @@ public sealed class PeerRegionTests
         using var reader = clientTls.CreateClient(receiver.ClientAddress!, await tenant.KeyAsync(receiver, "documents:read"));
         using var collection = await writer.PostAsJsonAsync(new Uri($"{tenant.Path("regions")}/collections", UriKind.Relative), new { name = "items" });
         collection.EnsureSuccessStatusCode();
-        var path = $"{tenant.Path("regions")}/collections/items/documents/{ReplicationDocuments.Id("regional")}";
+        var path = $"{tenant.Path("regions")}/collections/items/documents/by-key?id={ReplicationDocuments.Id("regional")}";
         using var put = await writer.PutAsJsonAsync(new Uri(path, UriKind.Relative), new { region = "iad-1" });
         put.EnsureSuccessStatusCode();
         await TerraBaseTestServer.ReplicatedAsync(sender);

@@ -55,6 +55,7 @@ never its value. Port `0` picks a free port.
 | --- | --- | --- |
 | `--region` / `TERRABASE_REGION` | `development` in Development; required otherwise | Node region ID matching Atlas discovery. Lowercase ASCII letter followed by lowercase letters, digits or hyphens; at most 63 characters, no trailing hyphen |
 | `--admin-port` / `TERRABASE_ADMIN_PORT` | `9464` | Loopback administrative listener (`/healthz`, `/readyz`, `/metrics`, operator endpoints). 0 to 65535 |
+| `--instance-id` / `TERRABASE_INSTANCE_ID` | unset | Cloud instance identity for node pressure; absent remains unknown |
 | `--node-name` / `TERRABASE_NODE_NAME` | Machine name | Descriptive node identity in pressure telemetry |
 | `--memory-budget` / `TERRABASE_MEMORY_BUDGET` | One quarter of runtime-available memory, at least 1 MiB | Bytes planned for caches and admitted memory reservations; also the pressure denominator. See [`docs/memory.md`](docs/memory.md) for coverage |
 | `--data-directory` / `TERRABASE_DATA_DIRECTORY` | `data` (relative to the working directory) | Directory holding one SQLite file per database. Must be a valid path |
@@ -136,8 +137,9 @@ and Atlas compatibility.
 ## Node pressure
 
 `GET /admin/node/pressure` and pressure metrics are available only on the loopback
-administrative listener. `/v1/node/pressure` remains a hidden compatibility alias. Measurements are cached;
-I/O-pool and replication signals stay unknown, keeping autoscaling gated until #13 and #11 are integrated.
+administrative listener. Instance identity, local readiness, actual storage admissions
+and outgoing durable ACK lag are sampled diagnostics. Certified membership, incoming
+catch-up and other unmeasured safety signals remain unknown, keeping autonomous scaling gated.
 See [signal definitions and follow-ups](docs/node-pressure.md).
 
 ## Production replication check

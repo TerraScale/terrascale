@@ -7,6 +7,7 @@ using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Memory;
 using TerraBase.Hosting;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using static TerraBase.Features.Management.SystemCatalog;
 
@@ -205,7 +206,7 @@ internal sealed partial class QueryShapeRecorder(SystemCatalog catalog, TimeProv
                     .Select(group => new Taken(group.Key, [.. group.Select(item => item.Shape)])).ToArray()).ToArray();
             for (var index = 0; index < batches.Length; index++)
             {
-                var id = Guid.NewGuid().ToString("N");
+                var id = EntityIds.New().ToString();
                 try
                 {
                     var (dropped, unsupported) = await WriteAsync(id, batches[index], cancellationToken).ConfigureAwait(false);

@@ -7,7 +7,9 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Configuration;
 using TerraBase.Engine;
+using TerraBase.Fast.Storage;
 using TerraBase.Features.Documents;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -506,23 +508,56 @@ public sealed class SqlApiTests
     [Test]
     public async Task A_run_does_not_wait_for_the_catalog_to_count_its_unindexed_fields()
     {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
+        var token = deadline.Token;
+        var output = TUnit.Core.TestContext.Current!.OutputWriter;
         var hook = new UsageCommitHook((collection, _, _) => collection.EndsWith("/projects", StringComparison.Ordinal));
-        await using var api = await ManagementApi.StartAsync(services: hook.Install);
+        await using var api = await ManagementApi.StartAsync(services: services =>
+        {
+            hook.Install(services);
+            TerraBaseTestServer.EnableConnectionDiagnostics(services);
+        });
         var database = await api.CreateManagedDatabaseAsync();
         await SeedPeopleAsync(api, database);
 
         // A project creation holds the catalog's write lock while the run counts email as unindexed.
         using var gate = hook.PauseCommit();
-        var creating = api.Client.PostAsJsonAsync(Uri($"/v1/management/organizations/{database.Organization}/projects"), new { name = "Held" });
-        await gate.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
-        var result = await RunAsync(api, database, "SELECT _id FROM people WHERE email = 'nobody'").WaitAsync(TimeSpan.FromSeconds(10));
-        gate.Dispose();
-        (await creating).EnsureSuccessStatusCode();
-        var recommendations = await api.Client.GetFromJsonAsync<JsonElement>(Uri($"{database.Path}/index-recommendations"));
+        var creating = api.Client.PostAsJsonAsync(Uri($"/v1/management/organizations/{database.Organization}/projects"), new { name = "Held" }, token);
+        Task runningQuery = Task.CompletedTask;
+        Exception? primaryFailure = null;
+        try
+        {
+            output.WriteLine("catalog gate: waiting for project commit");
+            await gate.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10), token);
+            output.WriteLine("catalog gate: running query while project commit is held");
+            var querying = RunAsync(api, database, "SELECT _id FROM people WHERE email = 'nobody'", token);
+            runningQuery = querying;
+            var result = await querying.WaitAsync(TimeSpan.FromSeconds(10), token);
+            output.WriteLine("catalog gate: query completed before project commit release");
+            gate.Dispose();
+            (await creating).EnsureSuccessStatusCode();
+            var recommendations = await api.Client.GetFromJsonAsync<JsonElement>(Uri($"{database.Path}/index-recommendations"), token);
 
-        await Assert.That(result.GetProperty("matched").GetInt32()).IsEqualTo(0);
-        await Assert.That(recommendations.GetProperty("items").EnumerateArray()
-            .Select(item => $"{item.GetProperty("id").GetString()}={item.GetProperty("queries").GetInt64()}")).IsEquivalentTo(["people:email=1"]);
+            await Assert.That(result.GetProperty("matched").GetInt32()).IsEqualTo(0);
+            await Assert.That(recommendations.GetProperty("items").EnumerateArray()
+                .Select(item => $"{item.GetProperty("id").GetString()}={item.GetProperty("queries").GetInt64()}")).IsEquivalentTo(["people:email=1"]);
+        }
+        catch (Exception error)
+        {
+            primaryFailure = error;
+            throw;
+        }
+        finally
+        {
+            deadline.Cancel();
+            gate.Dispose();
+            await StoragePoolTests.JoinCleanupAsync([runningQuery, DisposeCreatedAsync()], primaryFailure);
+        }
+
+        async Task DisposeCreatedAsync()
+        {
+            using var response = await creating;
+        }
     }
 
     [Test]
@@ -627,9 +662,9 @@ public sealed class SqlApiTests
     /// <summary>A database path with, in turn, an unknown organization, project and database.</summary>
     internal static string[] UnknownDatabasePaths(ManagedDatabaseRef database) =>
     [
-        $"/v1/management/organizations/{Guid.NewGuid()}/projects/{database.Project}/databases/{database.Id}",
-        $"/v1/management/organizations/{database.Organization}/projects/{Guid.NewGuid()}/databases/{database.Id}",
-        $"{database.ProjectPath}/databases/{Guid.NewGuid()}",
+        $"/v1/management/organizations/{EntityIds.New()}/projects/{database.Project}/databases/{database.Id}",
+        $"/v1/management/organizations/{database.Organization}/projects/{EntityIds.New()}/databases/{database.Id}",
+        $"{database.ProjectPath}/databases/{EntityIds.New()}",
     ];
 
     private static async Task<Dictionary<string, Person>> SeedPeopleAsync(ManagementApi api, ManagedDatabaseRef database)
@@ -657,14 +692,14 @@ public sealed class SqlApiTests
         return people;
     }
 
-    private static async Task<JsonElement> RunAsync(ManagementApi api, ManagedDatabaseRef database, string sql) =>
-        await PostAsync(api, $"{database.Path}/sql", new { sql });
+    private static async Task<JsonElement> RunAsync(ManagementApi api, ManagedDatabaseRef database, string sql, CancellationToken cancellationToken = default) =>
+        await PostAsync(api, $"{database.Path}/sql", new { sql }, cancellationToken);
 
-    private static async Task<JsonElement> PostAsync(ManagementApi api, string path, object body)
+    private static async Task<JsonElement> PostAsync(ManagementApi api, string path, object body, CancellationToken cancellationToken = default)
     {
-        using var response = await api.Client.PostAsJsonAsync(Uri(path), body);
+        using var response = await api.Client.PostAsJsonAsync(Uri(path), body, cancellationToken);
         response.EnsureSuccessStatusCode();
-        return await response.Content.ReadFromJsonAsync<JsonElement>();
+        return await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken);
     }
 
     // The test names of the rows' ids (see ManagementApi.DocumentId).

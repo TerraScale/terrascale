@@ -142,7 +142,7 @@ public sealed class ReplicationSlotPromotionTests
             await Assert.That(initial.Peers[0].Databases.Count).IsEqualTo(128);
             var observedIds = initial.Peers[0].Databases.Select(database => database.DatabaseId).ToHashSet(StringComparer.Ordinal);
             var omitted = databases.Single(entry => !observedIds.Contains(entry.Key));
-            var databaseId = ByteString.CopyFrom(Guid.Parse(omitted.Key).ToByteArray(bigEndian: true));
+            var databaseId = ByteString.CopyFrom(Ulid.Parse(omitted.Key).ToByteArray());
             recoveryPrefix = prefixes[databaseId];
             await Assert.That(recoveryPrefix.Sequence).IsEqualTo(1UL);
             using (var writer = clientTls.CreateClient(server.ClientAddress!, await omitted.Value.Tenant.KeyAsync(server, "documents:write")))
@@ -339,7 +339,7 @@ public sealed class ReplicationSlotPromotionTests
             var observed = initial.Peers[0].Databases;
             var observedIds = observed.Select(database => database.DatabaseId).ToHashSet(StringComparer.Ordinal);
             var omitted = databases.Single(entry => !observedIds.Contains(entry.Key));
-            omittedId = ByteString.CopyFrom(Guid.Parse(omitted.Key).ToByteArray(bigEndian: true));
+            omittedId = ByteString.CopyFrom(Ulid.Parse(omitted.Key).ToByteArray());
             var removed = observed[0];
             var slotLabel = $"database=\"{removed.Slot.ToString(CultureInfo.InvariantCulture)}\"";
             var convergences = await server.MetricAsync("terrabase_replication_convergence_seconds_count", "", token);
@@ -350,7 +350,7 @@ public sealed class ReplicationSlotPromotionTests
             // or another database is, leaving the omitted database's trusted ACK intact.
             Volatile.Write(ref heldId, revalidationInProgress
                 ? omittedId
-                : ByteString.CopyFrom(Guid.Parse(observed[1].DatabaseId).ToByteArray(bigEndian: true)));
+                : ByteString.CopyFrom(Ulid.Parse(observed[1].DatabaseId).ToByteArray()));
             await primaryHeld.Task.WaitAsync(token);
             var engine = server.Services.GetRequiredService<IStorageEngine>();
             await Assert.That(await engine.DeleteDatabaseAsync(databases[removed.DatabaseId], token)).IsTrue();

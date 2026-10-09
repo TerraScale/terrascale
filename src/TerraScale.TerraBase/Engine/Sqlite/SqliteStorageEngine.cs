@@ -6,6 +6,7 @@ using System.Runtime.CompilerServices;
 using TerraBase.Configuration;
 using TerraBase.Features.Memory;
 using TerraBase.Hosting;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Engine.Sqlite;
@@ -28,17 +29,17 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
     private readonly TimeSpan _readinessCacheTtl;
     internal const string SystemName = "_system";
     // Recorded in the lock file: the layout of this build, one directory per tenant.
-    private const byte LayoutVersion = 1;
+    private const byte LayoutVersion = 2;
     private const string PreTenancyLayout = "data directory uses the pre-tenancy layout; start with an empty data directory (no automatic migration)";
 
     /// <summary>The file whose exclusive lock makes a process the only owner of a data directory.</summary>
     internal const string LockFileName = ".terrabase.lock";
     private static readonly string[] Sidecars = ["-wal", "-shm", "-journal"];
 
-    // Opened (and migrated) stores, keyed by tenant and database; a database is migrated once per process.
+    // Opened stores, keyed by tenant and database; a database is bootstrapped once per process.
     private readonly ConcurrentDictionary<(string Organization, string Project, string Database), SqliteDatabaseStore> _stores = new();
 
-    // Coordinates file lifecycle and publication. Migration and baseline batches run independently per database.
+    // Coordinates file lifecycle and publication. Bootstrap and baseline batches run independently per database.
     private readonly SemaphoreSlim _creation = new(1, 1);
     private readonly Dictionary<(string Organization, string Project, string Database), Task<SqliteDatabaseStore>> _initializing = [];
 
@@ -54,7 +55,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
     internal bool CreationHeld => _creation.CurrentCount == 0;
     private readonly CancellationTokenSource _stopping = new();
 
-    // Fixed-size UUID triples bound both items and bytes; failed intents retain their reservation until recovery.
+    // Fixed-size ULID triples bound both items and bytes; failed intents retain their reservation until recovery.
     private const int MaxPendingIntents = 1000;
     private readonly HashSet<(string Organization, string Project, string Database)> _pendingIntents = [];
 
@@ -68,7 +69,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
     private readonly ILogger<SqliteStorageEngine> _logger;
     private readonly TimeSpan _shutdownGrace;
     private readonly DatabaseLifecycleCheckpoint _checkpoint;
-    private readonly Action<SqliteDatabaseStore>? _afterMigration;
+    private readonly Action<SqliteDatabaseStore>? _afterBootstrap;
     private readonly TimeProvider _backupTime;
 
     /// <summary>Runs every SQLite call of this engine.</summary>
@@ -111,6 +112,8 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
 
     public long CommittedWrites => Interlocked.Read(ref _committedWrites);
 
+    public long? IoAdmittedCount => Io.Closed ? null : Io.Admitted;
+
     public ValueTask RefreshStoragePressureAsync(CancellationToken cancellationToken)
     {
         if (cancellationToken.IsCancellationRequested)
@@ -129,7 +132,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
         {
             var top = new List<StoredTenantPressure>(10);
             long total = 0;
-            // Stream each layout level: one organization's running total and at most ten retained UUIDs.
+            // Stream each layout level: one organization's running total and at most ten retained ULIDs.
             // ponytail: metadata is sampled rather than atomic across files; use lifecycle coordination if an exact instant is required.
             RejectLink(_dataDirectory);
             foreach (var organization in new DirectoryInfo(_dataDirectory).EnumerateDirectories())
@@ -270,7 +273,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
             // A unique name, so a leftover never blocks a later probe. Not a database file, so even one left by a crash
             // between create and close never fails the layout check.
             using var probe = new FileStream(
-                Path.Combine(_dataDirectory, $".ready.{Guid.NewGuid():N}.probe"), FileMode.CreateNew, FileAccess.Write, FileShare.None, 1, FileOptions.DeleteOnClose);
+                Path.Combine(_dataDirectory, $".ready.{EntityIds.New()}.probe"), FileMode.CreateNew, FileAccess.Write, FileShare.None, 1, FileOptions.DeleteOnClose);
             return true;
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
@@ -316,7 +319,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
     /// <param name="checkpoint">A per-host lifecycle checkpoint for integration tests.</param>
     /// <param name="time">The clock of the query deadline; the system clock by default.</param>
     /// <param name="queryBudget">SQLite execution time one query may spend; <see cref="SqliteDatabaseStore.DefaultQueryBudget"/> by default.</param>
-    /// <param name="afterMigration">Optional integration-test hook before a tenant database's baseline is seeded.</param>
+    /// <param name="afterBootstrap">Optional integration-test hook before a tenant database's baseline is seeded.</param>
     /// <param name="systemReplica">Whether this node follows a catalog primary: its system database accepts only replicated writes.</param>
     /// <param name="walTaps">Whether continuous backup ships from this node: its <see cref="IWalTap"/>s checkpoint every database, not SQLite.</param>
     /// <param name="backupTime">The host's UTC clock for snapshot boundaries, independent of query deadlines.</param>
@@ -325,7 +328,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
         string dataDirectory, int threads, int queue, long memoryBudget, Meter meter, ILogger<SqliteStorageEngine> logger,
         TimeSpan shutdownGrace, int? maxIdle = null, int? maxIdlePerDatabase = null, Func<ThreadStart, Thread>? createWorker = null,
         TimeSpan? readinessCacheTtl = null, DatabaseLifecycleCheckpoint? checkpoint = null, TimeProvider? time = null,
-        Action<SqliteDatabaseStore>? afterMigration = null, bool systemReplica = false, bool walTaps = false, TimeSpan? queryBudget = null,
+        Action<SqliteDatabaseStore>? afterBootstrap = null, bool systemReplica = false, bool walTaps = false, TimeSpan? queryBudget = null,
         TimeProvider? backupTime = null, IMemoryBudget? schemaMemory = null)
     {
         _systemReplica = systemReplica;
@@ -336,7 +339,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
         _logger = logger;
         _shutdownGrace = shutdownGrace;
         _checkpoint = checkpoint ?? (static (_, _) => { });
-        _afterMigration = afterMigration;
+        _afterBootstrap = afterBootstrap;
         _backupTime = backupTime ?? TimeProvider.System;
         _readinessCacheTtl = readinessCacheTtl ?? TimeSpan.FromSeconds(1);
         Time = time ?? TimeProvider.System;
@@ -579,7 +582,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
     /// ponytail: a transaction already running on the deleted database finishes on the unlinked file (Linux)
     /// and new ones fail; add per-database reference counting if deletes must wait for in-flight work.
     /// </remarks>
-    public async ValueTask<bool> DeleteDatabaseAsync(TenantContext database, CancellationToken cancellationToken, bool retainIntentOwnership = false, Guid? incarnation = null)
+    public async ValueTask<bool> DeleteDatabaseAsync(TenantContext database, CancellationToken cancellationToken, bool retainIntentOwnership = false, Ulid? incarnation = null)
     {
         var (key, path) = Locate(database);
         while (true)
@@ -748,7 +751,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
                 };
                 try
                 {
-                    await system.MigrateAsync(openingToken).ConfigureAwait(false);
+                    await system.BootstrapAsync(openingToken).ConfigureAwait(false);
                 }
                 catch
                 {
@@ -1054,7 +1057,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
         && (name.EndsWith(FileExtension, StringComparison.Ordinal)
             || Sidecars.Any(sidecar => name.EndsWith(FileExtension + sidecar, StringComparison.Ordinal)));
 
-    // <data-directory>/<organization>/<project>/<database>.db. Every id must be a lowercase hyphenated UUID, so none can
+    // <data-directory>/<organization>/<project>/<database>.db. Every id must be a canonical uppercase ULID, so none can
     // name a parent, another tenant's directory or the system database.
     private ((string Organization, string Project, string Database) Key, string Path) Locate(TenantContext database)
     {
@@ -1094,10 +1097,10 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
     private static string Id(string? id) =>
         IsId(id)
             ? id
-            : throw new ArgumentException("a tenant database needs organization, project and database ids that are lowercase hyphenated UUIDs", nameof(id));
+            : throw new ArgumentException("a tenant database needs organization, project and database ids that are canonical uppercase ULIDs", nameof(id));
 
     private static bool IsId([NotNullWhen(true)] string? id) =>
-        Guid.TryParseExact(id, "D", out var guid) && string.Equals(guid.ToString(), id, StringComparison.Ordinal);
+        EntityIds.IsValid(id);
 
     private static TenantContext? DatabaseFromPath(string root, string path)
     {
@@ -1109,29 +1112,35 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
     }
 
     // Conservatively recognizes collision shapes; case variants never acquire canonical audit/cleanup ownership.
-    private static string? CollisionDatabaseIdFromFileName(string name) => DatabaseIdFromFileName(name.ToLowerInvariant());
+    private static string? CollisionDatabaseIdFromFileName(string name) => DatabaseIdFromFileName(name, collision: true);
 
-    private static string? DatabaseIdFromFileName(string name)
+    private static string? DatabaseIdFromFileName(string name, bool collision = false)
     {
+        var comparison = collision ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
         foreach (var sidecar in Sidecars)
         {
-            if (name.EndsWith(sidecar, StringComparison.Ordinal))
+            if (name.EndsWith(sidecar, comparison))
             {
                 name = name[..^sidecar.Length];
                 break;
             }
         }
 
-        if (name.EndsWith(FileExtension, StringComparison.Ordinal))
+        if (name.EndsWith(FileExtension, comparison))
         {
             var database = name[..^FileExtension.Length];
+            database = collision ? database.ToUpperInvariant() : database;
             return IsId(database) ? database : null;
         }
 
-        return name.Split('.') is ["", var id, var nonce, "creating"]
-            && IsId(id) && Guid.TryParseExact(nonce, "N", out var guid) && string.Equals(guid.ToString("N"), nonce, StringComparison.Ordinal)
-                ? id
-                : null;
+        if (name.Split('.') is not ["", var id, var nonce, var suffix] || !suffix.Equals("creating", comparison))
+        {
+            return null;
+        }
+
+        id = collision ? id.ToUpperInvariant() : id;
+        nonce = collision ? nonce.ToUpperInvariant() : nonce;
+        return IsId(id) && EntityIds.IsValid(nonce) ? id : null;
     }
 
     private static void RejectLink(string path)
@@ -1168,7 +1177,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
 
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         await InitializeHeapAsync(cancellationToken).ConfigureAwait(false);
-        await PublishAsync(name, path, temporary => SqliteDatabaseStore.InitializeAsync(name, temporary, Io, _pragmas, afterMigration: null, cancellationToken)).ConfigureAwait(false);
+        await PublishAsync(name, path, temporary => SqliteDatabaseStore.InitializeAsync(name, temporary, Io, _pragmas, afterBootstrap: null, cancellationToken)).ConfigureAwait(false);
         return true;
     }
 
@@ -1176,7 +1185,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
     // visible only once fully initialized and a failed or cancelled creation leaves nothing behind.
     private async Task PublishAsync(string name, string path, Func<string, Task> initialize)
     {
-        var temporary = Path.Combine(Path.GetDirectoryName(path)!, $".{name}.{Guid.NewGuid():N}.creating");
+        var temporary = Path.Combine(Path.GetDirectoryName(path)!, $".{name}.{EntityIds.New()}.creating");
         try
         {
             RejectDatabaseLinks(temporary);
@@ -1331,7 +1340,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
             return initialization;
         }
 
-        // Migration and seeding run on the I/O pool; keep them off the lifecycle lock. Nested transactions
+        // Bootstrap and seeding run on the I/O pool; keep them off the lifecycle lock. Nested transactions
         // reuse the initialization's own admission, taken only once the caller released its creation admission.
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _awaitingRelease.Add(release);
@@ -1362,14 +1371,14 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
         var admitted = false;
         try
         {
-            // Held from migration to publication or cleanup, so shutdown drains it and storage-queue bounds it.
+            // Held from bootstrap to publication or cleanup, so shutdown drains it and storage-queue bounds it.
             Io.Admit();
             admitted = true;
             using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _stopping.Token);
             RejectDatabaseLinks(path);
             await InitializeHeapAsync(lifetime.Token).ConfigureAwait(false);
-            await store.MigrateAsync(lifetime.Token).ConfigureAwait(false);
-            _afterMigration?.Invoke(store);
+            await store.BootstrapAsync(lifetime.Token).ConfigureAwait(false);
+            _afterBootstrap?.Invoke(store);
             var (sequence, skipped) = await store.SeedAsync(lifetime.Token).ConfigureAwait(false);
             if (skipped > 0)
             {

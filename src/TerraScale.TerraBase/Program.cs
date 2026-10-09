@@ -7,6 +7,7 @@ using TerraBase.Features.ApiReference;
 using TerraBase.Features.Backup;
 using TerraBase.Features.CrossRegion;
 using TerraBase.Features.Documents;
+using TerraBase.Features.Health;
 using TerraBase.Features.Management;
 using TerraBase.Features.Management.Queries;
 using TerraBase.Features.Management.Usage;
@@ -89,12 +90,15 @@ builder.Services.AddTerraBaseUserAuth();
 builder.Services.AddTerraBaseManagement();
 builder.Services.AddTerraBaseCluster(options);
 builder.Services.AddTerraBaseBackup(options);
+builder.Services.AddTerraBaseHealth();
 builder.Services.AddTerraBasePressure();
 builder.AddTerraBaseReplication(options);
 builder.Services.AddTerraBaseCrossRegion(options);
 
 try
 {
+    // Dispose startup certificates before publishing completion; the outer scope also covers setup failures.
+    using var runConfiguration = configuration;
     await using var app = builder.Build();
     try
     {

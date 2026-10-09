@@ -52,7 +52,7 @@ public enum InvitationStatus
 }
 
 /// <summary>An invitation to join an organization.</summary>
-/// <param name="Id">Lowercase hyphenated UUID.</param>
+/// <param name="Id">Canonical uppercase ULID.</param>
 /// <param name="Email">The invited address; only a user with this email can accept.</param>
 /// <param name="Role">Role the user gets on accepting.</param>
 /// <param name="InvitedBy">User id of the inviter.</param>

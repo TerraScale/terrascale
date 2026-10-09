@@ -4,7 +4,7 @@ using TerraBase.Tenancy;
 namespace TerraBase.Features.Management.Backups;
 
 /// <summary>A consistent snapshot of a managed database.</summary>
-/// <param name="Id">Lowercase hyphenated UUID.</param>
+/// <param name="Id">Canonical uppercase ULID.</param>
 /// <param name="DatabaseId">The database it was taken of.</param>
 /// <param name="Status">Always <c>ready</c>: a backup is listed only once registered (complete).</param>
 /// <param name="Trigger"><c>manual</c> or <c>scheduled</c>.</param>

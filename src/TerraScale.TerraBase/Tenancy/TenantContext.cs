@@ -28,7 +28,7 @@ public enum PlanTier
 /// membership on the Management API, and every engine call takes one: storage is addressed by tenant,
 /// never by a database id alone.
 /// </summary>
-/// <param name="OrganizationId">The organization, a lowercase hyphenated UUID.</param>
+/// <param name="OrganizationId">The organization, a canonical uppercase ULID.</param>
 /// <param name="Plan">The organization's plan.</param>
 /// <param name="ProjectId">A project of the organization, when the request addresses one.</param>
 /// <param name="DatabaseId">A database of <paramref name="ProjectId"/>, when the request addresses one.</param>

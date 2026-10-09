@@ -42,7 +42,7 @@ public sealed class ServedByCatalogPrimary
 /// <summary>Bounds of <c>CatalogForwarding.Forward</c>.</summary>
 internal static class ForwardingProtocol
 {
-    public const uint Version = 1;
+    public const uint Version = 2;
 
     /// <summary>Largest forwarded request body, the Documents and Management APIs' own bound.</summary>
     public const int MaxRequestBytes = ReplicationProtocol.MaxApplicationBytes;

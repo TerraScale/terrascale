@@ -2,6 +2,7 @@ using TerraBase.Errors;
 using TerraBase.Features.Replication;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
+using TerraBase.Primitives;
 using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Management;
@@ -36,7 +37,7 @@ public sealed class VerifyProjectBindingEndpoint(IProjectCatalog catalog) : Endp
         var project = ManagementRoute.Value(HttpContext, "project");
         if (!IsId(request.Organization) || !IsId(project))
         {
-            return ErrorResponse.From(new Validation("organization and project must be lowercase hyphenated UUIDs"));
+            return ErrorResponse.From(new Validation("organization and project must be canonical uppercase ULIDs"));
         }
 
         var header = HttpContext.Request.Headers.Authorization.ToString();
@@ -56,5 +57,5 @@ public sealed class VerifyProjectBindingEndpoint(IProjectCatalog catalog) : Endp
         };
     }
 
-    private static bool IsId(string? value) => Guid.TryParseExact(value, "D", out var id) && id.ToString("D") == value;
+    private static bool IsId(string? value) => EntityIds.IsValid(value);
 }

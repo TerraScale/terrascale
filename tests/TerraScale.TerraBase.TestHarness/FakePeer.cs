@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Server.Kestrel.Https;
 using Microsoft.Extensions.DependencyInjection;
+using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
 
 namespace TerraBase.Testing;
@@ -124,7 +125,7 @@ public sealed class FakePeer : IAsyncDisposable
             Welcome = new Welcome
             {
                 LocalIdentity = member,
-                ProtocolVersion = new ProtocolVersion { Major = 1 },
+                ProtocolVersion = new ProtocolVersion { Major = ReplicationProtocol.Major },
                 EventFormatVersion = 1,
                 RecordFormatVersion = 1,
                 MergePolicyVersion = 1,

@@ -18,6 +18,7 @@ using TerraBase.Features.Memory;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
 using TerraBase.Hosting;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Replication;
@@ -29,7 +30,7 @@ public sealed class QueryShapeForwardingTests
     public async Task Follower_queries_forward_an_immutable_batch_retry_without_double_counting_and_drain_the_tail_on_shutdown()
     {
         using var peers = new PeerTls();
-        var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var time = new ManualFlushClock();
         var credential = string.Empty;
         await using var primary = await ManagementApi.StartAsync(settings =>
         {
@@ -126,7 +127,7 @@ public sealed class QueryShapeForwardingTests
                 var payload = Payload(database, shape, time);
                 using var channel = peers.CreateChannel(api.Server.PeerAddress!);
                 var client = new CatalogQueryShapes.CatalogQueryShapesClient(channel);
-                var first = Batch(payload, ByteString.CopyFrom(Guid.NewGuid().ToByteArray()));
+                var first = Batch(payload, ByteString.CopyFrom(EntityIds.New().ToByteArray()));
                 using (var gate = hook.PauseCommit())
                 {
                     var pending = client.AddAsync(first).ResponseAsync;
@@ -221,7 +222,7 @@ public sealed class QueryShapeForwardingTests
         ], time.GetUtcNow());
         using var channel = peers.CreateChannel(api.Server.PeerAddress!);
         var client = new CatalogQueryShapes.CatalogQueryShapesClient(channel);
-        var batch = Batch(payload, ByteString.CopyFrom(Guid.NewGuid().ToByteArray()));
+        var batch = Batch(payload, ByteString.CopyFrom(EntityIds.New().ToByteArray()));
         await client.AddAsync(batch);
         await client.AddAsync(batch);
         await Assert.That((await ShapesAsync(api.Client, other)).Single().Queries).IsEqualTo(1);
@@ -250,7 +251,7 @@ public sealed class QueryShapeForwardingTests
         var database = await api.CreateManagedDatabaseAsync();
         var shape = await SavedShapeAsync(api, database);
         var payload = Payload(database, shape, time);
-        var valid = Batch(payload, ByteString.CopyFrom(Guid.NewGuid().ToByteArray()));
+        var valid = Batch(payload, ByteString.CopyFrom(EntityIds.New().ToByteArray()));
         var invalid = new List<QueryShapesBatch>();
         foreach (var change in new Action<QueryShapesBatch>[]
         {
@@ -350,15 +351,15 @@ public sealed class QueryShapeForwardingTests
         {
             try
             {
-                pending.Add(client.AddAsync(Batch(payload, ByteString.CopyFrom(Guid.NewGuid().ToByteArray()), sender: "first")).ResponseAsync);
+                pending.Add(client.AddAsync(Batch(payload, ByteString.CopyFrom(EntityIds.New().ToByteArray()), sender: "first")).ResponseAsync);
                 await gate.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
                 for (var i = 1; i < 4; i++)
                 {
-                    pending.Add(client.AddAsync(Batch(payload, ByteString.CopyFrom(Guid.NewGuid().ToByteArray()), sender: "queued" + i)).ResponseAsync);
+                    pending.Add(client.AddAsync(Batch(payload, ByteString.CopyFrom(EntityIds.New().ToByteArray()), sender: "queued" + i)).ResponseAsync);
                 }
                 await memory.FourEntered.Task.WaitAsync(TimeSpan.FromSeconds(10));
                 var refused = await Assert.ThrowsAsync<RpcException>(async () =>
-                    await client.AddAsync(Batch(payload, ByteString.CopyFrom(Guid.NewGuid().ToByteArray()), sender: "fifth")));
+                    await client.AddAsync(Batch(payload, ByteString.CopyFrom(EntityIds.New().ToByteArray()), sender: "fifth")));
                 await Assert.That(refused!.StatusCode).IsEqualTo(StatusCode.ResourceExhausted);
                 await Assert.That(memory.Active).IsEqualTo(4);
             }
@@ -371,7 +372,7 @@ public sealed class QueryShapeForwardingTests
         await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(memory.Active == 0));
         await Assert.That(memory.Active).IsEqualTo(0);
         await Assert.That((await ShapesAsync(api.Client, database)).Single().Queries).IsEqualTo(5);
-        var retry = Batch(payload, ByteString.CopyFrom(Guid.NewGuid().ToByteArray()), sender: "memory");
+        var retry = Batch(payload, ByteString.CopyFrom(EntityIds.New().ToByteArray()), sender: "memory");
         memory.Refuse = true;
         try
         {
@@ -391,7 +392,7 @@ public sealed class QueryShapeForwardingTests
     }
 
     private static Task<TerraBaseTestServer> StartFollowerAsync(
-        ManagementApi primary, PeerTls peers, FakeTimeProvider time, string? credential = null, Action<IServiceCollection>? services = null) =>
+        ManagementApi primary, PeerTls peers, TimeProvider time, string? credential = null, Action<IServiceCollection>? services = null) =>
         TerraBaseTestServer.StartAsync(settings =>
         {
             peers.Apply(settings);
@@ -468,6 +469,17 @@ public sealed class QueryShapeForwardingTests
         Sequence = sequence,
         Envelope = ByteString.CopyFrom(ApplicationEnvelope.Encode(JsonSerializer.SerializeToUtf8Bytes(payload, TerraBaseJsonContext.Default.QueryShapeForwardPayload)).Span),
     };
+
+    // Park periodic flushes while transport deadlines use current UTC and real timers.
+    private sealed class ManualFlushClock : TimeProvider
+    {
+        private readonly FakeTimeProvider _periodic = new();
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) =>
+            period == Timeout.InfiniteTimeSpan
+                ? base.CreateTimer(callback, state, dueTime, period)
+                : _periodic.CreateTimer(callback, state, dueTime, period);
+    }
 
     private sealed class LostShapeAcknowledgement(CatalogPrimaryClient inner) : ICatalogPrimaryClient
     {

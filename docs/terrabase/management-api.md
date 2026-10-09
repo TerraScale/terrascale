@@ -163,51 +163,18 @@ Decided by COS on 2026-10-05: the TS-529 bootstrap creates the `terrascale` orga
 - Platform-admin routes in the dashboard (`/api/v1/admin/…`) act on any organization. They need a
   separate admin authorization design and are not served by this API.
 
-### Upgrading a catalog from before roles
+### Fresh catalog bootstrap
 
-Catalog version 2 (TS-461) stored members without roles. Version 3 stores each member as
-`{userId, role, joinedAt}`. On its first Management request, a process upgrades a version 2 catalog in one
-write transaction: every member becomes an `owner`, because version 2 could only make an organization's
-creator (or the legacy owner) a member. `joinedAt` is the organization's creation time. No setting is needed.
-
-### Upgrading a catalog from before membership
-
-The first Management release (#5) stored organizations with no members and with globally
-unique names. That is catalog version 1. This release uses version 5 and records it in the
-`catalog/version` document of the `_system` database.
-
-- On its first Management request, each process brings the catalog to version 5, in one write
-  transaction.
-- If the catalog is still version 1 and holds organizations, set `TERRABASE_MANAGEMENT_LEGACY_OWNER`
-  (or `--management-legacy-owner=`) to a ts-auth user id. In that same transaction, every version 1
-  organization:
-  - gets that user as `createdBy` and only member, an `owner`;
-  - moves its name claim from the global index to that user's own index.
-
-  Projects and databases are untouched.
-- Without the setting, the Management API answers `503` and logs an error naming the setting. The
-  log gives only the number of organizations, no ids. Nothing is changed, and nothing is silently
-  hidden.
-- Once migrated, the version is recorded, so later starts need no setting.
-- Version 3 upgrades to version 4 without changing existing resources.
-- Version 4 upgrades to version 5 (TS-521) by filling the global project index (`project_organizations`),
-  which keeps client-chosen project ids unique across organizations; resources do not change. Version 5 adds
-  the `viewer` role, invitation history and token hashes, organization and account versions, commit records
-  and the dashboard document space ([management-commits.md](management-commits.md)). Builds that only
-  understand version 4 refuse a version 5 catalog (`503`), so they never misread a viewer or a closed
-  invitation; downgrade needs a supported recovery procedure, not editing the version marker. A version 4
-  catalog's cleanup intents are replayed at startup before the upgrade, as version 5 intents are.
-- A catalog with any other version (for example, one written by a newer build) is never migrated
-  or downgraded. The Management API answers `503`, logs an error and leaves the catalog unchanged.
-- `management-legacy-owner` must be a non-blank user id: at most 256 characters and no control
-  characters. Anything else stops the process with exit code `2`.
-- A user's current organization from version 1 reads as `404` unless that user is the assigned owner.
+An empty system database bootstraps `catalog/version` to 6 in one transaction. Existing older catalogs are
+refused with `503`; there is no upgrade, ownership backfill or `management-legacy-owner` setting.
+The closed-beta ULID rollout deletes old database files, catalog records, backups and affected external state
+before restart. Service bindings and credentials are recreated. See [the ID contract](id-contract.md).
 
 ### Database lifecycle recovery (TS-480)
 
-Version 4 adds `pending_database_cleanup` documents in `_system.db`, keyed by database id and
-holding its tenant context. Builds that only understand version 3 refuse this catalog; downgrade
-requires a supported recovery procedure, not editing the version marker.
+The current catalog stores `pending_database_cleanup` documents in `_system.db`, keyed by database ULID
+and holding its tenant context. Unsupported catalog versions are refused; changing the version marker
+does not make an older catalog compatible.
 
 - **Create and branch:** check that the target has no existing files and commit a cleanup intent
   under the engine lifecycle lock, keeping that lock through storage publication. Existing unknown
@@ -249,9 +216,10 @@ logged and counted as unknown while management requests keep returning `503`.
 
 ## Conventions
 
-- **IDs** are lowercase hyphenated UUIDv7 strings. Lists in id order (organizations, projects, databases)
-  are in creation order to the millisecond (ids created within the same millisecond sort by their random bits).
-  An unknown id answers `404`.
+- **IDs** are canonical uppercase 26-character Crockford ULIDs. Lists in id order (organizations, projects, databases)
+  sort by timestamp, with monotonic generation within a millisecond per process. Clock changes can change timestamp order.
+  A malformed entity id answers `400`; an unknown valid id answers `404`. The document key is the entity id; stored payloads omit its redundant `id`.
+  Caller-supplied document keys remain unrestricted except for the documented length and character bounds.
 - **Organization and project names** are 1 to 128 characters after trimming. They must contain a
   letter or digit and no control characters, and are compared ignoring case.
   - Project names are unique within their organization.
@@ -304,7 +272,7 @@ Base path: `/v1/management`.
 | `POST` | `/commits` | atomic commit of Management operations and dashboard documents ([management-commits.md](management-commits.md)) |
 | `GET` | `/commits/{id}` | recorded outcome of the acting user's commit; `404` if it never committed |
 | `GET` | `/versions?organization=…` | account and organization versions for fencing commits |
-| `GET` | `/documents/{collection}/{id}` | a document of the dashboard document space |
+| `GET` | `/documents/{collection}/by-key?id={id}` | a document of the dashboard document space; one UTF-8 query-encoded key ([contract](id-contract.md)) |
 | `POST` | `/documents/{collection}/query` | query v1 over the dashboard document space |
 
 Shapes:
@@ -402,7 +370,7 @@ Rules:
 - **Order:** invitations list in creation order and audit events newest first, by a per-organization
   sequence. The sequence comes from a counter document incremented in the same write transaction as the
   insert, and is the key the list is stored under. The order therefore survives restarts, does not depend
-  on the clock, and holds within one millisecond. Invitation and event ids are opaque UUIDs. On these two
+  on the clock, and holds within one millisecond. Invitation and event ids are opaque ULIDs. On these two
   lists `next` is an opaque cursor to pass back as `after`, not an item id.
 
 Shapes:
@@ -462,6 +430,7 @@ tooling is open to every member whatever its role (see [Membership](#membership)
 D = `/v1/management/organizations/{organization}/projects/{project}/databases/{database}`,
 P = `/v1/management/organizations/{organization}/projects/{project}`. Every route returns `404` when the
 organization, project or database does not exist.
+A = `/projects/{project}/databases/{database}` is the unversioned prefix for new automatic-index policy routes.
 
 | Method | Route | Result |
 | --- | --- | --- |
@@ -475,6 +444,8 @@ organization, project or database does not exist.
 | `GET` | `D/indexes[?collection=]` | indexes |
 | `POST` | `D/indexes` | `{collection, fields, name?}` → `201` index; `409` duplicate |
 | `DELETE` | `D/indexes/{index}` | `204` |
+| `GET` | `A/auto-index/{collection}` | `{collection, enabled}`; enabled by default |
+| `PUT` | `A/auto-index/{collection}` | `{enabled}` → collection policy; requires `databases:write` |
 | `GET` | `D/index-recommendations` | recommendations from the SQL workload |
 | `POST` | `D/index-recommendations/{recommendation}/apply` | `201` applied or `200` already applied |
 | `POST` | `D/sql` | `{sql}` → rows; `400` invalid SQL |
@@ -506,7 +477,7 @@ can be restored.
 
 | Field | Meaning |
 | --- | --- |
-| `id` | Opaque UUID. |
+| `id` | Canonical uppercase ULID. |
 | `databaseId` | The backed-up database. |
 | `status` | Always `ready`. |
 | `trigger` | `manual` (`POST`) or `scheduled` (policy). |
@@ -561,8 +532,7 @@ Each backup is a record in the catalog, kept under its organization, that only m
 - Before the first save, `GET` returns `{"fullBackupCron":"0 2 * * *","retentionDays":7,"disabled":false,"updatedAt":null}`.
   The scheduler applies this same default: a database is backed up daily at 02:00 UTC from its creation until a policy
   is saved, and the saved policy counts from its save. Every database is enrolled with the scheduler when it is
-  registered. Databases registered by older builds are enrolled once per catalog, on its first use after the upgrade
-  (before any scheduler pass). One that never had a scheduled backup is due once a cron occurrence has passed since its
+  registered. One that never had a scheduled backup is due once a cron occurrence has passed since its
   creation or policy save, and the next passes take those backups 16 per minute.
 - Once a minute the server takes a `scheduled` backup when the next cron occurrence after the later of the last
   successful scheduled backup and `updatedAt` has passed. Missed occurrences produce one backup, not one per occurrence.
@@ -725,7 +695,7 @@ TerraBase parses it (SqlParserCS, SQLite dialect) and runs its own query; client
 - Anything else (joins, subqueries, functions, `WITH`, aliases, DML, DDL, parameters, several statements) is rejected. The error names the construct and never repeats the SQL text.
 - Comparisons follow SQL: `!=` and `NOT IN` never match a missing or `null` field. `TRUE` and `FALSE` match JSON booleans (and, like SQLite, the numbers `1` and `0`).
 - Statements read live documents only: a deleted document's tombstone is never selected.
-- `POST …/sql` → `{"matched":2,"truncated":false,"rows":[{"id":"0199b1f0-7c2e-7a41-8d3b-5e6f70819a2b","value":{…}}]}`. `value` is the whole document for `*`; otherwise it has one member per field, named as written, and a missing field is `null`. Rows stop at the limit or before the complete serialized response exceeds 8 MiB (escaped ids, values, row wrappers, separators and envelope included); `truncated` reports either. Only the projected output counts against that bound: rows are projected as they are read, one stored document at a time, so a small projection of large documents is not cut short by their stored size. A statement that needs more than the engine's work budget, the one the document query API uses (5 million SQLite instructions or 5 seconds, counted on the work SQLite does, not the rows it returns), answers `400` `invalid_query`, `query too expensive` (so does `POST …/sql/check`), also when an unindexed filter matches nothing or an unindexed sort reads the whole collection before the first row. Documents at the data API's accepted nesting depth (16) are returned whole. Invalid SQL returns `400` `invalid_request` with the rule it breaks; `…/sql/check` reports it as `{"ok":false,"error":…}` instead. Saved queries answer `400 invalid_request` for an invalid name or SQL, `403 forbidden_role` when a viewer saves, updates or deletes one, and `404 not_found`.
+- `POST …/sql` → `{"matched":2,"truncated":false,"rows":[{"id":"01K6RZ0Z1EF90RTETYDXR836HB","value":{…}}]}`. `value` is the whole document for `*`; otherwise it has one member per field, named as written, and a missing field is `null`. Rows stop at the limit or before the complete serialized response exceeds 8 MiB (escaped ids, values, row wrappers, separators and envelope included); `truncated` reports either. Only the projected output counts against that bound: rows are projected as they are read, one stored document at a time, so a small projection of large documents is not cut short by their stored size. A statement that needs more than the engine's work budget, the one the document query API uses (5 million SQLite instructions or 5 seconds, counted on the work SQLite does, not the rows it returns), answers `400` `invalid_query`, `query too expensive` (so does `POST …/sql/check`), also when an unindexed filter matches nothing or an unindexed sort reads the whole collection before the first row. Documents at the data API's accepted nesting depth (16) are returned whole. Invalid SQL returns `400` `invalid_request` with the rule it breaks; `…/sql/check` reports it as `{"ok":false,"error":…}` instead. Saved queries answer `400 invalid_request` for an invalid name or SQL, `403 forbidden_role` when a viewer saves, updates or deletes one, and `404 not_found`.
 - `POST …/sql/check` → `{ok, error, collection, hasLimit, plan, indexes, suggestions:[{field, reason}]}`. It never returns `400` for bad SQL: it returns `ok: false` and the error. `plan` is the engine plan, `indexes` the indexes it reads, and `suggestions` the filtered or sorted fields (not `_id` or `_rev`) that no index of the collection leads with.
 - A temporary `ORDER BY` sorts only document ids and keys, then reads bodies for the returned page. It admits at most
   10000 candidate documents and 8 MiB of their JSON before sorting; excess returns `400` `invalid_query`, `query too expensive`.
@@ -777,6 +747,28 @@ queries beyond the first, so it can hold fewer than `limit`.
 - Indexes live in the database file: branches and restores keep them. An index does not require its collection to exist,
   and dropping a collection keeps its indexes (empty), which apply again if the collection is recreated.
 
+### Automatic index policy (TS-685, first slice)
+
+The automatic-index policy routes use `/projects/{project}/databases/{database}` (unversioned);
+`{database}` is the database name. A ts-auth project token needs `databases:read` to read or
+`databases:write` to change the policy. Tokens narrowed to another project or database receive `404`.
+`GET A/auto-index/{collection}` returns `{"collection":"people","enabled":true}` until explicitly opted out.
+`PUT` with `{"enabled":false}` reserves that collection's opt-out from automatic index creation and removal;
+`{"enabled":true}` removes the opt-out. The collection name follows the data API's name rules, and the collection
+need not exist yet. Omitting `enabled`, setting it to null, or sending a non-boolean returns `400`.
+
+Only opt-outs are stored, with at most 1000 per database. A new opt-out beyond the limit returns
+`400 auto_index_policy_limit`; repeating an existing opt-out or re-enabling remains allowed at the limit.
+Policies live in the management catalog under the database, survive restarts and catalog replication, and are
+deleted with the database or project. They survive collection deletion and apply if the collection is recreated.
+Branches and restored databases have their own default policy; this catalog state is not part of a database-file copy.
+Read-scoped tokens can inspect policies; write-scoped tokens can set them. Project access and database existence
+are checked again inside the catalog transaction, and a changed policy advances the organization's version.
+
+This slice stores the control for subsequent automatic maintenance. It does not enable a scheduler or change
+manual create, apply-recommendation or drop operations. Online builds, workload decisions, automatic removal and
+index provenance remain subsequent TS-685 slices.
+
 ### Index recommendations
 
 `{"items":[{"id":"people:email","collection":"people","fields":["email"],"reason":"…","queries":12}]}`
@@ -794,7 +786,7 @@ A project key is an API key of the project's organization narrowed to the projec
 
 | Field | Meaning |
 | --- | --- |
-| `id` | UUIDv7. Lists are in creation order. |
+| `id` | ULID. Lists are in creation order. |
 | `projectId` | The owning project. |
 | `name` | Label of 1 to 128 characters. Same rules as project names. |
 | `scopes` | A non-empty subset of `documents:read` and `documents:write`. |
@@ -806,7 +798,7 @@ A project key is an API key of the project's organization narrowed to the projec
 - Any other scope gives 400. A `databaseId` that is not a database of this project gives 404.
 - `GET …/api-keys` never returns secrets or hashes.
 - Key lists use the same persisted per-organization sequence pattern as invitations, allocated in the key's write
-  transaction. Pagination uses the opaque `next` sequence as `after`, not the key UUID. Keys created at one timestamp,
+  transaction. Pagination uses the opaque `next` sequence as `after`, not the key ULID. Keys created at one timestamp,
   after a clock change or after a restart keep committed creation order.
 - `DELETE …/api-keys/{key}` returns 204. The key stops working at once: its next request gets 401.
 - A viewer lists keys but cannot issue or revoke them: `403` `forbidden_role`. Errors use the `{"error":{"code","message"}}`
@@ -821,10 +813,8 @@ A project key is an API key of the project's organization narrowed to the projec
 - A key that the administrative listener (`POST /admin/api-keys`) narrows to a project is stored and listed the same
   way: it appears here, can be revoked here, and blocks deleting its project. The scope it names is checked in the
   issuing write; a missing one answers 400. Its `name` and `scopes` follow the administrative endpoint's rules (up to
-  100 characters; any client scope, such as `shapes:read`). Organization-wide keys are not listed here. Project keys
-  issued by older builds are listed once per catalog, on its first use after the upgrade; only a hash of their secret was
-  stored, so their `lastFour` is empty, their `createdAt` is the upgrade time, and an older key may have a non-UUID id.
-  They follow the keys already listed at the upgrade, in the order of their secrets' hashes.
+  100 characters; any client scope, such as `shapes:read`). Organization-wide keys are not listed here. Every key authentication record is keyed by its canonical ULID; a separate SHA-256 secret lookup points to that id.
+  The closed-beta cutover deletes old credentials and recreates service keys.
 
 ## Dashboard feature map
 
@@ -919,7 +909,7 @@ not cover branches.
 | --- | --- | --- |
 | Paths | `/v1/management/…` | ts-go SDK calls `/api/v1/databases…`; control-plane-v1 uses `/v1/dashboard/tenants/{tenant}/databases` |
 | Tenant | The organization is the tenant; projects group its databases | SDK sends the dashboard **organization** id as `X-TerraScale-Tenant-ID`; control-plane-v1 says tenant = project |
-| IDs | UUIDv7 strings | dashboard uses `org_`, `prj_`, `db_` + 32 hex |
+| IDs | Canonical uppercase ULIDs | All repositories use the same contract; caller-supplied document keys keep their bounds-only validation |
 | Database names | `^[a-z][a-z0-9_-]{0,62}$` | dashboard and SDK use `^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$` (leading digit allowed, no `_`, no trailing `-`) |
 | JSON | camelCase, ISO 8601 timestamps | control-plane-v1 uses snake_case, Unix-ms strings and `next_cursor` |
 | Idempotency | commits carry a client commit id with a durable, queryable outcome ([management-commits.md](management-commits.md#uncertain-outcomes)); other routes have none | control-plane-v1 requires `Idempotency-Key` on mutations |

@@ -7,8 +7,12 @@ using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
+using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Http;
+using Microsoft.Extensions.Logging;
+using OpenTelemetry;
 using OpenTelemetry.Exporter;
 using TerraBase.Configuration;
 using TerraBase.Engine.Sqlite;
@@ -114,6 +118,7 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
         Action<Dictionary<string, string>>? settings = null, Action<IServiceCollection>? services = null, string environmentName = "Development",
         CancellationToken? cancellationToken = null, Action<Task>? failedStartCleanup = null)
     {
+        InitializeProcessTimers();
         var dataDirectory = Directory.CreateTempSubdirectory("terrabase-test-").FullName;
         var testToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         var linkedCancellation = cancellationToken is { } callerCancellation
@@ -207,6 +212,26 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
             }
 
             throw;
+        }
+    }
+
+    private static void InitializeProcessTimers()
+    {
+        // Process-wide SQLite and SDK diagnostics workers must not capture a fixture's startup context.
+        if (ExecutionContext.IsFlowSuppressed())
+        {
+            Initialize();
+            return;
+        }
+
+        using var flow = ExecutionContext.SuppressFlow();
+        Initialize();
+
+        static void Initialize()
+        {
+            // Setting a connection string initializes the provider factory without opening a database.
+            using var connection = new SqliteConnection("Data Source=:memory:;Pooling=False");
+            _ = Sdk.CreateMeterProviderBuilder();
         }
     }
 
@@ -405,6 +430,12 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
         settings["query-budget-seconds"] = TerraBaseOptions.DefaultQueryBudgetSeconds.ToString(CultureInfo.InvariantCulture);
     }
 
+    /// <summary>Captures connection and TLS closure reasons for an individual fixture.</summary>
+    public static void EnableConnectionDiagnostics(IServiceCollection services) => services.AddLogging(logging => logging
+        .AddFilter("Microsoft.AspNetCore.Server.Kestrel.Connections", LogLevel.Debug)
+        .AddFilter("Microsoft.AspNetCore.Server.Kestrel.Https", LogLevel.Debug)
+        .AddFilter("Microsoft.AspNetCore.Server.Kestrel.BadRequests", LogLevel.Debug));
+
     internal static void ReportCleanupFailure(AggregateException error)
     {
         // Bypass per-test console capture: this test's report may already have been emitted.
@@ -419,6 +450,7 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
     {
         private ShutdownHost? _host;
         private SqliteStorageEngine? _nativeEngine;
+        private readonly FixtureHttpHandlers _httpHandlers = new();
 
         public Task Startup { get; set; } = Task.CompletedTask;
 
@@ -472,6 +504,11 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
 
             // Capture can precede adapter construction; even an early startup failure must join native ownership.
             await ObserveAsync(() => _nativeEngine?.CleanupCompletion ?? Task.CompletedTask);
+            await ObserveAsync(() =>
+            {
+                _httpHandlers.Dispose();
+                return Task.CompletedTask;
+            });
             _host?.Dispose();
 
             var failures = new AggregateException(errors).Flatten().InnerExceptions.Distinct<Exception>(ReferenceEqualityComparer.Instance).ToArray();
@@ -520,6 +557,14 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
                 // Completion barriers must observe commits after the previous scrape, not its cached zero.
                 values.Configure<PrometheusAspNetCoreOptions>(options => options.ScrapeResponseCacheDurationMilliseconds = 0);
                 services?.Invoke(values);
+                // Fixture teardown, rather than expiry timers, owns every outgoing HTTP pipeline.
+                values.PostConfigureAll<HttpClientFactoryOptions>(options =>
+                {
+                    options.HandlerLifetime = Timeout.InfiniteTimeSpan;
+                    options.SuppressHandlerScope = true;
+                });
+                // Run after all existing filters configure the pipeline, including logging and instrumentation.
+                values.Insert(0, ServiceDescriptor.Singleton<IHttpMessageHandlerBuilderFilter>(_httpHandlers));
                 // Capture when Program validates the directory, before service activation/StartingAsync can fail.
                 var native = values.Last(value => value.ServiceType == typeof(SqliteStorageEngine));
                 if (native.ImplementationInstance is SqliteStorageEngine instance)

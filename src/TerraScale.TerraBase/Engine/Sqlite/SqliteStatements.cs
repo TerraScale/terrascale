@@ -10,6 +10,12 @@ internal static class SqliteStatements
     // A tombstone has a NULL body.
     public const string Get = "SELECT version, body FROM documents WHERE collection = $collection AND id = $id;";
 
+    public const string UniqueRawDocument = """
+        SELECT d.version, coalesce(c.body, d.body), c.body IS NOT NULL
+        FROM documents d LEFT JOIN unique_conflicts c ON c.collection = d.collection AND c.id = d.id
+        WHERE d.collection = $collection AND d.id = $id;
+        """;
+
     // typeof() reads the column's type from the record header, not its content: no body is loaded.
     public const string Version = "SELECT version, typeof(body) = 'null' FROM documents WHERE collection = $collection AND id = $id;";
 
@@ -47,16 +53,18 @@ internal static class SqliteStatements
 
     // Every creation draws a new generation, so a recreated collection starts a new shape lineage.
     public const string CreateCollection = """
-        INSERT INTO collections (name, created_at, generation) VALUES ($collection, $created, random())
+        INSERT INTO collections (name, created_at, generation, entity_id) VALUES ($collection, $created, random(), $entityId)
         ON CONFLICT (name) DO NOTHING;
         """;
 
-    public const string GetCollection = "SELECT name, created_at, generation FROM collections WHERE name = $collection;";
+    public const string GetCollection = "SELECT name, created_at, generation, entity_id FROM collections WHERE name = $collection;";
+
+    public const string AdoptCollectionIdentity = "UPDATE collections SET entity_id = $entityId, created_at = $created WHERE name = $collection;";
 
     // The first page walks the primary key in order and stops at the limit.
-    public const string ListCollectionsFirst = "SELECT name, created_at, generation FROM collections ORDER BY name LIMIT $limit;";
+    public const string ListCollectionsFirst = "SELECT name, created_at, generation, entity_id FROM collections ORDER BY name LIMIT $limit;";
 
-    public const string ListCollectionsAfter = "SELECT name, created_at, generation FROM collections WHERE name > $after ORDER BY name LIMIT $limit;";
+    public const string ListCollectionsAfter = "SELECT name, created_at, generation, entity_id FROM collections WHERE name > $after ORDER BY name LIMIT $limit;";
 
     // Shape history: every write of a client database, a NULL body for a tombstone. No row is
     // inserted when the collection has no metadata, which the writer refuses.
@@ -150,7 +158,7 @@ internal static class SqliteStatements
     public const string CollectionDocumentIds = "SELECT id, octet_length(id) FROM documents WHERE collection = $collection ORDER BY id LIMIT $limit;";
 
     // The origin is the existing persisted incarnation in RFC byte order.
-    public const string Origin = "SELECT unhex(incarnation) FROM commit_offset WHERE id = 1;";
+    public const string Origin = "SELECT incarnation FROM commit_offset WHERE id = 1;";
 
     public const string Complete = "SELECT complete FROM replication_state WHERE id = 1;";
 
@@ -210,7 +218,7 @@ internal static class SqliteStatements
         ORDER BY collection, id LIMIT $limit;
         """;
 
-    // Shared with the partial-index migration: SQLite needs matching predicates to use the index.
+    // Shared with fresh schema indexes: SQLite needs matching predicates to use the index.
     internal const string BoundedReplicationKeys = BoundedBaselineKeys + " AND collection != '' AND id != ''";
 
     // Seek the latest actual winner, including imported equal-version conflicts, in this generation.
@@ -227,6 +235,8 @@ internal static class SqliteStatements
         FROM latest JOIN documents d ON d.collection = $collection AND d.id = $id
             AND d.version = latest.document_version
         WHERE latest.bytes IS NOT NULL AND NOT EXISTS (
+            SELECT 1 FROM unique_conflicts WHERE collection = $collection AND id = $id
+        ) AND NOT EXISTS (
             SELECT 1 FROM changes INDEXED BY changes_deleted
             WHERE collection = $collection AND id = $id AND body IS NULL AND version >= d.version
         );
@@ -237,7 +247,8 @@ internal static class SqliteStatements
     // Only a writer that re-read matching retained winner evidence may bypass the body tie-break.
     public const string RestoreReplicationBody = """
         UPDATE documents SET body = $body WHERE collection = $collection AND id = $id
-            AND version = $version AND (body IS NULL OR CAST(body AS BLOB) != CAST($body AS BLOB));
+            AND version = $version AND (body IS NULL OR CAST(body AS BLOB) != CAST($body AS BLOB))
+            AND NOT EXISTS (SELECT 1 FROM unique_conflicts WHERE collection = $collection AND id = $id);
         """;
 
     // Seek past each distinct deletion key, skipping its repeated journal entries. Both key streams
@@ -269,10 +280,12 @@ internal static class SqliteStatements
             ORDER BY collection, id LIMIT $limit
         ), evidence AS MATERIALIZED (
             SELECT keys.collection, keys.id, documents.version AS current_version,
-                documents.body IS NULL AS current_deleted, coalesce(octet_length(documents.body), 0) AS body_bytes,
+                unique_conflicts.body IS NULL AND documents.body IS NULL AS current_deleted,
+                coalesce(octet_length(unique_conflicts.body), octet_length(documents.body), 0) AS body_bytes,
                 (SELECT max(version) FROM changes INDEXED BY changes_deleted
                     WHERE collection = keys.collection AND id = keys.id AND body IS NULL) AS deleted_version
             FROM keys LEFT JOIN documents ON documents.collection = keys.collection AND documents.id = keys.id
+                LEFT JOIN unique_conflicts ON unique_conflicts.collection = keys.collection AND unique_conflicts.id = keys.id
         ), canonical AS (
             SELECT *, deleted_version IS NOT NULL AND (current_version IS NULL OR deleted_version > current_version
                 OR (deleted_version = current_version AND NOT current_deleted)) AS deleted_wins
@@ -349,6 +362,7 @@ internal static class SqliteStatements
     public static IReadOnlyDictionary<string, string> All { get; } = new Dictionary<string, string>(StringComparer.Ordinal)
     {
         [nameof(Get)] = Get,
+        [nameof(UniqueRawDocument)] = UniqueRawDocument,
         [nameof(ReplicationRetainedBody)] = ReplicationRetainedBody,
         [nameof(ReplicationRetainedBodyBytes)] = ReplicationRetainedBodyBytes,
         [nameof(RestoreReplicationBody)] = RestoreReplicationBody,

@@ -9,6 +9,7 @@ using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine.Cluster;
 using TerraBase.Features.CrossRegion;
 using TerraBase.Features.Documents;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -212,11 +213,11 @@ public sealed class CrossRegionTests
     public async Task A_database_of_a_project_only_one_region_registers_stays_there()
     {
         await using var regions = await Regions.StartAsync();
-        var project = Guid.NewGuid().ToString("D");
+        var project = EntityIds.New().ToString();
         using var service = regions.GruApi.Service(regions.GruApi.User);
         using var registered = await service.PostAsync(new Uri("/v1/management/commits", UriKind.Relative), new StringContent(JsonSerializer.Serialize(new
         {
-            id = Guid.NewGuid().ToString("D"),
+            id = EntityIds.New().ToString(),
             ops = new object[] { new { op = "create_project", organization = regions.Organization, id = project, name = "gru-only" } },
         }), Encoding.UTF8, "application/json"));
         registered.EnsureSuccessStatusCode();
@@ -224,7 +225,7 @@ public sealed class CrossRegionTests
             .CreateDatabaseAsync(regions.Organization, project, "private", CancellationToken.None);
         var path = $"/v1/projects/{project}/databases/private";
         (await regions.Gru.PostAsJsonAsync(new Uri($"{path}/collections", UriKind.Relative), new { name = "items" })).EnsureSuccessStatusCode();
-        (await regions.Gru.PutAsJsonAsync(new Uri($"{path}/collections/items/documents/{ReplicationDocuments.Id("secret")}", UriKind.Relative), new { value = "here" }))
+        (await regions.Gru.PutAsJsonAsync(new Uri($"{path}/collections/items/documents/by-key?id={ReplicationDocuments.Id("secret")}", UriKind.Relative), new { value = "here" }))
             .EnsureSuccessStatusCode();
 
         await TerraBaseTestServer.EventuallyAsync(async token =>
@@ -247,7 +248,7 @@ public sealed class CrossRegionTests
         await Assert.That(created.GetProperty("replicaRegions").GetArrayLength()).IsEqualTo(0);
         var path = $"/v1/projects/{regions.Project}/databases/orders";
         (await homeData.PostAsJsonAsync(new Uri($"{path}/collections", UriKind.Relative), new { name = "items" })).EnsureSuccessStatusCode();
-        var document = new Uri($"{path}/collections/items/documents/{ReplicationDocuments.Id("x")}", UriKind.Relative);
+        var document = new Uri($"{path}/collections/items/documents/by-key?id={ReplicationDocuments.Id("x")}", UriKind.Relative);
         (await homeData.PutAsJsonAsync(document, new { value = "here" })).EnsureSuccessStatusCode();
 
         // The other region learns where the database is served, and answers its data requests with that.
@@ -265,7 +266,7 @@ public sealed class CrossRegionTests
             ("shapes:read", true, HttpStatusCode.Unauthorized),
         })
         {
-            using var subscriber = otherApi.WithToken(otherApi.Issuer.Mint(Faker.Random.Guid().ToString("D"), token =>
+            using var subscriber = otherApi.WithToken(otherApi.Issuer.Mint(EntityIds.New().ToString(), token =>
             {
                 token.Claims["project_id"] = regions.Project;
                 token.Claims["scope"] = scope;
@@ -303,7 +304,7 @@ public sealed class CrossRegionTests
         using var seed = await regions.Gru.PutAsJsonAsync(regions.Document(ReplicationDocuments.Id("seed")), new { value = "before" }, deadline.Token);
         seed.EnsureSuccessStatusCode();
         _ = await Regions.EventuallyReadAsync(regions.Sfo, regions.Document(ReplicationDocuments.Id("seed")), "before");
-        using var subscriber = regions.SfoApi.WithToken(regions.SfoApi.Issuer.Mint(Faker.Random.Guid().ToString("D"), token =>
+        using var subscriber = regions.SfoApi.WithToken(regions.SfoApi.Issuer.Mint(EntityIds.New().ToString(), token =>
         {
             token.Claims["project_id"] = regions.Project;
             token.Claims["scope"] = "shapes:read";
@@ -404,8 +405,8 @@ public sealed class CrossRegionTests
         var id = created.GetProperty("id").GetString();
         var path = $"/v1/projects/{regions.Project}/databases/orders";
         (await regions.Gru.PostAsJsonAsync(new Uri($"{path}/collections", UriKind.Relative), new { name = "items" })).EnsureSuccessStatusCode();
-        var fromGru = new Uri($"{path}/collections/items/documents/{ReplicationDocuments.Id("gru")}", UriKind.Relative);
-        var fromSfo = new Uri($"{path}/collections/items/documents/{ReplicationDocuments.Id("sfo")}", UriKind.Relative);
+        var fromGru = new Uri($"{path}/collections/items/documents/by-key?id={ReplicationDocuments.Id("gru")}", UriKind.Relative);
+        var fromSfo = new Uri($"{path}/collections/items/documents/by-key?id={ReplicationDocuments.Id("sfo")}", UriKind.Relative);
         (await regions.Gru.PutAsJsonAsync(fromGru, new { value = "gru" })).EnsureSuccessStatusCode();
         _ = await Regions.EventuallyReadAsync(regions.Sfo, fromGru, "gru");
         (await regions.Sfo.PutAsJsonAsync(fromSfo, new { value = "sfo" })).EnsureSuccessStatusCode();
@@ -456,7 +457,7 @@ public sealed class CrossRegionTests
             HttpStatusCode.BadRequest, "invalid_request", "replicaRegions must not repeat a region");
 
         // The same through a commit: created with a replica, then made local to gru.
-        var database = Guid.NewGuid().ToString("D");
+        var database = EntityIds.New().ToString();
         using var created = await Regions.Commit(regions.GruApi, new { op = "create_database", organization = regions.Organization, project = regions.Project, name = "committed", id = database, replica_regions = InSfo });
         created.EnsureSuccessStatusCode();
         var path = $"/v1/projects/{regions.Project}/databases/committed";
@@ -529,7 +530,7 @@ public sealed class CrossRegionTests
     {
         await using var regions = await Regions.StartAsync();
         // A new organization and project, but the canary's database id.
-        var commit = Regions.Registration(Guid.NewGuid().ToString("D"), Guid.NewGuid().ToString("D"), regions.Database, "other");
+        var commit = Regions.Registration(EntityIds.New().ToString(), EntityIds.New().ToString(), regions.Database, "other");
         using var service = regions.GruApi.Service(regions.GruApi.User);
         using var taken = await service.PostAsync(new Uri("/v1/management/commits", UriKind.Relative), new StringContent(commit, Encoding.UTF8, "application/json"));
         await Assert.That(taken.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
@@ -569,7 +570,7 @@ public sealed class CrossRegionTests
             await using var sfo = await ManagementApi.StartAsync(
                 settings => Regions.Configure(settings, credentials, "sfo-1", "sfo-a"),
                 services => Regions.Join(services, network, "sfo", new FakeMemberStore(TimeProvider.System)), managementCredential: true);
-            var (organization, project, database) = (Guid.NewGuid().ToString("D"), Guid.NewGuid().ToString("D"), Guid.NewGuid().ToString("D"));
+            var (organization, project, database) = (EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString());
             foreach (var (api, commit) in new[] { (gruA, Regions.Registration(organization, project, database, "canary", "sfo-1")), (sfo, Regions.Registration(organization, project, null, "canary")) })
             {
                 using var service = api.Service(api.User);
@@ -588,7 +589,7 @@ public sealed class CrossRegionTests
 
             Uri Document(string id)
             {
-                return new($"/v1/projects/{project}/databases/canary/collections/items/documents/{ReplicationDocuments.Id(id)}", UriKind.Relative);
+                return new($"/v1/projects/{project}/databases/canary/collections/items/documents/by-key?id={ReplicationDocuments.Id(id)}", UriKind.Relative);
             }
 
             (await clientA.PutAsJsonAsync(Document("from-a"), new { value = "a" })).EnsureSuccessStatusCode();
@@ -674,13 +675,13 @@ public sealed class CrossRegionTests
 
         public HttpClient Sfo { get; private set; } = null!;
 
-        public string Organization { get; } = Guid.NewGuid().ToString("D");
+        public string Organization { get; } = EntityIds.New().ToString();
 
-        public string Project { get; } = Guid.NewGuid().ToString("D");
+        public string Project { get; } = EntityIds.New().ToString();
 
-        public string Database { get; } = Guid.NewGuid().ToString("D");
+        public string Database { get; } = EntityIds.New().ToString();
 
-        public Uri Document(string id) => new($"/v1/projects/{Project}/databases/canary/collections/items/documents/{id}", UriKind.Relative);
+        public Uri Document(string id) => new($"/v1/projects/{Project}/databases/canary/collections/items/documents/by-key?id={id}", UriKind.Relative);
 
         // A Management route under the canary's project.
         public Uri Management(string path) => new($"/v1/management/organizations/{Organization}/projects/{Project}/{path}", UriKind.Relative);
@@ -696,7 +697,7 @@ public sealed class CrossRegionTests
         // Sends a commit of one operation through api.
         public static Task<HttpResponseMessage> Commit(ManagementApi api, object op) =>
             api.Client.PostAsync(new Uri("/v1/management/commits", UriKind.Relative), new StringContent(
-                JsonSerializer.Serialize(new { id = Guid.NewGuid().ToString("D"), ops = new[] { op } }), Encoding.UTF8, "application/json"));
+                JsonSerializer.Serialize(new { id = EntityIds.New().ToString(), ops = new[] { op } }), Encoding.UTF8, "application/json"));
 
         // The answer of a region outside a database's placement: 421 wrong_region, naming its home and its regions.
         public static async Task WrongRegionAsync(Task<HttpResponseMessage> sending, string home, string regions)
@@ -736,10 +737,10 @@ public sealed class CrossRegionTests
         // An organization, project and database with chosen ids, in one commit.
         public static string Registration(string organization, string project, string? database, string name, params string[] replicas) => JsonSerializer.Serialize(new
         {
-            id = Guid.NewGuid().ToString("D"),
+            id = EntityIds.New().ToString(),
             ops = new object?[]
             {
-                new { op = "create_organization", id = organization, name = $"canary-{organization[..8]}" },
+                new { op = "create_organization", id = organization, name = $"canary-{organization}" },
                 new { op = "create_project", organization, id = project, name = "canary" },
                 database is null ? null : new { op = "create_database", organization, project, name, id = database, replica_regions = replicas },
             }.OfType<object>(),

@@ -46,10 +46,11 @@ are missing: check step 1.
 The check needs a database of its own (TS-660's in-region check owns its canary), at home in gru-1 with a replica in
 sfo-1 ([placement](../cross-region.md#placement)).
 
-1. Choose the ids once:
+1. Choose canonical ULIDs once, using the maintained `python-ulid` package in your tooling environment:
 
    ```sh
-   ORG=$(uuidgen | tr A-Z a-z) PROJECT=$(uuidgen | tr A-Z a-z) DB=$(uuidgen | tr A-Z a-z)
+   ulidgen() { python3 -c 'from ulid import ULID; print(ULID())'; }
+   ORG=$(ulidgen) PROJECT=$(ulidgen) DB=$(ulidgen) ACTOR=$(ulidgen)
    ```
 
 2. Register the organization and project in **both** regions under the **same** ids. On each region's catalog primary
@@ -57,12 +58,12 @@ sfo-1 ([placement](../cross-region.md#placement)).
 
    ```sh
    cat > project.json <<JSON
-   {"id":"$(uuidgen | tr A-Z a-z)","ops":[
+   {"id":"$(ulidgen)","ops":[
      {"op":"create_organization","id":"$ORG","name":"cross-region-canary"},
      {"op":"create_project","organization":"$ORG","id":"$PROJECT","name":"cross-region-canary"}]}
    JSON
    curl -s http://127.0.0.1:9464/v1/management/commits -H 'Content-Type: application/json' \
-     -H "Authorization: Bearer $(cat "$TERRABASE_MANAGEMENT_CREDENTIAL_FILE")" -H 'X-TerraBase-User-Id: terrabase-canary' -d @project.json
+     -H "Authorization: Bearer $(cat "$TERRABASE_MANAGEMENT_CREDENTIAL_FILE")" -H 'X-TerraBase-User-Id: $ACTOR' -d @project.json
    ```
 
    The credential is the file the member's `TERRABASE_MANAGEMENT_CREDENTIAL_FILE` names (read it from the process
@@ -72,8 +73,8 @@ sfo-1 ([placement](../cross-region.md#placement)).
 
    ```sh
    curl -s http://127.0.0.1:9464/v1/management/commits -H 'Content-Type: application/json' \
-     -H "Authorization: Bearer $(cat "$TERRABASE_MANAGEMENT_CREDENTIAL_FILE")" -H 'X-TerraBase-User-Id: terrabase-canary' \
-     -d "{\"id\":\"$(uuidgen | tr A-Z a-z)\",\"ops\":[{\"op\":\"create_database\",\"organization\":\"$ORG\",\"project\":\"$PROJECT\",
+     -H "Authorization: Bearer $(cat "$TERRABASE_MANAGEMENT_CREDENTIAL_FILE")" -H 'X-TerraBase-User-Id: $ACTOR' \
+     -d "{\"id\":\"$(ulidgen)\",\"ops\":[{\"op\":\"create_database\",\"organization\":\"$ORG\",\"project\":\"$PROJECT\",
           \"name\":\"cross-region-canary\",\"id\":\"$DB\",\"replica_regions\":[\"sfo-1\"]}]}"
    ```
 

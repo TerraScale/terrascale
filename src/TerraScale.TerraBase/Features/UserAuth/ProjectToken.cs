@@ -1,3 +1,4 @@
+using TerraBase.Primitives;
 namespace TerraBase.Features.UserAuth;
 
 /// <summary>Project grants from an already validated ts-auth access token; never populated from request headers.</summary>
@@ -9,7 +10,7 @@ public sealed record ProjectToken(string? ProjectId, string? Database, string? S
 {
     /// <summary>Whether the project and optional database restriction reach this route.</summary>
     public bool Reaches(string project, string database) =>
-        Guid.TryParseExact(ProjectId, "D", out var id) && id.ToString("D") == ProjectId && project == ProjectId
+        EntityIds.IsValid(ProjectId) && project == ProjectId
         && (Database is null || Database == database);
 
     /// <summary>Whether the token grants one exact scope.</summary>

@@ -37,8 +37,8 @@ decompression), not as native gRPC compression. This matches terrabase-rust
 - Every committed write transaction on a client database (never `_system`), whether or not
   `peer-addresses` is set, appends its puts and deletes to a `changes` table in the same SQLite
   transaction, numbered 1, 2, … under the database's existing `commit_offset.incarnation`: a
-  random UUID created with the file (document API schema v4), exposed through
-  `IDatabaseStore.Incarnation`. The wire origin is its 16 bytes in RFC order. Schema v7 adds the
+  ULID created with the file (document API schema v4), exposed through
+  `IDatabaseStore.Incarnation`. The wire origin is its 16 bytes in network byte order. Schema v7 adds the
   journal and applied-prefix tables without a second identity.
 - A captured transaction holds at most 1024 final document states and 2 MiB of UTF-8 collection, id and JSON
   bytes, checked before copying or replacing each final state; a larger one fails and its transaction cannot
@@ -105,7 +105,7 @@ become operationally relevant.
 ### Streams
 
 - One `Sync` stream per (peer, organization, project, database). `Hello` carries all three
-  tenant-qualified UUIDs as 16 bytes in RFC order; `project_id` is an additive field. Each
+  tenant-qualified ULIDs as 16 bytes in network byte order; `project_id` is an additive field. Each
   event and acknowledgment carries the same full identity, validated against the handshake.
   `Hello` carries the origin bytes in `member_id` and `member_incarnation`; there
   is no node-level member id until membership exists (TS-469).
@@ -123,7 +123,7 @@ become operationally relevant.
   an invalid batch.
 - Before releasing anything, the sender checks every `DurableAck`: the acknowledging peer from
   `Welcome`, the epoch, its database and origin, and a prefix between the last one and the last
-  group sent. It fails closed on a `Welcome` that selects anything but protocol 1.0, format and
+  group sent. It fails closed on a `Welcome` that selects anything but protocol 2.0, format and
   merge policy 1 and LZ4, or whose limits are not exactly the minimum of both sides.
 - One limit check (`ReplicationProtocol.CheckLimits`) runs on the sender before it writes a batch
   and on the receiver before it decodes one: gRPC message size, encoded and decoded bytes, changes

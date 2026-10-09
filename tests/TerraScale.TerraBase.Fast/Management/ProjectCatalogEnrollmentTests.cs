@@ -3,6 +3,7 @@ using System.Text.Json;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Management;
@@ -16,13 +17,13 @@ public sealed class ProjectCatalogEnrollmentTests
     {
         var faker = new Faker();
         await using var api = await ManagementApi.StartAsync();
-        var project = faker.Random.Guid().ToString();
+        var project = EntityIds.New().ToString();
         var organization = $"/v1/management/organizations/{project}";
         var legacyProject = organization + $"/projects/{project}";
         var legacyName = faker.Company.CompanyName();
         await JsonAsync(api.Client.PostAsJsonAsync(Uri("/v1/management/commits"), new
         {
-            id = faker.Random.Guid().ToString(),
+            id = EntityIds.New().ToString(),
             ops = new[] { new { op = "create_organization", id = project, name = legacyName } },
         }));
         using var legacyData = await api.CreateClientAsync(project, "documents:read", "documents:write");
@@ -32,7 +33,7 @@ public sealed class ProjectCatalogEnrollmentTests
             await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
         }
 
-        using var client = api.WithToken(api.Issuer.Mint("tsk_" + faker.Random.Guid().ToString("N"), token =>
+        using var client = api.WithToken(api.Issuer.Mint(EntityIds.New().ToString(), token =>
         {
             token.Claims["project_id"] = project;
             token.Claims["scope"] = "databases:read databases:write documents:read documents:write";
@@ -42,7 +43,7 @@ public sealed class ProjectCatalogEnrollmentTests
         var created = await JsonAsync(client.PostAsJsonAsync(Uri(databases), new { name = "main" }), HttpStatusCode.Created);
         var id = created.GetProperty("id").GetString();
         await JsonAsync(client.PostAsJsonAsync(Uri(database + "/collections"), new { name = "people" }), HttpStatusCode.Created);
-        var document = database + "/collections/people/documents/" + faker.Random.Guid();
+        var document = database + "/collections/people/documents/by-key?id=" + EntityIds.New();
         var name = faker.Name.FullName();
         await JsonAsync(client.PutAsJsonAsync(Uri(document), new { name }), HttpStatusCode.Created);
         await Assert.That((await JsonAsync(client.GetAsync(Uri(document)))).GetProperty("document").GetProperty("name").GetString()).IsEqualTo(name);
@@ -79,8 +80,8 @@ public sealed class ProjectCatalogEnrollmentTests
     {
         var faker = new Faker();
         await using var api = await ManagementApi.StartAsync();
-        var project = faker.Random.Guid().ToString();
-        var actor = faker.Random.Guid().ToString();
+        var project = EntityIds.New().ToString();
+        var actor = EntityIds.New().ToString();
         using var restricted = api.WithToken(api.Issuer.Mint(actor, token =>
         {
             token.Claims["project_id"] = project;

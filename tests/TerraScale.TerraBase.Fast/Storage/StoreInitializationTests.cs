@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using TerraBase.Configuration;
 using TerraBase.Engine.Sqlite;
 using TerraBase.Hosting;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -16,9 +17,9 @@ public sealed class StoreInitializationTests
     [Test]
     public async Task A_store_initializes_only_after_its_creator_released_the_creation_lock()
     {
-        var database = new TenantContext(Guid.NewGuid().ToString(), PlanTier.Hobby, Guid.NewGuid().ToString(), Guid.NewGuid().ToString());
+        var database = new TenantContext(EntityIds.New().ToString(), PlanTier.Hobby, EntityIds.New().ToString(), EntityIds.New().ToString());
         SqliteStorageEngine? engine = null;
-        var migratedUnderLock = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var bootstrappedUnderLock = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var server = await TerraBaseTestServer.StartAsync(services: services => services.AddSingleton(provider =>
         {
             var options = provider.GetRequiredService<TerraBaseOptions>();
@@ -28,23 +29,23 @@ public sealed class StoreInitializationTests
                 checkpoint: (step, tenant) =>
                 {
                     // Still inside the creation lock, right after the store's initialization was registered: one that
-                    // starts now would migrate while the lock is held. Wait until it did, or until it waits for the release.
+                    // starts now would bootstrap while the lock is held. Wait until it did, or until it waits for the release.
                     if (step == "open.registered" && tenant == database)
                     {
-                        SpinWait.SpinUntil(() => migratedUnderLock.Task.IsCompleted || engine!.InitializationsAwaitingRelease > 0, TimeSpan.FromSeconds(30));
+                        SpinWait.SpinUntil(() => bootstrappedUnderLock.Task.IsCompleted || engine!.InitializationsAwaitingRelease > 0, TimeSpan.FromSeconds(30));
                     }
                 },
-                afterMigration: store =>
+                afterBootstrap: store =>
                 {
                     if (store.Tenant == database)
                     {
-                        migratedUnderLock.TrySetResult(engine!.CreationHeld);
+                        bootstrappedUnderLock.TrySetResult(engine!.CreationHeld);
                     }
                 });
             return engine;
         }));
 
         await Assert.That(await engine!.CreateDatabaseAsync(database, CancellationToken.None)).IsTrue();
-        await Assert.That(await migratedUnderLock.Task).IsFalse();
+        await Assert.That(await bootstrappedUnderLock.Task).IsFalse();
     }
 }

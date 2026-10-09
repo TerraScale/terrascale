@@ -8,16 +8,53 @@ using TerraBase.Engine.Sqlite;
 using TerraBase.Fast.Documents;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.Alpha;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Replication;
 
-/// <summary>Legacy storage boundaries are enforced through the real mutual TLS repair listener.</summary>
+/// <summary>Stored-key boundaries are enforced through the real mutual TLS repair listener.</summary>
 public sealed class AntiEntropyBoundaryTests
 {
     [Test]
+    public async Task Repair_accepts_canonical_ULID_scopes_and_rejects_UUID_and_noncanonical_selectors(CancellationToken cancellationToken)
+    {
+        using var peerTls = new PeerTls();
+        using var clientTls = new ClientTls();
+        await using var server = await TerraBaseTestServer.StartAsync(settings => { peerTls.Apply(settings); clientTls.Apply(settings); });
+        var tenant = await ReplicationTenant.CreateAsync(server, ["repair"], cancellationToken);
+        using var channel = peerTls.CreateChannel(server.PeerAddress!);
+        var client = new AntiEntropy.AntiEntropyClient(channel);
+        var identity = new ShardIdentity { Organization = tenant.OrganizationId, Project = tenant.ProjectId, Database = tenant.Database("repair").DatabaseId! };
+        using (var accepted = client.DigestAsync(identity, cancellationToken: cancellationToken))
+        {
+            var digest = await accepted.ResponseAsync;
+            await Assert.That(digest.Incarnation.Length).IsEqualTo(16);
+            await Assert.That(digest.Origin.Length).IsEqualTo(16);
+        }
+
+        foreach (var id in new[] { "00000000-0000-7000-8000-000000000001", "01arz3ndektsv4rrffq69g5fa1", "81ARZ3NDEKTSV4RRFFQ69G5FA1" })
+        {
+            foreach (var selector in new[] { "organization", "project", "database" })
+            {
+                var invalid = identity.Clone();
+                switch (selector)
+                {
+                    case "organization": invalid.Organization = id; break;
+                    case "project": invalid.Project = id; break;
+                    case "database": invalid.Database = id; break;
+                }
+
+                using var rejected = client.DigestAsync(invalid, cancellationToken: cancellationToken);
+                var error = await Assert.ThrowsAsync<RpcException>(async () => await rejected.ResponseAsync);
+                await Assert.That(error!.StatusCode).IsEqualTo(StatusCode.InvalidArgument);
+            }
+        }
+    }
+
+    [Test]
     [Timeout(120_000)]
-    public async Task Legacy_invalid_keys_do_not_change_digests_or_hide_valid_live_and_deleted_states(CancellationToken cancellationToken)
+    public async Task Invalid_stored_keys_do_not_change_digests_or_hide_valid_live_and_deleted_states(CancellationToken cancellationToken)
     {
         using var peerTls = new PeerTls();
         using var clientTls = new ClientTls();
@@ -30,7 +67,7 @@ public sealed class AntiEntropyBoundaryTests
             collection.EnsureSuccessStatusCode();
         }
 
-        var ids = Enumerable.Range(0, 130).Select(i => $"00000000-0000-7000-8000-{i:x12}").ToArray();
+        var ids = Enumerable.Range(0, 130).Select(i => $"00000000000000{i:000000000000}").ToArray();
         var deleted = ids.Where((_, index) => index % 2 == 1).ToArray();
         var name = new Faker().Name.FullName();
         var transactions = new Uri($"{tenant.Path("repair")}/transactions", UriKind.Relative);
@@ -50,21 +87,21 @@ public sealed class AntiEntropyBoundaryTests
         var unicode = new string('\u754c', 256);
         await using var connection = new SqliteConnection(DocumentApi.ConnectionString(tenant.File(server, "repair")));
         await connection.OpenAsync(cancellationToken);
-        using (var legacy = connection.CreateCommand())
+        using (var malformed = connection.CreateCommand())
         {
-            legacy.CommandText = "INSERT INTO documents VALUES ('items', $id, 1, '{}');";
-            legacy.Parameters.AddWithValue("$id", unicode);
-            await legacy.ExecuteNonQueryAsync(cancellationToken);
+            malformed.CommandText = "INSERT INTO documents VALUES ('items', $id, 1, '{}');";
+            malformed.Parameters.AddWithValue("$id", unicode);
+            await malformed.ExecuteNonQueryAsync(cancellationToken);
         }
 
         using var channel = peerTls.CreateChannel(server.PeerAddress!);
         var client = new AntiEntropy.AntiEntropyClient(channel);
         var (identity, before) = await IdentityAsync(client, tenant, cancellationToken);
-        using (var legacy = connection.CreateCommand())
+        using (var malformed = connection.CreateCommand())
         {
             // More than a metadata page of managed-invalid keys still exercises empty continuations.
             // Sequence zero leaves the public journal's bilateral proofs unchanged.
-            legacy.CommandText = """
+            malformed.CommandText = """
                 WITH RECURSIVE numbers(n) AS (SELECT 0 UNION ALL SELECT n + 1 FROM numbers WHERE n < 129)
                 INSERT INTO documents SELECT 'items', '!' || replace(hex(zeroblob(252)), '00', 'd') || printf('%04d', n), 1, '{}' FROM numbers;
                 WITH RECURSIVE numbers(n) AS (SELECT 0 UNION ALL SELECT n + 1 FROM numbers WHERE n < 129)
@@ -83,12 +120,12 @@ public sealed class AntiEntropyBoundaryTests
                 INSERT INTO documents VALUES ($prefixCollection, 'live', 1, '{}');
                 INSERT INTO changes VALUES (0, 4232, $prefixCollection, 'deleted', 1, NULL);
                 """;
-            legacy.Parameters.AddWithValue("$short", ids[126] + new string('x', 221));
-            legacy.Parameters.AddWithValue("$edge", ids[127] + new string('x', 988));
-            legacy.Parameters.AddWithValue("$long", ids[128] + new string('x', 989));
-            legacy.Parameters.AddWithValue("$collection", new string('z', 64));
-            legacy.Parameters.AddWithValue("$prefixCollection", new string('!', 64));
-            await legacy.ExecuteNonQueryAsync(cancellationToken);
+            malformed.Parameters.AddWithValue("$short", ids[126] + new string('x', 257 - ids[126].Length));
+            malformed.Parameters.AddWithValue("$edge", ids[127] + new string('x', 1024 - ids[127].Length));
+            malformed.Parameters.AddWithValue("$long", ids[128] + new string('x', 1025 - ids[128].Length));
+            malformed.Parameters.AddWithValue("$collection", new string('z', 64));
+            malformed.Parameters.AddWithValue("$prefixCollection", new string('!', 64));
+            await malformed.ExecuteNonQueryAsync(cancellationToken);
         }
 
         using (var digestCall = client.DigestAsync(identity, cancellationToken: cancellationToken))
@@ -184,7 +221,7 @@ public sealed class AntiEntropyBoundaryTests
         }
 
         var id = DocumentApi.NewId();
-        using (var created = await writer.PutAsJsonAsync(new Uri($"{tenant.Path("repair")}/collections/items/documents/{id}", UriKind.Relative),
+        using (var created = await writer.PutAsJsonAsync(new Uri($"{tenant.Path("repair")}/collections/items/documents/by-key?id={id}", UriKind.Relative),
             new { name = new Faker().Name.FullName() }, cancellationToken))
         {
             created.EnsureSuccessStatusCode();
@@ -230,7 +267,7 @@ public sealed class AntiEntropyBoundaryTests
         using var call = client.DigestAsync(identity, cancellationToken: token);
         var digest = await call.ResponseAsync;
         identity.Incarnation = digest.Incarnation;
-        identity.Origin = ByteString.CopyFrom(Guid.NewGuid().ToByteArray(bigEndian: true));
+        identity.Origin = ByteString.CopyFrom(EntityIds.New().ToByteArray());
         identity.SourceProof = new JournalProof { Origin = identity.Origin, Digest = ByteString.CopyFrom(JournalDigest.Initial(identity.Origin.Span)) };
         identity.TargetProof = new JournalProof { Origin = digest.Origin, Digest = ByteString.CopyFrom(JournalDigest.Initial(digest.Origin.Span)) };
         return (identity, digest);

@@ -5,6 +5,7 @@ using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -109,10 +110,9 @@ internal sealed class DocumentApi : IAsyncDisposable
 
     /// <summary>
     /// Registers database <paramref name="name"/> in the tenant's project, then has the engine forget its store and
-    /// file and lets <paramref name="write"/> write a file of an older build at its path; the next request opens and
-    /// migrates that file. Returns the path.
+    /// file and lets <paramref name="write"/> write a fixture at its path; the next request opens that file. Returns the path.
     /// </summary>
-    public async Task<string> ReplaceWithOlderFileAsync(string name, Func<string, Task> write)
+    public async Task<string> ReplaceFileAsync(string name, Func<string, Task> write)
     {
         ArgumentNullException.ThrowIfNull(write);
         var created = await SendAsync(HttpMethod.Put, DatabasePath(name));
@@ -152,9 +152,9 @@ internal sealed class DocumentApi : IAsyncDisposable
     }.ToString();
 
     /// <summary>A new document id.</summary>
-    public static string NewId() => Guid.CreateVersion7().ToString();
+    public static string NewId() => EntityIds.New().ToString();
 
-    public string Document(string id) => $"{Documents}/{id}";
+    public string Document(string id) => $"{Documents}/by-key?id={Uri.EscapeDataString(id)}";
 
     /// <summary>A client for the same server and tenant with other scopes.</summary>
     public async Task<HttpClient> ClientWithScopesAsync(params string[] scopes) =>

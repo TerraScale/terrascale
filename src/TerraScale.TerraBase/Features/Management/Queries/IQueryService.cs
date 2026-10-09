@@ -53,7 +53,7 @@ public sealed record QueryFieldUsage(string Collection, string Field, long Queri
 }
 
 /// <summary>A named SQL statement saved in a project.</summary>
-/// <param name="Id">Lowercase hyphenated UUID.</param>
+/// <param name="Id">Canonical uppercase ULID.</param>
 /// <param name="Name">Display name.</param>
 /// <param name="Sql">The statement; valid when saved.</param>
 /// <param name="CreatedAt">Creation time.</param>

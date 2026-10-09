@@ -163,7 +163,7 @@ internal sealed class ForwardedRequests(TerraBaseOptions options, IHttpContextFa
             || request.Path.AsSpan().ContainsAny(Controls) || request.Query.AsSpan().ContainsAny(Controls) || request.Headers.Count > 256
             || request.Headers.Any(header => header.Name.Length == 0 || header.Name.AsSpan().ContainsAnyExcept(Token) || header.Value.AsSpan().ContainsAny(Controls)))
         {
-            throw new RpcException(new Status(StatusCode.InvalidArgument, "the forwarded request is not a valid HTTP request of protocol 1"));
+            throw new RpcException(new Status(StatusCode.InvalidArgument, "the forwarded request is not a valid HTTP request of protocol 2"));
         }
 
         return length;

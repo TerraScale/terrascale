@@ -5,6 +5,7 @@ using System.Text.Json.Nodes;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Management;
@@ -34,11 +35,11 @@ public sealed class ProjectBindingTests
         var faker = new Faker();
         await using var api = await ManagementApi.StartAsync(managementCredential: true);
         var organization = await api.CreateOrganizationAsync(faker.Company.CompanyName());
-        var project = faker.Random.Guid().ToString();
+        var project = EntityIds.New().ToString();
         var operation = new { op = "create_project", organization, id = project, name = faker.Company.CompanyName() };
         using (var denied = await api.Client.PostAsJsonAsync(Uri("/v1/management/commits"), new
         {
-            id = faker.Random.Guid().ToString(),
+            id = EntityIds.New().ToString(),
             ops = new[] { operation },
         }))
         {
@@ -54,7 +55,7 @@ public sealed class ProjectBindingTests
         using (var service = api.Service(api.User))
         using (var seeded = await service.PostAsJsonAsync(Uri("/v1/management/commits"), new
         {
-            id = faker.Random.Guid().ToString(),
+            id = EntityIds.New().ToString(),
             ops = new[] { operation },
         }))
         {
@@ -69,8 +70,8 @@ public sealed class ProjectBindingTests
         using var written = await legacy.PutAsJsonAsync(Uri(document), new { name });
         await Assert.That(written.StatusCode).IsEqualTo(HttpStatusCode.Created);
 
-        var authorityOrganization = faker.Random.Guid().ToString();
-        var victim = faker.Random.Guid().ToString();
+        var authorityOrganization = EntityIds.New().ToString();
+        var victim = EntityIds.New().ToString();
         var victimSignIn = api.Issuer.Mint(victim);
         api.Issuer.GrantProject(victimSignIn, authorityOrganization, project);
         using var victimOwner = api.WithToken(victimSignIn);
@@ -110,11 +111,11 @@ public sealed class ProjectBindingTests
         var name = faker.Name.FullName();
         using var written = await legacy.PutAsJsonAsync(Uri(document), new { name });
         await Assert.That(written.StatusCode).IsEqualTo(HttpStatusCode.Created);
-        using var jwt = api.WithToken(ProjectToken(api.Issuer, "tsk_" + faker.Random.Guid().ToString("N"), database.Project));
+        using var jwt = api.WithToken(ProjectToken(api.Issuer, EntityIds.New().ToString(), database.Project));
         await InaccessibleAsync(jwt, database);
 
         // A separate ts-auth organization proves the binding does not depend on equal legacy/auth organization IDs.
-        var authorityOrganization = faker.Random.Guid().ToString();
+        var authorityOrganization = EntityIds.New().ToString();
         var signIn = api.Issuer.Mint(api.User);
         api.Issuer.GrantProject(signIn, authorityOrganization, database.Project);
         using var owner = api.WithToken(signIn);
@@ -129,7 +130,7 @@ public sealed class ProjectBindingTests
         await Assert.That((await JsonAsync(legacy.GetAsync(Uri(document)))).GetProperty("document").GetProperty("name").GetString()).IsEqualTo(name);
         await Assert.That((await JsonAsync(api.Client.GetAsync(Uri(database.Path)))).GetProperty("id").GetString()).IsEqualTo(database.Id);
 
-        var otherAuthorityOrganization = faker.Random.Guid().ToString();
+        var otherAuthorityOrganization = EntityIds.New().ToString();
         api.Issuer.GrantProject(signIn, otherAuthorityOrganization, database.Project);
         await BindingStatusAsync(owner, database.Organization, database.Project, otherAuthorityOrganization, HttpStatusCode.Conflict);
         await StatusAsync(jwt.GetAsync(Uri(document)), HttpStatusCode.OK);
@@ -169,13 +170,13 @@ public sealed class ProjectBindingTests
         var faker = new Faker();
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
-        var authorityOrganization = faker.Random.Guid().ToString();
+        var authorityOrganization = EntityIds.New().ToString();
         var authority = new TestIssuer.ProjectAuthority(database.Project, authorityOrganization);
         authority = response switch
         {
             "role" => authority with { Role = "viewer" },
-            "project" => authority with { Id = faker.Random.Guid().ToString() },
-            "organization" => authority with { OrganizationId = faker.Random.Guid().ToString() },
+            "project" => authority with { Id = EntityIds.New().ToString() },
+            "organization" => authority with { OrganizationId = EntityIds.New().ToString() },
             "unauthorized" => authority with { Status = HttpStatusCode.Unauthorized },
             "forbidden" => authority with { Status = HttpStatusCode.Forbidden },
             "missing" => authority with { Status = HttpStatusCode.NotFound },
@@ -203,7 +204,7 @@ public sealed class ProjectBindingTests
         var faker = new Faker();
         await using var api = await ManagementApi.StartAsync(managementCredential: true);
         var database = await api.CreateManagedDatabaseAsync();
-        var authorityOrganization = faker.Random.Guid().ToString();
+        var authorityOrganization = EntityIds.New().ToString();
         var unpublished = api.Issuer.AddKey(Microsoft.IdentityModel.Tokens.SecurityAlgorithms.EcdsaSha256, publish: false);
         var token = api.Issuer.Mint(api.User, descriptor =>
         {
@@ -244,7 +245,7 @@ public sealed class ProjectBindingTests
             tls.Apply(settings);
             TestIssuer.Configure(settings);
         }, authorityServer.Route);
-        var user = faker.Random.Guid().ToString();
+        var user = EntityIds.New().ToString();
         var token = issuer.Mint(user);
         using var owner = tls.CreateClient(server.ClientAddress!, token);
         var organization = (await JsonAsync(owner.PostAsJsonAsync(Uri("/v1/management/organizations"), new { name = faker.Company.CompanyName() }),
@@ -254,8 +255,8 @@ public sealed class ProjectBindingTests
         var id = (await JsonAsync(owner.PostAsJsonAsync(Uri(ProjectPath(organization, project) + "/databases"), new { name = "main" }),
             HttpStatusCode.Created)).GetProperty("id").GetString()!;
         var database = new ManagedDatabaseRef(organization, project, id, "main");
-        var authorityOrganization = faker.Random.Guid().ToString();
-        var redirectedProject = faker.Random.Guid().ToString();
+        var authorityOrganization = EntityIds.New().ToString();
+        var redirectedProject = EntityIds.New().ToString();
         var redirect = new Uri($"https://auth.test/v1/terrascale/organizations/{authorityOrganization}/projects/{redirectedProject}");
         issuer.GrantProject(token, authorityOrganization, project,
             new TestIssuer.ProjectAuthority(project, authorityOrganization, Status: HttpStatusCode.Found, Redirect: redirect));
@@ -278,7 +279,7 @@ public sealed class ProjectBindingTests
         var directory = Directory.CreateTempSubdirectory("terrabase-project-binding-").FullName;
         using var issuer = new TestIssuer();
         var faker = new Faker();
-        var user = faker.Random.Guid().ToString();
+        var user = EntityIds.New().ToString();
         var signIn = issuer.Mint(user);
         ManagedDatabaseRef database;
         string document;
@@ -312,7 +313,7 @@ public sealed class ProjectBindingTests
                     {
                         case "issuer": binding["issuer"] = "https://auth.test/other"; break;
                         case "version": binding["version"] = 2; break;
-                        case "organization": binding["organizationId"] = faker.Random.Guid().ToString(); break;
+                        case "organization": binding["organizationId"] = EntityIds.New().ToString(); break;
                         default: throw new ArgumentOutOfRangeException(nameof(persisted));
                     }
 
@@ -322,7 +323,7 @@ public sealed class ProjectBindingTests
             }
 
             await using var restarted = await ManagementApi.StartAsync(settings => settings["data-directory"] = directory, issuer.Route);
-            using var jwt = restarted.WithToken(ProjectToken(issuer, "tsk_" + faker.Random.Guid().ToString("N"), database.Project));
+            using var jwt = restarted.WithToken(ProjectToken(issuer, EntityIds.New().ToString(), database.Project));
             if (persisted == "valid")
             {
                 using var read = await jwt.GetAsync(Uri(document));

@@ -25,7 +25,7 @@ namespace TerraBase.Features.Replication;
 internal sealed partial class ReplicationSender(
     IStorageEngine engine, ITenantDirectory tenants, PeerCredentials credentials, TerraBaseOptions options, ReplicationMetrics metrics, ILogger<ReplicationSender> logger,
     TimeProvider time, IUsageMeter usage)
-    : BackgroundService, IReplicationWait, IReplicationStatus
+    : BackgroundService, IReplicationWait, IReplicationStatus, IReplicationPressure
 {
     // Groups one stream sends before the database goes to the back of the queue, so a database that is
     // written as fast as it replicates cannot starve the others.
@@ -50,10 +50,37 @@ internal sealed partial class ReplicationSender(
     // ponytail: one signal wakes every waiting write; per-database signals if many concurrent writers wake each other.
     private TaskCompletionSource _progress = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    private readonly record struct DatabaseIncarnation(string Organization, string Project, string Database, Guid Origin)
+    private readonly record struct DatabaseIncarnation(string Organization, string Project, string Database, Ulid Origin)
     {
         public TenantContext Tenant => new(Organization, PlanTier.Hobby, Project, Database);
     }
+
+    public long? SenderDurableLagSeq
+    {
+        get
+        {
+            lock (_state)
+            {
+                return Volatile.Read(ref _initialized) == 0 ? null : DurableLag();
+            }
+        }
+    }
+
+    private long DurableLag()
+    {
+        lock (_state)
+        {
+            var total = 0L;
+            foreach (var peer in _peers)
+            {
+                total = SaturatingAdd(total, peer.Lag());
+            }
+
+            return total;
+        }
+    }
+
+    private static long SaturatingAdd(long total, long value) => total > long.MaxValue - value ? long.MaxValue : total + value;
 
     public ReplicationStatus Snapshot()
     {
@@ -72,7 +99,7 @@ internal sealed partial class ReplicationSender(
             () => DatabaseMeasurements(status => status.Diverged ? 1 : 0),
             () => DatabaseMeasurements(status => status.CatchupSeconds),
             PeerLagMeasurements, OmittedDatabases);
-        metrics.ObserveDurableLag(() => Volatile.Read(ref _peers).Sum(peer => peer.Lag()), () => Volatile.Read(ref _initialized));
+        metrics.ObserveDurableLag(DurableLag, () => Volatile.Read(ref _initialized));
         // Here, not in ExecuteAsync (which runs later on the thread pool): hosted services start before the server listens,
         // so every client write commits after its peers exist and its head is tracked, and write-wait covers it.
         var peers = new List<Peer>();
@@ -97,7 +124,7 @@ internal sealed partial class ReplicationSender(
         return base.StartAsync(cancellationToken);
     }
 
-    // The container disposes it once per registration (the sender, IReplicationWait and IHostedService).
+    // The container disposes it once per registration (the sender, its interfaces and IHostedService).
     public override void Dispose()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
@@ -274,7 +301,10 @@ internal sealed partial class ReplicationSender(
 
         // A failed database stays in durable discovery, without an unbounded in-memory retry queue.
         metrics.Discovered();
-        Volatile.Write(ref _initialized, complete ? 1 : 0);
+        lock (_state)
+        {
+            Volatile.Write(ref _initialized, complete ? 1 : 0);
+        }
     }
 
     private async Task ReconcileAsync(List<Peer> peers, CancellationToken stoppingToken)
@@ -397,7 +427,7 @@ internal sealed partial class ReplicationSender(
 
         var welcome = opening.Welcome
             ?? throw new InvalidDataException("the peer did not answer Hello with Welcome");
-        // Fail closed on anything but what Hello offered: protocol 1.0, format and merge policy 1, LZ4, this
+        // Fail closed on anything but what Hello offered: protocol 2.0, format and merge policy 1, LZ4, this
         // database in this epoch, and the minimum of both sides' limits, which both sides then enforce.
         if (!ReplicationProtocol.Accepts(welcome, database))
         {
@@ -409,7 +439,7 @@ internal sealed partial class ReplicationSender(
         var peerMember = welcome.LocalIdentity;
         var peerRegion = peerMember.Region;
         peer.Region = peerRegion;
-        var receiverIncarnation = new Guid(peerMember.MemberIncarnation.Span, bigEndian: true);
+        var receiverIncarnation = new Ulid(peerMember.MemberIncarnation.Span);
 
         progress.CancelAfter(ReplicationProtocol.ProgressTimeout);
 
@@ -866,7 +896,7 @@ internal sealed partial class ReplicationSender(
         // Only the latest receiving incarnation is retained; Welcome retires its predecessor's prefix.
         // LastVerified survives handshakes and slot promotion; Prefix/Receiver remain trusted only after validation.
         // Unresolved conflicts are retained here even when the database has no observation slot.
-        private readonly Dictionary<DatabaseIncarnation, (Guid? Receiver, long Prefix, long LastVerified, bool Diverged)> _acknowledged = [];
+        private readonly Dictionary<DatabaseIncarnation, (Ulid? Receiver, long Prefix, long LastVerified, bool Diverged)> _acknowledged = [];
 
         public int Number => number;
 
@@ -937,7 +967,7 @@ internal sealed partial class ReplicationSender(
             }
         }
 
-        public void Welcomed(DatabaseIncarnation database, Guid receiver, long prefix)
+        public void Welcomed(DatabaseIncarnation database, Ulid receiver, long prefix)
         {
             lock (state)
             {
@@ -961,7 +991,7 @@ internal sealed partial class ReplicationSender(
             }
         }
 
-        public void Acknowledged(DatabaseIncarnation database, Guid receiver, long prefix)
+        public void Acknowledged(DatabaseIncarnation database, Ulid receiver, long prefix)
         {
             lock (state)
             {
@@ -995,7 +1025,13 @@ internal sealed partial class ReplicationSender(
         {
             lock (state)
             {
-                return heads.Sum(head => Math.Max(0, head.Value - _acknowledged.GetValueOrDefault(head.Key).Prefix));
+                var total = 0L;
+                foreach (var head in heads)
+                {
+                    total = SaturatingAdd(total, Math.Max(0, head.Value - _acknowledged.GetValueOrDefault(head.Key).Prefix));
+                }
+
+                return total;
             }
         }
 

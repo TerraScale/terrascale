@@ -104,7 +104,7 @@ The current mapping is:
   false `version <= S` term): its revisions are never read, the filter never runs, and it is not a
   step, so later writes cannot change a page, its boundaries or its ETag. The walk stops at the
   highest id at `S` (one `change_log_high` seek per page), so ids appended after `S` in id order,
-  such as server-generated UUIDv7s, are never visited. Later ids that sort between `S`'s ids
+  such as server-generated ULIDs, are never visited. Later ids that sort between `S`'s ids
   (client-chosen ones) are passed over: a page passes over at most 50000 of them; beyond, it
   answers `409 must_refetch`: the snapshot is too old to read within bounded work, and a restart at
   `-1` snapshots the head. `S` is checked

@@ -5,6 +5,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Management;
@@ -28,8 +29,8 @@ public sealed class SavedQueryApiTests
         });
         var database = await api.CreateManagedDatabaseAsync();
         var queries = $"{database.ProjectPath}/saved-queries";
-        var unknownProject = $"/v1/management/organizations/{database.Organization}/projects/{Guid.NewGuid()}";
-        var unknownDatabase = $"{database.ProjectPath}/databases/{Guid.NewGuid()}";
+        var unknownProject = $"/v1/management/organizations/{database.Organization}/projects/{EntityIds.New()}";
+        var unknownDatabase = $"{database.ProjectPath}/databases/{EntityIds.New()}";
         using var created = await api.Client.PostAsJsonAsync(Uri(queries), new { name = "All", sql = "SELECT * FROM people" });
         var id = (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString();
         using var viewer = api.As(await api.AddMemberAsync(api.Client, database.Organization, "viewer"));
@@ -40,10 +41,10 @@ public sealed class SavedQueryApiTests
         await ErrorAssert.ErrorAsync(api.Client.PostAsJsonAsync(Uri($"{unknownProject}/saved-queries"), new { name = "All", sql = "SELECT * FROM people" }), HttpStatusCode.NotFound, "not_found");
         await ErrorAssert.ErrorAsync(api.Client.GetAsync(Uri($"{unknownProject}/saved-queries")), HttpStatusCode.NotFound, "not_found");
         await ErrorAssert.ErrorAsync(api.Client.GetAsync(Uri($"{queries}?limit=0")), HttpStatusCode.BadRequest, "invalid_request", "limit must be an integer between 1 and 100");
-        await ErrorAssert.ErrorAsync(api.Client.GetAsync(Uri($"{queries}/{Guid.NewGuid()}")), HttpStatusCode.NotFound, "not_found");
+        await ErrorAssert.ErrorAsync(api.Client.GetAsync(Uri($"{queries}/{EntityIds.New()}")), HttpStatusCode.NotFound, "not_found");
         await ErrorAssert.ErrorAsync(api.Client.GetAsync(Uri($"{unknownProject}/saved-queries/{id}")), HttpStatusCode.NotFound, "not_found");
-        await ErrorAssert.ErrorAsync(api.Client.PutAsJsonAsync(Uri($"{queries}/{Guid.NewGuid()}"), new { name = "All", sql = "SELECT * FROM people" }), HttpStatusCode.NotFound, "not_found");
-        await ErrorAssert.ErrorAsync(api.Client.DeleteAsync(Uri($"{queries}/{Guid.NewGuid()}")), HttpStatusCode.NotFound, "not_found");
+        await ErrorAssert.ErrorAsync(api.Client.PutAsJsonAsync(Uri($"{queries}/{EntityIds.New()}"), new { name = "All", sql = "SELECT * FROM people" }), HttpStatusCode.NotFound, "not_found");
+        await ErrorAssert.ErrorAsync(api.Client.DeleteAsync(Uri($"{queries}/{EntityIds.New()}")), HttpStatusCode.NotFound, "not_found");
         await ErrorAssert.ErrorAsync(viewer.PostAsJsonAsync(Uri(queries), new { name = "All", sql = "SELECT * FROM people" }), HttpStatusCode.Forbidden, "forbidden_role", RoleTooLow);
         await ErrorAssert.ErrorAsync(viewer.PutAsJsonAsync(Uri($"{queries}/{id}"), new { name = "All", sql = "SELECT * FROM people" }), HttpStatusCode.Forbidden, "forbidden_role", RoleTooLow);
         await ErrorAssert.ErrorAsync(viewer.DeleteAsync(Uri($"{queries}/{id}")), HttpStatusCode.Forbidden, "forbidden_role", RoleTooLow);
@@ -277,8 +278,8 @@ public sealed class SavedQueryApiTests
         var body = new { name = "Query", sql = "SELECT * FROM people" };
         string[] projects =
         [
-            $"/v1/management/organizations/{Guid.NewGuid()}/projects/{database.Project}",
-            $"/v1/management/organizations/{database.Organization}/projects/{Guid.NewGuid()}",
+            $"/v1/management/organizations/{EntityIds.New()}/projects/{database.Project}",
+            $"/v1/management/organizations/{database.Organization}/projects/{EntityIds.New()}",
         ];
 
         foreach (var project in projects)
@@ -292,7 +293,7 @@ public sealed class SavedQueryApiTests
             await Assert.That(statuses.All(status => status == HttpStatusCode.NotFound)).IsTrue().Because(project);
         }
 
-        using var unknownQuery = await api.Client.GetAsync(Uri($"{database.ProjectPath}/saved-queries/{Guid.NewGuid()}"));
+        using var unknownQuery = await api.Client.GetAsync(Uri($"{database.ProjectPath}/saved-queries/{EntityIds.New()}"));
         using var kept = await api.Client.GetAsync(Uri($"{database.ProjectPath}/saved-queries/{id}"));
         await Assert.That(unknownQuery.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(kept.StatusCode).IsEqualTo(HttpStatusCode.OK);

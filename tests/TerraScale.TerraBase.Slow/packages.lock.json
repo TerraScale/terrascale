@@ -654,6 +654,7 @@
           "Microsoft.Data.Sqlite": "[11.0.0-rc.1.26425.128, )",
           "Microsoft.IdentityModel.Protocols.OpenIdConnect": "[8.23.0, )",
           "NATS.Client.KeyValueStore": "[3.3.0, )",
+          "NUlid": "[1.7.3, )",
           "NativeCompressions": "[0.6.1, )",
           "OpenTelemetry.Exporter.Prometheus.AspNetCore": "[1.15.3-beta.1, )",
           "OpenTelemetry.Extensions.Hosting": "[1.15.3, )",
@@ -872,6 +873,12 @@
         "dependencies": {
           "NATS.Client.JetStream": "3.3.0"
         }
+      },
+      "NUlid": {
+        "type": "CentralTransitive",
+        "requested": "[1.7.3, )",
+        "resolved": "1.7.3",
+        "contentHash": "AXxv7eF+3REXlGLojlN4zXzvesgxiC0/Jq66Qn5L+hhw+NBCK60douGZBI+6ZTAZHRE2xg7AyCEj8cqCKp/U5w=="
       },
       "OpenTelemetry.Exporter.Prometheus.AspNetCore": {
         "type": "CentralTransitive",

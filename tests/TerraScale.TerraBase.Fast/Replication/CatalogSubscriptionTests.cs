@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
 using TerraBase.Hosting;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -27,7 +28,7 @@ public sealed class CatalogSubscriptionTests
         var organization = await primary.CreateOrganizationAsync(faker.Company.CompanyName());
         var project = await primary.CreateProjectAsync(organization, "main");
         await primary.VerifyProjectBindingAsync(organization, project);
-        var database = new TenantContext(organization, PlanTier.Hobby, project, faker.Random.Guid().ToString("D"));
+        var database = new TenantContext(organization, PlanTier.Hobby, project, EntityIds.New().ToString());
         // The region's catalog primary records a database served elsewhere, as WAN discovery does: no local file.
         await Assert.That(await primary.Server.Services.GetRequiredService<ITenantDirectory>()
             .AdoptDatabaseAsync(database, "orders", new DatabasePlacement("gru-1", [], 1), deadline.Token)).IsEqualTo(DatabaseAdoption.Registered);
@@ -72,14 +73,14 @@ public sealed class CatalogSubscriptionTests
         foreach (var (grantProject, grantDatabase, scope, expired, status, code) in new[]
         {
             (project, "orders", "shapes:read", false, HttpStatusCode.MisdirectedRequest, "wrong_region"),
-            (faker.Random.Guid().ToString("D"), "orders", "shapes:read", false, HttpStatusCode.NotFound, "unknown_database"),
+            (EntityIds.New().ToString(), "orders", "shapes:read", false, HttpStatusCode.NotFound, "unknown_database"),
             (project, "other", "shapes:read", false, HttpStatusCode.NotFound, "unknown_database"),
             (project, "orders", "documents:read", false, HttpStatusCode.Forbidden, "forbidden_scope"),
             (project, "orders", "shapes:read", true, HttpStatusCode.Unauthorized, "unauthorized"),
         })
         {
             // The subject is not a catalog member; only the signed project/database grants authorize this route.
-            using var client = primary.Tls.CreateClient(follower.ClientAddress!, primary.Issuer.Mint(faker.Random.Guid().ToString("D"), token =>
+            using var client = primary.Tls.CreateClient(follower.ClientAddress!, primary.Issuer.Mint(EntityIds.New().ToString(), token =>
             {
                 token.Claims["project_id"] = grantProject;
                 token.Claims["database"] = grantDatabase;

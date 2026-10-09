@@ -6,9 +6,15 @@ namespace TerraBase.Features.Pressure;
 public sealed record PressureBody
 {
     /// <summary>Wire schema version.</summary>
-    [JsonPropertyName("schema")] public int Schema => 1;
+    [JsonPropertyName("schema")] public int Schema => 2;
     /// <summary>Operator node identity.</summary>
     [JsonPropertyName("node")] public required string Node { get; init; }
+    /// <summary>Cloud instance identity supplied by the operator; null when unconfigured.</summary>
+    [JsonPropertyName("instance_id")] public string? InstanceId { get; init; }
+    /// <summary>Local serving readiness using the same checks as /readyz, not member catch-up.</summary>
+    [JsonPropertyName("local_ready")] public bool? LocalReady { get; init; }
+    /// <summary>Outgoing local-origin groups not durably acknowledged by configured peers; not incoming lag.</summary>
+    [JsonPropertyName("sender_durable_lag_seq")] public long? SenderDurableLagSeq { get; init; }
     /// <summary>Membership readiness is not implemented.</summary>
     [JsonPropertyName("state")] public string State => "unknown";
     /// <summary>Unique identifier for this host incarnation.</summary>
@@ -41,8 +47,8 @@ public sealed record PressureBody
     [JsonPropertyName("request_rate")] public double RequestRate { get; init; }
     /// <summary>I/O admission queue measurement is unavailable until #13.</summary>
     [JsonPropertyName("io_queue_depth")] public double? IoQueueDepth => null;
-    /// <summary>I/O admitted operation count is unavailable until #13.</summary>
-    [JsonPropertyName("io_admitted_count")] public long? IoAdmittedCount => null;
+    /// <summary>Current admitted storage operations; null when storage admission is closed.</summary>
+    [JsonPropertyName("io_admitted_count")] public long? IoAdmittedCount { get; init; }
     /// <summary>Approximate interval p95 HTTP latency in milliseconds.</summary>
     [JsonPropertyName("p95_latency_ms")] public double P95LatencyMs { get; init; }
     /// <summary>Member load counters; unavailable fields remain explicit null.</summary>
@@ -50,7 +56,7 @@ public sealed record PressureBody
     /// <summary>Per-listener completed request rates, latencies and cumulative counts.</summary>
     [JsonPropertyName("listeners")] public required IReadOnlyList<ListenerPressure> Listeners { get; init; }
     /// <summary>Top ten observed organizations by authenticated API-key request rate.</summary>
-    [JsonPropertyName("top_tenants")] public required IReadOnlyList<TenantPressure> TopTenants { get; init; }
+    [JsonPropertyName("top_organizations")] public required IReadOnlyList<TenantPressure> TopTenants { get; init; }
     /// <summary>Requests omitted from tenant ranking when its bounded tracking table is full.</summary>
     [JsonPropertyName("untracked_tenant_requests")] public long UntrackedTenantRequests { get; init; }
     /// <summary>Cached physical bytes of tenant database files and their sidecars.</summary>
@@ -58,7 +64,7 @@ public sealed record PressureBody
     /// <summary>UTC time of the independent storage file-metadata sample.</summary>
     [JsonPropertyName("storage_sampled_at")] public DateTimeOffset? StorageSampledAt { get; init; }
     /// <summary>Top ten organizations by cached physical database file bytes.</summary>
-    [JsonPropertyName("top_tenants_by_storage")] public required IReadOnlyList<TenantStoragePressure> TopTenantsByStorage { get; init; }
+    [JsonPropertyName("top_organizations_by_storage")] public required IReadOnlyList<TenantStoragePressure> TopTenantsByStorage { get; init; }
 }
 
 /// <summary>Operational member load; unknown fields are not lifecycle evidence.</summary>
@@ -86,7 +92,7 @@ public sealed record ListenerPressure(
     [property: JsonPropertyName("requests_total")] long RequestsTotal);
 
 /// <summary>One organization's request rate. CPU attribution is unavailable.</summary>
-/// <param name="Org">Organization UUID from an authenticated API key.</param>
+/// <param name="Org">Organization ULID from an authenticated API key.</param>
 /// <param name="RequestRate">Completed requests per second.</param>
 /// <param name="Plan">Last plan resolved by an endpoint in this interval, or null when unresolved.</param>
 public sealed record TenantPressure(
@@ -99,7 +105,7 @@ public sealed record TenantPressure(
 }
 
 /// <summary>Physical storage of one organization.</summary>
-/// <param name="Org">Organization UUID.</param>
+/// <param name="Org">Organization ULID.</param>
 /// <param name="Bytes">SQLite file and sidecar bytes, not logical document size.</param>
 public sealed record TenantStoragePressure(
     [property: JsonPropertyName("org")] string Org,

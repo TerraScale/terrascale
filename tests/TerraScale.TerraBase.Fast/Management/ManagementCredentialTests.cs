@@ -1,9 +1,9 @@
 using System.Collections.Concurrent;
 using System.Net;
 using System.Text.Json;
-using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Management;
@@ -18,7 +18,6 @@ public sealed class ManagementCredentialTests
     private const string UserHeader = "X-TerraBase-User-Id";
     private const string Organizations = "/v1/management/organizations";
 
-    private static readonly Faker Faker = new();
 
     [Test]
     public async Task The_credential_bootstraps_organizations_on_the_admin_listener_before_ts_auth_answers()
@@ -35,7 +34,7 @@ public sealed class ManagementCredentialTests
                 settings["management-credential-file"] = credential.Path;
             },
             issuer.Route);
-        var user = Faker.Random.Guid().ToString();
+        var user = EntityIds.New().ToString();
 
         using var created = await SendAsync(server.Client, HttpMethod.Post, Organizations, Credential, user, new { name = "terrascale" });
         var organization = await created.Content.ReadFromJsonAsync<JsonElement>();
@@ -55,7 +54,7 @@ public sealed class ManagementCredentialTests
         using var credential = new CredentialFile(Credential);
         await using var api = await ManagementApi.StartAsync(settings => settings["management-credential-file"] = credential.Path);
         using var client = api.WithToken(null);
-        var user = Faker.Random.Guid().ToString();
+        var user = EntityIds.New().ToString();
 
         using var onAdmin = await SendAsync(api.Server.Client, HttpMethod.Get, Organizations, Credential, user);
         using var onClient = await SendAsync(client, HttpMethod.Get, Organizations, Credential, user);
@@ -74,9 +73,9 @@ public sealed class ManagementCredentialTests
         // TS-535: the TS-529 bootstrap hands the organization it created to a person, before ts-auth exists.
         using var credential = new CredentialFile(Credential);
         await using var server = await TerraBaseTestServer.StartAsync(settings => settings["management-credential-file"] = credential.Path);
-        var bootstrap = Faker.Random.Guid().ToString();
-        var user = Faker.Random.Guid().ToString();
-        var email = $"{Faker.Random.Guid():N}@example.com";
+        var bootstrap = EntityIds.New().ToString();
+        var user = EntityIds.New().ToString();
+        var email = $"{EntityIds.New()}@example.com";
         using var created = await SendAsync(server.Client, HttpMethod.Post, Organizations, Credential, bootstrap, new { name = "terrascale" });
         var organization = $"{Organizations}/{(await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()}";
 
@@ -117,10 +116,10 @@ public sealed class ManagementCredentialTests
     {
         using var credential = new CredentialFile(Credential);
         await using var server = await TerraBaseTestServer.StartAsync(settings => settings["management-credential-file"] = credential.Path);
-        var owner = Faker.Random.Guid().ToString();
-        var member = Faker.Random.Guid().ToString();
-        var user = Faker.Random.Guid().ToString();
-        var email = $"{Faker.Random.Guid():N}@example.com";
+        var owner = EntityIds.New().ToString();
+        var member = EntityIds.New().ToString();
+        var user = EntityIds.New().ToString();
+        var email = $"{EntityIds.New()}@example.com";
         using var created = await SendAsync(server.Client, HttpMethod.Post, Organizations, Credential, owner, new { name = "terrascale" });
         var organization = $"{Organizations}/{(await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()}";
         using var added = await SendAsync(server.Client, HttpMethod.Put, $"{organization}/members/{member}", Credential, owner, new { email });
@@ -141,7 +140,7 @@ public sealed class ManagementCredentialTests
         await Assert.That(invalidEmail.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
         await Assert.That(await ErrorAsync(invalidEmail)).IsEqualTo(("invalid_request", "email must be one address of at most 254 characters"));
         await Assert.That(invalidUser.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-        await Assert.That(await ErrorAsync(invalidUser)).IsEqualTo(("invalid_request", "user must be 1 to 256 characters without control characters"));
+        await Assert.That(await ErrorAsync(invalidUser)).IsEqualTo(("invalid_request", "user must be a canonical uppercase ULID"));
         await Assert.That(users).IsEquivalentTo([owner, member]);
     }
 
@@ -152,8 +151,8 @@ public sealed class ManagementCredentialTests
         await using var api = await ManagementApi.StartAsync(settings => settings["management-credential-file"] = credential.Path);
         using var anonymous = api.WithToken(null);
         var organization = $"{Organizations}/{await api.CreateOrganizationAsync("Public")}";
-        var path = $"{organization}/members/{Faker.Random.Guid()}";
-        var body = new { email = $"{Faker.Random.Guid():N}@example.com" };
+        var path = $"{organization}/members/{EntityIds.New()}";
+        var body = new { email = $"{EntityIds.New()}@example.com" };
 
         // The owner's own valid token, and the credential, are both refused there.
         using var withToken = await api.Client.PutAsJsonAsync(ManagementApi.Uri(path), body);
@@ -172,7 +171,7 @@ public sealed class ManagementCredentialTests
     {
         using var credential = new CredentialFile(Credential);
         await using var server = await TerraBaseTestServer.StartAsync(settings => settings["management-credential-file"] = credential.Path);
-        var user = Faker.Random.Guid().ToString();
+        var user = EntityIds.New().ToString();
         (string? Bearer, string[] Users)[] refused =
         [
             (null, [user]),
@@ -181,6 +180,10 @@ public sealed class ManagementCredentialTests
             (Credential, []),
             (Credential, [new string('u', 257)]),
             (Credential, ["bad\u0001user"]),
+            (Credential, ["00112233-4455-6677-8899-aabbccddeeff"]),
+            (Credential, ["01arz3ndektsv4rrffq69g5fav"]),
+            (Credential, ["01ARZ3NDEKTSV4RRFFQ69G5FAI"]),
+            (Credential, ["81ARZ3NDEKTSV4RRFFQ69G5FAV"]),
         ];
 
         var statuses = new List<HttpStatusCode>();
@@ -198,7 +201,7 @@ public sealed class ManagementCredentialTests
     {
         await using var server = await TerraBaseTestServer.StartAsync();
 
-        using var response = await SendAsync(server.Client, HttpMethod.Get, Organizations, Credential, Faker.Random.Guid().ToString());
+        using var response = await SendAsync(server.Client, HttpMethod.Get, Organizations, Credential, EntityIds.New().ToString());
 
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
     }
@@ -211,7 +214,7 @@ public sealed class ManagementCredentialTests
         await using var server = await TerraBaseTestServer.StartAsync(
             settings => settings["management-credential-file"] = credential.Path,
             services => services.AddSingleton<ILoggerProvider>(logs));
-        var user = Faker.Random.Guid().ToString();
+        var user = EntityIds.New().ToString();
 
         using var accepted = await SendAsync(server.Client, HttpMethod.Post, Organizations, Credential, user, new { name = "Audited" });
         using var rejected = await SendAsync(server.Client, HttpMethod.Get, Organizations, Credential + "x", user);

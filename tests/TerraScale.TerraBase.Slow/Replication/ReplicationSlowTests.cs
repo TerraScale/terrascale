@@ -54,7 +54,7 @@ public sealed class ReplicationSlowTests
                     collection.EnsureSuccessStatusCode();
                 }
 
-                using var put = await writer.PutAsJsonAsync(new Uri($"{tenant.Path("broken")}/collections/items/documents/{ReplicationDocuments.Id("blocked")}", UriKind.Relative), new { value = "blocked" }, deadline.Token);
+                using var put = await writer.PutAsJsonAsync(new Uri($"{tenant.Path("broken")}/collections/items/documents/by-key?id={ReplicationDocuments.Id("blocked")}", UriKind.Relative), new { value = "blocked" }, deadline.Token);
                 put.EnsureSuccessStatusCode();
             }
 
@@ -139,7 +139,7 @@ public sealed class ReplicationSlowTests
                 await blockedWelcome.Task.WaitAsync(deadline.Token);
             }
             using var client = clientTls.CreateClient(sender.ClientAddress!, await tenant.KeyAsync(sender, "documents:write"));
-            using var added = await client.PutAsJsonAsync(new Uri($"{tenant.Path("healthy")}/collections/items/documents/{ReplicationDocuments.Id("healthy")}", UriKind.Relative), new { value = "healthy" }, deadline.Token);
+            using var added = await client.PutAsJsonAsync(new Uri($"{tenant.Path("healthy")}/collections/items/documents/by-key?id={ReplicationDocuments.Id("healthy")}", UriKind.Relative), new { value = "healthy" }, deadline.Token);
             added.EnsureSuccessStatusCode();
             // Shorter than SQLite's 30 s lock timeout, longer than the real 15 s progress budget.
             // The exclusive lock stays held while healthy work advances. Startup also requires
@@ -242,7 +242,7 @@ public sealed class ReplicationSlowTests
         await Assert.That(tombstone.Value.Version).IsGreaterThan(1);
         foreach (var client in new[] { clientA, clientB })
         {
-            using var deleted = await client.GetAsync(new Uri($"{path}/collections/items/documents/{ReplicationDocuments.Id("deleted")}", UriKind.Relative));
+            using var deleted = await client.GetAsync(new Uri($"{path}/collections/items/documents/by-key?id={ReplicationDocuments.Id("deleted")}", UriKind.Relative));
             await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         }
 
@@ -286,7 +286,7 @@ public sealed class ReplicationSlowTests
                 foreach (var index in Enumerable.Range(0, 8))
                 {
                     using var response = await writer.PutAsJsonAsync(
-                        new Uri($"{tenant.Path("paced")}/collections/items/documents/{ReplicationDocuments.Id($"b{index}")}", UriKind.Relative),
+                        new Uri($"{tenant.Path("paced")}/collections/items/documents/by-key?id={ReplicationDocuments.Id($"b{index}")}", UriKind.Relative),
                         new { data = Convert.ToBase64String(faker.Random.Bytes(600 * 1024)) });
                     response.EnsureSuccessStatusCode();
                 }
@@ -553,8 +553,8 @@ public sealed class ReplicationSlowTests
             settings["write-wait-ms"] = "0";
         });
         var tenant = await ReplicationTenant.CreateAsync(sender, "busy", "quiet");
-        busyId = Google.Protobuf.ByteString.CopyFrom(Guid.Parse(tenant.Database("busy").DatabaseId!).ToByteArray(bigEndian: true));
-        quietId = Google.Protobuf.ByteString.CopyFrom(Guid.Parse(tenant.Database("quiet").DatabaseId!).ToByteArray(bigEndian: true));
+        busyId = Google.Protobuf.ByteString.CopyFrom(Ulid.Parse(tenant.Database("busy").DatabaseId!).ToByteArray());
+        quietId = Google.Protobuf.ByteString.CopyFrom(Ulid.Parse(tenant.Database("quiet").DatabaseId!).ToByteArray());
         await tenant.BindAsync(receiver);
         using var reader = clientTls.CreateClient(receiver.ClientAddress!, await tenant.KeyAsync(receiver, "documents:read"));
         var key = await tenant.KeyAsync(sender, "documents:write");
@@ -587,7 +587,7 @@ public sealed class ReplicationSlowTests
                     while (!stop.IsCancellationRequested)
                     {
                         using var response = await writer.PutAsJsonAsync(
-                            new Uri($"{tenant.Path("busy")}/collections/items/documents/{ReplicationDocuments.Id($"w{writerId}-{faker.Random.Int(0, 50)}")}", UriKind.Relative),
+                            new Uri($"{tenant.Path("busy")}/collections/items/documents/by-key?id={ReplicationDocuments.Id($"w{writerId}-{faker.Random.Int(0, 50)}")}", UriKind.Relative),
                             new { note = faker.Lorem.Sentence() }, stop.Token);
                         response.EnsureSuccessStatusCode();
                     }
@@ -602,7 +602,7 @@ public sealed class ReplicationSlowTests
                 await using var read = await source.BeginTransactionAsync(write: false, token);
                 return await read.GetLastChangeSequenceAsync(token) >= 512;
             });
-            using var quietResponse = await quietWriter.PutAsJsonAsync(new Uri($"{tenant.Path("quiet")}/collections/items/documents/{ReplicationDocuments.Id("q1")}", UriKind.Relative), new { note = "quiet" });
+            using var quietResponse = await quietWriter.PutAsJsonAsync(new Uri($"{tenant.Path("quiet")}/collections/items/documents/by-key?id={ReplicationDocuments.Id("q1")}", UriKind.Relative), new { note = "quiet" });
             quietResponse.EnsureSuccessStatusCode();
             releaseFirst.TrySetResult();
             var quietReads = 0;
@@ -617,7 +617,7 @@ public sealed class ReplicationSlowTests
                     }
 
                     quietReads++;
-                    using var response = await reader.GetAsync(new Uri($"{tenant.Path("quiet")}/collections/items/documents/{ReplicationDocuments.Id("q1")}", UriKind.Relative), token);
+                    using var response = await reader.GetAsync(new Uri($"{tenant.Path("quiet")}/collections/items/documents/by-key?id={ReplicationDocuments.Id("q1")}", UriKind.Relative), token);
                     quietStatus = response.StatusCode;
                     return response.IsSuccessStatusCode;
                 }, TimeSpan.FromSeconds(30));
@@ -809,14 +809,14 @@ public sealed class ReplicationSlowTests
     private static async Task PutAsync(HttpClient client, string path, string id, Faker faker)
     {
         using var response = await client.PutAsJsonAsync(
-            new Uri($"{path}/collections/items/documents/{ReplicationDocuments.Id(id)}", UriKind.Relative),
+            new Uri($"{path}/collections/items/documents/by-key?id={ReplicationDocuments.Id(id)}", UriKind.Relative),
             new { title = faker.Commerce.ProductName(), price = faker.Random.Decimal(1, 100), note = faker.Lorem.Sentence() });
         response.EnsureSuccessStatusCode();
     }
 
     private static async Task DeleteAsync(HttpClient client, string path, string id)
     {
-        using var response = await client.DeleteAsync(new Uri($"{path}/collections/items/documents/{ReplicationDocuments.Id(id)}", UriKind.Relative));
+        using var response = await client.DeleteAsync(new Uri($"{path}/collections/items/documents/by-key?id={ReplicationDocuments.Id(id)}", UriKind.Relative));
         if (response.StatusCode != HttpStatusCode.NotFound)
         {
             response.EnsureSuccessStatusCode();
