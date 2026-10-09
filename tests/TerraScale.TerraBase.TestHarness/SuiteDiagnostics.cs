@@ -13,7 +13,7 @@ public static class SuiteDiagnostics
     private static Timer? _timer;
     private static long _started;
     private static int _reported;
-    private static string _cgroup = "/sys/fs/cgroup";
+    private static string? _cgroup;
 
     internal static TimeSpan Elapsed => Stopwatch.GetElapsedTime(_started);
 
@@ -21,13 +21,7 @@ public static class SuiteDiagnostics
     public static void Start()
     {
         _started = Stopwatch.GetTimestamp();
-        // cgroup v2 lists this process's cgroup as "0::/path"; without a cgroup namespace it is not the mount root.
-        var membership = ReadSmall("/proc/self/cgroup")?.Split('\n').FirstOrDefault(entry => entry.StartsWith("0::/", StringComparison.Ordinal));
-        if (membership is not null)
-        {
-            _cgroup += membership[3..].TrimEnd('/');
-        }
-
+        _cgroup = CgroupDirectory();
         Capture(null);
         using (ExecutionContext.SuppressFlow())
         {
@@ -81,8 +75,8 @@ public static class SuiteDiagnostics
             var sample = new Sample(Stopwatch.GetElapsedTime(_started).TotalSeconds, Environment.CpuUsage.TotalTime.TotalSeconds,
                 GC.GetTotalPauseDuration().TotalSeconds, GC.CollectionCount(2), ThreadPool.ThreadCount, ThreadPool.PendingWorkItemCount, Monitor.LockContentionCount,
                 gc.Index, gc.Generation, gc.PromotedBytes, pauses[0].TotalMilliseconds, pauses[1].TotalMilliseconds,
-                Field(ReadSmall("/proc/pressure/cpu"), "some ", "total="), Field(ReadSmall(_cgroup + "/cpu.pressure"), "some ", "total="),
-                Field(ReadSmall(_cgroup + "/cpu.stat"), "throttled_usec ", ""),
+                Field(ReadSmall("/proc/pressure/cpu"), "some ", "total="), Field(_cgroup is null ? null : ReadSmall(_cgroup + "/cpu.pressure"), "some ", "total="),
+                Field(_cgroup is null ? null : ReadSmall(_cgroup + "/cpu.stat"), "throttled_usec ", ""),
                 double.TryParse(load, NumberStyles.Float, CultureInfo.InvariantCulture, out var load1) ? load1 : -1);
             if (Samples.Count == Capacity)
             {
@@ -93,14 +87,63 @@ public static class SuiteDiagnostics
         }
     }
 
-    // Best effort: one read of at most 1 KiB, null when the file is absent or unreadable.
-    private static string? ReadSmall(string path)
+    // This process's cgroup v2 directory, or null (fields report -1) when no visible cgroup2 mount contains it. Runs once.
+    // /proc/self/cgroup gives "0::/path" relative to the hierarchy (or cgroup namespace) root; each cgroup2 line in
+    // /proc/self/mountinfo gives the subtree root it exposes (field 4) at a mountpoint (field 5). The most specific mount
+    // whose root is the membership path or a "/"-bounded prefix of it maps the remainder below its mountpoint.
+    private static string? CgroupDirectory()
+    {
+        var membership = ReadSmall("/proc/self/cgroup", 4096)?.Split('\n').SkipLast(1)
+            .FirstOrDefault(entry => entry.StartsWith("0::/", StringComparison.Ordinal))?[3..].TrimEnd('/');
+        // 1 MiB covers hosts with thousands of mounts; past that the cut-off tail is ignored and fields report -1.
+        var mountinfo = ReadSmall("/proc/self/mountinfo", 1 << 20);
+        if (membership is null || mountinfo is null)
+        {
+            return null;
+        }
+
+        string? directory = null;
+        var matched = -1;
+        foreach (var line in mountinfo[..(mountinfo.LastIndexOf('\n') + 1)].Split('\n'))
+        {
+            var fields = line.Split(' ');
+            var separator = line.IndexOf(" - ", StringComparison.Ordinal);
+            if (fields.Length < 5 || separator < 0 || !line[(separator + 3)..].StartsWith("cgroup2 ", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var root = Unescape(fields[3]).TrimEnd('/');
+            if (root.Length > matched && (membership == root || membership.StartsWith(root + "/", StringComparison.Ordinal)))
+            {
+                matched = root.Length;
+                directory = Unescape(fields[4]).TrimEnd('/') + membership[root.Length..];
+            }
+        }
+
+        return directory;
+    }
+
+    // mountinfo octal-escapes space, tab, newline and backslash; backslash goes last so "\134040" stays a literal "\040".
+    private static string Unescape(string field) => field.Replace("\\040", " ", StringComparison.Ordinal)
+        .Replace("\\011", "\t", StringComparison.Ordinal).Replace("\\012", "\n", StringComparison.Ordinal)
+        .Replace("\\134", "\\", StringComparison.Ordinal);
+
+    // Best effort: reads at most limit bytes (stack buffer for the 1 KiB per-second stats), null when absent or unreadable.
+    private static string? ReadSmall(string path, int limit = 1024)
     {
         try
         {
             using var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, bufferSize: 0);
-            Span<byte> buffer = stackalloc byte[1024];
-            return Encoding.ASCII.GetString(buffer[..file.Read(buffer)]);
+            Span<byte> buffer = limit <= 1024 ? stackalloc byte[1024] : new byte[limit];
+            var length = 0;
+            int read;
+            while (length < buffer.Length && (read = file.Read(buffer[length..])) > 0)
+            {
+                length += read;
+            }
+
+            return Encoding.UTF8.GetString(buffer[..length]);
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {

@@ -485,6 +485,7 @@ public sealed class ReplicationSlowTests
         var clock = new ProgressClock();
         var streams = new System.Collections.Concurrent.ConcurrentQueue<HeldStream>();
         var scripted = 0;
+        var releaseAcknowledgment = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         try
         {
             var database = await SeedAsync(clientTls, data);
@@ -508,6 +509,7 @@ public sealed class ReplicationSlowTests
                     await responses.WriteAsync(FakePeer.Welcome(hello, out member), context.CancellationToken);
                     var group = await NextGroupAsync(requests, context.CancellationToken);
                     stream.Group.TrySetResult(group);
+                    await releaseAcknowledgment.Task.WaitAsync(context.CancellationToken);
                     await responses.WriteAsync(FakePeer.Ack(member, group, group.EventId.Sequence), context.CancellationToken);
                 }
                 catch (Exception error) when (error is OperationCanceledException or IOException or InvalidOperationException or InvalidDataException)
@@ -531,6 +533,10 @@ public sealed class ReplicationSlowTests
             stream.Release.TrySetResult();
             var group = await stream.Group.Task.WaitAsync(TimeSpan.FromSeconds(30));
             await Assert.That(group.EventId.Sequence).IsEqualTo(1UL);
+            // The first group proves Welcome was processed; no ACK may extend the deadline yet.
+            clock.Advance(TimeSpan.FromTicks(1));
+            await Assert.That(clock.Expired.Task.IsCompleted).IsFalse();
+            releaseAcknowledgment.TrySetResult();
         }
         finally
         {
