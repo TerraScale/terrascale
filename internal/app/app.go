@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"net/http"
 	"net/mail"
@@ -79,6 +80,18 @@ func New(cfg config.Config) (*Application, error) {
 		if len(cfg.CSRFSecret) < 32 {
 			return nil, errors.New("TS_DASHBOARD_CSRF_SECRET must be at least 32 bytes with TerraBase persistence")
 		}
+		// Apply the request timeout before SDK handles capture the client.
+		if cfg.TerraBaseHTTPClient == nil {
+			cfg.TerraBaseHTTPClient = &http.Client{
+				Timeout: 15 * time.Second,
+				Transport: &http.Transport{
+					Proxy:             http.ProxyFromEnvironment,
+					TLSClientConfig:   &tls.Config{MinVersion: tls.VersionTLS13},
+					ForceAttemptHTTP2: true,
+					IdleConnTimeout:   90 * time.Second,
+				},
+			}
+		}
 		client, err := v1.New(v1.Config{BaseURL: cfg.TerraBaseURL, Token: cfg.TerraBaseAPIKey, HTTPClient: cfg.TerraBaseHTTPClient})
 		if err != nil {
 			return nil, err
@@ -121,15 +134,9 @@ func New(cfg config.Config) (*Application, error) {
 	var sdkFactory core.SDKFactory
 	var management *v1.Management
 	if db != nil {
-		// A stalled TerraBase must not hold a page: every call gets a
-		// deadline.
-		client := cfg.TerraBaseHTTPClient
-		if client == nil {
-			client = &http.Client{Timeout: 15 * time.Second}
-		}
-		sdkFactory = tsgo.Factory{HTTPClient: client}
+		sdkFactory = tsgo.Factory{HTTPClient: cfg.TerraBaseHTTPClient}
 		if cfg.TSAuth.Issuer != "" {
-			if management, err = v1.NewManagement(v1.Config{BaseURL: cfg.TerraBaseURL, HTTPClient: client}); err != nil {
+			if management, err = v1.NewManagement(v1.Config{BaseURL: cfg.TerraBaseURL, HTTPClient: cfg.TerraBaseHTTPClient}); err != nil {
 				return nil, err
 			}
 		}
