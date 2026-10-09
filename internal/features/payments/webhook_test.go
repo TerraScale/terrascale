@@ -337,7 +337,7 @@ func TestWebhookAsksStripeToRetryFailedSync(t *testing.T) {
 	fixture := newBillingFixture(t)
 	before := fixture.organization(t)
 	fixture.provider.fetchErr = errors.New("Stripe is unavailable")
-	if response := fixture.deliver(t, testEvent{ID: "4R3GYP9C7AM808TJCCKZW0M5T1", Type: "invoice.paid"}, testWebhookSecret); response.Code != http.StatusInternalServerError {
+	if response := fixture.deliver(t, testEvent{ID: "evt_retry", Type: "invoice.paid"}, testWebhookSecret); response.Code != http.StatusInternalServerError {
 		t.Fatalf("failed sync = %d, want 500", response.Code)
 	}
 	if !reflect.DeepEqual(before, fixture.organization(t)) {
@@ -349,7 +349,7 @@ func TestWebhookAsksStripeToRetryFailedSync(t *testing.T) {
 			t.Fatalf("redelivery = %d, want 200", response.Code)
 		}
 	}
-	if org := fixture.organization(t); org.PlanID != "plan_pro" || len(org.Billing.Invoices) != 1 {
+	if org := fixture.organization(t); org.PlanID != "7CNW2H87JE68ATZX224CV2G625" || len(org.Billing.Invoices) != 1 {
 		t.Fatalf("redeliveries did not converge: %#v", org.Billing)
 	}
 }
@@ -369,7 +369,7 @@ func TestWebhookLiveMode(t *testing.T) {
 			t.Fatalf("live delivery = %d", response.Code)
 		}
 	}
-	if org := fixture.organization(t); org.PlanID != "plan_pro" || len(org.Billing.Invoices) != 1 {
+	if org := fixture.organization(t); org.PlanID != "7CNW2H87JE68ATZX224CV2G625" || len(org.Billing.Invoices) != 1 {
 		t.Fatalf("duplicate live deliveries did not converge: %#v", org.Billing)
 	}
 }

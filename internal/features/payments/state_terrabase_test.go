@@ -61,7 +61,7 @@ func TestTerraBaseStateStoreReadersDistinguishMissingDocumentsFromStorageErrors(
 				read func(*testing.T) error
 			}{
 				{"CustomerFor", func(t *testing.T) error {
-					customer, found, err := store.CustomerFor(t.Context(), core.NewULID())
+					customer, found, err := store.CustomerFor(t.Context(), core.NewID())
 					if customer != "" || found {
 						t.Errorf("CustomerFor = %q, %v; want empty, false", customer, found)
 					}
