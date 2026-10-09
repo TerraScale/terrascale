@@ -25,8 +25,10 @@ curl -fsS https://dash.terrascale.tech/health/ready
 scripts/smoke-native-login.sh https://dash.terrascale.tech
 ```
 
-Read-only inspection on 2026-10-07 found Machine `d8d96000b74e78` started in
-`gru` on release `v120`; readiness and the native login form returned `200`.
+Read-only inspection on 2026-10-09 at 07:10 UTC found Machine
+`d8d96000b74e78` started in `gru` on completed release `v135`, with its check
+passing. Readiness, native password login and email-code pages returned `200`;
+the login pages retain CSRF controls. Actual authentication was not exercised.
 Fly has ten deployed `Payments__Stripe__*` secrets, but no current `STRIPE_*`
 or `DASHBOARD_PUBLIC_ORIGIN` settings. The Go application ignores those legacy
 names, so billing is unconfigured. Do not add compatibility aliases; provision
@@ -41,9 +43,9 @@ homelab hosts.
 ## Prepare live configuration from OCI Vault
 
 The inspected production Vault is `gru-1-vault`, region `sa-saopaulo-1`, in
-compartment `gru-1-control`. No Stripe-named secret appeared in its 155-secret
-inventory. The follow-up inventory of `sfo-1-vault` (`us-sanjose-1`, 41 secrets)
-also found no Stripe/billing-named secret. **Live credential and signing-secret
+compartment `gru-1-control`. On 2026-10-09, no Stripe/billing-named secret
+appeared in its 285-secret inventory or the 168-secret inventory of
+`sfo-1-vault` (`us-sanjose-1`). **Live credential and signing-secret
 OCIDs have not been identified; cutover is NEEDS-USER.** Credentials under
 other names or in other scopes remain unverified. Verify them before proceeding.
 The working CLI authentication uses `--config-file
@@ -125,7 +127,10 @@ Verified Stripe sandbox deliveries remain required before live approval.
    compatibility shims. Confirm the resulting billing bindings, checkout
    records and organization entitlements contain no test references. Dashboard
    entity IDs must be plain ULIDs, and uniqueness must use TerraBase native
-   constraints rather than claim documents.
+   constraints rather than claim documents. These bootstrap prerequisites are
+   not yet satisfied on dashboard main `24c44cf3`, which still uses
+   `DocumentIDFor` and `unique_claim`; complete the separate TS-754/TS-755
+   rollout before resetting and re-bootstrapping production data.
 4. Require the live audit to pass and verify credentials can read/write the
    existing TerraBase billing collections. Keep in-place plan changes disabled
    in live mode until their separate staging gate is satisfied.

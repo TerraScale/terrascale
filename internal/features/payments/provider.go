@@ -106,9 +106,9 @@ type BillingProvider interface {
 }
 
 const (
-	// stripeRequestTimeout bounds one Stripe API attempt. Retries of
-	// connection errors, 409 lock timeouts, 429s, and retryable 5xx responses
-	// reuse the request's idempotency key, so a retried mutation applies once.
+	// stripeRequestTimeout bounds one Stripe API attempt. SDK retries reuse
+	// the request's idempotency key. Lock-timeout 429s retry; ordinary rate-limit
+	// errors return to the caller.
 	stripeRequestTimeout    = 20 * time.Second
 	stripeMaxNetworkRetries = 3
 )
