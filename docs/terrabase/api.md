@@ -120,10 +120,19 @@ This is the public way to create a database. The old data-plane `PUT D` remains 
 | GET | `D/backup-policy` | `getBackupPolicy` | `databases:read` | `MD/backup-policy` |
 | PUT | `D/backup-policy` | `setBackupPolicy` | `databases:write` | `MD/backup-policy` |
 | POST | `D/point-in-time/plan` | `planPointInTime` | `databases:read` | `MD/point-in-time/plan` (TS-493) |
+| GET | `P/backup-destination` | `getBackupDestination` | `databases:read` | `MP/backup-destination` |
+| PUT | `P/backup-destination` | `setBackupDestination` | `databases:write` | `MP/backup-destination` |
+| DELETE | `P/backup-destination` | `deleteBackupDestination` | `databases:write` | `MP/backup-destination` |
+| GET | `D/point-in-time` | `getRestoreWindow` | `databases:read` | `MD/point-in-time` |
+| POST | `D/point-in-time/restore` | `restorePointInTime` | `databases:write` | `MD/point-in-time/restore` |
 
-Continuous backup's window and restore from TS-633 remain legacy-only at
-`GET MD/point-in-time` and `POST MD/point-in-time/restore`; they are not public project routes.
-TS-493 adds the public read-only preview above, with its hidden legacy alias.
+TS-635 adds one customer S3-compatible destination per project and explicit restore source selection.
+Destination configuration requires a project-wide token; a token narrowed to a database receives 404.
+Window reads accept `?destination=platform|customer`; preview and restore bodies accept the same
+`destination` selector. Omission selects platform. Restore and preview times must lie within the
+selected source's earliest/latest window, inclusive. The hidden organization aliases retain their
+membership-based authorization. Credentials are write-only and stored encrypted in OCI Vault;
+public responses contain no credentials or Vault references.
 Preview describes snapshot selection from backup metadata; it does not reserve objects or
 prove that their contents pass the integrity checks performed during restore. See
 [backup restore](backup.md#restore).

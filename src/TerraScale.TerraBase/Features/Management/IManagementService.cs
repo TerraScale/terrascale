@@ -184,7 +184,7 @@ public interface IManagementService
     ValueTask<ManagementResult<Project>> RenameProjectAsync(
         string userId, string organizationId, string projectId, string name, CancellationToken cancellationToken);
 
-    /// <summary>Deletes a project that has no databases or API keys.</summary>
+    /// <summary>Deletes a project that has no databases, API keys or customer backup destination.</summary>
     ValueTask<ManagementError> DeleteProjectAsync(string userId, string organizationId, string projectId, CancellationToken cancellationToken);
 
     /// <summary>Creates an empty database in a project.</summary>

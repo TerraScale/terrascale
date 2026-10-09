@@ -137,7 +137,7 @@ public sealed class BackupKeyRotationTests
 
             await using var cold = await StartAsync(oci, time, coldDirectory);
             var backup = cold.Server.Services.GetRequiredService<IContinuousBackup>();
-            // ExecuteAsync may already own the pass. This call also ensures shipping completes after the PUT is released.
+            // Manual hosting makes this pass own the blocked PUT and its completion.
             var pass = backup.RunOnceAsync(cancellationToken);
             Exception? primaryFailure = null;
             try
@@ -225,7 +225,7 @@ public sealed class BackupKeyRotationTests
             await using (var api = await StartAsync(oci, time, directory))
             {
                 var backup = api.Server.Services.GetRequiredService<IContinuousBackup>();
-                await backup.RunOnceAsync(CancellationToken.None);
+                await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
                 var snapshot = oci.Objects.Where(item => item.Key.StartsWith(FilePrefix(database) + "/snapshots/", StringComparison.Ordinal))
                     .OrderBy(item => item.Key, StringComparer.Ordinal).Last();
                 var generation = snapshot.Key.Split('/')[^1].Split('-')[1];
@@ -254,7 +254,7 @@ public sealed class BackupKeyRotationTests
                     written.EnsureSuccessStatusCode();
                 }
 
-                await backup.RunOnceAsync(CancellationToken.None);
+                await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
                 if (failPublication)
                 {
                     var failed = await StatusAsync(api, database);
@@ -267,7 +267,7 @@ public sealed class BackupKeyRotationTests
                     oci.FailPut = _ => false;
                     // Exceed the shipper's maximum backoff without approaching the next daily snapshot.
                     time.Advance(TimeSpan.FromMinutes(6));
-                    await backup.RunOnceAsync(CancellationToken.None);
+                    await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
                 }
 
                 // Each acknowledged write is shipped before the next: at least eight consecutive segments use the
@@ -276,7 +276,7 @@ public sealed class BackupKeyRotationTests
                 {
                     using var written = await data.PutAsJsonAsync(ManagementApi.Uri(ManagementApi.DocumentPath(database, "people", name)), new { text });
                     written.EnsureSuccessStatusCode();
-                    await backup.RunOnceAsync(CancellationToken.None);
+                    await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
                 }
 
                 newKey = oci.Objects.Keys.Single(key => key.StartsWith(keys, StringComparison.Ordinal) && key != oldKey);
@@ -343,7 +343,7 @@ public sealed class BackupKeyRotationTests
 
             // A cold shipper taking over the restored file reuses the newest persisted project key.
             time.Advance(TimeSpan.FromSeconds(10));
-            await cold.Server.Services.GetRequiredService<IContinuousBackup>().RunOnceAsync(CancellationToken.None);
+            await cold.Server.Services.GetRequiredService<IContinuousBackup>().RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
             var restoredPrefix = $"v1/{database.Organization}/{database.Project}/{restoredDatabase.GetProperty("id").GetString()}/snapshots/";
             await Assert.That(oci.Objects.Where(item => item.Key.StartsWith(restoredPrefix, StringComparison.Ordinal))
                 .Select(item => KeyId(item.Value))).IsEquivalentTo([newKey[keys.Length..]]);
@@ -384,7 +384,7 @@ public sealed class BackupKeyRotationTests
             await using var live = await StartAsync(oci, time, directory, rotation: "");
             await Assert.That(live.Server.Services.GetRequiredService<TerraBaseOptions>().Backup!.KeyRotationDays).IsEqualTo(90);
             var backup = live.Server.Services.GetRequiredService<IContinuousBackup>();
-            await backup.RunOnceAsync(CancellationToken.None);
+            await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
             var lists = oci.ListRequests;
             await Assert.That(lists).IsGreaterThan(0);
             await Assert.That(oci.LastListStartAfter).IsEqualTo("");
@@ -396,7 +396,7 @@ public sealed class BackupKeyRotationTests
             time.Advance(TimeSpan.FromHours(23));
             using var warm = await data.PutAsJsonAsync(ManagementApi.Uri(ManagementApi.DocumentPath(database, "people", "keep-warm")), new { text = new Faker().Lorem.Sentence(8) });
             warm.EnsureSuccessStatusCode();
-            await backup.RunOnceAsync(CancellationToken.None);
+            await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
             await Assert.That(oci.ListRequests).IsEqualTo(lists + 1);
             await Assert.That(oci.LastListStartAfter).IsEqualTo(oldKey);
             await Assert.That(oldRequests.Gets).IsEqualTo(1);
@@ -406,7 +406,7 @@ public sealed class BackupKeyRotationTests
             // The default 90-day key stays valid locally. The daily snapshot refreshes the warm selection before
             // the peer, configured for one day, publishes a newer key from its independent physical copy.
             time.Advance(TimeSpan.FromHours(1) + TimeSpan.FromSeconds(1));
-            await backup.RunOnceAsync(CancellationToken.None);
+            await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
             await Assert.That(oci.Objects.Keys.Count(key => key.StartsWith(keys, StringComparison.Ordinal))).IsEqualTo(1);
             await Assert.That(oci.ListRequests).IsEqualTo(lists + 1);
             await Assert.That(oci.LastListStartAfter).IsEqualTo(oldKey);
@@ -417,7 +417,7 @@ public sealed class BackupKeyRotationTests
             // Advance only the live node during refresh assertions; an unrelated peer pass must not enter its LIST totals.
             var peerTime = new FakeTimeProvider(time.GetUtcNow());
             await using var peer = await StartAsync(oci, peerTime, peerDirectory);
-            await peer.Server.Services.GetRequiredService<IContinuousBackup>().RunOnceAsync(CancellationToken.None);
+            await peer.Server.Services.GetRequiredService<IContinuousBackup>().RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
             var newest = oci.Objects.Keys.Single(key => key.StartsWith(keys, StringComparison.Ordinal) && key != oldKey);
             var newRequests = oci.ObserveKey(newest);
             var generated = oci.GeneratedKeys;
@@ -426,7 +426,7 @@ public sealed class BackupKeyRotationTests
             time.Advance(TimeSpan.FromSeconds(61));
             using var written = await data.PutAsJsonAsync(ManagementApi.Uri(ManagementApi.DocumentPath(database, "people", "after-peer")), new { text = new Faker().Lorem.Sentence(8) });
             written.EnsureSuccessStatusCode();
-            await backup.RunOnceAsync(CancellationToken.None);
+            await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
             var status = await StatusAsync(live, database);
             var walPrefix = FilePrefix(database) + "/wal/" + status.GetProperty("generation").GetString() + "/";
             var segments = oci.Objects.Where(item => item.Key.StartsWith(walPrefix, StringComparison.Ordinal) && !priorSegments.Contains(item.Key)).ToArray();
@@ -442,7 +442,7 @@ public sealed class BackupKeyRotationTests
             time.Advance(TimeSpan.FromSeconds(61));
             using var unchanged = await data.PutAsJsonAsync(ManagementApi.Uri(ManagementApi.DocumentPath(database, "people", "after-refresh")), new { text = new Faker().Lorem.Sentence(8) });
             unchanged.EnsureSuccessStatusCode();
-            await backup.RunOnceAsync(CancellationToken.None);
+            await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
             var refreshed = oci.Objects.Where(item => item.Key.StartsWith(walPrefix, StringComparison.Ordinal) && !priorSegments.Contains(item.Key)).ToArray();
             await Assert.That(refreshed.Length).IsGreaterThan(segments.Length);
             await Assert.That(refreshed.All(item => KeyId(item.Value) == newest[keys.Length..])).IsTrue();
@@ -482,8 +482,9 @@ public sealed class BackupKeyRotationTests
         await Assert.That(oci.GeneratedKeys).IsEqualTo(0);
     }
 
-    private static Task<ManagementApi> StartAsync(FakeOci oci, FakeTimeProvider time, string directory, string rotation = "1") =>
-        ManagementApi.StartAsync(settings =>
+    private static async Task<ManagementApi> StartAsync(FakeOci oci, FakeTimeProvider time, string directory, string rotation = "1")
+    {
+        var api = await ManagementApi.StartAsync(settings =>
         {
             oci.Configure(settings);
             settings["data-directory"] = directory;
@@ -507,7 +508,7 @@ public sealed class BackupKeyRotationTests
         using var written = await data.PutAsJsonAsync(ManagementApi.Uri(ManagementApi.DocumentPath(database, "people", "before")), new { text });
         written.EnsureSuccessStatusCode();
         time.Advance(TimeSpan.FromSeconds(10));
-        await api.Server.Services.GetRequiredService<IContinuousBackup>().RunOnceAsync(CancellationToken.None);
+        await api.Server.Services.GetRequiredService<IContinuousBackup>().RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         return (database, api.User);
     }
 

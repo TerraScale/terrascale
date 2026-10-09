@@ -1,4 +1,5 @@
 using TerraBase.Errors;
+using TerraBase.Features.Backup;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Management.Backups;
@@ -27,8 +28,9 @@ public sealed record BackupPolicyRequest(string? FullBackupCron, int? RetentionD
 
 /// <summary>The body of <c>POST …/point-in-time/restore</c>.</summary>
 /// <param name="PointInTime">The time to restore the database as of, inside its restore window.</param>
+/// <param name="Destination"><c>platform</c> (default) or <c>customer</c>.</param>
 /// <param name="Name">The new database's name; the first free of <c>&lt;source&gt;-restore</c>, <c>-restore-2</c>, … without it.</param>
-public sealed record PointInTimeRestoreRequest(DateTimeOffset? PointInTime, string? Name);
+public sealed record PointInTimeRestoreRequest(DateTimeOffset? PointInTime, string? Name, string? Destination = null);
 
 /// <summary>A completed backup, or that its database is gone or out of the user's reach.</summary>
 public readonly union CreateBackupResult(DatabaseBackup, NotFound);
@@ -67,7 +69,7 @@ public interface IManagedBackupService
     /// project, named like <see cref="RestoreAsync"/>; validates <paramref name="at"/> against its restore window before downloading.
     /// </summary>
     ValueTask<RestoreBackupResult> RestorePointInTimeAsync(
-        string userId, string organizationId, TenantContext database, DateTimeOffset at, string? name, CancellationToken cancellationToken);
+        string userId, string organizationId, TenantContext database, DateTimeOffset at, string? name, CancellationToken cancellationToken, string destination = BackupDestinationNames.Platform);
 
     /// <summary>One scheduler pass: a page of the storage sweep, retention, then the scheduled backups that are due.</summary>
     ValueTask RunScheduleAsync(CancellationToken cancellationToken);

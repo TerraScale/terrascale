@@ -40,6 +40,167 @@ values.
 Give the backup identity only what it needs: object read, write and list in the backup bucket, and `use` of the one
 master key.
 
+### Customer buckets (TS-635)
+
+A project can attach one S3-compatible customer bucket through the public `/v1` project API:
+
+```http
+PUT /v1/projects/{project}/backup-destination
+Content-Type: application/json
+Authorization: Bearer <ts-auth project access token granting databases:write>
+
+{"endpoint":"https://s3.example.com","region":"us-east-1","bucket":"customer-backups","accessKeyId":"…","secretKey":"…","mode":"both"}
+```
+
+These operations appear under the `Backups` tag in OpenAPI. `P` below is `/v1/projects/{project}`;
+`D` is `P/databases/{database}`, where `{database}` is the database name.
+
+| Method | Route | operationId | Required JWT scope | Success |
+| --- | --- | --- | --- | --- |
+| GET | `P/backup-destination` | `getBackupDestination` | `databases:read` | 200 |
+| PUT | `P/backup-destination` | `setBackupDestination` | `databases:write` | 200 |
+| DELETE | `P/backup-destination` | `deleteBackupDestination` | `databases:write` | 204, no body |
+| GET | `D/point-in-time` | `getRestoreWindow` | `databases:read` | 200 |
+| POST | `D/point-in-time/restore` | `restorePointInTime` | `databases:write` | 201 |
+
+The signed `project_id` must match `{project}`. Missing or invalid project credentials return 401;
+missing scope returns 403; another project or a database outside the token's narrowing returns 404.
+GET, PUT and DELETE of the project-wide destination also return 404 for a database-narrowed token.
+Published organization routes remain hidden aliases under
+`/v1/management/organizations/{organization}/projects/{project}`. They retain user membership and role checks,
+and their `{database}` remains a catalog database ID. A project token cannot use those aliases.
+
+`mode=both` ships the project's encrypted snapshots, WAL segments and wrapped data keys to both buckets.
+`mode=customer` ships that project's data only to the customer bucket. `_system.db` and other projects stay in the
+platform bucket. Continuous backup must already be enabled, including its platform bucket and OCI master key; customer
+backup uses that same master key. This is customer-only **project shipping**, not a standalone backup service.
+
+`GET` at the same path returns `endpoint`, `region`, `bucket`, `mode`, and `updatedAt`; it never returns credentials or
+Vault references. `DELETE` detaches the customer destination and resumes platform shipping. It preserves customer
+objects. Reattaching the same bucket and credentials makes its older backups accessible again. Every save replaces the
+credentials and starts a new generation with a snapshot, so a newly attached bucket never receives WAL without a base.
+On the hidden organization aliases, a viewer cannot save or detach destinations; other existing writable-project
+roles can. Outsiders receive 404.
+Deleting an unset destination is idempotent and returns 204. Saves admit at most four organizations concurrently,
+with one save per organization, so one organization cannot occupy every slot. Each file's shipper refreshes
+destination configuration at a ten-second cadence on successful passes; shipping work and retries can delay refresh.
+Each lookup has a one-second deadline. A timeout cancels and joins the read, then uses the file's shipping backoff so
+other files can be admitted.
+Project deletion returns 409 while a customer destination remains configured; detach it first so its Vault secret can retire.
+Saving, replacing or detaching an existing destination advances the organization's management version, invalidating
+stale fences. Deleting an unset destination leaves that version unchanged.
+
+The bucket must allow read, write, list and delete under `v1/<organization>/<project>/` and read/write/list under
+`v1/keys/<organization>/<project>/`. Saving checks the object permissions using a small non-secret probe and verifies
+the exact returned bytes, reading at most one byte beyond the expected payload. Probe cleanup uses a separate five-second
+deadline after request cancellation, linked to host shutdown. The probe may remain if cleanup fails or a bucket
+retention rule protects it. Customer endpoints must use HTTPS and globally reachable IP addresses. Redirects,
+proxies and connections to private, loopback or metadata addresses are blocked; private-network S3 endpoints are not
+supported.
+
+Customer listing pages request at most 250 objects and are bounded to 2 MiB before XML parsing. The smaller page leaves
+room for XML escaping of S3's 1,024-byte UTF-8 keys. Oversized keys are skipped; malformed entries still count toward
+metadata scan limits.
+
+Customer credentials live encrypted in OCI Vault Secrets as a versioned JSON secret. TerraBase's version-1 catalog
+record under `projects/<project>/backup_destination` holds public settings and the secret OCID only. Credentials are
+write-only, and errors never include provider response bodies. The runtime identity needs secret creation, retrieval,
+metadata listing/inspection, scheduled deletion and secret encryption-key permissions in addition to the original backup permissions. Configure all four settings together:
+
+| Setting | Meaning |
+| --- | --- |
+| `backup-vault-id` | Vault OCID for customer credential secrets |
+| `backup-vault-compartment-id` | Compartment OCID for those secrets |
+| `backup-vault-endpoint` | HTTPS Vault secrets management endpoint |
+| `backup-secrets-endpoint` | HTTPS Secret Retrieval endpoint |
+
+The existing `backup-kms-api-key`, `backup-kms-private-key-file` and `backup-kms-key-id` sign and encrypt the secret
+operations. Changing a destination creates a new secret. Replacement or detachment records the old secret's retirement
+in the same catalog transaction. An immediate attempt schedules deletion after OCI's minimum seven-day window;
+failed attempts remain in `backup_secret_lifecycle` for background retry. In-flight work keeps its acquired credentials,
+and customer objects are preserved.
+
+Before creation, TerraBase records a unique `terrabase-backup-<ULID>` name in that collection. A successful create response
+is read under an independent bounded token so caller cancellation cannot discard a returned OCID. Uncertain responses
+are reconciled through OCI secret metadata; no credential content is stored in these records or replayed to create another
+secret. Publication removes its intent atomically. Cleanup claims an expired intent before retirement, preventing it from
+being published afterward. An empty metadata listing leaves the intent pending because the secret may appear later.
+Confirmed failures before submission and definitive OCI create rejections remove the unused intent; uncertain outcomes
+retain it for reconciliation. Confirmed removal keeps save admission until completion, allowing at most four local
+discards even while remote cleanup is full. Local catalog failures retry within an independent 30-second deadline.
+Shutdown before removal commits, or catalog unavailability through that deadline, can leave an intent pending for
+operator investigation.
+
+The lifecycle backlog separately admits at most 1,024 named create intents and 1,024 predecessor/detachment retirements,
+each bounded to 2 KiB. An abandoned create keeps its reserved intent slot even after its OCID becomes known. Unresolved
+creates can exhaust new-save admission, but cannot consume detachment retirement capacity. A full retirement pool rejects
+replacement or detachment with fixed 503 before changing the destination; an already detached destination still returns
+204. Maintenance independently reads at most eight known-ID and eight unresolved records / 32 KiB per pass, processing
+known IDs first with separate thirty-second budgets for each class, so a known-ID timeout cannot consume the unresolved
+class's deadline. Both classes share the tracked worker chain and shutdown cancellation. Keep Vault and compartment settings available until pending reconciliation and
+retirement complete. OCI 404 responses remain pending because they can mask lost authorization; restore metadata
+permissions or investigate an external deletion rather than treating 404 as proof of retirement. These records survive
+project deletion; no migration is required.
+
+Uncertain intents with no OCI match are never removed automatically. To release admission after a verified unsubmitted
+create, an operator with the management service credential can use the loopback-only recovery API:
+
+1. `GET /backup-secret-lifecycle` reads eight metadata-only intents; pass its `next` ULID as `?after=...` for another page.
+2. Investigate the exact `secretName` in the configured OCI vault and compartment, including pending create requests.
+   Confirm no credential exists or can still be accepted. Restore metadata permissions before investigating; an error
+   or authorization-masked 404 is not evidence of absence. If a secret exists, let ordinary reconciliation retire it.
+3. For a `recoverable` intent, `POST /backup-secret-lifecycle/{id}/confirm-absent` with
+   `{"secretName":"terrabase-backup-<id>","confirmAbsent":true}` releases its reserved slot in a FULL catalog transaction.
+
+Both routes require `management-credential-file`, Bearer service authentication and `X-TerraBase-User-Id`; the client
+listener returns 404. Recovery additionally checks an empty fresh OCI metadata listing and refuses live/unfenced,
+known-ID, mismatched or concurrently resolved rows. It does not delete or replay a remote secret. Incorrect operator
+confirmation can leave a late remote acceptance untracked, so do not use it solely because a metadata list is empty.
+
+Restore selection is explicit and never falls back between buckets:
+
+- `GET /v1/projects/{project}/databases/{database}/point-in-time?destination=platform|customer`
+- `POST /v1/projects/{project}/databases/{database}/point-in-time/restore` adds `"destination":"platform"` or `"destination":"customer"`
+  to the existing `pointInTime`/`name` body. Omission keeps the original platform behavior.
+- `POST /v1/projects/{project}/databases/{database}/point-in-time/plan` accepts the same optional `destination` in its
+  `pointInTime` body and requires `databases:read` (see [Restore preview](#restore-preview-ts-493)).
+
+Each source's window comes from its own stored objects, so old platform backups stay restorable after switching to
+customer-only. An invalid selector returns 400; a disabled or empty source, including an unset customer destination,
+returns 404. Window and restore bucket/Vault transport failures return a sanitized 503. Malformed window listings
+also return 503; corrupt snapshot or key material during restoration remains an integrity failure. A successful restore returns
+the new database and `Location: /v1/projects/{project}/databases/{restored-name}`; a hidden legacy request retains its
+organization route and restored database ID in `Location`.
+Encryption, `TBK1` objects and the catalog schema are unchanged; restoring either source still requires OCI KMS access.
+In `both` mode, shipping succeeds only when both uploads succeed; a failed destination delays this project's progress
+and starts a fresh generation after backoff to avoid overlapping WAL segments after a partial upload. Platform files
+and eligible customer jobs in other organizations continue shipping. Retention scans both configured buckets
+independently, including earlier platform backups in customer-only mode; drills exercise the customer copy.
+Retention processes at most 10,000 expired snapshots per file
+and bucket per pass, checking later snapshots before removing their generations' segments. Expired segments are deleted
+in batches of sixteen. Object locks may delay cleanup, and a bucket entirely outside the plan's window returns no
+restore window. Customer-written junk keys inside the requested prefix are skipped; foreign or nonascending listing
+responses are rejected. Listing order follows S3's UTF-8 byte ordering, including unrelated Unicode objects.
+Customer object operations have a fifteen-minute deadline covering response headers, streamed body decoding and all
+pages of a listing.
+Shipping admits at most four file jobs, with at most two customer jobs and one customer job per organization;
+platform-only files, including `_system`, can use the remaining capacity. A stalled customer job holds its organization's
+customer slot until completion or cancellation. Background ticks skip busy files and admit
+the least recently scheduled eligible files without waiting for earlier customer jobs. Each file keeps its target
+until its job finishes. Database removal and shutdown cancel and join active jobs before disposing their resources;
+shutdown refreshes and flushes known platform files first, then checks cached customer configurations for detachments
+before starting customer I/O, using the supplied shutdown token. Mirrored acknowledgements also provide platform
+freshness for their matching generation.
+Configuration reads are limited to four admission candidates per scheduling pass. Wrapped-key reads have separate
+host-wide admission pools of eight for platform and customer work, so customer prefetch cannot exhaust platform reads.
+Cold platform key reads wait with request cancellation when their pool is occupied.
+
+SDK/dashboard integration must consume these `/v1` project contracts through typed `ts-go` methods, with a ts-auth
+project access token granting the scope above. User sign-in tokens belong to the hidden organization aliases.
+This TerraBase change supplies the server contract; it does not ship `ts-go` methods or a `ts-dashboard` bucket UI.
+Those remain dependent integration work. Native dashboard sign-in is unchanged. No live Vault, IAM or dashboard
+rollout is performed by this repository change.
+
 ### Leases
 
 One member ships each file. `Engine/IShipperLeases` chooses it: `ShipperEpochAsync(database)` returns the epoch of this
@@ -127,8 +288,9 @@ scopes, with another 65536 unwrapped keys cached for restores (at most 4 MiB of 
 expire after a day without access. At capacity, cache admission synchronously makes room for new results so waiting
 downloads can reuse them. Evicted-key lookups retrieve keys from the bucket and Vault;
 size nodes to keep active scopes and restore keys within these limits. Generated keys enter the restore cache only
-after their wrapped copy is persisted. Concurrent downloads using one historical key share its retrieval and unwrap;
-distinct keys use bounded key stripes independently of selection and publication. Unrelated, nested, and future-dated
+after their wrapped copy is persisted. Concurrent downloads using one historical key share its retrieval and unwrap.
+Wrapped key bodies are limited to 16 KiB both before publication and during cold retrieval.
+Distinct keys use bounded key stripes independently of selection and publication. Unrelated, nested, and future-dated
 key objects are ignored during selection; a future-dated key can still decrypt historical objects naming it.
 Changing `backup-key-rotation-days` requires a rolling
 restart; use `1` for the next daily rotation when shortening the schedule.
@@ -162,11 +324,12 @@ A restore always creates a new database, so a new incarnation that reaches the o
 TS-647, through anti-entropy). Backups taken before the TS-602 wipe use the old schema and do not need to restore after
 it (user decision, 2026-10-07). Production backup starts right after that cutover.
 
-`GET …/databases/{database}/point-in-time` returns the restore window: from the oldest snapshot, but no earlier than the
-plan's retention window (a bucket rule may keep older objects), to the newest data in the bucket. It returns 404 when no
-stored data falls within the plan's window, including when retained objects have all expired under the plan.
-`POST …/databases/{database}/point-in-time/restore` with `{"pointInTime": "…", "name": "…"}` restores into a
-new database of the same project (`branchedFrom` set, like a backup restore). The restore:
+`GET /v1/projects/{project}/databases/{database}/point-in-time` returns the restore window: from the oldest snapshot,
+but no earlier than the plan's retention window (a bucket rule may keep older objects), to the newest data in the
+bucket. It returns 404 when no stored data falls within the plan's window, including when retained objects have all
+expired under the plan.
+`POST /v1/projects/{project}/databases/{database}/point-in-time/restore` with `{"pointInTime": "…", "name": "…"}`
+restores into a new database of the same project (`branchedFrom` set, like a backup restore). The restore:
 
 1. takes the newest snapshot at or before `pointInTime`;
 2. applies its generation's segments up to `pointInTime` in order, checking they are contiguous. Each frame's page is
@@ -186,7 +349,8 @@ committed in the second before `pointInTime` may be missing.
 
 ### Restore preview (TS-493)
 
-`POST /v1/projects/{project}/databases/{database}/point-in-time/plan` with `{"pointInTime":"…"}` reads
+`POST /v1/projects/{project}/databases/{database}/point-in-time/plan` with
+`{"pointInTime":"…","destination":"customer"}` reads the selected source's
 backup metadata without downloading or decrypting backup contents, creating scratch files,
 or changing databases. It returns:
 
@@ -200,6 +364,7 @@ or changing databases. It returns:
 }
 ```
 
+`destination` is optional and defaults to `platform`; `customer` inspects only the attached customer bucket.
 The snapshot is the newest at or before `pointInTime`, selected by the same code as
 restore. `segmentCount` and `latestSegmentAt` describe that snapshot generation's
 segments after its position and read by the requested time. The latter is null when

@@ -178,7 +178,7 @@ internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKe
             bool found;
             try
             {
-                found = await store.ReadAsync(key, content => BackupObject.ReadAsync(content, output, key, id => keys.GetAsync(scope, id, cancellationToken), cancellationToken),
+                found = await store.ReadAsync(key, (content, readToken) => BackupObject.ReadAsync(content, output, key, id => keys.GetAsync(scope, id, readToken), readToken),
                     cancellationToken).ConfigureAwait(false);
             }
             catch (Exception error) when (attempt < 3 && error is not OperationCanceledException)

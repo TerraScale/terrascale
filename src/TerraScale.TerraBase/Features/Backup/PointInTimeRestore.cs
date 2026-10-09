@@ -29,36 +29,42 @@ public readonly union PointInTimeRestoreResult(Done, NotFound, Validation);
 public interface IPointInTimeRestore
 {
     /// <summary>The restore window of <paramref name="database"/>; <see langword="null"/> when no backup remains within its plan's retention window.</summary>
-    Task<RestoreWindow?> GetWindowAsync(TenantContext database, CancellationToken cancellationToken);
+    Task<RestoreWindow?> GetWindowAsync(TenantContext database, CancellationToken cancellationToken, string destination = BackupDestinationNames.Platform);
 
     /// <summary>Reads bounded backup metadata without downloading, decrypting or importing any backup.</summary>
-    Task<PointInTimePlanResult> PlanAsync(TenantContext database, DateTimeOffset at, CancellationToken cancellationToken);
+    Task<PointInTimePlanResult> PlanAsync(TenantContext database, DateTimeOffset at, CancellationToken cancellationToken, string destination = BackupDestinationNames.Platform);
 
     /// <summary>
     /// Creates <paramref name="target"/>, a new engine database, holding <paramref name="source"/> as of <paramref name="at"/>:
     /// every transaction the backup read by then. Validates its restore window at entry, before downloading or importing.
     /// </summary>
     /// <exception cref="InvalidDataException">The backup is incomplete or fails authentication or its integrity check.</exception>
-    Task<PointInTimeRestoreResult> RestoreAsync(TenantContext source, DateTimeOffset at, TenantContext target, CancellationToken cancellationToken);
+    Task<PointInTimeRestoreResult> RestoreAsync(TenantContext source, DateTimeOffset at, TenantContext target, CancellationToken cancellationToken, string destination = BackupDestinationNames.Platform);
 }
 
 /// <summary>Restores from the newest snapshot at or before the time, rolled forward through its generation's segments.</summary>
 internal sealed class PointInTimeRestore(
-    IWalBackup engine, IObjectStore store, BackupReader reader, IContinuousBackup shipper, ITenantDirectory tenants, BackupSettings settings, TimeProvider time)
+    IWalBackup engine, BackupTargets targets, IContinuousBackup shipper, ITenantDirectory tenants, BackupSettings settings, TimeProvider time)
     : IPointInTimeRestore
 {
     private const int MaxPlanItems = 10_000;
     private static readonly TimeSpan PlanTimeout = TimeSpan.FromSeconds(10);
 
-    public async Task<PointInTimePlanResult> PlanAsync(TenantContext database, DateTimeOffset at, CancellationToken cancellationToken)
+    public async Task<PointInTimePlanResult> PlanAsync(TenantContext database, DateTimeOffset at, CancellationToken cancellationToken, string destination = BackupDestinationNames.Platform)
     {
         var now = time.GetUtcNow();
         using var timeout = new CancellationTokenSource(PlanTimeout, time);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
         try
         {
+            using var backup = await targets.RestoreAsync(database, destination, deadline.Token).ConfigureAwait(false);
+            if (backup is null)
+            {
+                return new NotFound("continuous backup holds nothing of this database");
+            }
+
             var file = BackupLayout.File(database);
-            var snapshots = await ScanSnapshotsAsync(file, at, MaxPlanItems, deadline.Token).ConfigureAwait(false);
+            var snapshots = await ScanSnapshotsAsync(backup.Store, file, at, MaxPlanItems, deadline.Token).ConfigureAwait(false);
             if (snapshots is null)
             {
                 return PlanLimit();
@@ -71,11 +77,11 @@ internal sealed class PointInTimeRestore(
 
             var earliest = await EarliestAsync(database, first.At, now, deadline.Token).ConfigureAwait(false);
             var remaining = MaxPlanItems - snapshots.Scanned;
-            var latest = shipper.LastShipped(database);
+            var latest = destination == BackupDestinationNames.Platform ? shipper.LastShipped(database, last.Generation) : null;
             SegmentScan? segments = null;
             if (latest is null)
             {
-                var newest = await ScanSegmentsAsync(file, last, at, remaining, stopAfterTarget: false, deadline.Token).ConfigureAwait(false);
+                var newest = await ScanSegmentsAsync(backup.Store, file, last, at, remaining, stopAfterTarget: false, deadline.Token).ConfigureAwait(false);
                 if (newest is null)
                 {
                     return PlanLimit();
@@ -105,7 +111,7 @@ internal sealed class PointInTimeRestore(
                 return new NotFound("continuous backup holds nothing of this database");
             }
 
-            segments ??= await ScanSegmentsAsync(file, chosen, at, remaining, stopAfterTarget: true, deadline.Token).ConfigureAwait(false);
+            segments ??= await ScanSegmentsAsync(backup.Store, file, chosen, at, remaining, stopAfterTarget: true, deadline.Token).ConfigureAwait(false);
             return segments is null
                 ? PlanLimit()
                 : new PointInTimePlan(new(earliest, storedLatest), at, chosen.At, segments.Latest, segments.Count);
@@ -114,7 +120,7 @@ internal sealed class PointInTimeRestore(
         {
             return new Unavailable("the point-in-time plan metadata scan timed out", "pitr_plan_timeout");
         }
-        catch (Exception error) when (error is AmazonS3Exception or HttpRequestException or IOException)
+        catch (Exception error) when (error is AmazonS3Exception or HttpRequestException or IOException or InvalidDataException)
         {
             cancellationToken.ThrowIfCancellationRequested();
             return timeout.IsCancellationRequested
@@ -123,15 +129,21 @@ internal sealed class PointInTimeRestore(
         }
     }
 
-    public async Task<RestoreWindow?> GetWindowAsync(TenantContext database, CancellationToken cancellationToken)
+    public async Task<RestoreWindow?> GetWindowAsync(TenantContext database, CancellationToken cancellationToken, string destination = BackupDestinationNames.Platform)
     {
         var now = time.GetUtcNow();
+        using var backup = await targets.RestoreAsync(database, destination, cancellationToken).ConfigureAwait(false);
+        if (backup is null)
+        {
+            return null;
+        }
+
         var file = BackupLayout.File(database);
-        var snapshots = await ScanSnapshotsAsync(file, DateTimeOffset.MaxValue, int.MaxValue, cancellationToken).ConfigureAwait(false);
-        return await WindowAsync(database, file, snapshots, now, cancellationToken).ConfigureAwait(false);
+        var snapshots = await ScanSnapshotsAsync(backup.Store, file, DateTimeOffset.MaxValue, int.MaxValue, cancellationToken).ConfigureAwait(false);
+        return await WindowAsync(database, file, snapshots, now, backup, destination, cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task<RestoreWindow?> WindowAsync(TenantContext database, string file, SnapshotScan? snapshots, DateTimeOffset now, CancellationToken cancellationToken)
+    private async Task<RestoreWindow?> WindowAsync(TenantContext database, string file, SnapshotScan? snapshots, DateTimeOffset now, BackupTarget backup, string destination, CancellationToken cancellationToken)
     {
         if (snapshots?.First is not { } first || snapshots.Last is not { } last)
         {
@@ -139,11 +151,11 @@ internal sealed class PointInTimeRestore(
         }
 
         // The shipper knows its own progress; otherwise the newest segment after the newest snapshot tells.
-        var shipped = shipper.LastShipped(database);
+        var shipped = destination == BackupDestinationNames.Platform ? shipper.LastShipped(database, last.Generation) : null;
         var latest = shipped ?? last.At;
         if (shipped is null)
         {
-            await foreach (var item in store.ListAsync(BackupLayout.Segments(file, last.Generation),
+            await foreach (var item in backup.Store.ListAsync(BackupLayout.Segments(file, last.Generation),
                 BackupLayout.SegmentsBefore(file, last.Generation, last.Position), cancellationToken).ConfigureAwait(false))
             {
                 if (BackupLayout.ParseSegment(item.Key) is { } segment && segment.At > latest)
@@ -158,18 +170,24 @@ internal sealed class PointInTimeRestore(
         return earliest <= latest ? new(earliest, latest) : null;
     }
 
-    public async Task<PointInTimeRestoreResult> RestoreAsync(TenantContext source, DateTimeOffset at, TenantContext target, CancellationToken cancellationToken)
+    public async Task<PointInTimeRestoreResult> RestoreAsync(TenantContext source, DateTimeOffset at, TenantContext target, CancellationToken cancellationToken, string destination = BackupDestinationNames.Platform)
     {
         // Pin retention before metadata awaits; the same scan discovers the window and selects the snapshot.
         var now = time.GetUtcNow();
+        using var backup = await targets.RestoreAsync(source, destination, cancellationToken).ConfigureAwait(false);
+        if (backup is null)
+        {
+            return new NotFound("continuous backup holds nothing of this database");
+        }
+
         var file = BackupLayout.File(source);
-        var snapshots = await ScanSnapshotsAsync(file, at, int.MaxValue, cancellationToken).ConfigureAwait(false);
+        var snapshots = await ScanSnapshotsAsync(backup.Store, file, at, int.MaxValue, cancellationToken).ConfigureAwait(false);
         if (snapshots?.First is null)
         {
             return new NotFound("continuous backup holds nothing of this database");
         }
 
-        if (await WindowAsync(source, file, snapshots, now, cancellationToken).ConfigureAwait(false) is not { } window)
+        if (await WindowAsync(source, file, snapshots, now, backup, destination, cancellationToken).ConfigureAwait(false) is not { } window)
         {
             return new NotFound("continuous backup holds nothing of this database within its plan's retention window");
         }
@@ -184,7 +202,7 @@ internal sealed class PointInTimeRestore(
             return new NotFound("continuous backup holds nothing of this database");
         }
 
-        var (restored, _) = await reader.BuildAsync(file, BackupLayout.KeyScope(source), chosen, at, until: null, cancellationToken).ConfigureAwait(false);
+        var (restored, _) = await backup.Reader.BuildAsync(file, BackupLayout.KeyScope(source), chosen, at, until: null, cancellationToken).ConfigureAwait(false);
         try
         {
             await engine.ImportDatabaseAsync(target, restored, cancellationToken).ConfigureAwait(false);
@@ -206,7 +224,7 @@ internal sealed class PointInTimeRestore(
     }
 
     // Scan raw objects so malformed metadata also consumes the preview budget. Both restore and preview select here.
-    private async Task<SnapshotScan?> ScanSnapshotsAsync(string file, DateTimeOffset at, int limit, CancellationToken cancellationToken)
+    private static async Task<SnapshotScan?> ScanSnapshotsAsync(IObjectStore store, string file, DateTimeOffset at, int limit, CancellationToken cancellationToken)
     {
         SnapshotKey? first = null;
         SnapshotKey? last = null;
@@ -236,7 +254,7 @@ internal sealed class PointInTimeRestore(
         return new(first, last, chosen, scanned);
     }
 
-    private async Task<SegmentScan?> ScanSegmentsAsync(string file, SnapshotKey snapshot, DateTimeOffset at, int limit, bool stopAfterTarget, CancellationToken cancellationToken)
+    private static async Task<SegmentScan?> ScanSegmentsAsync(IObjectStore store, string file, SnapshotKey snapshot, DateTimeOffset at, int limit, bool stopAfterTarget, CancellationToken cancellationToken)
     {
         DateTimeOffset? latest = null;
         DateTimeOffset? newest = null;

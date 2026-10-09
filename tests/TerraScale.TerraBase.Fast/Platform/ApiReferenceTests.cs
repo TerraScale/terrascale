@@ -14,6 +14,7 @@ public sealed class ApiReferenceTests
     // an admin-listener operation appearing here is a leak.
     private const string Operations = """
         DELETE /projects/{project}/databases/{database}/collections/{collection}/schema TsAuth(documents:write) deleteDeclaredCollectionSchema Collections
+        DELETE /v1/projects/{project}/backup-destination TsAuth(databases:write) deleteBackupDestination Backups
         DELETE /v1/projects/{project}/databases/{database} TsAuth(databases:write) deleteDatabase Databases
         DELETE /v1/projects/{project}/databases/{database}/collections/{collection} TsAuth(documents:write) dropCollection Collections
         DELETE /v1/projects/{project}/databases/{database}/collections/{collection}/documents/by-key TsAuth(documents:write) deleteDocument Documents
@@ -29,6 +30,7 @@ public sealed class ApiReferenceTests
         GET /projects/{project}/databases/{database}/replication TsAuth(databases:read) getDatabaseReplication Replication
         GET /projects/{project}/replication TsAuth(databases:read) getProjectReplication Replication
         GET /readyz anonymous readyz Health
+        GET /v1/projects/{project}/backup-destination TsAuth(databases:read) getBackupDestination Backups
         GET /v1/projects/{project}/databases TsAuth(databases:read) listDatabases Databases
         GET /v1/projects/{project}/databases/{database} TsAuth(databases:read) getDatabase Databases
         GET /v1/projects/{project}/databases/{database}/backup-policy TsAuth(databases:read) getBackupPolicy Backups
@@ -40,6 +42,7 @@ public sealed class ApiReferenceTests
         GET /v1/projects/{project}/databases/{database}/collections/{collection}/shape TsAuth(shapes:read) getShape Live
         GET /v1/projects/{project}/databases/{database}/index-recommendations TsAuth(databases:read) listIndexRecommendations Indexes
         GET /v1/projects/{project}/databases/{database}/indexes TsAuth(databases:read) listIndexes Indexes
+        GET /v1/projects/{project}/databases/{database}/point-in-time TsAuth(databases:read) getRestoreWindow Backups
         GET /v1/projects/{project}/databases/{database}/query-shapes TsAuth(databases:read) listQueryShapes Queries
         GET /v1/projects/{project}/databases/{database}/schema TsAuth(databases:read) getDatabaseSchema Schema
         GET /v1/projects/{project}/databases/{database}/schema/{collection} TsAuth(databases:read) getCollectionSchema Schema
@@ -60,12 +63,14 @@ public sealed class ApiReferenceTests
         POST /v1/projects/{project}/databases/{database}/index-recommendations/{recommendation}/apply TsAuth(databases:write) applyIndexRecommendation Indexes
         POST /v1/projects/{project}/databases/{database}/indexes TsAuth(databases:write) createIndex Indexes
         POST /v1/projects/{project}/databases/{database}/point-in-time/plan TsAuth(databases:read) planPointInTime Backups
+        POST /v1/projects/{project}/databases/{database}/point-in-time/restore TsAuth(databases:write) restorePointInTime Backups
         POST /v1/projects/{project}/databases/{database}/sql TsAuth(databases:read) runSql Queries
         POST /v1/projects/{project}/databases/{database}/sql/check TsAuth(databases:read) checkSql Queries
         POST /v1/projects/{project}/databases/{database}/transactions TsAuth(documents:write) runTransaction Transactions
         POST /v1/projects/{project}/saved-queries TsAuth(databases:write) createSavedQuery Queries
         PUT /projects/{project}/databases/{database}/auto-index/{collection} TsAuth(databases:write) setAutoIndexPolicy Indexes
         PUT /projects/{project}/databases/{database}/collections/{collection}/schema TsAuth(documents:write) putDeclaredCollectionSchema Collections
+        PUT /v1/projects/{project}/backup-destination TsAuth(databases:write) setBackupDestination Backups
         PUT /v1/projects/{project}/databases/{database}/backup-policy TsAuth(databases:write) setBackupPolicy Backups
         PUT /v1/projects/{project}/databases/{database}/collections/{collection}/documents/by-key TsAuth(documents:write) putDocument Documents
         PUT /v1/projects/{project}/databases/{database}/schema/{collection} TsAuth(databases:write) declareCollectionSchema Schema
@@ -136,6 +141,61 @@ public sealed class ApiReferenceTests
             .IsEqualTo("Management,Data,System");
         await Assert.That(string.Join('\n', operations.Select(operation => operation.Line).Order(StringComparer.Ordinal)))
             .IsEqualTo(Operations.ReplaceLineEndings("\n"));
+        const string project = "/v1/projects/{project}";
+        var paths = document.GetProperty("paths");
+        foreach (var (path, method, statuses) in new[]
+        {
+            (project + "/backup-destination", "get", "200,400,401,403,404,421"),
+            (project + "/backup-destination", "put", "200,400,401,403,404,421,503"),
+            (project + "/backup-destination", "delete", "204,400,401,403,404,421,503"),
+            (project + "/databases/{database}/point-in-time", "get", "200,400,401,403,404,421,503"),
+            (project + "/databases/{database}/point-in-time/restore", "post", "201,400,401,403,404,409,421,503"),
+        })
+        {
+            await Assert.That(string.Join(',', paths.GetProperty(path).GetProperty(method).GetProperty("responses")
+                .EnumerateObject().Select(status => status.Name).Order(StringComparer.Ordinal)))
+                .IsEqualTo(statuses).Because($"{method} {path}");
+        }
+
+        var destination = paths.GetProperty(project + "/backup-destination");
+        await Assert.That(destination.GetProperty("delete").GetProperty("responses").GetProperty("204").TryGetProperty("content", out _)).IsFalse();
+        await Assert.That(destination.GetProperty("put").GetProperty("requestBody").GetProperty("content")
+            .GetProperty("application/json").GetProperty("schema").GetProperty("$ref").GetString())
+            .IsEqualTo("#/components/schemas/ProjectBackupDestinationRequest");
+        foreach (var method in new[] { "get", "put" })
+        {
+            var success = destination.GetProperty(method).GetProperty("responses").GetProperty("200")
+                .GetProperty("content").GetProperty("application/json");
+            await Assert.That(success.GetProperty("schema").GetProperty("oneOf").EnumerateArray()
+                .Single(schema => schema.TryGetProperty("$ref", out _)).GetProperty("$ref").GetString())
+                .IsEqualTo("#/components/schemas/ProjectBackupDestination");
+            await Assert.That(success.GetProperty("example").EnumerateObject().Select(property => property.Name).ToList())
+                .IsEquivalentTo(["endpoint", "region", "bucket", "mode", "updatedAt"]);
+        }
+
+        var schemas = document.GetProperty("components").GetProperty("schemas");
+        // Credentials belong only to the request; responses also exclude the internal Vault secret reference.
+        await Assert.That(schemas.GetProperty("ProjectBackupDestinationRequest").GetProperty("properties")
+            .EnumerateObject().Select(property => property.Name).ToList())
+            .IsEquivalentTo(["endpoint", "region", "bucket", "accessKeyId", "secretKey", "mode"]);
+        await Assert.That(schemas.GetProperty("ProjectBackupDestination").GetProperty("properties")
+            .EnumerateObject().Select(property => property.Name).ToList())
+            .IsEquivalentTo(["endpoint", "region", "bucket", "mode", "updatedAt"]);
+        foreach (var name in new[] { "PointInTimeRestoreRequest", "PointInTimePlanRequest" })
+        {
+            var request = schemas.GetProperty(name);
+            await Assert.That(request.GetProperty("properties").TryGetProperty("destination", out _)).IsTrue().Because(name);
+            await Assert.That(request.TryGetProperty("required", out var required)
+                && required.EnumerateArray().Any(property => property.GetString() == "destination")).IsFalse().Because(name);
+        }
+        var selector = paths.GetProperty(project + "/databases/{database}/point-in-time").GetProperty("get")
+            .GetProperty("parameters").EnumerateArray().Single(parameter => parameter.GetProperty("name").GetString() == "destination");
+        await Assert.That(selector.GetProperty("in").GetString()).IsEqualTo("query");
+        await Assert.That(selector.TryGetProperty("required", out var requiredSelector) && requiredSelector.GetBoolean()).IsFalse();
+        await Assert.That(selector.GetProperty("schema").GetProperty("default").GetString()).IsEqualTo("platform");
+        await Assert.That(selector.GetProperty("schema").GetProperty("enum").EnumerateArray().Select(value => value.GetString() ?? string.Empty).ToList())
+            .IsEquivalentTo(["platform", "customer"]);
+
         foreach (var (line, operation) in operations)
         {
             await Assert.That(operation.GetProperty("tags").GetArrayLength()).IsEqualTo(1).Because(line);

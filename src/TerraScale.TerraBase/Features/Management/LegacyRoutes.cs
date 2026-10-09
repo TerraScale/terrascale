@@ -70,6 +70,7 @@ public static class LegacyRoutes
         var mapped = suffix switch
         {
             ["usage"] when HttpMethods.IsGet(method) => suffix,
+            ["backup-destination"] when HttpMethods.IsGet(method) || HttpMethods.IsPut(method) || HttpMethods.IsDelete(method) => suffix,
             ["saved-queries", ..] when suffix.Length <= 2 => suffix,
             ["databases"] when HttpMethods.IsGet(method) || HttpMethods.IsPost(method) => suffix,
             ["databases", var id, ..] when DatabaseSuffix(suffix[2..], method) => DatabasePath(suffix, id),
@@ -85,7 +86,8 @@ public static class LegacyRoutes
         ["backups"] => HttpMethods.IsGet(method) || HttpMethods.IsPost(method),
         ["backups", _, "restore"] => HttpMethods.IsPost(method),
         ["backup-policy"] => HttpMethods.IsGet(method) || HttpMethods.IsPut(method),
-        ["point-in-time", "plan"] => HttpMethods.IsPost(method),
+        ["point-in-time"] => HttpMethods.IsGet(method),
+        ["point-in-time", "plan" or "restore"] => HttpMethods.IsPost(method),
         ["indexes"] => HttpMethods.IsGet(method) || HttpMethods.IsPost(method),
         ["indexes", _] => HttpMethods.IsDelete(method),
         ["index-recommendations"] => HttpMethods.IsGet(method),

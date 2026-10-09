@@ -1,6 +1,8 @@
+using System.Text.Json.Nodes;
+using Microsoft.OpenApi;
 using TerraBase.Errors;
+using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Backup;
-using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
@@ -12,21 +14,56 @@ public sealed class GetRestoreWindowEndpoint(IManagementService management, IPoi
     /// <inheritdoc />
     public override void Configure()
     {
-        Get(ManagementRoute.Database + "/point-in-time");
+        Get(ProjectApiRoute.Database + "/point-in-time");
         Name("getRestoreWindow");
         Summary("Reads the point-in-time restore window of a database");
-        Description("earliest is the oldest continuous backup snapshot of the database limited by its plan's retention window, latest the newest data in the backup (normally about a second old). 404 when continuous backup is off or holds no data of the database within its plan's retention window." + " " + ManagementRoute.IdentityDescription);
-        Tags(ManagementRoute.Tag);
+        Description("Query destination selects platform (default) or customer. earliest is the oldest continuous backup snapshot of the database limited by its plan's retention window, latest the newest data in the backup (normally about a second old). 404 when continuous backup is off or holds no data of the database within its plan's retention window." + " " + ProjectApiRoute.IdentityDescription);
+        Tags("Backups");
         Produces<RestoreWindow>();
+        Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
-        RequireAuthorization(UserAuthExtensions.PolicyName);
-        Metadata(ListenerMetadata.Management);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
+        Metadata(new OpenApiParameter
+        {
+            Name = "destination",
+            In = ParameterLocation.Query,
+            Description = "The backup bucket to inspect; defaults to platform.",
+            Schema = new OpenApiSchema
+            {
+                Type = JsonSchemaType.String,
+                Enum = [JsonValue.Create(BackupDestinationNames.Platform), JsonValue.Create(BackupDestinationNames.Customer)],
+                Default = JsonValue.Create(BackupDestinationNames.Platform),
+            },
+        });
+        RequireAuthorization(ApiKeyScopes.DatabasesRead);
+        Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
     }
 
     /// <inheritdoc />
-    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
-        await ManagementRoute.DatabaseAsync(HttpContext, management, cancellationToken) is { } database
-            && await restore.GetWindowAsync(database, cancellationToken) is { } window
-            ? TypedResults.Ok(window)
-            : ErrorResponse.From(new NotFound());
+    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
+    {
+        if (await ManagementRoute.DatabaseAsync(HttpContext, management, cancellationToken) is not { } database)
+        {
+            return ErrorResponse.From(new NotFound());
+        }
+
+        try
+        {
+            return BackupDestinationRoute.Source(HttpContext.Request.Query["destination"]) switch
+            {
+                Validation error => ErrorResponse.From(error),
+                string source => await restore.GetWindowAsync(database, cancellationToken, source) is { } window
+                    ? TypedResults.Ok(window) : ErrorResponse.From(new NotFound()),
+            };
+        }
+        catch (InvalidDataException)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ErrorResponse.From(BackupDestinationRoute.Unavailable());
+        }
+        catch (Exception error) when (BackupDestinationRoute.IsUnavailable(error, cancellationToken))
+        {
+            return ErrorResponse.From(BackupDestinationRoute.Unavailable());
+        }
+    }
 }

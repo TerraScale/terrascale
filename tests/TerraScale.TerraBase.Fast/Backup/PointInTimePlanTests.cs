@@ -87,20 +87,20 @@ public sealed class PointInTimePlanTests
         (await data.PutAsJsonAsync(Uri(document), new { text })).EnsureSuccessStatusCode();
         var backup = api.Server.Services.GetRequiredService<IContinuousBackup>();
         time.Advance(TimeSpan.FromSeconds(10));
-        await backup.RunOnceAsync(CancellationToken.None);
+        await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var first = time.GetUtcNow();
         (await data.PutAsJsonAsync(Uri(document), new { text = text + " updated" })).EnsureSuccessStatusCode();
         time.Advance(TimeSpan.FromSeconds(1));
-        await backup.RunOnceAsync(CancellationToken.None);
+        await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var earlier = time.GetUtcNow();
         time.Advance(TimeSpan.FromDays(1));
-        await backup.RunOnceAsync(CancellationToken.None);
+        await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var second = time.GetUtcNow();
         (await data.PutAsJsonAsync(Uri(document), new { text = text + " latest" })).EnsureSuccessStatusCode();
         time.Advance(TimeSpan.FromSeconds(1));
-        await backup.RunOnceAsync(CancellationToken.None);
+        await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         // Only explicit passes ship: periodic timers stay dormant while the preview timeout still advances.
-        await backup.RunOnceAsync(CancellationToken.None);
+        await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var latest = time.GetUtcNow();
         var objects = oci.Objects.ToDictionary(item => item.Key, item => Convert.ToHexString(SHA256.HashData(item.Value)), StringComparer.Ordinal);
         var files = Files(api);
@@ -151,17 +151,22 @@ public sealed class PointInTimePlanTests
     {
         using var oci = new FakeOci();
         var time = Clock();
-        await using var api = await ManagementApi.StartAsync(oci.Configure, oci.Route, time);
+        await using var api = await ManagementApi.StartAsync(oci.Configure, services =>
+        {
+            oci.Route(services);
+            ManualBackupHosting.Configure(services);
+        }, time);
+        Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
         var database = await api.CreateManagedDatabaseAsync();
         using var viewer = api.As(await api.AddMemberAsync(api.Client, database.Organization, "viewer"));
         using var outsider = api.As(EntityIds.New().ToString());
         var backup = api.Server.Services.GetRequiredService<IContinuousBackup>();
         time.Advance(TimeSpan.FromSeconds(10));
-        await backup.RunOnceAsync(CancellationToken.None);
+        await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var snapshot = time.GetUtcNow();
         time.Advance(TimeSpan.FromSeconds(1));
-        await backup.RunOnceAsync(CancellationToken.None);
-        await backup.RunOnceAsync(CancellationToken.None);
+        await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
+        await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         oci.FailPut = _ => true;
         time.Advance(TimeSpan.FromSeconds(1));
         using var window = JsonDocument.Parse(await api.Client.GetStringAsync(Uri(database.Path + "/point-in-time")));
@@ -372,8 +377,8 @@ public sealed class PointInTimePlanTests
         var database = await api.CreateManagedDatabaseAsync();
         var backup = api.Server.Services.GetRequiredService<IContinuousBackup>();
         time.Advance(TimeSpan.FromSeconds(10));
-        await backup.RunOnceAsync(CancellationToken.None);
-        await backup.RunOnceAsync(CancellationToken.None);
+        await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
+        await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         probe.OversizePrefix = File(database) + (segments ? "/wal/" : "/snapshots/");
         probe.OversizeItems = segments ? 10000 : 10001;
         try
@@ -396,7 +401,7 @@ public sealed class PointInTimePlanTests
         var probe = new StorageProbe();
         await using var api = await ManagementApi.StartAsync(oci.Configure, services => Route(oci, probe, services), time, managementCredential: true);
         var database = await api.CreateManagedDatabaseAsync();
-        await api.Server.Services.GetRequiredService<IContinuousBackup>().RunOnceAsync(CancellationToken.None);
+        await api.Server.Services.GetRequiredService<IContinuousBackup>().RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         probe.BlockPrefix = File(database) + "/snapshots/";
         try
         {
@@ -435,6 +440,7 @@ public sealed class PointInTimePlanTests
     private static void Route(FakeOci oci, StorageProbe probe, IServiceCollection services)
     {
         oci.Route(services);
+        ManualBackupHosting.Configure(services);
         services.AddHttpClient("backup-s3").AddHttpMessageHandler(() => new ProbeHandler(probe, vault: false));
         services.AddHttpClient("backup-kms").AddHttpMessageHandler(() => new ProbeHandler(probe, vault: true));
     }
@@ -513,7 +519,7 @@ public sealed class PointInTimePlanTests
             string[]? keys = null;
             if (prefix is not null && probe.OversizePrefix is { } oversized && prefix.StartsWith(oversized, StringComparison.Ordinal))
             {
-                keys = [.. Enumerable.Range(0, probe.OversizeItems).Select(i => prefix + i.ToString("D16", CultureInfo.InvariantCulture))];
+                keys = [.. Enumerable.Range(0, probe.OversizeItems).Select(i => prefix + "junk-" + i.ToString("D16", CultureInfo.InvariantCulture))];
             }
             else if (prefix is not null && probe.Listings.TryGetValue(prefix, out var listed))
             {

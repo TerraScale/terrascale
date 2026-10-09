@@ -6,18 +6,24 @@ namespace TerraBase.Configuration;
 
 /// <summary>
 /// Where continuous backup ships to (TS-633, <c>docs/backup.md</c>): an S3-compatible bucket (OCI Object Storage) and the
-/// OCI Vault master key that wraps each project's data key. Set all <c>backup-*</c> settings or none; none turns backup off.
+/// OCI Vault master key that wraps each project's data key. Set the required settings together; none turns backup off.
+/// Customer credentials can additionally be stored in OCI Vault when all four optional secret settings are supplied.
 /// </summary>
 public sealed class BackupSettings
 {
     /// <summary>Every backup setting.</summary>
-    internal static string[] Keys => [.. Required, "backup-retention-days", "backup-key-rotation-days"];
+    internal static string[] Keys => [.. Required, .. VaultRequired, "backup-retention-days", "backup-key-rotation-days"];
 
     // Required together; the rest are optional.
     private static readonly string[] Required =
     [
         "backup-endpoint", "backup-region", "backup-bucket", "backup-access-key-id", "backup-secret-key-file",
         "backup-kms-endpoint", "backup-kms-key-id", "backup-kms-api-key", "backup-kms-private-key-file",
+    ];
+
+    private static readonly string[] VaultRequired =
+    [
+        "backup-vault-id", "backup-vault-compartment-id", "backup-vault-endpoint", "backup-secrets-endpoint",
     ];
 
     /// <summary>S3-compatible endpoint, for example <c>https://&lt;namespace&gt;.compat.objectstorage.sa-saopaulo-1.oraclecloud.com</c>.</summary>
@@ -50,6 +56,18 @@ public sealed class BackupSettings
     /// <summary>Maximum age of a backup data key before the next upload rotates it; 90 days by default.</summary>
     public int KeyRotationDays { get; init; } = 90;
 
+    /// <summary>OCID of the optional vault holding customer backup credentials; its key is <see cref="KmsKeyId"/>.</summary>
+    public string? VaultId { get; init; }
+
+    /// <summary>OCID of the compartment where customer credential secrets are created.</summary>
+    public string? VaultCompartmentId { get; init; }
+
+    /// <summary>Optional OCI Vault secrets management endpoint, used to create and schedule deletion of secrets.</summary>
+    public Uri? VaultEndpoint { get; init; }
+
+    /// <summary>Optional OCI secret retrieval endpoint, used to read secret bundles.</summary>
+    public Uri? SecretsEndpoint { get; init; }
+
     /// <summary>
     /// Days each plan keeps backups (<c>backup-retention-days</c>, default <c>hobby=1,pro=7,enterprise=30</c>): a database
     /// restores to any time in that window. Plans move to ts-dashboard (TS-599); this stays the fallback.
@@ -74,6 +92,12 @@ public sealed class BackupSettings
             throw new TerraBaseConfigurationException($"{string.Join(", ", Required)} must be set together");
         }
 
+        var vaultEnabled = VaultRequired.Any(values.ContainsKey);
+        if (vaultEnabled && !VaultRequired.All(values.ContainsKey))
+        {
+            throw new TerraBaseConfigurationException($"{string.Join(", ", VaultRequired)} must be set together");
+        }
+
         return new BackupSettings
         {
             Endpoint = Https(values, "backup-endpoint"),
@@ -90,6 +114,10 @@ public sealed class BackupSettings
                 : throw new TerraBaseConfigurationException("backup-kms-api-key must be <tenancy OCID>/<user OCID>/<fingerprint>"),
             KmsPrivateKeyPem = ReadPrivateKey(values["backup-kms-private-key-file"]),
             KeyRotationDays = values.TryGetValue("backup-key-rotation-days", out var rotation) ? ParseKeyRotation(rotation) : 90,
+            VaultId = vaultEnabled ? Token(values, "backup-vault-id") : null,
+            VaultCompartmentId = vaultEnabled ? Token(values, "backup-vault-compartment-id") : null,
+            VaultEndpoint = vaultEnabled ? Https(values, "backup-vault-endpoint") : null,
+            SecretsEndpoint = vaultEnabled ? Https(values, "backup-secrets-endpoint") : null,
             RetentionDays = values.TryGetValue("backup-retention-days", out var retention) ? ParseRetention(retention) : DefaultRetentionDays,
         };
     }

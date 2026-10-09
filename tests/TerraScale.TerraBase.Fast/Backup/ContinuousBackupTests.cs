@@ -24,7 +24,8 @@ public sealed class ContinuousBackupTests
     {
         using var oci = new FakeOci();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
-        await using var api = await ManagementApi.StartAsync(oci.Configure, oci.Route, time);
+        await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
+        Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
         var backup = api.Server.Services.GetRequiredService<IContinuousBackup>();
         var database = await api.CreateManagedDatabaseAsync("main");
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
@@ -35,15 +36,14 @@ public sealed class ContinuousBackupTests
 
         // Discovery runs every ten seconds: the pass after it snapshots every file, starting its generation.
         time.Advance(TimeSpan.FromSeconds(10));
-        await backup.RunOnceAsync(CancellationToken.None);
+        await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var snapshotted = time.GetUtcNow();
         time.Advance(TimeSpan.FromSeconds(5));
         var written = time.GetUtcNow();
         (await data.PutAsJsonAsync(Uri(ManagementApi.DocumentPath(database, "people", "after")), new { text = after })).EnsureSuccessStatusCode();
         time.Advance(TimeSpan.FromSeconds(1));
-        await backup.RunOnceAsync(CancellationToken.None);
+        await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var shipped = time.GetUtcNow();
-        // The service's own timer, fired by Advance, may ship the write in its pass at :15 before this one at :16.
         var lastShipped = backup.Status.Files.Single(file => file.File == File(database)).LastShippedAt;
 
         using var window = await api.Client.GetAsync(Uri($"{database.Path}/point-in-time"));
@@ -103,13 +103,14 @@ public sealed class ContinuousBackupTests
     {
         using var oci = new FakeOci();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
-        await using var api = await ManagementApi.StartAsync(oci.Configure, oci.Route, time);
+        await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
+        Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
         var backup = api.Server.Services.GetRequiredService<IContinuousBackup>();
         var database = await api.CreateManagedDatabaseAsync("main");
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
         await ManagementApi.CreateCollectionAsync(data, database, "people");
         time.Advance(TimeSpan.FromSeconds(10));
-        await backup.RunOnceAsync(CancellationToken.None);
+        await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var generation = Generation(backup, database);
 
         // Over a thousand pages: the next read checkpoints, so the write after it restarts the log.
@@ -120,11 +121,11 @@ public sealed class ContinuousBackupTests
         }
 
         time.Advance(TimeSpan.FromSeconds(1));
-        await backup.RunOnceAsync(CancellationToken.None);
+        await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var log = new FileInfo(Path.Combine(api.Server.DataDirectory, database.Organization, database.Project, database.Id + ".db-wal")).Length;
         (await data.PutAsJsonAsync(Uri(ManagementApi.DocumentPath(database, "people", "large-5")), new { text = texts[5] })).EnsureSuccessStatusCode();
         time.Advance(TimeSpan.FromSeconds(1));
-        await backup.RunOnceAsync(CancellationToken.None);
+        await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var shipped = backup.Status.Files.Single(file => file.File == File(database)).LastShippedAt!.Value;
 
         using var restored = await api.Client.PostAsJsonAsync(Uri($"{database.Path}/point-in-time/restore"), new { pointInTime = shipped, name = "main-latest" });
@@ -147,13 +148,14 @@ public sealed class ContinuousBackupTests
     {
         using var oci = new FakeOci();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
-        await using var api = await ManagementApi.StartAsync(oci.Configure, oci.Route, time);
+        await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
+        Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
         var backup = api.Server.Services.GetRequiredService<IContinuousBackup>();
         var database = await api.CreateManagedDatabaseAsync("main");
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
         await ManagementApi.CreateCollectionAsync(data, database, "people");
         time.Advance(TimeSpan.FromSeconds(10));
-        await backup.RunOnceAsync(CancellationToken.None);
+        await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var generation = Generation(backup, database);
         var text = Faker.Lorem.Sentence(12);
         (await data.PutAsJsonAsync(Uri(ManagementApi.DocumentPath(database, "people", "outside")), new { text })).EnsureSuccessStatusCode();
@@ -169,7 +171,7 @@ public sealed class ContinuousBackupTests
         }
 
         time.Advance(TimeSpan.FromSeconds(1));
-        await backup.RunOnceAsync(CancellationToken.None);
+        await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var shipped = backup.Status.Files.Single(file => file.File == File(database)).LastShippedAt!.Value;
         using var restored = await api.Client.PostAsJsonAsync(Uri($"{database.Path}/point-in-time/restore"), new { pointInTime = shipped, name = "main-latest" });
         using var read = await data.GetAsync(Uri(DocumentPath(database, "main-latest", "outside")));
@@ -231,23 +233,25 @@ public sealed class ContinuousBackupTests
 
         async Task<TerraBaseTestServer> MemberAsync(string node)
         {
-            return await TerraBaseTestServer.StartAsync(settings =>
+            var member = await TerraBaseTestServer.StartAsync(settings =>
             {
                 oci.Configure(settings);
                 settings["node-name"] = node;
             }, services =>
             {
-                oci.Route(services);
+                ManualShipping(oci, services);
                 services.AddSingleton<TimeProvider>(time);
                 services.AddSingleton<IMemberStore>(store);
             });
+            Directory.CreateDirectory(Path.Combine(member.DataDirectory, ".backup"));
+            return member;
         }
 
         async Task PassAsync()
         {
             foreach (var member in members.Values)
             {
-                await member.Services.GetRequiredService<IContinuousBackup>().RunOnceAsync(CancellationToken.None);
+                await member.Services.GetRequiredService<IContinuousBackup>().RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
             }
         }
     }
@@ -265,18 +269,18 @@ public sealed class ContinuousBackupTests
         using var data = await api.CreateClientAsync(hobby.Organization, "documents:read", "documents:write");
         await ManagementApi.CreateCollectionAsync(data, hobby, "people");
         time.Advance(TimeSpan.FromSeconds(10));
-        await backup.RunOnceAsync(CancellationToken.None);
+        await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         (await data.PutAsJsonAsync(Uri(ManagementApi.DocumentPath(hobby, "people", "first-day")), new { text = Faker.Lorem.Sentence(8) })).EnsureSuccessStatusCode();
 
         // Two daily snapshots, each checked by a drill, then an hour on: hobby keeps a day plus the snapshot before it.
         for (var day = 0; day < 2; day++)
         {
             time.Advance(TimeSpan.FromDays(1) + TimeSpan.FromSeconds(1));
-            await backup.RunOnceAsync(CancellationToken.None);
+            await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         }
 
         time.Advance(TimeSpan.FromHours(2));
-        await backup.RunOnceAsync(CancellationToken.None);
+        await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var hobbySnapshots = Snapshots(oci, hobby);
         var proSnapshots = Snapshots(oci, pro);
         var (oldestAt, oldestPosition) = hobbySnapshots[0];
@@ -305,22 +309,23 @@ public sealed class ContinuousBackupTests
     {
         using var oci = new FakeOci { Locked = _ => true };
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
-        await using var api = await ManagementApi.StartAsync(oci.Configure, oci.Route, time);
+        await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
+        Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
         var backup = api.Server.Services.GetRequiredService<IContinuousBackup>();
         var database = await api.CreateManagedDatabaseAsync("main");
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
         await ManagementApi.CreateCollectionAsync(data, database, "people");
         time.Advance(TimeSpan.FromSeconds(10));
-        await backup.RunOnceAsync(CancellationToken.None);
+        await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         (await data.PutAsJsonAsync(Uri(ManagementApi.DocumentPath(database, "people", "kept")), new { text = Faker.Lorem.Sentence(8) })).EnsureSuccessStatusCode();
         for (var day = 0; day < 2; day++)
         {
             time.Advance(TimeSpan.FromDays(1) + TimeSpan.FromSeconds(1));
-            await backup.RunOnceAsync(CancellationToken.None);
+            await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         }
 
         time.Advance(TimeSpan.FromHours(2));
-        await backup.RunOnceAsync(CancellationToken.None);
+        await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var locked = Snapshots(oci, database).Count;
         var status = backup.Status.Files.Single(file => file.File == File(database));
         using var window = JsonDocument.Parse(await api.Client.GetStringAsync(Uri($"{database.Path}/point-in-time")));
@@ -328,7 +333,7 @@ public sealed class ContinuousBackupTests
         // The rule lapses: the next hourly pass deletes what the plan no longer needs.
         oci.Locked = _ => false;
         time.Advance(TimeSpan.FromHours(1));
-        await backup.RunOnceAsync(CancellationToken.None);
+        await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
 
         await Assert.That(locked).IsEqualTo(3);
         await Assert.That(status.LastError).IsNull();
@@ -341,22 +346,23 @@ public sealed class ContinuousBackupTests
     {
         using var oci = new FakeOci();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
-        await using var api = await ManagementApi.StartAsync(oci.Configure, oci.Route, time);
+        await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
+        Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
         var backup = api.Server.Services.GetRequiredService<IContinuousBackup>();
         var database = await api.CreateManagedDatabaseAsync("main");
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
         await ManagementApi.CreateCollectionAsync(data, database, "people");
         time.Advance(TimeSpan.FromSeconds(10));
-        await backup.RunOnceAsync(CancellationToken.None);
+        await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         (await data.PutAsJsonAsync(Uri(ManagementApi.DocumentPath(database, "people", "doomed")), new { text = Faker.Lorem.Sentence(8) })).EnsureSuccessStatusCode();
         time.Advance(TimeSpan.FromSeconds(1));
-        await backup.RunOnceAsync(CancellationToken.None);
+        await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
 
         // Flip a byte of the segment's last tag: it no longer authenticates.
         var segment = oci.Objects.Single(item => item.Key.StartsWith(File(database) + "/wal/", StringComparison.Ordinal)).Value;
         segment[^1] ^= 0xff;
         time.Advance(TimeSpan.FromDays(1));
-        await backup.RunOnceAsync(CancellationToken.None);
+        await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var drill = backup.Status.Files.Single(file => file.File == File(database)).LastDrill!;
         var record = await RecordAsync(api, database);
         var metrics = await api.Server.Client.GetStringAsync(Uri("/metrics"));
@@ -411,6 +417,12 @@ public sealed class ContinuousBackupTests
 
     private static string DocumentPath(ManagedDatabaseRef database, string name, string document) =>
         $"/v1/projects/{database.Project}/databases/{name}/collections/people/documents/by-key?id={ManagementApi.DocumentId(document)}";
+
+    private static void ManualShipping(FakeOci oci, IServiceCollection services)
+    {
+        oci.Route(services);
+        ManualBackupHosting.Configure(services);
+    }
 
     private static Uri Uri(string path) => ManagementApi.Uri(path);
 }

@@ -7,8 +7,9 @@ using TerraScale.Endpoints;
 namespace TerraBase.Features.Management.Backups;
 
 /// <summary>The body of <c>POST …/point-in-time/plan</c>.</summary>
+/// <param name="Destination">The backup bucket: platform (default) or customer.</param>
 /// <param name="PointInTime">The required restore time, between the window's earliest and latest times, inclusive.</param>
-public sealed record PointInTimePlanRequest(DateTimeOffset? PointInTime);
+public sealed record PointInTimePlanRequest(DateTimeOffset? PointInTime, string? Destination = null);
 
 /// <summary><c>POST …/databases/{database}/point-in-time/plan</c>: previews continuous backup metadata without restoring.</summary>
 public sealed class PlanPointInTimeEndpoint(IManagementService management, IPointInTimeRestore restore) : Endpoint<PointInTimePlanRequest, IResult>
@@ -19,7 +20,7 @@ public sealed class PlanPointInTimeEndpoint(IManagementService management, IPoin
         Post(ProjectApiRoute.Database + "/point-in-time/plan");
         Name("planPointInTime");
         Summary("Previews a point-in-time restore without changing the database");
-        Description("Read-only advisory metadata: the restore window, requested time, selected snapshot time and applicable segment count/latest time. pointInTime is required between the window's earliest and latest times, inclusive; 404 when no stored data remains within the plan's retention window. No backup objects are downloaded or decrypted. Integrity and segment contiguity are checked during actual restore. Scans at most 10000 objects within 10 seconds; exceeding either bound returns 503." + " " + ProjectApiRoute.IdentityDescription);
+        Description("destination selects platform (default) or customer. Read-only advisory metadata: the restore window, requested time, selected snapshot time and applicable segment count/latest time. pointInTime is required between the window's earliest and latest times, inclusive; 404 when no stored data remains within the plan's retention window. No backup objects are downloaded or decrypted. Integrity and segment contiguity are checked during actual restore. Scans at most 10000 objects within 10 seconds; exceeding either bound returns 503." + " " + ProjectApiRoute.IdentityDescription);
         Tags("Backups");
         Produces<PointInTimePlan>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
@@ -45,7 +46,17 @@ public sealed class PlanPointInTimeEndpoint(IManagementService management, IPoin
             return ErrorResponse.From(new Validation("pointInTime is required"));
         }
 
-        return await restore.PlanAsync(database, at, cancellationToken) switch
+        string destination = BackupDestinationNames.Platform;
+        switch (BackupDestinationRoute.Source(request.Destination))
+        {
+            case Validation error:
+                return ErrorResponse.From(error);
+            case string source:
+                destination = source;
+                break;
+        }
+
+        return await restore.PlanAsync(database, at, cancellationToken, destination) switch
         {
             PointInTimePlan plan => TypedResults.Ok(plan),
             NotFound error => ErrorResponse.From(error),

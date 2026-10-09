@@ -197,18 +197,21 @@ public sealed class BackupKeySaturationTests
             Directory.Delete(coldDirectory, recursive: true);
         }
 
-        Task<ManagementApi> StartAsync(string dataDirectory)
+        async Task<ManagementApi> StartAsync(string dataDirectory)
         {
-            return ManagementApi.StartAsync(settings =>
+            var api = await ManagementApi.StartAsync(settings =>
             {
                 oci.Configure(settings);
                 settings["data-directory"] = dataDirectory;
             }, services =>
             {
                 oci.Route(services);
+                ManualBackupHosting.Configure(services);
                 // Bound captured output from the 65,536-key workload; warnings and errors remain visible.
                 services.AddLogging(logging => logging.AddFilter("System.Net.Http.HttpClient", LogLevel.Warning));
             }, time);
+            Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
+            return api;
         }
     }
 

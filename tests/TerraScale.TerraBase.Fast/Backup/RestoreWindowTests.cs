@@ -15,7 +15,8 @@ public sealed class RestoreWindowTests
     {
         using var oci = new FakeOci();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
-        await using var api = await ManagementApi.StartAsync(oci.Configure, oci.Route, time);
+        await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
+        Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
         var backup = api.Server.Services.GetRequiredService<IContinuousBackup>();
         var database = await api.CreateManagedDatabaseAsync();
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
@@ -24,7 +25,7 @@ public sealed class RestoreWindowTests
         using var seed = await data.PutAsJsonAsync(Uri(ManagementApi.DocumentPath(database, "people", "state")), new { text = stored });
         seed.EnsureSuccessStatusCode();
         time.Advance(TimeSpan.FromSeconds(10));
-        await backup.RunOnceAsync(CancellationToken.None);
+        await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var shipped = time.GetUtcNow();
         // Keep the application running while OCI refuses additional uploads.
         oci.FailPut = _ => true;
@@ -33,7 +34,7 @@ public sealed class RestoreWindowTests
         var unshipped = new Faker().Lorem.Sentence(20);
         using var write = await data.PutAsJsonAsync(Uri(ManagementApi.DocumentPath(database, "people", "state")), new { text = unshipped });
         write.EnsureSuccessStatusCode();
-        await backup.RunOnceAsync(CancellationToken.None);
+        await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         using var window = await api.Client.GetAsync(Uri($"{database.Path}/point-in-time"));
         window.EnsureSuccessStatusCode();
         var bounds = await window.Content.ReadFromJsonAsync<JsonElement>();
@@ -65,7 +66,8 @@ public sealed class RestoreWindowTests
     {
         using var oci = new FakeOci();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
-        await using var api = await ManagementApi.StartAsync(oci.Configure, oci.Route, time);
+        await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
+        Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
         var backup = api.Server.Services.GetRequiredService<IContinuousBackup>();
         var database = await api.CreateManagedDatabaseAsync();
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
@@ -74,12 +76,12 @@ public sealed class RestoreWindowTests
         using var seed = await data.PutAsJsonAsync(Uri(ManagementApi.DocumentPath(database, "people", "state")), new { text = initial });
         seed.EnsureSuccessStatusCode();
         time.Advance(TimeSpan.FromSeconds(10));
-        await backup.RunOnceAsync(CancellationToken.None);
+        await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var snapshotted = time.GetUtcNow();
         time.Advance(TimeSpan.FromSeconds(5));
         using var write = await data.PutAsJsonAsync(Uri(ManagementApi.DocumentPath(database, "people", "state")), new { text = new Faker().Lorem.Sentence(20) });
         write.EnsureSuccessStatusCode();
-        await backup.RunOnceAsync(CancellationToken.None);
+        await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         oci.FailPut = _ => true;
 
         using var window = await api.Client.GetAsync(Uri($"{database.Path}/point-in-time"));
@@ -140,7 +142,8 @@ public sealed class RestoreWindowTests
     {
         using var oci = new FakeOci { Locked = _ => true };
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
-        await using var api = await ManagementApi.StartAsync(oci.Configure, oci.Route, time);
+        await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
+        Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
         var backup = api.Server.Services.GetRequiredService<IContinuousBackup>();
         var database = await api.CreateManagedDatabaseAsync();
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
@@ -148,7 +151,7 @@ public sealed class RestoreWindowTests
         using var seed = await data.PutAsJsonAsync(Uri(ManagementApi.DocumentPath(database, "people", "state")), new { text = new Faker().Lorem.Sentence(12) });
         seed.EnsureSuccessStatusCode();
         time.Advance(TimeSpan.FromSeconds(10));
-        await backup.RunOnceAsync(CancellationToken.None);
+        await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var snapshotted = time.GetUtcNow();
         var prefix = backup.Status.Files.Single(file => file.File.EndsWith("/" + database.Id, StringComparison.Ordinal)).File + "/";
         oci.FailPut = _ => true;
@@ -171,6 +174,12 @@ public sealed class RestoreWindowTests
         await Assert.That(oci.Objects.Keys.Where(key => key.StartsWith(prefix, StringComparison.Ordinal))).IsEquivalentTo(retained);
         var databases = await api.Client.GetFromJsonAsync<JsonElement>(Uri($"{database.ProjectPath}/databases"));
         await Assert.That(databases.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("id").GetString()!)).IsEquivalentTo([database.Id]);
+    }
+
+    private static void ManualShipping(FakeOci oci, IServiceCollection services)
+    {
+        oci.Route(services);
+        ManualBackupHosting.Configure(services);
     }
 
     private static Uri Uri(string path) => ManagementApi.Uri(path);
