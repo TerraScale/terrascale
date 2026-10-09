@@ -1,6 +1,7 @@
 using System.Diagnostics.Metrics;
 using System.Net;
 using Microsoft.Extensions.DependencyInjection;
+using TerraBase.Features.Memory;
 using TerraBase.Hosting;
 using TerraBase.Testing;
 
@@ -19,6 +20,10 @@ public sealed class MetricsTests
         secondMeter.CreateCounter<long>("terrabase_test_isolation").Add(11);
         using var health = await first.Client.GetAsync(new Uri("/healthz", UriKind.Relative));
         health.EnsureSuccessStatusCode();
+        using var firstReservation = first.Services.GetRequiredService<IMemoryBudget>().TryReserve(MemoryLane.Foreground, 7);
+        using var secondReservation = second.Services.GetRequiredService<IMemoryBudget>().TryReserve(MemoryLane.Foreground, 11);
+        await Assert.That(firstReservation).IsNotNull();
+        await Assert.That(secondReservation).IsNotNull();
 
         var firstMetrics = await first.Client.GetStringAsync(new Uri("/metrics", UriKind.Relative));
         var secondMetrics = await second.Client.GetStringAsync(new Uri("/metrics", UriKind.Relative));
@@ -28,6 +33,40 @@ public sealed class MetricsTests
             .IsEqualTo("7");
         await Assert.That(secondMetrics.Split('\n').Single(line => line.StartsWith("terrabase_test_isolation_total{", StringComparison.Ordinal)).Split(' ')[1])
             .IsEqualTo("11");
+        await Assert.That(Sample(firstMetrics, "terrabase_memory_reserved_bytes")).IsEqualTo("7");
+        await Assert.That(Sample(secondMetrics, "terrabase_memory_reserved_bytes")).IsEqualTo("11");
+    }
+
+    [Test]
+    public async Task Unlisted_instruments_keep_default_cardinality_and_histogram_buckets()
+    {
+        await using var server = await TerraBaseTestServer.StartAsync();
+        var meter = server.Services.GetRequiredService<IMeterFactory>().Create(Telemetry.MeterName);
+        var counter = meter.CreateCounter<long>("terrabase_test_cardinality");
+        for (var slot = 0; slot <= 2000; slot++)
+        {
+            counter.Add(1, new KeyValuePair<string, object?>("slot", slot));
+        }
+
+        counter.Add(7, new KeyValuePair<string, object?>("slot", 0));
+        var histogram = meter.CreateHistogram<double>("terrabase_test_latency", "s",
+            advice: new InstrumentAdvice<double> { HistogramBucketBoundaries = [0.1, 1] });
+        histogram.Record(0.05, new KeyValuePair<string, object?>("result", "fast"));
+        histogram.Record(2, new KeyValuePair<string, object?>("result", "slow"));
+
+        var metrics = await server.Client.GetStringAsync(new Uri("/metrics", UriKind.Relative),
+            TUnit.Core.TestContext.Current!.Execution.CancellationToken);
+        var samples = metrics.Split('\n').Where(line => line.StartsWith("terrabase_test_cardinality_total{", StringComparison.Ordinal)).ToArray();
+        await Assert.That(samples.Length).IsEqualTo(2001);
+        await Assert.That(Sample(metrics, "terrabase_test_cardinality_total", "slot=\"0\"")).IsEqualTo("8");
+        await Assert.That(Sample(metrics, "terrabase_test_cardinality_total", "otel_metric_overflow=\"true\"")).IsEqualTo("1");
+        await Assert.That(Sample(metrics, "terrabase_test_latency_seconds_count", "result=\"fast\"")).IsEqualTo("1");
+        await Assert.That(Sample(metrics, "terrabase_test_latency_seconds_sum", "result=\"fast\"")).IsEqualTo("0.05");
+        await Assert.That(Sample(metrics, "terrabase_test_latency_seconds_count", "result=\"slow\"")).IsEqualTo("1");
+        await Assert.That(Sample(metrics, "terrabase_test_latency_seconds_sum", "result=\"slow\"")).IsEqualTo("2");
+        await Assert.That(Sample(metrics, "terrabase_test_latency_seconds_bucket", "result=\"fast\"", "le=\"0.1\"")).IsEqualTo("1");
+        await Assert.That(Sample(metrics, "terrabase_test_latency_seconds_bucket", "result=\"slow\"", "le=\"1\"")).IsEqualTo("0");
+        await Assert.That(Sample(metrics, "terrabase_test_latency_seconds_bucket", "result=\"slow\"", "le=\"+Inf\"")).IsEqualTo("1");
     }
 
     [Test]
@@ -44,4 +83,8 @@ public sealed class MetricsTests
         await Assert.That(response.Content.Headers.ContentType?.MediaType).IsEqualTo("text/plain");
         await Assert.That(text).Contains("http_server_request_duration_seconds");
     }
+
+    private static string Sample(string metrics, string name, params string[] labels) =>
+        metrics.Split('\n').Single(line => line.StartsWith(name + "{", StringComparison.Ordinal)
+            && labels.All(label => line.Contains(label, StringComparison.Ordinal))).Split(' ')[1];
 }
