@@ -182,6 +182,64 @@ public sealed class TenantLookupCacheTests
         await Assert.That((await current.Content.ReadFromJsonAsync(TerraBaseJsonContext.Default.ManagedDatabase, token))!.Replicas).IsEquivalentTo(replicas);
     }
 
+    [Test]
+    [Arguments("valid")]
+    [Arguments("long-name")]
+    [Arguments("invalid-name")]
+    [Arguments("long-project")]
+    [Arguments("invalid-project")]
+    public async Task Missing_route_records_are_cached_only_with_bounded_valid_keys(string scenario)
+    {
+        var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
+        await using var api = await ManagementApi.StartAsync(settings =>
+        {
+            settings["storage-threads"] = "1";
+            settings["storage-queue"] = "2";
+        }, StorageTransactionTests.ConfigurePool, time: new FakeTimeProvider(DateTimeOffset.UtcNow));
+        var created = await api.CreateManagedDatabaseAsync();
+        var project = scenario switch
+        {
+            "long-project" => new string('p', 128),
+            "invalid-project" => "invalid-project",
+            _ => created.Project,
+        };
+        var name = scenario switch
+        {
+            "long-name" => new string('n', 128),
+            "invalid-name" => "INVALID",
+            _ => "missing",
+        };
+        var missing = created with { Project = project, Name = name };
+        var expected = scenario is "long-name" or "invalid-name" ? HttpStatusCode.BadRequest : HttpStatusCode.NotFound;
+        using var client = await api.CreateClientAsync(created.Organization, "documents:read");
+        using (var response = await client.GetAsync(ManagementApi.Uri(ManagementApi.DocumentPath(missing, "items", "absent")), token))
+        {
+            await Assert.That(response.StatusCode).IsEqualTo(expected);
+        }
+
+        var management = api.Server.Services.GetRequiredService<IManagementService>();
+        await Assert.That(await management.FindDatabaseRecordAsync(created.Organization, project, name, token)).IsNull();
+        var engine = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
+        Task<ManagedDatabase?> lookup;
+        await using (await StorageFixture.HoldWorkerAsync(engine, token))
+        {
+            lookup = management.FindDatabaseRecordAsync(created.Organization, project, name, token).AsTask();
+            if (scenario == "valid")
+            {
+                await Assert.That(lookup.IsCompletedSuccessfully).IsTrue();
+            }
+            else
+            {
+                await Assert.That(lookup.IsCompleted).IsFalse();
+                await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(engine.Io.Queued > 0 && !lookup.IsCompleted));
+            }
+        }
+
+        await Assert.That(await lookup).IsNull();
+        using var current = await client.GetAsync(ManagementApi.Uri(ManagementApi.DocumentPath(missing, "items", "absent")), token);
+        await Assert.That(current.StatusCode).IsEqualTo(expected);
+    }
+
     // Each lookup twice: the second answers from the cache unless the catalog committed in between.
     private static async Task<(string Name, DatabasePlacement Placement)?> AssertLookupsAsync(
         ITenantDirectory tenants, TenantContext database, bool registered, CancellationToken token)

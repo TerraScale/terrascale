@@ -134,11 +134,20 @@ internal sealed partial class ReplicationService(
             return;
         }
 
+        // The engine notifies with its own store, while the journal opened the stamping engine's wrapper of it: match its
+        // incarnation. A notification taken before this stream unsubscribed can arrive after it ended and released its lifetime.
         void OnDeleted(object? sender, IDatabaseStore deleted)
         {
-            if (ReferenceEquals(store, deleted))
+            if (deleted.Incarnation == store.Incarnation)
             {
-                lifetime.Cancel();
+                try
+                {
+                    lifetime.Cancel();
+                }
+                catch (ObjectDisposedException)
+                {
+                    // The stream already ended.
+                }
             }
         }
 

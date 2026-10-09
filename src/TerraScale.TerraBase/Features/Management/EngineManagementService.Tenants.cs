@@ -78,6 +78,11 @@ internal sealed partial class EngineManagementService
 
     private void Cache<T>(ConcurrentDictionary<(string, string, string), (long, T)> cache, (string, string, string) key, long sequence, T value)
     {
+        if (key.Item1.Length > 63 || key.Item2.Length > 63 || key.Item3.Length > 63)
+        {
+            return;
+        }
+
         lock (_cacheInsertion)
         {
             if (cache.Count >= MaxCachedTenants)
@@ -476,7 +481,8 @@ internal sealed partial class EngineManagementService
         }
 
         var record = found is ManagedDatabase database ? database : null;
-        if (record is null || Admits((record.Name, record.Placement(options.Region))))
+        var validKey = Ulid.TryParse(projectId, out _) && DatabaseName.TryParse(name, out _);
+        if (validKey && (record is null || Admits((record.Name, record.Placement(options.Region)))))
         {
             Cache(_records, key, sequence, record);
         }

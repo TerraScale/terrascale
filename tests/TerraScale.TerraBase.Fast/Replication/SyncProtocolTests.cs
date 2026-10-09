@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Diagnostics;
 using System.Net;
 using System.Numerics;
 using System.Security.Cryptography;
@@ -190,9 +191,10 @@ public sealed class SyncProtocolTests
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task Recreating_the_receiver_ends_the_old_stream_without_acknowledging_its_duplicate(bool applyOnStream)
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    [Arguments(true, false)]
+    public async Task Recreating_the_receiver_ends_the_old_stream_without_acknowledging_its_duplicate(bool applyOnStream, bool sendDuplicate)
     {
         await using var node = await Node.StartAsync("retired");
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
@@ -203,6 +205,8 @@ public sealed class SyncProtocolTests
             await ApplyAsync(node, "retired", origin, 1, change);
         }
 
+        // The receiver's last idle wait begins after this, so its idle timeout cannot end the stream sooner.
+        var clock = Stopwatch.StartNew();
         using var call = node.Sync();
         var welcome = await HelloAsync(call, node.Tenant.Database("retired"), origin);
         if (applyOnStream)
@@ -219,19 +223,28 @@ public sealed class SyncProtocolTests
         var engine = node.Server.Services.GetRequiredService<IStorageEngine>();
         await Assert.That(await engine.DeleteDatabaseAsync(node.Tenant.Database("retired"), deadline.Token)).IsTrue();
         await engine.CreateDatabaseAsync(node.Tenant.Database("retired"), deadline.Token);
-        try
+        if (sendDuplicate)
         {
-            await SendAsync(call, Batch(node.Tenant.Database("retired"), origin, 1, [change]));
-        }
-        catch (RpcException writeError) when (writeError.StatusCode is StatusCode.Cancelled or StatusCode.FailedPrecondition)
-        {
-            // Retirement can close the request writer before it observes the server's trailers.
-            // The response reader must still report the exact retirement status below.
+            try
+            {
+                await SendAsync(call, Batch(node.Tenant.Database("retired"), origin, 1, [change]));
+            }
+            catch (RpcException writeError) when (writeError.StatusCode is StatusCode.Cancelled or StatusCode.FailedPrecondition)
+            {
+                // Retirement can close the request writer before it observes the server's trailers.
+                // The response reader must still report the exact retirement status below.
+            }
         }
 
         var error = await Assert.That(async () => await NextAsync(call)).Throws<RpcException>();
         await Assert.That(error!.StatusCode).IsEqualTo(StatusCode.FailedPrecondition);
         await Assert.That(error.Status.Detail).IsEqualTo("the receiving database was deleted; reopen the Sync stream");
+        if (!sendDuplicate)
+        {
+            // Retirement, not the idle timeout that reports the same status for a deleted database, ended the idle stream.
+            await Assert.That(clock.Elapsed).IsLessThan(ReplicationProtocol.IdleTimeout - TimeSpan.FromSeconds(1));
+        }
+
         await Assert.That(await node.ListAsync("retired", "items")).IsEmpty();
 
         using var resumed = node.Sync();

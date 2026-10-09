@@ -1326,7 +1326,7 @@ internal sealed partial class WanPuller(
             if (!store.IsClosed)
             {
                 _stores[key] = store;
-                // Open read this frontier already; preserve any prefix recorded since that read.
+                // Open read this frontier already.
                 _ = _applied.TryAdd((store, Convert.ToHexString(origin.Span)), applied);
             }
         }
