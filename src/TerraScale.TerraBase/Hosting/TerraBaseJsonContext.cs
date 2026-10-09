@@ -44,6 +44,7 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(DatabaseBackup))]
 [JsonSerializable(typeof(ErrorBody))]
 [JsonSerializable(typeof(ShapeBody))]
+[JsonSerializable(typeof(ChangeFeedBody))]
 [JsonSerializable(typeof(DatabaseBody))]
 [JsonSerializable(typeof(DatabaseOwner))]
 [JsonSerializable(typeof(DatabaseUsage))]
