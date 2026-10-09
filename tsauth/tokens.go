@@ -23,6 +23,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"terrascale.tech/sdk/internal/entityid"
 )
 
 // DefaultIssuer is the terrascale tenant, which issues every platform token.
@@ -41,8 +43,8 @@ const (
 type APIKeyConfig struct {
 	// Issuer is the tenant issuer; empty means DefaultIssuer.
 	Issuer string
-	// Key is the whole API key, tsk_<20>_<52>. It is the client secret; its
-	// first 24 characters are the client id.
+	// Key is the whole API key, tsk_<ULID>_<52>. It is the client secret; its
+	// 26-character ULID between the underscores is the client id.
 	Key string
 	// Project is the project an organization key's token acts in; empty
 	// yields an organization token. A project key may name its own project.
@@ -76,12 +78,17 @@ type ExchangeConfig struct {
 	HTTPClient *http.Client
 }
 
-var keyPattern = regexp.MustCompile(`^tsk_[0-9a-hjkmnp-tv-z]{20}_[0-9a-hjkmnp-tv-z]{52}$`)
+var keyPattern = regexp.MustCompile(`^tsk_[0-7][0-9A-HJKMNP-TV-Z]{25}_[0-9a-hjkmnp-tv-z]{52}$`)
 
 // NewAPIKeySource returns a source of tokens for an API key.
 func NewAPIKeySource(cfg APIKeyConfig) (*TokenSource, error) {
 	if !keyPattern.MatchString(cfg.Key) {
-		return nil, errors.New("tsauth: Key must be an API key, tsk_ followed by 20 and 52 base32 characters")
+		return nil, errors.New("tsauth: Key must be an API key, tsk_ followed by a canonical ULID and 52 base32 secret characters")
+	}
+	if cfg.Project != "" {
+		if err := entityid.Check(cfg.Project); err != nil {
+			return nil, fmt.Errorf("tsauth: Project: %w", err)
+		}
 	}
 	endpoint, err := tokenEndpoint(cfg.Issuer)
 	if err != nil {
@@ -94,7 +101,7 @@ func NewAPIKeySource(cfg APIKeyConfig) (*TokenSource, error) {
 	if len(cfg.Scopes) > 0 {
 		form.Set("scope", strings.Join(cfg.Scopes, " "))
 	}
-	client := cfg.Key[:24]
+	client := cfg.Key[4:30]
 	return newSource(cfg.HTTPClient, func(ctx context.Context, hc *http.Client) (*tokenResponse, error) {
 		return requestToken(ctx, hc, endpoint, form, client, cfg.Key)
 	}), nil
@@ -106,9 +113,17 @@ func NewExchangeSource(cfg ExchangeConfig) (*TokenSource, error) {
 	if cfg.ClientID == "" || cfg.SubjectToken == nil || cfg.Organization == "" {
 		return nil, errors.New("tsauth: ClientID, SubjectToken and Organization are required")
 	}
+	if cfg.Project != "" {
+		if err := entityid.Check(cfg.Project); err != nil {
+			return nil, fmt.Errorf("tsauth: Project: %w", err)
+		}
+	}
 	endpoint, err := tokenEndpoint(cfg.Issuer)
 	if err != nil {
 		return nil, err
+	}
+	if err := entityid.Check(cfg.Organization); err != nil {
+		return nil, fmt.Errorf("tsauth: Organization: %w", err)
 	}
 	return newSource(cfg.HTTPClient, func(ctx context.Context, hc *http.Client) (*tokenResponse, error) {
 		subject, err := cfg.SubjectToken(ctx)

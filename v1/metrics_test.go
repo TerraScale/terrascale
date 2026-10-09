@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"reflect"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -26,7 +27,7 @@ const (
 	replicationFixture = `{"projectId":"01ARZ3NDEKTSV4RRFFQ69G5FAV","from":"2026-10-08T11:00:00Z","to":"2026-10-08T12:00:00Z","bucketSeconds":60,"next":"opaque+/=&","items":[
 	{"databaseId":"01ARZ3NDEKTSV4RRFFQ69G5FAW","region":"gru","replicatedOps":9007199254740993,"bandwidth":[{"sourceRegion":"gru","destinationRegion":"sfo","bytesSent":100,"bytesReceived":200,"meter":"replication_bytes"}],"lagMs":0,"divergence":0,"convergenceTimeMs":12.5,"lastApplied":"2026-10-08T11:59:59.123Z","status":"healthy"},
 	{"databaseId":"01ARZ3NDEKTSV4RRFFQ69G5FAW","region":"sfo","lagMs":null,"divergence":null,"convergenceTimeMs":null,"lastApplied":null,"status":"stopped"},
-	{"status":"lagging"},{"status":"diverged"},{"status":"new-status"}]}`
+	{"databaseId":"01ARZ3NDEKTSV4RRFFQ69G5FAW","status":"lagging"},{"databaseId":"01ARZ3NDEKTSV4RRFFQ69G5FAW","status":"diverged"},{"databaseId":"01ARZ3NDEKTSV4RRFFQ69G5FAW","status":"new-status"}]}`
 )
 
 func metricsUser(t *testing.T, server *httptest.Server, retries int) *tb.ManagementUser {
@@ -38,12 +39,10 @@ func metricsUser(t *testing.T, server *httptest.Server, retries int) *tb.Managem
 	return m.WithToken("project-access-token")
 }
 
-func TestMetricsAcceptCaseInsensitiveULIDs(t *testing.T) {
+func TestMetricsAcceptCanonicalULIDs(t *testing.T) {
 	t.Parallel()
 	for _, ids := range []struct{ project, database string }{
 		{metricsProject, metricsDatabase},
-		{"01arz3ndektsv4rrffq69g5fav", "01arz3ndektsv4rrffq69g5faw"},
-		{"01aRz3NdEkTsV4rRfFq69G5fAv", "01ArZ3nDeKtSv4RrFfQ69g5FaW"},
 	} {
 		t.Run(ids.project, func(t *testing.T) {
 			t.Parallel()
@@ -54,7 +53,7 @@ func TestMetricsAcceptCaseInsensitiveULIDs(t *testing.T) {
 				}
 				calls.Add(1)
 				w.Header().Set("Content-Type", "application/json")
-				io.WriteString(w, `{}`)
+				io.WriteString(w, `{"projectId":"`+metricsProject+`"}`)
 			}))
 			t.Cleanup(server.Close)
 			u := metricsUser(t, server, -1)
@@ -96,9 +95,9 @@ func TestMetricsFiltersAndPaging(t *testing.T) {
 					}
 					w.Header().Set("Content-Type", "application/json")
 					if page == 1 {
-						io.WriteString(w, `{"next":"opaque+/=&"}`)
+						io.WriteString(w, `{"projectId":"`+metricsProject+`","next":"opaque+/=&"}`)
 					} else {
-						io.WriteString(w, `{"next":""}`)
+						io.WriteString(w, `{"projectId":"`+metricsProject+`","next":""}`)
 					}
 				}))
 				t.Cleanup(server.Close)
@@ -193,15 +192,20 @@ func TestMetricsDecoding(t *testing.T) {
 func TestMetricsRejectInvalidFilters(t *testing.T) {
 	t.Parallel()
 	var calls atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls.Add(1); io.WriteString(w, `{}`) }))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		io.WriteString(w, `{"projectId":"`+metricsProject+`"}`)
+	}))
 	t.Cleanup(server.Close)
 	u := metricsUser(t, server, -1)
 	for _, test := range []struct {
 		project string
 		opts    tb.MetricsOptions
 	}{
-		{"", tb.MetricsOptions{}}, {testProject, tb.MetricsOptions{}}, {"proj_" + metricsProject, tb.MetricsOptions{}}, {"../" + metricsProject, tb.MetricsOptions{}}, {"81ARZ3NDEKTSV4RRFFQ69G5FAV", tb.MetricsOptions{}},
-		{metricsProject, tb.MetricsOptions{DatabaseID: "main"}}, {metricsProject, tb.MetricsOptions{DatabaseID: testProject}}, {metricsProject, tb.MetricsOptions{Range: "2h"}}, {metricsProject, tb.MetricsOptions{Limit: -1}}, {metricsProject, tb.MetricsOptions{Limit: 101}},
+		{"", tb.MetricsOptions{}}, {"0190a6e4-7c3b-7d2e-8f00-0123456789ab", tb.MetricsOptions{}}, {"proj_" + metricsProject, tb.MetricsOptions{}}, {"../" + metricsProject, tb.MetricsOptions{}}, {"81ARZ3NDEKTSV4RRFFQ69G5FAV", tb.MetricsOptions{}},
+		{metricsProject, tb.MetricsOptions{DatabaseID: "main"}}, {metricsProject, tb.MetricsOptions{DatabaseID: "0190a6e4-7c3b-7d2e-8f00-0123456789ab"}}, {metricsProject, tb.MetricsOptions{Range: "2h"}}, {metricsProject, tb.MetricsOptions{Limit: -1}}, {metricsProject, tb.MetricsOptions{Limit: 101}},
+		{"01arz3ndektsv4rrffq69g5fav", tb.MetricsOptions{}}, {metricsProject, tb.MetricsOptions{DatabaseID: "01arz3ndektsv4rrffq69g5faw"}},
+		{"01aRz3NdEkTsV4rRfFq69G5fAv", tb.MetricsOptions{}}, {metricsProject, tb.MetricsOptions{DatabaseID: "01ArZ3nDeKtSv4RrFfQ69g5FaW"}},
 		{"01arz3ndektsv4rrffq69g5fai", tb.MetricsOptions{}}, {metricsProject, tb.MetricsOptions{DatabaseID: "01arz3ndektsv4rrffq69g5fau"}},
 		{"01arz3ndektsv4rrffq69g5fal", tb.MetricsOptions{}}, {metricsProject, tb.MetricsOptions{DatabaseID: "01arz3ndektsv4rrffq69g5fao"}},
 		{"01ARZ3NDEKTSV4RRFFQ69G5FAV", tb.MetricsOptions{}}, {metricsProject, tb.MetricsOptions{DatabaseID: "01ARZ3NDEKTſV4RRFFQ69G5FAW"}},
@@ -234,6 +238,30 @@ func TestMetricsRejectInvalidFilters(t *testing.T) {
 	}
 }
 
+func TestMetricsRejectInvalidResponseIDs(t *testing.T) {
+	for _, id := range []string{"", "proj_" + metricsProject, "0190a6e4-7c3b-7d2e-8f00-0123456789ab", strings.ToLower(metricsProject), "81ARZ3NDEKTSV4RRFFQ69G5FAV", "01ARZ3NDEKTSV4RRFFQ69G5FAI"} {
+		for _, fixture := range []string{analyticsFixture, replicationFixture} {
+			for _, entity := range []string{metricsProject, metricsDatabase} {
+				body := strings.ReplaceAll(fixture, entity, id)
+				transport := &scriptTransport{responses: []scripted{{status: http.StatusOK, body: body}}}
+				m, err := tb.NewManagement(tb.Config{BaseURL: "https://tb.example", HTTPClient: &http.Client{Transport: transport}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				u := m.WithToken("project-access-token")
+				if fixture == analyticsFixture {
+					_, err = u.Analytics(t.Context(), metricsProject, tb.MetricsOptions{})
+				} else {
+					_, err = u.Replication(t.Context(), metricsProject, tb.MetricsOptions{})
+				}
+				if err == nil {
+					t.Fatal("accepted a noncanonical metrics response ID")
+				}
+			}
+		}
+	}
+}
+
 func TestMetricsErrorsAndRetries(t *testing.T) {
 	t.Parallel()
 	for _, endpoint := range []string{"analytics", "replication"} {
@@ -257,7 +285,7 @@ func TestMetricsErrorsAndRetries(t *testing.T) {
 					n := calls.Add(1)
 					w.Header().Set("Content-Type", "application/json")
 					if test.name == "transient" && n == 2 {
-						io.WriteString(w, `{}`)
+						io.WriteString(w, `{"projectId":"`+metricsProject+`"}`)
 						return
 					}
 					w.WriteHeader(test.status)

@@ -149,7 +149,7 @@ func TestTSAuthEdgeRetryAndCancellation(t *testing.T) {
 			return
 		}
 		retriedAt = time.Now()
-		tsAuthEdgeJSON(w, `{"sub":"user-1"}`)
+		tsAuthEdgeJSON(w, `{"sub":"01ARZ3NDEKTSV4RRFFQ69G5FA4"}`)
 	})
 	start := time.Now()
 	if _, err := instance.OIDC.GetUserInfo(ctx, "access-token"); err != nil {
@@ -342,7 +342,7 @@ func TestTSAuthEdgeConfig(t *testing.T) {
 	var requests []string
 	slashServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests = append(requests, r.Method+" "+r.URL.RequestURI())
-		tsAuthEdgeJSON(w, `{"sub":"user-1"}`)
+		tsAuthEdgeJSON(w, `{"sub":"01ARZ3NDEKTSV4RRFFQ69G5FA4"}`)
 	}))
 	defer slashServer.Close()
 	for _, base := range []string{slashServer.URL, slashServer.URL + "/"} {
@@ -360,7 +360,7 @@ func TestTSAuthEdgeConfig(t *testing.T) {
 	snapshotRequests := 0
 	cfgServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		snapshotRequests++
-		tsAuthEdgeJSON(w, `{"sub":"user-1"}`)
+		tsAuthEdgeJSON(w, `{"sub":"01ARZ3NDEKTSV4RRFFQ69G5FA4"}`)
 	}))
 	defer cfgServer.Close()
 	cfg := Config{APIBaseURL: cfgServer.URL}
@@ -387,7 +387,7 @@ func TestTSAuthEdgeExplicitOrigin(t *testing.T) {
 	tsAuthRequests := 0
 	tsAuthServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		tsAuthRequests++
-		tsAuthEdgeJSON(w, `{"sub":"user-1"}`)
+		tsAuthEdgeJSON(w, `{"sub":"01ARZ3NDEKTSV4RRFFQ69G5FA4"}`)
 	}))
 	defer tsAuthServer.Close()
 	productServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -13,6 +13,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -40,7 +42,7 @@ func atlasServer(t *testing.T, key *ecdsa.PublicKey) (*httptest.Server, *atlas.D
 		if err := json.Unmarshal(body, &got); err != nil {
 			t.Error(err)
 		}
-		io.WriteString(w, `{"topology":"updated","placements":[{"project":"p1","result":"stale"}]}`)
+		io.WriteString(w, `{"topology":"updated","placements":[{"project":"01ARZ3NDEKTSV4RRFFQ69G5FAD","result":"stale"}]}`)
 	}))
 	t.Cleanup(srv.Close)
 	return srv, &got
@@ -61,7 +63,7 @@ func TestPublish(t *testing.T) {
 		Topology: &atlas.Topology{V: 1, Updated: 1791159807,
 			Regions:  []atlas.Region{{ID: "gru-1", Name: "São Paulo", Country: "BR", API: "https://gru.api.terrascale.tech", Auth: "https://gru.auth.terrascale.tech", OK: true}},
 			Services: []atlas.Service{{ID: "terrabase", Name: "TerraBase", URL: "https://api.terrascale.tech", Health: "https://api.terrascale.tech/readyz"}}},
-		Placements: []atlas.Placement{{V: 1, Project: "p1", Region: "gru-1", Databases: map[string]string{"orders": "gru-1"}, Updated: 1791159807}},
+		Placements: []atlas.Placement{{V: 1, Project: "01ARZ3NDEKTSV4RRFFQ69G5FAD", Region: "gru-1", Databases: map[string]string{"orders": "gru-1"}, Updated: 1791159807}},
 	}
 	if _, err := (&atlas.Publisher{BaseURL: srv.URL + "/", Key: key}).Publish(t.Context(), doc); err != nil {
 		t.Fatalf("trailing slash: %v", err)
@@ -145,3 +147,27 @@ func TestPublishRejectsLocally(t *testing.T) {
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestPublishDistinguishesRequestAndResponseIDErrors(t *testing.T) {
+	var calls atomic.Int64
+	peer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		io.WriteString(w, `{"placements":[{"project":"legacy","result":"updated"}]}`)
+	}))
+	t.Cleanup(peer.Close)
+	publisher := atlas.Publisher{BaseURL: peer.URL, Key: newKey(t)}
+	doc := atlas.Document{Placements: []atlas.Placement{{Project: "legacy"}}}
+	if _, err := publisher.Publish(t.Context(), doc); err == nil || !strings.Contains(err.Error(), "publish request project ID") {
+		t.Fatal("invalid request ID must identify the request stage")
+	}
+	if calls.Load() != 0 {
+		t.Fatal("invalid request ID reached HTTP")
+	}
+	doc.Placements[0].Project = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+	if _, err := publisher.Publish(t.Context(), doc); err == nil || !strings.Contains(err.Error(), "publish response project ID") {
+		t.Fatal("invalid response ID must identify the response stage")
+	}
+	if calls.Load() != 1 {
+		t.Fatal("expected one accepted publish request")
+	}
+}

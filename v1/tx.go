@@ -43,7 +43,7 @@ type TxResult struct {
 // OpResult is the outcome of one transaction op: ID and Version for writes,
 // Asserted for asserts, and Count for AssertCount.
 type OpResult struct {
-	ID       string  `json:"id,omitempty"`
+	ID       string  `json:"id,omitempty" ulid:"optional"`
 	Version  string  `json:"version,omitempty"`
 	Asserted bool    `json:"asserted,omitempty"`
 	Count    *Uint64 `json:"count,omitempty"`
@@ -76,8 +76,8 @@ func (t *Tx) addOp(op txOp, pre []Precondition, collection, id string, idRequire
 		return fail(err)
 	}
 	if id != "" || idRequired {
-		if err := checkID(id); err != nil {
-			return fail(err)
+		if err := ValidateID(id); err != nil {
+			return fail(fmt.Errorf("document ID: %w", err))
 		}
 	}
 	for _, p := range pre {
@@ -103,7 +103,7 @@ func (t *Tx) addOp(op txOp, pre []Precondition, collection, id string, idRequire
 }
 
 // Create adds a create op (a put that requires absence). An empty id lets
-// the server generate a UUIDv7, returned in the op's result.
+// the server generate a ULID, returned in the op's result.
 func (t *Tx) Create(collection, id string, doc any) *Tx {
 	body, err := encodeObject(doc)
 	if err != nil {
@@ -197,6 +197,17 @@ func (t *Tx) Commit(ctx context.Context) (*TxResult, error) {
 		Ops []txOp `json:"ops"`
 	}{t.ops}, &res); err != nil {
 		return nil, err
+	}
+	for i, op := range t.ops {
+		if op.Op == "assert" || op.Op == "assert_count" {
+			continue
+		}
+		if i >= len(res.Results) {
+			return nil, errors.New("terrabase: transaction response is missing a document key")
+		}
+		if err := ValidateID(res.Results[i].ID); err != nil {
+			return nil, fmt.Errorf("terrabase: invalid transaction result %d: %w", i, err)
+		}
 	}
 	return &res, nil
 }

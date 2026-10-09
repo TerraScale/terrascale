@@ -138,7 +138,7 @@ func (f *oidcFixture) application(t *testing.T) *TSAuthOIDCApplication {
 func (f *oidcFixture) claims(nonce string) map[string]any {
 	now := time.Now().Unix()
 	hash := sha256.Sum256([]byte("access"))
-	return map[string]any{"iss": f.issuer, "sub": "user", "aud": "client", "exp": now + 60, "iat": now - 1, "nonce": nonce, "token_use": "id", "sid": "session", "at_hash": base64.RawURLEncoding.EncodeToString(hash[:16])}
+	return map[string]any{"iss": f.issuer, "sub": "01ARZ3NDEKTSV4RRFFQ69G5FA9", "aud": "client", "exp": now + 60, "iat": now - 1, "nonce": nonce, "token_use": "id", "sid": "01ARZ3NDEKTSV4RRFFQ69G5FAB", "at_hash": base64.RawURLEncoding.EncodeToString(hash[:16])}
 }
 func (f *oidcFixture) sign(t *testing.T, claims map[string]any, header map[string]any) string {
 	t.Helper()
@@ -194,7 +194,7 @@ func TestTSAuthOIDCVerifiedAuthorization(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if login.Identity.Subject != "user" || login.Identity.Issuer != f.issuer || login.Identity.SessionID == nil {
+	if login.Identity.Subject != "01ARZ3NDEKTSV4RRFFQ69G5FA9" || login.Identity.Issuer != f.issuer || login.Identity.SessionID == nil {
 		t.Fatal("identity binding lost")
 	}
 	_, err = app.ExchangeCode(t.Context(), TSAuthOIDCCallback{Code: "code", State: "replayed-state"}, *attempt)
@@ -219,6 +219,10 @@ func TestTSAuthOIDCVerificationDenials(t *testing.T) {
 		name, code string
 		mutate     func(map[string]any)
 	}{
+		{"UUID subject", "invalid_identity_claims", func(c map[string]any) { c["sub"] = "0190a6e4-7c3b-7d2e-8f00-0123456789ab" }},
+		{"prefixed subject", "invalid_identity_claims", func(c map[string]any) { c["sub"] = "usr_01ARZ3NDEKTSV4RRFFQ69G5FAV" }},
+		{"lowercase subject", "invalid_identity_claims", func(c map[string]any) { c["sub"] = "01arz3ndektsv4rrffq69g5fav" }},
+		{"invalid session ID", "invalid_session_binding", func(c map[string]any) { c["sid"] = "session" }},
 		{"issuer", "invalid_identity_claims", func(c map[string]any) { c["iss"] = "https://evil.example/acme" }},
 		{"audience", "invalid_identity_claims", func(c map[string]any) { c["aud"] = "another-client" }},
 		{"access token", "invalid_identity_claims", func(c map[string]any) { c["token_use"] = "access" }},
@@ -544,7 +548,7 @@ func TestTSAuthOIDCResponseStatusAndUserInfoDenials(t *testing.T) {
 	if err := user.decodeHTTPResponse(200, []byte(`{"sub":"a","sub":"b"}`)); err == nil {
 		t.Fatal("duplicate userinfo admitted")
 	}
-	if err := user.decodeHTTPResponse(200, []byte(`{"sub":"real","SUB":"other"}`)); err != nil || user.Sub != "real" {
+	if err := user.decodeHTTPResponse(200, []byte(`{"sub":"01ARZ3NDEKTSV4RRFFQ69G5FAC","SUB":"other"}`)); err != nil || user.Sub != "01ARZ3NDEKTSV4RRFFQ69G5FAC" {
 		t.Fatal("userinfo exact field changed")
 	}
 	for _, status := range []int{201, 202, 204} {

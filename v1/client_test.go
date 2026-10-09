@@ -20,8 +20,8 @@ import (
 const (
 	testToken      = "tb_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 	testCredential = "dashboard-credential-0123456789abcdef"
-	testProject    = "0190a6e4-7c3b-7d2e-8f00-0123456789ab"
-	testOrg        = "0190a6e4-7c3b-7d2e-8f00-0000000000c0"
+	testProject    = "01J2KE8Z1VFMQ8Y0014D2PF2DB"
+	testOrg        = "01J2KE8Z1VFMQ8Y00000000060"
 )
 
 func TestClientConfigValidation(t *testing.T) {
@@ -129,7 +129,17 @@ func TestLocalRejection(t *testing.T) {
 	users := c.Database(testProject, "main").Collection("users")
 	ctx := t.Context()
 	for name, call := range map[string]func() error{
-		"non-UUID project": func() error { _, err := c.Database("My-Project", "main").Create(ctx); return err },
+		"organization ID": func() error { _, err := m.WithToken("access-token").Organization(ctx, "org_legacy"); return err },
+		"member ID":       func() error { return m.WithToken("access-token").RemoveMember(ctx, testOrg, "legacy-user") },
+		"body organization ID": func() error {
+			_, err := m.WithToken("access-token").SetCurrentOrganization(ctx, "org_legacy")
+			return err
+		},
+		"body user ID": func() error {
+			_, err := m.WithToken("access-token").StartOwnershipTransfer(ctx, testOrg, "legacy-user")
+			return err
+		},
+		"non-ULID project": func() error { _, err := c.Database("My-Project", "main").Create(ctx); return err },
 		"database name":    func() error { _, err := c.Database(testProject, "Main").Create(ctx); return err },
 		"collection name":  func() error { _, err := c.Database(testProject, "main").CreateCollection(ctx, "a/b"); return err },
 		"empty id":         func() error { _, err := users.Get(ctx, ""); return err },
@@ -196,14 +206,14 @@ func TestDatabasePlacementRequests(t *testing.T) {
 	// Every call fails at the transport; only the requests matter.
 	u.CreateDatabase(ctx, testOrg, testProject, "orders")
 	u.CreateDatabaseIn(ctx, testOrg, testProject, "orders", v1.Placement{HomeRegion: "gru-1", ReplicaRegions: []string{"sfo-1"}})
-	u.SetDatabaseRegions(ctx, testOrg, testProject, "db-1", []string{"sfo-1"})
-	u.SetDatabaseRegions(ctx, testOrg, testProject, "db-1", nil)
+	u.SetDatabaseRegions(ctx, testOrg, testProject, "01ARZ3NDEKTSV4RRFFQ69G5FA5", []string{"sfo-1"})
+	u.SetDatabaseRegions(ctx, testOrg, testProject, "01ARZ3NDEKTSV4RRFFQ69G5FA5", nil)
 	const databases = "/v1/management/organizations/" + testOrg + "/projects/" + testProject + "/databases"
 	want := []string{
 		"POST " + databases + ` {"name":"orders"}`,
 		"POST " + databases + ` {"name":"orders","homeRegion":"gru-1","replicaRegions":["sfo-1"]}`,
-		"PATCH " + databases + `/db-1 {"replicaRegions":["sfo-1"]}`,
-		"PATCH " + databases + `/db-1 {"replicaRegions":[]}`, // nil clears the replicas
+		"PATCH " + databases + `/01ARZ3NDEKTSV4RRFFQ69G5FA5 {"replicaRegions":["sfo-1"]}`,
+		"PATCH " + databases + `/01ARZ3NDEKTSV4RRFFQ69G5FA5 {"replicaRegions":[]}`, // nil clears the replicas
 	}
 	if !slices.Equal(capture.got, want) {
 		t.Fatalf("sent\n%s\nwant\n%s", strings.Join(capture.got, "\n"), strings.Join(want, "\n"))

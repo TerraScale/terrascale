@@ -504,7 +504,7 @@
             "required": false,
             "description": "Only invitations to this project.",
             "schema": {
-              "$ref": "#/components/schemas/Uuid"
+              "$ref": "#/components/schemas/Ulid"
             }
           },
           {
@@ -1759,7 +1759,7 @@
                   "summary": "An organization API key, for a project token",
                   "value": {
                     "grant_type": "client_credentials",
-                    "project": "0199b3e4-5b6a-7c8d-9e0f-1a2b3c4d5e6f",
+                    "project": "01K6SY8PVAFJ6SW3RT5CY4TQKF",
                     "scope": "documents:read documents:write"
                   }
                 },
@@ -1769,8 +1769,8 @@
                     "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
                     "subject_token": "eyJhbGciOiJFUzI1NiIsInR5cCI6ImF0K2p3dCJ9…",
                     "subject_token_type": "urn:ietf:params:oauth:token-type:access_token",
-                    "organization": "0199b3e4-0000-7000-8000-000000000001",
-                    "project": "0199b3e4-5b6a-7c8d-9e0f-1a2b3c4d5e6f"
+                    "organization": "01K6SY8000E008000000000001",
+                    "project": "01K6SY8PVAFJ6SW3RT5CY4TQKF"
                   }
                 }
               }
@@ -1870,7 +1870,7 @@
         "required": true,
         "description": "Organization id.",
         "schema": {
-          "$ref": "#/components/schemas/Uuid"
+          "$ref": "#/components/schemas/Ulid"
         }
       },
       "Project": {
@@ -1879,7 +1879,7 @@
         "required": true,
         "description": "Project id, also its tenant slug.",
         "schema": {
-          "$ref": "#/components/schemas/Uuid"
+          "$ref": "#/components/schemas/Ulid"
         }
       },
       "User": {
@@ -1888,7 +1888,7 @@
         "required": true,
         "description": "User id (the sub of its tokens).",
         "schema": {
-          "$ref": "#/components/schemas/Uuid"
+          "$ref": "#/components/schemas/Ulid"
         }
       },
       "Invitation": {
@@ -1897,7 +1897,7 @@
         "required": true,
         "description": "Invitation id.",
         "schema": {
-          "$ref": "#/components/schemas/Uuid"
+          "$ref": "#/components/schemas/Ulid"
         }
       },
       "Key": {
@@ -2008,10 +2008,11 @@
       }
     },
     "schemas": {
-      "Uuid": {
+      "Ulid": {
         "type": "string",
-        "format": "uuid",
-        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        "minLength": 26,
+        "maxLength": 26,
+        "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$"
       },
       "Timestamp": {
         "type": "string",
@@ -2058,8 +2059,8 @@
       },
       "ApiKeyId": {
         "type": "string",
-        "pattern": "^tsk_[0-9a-hjkmnp-tv-z]{20}$",
-        "example": "tsk_3k9f2m8q1x7v4c6n0b5z"
+        "pattern": "^[0-7][0-9A-HJKMNP-TV-Z]{25}$",
+        "example": "01ARZ3NDEKTSV4RRFFQ69G5FA8"
       },
       "Error": {
         "type": "object",
@@ -2121,13 +2122,13 @@
         ],
         "properties": {
           "id": {
-            "$ref": "#/components/schemas/Uuid"
+            "$ref": "#/components/schemas/Ulid"
           },
           "name": {
             "type": "string"
           },
           "created_by": {
-            "$ref": "#/components/schemas/Uuid"
+            "$ref": "#/components/schemas/Ulid"
           },
           "created_at": {
             "$ref": "#/components/schemas/Timestamp"
@@ -2145,9 +2146,9 @@
           }
         },
         "example": {
-          "id": "0199b3e4-0000-7000-8000-000000000001",
+          "id": "01K6SY8000E008000000000001",
           "name": "Acme",
-          "created_by": "4f1c2d3e-5a6b-4c7d-8e9f-0a1b2c3d4e5f",
+          "created_by": "2F3GPKWPKB9HYRX7RA3CP3TKJZ",
           "created_at": "2026-10-06T12:00:00Z",
           "role": "owner"
         }
@@ -2207,7 +2208,7 @@
         ],
         "properties": {
           "user_id": {
-            "$ref": "#/components/schemas/Uuid"
+            "$ref": "#/components/schemas/Ulid"
           },
           "email": {
             "$ref": "#/components/schemas/Email"
@@ -2254,10 +2255,10 @@
         ],
         "properties": {
           "id": {
-            "$ref": "#/components/schemas/Uuid"
+            "$ref": "#/components/schemas/Ulid"
           },
           "organization_id": {
-            "$ref": "#/components/schemas/Uuid"
+            "$ref": "#/components/schemas/Ulid"
           },
           "name": {
             "type": "string"
@@ -2268,7 +2269,7 @@
             "description": "The project tenant's issuer, {public origin}/{project id}."
           },
           "created_by": {
-            "$ref": "#/components/schemas/Uuid"
+            "$ref": "#/components/schemas/Ulid"
           },
           "created_at": {
             "$ref": "#/components/schemas/Timestamp"
@@ -2278,11 +2279,11 @@
           }
         },
         "example": {
-          "id": "0199b3e4-5b6a-7c8d-9e0f-1a2b3c4d5e6f",
-          "organization_id": "0199b3e4-0000-7000-8000-000000000001",
+          "id": "01K6SY8PVAFJ6SW3RT5CY4TQKF",
+          "organization_id": "01K6SY8000E008000000000001",
           "name": "Production",
-          "issuer": "https://gru.auth.terrascale.tech/0199b3e4-5b6a-7c8d-9e0f-1a2b3c4d5e6f",
-          "created_by": "4f1c2d3e-5a6b-4c7d-8e9f-0a1b2c3d4e5f",
+          "issuer": "https://gru.auth.terrascale.tech/01K6SY8PVAFJ6SW3RT5CY4TQKF",
+          "created_by": "2F3GPKWPKB9HYRX7RA3CP3TKJZ",
           "created_at": "2026-10-06T12:00:00Z",
           "role": "admin"
         }
@@ -2318,7 +2319,7 @@
         ],
         "properties": {
           "user_id": {
-            "$ref": "#/components/schemas/Uuid"
+            "$ref": "#/components/schemas/Ulid"
           },
           "email": {
             "$ref": "#/components/schemas/Email"
@@ -2376,7 +2377,7 @@
           "project_id": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/Uuid"
+                "$ref": "#/components/schemas/Ulid"
               },
               {
                 "type": "null"
@@ -2399,7 +2400,7 @@
         ],
         "properties": {
           "id": {
-            "$ref": "#/components/schemas/Uuid"
+            "$ref": "#/components/schemas/Ulid"
           },
           "email": {
             "$ref": "#/components/schemas/Email"
@@ -2416,7 +2417,7 @@
           "project_id": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/Uuid"
+                "$ref": "#/components/schemas/Ulid"
               },
               {
                 "type": "null"
@@ -2424,7 +2425,7 @@
             ]
           },
           "invited_by": {
-            "$ref": "#/components/schemas/Uuid"
+            "$ref": "#/components/schemas/Ulid"
           },
           "created_at": {
             "$ref": "#/components/schemas/Timestamp"
@@ -2512,7 +2513,7 @@
             ],
             "properties": {
               "id": {
-                "$ref": "#/components/schemas/Uuid"
+                "$ref": "#/components/schemas/Ulid"
               },
               "name": {
                 "type": "string"
@@ -2529,7 +2530,7 @@
                 ],
                 "properties": {
                   "id": {
-                    "$ref": "#/components/schemas/Uuid"
+                    "$ref": "#/components/schemas/Ulid"
                   },
                   "name": {
                     "type": "string"
@@ -2567,12 +2568,12 @@
         ],
         "properties": {
           "organization_id": {
-            "$ref": "#/components/schemas/Uuid"
+            "$ref": "#/components/schemas/Ulid"
           },
           "project_id": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/Uuid"
+                "$ref": "#/components/schemas/Ulid"
               },
               {
                 "type": "null"
@@ -2598,7 +2599,7 @@
         "additionalProperties": false,
         "properties": {
           "user_id": {
-            "$ref": "#/components/schemas/Uuid"
+            "$ref": "#/components/schemas/Ulid"
           }
         }
       },
@@ -2612,10 +2613,10 @@
         ],
         "properties": {
           "from_user_id": {
-            "$ref": "#/components/schemas/Uuid"
+            "$ref": "#/components/schemas/Ulid"
           },
           "to_user_id": {
-            "$ref": "#/components/schemas/Uuid"
+            "$ref": "#/components/schemas/Ulid"
           },
           "created_at": {
             "$ref": "#/components/schemas/Timestamp"
@@ -2734,13 +2735,13 @@
             "type": "string"
           },
           "organization_id": {
-            "$ref": "#/components/schemas/Uuid"
+            "$ref": "#/components/schemas/Ulid"
           },
           "project_id": {
             "description": "null for an organization key.",
             "oneOf": [
               {
-                "$ref": "#/components/schemas/Uuid"
+                "$ref": "#/components/schemas/Ulid"
               },
               {
                 "type": "null"
@@ -2760,7 +2761,7 @@
             }
           },
           "created_by": {
-            "$ref": "#/components/schemas/Uuid"
+            "$ref": "#/components/schemas/Ulid"
           },
           "created_at": {
             "$ref": "#/components/schemas/Timestamp"
@@ -2800,8 +2801,8 @@
           },
           "key": {
             "type": "string",
-            "pattern": "^tsk_[0-9a-hjkmnp-tv-z]{20}_[0-9a-hjkmnp-tv-z]{52}$",
-            "description": "The whole key string, shown once. Its first 24 characters are the id."
+            "pattern": "^tsk_[0-7][0-9A-HJKMNP-TV-Z]{25}_[0-9a-hjkmnp-tv-z]{52}$",
+            "description": "The whole key string, shown once. The 26-character ULID between underscores is the entity and OAuth client id."
           }
         }
       },
@@ -2838,7 +2839,7 @@
         ],
         "properties": {
           "id": {
-            "$ref": "#/components/schemas/Uuid"
+            "$ref": "#/components/schemas/Ulid"
           },
           "actor": {
             "type": "string",
@@ -2922,7 +2923,7 @@
             "const": "client_credentials"
           },
           "project": {
-            "$ref": "#/components/schemas/Uuid",
+            "$ref": "#/components/schemas/Ulid",
             "description": "Organization keys, the project to act in (omit for an organization token); project keys, optional and equal to the key's."
           },
           "scope": {
@@ -2962,10 +2963,10 @@
             "const": "urn:ietf:params:oauth:token-type:access_token"
           },
           "organization": {
-            "$ref": "#/components/schemas/Uuid"
+            "$ref": "#/components/schemas/Ulid"
           },
           "project": {
-            "$ref": "#/components/schemas/Uuid",
+            "$ref": "#/components/schemas/Ulid",
             "description": "Omit for an organization token."
           },
           "scope": {

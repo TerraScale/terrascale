@@ -18,8 +18,8 @@ type UsageOptions struct {
 // Period is nil on older servers that report lifetime counters only; callers
 // must never treat those counters as usage of the requested window.
 type Usage struct {
-	ProjectID    string       `json:"projectId,omitempty"`
-	DatabaseID   string       `json:"databaseId,omitempty"`
+	ProjectID    string       `json:"projectId,omitempty" ulid:"optional"`
+	DatabaseID   string       `json:"databaseId,omitempty" ulid:"optional"`
 	StorageBytes int64        `json:"storageBytes"`
 	LogicalBytes int64        `json:"logicalBytes"`
 	Documents    int64        `json:"documents"`

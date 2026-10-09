@@ -141,8 +141,8 @@ func (s *spec) generate(sc schema, name string) any {
 	switch {
 	case strings.HasSuffix(name, "_at"):
 		return "2026-10-06T12:00:00Z"
-	case name == "id" || strings.HasSuffix(name, "_id") || name == "created_by" || name == "invited_by":
-		return "0199b3e4-0000-7000-8000-000000000001"
+	case name == "id" || strings.HasSuffix(name, "_id") || name == "created_by" || name == "invited_by" || name == "actor":
+		return "01K6SY8000E008000000000001"
 	}
 	return name + "-value"
 }
@@ -283,8 +283,8 @@ func TestManagementContract(t *testing.T) {
 	}
 	u := c.WithToken("sign-in-token")
 	ctx := t.Context()
-	const org, project, user = "0199b3e4-0000-7000-8000-000000000001", "0199b3e4-5b6a-7c8d-9e0f-1a2b3c4d5e6f", "4f1c2d3e-5a6b-4c7d-8e9f-0a1b2c3d4e5f"
-	const key = "tsk_3k9f2m8q1x7v4c6n0b5z"
+	const org, project, user = "01K6SY8000E008000000000001", "01K6SY8PVAFJ6SW3RT5CY4TQKF", "2F3GPKWPKB9HYRX7RA3CP3TKJZ"
+	const key = "01ARZ3NDEKTSV4RRFFQ69G5FA8"
 	expires := time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)
 	page := tsauth.PageOptions{Limit: 10, After: "cursor"}
 	check := func(name string, ok bool, err error) {
@@ -385,7 +385,7 @@ func TestManagementErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = c.WithToken("t").Leave(t.Context(), "org")
+	err = c.WithToken("t").Leave(t.Context(), "01ARZ3NDEKTSV4RRFFQ69G5FA6")
 	var apiErr *tsauth.APIError
 	if !errors.Is(err, tsauth.ErrLastOwner) || !errors.As(err, &apiErr) || apiErr.Status != http.StatusConflict || apiErr.Message == "" {
 		t.Fatalf("error: %v", err)
@@ -395,14 +395,14 @@ func TestManagementErrors(t *testing.T) {
 func TestManagementDecodeErrorsHideValues(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusCreated)
-		io.WriteString(w, `{"api_key":{"id":"tsk_3k9f2m8q1x7v4c6n0b5z"},"key":12345678901234567890}`)
+		io.WriteString(w, `{"api_key":{"id":"01ARZ3NDEKTSV4RRFFQ69G5FA8"},"key":12345678901234567890}`)
 	}))
 	t.Cleanup(srv.Close)
 	c, err := tsauth.New(tsauth.Config{Issuer: srv.URL + "/terrascale"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = c.WithToken("t").CreateAPIKey(t.Context(), "org", "", tsauth.APIKeyRequest{Name: "k", Scopes: []string{tsauth.ScopeDocumentsRead}})
+	_, err = c.WithToken("t").CreateAPIKey(t.Context(), "01ARZ3NDEKTSV4RRFFQ69G5FA6", "", tsauth.APIKeyRequest{Name: "k", Scopes: []string{tsauth.ScopeDocumentsRead}})
 	if err == nil || strings.Contains(err.Error(), "12345678901234567890") || errors.Unwrap(err) != nil {
 		t.Fatalf("decode error: %v", err)
 	}
@@ -418,14 +418,17 @@ func TestManagementRejectsLocally(t *testing.T) {
 	}
 	ctx := t.Context()
 	for name, err := range map[string]error{
-		"empty token":      c.WithToken("").Leave(ctx, "org"),
-		"token with space": c.WithToken("a b").Leave(ctx, "org"),
+		"body project ID":  second(c.WithToken("t").CreateInvitation(ctx, "01ARZ3NDEKTSV4RRFFQ69G5FA6", "prj_legacy", "user@example.com", tsauth.RoleMember)),
+		"body user ID":     second(c.WithToken("t").StartOwnershipTransfer(ctx, "01ARZ3NDEKTSV4RRFFQ69G5FA6", "usr_legacy")),
+		"query project ID": second(c.WithToken("t").Invitations(ctx, "01ARZ3NDEKTSV4RRFFQ69G5FA6", "prj_legacy", tsauth.PageOptions{})),
+		"empty token":      c.WithToken("").Leave(ctx, "01ARZ3NDEKTSV4RRFFQ69G5FA6"),
+		"token with space": c.WithToken("a b").Leave(ctx, "01ARZ3NDEKTSV4RRFFQ69G5FA6"),
 		"slash":            c.WithToken("t").Leave(ctx, "a/b"),
 		"dot":              c.WithToken("t").Leave(ctx, ".."),
 		"empty":            c.WithToken("t").Leave(ctx, ""),
-		"org key database": second(c.WithToken("t").CreateAPIKey(ctx, "org", "", tsauth.APIKeyRequest{Name: "k", Database: "main"})),
-		"negative grace":   second(c.WithToken("t").RotateAPIKey(ctx, "org", "", "tsk_3k9f2m8q1x7v4c6n0b5z", -500*time.Millisecond)),
-		"grace over a day": second(c.WithToken("t").RotateAPIKey(ctx, "org", "", "tsk_3k9f2m8q1x7v4c6n0b5z", 24*time.Hour+time.Second)),
+		"org key database": second(c.WithToken("t").CreateAPIKey(ctx, "01ARZ3NDEKTSV4RRFFQ69G5FA6", "", tsauth.APIKeyRequest{Name: "k", Database: "main"})),
+		"negative grace":   second(c.WithToken("t").RotateAPIKey(ctx, "01ARZ3NDEKTSV4RRFFQ69G5FA6", "", "01ARZ3NDEKTSV4RRFFQ69G5FA8", -500*time.Millisecond)),
+		"grace over a day": second(c.WithToken("t").RotateAPIKey(ctx, "01ARZ3NDEKTSV4RRFFQ69G5FA6", "", "01ARZ3NDEKTSV4RRFFQ69G5FA8", 24*time.Hour+time.Second)),
 	} {
 		if err == nil {
 			t.Errorf("%s: no error", name)
