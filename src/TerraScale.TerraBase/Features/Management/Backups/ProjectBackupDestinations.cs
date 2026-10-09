@@ -48,6 +48,7 @@ internal sealed class ProjectBackupDestinations(
         BackupSecretWork? intent = null;
         BackupSecretWork? retirement = null;
         string? secretId = null;
+        var confirmedNotCreated = false;
         try
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -77,6 +78,12 @@ internal sealed class ProjectBackupDestinations(
 
             return saved;
         }
+        catch (OciSecretNotCreatedException)
+        {
+            confirmedNotCreated = true;
+            cancellationToken.ThrowIfCancellationRequested();
+            return new Unavailable("customer backup bucket or OCI Vault could not be accessed");
+        }
         catch (Exception error) when (!cancellationToken.IsCancellationRequested && error is HttpRequestException or AmazonS3Exception or IOException or InvalidDataException or OperationCanceledException)
         {
             // Bucket/Vault errors can include tenant input and credentials. Only a fixed error reaches HTTP.
@@ -84,14 +91,25 @@ internal sealed class ProjectBackupDestinations(
         }
         finally
         {
-            lock (_savingLock)
+            try
             {
-                _saving.Remove(organizationId);
+                if (intent is not null && confirmedNotCreated)
+                {
+                    // Hold bounded save admission until local removal ends; remote cleanup cannot reject it.
+                    await lifecycle.AbandonCreateAsync(intent.Id, secretId, confirmedNotCreated: true).ConfigureAwait(false);
+                }
+            }
+            finally
+            {
+                lock (_savingLock)
+                {
+                    _saving.Remove(organizationId);
+                }
             }
 
-            if (intent is not null)
+            if (intent is not null && !confirmedNotCreated)
             {
-                await lifecycle.AbandonCreateAsync(intent.Id, secretId).ConfigureAwait(false);
+                await lifecycle.AbandonCreateAsync(intent.Id, secretId, confirmedNotCreated: false).ConfigureAwait(false);
             }
 
             await lifecycle.RetireCommittedAsync(retirement).ConfigureAwait(false);

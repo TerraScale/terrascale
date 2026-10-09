@@ -116,7 +116,8 @@ internal sealed class S3ObjectStore : IObjectStore, IDisposable
         using var deadline = _customer ? new CancellationTokenSource(RequestTimeout, _time) : null;
         using var stop = deadline is null ? null : CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
         cancellationToken = stop?.Token ?? cancellationToken;
-        var request = new ListObjectsV2Request { BucketName = _bucket, Prefix = prefix, StartAfter = startAfter, MaxKeys = 1000 };
+        // Leave room for metadata after sixfold XML expansion of 1024-byte keys within the customer 2 MiB limit.
+        var request = new ListObjectsV2Request { BucketName = _bucket, Prefix = prefix, StartAfter = startAfter, MaxKeys = _customer ? 250 : 1000 };
         var previous = startAfter;
         while (true)
         {

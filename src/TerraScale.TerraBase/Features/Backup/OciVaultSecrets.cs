@@ -26,6 +26,9 @@ internal interface IOciVaultSecrets
     Task DeleteAsync(string secretId, CancellationToken cancellationToken);
 }
 
+// Only the owning transport can prove that a create was never submitted or was explicitly rejected.
+internal sealed class OciSecretNotCreatedException() : HttpRequestException("OCI Vault secret creation was not submitted or was rejected");
+
 /// <summary>Versioned JSON stored as the content of a customer backup credential secret.</summary>
 /// <param name="Version">Format version; currently 1.</param>
 /// <param name="AccessKeyId">The customer's S3 access key id.</param>
@@ -98,21 +101,24 @@ internal sealed class OciVaultSecrets(BackupSettings settings, IHttpClientFactor
 
     public async Task<string> CreateAsync(string name, string accessKeyId, string secretKey, CancellationToken cancellationToken)
     {
-        if (!IsName(name, 256))
-        {
-            throw new ArgumentException("Secret name must be 1 to 256 ASCII letters, digits, dots, underscores or hyphens", nameof(name));
-        }
-        if (!IsCredential(accessKeyId) || !IsCredential(secretKey))
-        {
-            throw new ArgumentException("Backup credential fields must each be 1 to 4096 UTF-8 bytes without control characters");
-        }
-
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(TimeSpan.FromSeconds(30));
-        cancellationToken = timeout.Token;
-        await AdmitAsync(cancellationToken).ConfigureAwait(false);
+        var admitted = false;
+        var submitting = false;
         try
         {
+            if (!IsName(name, 256))
+            {
+                throw new ArgumentException("Secret name must be 1 to 256 ASCII letters, digits, dots, underscores or hyphens", nameof(name));
+            }
+            if (!IsCredential(accessKeyId) || !IsCredential(secretKey))
+            {
+                throw new ArgumentException("Backup credential fields must each be 1 to 4096 UTF-8 bytes without control characters");
+            }
+
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeout.CancelAfter(TimeSpan.FromSeconds(30));
+            cancellationToken = timeout.Token;
+            await AdmitAsync(cancellationToken).ConfigureAwait(false);
+            admitted = true;
             var credentials = JsonSerializer.SerializeToUtf8Bytes(new OciSecretCredentials(1, accessKeyId, secretKey), Metadata<OciSecretCredentials>());
             byte[] body;
             try
@@ -129,6 +135,7 @@ internal sealed class OciVaultSecrets(BackupSettings settings, IHttpClientFactor
                 CryptographicOperations.ZeroMemory(credentials);
             }
 
+            submitting = true;
             using var response = await SendAsync(HttpMethod.Post, new Uri(_vaultEndpoint, "/20180608/secrets"), body, cancellationToken, retryToken: name).ConfigureAwait(false);
             // Successful headers may follow a committed create. Caller cancellation must not hide its OCID.
             using var completion = CancellationTokenSource.CreateLinkedTokenSource(lifetime.ApplicationStopping);
@@ -137,9 +144,16 @@ internal sealed class OciVaultSecrets(BackupSettings settings, IHttpClientFactor
             // A completed create must hand its id to the caller, even if cancellation now prevents publishing it.
             return IsName(secret.Id, 512) ? secret.Id! : throw new HttpRequestException("OCI Vault Secrets returned no valid secret id", null, HttpStatusCode.BadGateway);
         }
+        catch (Exception error) when (!submitting && error is ArgumentException or InvalidOperationException or HttpRequestException or OperationCanceledException)
+        {
+            throw new OciSecretNotCreatedException();
+        }
         finally
         {
-            _requests.Release();
+            if (admitted)
+            {
+                _requests.Release();
+            }
         }
     }
 
@@ -279,6 +293,7 @@ internal sealed class OciVaultSecrets(BackupSettings settings, IHttpClientFactor
 
     private async Task<HttpResponseMessage> SendAsync(HttpMethod method, Uri uri, byte[]? body, CancellationToken cancellationToken, string? retryToken = null)
     {
+        var submitted = false;
         try
         {
             if (body is { Length: > MaxBodyBytes })
@@ -292,7 +307,10 @@ internal sealed class OciVaultSecrets(BackupSettings settings, IHttpClientFactor
             }
 
             Sign(request, body);
-            var response = await http.CreateClient(HttpClientName).SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+            var client = http.CreateClient(HttpClientName);
+            cancellationToken.ThrowIfCancellationRequested();
+            submitted = true;
+            var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
             if (response.IsSuccessStatusCode)
             {
                 return response;
@@ -300,7 +318,17 @@ internal sealed class OciVaultSecrets(BackupSettings settings, IHttpClientFactor
             var status = response.StatusCode;
             response.Dispose();
             // Error bodies may echo submitted content. Never read them or attach them to an exception.
+            if (retryToken is not null && status is HttpStatusCode.BadRequest or HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+            {
+                throw new OciSecretNotCreatedException();
+            }
+
             throw new HttpRequestException($"OCI Vault Secrets answered {(int)status}", null, status);
+        }
+        catch (Exception error) when (retryToken is not null && !submitted
+            && error is ArgumentException or InvalidOperationException or CryptographicException or HttpRequestException or OperationCanceledException)
+        {
+            throw new OciSecretNotCreatedException();
         }
         finally
         {

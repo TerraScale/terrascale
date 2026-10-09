@@ -289,6 +289,11 @@ public sealed class CustomerBackupTimerIsolationTests
 
         public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
         {
+            if (period == Timeout.InfiniteTimeSpan)
+            {
+                return time.CreateTimer(callback, state, dueTime, period);
+            }
+
             if (_timer is not null || dueTime != TimeSpan.FromSeconds(1) || period != TimeSpan.FromSeconds(1))
             {
                 throw new InvalidOperationException("expected the continuous backup service's one-second timer");

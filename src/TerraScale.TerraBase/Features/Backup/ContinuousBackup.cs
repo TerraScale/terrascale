@@ -56,6 +56,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
     private static readonly TimeSpan Interval = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan DiscoveryInterval = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan SnapshotInterval = TimeSpan.FromDays(1);
+    private static readonly TimeSpan ConfigurationTimeout = TimeSpan.FromSeconds(1);
 
     // Frames read but not stored, per file, before its generation is abandoned for a fresh snapshot (bounds scratch disk).
     private const long MaxPendingBytes = 256L * 1024 * 1024;
@@ -275,7 +276,12 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
     {
         if (_time.GetUtcNow() >= file.RetryAt && _time.GetUtcNow() >= file.NextConfiguration)
         {
-            file.Configuration = await _targets.ConfigurationAsync(file.Database, cancellationToken).ConfigureAwait(false);
+            // Cancel and join the catalog read before releasing admission; its timeout uses the file's normal backoff.
+            using var timeout = new CancellationTokenSource(ConfigurationTimeout, _time);
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
+            var configuration = await _targets.ConfigurationAsync(file.Database, deadline.Token).ConfigureAwait(false);
+            deadline.Token.ThrowIfCancellationRequested();
+            file.Configuration = configuration;
             file.NextConfiguration = _time.GetUtcNow() + DiscoveryInterval;
         }
     }

@@ -84,6 +84,8 @@ roles can. Outsiders receive 404.
 Deleting an unset destination is idempotent and returns 204. Saves admit at most four organizations concurrently,
 with one save per organization, so one organization cannot occupy every slot. Each file's shipper refreshes
 destination configuration at a ten-second cadence on successful passes; shipping work and retries can delay refresh.
+Each lookup has a one-second deadline. A timeout cancels and joins the read, then uses the file's shipping backoff so
+other files can be admitted.
 Project deletion returns 409 while a customer destination remains configured; detach it first so its Vault secret can retire.
 Saving, replacing or detaching an existing destination advances the organization's management version, invalidating
 stale fences. Deleting an unset destination leaves that version unchanged.
@@ -93,6 +95,9 @@ The bucket must allow read, write, list and delete under `v1/<organization>/<pro
 remain if a bucket retention rule protects it. Customer endpoints must use HTTPS and public IP addresses. Redirects,
 proxies and connections to private, loopback or metadata addresses are blocked; private-network S3 endpoints are not
 supported.
+
+Customer listing pages request at most 250 objects and are bounded to 2 MiB before XML parsing. The smaller page leaves
+room for XML escaping of S3's 1,024-byte keys; malformed entries still count toward metadata scan limits.
 
 Customer credentials live encrypted in OCI Vault Secrets as a versioned JSON secret. TerraBase's version-1 catalog
 record under `projects/<project>/backup_destination` holds public settings and the secret OCID only. Credentials are
@@ -117,6 +122,11 @@ is read under an independent bounded token so caller cancellation cannot discard
 are reconciled through OCI secret metadata; no credential content is stored in these records or replayed to create another
 secret. Publication removes its intent atomically. Cleanup claims an expired intent before retirement, preventing it from
 being published afterward. An empty metadata listing leaves the intent pending because the secret may appear later.
+Confirmed failures before submission and definitive OCI create rejections remove the unused intent; uncertain outcomes
+retain it for reconciliation. Confirmed removal keeps save admission until completion, allowing at most four local
+discards even while remote cleanup is full. Local catalog failures retry within an independent 30-second deadline.
+Shutdown before removal commits, or catalog unavailability through that deadline, can leave an intent pending for
+operator investigation.
 
 The lifecycle backlog admits at most 1,024 records of 2 KiB each. A full backlog returns fixed 503 before changing a
 destination; an already detached destination still returns 204. Maintenance reads at most eight records / 16 KiB per
@@ -252,8 +262,9 @@ scopes, with another 65536 unwrapped keys cached for restores (at most 4 MiB of 
 expire after a day without access. At capacity, cache admission synchronously makes room for new results so waiting
 downloads can reuse them. Evicted-key lookups retrieve keys from the bucket and Vault;
 size nodes to keep active scopes and restore keys within these limits. Generated keys enter the restore cache only
-after their wrapped copy is persisted. Concurrent downloads using one historical key share its retrieval and unwrap;
-distinct keys use bounded key stripes independently of selection and publication. Unrelated, nested, and future-dated
+after their wrapped copy is persisted. Concurrent downloads using one historical key share its retrieval and unwrap.
+Wrapped key bodies are limited to 16 KiB both before publication and during cold retrieval.
+Distinct keys use bounded key stripes independently of selection and publication. Unrelated, nested, and future-dated
 key objects are ignored during selection; a future-dated key can still decrypt historical objects naming it.
 Changing `backup-key-rotation-days` requires a rolling
 restart; use `1` for the next daily rotation when shortening the schedule.

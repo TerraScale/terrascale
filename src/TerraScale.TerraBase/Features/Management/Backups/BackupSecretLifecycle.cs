@@ -13,7 +13,7 @@ internal interface IBackupSecretLifecycle
     ValueTask<bool> CanPublishAsync(IStorageTransaction transaction, string intentId, CancellationToken cancellationToken);
     ValueTask CompleteCreateAsync(IStorageTransaction transaction, string intentId, CancellationToken cancellationToken);
     ValueTask<BackupSecretWork?> QueueRetirementAsync(IStorageTransaction transaction, ProjectBackupDestinationRecord record, CancellationToken cancellationToken);
-    Task AbandonCreateAsync(string intentId, string? secretId);
+    Task AbandonCreateAsync(string intentId, string? secretId, bool confirmedNotCreated);
     Task RetireCommittedAsync(BackupSecretWork? work);
 }
 
@@ -67,9 +67,9 @@ internal sealed class BackupSecretLifecycle(
         return work;
     }
 
-    public async Task AbandonCreateAsync(string intentId, string? secretId)
+    public async Task AbandonCreateAsync(string intentId, string? secretId, bool confirmedNotCreated)
     {
-        if (!TryEnter())
+        if (!TryEnter(confirmedNotCreated))
         {
             return;
         }
@@ -77,19 +77,38 @@ internal sealed class BackupSecretLifecycle(
         try
         {
             using var timeout = OperationTimeout();
-            var work = await catalog.WriteDurableAsync(async transaction =>
+            BackupSecretWork? work;
+            while (true)
             {
-                var intent = await GetAsync(transaction, Collection, intentId, TerraBaseJsonContext.Default.BackupSecretWork, timeout.Token).ConfigureAwait(false);
-                if (intent is null)
+                try
                 {
-                    // Publication removed it atomically, or the worker already retired the fenced create.
-                    return null;
-                }
+                    work = await catalog.WriteDurableAsync(async transaction =>
+                    {
+                        var intent = await GetAsync(transaction, Collection, intentId, TerraBaseJsonContext.Default.BackupSecretWork, timeout.Token).ConfigureAwait(false);
+                        if (intent is null)
+                        {
+                            // Publication removed it atomically, or the worker already retired the fenced create.
+                            return null;
+                        }
 
-                var abandoned = intent with { Retiring = true, SecretId = secretId ?? intent.SecretId, DueAt = time.GetUtcNow().Add(RetryInterval) };
-                await PutWorkAsync(transaction, abandoned, timeout.Token).ConfigureAwait(false);
-                return abandoned;
-            }, timeout.Token).ConfigureAwait(false);
+                        if (confirmedNotCreated && secretId is null && intent.SecretId is null)
+                        {
+                            await CompleteCreateAsync(transaction, intentId, timeout.Token).ConfigureAwait(false);
+                            return null;
+                        }
+
+                        var abandoned = intent with { Retiring = true, SecretId = secretId ?? intent.SecretId, DueAt = time.GetUtcNow().Add(RetryInterval) };
+                        await PutWorkAsync(transaction, abandoned, timeout.Token).ConfigureAwait(false);
+                        return abandoned;
+                    }, timeout.Token).ConfigureAwait(false);
+                    break;
+                }
+                catch (Exception error) when (confirmedNotCreated && IsAvailabilityFailure(error) && !timeout.IsCancellationRequested)
+                {
+                    // Retry local failure within the independent cleanup deadline, without admitting another save.
+                    await Task.Delay(TimeSpan.FromMilliseconds(50), timeout.Token).ConfigureAwait(false);
+                }
+            }
             if (work?.SecretId is not null)
             {
                 await ProcessAsync(work, timeout.Token).ConfigureAwait(false);
@@ -271,11 +290,12 @@ internal sealed class BackupSecretLifecycle(
     private static bool IsAvailabilityFailure(Exception error) => error is HttpRequestException or IOException or InvalidDataException or OperationCanceledException or BadHttpRequestException
         or StorageBusyException or StorageWriteLimitException or ChangeGroupCapacityException;
 
-    private bool TryEnter()
+    private bool TryEnter(bool confirmedNotCreated = false)
     {
         lock (_operations)
         {
-            if (_closed || _active == 4)
+            // Confirmed discards keep their save admission, so at most four can bypass the remote-work limit.
+            if (_closed || (!confirmedNotCreated && _active >= 4))
             {
                 return false;
             }

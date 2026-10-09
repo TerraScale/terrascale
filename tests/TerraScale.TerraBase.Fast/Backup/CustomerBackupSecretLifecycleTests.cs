@@ -6,6 +6,9 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
+using TerraBase.Engine;
+using TerraBase.Fast.Management;
+using TerraBase.Features.Backup;
 using TerraBase.Features.Management;
 using TerraBase.Features.Management.Backups;
 using TerraBase.Hosting;
@@ -16,6 +19,337 @@ namespace TerraBase.Fast.Backup;
 
 public sealed class CustomerBackupSecretLifecycleTests
 {
+    [Test]
+    [Arguments(HttpStatusCode.BadRequest)]
+    [Arguments(HttpStatusCode.Unauthorized)]
+    [Arguments(HttpStatusCode.Forbidden)]
+    public async Task Repeated_definitive_create_rejections_preserve_backlog_capacity_for_replacement_and_detach(HttpStatusCode status)
+    {
+        var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
+        using var oci = new FakeOci();
+        var time = Clock();
+        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services => Manual(oci, services), time);
+        var database = await api.CreateManagedDatabaseAsync();
+        var route = Uri(database.ProjectPath + "/backup-destination");
+        await SaveAsync(api, route, "customer", token);
+        var predecessor = oci.Secrets.Keys.Single();
+        var catalog = api.Server.Services.GetRequiredService<SystemCatalog>();
+        var seeded = BackupSecretLifecycle.MaxPending - 1;
+        for (var offset = 0; offset < seeded; offset += 128)
+        {
+            var count = Math.Min(128, seeded - offset);
+            await catalog.WriteDurableAsync(async transaction =>
+            {
+                for (var index = 0; index < count; index++)
+                {
+                    var id = Ulid.NewUlid().ToString();
+                    var work = new BackupSecretWork(1, id, "terrabase-backup-" + id, null, true, time.GetUtcNow().AddDays(1));
+                    await SystemCatalog.PutAsync(transaction, BackupSecretLifecycle.Collection, id, work, TerraBaseJsonContext.Default.BackupSecretWork, token);
+                }
+
+                return true;
+            }, token);
+        }
+
+        var rejections = 0;
+        oci.SecretResponseOverride = (method, path) =>
+        {
+            if (method != HttpMethod.Post || path != "/20180608/secrets")
+            {
+                return null;
+            }
+
+            Interlocked.Increment(ref rejections);
+            return new(status) { Content = new StringContent(FakeOci.CustomerSecretKey) };
+        };
+        for (var attempt = 0; attempt < 8; attempt++)
+        {
+            await ErrorAssert.ErrorAsync(api.Client.PutAsJsonAsync(route, Destination("both"), token), HttpStatusCode.ServiceUnavailable,
+                "unavailable", "customer backup bucket or OCI Vault could not be accessed");
+            await Assert.That((await PendingAsync(api, token)).Count).IsEqualTo(seeded);
+        }
+
+        await Assert.That(Volatile.Read(ref rejections)).IsEqualTo(8);
+        await Assert.That(oci.Secrets.Keys).IsEquivalentTo([predecessor]);
+        await Assert.That(oci.ScheduledSecrets.Count).IsEqualTo(0);
+        using var unchanged = await api.Client.GetAsync(route, token);
+        unchanged.EnsureSuccessStatusCode();
+        await Assert.That((await unchanged.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: token)).GetProperty("mode").GetString()).IsEqualTo("customer");
+        oci.SecretResponseOverride = null;
+        await SaveAsync(api, route, "both", token);
+        await Assert.That(oci.ScheduledSecrets).IsEquivalentTo([predecessor]);
+        await Assert.That((await PendingAsync(api, token)).Count).IsEqualTo(seeded);
+        using var detached = await api.Client.DeleteAsync(route, token);
+        await Assert.That(detached.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+        using var absent = await api.Client.GetAsync(route, token);
+        await Assert.That(absent.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        await Assert.That(oci.ScheduledSecrets).IsEquivalentTo(oci.Secrets.Keys);
+        await Assert.That((await PendingAsync(api, token)).Count).IsEqualTo(seeded);
+        await Assert.That(oci.BadSignatures).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task Definitive_rejection_removes_its_intent_while_all_remote_cleanup_slots_are_stalled()
+    {
+        var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
+        deadline.CancelAfter(TimeSpan.FromSeconds(30));
+        token = deadline.Token;
+        using var oci = new FakeOci();
+        var time = Clock();
+        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services => Manual(oci, services), time);
+        var organization = await api.CreateOrganizationAsync(new Faker().Company.CompanyName());
+        var routes = new List<Uri>(4);
+        for (var index = 0; index < 4; index++)
+        {
+            var project = await api.CreateProjectAsync(organization, "Retirement " + index);
+            var route = Uri($"/v1/management/organizations/{organization}/projects/{project}/backup-destination");
+            await SaveAsync(api, route, "customer", token);
+            routes.Add(route);
+        }
+
+        var predecessors = oci.Secrets.Keys.ToArray();
+        var replacement = await api.CreateProjectAsync(organization, "Definitive rejection");
+        var replacing = Uri($"/v1/management/organizations/{organization}/projects/{replacement}/backup-destination");
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var retiring = 0;
+        oci.BeforeSecretRequest = async (_, path, cancellationToken) =>
+        {
+            if (path.EndsWith("/actions/scheduleDeletion", StringComparison.Ordinal))
+            {
+                if (Interlocked.Increment(ref retiring) == 4)
+                {
+                    entered.TrySetResult();
+                }
+
+                await release.Task.WaitAsync(cancellationToken);
+            }
+        };
+        using var deleting = CancellationTokenSource.CreateLinkedTokenSource(token);
+        var deletions = routes.Select(route => api.Client.DeleteAsync(route, deleting.Token)).ToArray();
+        try
+        {
+            await entered.Task.WaitAsync(token);
+            await Assert.That((await PendingAsync(api, token)).Count).IsEqualTo(4);
+            oci.SecretResponseOverride = (method, path) => method == HttpMethod.Post && path == "/20180608/secrets"
+                ? new(HttpStatusCode.Forbidden) : null;
+            await ErrorAssert.ErrorAsync(api.Client.PutAsJsonAsync(replacing, Destination("customer"), token), HttpStatusCode.ServiceUnavailable,
+                "unavailable", "customer backup bucket or OCI Vault could not be accessed");
+            var pending = await PendingAsync(api, token);
+            await Assert.That(pending.Count).IsEqualTo(4);
+            await Assert.That(pending.Select(work => work.SecretId!)).IsEquivalentTo(predecessors);
+            await Assert.That(oci.ScheduledSecrets.Count).IsEqualTo(0);
+            oci.SecretResponseOverride = null;
+            await SaveAsync(api, replacing, "customer", token);
+            await Assert.That((await PendingAsync(api, token)).Count).IsEqualTo(4);
+            release.TrySetResult();
+            foreach (var deletion in deletions)
+            {
+                using var response = await deletion.WaitAsync(token);
+                await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+            }
+
+            await Assert.That((await PendingAsync(api, token)).Count).IsEqualTo(0);
+            await Assert.That(oci.ScheduledSecrets).IsEquivalentTo(predecessors);
+            await Assert.That(oci.BadSignatures).IsEqualTo(0);
+        }
+        finally
+        {
+            release.TrySetResult();
+            await deleting.CancelAsync();
+            await ((Task)Task.WhenAll(deletions)).WaitAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            foreach (var deletion in deletions.Where(task => task.IsCompletedSuccessfully))
+            {
+                using var response = await deletion;
+            }
+        }
+    }
+
+    [Test]
+    public async Task Definitive_rejection_retries_transient_catalog_cleanup_failures_before_releasing_save_admission()
+    {
+        var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
+        using var oci = new FakeOci();
+        var time = Clock();
+        var hook = new UsageCommitHook();
+        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services =>
+        {
+            Manual(oci, services);
+            hook.Install(services);
+        }, time);
+        var database = await api.CreateManagedDatabaseAsync();
+        var route = Uri(database.ProjectPath + "/backup-destination");
+        var rejections = 0;
+        var cleanups = 0;
+        oci.SecretResponseOverride = (method, path) =>
+        {
+            if (method != HttpMethod.Post || path != "/20180608/secrets")
+            {
+                return null;
+            }
+
+            Interlocked.Increment(ref rejections);
+            return new(HttpStatusCode.BadRequest);
+        };
+        hook.AfterGet = (collection, _, _) =>
+        {
+            if (collection == BackupSecretLifecycle.Collection && Volatile.Read(ref rejections) != 0
+                && Interlocked.Increment(ref cleanups) <= 2)
+            {
+                throw new StorageBusyException();
+            }
+
+            return ValueTask.CompletedTask;
+        };
+        await ErrorAssert.ErrorAsync(api.Client.PutAsJsonAsync(route, Destination("customer"), token), HttpStatusCode.ServiceUnavailable,
+            "unavailable", "customer backup bucket or OCI Vault could not be accessed");
+        await Assert.That(Volatile.Read(ref rejections)).IsEqualTo(1);
+        await Assert.That(Volatile.Read(ref cleanups)).IsEqualTo(3);
+        await Assert.That((await PendingAsync(api, token)).Count).IsEqualTo(0);
+        await Assert.That(oci.Secrets.Count).IsEqualTo(0);
+        hook.AfterGet = null;
+        oci.SecretResponseOverride = null;
+        await SaveAsync(api, route, "customer", token);
+        await Assert.That((await PendingAsync(api, token)).Count).IsEqualTo(0);
+        await Assert.That(oci.Secrets.Count).IsEqualTo(1);
+        await Assert.That(oci.BadSignatures).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task Vault_admission_rejection_discards_the_unsubmitted_intent_and_allows_recovery()
+    {
+        var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
+        deadline.CancelAfter(TimeSpan.FromSeconds(30));
+        token = deadline.Token;
+        using var oci = new FakeOci();
+        var time = Clock();
+        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services => Manual(oci, services), time);
+        var database = await api.CreateManagedDatabaseAsync();
+        var route = Uri(database.ProjectPath + "/backup-destination");
+        await SaveAsync(api, route, "customer", token);
+        var current = oci.Secrets.Keys.Single();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var admitted = 0;
+        var submitted = 0;
+        oci.BeforeSecretRequest = async (method, path, cancellationToken) =>
+        {
+            if (method == HttpMethod.Post && path == "/20180608/secrets")
+            {
+                Interlocked.Increment(ref submitted);
+            }
+
+            if (method == HttpMethod.Get && path == "/20190301/secretbundles/" + current)
+            {
+                if (Interlocked.Increment(ref admitted) == 8)
+                {
+                    entered.TrySetResult();
+                }
+
+                await release.Task.WaitAsync(cancellationToken);
+            }
+        };
+        using var reading = CancellationTokenSource.CreateLinkedTokenSource(token);
+        var secrets = api.Server.Services.GetRequiredService<IOciVaultSecrets>();
+        var reads = Enumerable.Range(0, 8).Select(_ => secrets.ReadAsync(current, reading.Token)).ToArray();
+        try
+        {
+            await entered.Task.WaitAsync(token);
+            await ErrorAssert.ErrorAsync(api.Client.PutAsJsonAsync(route, Destination("both"), token), HttpStatusCode.ServiceUnavailable,
+                "unavailable", "customer backup bucket or OCI Vault could not be accessed");
+            await Assert.That(Volatile.Read(ref submitted)).IsEqualTo(0);
+            await Assert.That((await PendingAsync(api, token)).Count).IsEqualTo(0);
+            await Assert.That(oci.Secrets.Keys).IsEquivalentTo([current]);
+            await Assert.That(oci.ScheduledSecrets.Count).IsEqualTo(0);
+            release.TrySetResult();
+            await Task.WhenAll(reads).WaitAsync(token);
+            oci.BeforeSecretRequest = null;
+            await SaveAsync(api, route, "both", token);
+            await Assert.That(oci.ScheduledSecrets).IsEquivalentTo([current]);
+            await Assert.That((await PendingAsync(api, token)).Count).IsEqualTo(0);
+            await Assert.That(oci.BadSignatures).IsEqualTo(0);
+        }
+        finally
+        {
+            release.TrySetResult();
+            await reading.CancelAsync();
+            await ((Task)Task.WhenAll(reads)).WaitAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        }
+    }
+
+    [Test]
+    [Arguments(true)]
+    [Arguments(false)]
+    public async Task Cancellation_discards_only_a_confirmed_unsubmitted_create(bool beforeSubmission)
+    {
+        var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
+        deadline.CancelAfter(TimeSpan.FromSeconds(30));
+        token = deadline.Token;
+        using var oci = new FakeOci();
+        var time = Clock();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var aborted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services =>
+        {
+            Manual(oci, services);
+            services.AddSingleton<IStartupFilter>(new ObserveAbort(aborted));
+            if (beforeSubmission)
+            {
+                services.AddSingleton<OciVaultSecrets>();
+                services.AddSingleton<IOciVaultSecrets>(provider => new GateCreate(
+                    provider.GetRequiredService<OciVaultSecrets>(), entered, release, token));
+            }
+        }, time);
+        var database = await api.CreateManagedDatabaseAsync();
+        var submitted = 0;
+        oci.BeforeSecretRequest = async (method, path, cancellationToken) =>
+        {
+            if (method == HttpMethod.Post && path == "/20180608/secrets")
+            {
+                Interlocked.Increment(ref submitted);
+                entered.TrySetResult();
+                await release.Task.WaitAsync(cancellationToken);
+            }
+        };
+        using var caller = CancellationTokenSource.CreateLinkedTokenSource(token);
+        var route = Uri(database.ProjectPath + "/backup-destination");
+        var saving = api.Client.PutAsJsonAsync(route, Destination("customer"), caller.Token);
+        try
+        {
+            await entered.Task.WaitAsync(token);
+            await Assert.That((await PendingAsync(api, token)).Single().Retiring).IsFalse();
+            await caller.CancelAsync();
+            await Assert.ThrowsAsync<OperationCanceledException>(() => saving);
+            await aborted.Task.WaitAsync(token);
+            release.TrySetResult();
+            await EventuallyAsync(async () => beforeSubmission
+                ? (await PendingAsync(api, token)).Count == 0
+                : (await PendingAsync(api, token)).Single().Retiring, token);
+            await Assert.That(Volatile.Read(ref submitted)).IsEqualTo(beforeSubmission ? 0 : 1);
+            await Assert.That(oci.Secrets.Count).IsEqualTo(0);
+            using var absent = await api.Client.GetAsync(route, token);
+            await Assert.That(absent.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+            oci.BeforeSecretRequest = null;
+            await SaveAsync(api, route, "customer", token);
+            await Assert.That((await PendingAsync(api, token)).Count).IsEqualTo(beforeSubmission ? 0 : 1);
+            await Assert.That(oci.BadSignatures).IsEqualTo(0);
+        }
+        finally
+        {
+            release.TrySetResult();
+            await caller.CancelAsync();
+            await ((Task)saving).WaitAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            if (saving.IsCompletedSuccessfully)
+            {
+                using var response = await saving;
+            }
+        }
+    }
+
     [Test]
     public async Task Failed_replacement_and_detach_retirements_survive_project_deletion_and_a_server_restart()
     {
@@ -90,6 +424,8 @@ public sealed class CustomerBackupSecretLifecycleTests
     [Test]
     [Arguments("malformed")]
     [Arguments("transport")]
+    [Arguments("http-timeout")]
+    [Arguments("http-unavailable")]
     [Arguments("foreign-metadata")]
     [Arguments("duplicate-metadata")]
     [Arguments("null-metadata")]
@@ -106,7 +442,12 @@ public sealed class CustomerBackupSecretLifecycleTests
         var route = Uri(database.ProjectPath + "/backup-destination");
         await SaveAsync(api, route, "customer", token);
         var current = oci.Secrets.Keys.Single();
-        oci.CreatedSecretResponseOverride = (_, _) => new(HttpStatusCode.OK)
+        oci.CreatedSecretResponseOverride = (_, _) => new(failure switch
+        {
+            "http-timeout" => HttpStatusCode.RequestTimeout,
+            "http-unavailable" => HttpStatusCode.ServiceUnavailable,
+            _ => HttpStatusCode.OK,
+        })
         {
             Content = failure == "transport" ? new StreamContent(new FailingBody()) : new StringContent("invalid-json"),
         };
@@ -495,6 +836,22 @@ public sealed class CustomerBackupSecretLifecycleTests
             });
             next(app);
         };
+    }
+
+    private sealed class GateCreate(IOciVaultSecrets inner, TaskCompletionSource entered, TaskCompletionSource release, CancellationToken token) : IOciVaultSecrets
+    {
+        public async Task<string> CreateAsync(string name, string accessKeyId, string secretKey, CancellationToken cancellationToken)
+        {
+            entered.TrySetResult();
+            await release.Task.WaitAsync(token);
+            return await inner.CreateAsync(name, accessKeyId, secretKey, cancellationToken);
+        }
+
+        public Task<(string AccessKeyId, string SecretKey)> ReadAsync(string secretId, CancellationToken cancellationToken) => inner.ReadAsync(secretId, cancellationToken);
+
+        public Task<string?> FindAsync(string name, CancellationToken cancellationToken) => inner.FindAsync(name, cancellationToken);
+
+        public Task DeleteAsync(string secretId, CancellationToken cancellationToken) => inner.DeleteAsync(secretId, cancellationToken);
     }
 
     private sealed class GatedBody(byte[] bytes) : MemoryStream(bytes)
