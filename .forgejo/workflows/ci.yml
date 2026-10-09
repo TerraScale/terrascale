@@ -58,7 +58,7 @@ jobs:
               --project tests/TerraScale.DotNet.Tests/TerraScale.DotNet.Tests.csproj \
               --framework "$framework" \
               --configuration Release --no-build --no-restore -- \
-              --minimum-expected-tests 475
+              --minimum-expected-tests 487
           done
 
       - name: Pack and bind the exact source revision

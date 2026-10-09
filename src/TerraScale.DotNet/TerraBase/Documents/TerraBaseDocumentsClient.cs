@@ -104,6 +104,29 @@ public sealed class TerraBaseDatabase
     public async Task<TerraBaseCollection> DropCollectionAsync(string name, CancellationToken cancellationToken = default) =>
         (await connection.SendAsync(HttpMethod.Delete, CollectionPath(name), null, Json.TerraBaseCollection, null, cancellationToken).ConfigureAwait(false)).Value;
 
+    /// <summary>
+    /// Declares single and compound unique keys (<c>PUT …/schema/{collection}</c>). Requires a ts-auth project token
+    /// with <c>databases:write</c> in the current producer contract. Declarations may only change when the collection
+    /// has no retained document states (including tombstones); identical declarations are idempotent.
+    /// Otherwise, <see cref="TerraBaseConflictException"/> is thrown
+    /// with <c>schema_requires_empty_collection</c>. Local duplicate writes throw <c>unique_violation</c> and roll back
+    /// the whole transaction. Replicas can admit competing claims during partitions; this is not globally exclusive admission.
+    /// </summary>
+    public async Task<TerraBaseUniqueSchema> DeclareSchemaAsync(
+        string collection, TerraBaseUniqueSchemaRequest schema, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(schema);
+        var body = TerraBaseConnection.Json(schema, Json.TerraBaseUniqueSchemaRequest);
+        return (await connection.SendAsync(HttpMethod.Put, SchemaPath(collection), body, Json.TerraBaseUniqueSchema, null, cancellationToken).ConfigureAwait(false)).Value;
+    }
+
+    /// <summary>
+    /// Reads inferred fields and declared unique keys (<c>GET …/schema/{collection}</c>).
+    /// Requires a ts-auth project token with <c>databases:read</c> in the current producer contract.
+    /// </summary>
+    public async Task<TerraBaseCollectionSchema> GetSchemaAsync(string collection, CancellationToken cancellationToken = default) =>
+        (await connection.SendAsync(HttpMethod.Get, SchemaPath(collection), null, Json.TerraBaseCollectionSchema, null, cancellationToken).ConfigureAwait(false)).Value;
+
     /// <summary>Reads a document; <see langword="null"/> when it is absent or deleted.</summary>
     public async Task<TerraBaseDocument?> GetDocumentAsync(string collection, string id, CancellationToken cancellationToken = default)
     {
@@ -193,6 +216,8 @@ public sealed class TerraBaseDatabase
             .ConfigureAwait(false)).Value;
 
     private string CollectionPath(string collection) => $"{path}/collections/{TerraBaseConnection.Segment(collection, nameof(collection))}";
+
+    private string SchemaPath(string collection) => $"{path}/schema/{TerraBaseConnection.Segment(collection, nameof(collection))}";
 
     private string DocumentPath(string collection, string id) => $"{CollectionPath(collection)}/documents/{TerraBaseConnection.Segment(id, nameof(id))}";
 }

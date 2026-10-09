@@ -50,6 +50,11 @@ no persisted service data and performs no production reset.
 
 ## TerraBase client
 
+Schema10 preparation adds `TerraBaseDatabase.DeclareSchemaAsync` and `GetSchemaAsync` with native single
+and compound unique declarations. See the [exact source contract and qualification gates](docs/terrabase-schema10.md).
+These operations are not qualified by the existing pinned server release; Auth bootstrap credential
+support must land in the producer before Auth uses them at startup.
+
 `TerraScale.DotNet.TerraBase` talks to the C# TerraBase server over its public
 HTTPS client listener. `TerraBaseDocumentsClient` covers the Documents API v1:
 databases, collections, documents, queries and transactions.
