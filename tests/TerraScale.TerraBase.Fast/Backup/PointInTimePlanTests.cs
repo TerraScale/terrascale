@@ -513,7 +513,7 @@ public sealed class PointInTimePlanTests
             string[]? keys = null;
             if (prefix is not null && probe.OversizePrefix is { } oversized && prefix.StartsWith(oversized, StringComparison.Ordinal))
             {
-                keys = [.. Enumerable.Range(0, probe.OversizeItems).Select(i => prefix + i.ToString("D16", CultureInfo.InvariantCulture))];
+                keys = [.. Enumerable.Range(0, probe.OversizeItems).Select(i => prefix + "junk-" + i.ToString("D16", CultureInfo.InvariantCulture))];
             }
             else if (prefix is not null && probe.Listings.TryGetValue(prefix, out var listed))
             {

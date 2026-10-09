@@ -1,8 +1,8 @@
 using System.Text.Json.Nodes;
 using Microsoft.OpenApi;
 using TerraBase.Errors;
+using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Backup;
-using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
@@ -14,11 +14,11 @@ public sealed class GetRestoreWindowEndpoint(IManagementService management, IPoi
     /// <inheritdoc />
     public override void Configure()
     {
-        Get(ManagementRoute.Database + "/point-in-time");
+        Get(ProjectApiRoute.Database + "/point-in-time");
         Name("getRestoreWindow");
         Summary("Reads the point-in-time restore window of a database");
-        Description("Query destination selects platform (default) or customer. earliest is the oldest continuous backup snapshot of the database limited by its plan's retention window, latest the newest data in the backup (normally about a second old). 404 when continuous backup is off or holds no data of the database within its plan's retention window." + " " + ManagementRoute.IdentityDescription);
-        Tags(ManagementRoute.Tag);
+        Description("Query destination selects platform (default) or customer. earliest is the oldest continuous backup snapshot of the database limited by its plan's retention window, latest the newest data in the backup (normally about a second old). 404 when continuous backup is off or holds no data of the database within its plan's retention window." + " " + ProjectApiRoute.IdentityDescription);
+        Tags("Backups");
         Produces<RestoreWindow>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
@@ -35,8 +35,8 @@ public sealed class GetRestoreWindowEndpoint(IManagementService management, IPoi
                 Default = JsonValue.Create(BackupDestinationNames.Platform),
             },
         });
-        RequireAuthorization(UserAuthExtensions.PolicyName);
-        Metadata(ListenerMetadata.Management);
+        RequireAuthorization(ApiKeyScopes.DatabasesRead);
+        Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
     }
 
     /// <inheritdoc />

@@ -1,6 +1,6 @@
 using TerraBase.Errors;
+using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Backup;
-using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using TerraScale.Endpoints;
@@ -14,11 +14,11 @@ public sealed class RestorePointInTimeEndpoint(IManagementService management, IM
     /// <inheritdoc />
     public override void Configure()
     {
-        Post(ManagementRoute.Database + "/point-in-time/restore");
+        Post(ProjectApiRoute.Database + "/point-in-time/restore");
         Name("restorePointInTime");
         Summary("Restores a database as of a time into a new database");
-        Description("Restores every transaction continuous backup read by pointInTime (backup reads each second) into a new database in the same project, with branchedFrom set to the restored database; the database itself is unchanged. destination selects platform (default) or customer. pointInTime must lie between the restore window's earliest and latest times, inclusive (GET …/point-in-time). name follows the database name rules; without it the first free of <source>-restore, <source>-restore-2, … is used." + " " + ManagementRoute.IdentityDescription);
-        Tags(ManagementRoute.Tag);
+        Description("Restores every transaction continuous backup read by pointInTime (backup reads each second) into a new database in the same project, with branchedFrom set to the restored database; the database itself is unchanged. destination selects platform (default) or customer. pointInTime must lie between the restore window's earliest and latest times, inclusive (GET …/point-in-time). name follows the database name rules; without it the first free of <source>-restore, <source>-restore-2, … is used." + " " + ProjectApiRoute.IdentityDescription);
+        Tags("Backups");
         Produces<ManagedDatabase>(StatusCodes.Status201Created);
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
@@ -26,8 +26,8 @@ public sealed class RestorePointInTimeEndpoint(IManagementService management, IM
         Produces<ErrorBody>(StatusCodes.Status403Forbidden);
         Produces<ErrorBody>(StatusCodes.Status429TooManyRequests);
         Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
-        RequireAuthorization(UserAuthExtensions.PolicyName);
-        Metadata(ListenerMetadata.Management);
+        RequireAuthorization(ApiKeyScopes.DatabasesWrite);
+        Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
     }
 
     /// <inheritdoc />
@@ -88,7 +88,7 @@ public sealed class RestorePointInTimeEndpoint(IManagementService management, IM
         var organization = ManagementRoute.OrganizationId(HttpContext);
         return await backups.RestorePointInTimeAsync(ManagementRoute.UserId(HttpContext), organization, database, at, name, cancellationToken, destination) switch
         {
-            ManagedDatabase restored => TypedResults.Created($"{ManagementRoute.Organizations}/{organization}/projects/{restored.ProjectId}/databases/{restored.Id}", restored),
+            ManagedDatabase restored => TypedResults.Created(ManagementRoute.CreatedDatabasePath(HttpContext, restored), restored),
             NotFound error => ErrorResponse.From(error),
             Conflict error => ErrorResponse.From(error),
             Forbidden error => ErrorResponse.From(error),

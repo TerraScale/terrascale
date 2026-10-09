@@ -70,6 +70,228 @@ public sealed class CustomerBackupTests
     }
 
     [Test]
+    [Arguments("customer")]
+    [Arguments("both")]
+    public async Task Project_tokens_select_platform_or_customer_plans_and_restore_only_within_each_stored_window(string mode)
+    {
+        using var oci = new FakeOci();
+        var time = Clock();
+        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services => ManualShipping(oci, services), time);
+        Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
+        var database = await api.CreateManagedDatabaseAsync();
+        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
+        using var writer = ProjectClient(api, database.Project, "databases:read databases:write documents:write");
+        using var reader = ProjectClient(api, database.Project, "databases:read", database.Name);
+        await ManagementApi.CreateCollectionAsync(writer, database, "before");
+        await ShipAsync(api, time);
+        var platformSnapshot = time.GetUtcNow();
+        await SetAsync(api, database, mode);
+        await ManagementApi.CreateCollectionAsync(writer, database, "snapshot");
+        await ShipAsync(api, time);
+        var customerSnapshot = time.GetUtcNow();
+        await ManagementApi.CreateCollectionAsync(writer, database, "after");
+        await ShipAsync(api, time);
+        var customerLatest = time.GetUtcNow();
+        // A maintenance-only pass must not extend either source beyond its newest stored snapshot or WAL.
+        await ShipAsync(api, time);
+        var planRoute = Uri(database.Data + "/point-in-time/plan");
+        var restoreRoute = Uri(database.Data + "/point-in-time/restore");
+
+        foreach (var destination in new[] { "platform", "customer" })
+        {
+            using var window = await reader.GetAsync(Uri(database.Data + "/point-in-time?destination=" + destination));
+            window.EnsureSuccessStatusCode();
+            var bounds = await window.Content.ReadFromJsonAsync<JsonElement>();
+            var latest = bounds.GetProperty("latest").GetDateTimeOffset();
+            var mirrored = destination == "customer" || mode == "both";
+            await Assert.That(bounds.GetProperty("earliest").GetDateTimeOffset()).IsEqualTo(destination == "customer" ? customerSnapshot : platformSnapshot);
+            await Assert.That(latest).IsEqualTo(mirrored ? customerLatest : platformSnapshot);
+            await Assert.That(latest).IsLessThan(time.GetUtcNow());
+            using var preview = await reader.PostAsJsonAsync(planRoute, new { pointInTime = latest, destination });
+            preview.EnsureSuccessStatusCode();
+            var plan = await preview.Content.ReadFromJsonAsync<JsonElement>();
+            await Assert.That(plan.GetProperty("window").GetRawText()).IsEqualTo(bounds.GetRawText());
+            await Assert.That(plan.GetProperty("pointInTime").GetDateTimeOffset()).IsEqualTo(latest);
+            await Assert.That(plan.GetProperty("snapshotAt").GetDateTimeOffset()).IsEqualTo(mirrored ? customerSnapshot : platformSnapshot);
+            await Assert.That(plan.GetProperty("segmentCount").GetInt32()).IsEqualTo(mirrored ? 1 : 0);
+            await Assert.That(plan.GetProperty("latestSegmentAt").ValueKind == JsonValueKind.Null ? (DateTimeOffset?)null : plan.GetProperty("latestSegmentAt").GetDateTimeOffset())
+                .IsEqualTo(mirrored ? customerLatest : null);
+
+            foreach (var at in new[] { latest.AddTicks(1), time.GetUtcNow() })
+            {
+                await ErrorAssert.ErrorAsync(reader.PostAsJsonAsync(planRoute, new { pointInTime = at, destination }),
+                    HttpStatusCode.BadRequest, "invalid_request", "pointInTime must lie between the restore window's earliest and latest times");
+                await ErrorAssert.ErrorAsync(writer.PostAsJsonAsync(restoreRoute, new { pointInTime = at, destination, name = "after-" + destination }),
+                    HttpStatusCode.BadRequest, "invalid_request", "pointInTime must lie between the restore window's earliest and latest times");
+            }
+
+            var name = "selected-" + destination;
+            using var restored = await writer.PostAsJsonAsync(restoreRoute, new { pointInTime = latest, destination, name });
+            await Assert.That(restored.StatusCode).IsEqualTo(HttpStatusCode.Created);
+            await Assert.That(restored.Headers.Location!.OriginalString).IsEqualTo($"/v1/projects/{database.Project}/databases/{name}");
+            await Assert.That((await restored.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("branchedFrom").GetString()).IsEqualTo(database.Id);
+            var schema = await writer.GetFromJsonAsync<JsonElement>(Uri($"/v1/projects/{database.Project}/databases/{name}/schema"));
+            string?[] expectedCollections = mirrored ? ["before", "snapshot", "after"] : ["before"];
+            await Assert.That(schema.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("name").GetString()))
+                .IsEquivalentTo(expectedCollections);
+        }
+
+        foreach (var destination in new string?[] { null, "", "platform" })
+        {
+            var body = new Dictionary<string, object>(StringComparer.Ordinal) { ["pointInTime"] = platformSnapshot };
+            if (destination is not null)
+            {
+                body["destination"] = destination;
+            }
+
+            using var preview = await reader.PostAsJsonAsync(planRoute, body);
+            preview.EnsureSuccessStatusCode();
+            var plan = await preview.Content.ReadFromJsonAsync<JsonElement>();
+            await Assert.That(plan.GetProperty("snapshotAt").GetDateTimeOffset()).IsEqualTo(platformSnapshot);
+            await Assert.That(plan.GetProperty("window").GetProperty("earliest").GetDateTimeOffset()).IsEqualTo(platformSnapshot);
+            await Assert.That(plan.GetProperty("segmentCount").GetInt32()).IsEqualTo(0);
+        }
+
+        await ErrorAssert.ErrorAsync(reader.PostAsJsonAsync(planRoute, new { pointInTime = platformSnapshot, destination = "customer" }),
+            HttpStatusCode.BadRequest, "invalid_request", "pointInTime must lie between the restore window's earliest and latest times");
+        using var historical = await reader.PostAsJsonAsync(planRoute, new { pointInTime = customerSnapshot, destination = "customer" });
+        historical.EnsureSuccessStatusCode();
+        var earlier = await historical.Content.ReadFromJsonAsync<JsonElement>();
+        await Assert.That(earlier.GetProperty("snapshotAt").GetDateTimeOffset()).IsEqualTo(customerSnapshot);
+        await Assert.That(earlier.GetProperty("segmentCount").GetInt32()).IsEqualTo(0);
+        await Assert.That(earlier.GetProperty("latestSegmentAt").ValueKind).IsEqualTo(JsonValueKind.Null);
+        await ErrorAssert.ErrorAsync(reader.PostAsJsonAsync(planRoute, new { pointInTime = customerLatest, destination = "Customer" }),
+            HttpStatusCode.BadRequest, "invalid_request", "destination must be platform or customer");
+        using var narrowed = ProjectClient(api, database.Project, "databases:read databases:write", "another");
+        using var hiddenWindow = await narrowed.GetAsync(Uri(database.Data + "/point-in-time?destination=customer"));
+        using var hiddenPlan = await narrowed.PostAsJsonAsync(planRoute, new { });
+        using var hiddenRestore = await narrowed.PostAsJsonAsync(restoreRoute, new { });
+        foreach (var response in new[] { hiddenWindow, hiddenPlan, hiddenRestore })
+        {
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        }
+
+        await Assert.That(oci.BadSignatures).IsEqualTo(0);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Unusable_customer_snapshot_and_segment_entries_consume_the_paginated_plan_budget(bool segments)
+    {
+        using var oci = new FakeOci();
+        var time = Clock();
+        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services => ManualShipping(oci, services), time);
+        Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
+        var database = await api.CreateManagedDatabaseAsync();
+        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
+        await SetAsync(api, database, "customer");
+        await ShipAsync(api, time);
+        var latest = await LatestAsync(api.Client, database, "customer");
+        var generation = Generations(oci.CustomerObjects, database).Single();
+        var prefix = File(database) + (segments ? "/wal/" + generation + "/" : "/snapshots/");
+        oci.ObservedListPrefix = prefix;
+        // Sort beyond the segment start-after cursor; each dot-component key is filtered before parsing.
+        var junk = Enumerable.Range(0, 10_000).Select(index => prefix + "zzz/./junk-" + index.ToString("D5", CultureInfo.InvariantCulture)).ToArray();
+        foreach (var key in junk)
+        {
+            oci.SeedObject(customer: true, key, []);
+        }
+
+        using var reader = ProjectClient(api, database.Project, "databases:read");
+        await ErrorAssert.ErrorAsync(reader.PostAsJsonAsync(Uri(database.Data + "/point-in-time/plan"), new { pointInTime = latest, destination = "customer" }),
+            HttpStatusCode.ServiceUnavailable, "pitr_plan_limit", "the point-in-time plan metadata scan exceeds 10000 objects");
+        await Assert.That(oci.ListRequests).IsGreaterThanOrEqualTo(10);
+        oci.CustomerListingOverride = (requested, keys) => requested == prefix
+            ? [.. keys.Where(key => !key.Contains("/./", StringComparison.Ordinal))] : keys;
+
+        using var recovered = await reader.PostAsJsonAsync(Uri(database.Data + "/point-in-time/plan"), new { pointInTime = latest, destination = "customer" });
+        recovered.EnsureSuccessStatusCode();
+        await Assert.That((await recovered.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("snapshotAt").GetDateTimeOffset()).IsEqualTo(latest);
+        await Assert.That(oci.BadSignatures).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task Project_destination_configuration_requires_scope_and_hides_other_projects_tenants_and_database_narrowed_tokens()
+    {
+        using var oci = new FakeOci();
+        var time = Clock();
+        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, oci.Route, time);
+        var database = await api.CreateManagedDatabaseAsync();
+        var siblingProject = await api.CreateProjectAsync(database.Organization, "Destination sibling");
+        var sibling = await api.CreateManagedDatabaseAsync(database.Organization, siblingProject, "main");
+        var otherTenant = await api.CreateManagedDatabaseAsync();
+        foreach (var target in new[] { database, sibling, otherTenant })
+        {
+            await api.VerifyProjectBindingAsync(target.Organization, target.Project);
+        }
+
+        var route = Uri($"/v1/projects/{database.Project}/backup-destination");
+        using var writer = ProjectClient(api, database.Project, "databases:write");
+        using var reader = ProjectClient(api, database.Project, "databases:read");
+        using var saved = await writer.PutAsJsonAsync(route, Destination("customer"));
+        saved.EnsureSuccessStatusCode();
+        await AssertDestinationAsync(await saved.Content.ReadAsStringAsync(), "customer");
+        var secret = oci.Secrets.Keys.Single();
+        await SetAsync(api, sibling, "both");
+        await SetAsync(api, otherTenant, "both");
+        var secrets = oci.Secrets.ToDictionary(item => item.Key, item => item.Value, StringComparer.Ordinal);
+        var configured = await reader.GetStringAsync(route);
+        await AssertDestinationAsync(configured, "customer");
+        using var writeOnlyGet = await writer.GetAsync(route);
+        using var readOnlyPut = await reader.PutAsJsonAsync(route, Destination("both"));
+        using var readOnlyDelete = await reader.DeleteAsync(route);
+        foreach (var response in new[] { writeOnlyGet, readOnlyPut, readOnlyDelete })
+        {
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+        }
+
+        foreach (var (project, scope, name, status) in new (string, string, string?, HttpStatusCode)[]
+        {
+            (database.Project, "documents:read documents:write", null, HttpStatusCode.Forbidden),
+            (sibling.Project, "databases:read databases:write", null, HttpStatusCode.NotFound),
+            (otherTenant.Project, "databases:read databases:write", null, HttpStatusCode.NotFound),
+            (database.Project, "databases:read databases:write", database.Name, HttpStatusCode.NotFound),
+            (database.Project, "databases:read databases:write", "missing", HttpStatusCode.NotFound),
+        })
+        {
+            using var client = ProjectClient(api, project, scope, name);
+            using var get = await client.GetAsync(route);
+            using var put = await client.PutAsJsonAsync(route, Destination("both"));
+            using var delete = await client.DeleteAsync(route);
+            foreach (var response in new[] { get, put, delete })
+            {
+                await Assert.That(response.StatusCode).IsEqualTo(status);
+            }
+        }
+
+        using var anonymous = api.WithToken(null);
+        using var anonymousGet = await anonymous.GetAsync(route);
+        using var anonymousPut = await anonymous.PutAsJsonAsync(route, Destination("both"));
+        using var anonymousDelete = await anonymous.DeleteAsync(route);
+        foreach (var response in new[] { anonymousGet, anonymousPut, anonymousDelete })
+        {
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        }
+
+        await Assert.That(await reader.GetStringAsync(route)).IsEqualTo(configured);
+        await Assert.That(oci.Secrets).IsEquivalentTo(secrets);
+        await Assert.That(oci.ScheduledSecrets.Count).IsEqualTo(0);
+        using var removed = await writer.DeleteAsync(route);
+        await Assert.That(removed.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+        using var absent = await reader.GetAsync(route);
+        await Assert.That(absent.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        await Assert.That(oci.ScheduledSecrets).IsEquivalentTo([secret]);
+        foreach (var target in new[] { sibling, otherTenant })
+        {
+            using var client = ProjectClient(api, target.Project, "databases:read");
+            await AssertDestinationAsync(await client.GetStringAsync(Uri($"/v1/projects/{target.Project}/backup-destination")), "both");
+        }
+
+        await Assert.That(oci.BadSignatures).IsEqualTo(0);
+    }
+
+    [Test]
     public async Task Customer_only_shipping_is_isolated_to_its_project_and_keeps_system_backups_on_platform()
     {
         using var oci = new FakeOci();
@@ -104,7 +326,7 @@ public sealed class CustomerBackupTests
         await Assert.That(emptyWindow.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(emptyRestore.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(siblingWindow.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-        var restored = await RestoreAsync(api, customer, time.GetUtcNow(), "customer-restored", "customer");
+        var restored = await RestoreAsync(api, customer, await LatestAsync(api.Client, customer, "customer"), "customer-restored", "customer");
         await AssertDocumentAsync(data, restored, "only", text);
         await Assert.That(oci.BadSignatures).IsEqualTo(0);
     }
@@ -156,7 +378,7 @@ public sealed class CustomerBackupTests
         await Assert.That(oci.Objects.Keys.Any(key => key.StartsWith(File(database) + "/snapshots/", StringComparison.Ordinal))).IsTrue();
         using var customerWindow = await api.Client.GetAsync(Uri(database.Path + "/point-in-time?destination=customer"));
         await Assert.That(customerWindow.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-        var restored = await RestoreAsync(api, database, time.GetUtcNow(), "platform-resumed");
+        var restored = await RestoreAsync(api, database, await LatestAsync(api.Client, database), "platform-resumed");
         await AssertDocumentAsync(data, restored, "kept", text);
         await Assert.That(oci.BadSignatures).IsEqualTo(0);
     }
@@ -296,8 +518,9 @@ public sealed class CustomerBackupTests
         platformWindow.EnsureSuccessStatusCode();
         customerWindow.EnsureSuccessStatusCode();
         await Assert.That((await platformWindow.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("latest").GetDateTimeOffset()).IsEqualTo(platformLatest);
-        await Assert.That((await customerWindow.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("latest").GetDateTimeOffset()).IsEqualTo(time.GetUtcNow());
-        var restored = await RestoreAsync(api, database, time.GetUtcNow(), "changed-destination", "customer");
+        var customerLatest = (await customerWindow.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("latest").GetDateTimeOffset();
+        await Assert.That(customerLatest).IsEqualTo(time.GetUtcNow());
+        var restored = await RestoreAsync(api, database, customerLatest, "changed-destination", "customer");
         await AssertDocumentAsync(data, restored, "before", before);
         await AssertDocumentAsync(data, restored, "after", after);
         await Assert.That(oci.Secrets.Count).IsEqualTo(2);
@@ -403,7 +626,7 @@ public sealed class CustomerBackupTests
         var names = new[] { "initial", "partial", "recovered", "later" };
         foreach (var destination in new[] { "platform", "customer" })
         {
-            var restored = await RestoreAsync(api, database, time.GetUtcNow(), "recovered-" + destination, destination);
+            var restored = await RestoreAsync(api, database, await LatestAsync(api.Client, database, destination), "recovered-" + destination, destination);
             for (var index = 0; index < texts.Length; index++)
             {
                 await AssertDocumentAsync(data, restored, names[index], texts[index]);
@@ -460,6 +683,7 @@ public sealed class CustomerBackupTests
             await ShipAsync(api, time);
         }
 
+        var latest = await LatestAsync(api.Client, database, "customer");
         var foreignReads = 0;
         var foreignDeletes = 0;
         var snapshotListings = 0;
@@ -512,7 +736,7 @@ public sealed class CustomerBackupTests
         time.Advance(TimeSpan.FromHours(1));
         await ShipAsync(api, time);
         using var rejectedSegment = await api.Client.PostAsJsonAsync(Uri(database.Path + "/point-in-time/restore"),
-            new { pointInTime = time.GetUtcNow(), name = "hostile-segment", destination = "customer" });
+            new { pointInTime = latest, name = "hostile-segment", destination = "customer" });
         if (rejectedSegment.IsSuccessStatusCode)
         {
             var body = await rejectedSegment.Content.ReadFromJsonAsync<JsonElement>();
@@ -527,7 +751,7 @@ public sealed class CustomerBackupTests
         // A restore also receives a foreign snapshot alone: rejecting it and ignoring it are both safe.
         oci.CustomerListingOverride = (prefix, keys) => prefix == File(database) + "/snapshots/" ? [foreignSnapshot] : keys;
         using var rejected = await api.Client.PostAsJsonAsync(Uri(database.Path + "/point-in-time/restore"),
-            new { pointInTime = time.GetUtcNow(), name = "hostile-listing", destination = "customer" });
+            new { pointInTime = latest, name = "hostile-listing", destination = "customer" });
         await Assert.That(rejected.IsSuccessStatusCode).IsFalse();
         await AssertPublicAsync(await rejected.Content.ReadAsStringAsync());
         await Assert.That(snapshotListings).IsGreaterThan(0);
@@ -537,7 +761,7 @@ public sealed class CustomerBackupTests
         await Assert.That(preserved.All(item => oci.CustomerObjects.TryGetValue(item.Key, out var bytes) && bytes.AsSpan().SequenceEqual(item.Value))).IsTrue();
         oci.CustomerListingOverride = null;
         oci.ObjectRequested = null;
-        var restored = await RestoreAsync(api, database, time.GetUtcNow(), "safe-listing", "customer");
+        var restored = await RestoreAsync(api, database, await LatestAsync(api.Client, database, "customer"), "safe-listing", "customer");
         await AssertDocumentAsync(data, restored, "kept", text);
         await Assert.That(oci.BadSignatures).IsEqualTo(0);
     }
@@ -597,7 +821,7 @@ public sealed class CustomerBackupTests
                 await Assert.That(Volatile.Read(ref listings)).IsGreaterThan(before);
             }
 
-            var platformRestore = await RestoreAsync(api, sibling, time.GetUtcNow(), "unstalled-platform", "platform");
+            var platformRestore = await RestoreAsync(api, sibling, await LatestAsync(api.Client, sibling), "unstalled-platform", "platform");
             await AssertDocumentAsync(data, platformRestore, "initial", texts[0]);
             for (var index = 0; index < names.Length; index++)
             {
@@ -605,7 +829,7 @@ public sealed class CustomerBackupTests
             }
 
             oci.EmptyCustomerPages = null;
-            var customerRestore = await RestoreAsync(api, customer, time.GetUtcNow(), "unstalled-customer", "customer");
+            var customerRestore = await RestoreAsync(api, customer, await LatestAsync(api.Client, customer, "customer"), "unstalled-customer", "customer");
             await AssertDocumentAsync(data, customerRestore, "initial", texts[0]);
             for (var index = 0; index < names.Length; index++)
             {
@@ -677,7 +901,7 @@ public sealed class CustomerBackupTests
             await pass.WaitAsync(stop.Token);
             foreach (var (database, destination) in new[] { (customer, "customer"), (sibling, "platform") })
             {
-                var restored = await RestoreAsync(api, database, time.GetUtcNow(), "deadline-" + destination, destination);
+                var restored = await RestoreAsync(api, database, await LatestAsync(api.Client, database, destination), "deadline-" + destination, destination);
                 await AssertDocumentAsync(data, restored, "before", before);
                 await AssertDocumentAsync(data, restored, "after", after);
             }
@@ -751,7 +975,7 @@ public sealed class CustomerBackupTests
         var names = new[] { "initial", "partial", "recovered", "later" };
         foreach (var destination in new[] { "platform", "customer" })
         {
-            var restored = await RestoreAsync(api, database, time.GetUtcNow(), "cancelled-" + destination, destination);
+            var restored = await RestoreAsync(api, database, await LatestAsync(api.Client, database, destination), "cancelled-" + destination, destination);
             for (var index = 0; index < texts.Length; index++)
             {
                 await AssertDocumentAsync(data, restored, names[index], texts[index]);
@@ -781,6 +1005,7 @@ public sealed class CustomerBackupTests
         await PutAsync(data, database, "kept", text);
         await ShipAsync(api, time);
         var key = oci.CustomerObjects.Single(item => item.Key.StartsWith($"v1/keys/{database.Organization}/{database.Project}/", StringComparison.Ordinal));
+        var latest = await LatestAsync(api.Client, database, "customer");
         // Trailing whitespace decodes to the same key. Exactly 16 KiB must remain accepted, catching >= regressions.
         var keyBody = Encoding.ASCII.GetBytes(Encoding.ASCII.GetString(key.Value).PadRight(16 * 1024));
         var keyReads = 0;
@@ -794,13 +1019,13 @@ public sealed class CustomerBackupTests
             Interlocked.Increment(ref keyReads);
             return keyBody;
         };
-        var boundary = await RestoreAsync(api, database, time.GetUtcNow(), "boundary-key", "customer");
+        var boundary = await RestoreAsync(api, database, latest, "boundary-key", "customer");
         await AssertDocumentAsync(data, boundary, "kept", text);
         await Assert.That(keyReads).IsGreaterThan(0);
         keyReads = 0;
         keyBody = [.. keyBody, (byte)' '];
         using var rejected = await api.Client.PostAsJsonAsync(Uri(database.Path + "/point-in-time/restore"),
-            new { pointInTime = time.GetUtcNow(), name = "oversized-key", destination = "customer" });
+            new { pointInTime = latest, name = "oversized-key", destination = "customer" });
         await Assert.That(keyReads).IsGreaterThan(0);
         await Assert.That(rejected.IsSuccessStatusCode).IsFalse();
         var error = await rejected.Content.ReadAsStringAsync();
@@ -808,7 +1033,7 @@ public sealed class CustomerBackupTests
         await Assert.That(error.Contains(Encoding.ASCII.GetString(key.Value), StringComparison.Ordinal)).IsFalse();
         await AssertDocumentAsync(data, database, "kept", text);
         oci.CustomerReadOverride = null;
-        var restored = await RestoreAsync(api, database, time.GetUtcNow(), "bounded-key", "customer");
+        var restored = await RestoreAsync(api, database, latest, "bounded-key", "customer");
         await AssertDocumentAsync(data, restored, "kept", text);
         await Assert.That(oci.BadSignatures).IsEqualTo(0);
     }
@@ -848,7 +1073,7 @@ public sealed class CustomerBackupTests
         await Assert.That(oldPlatform.Any(oci.Objects.ContainsKey)).IsFalse();
         foreach (var destination in new[] { "platform", "customer" })
         {
-            var restored = await RestoreAsync(api, database, time.GetUtcNow(), "retained-" + destination, destination);
+            var restored = await RestoreAsync(api, database, await LatestAsync(api.Client, database, destination), "retained-" + destination, destination);
             await AssertDocumentAsync(data, restored, "kept", text);
         }
 
@@ -907,7 +1132,7 @@ public sealed class CustomerBackupTests
             previous = remaining;
             await Assert.That(oci.CustomerObjects.ContainsKey(currentSnapshot)).IsTrue();
             await Assert.That(oci.CustomerObjects.ContainsKey(neededSegment)).IsTrue();
-            var restored = await RestoreAsync(api, database, time.GetUtcNow(), "backlog-" + pass, "customer");
+            var restored = await RestoreAsync(api, database, await LatestAsync(api.Client, database, "customer"), "backlog-" + pass, "customer");
             await AssertDocumentAsync(data, restored, "before", before);
             await AssertDocumentAsync(data, restored, "after", after);
         }
@@ -961,7 +1186,7 @@ public sealed class CustomerBackupTests
         using var platformRestore = await api.Client.PostAsJsonAsync(Uri(database.Path + "/point-in-time/restore"),
             new { pointInTime = time.GetUtcNow(), name = "expired-platform", destination = "platform" });
         await Assert.That(platformRestore.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-        var restored = await RestoreAsync(api, database, time.GetUtcNow(), "retained-customer", "customer");
+        var restored = await RestoreAsync(api, database, await LatestAsync(api.Client, database, "customer"), "retained-customer", "customer");
         await AssertDocumentAsync(data, restored, "kept", text);
         await Assert.That(oci.BadSignatures).IsEqualTo(0);
     }
@@ -997,7 +1222,8 @@ public sealed class CustomerBackupTests
         await ShipAsync(api, time);
         using var validWindow = await api.Client.GetAsync(Uri(database.Path + "/point-in-time?destination=customer"));
         validWindow.EnsureSuccessStatusCode();
-        var restored = await RestoreAsync(api, database, time.GetUtcNow(), "junk-ignored", "customer");
+        var latest = (await validWindow.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("latest").GetDateTimeOffset();
+        var restored = await RestoreAsync(api, database, latest, "junk-ignored", "customer");
         await AssertDocumentAsync(data, restored, "kept", text);
         await Assert.That(touched).IsEqualTo(0);
         foreach (var repeated in new[] { true, false })
@@ -1007,6 +1233,8 @@ public sealed class CustomerBackupTests
             using var rejected = await api.Client.GetAsync(Uri(database.Path + "/point-in-time?destination=customer"));
             await Assert.That(rejected.IsSuccessStatusCode).IsFalse();
             await AssertPublicAsync(await rejected.Content.ReadAsStringAsync());
+            await ErrorAssert.ErrorAsync(api.Client.PostAsJsonAsync(Uri(database.Path + "/point-in-time/plan"), new { pointInTime = latest, destination = "customer" }),
+                HttpStatusCode.ServiceUnavailable, "pitr_plan_unavailable", "the point-in-time plan metadata could not be read");
         }
 
         await Assert.That(oci.BadSignatures).IsEqualTo(0);
@@ -1027,11 +1255,12 @@ public sealed class CustomerBackupTests
         await PutAsync(data, database, "kept", text);
         await ShipAsync(api, time);
         var snapshot = oci.CustomerObjects.Keys.Single(key => key.StartsWith(File(database) + "/snapshots/", StringComparison.Ordinal));
+        var latest = await LatestAsync(api.Client, database, "customer");
         foreach (var (code, status) in new[] { ("NoSuchBucket", HttpStatusCode.ServiceUnavailable), ("NoSuchKey", HttpStatusCode.InternalServerError) })
         {
             oci.CustomerReadError = key => key == snapshot ? code : null;
             using var rejected = await api.Client.PostAsJsonAsync(Uri(database.Path + "/point-in-time/restore"),
-                new { pointInTime = time.GetUtcNow(), name = "missing-" + code.ToLowerInvariant(), destination = "customer" });
+                new { pointInTime = latest, name = "missing-" + code.ToLowerInvariant(), destination = "customer" });
             await Assert.That(rejected.StatusCode).IsEqualTo(status);
             if (code == "NoSuchBucket")
             {
@@ -1042,7 +1271,7 @@ public sealed class CustomerBackupTests
         }
 
         oci.CustomerReadError = null;
-        var restored = await RestoreAsync(api, database, time.GetUtcNow(), "bucket-returned", "customer");
+        var restored = await RestoreAsync(api, database, latest, "bucket-returned", "customer");
         await AssertDocumentAsync(data, restored, "kept", text);
     }
 
@@ -1100,17 +1329,18 @@ public sealed class CustomerBackupTests
         var text = new Faker().Lorem.Sentence(12);
         await PutAsync(data, database, "kept", text);
         await ShipAsync(api, time);
+        var latest = await LatestAsync(api.Client, database, "customer");
         var marker = "vault-protocol-marker-" + Guid.NewGuid().ToString("N");
         oci.SecretResponseOverride = (method, path) => method == HttpMethod.Get && path.StartsWith("/20190301/secretbundles/", StringComparison.Ordinal)
             ? new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(MalformedVaultBody(fault, bundle: true, marker), Encoding.UTF8, "application/json") }
             : null;
         using var window = await api.Client.GetAsync(Uri(database.Path + "/point-in-time?destination=customer"));
         using var restore = await api.Client.PostAsJsonAsync(Uri(database.Path + "/point-in-time/restore"),
-            new { pointInTime = time.GetUtcNow(), name = "malformed-bundle", destination = "customer" });
+            new { pointInTime = latest, name = "malformed-bundle", destination = "customer" });
         await AssertUnavailableAsync(window, "backup bucket or OCI Vault could not be accessed", marker);
         await AssertUnavailableAsync(restore, "backup bucket or OCI Vault could not be accessed", marker);
         oci.SecretResponseOverride = null;
-        var restored = await RestoreAsync(api, database, time.GetUtcNow(), "bundle-recovered", "customer");
+        var restored = await RestoreAsync(api, database, latest, "bundle-recovered", "customer");
         await AssertDocumentAsync(data, restored, "kept", text);
         await Assert.That(oci.BadSignatures).IsEqualTo(0);
     }
@@ -1386,6 +1616,24 @@ public sealed class CustomerBackupTests
         ["secretKey"] = FakeOci.CustomerSecretKey,
         ["mode"] = mode,
     };
+
+    private static HttpClient ProjectClient(ManagementApi api, string project, string scope, string? database = null) =>
+        api.WithToken(api.Issuer.Mint(Ulid.NewUlid().ToString(), token =>
+        {
+            token.Claims["project_id"] = project;
+            token.Claims["scope"] = scope;
+            if (database is not null)
+            {
+                token.Claims["database"] = database;
+            }
+        }));
+
+    private static async Task<DateTimeOffset> LatestAsync(HttpClient client, ManagedDatabaseRef database, string destination = "platform")
+    {
+        using var response = await client.GetAsync(Uri(database.Path + "/point-in-time?destination=" + destination));
+        response.EnsureSuccessStatusCode();
+        return (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("latest").GetDateTimeOffset();
+    }
 
     private static async Task SetAsync(ManagementApi api, ManagedDatabaseRef database, string mode)
     {

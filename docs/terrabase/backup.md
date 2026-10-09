@@ -42,15 +42,33 @@ master key.
 
 ### Customer buckets (TS-635)
 
-A project can attach one S3-compatible customer bucket through the authenticated Management API:
+A project can attach one S3-compatible customer bucket through the public `/v1` project API:
 
 ```http
-PUT /v1/management/organizations/{organization}/projects/{project}/backup-destination
+PUT /v1/projects/{project}/backup-destination
 Content-Type: application/json
-Authorization: Bearer <ts-auth user access token>
+Authorization: Bearer <ts-auth project access token granting databases:write>
 
 {"endpoint":"https://s3.example.com","region":"us-east-1","bucket":"customer-backups","accessKeyId":"…","secretKey":"…","mode":"both"}
 ```
+
+These operations appear under the `Backups` tag in OpenAPI. `P` below is `/v1/projects/{project}`;
+`D` is `P/databases/{database}`, where `{database}` is the database name.
+
+| Method | Route | operationId | Required JWT scope | Success |
+| --- | --- | --- | --- | --- |
+| GET | `P/backup-destination` | `getBackupDestination` | `databases:read` | 200 |
+| PUT | `P/backup-destination` | `setBackupDestination` | `databases:write` | 200 |
+| DELETE | `P/backup-destination` | `deleteBackupDestination` | `databases:write` | 204, no body |
+| GET | `D/point-in-time` | `getRestoreWindow` | `databases:read` | 200 |
+| POST | `D/point-in-time/restore` | `restorePointInTime` | `databases:write` | 201 |
+
+The signed `project_id` must match `{project}`. Missing or invalid project credentials return 401;
+missing scope returns 403; another project or a database outside the token's narrowing returns 404.
+GET, PUT and DELETE of the project-wide destination also return 404 for a database-narrowed token.
+Published organization routes remain hidden aliases under
+`/v1/management/organizations/{organization}/projects/{project}`. They retain user membership and role checks,
+and their `{database}` remains a catalog database ID. A project token cannot use those aliases.
 
 `mode=both` ships the project's encrypted snapshots, WAL segments and wrapped data keys to both buckets.
 `mode=customer` ships that project's data only to the customer bucket. `_system.db` and other projects stay in the
@@ -61,12 +79,14 @@ backup uses that same master key. This is customer-only **project shipping**, no
 Vault references. `DELETE` detaches the customer destination and resumes platform shipping. It preserves customer
 objects. Reattaching the same bucket and credentials makes its older backups accessible again. Every save replaces the
 credentials and starts a new generation with a snapshot, so a newly attached bucket never receives WAL without a base.
-A viewer cannot save or detach destinations; other existing writable-project roles can. Outsiders receive 404.
+On the hidden organization aliases, a viewer cannot save or detach destinations; other existing writable-project
+roles can. Outsiders receive 404.
 Deleting an unset destination is idempotent and returns 204. Saves admit at most four organizations concurrently,
 with one save per organization, so one organization cannot occupy every slot. Each file's shipper refreshes
 destination configuration at a ten-second cadence on successful passes; shipping work and retries can delay refresh.
 Project deletion returns 409 while a customer destination remains configured; detach it first so its Vault secret can retire.
-Saving, replacing or detaching a destination advances the organization's management version, invalidating stale fences.
+Saving, replacing or detaching an existing destination advances the organization's management version, invalidating
+stale fences. Deleting an unset destination leaves that version unchanged.
 
 The bucket must allow read, write, list and delete under `v1/<organization>/<project>/` and read/write/list under
 `v1/keys/<organization>/<project>/`. Saving checks the object permissions using a small non-secret probe, which may
@@ -74,7 +94,7 @@ remain if a bucket retention rule protects it. Customer endpoints must use HTTPS
 proxies and connections to private, loopback or metadata addresses are blocked; private-network S3 endpoints are not
 supported.
 
-Customer credentials live encrypted in OCI Vault Secrets as a versioned JSON secret. TerraBase's versioned catalog
+Customer credentials live encrypted in OCI Vault Secrets as a versioned JSON secret. TerraBase's version-1 catalog
 record under `projects/<project>/backup_destination` holds public settings and the secret OCID only. Credentials are
 write-only, and errors never include provider response bodies. The runtime identity needs secret creation, retrieval,
 scheduled deletion and secret encryption-key permissions in addition to the original backup permissions. Configure all four settings together:
@@ -94,12 +114,18 @@ a transport failure before receiving its OCID can leave an orphan named `terraba
 
 Restore selection is explicit and never falls back between buckets:
 
-- `GET …/databases/{database}/point-in-time?destination=platform|customer`
-- `POST …/databases/{database}/point-in-time/restore` adds `"destination":"platform"` or `"destination":"customer"`
+- `GET /v1/projects/{project}/databases/{database}/point-in-time?destination=platform|customer`
+- `POST /v1/projects/{project}/databases/{database}/point-in-time/restore` adds `"destination":"platform"` or `"destination":"customer"`
   to the existing `pointInTime`/`name` body. Omission keeps the original platform behavior.
+- `POST /v1/projects/{project}/databases/{database}/point-in-time/plan` accepts the same optional `destination` in its
+  `pointInTime` body and requires `databases:read` (see [Restore preview](#restore-preview-ts-493)).
 
 Each source's window comes from its own stored objects, so old platform backups stay restorable after switching to
-customer-only. Encryption and the object layout are unchanged; restoring either source still requires OCI KMS access.
+customer-only. An invalid selector returns 400; a disabled or empty source, including an unset customer destination,
+returns 404. Window and restore bucket/Vault transport failures return a sanitized 503. A successful restore returns
+the new database and `Location: /v1/projects/{project}/databases/{restored-name}`; a hidden legacy request retains its
+organization route and restored database ID in `Location`.
+Encryption, `TBK1` objects and the catalog schema are unchanged; restoring either source still requires OCI KMS access.
 In `both` mode, shipping succeeds only when both uploads succeed; a failed destination delays this project's progress
 and starts a fresh generation after backoff to avoid overlapping WAL segments after a partial upload. Other projects
 continue shipping. Retention scans both configured buckets independently, including earlier platform backups in
@@ -111,11 +137,11 @@ responses are rejected.
 Customer object operations have a fifteen-minute deadline covering response headers, streamed body decoding and all
 pages of a listing.
 
-The SDK/dashboard integration must consume these endpoints through `ts-go` and forward the signed-in user's ts-auth
-access token. The dashboard's currently pinned SDK uses the older management API and needs compatible typed methods
-before a bucket configuration UI can ship. This TerraBase change supplies the server contract; it does not change
-`ts-go` or `ts-dashboard`, and TS-635's dashboard outcome remains a dependent integration task. Native dashboard sign-in
-is unchanged. No live Vault, IAM or dashboard rollout is performed by this repository change.
+SDK/dashboard integration must consume these `/v1` project contracts through typed `ts-go` methods, with a ts-auth
+project access token granting the scope above. User sign-in tokens belong to the hidden organization aliases.
+This TerraBase change supplies the server contract; it does not ship `ts-go` methods or a `ts-dashboard` bucket UI.
+Those remain dependent integration work. Native dashboard sign-in is unchanged. No live Vault, IAM or dashboard
+rollout is performed by this repository change.
 
 ### Leases
 
@@ -239,11 +265,12 @@ A restore always creates a new database, so a new incarnation that reaches the o
 TS-647, through anti-entropy). Backups taken before the TS-602 wipe use the old schema and do not need to restore after
 it (user decision, 2026-10-07). Production backup starts right after that cutover.
 
-`GET …/databases/{database}/point-in-time` returns the restore window: from the oldest snapshot, but no earlier than the
-plan's retention window (a bucket rule may keep older objects), to the newest data in the bucket. It returns 404 when no
-stored data falls within the plan's window, including when retained objects have all expired under the plan.
-`POST …/databases/{database}/point-in-time/restore` with `{"pointInTime": "…", "name": "…"}` restores into a
-new database of the same project (`branchedFrom` set, like a backup restore). The restore:
+`GET /v1/projects/{project}/databases/{database}/point-in-time` returns the restore window: from the oldest snapshot,
+but no earlier than the plan's retention window (a bucket rule may keep older objects), to the newest data in the
+bucket. It returns 404 when no stored data falls within the plan's window, including when retained objects have all
+expired under the plan.
+`POST /v1/projects/{project}/databases/{database}/point-in-time/restore` with `{"pointInTime": "…", "name": "…"}`
+restores into a new database of the same project (`branchedFrom` set, like a backup restore). The restore:
 
 1. takes the newest snapshot at or before `pointInTime`;
 2. applies its generation's segments up to `pointInTime` in order, checking they are contiguous. Each frame's page is
@@ -263,7 +290,8 @@ committed in the second before `pointInTime` may be missing.
 
 ### Restore preview (TS-493)
 
-`POST /v1/projects/{project}/databases/{database}/point-in-time/plan` with `{"pointInTime":"…"}` reads
+`POST /v1/projects/{project}/databases/{database}/point-in-time/plan` with
+`{"pointInTime":"…","destination":"customer"}` reads the selected source's
 backup metadata without downloading or decrypting backup contents, creating scratch files,
 or changing databases. It returns:
 
@@ -277,6 +305,7 @@ or changing databases. It returns:
 }
 ```
 
+`destination` is optional and defaults to `platform`; `customer` inspects only the attached customer bucket.
 The snapshot is the newest at or before `pointInTime`, selected by the same code as
 restore. `segmentCount` and `latestSegmentAt` describe that snapshot generation's
 segments after its position and read by the requested time. The latter is null when

@@ -120,7 +120,7 @@ internal sealed class PointInTimeRestore(
         {
             return new Unavailable("the point-in-time plan metadata scan timed out", "pitr_plan_timeout");
         }
-        catch (Exception error) when (error is AmazonS3Exception or HttpRequestException or IOException)
+        catch (Exception error) when (error is AmazonS3Exception or HttpRequestException or IOException or InvalidDataException)
         {
             cancellationToken.ThrowIfCancellationRequested();
             return timeout.IsCancellationRequested
@@ -140,10 +140,10 @@ internal sealed class PointInTimeRestore(
 
         var file = BackupLayout.File(database);
         var snapshots = await ScanSnapshotsAsync(backup.Store, file, DateTimeOffset.MaxValue, int.MaxValue, cancellationToken).ConfigureAwait(false);
-        return await WindowAsync(database, file, snapshots, now, cancellationToken, backup, destination).ConfigureAwait(false);
+        return await WindowAsync(database, file, snapshots, now, backup, destination, cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task<RestoreWindow?> WindowAsync(TenantContext database, string file, SnapshotScan? snapshots, DateTimeOffset now, CancellationToken cancellationToken, BackupTarget backup, string destination)
+    private async Task<RestoreWindow?> WindowAsync(TenantContext database, string file, SnapshotScan? snapshots, DateTimeOffset now, BackupTarget backup, string destination, CancellationToken cancellationToken)
     {
         if (snapshots?.First is not { } first || snapshots.Last is not { } last)
         {
@@ -187,7 +187,7 @@ internal sealed class PointInTimeRestore(
             return new NotFound("continuous backup holds nothing of this database");
         }
 
-        if (await WindowAsync(source, file, snapshots, now, cancellationToken, backup, destination).ConfigureAwait(false) is not { } window)
+        if (await WindowAsync(source, file, snapshots, now, backup, destination, cancellationToken).ConfigureAwait(false) is not { } window)
         {
             return new NotFound("continuous backup holds nothing of this database within its plan's retention window");
         }
@@ -224,7 +224,7 @@ internal sealed class PointInTimeRestore(
     }
 
     // Scan raw objects so malformed metadata also consumes the preview budget. Both restore and preview select here.
-    private async Task<SnapshotScan?> ScanSnapshotsAsync(IObjectStore store, string file, DateTimeOffset at, int limit, CancellationToken cancellationToken)
+    private static async Task<SnapshotScan?> ScanSnapshotsAsync(IObjectStore store, string file, DateTimeOffset at, int limit, CancellationToken cancellationToken)
     {
         SnapshotKey? first = null;
         SnapshotKey? last = null;
@@ -254,7 +254,7 @@ internal sealed class PointInTimeRestore(
         return new(first, last, chosen, scanned);
     }
 
-    private async Task<SegmentScan?> ScanSegmentsAsync(IObjectStore store, string file, SnapshotKey snapshot, DateTimeOffset at, int limit, bool stopAfterTarget, CancellationToken cancellationToken)
+    private static async Task<SegmentScan?> ScanSegmentsAsync(IObjectStore store, string file, SnapshotKey snapshot, DateTimeOffset at, int limit, bool stopAfterTarget, CancellationToken cancellationToken)
     {
         DateTimeOffset? latest = null;
         DateTimeOffset? newest = null;

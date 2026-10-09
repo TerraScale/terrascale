@@ -8,7 +8,7 @@ using TerraBase.Configuration;
 namespace TerraBase.Features.Backup;
 
 /// <summary>An object in the bucket.</summary>
-/// <param name="Key">Its key.</param>
+/// <param name="Key">Its key, or empty for an unusable listing entry that still consumes scan budgets.</param>
 /// <param name="Size">Its stored bytes.</param>
 internal readonly record struct StoredObject(string Key, long Size);
 
@@ -22,6 +22,7 @@ internal interface IObjectStore
     Task<bool> ReadAsync(string key, Func<Stream, CancellationToken, Task> read, CancellationToken cancellationToken);
 
     /// <summary>Lists the objects under <paramref name="prefix"/> in key order, after <paramref name="startAfter"/> when set.</summary>
+    /// <remarks>Unusable entries have an empty key and zero size so raw-item scan budgets still count them.</remarks>
     IAsyncEnumerable<StoredObject> ListAsync(string prefix, string? startAfter, CancellationToken cancellationToken);
 
     /// <summary>
@@ -133,10 +134,11 @@ internal sealed class S3ObjectStore : IObjectStore, IDisposable
                 }
 
                 previous = key;
-                // Customers can write unrelated junk under their prefix. Never operate on it, but let valid backups
-                // remain discoverable. A foreign or nonascending response above still fails before any operation.
+                // Keep unusable entries in scan accounting without exposing their keys to backup operations.
+                // A foreign or nonascending response above still fails before any operation.
                 if (key is not { Length: > 0 and <= 1024 } || key.Split('/').Any(part => part is "." or "..") || item.Size is < 0)
                 {
+                    yield return new(string.Empty, 0);
                     continue;
                 }
 

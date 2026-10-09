@@ -1,6 +1,6 @@
 using TerraBase.Errors;
+using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Backup;
-using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
@@ -16,20 +16,25 @@ public sealed class SetBackupDestinationEndpoint(IManagementService management, 
         Name("setBackupDestination");
         Summary("Put a project's customer backup destination");
         Description(BackupDestinationRoute.Description);
-        Tags(ManagementRoute.Tag);
+        Tags("Backups");
         Produces<ProjectBackupDestination>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status403Forbidden);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
         Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
-        RequireAuthorization(UserAuthExtensions.PolicyName);
-        Metadata(ListenerMetadata.Management);
+        RequireAuthorization(ApiKeyScopes.DatabasesWrite);
+        Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
     }
 
     /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(ProjectBackupDestinationRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
+        if (BackupDestinationRoute.IsDatabaseScoped)
+        {
+            return ErrorResponse.From(new NotFound());
+        }
+
         return await ManagementRoute.CheckWritableProjectAsync(HttpContext, management, cancellationToken) switch
         {
             NotFound error => ErrorResponse.From(error),

@@ -62,6 +62,11 @@ internal sealed class DataKeys(IObjectStore store, IMasterKey master, TimeProvid
                 var prefix = BackupLayout.Keys(scope);
                 await foreach (var item in store.ListAsync(prefix, after, cancellationToken).ConfigureAwait(false))
                 {
+                    if (item.Key.Length == 0)
+                    {
+                        continue;
+                    }
+
                     var candidate = item.Key[prefix.Length..];
                     if (TryParseKey(candidate, out var candidateKey) && NotFuture(candidateKey))
                     {
