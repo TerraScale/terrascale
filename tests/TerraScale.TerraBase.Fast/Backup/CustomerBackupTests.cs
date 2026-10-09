@@ -15,6 +15,7 @@ public sealed class CustomerBackupTests
     [Test]
     public async Task Both_destinations_ship_encrypted_snapshots_and_wal_and_restore_actual_documents()
     {
+        var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         using var oci = new FakeOci();
         var time = Clock();
         await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services => ManualShipping(oci, services), time);
@@ -34,9 +35,9 @@ public sealed class CustomerBackupTests
 
         foreach (var destination in new[] { "platform", "customer" })
         {
-            using var window = await api.Client.GetAsync(Uri($"{database.Path}/point-in-time?destination={destination}"));
+            using var window = await api.Client.GetAsync(Uri($"{database.Path}/point-in-time?destination={destination}"), cancellationToken);
             window.EnsureSuccessStatusCode();
-            var bounds = await window.Content.ReadFromJsonAsync<JsonElement>();
+            var bounds = await window.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cancellationToken);
             await Assert.That(bounds.GetProperty("earliest").GetDateTimeOffset()).IsEqualTo(snapshot);
             var latest = bounds.GetProperty("latest").GetDateTimeOffset();
             var restored = await RestoreAsync(api, database, latest, "latest-" + destination, destination);
@@ -44,16 +45,16 @@ public sealed class CustomerBackupTests
             await AssertDocumentAsync(data, restored, "after", after);
             var earlier = await RestoreAsync(api, database, snapshot, "earlier-" + destination, destination);
             await AssertDocumentAsync(data, earlier, "before", before);
-            using var absent = await data.GetAsync(Uri(ManagementApi.DocumentPath(earlier, "people", "after")));
+            using var absent = await data.GetAsync(Uri(ManagementApi.DocumentPath(earlier, "people", "after")), cancellationToken);
             await Assert.That(absent.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         }
 
         foreach (var destination in new string?[] { null, "", "platform" })
         {
             var query = destination is null ? "" : "?destination=" + destination;
-            using var defaultWindow = await api.Client.GetAsync(Uri(database.Path + "/point-in-time" + query));
+            using var defaultWindow = await api.Client.GetAsync(Uri(database.Path + "/point-in-time" + query), cancellationToken);
             defaultWindow.EnsureSuccessStatusCode();
-            var defaultBounds = await defaultWindow.Content.ReadFromJsonAsync<JsonElement>();
+            var defaultBounds = await defaultWindow.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cancellationToken);
             var defaultRestore = await RestoreAsync(api, database, defaultBounds.GetProperty("latest").GetDateTimeOffset(),
                 "default-" + (destination is null ? "omitted" : destination.Length == 0 ? "empty" : destination), destination);
             await AssertDocumentAsync(data, defaultRestore, "after", after);
@@ -74,6 +75,7 @@ public sealed class CustomerBackupTests
     [Arguments("both")]
     public async Task Project_tokens_select_platform_or_customer_plans_and_restore_only_within_each_stored_window(string mode)
     {
+        var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         using var oci = new FakeOci();
         var time = Clock();
         await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services => ManualShipping(oci, services), time);
@@ -99,17 +101,17 @@ public sealed class CustomerBackupTests
 
         foreach (var destination in new[] { "platform", "customer" })
         {
-            using var window = await reader.GetAsync(Uri(database.Data + "/point-in-time?destination=" + destination));
+            using var window = await reader.GetAsync(Uri(database.Data + "/point-in-time?destination=" + destination), cancellationToken);
             window.EnsureSuccessStatusCode();
-            var bounds = await window.Content.ReadFromJsonAsync<JsonElement>();
+            var bounds = await window.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cancellationToken);
             var latest = bounds.GetProperty("latest").GetDateTimeOffset();
             var mirrored = destination == "customer" || mode == "both";
             await Assert.That(bounds.GetProperty("earliest").GetDateTimeOffset()).IsEqualTo(destination == "customer" ? customerSnapshot : platformSnapshot);
             await Assert.That(latest).IsEqualTo(mirrored ? customerLatest : platformSnapshot);
             await Assert.That(latest).IsLessThan(time.GetUtcNow());
-            using var preview = await reader.PostAsJsonAsync(planRoute, new { pointInTime = latest, destination });
+            using var preview = await reader.PostAsJsonAsync(planRoute, new { pointInTime = latest, destination }, cancellationToken);
             preview.EnsureSuccessStatusCode();
-            var plan = await preview.Content.ReadFromJsonAsync<JsonElement>();
+            var plan = await preview.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cancellationToken);
             await Assert.That(plan.GetProperty("window").GetRawText()).IsEqualTo(bounds.GetRawText());
             await Assert.That(plan.GetProperty("pointInTime").GetDateTimeOffset()).IsEqualTo(latest);
             await Assert.That(plan.GetProperty("snapshotAt").GetDateTimeOffset()).IsEqualTo(mirrored ? customerSnapshot : platformSnapshot);
@@ -119,18 +121,18 @@ public sealed class CustomerBackupTests
 
             foreach (var at in new[] { latest.AddTicks(1), time.GetUtcNow() })
             {
-                await ErrorAssert.ErrorAsync(reader.PostAsJsonAsync(planRoute, new { pointInTime = at, destination }),
+                await ErrorAssert.ErrorAsync(reader.PostAsJsonAsync(planRoute, new { pointInTime = at, destination }, cancellationToken),
                     HttpStatusCode.BadRequest, "invalid_request", "pointInTime must lie between the restore window's earliest and latest times");
-                await ErrorAssert.ErrorAsync(writer.PostAsJsonAsync(restoreRoute, new { pointInTime = at, destination, name = "after-" + destination }),
+                await ErrorAssert.ErrorAsync(writer.PostAsJsonAsync(restoreRoute, new { pointInTime = at, destination, name = "after-" + destination }, cancellationToken),
                     HttpStatusCode.BadRequest, "invalid_request", "pointInTime must lie between the restore window's earliest and latest times");
             }
 
             var name = "selected-" + destination;
-            using var restored = await writer.PostAsJsonAsync(restoreRoute, new { pointInTime = latest, destination, name });
+            using var restored = await writer.PostAsJsonAsync(restoreRoute, new { pointInTime = latest, destination, name }, cancellationToken);
             await Assert.That(restored.StatusCode).IsEqualTo(HttpStatusCode.Created);
             await Assert.That(restored.Headers.Location!.OriginalString).IsEqualTo($"/v1/projects/{database.Project}/databases/{name}");
-            await Assert.That((await restored.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("branchedFrom").GetString()).IsEqualTo(database.Id);
-            var schema = await writer.GetFromJsonAsync<JsonElement>(Uri($"/v1/projects/{database.Project}/databases/{name}/schema"));
+            await Assert.That((await restored.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cancellationToken)).GetProperty("branchedFrom").GetString()).IsEqualTo(database.Id);
+            var schema = await writer.GetFromJsonAsync<JsonElement>(Uri($"/v1/projects/{database.Project}/databases/{name}/schema"), cancellationToken: cancellationToken);
             string?[] expectedCollections = mirrored ? ["before", "snapshot", "after"] : ["before"];
             await Assert.That(schema.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("name").GetString()))
                 .IsEquivalentTo(expectedCollections);
@@ -144,28 +146,28 @@ public sealed class CustomerBackupTests
                 body["destination"] = destination;
             }
 
-            using var preview = await reader.PostAsJsonAsync(planRoute, body);
+            using var preview = await reader.PostAsJsonAsync(planRoute, body, cancellationToken);
             preview.EnsureSuccessStatusCode();
-            var plan = await preview.Content.ReadFromJsonAsync<JsonElement>();
+            var plan = await preview.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cancellationToken);
             await Assert.That(plan.GetProperty("snapshotAt").GetDateTimeOffset()).IsEqualTo(platformSnapshot);
             await Assert.That(plan.GetProperty("window").GetProperty("earliest").GetDateTimeOffset()).IsEqualTo(platformSnapshot);
             await Assert.That(plan.GetProperty("segmentCount").GetInt32()).IsEqualTo(0);
         }
 
-        await ErrorAssert.ErrorAsync(reader.PostAsJsonAsync(planRoute, new { pointInTime = platformSnapshot, destination = "customer" }),
+        await ErrorAssert.ErrorAsync(reader.PostAsJsonAsync(planRoute, new { pointInTime = platformSnapshot, destination = "customer" }, cancellationToken),
             HttpStatusCode.BadRequest, "invalid_request", "pointInTime must lie between the restore window's earliest and latest times");
-        using var historical = await reader.PostAsJsonAsync(planRoute, new { pointInTime = customerSnapshot, destination = "customer" });
+        using var historical = await reader.PostAsJsonAsync(planRoute, new { pointInTime = customerSnapshot, destination = "customer" }, cancellationToken);
         historical.EnsureSuccessStatusCode();
-        var earlier = await historical.Content.ReadFromJsonAsync<JsonElement>();
+        var earlier = await historical.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cancellationToken);
         await Assert.That(earlier.GetProperty("snapshotAt").GetDateTimeOffset()).IsEqualTo(customerSnapshot);
         await Assert.That(earlier.GetProperty("segmentCount").GetInt32()).IsEqualTo(0);
         await Assert.That(earlier.GetProperty("latestSegmentAt").ValueKind).IsEqualTo(JsonValueKind.Null);
-        await ErrorAssert.ErrorAsync(reader.PostAsJsonAsync(planRoute, new { pointInTime = customerLatest, destination = "Customer" }),
+        await ErrorAssert.ErrorAsync(reader.PostAsJsonAsync(planRoute, new { pointInTime = customerLatest, destination = "Customer" }, cancellationToken),
             HttpStatusCode.BadRequest, "invalid_request", "destination must be platform or customer");
         using var narrowed = ProjectClient(api, database.Project, "databases:read databases:write", "another");
-        using var hiddenWindow = await narrowed.GetAsync(Uri(database.Data + "/point-in-time?destination=customer"));
-        using var hiddenPlan = await narrowed.PostAsJsonAsync(planRoute, new { });
-        using var hiddenRestore = await narrowed.PostAsJsonAsync(restoreRoute, new { });
+        using var hiddenWindow = await narrowed.GetAsync(Uri(database.Data + "/point-in-time?destination=customer"), cancellationToken);
+        using var hiddenPlan = await narrowed.PostAsJsonAsync(planRoute, new { }, cancellationToken);
+        using var hiddenRestore = await narrowed.PostAsJsonAsync(restoreRoute, new { }, cancellationToken);
         foreach (var response in new[] { hiddenWindow, hiddenPlan, hiddenRestore })
         {
             await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
@@ -179,6 +181,7 @@ public sealed class CustomerBackupTests
     [Arguments(true)]
     public async Task Unusable_customer_snapshot_and_segment_entries_consume_the_paginated_plan_budget(bool segments)
     {
+        var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         using var oci = new FakeOci();
         var time = Clock();
         await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services => ManualShipping(oci, services), time);
@@ -199,21 +202,22 @@ public sealed class CustomerBackupTests
         }
 
         using var reader = ProjectClient(api, database.Project, "databases:read");
-        await ErrorAssert.ErrorAsync(reader.PostAsJsonAsync(Uri(database.Data + "/point-in-time/plan"), new { pointInTime = latest, destination = "customer" }),
+        await ErrorAssert.ErrorAsync(reader.PostAsJsonAsync(Uri(database.Data + "/point-in-time/plan"), new { pointInTime = latest, destination = "customer" }, cancellationToken),
             HttpStatusCode.ServiceUnavailable, "pitr_plan_limit", "the point-in-time plan metadata scan exceeds 10000 objects");
         await Assert.That(oci.ListRequests).IsGreaterThanOrEqualTo(10);
         oci.CustomerListingOverride = (requested, keys) => requested == prefix
             ? [.. keys.Where(key => !key.Contains("/./", StringComparison.Ordinal))] : keys;
 
-        using var recovered = await reader.PostAsJsonAsync(Uri(database.Data + "/point-in-time/plan"), new { pointInTime = latest, destination = "customer" });
+        using var recovered = await reader.PostAsJsonAsync(Uri(database.Data + "/point-in-time/plan"), new { pointInTime = latest, destination = "customer" }, cancellationToken);
         recovered.EnsureSuccessStatusCode();
-        await Assert.That((await recovered.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("snapshotAt").GetDateTimeOffset()).IsEqualTo(latest);
+        await Assert.That((await recovered.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cancellationToken)).GetProperty("snapshotAt").GetDateTimeOffset()).IsEqualTo(latest);
         await Assert.That(oci.BadSignatures).IsEqualTo(0);
     }
 
     [Test]
     public async Task Project_destination_configuration_requires_scope_and_hides_other_projects_tenants_and_database_narrowed_tokens()
     {
+        var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         using var oci = new FakeOci();
         var time = Clock();
         await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, oci.Route, time);
@@ -229,18 +233,18 @@ public sealed class CustomerBackupTests
         var route = Uri($"/v1/projects/{database.Project}/backup-destination");
         using var writer = ProjectClient(api, database.Project, "databases:write");
         using var reader = ProjectClient(api, database.Project, "databases:read");
-        using var saved = await writer.PutAsJsonAsync(route, Destination("customer"));
+        using var saved = await writer.PutAsJsonAsync(route, Destination("customer"), cancellationToken);
         saved.EnsureSuccessStatusCode();
-        await AssertDestinationAsync(await saved.Content.ReadAsStringAsync(), "customer");
+        await AssertDestinationAsync(await saved.Content.ReadAsStringAsync(cancellationToken), "customer");
         var secret = oci.Secrets.Keys.Single();
         await SetAsync(api, sibling, "both");
         await SetAsync(api, otherTenant, "both");
         var secrets = oci.Secrets.ToDictionary(item => item.Key, item => item.Value, StringComparer.Ordinal);
-        var configured = await reader.GetStringAsync(route);
+        var configured = await reader.GetStringAsync(route, cancellationToken);
         await AssertDestinationAsync(configured, "customer");
-        using var writeOnlyGet = await writer.GetAsync(route);
-        using var readOnlyPut = await reader.PutAsJsonAsync(route, Destination("both"));
-        using var readOnlyDelete = await reader.DeleteAsync(route);
+        using var writeOnlyGet = await writer.GetAsync(route, cancellationToken);
+        using var readOnlyPut = await reader.PutAsJsonAsync(route, Destination("both"), cancellationToken);
+        using var readOnlyDelete = await reader.DeleteAsync(route, cancellationToken);
         foreach (var response in new[] { writeOnlyGet, readOnlyPut, readOnlyDelete })
         {
             await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
@@ -256,9 +260,9 @@ public sealed class CustomerBackupTests
         })
         {
             using var client = ProjectClient(api, project, scope, name);
-            using var get = await client.GetAsync(route);
-            using var put = await client.PutAsJsonAsync(route, Destination("both"));
-            using var delete = await client.DeleteAsync(route);
+            using var get = await client.GetAsync(route, cancellationToken);
+            using var put = await client.PutAsJsonAsync(route, Destination("both"), cancellationToken);
+            using var delete = await client.DeleteAsync(route, cancellationToken);
             foreach (var response in new[] { get, put, delete })
             {
                 await Assert.That(response.StatusCode).IsEqualTo(status);
@@ -266,26 +270,26 @@ public sealed class CustomerBackupTests
         }
 
         using var anonymous = api.WithToken(null);
-        using var anonymousGet = await anonymous.GetAsync(route);
-        using var anonymousPut = await anonymous.PutAsJsonAsync(route, Destination("both"));
-        using var anonymousDelete = await anonymous.DeleteAsync(route);
+        using var anonymousGet = await anonymous.GetAsync(route, cancellationToken);
+        using var anonymousPut = await anonymous.PutAsJsonAsync(route, Destination("both"), cancellationToken);
+        using var anonymousDelete = await anonymous.DeleteAsync(route, cancellationToken);
         foreach (var response in new[] { anonymousGet, anonymousPut, anonymousDelete })
         {
             await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         }
 
-        await Assert.That(await reader.GetStringAsync(route)).IsEqualTo(configured);
+        await Assert.That(await reader.GetStringAsync(route, cancellationToken)).IsEqualTo(configured);
         await Assert.That(oci.Secrets).IsEquivalentTo(secrets);
         await Assert.That(oci.ScheduledSecrets.Count).IsEqualTo(0);
-        using var removed = await writer.DeleteAsync(route);
+        using var removed = await writer.DeleteAsync(route, cancellationToken);
         await Assert.That(removed.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
-        using var absent = await reader.GetAsync(route);
+        using var absent = await reader.GetAsync(route, cancellationToken);
         await Assert.That(absent.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(oci.ScheduledSecrets).IsEquivalentTo([secret]);
         foreach (var target in new[] { sibling, otherTenant })
         {
             using var client = ProjectClient(api, target.Project, "databases:read");
-            await AssertDestinationAsync(await client.GetStringAsync(Uri($"/v1/projects/{target.Project}/backup-destination")), "both");
+            await AssertDestinationAsync(await client.GetStringAsync(Uri($"/v1/projects/{target.Project}/backup-destination"), cancellationToken), "both");
         }
 
         await Assert.That(oci.BadSignatures).IsEqualTo(0);
@@ -294,6 +298,7 @@ public sealed class CustomerBackupTests
     [Test]
     public async Task Customer_only_shipping_is_isolated_to_its_project_and_keeps_system_backups_on_platform()
     {
+        var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         using var oci = new FakeOci();
         var time = Clock();
         await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services => ManualShipping(oci, services), time);
@@ -316,14 +321,14 @@ public sealed class CustomerBackupTests
         await Assert.That(oci.Objects.Keys.Any(key => key.StartsWith("v1/_system/", StringComparison.Ordinal))).IsTrue();
         await Assert.That(oci.CustomerObjects.Keys.All(key => key.StartsWith(File(customer) + "/", StringComparison.Ordinal)
             || key.StartsWith($"v1/keys/{customer.Organization}/{customer.Project}/", StringComparison.Ordinal))).IsTrue();
-        using var platformWindow = await api.Client.GetAsync(Uri(customer.Path + "/point-in-time"));
-        using var platformRestore = await api.Client.PostAsJsonAsync(Uri(customer.Path + "/point-in-time/restore"), new { pointInTime = time.GetUtcNow(), name = "no-platform" });
-        using var siblingWindow = await api.Client.GetAsync(Uri(sibling.Path + "/point-in-time?destination=customer"));
+        using var platformWindow = await api.Client.GetAsync(Uri(customer.Path + "/point-in-time"), cancellationToken);
+        using var platformRestore = await api.Client.PostAsJsonAsync(Uri(customer.Path + "/point-in-time/restore"), new { pointInTime = time.GetUtcNow(), name = "no-platform" }, cancellationToken);
+        using var siblingWindow = await api.Client.GetAsync(Uri(sibling.Path + "/point-in-time?destination=customer"), cancellationToken);
         await Assert.That(platformWindow.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(platformRestore.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-        using var emptyWindow = await api.Client.GetAsync(Uri(customer.Path + "/point-in-time?destination="));
+        using var emptyWindow = await api.Client.GetAsync(Uri(customer.Path + "/point-in-time?destination="), cancellationToken);
         using var emptyRestore = await api.Client.PostAsJsonAsync(Uri(customer.Path + "/point-in-time/restore"),
-            new { pointInTime = time.GetUtcNow(), name = "no-platform-empty", destination = "" });
+            new { pointInTime = time.GetUtcNow(), name = "no-platform-empty", destination = "" }, cancellationToken);
         await Assert.That(emptyWindow.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(emptyRestore.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(siblingWindow.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
@@ -335,18 +340,19 @@ public sealed class CustomerBackupTests
     [Test]
     public async Task Credentials_live_in_vault_only_and_delete_resumes_platform_without_removing_customer_objects()
     {
+        var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         using var oci = new FakeOci();
         var time = Clock();
         await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services => ManualShipping(oci, services), time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
         var database = await api.CreateManagedDatabaseAsync();
         var route = Uri(database.ProjectPath + "/backup-destination");
-        using var unset = await api.Client.GetAsync(route);
+        using var unset = await api.Client.GetAsync(route, cancellationToken);
         await Assert.That(unset.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         await SetAsync(api, database, "customer");
-        using var get = await api.Client.GetAsync(route);
+        using var get = await api.Client.GetAsync(route, cancellationToken);
         get.EnsureSuccessStatusCode();
-        await AssertDestinationAsync(await get.Content.ReadAsStringAsync(), "customer");
+        await AssertDestinationAsync(await get.Content.ReadAsStringAsync(cancellationToken), "customer");
         await Assert.That(oci.Secrets.Count).IsEqualTo(1);
         var secretId = oci.Secrets.Keys.Single();
         using var secret = JsonDocument.Parse(oci.Secrets.Values.Single());
@@ -358,7 +364,7 @@ public sealed class CustomerBackupTests
         await Assert.That(catalog.Contains(FakeOci.CustomerSecretKey, StringComparison.Ordinal)).IsFalse();
         foreach (var path in new[] { database.ProjectPath, database.Path, database.ProjectPath + "/databases" })
         {
-            var response = await api.Client.GetStringAsync(Uri(path));
+            var response = await api.Client.GetStringAsync(Uri(path), cancellationToken);
             await AssertPublicAsync(response);
         }
 
@@ -368,8 +374,8 @@ public sealed class CustomerBackupTests
         await PutAsync(data, database, "kept", text);
         await ShipAsync(api, time);
         var retained = oci.CustomerObjects.ToDictionary(item => item.Key, item => item.Value.ToArray(), StringComparer.Ordinal);
-        using var deleted = await api.Client.DeleteAsync(route);
-        using var gone = await api.Client.GetAsync(route);
+        using var deleted = await api.Client.DeleteAsync(route, cancellationToken);
+        using var gone = await api.Client.GetAsync(route, cancellationToken);
         await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
         await Assert.That(gone.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(oci.ScheduledSecrets).IsEquivalentTo([secretId]);
@@ -378,7 +384,7 @@ public sealed class CustomerBackupTests
         await Assert.That(oci.CustomerObjects.Keys).IsEquivalentTo(retained.Keys);
         await Assert.That(retained.All(item => oci.CustomerObjects[item.Key].AsSpan().SequenceEqual(item.Value))).IsTrue();
         await Assert.That(oci.Objects.Keys.Any(key => key.StartsWith(File(database) + "/snapshots/", StringComparison.Ordinal))).IsTrue();
-        using var customerWindow = await api.Client.GetAsync(Uri(database.Path + "/point-in-time?destination=customer"));
+        using var customerWindow = await api.Client.GetAsync(Uri(database.Path + "/point-in-time?destination=customer"), cancellationToken);
         await Assert.That(customerWindow.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         var restored = await RestoreAsync(api, database, await LatestAsync(api.Client, database), "platform-resumed");
         await AssertDocumentAsync(data, restored, "kept", text);
@@ -390,6 +396,7 @@ public sealed class CustomerBackupTests
     [Arguments(true)]
     public async Task An_empty_project_with_a_customer_backup_destination_requires_detach_before_deletion(bool viaCommit)
     {
+        var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         using var oci = new FakeOci();
         var time = Clock();
         await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, oci.Route, time);
@@ -397,29 +404,29 @@ public sealed class CustomerBackupTests
         var project = await api.CreateProjectAsync(organization, "Empty project");
         var projectRoute = Uri($"/v1/management/organizations/{organization}/projects/{project}");
         var destinationRoute = Uri(projectRoute.OriginalString + "/backup-destination");
-        using var saved = await api.Client.PutAsJsonAsync(destinationRoute, Destination("customer"));
+        using var saved = await api.Client.PutAsJsonAsync(destinationRoute, Destination("customer"), cancellationToken);
         saved.EnsureSuccessStatusCode();
         var secretId = oci.Secrets.Keys.Single();
         var secret = oci.Secrets[secretId];
 
         using var rejected = await DeleteProjectAsync();
         await Assert.That(rejected.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
-        using var configured = await api.Client.GetAsync(destinationRoute);
+        using var configured = await api.Client.GetAsync(destinationRoute, cancellationToken);
         configured.EnsureSuccessStatusCode();
-        await AssertDestinationAsync(await configured.Content.ReadAsStringAsync(), "customer");
+        await AssertDestinationAsync(await configured.Content.ReadAsStringAsync(cancellationToken), "customer");
         await Assert.That(oci.Secrets.Keys).IsEquivalentTo([secretId]);
         await Assert.That(oci.Secrets[secretId]).IsEqualTo(secret);
         await Assert.That(oci.ScheduledSecrets.Count).IsEqualTo(0);
 
-        using var detached = await api.Client.DeleteAsync(destinationRoute);
+        using var detached = await api.Client.DeleteAsync(destinationRoute, cancellationToken);
         await Assert.That(detached.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
-        using var unconfigured = await api.Client.GetAsync(destinationRoute);
+        using var unconfigured = await api.Client.GetAsync(destinationRoute, cancellationToken);
         await Assert.That(unconfigured.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(oci.ScheduledSecrets).IsEquivalentTo([secretId]);
         await Assert.That(oci.SecretDeletionTimes[secretId]).IsGreaterThanOrEqualTo(time.GetUtcNow().AddDays(7));
         using var deleted = await DeleteProjectAsync();
         await Assert.That(deleted.StatusCode).IsEqualTo(viaCommit ? HttpStatusCode.OK : HttpStatusCode.NoContent);
-        using var gone = await api.Client.GetAsync(projectRoute);
+        using var gone = await api.Client.GetAsync(projectRoute, cancellationToken);
         await Assert.That(gone.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(oci.ScheduledSecrets).IsEquivalentTo([secretId]);
         await Assert.That(oci.BadSignatures).IsEqualTo(0);
@@ -431,14 +438,15 @@ public sealed class CustomerBackupTests
                 {
                     id = Guid.NewGuid().ToString(),
                     ops = new[] { new { op = "delete_project", organization, project } },
-                })
-                : api.Client.DeleteAsync(projectRoute);
+                }, cancellationToken)
+                : api.Client.DeleteAsync(projectRoute, cancellationToken);
         }
     }
 
     [Test]
     public async Task Creating_replacing_and_detaching_a_backup_destination_advances_the_organization_fence()
     {
+        var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         using var oci = new FakeOci();
         var time = Clock();
         await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, oci.Route, time);
@@ -449,27 +457,27 @@ public sealed class CustomerBackupTests
         foreach (var mode in new[] { "customer", "both" })
         {
             var before = await VersionAsync();
-            using var saved = await api.Client.PutAsJsonAsync(route, Destination(mode));
+            using var saved = await api.Client.PutAsJsonAsync(route, Destination(mode), cancellationToken);
             saved.EnsureSuccessStatusCode();
-            await AssertDestinationAsync(await saved.Content.ReadAsStringAsync(), mode);
+            await AssertDestinationAsync(await saved.Content.ReadAsStringAsync(cancellationToken), mode);
             await AssertChangedAndStaleFenceAsync(before);
         }
 
         var beforeDetach = await VersionAsync();
-        using var detached = await api.Client.DeleteAsync(route);
+        using var detached = await api.Client.DeleteAsync(route, cancellationToken);
         await Assert.That(detached.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
         await AssertChangedAndStaleFenceAsync(beforeDetach);
 
         var beforeRepeatedDelete = await VersionAsync();
-        using var repeated = await api.Client.DeleteAsync(route);
+        using var repeated = await api.Client.DeleteAsync(route, cancellationToken);
         await Assert.That(repeated.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
         await Assert.That(await VersionAsync()).IsEqualTo(beforeRepeatedDelete);
 
         async Task<string> VersionAsync()
         {
-            using var response = await api.Client.GetAsync(Uri($"/v1/management/versions?organization={organization}"));
+            using var response = await api.Client.GetAsync(Uri($"/v1/management/versions?organization={organization}"), cancellationToken);
             response.EnsureSuccessStatusCode();
-            var versions = await response.Content.ReadFromJsonAsync<JsonElement>();
+            var versions = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cancellationToken);
             return versions.GetProperty("organizations").GetProperty(organization).GetString()!;
         }
 
@@ -481,9 +489,9 @@ public sealed class CustomerBackupTests
             {
                 id = Guid.CreateVersion7().ToString(),
                 ops = new[] { new { op = "fence", organization, version = before } },
-            });
+            }, cancellationToken);
             await Assert.That(rejected.StatusCode).IsEqualTo(HttpStatusCode.PreconditionFailed);
-            var body = await rejected.Content.ReadFromJsonAsync<JsonElement>();
+            var body = await rejected.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cancellationToken);
             await Assert.That(body.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("precondition_failed");
         }
     }
@@ -491,6 +499,7 @@ public sealed class CustomerBackupTests
     [Test]
     public async Task Changing_a_destination_starts_a_new_generation_and_stops_platform_shipping_in_customer_mode()
     {
+        var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         using var oci = new FakeOci();
         var time = Clock();
         await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services => ManualShipping(oci, services), time);
@@ -516,12 +525,12 @@ public sealed class CustomerBackupTests
         await Assert.That(changed.Count).IsEqualTo(2);
         await Assert.That(changed.IsSupersetOf(initial)).IsTrue();
         await Assert.That(oci.Objects.Keys.Where(key => key.StartsWith(File(database) + "/", StringComparison.Ordinal))).IsEquivalentTo(platformKeys);
-        using var platformWindow = await api.Client.GetAsync(Uri(database.Path + "/point-in-time?destination=platform"));
-        using var customerWindow = await api.Client.GetAsync(Uri(database.Path + "/point-in-time?destination=customer"));
+        using var platformWindow = await api.Client.GetAsync(Uri(database.Path + "/point-in-time?destination=platform"), cancellationToken);
+        using var customerWindow = await api.Client.GetAsync(Uri(database.Path + "/point-in-time?destination=customer"), cancellationToken);
         platformWindow.EnsureSuccessStatusCode();
         customerWindow.EnsureSuccessStatusCode();
-        await Assert.That((await platformWindow.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("latest").GetDateTimeOffset()).IsEqualTo(platformLatest);
-        var customerLatest = (await customerWindow.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("latest").GetDateTimeOffset();
+        await Assert.That((await platformWindow.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cancellationToken)).GetProperty("latest").GetDateTimeOffset()).IsEqualTo(platformLatest);
+        var customerLatest = (await customerWindow.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cancellationToken)).GetProperty("latest").GetDateTimeOffset();
         await Assert.That(customerLatest).IsEqualTo(time.GetUtcNow());
         var restored = await RestoreAsync(api, database, customerLatest, "changed-destination", "customer");
         await AssertDocumentAsync(data, restored, "before", before);
@@ -536,6 +545,7 @@ public sealed class CustomerBackupTests
     [Test]
     public async Task Invalid_destinations_and_unauthorized_callers_cannot_change_or_restore_customer_backups()
     {
+        var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         using var oci = new FakeOci();
         var time = Clock();
         await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, oci.Route, time);
@@ -550,7 +560,7 @@ public sealed class CustomerBackupTests
         })
         {
             var invalid = new Dictionary<string, string>(valid, StringComparer.Ordinal) { [field] = value };
-            using var response = await api.Client.PutAsJsonAsync(route, invalid);
+            using var response = await api.Client.PutAsJsonAsync(route, invalid, cancellationToken);
             await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
         }
 
@@ -560,17 +570,17 @@ public sealed class CustomerBackupTests
         var viewerId = await api.AddMemberAsync(api.Client, database.Organization, "viewer");
         using var viewer = api.As(viewerId);
         using var outsider = api.As(Guid.NewGuid().ToString());
-        using var viewerPut = await viewer.PutAsJsonAsync(route, valid);
-        using var viewerDelete = await viewer.DeleteAsync(route);
-        using var viewerRestore = await viewer.PostAsJsonAsync(Uri(database.Path + "/point-in-time/restore"), new { pointInTime = time.GetUtcNow(), destination = "customer" });
+        using var viewerPut = await viewer.PutAsJsonAsync(route, valid, cancellationToken);
+        using var viewerDelete = await viewer.DeleteAsync(route, cancellationToken);
+        using var viewerRestore = await viewer.PostAsJsonAsync(Uri(database.Path + "/point-in-time/restore"), new { pointInTime = time.GetUtcNow(), destination = "customer" }, cancellationToken);
         await Assert.That(viewerPut.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
         await Assert.That(viewerDelete.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
         await Assert.That(viewerRestore.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
-        using var outsiderGet = await outsider.GetAsync(route);
-        using var outsiderPut = await outsider.PutAsJsonAsync(route, valid);
-        using var outsiderDelete = await outsider.DeleteAsync(route);
-        using var outsiderWindow = await outsider.GetAsync(Uri(database.Path + "/point-in-time?destination=customer"));
-        using var outsiderRestore = await outsider.PostAsJsonAsync(Uri(database.Path + "/point-in-time/restore"), new { pointInTime = time.GetUtcNow(), destination = "customer" });
+        using var outsiderGet = await outsider.GetAsync(route, cancellationToken);
+        using var outsiderPut = await outsider.PutAsJsonAsync(route, valid, cancellationToken);
+        using var outsiderDelete = await outsider.DeleteAsync(route, cancellationToken);
+        using var outsiderWindow = await outsider.GetAsync(Uri(database.Path + "/point-in-time?destination=customer"), cancellationToken);
+        using var outsiderRestore = await outsider.PostAsJsonAsync(Uri(database.Path + "/point-in-time/restore"), new { pointInTime = time.GetUtcNow(), destination = "customer" }, cancellationToken);
         foreach (var response in new[] { outsiderGet, outsiderPut, outsiderDelete, outsiderWindow, outsiderRestore })
         {
             await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
@@ -578,24 +588,25 @@ public sealed class CustomerBackupTests
 
         foreach (var source in new[] { "other", "PLATFORM", "Customer", " platform " })
         {
-            using var invalidWindow = await api.Client.GetAsync(Uri(database.Path + "/point-in-time?destination=" + System.Uri.EscapeDataString(source)));
-            using var invalidRestore = await api.Client.PostAsJsonAsync(Uri(database.Path + "/point-in-time/restore"), new { pointInTime = time.GetUtcNow(), destination = source });
+            using var invalidWindow = await api.Client.GetAsync(Uri(database.Path + "/point-in-time?destination=" + System.Uri.EscapeDataString(source)), cancellationToken);
+            using var invalidRestore = await api.Client.PostAsJsonAsync(Uri(database.Path + "/point-in-time/restore"), new { pointInTime = time.GetUtcNow(), destination = source }, cancellationToken);
             await Assert.That(invalidWindow.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
             await Assert.That(invalidRestore.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
         }
         using var wrongCredentials = await api.Client.PutAsJsonAsync(route,
-            new Dictionary<string, string>(valid, StringComparer.Ordinal) { ["secretKey"] = "wrong-secret" });
+            new Dictionary<string, string>(valid, StringComparer.Ordinal) { ["secretKey"] = "wrong-secret" }, cancellationToken);
         await Assert.That(wrongCredentials.IsSuccessStatusCode).IsFalse();
         await Assert.That(oci.BadSignatures).IsGreaterThan(0);
         await Assert.That(oci.Secrets.Count).IsEqualTo(1);
-        using var unchanged = await api.Client.GetAsync(route);
+        using var unchanged = await api.Client.GetAsync(route, cancellationToken);
         unchanged.EnsureSuccessStatusCode();
-        await AssertDestinationAsync(await unchanged.Content.ReadAsStringAsync(), "both");
+        await AssertDestinationAsync(await unchanged.Content.ReadAsStringAsync(cancellationToken), "both");
     }
 
     [Test]
     public async Task A_partial_mirror_upload_recovers_without_overlapping_segments_and_both_copies_restore()
     {
+        var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         using var oci = new FakeOci();
         var time = Clock();
         await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services => ManualShipping(oci, services), time);
@@ -640,7 +651,7 @@ public sealed class CustomerBackupTests
         var earlier = await RestoreAsync(api, database, partialAt, "partial-platform", "platform");
         await AssertDocumentAsync(data, earlier, "initial", texts[0]);
         await AssertDocumentAsync(data, earlier, "partial", texts[1]);
-        using var absent = await data.GetAsync(Uri(ManagementApi.DocumentPath(earlier, "people", "recovered")));
+        using var absent = await data.GetAsync(Uri(ManagementApi.DocumentPath(earlier, "people", "recovered")), cancellationToken);
         await Assert.That(absent.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         foreach (var objects in new[] { oci.Objects, oci.CustomerObjects })
         {
@@ -655,6 +666,7 @@ public sealed class CustomerBackupTests
     [Test]
     public async Task Hostile_customer_listings_cannot_read_or_delete_foreign_project_objects()
     {
+        var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         using var oci = new FakeOci();
         var time = Clock();
         await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services => ManualShipping(oci, services), time);
@@ -741,24 +753,24 @@ public sealed class CustomerBackupTests
         time.Advance(TimeSpan.FromHours(1));
         await ShipAsync(api, time);
         using var rejectedSegment = await api.Client.PostAsJsonAsync(Uri(database.Path + "/point-in-time/restore"),
-            new { pointInTime = latest, name = "hostile-segment", destination = "customer" });
+            new { pointInTime = latest, name = "hostile-segment", destination = "customer" }, cancellationToken);
         if (rejectedSegment.IsSuccessStatusCode)
         {
-            var body = await rejectedSegment.Content.ReadFromJsonAsync<JsonElement>();
+            var body = await rejectedSegment.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cancellationToken);
             var restoredSegment = new ManagedDatabaseRef(database.Organization, database.Project, body.GetProperty("id").GetString()!, body.GetProperty("name").GetString()!);
             await AssertDocumentAsync(data, restoredSegment, "kept", text);
         }
         else
         {
-            await AssertPublicAsync(await rejectedSegment.Content.ReadAsStringAsync());
+            await AssertPublicAsync(await rejectedSegment.Content.ReadAsStringAsync(cancellationToken));
         }
 
         // A restore also receives a foreign snapshot alone: rejecting it and ignoring it are both safe.
         oci.CustomerListingOverride = (prefix, keys) => prefix == File(database) + "/snapshots/" ? [foreignSnapshot] : keys;
         using var rejected = await api.Client.PostAsJsonAsync(Uri(database.Path + "/point-in-time/restore"),
-            new { pointInTime = latest, name = "hostile-listing", destination = "customer" });
+            new { pointInTime = latest, name = "hostile-listing", destination = "customer" }, cancellationToken);
         await Assert.That(rejected.IsSuccessStatusCode).IsFalse();
-        await AssertPublicAsync(await rejected.Content.ReadAsStringAsync());
+        await AssertPublicAsync(await rejected.Content.ReadAsStringAsync(cancellationToken));
         await Assert.That(snapshotListings).IsGreaterThan(0);
         await Assert.That(segmentListings).IsGreaterThan(0);
         await Assert.That(foreignReads).IsEqualTo(0);
@@ -999,6 +1011,7 @@ public sealed class CustomerBackupTests
     [Test]
     public async Task Customer_restore_accepts_exactly_sixteen_kibibytes_of_wrapped_key_and_rejects_larger_bodies()
     {
+        var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         using var oci = new FakeOci();
         var time = Clock();
         await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services => ManualShipping(oci, services), time);
@@ -1031,10 +1044,10 @@ public sealed class CustomerBackupTests
         keyReads = 0;
         keyBody = [.. keyBody, (byte)' '];
         using var rejected = await api.Client.PostAsJsonAsync(Uri(database.Path + "/point-in-time/restore"),
-            new { pointInTime = latest, name = "oversized-key", destination = "customer" });
+            new { pointInTime = latest, name = "oversized-key", destination = "customer" }, cancellationToken);
         await Assert.That(keyReads).IsGreaterThan(0);
         await Assert.That(rejected.IsSuccessStatusCode).IsFalse();
-        var error = await rejected.Content.ReadAsStringAsync();
+        var error = await rejected.Content.ReadAsStringAsync(cancellationToken);
         await AssertPublicAsync(error);
         await Assert.That(error.Contains(Encoding.ASCII.GetString(key.Value), StringComparison.Ordinal)).IsFalse();
         await AssertDocumentAsync(data, database, "kept", text);
@@ -1090,6 +1103,7 @@ public sealed class CustomerBackupTests
     [Test]
     public async Task Customer_only_switch_refreshes_size_and_prunes_old_platform_history_while_expired_window_is_absent()
     {
+        var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         using var oci = new FakeOci();
         var time = Clock();
         await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services => ManualShipping(oci, services), time);
@@ -1126,10 +1140,10 @@ public sealed class CustomerBackupTests
         await ShipAsync(api, time);
         await Assert.That(oci.Objects.ContainsKey(expired)).IsFalse();
         await Assert.That(oci.Objects.ContainsKey(old)).IsTrue();
-        using var platformWindow = await api.Client.GetAsync(Uri(database.Path + "/point-in-time?destination=platform"));
+        using var platformWindow = await api.Client.GetAsync(Uri(database.Path + "/point-in-time?destination=platform"), cancellationToken);
         await Assert.That(platformWindow.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         using var platformRestore = await api.Client.PostAsJsonAsync(Uri(database.Path + "/point-in-time/restore"),
-            new { pointInTime = time.GetUtcNow(), name = "expired-platform", destination = "platform" });
+            new { pointInTime = time.GetUtcNow(), name = "expired-platform", destination = "platform" }, cancellationToken);
         await Assert.That(platformRestore.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         var restored = await RestoreAsync(api, database, await LatestAsync(api.Client, database, "customer"), "retained-customer", "customer");
         await AssertDocumentAsync(data, restored, "kept", text);
@@ -1139,6 +1153,7 @@ public sealed class CustomerBackupTests
     [Test]
     public async Task Own_prefix_junk_is_ignored_but_nonascending_customer_listings_still_fail()
     {
+        var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         using var oci = new FakeOci();
         var time = Clock();
         await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services => ManualShipping(oci, services), time);
@@ -1165,9 +1180,9 @@ public sealed class CustomerBackupTests
             }
         };
         await ShipAsync(api, time);
-        using var validWindow = await api.Client.GetAsync(Uri(database.Path + "/point-in-time?destination=customer"));
+        using var validWindow = await api.Client.GetAsync(Uri(database.Path + "/point-in-time?destination=customer"), cancellationToken);
         validWindow.EnsureSuccessStatusCode();
-        var latest = (await validWindow.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("latest").GetDateTimeOffset();
+        var latest = (await validWindow.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cancellationToken)).GetProperty("latest").GetDateTimeOffset();
         var restored = await RestoreAsync(api, database, latest, "junk-ignored", "customer");
         await AssertDocumentAsync(data, restored, "kept", text);
         await Assert.That(touched).IsEqualTo(0);
@@ -1175,10 +1190,10 @@ public sealed class CustomerBackupTests
         {
             oci.CustomerListingOverride = (requested, keys) => requested != prefix ? keys
                 : repeated ? [snapshot, snapshot] : [prefix + "z-last", snapshot];
-            using var rejected = await api.Client.GetAsync(Uri(database.Path + "/point-in-time?destination=customer"));
+            using var rejected = await api.Client.GetAsync(Uri(database.Path + "/point-in-time?destination=customer"), cancellationToken);
             await Assert.That(rejected.IsSuccessStatusCode).IsFalse();
-            await AssertPublicAsync(await rejected.Content.ReadAsStringAsync());
-            await ErrorAssert.ErrorAsync(api.Client.PostAsJsonAsync(Uri(database.Path + "/point-in-time/plan"), new { pointInTime = latest, destination = "customer" }),
+            await AssertPublicAsync(await rejected.Content.ReadAsStringAsync(cancellationToken));
+            await ErrorAssert.ErrorAsync(api.Client.PostAsJsonAsync(Uri(database.Path + "/point-in-time/plan"), new { pointInTime = latest, destination = "customer" }, cancellationToken),
                 HttpStatusCode.ServiceUnavailable, "pitr_plan_unavailable", "the point-in-time plan metadata could not be read");
         }
 
@@ -1188,6 +1203,7 @@ public sealed class CustomerBackupTests
     [Test]
     public async Task Missing_customer_bucket_is_unavailable_while_a_missing_snapshot_is_an_incomplete_backup()
     {
+        var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         using var oci = new FakeOci();
         var time = Clock();
         await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services => ManualShipping(oci, services), time);
@@ -1205,14 +1221,14 @@ public sealed class CustomerBackupTests
         {
             oci.CustomerReadError = key => key == snapshot ? code : null;
             using var rejected = await api.Client.PostAsJsonAsync(Uri(database.Path + "/point-in-time/restore"),
-                new { pointInTime = latest, name = "missing-" + code.ToLowerInvariant(), destination = "customer" });
+                new { pointInTime = latest, name = "missing-" + code.ToLowerInvariant(), destination = "customer" }, cancellationToken);
             await Assert.That(rejected.StatusCode).IsEqualTo(status);
             if (code == "NoSuchBucket")
             {
                 await AssertUnavailableAsync(rejected, "backup bucket or OCI Vault could not be accessed");
             }
 
-            await AssertPublicAsync(await rejected.Content.ReadAsStringAsync());
+            await AssertPublicAsync(await rejected.Content.ReadAsStringAsync(cancellationToken));
         }
 
         oci.CustomerReadError = null;
@@ -1228,6 +1244,7 @@ public sealed class CustomerBackupTests
     [Arguments("oversized")]
     public async Task Malformed_vault_create_answers_fixed_unavailable_without_replacing_the_current_destination(string fault)
     {
+        var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         using var oci = new FakeOci();
         var time = Clock();
         await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services => ManualShipping(oci, services), time);
@@ -1239,11 +1256,11 @@ public sealed class CustomerBackupTests
         oci.SecretResponseOverride = (method, path) => method == HttpMethod.Post && path == "/20180608/secrets"
             ? new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(MalformedVaultBody(fault, bundle: false, marker), Encoding.UTF8, "application/json") }
             : null;
-        using var failed = await api.Client.PutAsJsonAsync(route, Destination("both"));
+        using var failed = await api.Client.PutAsJsonAsync(route, Destination("both"), cancellationToken);
         await AssertUnavailableAsync(failed, "customer backup bucket or OCI Vault could not be accessed", marker);
-        using var unchanged = await api.Client.GetAsync(route);
+        using var unchanged = await api.Client.GetAsync(route, cancellationToken);
         unchanged.EnsureSuccessStatusCode();
-        await AssertDestinationAsync(await unchanged.Content.ReadAsStringAsync(), "customer");
+        await AssertDestinationAsync(await unchanged.Content.ReadAsStringAsync(cancellationToken), "customer");
         await Assert.That(oci.ScheduledSecrets.Contains(currentSecret, StringComparer.Ordinal)).IsFalse();
         oci.SecretResponseOverride = null;
         // The failed request releases admission; its successor can publish and retire the predecessor.
@@ -1263,6 +1280,7 @@ public sealed class CustomerBackupTests
     [Arguments("invalid-credentials")]
     public async Task Malformed_vault_bundle_answers_fixed_unavailable_for_window_and_restore(string fault)
     {
+        var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         using var oci = new FakeOci();
         var time = Clock();
         await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services => ManualShipping(oci, services), time);
@@ -1279,9 +1297,9 @@ public sealed class CustomerBackupTests
         oci.SecretResponseOverride = (method, path) => method == HttpMethod.Get && path.StartsWith("/20190301/secretbundles/", StringComparison.Ordinal)
             ? new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(MalformedVaultBody(fault, bundle: true, marker), Encoding.UTF8, "application/json") }
             : null;
-        using var window = await api.Client.GetAsync(Uri(database.Path + "/point-in-time?destination=customer"));
+        using var window = await api.Client.GetAsync(Uri(database.Path + "/point-in-time?destination=customer"), cancellationToken);
         using var restore = await api.Client.PostAsJsonAsync(Uri(database.Path + "/point-in-time/restore"),
-            new { pointInTime = latest, name = "malformed-bundle", destination = "customer" });
+            new { pointInTime = latest, name = "malformed-bundle", destination = "customer" }, cancellationToken);
         await AssertUnavailableAsync(window, "backup bucket or OCI Vault could not be accessed", marker);
         await AssertUnavailableAsync(restore, "backup bucket or OCI Vault could not be accessed", marker);
         oci.SecretResponseOverride = null;
@@ -1295,6 +1313,7 @@ public sealed class CustomerBackupTests
     [Arguments(true)]
     public async Task Retirement_failure_preserves_committed_save_and_delete_and_releases_organization_admission(bool protocolFailure)
     {
+        var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         using var oci = new FakeOci();
         var time = Clock();
         await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services => ManualShipping(oci, services), time);
@@ -1341,7 +1360,7 @@ public sealed class CustomerBackupTests
             await reached.Task.WaitAsync(stop.Token);
             using var committed = await api.Client.GetAsync(Uri(database.ProjectPath + "/backup-destination"), stop.Token);
             committed.EnsureSuccessStatusCode();
-            await AssertDestinationAsync(await committed.Content.ReadAsStringAsync(), "customer");
+            await AssertDestinationAsync(await committed.Content.ReadAsStringAsync(cancellationToken), "customer");
             var currentSecret = oci.Secrets.Keys.Single(id => id != oldSecret);
             using var sibling = await api.Client.PutAsJsonAsync(
                 Uri($"/v1/management/organizations/{database.Organization}/projects/{siblingProject}/backup-destination"), Destination("customer"), stop.Token);
@@ -1349,7 +1368,7 @@ public sealed class CustomerBackupTests
             release.TrySetResult();
             using var saved = await saving.WaitAsync(stop.Token);
             saved.EnsureSuccessStatusCode();
-            await AssertDestinationAsync(await saved.Content.ReadAsStringAsync(), "customer");
+            await AssertDestinationAsync(await saved.Content.ReadAsStringAsync(cancellationToken), "customer");
             await Assert.That(oci.ScheduledSecrets.Contains(currentSecret, StringComparer.Ordinal)).IsFalse();
             using var deleted = await api.Client.DeleteAsync(Uri(database.ProjectPath + "/backup-destination"), stop.Token);
             await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
@@ -1480,8 +1499,9 @@ public sealed class CustomerBackupTests
 
     private static async Task AssertUnavailableAsync(HttpResponseMessage response, string message, string? marker = null)
     {
+        var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
-        var json = await response.Content.ReadAsStringAsync();
+        var json = await response.Content.ReadAsStringAsync(cancellationToken);
         using var body = JsonDocument.Parse(json);
         await Assert.That(body.RootElement.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("unavailable");
         await Assert.That(body.RootElement.GetProperty("error").GetProperty("message").GetString()).IsEqualTo(message);
