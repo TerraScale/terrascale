@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Sockets;
 using System.Text.Json;
 
 namespace BenchClient;
@@ -7,7 +8,7 @@ internal static class Cli
 {
     internal const string Usage = "bench-client run --workload <file> --region <gru|sfo> --out <results.jsonl>";
 
-    internal static async Task<int> RunAsync(string[] args, TextWriter output, TextWriter error)
+    internal static async Task<int> RunAsync(string[] args, TextWriter output, TextWriter error, Func<string>? getHostName = null)
     {
         if (args is ["--help"] or ["-h"])
         {
@@ -17,7 +18,10 @@ internal static class Cli
 
         try
         {
-            if (Dns.GetHostName().Split('.')[0].Equals("mariogk-desktop", StringComparison.OrdinalIgnoreCase))
+            var hostName = (getHostName ?? Dns.GetHostName)();
+            if (string.IsNullOrWhiteSpace(hostName))
+                throw new PreflightException("HOST_UNAVAILABLE", "Cannot verify the local hostname; refusing to run.");
+            if (hostName.Split('.')[0].Equals("mariogk-desktop", StringComparison.OrdinalIgnoreCase))
                 throw new PreflightException("HOST_EXCLUDED", "Benchmarks must not run on mariogk-desktop.");
 
             var options = Parse(args);
@@ -29,6 +33,11 @@ internal static class Cli
         {
             await error.WriteLineAsync($"{failure.Code}: {failure.Message}");
             return failure.Code == "SDK_BLOCKED" ? 1 : 2;
+        }
+        catch (SocketException)
+        {
+            await error.WriteLineAsync("HOST_UNAVAILABLE: Cannot verify the local hostname; refusing to run.");
+            return 2;
         }
         catch (Exception failure) when (failure is IOException or UnauthorizedAccessException or JsonException or ArgumentException or NotSupportedException or InvalidOperationException)
         {

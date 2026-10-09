@@ -8,7 +8,8 @@ exits 0. Existing results remain intact.
 
 ## Build and check
 
-Requires the .NET 10.0.401 SDK (or newer 10.0.4xx patch) and read access to the
+Requires Linux, Bash, GNU coreutils (`timeout`), the .NET 10.0.401 SDK (or newer
+10.0.4xx patch) and read access to the
 official private SDK Git repository. No SDK source is vendored. The production
 project references a separate checkout of the official `ts-dotnet` main build,
 pinned by [sdk.rev](sdk.rev). The CLI reports the referenced SDK assembly
@@ -34,6 +35,10 @@ This slice does not modify the repository-wide workflow, which does not yet
 run .NET client checks; the checks above are local validation only.
 `bench-client` runs the built DLL with `dotnet` from PATH and preserves the
 caller's working directory, including relative workload/output paths.
+The launcher bounds the entire preflight to five seconds, including hostname
+lookup, file opening and reads; termination escalates after one additional
+second. Deadline expiry exits 2 with a fixed diagnostic. Use the launcher rather
+than invoking the DLL directly to enforce this process deadline.
 
 ## Shared contract
 
@@ -45,7 +50,8 @@ ramp steps. Unknown, duplicate, missing or incorrectly typed fields and trailing
 JSON values are rejected, including nested fields. Input is bounded to 1 MiB
 and 16 JSON levels. Diagnostics never include input values, file paths, tokens
 or response bodies. The excluded `mariogk-desktop` host is refused before input
-is read.
+is read. A failed or empty hostname lookup exits 2 with `HOST_UNAVAILABLE` and
+refuses the run.
 
 The official SDK production dependency is present; its public ULID generator,
 validator and regional HTTPS resolver are exercised by tests. No UUID conversion,

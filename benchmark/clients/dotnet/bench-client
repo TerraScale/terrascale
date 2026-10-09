@@ -1,4 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 client_root=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-exec dotnet "$client_root/src/bin/Release/net10.0/bench-client.dll" "$@"
+# Bound opening FIFOs and stalled reads, which cannot be cancelled before open.
+if timeout --kill-after=1s 5s dotnet "$client_root/src/bin/Release/net10.0/bench-client.dll" "$@"; then
+  exit 0
+else
+  client_exit=$?
+fi
+if [[ $client_exit == 124 || $client_exit == 137 ]]; then
+  echo 'INVALID_WORKLOAD: Workload preflight exceeded its 5-second deadline.' >&2
+  exit 2
+fi
+exit "$client_exit"
