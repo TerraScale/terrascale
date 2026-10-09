@@ -26,8 +26,11 @@ internal sealed class BackupTarget(string revision, IObjectStore store, DataKeys
 /// <summary>Creates a fixed generation destination from current project configuration, with no credential cache.</summary>
 internal sealed class BackupTargets(
     IObjectStore platform, DataKeys platformKeys, BackupReader platformReader, IProjectBackupDestinations destinations,
-    IMasterKey master, IWalBackup engine, TerraBaseOptions options, IHttpClientFactory http, TimeProvider time, IOciVaultSecrets? secrets = null)
+    IMasterKey master, IWalBackup engine, TerraBaseOptions options, IHttpClientFactory http, TimeProvider time, IOciVaultSecrets? secrets = null) : IDisposable
 {
+    private readonly SemaphoreSlim _customerKeyReads = new(DataKeys.MaxReads, DataKeys.MaxReads);
+
+    public void Dispose() => _customerKeyReads.Dispose();
     public BackupTarget Platform { get; } = new(BackupDestinationNames.Platform, platform, platformKeys, platformReader, [platform]);
 
     public async ValueTask<ProjectBackupDestinationRecord?> ConfigurationAsync(TenantContext? database, CancellationToken cancellationToken) =>
@@ -57,7 +60,7 @@ internal sealed class BackupTargets(
     {
         if (record.Version != 1 || secrets is null)
         {
-            throw new InvalidDataException("customer backup destination version or Vault configuration is unavailable");
+            throw new HttpRequestException("customer backup destination version or Vault configuration is unavailable");
         }
 
         var (accessKeyId, secretKey) = await secrets.ReadAsync(record.SecretId, cancellationToken).ConfigureAwait(false);
@@ -66,7 +69,7 @@ internal sealed class BackupTargets(
         var scope = BackupLayout.KeyScope(database);
         var scopedCustomer = new ProjectStore(customer, scope);
         IObjectStore store = mirror ? new MirroredStore(new ProjectStore(platform, scope), scopedCustomer) : scopedCustomer;
-        var keys = new DataKeys(store, master, time, options.Backup!, freshKey, platformKeys.ReadSlots);
+        var keys = new DataKeys(store, master, time, options.Backup!, freshKey, _customerKeyReads);
         return new(record.Revision, store, keys, new BackupReader(engine, store, keys, options), [new ProjectStore(platform, scope), scopedCustomer], customer);
     }
 

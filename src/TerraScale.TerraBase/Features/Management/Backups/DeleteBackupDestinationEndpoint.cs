@@ -21,6 +21,7 @@ public sealed class DeleteBackupDestinationEndpoint(IProjectBackupDestinations d
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status403Forbidden);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(ApiKeyScopes.DatabasesWrite);
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
     }
@@ -33,5 +34,6 @@ public sealed class DeleteBackupDestinationEndpoint(IProjectBackupDestinations d
             Done => TypedResults.NoContent(),
             NotFound error => ErrorResponse.From(error),
             Forbidden error => ErrorResponse.From(error),
+            Unavailable error => ErrorResponse.From(error),
         };
 }

@@ -97,7 +97,7 @@ supported.
 Customer credentials live encrypted in OCI Vault Secrets as a versioned JSON secret. TerraBase's version-1 catalog
 record under `projects/<project>/backup_destination` holds public settings and the secret OCID only. Credentials are
 write-only, and errors never include provider response bodies. The runtime identity needs secret creation, retrieval,
-scheduled deletion and secret encryption-key permissions in addition to the original backup permissions. Configure all four settings together:
+metadata listing/inspection, scheduled deletion and secret encryption-key permissions in addition to the original backup permissions. Configure all four settings together:
 
 | Setting | Meaning |
 | --- | --- |
@@ -107,10 +107,23 @@ scheduled deletion and secret encryption-key permissions in addition to the orig
 | `backup-secrets-endpoint` | HTTPS Secret Retrieval endpoint |
 
 The existing `backup-kms-api-key`, `backup-kms-private-key-file` and `backup-kms-key-id` sign and encrypt the secret
-operations. Changing a destination creates a new secret. After replacement or detachment commits, the old secret is
-scheduled for deletion after OCI's minimum seven-day window when possible; in-flight work keeps its acquired credentials.
-Customer objects are preserved. Unsuccessfully saved secrets are also scheduled for deletion when possible;
-a transport failure before receiving its OCID can leave an orphan named `terrabase-backup-<random id>`.
+operations. Changing a destination creates a new secret. Replacement or detachment records the old secret's retirement
+in the same catalog transaction. An immediate attempt schedules deletion after OCI's minimum seven-day window;
+failed attempts remain in `backup_secret_lifecycle` for background retry. In-flight work keeps its acquired credentials,
+and customer objects are preserved.
+
+Before creation, TerraBase records a unique `terrabase-backup-<ULID>` name in that collection. A successful create response
+is read under an independent bounded token so caller cancellation cannot discard a returned OCID. Uncertain responses
+are reconciled through OCI secret metadata; no credential content is stored in these records or replayed to create another
+secret. Publication removes its intent atomically. Cleanup claims an expired intent before retirement, preventing it from
+being published afterward. An empty metadata listing leaves the intent pending because the secret may appear later.
+
+The lifecycle backlog admits at most 1,024 records of 2 KiB each. A full backlog returns fixed 503 before changing a
+destination; an already detached destination still returns 204. Maintenance reads at most eight records / 16 KiB per
+pass, with bounded remote operations. Keep Vault and compartment settings available until pending reconciliation and
+retirement complete. OCI 404 responses remain pending because they can mask lost authorization; restore metadata
+permissions or investigate an external deletion rather than treating 404 as proof of retirement. These records survive
+project deletion; no migration is required.
 
 Restore selection is explicit and never falls back between buckets:
 
@@ -143,6 +156,8 @@ customer slot until completion or cancellation. Background ticks skip busy files
 the least recently scheduled eligible files without waiting for earlier customer jobs. Each file keeps its target
 until its job finishes. Database removal and shutdown cancel and join active jobs before disposing their resources;
 shutdown then attempts final shipping with the supplied shutdown token.
+Configuration reads are limited to four admission candidates per scheduling pass. Wrapped-key reads have separate
+host-wide admission pools of eight for platform and customer work, so customer prefetch cannot exhaust platform reads.
 
 SDK/dashboard integration must consume these `/v1` project contracts through typed `ts-go` methods, with a ts-auth
 project access token granting the scope above. User sign-in tokens belong to the hidden organization aliases.

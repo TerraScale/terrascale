@@ -44,7 +44,7 @@ public sealed record ProjectBackupDestinationRecord(int Version, string Revision
 public readonly union SaveBackupDestinationResult(ProjectBackupDestination, NotFound, Forbidden, Unavailable);
 
 /// <summary>A detached destination, or why it could not be detached.</summary>
-public readonly union DeleteBackupDestinationResult(Done, NotFound, Forbidden);
+public readonly union DeleteBackupDestinationResult(Done, NotFound, Forbidden, Unavailable);
 
 /// <summary>Project backup configuration owned by TerraBase.</summary>
 public interface IProjectBackupDestinations

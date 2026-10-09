@@ -19,6 +19,9 @@ internal interface IOciVaultSecrets
     /// <summary>Reads the credentials from the secret's CURRENT version.</summary>
     Task<(string AccessKeyId, string SecretKey)> ReadAsync(string secretId, CancellationToken cancellationToken);
 
+    /// <summary>Resolves an uncertain create by its unique name and verifies its vault/compartment metadata.</summary>
+    Task<string?> FindAsync(string name, CancellationToken cancellationToken);
+
     /// <summary>Schedules retirement of an unused secret after OCI's minimum seven-day deletion window.</summary>
     Task DeleteAsync(string secretId, CancellationToken cancellationToken);
 }
@@ -55,6 +58,14 @@ public sealed record OciCreateSecretRequest(string CompartmentId, string VaultId
 /// <param name="Id">The newly created secret's OCID.</param>
 public sealed record OciSecretResponse(string? Id);
 
+/// <summary>Metadata from OCI Vault's GetSecret and ListSecrets APIs, without secret content.</summary>
+/// <param name="Id">The secret OCID.</param>
+/// <param name="SecretName">Unique secret name within its vault.</param>
+/// <param name="VaultId">Vault OCID.</param>
+/// <param name="CompartmentId">Compartment OCID.</param>
+/// <param name="LifecycleState">OCI's lifecycle state; PENDING_DELETION confirms scheduled retirement.</param>
+public sealed record OciSecretMetadata(string? Id, string? SecretName, string? VaultId, string? CompartmentId, string? LifecycleState);
+
 /// <summary>The fields TerraBase reads from OCI's secret-bundle response.</summary>
 /// <param name="SecretBundleContent">The encoded credentials.</param>
 public sealed record OciSecretBundleResponse(OciSecretContent? SecretBundleContent);
@@ -67,7 +78,7 @@ public sealed record OciScheduleSecretDeletionRequest(DateTimeOffset TimeOfDelet
 /// Signed HTTP calls to OCI Vault's secret management and retrieval endpoints. The OCI .NET SDK depends on
 /// Newtonsoft.Json, so this uses the same API signing credentials as the backup master key.
 /// </summary>
-internal sealed class OciVaultSecrets(BackupSettings settings, IHttpClientFactory http, TimeProvider time) : IOciVaultSecrets, IDisposable
+internal sealed class OciVaultSecrets(BackupSettings settings, IHttpClientFactory http, TimeProvider time, IHostApplicationLifetime lifetime) : IOciVaultSecrets, IDisposable
 {
     /// <summary>The named client used for both OCI secret endpoints.</summary>
     public const string HttpClientName = "backup-vault-secrets";
@@ -118,8 +129,11 @@ internal sealed class OciVaultSecrets(BackupSettings settings, IHttpClientFactor
                 CryptographicOperations.ZeroMemory(credentials);
             }
 
-            using var response = await SendAsync(HttpMethod.Post, new Uri(_vaultEndpoint, "/20180608/secrets"), body, cancellationToken).ConfigureAwait(false);
-            var secret = await ReadResponseAsync<OciSecretResponse>(response, cancellationToken).ConfigureAwait(false);
+            using var response = await SendAsync(HttpMethod.Post, new Uri(_vaultEndpoint, "/20180608/secrets"), body, cancellationToken, retryToken: name).ConfigureAwait(false);
+            // Successful headers may follow a committed create. Caller cancellation must not hide its OCID.
+            using var completion = CancellationTokenSource.CreateLinkedTokenSource(lifetime.ApplicationStopping);
+            completion.CancelAfter(TimeSpan.FromSeconds(30));
+            var secret = await ReadResponseAsync<OciSecretResponse>(response, completion.Token).ConfigureAwait(false);
             // A completed create must hand its id to the caller, even if cancellation now prevents publishing it.
             return IsName(secret.Id, 512) ? secret.Id! : throw new HttpRequestException("OCI Vault Secrets returned no valid secret id", null, HttpStatusCode.BadGateway);
         }
@@ -175,6 +189,39 @@ internal sealed class OciVaultSecrets(BackupSettings settings, IHttpClientFactor
         }
     }
 
+    public async Task<string?> FindAsync(string name, CancellationToken cancellationToken)
+    {
+        if (!IsName(name, 256))
+        {
+            throw new ArgumentException("Secret name must be 1 to 256 ASCII letters, digits, dots, underscores or hyphens", nameof(name));
+        }
+
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(30));
+        cancellationToken = timeout.Token;
+        await AdmitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            // OCI ListSecrets uses `name`, not `secretName`; the name is unique within the filtered vault.
+            var uri = new Uri(_vaultEndpoint, $"/20180608/secrets?compartmentId={Uri.EscapeDataString(_compartmentId)}&vaultId={Uri.EscapeDataString(_vaultId)}&name={Uri.EscapeDataString(name)}&limit=2");
+            using var response = await SendAsync(HttpMethod.Get, uri, null, cancellationToken).ConfigureAwait(false);
+            var matches = await ReadResponseAsync<OciSecretMetadata[]>(response, cancellationToken).ConfigureAwait(false);
+            if (matches.Length > 1 || response.Headers.Contains("opc-next-page")
+                || (matches.Length == 1 && (matches[0] is not { } match || match.SecretName != name || match.VaultId != _vaultId || match.CompartmentId != _compartmentId
+                    || !IsName(match.Id, 512) || !IsLifecycleState(match.LifecycleState))))
+            {
+                throw new HttpRequestException("OCI Vault Secrets returned ambiguous or invalid secret metadata", null, HttpStatusCode.BadGateway);
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            return matches.Length == 0 ? null : matches[0].Id;
+        }
+        finally
+        {
+            _requests.Release();
+        }
+    }
+
     public async Task DeleteAsync(string secretId, CancellationToken cancellationToken)
     {
         ValidateSecretId(secretId);
@@ -184,10 +231,30 @@ internal sealed class OciVaultSecrets(BackupSettings settings, IHttpClientFactor
         await AdmitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            var metadataUri = new Uri(_vaultEndpoint, $"/20180608/secrets/{Uri.EscapeDataString(secretId)}");
+            // OCI's 404 can mask lost authorization, so it cannot prove retirement completed.
+            using var metadataResponse = await SendAsync(HttpMethod.Get, metadataUri, null, cancellationToken).ConfigureAwait(false);
+            var metadata = await ReadResponseAsync<OciSecretMetadata>(metadataResponse, cancellationToken).ConfigureAwait(false);
+            if (metadata.Id != secretId || !IsLifecycleState(metadata.LifecycleState))
+            {
+                throw new HttpRequestException("OCI Vault Secrets returned invalid retirement metadata", null, HttpStatusCode.BadGateway);
+            }
+
+            if (metadata.LifecycleState is "PENDING_DELETION" or "DELETING" or "DELETED")
+            {
+                // A retry must preserve the first deletion date rather than move it seven days forward again.
+                return;
+            }
+
+            if (metadata.LifecycleState != "ACTIVE")
+            {
+                throw new HttpRequestException("OCI Vault Secrets is not ready for retirement", null, HttpStatusCode.ServiceUnavailable);
+            }
+
             // One extra minute leaves room for the request to reach OCI after its minimum seven-day window begins.
             var body = JsonSerializer.SerializeToUtf8Bytes(new OciScheduleSecretDeletionRequest(time.GetUtcNow().AddDays(7).AddMinutes(1)), Metadata<OciScheduleSecretDeletionRequest>());
             var uri = new Uri(_vaultEndpoint, $"/20180608/secrets/{Uri.EscapeDataString(secretId)}/actions/scheduleDeletion");
-            using var response = await SendAsync(HttpMethod.Post, uri, body, cancellationToken, allowMissing: true).ConfigureAwait(false);
+            using var response = await SendAsync(HttpMethod.Post, uri, body, cancellationToken).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
         }
         finally
@@ -210,7 +277,7 @@ internal sealed class OciVaultSecrets(BackupSettings settings, IHttpClientFactor
         }
     }
 
-    private async Task<HttpResponseMessage> SendAsync(HttpMethod method, Uri uri, byte[]? body, CancellationToken cancellationToken, bool allowMissing = false)
+    private async Task<HttpResponseMessage> SendAsync(HttpMethod method, Uri uri, byte[]? body, CancellationToken cancellationToken, string? retryToken = null)
     {
         try
         {
@@ -219,9 +286,14 @@ internal sealed class OciVaultSecrets(BackupSettings settings, IHttpClientFactor
                 throw new HttpRequestException("OCI Vault Secrets request exceeds its byte limit", null, HttpStatusCode.BadGateway);
             }
             using var request = new HttpRequestMessage(method, uri);
+            if (retryToken is not null)
+            {
+                request.Headers.Add("opc-retry-token", retryToken);
+            }
+
             Sign(request, body);
             var response = await http.CreateClient(HttpClientName).SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
-            if (response.IsSuccessStatusCode || (allowMissing && response.StatusCode == HttpStatusCode.NotFound))
+            if (response.IsSuccessStatusCode)
             {
                 return response;
             }
@@ -306,6 +378,9 @@ internal sealed class OciVaultSecrets(BackupSettings settings, IHttpClientFactor
 
     private static bool IsCredential(string? value) => value is { Length: > 0 and <= MaxCredentialBytes }
         && !value.Any(char.IsControl) && Encoding.UTF8.GetByteCount(value) <= MaxCredentialBytes;
+
+    private static bool IsLifecycleState(string? value) => value is "CREATING" or "ACTIVE" or "UPDATING" or "DELETING" or "DELETED"
+        or "SCHEDULING_DELETION" or "PENDING_DELETION" or "CANCELLING_DELETION" or "FAILED";
 
     private static bool IsName(string? value, int maximum) => value is { Length: > 0 } && value.Length <= maximum && value is not "." and not ".."
         && value.All(character => character is (>= 'a' and <= 'z') or (>= 'A' and <= 'Z') or (>= '0' and <= '9') or '.' or '_' or '-');

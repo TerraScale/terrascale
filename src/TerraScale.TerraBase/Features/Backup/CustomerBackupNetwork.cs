@@ -15,32 +15,24 @@ internal static class CustomerBackupNetwork
         && (!IPAddress.TryParse(uri.Host.Trim('[', ']'), out var address) || Public(address))
             ? uri : new Validation("endpoint must be a public https://host[:port] URL");
 
-    public static SocketsHttpHandler Handler() => new()
+    public static SocketsHttpHandler Handler(ICustomerBackupDns dns, ICustomerBackupConnector connector) => new()
     {
         AllowAutoRedirect = false,
         UseProxy = false,
-        ConnectCallback = ConnectAsync,
+        ConnectCallback = (context, cancellationToken) => ConnectAsync(context, dns, connector, cancellationToken),
     };
 
-    private static async ValueTask<Stream> ConnectAsync(SocketsHttpConnectionContext context, CancellationToken cancellationToken)
+    private static async ValueTask<Stream> ConnectAsync(
+        SocketsHttpConnectionContext context, ICustomerBackupDns dns, ICustomerBackupConnector connector, CancellationToken cancellationToken)
     {
-        var addresses = await Dns.GetHostAddressesAsync(context.DnsEndPoint.Host, cancellationToken).ConfigureAwait(false);
-        if (addresses.Length == 0 || addresses.Any(address => !Public(address)))
+        var addresses = await dns.ResolveAsync(context.DnsEndPoint.Host, cancellationToken).ConfigureAwait(false);
+        if (addresses.Length is 0 or > 32 || addresses.Any(address => !Public(address)))
         {
             throw new HttpRequestException("customer backup endpoint must resolve to public addresses");
         }
 
-        var socket = new Socket(SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
-        try
-        {
-            await socket.ConnectAsync(addresses, context.DnsEndPoint.Port, cancellationToken).ConfigureAwait(false);
-            return new NetworkStream(socket, ownsSocket: true);
-        }
-        catch
-        {
-            socket.Dispose();
-            throw;
-        }
+        cancellationToken.ThrowIfCancellationRequested();
+        return await connector.ConnectAsync(addresses, context.DnsEndPoint.Port, cancellationToken).ConfigureAwait(false);
     }
 
     private static bool Public(IPAddress address)
@@ -67,5 +59,40 @@ internal static class CustomerBackupNetwork
             && !(bytes[0] == 169 && bytes[1] == 254) && !(bytes[0] == 172 && bytes[1] is >= 16 and <= 31)
             && !(bytes[0] == 192 && bytes[1] == 168) && !(bytes[0] == 100 && bytes[1] is >= 64 and <= 127)
             && !(bytes[0] == 198 && bytes[1] is 18 or 19);
+    }
+}
+
+/// <summary>Resolves the customer host once for each new connection.</summary>
+internal interface ICustomerBackupDns
+{
+    Task<IPAddress[]> ResolveAsync(string host, CancellationToken cancellationToken);
+}
+
+internal sealed class CustomerBackupDns : ICustomerBackupDns
+{
+    public Task<IPAddress[]> ResolveAsync(string host, CancellationToken cancellationToken) => Dns.GetHostAddressesAsync(host, cancellationToken);
+}
+
+/// <summary>Connects only to the addresses already checked by the customer handler, without resolving again.</summary>
+internal interface ICustomerBackupConnector
+{
+    ValueTask<Stream> ConnectAsync(IPAddress[] addresses, int port, CancellationToken cancellationToken);
+}
+
+internal sealed class CustomerBackupConnector : ICustomerBackupConnector
+{
+    public async ValueTask<Stream> ConnectAsync(IPAddress[] addresses, int port, CancellationToken cancellationToken)
+    {
+        var socket = new Socket(SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
+        try
+        {
+            await socket.ConnectAsync(addresses, port, cancellationToken).ConfigureAwait(false);
+            return new NetworkStream(socket, ownsSocket: true);
+        }
+        catch
+        {
+            socket.Dispose();
+            throw;
+        }
     }
 }

@@ -10,7 +10,7 @@ using static TerraBase.Features.Management.SystemCatalog;
 namespace TerraBase.Features.Management.Backups;
 
 internal sealed class ProjectBackupDestinations(
-    SystemCatalog catalog, TerraBaseOptions options, IHttpClientFactory http, TimeProvider time, IOciVaultSecrets? secrets = null) : IProjectBackupDestinations
+    SystemCatalog catalog, TerraBaseOptions options, IHttpClientFactory http, TimeProvider time, IBackupSecretLifecycle lifecycle, IOciVaultSecrets? secrets = null) : IProjectBackupDestinations
 {
     internal static string Collection(string projectId) => ProjectState(projectId) + "backup_destination";
     private const string Current = "current";
@@ -45,6 +45,8 @@ internal sealed class ProjectBackupDestinations(
             }
         }
 
+        BackupSecretWork? intent = null;
+        BackupSecretWork? retirement = null;
         string? secretId = null;
         try
         {
@@ -56,14 +58,21 @@ internal sealed class ProjectBackupDestinations(
                 await ProbeAsync(bucket, organizationId, projectId, timeout.Token).ConfigureAwait(false);
             }
 
-            secretId = await secrets.CreateAsync("terrabase-backup-" + Ulid.NewUlid().ToString(), request.AccessKeyId!, request.SecretKey!, timeout.Token).ConfigureAwait(false);
+            intent = await lifecycle.BeginCreateAsync(timeout.Token).ConfigureAwait(false);
+            if (intent is null)
+            {
+                return new Unavailable("customer backup credential lifecycle backlog is full");
+            }
+
+            secretId = await secrets.CreateAsync(intent.SecretName!, request.AccessKeyId!, request.SecretKey!, timeout.Token).ConfigureAwait(false);
             var destination = new ProjectBackupDestination(new Uri(request.Endpoint!), request.Region!, request.Bucket!, request.Mode!, time.GetUtcNow());
-            var record = new ProjectBackupDestinationRecord(1, Ulid.NewUlid().ToString(), destination, secretId);
-            var (saved, retiredSecretId) = await SaveCoreAsync(userId, organizationId, projectId, record, timeout.Token).ConfigureAwait(false);
+            var record = new ProjectBackupDestinationRecord(1, intent.Id, destination, secretId);
+            var (saved, retired) = await SaveCoreAsync(userId, organizationId, projectId, record, timeout.Token).ConfigureAwait(false);
             if (saved is ProjectBackupDestination)
             {
-                // WriteAsync has committed: the new secret is current, and only its predecessor can retire.
-                secretId = retiredSecretId;
+                // Publication removed this intent and persisted its predecessor's retirement atomically.
+                intent = null;
+                retirement = retired;
             }
 
             return saved;
@@ -80,16 +89,18 @@ internal sealed class ProjectBackupDestinations(
                 _saving.Remove(organizationId);
             }
 
-            if (secretId is not null)
+            if (intent is not null)
             {
-                await RetireAsync(secretId).ConfigureAwait(false);
+                await lifecycle.AbandonCreateAsync(intent.Id, secretId).ConfigureAwait(false);
             }
+
+            await lifecycle.RetireCommittedAsync(retirement).ConfigureAwait(false);
         }
     }
 
-    private async Task<(SaveBackupDestinationResult Result, string? RetiredSecretId)> SaveCoreAsync(
+    private async Task<(SaveBackupDestinationResult Result, BackupSecretWork? Retirement)> SaveCoreAsync(
         string userId, string organizationId, string projectId, ProjectBackupDestinationRecord record, CancellationToken cancellationToken) =>
-        await catalog.WriteAsync<(SaveBackupDestinationResult, string?)>(async transaction =>
+        await catalog.WriteDurableAsync<(SaveBackupDestinationResult, BackupSecretWork?)>(async transaction =>
         {
             var access = await WritableAsync(transaction, userId, organizationId, projectId, cancellationToken).ConfigureAwait(false);
             if (access != ManagementError.None)
@@ -98,14 +109,27 @@ internal sealed class ProjectBackupDestinations(
             }
 
             var replaced = await GetAsync(transaction, Collection(projectId), Current, TerraBaseJsonContext.Default.ProjectBackupDestinationRecord, cancellationToken).ConfigureAwait(false);
+            if (!await lifecycle.CanPublishAsync(transaction, record.Revision, cancellationToken).ConfigureAwait(false))
+            {
+                return (new Unavailable("customer backup credential creation was claimed for retirement"), null);
+            }
+
+            await lifecycle.CompleteCreateAsync(transaction, record.Revision, cancellationToken).ConfigureAwait(false);
+            var retirement = replaced is null ? null : await lifecycle.QueueRetirementAsync(transaction, replaced, cancellationToken).ConfigureAwait(false);
+            if (replaced is not null && retirement is null)
+            {
+                // Removing the intent reserved exactly this slot; an invariant failure must roll back.
+                throw new InvalidDataException("backup secret lifecycle reserved capacity was lost");
+            }
+
             await EngineManagementService.TouchOrganizationAsync(transaction, organizationId, cancellationToken).ConfigureAwait(false);
             await PutAsync(transaction, Collection(projectId), Current, record, TerraBaseJsonContext.Default.ProjectBackupDestinationRecord, cancellationToken).ConfigureAwait(false);
-            return (record.Destination, replaced?.SecretId);
+            return (record.Destination, retirement);
         }, cancellationToken).ConfigureAwait(false);
 
     public async Task<DeleteBackupDestinationResult> DeleteAsync(string userId, string organizationId, string projectId, CancellationToken cancellationToken)
     {
-        var (result, retiredSecretId) = await catalog.WriteAsync<(DeleteBackupDestinationResult, string?)>(async transaction =>
+        var (result, retirement) = await catalog.WriteDurableAsync<(DeleteBackupDestinationResult, BackupSecretWork?)>(async transaction =>
         {
             var access = await WritableAsync(transaction, userId, organizationId, projectId, cancellationToken).ConfigureAwait(false);
             if (access != ManagementError.None)
@@ -114,18 +138,22 @@ internal sealed class ProjectBackupDestinations(
             }
 
             var removed = await GetAsync(transaction, Collection(projectId), Current, TerraBaseJsonContext.Default.ProjectBackupDestinationRecord, cancellationToken).ConfigureAwait(false);
+            BackupSecretWork? queued = null;
             if (removed is not null)
             {
+                queued = await lifecycle.QueueRetirementAsync(transaction, removed, cancellationToken).ConfigureAwait(false);
+                if (queued is null)
+                {
+                    return (new Unavailable("customer backup credential lifecycle backlog is full"), null);
+                }
+
                 await EngineManagementService.TouchOrganizationAsync(transaction, organizationId, cancellationToken).ConfigureAwait(false);
                 await transaction.DeleteAsync(Collection(projectId), Current, cancellationToken).ConfigureAwait(false);
             }
 
-            return (new Done(), removed?.SecretId);
+            return (new Done(), queued);
         }, cancellationToken).ConfigureAwait(false);
-        if (retiredSecretId is not null)
-        {
-            await RetireAsync(retiredSecretId).ConfigureAwait(false);
-        }
+        await lifecycle.RetireCommittedAsync(retirement).ConfigureAwait(false);
 
         return result;
     }
@@ -136,24 +164,6 @@ internal sealed class ProjectBackupDestinations(
         await EngineManagementService.GetProjectAsync(transaction, userId, organizationId, projectId, cancellationToken).ConfigureAwait(false) is null
             ? ManagementError.NotFound
             : await EngineManagementService.WritableAsync(transaction, userId, organizationId, cancellationToken).ConfigureAwait(false);
-
-    private async Task RetireAsync(string id)
-    {
-        if (secrets is null)
-        {
-            return;
-        }
-
-        try
-        {
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-            await secrets.DeleteAsync(id, timeout.Token).ConfigureAwait(false);
-        }
-        catch (Exception error) when (error is HttpRequestException or IOException or InvalidDataException or OperationCanceledException)
-        {
-            // Retirement is best effort; failures must not turn a committed configuration change into an error.
-        }
-    }
 
     private static async Task ProbeAsync(S3ObjectStore bucket, string organizationId, string projectId, CancellationToken cancellationToken)
     {

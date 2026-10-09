@@ -200,6 +200,8 @@ public sealed class BackupShutdownTests
             {
                 return;
             }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(50), cancellationToken);
         }
     }
 

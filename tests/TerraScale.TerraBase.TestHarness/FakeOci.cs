@@ -36,6 +36,7 @@ public sealed class FakeOci : IDisposable
     private readonly ConcurrentDictionary<string, KeyRequests> _keyRequests = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, byte[]> _customerObjects = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, string> _secrets = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, string> _secretNames = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, DateTimeOffset> _scheduledSecrets = new(StringComparer.Ordinal);
     private readonly RSA _apiKey = RSA.Create(2048);
     private readonly string _directory = Directory.CreateTempSubdirectory("terrabase-oci-").FullName;
@@ -98,6 +99,9 @@ public sealed class FakeOci : IDisposable
     /// <summary>Overrides a signed Vault Secrets response, including malformed successful protocol bodies.</summary>
     public Func<HttpMethod, string, HttpResponseMessage?>? SecretResponseOverride { get; set; }
 
+    /// <summary>Overrides a successful create response after the secret is stored, to exercise uncertain outcomes.</summary>
+    public Func<string, string, HttpResponseMessage?>? CreatedSecretResponseOverride { get; set; }
+
     /// <summary>Observes object requests without retaining an unbounded request history; true identifies the customer.</summary>
     public Action<bool, HttpMethod, string>? ObjectRequested { get; set; }
 
@@ -109,6 +113,9 @@ public sealed class FakeOci : IDisposable
 
     /// <summary>Decoded secret contents stored in this test's Vault, by secret OCID.</summary>
     public IReadOnlyDictionary<string, string> Secrets => _secrets;
+
+    /// <summary>Secret OCIDs indexed by their unique Vault names.</summary>
+    public IReadOnlyDictionary<string, string> SecretNames => _secretNames;
 
     /// <summary>Secret OCIDs scheduled for deletion (OCI keeps their contents until deletion).</summary>
     public IReadOnlyCollection<string> ScheduledSecrets => [.. _scheduledSecrets.Keys];
@@ -197,8 +204,14 @@ public sealed class FakeOci : IDisposable
     /// <summary>Routes the server's object storage and vault clients here.</summary>
     public void Route(IServiceCollection services)
     {
-        services.AddHttpClient("backup-s3").ConfigurePrimaryHttpMessageHandler(() => new Handler(this));
+        RoutePlatformAndVault(services);
         services.AddHttpClient("backup-s3-customer").ConfigurePrimaryHttpMessageHandler(() => new Handler(this));
+    }
+
+    /// <summary>Replaces only platform and Vault transports, leaving the real customer connection handler intact.</summary>
+    public void RoutePlatformAndVault(IServiceCollection services)
+    {
+        services.AddHttpClient("backup-s3").ConfigurePrimaryHttpMessageHandler(() => new Handler(this));
         services.AddHttpClient("backup-kms").ConfigurePrimaryHttpMessageHandler(() => new Handler(this));
         services.AddHttpClient("backup-vault-secrets").ConfigurePrimaryHttpMessageHandler(() => new Handler(this));
     }
@@ -446,6 +459,7 @@ public sealed class FakeOci : IDisposable
         {
             var json = JsonNode.Parse(body)!;
             if ((string?)json["vaultId"] != VaultId || (string?)json["compartmentId"] != CompartmentId || (string?)json["keyId"] != KeyId
+                || (string?)json["secretName"] is not { Length: > 0 } name
                 || (string?)json["secretContent"]?["contentType"] != "BASE64" || (string?)json["secretContent"]?["content"] is not { } content)
             {
                 return new HttpResponseMessage(HttpStatusCode.BadRequest);
@@ -453,7 +467,43 @@ public sealed class FakeOci : IDisposable
 
             var id = "ocid1.vaultsecret.oc1.test." + Guid.NewGuid().ToString("N");
             _secrets[id] = Encoding.UTF8.GetString(Convert.FromBase64String(content));
+            if (!_secretNames.TryAdd(name, id))
+            {
+                _secrets.TryRemove(id, out _);
+                return new HttpResponseMessage(HttpStatusCode.Conflict);
+            }
+
+            if (CreatedSecretResponseOverride?.Invoke(name, id) is { } created)
+            {
+                return created;
+            }
+
             return Json(HttpStatusCode.OK, new JsonObject { ["id"] = id, ["lifecycleState"] = "ACTIVE" });
+        }
+
+        if (uri.GetLeftPart(UriPartial.Authority) == VaultManagement && request.Method == HttpMethod.Get && path == "/20180608/secrets")
+        {
+            var query = System.Web.HttpUtility.ParseQueryString(uri.Query);
+            if (query["compartmentId"] != CompartmentId || query["vaultId"] != VaultId || query["name"] is not { Length: > 0 } name || query["limit"] != "2")
+            {
+                return new HttpResponseMessage(HttpStatusCode.BadRequest);
+            }
+
+            var matches = new JsonArray();
+            if (_secretNames.TryGetValue(name, out var id))
+            {
+                matches.Add(SecretMetadata(name, id));
+            }
+
+            return Json(HttpStatusCode.OK, matches);
+        }
+
+        if (uri.GetLeftPart(UriPartial.Authority) == VaultManagement && request.Method == HttpMethod.Get
+            && path.StartsWith("/20180608/secrets/", StringComparison.Ordinal))
+        {
+            var id = Uri.UnescapeDataString(path["/20180608/secrets/".Length..]);
+            var name = _secretNames.FirstOrDefault(secret => secret.Value == id).Key;
+            return name is null ? new HttpResponseMessage(HttpStatusCode.NotFound) : Json(HttpStatusCode.OK, SecretMetadata(name, id));
         }
 
         if (uri.GetLeftPart(UriPartial.Authority) == VaultSecrets && request.Method == HttpMethod.Get
@@ -487,7 +537,16 @@ public sealed class FakeOci : IDisposable
         return new HttpResponseMessage(HttpStatusCode.BadRequest);
     }
 
-    private static HttpResponseMessage Json(HttpStatusCode status, JsonObject body) =>
+    private JsonObject SecretMetadata(string name, string id) => new()
+    {
+        ["id"] = id,
+        ["secretName"] = name,
+        ["vaultId"] = VaultId,
+        ["compartmentId"] = CompartmentId,
+        ["lifecycleState"] = _scheduledSecrets.ContainsKey(id) ? "PENDING_DELETION" : "ACTIVE",
+    };
+
+    private static HttpResponseMessage Json(HttpStatusCode status, JsonNode body) =>
         new(status) { Content = new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json") };
 
     // OCI HTTP signatures include the query string; GETs need no content headers.

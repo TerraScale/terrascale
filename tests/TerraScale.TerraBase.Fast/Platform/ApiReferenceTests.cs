@@ -147,7 +147,7 @@ public sealed class ApiReferenceTests
         {
             (project + "/backup-destination", "get", "200,400,401,403,404,421"),
             (project + "/backup-destination", "put", "200,400,401,403,404,421,503"),
-            (project + "/backup-destination", "delete", "204,400,401,403,404,421"),
+            (project + "/backup-destination", "delete", "204,400,401,403,404,421,503"),
             (project + "/databases/{database}/point-in-time", "get", "200,400,401,403,404,421,503"),
             (project + "/databases/{database}/point-in-time/restore", "post", "201,400,401,403,404,409,421,503"),
         })

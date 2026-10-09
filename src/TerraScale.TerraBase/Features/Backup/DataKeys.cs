@@ -23,9 +23,9 @@ internal sealed class DataKeys(IObjectStore store, IMasterKey master, TimeProvid
     private static readonly TimeSpan CacheLifetime = TimeSpan.FromDays(1);
     private const int CacheCapacity = 65536;
     private const int MaxWrappedKeyBytes = 16 * 1024;
-    private const int MaxReads = 8;
-    // Share admission with the platform key manager of this host; independent integration hosts own their slots.
-    internal SemaphoreSlim ReadSlots { get; } = reads ?? new(MaxReads, MaxReads);
+    internal const int MaxReads = 8;
+    // Customer managers share a separate host-wide pool; slow customer keys cannot consume platform capacity.
+    private readonly SemaphoreSlim _readSlots = reads ?? new(MaxReads, MaxReads);
     private readonly TimeSpan _rotation = TimeSpan.FromDays(settings.KeyRotationDays);
     private readonly MemoryCache _current = new(new MemoryCacheOptions { Clock = new CacheClock(time) });
     private readonly MemoryCache _keys = new(new MemoryCacheOptions { Clock = new CacheClock(time) });
@@ -121,7 +121,7 @@ internal sealed class DataKeys(IObjectStore store, IMasterKey master, TimeProvid
                 return selected;
             }
 
-            if (!await ReadSlots.WaitAsync(0, cancellationToken).ConfigureAwait(false))
+            if (!await _readSlots.WaitAsync(0, cancellationToken).ConfigureAwait(false))
             {
                 throw new IOException("backup data key read limit reached");
             }
@@ -164,7 +164,7 @@ internal sealed class DataKeys(IObjectStore store, IMasterKey master, TimeProvid
             }
             finally
             {
-                ReadSlots.Release();
+                _readSlots.Release();
             }
         }
         finally

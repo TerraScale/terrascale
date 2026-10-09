@@ -107,6 +107,8 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(OciSecretCredentials))]
 [JsonSerializable(typeof(OciCreateSecretRequest))]
 [JsonSerializable(typeof(OciSecretResponse))]
+[JsonSerializable(typeof(OciSecretMetadata))]
+[JsonSerializable(typeof(OciSecretMetadata[]))]
 [JsonSerializable(typeof(OciSecretBundleResponse))]
 [JsonSerializable(typeof(OciScheduleSecretDeletionRequest))]
 [JsonSerializable(typeof(OciDecryptRequest))]

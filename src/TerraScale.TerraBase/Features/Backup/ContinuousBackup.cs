@@ -194,6 +194,11 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
                 // A later manual pass must not adopt a job that was busy when that pass began.
                 job.File.ScheduledAt = ++_scheduleCounter;
                 _jobs.RemoveAt(index);
+                if (job.File.Removed)
+                {
+                    _files.TryRemove(job.File.Prefix, out _);
+                    await job.File.DisposeAsync().ConfigureAwait(false);
+                }
             }
 
             if (_time.GetUtcNow() >= _nextDiscovery)
@@ -203,41 +208,15 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
             }
 
             var boundary = pass ?? _scheduleCounter;
-            foreach (var (prefix, file) in _files)
-            {
-                if (file.Job is not null)
-                {
-                    continue;
-                }
-
-                if (file.Removed)
-                {
-                    _files.TryRemove(prefix, out _);
-                    await file.DisposeAsync().ConfigureAwait(false);
-                }
-                else if (file.ScheduledAt <= boundary)
-                {
-                    try
-                    {
-                        // Local catalog reads classify customer work before it can take reserved platform capacity.
-                        await RefreshConfigurationAsync(file, schedulingToken).ConfigureAwait(false);
-                    }
-                    catch (Exception error) when (!schedulingToken.IsCancellationRequested)
-                    {
-                        Failed(file, error);
-                        file.PendingBytes = file.Pending.Length;
-                        file.ScheduledAt = ++_scheduleCounter;
-                    }
-                }
-            }
-
-            while (!_stopped && _jobs.Count < MaxJobs && (pending is null || pending.Count < MaxJobs))
+            var candidates = 0;
+            while (!_stopped && _jobs.Count < MaxJobs && (pending is null || pending.Count < MaxJobs) && candidates < MaxJobs)
             {
                 ShippedFile? next = null;
                 foreach (var (_, file) in _files)
                 {
                     if (!file.Removed && file.Job is null && file.ScheduledAt <= boundary && CanAdmit(file)
-                        && (next is null || file.ScheduledAt < next.ScheduledAt))
+                        && (next is null || file.ScheduledAt < next.ScheduledAt
+                            || file.ScheduledAt == next.ScheduledAt && file.Database is null))
                     {
                         next = file;
                     }
@@ -249,8 +228,28 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
                 }
 
                 schedulingToken.ThrowIfCancellationRequested();
-                var job = new ShippingJob(next, CustomerWork(next), CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _jobCancellation.Token));
+                candidates++;
                 next.ScheduledAt = ++_scheduleCounter;
+                try
+                {
+                    // Refresh only bounded admission candidates, never the idle fleet while shipping slots are full.
+                    await RefreshConfigurationAsync(next, schedulingToken).ConfigureAwait(false);
+                }
+                catch (Exception error) when (!schedulingToken.IsCancellationRequested)
+                {
+                    Failed(next, error);
+                    next.PendingBytes = next.Pending.Length;
+                    continue;
+                }
+
+                schedulingToken.ThrowIfCancellationRequested();
+                // A formerly platform file can become customer work during the refresh.
+                if (!CanAdmit(next))
+                {
+                    continue;
+                }
+
+                var job = new ShippingJob(next, CustomerWork(next), CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _jobCancellation.Token));
                 next.Job = job;
                 _jobs.Add(job);
                 job.Completion = Task.Run(() => ShipAsync(job.File, job.Cancellation.Token), CancellationToken.None);
@@ -443,6 +442,11 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
                 if (file.Job is { } job)
                 {
                     job.Cancelling ??= job.Cancellation.CancelAsync();
+                }
+                else
+                {
+                    _files.TryRemove(prefix, out _);
+                    await file.DisposeAsync().ConfigureAwait(false);
                 }
             }
         }

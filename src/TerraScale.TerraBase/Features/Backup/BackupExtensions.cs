@@ -23,8 +23,11 @@ public static class BackupExtensions
 
         // Engine/Cluster registers IShipperLeases: a database's primary member ships it while it holds its lease.
         services.AddHttpClient(S3ObjectStore.HttpClientName);
+        services.AddSingleton<ICustomerBackupDns, CustomerBackupDns>();
+        services.AddSingleton<ICustomerBackupConnector, CustomerBackupConnector>();
         services.AddHttpClient(S3ObjectStore.CustomerHttpClientName)
-            .ConfigurePrimaryHttpMessageHandler(CustomerBackupNetwork.Handler)
+            .ConfigurePrimaryHttpMessageHandler(provider => CustomerBackupNetwork.Handler(
+                provider.GetRequiredService<ICustomerBackupDns>(), provider.GetRequiredService<ICustomerBackupConnector>()))
             .AddHttpMessageHandler<CustomerBackupResponseLimits>();
         services.AddTransient<CustomerBackupResponseLimits>();
         if (settings.VaultId is not null)
