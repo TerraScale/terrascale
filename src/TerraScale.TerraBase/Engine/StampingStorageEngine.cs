@@ -263,6 +263,7 @@ internal sealed class StampingStorageEngine(IStorageEngine inner, ISystemReplica
         {
             ArgumentNullException.ThrowIfNull(puts);
             ArgumentOutOfRangeException.ThrowIfLessThan(results.Length, puts.Count);
+            results.Span[..puts.Count].Clear();
             await RunAsync(async () =>
             {
                 foreach (var (collection, id, _) in puts)
