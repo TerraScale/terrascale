@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -68,11 +69,12 @@ func TestMeasuredActivityTicksFollowPlottedBucketTimes(t *testing.T) {
 		lag   time.Duration
 		want  []string
 	}{
+		{"1h", 1, time.Hour, 30 * time.Minute, []string{"30m ago", "", "", "", ""}},
 		{"24h", 24, time.Hour, 30 * time.Minute, []string{"23.5h ago", "17.5h", "11.5h", "6.5h", "30m ago"}},
 		{"7d", 168, time.Hour, 30 * time.Minute, []string{"7d ago", "5.2d", "3.5d", "1.8d", "30m ago"}},
 		{"30d", 30, 24 * time.Hour, 12*time.Hour + 30*time.Minute, []string{"29.5d ago", "22.5d", "14.5d", "7.5d", "12.5h ago"}},
 		{"delayed", 5, 24 * time.Hour, 2 * 24 * time.Hour, []string{"6d ago", "5d", "4d", "3d", "2d ago"}},
-		{"short", 2, time.Hour, 30 * time.Minute, []string{"1.5h ago", "1.5h", "30m", "30m", "30m ago"}},
+		{"short", 2, time.Hour, 30 * time.Minute, []string{"1.5h ago", "", "", "", "30m ago"}},
 		{"current", 5, time.Hour, 0, []string{"4h ago", "3h", "2h", "1h", "Now"}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -85,6 +87,9 @@ func TestMeasuredActivityTicksFollowPlottedBucketTimes(t *testing.T) {
 				data.Writes = append(data.Writes, 0)
 			}
 			chart := activityChart(data)
+			if tt.name == "1h" && !strings.Contains(chart.Label, "Current UTC hour") {
+				t.Fatalf("chart label = %q, want the provider's current hourly bucket", chart.Label)
+			}
 			var got []string
 			for _, tick := range chart.Ticks {
 				got = append(got, tick.Label)

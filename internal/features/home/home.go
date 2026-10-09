@@ -141,10 +141,18 @@ func activityTicks(activity activity) []string {
 		return nil // NewLine falls back to the timestamp labels.
 	}
 	ticks := make([]string, 5)
+	seen := make(map[int]bool)
 	for step := range ticks {
 		// Keep the indices aligned with NewLine's five evenly spaced ticks,
 		// including short and sparse provider series.
 		index := int(math.Round(float64(step) * float64(count-1) / 4))
+		if count > 1 && index == count-1 && step != len(ticks)-1 {
+			continue
+		}
+		if seen[index] {
+			continue
+		}
+		seen[index] = true
 		age := activity.observedAt.Sub(activity.bucketStarts[index])
 		if age < 0 {
 			return nil // Future timestamps must not be presented as current.
