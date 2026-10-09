@@ -5,6 +5,7 @@ using System.Text.Json;
 using Bogus;
 using Grpc.Core;
 using TerraBase.Fast.Documents;
+using TerraBase.Features.Replication.V1;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Replication;
@@ -73,23 +74,24 @@ public sealed class CollectionSchemaReplicationTests
         using var peers = new PeerTls();
         using var tls = new ClientTls();
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
+        var sourceAddress = new TaskCompletionSource<Uri>(TaskCreationOptions.RunContinuationsAsynchronously);
         var receiverAddress = new TaskCompletionSource<Uri>(TaskCreationOptions.RunContinuationsAsynchronously);
         var held = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var holdGroups = 0;
-        // Forward the actual protocol unchanged, but hold the old body until the receiving node has a schema.
-        await using var relay = await FakePeer.StartAsync(peers, async (requests, responses, context) =>
+        async Task ForwardAsync(IAsyncStreamReader<SyncRequest> requests, IServerStreamWriter<SyncResponse> responses,
+            ServerCallContext context, Task<Uri> address, bool hold)
         {
             using var relayStop = CancellationTokenSource.CreateLinkedTokenSource(context.CancellationToken);
             var relayToken = relayStop.Token;
-            using var channel = peers.CreateChannel(await receiverAddress.Task.WaitAsync(relayToken));
+            using var channel = peers.CreateChannel(await address.WaitAsync(relayToken));
             using var call = new Features.Replication.V1.Replication.ReplicationClient(channel).Sync(cancellationToken: relayToken);
             var reading = ForwardResponsesAsync();
             try
             {
                 while (await requests.MoveNext(relayToken))
                 {
-                    if (requests.Current.CommittedGroup is not null && Volatile.Read(ref holdGroups) != 0)
+                    if (hold && requests.Current.CommittedGroup is not null && Volatile.Read(ref holdGroups) != 0)
                     {
                         held.TrySetResult();
                         await release.Task.WaitAsync(relayToken);
@@ -122,18 +124,22 @@ public sealed class CollectionSchemaReplicationTests
                     await responses.WriteAsync(call.ResponseStream.Current, relayToken);
                 }
             }
-        });
+        }
+
+        // Both directions use Sync relays so anti-entropy cannot bypass the held committed group.
+        await using var relay = await FakePeer.StartAsync(peers, (requests, responses, context) =>
+            ForwardAsync(requests, responses, context, receiverAddress.Task, hold: true));
+        await using var reverseRelay = await FakePeer.StartAsync(peers, (requests, responses, context) =>
+            ForwardAsync(requests, responses, context, sourceAddress.Task, hold: false));
         var (a, b) = await TerraBaseTestServer.StartPairAsync((settings, own, other) =>
         {
             Configure(settings, peers, tls, own, other);
-            if (own < other)
-            {
-                settings["peer-addresses"] = relay.Address.ToString();
-            }
+            settings["peer-addresses"] = (own < other ? relay : reverseRelay).Address.ToString();
         });
         await using var disposeA = a;
         await using var disposeB = b;
         var (source, receiver) = a.PeerAddress!.Port < b.PeerAddress!.Port ? (a, b) : (b, a);
+        sourceAddress.SetResult(source.PeerAddress!);
         receiverAddress.SetResult(receiver.PeerAddress!);
         var tenant = await ReplicationTenant.CreateAsync(source, "shop");
         await tenant.BindAsync(receiver);
