@@ -398,19 +398,35 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         }
 
         _jobs.Clear();
-        // Refresh and flush platform files before restarting customer I/O; each phase admits one job at a time.
-        foreach (var customer in new[] { false, true })
+        // Known platform files flush before cached customer lookups can consume the shutdown budget.
+        // Then refresh cached customer files for detachments, and only then restart customer I/O.
+        for (var phase = 0; phase < 3; phase++)
         {
             foreach (var (_, file) in _files)
             {
-                if (file.Removed || cancellationToken.IsCancellationRequested || customer && !file.FinalCustomer)
+                if (file.Removed || cancellationToken.IsCancellationRequested)
+                {
+                    continue;
+                }
+
+                if (phase < 2)
+                {
+                    if (file.FinalRefreshed || CustomerWork(file) != (phase == 1))
+                    {
+                        continue;
+                    }
+
+                    // A refresh can change classification; never refresh that file again in the next phase.
+                    file.FinalRefreshed = true;
+                }
+                else if (!file.FinalCustomer)
                 {
                     continue;
                 }
 
                 try
                 {
-                    if (!customer)
+                    if (phase < 2)
                     {
                         await RefreshConfigurationAsync(file, cancellationToken, force: true).ConfigureAwait(false);
                         // Refresh even cached customer records: a detached destination now belongs to platform.
@@ -867,6 +883,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         public ShippingJob? Job { get; set; }
         public long ScheduledAt { get; set; }
         public bool Removed { get; set; }
+        public bool FinalRefreshed { get; set; }
         public bool FinalCustomer { get; set; }
         public BackupTarget Target { get; set; } = target;
         public ProjectBackupDestinationRecord? Configuration { get; set; }

@@ -76,6 +76,9 @@ public sealed class FakeOci : IDisposable
     /// <summary>Replaces a customer listing after normal prefix filtering, including deliberately foreign keys.</summary>
     public Func<string, IReadOnlyList<string>, IReadOnlyList<string>>? CustomerListingOverride { get; set; }
 
+    /// <summary>Replaces the next token of a truncated customer page; receives its prefix and normal token.</summary>
+    public Func<string, string, string>? CustomerContinuationTokenOverride { get; set; }
+
     /// <summary>Overrides a listed customer object's size, including malformed negative sizes.</summary>
     public Func<string, long?>? CustomerListingSizeOverride { get; set; }
 
@@ -91,11 +94,17 @@ public sealed class FakeOci : IDisposable
     /// <summary>Replaces customer GET content, including a streamed body; null retains the normal body.</summary>
     public Func<string, HttpContent?>? CustomerContentOverride { get; set; }
 
+    /// <summary>Replaces platform GET content, including a streamed body; null retains the stored body.</summary>
+    public Func<string, HttpContent?>? PlatformContentOverride { get; set; }
+
     /// <summary>Adjusts headers on a successful existing-object customer GET, after content and ETag creation.</summary>
     public Action<string, HttpResponseMessage>? CustomerGetResponseCreated { get; set; }
 
     /// <summary>Runs before a customer PUT is accepted; gates must observe the request's cancellation token.</summary>
     public Func<string, CancellationToken, Task>? BeforeCustomerWrite { get; set; }
+
+    /// <summary>Runs before customer DELETE lock checks or mutation; observes the transport cancellation token.</summary>
+    public Func<string, CancellationToken, Task>? BeforeCustomerDelete { get; set; }
 
     /// <summary>Gates a Vault Secrets request; observes cancellation without wall-clock sleeps.</summary>
     public Func<HttpMethod, string, CancellationToken, Task>? BeforeSecretRequest { get; set; }
@@ -318,13 +327,19 @@ public sealed class FakeOci : IDisposable
 
             var truncated = maxKeys > 0 && keys.Count > maxKeys;
             keys = [.. keys.Take(maxKeys)];
+            var continuation = truncated ? Base64Url.EncodeToString(Encoding.UTF8.GetBytes(keys[^1])) : null;
+            if (customer && continuation is not null && CustomerContinuationTokenOverride is { } nextToken)
+            {
+                continuation = nextToken(prefix, continuation);
+            }
+
             var result = new XElement(S3 + "ListBucketResult",
                 new XElement(S3 + "Name", bucket),
                 new XElement(S3 + "Prefix", prefix),
                 new XElement(S3 + "KeyCount", keys.Count),
                 new XElement(S3 + "MaxKeys", maxKeys),
                 new XElement(S3 + "IsTruncated", truncated ? "true" : "false"),
-                truncated ? new XElement(S3 + "NextContinuationToken", Base64Url.EncodeToString(Encoding.UTF8.GetBytes(keys[^1]))) : null,
+                continuation is not null ? new XElement(S3 + "NextContinuationToken", continuation) : null,
                 keys.Select(item => new XElement(S3 + "Contents",
                     new XElement(S3 + "Key", item),
                     new XElement(S3 + "LastModified", "2026-10-07T00:00:00.000Z"),
@@ -377,7 +392,7 @@ public sealed class FakeOci : IDisposable
 
             var get = new HttpResponseMessage(HttpStatusCode.OK)
             {
-                Content = (customer ? CustomerContentOverride?.Invoke(key) : null)
+                Content = (customer ? CustomerContentOverride?.Invoke(key) : PlatformContentOverride?.Invoke(key))
                     ?? new ByteArrayContent(customer ? CustomerReadOverride?.Invoke(key) ?? stored : stored),
             };
             get.Headers.ETag = new(ETag(stored));
@@ -393,6 +408,11 @@ public sealed class FakeOci : IDisposable
         if (request.Method == HttpMethod.Head)
         {
             return new HttpResponseMessage(key.Length == 0 || objects.ContainsKey(key) ? HttpStatusCode.OK : HttpStatusCode.NotFound);
+        }
+
+        if (customer && request.Method == HttpMethod.Delete && BeforeCustomerDelete is { } beforeDelete)
+        {
+            await beforeDelete(key, cancellationToken);
         }
 
         if (request.Method == HttpMethod.Delete && objects.ContainsKey(key) && Locked(key))

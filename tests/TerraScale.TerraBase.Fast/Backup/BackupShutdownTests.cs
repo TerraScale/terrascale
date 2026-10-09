@@ -9,6 +9,7 @@ using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Sqlite;
+using TerraBase.Fast.Management;
 using TerraBase.Features.Backup;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
@@ -19,6 +20,145 @@ namespace TerraBase.Fast.Backup;
 public sealed class BackupShutdownTests
 {
     private static readonly TimeSpan CleanupDeadline = TimeSpan.FromSeconds(30);
+
+    [Test]
+    public async Task Multiple_cached_customer_configuration_deadlines_cannot_precede_healthy_final_wal_and_restore()
+    {
+        const int customers = 3;
+        var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
+        using var oci = new FakeOci();
+        using var shutdown = CancellationTokenSource.CreateLinkedTokenSource(token);
+        var directory = Directory.CreateTempSubdirectory("terrabase-final-configurations-").FullName;
+        var hook = new UsageCommitHook();
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var entered = Enumerable.Range(0, customers).Select(_ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)).ToArray();
+        var exited = Enumerable.Range(0, customers).Select(_ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)).ToArray();
+        var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 9, 12, 0, 0, TimeSpan.Zero));
+        ManagementApi? api = null;
+        TrackedBackup? taps = null;
+        ContinuousBackup? backup = null;
+        Task? stop = null;
+        try
+        {
+            api = await ManagementApi.StartAsync(settings =>
+            {
+                oci.ConfigureCustomer(settings);
+                settings["data-directory"] = directory;
+            }, services =>
+            {
+                oci.Route(services);
+                hook.Install(services);
+                services.AddSingleton<IWalBackup>(provider => taps = new TrackedBackup(provider.GetRequiredService<SqliteStorageEngine>()));
+                var registration = services.Single(descriptor => descriptor.ServiceType == typeof(IHostedService)
+                    && descriptor.ImplementationFactory?.Method.ReturnType == typeof(ContinuousBackup));
+                services[services.IndexOf(registration)] = ServiceDescriptor.Singleton<IHostedService>(provider =>
+                    new BackupLifetime(provider.GetRequiredService<ContinuousBackup>(), manual: true));
+            }, time);
+            Directory.CreateDirectory(Path.Combine(directory, ".backup"));
+            backup = api.Server.Services.GetRequiredService<ContinuousBackup>();
+            var customerCollections = new HashSet<string>(StringComparer.Ordinal);
+            var text = new Faker().Lorem.Sentence();
+            for (var index = 0; index < customers; index++)
+            {
+                var customer = await api.CreateManagedDatabaseAsync("customer-" + index);
+                await SetCustomerAsync(api, customer, token);
+                using var data = await api.CreateClientAsync(customer.Organization, "documents:write");
+                using var collection = await data.PostAsJsonAsync(ManagementApi.Uri(customer.Data + "/collections"), new { name = "people" }, token);
+                collection.EnsureSuccessStatusCode();
+                await PutAsync(data, customer, "before", text, token);
+                customerCollections.Add("projects/" + customer.Project + "/backup_destination");
+            }
+
+            var healthy = await api.CreateManagedDatabaseAsync("healthy");
+            using var healthyData = await api.CreateClientAsync(healthy.Organization, "documents:read", "documents:write");
+            using (var collection = await healthyData.PostAsJsonAsync(ManagementApi.Uri(healthy.Data + "/collections"), new { name = "people" }, token))
+            {
+                collection.EnsureSuccessStatusCode();
+            }
+
+            await PutAsync(healthyData, healthy, "before", text, token);
+            time.Advance(TimeSpan.FromSeconds(10));
+            await backup.RunOnceAsync(token);
+            await Assert.That(backup.Status.Files.Count).IsEqualTo(customers + 2);
+            await Assert.That(backup.Status.Files.All(file => file.Generation is not null && file.LastDrill is not null)).IsTrue();
+            var snapshot = backup.Status.Files.Single(file => file.File == File(healthy));
+            await Assert.That(oci.Objects.Keys.Any(key => key.StartsWith(File(healthy) + "/wal/", StringComparison.Ordinal))).IsFalse();
+            var customerObjects = oci.CustomerObjects.Count;
+
+            time.Advance(TimeSpan.FromSeconds(1));
+            var committed = new Faker().Lorem.Sentence();
+            await PutAsync(healthyData, healthy, "final", committed, token);
+            var reads = 0;
+            var healthyReads = 0;
+            hook.AfterGet = async (collection, id, cancellationToken) =>
+            {
+                if (id != "current")
+                {
+                    return;
+                }
+
+                if (collection == "projects/" + healthy.Project + "/backup_destination")
+                {
+                    Interlocked.Increment(ref healthyReads);
+                }
+                else if (customerCollections.Contains(collection))
+                {
+                    var index = Interlocked.Increment(ref reads) - 1;
+                    entered[index].TrySetResult();
+                    try
+                    {
+                        await release.Task.WaitAsync(cancellationToken);
+                    }
+                    finally
+                    {
+                        exited[index].TrySetResult();
+                    }
+                }
+            };
+            var budget = api.Server.Services.GetRequiredService<IOptions<HostOptions>>().Value.ShutdownTimeout;
+            shutdown.CancelAfter(budget);
+            var elapsed = Stopwatch.StartNew();
+            stop = backup.StopAsync(shutdown.Token);
+            await entered[0].Task.WaitAsync(shutdown.Token);
+            await Assert.That(Volatile.Read(ref healthyReads)).IsEqualTo(1);
+            var finalWal = oci.Objects.Keys.Single(key => key.StartsWith(File(healthy) + "/wal/", StringComparison.Ordinal));
+            var finalAt = BackupLayout.ParseSegment(finalWal)!.At;
+            await Assert.That(finalAt).IsGreaterThan(snapshot.LastShippedAt!.Value);
+            await Assert.That(oci.Objects.Keys.Count(key => key.StartsWith(File(healthy) + "/snapshots/", StringComparison.Ordinal))).IsEqualTo(1);
+            await AssertRestoredAsync(api, healthyData, healthy, finalAt, "final-config-wal", committed, shutdown.Token);
+            await Assert.That(shutdown.IsCancellationRequested).IsFalse();
+            await Assert.That(elapsed.Elapsed).IsLessThan(budget);
+
+            for (var index = 0; index < customers; index++)
+            {
+                await entered[index].Task.WaitAsync(shutdown.Token);
+                await Assert.That(stop.IsCompleted).IsFalse();
+                await Assert.That(taps!.Taps.All(tap => !tap.Returned)).IsTrue();
+                time.Advance(TimeSpan.FromSeconds(1));
+                await exited[index].Task.WaitAsync(shutdown.Token);
+            }
+
+            var failure = await Assert.ThrowsAsync<AggregateException>(() => stop.WaitAsync(shutdown.Token));
+            await Assert.That(failure!.InnerExceptions.Count).IsEqualTo(customers);
+            await Assert.That(failure!.InnerExceptions.All(error => error is OperationCanceledException)).IsTrue();
+            await Assert.That(Volatile.Read(ref reads)).IsEqualTo(customers);
+            await Assert.That(Volatile.Read(ref healthyReads)).IsEqualTo(1);
+            await Assert.That(release.Task.IsCompleted).IsFalse();
+            await Assert.That(oci.CustomerObjects.Count).IsEqualTo(customerObjects);
+            await Assert.That(taps!.Taps.All(tap => tap.Returned)).IsTrue();
+            await Assert.That(backup.Status.Files).IsEmpty();
+            await Assert.That(Directory.EnumerateFiles(Path.Combine(directory, ".backup"))).IsEmpty();
+            await Assert.That(oci.BadSignatures).IsEqualTo(0);
+        }
+        finally
+        {
+            hook.AfterGet = null;
+            release.TrySetResult();
+            await shutdown.CancelAsync();
+            stop ??= backup?.StopAsync(shutdown.Token);
+            await CleanupAsync(stop, taps, api, directory);
+        }
+    }
 
     [Test]
     [Arguments(false)]

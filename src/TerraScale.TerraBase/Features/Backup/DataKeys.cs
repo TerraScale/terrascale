@@ -26,6 +26,7 @@ internal sealed class DataKeys(IObjectStore store, IMasterKey master, TimeProvid
     internal const int MaxReads = 8;
     // Customer managers share a separate host-wide pool; slow customer keys cannot consume platform capacity.
     private readonly SemaphoreSlim _readSlots = reads ?? new(MaxReads, MaxReads);
+    private readonly bool _waitForReadSlot = reads is null;
     private readonly TimeSpan _rotation = TimeSpan.FromDays(settings.KeyRotationDays);
     private readonly MemoryCache _current = new(new MemoryCacheOptions { Clock = new CacheClock(time) });
     private readonly MemoryCache _keys = new(new MemoryCacheOptions { Clock = new CacheClock(time) });
@@ -121,7 +122,12 @@ internal sealed class DataKeys(IObjectStore store, IMasterKey master, TimeProvid
                 return selected;
             }
 
-            if (!await _readSlots.WaitAsync(0, cancellationToken).ConfigureAwait(false))
+            if (_waitForReadSlot)
+            {
+                // Holding a key stripe bounds platform slot waiters to 64 without reserving another read buffer.
+                await _readSlots.WaitAsync(cancellationToken).ConfigureAwait(false);
+            }
+            else if (!await _readSlots.WaitAsync(0, cancellationToken).ConfigureAwait(false))
             {
                 throw new IOException("backup data key read limit reached");
             }

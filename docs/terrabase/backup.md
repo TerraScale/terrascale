@@ -92,13 +92,15 @@ stale fences. Deleting an unset destination leaves that version unchanged.
 
 The bucket must allow read, write, list and delete under `v1/<organization>/<project>/` and read/write/list under
 `v1/keys/<organization>/<project>/`. Saving checks the object permissions using a small non-secret probe and verifies
-the exact returned bytes, reading at most one byte beyond the expected payload. The probe may remain if a bucket
+the exact returned bytes, reading at most one byte beyond the expected payload. Probe cleanup uses a separate five-second
+deadline after request cancellation, linked to host shutdown. The probe may remain if cleanup fails or a bucket
 retention rule protects it. Customer endpoints must use HTTPS and globally reachable IP addresses. Redirects,
 proxies and connections to private, loopback or metadata addresses are blocked; private-network S3 endpoints are not
 supported.
 
 Customer listing pages request at most 250 objects and are bounded to 2 MiB before XML parsing. The smaller page leaves
-room for XML escaping of S3's 1,024-byte keys; malformed entries still count toward metadata scan limits.
+room for XML escaping of S3's 1,024-byte UTF-8 keys. Oversized keys are skipped; malformed entries still count toward
+metadata scan limits.
 
 Customer credentials live encrypted in OCI Vault Secrets as a versioned JSON secret. TerraBase's version-1 catalog
 record under `projects/<project>/backup_destination` holds public settings and the secret OCID only. Credentials are
@@ -134,7 +136,8 @@ each bounded to 2 KiB. An abandoned create keeps its reserved intent slot even a
 creates can exhaust new-save admission, but cannot consume detachment retirement capacity. A full retirement pool rejects
 replacement or detachment with fixed 503 before changing the destination; an already detached destination still returns
 204. Maintenance independently reads at most eight known-ID and eight unresolved records / 32 KiB per pass, processing
-known IDs first with bounded remote operations. Keep Vault and compartment settings available until pending reconciliation and
+known IDs first with separate thirty-second budgets for each class, so a known-ID timeout cannot consume the unresolved
+class's deadline. Both classes share the tracked worker chain and shutdown cancellation. Keep Vault and compartment settings available until pending reconciliation and
 retirement complete. OCI 404 responses remain pending because they can mask lost authorization; restore metadata
 permissions or investigate an external deletion rather than treating 404 as proof of retirement. These records survive
 project deletion; no migration is required.
@@ -149,7 +152,8 @@ Restore selection is explicit and never falls back between buckets:
 
 Each source's window comes from its own stored objects, so old platform backups stay restorable after switching to
 customer-only. An invalid selector returns 400; a disabled or empty source, including an unset customer destination,
-returns 404. Window and restore bucket/Vault transport failures return a sanitized 503. A successful restore returns
+returns 404. Window and restore bucket/Vault transport failures return a sanitized 503. Malformed window listings
+also return 503; corrupt snapshot or key material during restoration remains an integrity failure. A successful restore returns
 the new database and `Location: /v1/projects/{project}/databases/{restored-name}`; a hidden legacy request retains its
 organization route and restored database ID in `Location`.
 Encryption, `TBK1` objects and the catalog schema are unchanged; restoring either source still requires OCI KMS access.
@@ -169,10 +173,12 @@ platform-only files, including `_system`, can use the remaining capacity. A stal
 customer slot until completion or cancellation. Background ticks skip busy files and admit
 the least recently scheduled eligible files without waiting for earlier customer jobs. Each file keeps its target
 until its job finishes. Database removal and shutdown cancel and join active jobs before disposing their resources;
-shutdown refreshes configuration and attempts final platform-only shipping before restarting customer work, using
-the supplied shutdown token. Mirrored acknowledgements also provide platform freshness for their matching generation.
+shutdown refreshes and flushes known platform files first, then checks cached customer configurations for detachments
+before starting customer I/O, using the supplied shutdown token. Mirrored acknowledgements also provide platform
+freshness for their matching generation.
 Configuration reads are limited to four admission candidates per scheduling pass. Wrapped-key reads have separate
 host-wide admission pools of eight for platform and customer work, so customer prefetch cannot exhaust platform reads.
+Cold platform key reads wait with request cancellation when their pool is occupied.
 
 SDK/dashboard integration must consume these `/v1` project contracts through typed `ts-go` methods, with a ts-auth
 project access token granting the scope above. User sign-in tokens belong to the hidden organization aliases.

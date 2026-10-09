@@ -1,5 +1,6 @@
 using System.Net;
 using System.Runtime.CompilerServices;
+using System.Text;
 using Amazon.Runtime;
 using Amazon.S3;
 using Amazon.S3.Model;
@@ -137,7 +138,7 @@ internal sealed class S3ObjectStore : IObjectStore, IDisposable
                 previous = key;
                 // Keep unusable entries in scan accounting without exposing their keys to backup operations.
                 // A foreign or nonascending response above still fails before any operation.
-                if (key is not { Length: > 0 and <= 1024 } || key.Split('/').Any(part => part is "." or "..") || item.Size is < 0)
+                if (key.Length == 0 || Encoding.UTF8.GetByteCount(key) > 1024 || key.Split('/').Any(part => part is "." or "..") || item.Size is < 0)
                 {
                     yield return new(string.Empty, 0);
                     continue;

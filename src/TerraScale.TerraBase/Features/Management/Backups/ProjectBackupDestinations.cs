@@ -10,7 +10,8 @@ using static TerraBase.Features.Management.SystemCatalog;
 namespace TerraBase.Features.Management.Backups;
 
 internal sealed class ProjectBackupDestinations(
-    SystemCatalog catalog, TerraBaseOptions options, IHttpClientFactory http, TimeProvider time, IBackupSecretLifecycle lifecycle, IOciVaultSecrets? secrets = null) : IProjectBackupDestinations
+    SystemCatalog catalog, TerraBaseOptions options, IHttpClientFactory http, TimeProvider time, IBackupSecretLifecycle lifecycle,
+    IHostApplicationLifetime lifetime, IOciVaultSecrets? secrets = null) : IProjectBackupDestinations
 {
     internal static string Collection(string projectId) => ProjectState(projectId) + "backup_destination";
     private const string Current = "current";
@@ -51,8 +52,8 @@ internal sealed class ProjectBackupDestinations(
         var confirmedNotCreated = false;
         try
         {
-            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            timeout.CancelAfter(TimeSpan.FromSeconds(30));
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30), time);
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
             using (var bucket = new S3ObjectStore(new Uri(request.Endpoint!), request.Region!, request.Bucket!, request.AccessKeyId!, request.SecretKey!, http,
                 S3ObjectStore.CustomerHttpClientName, time))
             {
@@ -182,12 +183,13 @@ internal sealed class ProjectBackupDestinations(
             ? ManagementError.NotFound
             : await EngineManagementService.WritableAsync(transaction, userId, organizationId, cancellationToken).ConfigureAwait(false);
 
-    private static async Task ProbeAsync(S3ObjectStore bucket, string organizationId, string projectId, CancellationToken cancellationToken)
+    private async Task ProbeAsync(S3ObjectStore bucket, string organizationId, string projectId, CancellationToken cancellationToken)
     {
         var prefix = BackupLayout.Data($"{organizationId}/{projectId}");
         var key = $"{prefix}.probe/{Ulid.NewUlid()}";
         var expected = Encoding.ASCII.GetBytes("TerraBase backup access check");
         using var content = new MemoryStream(expected);
+        var verified = false;
         try
         {
             await bucket.PutAsync(key, content, cancellationToken).ConfigureAwait(false);
@@ -204,13 +206,26 @@ internal sealed class ProjectBackupDestinations(
                 throw new IOException("customer bucket cannot read the access check");
             }
 
-            await using var listed = bucket.ListAsync(prefix, null, cancellationToken).GetAsyncEnumerator(cancellationToken);
-            _ = await listed.MoveNextAsync().ConfigureAwait(false);
+            await using (var listed = bucket.ListAsync(prefix, null, cancellationToken).GetAsyncEnumerator(cancellationToken))
+            {
+                _ = await listed.MoveNextAsync().ConfigureAwait(false);
+            }
+            cancellationToken.ThrowIfCancellationRequested();
+            verified = true;
         }
         finally
         {
-            // An object lock may retain this tiny probe; it contains no database or secret material.
-            await bucket.DeleteAsync(key, cancellationToken).ConfigureAwait(false);
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5), time);
+            using var cleanup = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token, lifetime.ApplicationStopping);
+            try
+            {
+                // An object lock may retain this tiny probe; it contains no database or secret material.
+                await bucket.DeleteAsync(key, cleanup.Token).ConfigureAwait(false);
+            }
+            catch (Exception) when (!verified)
+            {
+                // Preserve the probe failure; a successful check must still verify delete permission.
+            }
         }
     }
 }

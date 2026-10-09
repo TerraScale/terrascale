@@ -56,6 +56,11 @@ public sealed class GetRestoreWindowEndpoint(IManagementService management, IPoi
                     ? TypedResults.Ok(window) : ErrorResponse.From(new NotFound()),
             };
         }
+        catch (InvalidDataException)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ErrorResponse.From(BackupDestinationRoute.Unavailable());
+        }
         catch (Exception error) when (BackupDestinationRoute.IsUnavailable(error, cancellationToken))
         {
             return ErrorResponse.From(BackupDestinationRoute.Unavailable());

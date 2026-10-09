@@ -923,6 +923,100 @@ public sealed class CustomerBackupSecretLifecycleTests
     }
 
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task A_known_id_phase_timeout_still_reconciles_unknown_names_with_an_independent_budget(bool stallDeletion)
+    {
+        var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
+        using var oci = new FakeOci();
+        var time = Clock();
+        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services => Manual(oci, services), time);
+        var knownDatabase = await api.CreateManagedDatabaseAsync();
+        var knownRoute = Uri(knownDatabase.ProjectPath + "/backup-destination");
+        await SaveAsync(api, knownRoute, "customer", token);
+        var knownId = oci.Secrets.Keys.Single();
+        oci.SecretResponseOverride = (_, path) => path.EndsWith("/actions/scheduleDeletion", StringComparison.Ordinal)
+            ? new(HttpStatusCode.ServiceUnavailable) : null;
+        using var detached = await api.Client.DeleteAsync(knownRoute, token);
+        await Assert.That(detached.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+        oci.SecretResponseOverride = null;
+        var knownWork = (await PendingAsync(api, token)).Single();
+
+        var unknownDatabase = await api.CreateManagedDatabaseAsync();
+        var unknownRoute = Uri(unknownDatabase.ProjectPath + "/backup-destination");
+        oci.CreatedSecretResponseOverride = (_, _) => new(HttpStatusCode.OK) { Content = new StringContent("invalid-json") };
+        await ErrorAssert.ErrorAsync(api.Client.PutAsJsonAsync(unknownRoute, Destination("customer"), token), HttpStatusCode.ServiceUnavailable,
+            "unavailable", "customer backup bucket or OCI Vault could not be accessed");
+        oci.CreatedSecretResponseOverride = null;
+        var unknownWork = (await PendingAsync(api, token)).Single(work => work.SecretId is null);
+        var unknownId = oci.SecretNames[unknownWork.SecretName!];
+        var knownEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var knownRelease = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var knownExited = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var resolving = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        CancellationToken knownToken = default;
+        oci.BeforeSecretRequest = async (method, path, cancellationToken) =>
+        {
+            if (method == HttpMethod.Get && path == "/20180608/secrets")
+            {
+                resolving.TrySetResult();
+            }
+
+            if (method != (stallDeletion ? HttpMethod.Post : HttpMethod.Get)
+                || path != "/20180608/secrets/" + knownId + (stallDeletion ? "/actions/scheduleDeletion" : ""))
+            {
+                return;
+            }
+
+            knownToken = cancellationToken;
+            knownEntered.TrySetResult();
+            try
+            {
+                await knownRelease.Task.WaitAsync(cancellationToken);
+            }
+            finally
+            {
+                knownExited.TrySetResult();
+            }
+        };
+        try
+        {
+            time.Advance(TimeSpan.FromMinutes(1));
+            await knownEntered.Task.WaitAsync(token);
+            var claimedAt = time.GetUtcNow();
+            await Assert.That(resolving.Task.IsCompleted).IsFalse();
+            await Assert.That(knownToken.IsCancellationRequested).IsFalse();
+            await Assert.That((await PendingAsync(api, token)).Single(work => work.Id == knownWork.Id).DueAt).IsEqualTo(claimedAt.AddMinutes(1));
+            time.Advance(TimeSpan.FromSeconds(30));
+            await knownExited.Task.WaitAsync(token);
+            await resolving.Task.WaitAsync(token);
+            var pending = await WaitForPendingAsync(api, rows => rows.Count == 1 && rows[0].Id == knownWork.Id, token);
+            await Assert.That(knownRelease.Task.IsCompleted).IsFalse();
+            await Assert.That(knownToken.IsCancellationRequested).IsTrue();
+            await Assert.That(pending[0].Retiring).IsTrue();
+            await Assert.That(pending[0].SecretId).IsEqualTo(knownId);
+            await Assert.That(pending[0].SecretName).IsNull();
+            await Assert.That(pending[0].DueAt).IsEqualTo(claimedAt.AddMinutes(1));
+            await Assert.That(oci.ScheduledSecrets).IsEquivalentTo([unknownId]);
+            using var absent = await api.Client.GetAsync(unknownRoute, token);
+            await Assert.That(absent.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+            await AssertMetadataOnlyAsync(api, token);
+
+            oci.BeforeSecretRequest = null;
+            time.Advance(TimeSpan.FromMinutes(1));
+            await WaitForPendingAsync(api, rows => rows.Count == 0, token);
+            await Assert.That(oci.ScheduledSecrets).IsEquivalentTo([knownId, unknownId]);
+            await Assert.That(knownRelease.Task.IsCompleted).IsFalse();
+            await Assert.That(oci.BadSignatures).IsEqualTo(0);
+        }
+        finally
+        {
+            knownRelease.TrySetResult();
+            await api.Server.Services.GetRequiredService<BackupSecretLifecycle>().StopAsync(token).WaitAsync(TimeSpan.FromSeconds(10));
+        }
+    }
+
+    [Test]
     public async Task Shutdown_cancels_and_joins_a_foreground_retirement_before_dependencies_are_disposed()
     {
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
@@ -1019,6 +1113,23 @@ public sealed class CustomerBackupSecretLifecycleTests
                 BackupSecretLifecycle.MaxPending * BackupSecretLifecycle.MaxRecordBytes, token);
             return (IReadOnlyList<BackupSecretWork>)[.. page.Documents.Select(document => JsonSerializer.Deserialize(document.Json.Span, TerraBaseJsonContext.Default.BackupSecretWork)!)];
         }, token);
+
+    private static async Task<IReadOnlyList<BackupSecretWork>> WaitForPendingAsync(
+        ManagementApi api, Func<IReadOnlyList<BackupSecretWork>, bool> condition, CancellationToken token)
+    {
+        var store = await api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(token);
+        while (true)
+        {
+            var sequence = store.CommitSequence;
+            var pending = await PendingAsync(api, token);
+            if (condition(pending))
+            {
+                return pending;
+            }
+
+            await store.WaitForCommitAsync(sequence, token);
+        }
+    }
 
     private static async Task AssertMetadataOnlyAsync(ManagementApi api, CancellationToken token)
     {

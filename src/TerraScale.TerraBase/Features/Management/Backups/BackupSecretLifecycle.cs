@@ -191,14 +191,28 @@ internal sealed class BackupSecretLifecycle(
 
         try
         {
-            using var timeout = OperationTimeout(cancellationToken);
             // Independent cursors keep unresolved names from delaying known retirements.
-            await ProcessBatchAsync(known: true, timeout.Token).ConfigureAwait(false);
-            await ProcessBatchAsync(known: false, timeout.Token).ConfigureAwait(false);
+            await RunClassAsync(known: true, cancellationToken).ConfigureAwait(false);
+            await RunClassAsync(known: false, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
             ExitOperation();
+        }
+    }
+
+    private async Task RunClassAsync(bool known, CancellationToken cancellationToken)
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30), time);
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(_shutdown.Token, cancellationToken, deadline.Token);
+        try
+        {
+            timeout.Token.ThrowIfCancellationRequested();
+            await ProcessBatchAsync(known, timeout.Token).ConfigureAwait(false);
+        }
+        catch (Exception error) when (IsAvailabilityFailure(error) && !cancellationToken.IsCancellationRequested && !_shutdown.IsCancellationRequested)
+        {
+            // One class can exhaust its budget without consuming the other class's independent deadline.
         }
     }
 
