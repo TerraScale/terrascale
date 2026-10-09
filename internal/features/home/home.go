@@ -3,8 +3,11 @@ package home
 
 import (
 	"errors"
+	"fmt"
+	"math"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/a-h/templ"
 
@@ -127,10 +130,40 @@ func writeError(w http.ResponseWriter, err error) {
 	}
 }
 
-// activityTicks labels the range by distance from now. Exact measured bucket
-// timestamps remain available in the point tooltips.
+// activityTicks labels the actual samples selected by charts.NewLine. Exact
+// measured bucket timestamps remain available in the point tooltips.
 func activityTicks(activity activity) []string {
-	return demovisuals.TickLabels(activity.Range)
+	if activity.Sample {
+		return demovisuals.TickLabels(activity.Range)
+	}
+	count := len(activity.Reads)
+	if count == 0 || len(activity.bucketStarts) != count || activity.observedAt.IsZero() {
+		return nil // NewLine falls back to the timestamp labels.
+	}
+	ticks := make([]string, 5)
+	for step := range ticks {
+		// Keep the indices aligned with NewLine's five evenly spaced ticks,
+		// including short and sparse provider series.
+		index := int(math.Round(float64(step) * float64(count-1) / 4))
+		age := activity.observedAt.Sub(activity.bucketStarts[index])
+		if age < 0 {
+			return nil // Future timestamps must not be presented as current.
+		}
+		label := "Now"
+		switch {
+		case age >= 24*time.Hour:
+			label = fmt.Sprintf("%gd", math.Round(age.Hours()/24*10)/10)
+		case age >= time.Hour:
+			label = fmt.Sprintf("%gh", math.Round(age.Hours()*10)/10)
+		case age >= time.Minute:
+			label = fmt.Sprintf("%dm", int(age.Minutes()))
+		}
+		if label != "Now" && (step == 0 || step == len(ticks)-1) {
+			label += " ago"
+		}
+		ticks[step] = label
+	}
+	return ticks
 }
 
 // activityChart presents read and write counts as operations on the overview.
