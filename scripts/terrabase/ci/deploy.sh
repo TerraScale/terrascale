@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Hand the release this main run published to ts-orchestrator, which rolls it
-# out to GRU and SFO, health-gated with rollback (ts-orchestrator
+# out to every discovered serving region independently, with health gates
+# and rollback (ts-orchestrator
 # docs/continuous-delivery.md, "Automatic service releases"). CI runs this on
 # every green push to main after the release is published.
 #
@@ -12,7 +13,7 @@
 # Environment: GITHUB_SERVER_URL, GITHUB_REPOSITORY and GITHUB_SHA of the job;
 # ORG_READ_TOKEN, which reads private release assets of this repository and of
 # ts-orchestrator; TS_RELEASE_OCI_KEY, the scoped OCI API key that may only
-# read the release key in Vault and write releases/v1/services/* in the head
+# read the release key in Vault and write releases/services/* in the head
 # buckets; and the variables
 # TS_ORCH_RELEASE and TS_ORCH_SHA256 (the ts-orchestrator CI release whose
 # terrascale-orchestrator-linux-amd64 runs the deployment, and that
@@ -115,13 +116,12 @@ chmod 0700 "$work/ts-orch"
 printf '[DEFAULT]\nuser=%s\nfingerprint=%s\ntenancy=%s\nregion=%s\nkey_file=%s\n' "$TS_RELEASE_OCI_USER" \
 	"$TS_RELEASE_OCI_FINGERPRINT" "$TS_RELEASE_OCI_TENANCY" "${TS_RELEASE_OCI_REGION:-sa-saopaulo-1}" "$work/oci-key.pem" \
 	> "$work/oci-config"
-# GRU and SFO are the entire deployed fleet until TS-768 supplies discovery.
 # A tracked child: bash runs a trap only between commands, and wait returns
 # for one at once.
 OCI_CONFIG_FILE=$work/oci-config setsid "$work/ts-orch" release service-deploy --role "$role" --binary "$work/$asset" \
 	--repository "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" --commit "$GITHUB_SHA" --source-checkout . \
-	--environment production --actor "$TS_RELEASE_ACTOR" \
+	--actor "$TS_RELEASE_ACTOR" \
 	--signing-key-secret "$TS_RELEASE_KEY_SECRET" --vault-id "$TS_RELEASE_VAULT_ID" \
-	--namespace "$TS_OBJECT_NAMESPACE" --cell GRU --cell SFO &
+	--namespace "$TS_OBJECT_NAMESPACE" --region-timeout 30m --poll 5s &
 child=$!
 wait "$child"

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Exercise scripts/ci/deploy.sh against a stub curl and a stub ts-orch: the
 # exact ts-orch invocation, with the release bytes, OCI config and key it
-# reads; production deployed to GRU and SFO without a switch; nothing run
+# reads; scope discovered by ts-orch without caller flags or a switch; nothing run
 # unless the asset matches its exact checksum line
 # and ts-orch its pinned SHA-256; a ts-orch failure failing the job; and every
 # authenticated download staying on the Forgejo origin.
@@ -141,8 +141,8 @@ deploy() {
 
 deploy "$pinned" || { cat "$sandbox/log" >&2; fail "automatic deployment failed"; }
 expected=(release service-deploy --role app --binary '*' --repository https://git.example/TerraScale/app
-	--commit "$head" --source-checkout . --environment production --actor ci-release --signing-key-secret secret
-	--vault-id vault --namespace ns --cell GRU --cell SFO)
+	--commit "$head" --source-checkout . --actor ci-release --signing-key-secret secret
+	--vault-id vault --namespace ns --region-timeout 30m --poll 5s)
 mapfile -t ran < "$sandbox/ran"
 ((${#ran[@]} == ${#expected[@]})) || fail "ts-orch ran with $(paste -sd' ' "$sandbox/ran")"
 for index in "${!expected[@]}"; do

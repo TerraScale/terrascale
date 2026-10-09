@@ -32,13 +32,13 @@ Forgejo Actions on the `terrascale-builder` runner (ts-builder image, .NET SDK 1
   `scripts/ci/deploy.sh` hands the
   published `terrabase-linux-arm64` to ts-orchestrator: `ts-orch release service-deploy` (the
   ts-orchestrator CI build pinned by `TS_ORCH_RELEASE` and its `TS_ORCH_SHA256`) signs a release claim with the scoped release key it
-  reads from OCI Vault, publishes it with the binary in GRU and SFO's head buckets in the
-  `production` environment and waits
-  until that region's orchestrator reports every member serving it. The orchestrator gates the
-  rollout on member health and rolls a release that never serves back; a region that rolls back
-  fails the job, and later regions never see the release. GRU and SFO are fixed in the
-  script until TS-768 supplies discovery and independent regional rollouts through the
-  shared CLI. Deployment has no opt-in switch. The job's
+  reads from OCI Vault. Serving regions come from orch's published topology;
+  each region's admitted environment comes from its fresh controller report.
+  Regions sign, publish and wait in parallel, with a 30-minute regional deadline
+  and five-second polling. The orchestrator gates each rollout on member health
+  and rolls a release that never serves back. Every region finishes independently;
+  a failure in any region fails the job after the others finish. No repository
+  region list, fixed environment or opt-in switch remains. The job's
   inputs are the secrets `ORG_READ_TOKEN` and `TS_RELEASE_OCI_KEY` and the variables listed in
   `scripts/ci/deploy.sh`; the flow is documented in ts-orchestrator
   `docs/continuous-delivery.md`, "Automatic service releases". `scripts/ci/check-deploy.sh`

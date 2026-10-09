@@ -124,13 +124,27 @@ jobs:
           RELEASE_ID: ${{ needs.release.outputs.release_id }}
         run: bash scripts/ci/release.sh publish "$RELEASE_ID"
 
-  # Every green main push deploys to GRU and SFO, health-gated with rollback.
+      # Deployment failure must not erase the time this build became qualified.
+      - name: Record the qualified main build for the deployment-lag guard
+        if: forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main'
+        shell: bash
+        env:
+          FORGEJO_TOKEN: ${{ forgejo.token }}
+        run: |
+          set -euo pipefail
+          curl -fsS --connect-timeout 10 --max-time 30 -o /dev/null \
+            -H "Authorization: token ${FORGEJO_TOKEN}" -H 'Content-Type: application/json' \
+            --data '{"state":"success","context":"deployment/qualified","description":"Verified main build ready for automatic deployment"}' \
+            "https://git.terrascale.tech/api/v1/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}"
+  # Every green main push deploys to all discovered regions with health gates.
   deploy:
     name: deploy
     needs: [publish]
     if: ${{ forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main' }}
     runs-on: terrascale-builder
-    timeout-minutes: 40
+    # All regions share a parallel 30-minute wait. Three downloads allow
+    # 15 minutes each; setup and cleanup get 15 more.
+    timeout-minutes: 90
     steps:
       - name: Check out the event revision
         uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
