@@ -226,15 +226,10 @@ public sealed class ApiKeyApplicationManager(
 
     /// <summary>
     /// An API key's client comes from the store on every lookup, never from OpenIddict's entity cache: rotation and
-    /// revocation change its digests, which must hold at once. Other clients keep the base lookup.
+    /// revocation change its digests, which must hold at once. Canonical ULIDs do not identify the client kind.
     /// </summary>
     public override async ValueTask<OidcApplication?> FindByClientIdAsync(string identifier, CancellationToken cancellationToken = default)
     {
-        if (!ApiKeys.IsKeyId(identifier))
-        {
-            return await base.FindByClientIdAsync(identifier, cancellationToken).ConfigureAwait(false);
-        }
-
         return await this.Store.FindByClientIdAsync(identifier, cancellationToken).ConfigureAwait(false) is { } application
             && string.Equals(await this.Store.GetClientIdAsync(application, cancellationToken).ConfigureAwait(false), identifier, StringComparison.Ordinal)
                 ? application

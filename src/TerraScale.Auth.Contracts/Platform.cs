@@ -1,7 +1,7 @@
 namespace TerraScale.Auth.Contracts;
 
 /// <summary>An organization of the platform tenant (collection <c>organizations</c>).</summary>
-/// <param name="Id">UUIDv7.</param>
+/// <param name="Id">Canonical ULID.</param>
 /// <param name="InstanceId">Always the platform tenant.</param>
 /// <param name="Name">Display name; not unique.</param>
 /// <param name="CreatedBy">The creating user.</param>
@@ -31,7 +31,7 @@ public sealed record OwnershipTransferRecord(string FromUserId, string ToUserId,
 public sealed record MembershipRecord(string InstanceId, string OrganizationId, string UserId, string? Role, DateTimeOffset JoinedAt);
 
 /// <summary>A project (collection <c>projects</c>); its id is also its end users' tenant.</summary>
-/// <param name="Id">UUIDv7.</param>
+/// <param name="Id">Canonical ULID.</param>
 /// <param name="InstanceId">Always the platform tenant.</param>
 /// <param name="OrganizationId">The owning organization; never changes.</param>
 /// <param name="Name">Display name, unique in the organization ignoring case.</param>
@@ -52,7 +52,7 @@ public sealed record ProjectMemberRecord(string InstanceId, string OrganizationI
 /// An API key (collection <c>api_keys</c>, addressed by its id): an OAuth client credential owned by an organization or a
 /// project. Only SHA-256 digests of the key string are stored. Revoking deletes the record.
 /// </summary>
-/// <param name="Id"><c>tsk_</c> and 20 base32 characters: the client id and the <c>sub</c> of its tokens.</param>
+/// <param name="Id">Canonical ULID: the client id and the <c>sub</c> of its tokens.</param>
 /// <param name="InstanceId">Always the platform tenant.</param>
 /// <param name="OrganizationId">The owning organization.</param>
 /// <param name="ProjectId">The owning project, or null for an organization key.</param>
@@ -85,7 +85,7 @@ public sealed record ApiKeyRecord(
 /// project's role. Only the SHA-256 of its token is stored; <c>uniques</c> maps that digest to the invitation and holds
 /// one pending invitation per email and target.
 /// </summary>
-/// <param name="Id">UUIDv7.</param>
+/// <param name="Id">Canonical ULID.</param>
 /// <param name="InstanceId">Always the platform tenant.</param>
 /// <param name="OrganizationId">The organization.</param>
 /// <param name="ProjectId">The project, for a project invitation.</param>
@@ -114,7 +114,7 @@ public sealed record InvitationRecord(
     string? DecidedBy = null);
 
 /// <summary>An audit event of an organization (collection <c>audit_events</c>), written with the change it records.</summary>
-/// <param name="Id">UUIDv7, so id order is time order.</param>
+/// <param name="Id">Monotonic canonical ULID.</param>
 /// <param name="InstanceId">Always the platform tenant.</param>
 /// <param name="OrganizationId">The organization.</param>
 /// <param name="Actor">The acting user, or a platform client's id.</param>

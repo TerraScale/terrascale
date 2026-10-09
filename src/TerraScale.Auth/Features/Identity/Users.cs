@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using TerraScale.Auth.Contracts;
 using TerraScale.Auth.Store;
+using TerraScale.DotNet;
 
 namespace TerraScale.Auth.Features.Identity;
 
@@ -40,7 +41,7 @@ public sealed class Users(AuthStore store, TimeProvider clock)
     public async Task<UserRecord?> CreateAsync(string instanceId, string email, string? passwordHash, CancellationToken cancellationToken)
     {
         var normalized = NormalizeEmail(email) ?? throw new ArgumentException("A valid email address is required.", nameof(email));
-        var user = new UserRecord(Guid.NewGuid().ToString("D"), instanceId, normalized, 0, clock.GetUtcNow(), passwordHash);
+        var user = new UserRecord(AuthStore.NewId(), instanceId, normalized, 0, clock.GetUtcNow(), passwordHash);
         var record = JsonSerializer.SerializeToElement(user, IdentityJson.Default.UserRecord);
         return await store.CreateClaimedAsync(AuthStore.UserCollection, instanceId, user.Id, record, EmailKind, normalized, cancellationToken).ConfigureAwait(false)
             ? user
@@ -91,6 +92,11 @@ public sealed class Users(AuthStore store, TimeProvider clock)
 
     internal async Task<(UserRecord User, string Version)?> GetVersionedAsync(string instanceId, string userId, CancellationToken cancellationToken)
     {
+        if (!TerraScaleIds.IsValid(userId))
+        {
+            return null;
+        }
+
         var document = await store.GetAsync(AuthStore.UserCollection, instanceId, userId, cancellationToken).ConfigureAwait(false);
         var user = document?.Document.Deserialize(IdentityJson.Default.UserRecord);
         return user is not null && user.InstanceId == instanceId && user.Id == userId ? (user, document!.Version) : null;

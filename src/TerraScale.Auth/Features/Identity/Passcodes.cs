@@ -101,7 +101,7 @@ public sealed class Passcodes(AuthStore store, Users users, Sessions sessions, T
 
         return await users.FindByEmailAsync(instanceId, normalized, cancellationToken).ConfigureAwait(false) is { } user
             ? await this.IssueAsync(instanceId, user.Id, user.Id, user.Email, user.AuthEpoch, PasscodePurpose.SignIn, null, null, cancellationToken).ConfigureAwait(false)
-            : await this.IssueAsync(instanceId, SignUpKey + normalized, Guid.NewGuid().ToString("D"), normalized, 0, PasscodePurpose.SignUp, passwordHash,
+            : await this.IssueAsync(instanceId, SignUpKey + normalized, AuthStore.NewId(), normalized, 0, PasscodePurpose.SignUp, passwordHash,
                 Tokens.Sha256Hex(pendingToken), cancellationToken).ConfigureAwait(false);
     }
 

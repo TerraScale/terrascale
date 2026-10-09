@@ -22,7 +22,7 @@ public sealed class UserTests(TerraBaseFixture fixture)
         await Assert.That(alice.InstanceId).IsEqualTo("instance-a");
         await Assert.That(alice.AuthEpoch).IsEqualTo(0);
         await Assert.That(alice.CreatedAt).IsEqualTo(clock.UtcNow);
-        await Assert.That(Guid.TryParse(alice.Id, out _)).IsTrue();
+        await Assert.That(TerraScale.DotNet.TerraScaleIds.IsValid(alice.Id)).IsTrue();
         await Assert.That(await other.CreateAsync("instance-a", "alice@example.test")).IsNull();
         await Assert.That(await other.CreateAsync("instance-a", "ALICE@EXAMPLE.TEST")).IsNull();
         await Assert.That((await database.ListDocumentsAsync("users")).Items.Count).IsEqualTo(1);

@@ -7,6 +7,7 @@ using TerraScale.Auth.Contracts;
 using TerraScale.Auth.Features.Identity;
 using TerraScale.Auth.Features.Oidc;
 using TerraScale.Auth.Store;
+using TerraScale.DotNet;
 using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Auth.Features.Platform;
@@ -103,18 +104,18 @@ public sealed partial class PlatformDirectory(AuthStore store, Users users, Time
         return trimmed is { Length: >= 1 and <= 128 } && trimmed.Any(char.IsLetterOrDigit) && !trimmed.Any(char.IsControl) ? trimmed : null;
     }
 
-    /// <summary>Whether <paramref name="value"/> is a lowercase hyphenated UUID.</summary>
+    /// <summary>Whether <paramref name="value"/> is a canonical uppercase ULID.</summary>
     public static bool IsId(string? value) =>
-        value is { Length: 36 } && Guid.TryParseExact(value, "D", out var id) && string.Equals(id.ToString("D"), value, StringComparison.Ordinal);
+        TerraScaleIds.IsValid(value);
 
     /// <summary>Creates an organization whose first member, an owner, is <paramref name="user"/>.</summary>
     public async Task<OrganizationRecord> CreateOrganizationAsync(UserRecord user, string name, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(user);
         var now = clock.GetUtcNow();
-        var organization = new OrganizationRecord(this.NewId(), Instance, name, user.Id, now, Owners: 1, Projects: 0);
+        var organization = new OrganizationRecord(AuthStore.NewId(), Instance, name, user.Id, now, Owners: 1, Projects: 0);
         var membership = new MembershipRecord(Instance, organization.Id, user.Id, Roles.Owner, now);
-        // A fresh UUIDv7 cannot be taken, so any failure is unexpected.
+        // An ID collision aborts the whole transaction.
         return await store.TransactAsync(
         [
             AuthStore.Create(AuthStore.OrganizationCollection, Instance, organization.Id, Serialize(organization, PlatformJson.Default.OrganizationRecord)),
@@ -315,7 +316,7 @@ public sealed partial class PlatformDirectory(AuthStore store, Users users, Time
             var access = await this.OrganizationAccessAsync(userId, organizationId, cancellationToken).ConfigureAwait(false);
             RequireRole(access, Roles.Member);
             var now = clock.GetUtcNow();
-            var project = new ProjectRecord(this.NewId(), Instance, organizationId, name, userId, now);
+            var project = new ProjectRecord(AuthStore.NewId(), Instance, organizationId, name, userId, now);
             var grant = new ProjectMemberRecord(Instance, organizationId, project.Id, userId, Roles.Admin, now);
             var organization = access.Organization.Value;
             return new Plan<ProjectRecord>(
@@ -740,7 +741,7 @@ public sealed partial class PlatformDirectory(AuthStore store, Users users, Time
     /// <summary>An audit event, written in the same transaction as the change it records.</summary>
     internal StoreOperation Audit(string organizationId, string actor, string action, string? target = null, string? detail = null)
     {
-        var id = this.NewId();
+        var id = AuthStore.NewId();
         return AuthStore.Create(AuthStore.AuditEventCollection, Instance, id,
             Serialize(new AuditEventRecord(id, Instance, organizationId, actor, action, target, detail, clock.GetUtcNow()), PlatformJson.Default.AuditEventRecord));
     }
@@ -793,8 +794,6 @@ public sealed partial class PlatformDirectory(AuthStore store, Users users, Time
                 Filter("in", RoleList(Roles.Organization.Where(role => Roles.Rank(Roles.Implied(role)) >= Roles.Rank(minimum)))), access.Membership.Version)
             : AuthStore.Require(AuthStore.ProjectMemberCollection, Instance, ProjectMemberKey(access.Project.Value.Id, access.Grant!.Value.UserId),
                 Filter("in", RoleList(Roles.Project.Where(role => Roles.Rank(role) >= Roles.Rank(minimum)))), access.Grant.Version);
-
-    internal string NewId() => Guid.CreateVersion7(clock.GetUtcNow()).ToString("D");
 
     internal async Task<T> CommitAsync<T>(Func<Task<Plan<T>>> plan, CancellationToken cancellationToken)
     {

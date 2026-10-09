@@ -83,7 +83,7 @@ public sealed class Invitations(AuthStore store, PlatformDirectory directory, Us
 
             var now = clock.GetUtcNow();
             var token = Prefix + RandomNumberGenerator.GetString(Alphabet, 52);
-            var invitation = new InvitationRecord(directory.NewId(), Instance, organizationId, projectId, email, role, caller.Id, now, now + Lifetime, "pending", Tokens.Sha256Hex(token));
+            var invitation = new InvitationRecord(AuthStore.NewId(), Instance, organizationId, projectId, email, role, caller.Id, now, now + Lifetime, "pending", Tokens.Sha256Hex(token));
             // Orders the invitation against a deletion of the organization or project, whose invitations are deleted after it.
             List<StoreOperation> operations = [authority, AuthStore.Require(AuthStore.OrganizationCollection, Instance, organizationId, PlatformDirectory.Filter("exists", "/id"))];
             if (projectId is not null)

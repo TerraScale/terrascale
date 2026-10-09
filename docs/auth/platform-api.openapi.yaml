@@ -253,7 +253,7 @@ paths:
           in: query
           required: false
           description: Only invitations to this project.
-          schema: { $ref: '#/components/schemas/Uuid' }
+          schema: { $ref: '#/components/schemas/Ulid' }
         - $ref: '#/components/parameters/Limit'
         - $ref: '#/components/parameters/After'
       responses:
@@ -985,7 +985,7 @@ paths:
                 summary: An organization API key, for a project token
                 value:
                   grant_type: client_credentials
-                  project: 0199b3e4-5b6a-7c8d-9e0f-1a2b3c4d5e6f
+                  project: 01M4EQ2FRJ8S8B29E8TQVWNW4K
                   scope: documents:read documents:write
               user:
                 summary: A user's sign-in token, for a project token
@@ -993,8 +993,8 @@ paths:
                   grant_type: urn:ietf:params:oauth:grant-type:token-exchange
                   subject_token: eyJhbGciOiJFUzI1NiIsInR5cCI6ImF0K2p3dCJ9…
                   subject_token_type: urn:ietf:params:oauth:token-type:access_token
-                  organization: 0199b3e4-0000-7000-8000-000000000001
-                  project: 0199b3e4-5b6a-7c8d-9e0f-1a2b3c4d5e6f
+                  organization: 01M4EQ2FRJ8S8B29E8TQVWNW4J
+                  project: 01M4EQ2FRJ8S8B29E8TQVWNW4K
       responses:
         '200':
           description: An organization or project access token.
@@ -1057,25 +1057,25 @@ components:
       in: path
       required: true
       description: Organization id.
-      schema: { $ref: '#/components/schemas/Uuid' }
+      schema: { $ref: '#/components/schemas/Ulid' }
     Project:
       name: project
       in: path
       required: true
       description: Project id, also its tenant slug.
-      schema: { $ref: '#/components/schemas/Uuid' }
+      schema: { $ref: '#/components/schemas/Ulid' }
     User:
       name: user
       in: path
       required: true
       description: User id (the sub of its tokens).
-      schema: { $ref: '#/components/schemas/Uuid' }
+      schema: { $ref: '#/components/schemas/Ulid' }
     Invitation:
       name: invitation
       in: path
       required: true
       description: Invitation id.
-      schema: { $ref: '#/components/schemas/Uuid' }
+      schema: { $ref: '#/components/schemas/Ulid' }
     Key:
       name: key
       in: path
@@ -1131,10 +1131,12 @@ components:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
   schemas:
-    Uuid:
+    Ulid:
       type: string
-      format: uuid
-      pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+      minLength: 26
+      maxLength: 26
+      pattern: '^[0-7][0-9A-HJKMNP-TV-Z]{25}$'
+      example: 01M4EQ2FRJ8S8B29E8TQVWNW4J
     Timestamp:
       type: string
       format: date-time
@@ -1159,8 +1161,8 @@ components:
       enum: ['databases:read', 'databases:write', 'documents:read', 'documents:write', 'shapes:read', 'usage:read', 'billing:read', 'billing:write']
     ApiKeyId:
       type: string
-      pattern: '^tsk_[0-9a-hjkmnp-tv-z]{20}$'
-      example: tsk_3k9f2m8q1x7v4c6n0b5z
+      pattern: '^[0-7][0-9A-HJKMNP-TV-Z]{25}$'
+      example: 01M4EQ2FRJ8S8B29E8TQVWNW4K
     Error:
       type: object
       required: [error]
@@ -1187,9 +1189,9 @@ components:
       type: object
       required: [id, name, created_by, created_at, role]
       properties:
-        id: { $ref: '#/components/schemas/Uuid' }
+        id: { $ref: '#/components/schemas/Ulid' }
         name: { type: string }
-        created_by: { $ref: '#/components/schemas/Uuid' }
+        created_by: { $ref: '#/components/schemas/Ulid' }
         created_at: { $ref: '#/components/schemas/Timestamp' }
         role:
           description: The caller's organization role; null for a collaborator.
@@ -1197,9 +1199,9 @@ components:
             - $ref: '#/components/schemas/OrganizationRole'
             - type: 'null'
       example:
-        id: 0199b3e4-0000-7000-8000-000000000001
+        id: 01M4EQ2FRJ8S8B29E8TQVWNW4J
         name: Acme
-        created_by: 4f1c2d3e-5a6b-4c7d-8e9f-0a1b2c3d4e5f
+        created_by: 01M4EQ2FRJ8S8B29E8TQVWNW4M
         created_at: '2026-10-06T12:00:00Z'
         role: owner
     OrganizationPage:
@@ -1226,7 +1228,7 @@ components:
       type: object
       required: [user_id, email, role, joined_at]
       properties:
-        user_id: { $ref: '#/components/schemas/Uuid' }
+        user_id: { $ref: '#/components/schemas/Ulid' }
         email: { $ref: '#/components/schemas/Email' }
         role: { $ref: '#/components/schemas/OrganizationRole' }
         joined_at: { $ref: '#/components/schemas/Timestamp' }
@@ -1242,23 +1244,23 @@ components:
       type: object
       required: [id, organization_id, name, issuer, created_by, created_at, role]
       properties:
-        id: { $ref: '#/components/schemas/Uuid' }
-        organization_id: { $ref: '#/components/schemas/Uuid' }
+        id: { $ref: '#/components/schemas/Ulid' }
+        organization_id: { $ref: '#/components/schemas/Ulid' }
         name: { type: string }
         issuer:
           type: [string, 'null']
           format: uri
           description: The project tenant's issuer, {public origin}/{project id}; null until project tenants are served (slice 5).
-        created_by: { $ref: '#/components/schemas/Uuid' }
+        created_by: { $ref: '#/components/schemas/Ulid' }
         created_at: { $ref: '#/components/schemas/Timestamp' }
         role:
           $ref: '#/components/schemas/ProjectRole'
       example:
-        id: 0199b3e4-5b6a-7c8d-9e0f-1a2b3c4d5e6f
-        organization_id: 0199b3e4-0000-7000-8000-000000000001
+        id: 01M4EQ2FRJ8S8B29E8TQVWNW4K
+        organization_id: 01M4EQ2FRJ8S8B29E8TQVWNW4J
         name: Production
         issuer: null
-        created_by: 4f1c2d3e-5a6b-4c7d-8e9f-0a1b2c3d4e5f
+        created_by: 01M4EQ2FRJ8S8B29E8TQVWNW4M
         created_at: '2026-10-06T12:00:00Z'
         role: admin
     ProjectPage:
@@ -1273,7 +1275,7 @@ components:
       type: object
       required: [user_id, email, role, granted_at]
       properties:
-        user_id: { $ref: '#/components/schemas/Uuid' }
+        user_id: { $ref: '#/components/schemas/Ulid' }
         email: { $ref: '#/components/schemas/Email' }
         role: { $ref: '#/components/schemas/ProjectRole' }
         granted_at: { $ref: '#/components/schemas/Timestamp' }
@@ -1297,20 +1299,20 @@ components:
           enum: [viewer, member, admin, owner]
         project_id:
           oneOf:
-            - $ref: '#/components/schemas/Uuid'
+            - $ref: '#/components/schemas/Ulid'
             - type: 'null'
     Invitation:
       type: object
       required: [id, email, role, project_id, invited_by, created_at, expires_at, status]
       properties:
-        id: { $ref: '#/components/schemas/Uuid' }
+        id: { $ref: '#/components/schemas/Ulid' }
         email: { $ref: '#/components/schemas/Email' }
         role: { type: string, enum: [viewer, member, admin, owner] }
         project_id:
           oneOf:
-            - $ref: '#/components/schemas/Uuid'
+            - $ref: '#/components/schemas/Ulid'
             - type: 'null'
-        invited_by: { $ref: '#/components/schemas/Uuid' }
+        invited_by: { $ref: '#/components/schemas/Ulid' }
         created_at: { $ref: '#/components/schemas/Timestamp' }
         expires_at: { $ref: '#/components/schemas/Timestamp' }
         status: { type: string, enum: [pending, accepted, declined, revoked, expired] }
@@ -1345,14 +1347,14 @@ components:
           type: object
           required: [id, name]
           properties:
-            id: { $ref: '#/components/schemas/Uuid' }
+            id: { $ref: '#/components/schemas/Ulid' }
             name: { type: string }
         project:
           oneOf:
             - type: object
               required: [id, name]
               properties:
-                id: { $ref: '#/components/schemas/Uuid' }
+                id: { $ref: '#/components/schemas/Ulid' }
                 name: { type: string }
             - type: 'null'
         email: { $ref: '#/components/schemas/Email' }
@@ -1362,10 +1364,10 @@ components:
       type: object
       required: [organization_id, project_id, role]
       properties:
-        organization_id: { $ref: '#/components/schemas/Uuid' }
+        organization_id: { $ref: '#/components/schemas/Ulid' }
         project_id:
           oneOf:
-            - $ref: '#/components/schemas/Uuid'
+            - $ref: '#/components/schemas/Ulid'
             - type: 'null'
         role: { type: string, enum: [viewer, member, admin, owner] }
     StartTransferRequest:
@@ -1373,13 +1375,13 @@ components:
       required: [user_id]
       additionalProperties: false
       properties:
-        user_id: { $ref: '#/components/schemas/Uuid' }
+        user_id: { $ref: '#/components/schemas/Ulid' }
     OwnershipTransfer:
       type: object
       required: [from_user_id, to_user_id, created_at, expires_at]
       properties:
-        from_user_id: { $ref: '#/components/schemas/Uuid' }
-        to_user_id: { $ref: '#/components/schemas/Uuid' }
+        from_user_id: { $ref: '#/components/schemas/Ulid' }
+        to_user_id: { $ref: '#/components/schemas/Ulid' }
         created_at: { $ref: '#/components/schemas/Timestamp' }
         expires_at: { $ref: '#/components/schemas/Timestamp' }
     CreateOrganizationApiKeyRequest:
@@ -1434,17 +1436,17 @@ components:
       properties:
         id: { $ref: '#/components/schemas/ApiKeyId' }
         name: { type: string }
-        organization_id: { $ref: '#/components/schemas/Uuid' }
+        organization_id: { $ref: '#/components/schemas/Ulid' }
         project_id:
           description: null for an organization key.
           oneOf:
-            - $ref: '#/components/schemas/Uuid'
+            - $ref: '#/components/schemas/Ulid'
             - type: 'null'
         database: { type: ['string', 'null'] }
         scopes:
           type: array
           items: { $ref: '#/components/schemas/Scope' }
-        created_by: { $ref: '#/components/schemas/Uuid' }
+        created_by: { $ref: '#/components/schemas/Ulid' }
         created_at: { $ref: '#/components/schemas/Timestamp' }
         expires_at:
           oneOf:
@@ -1462,7 +1464,7 @@ components:
         api_key: { $ref: '#/components/schemas/ApiKey' }
         key:
           type: string
-          pattern: '^tsk_[0-9a-hjkmnp-tv-z]{20}_[0-9a-hjkmnp-tv-z]{52}$'
+          pattern: '^[0-7][0-9A-HJKMNP-TV-Z]{25}_[0-9a-hjkmnp-tv-z]{52}$'
           description: The whole key string, shown once. Its first 24 characters are the id.
     ApiKeyPage:
       type: object
@@ -1476,7 +1478,7 @@ components:
       type: object
       required: [id, actor, action, target, detail, occurred_at]
       properties:
-        id: { $ref: '#/components/schemas/Uuid' }
+        id: { $ref: '#/components/schemas/Ulid' }
         actor: { type: string, description: 'The acting user id.' }
         action:
           type: string
@@ -1525,7 +1527,7 @@ components:
       type: object
       required: [project_id, reason, suspended_at]
       properties:
-        project_id: { $ref: '#/components/schemas/Uuid' }
+        project_id: { $ref: '#/components/schemas/Ulid' }
         reason: { type: string }
         suspended_at: { $ref: '#/components/schemas/Timestamp' }
     DeviceAuthorizationRequest:
@@ -1566,7 +1568,7 @@ components:
       properties:
         grant_type: { type: string, const: client_credentials }
         project:
-          $ref: '#/components/schemas/Uuid'
+          $ref: '#/components/schemas/Ulid'
           description: Organization keys, the project to act in (omit for an organization token); project keys, optional and equal to the key's.
         scope:
           type: string
@@ -1581,9 +1583,9 @@ components:
         grant_type: { type: string, const: 'urn:ietf:params:oauth:grant-type:token-exchange' }
         subject_token: { type: string, description: 'A sign-in access token of this tenant, issued to the same client.' }
         subject_token_type: { type: string, const: 'urn:ietf:params:oauth:token-type:access_token' }
-        organization: { $ref: '#/components/schemas/Uuid' }
+        organization: { $ref: '#/components/schemas/Ulid' }
         project:
-          $ref: '#/components/schemas/Uuid'
+          $ref: '#/components/schemas/Ulid'
           description: Omit for an organization token.
         scope:
           type: string

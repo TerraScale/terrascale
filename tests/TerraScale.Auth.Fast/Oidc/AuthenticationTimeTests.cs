@@ -23,7 +23,7 @@ public sealed class AuthenticationTimeTests(TerraBaseFixture fixture)
     private const string Password = "correct horse battery";
     private const string Ip = "203.0.113.7";
     private const string Audience = "https://gru.api.terrascale.tech";
-    private const string ServiceId = "ts-orchestrator";
+    private const string ServiceId = "01M4EQ2FRJ8S8B29E8TQVWNW4K";
     private const string ServiceSecret = "service-test-secret-0123456789abcdefghij";
     private const string SignIn = $"/ui/{OidcIssuer.Slug}/sign-in";
     private static readonly string[] ReadScopes = ["documents:read"];
@@ -332,7 +332,7 @@ public sealed class AuthenticationTimeTests(TerraBaseFixture fixture)
             var created = await oidc.OkAsync(HttpMethod.Post, path, token, new { name = "backend", scopes = ReadScopes }, HttpStatusCode.Created);
             var key = created.GetProperty("key").GetString()!;
             using var exchanged = await oidc.ApiKeyTokenAsync(key, parameters);
-            await AssertMachineAuthenticationTimeAbsentAsync(oidc, exchanged, key[..24]);
+            await AssertMachineAuthenticationTimeAbsentAsync(oidc, exchanged, created.GetProperty("api_key").GetProperty("id").GetString()!);
         }
     }
 

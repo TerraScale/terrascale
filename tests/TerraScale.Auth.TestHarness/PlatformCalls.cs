@@ -82,7 +82,7 @@ public static class PlatformCalls
     public static Task<HttpResponseMessage> ApiKeyTokenAsync(this OidcHarness oidc, string key, Dictionary<string, string>? parameters = null)
     {
         var form = new Dictionary<string, string>(parameters ?? []) { ["grant_type"] = "client_credentials" };
-        return oidc.PostTokenAsync(form, key[..24], key);
+        return oidc.PostTokenAsync(form, key[..26], key);
     }
 
     /// <summary>Exchanges a user's sign-in access token as the dashboard (RFC 8693).</summary>
@@ -94,7 +94,7 @@ public static class PlatformCalls
             ["subject_token"] = subjectToken,
             ["subject_token_type"] = "urn:ietf:params:oauth:token-type:access_token",
         };
-        return oidc.PostTokenAsync(form, "ts-dashboard", OidcHarness.ClientSecret, client);
+        return oidc.PostTokenAsync(form, "01M4EQ2FRJ8S8B29E8TQVWNW4J", OidcHarness.ClientSecret, client);
     }
 
     /// <summary>Validates a token as TerraBase does (ES256, the issuer's JWKS, exact issuer and audience, at+jwt).</summary>

@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
+using TerraScale.DotNet;
 using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Auth.Store;
@@ -87,6 +88,11 @@ public sealed class AuthStore(TerraBaseDatabase database, TimeProvider clock)
         OrganizationCollection, MembershipCollection, ProjectCollection, ProjectMemberCollection, ApiKeyCollection,
         InvitationCollection, AuditEventCollection, MfaCollection,
     ];
+
+    private static readonly TerraScaleIdGenerator Ids = new();
+
+    /// <summary>Generates a canonical ULID with monotonic ordering within a millisecond.</summary>
+    public static string NewId() => Ids.NewId();
 
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
 

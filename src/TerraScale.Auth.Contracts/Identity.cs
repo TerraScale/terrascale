@@ -1,7 +1,7 @@
 namespace TerraScale.Auth.Contracts;
 
 /// <summary>A user account (collection <c>users</c>). One account owns each normalized email per instance.</summary>
-/// <param name="Id">Random UUID.</param>
+/// <param name="Id">Canonical ULID.</param>
 /// <param name="InstanceId">The owning instance.</param>
 /// <param name="Email">Trimmed, lowercased email.</param>
 /// <param name="AuthEpoch">Advancing it invalidates every session and passcode issued before.</param>

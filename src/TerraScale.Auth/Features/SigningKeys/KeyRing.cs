@@ -6,6 +6,8 @@ using System.Text.Json;
 using TerraScale.Auth.Configuration;
 using TerraScale.Auth.Contracts;
 using TerraScale.Auth.Security;
+using TerraScale.Auth.Store;
+using TerraScale.DotNet;
 
 namespace TerraScale.Auth.Features.SigningKeys;
 
@@ -613,7 +615,7 @@ public sealed class KeyRing(ISigningKeyVault vault, AuthOptions options, TimePro
         return null;
     }
 
-    private static string NewKeyId() => $"skey_{Tokens.RandomToken(40)}";
+    private static string NewKeyId() => AuthStore.NewId();
 
     // Binds each box to its key and instance: a box copied into another ring or under another
     // kid fails authentication. Key ids never contain ':', so the context is unambiguous.
@@ -650,7 +652,7 @@ public sealed class KeyRing(ISigningKeyVault vault, AuthOptions options, TimePro
         for (var index = 0; index < ring.Keys.Count; index++)
         {
             var record = ring.Keys[index];
-            if (record is null || record.Algorithm != Algorithm || string.IsNullOrEmpty(record.Id) || record.Id.Contains(':', StringComparison.Ordinal)
+            if (record is null || record.Algorithm != Algorithm || !TerraScaleIds.IsValid(record.Id)
                 || !identifiers.Add(record.Id) || (index > 0 && record.CreatedAt <= ring.Keys[index - 1].CreatedAt))
             {
                 throw new CryptographicException("The signing key ring has invalid key identities or creation order.");
