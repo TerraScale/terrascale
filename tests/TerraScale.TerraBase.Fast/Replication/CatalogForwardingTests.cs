@@ -197,7 +197,7 @@ public sealed class CatalogForwardingTests
         await using var follower = await StartFollowerAsync(peers, tls, issuer, primary.PeerAddress!,
             services => services.AddSingleton<TimeProvider>(time));
         await ReadyAsync(follower);
-        var token = issuer.Mint(Guid.NewGuid().ToString(), descriptor => descriptor.NotBefore = time.GetUtcNow().UtcDateTime);
+        var token = issuer.Mint(EntityIds.New().ToString(), descriptor => descriptor.NotBefore = time.GetUtcNow().UtcDateTime);
         using var client = tls.CreateClient(follower.ClientAddress!, token);
         var name = new Faker().Company.CompanyName();
         var organization = await CreatedIdAsync(client, "/v1/management/organizations", new { name });

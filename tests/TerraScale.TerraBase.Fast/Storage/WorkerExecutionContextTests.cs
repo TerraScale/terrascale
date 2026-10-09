@@ -46,7 +46,7 @@ public sealed class WorkerExecutionContextTests
                         provider.GetRequiredService<ILogger<SqliteStorageEngine>>(), options.ShutdownGrace,
                         readinessCacheTtl: options.ReadinessCacheTtl,
                         checkpoint: provider.GetRequiredService<DatabaseLifecycleCheckpoint>(),
-                        afterMigration: ObserveWorker, queryBudget: options.QueryBudget);
+                        afterBootstrap: ObserveWorker, queryBudget: options.QueryBudget);
                     return engine;
                 }
                 finally
@@ -75,7 +75,7 @@ public sealed class WorkerExecutionContextTests
             created.EnsureSuccessStatusCode();
             await probe!.WaitAsync(deadline.Token);
             await StorageFixture.CreateCollectionAsync(tenant, "context", "items", deadline.Token);
-            var document = tenant.Database("context", $"/collections/items/documents/{StorageFixture.Id("a")}");
+            var document = tenant.Database("context", $"/collections/items/documents/by-key?id={StorageFixture.Id("a")}");
             using var written = await tenant.Data.PutAsJsonAsync(document, new { n = 1 }, deadline.Token);
             written.EnsureSuccessStatusCode();
             using var read = await tenant.Data.GetAsync(document, deadline.Token);
@@ -112,7 +112,7 @@ public sealed class WorkerExecutionContextTests
             {
                 if (write)
                 {
-                    // Migration uses the read pool; this store's write lane has never started yet.
+                    // Bootstrap uses the read pool; this store's write lane has never started yet.
                     ambient.Value = marker;
                     startingFlowSuppressed = ExecutionContext.IsFlowSuppressed();
                 }

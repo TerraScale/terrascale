@@ -908,7 +908,8 @@ internal sealed partial class EngineManagementService(
             await transaction.PutBatchAsync(
             [
                 (DatabaseNames(database.ProjectId), database.Name, JsonSerializer.SerializeToUtf8Bytes(database.Id, Id)),
-                (Databases(database.ProjectId), database.Id, JsonSerializer.SerializeToUtf8Bytes(database, TerraBaseJsonContext.Default.ManagedDatabase)),
+                (Databases(database.ProjectId), database.Id,
+                    EntityPayload.WithoutId(JsonSerializer.SerializeToUtf8Bytes(database, TerraBaseJsonContext.Default.ManagedDatabase), database.Id, nested: true)),
                 (EngineManagedBackupService.BackedUpDatabases, database.Id,
                     JsonSerializer.SerializeToUtf8Bytes(DatabaseOwner.Of(tenant with { DatabaseId = database.Id }), TerraBaseJsonContext.Default.DatabaseOwner)),
             ], new (long Version, DocumentVersion? Previous)[3], cancellationToken).ConfigureAwait(false);

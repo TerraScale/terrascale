@@ -83,18 +83,18 @@ public sealed class BackupEmptySegmentTests
             oci.BeforeGet = null;
         }
 
-        using var cancelled = await data.GetAsync(ManagementApi.Uri($"/v1/projects/{database.Project}/databases/cancelled/collections/items/documents/{ManagementApi.DocumentId("before")}"), cancellationToken);
+        using var cancelled = await data.GetAsync(ManagementApi.Uri($"/v1/projects/{database.Project}/databases/cancelled/collections/items/documents/by-key?id={ManagementApi.DocumentId("before")}"), cancellationToken);
         await Assert.That(cancelled.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         using var restored = await api.Client.PostAsJsonAsync(ManagementApi.Uri(database.Path + "/point-in-time/restore"), new { pointInTime = at, name = "empty" }, cancellationToken);
         await Assert.That(restored.StatusCode).IsEqualTo(HttpStatusCode.Created);
-        using var read = await data.GetAsync(ManagementApi.Uri($"/v1/projects/{database.Project}/databases/empty/collections/items/documents/{ManagementApi.DocumentId("before")}"), cancellationToken);
+        using var read = await data.GetAsync(ManagementApi.Uri($"/v1/projects/{database.Project}/databases/empty/collections/items/documents/by-key?id={ManagementApi.DocumentId("before")}"), cancellationToken);
         read.EnsureSuccessStatusCode();
         await Assert.That((await read.Content.ReadFromJsonAsync<JsonElement>(cancellationToken)).GetProperty("document").GetProperty("text").GetString()).IsEqualTo(text);
 
         sealedEmpty[^1] ^= 0xff;
         using var rejected = await api.Client.PostAsJsonAsync(ManagementApi.Uri(database.Path + "/point-in-time/restore"), new { pointInTime = at, name = "bad-tag" }, cancellationToken);
         await Assert.That(rejected.StatusCode).IsEqualTo(HttpStatusCode.InternalServerError);
-        using var absent = await data.GetAsync(ManagementApi.Uri($"/v1/projects/{database.Project}/databases/bad-tag/collections/items/documents/{ManagementApi.DocumentId("before")}"), cancellationToken);
+        using var absent = await data.GetAsync(ManagementApi.Uri($"/v1/projects/{database.Project}/databases/bad-tag/collections/items/documents/by-key?id={ManagementApi.DocumentId("before")}"), cancellationToken);
         await Assert.That(absent.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(oci.BadSignatures).IsEqualTo(0);
     }

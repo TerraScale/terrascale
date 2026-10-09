@@ -2,6 +2,7 @@ using System.Net;
 using System.Runtime.CompilerServices;
 using Microsoft.Extensions.DependencyInjection;
 using OpenTelemetry.Metrics;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Platform;
@@ -60,7 +61,7 @@ public sealed class StoppedHostTests
             tls.Apply(settings);
             TestIssuer.Configure(settings);
         }, transport.Route);
-        using var client = tls.CreateClient(server.ClientAddress!, issuer.Mint(Guid.NewGuid().ToString()));
+        using var client = tls.CreateClient(server.ClientAddress!, issuer.Mint(EntityIds.New().ToString()));
         // The bearer token is checked against keys the server fetched through its ts-auth client.
         using var response = await client.GetAsync(ManagementApi.Uri("/v1/management/organizations"), TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);

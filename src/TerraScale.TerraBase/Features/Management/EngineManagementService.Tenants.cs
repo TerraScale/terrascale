@@ -481,7 +481,7 @@ internal sealed partial class EngineManagementService
         }
 
         var record = found is ManagedDatabase database ? database : null;
-        var validKey = Ulid.TryParse(projectId, out _) && DatabaseName.TryParse(name, out _);
+        var validKey = EntityIds.IsValid(projectId) && DatabaseName.TryParse(name, out _);
         if (validKey && (record is null || Admits((record.Name, record.Placement(options.Region)))))
         {
             Cache(_records, key, sequence, record);

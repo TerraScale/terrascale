@@ -12,6 +12,7 @@ using TerraBase.Engine.Cluster;
 using TerraBase.Features.CrossRegion;
 using TerraBase.Features.CrossRegion.V1;
 using TerraBase.Hosting;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -278,8 +279,8 @@ public sealed partial class CrossRegionPagingProgressTests
         ManagementApi gru, ManagementApi sfo, CancellationToken token)
     {
         var faker = new Faker();
-        var organization = Guid.NewGuid().ToString("D");
-        var project = Guid.NewGuid().ToString("D");
+        var organization = EntityIds.New().ToString();
+        var project = EntityIds.New().ToString();
         var organizationName = faker.Company.CompanyName();
         var projectName = faker.Random.AlphaNumeric(12);
         foreach (var api in new[] { gru, sfo })
@@ -287,7 +288,7 @@ public sealed partial class CrossRegionPagingProgressTests
             using var service = api.Service(api.User);
             using var registered = await service.PostAsJsonAsync(ManagementApi.Uri("/v1/management/commits"), new
             {
-                id = Guid.NewGuid().ToString("D"),
+                id = EntityIds.New().ToString(),
                 ops = new object[]
                 {
                     new { op = "create_organization", id = organization, name = organizationName },
@@ -299,7 +300,7 @@ public sealed partial class CrossRegionPagingProgressTests
 
         var databases = await CreatePlacedAsync(gru, organization, project,
             Enumerable.Range(0, 10).Select(index => "prepare-" + index.ToString(CultureInfo.InvariantCulture)), token);
-        // Within one project, canonical UUID text orders like the heads' big-endian ids.
+        // Within one project, canonical ULID text orders like the heads' binary ids.
         databases.Sort((left, right) => string.CompareOrdinal(left.Id, right.Id));
         var documents = databases.Select(database => ManagementApi.Uri(ManagementApi.DocumentPath(database, "items", "saved"))).ToArray();
         var values = databases.Select(_ => faker.Lorem.Sentence()).ToArray();

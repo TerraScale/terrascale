@@ -6,17 +6,17 @@ import "terrabase/v1/replication.proto";
 
 option csharp_namespace = "TerraBase.Features.CrossRegion.V1";
 
-// Version 2 of cross-region (WAN) replication over NATS request/reply (docs/cross-region.md). A member of one
+// Version 3 of cross-region (WAN) replication over NATS request/reply (docs/cross-region.md). A member of one
 // region pulls the change groups of every origin of another region from the member that originated them, after
 // its own applied prefix. Every request and reply is at most 1 MiB, NATS's default max_payload.
 // The schema/package and ts.orch.v1 subjects remain unchanged; WanRequest.version selects the WAN wire version.
 // HeadsReply travels inside the versioned TBLZ4E01 application envelope, checked before parsing its protobuf.
-// Version 1 requests and raw protobuf heads replies are rejected; there is no wire fallback.
+// Version 1 and 2 requests and raw protobuf heads replies are rejected; there is no wire fallback.
 
 // A request on ts.orch.v1.<cell>.query.terrabase-wan.heads, which every member of the cell answers with the first
 // page of its heads, or on ts.orch.v1.<cell>.query.terrabase-wan.member.<member>, which one member answers.
 message WanRequest {
-  // 2.
+  // 3.
   uint32 version = 1;
   oneof request {
     HeadsRequest heads = 2;

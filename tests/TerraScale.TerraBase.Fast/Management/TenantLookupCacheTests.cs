@@ -9,6 +9,7 @@ using TerraBase.Engine.Sqlite;
 using TerraBase.Fast.Storage;
 using TerraBase.Features.Management;
 using TerraBase.Hosting;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -46,7 +47,7 @@ public sealed class TenantLookupCacheTests
             var organization = await gru.CreateOrganizationAsync(faker.Company.CompanyName());
             var project = await gru.CreateProjectAsync(organization, faker.Random.AlphaNumeric(12));
             var name = "cached";
-            var database = new TenantContext(organization, PlanTier.Hobby, project, Guid.NewGuid().ToString("D"));
+            var database = new TenantContext(organization, PlanTier.Hobby, project, EntityIds.New().ToString());
             var path = $"/v1/management/organizations/{organization}/projects/{project}/databases";
 
             // Negative answers for an id the catalog does not record yet.
@@ -55,7 +56,7 @@ public sealed class TenantLookupCacheTests
 
             using (var created = await gru.Client.PostAsJsonAsync(ManagementApi.Uri("/v1/management/commits"), new
             {
-                id = Guid.NewGuid().ToString("D"),
+                id = EntityIds.New().ToString(),
                 ops = new[] { new { op = "create_database", organization, project, name, id = database.DatabaseId!, replica_regions = InSfo } },
             }, token))
             {
@@ -210,7 +211,7 @@ public sealed class TenantLookupCacheTests
             _ => "missing",
         };
         var missing = created with { Project = project, Name = name };
-        var expected = scenario is "long-name" or "invalid-name" ? HttpStatusCode.BadRequest : HttpStatusCode.NotFound;
+        var expected = scenario == "valid" ? HttpStatusCode.NotFound : HttpStatusCode.BadRequest;
         using var client = await api.CreateClientAsync(created.Organization, "documents:read");
         using (var response = await client.GetAsync(ManagementApi.Uri(ManagementApi.DocumentPath(missing, "items", "absent")), token))
         {

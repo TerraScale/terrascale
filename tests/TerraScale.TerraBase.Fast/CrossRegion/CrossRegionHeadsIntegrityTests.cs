@@ -11,6 +11,7 @@ using TerraBase.Engine.Cluster;
 using TerraBase.Features.CrossRegion;
 using TerraBase.Features.CrossRegion.V1;
 using TerraBase.Features.Replication;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.CrossRegion;
@@ -24,7 +25,7 @@ public sealed class CrossRegionHeadsIntegrityTests
     [Test]
     [Arguments("header")]
     [Arguments("payload")]
-    [Arguments("raw-uuid")]
+    [Arguments("raw-ulid")]
     public async Task Damaged_heads_cannot_delete_a_live_replica_or_adopt_a_database_and_a_healthy_sweep_resumes(string damage)
     {
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
@@ -41,8 +42,8 @@ public sealed class CrossRegionHeadsIntegrityTests
             await using var sfo = await StartAsync(network, credentials, "sfo-1", "sfo", "sfo-a", bus, clock);
             try
             {
-                var organization = Guid.NewGuid().ToString("D");
-                var project = Guid.NewGuid().ToString("D");
+                var organization = EntityIds.New().ToString();
+                var project = EntityIds.New().ToString();
                 var organizationName = faker.Company.CompanyName();
                 var projectName = faker.Random.AlphaNumeric(12);
                 foreach (var api in new[] { gru, sfo })
@@ -50,7 +51,7 @@ public sealed class CrossRegionHeadsIntegrityTests
                     using var service = api.Service(api.User);
                     using var registered = await service.PostAsJsonAsync(ManagementApi.Uri("/v1/management/commits"), new
                     {
-                        id = Guid.NewGuid().ToString("D"),
+                        id = EntityIds.New().ToString(),
                         ops = new object[]
                         {
                             new { op = "create_organization", id = organization, name = organizationName },
@@ -250,21 +251,21 @@ public sealed class CrossRegionHeadsIntegrityTests
             }
 
             byte[] damaged;
-            if (damage == "raw-uuid")
+            if (damage == "raw-ulid")
             {
-                // This exact transport bit flip keeps protobuf and all UUID lengths valid, as the lossy WAN fault does.
+                // This exact transport bit flip keeps protobuf and all ULID lengths valid, as the lossy WAN fault does.
                 damaged = WanProtocol.DecodeHeads(reply).ToByteArray();
                 var offset = damaged.AsSpan().IndexOf(DatabaseId.Span);
                 if (DatabaseId.Length != 16 || offset < 0)
                 {
-                    throw new InvalidOperationException("the real heads reply did not contain the saved database UUID");
+                    throw new InvalidOperationException("the real heads reply did not contain the saved database ULID");
                 }
 
                 damaged[offset + 15] ^= 0x5a;
                 var changed = HeadsReply.Parser.ParseFrom(damaged);
                 if (changed.Heads.Any(head => head.DatabaseId.Length != 16) || changed.Heads.Any(head => head.DatabaseId == DatabaseId))
                 {
-                    throw new InvalidOperationException("the injected fault did not change only the saved UUID bytes");
+                    throw new InvalidOperationException("the injected fault did not change only the saved ULID bytes");
                 }
             }
             else

@@ -19,7 +19,7 @@ Every member of a region **pulls** each other region's change groups:
    the member's own subject. The whole `HeadsReply` travels in the existing versioned `TBLZ4E01` LZ4 application
    envelope ([0007](decisions/0007-lz4-application-envelope-replication.md)). Its header, encoded payload and decoded
    payload checksums are validated before parsing any heads, membership or EOF evidence. A reply that fails integrity
-   validation cannot authorize adoption, placement changes, cursor progress or deletion, even when its UUIDs would still
+   validation cannot authorize adoption, placement changes, cursor progress or deletion, even when its ULIDs would still
    parse as valid protobuf. Encoded and decoded heads replies are each bounded to 1 MiB; the reply budget leaves room
    for the envelope header and LZ4 expansion.
 
@@ -83,9 +83,9 @@ Every member of a region **pulls** each other region's change groups:
 A round that pulled something and is still behind starts the next one at once; otherwise the next one starts a
 second later. Each origin gets at most 16 pull requests per round, so a busy origin does not hold up the others.
 
-The messages use the protobuf schema `Features/Replication/Protos/terrabase/v1/wan.proto`, with WAN request version 2.
-This is a breaking wire change: version 1 requests and raw protobuf heads replies are rejected, with no fallback or
-migration. Regions must use version 2 to replicate with each other; a version mismatch postpones replication and cannot
+The messages use the protobuf schema `Features/Replication/Protos/terrabase/v1/wan.proto`, with WAN request version 3.
+This is a breaking wire change: version 1 and 2 requests and raw protobuf heads replies are rejected, with no fallback or
+migration. Regions must use version 3 to replicate with each other; a version mismatch postpones replication and cannot
 authorize inventory cleanup. The protobuf package and `ts.orch.v1` subjects remain unchanged: that subject version
 belongs to ts-orchestrator's fabric, separately from the WAN request version and application envelope major version 1.
 Pull replies retain their protobuf framing and existing change-group envelopes. Every request and encoded reply is at

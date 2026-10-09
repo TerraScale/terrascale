@@ -11,8 +11,8 @@ using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine.Cluster;
 using TerraBase.Features.CrossRegion;
 using TerraBase.Features.CrossRegion.V1;
-using TerraBase.Primitives;
 using TerraBase.Features.Replication;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.CrossRegion;

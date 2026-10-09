@@ -350,7 +350,7 @@ public sealed class TransactionApiTests
             reads.Add(await api.GetAsync(id));
         }
 
-        reads.Add(await api.SendAsync(HttpMethod.Get, $"{api.Project}/databases/db/collections/other/documents/{elsewhere}"));
+        reads.Add(await api.SendAsync(HttpMethod.Get, $"{api.Project}/databases/db/collections/other/documents/by-key?id={elsewhere}"));
         reads.Add(await api.GetAsync(last));
         // A single put reports whether it created the document from the version it replaced.
         var recreated = await api.PutAsync(deleted, new { n = 3 });
@@ -389,8 +389,8 @@ public sealed class TransactionApiTests
             Ops(Put(existing, large), Put(first, large), Put(second, "{}", "nope")), "application/json");
         var unknown = await api.SendRawAsync(HttpMethod.Post, api.Transactions,
             Ops(Put(first, "{}"), Put(existing, """{"n":2}"""), Put(second, "{}", "nope")), "application/json");
-        var legacy = await api.SendRawAsync(HttpMethod.Post, api.Transactions,
-            Ops(Put(first, "{}"), Put(existing, """{"n":2}"""), Put("NOT-A-UUID", "{}"), Put(second, "{}")), "application/json");
+        var invalid = await api.SendRawAsync(HttpMethod.Post, api.Transactions,
+            Ops(Put(first, "{}"), Put(existing, """{"n":2}"""), Put("", "{}"), Put(second, "{}")), "application/json");
         var exists = await api.SendRawAsync(HttpMethod.Post, api.Transactions,
             Ops(Put(first, "{}"), $$$"""{"op":"create","collection":"items","id":"{{{existing}}}","document":{}}""", Put(second, "{}", "nope")),
             "application/json");
@@ -400,8 +400,8 @@ public sealed class TransactionApiTests
 
         await Assert.That((capacity.Status, capacity.Code, capacity.Op)).IsEqualTo((HttpStatusCode.ServiceUnavailable, "capacity", (int?)1));
         await Assert.That((unknown.Status, unknown.Code, unknown.Op)).IsEqualTo((HttpStatusCode.NotFound, "unknown_collection", (int?)2));
-        await Assert.That((legacy.Status, legacy.Message, legacy.Op))
-            .IsEqualTo((HttpStatusCode.BadRequest, "a new id must be a lowercase hyphenated UUID", (int?)2));
+        await Assert.That((invalid.Status, invalid.Message, invalid.Op))
+            .IsEqualTo((HttpStatusCode.BadRequest, "id must be 1 to 256 characters without control characters", (int?)2));
         await Assert.That((exists.Status, exists.Code, exists.Op)).IsEqualTo((HttpStatusCode.PreconditionFailed, "precondition_failed", (int?)1));
         await Assert.That(unchanged.Version).IsEqualTo(original.Version);
         await Assert.That(unchanged.Json.GetProperty("document").GetRawText()).IsEqualTo("""{"n":1}""");
