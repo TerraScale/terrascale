@@ -193,14 +193,27 @@ jobs:
           FORGEJO_REPOSITORY: ${{ forgejo.repository }}
         run: bash scripts/ci/publish-binary.sh
 
+
+      # Deployment failure must not erase the time this build became qualified.
+      - name: Record the qualified main build for the deployment-lag guard
+        if: forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main'
+        shell: bash
+        env:
+          FORGEJO_TOKEN: ${{ forgejo.token }}
+        run: |
+          set -euo pipefail
+          curl -fsS --connect-timeout 10 --max-time 30 -o /dev/null \
+            -H "Authorization: token ${FORGEJO_TOKEN}" -H 'Content-Type: application/json' \
+            --data '{"state":"success","context":"deployment/qualified","description":"Verified main build ready for automatic deployment"}' \
+            "https://git.terrascale.tech/api/v1/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}"
   # TS-610: hand the published release to ts-orchestrator, which rolls it out
-  # to every region, canary first, health-gated with automatic rollback.
-  # Off until the repository variable TS_AUTO_DEPLOY_CELLS names the cells;
+  # to every region, health-gated with automatic rollback. Missing deployment
+  # configuration fails visibly instead of silently skipping a green build;
   # scripts/ci/deploy.sh lists every input.
   deploy:
     name: Deploy the release to every region
     needs: [publish-binary]
-    if: vars.TS_AUTO_DEPLOY_CELLS != '' && forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main'
+    if: forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main'
     runs-on: terrascale-builder
     timeout-minutes: 40
     steps:

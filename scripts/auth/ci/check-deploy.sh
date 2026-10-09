@@ -130,7 +130,7 @@ deploy() {
 deploy $'GRU\n  SFO\tFRA\n' "$pinned" || { cat "$sandbox/log" >&2; fail "a multiline cell list failed"; }
 expected=(release service-deploy --role app --binary '*' --repository https://git.example/TerraScale/app
 	--commit "$head" --source-checkout . --environment canary --actor ci-release --signing-key-secret secret
-	--vault-id vault --namespace ns --cell GRU --cell SFO --cell FRA)
+	--vault-id vault --namespace ns --region-timeout 30m --poll 5s --cell GRU --cell SFO --cell FRA)
 mapfile -t ran < "$sandbox/ran"
 ((${#ran[@]} == ${#expected[@]})) || fail "ts-orch ran with $(paste -sd' ' "$sandbox/ran")"
 for index in "${!expected[@]}"; do

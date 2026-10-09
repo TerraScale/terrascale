@@ -129,6 +129,6 @@ OCI_CONFIG_FILE=$work/oci-config setsid "$work/ts-orch" release service-deploy -
 	--repository "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" --commit "$GITHUB_SHA" --source-checkout . \
 	--environment "$TS_AUTO_DEPLOY_ENVIRONMENT" --actor "$TS_RELEASE_ACTOR" \
 	--signing-key-secret "$TS_RELEASE_KEY_SECRET" --vault-id "$TS_RELEASE_VAULT_ID" \
-	--namespace "$TS_OBJECT_NAMESPACE" "${cells[@]}" &
+	--namespace "$TS_OBJECT_NAMESPACE" --region-timeout 30m --poll 5s "${cells[@]}" &
 child=$!
 wait "$child"
