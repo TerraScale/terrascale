@@ -20,6 +20,7 @@ func TestMirrorOrganizationsPreservesDashboardOwnership(t *testing.T) {
 	}
 	orgID, projectID := account.ActiveOrganizationID, account.ActiveProjectID
 	dbID, addedDBID, serviceID, serviceDBID := core.NewID(), core.NewID(), core.NewID(), core.NewID()
+	laterServiceDBID := core.NewID()
 	if err := store.Update(t.Context(), account.ID, func(a *core.Account) error {
 		org := a.Organizations[orgID]
 		org.PlanID, org.Kind = "09XCWRH05BWWBADSBPTPDMFA7D", "business"
@@ -66,7 +67,10 @@ func TestMirrorOrganizationsPreservesDashboardOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for range 2 {
+	for iteration := range 2 {
+		if iteration == 1 {
+			databases[serviceID] = append(databases[serviceID], v1.ManagedDatabase{ID: laterServiceDBID, ProjectID: serviceID, Name: "new-service"})
+		}
 		if err := MirrorOrganizations(t.Context(), store, management.As(account.User.ID), account.User.Email); err != nil {
 			t.Fatal(err)
 		}
@@ -84,6 +88,9 @@ func TestMirrorOrganizationsPreservesDashboardOwnership(t *testing.T) {
 		}
 		if !service.System || !core.SystemDatabase(service.Databases[serviceDBID]) {
 			t.Fatalf("imported service resources lack system ownership: %+v", service)
+		}
+		if iteration == 1 && !core.SystemDatabase(service.Databases[laterServiceDBID]) {
+			t.Fatal("a database discovered on a later mirror lost its service ownership")
 		}
 	}
 }

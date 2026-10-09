@@ -66,6 +66,7 @@ func mirror(ctx context.Context, store core.Store, m *v1.ManagementUser, remote 
 			org.Members[a.User.ID] = core.Member{UserID: a.User.ID, Email: a.User.Email, Name: a.User.Name, Role: "owner", Status: "active", CreatedAt: now}
 		}
 		for _, rp := range projects {
+			// Preserve current ownership; the greenfield cutover deletes all pre-cutover rows.
 			project, ok := org.Projects[rp.ID]
 			if !ok {
 				project = core.Project{
