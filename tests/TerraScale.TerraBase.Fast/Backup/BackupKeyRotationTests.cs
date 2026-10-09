@@ -1,4 +1,6 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
+using System.Globalization;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
@@ -17,6 +19,7 @@ public sealed class BackupKeyRotationTests
     [Test]
     public async Task Generated_keys_remain_cached_for_restore_after_rotation_and_stray_key_objects_are_ignored()
     {
+        var elapsed = Stopwatch.StartNew();
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         deadline.CancelAfter(TimeSpan.FromSeconds(30));
         var cancellationToken = deadline.Token;
@@ -25,10 +28,18 @@ public sealed class BackupKeyRotationTests
         var directory = Directory.CreateTempSubdirectory("terrabase-key-history-").FullName;
         var before = new Faker().Lorem.Sentence(12);
         var after = new Faker().Lorem.Sentence(12);
+        var phases = new (double Elapsed, double Cpu, double Pause)[5];
+        void Mark(int index)
+        {
+            phases[index] = (elapsed.Elapsed.TotalSeconds, Environment.CpuUsage.TotalTime.TotalSeconds, GC.GetTotalPauseDuration().TotalSeconds);
+        }
+        Mark(0);
         try
         {
             await using var api = await StartAsync(oci, time, directory);
+            Mark(1);
             var (database, _) = await SeedAsync(api, time, before);
+            Mark(2);
             var keys = Keys(database);
             var oldKey = oci.Objects.Keys.Single(key => key.StartsWith(keys, StringComparison.Ordinal));
             var oldRequests = oci.ObserveKey(oldKey);
@@ -46,8 +57,10 @@ public sealed class BackupKeyRotationTests
             var generated = oci.GeneratedKeys;
             var backup = api.Server.Services.GetRequiredService<IContinuousBackup>();
             using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
+            Mark(3);
 
             time.Advance(TimeSpan.FromHours(23));
+            Mark(4);
             using var refreshed = await data.PutAsJsonAsync(ManagementApi.Uri(ManagementApi.DocumentPath(database, "people", "refresh")), new { text = before }, cancellationToken);
             refreshed.EnsureSuccessStatusCode();
             await backup.RunOnceAsync(cancellationToken);
@@ -89,6 +102,18 @@ public sealed class BackupKeyRotationTests
             await Assert.That(outOfRangeRequests.Unwraps).IsEqualTo(0);
             await Assert.That(nestedRequests.Gets).IsEqualTo(0);
             await Assert.That(nestedRequests.Unwraps).IsEqualTo(0);
+        }
+        catch (OperationCanceledException)
+        {
+            Console.Error.WriteLine("Backup rotation setup: phases=prepared,host,seed,client,advance23h; index,elapsed_s,cpu_s,gc_pause_s");
+            for (var index = 0; index < phases.Length; index++)
+            {
+                var (elapsedSeconds, cpuSeconds, pauseSeconds) = phases[index];
+                Console.Error.WriteLine(string.Create(CultureInfo.InvariantCulture,
+                    $"Backup rotation setup: {index},{elapsedSeconds:F3},{cpuSeconds:F3},{pauseSeconds:F3}"));
+            }
+
+            throw;
         }
         finally
         {

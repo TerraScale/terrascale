@@ -5,14 +5,14 @@ using System.Text;
 
 namespace TerraBase.Testing;
 
-/// <summary>Reports bounded runtime samples at the first integration failure, before a CI job can be killed.</summary>
+/// <summary>Reports new bounded runtime samples at integration failures, before a CI job can be killed.</summary>
 public static class SuiteDiagnostics
 {
     private const int Capacity = 600;
     private static readonly Queue<Sample> Samples = new(Capacity);
     private static Timer? _timer;
     private static long _started;
-    private static int _reported;
+    private static double _reported = -1;
     private static string? _cgroup;
 
     internal static TimeSpan Elapsed => Stopwatch.GetElapsedTime(_started);
@@ -32,8 +32,7 @@ public static class SuiteDiagnostics
     [AfterEvery(HookType.Test)]
     public static void ReportFailure(TestContext context)
     {
-        if (context.Execution.Result?.State is not (TestState.Failed or TestState.Timeout or TestState.Cancelled)
-            || Interlocked.Exchange(ref _reported, 1) != 0)
+        if (context.Execution.Result?.State is not (TestState.Failed or TestState.Timeout or TestState.Cancelled))
         {
             return;
         }
@@ -42,7 +41,8 @@ public static class SuiteDiagnostics
         Sample[] samples;
         lock (Samples)
         {
-            samples = [.. Samples];
+            samples = [.. Samples.Where(sample => sample.Elapsed > _reported)];
+            _reported = Samples.Last().Elapsed;
         }
 
         // Each row holds only the latest completed collection; a gap in gc_index means unobserved collections.
@@ -53,6 +53,14 @@ public static class SuiteDiagnostics
         {
             context.OutputWriter.WriteLine(string.Create(CultureInfo.InvariantCulture,
                 $"Suite runtime: {sample.Elapsed:F3},{sample.Cpu:F3},{sample.Pause:F3},{sample.Gen2},{sample.Threads},{sample.Queued},{sample.Contentions},{sample.GcIndex},{sample.GcGeneration},{sample.GcPromoted},{sample.GcPause0:F3},{sample.GcPause1:F3},{sample.HostCpuSome},{sample.CgroupCpuSome},{sample.CgroupThrottled},{sample.Load1:F2}"));
+        }
+
+        var generations = GC.GetGCMemoryInfo().GenerationInfo;
+        for (var index = 0; index < generations.Length; index++)
+        {
+            var generation = generations[index];
+            context.OutputWriter.WriteLine(string.Create(CultureInfo.InvariantCulture,
+                $"Suite heap: generation={index} before_bytes={generation.SizeBeforeBytes} after_bytes={generation.SizeAfterBytes} fragmented_bytes={generation.FragmentationAfterBytes}"));
         }
     }
 

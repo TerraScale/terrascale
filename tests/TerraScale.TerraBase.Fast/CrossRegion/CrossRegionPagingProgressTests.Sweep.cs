@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Diagnostics;
 using System.Globalization;
 using System.Net;
 using System.Text.Json;
@@ -174,6 +175,7 @@ public sealed partial class CrossRegionPagingProgressTests
     [Arguments(true)]
     public async Task A_seventeen_page_inventory_completes_across_rounds_and_advances_the_local_cleanup_page(bool malformedPrefix)
     {
+        var elapsed = Stopwatch.StartNew();
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         var output = TUnit.Core.TestContext.Current!.OutputWriter;
         var faker = new Faker();
@@ -238,8 +240,29 @@ public sealed partial class CrossRegionPagingProgressTests
 
                 // One unlimited real heads scan seeds every record and replica file before pagination is constrained.
                 output.WriteLine("paging inventory: waiting for initial WAN seed round to pause");
+                var setupSeconds = elapsed.Elapsed.TotalSeconds;
+                var seedPause = GC.GetTotalPauseDuration();
                 bus.Begin.TrySetResult();
-                await clock.PausedAsync(token);
+                try
+                {
+                    await clock.PausedAsync(token);
+                }
+                catch (Exception error) when (error is TimeoutException or OperationCanceledException)
+                {
+                    var files = -1;
+                    try
+                    {
+                        files = Directory.EnumerateFiles(sfo.Server.DataDirectory, "*.db", SearchOption.AllDirectories).Count();
+                    }
+                    catch (Exception readError) when (readError is IOException or UnauthorizedAccessException)
+                    {
+                        // Diagnostics must preserve the seeding failure when files cannot be inspected.
+                    }
+
+                    Console.Error.WriteLine(string.Create(CultureInfo.InvariantCulture,
+                        $"WAN cold seed: malformed={malformedPrefix} setup_s={setupSeconds:F3} seed_s={elapsed.Elapsed.TotalSeconds - setupSeconds:F3} gc_pause_s={(GC.GetTotalPauseDuration() - seedPause).TotalSeconds:F3} db_files={files} advertised={bus.LastAdvertisement?.Heads.Count ?? -1} pulls={bus.Pulls.Count} active_heads={bus.ActiveHeads}"));
+                    throw;
+                }
                 HashSet<string> removed = [with(StringComparer.Ordinal)];
                 output.WriteLine("paging inventory: validating initial inventory and documents");
                 await AssertSweepInventoryAsync(sfo, databases, removed, token);
