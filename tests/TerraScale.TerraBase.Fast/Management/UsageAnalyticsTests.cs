@@ -524,8 +524,9 @@ public sealed class UsageAnalyticsTests
 
             return ValueTask.CompletedTask;
         };
+        // The background sampler may start this minute's pass as soon as the clock reaches it.
+        var started = (clock.GetUtcNow().ToUnixTimeSeconds() / 60) + 1;
         clock.Advance(TimeSpan.FromMinutes(1));
-        var started = clock.GetUtcNow().ToUnixTimeSeconds() / 60;
         var flush = api.Server.Services.GetServices<IHostedService>().OfType<UsageFlushService>().Single();
         await flush.SampleStorageAsync(CancellationToken.None);
         await flush.SampleStorageAsync(CancellationToken.None);
