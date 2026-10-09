@@ -4,6 +4,8 @@ import (
 	"fmt"
 
 	"terrascale.tech/dashboard/internal/ui"
+	"terrascale.tech/dashboard/internal/features/analytics"
+	"terrascale.tech/dashboard/internal/features/replication"
 	"terrascale.tech/dashboard/internal/ui/charts"
 	"terrascale.tech/dashboard/internal/ui/icons"
 )
@@ -15,6 +17,19 @@ templ homeView(data pageData) {
 <span>API keys</span></a>
 			<a class="ts-btn ts-btn-primary" href="/databases">@icons.Plus(16)
 <span>New database</span></a>
+			if data.Tab == "overview" {
+				<form class="ts-filters" method="get" action="/" aria-label="Filter overview analytics" data-submit-once>
+					<label class="ts-filter-inline" for="overview-range">
+						<span class="ts-filter-inline-label">Range</span>
+						<select class="ts-select" id="overview-range" name="range">
+							for _, rangeKey := range []string{"1h", "24h", "7d", "30d"} {
+								<option value={ rangeKey } selected?={ rangeKey == data.ActivityRange }>{ rangeKey }</option>
+							}
+						</select>
+					</label>
+					<button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">Apply</button>
+				</form>
+			}
 		}
 		@ui.Tabs("Overview sections", []ui.Tab{
 			{Label: "Overview", URL: "/", Active: data.Tab != "connect"},
@@ -29,6 +44,12 @@ templ homeView(data pageData) {
 }
 
 templ overviewView(data pageData) {
+	<p class="ts-meta ts-measurement-loading" role="status">Loading analytics, replication and regions…</p>
+	@analytics.Home(data.Analytics)
+	<div class="ts-grid ts-grid-2">
+		@regionsPanel(data.Regions)
+		@replication.Summary(data.Replication)
+	</div>
 	@ui.Stats("Workspace metrics") {
 		@ui.Stat("Databases", fmt.Sprint(data.DatabaseCount), data.DatabaseDetail)
 		@ui.Stat("Organization members", fmt.Sprint(data.OrganizationMembers), data.OrganizationMembersDetail)
@@ -63,7 +84,7 @@ templ overviewView(data pageData) {
 templ activityRange(data pageData) {
 	<span class="ts-sr-only" id="home-range-label">Activity range</span>
 	@ui.Dropdown(ui.DropdownProps{End: true, LabelledBy: "home-range-label home-range-value", Trigger: rangeTrigger(data.ActivityRange), TriggerClass: "ts-select ts-input-sm"}) {
-		for _, r := range []string{"24h", "7d", "30d"} {
+		for _, r := range []string{"1h", "24h", "7d", "30d"} {
 			@ui.MenuItem(ui.MenuItemProps{Href: "/?range=" + r, Label: r, Current: data.ActivityRange == r})
 		}
 	}

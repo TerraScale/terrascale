@@ -60,11 +60,12 @@ func TestPersistsAcrossDashboardRestart(t *testing.T) {
 	}
 
 	limits := core.OperationLimits{ReadLimit: 1000, WriteLimit: 2000, ReplicationLimit: 3000}
+	databaseID := core.NewID()
 	if err := store.UpdateAs(t.Context(), want.Principal(), func(a *core.Account) error {
 		org := a.Organizations[a.ActiveOrganizationID]
 		project := org.Projects[a.ActiveProjectID]
 		project.OperationLimits = limits
-		project.Databases["db_restart_limits"] = core.Database{ID: "db_restart_limits", ProjectID: project.ID, Name: "limits", OperationLimits: limits}
+		project.Databases[databaseID] = core.Database{ID: databaseID, ProjectID: project.ID, Name: "limits", OperationLimits: limits}
 		org.Projects[project.ID] = project
 		a.Organizations[org.ID] = org
 		return nil
@@ -85,7 +86,7 @@ func TestPersistsAcrossDashboardRestart(t *testing.T) {
 		t.Fatalf("restarted account = %+v, want %+v", got, want)
 	}
 	project := got.Organizations[got.ActiveOrganizationID].Projects[got.ActiveProjectID]
-	if project.OperationLimits != limits || project.Databases["db_restart_limits"].OperationLimits != limits {
+	if project.OperationLimits != limits || project.Databases[databaseID].OperationLimits != limits {
 		t.Fatalf("operation limits did not persist across restart: %+v", project)
 	}
 }
@@ -114,7 +115,7 @@ func TestMirrorOrganizationsFollowsEveryServiceDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	user := m.WithToken(tb.Token(t, "user-admin", "admin@example.test"))
+	user := m.WithToken(tb.Token(t, admin.User.ID, "admin@example.test"))
 	addService := func(org, name string) {
 		t.Helper()
 		project, err := user.CreateProject(t.Context(), org, name)
@@ -189,7 +190,7 @@ func TestSessionsReplaceOnlyUnchanged(t *testing.T) {
 	key[0] = 1
 	now := time.Now()
 	first := session.Record{
-		AccountID: "acct_1", UserID: "usr_1", AuthVersion: 2, ExpiresAt: now.Add(time.Hour),
+		AccountID: "6RDSCGEW3TSZH61T8JHT0HJTD9", UserID: "4535YKH20T3JR5H77D86GA0KDS", AuthVersion: 2, ExpiresAt: now.Add(time.Hour),
 		Refresh: `{"sub":"sub-1","token":"r1"}`, RefreshAt: now.Add(time.Minute),
 	}
 	if err := sessions.Put(t.Context(), key, first); err != nil {

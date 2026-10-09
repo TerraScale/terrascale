@@ -18,6 +18,7 @@ import (
 	"terrascale.tech/dashboard/internal/core/memstore"
 	"terrascale.tech/dashboard/internal/features/access"
 	"terrascale.tech/dashboard/internal/features/admin"
+	"terrascale.tech/dashboard/internal/features/analytics"
 	"terrascale.tech/dashboard/internal/features/apikeys"
 	"terrascale.tech/dashboard/internal/features/audit"
 	"terrascale.tech/dashboard/internal/features/auth"
@@ -56,10 +57,23 @@ type Application struct {
 }
 
 func New(cfg config.Config) (*Application, error) {
+	return NewWithMetrics(cfg, nil, nil)
+}
+
+// NewWithMetrics supplies the typed ts-go metrics boundary. Test clients live
+// in tests; the in-memory demo never fabricates provider measurements.
+func NewWithMetrics(cfg config.Config, metrics core.MetricsReader, regionHealth core.RegionHealthReader) (*Application, error) {
 	if err := cfg.ValidateBackend(); err != nil {
 		return nil, err
 	}
 	ctx := context.Background()
+	if regionHealth == nil && cfg.RegionStatusURL != "" {
+		reader, err := tsgo.NewStatusRegions(cfg.RegionStatusURL)
+		if err != nil {
+			return nil, err
+		}
+		regionHealth = reader
+	}
 	var store core.Store
 	var sessionStore session.Store
 	var throttleStore throttle.Store
@@ -100,7 +114,17 @@ func New(cfg config.Config) (*Application, error) {
 		// The meter calls the Management API on TERRABASE_URL's client
 		// listener: it alone accepts the user's ts-auth token.
 		meter = terrabase.Meter{BaseURL: cfg.TerraBaseURL, Client: cfg.TerraBaseHTTPClient}
-		store = terrabase.New(db)
+		if _, err := db.Create(ctx); err != nil {
+			return nil, err
+		}
+		persistent := terrabase.New(db)
+		if err := terrabase.EnsureCollections(ctx, db); err != nil {
+			return nil, err
+		}
+		if err := persistent.SeedPlans(ctx); err != nil {
+			return nil, err
+		}
+		store = persistent
 		sessionStore = terrabase.NewSessions(db)
 		throttleStore = terrabase.NewThrottle(db)
 		grants = terrabase.NewDeviceGrants(db)
@@ -175,6 +199,7 @@ func New(cfg config.Config) (*Application, error) {
 		Store: store, Sessions: sessions, CSRF: guard, Render: renderer,
 		Events: datastar.Events{}, Demo: memoryDemo, Tools: core.NewTools(store),
 		SDK: sdkFactory, Management: management, Usage: meter, DocumentsOnly: db != nil && management == nil,
+		Metrics: metrics, RegionHealth: regionHealth,
 		Throttle: throttle.New(throttle.Options{ClientHeader: cfg.ClientIPHeader, Store: throttleStore}),
 		SignUpMail: throttle.New(throttle.Options{
 			ClientHeader: cfg.ClientIPHeader, Store: throttleStore, KeyPrefix: "signup-mail ",
@@ -201,6 +226,7 @@ func New(cfg config.Config) (*Application, error) {
 	organization.Mount(mux, deps)
 	access.Mount(mux, deps, billing)
 	home.Mount(mux, deps)
+	analytics.Mount(mux, deps)
 	databases.Mount(mux, deps)
 	apikeys.Mount(mux, deps)
 	data.Mount(mux, deps)
@@ -316,7 +342,7 @@ func seedDemoAccount(ctx context.Context, store core.Store) error {
 		return err
 	}
 	account, err := store.CreateAccount(ctx, core.User{
-		ID: "usr_01JC9Q7T4N8Y2M3P5R7V9X1ZAB", Name: "Mario Kraus",
+		ID: "7CVZQJY80VY06TJG7VP8TQ44DM", Name: "Mario Kraus",
 		Email: demoAccountEmail, PasswordHash: hash, Role: "owner", PlatformAdmin: true,
 	})
 	if err != nil {

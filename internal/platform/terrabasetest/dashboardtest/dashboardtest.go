@@ -49,7 +49,7 @@ func Start(t testing.TB) Dashboard {
 		t.Fatal(err)
 	}
 	return Dashboard{
-		Server: s, Principal: account.Principal(), Token: s.Token(t, "user-"+rand.Text(), email),
+		Server: s, Principal: account.Principal(), Token: s.Token(t, account.User.ID, email),
 		Deps: core.Deps{
 			Store: store, SDK: tsgo.Factory{HTTPClient: s.Client}, Management: m,
 			Regions: func(context.Context) ([]core.Region, error) {

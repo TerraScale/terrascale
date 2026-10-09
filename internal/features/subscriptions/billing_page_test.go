@@ -266,7 +266,7 @@ func TestBillingPageForAnOrganizationAwaitingItsFirstPayment(t *testing.T) {
 	fixture := newBillingFixture(t)
 	if err := fixture.store.UpdateAs(t.Context(), fixture.principal, func(account *core.Account) error {
 		org := account.Organizations[fixture.principal.OrganizationID]
-		org.Kind, org.PlanID, org.BillingStatus = "business", "plan_starter", "billing_required"
+		org.Kind, org.PlanID, org.BillingStatus = "business", "443RCMMF70MNP6S1QMT230NF99", "billing_required"
 		account.Organizations[org.ID] = org
 		return nil
 	}); err != nil {
@@ -290,7 +290,7 @@ func TestBillingPageHidesOwnerActionsFromMembers(t *testing.T) {
 	fixture := newBillingFixture(t)
 	fixture.subscribe(t, "starter", intervalMonthly)
 	member := fixture.principal
-	member.UserID = "usr_member"
+	member.UserID = "3815H39Y2X0TANA4N0YVSSWWH3"
 
 	owner := fixture.page(t, fixture.principal, intervalMonthly)
 	if !owner.CanManage || !owner.ShowPortal {

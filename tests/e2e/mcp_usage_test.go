@@ -82,7 +82,7 @@ func TestMCPUsageReportsAndSetsSpendingControls(t *testing.T) {
 	if message := callToolError(t, session, "set_spending_controls", map[string]any{"databaseCaps": []map[string]any{{"id": "", "capCents": 100}}}); !strings.Contains(message, "database id is required") {
 		t.Errorf("empty database cap ID error = %q, want ID validation", message)
 	}
-	if message := callToolError(t, session, "get_usage", map[string]any{"databaseId": "db_missing"}); !strings.Contains(message, "not found") {
+	if message := callToolError(t, session, "get_usage", map[string]any{"databaseId": "7CWZH5HEGFV2Z8DWE3144TJQSS"}); !strings.Contains(message, "not found") {
 		t.Errorf("unknown database filter error = %q, want not found", message)
 	}
 }

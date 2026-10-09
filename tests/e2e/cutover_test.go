@@ -39,7 +39,7 @@ func TestCutoverBusinessOrganizationRetriesCanceledAnnualCheckoutAsMonthly(t *te
 	must(t, payment.Locator(`input[name="plan"][value="starter"]`).Check())
 	must(t, payment.Locator(`input[name="interval"][value="annual"]`).Check())
 	submitAndExpect(t, page, newOrganizationPath, 307, byRole(payment, *playwright.AriaRoleButton, "Continue to checkout").Click)
-	must(t, page.WaitForURL(regexp.MustCompile(`/checkout/cs_local_`)))
+	must(t, page.WaitForURL(regexp.MustCompile(`/checkout/[0-7][0-9A-HJKMNP-TV-Z]{25}(?:[?#]|$)`)))
 	visible(t, pageByRole(page, *playwright.AriaRoleHeading, "Local payment setup"))
 	must(t, expect.Locator(page.Locator(".ts-auth-subtitle")).ToContainText("Starter · billed annually"))
 	must(t, expect.Locator(page.GetByRole(*playwright.AriaRoleStatus)).ToContainText("No card details are collected"))
@@ -52,7 +52,7 @@ func TestCutoverBusinessOrganizationRetriesCanceledAnnualCheckoutAsMonthly(t *te
 	visible(t, byRole(wizard, *playwright.AriaRoleHeading, "Set up billing"))
 	must(t, payment.Locator(`input[name="interval"][value="monthly"]`).Check())
 	submitAndExpect(t, page, newOrganizationPath, 307, byRole(payment, *playwright.AriaRoleButton, "Continue to checkout").Click)
-	must(t, page.WaitForURL(regexp.MustCompile(`/checkout/cs_local_`)))
+	must(t, page.WaitForURL(regexp.MustCompile(`/checkout/[0-7][0-9A-HJKMNP-TV-Z]{25}(?:[?#]|$)`)))
 	must(t, expect.Locator(page.Locator(".ts-auth-subtitle")).ToContainText("billed monthly"))
 	click(t, pageByRole(page, *playwright.AriaRoleButton, "Confirm local demo setup"))
 
@@ -155,7 +155,7 @@ func TestCutoverSQLCheckExplainsQueryAndCollectionIndexIsCreated(t *testing.T) {
 	fill(t, database.Locator(`[name="name"]`), uniqueName("cutover"))
 	selectDatabaseRegions(t, database, "GRU")
 	submitAndExpect(t, page, "/api/v1/dashboard/databases", 303, byRole(database, *playwright.AriaRoleButton, "Create database").Click)
-	waitForPath(t, page, func(u *url.URL) bool { return strings.HasPrefix(u.Path, "/databases/db_") })
+	waitForPath(t, page, func(u *url.URL) bool { return entityPath(u.Path, "/databases/") })
 	databasePath := currentPath(t, page)
 
 	goToOK(t, page, databasePath+"/sql?collection=orders")
@@ -252,6 +252,7 @@ func TestCutoverSeededChartsRenderLabelledSamplesForSelectedRange(t *testing.T) 
 	t.Parallel()
 	page := newPage(t)
 	login(t, page, sampleAccount.Email, sampleAccount.Password)
+	goToOK(t, page, "/?range=7d")
 	activity := page.Locator("#home-activity svg.ts-chart")
 	visible(t, activity)
 	must(t, expect.Locator(activity).ToHaveAttribute("aria-label", regexp.MustCompile(`Sample organization activity`)))
@@ -330,7 +331,7 @@ func TestCutoverMarioMigrationProgressIsScopedToOrders(t *testing.T) {
 	t.Parallel()
 	page := newPage(t)
 	login(t, page, sampleAccount.Email, sampleAccount.Password)
-	const migration = "/databases/db_01JC9Q8Y5N7P9R3T5V7X9Z2AC/indexes?view=migration&collection="
+	const migration = "/databases/0Z793APJ2ECFW2F7P6J9F2RKVY/indexes?view=migration&collection="
 	goToOK(t, page, migration+"orders")
 	visible(t, pageByRole(page, *playwright.AriaRoleHeading, "Migration progress"))
 	visible(t, page.GetByText("Static sample from the Mario in-memory demo", playwright.PageGetByTextOptions{Exact: new(false)}))
@@ -353,7 +354,7 @@ func TestCutoverAdminEstateActionRecordsAuditEntry(t *testing.T) {
 	click(t, page.Locator(`a[href="/admin/estate?tab=operations"]`))
 	visible(t, pageByRole(page, *playwright.AriaRoleHeading, "Operations", true))
 	form := page.Locator(`form[action="/api/v1/admin/estate/action"]`)
-	target := uniqueName("db_cutover")
+	target := uniqueName("1NGHSBM820ESXY3EEBXBQ4YB7E")
 	reason := uniqueName("E2E audit record")
 	selectOption(t, form.Locator(`[name="action"]`), "pause")
 	fill(t, form.Locator(`[name="targetId"]`), target)
@@ -389,9 +390,9 @@ func TestCutoverSeededDatabaseDetailTabsRetainControls(t *testing.T) {
 	click(t, byRole(pageByRole(page, *playwright.AriaRoleNavigation, "Collections"), *playwright.AriaRoleLink, "orders"))
 	documents := page.Locator("#documents table tbody tr")
 	must(t, expect.Locator(documents).ToHaveCount(3))
-	click(t, documents.First().Locator(`details.ts-menu > summary[aria-label="Actions for ord_1001"]`))
+	click(t, documents.First().Locator(`details.ts-menu > summary[aria-label="Actions for 01K78000000000000000001001"]`))
 	click(t, byRole(documents.First(), *playwright.AriaRoleLink, "Edit"))
-	editor := pageByRole(page, *playwright.AriaRoleDialog, "ord_1001")
+	editor := pageByRole(page, *playwright.AriaRoleDialog, "01K78000000000000000001001")
 	visible(t, editor)
 	must(t, expect.Locator(editor.Locator("#document-json")).ToHaveValue(regexp.MustCompile(`"cus_1001"`)))
 	must(t, page.Keyboard().Press("Escape"))
@@ -431,7 +432,7 @@ func TestCutoverSeededDatabaseDetailTabsRetainControls(t *testing.T) {
 	fill(t, branch.Locator(`input[name="name"]`), branchName)
 	submitAndExpect(t, page, "/api/v1/dashboard/databases/branch", 303, byRole(branch, *playwright.AriaRoleButton, "Create branch").Click)
 	waitForPath(t, page, func(u *url.URL) bool {
-		return strings.HasPrefix(u.Path, "/databases/db_") && u.Path != databasePath
+		return entityPath(u.Path, "/databases/") && u.Path != databasePath
 	})
 	visible(t, pageByRole(page, *playwright.AriaRoleHeading, branchName))
 }

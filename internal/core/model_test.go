@@ -12,36 +12,36 @@ func TestDefaultProjectID(t *testing.T) {
 		{
 			name: "marked default",
 			projects: map[string]Project{
-				"prj_a": {OrganizationID: "org_1"},
-				"prj_b": {OrganizationID: "org_1", IsDefault: true},
+				"7PRR0P2V1D3B8TWN2SBH8H56YQ": {OrganizationID: "1MZ7GT1142NZMAQXJE73TYTFZW"},
+				"0RNQMHXN3S9APPXH49NK7HKTC6": {OrganizationID: "1MZ7GT1142NZMAQXJE73TYTFZW", IsDefault: true},
 			},
-			want: "prj_b",
+			want: "0RNQMHXN3S9APPXH49NK7HKTC6",
 		},
 		{
 			name: "first by ID without a default",
 			projects: map[string]Project{
-				"prj_c": {OrganizationID: "org_1"},
-				"prj_a": {OrganizationID: "org_1"},
+				"4RHQAH9DY169DF0EFHQPCR12JV": {OrganizationID: "1MZ7GT1142NZMAQXJE73TYTFZW"},
+				"7PRR0P2V1D3B8TWN2SBH8H56YQ": {OrganizationID: "1MZ7GT1142NZMAQXJE73TYTFZW"},
 			},
-			want: "prj_a",
+			want: "4RHQAH9DY169DF0EFHQPCR12JV",
 		},
 		{
 			name: "skips another organization's projects",
 			projects: map[string]Project{
-				"prj_a": {OrganizationID: "org_2", IsDefault: true},
-				"prj_b": {OrganizationID: "org_1"},
+				"7PRR0P2V1D3B8TWN2SBH8H56YQ": {OrganizationID: "74HHC6CSDPQX1TQ8CRT3750K68", IsDefault: true},
+				"0RNQMHXN3S9APPXH49NK7HKTC6": {OrganizationID: "1MZ7GT1142NZMAQXJE73TYTFZW"},
 			},
-			want: "prj_b",
+			want: "0RNQMHXN3S9APPXH49NK7HKTC6",
 		},
 		{
 			name:     "only another organization's projects",
-			projects: map[string]Project{"prj_a": {OrganizationID: "org_2"}},
+			projects: map[string]Project{"7PRR0P2V1D3B8TWN2SBH8H56YQ": {OrganizationID: "74HHC6CSDPQX1TQ8CRT3750K68"}},
 			want:     "",
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			org := Organization{ID: "org_1", Projects: tt.projects}
+			org := Organization{ID: "1MZ7GT1142NZMAQXJE73TYTFZW", Projects: tt.projects}
 			if got := org.DefaultProjectID(); got != tt.want {
 				t.Fatalf("DefaultProjectID() = %q, want %q", got, tt.want)
 			}

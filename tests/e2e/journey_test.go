@@ -132,7 +132,7 @@ func createDatabaseFromUI(t *testing.T, page playwright.Page, name string) {
 	fill(t, form.Locator(`[name="name"]`), name)
 	selectDatabaseRegions(t, form, "GRU")
 	click(t, byRole(form, *playwright.AriaRoleButton, "Create database"))
-	waitForPath(t, page, func(u *url.URL) bool { return strings.HasPrefix(u.Path, "/databases/db_") })
+	waitForPath(t, page, func(u *url.URL) bool { return entityPath(u.Path, "/databases/") })
 }
 
 // listedDatabaseNamed returns the named database from the dashboard list API.

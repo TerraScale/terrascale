@@ -26,7 +26,7 @@ func TestDemoBillingUpgradesThroughLocalSimulator(t *testing.T) {
 		must(t, expect.Locator(proPlan).ToContainText(allowance))
 	}
 	click(t, byRole(proPlan, *playwright.AriaRoleButton, "Upgrade to Pro"))
-	must(t, page.WaitForURL(regexp.MustCompile(`/checkout/cs_local_`)))
+	must(t, page.WaitForURL(regexp.MustCompile(`/checkout/[0-7][0-9A-HJKMNP-TV-Z]{25}(?:[?#]|$)`)))
 
 	status := page.GetByRole(*playwright.AriaRoleStatus)
 	visible(t, pageByRole(page, *playwright.AriaRoleHeading, "Local payment setup"))

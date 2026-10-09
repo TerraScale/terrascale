@@ -111,40 +111,11 @@
 }
 
 .ts-spending-notice > .ts-alert {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: var(--ts-s1) var(--ts-s3);
   background: var(--ts-surface);
-}
-
-.ts-spending-notice .ts-alert-title,
-.ts-spending-notice .ts-alert-body {
-  grid-column: 1;
-}
-
-.ts-spending-notice .ts-icon-btn {
-  grid-column: 2;
-  grid-row: 1 / span 2;
-}
-
-.ts-spending-heading,
-.ts-spending-actions,
-.ts-spending-database-heading {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--ts-s4);
 }
 
 .ts-spending-title {
   font-size: var(--ts-fs-xl);
-  font-weight: 600;
-}
-
-.ts-spending-form {
-  display: grid;
-  gap: var(--ts-s8);
 }
 
 .ts-spending-form > .ts-card {
@@ -161,19 +132,13 @@
 }
 
 .ts-spending-identity {
-  display: flex;
-  align-items: center;
+  flex-wrap: nowrap;
   gap: var(--ts-s2);
-  min-width: 0;
 }
 
 .ts-spending-identity > svg {
   flex: none;
   color: var(--ts-ink-3);
-}
-
-.ts-spending-organization-price {
-  max-width: 320px;
 }
 
 .ts-spending-limit-grid {
@@ -182,65 +147,19 @@
   gap: var(--ts-s4);
 }
 
-.ts-spending-price,
-.ts-spending-select {
-  position: relative;
-  min-width: 0;
-}
-
-.ts-spending-price > span,
-.ts-spending-select > svg {
-  position: absolute;
-  inset-inline-start: var(--ts-s3);
-  top: 50%;
-  transform: translateY(-50%);
-  pointer-events: none;
-  color: var(--ts-ink-3);
-}
-
-.ts-spending-price > .ts-input {
-  padding-inline-start: var(--ts-s8);
-}
-
-.ts-spending-select {
+.ts-spending-control {
   max-width: 400px;
 }
 
-.ts-spending-select > .ts-select {
-  padding-inline-start: var(--ts-s10);
-}
-
 .ts-spending-excess {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--ts-s6);
+  flex-wrap: nowrap;
   padding-block-start: var(--ts-s4);
   border-block-start: 1px solid var(--ts-line);
   cursor: pointer;
 }
 
 .ts-spending-excess > input {
-  appearance: none;
-  width: 40px;
-  height: 24px;
   border-color: var(--ts-control-line);
-}
-
-.ts-spending-excess > input::after {
-  top: 3px;
-  left: 3px;
-  transition: transform var(--ts-fast) var(--ts-ease);
-}
-
-.ts-spending-excess > input:checked {
-  border-color: var(--ts-accent);
-  background: var(--ts-accent-fill);
-}
-
-.ts-spending-excess > input:checked::after {
-  transform: translateX(16px);
-  background: var(--ts-on-accent);
 }
 
 .ts-spending-database + .ts-spending-database,

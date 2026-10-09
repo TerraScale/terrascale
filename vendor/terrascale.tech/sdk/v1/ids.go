@@ -1,54 +1,18 @@
 package v1
 
 import (
-	"crypto/sha1"
-	"encoding/hex"
+	"crypto/sha256"
+	"encoding/binary"
 	"fmt"
 	"regexp"
-	"strings"
-	"unicode"
-	"unicode/utf16"
-	"unicode/utf8"
+
+	"github.com/oklog/ulid/v2"
+
+	"terrascale.tech/sdk/internal/entityid"
 )
-
-// namespaceURL is RFC 9562's NAMESPACE_URL, 6ba7b811-9dad-11d1-80b4-00c04fd430c8.
-var namespaceURL = [16]byte{0x6b, 0xa7, 0xb8, 0x11, 0x9d, 0xad, 0x11, 0xd1, 0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30, 0xc8}
-
-// DocumentIDFor returns the deterministic document ID for a natural key in a
-// collection: uuidv5(uuidv5(NAMESPACE_URL, "terrabase:collection:" + collection), key).
-func DocumentIDFor(collection, key string) string {
-	ns := uuidV5(namespaceURL, "terrabase:collection:"+collection)
-	return formatUUID(uuidV5(ns, key))
-}
-
-func uuidV5(ns [16]byte, name string) [16]byte {
-	h := sha1.New()
-	h.Write(ns[:])
-	h.Write([]byte(name))
-	var u [16]byte
-	copy(u[:], h.Sum(nil))
-	u[6] = u[6]&0x0f | 0x50
-	u[8] = u[8]&0x3f | 0x80
-	return u
-}
-
-func formatUUID(u [16]byte) string {
-	var b [36]byte
-	hex.Encode(b[0:8], u[0:4])
-	b[8] = '-'
-	hex.Encode(b[9:13], u[4:6])
-	b[13] = '-'
-	hex.Encode(b[14:18], u[6:8])
-	b[18] = '-'
-	hex.Encode(b[19:23], u[8:10])
-	b[23] = '-'
-	hex.Encode(b[24:], u[10:])
-	return string(b[:])
-}
 
 var (
 	namePattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,62}$`)
-	uuidPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 	// versionPattern is any non-empty RFC 9110 entity-tag value without obs-text.
 	versionPattern = regexp.MustCompile(`^[\x21\x23-\x7e]+$`)
 )
@@ -60,12 +24,36 @@ func checkName(kind, name string) error {
 	return nil
 }
 
-// checkID accepts what TerraBase addresses: 1-256 UTF-16 units without control
-// characters. New ids must be UUIDs; older non-UUID ids stay addressable.
-// The path builder rejects a slash.
-func checkID(id string) error {
-	if id == "" || !utf8.ValidString(id) || len(utf16.Encode([]rune(id))) > 256 || strings.ContainsFunc(id, unicode.IsControl) {
-		return fmt.Errorf("terrabase: document ID %q must be 1 to 256 characters without control characters", id)
+// NewID returns a canonical uppercase ULID, monotonic within a millisecond.
+// It is safe for concurrent use.
+func NewID() string { return entityid.New() }
+
+// ValidateID checks the shared TerraScale entity ID contract.
+func ValidateID(id string) error { return entityid.Check(id) }
+
+func checkID(id string) error { return ValidateID(id) }
+
+// DocumentIDFor preserves canonical entity IDs and derives collection-scoped
+// ULID addresses for natural keys. Length framing prevents ambiguous tuples.
+func DocumentIDFor(collection, key string) string {
+	if ValidateID(key) == nil {
+		return key
+	}
+	h := sha256.New()
+	for _, part := range []string{collection, key} {
+		var size [8]byte
+		binary.BigEndian.PutUint64(size[:], uint64(len(part)))
+		h.Write(size[:])
+		h.Write([]byte(part))
+	}
+	return ulid.ULID(h.Sum(nil)[:16]).String()
+}
+
+// ValidateDocumentKey checks raw key bounds without changing the key.
+// Only generated keys and entity selectors follow the ULID contract.
+func ValidateDocumentKey(id string) error {
+	if err := entityid.DocumentKey(id); err != nil {
+		return fmt.Errorf("terrabase: %w", err)
 	}
 	return nil
 }

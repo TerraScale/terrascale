@@ -10,7 +10,7 @@ import (
 func TestUsageAndSpendingControlsSupportOrganizationWithoutProjects(t *testing.T) {
 	store := memstore.New()
 	account, err := store.CreateAccount(t.Context(), core.User{
-		ID: "usr_projectless", Email: "projectless@example.test", Name: "Projectless", PasswordHash: "hash",
+		ID: "5D8GT5G9JX5G679D1VFTRNRADT", Email: "projectless@example.test", Name: "Projectless", PasswordHash: "hash",
 	})
 	if err != nil {
 		t.Fatal(err)

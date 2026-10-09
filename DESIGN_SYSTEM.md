@@ -99,7 +99,9 @@ top layer.
 `internal/ui/charts` renders SVG on the server: monotone curves, a gradient
 area for single series, a dashed grid, and focusable hover columns (capped at
 60) with a guide line, dots and an SVG tooltip listing the point label and the
-exact value of every series. The tooltip is sized from its monospaced text and
+exact value of every series. Each additional group of three series reuses the
+categorical tokens with a distinct dash length, matching curves, legend strokes,
+tooltip keys and markers. The tooltip is sized from its monospaced text and
 flips left near the plot end, so it never leaves the viewBox. With Datastar
 running a line chart is one tab stop, starting on the latest point; the arrow
 keys, Home and End move between points. Rings and share bars sit in a

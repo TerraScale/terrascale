@@ -50,7 +50,6 @@ type section struct {
 	Description string
 	// Noun is the singular record name used in buttons and messages.
 	Noun     string
-	IDPrefix string
 	Icon     func(int) templ.Component
 	Tone     string
 	Fields   []field
@@ -101,7 +100,7 @@ var sections = []section{
 	{Key: "overview", Title: "Overview", Description: "Setup progress and identity totals for this instance.", Icon: icons.LayoutDashboard, Tone: "emerald"},
 	{Key: "quickstart", Title: "Quickstart", Description: "Connect an application to this instance with OpenID Connect.", Icon: icons.Zap, Tone: "amber"},
 	{
-		Key: "users", Title: "Users", Group: "Manage", Noun: "user", IDPrefix: "user", Icon: icons.Users, Tone: "pink", Editable: true,
+		Key: "users", Title: "Users", Group: "Manage", Noun: "user", Icon: icons.Users, Tone: "pink", Editable: true,
 		Description: "People who can sign in to your application.",
 		EmptyDetail: "Users appear here when they sign up on the hosted pages, or when you create them.",
 		Fields: []field{
@@ -111,7 +110,7 @@ var sections = []section{
 		},
 	},
 	{
-		Key: "organizations", Title: "Organizations", Group: "Manage", Noun: "organization", IDPrefix: "org", Icon: icons.Building2, Tone: "indigo", Editable: true,
+		Key: "organizations", Title: "Organizations", Group: "Manage", Noun: "organization", Icon: icons.Building2, Tone: "indigo", Editable: true,
 		Description: "Customer workspaces with their own members, roles, and SSO.",
 		EmptyDetail: "Create an organization to group users, send invitations, and scope SSO connections.",
 		Fields: []field{
@@ -120,7 +119,7 @@ var sections = []section{
 		},
 	},
 	{
-		Key: "memberships", Title: "Memberships", Group: "Manage", Noun: "membership", IDPrefix: "mem", Icon: icons.Network, Tone: "violet", Editable: true,
+		Key: "memberships", Title: "Memberships", Group: "Manage", Noun: "membership", Icon: icons.Network, Tone: "violet", Editable: true,
 		Description: "Which users belong to which organization, and with what role.",
 		EmptyDetail: "Add a user to an organization to give them a role there.",
 		Fields: []field{
@@ -130,7 +129,7 @@ var sections = []section{
 		},
 	},
 	{
-		Key: "invitations", Title: "Invitations", Group: "Manage", Noun: "invitation", IDPrefix: "inv", Icon: icons.MailPlus, Tone: "sky", Revocable: true,
+		Key: "invitations", Title: "Invitations", Group: "Manage", Noun: "invitation", Icon: icons.MailPlus, Tone: "sky", Revocable: true,
 		Description: "Pending email invitations to join an organization.",
 		EmptyDetail: "Invite someone by email; they join the organization when they accept.",
 		Fields: []field{
@@ -140,7 +139,7 @@ var sections = []section{
 		},
 	},
 	{
-		Key: "domains", Title: "Enrollment domains", Group: "Manage", Noun: "domain", IDPrefix: "dom", Icon: icons.Globe, Tone: "teal",
+		Key: "domains", Title: "Enrollment domains", Group: "Manage", Noun: "domain", Icon: icons.Globe, Tone: "teal",
 		Description: "Users with a verified email on these domains can join the organization.",
 		EmptyDetail: "Add a domain such as acme.com so verified users can enroll without an invitation.",
 		Fields: []field{
@@ -150,7 +149,7 @@ var sections = []section{
 	},
 	{Key: "sign-in", Title: "Sign-in methods", Group: "User & authentication", Description: "How users identify themselves and prove who they are.", Icon: icons.LockKeyhole, Tone: "blue"},
 	{
-		Key: "connections", Title: "SSO connections", Group: "User & authentication", Noun: "connection", IDPrefix: "conn", Icon: icons.GlobeLock, Tone: "cyan", Editable: true,
+		Key: "connections", Title: "SSO connections", Group: "User & authentication", Noun: "connection", Icon: icons.GlobeLock, Tone: "cyan", Editable: true,
 		Description: "Social and enterprise identity providers users can sign in with.",
 		EmptyDetail: "Add Google, Microsoft, or GitHub for social sign-in, or OIDC and SAML for enterprise SSO.",
 		// Provider forms own the connection fields; see providers.
@@ -159,7 +158,7 @@ var sections = []section{
 	{Key: "mfa", Title: "Multi-factor", Group: "User & authentication", Description: "Second factors users can enroll and must pass at sign-in.", Icon: icons.ShieldCheck, Tone: "lime"},
 	{Key: "sessions", Title: "Sessions", Group: "User & authentication", Description: "How long sign-ins last and how they end.", Icon: icons.Monitor, Tone: "orange"},
 	{
-		Key: "directories", Title: "Directory sync", Group: "User & authentication", Noun: "directory", IDPrefix: "dir", Icon: icons.Layers, Tone: "fuchsia",
+		Key: "directories", Title: "Directory sync", Group: "User & authentication", Noun: "directory", Icon: icons.Layers, Tone: "fuchsia",
 		Description: "SCIM 2.0 directories that provision and deprovision users from an identity provider.",
 		EmptyDetail: "Create a directory and give its SCIM endpoint and token to Okta, Entra ID, or another provider.",
 		Fields: []field{
@@ -167,7 +166,7 @@ var sections = []section{
 		},
 	},
 	{
-		Key: "clients", Title: "OAuth applications", Group: "Developers", Noun: "application", IDPrefix: "client", Icon: icons.Boxes, Tone: "violet",
+		Key: "clients", Title: "OAuth applications", Group: "Developers", Noun: "application", Icon: icons.Boxes, Tone: "violet",
 		Description: "Applications that sign users in through the OAuth 2.1 authorization code flow with PKCE.",
 		EmptyDetail: "Register an application to get a client ID for the authorization code flow.",
 		Fields: []field{
@@ -177,7 +176,7 @@ var sections = []section{
 		},
 	},
 	{
-		Key: "templates", Title: "JWT templates", Group: "Developers", Noun: "template", IDPrefix: "jtp", Icon: icons.FileJson, Tone: "amber", Editable: true,
+		Key: "templates", Title: "JWT templates", Group: "Developers", Noun: "template", Icon: icons.FileJson, Tone: "amber", Editable: true,
 		Description: "Custom-claim tokens minted on demand for third-party services.",
 		EmptyDetail: "Create a template to mint short-lived tokens with the claims another service expects.",
 		Fields: []field{
@@ -187,7 +186,7 @@ var sections = []section{
 		},
 	},
 	{
-		Key: "keys", Title: "Management keys", Group: "Developers", Noun: "key", IDPrefix: "key", Icon: icons.KeySquare, Tone: "rose", Revocable: true,
+		Key: "keys", Title: "Management keys", Group: "Developers", Noun: "key", Icon: icons.KeySquare, Tone: "rose", Revocable: true,
 		Description: "Scoped sk_ keys for the ts-auth Management API. This console records keys without issuing secrets.",
 		EmptyDetail: "Create a key scoped to the route families your backend calls.",
 		Fields: []field{
@@ -196,7 +195,7 @@ var sections = []section{
 		},
 	},
 	{
-		Key: "webhooks", Title: "Webhooks", Group: "Developers", Noun: "endpoint", IDPrefix: "wh", Icon: icons.Webhook, Tone: "orange",
+		Key: "webhooks", Title: "Webhooks", Group: "Developers", Noun: "endpoint", Icon: icons.Webhook, Tone: "orange",
 		Description: "HMAC-signed event deliveries with retries and a dead-letter queue.",
 		EmptyDetail: "Add an HTTPS endpoint to receive user, organization, and membership events.",
 		Fields: []field{

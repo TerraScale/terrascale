@@ -112,7 +112,7 @@ func (s Service) CheckInternalBilling(ctx context.Context, p core.Principal, org
 
 func (s Service) recordInternalCapAlert(ctx context.Context, owner core.Account, org core.Organization, bill *internalBill) error {
 	month := bill.PeriodStart.UTC().Format("2006-01")
-	createdAt, id := time.Now().UTC(), core.NewULID()
+	createdAt, id := time.Now().UTC(), core.NewID()
 	return s.deps.Store.Update(ctx, owner.ID, func(account *core.Account) error {
 		current, exists := account.Organizations[org.ID]
 		if account.User.ID != owner.User.ID || !exists || current.OwnerUserID != owner.User.ID || !current.Billing.Internal || current.Billing.SpendCapCents != bill.SpendCapCents {

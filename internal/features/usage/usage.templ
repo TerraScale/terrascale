@@ -8,6 +8,7 @@ import (
 
 	"terrascale.tech/dashboard/internal/core"
 	"terrascale.tech/dashboard/internal/ui"
+	"terrascale.tech/dashboard/internal/features/replication"
 	"terrascale.tech/dashboard/internal/ui/aria"
 	"terrascale.tech/dashboard/internal/ui/charts"
 	"terrascale.tech/dashboard/internal/ui/icons"
@@ -29,8 +30,14 @@ templ usageView(data pageData, csrfToken string) {
 		</div>
 		if data.Saved == "ok" {
 			<div class="ts-spending-notice" data-signals="{spendingSaved: true}" data-attr:hidden="!$spendingSaved">
-				@ui.Alert("success", "Changes saved", "Spending controls saved.") {
-					<button class="ts-icon-btn" type="button" aria-label="Dismiss save confirmation" data-on:click="$spendingSaved = false">@icons.X(16)</button>
+				@ui.Alert("success", "", "") {
+					<div class="ts-row-between">
+						<div class="ts-stack-sm">
+							<p class="ts-alert-title">Changes saved</p>
+							<p class="ts-alert-body">Spending controls saved.</p>
+						</div>
+						<button class="ts-icon-btn" type="button" aria-label="Dismiss save confirmation" data-on:click="$spendingSaved = false">@icons.X(16)</button>
+					</div>
 				}
 			</div>
 		}
@@ -42,7 +49,9 @@ templ usageView(data pageData, csrfToken string) {
 		}
 		switch data.Tab {
 			case "overview":
+				<p class="ts-meta ts-measurement-loading" role="status">Loading usage and replication…</p>
 				@overviewTab(data)
+				@replication.Section(data.Replication)
 			case "billing":
 				@billingTab(data, csrfToken)
 			default:
@@ -74,6 +83,7 @@ templ overviewFilters(data pageData) {
 		<label class="ts-filter-inline" for="usage-range">
 			<span class="ts-filter-inline-label">Period</span>
 			<select class="ts-select" id="usage-range" name="range">
+				<option value="1h" selected?={ data.HistoryRange == "1h" }>1h</option>
 				<option value="24h" selected?={ data.HistoryRange == "24h" }>Last 24 hours</option>
 				<option value="7d" selected?={ data.HistoryRange == "7d" }>Last 7 days</option>
 				<option value="30d" selected?={ data.HistoryRange == "30d" }>Last 30 days</option>
@@ -514,9 +524,9 @@ func billingChangeAction(data pageData) string {
 }
 
 templ spendingControlsTab(data pageData, csrfToken string) {
-	<div class="ts-spending-heading">
+	<div class="ts-row-between">
 		<div class="ts-stack-sm">
-			<h2 class="ts-spending-title">Spending controls</h2>
+			<h2 class="ts-section-title ts-spending-title">Spending controls</h2>
 			<p class="ts-meta">Manage monthly budgets and operation limits across your organization.</p>
 		</div>
 		@ui.Badge("info", data.PlanName + " plan")
@@ -527,21 +537,21 @@ templ spendingControlsTab(data pageData, csrfToken string) {
 	if !data.CanManage {
 		@ui.Alert("info", "View-only access", "Only organization owners and admins can change spending controls.")
 	}
-	<form id="spending-controls" class="ts-spending-form" method="post" action="/api/v1/dashboard/usage/spending-controls" data-submit-once data-signals={ spendingSignals(data.SelectedProject) } data-on:invalid__capture="$spendingProject = el.querySelector('input:invalid')?.closest('[data-project-id]')?.dataset.projectId || $spendingProject">
+	<form id="spending-controls" class="ts-stack-lg ts-spending-form" method="post" action="/api/v1/dashboard/usage/spending-controls" data-submit-once data-signals={ spendingSignals(data.SelectedProject) } data-on:invalid__capture="$spendingProject = el.querySelector('input:invalid')?.closest('[data-project-id]')?.dataset.projectId || $spendingProject">
 		<input type="hidden" name="_csrf" value={ csrfToken }/>
 		@ui.Card(ui.CardProps{ID: "organization-controls", Title: "Organization", Description: "Set the monthly budget shared by all projects and databases."}) {
 			<fieldset class="ts-stack" disabled?={ !data.CanManage }>
 				<legend class="ts-sr-only">Organization spending limits</legend>
-				<div class="ts-spending-identity">
+				<div class="ts-row ts-spending-identity">
 					@icons.Building2(20)
 					<strong class="ts-break">{ data.OrganizationName }</strong>
 				</div>
-				<div class="ts-spending-organization-price">
+				<div class="ts-spending-control">
 					@spendingPrice("organization-spend-cap", "spendCap", data.OrganizationCap)
 				</div>
 				if data.InternalBill == nil {
 					<input type="hidden" name="initial_paidExcess" value={ strconv.FormatBool(data.PaidExcess) }/>
-					<label class="ts-spending-excess" for="paid-excess">
+					<label class="ts-row-between ts-spending-excess" for="paid-excess">
 						<span class="ts-stack-sm"><strong>Allow usage beyond included plan resources</strong><span class="ts-hint" id="paid-excess-hint">Additional usage is billed according to your plan.</span></span>
 						<input class="ts-switch" id="paid-excess" type="checkbox" role="switch" name="paidExcess" value="true" checked?={ data.PaidExcess } aria-describedby="paid-excess-hint"/>
 					</label>
@@ -550,8 +560,7 @@ templ spendingControlsTab(data pageData, csrfToken string) {
 		}
 		@ui.Card(ui.CardProps{ID: "project-controls", Title: "Project", Description: "Choose a project and configure its price and operation limits."}) {
 			@ui.Field(ui.FieldProps{ID: "spending-project", Label: "Select project"}) {
-				<div class="ts-spending-select">
-					@icons.FolderOpen(18)
+				<div class="ts-spending-control">
 					<select class="ts-select" id="spending-project" name="project" data-bind="spendingProject" disabled?={ len(data.SpendingProjects) == 0 }>
 						if len(data.SpendingProjects) == 0 {
 							<option value="">No projects yet</option>
@@ -586,8 +595,8 @@ templ spendingControlsTab(data pageData, csrfToken string) {
 					for _, database := range project.Databases {
 						<fieldset class="ts-spending-database ts-stack" disabled?={ !data.CanManage }>
 							<legend class="ts-sr-only">{ database.Name + " database limits" }</legend>
-							<div class="ts-spending-database-heading">
-								<div class="ts-spending-identity">@icons.Database(18)<h3 class="ts-section-title ts-break">{ database.Name }</h3></div>
+							<div class="ts-row-between">
+								<div class="ts-row ts-spending-identity">@icons.Database(18)<h3 class="ts-section-title ts-break">{ database.Name }</h3></div>
 								@ui.Badge("neutral", database.Region)
 							</div>
 							@spendingLimitFields("database", "db", database.ID, database.SpendCap, database.Operations)
@@ -597,7 +606,7 @@ templ spendingControlsTab(data pageData, csrfToken string) {
 				</div>
 			}
 		}
-		<div class="ts-spending-actions">
+		<div class="ts-row-between ts-spending-actions">
 			<p class="ts-hint">Limits reset monthly. Leave a field empty or enter 0 for no limit.</p>
 			if data.CanManage {
 				<button class="ts-btn ts-btn-primary" type="submit">@icons.Save(16)<span>Save spending controls</span></button>
@@ -619,10 +628,7 @@ templ spendingPrice(id, name, value string) {
 	{{ field := ui.FieldProps{ID: id, Label: "Price limit (USD)", Hint: "USD per month"} }}
 	<input type="hidden" name={ "initial_" + name } value={ value }/>
 	@ui.Field(field) {
-		<div class="ts-spending-price">
-			<span aria-hidden="true">$</span>
-			<input class="ts-input" id={ id } name={ name } inputmode="decimal" pattern="\d+(\.\d{1,2})?" value={ value } placeholder="No limit" { field.ControlAttrs()... }/>
-		</div>
+		<input class="ts-input" id={ id } name={ name } inputmode="decimal" pattern="\d+(\.\d{1,2})?" value={ value } placeholder="No limit" { field.ControlAttrs()... }/>
 	}
 }
 

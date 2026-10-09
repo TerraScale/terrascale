@@ -322,7 +322,7 @@ func createRecord(instance *core.AuthInstance, current section, form url.Values,
 		return "", "", err
 	}
 	resource := core.AuthResource{
-		ID: core.NewID(current.IDPrefix), Section: current.Key, Status: "Active",
+		ID: core.NewID(), Section: current.Key, Status: "Active",
 		Values: storedValues(fields, values, nil), CreatedAt: now,
 	}
 	switch current.Key {

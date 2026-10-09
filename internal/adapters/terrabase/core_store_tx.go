@@ -2,7 +2,6 @@ package terrabase
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -15,9 +14,9 @@ import (
 )
 
 type coreWrite struct {
-	catalog    bool
-	deletePlan string
-	adminID    string
+	catalog      bool
+	deletePlan   string
+	adminActions bool
 }
 
 func validateCore(before, after memstore.State, now time.Time) error {
@@ -217,15 +216,15 @@ func (s *Store) commitCore(ctx context.Context, a *coreSnapshot, after memstore.
 			guarded[k] = true
 		}
 	}
-	if write.adminID != "" {
+	if write.adminActions {
 		for _, action := range after.AdminActions[len(a.state.AdminActions):] {
-			data, err := json.Marshal(action)
+			data, err := encodeData(action)
 			if err != nil {
 				return core.ErrInvalid
 			}
-			r := coreRecord{Kind: "record", ID: write.adminID, RecordedAt: action.RecordedAt, Data: data}
+			r := coreRecord{Kind: "record", ID: action.ID, RecordedAt: action.RecordedAt, Data: data}
 			createOps[tx.Len()] = true
-			tx.Create("admin_actions", write.adminID, r)
+			tx.Create("admin_actions", action.ID, r)
 		}
 	}
 	if tx.Len() == 0 && !write.catalog {

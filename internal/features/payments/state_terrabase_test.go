@@ -61,7 +61,7 @@ func TestTerraBaseStateStoreReadersDistinguishMissingDocumentsFromStorageErrors(
 				read func(*testing.T) error
 			}{
 				{"CustomerFor", func(t *testing.T) error {
-					customer, found, err := store.CustomerFor(t.Context(), core.NewULID())
+					customer, found, err := store.CustomerFor(t.Context(), core.NewID())
 					if customer != "" || found {
 						t.Errorf("CustomerFor = %q, %v; want empty, false", customer, found)
 					}
@@ -105,19 +105,19 @@ func TestTerraBaseStateStoreReadersDistinguishMissingDocumentsFromStorageErrors(
 func TestTerraBaseStateStoreBindsEachCustomerOnce(t *testing.T) {
 	store := realBillingStore(t)
 	ctx := t.Context()
-	if customer, err := store.BindCustomer(ctx, "org_a", "cus_a"); err != nil || customer != "cus_a" {
+	if customer, err := store.BindCustomer(ctx, "7VGX1JD78ZYNTV8K70SZAEK4QV", "cus_a"); err != nil || customer != "cus_a" {
 		t.Fatalf("first binding = %q, %v", customer, err)
 	}
-	if customer, err := store.BindCustomer(ctx, "org_a", "cus_racing"); err != nil || customer != "cus_a" {
+	if customer, err := store.BindCustomer(ctx, "7VGX1JD78ZYNTV8K70SZAEK4QV", "cus_racing"); err != nil || customer != "cus_a" {
 		t.Fatalf("racing binding = %q, %v; want the first customer", customer, err)
 	}
-	if _, err := store.BindCustomer(ctx, "org_b", "cus_a"); !errors.Is(err, core.ErrConflict) {
+	if _, err := store.BindCustomer(ctx, "72RDB9P1FF63DRZKDBD4X8D0YR", "cus_a"); !errors.Is(err, core.ErrConflict) {
 		t.Fatalf("customer reused by another organization: %v", err)
 	}
-	if organization, ok, err := store.OrganizationFor(ctx, "cus_a"); err != nil || !ok || organization != "org_a" {
+	if organization, ok, err := store.OrganizationFor(ctx, "cus_a"); err != nil || !ok || organization != "7VGX1JD78ZYNTV8K70SZAEK4QV" {
 		t.Fatalf("OrganizationFor = %q, %v, %v", organization, ok, err)
 	}
-	if _, ok, err := store.CustomerFor(ctx, "org_unknown"); err != nil || ok {
+	if _, ok, err := store.CustomerFor(ctx, "3FKZNNRQZQZAZDQZH9B24PHGA1"); err != nil || ok {
 		t.Fatalf("unknown organization = %v, %v", ok, err)
 	}
 }
@@ -125,13 +125,13 @@ func TestTerraBaseStateStoreBindsEachCustomerOnce(t *testing.T) {
 func TestTerraBaseStateStoreRejectsCustomerReuseAtomically(t *testing.T) {
 	store := realBillingStore(t)
 	ctx := t.Context()
-	if _, err := store.BindCustomer(ctx, "org_a", "cus_a"); err != nil {
+	if _, err := store.BindCustomer(ctx, "7VGX1JD78ZYNTV8K70SZAEK4QV", "cus_a"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.BindCustomer(ctx, "org_b", "cus_a"); !errors.Is(err, core.ErrConflict) {
+	if _, err := store.BindCustomer(ctx, "72RDB9P1FF63DRZKDBD4X8D0YR", "cus_a"); !errors.Is(err, core.ErrConflict) {
 		t.Fatalf("reuse: %v", err)
 	}
-	if _, bound, err := store.CustomerFor(ctx, "org_b"); err != nil || bound {
+	if _, bound, err := store.CustomerFor(ctx, "72RDB9P1FF63DRZKDBD4X8D0YR"); err != nil || bound {
 		t.Fatalf("failed binding left organization record: %v %v", bound, err)
 	}
 }
@@ -139,7 +139,7 @@ func TestTerraBaseStateStoreRejectsCustomerReuseAtomically(t *testing.T) {
 func TestTerraBaseStateStoreSavesConditionally(t *testing.T) {
 	store := realBillingStore(t)
 	ctx := t.Context()
-	if _, err := store.BindCustomer(ctx, "org_a", "cus_a"); err != nil {
+	if _, err := store.BindCustomer(ctx, "7VGX1JD78ZYNTV8K70SZAEK4QV", "cus_a"); err != nil {
 		t.Fatal(err)
 	}
 	_, version, err := store.Load(ctx, "cus_a")
@@ -148,7 +148,7 @@ func TestTerraBaseStateStoreSavesConditionally(t *testing.T) {
 	}
 	periodEnd := time.Date(2026, time.October, 26, 0, 0, 0, 0, time.UTC)
 	state := CustomerState{
-		CustomerID: "cus_a", OrganizationID: "org_a", SubscriptionID: "sub_a", Status: "active",
+		CustomerID: "cus_a", OrganizationID: "7VGX1JD78ZYNTV8K70SZAEK4QV", SubscriptionID: "sub_a", Status: "active",
 		PriceID: "price_pro_monthly", PlanKey: PlanPro, Interval: IntervalMonthly,
 		CurrentPeriodStart: periodEnd.AddDate(0, -1, 0), CurrentPeriodEnd: periodEnd,
 		ScheduleID: "sub_sched_a", ScheduledPlanKey: PlanStarter, ScheduledInterval: IntervalMonthly, TrialUsed: true,
@@ -163,7 +163,7 @@ func TestTerraBaseStateStoreSavesConditionally(t *testing.T) {
 	if err := store.Save(ctx, state, version); !errors.Is(err, ErrStaleState) {
 		t.Fatalf("save at a stale version = %v, want ErrStaleState", err)
 	}
-	if err := store.Save(ctx, CustomerState{CustomerID: "cus_a", OrganizationID: "org_a", Status: StatusNone}, ""); !errors.Is(err, ErrStaleState) {
+	if err := store.Save(ctx, CustomerState{CustomerID: "cus_a", OrganizationID: "7VGX1JD78ZYNTV8K70SZAEK4QV", Status: StatusNone}, ""); !errors.Is(err, ErrStaleState) {
 		t.Fatalf("create over an existing state = %v, want ErrStaleState", err)
 	}
 	loaded, next, err := store.Load(ctx, "cus_a")

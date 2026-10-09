@@ -47,7 +47,10 @@ func TestSQLEditorCompletesTheCatalog(t *testing.T) {
 	suggestions := editor.Locator(".suggest-widget .monaco-list")
 	replace := func(text string) {
 		t.Helper()
-		click(t, editor.Locator(".view-lines"))
+		// Typing needs focus on Monaco's input, independent of rendered-line layout.
+		input := byRole(editor, *playwright.AriaRoleTextbox, "SQL. Press Ctrl+M to toggle Tab moving focus.", true)
+		must(t, input.Focus())
+		must(t, expect.Locator(input).ToBeFocused())
 		must(t, page.Keyboard().Press("Escape"))
 		must(t, page.Keyboard().Press("ControlOrMeta+A"))
 		must(t, page.Keyboard().Type(text))

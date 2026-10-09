@@ -2,6 +2,7 @@ package apikeys
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -125,9 +126,9 @@ func (s Service) Create(ctx context.Context, p core.Principal, kind string, inpu
 	if kind == kindM2M {
 		prefix = "tsm_demo_"
 	}
-	secret := prefix + strings.TrimPrefix(core.NewID(""), "_")
+	secret := prefix + rand.Text()
 	key := core.APIKey{
-		ID: core.NewID("key"), Kind: kind, ProjectID: p.ProjectID, DatabaseID: input.DatabaseID, Name: strings.TrimSpace(input.Name),
+		ID: core.NewID(), Kind: kind, ProjectID: p.ProjectID, DatabaseID: input.DatabaseID, Name: strings.TrimSpace(input.Name),
 		Prefix: secret[:min(len(secret), 16)], LastFour: secret[len(secret)-4:], SecretHash: hash(secret),
 		Scopes: slices.Clone(input.Scopes), CreatedAt: time.Now().UTC(),
 	}
@@ -168,7 +169,7 @@ func (s Service) Rotate(ctx context.Context, p core.Principal, keyID, kind strin
 		if current.Kind == kindM2M {
 			prefix = "tsm_demo_"
 		}
-		secret = prefix + strings.TrimPrefix(core.NewID(""), "_")
+		secret = prefix + rand.Text()
 		current.SecretHash = hash(secret)
 		current.Prefix = secret[:min(len(secret), 16)]
 		current.LastFour = secret[len(secret)-4:]
@@ -298,7 +299,7 @@ func (s Service) terraBaseKeys(ctx context.Context, project core.Project) ([]cor
 	}
 	databases := make(map[string]string, len(project.Databases))
 	for _, db := range project.Databases {
-		databases[db.TerraBaseID] = db.ID
+		databases[db.ID] = db.ID
 	}
 	org, proj := project.TerraBaseIDs(project.OrganizationID)
 	var keys []core.APIKey
@@ -345,10 +346,7 @@ func (s Service) issue(ctx context.Context, p core.Principal, project core.Proje
 	region, err := s.deps.Region(ctx, project.Region)
 	if input.DatabaseID != "" {
 		db := project.Databases[input.DatabaseID]
-		if db, err = s.deps.Ensure(ctx, p, project, db); err != nil {
-			return ProjectAPIKeySecret{}, err
-		}
-		request.DatabaseID = db.TerraBaseID
+		request.DatabaseID = db.ID
 		region, err = s.deps.Home(ctx, project, db)
 	}
 	if err != nil {

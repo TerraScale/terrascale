@@ -27,18 +27,18 @@ func internalBillingFixture(t *testing.T, store core.Store) (core.Principal, cor
 	}
 	org := owner.Organizations[owner.ActiveOrganizationID]
 	org.Name, org.Kind = "terrascale", "business"
-	org.PlanID = "plan_business"
+	org.PlanID = "09XCWRH05BWWBADSBPTPDMFA7D"
 	for _, name := range []string{"ts-dashboard", "ts-auth", "ts-router", "ts-status", "ts-orchestrator", "ku", "ts-reviewer"} {
 		project := core.Project{
-			ID: core.NewULID(), OrganizationID: org.ID, Name: name, Status: "active", SpendCapCents: 123,
+			ID: core.NewID(), OrganizationID: org.ID, Name: name, Status: "active", SpendCapCents: 123,
 			Databases: map[string]core.Database{}, APIKeys: map[string]core.APIKey{},
 		}
 		db := core.Database{
-			ID: core.NewULID(), ProjectID: project.ID, Name: "main", Status: "ready", SpendCapCents: 45,
+			ID: core.NewID(), ProjectID: project.ID, Name: "main", Status: "ready", SpendCapCents: 45,
 			Documents: map[string]map[string][]byte{"records": {"record": []byte(`{"value":"keep"}`)}},
 		}
 		project.Databases[db.ID] = db
-		key := core.APIKey{ID: core.NewULID(), ProjectID: project.ID, Name: "existing", SecretHash: "keep"}
+		key := core.APIKey{ID: core.NewID(), ProjectID: project.ID, Name: "existing", SecretHash: "keep"}
 		project.APIKeys[key.ID] = key
 		org.Projects[project.ID] = project
 	}
@@ -144,7 +144,9 @@ func TestConfigureInternalBillingRejectsInvalidRequests(t *testing.T) {
 		{"missing-base", func(_ *core.Principal, c *InternalBillingConfig, _, _ core.Account) { c.BasePlanKey = "" }, core.ErrInvalid},
 		{"unknown-base", func(_ *core.Principal, c *InternalBillingConfig, _, _ core.Account) { c.BasePlanKey = "missing" }, core.ErrNotFound},
 		{"free-base", func(_ *core.Principal, c *InternalBillingConfig, _, _ core.Account) { c.BasePlanKey = "free" }, core.ErrInvalid},
-		{"base-id-not-key", func(_ *core.Principal, c *InternalBillingConfig, _, _ core.Account) { c.BasePlanKey = "plan_business" }, core.ErrInvalid},
+		{"base-id-not-key", func(_ *core.Principal, c *InternalBillingConfig, _, _ core.Account) {
+			c.BasePlanKey = "09XCWRH05BWWBADSBPTPDMFA7D"
+		}, core.ErrInvalid},
 		{"zero-cap", func(_ *core.Principal, c *InternalBillingConfig, _, _ core.Account) { c.SpendCapCents = 0 }, core.ErrInvalid},
 		{"negative-cap", func(_ *core.Principal, c *InternalBillingConfig, _, _ core.Account) { c.SpendCapCents = -1 }, core.ErrInvalid},
 		{"negative-writes", func(_ *core.Principal, c *InternalBillingConfig, _, _ core.Account) { c.WriteCentsPerMillion = -1 }, core.ErrInvalid},
@@ -197,7 +199,7 @@ func TestConfigureInternalBillingRejectsInactiveOrStripeOrganizations(t *testing
 		{"pending-plan", func(o *core.Organization) { o.Billing.PendingPlanKey = "pro" }, core.ErrConflict},
 		{"scheduled-plan", func(o *core.Organization) { o.Billing.ScheduledPlanKey = "pro" }, core.ErrConflict},
 		{"checkout-history", func(o *core.Organization) {
-			o.CheckoutSessions["cs_real"] = core.CheckoutSession{ID: "cs_real", PlanID: "plan_business", Status: "complete"}
+			o.CheckoutSessions["cs_real"] = core.CheckoutSession{ID: "cs_real", PlanID: "09XCWRH05BWWBADSBPTPDMFA7D", Status: "complete"}
 		}, core.ErrConflict},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -264,7 +266,7 @@ func TestConfigureInternalBillingRechecksCheckoutBeforeAssignment(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if org.Billing.Internal || org.PlanID != "plan_business" || org.Billing.CheckoutID != "concurrent-checkout" {
+	if org.Billing.Internal || org.PlanID != "09XCWRH05BWWBADSBPTPDMFA7D" || org.Billing.CheckoutID != "concurrent-checkout" {
 		t.Fatalf("concurrent checkout was replaced: %+v", org.Billing)
 	}
 	if _, err := store.Plan(t.Context(), "internal"); !errors.Is(err, core.ErrNotFound) {

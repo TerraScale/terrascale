@@ -56,7 +56,7 @@ func mirror(ctx context.Context, store core.Store, m *v1.ManagementUser, remote 
 			// databases never trip the Free limit; billing stays with the dashboard.
 			org = core.Organization{
 				ID: remote.ID, Kind: "business", Status: "active", OwnerUserID: a.User.ID,
-				PlanID: "plan_business", BillingStatus: "active", CreatedAt: remote.CreatedAt,
+				PlanID: core.BusinessPlanID, BillingStatus: "active", CreatedAt: remote.CreatedAt,
 				Projects: map[string]core.Project{}, Members: map[string]core.Member{},
 				Invitations: map[string]core.Invitation{}, CheckoutSessions: map[string]core.CheckoutSession{},
 			}
@@ -66,10 +66,11 @@ func mirror(ctx context.Context, store core.Store, m *v1.ManagementUser, remote 
 			org.Members[a.User.ID] = core.Member{UserID: a.User.ID, Email: a.User.Email, Name: a.User.Name, Role: "owner", Status: "active", CreatedAt: now}
 		}
 		for _, rp := range projects {
+			// Preserve current ownership; the greenfield cutover deletes all pre-cutover rows.
 			project, ok := org.Projects[rp.ID]
 			if !ok {
 				project = core.Project{
-					ID: rp.ID, OrganizationID: org.ID, Status: "active", CreatedAt: rp.CreatedAt,
+					ID: rp.ID, OrganizationID: org.ID, System: true, Status: "active", CreatedAt: rp.CreatedAt,
 					Databases: map[string]core.Database{}, APIKeys: map[string]core.APIKey{},
 					SavedQueries: map[string]core.SavedQuery{}, SharedResultConfigs: map[string]core.SharedResultConfig{},
 					BackupPolicies: map[string]core.BackupPolicy{},
@@ -79,7 +80,7 @@ func mirror(ctx context.Context, store core.Store, m *v1.ManagementUser, remote 
 			for _, rd := range databases[rp.ID] {
 				db, ok := project.Databases[rd.ID]
 				if !ok {
-					db = core.Database{ID: rd.ID, ProjectID: project.ID, Status: "ready", CreatedAt: rd.CreatedAt}
+					db = core.Database{ID: rd.ID, ProjectID: project.ID, System: project.System, Status: "ready", CreatedAt: rd.CreatedAt}
 				}
 				db.Name = rd.Name
 				project.Databases[rd.ID] = db

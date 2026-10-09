@@ -34,6 +34,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"terrascale.tech/sdk/internal/entityid"
 )
 
 // Protocol limits and client defaults.
@@ -198,9 +200,7 @@ type response struct {
 	body   []byte
 }
 
-// url escapes each segment. A segment may not contain a slash: TerraBase
-// would match an escaped %2F literally, so "a/b" could address a different
-// id such as "a%2Fb".
+// url escapes protocol path segments; raw document keys travel in the query.
 func (c *Client) url(ctx context.Context, segments []string, query url.Values) (string, error) {
 	for _, s := range segments {
 		if s == "" || s == "." || s == ".." || strings.Contains(s, "/") {
@@ -362,6 +362,9 @@ func (c *Client) call(ctx context.Context, req request, in, out any) (*response,
 	if out != nil && !(resp.status == http.StatusNoContent && len(bytes.TrimSpace(resp.body)) == 0) {
 		if err := decodeExact(resp.body, out); err != nil {
 			return resp, fmt.Errorf("terrabase: decode %s response: %w", req.method, err)
+		}
+		if err := entityid.Model(out); err != nil {
+			return resp, fmt.Errorf("terrabase: invalid response: %w", err)
 		}
 	}
 	return resp, nil

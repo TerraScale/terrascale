@@ -36,10 +36,11 @@ func TestSpendingControlsPersistOperationsAndRollBackInvalidScopes(t *testing.T)
 		t.Fatal(err)
 	}
 	p := account.Principal()
+	databaseID := core.NewID()
 	err = store.UpdateAs(t.Context(), p, func(a *core.Account) error {
 		org := a.Organizations[p.OrganizationID]
 		project := org.Projects[p.ProjectID]
-		project.Databases["db_limits"] = core.Database{ID: "db_limits", ProjectID: project.ID, Name: "Limits"}
+		project.Databases[databaseID] = core.Database{ID: databaseID, ProjectID: project.ID, Name: "Limits"}
 		org.Projects[project.ID] = project
 		a.Organizations[org.ID] = org
 		return nil
@@ -53,8 +54,8 @@ func TestSpendingControlsPersistOperationsAndRollBackInvalidScopes(t *testing.T)
 	change := operationLimitChange{ReadLimit: new(int64(1000)), WriteLimit: new(int64(2000)), ReplicationLimit: new(int64(3000))}
 	err = service.SetSpendingControls(t.Context(), p, spendingControls{
 		OrganizationCapCents: &cap, PaidExcess: &paid,
-		ProjectCaps: map[string]int64{p.ProjectID: 2500}, DatabaseCaps: map[string]int64{"db_limits": 1000},
-		ProjectOperations: map[string]operationLimitChange{p.ProjectID: change}, DatabaseOperations: map[string]operationLimitChange{"db_limits": change},
+		ProjectCaps: map[string]int64{p.ProjectID: 2500}, DatabaseCaps: map[string]int64{databaseID: 1000},
+		ProjectOperations: map[string]operationLimitChange{p.ProjectID: change}, DatabaseOperations: map[string]operationLimitChange{databaseID: change},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -78,9 +79,9 @@ func TestSpendingControlsPersistOperationsAndRollBackInvalidScopes(t *testing.T)
 		t.Fatalf("partial change overwrote unrelated limits: %+v", limits)
 	}
 	for _, controls := range []spendingControls{
-		{OrganizationCapCents: new(int64(1)), DatabaseOperations: map[string]operationLimitChange{"db_other_tenant": change}},
-		{ProjectOperations: map[string]operationLimitChange{"project_other_tenant": change}},
-		{DatabaseOperations: map[string]operationLimitChange{"db_limits": {WriteLimit: new(int64(-1))}}},
+		{OrganizationCapCents: new(int64(1)), DatabaseOperations: map[string]operationLimitChange{core.NewID(): change}},
+		{ProjectOperations: map[string]operationLimitChange{core.NewID(): change}},
+		{DatabaseOperations: map[string]operationLimitChange{databaseID: {WriteLimit: new(int64(-1))}}},
 	} {
 		if err := service.SetSpendingControls(t.Context(), p, controls); err == nil {
 			t.Fatal("invalid limit or scope succeeded")
@@ -93,7 +94,7 @@ func TestSpendingControlsPersistOperationsAndRollBackInvalidScopes(t *testing.T)
 	// A member can read limits but cannot change them.
 	err = store.UpdateAs(t.Context(), p, func(a *core.Account) error {
 		org := a.Organizations[p.OrganizationID]
-		org.OwnerUserID = "another-owner"
+		org.OwnerUserID = core.NewID()
 		member := org.Members[p.UserID]
 		member.Role = "member"
 		org.Members[p.UserID] = member

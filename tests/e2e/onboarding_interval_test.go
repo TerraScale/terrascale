@@ -59,7 +59,7 @@ func TestOnboardingBillingIntervalUpdatesPricesAndCheckout(t *testing.T) {
 				billed = "Pro · billed monthly"
 			}
 			click(t, byRole(payment, *playwright.AriaRoleButton, "Continue to checkout"))
-			must(t, page.WaitForURL(regexp.MustCompile(`/checkout/cs_local_`)))
+			must(t, page.WaitForURL(regexp.MustCompile(`/checkout/[0-7][0-9A-HJKMNP-TV-Z]{25}(?:[?#]|$)`)))
 			must(t, expect.Locator(page.Locator(".ts-auth-subtitle")).ToContainText(billed))
 		})
 	}

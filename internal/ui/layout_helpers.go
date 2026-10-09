@@ -32,6 +32,7 @@ var navDestinations = map[string]navDestination{
 	"/api-keys":            {icons.KeyRound, "lime"},
 	"/auth":                {icons.Fingerprint, "emerald"},
 	"/usage":               {icons.ChartColumnBig, "sky"},
+	"/analytics":           {icons.LineChart, "orange"},
 	"/subscriptions":       {icons.RadioTower, "fuchsia"},
 	"/billing":             {icons.CreditCard, "rose"},
 	"/organization":        {icons.Building2, "teal"},

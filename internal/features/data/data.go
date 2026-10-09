@@ -53,7 +53,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			return
 		}
 		collection, operation := strings.TrimSpace(r.FormValue("collection")), strings.TrimSpace(r.FormValue("operation"))
-		submittedID := strings.TrimSpace(r.FormValue("id"))
+		submittedID := r.FormValue("id")
 		body := []byte(r.FormValue("document"))
 		// failed shows the error in the form the post came from, refilled.
 		failed := func(status int, message string) {
@@ -70,13 +70,9 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			failed(http.StatusBadRequest, "Enter a collection name without slashes or line breaks.")
 			return
 		}
-		if len(submittedID) > 256 {
-			failed(http.StatusBadRequest, "Document IDs are at most 256 characters.")
-			return
-		}
 		id := submittedID
 		if operation == "create" && id == "" && deps.LocalResources() {
-			id = core.NewULID()
+			id = core.NewID()
 		}
 		if id == "" && operation != "create" || !slices.Contains([]string{"create", "replace", "patch", "delete"}, operation) {
 			failed(http.StatusBadRequest, "Choose a document and an operation.")
@@ -337,6 +333,9 @@ func failure(err error, action string) (int, string) {
 	case errors.Is(err, core.ErrConflict):
 		return http.StatusConflict, "This change conflicts with the current data. Reload the page and try again."
 	case errors.Is(err, core.ErrInvalid):
+		if reason, ok := core.InvalidReason(err); ok {
+			return http.StatusBadRequest, reason
+		}
 		return http.StatusBadRequest, "Check the values you entered."
 	case errors.Is(err, core.ErrUnavailable):
 		return http.StatusServiceUnavailable, "The dashboard is unavailable right now. Try again in a moment."

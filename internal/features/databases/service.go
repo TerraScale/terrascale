@@ -94,7 +94,7 @@ func (s Service) Create(ctx context.Context, p core.Principal, name string, regi
 	}
 	codes := codesOf(placed)
 	db := core.Database{
-		ID: core.NewID("db"), ProjectID: p.ProjectID, Name: name, Region: codes[0], Regions: codes, Status: "ready",
+		ID: core.NewID(), ProjectID: p.ProjectID, Name: name, Region: codes[0], Regions: codes, Status: "ready",
 		CreatedAt: time.Now().UTC(), Documents: make(map[string]map[string][]byte),
 	}
 	if !s.deps.LocalResources() {
@@ -103,7 +103,7 @@ func (s Service) Create(ctx context.Context, p core.Principal, name string, regi
 		if err := s.roomForDatabase(ctx, p, a, name); err != nil {
 			return databaseView{}, err
 		}
-		if db.TerraBaseID, err = s.deps.CreateDatabase(ctx, p, project, name, placed); err != nil {
+		if db.ID, err = s.deps.CreateDatabase(ctx, p, project, name, placed); err != nil {
 			return databaseView{}, placementError(err)
 		}
 		db.Documents = nil
@@ -223,14 +223,14 @@ func (s Service) Branch(ctx context.Context, p core.Principal, sourceID, name st
 	if source.Status != "ready" {
 		return databaseView{}, errNotReady
 	}
-	branch := core.Database{ID: core.NewID("db"), ProjectID: project.ID, Name: name, Region: source.Region, Regions: slices.Clone(databaseRegions(source)), Status: "ready", CreatedAt: time.Now().UTC()}
+	branch := core.Database{ID: core.NewID(), ProjectID: project.ID, Name: name, Region: source.Region, Regions: slices.Clone(databaseRegions(source)), Status: "ready", CreatedAt: time.Now().UTC()}
 	if !s.deps.LocalResources() {
 		if err := s.roomForDatabase(ctx, p, a, name); err != nil {
 			return databaseView{}, err
 		}
 		// TerraBase branches in the source's home region only.
 		branch.Regions = branch.Regions[:1]
-		if branch.TerraBaseID, err = s.deps.BranchDatabase(ctx, p, project, source, name); err != nil {
+		if branch.ID, err = s.deps.BranchDatabase(ctx, p, project, source, name); err != nil {
 			return databaseView{}, placementError(err)
 		}
 	}

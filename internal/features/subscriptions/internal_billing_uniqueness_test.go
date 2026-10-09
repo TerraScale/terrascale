@@ -31,7 +31,7 @@ func anotherInternalBillingTarget(t *testing.T, store core.Store, other core.Acc
 		org.Name = "terrascale"
 		for _, name := range []string{"ts-dashboard", "ts-auth", "ts-router", "ts-status", "ts-orchestrator", "ku", "ts-reviewer"} {
 			project := core.Project{
-				ID: core.NewULID(), OrganizationID: org.ID, Name: name, Status: "active",
+				ID: core.NewID(), OrganizationID: org.ID, Name: name, Status: "active",
 				Databases: map[string]core.Database{}, APIKeys: map[string]core.APIKey{},
 			}
 			org.Projects[project.ID] = project
@@ -49,7 +49,7 @@ func seedUnassignedInternalPlan(t *testing.T, store core.Store, principal core.P
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan.ID, plan.Key, plan.Name, plan.Visible = core.NewULID(), "internal", "TerraScale Internal", false
+	plan.ID, plan.Key, plan.Name, plan.Visible = core.NewID(), "internal", "TerraScale Internal", false
 	if err := store.UpsertPlanAs(t.Context(), principal, plan); err != nil {
 		t.Fatal(err)
 	}

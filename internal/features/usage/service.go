@@ -1,7 +1,6 @@
 package usage
 
 import (
-	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -55,7 +54,7 @@ type usageTotals struct {
 	Available    bool   `json:"available" jsonschema:"Whether TerraBase's metered reads and writes could be loaded."`
 	Source       string `json:"source"`
 	Error        string `json:"error,omitempty"`
-	Range        string `json:"range" jsonschema:"24h, 7d, or 30d."`
+	Range        string `json:"range" jsonschema:"1h, 24h, 7d, or 30d."`
 	Reads        int64  `json:"reads"`
 	Writes       int64  `json:"writes"`
 	LogicalBytes int64  `json:"logicalBytes" jsonschema:"Logical storage of the selected scope."`
@@ -116,7 +115,7 @@ type Service struct {
 	deps core.Deps
 }
 
-// Usage reports the selected project's usage over rangeKey (24h, 7d or
+// Usage reports the selected project's usage over rangeKey (1h, 24h, 7d or
 // 30d), optionally for one database. token is the user's ts-auth access
 // token, with which TerraBase's metered usage is read; without one, only
 // stored resources are reported.
@@ -367,7 +366,7 @@ func (s Service) meter(ctx context.Context, token string, org core.Organization,
 	}
 	orgID, projectID := project.TerraBaseIDs(org.ID)
 	terraBaseID := func(databaseID string) string {
-		return cmp.Or(project.Databases[databaseID].TerraBaseID, databaseID)
+		return project.Databases[databaseID].ID
 	}
 	now := time.Now().UTC()
 	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)

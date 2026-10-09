@@ -5,6 +5,23 @@ transactions with an API key, and the Management API for the dashboard
 backend. The root package holds the hosted TSAuth clients and the pure schema
 and SQL builders.
 
+All entity IDs are canonical uppercase, 26-character Crockford ULIDs. Use
+`sdk.NewID()` (or `v1.NewID()`) to generate one and `ValidateID` to validate it.
+Generation is concurrency-safe and monotonic within a millisecond. UUIDs,
+prefixed IDs and lowercase IDs are rejected for entity selectors and generated
+keys. Caller-supplied document keys are unrestricted strings of 1–256 UTF-16
+units without control characters. `DocumentIDFor(collection, key)` preserves
+canonical entity keys and derives deterministic, collection-scoped ULID
+addresses for natural or composite keys. The TerraBase document key is the entity ID; TerraBase omits a matching root
+payload `id` when storing it. Other payload fields remain application data. OAuth client names, database and
+collection names, region/service catalog names, versions and credentials
+remain protocol names or opaque tokens, not entity IDs.
+
+This greenfield change provides no data migration or compatibility path.
+The SDK owns no persistent collections, databases or KV records; no stored
+data is deleted by this repository. Services must wipe affected data and
+recreate bootstrap state before serving the new contract.
+
 ## TerraBase v1 client (`terrascale.tech/sdk/v1`)
 
 Package `v1` talks to the C# TerraBase server: the Documents API v1 and the
@@ -22,12 +39,12 @@ _, err = db.CreateCollection(ctx, "users") // 409 name_taken when it exists
 cols, err := db.Collections(ctx, tb.ListOptions{Limit: 50})
 users := db.Collection("users")             // also Info and Drop
 
-res, err := users.Create(ctx, map[string]any{"email": "ana@example.com"}) // server UUIDv7
+res, err := users.Create(ctx, map[string]any{"email": "ana@example.com"}) // server ULID
 doc, err := users.Get(ctx, res.ID)
 var body map[string]any
 err = doc.Decode(&body) // numbers decode as json.Number, never float64
 
-id := tb.DocumentIDFor("users", "ana@example.com") // deterministic UUIDv5 natural key
+id := tb.NewID() // monotonic ULID; keep natural keys in payload fields
 _, err = users.Put(ctx, id, body, tb.IfNoneMatchAny())
 _, err = users.Patch(ctx, id, tb.Ops(tb.Inc("/logins", 1), tb.Append("/tags", "beta")), tb.IfMatch(doc.Version))
 _, err = users.Patch(ctx, id, tb.MergePatch(map[string]any{"legacy": nil}))
@@ -65,8 +82,10 @@ queries. Mutations return uncertain outcomes without a replay: use
 what to do. A transport failure matches that code and retains its original
 cause; a server response retains its `*tb.APIError`. Other writes and
 `500 internal_error` are never retried. Set `Config.MaxRetries` to change the
-budget. Path segments containing `/` fail locally: TerraBase would match an
-escaped `%2F` literally.
+budget. Point document operations use `/documents/by-key?id=…`, with the raw
+key query-encoded once. Keys never enter path segments and are never pre-decoded.
+Listing and generated creation use GET and POST `/documents`, respectively.
+The old `/documents/{id}` point routes are removed.
 
 Transactions apply up to 1024 ops atomically; failures name the op index:
 
@@ -156,10 +175,42 @@ database tooling (backups, index recommendations, schema, project usage, SQL che
 invitation lookup and general Management commits. Not served:
 query `explain`, `Idempotency-Key` and the `/v1/dashboard` control plane.
 
+### Replication and analytics (TS-762)
+
+`Analytics` and `Replication` read TerraBase's unversioned project routes using
+a ts-auth **project access token**. Project and database IDs are plain ULIDs.
+The wire shape is provisional until TerraBase's TS-762 OpenAPI lands; see
+[the contract](contracts/replication-analytics.md). Do not merge the SDK PR
+before the TerraBase PR has merged and this contract has been reconciled.
+
+```go
+m, err := tb.NewManagement(tb.Config{BaseURL: origin})
+u := m.WithToken(projectAccessToken)
+opts := tb.MetricsOptions{Range: tb.Range24Hours, DatabaseID: databaseID, Region: "gru"}
+analytics, err := u.Analytics(ctx, projectID, opts)
+replication, err := u.Replication(ctx, projectID, opts)
+// Fetch the next analytics page with the same filters.
+opts.After = analytics.Next // empty means the last page
+```
+
+Each call returns one page; pass `Next` as `MetricsOptions.After` when non-empty.
+TerraBase chooses time buckets for `1h`, `24h`, `7d`, or `30d`. Analytics includes
+requests and operations by type, errors, p50/p95/p99 latency, storage, client
+bandwidth and directed replication bandwidth. Replication reports period ops
+and bytes by region pair, lag, divergence, convergence time, last applied and
+status per database and region. `replication_bytes` is a separate meter from
+client bandwidth; nullable observations distinguish missing data from zero.
+The methods share the client's context cancellation, response bounds, API
+errors and safe-read retries.
+
 ### Tests
 
-Tests of the TerraBase client run against the real TerraBase release, never a
-fake server. The importable `terrascale.tech/sdk/terrabasetest` package is the
+TerraBase storage and management journeys run against the real release.
+Focused HTTP boundary tests also check generated IDs and malformed response
+envelopes without simulating persistence. TS-762's `v1/metrics_test.go` uses
+`httptest` for the provisional replication and analytics contract while the
+server endpoints are being added in parallel. The importable
+`terrascale.tech/sdk/terrabasetest` package is the
 shared harness for SDK and downstream tests: it pins the release
 by version and SHA-256, downloads it once with `TERRABASE_TOKEN` (read access
 to TerraScale/terrabase) into the user cache directory (or `TERRABASE_CACHE`),
@@ -173,7 +224,7 @@ TerraBase assigns both listener ports. Startup is bounded to
 TERRABASE_TOKEN=… TERRABASE_REQUIRE=1 nice -n 19 go test ./v1/ ./terrabasetest/
 ```
 
-`v1/integration_test.go` exercises every SDK call against it. Its recording
+`v1/integration_test.go` exercises the pinned release's SDK calls. Its recording
 transport checks the real traffic: each request is a route of
 `v1/testdata/openapi.json` (the executable's own `/openapi/v1.json` on the
 client listener; `TERRABASE_REPIN=1` rewrites it) or an admin-listener route,
@@ -225,6 +276,58 @@ listener configuration, credentials, and CA trust. Actual PostgreSQL execution
 requires its producer protocol and an admitted signed listener; source and
 package checks do not qualify an actual admitted PostgreSQL runtime.
 
+## Region latency (`client.Status`)
+
+`client.Status.Latency(ctx, "")` reads all regions from the public
+`https://status.terrascale.tech/api/latency` endpoint. Pass a region code such
+as `"gru"` to send `?region=gru`; codes are trimmed and lowercased without
+restricting the available regions. Override the origin with `Config.StatusBaseURL`
+(HTTPS, or HTTP on loopback and `.test` origins for development). Status calls
+need no credentials and do not use auth discovery.
+
+```go
+client, err := sdk.NewClient(sdk.Config{MaxRetryAttempts: 2})
+if err != nil {
+    return err
+}
+latency, err := client.Status.Latency(ctx, "gru")
+if err != nil {
+    return err
+}
+for _, region := range latency.Regions {
+    if region.Consensus != nil && region.Consensus.MedianMS != nil {
+        fmt.Printf("%s: %d ms (%s)\n", region.Name, *region.Consensus.MedianMS, region.Status)
+    }
+}
+```
+
+`LatencyResponse.GeneratedAt` is a parsed RFC3339 timestamp; `Window` is `"1h"`.
+Each region contains its code, name, ping URL, status, consensus, and individual
+vantages. Median and p95 measurements are `*int` milliseconds: `nil` means no
+measurement, while a pointer to zero is a measured zero. Consensus may also be
+`nil`. `Samples` is an integer count. Status is `operational`, `degraded`, `down`,
+or `planned`. These are probe measurements, not the caller's own browser ping.
+
+The client shares the SDK's bounded HTTP transport, `RequestTimeout`, retries
+on transient failures (`MaxRetryAttempts`, `RetryDelay`, and `Retry-After`),
+and `*sdk.APIError` responses. Retries default to zero; redirects are refused.
+The service briefly caches responses; the SDK adds no cache.
+[`status_example_test.go`](status_example_test.go) contains a compilable example.
+
+Unit tests use `httptest`. The live contract test is opt-in and skips HTTP 404
+until the endpoint is deployed:
+
+```sh
+TERRASCALE_STATUS_LIVE=1 nice -n 19 go test . -run '^TestStatusLatencyLive$' -v
+```
+
+Before merging this client, require the deployed endpoint to match the response,
+region filter, public CORS, and cache contract (404 now fails):
+
+```sh
+TERRASCALE_STATUS_REQUIRE_LATENCY=1 nice -n 19 go test . -run '^TestStatusLatencyLive$' -v
+```
+
 ## Atlas publishing (`terrascale.tech/sdk/atlas`)
 
 `atlas.Publisher` posts signed documents to ts-atlas (`POST /v1/publish`,
@@ -246,7 +349,7 @@ var atlasErr *atlas.Error // errors.As: Status, Code (invalid_signature, invalid
 ts-auth's platform contract (TS-598) issues every token TerraBase accepts.
 `tsauth` turns credentials into short-lived tokens:
 
-- `NewAPIKeySource` exchanges an API key (`tsk_…`, an OAuth client
+- `NewAPIKeySource` exchanges an API key (`tsk_<ULID>_<secret>`, an OAuth client
   credential) at `{issuer}/oauth/token` for an organization or project token
   (`Project`, optional `Scopes`).
 - `NewExchangeSource` exchanges a signed-in user's token (RFC 8693) for an
@@ -329,11 +432,17 @@ The edge artifacts and pins are in `contracts/edge/v1`.
 
 ```sh
 test -z "$(gofmt -l .)"
-go vet ./...
-go build ./...
-go test -race ./...
+nice -n 19 go vet ./...
+nice -n 19 go build ./...
+nice -n 19 go test -race ./...
 ```
 
 The module requires Go 1.25 and has no CGO dependency. CI runs the pinned
 vulnerability scanner alongside formatting, vet, build and race tests,
 including the v1 integration tests against the pinned TerraBase.
+
+PostgreSQL connections require plain ULIDs for both `PostgresConfig.Database`
+and `PostgresConfig.KeyID`; the key ID is also the PostgreSQL username.
+API key token sources use `tsk_<26-character ULID>_<52-character secret>`:
+the ULID alone is the OAuth client ID. Credential prefixes identify secret
+formats and are never part of an entity ID.

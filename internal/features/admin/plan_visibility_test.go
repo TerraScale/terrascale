@@ -13,8 +13,8 @@ func TestReservedInternalPlanStaysHiddenAfterAdminMutations(t *testing.T) {
 		name, id, key string
 		reserved      bool
 	}{
-		{"reserved key", core.NewULID(), "internal", true},
-		{"customer plan", core.NewULID(), "custom", false},
+		{"reserved key", core.NewID(), "internal", true},
+		{"customer plan", core.NewID(), "custom", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store := memstore.New()

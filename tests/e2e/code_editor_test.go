@@ -57,7 +57,8 @@ func TestCodeEditorValidatesAndSubmitsJSONDocument(t *testing.T) {
 	databasePath := linkPath(t, page, pageByRole(page, *playwright.AriaRoleLink, "core-primary"))
 	// A collection of its own keeps the shared sample data unchanged for
 	// parallel tests.
-	goToOK(t, page, databasePath+"/documents?collection="+uniqueName("e2e_editor"))
+	collection := identifier("e2e_editor")
+	goToOK(t, page, databasePath+"/documents?collection="+collection)
 
 	click(t, pageByRole(page, *playwright.AriaRoleButton, "Add document"))
 	dialog := pageByRole(page, *playwright.AriaRoleDialog, "Add document")
@@ -71,10 +72,20 @@ func TestCodeEditorValidatesAndSubmitsJSONDocument(t *testing.T) {
 
 	id := uniqueName("ord")
 	fill(t, dialog.Locator("#new-document-id"), id)
-	fill(t, dialog.Locator("#new-document-json"), `{ "customer_id": "cus_e2e" }`)
+	fill(t, dialog.Locator("#new-document-json"), `{ "id": "customer-7", "ID": 42, "customer_id": "cus_e2e" }`)
 	must(t, expect.Locator(editor.Locator(".squiggly-error")).ToHaveCount(0))
 	submitAndExpect(t, page, "/api/v1/dashboard/data/documents", 303, byRole(dialog, *playwright.AriaRoleButton, "Add document").Click)
 	must(t, expect.Locator(page.Locator("#documents table")).ToContainText(id))
+	must(t, expect.Locator(page.Locator("#documents thead th")).ToHaveText([]string{"id", "payload.id", "payload.ID", "customer_id", "Actions"}))
+	must(t, expect.Locator(page.Locator("#documents tbody tr").First()).ToContainText("customer-7"))
+	viewportScreenshot(t, page, "ts754-payload-grid")
+	goToOK(t, page, databasePath+"/sql?collection="+collection)
+	query := page.Locator(`form[action="/api/v1/dashboard/data/sql"]`)
+	submitAndExpect(t, page, "/api/v1/dashboard/data/sql", 200, byRole(query, *playwright.AriaRoleButton, "Run query").Click)
+	result := page.Locator("#sql-result")
+	must(t, expect.Locator(result.Locator("thead th")).ToHaveText([]string{"id", "payload.id", "payload.ID", "customer_id"}))
+	must(t, expect.Locator(result.Locator("tbody tr").First().Locator("td")).ToHaveText([]string{id, "customer-7", "42", "cus_e2e"}))
+	viewportScreenshot(t, page, "ts754-payload-sql")
 }
 
 func TestCodeEditorLoadsOnlyWhereUsed(t *testing.T) {

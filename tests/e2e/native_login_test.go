@@ -317,6 +317,7 @@ func signUpThroughTSAuth(t *testing.T, page playwright.Page, fake *fakeTSAuth, n
 	must(t, form.Locator("#terms").Check())
 	click(t, byRole(form, *playwright.AriaRoleButton, "Create account"))
 	must(t, expect.Locator(page.Locator("h1")).ToHaveText("Verify your email"))
+	must(t, expect.Locator(page.Locator(".ts-email-code-slot")).ToHaveCount(6))
 	fill(t, page.Locator("#code"), fake.code(t, email))
 	click(t, pageByRole(page, *playwright.AriaRoleButton, "Continue"))
 	waitForPath(t, page, func(u *url.URL) bool { return u.Path == "/onboarding" })
@@ -364,6 +365,307 @@ func TestNativeEmailCodeSignIn(t *testing.T) {
 	click(t, pageByRole(page, *playwright.AriaRoleButton, "Continue"))
 	waitForPath(t, page, func(u *url.URL) bool { return u.Path == "/onboarding" })
 	signedInAs(t, page, email, "Grace Code")
+}
+
+func TestNativeEmailCodeInputEditing(t *testing.T) {
+	t.Parallel()
+	base, _ := tsAuthDashboard(t)
+	page := rejectingPage(t, base)
+	goTo(t, page, "/login/code")
+	fill(t, page.Locator("#email"), "code-input@example.test")
+	click(t, pageByRole(page, *playwright.AriaRoleButton, "Email me a code"))
+	code := page.Locator("#code")
+	slots := page.Locator(".ts-email-code-slot")
+	must(t, expect.Locator(slots).ToHaveCount(6))
+	must(t, expect.Locator(code).ToBeFocused())
+	expectAccessible(t, page, "email code entry", "")
+
+	// The native input keeps leading zeroes and normal keyboard editing.
+	fill(t, code, "012345")
+	must(t, expect.Locator(slots).ToHaveText([]string{"0", "1", "2", "3", "4", "5"}))
+	must(t, code.Press("Home"))
+	must(t, code.Press("ArrowRight"))
+	must(t, code.Press("Delete"))
+	must(t, expect.Locator(code).ToHaveValue("02345"))
+	must(t, code.Press("End"))
+	must(t, code.Press("Backspace"))
+	must(t, expect.Locator(code).ToHaveValue("0234"))
+	must(t, code.Press("a"))
+	must(t, expect.Locator(code).ToHaveValue("0234"))
+	must(t, code.Press("Home"))
+	must(t, code.Press("ArrowRight"))
+	must(t, code.Press("a"))
+	must(t, code.Press("9"))
+	must(t, expect.Locator(code).ToHaveValue("09234"))
+
+	// Pasting a formatted code replaces the selection and removes separators.
+	must(t, code.Press("ControlOrMeta+a"))
+	_, err := code.Evaluate(`input => {
+		const clipboardData = new DataTransfer();
+		clipboardData.setData('text', '908 027');
+		input.dispatchEvent(new ClipboardEvent('paste', {clipboardData, bubbles: true, cancelable: true}));
+	}`, nil)
+	must(t, err)
+	must(t, expect.Locator(code).ToHaveValue("908027"))
+	must(t, expect.Locator(slots).ToHaveText([]string{"9", "0", "8", "0", "2", "7"}))
+
+	// Each visual box selects its digit for replacement while remaining one
+	// tab stop. The input overlays the boxes, so target its relative position.
+	box, err := slots.Nth(2).BoundingBox()
+	must(t, err)
+	inputBox, err := code.BoundingBox()
+	must(t, err)
+	must(t, code.Click(playwright.LocatorClickOptions{Position: &playwright.Position{
+		X: box.X + box.Width/2 - inputBox.X, Y: box.Height / 2,
+	}}))
+	must(t, code.Press("1"))
+	must(t, expect.Locator(code).ToHaveValue("901027"))
+
+	// Dragging in either direction selects a range of visible boxes. Shift-click
+	// extends that range, and double-click still selects the complete code.
+	position := func(index int) *playwright.Position {
+		t.Helper()
+		box, err := slots.Nth(index).BoundingBox()
+		must(t, err)
+		return &playwright.Position{X: box.X + box.Width/2, Y: box.Y + box.Height/2}
+	}
+	for _, endpoints := range [][2]int{{1, 4}, {4, 1}} {
+		fill(t, code, "012345")
+		from, to := position(endpoints[0]), position(endpoints[1])
+		must(t, page.Mouse().Move(from.X, from.Y))
+		must(t, page.Mouse().Down())
+		must(t, page.Mouse().Move(to.X, to.Y, playwright.MouseMoveOptions{Steps: new(8)}))
+		must(t, page.Mouse().Up())
+		must(t, expect.Locator(page.Locator(".ts-email-code-selected")).ToHaveCount(4))
+		must(t, code.Press("8"))
+		must(t, expect.Locator(code).ToHaveValue("085"))
+	}
+	fill(t, code, "012345")
+	from, to := position(1), position(4)
+	must(t, code.Click(playwright.LocatorClickOptions{Position: &playwright.Position{X: from.X - inputBox.X, Y: from.Y - inputBox.Y}}))
+	must(t, code.Click(playwright.LocatorClickOptions{
+		Position:  &playwright.Position{X: to.X - inputBox.X, Y: to.Y - inputBox.Y},
+		Modifiers: []playwright.KeyboardModifier{*playwright.KeyboardModifierShift},
+	}))
+	must(t, code.Press("8"))
+	must(t, expect.Locator(code).ToHaveValue("085"))
+	must(t, code.Dblclick())
+	must(t, code.Press("9"))
+	must(t, expect.Locator(code).ToHaveValue("9"))
+	must(t, code.Press("Tab"))
+	must(t, expect.Locator(pageByRole(page, *playwright.AriaRoleButton, "Continue")).ToBeFocused())
+
+	for _, width := range []int{320, 390, 1040, 1440} {
+		must(t, page.SetViewportSize(width, 844))
+		fits, err := page.Evaluate(`document.documentElement.scrollWidth <= innerWidth`)
+		must(t, err)
+		if fits != true {
+			t.Fatalf("code form overflows at width %d", width)
+		}
+	}
+	screenshot(t, page, "email-code-filled")
+
+	fill(t, code, "")
+	click(t, pageByRole(page, *playwright.AriaRoleButton, "Continue"))
+	must(t, expect.Locator(code).ToHaveAttribute("aria-invalid", "true"))
+	must(t, expect.Locator(code).ToHaveAttribute("aria-describedby", "code-error"))
+	must(t, expect.Locator(page.Locator("#code-error")).ToContainText("Enter the code"))
+	expectAccessible(t, page, "email code error", "")
+	screenshot(t, page, "email-code-error")
+}
+
+func TestNativeEmailCodeTypingCapacity(t *testing.T) {
+	t.Parallel()
+	base, _ := tsAuthDashboard(t)
+	page := rejectingPage(t, base)
+	for _, position := range []int{0, 3, 6} {
+		t.Run(fmt.Sprintf("caret_%d", position), func(t *testing.T) {
+			goTo(t, page, "/login/code")
+			fill(t, page.Locator("#email"), "typing-capacity@example.test")
+			click(t, pageByRole(page, *playwright.AriaRoleButton, "Email me a code"))
+			code := page.Locator("#code")
+			slots := page.Locator(".ts-email-code-slot")
+			fill(t, code, "12345")
+			must(t, code.Press("End"))
+			must(t, code.Press("6"))
+			must(t, expect.Locator(code).ToHaveValue("123456"))
+			must(t, code.Press("Home"))
+			for range position {
+				must(t, code.Press("ArrowRight"))
+			}
+			// A seventh digit must not shift existing digits or clear the undo
+			// transaction that inserted the sixth digit.
+			must(t, code.Press("9"))
+			must(t, expect.Locator(code).ToHaveValue("123456"))
+			must(t, expect.Locator(slots).ToHaveText(strings.Split("123456", "")))
+			must(t, code.Press("ControlOrMeta+z"))
+			must(t, expect.Locator(code).ToHaveValue("12345"))
+			must(t, expect.Locator(slots).ToHaveText([]string{"1", "2", "3", "4", "5", ""}))
+			must(t, code.Press("ControlOrMeta+Shift+z"))
+			must(t, expect.Locator(code).ToHaveValue("123456"))
+
+			// Selecting an existing digit still allows a native replacement,
+			// with its own undo/redo transaction.
+			must(t, code.Press("Home"))
+			must(t, code.Press("ArrowRight"))
+			must(t, code.Press("ArrowRight"))
+			must(t, code.Press("Shift+ArrowRight"))
+			must(t, code.Press("9"))
+			must(t, expect.Locator(code).ToHaveValue("129456"))
+			must(t, code.Press("ControlOrMeta+z"))
+			must(t, expect.Locator(code).ToHaveValue("123456"))
+			must(t, code.Press("ControlOrMeta+Shift+z"))
+			must(t, expect.Locator(code).ToHaveValue("129456"))
+			must(t, expect.Locator(slots).ToHaveText(strings.Split("129456", "")))
+		})
+	}
+}
+
+func TestNativeEmailCodeFormattedDrop(t *testing.T) {
+	t.Parallel()
+	base, _ := tsAuthDashboard(t)
+	page := rejectingPage(t, base)
+	goTo(t, page, "/login/code")
+	fill(t, page.Locator("#email"), "drop-code@example.test")
+	click(t, pageByRole(page, *playwright.AriaRoleButton, "Email me a code"))
+	code := page.Locator("#code")
+	visible(t, page.Locator(".ts-email-code-slot").First())
+	for _, test := range []struct{ name, text, want string }{
+		{"spaces", "123 456", "123456"},
+		{"leading zeros", "012-345", "012345"},
+		{"long code", "123 456 789", "123456"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fill(t, code, "")
+			_, err := page.Evaluate(`text => {
+				document.querySelector('#code-drag-source')?.remove();
+				const source = document.createElement('div');
+				source.id = 'code-drag-source';
+				source.draggable = true;
+				source.textContent = text;
+				source.style.cssText = 'position:fixed;top:8px;left:8px;padding:8px;z-index:9999';
+				source.addEventListener('dragstart', event => event.dataTransfer.setData('text/plain', text));
+				document.body.append(source);
+			}`, test.text)
+			must(t, err)
+			// Use a real native drop so the browser applies maxlength before input.
+			must(t, page.Locator("#code-drag-source").DragTo(code))
+			must(t, expect.Locator(code).ToHaveValue(test.want))
+			must(t, expect.Locator(page.Locator(".ts-email-code-slot")).ToHaveText(strings.Split(test.want, "")))
+		})
+	}
+}
+
+func TestNativeEmailCodePasteUndo(t *testing.T) {
+	t.Parallel()
+	base, _ := tsAuthDashboard(t)
+	page := rejectingPage(t, base)
+	must(t, page.Context().GrantPermissions([]string{"clipboard-read", "clipboard-write"}))
+	for _, test := range []struct {
+		name, clipboard, want string
+		start, end            int
+	}{
+		{"digits", "908027", "908027", 0, 6},
+		{"formatted", "908 027", "908027", 0, 6},
+		{"selected range", "9 0", "09045", 1, 4},
+		{"long digits", "908027123", "908027", 0, 6},
+		{"long selected range", "98765", "098745", 1, 4},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			goTo(t, page, "/login/code")
+			fill(t, page.Locator("#email"), "paste-undo@example.test")
+			click(t, pageByRole(page, *playwright.AriaRoleButton, "Email me a code"))
+			code := page.Locator("#code")
+			slots := page.Locator(".ts-email-code-slot")
+			fill(t, code, "012345")
+			_, err := code.Evaluate(`(input, range) => input.setSelectionRange(range[0], range[1])`, []int{test.start, test.end})
+			must(t, err)
+			_, err = page.Evaluate(`text => navigator.clipboard.writeText(text)`, test.clipboard)
+			must(t, err)
+			// Exercise the real browser paste transaction, then undo and redo it.
+			must(t, code.Press("ControlOrMeta+v"))
+			must(t, expect.Locator(code).ToHaveValue(test.want))
+			must(t, code.Press("ControlOrMeta+z"))
+			must(t, expect.Locator(code).ToHaveValue("012345"))
+			must(t, expect.Locator(slots).ToHaveText([]string{"0", "1", "2", "3", "4", "5"}))
+			must(t, code.Press("ControlOrMeta+Shift+z"))
+			must(t, expect.Locator(code).ToHaveValue(test.want))
+			wantSlots := make([]string, 6)
+			copy(wantSlots, strings.Split(test.want, ""))
+			must(t, expect.Locator(slots).ToHaveText(wantSlots))
+		})
+	}
+}
+
+func TestNativeEmailCodeBeforeDatastarLoads(t *testing.T) {
+	t.Parallel()
+	base, _ := tsAuthDashboard(t)
+	for _, test := range []struct {
+		name, text string
+		end        int
+	}{
+		{"digits", "012345", 4},
+		{"formatted", "012 345", 5},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			page := watchedPage(t, newContext(t, base))
+			goTo(t, page, "/login/code")
+			fill(t, page.Locator("#email"), "early-code@example.test")
+
+			// Hold the real module response so the fallback field can receive input
+			// before binding, without replacing the script or bypassing its integrity.
+			pending := make(chan playwright.Route, 1)
+			must(t, page.Route("**/js/datastar.js*", func(route playwright.Route) { pending <- route }))
+			_, err := pageByRole(page, *playwright.AriaRoleButton, "Email me a code").Evaluate(`button => button.click()`, nil)
+			must(t, err)
+			code := page.Locator("#code")
+			must(t, expect.Locator(code).ToBeVisible())
+			must(t, expect.Locator(page.Locator(".ts-email-code-ready")).ToHaveCount(0))
+			must(t, code.PressSequentially(test.text))
+			_, err = code.Evaluate(`(input, end) => input.setSelectionRange(1, end)`, test.end)
+			must(t, err)
+			select {
+			case route := <-pending:
+				must(t, route.Continue())
+			case <-time.After(10 * time.Second):
+				t.Fatal("Datastar module request was not intercepted")
+			}
+			must(t, expect.Locator(page.Locator(".ts-email-code-slot")).ToHaveText([]string{"0", "1", "2", "3", "4", "5"}))
+			must(t, expect.Locator(code).ToHaveValue("012345"))
+			selection, err := code.Evaluate(`input => input.selectionStart === 1 && input.selectionEnd === 4`, nil)
+			must(t, err)
+			if selection != true {
+				t.Fatal("Datastar initialization changed the selected digits")
+			}
+			must(t, expect.Locator(page.Locator(".ts-email-code-selected")).ToHaveCount(3))
+		})
+	}
+}
+
+func TestNativeSignUpWithoutJavaScript(t *testing.T) {
+	t.Parallel()
+	base, fake := tsAuthDashboard(t)
+	context, err := browser.NewContext(playwright.BrowserNewContextOptions{
+		BaseURL: new(base), JavaScriptEnabled: new(false),
+	})
+	must(t, err)
+	t.Cleanup(func() { _ = context.Close() })
+	page := watchedPage(t, context)
+	email := strings.ToLower(uniqueName("nojs")) + "@example.test"
+	goTo(t, page, "/onboarding")
+	fill(t, page.Locator("#displayName"), "Native Form")
+	fill(t, page.Locator("#email"), email)
+	fill(t, page.Locator("#password"), "native form password 1")
+	fill(t, page.Locator("#confirmPassword"), "native form password 1")
+	must(t, page.Locator("#terms").Check())
+	click(t, pageByRole(page, *playwright.AriaRoleButton, "Create account"))
+	must(t, expect.Locator(page.Locator("h1")).ToHaveText("Verify your email"))
+	code := fake.code(t, email)
+	// Native typing must preserve the separator until the server normalizes it.
+	must(t, page.Locator("#code").PressSequentially(code[:3]+" "+code[3:]))
+	click(t, pageByRole(page, *playwright.AriaRoleButton, "Continue"))
+	waitForPath(t, page, func(u *url.URL) bool { return u.Path == "/onboarding" })
+	signedInAs(t, page, email, "Native Form")
 }
 
 func TestNativePasswordReset(t *testing.T) {
