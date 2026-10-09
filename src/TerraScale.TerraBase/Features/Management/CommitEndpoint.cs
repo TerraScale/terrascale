@@ -22,7 +22,7 @@ namespace TerraBase.Features.Management;
 public sealed record CommitRequest(string? Id, IReadOnlyList<ManagementOpRequest>? Ops);
 
 /// <summary><c>POST /v1/management/commits</c>: applies Management and dashboard document operations atomically.</summary>
-public sealed class CommitEndpoint(IManagementCommits commits) : EndpointWithoutRequest<IResult>
+public sealed class CommitEndpoint(IManagementCommits commits, TimeProvider time) : EndpointWithoutRequest<IResult>
 {
     /// <summary>Set on a response answered from the record of an earlier, identical commit.</summary>
     public const string ReplayedHeader = "TerraBase-Commit-Replayed";
@@ -111,7 +111,7 @@ public sealed class CommitEndpoint(IManagementCommits commits) : EndpointWithout
 
         using (envelope)
         {
-            switch (Parse(envelope.RootElement, HttpContext.User.IsManagementService()))
+            switch (Parse(envelope.RootElement, HttpContext.User.IsManagementService(), time))
             {
                 case CommitRejected rejected:
                     return ErrorResponse.From(rejected.Error, rejected.Op);
@@ -139,7 +139,7 @@ public sealed class CommitEndpoint(IManagementCommits commits) : EndpointWithout
     }
 
     // {"id":"<ULID>","ops":[…]} exactly, every operation valid; the first invalid one is named by its index.
-    private static ParsedRequest Parse(JsonElement envelope, bool service)
+    private static ParsedRequest Parse(JsonElement envelope, bool service, TimeProvider time)
     {
         if (envelope.ValueKind != JsonValueKind.Object)
         {
@@ -165,7 +165,7 @@ public sealed class CommitEndpoint(IManagementCommits commits) : EndpointWithout
         foreach (var (json, i) in ops.EnumerateArray().Select((json, i) => (json, i)))
         {
             CommitOperation operation;
-            switch (Operation(json))
+            switch (Operation(json, time))
             {
                 case Validation error:
                     return new CommitRejected(error, i);
@@ -206,11 +206,11 @@ public sealed class CommitEndpoint(IManagementCommits commits) : EndpointWithout
     }
 
     // One operation; the Management validators still throw (docs/error-handling.md), so their errors are read here.
-    private static ValidOperation Operation(JsonElement json)
+    private static ValidOperation Operation(JsonElement json, TimeProvider time)
     {
         try
         {
-            return Unchecked(json);
+            return Unchecked(json, time);
         }
         catch (BadHttpRequestException error)
         {
@@ -218,7 +218,7 @@ public sealed class CommitEndpoint(IManagementCommits commits) : EndpointWithout
         }
     }
 
-    private static ValidOperation Unchecked(JsonElement json)
+    private static ValidOperation Unchecked(JsonElement json, TimeProvider time)
     {
         if (json.ValueKind != JsonValueKind.Object)
         {
@@ -227,7 +227,7 @@ public sealed class CommitEndpoint(IManagementCommits commits) : EndpointWithout
 
         if (json.TryGetProperty("collection", out _))
         {
-            return TransactionEndpoint.CheckOperation(json) switch
+            return TransactionEndpoint.CheckOperation(json, time) switch
             {
                 Validation error => error,
                 DocumentOperation operation => new DocumentCommitOperation(operation),

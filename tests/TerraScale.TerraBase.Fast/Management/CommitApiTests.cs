@@ -6,6 +6,7 @@ using System.Text.Json;
 using Bogus;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Primitives;
 using TerraBase.Testing;
@@ -23,6 +24,39 @@ public sealed class CommitApiTests
     private static readonly Faker Faker = new();
     private static readonly string[] ReadScope = ["documents:read"];
     private static readonly string[] StatusField = ["status"];
+
+    [Test]
+    public async Task Commit_document_creates_use_the_application_clock_for_monotonic_ULIDs()
+    {
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 8, 12, 0, 0, TimeSpan.Zero));
+        await using var api = await ManagementApi.StartAsync(time: clock, managementCredential: true);
+        using var service = api.Service(api.User);
+        var ids = new List<string>();
+        for (var i = 0; i < 2; i++)
+        {
+            var commit = await CommitAsync(service,
+                new { op = "create", collection = "notes", document = new { value = i * 2 } },
+                new { op = "create", collection = "notes", document = new { value = (i * 2) + 1 } });
+            await Assert.That(commit.Status).IsEqualTo(HttpStatusCode.OK);
+            for (var j = 0; j < 2; j++)
+            {
+                var id = commit.Result(j).GetProperty("id").GetString()!;
+                await Assert.That(EntityIds.IsValid(id)).IsTrue();
+                await Assert.That(Ulid.Parse(id).Time).IsEqualTo(clock.GetUtcNow());
+                var read = await GetAsync(service, $"{Documents}/notes/by-key?id={System.Uri.EscapeDataString(id)}");
+                await Assert.That(read.Status).IsEqualTo(HttpStatusCode.OK);
+                await Assert.That(read.Json.GetProperty("id").GetString()).IsEqualTo(id);
+                await Assert.That(read.Json.GetProperty("document").GetProperty("value").GetInt32()).IsEqualTo((i * 2) + j);
+                await Assert.That(read.ETag).IsEqualTo(Version(commit, j));
+                ids.Add(id);
+            }
+        }
+
+        for (var i = 1; i < ids.Count; i++)
+        {
+            await Assert.That(string.CompareOrdinal(ids[i - 1], ids[i])).IsLessThan(0);
+        }
+    }
 
     [Test]
     public async Task A_commit_creates_an_organization_a_project_and_a_document_naming_both()

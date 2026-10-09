@@ -130,7 +130,7 @@ public sealed class TransactionEndpoint(IDocumentService documents, IAuthorizati
     };
 
     /// <summary>Parses and validates one operation of a transaction (also of a Management commit), or answers the rule it breaks.</summary>
-    internal static Valid<DocumentOperation> CheckOperation(JsonElement json, TimeProvider? time = null)
+    internal static Valid<DocumentOperation> CheckOperation(JsonElement json, TimeProvider time)
     {
         if (json.ValueKind != JsonValueKind.Object)
         {
@@ -154,7 +154,7 @@ public sealed class TransactionEndpoint(IDocumentService documents, IAuthorizati
         };
     }
 
-    private static Valid<DocumentOperation> Operation(TransactionOpRequest op, string collection, TimeProvider? time)
+    private static Valid<DocumentOperation> Operation(TransactionOpRequest op, string collection, TimeProvider time)
     {
         var hasDocument = op.Document.ValueKind != JsonValueKind.Undefined;
         var hasMerge = op.Merge.ValueKind != JsonValueKind.Undefined;
