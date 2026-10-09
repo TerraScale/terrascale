@@ -103,7 +103,10 @@
   width: min(100%, 400px);
 }
 
-.ts-spending-notice[hidden] {
+/* Respect native hidden state before Datastar initializes. */
+.ts-spending-notice[hidden],
+.ts-spending-project[hidden],
+.ts-spending-databases[hidden] {
   display: none;
 }
 
@@ -153,35 +156,8 @@
   border-block-start: 1px solid var(--ts-line);
 }
 
-.ts-spending-form .ts-card-head {
-  align-items: start;
-}
-
 .ts-spending-form .ts-card-heading {
   gap: var(--ts-s2);
-}
-
-.ts-spending-fields,
-.ts-spending-project,
-.ts-spending-databases {
-  display: grid;
-  min-width: 0;
-  gap: var(--ts-s4);
-}
-
-/* Keep server-rendered hidden projects hidden before Datastar initializes. */
-.ts-spending-project[hidden],
-.ts-spending-databases[hidden] {
-  display: none;
-}
-
-.ts-spending-fields {
-  padding: 0;
-  border: 0;
-}
-
-.ts-spending-fields:disabled .ts-input {
-  cursor: not-allowed;
 }
 
 .ts-spending-identity {
@@ -206,10 +182,6 @@
   gap: var(--ts-s4);
 }
 
-.ts-spending-limit-grid .ts-field {
-  min-width: 0;
-}
-
 .ts-spending-price,
 .ts-spending-select {
   position: relative;
@@ -226,8 +198,7 @@
   color: var(--ts-ink-3);
 }
 
-.ts-spending-price > .ts-input,
-.ts-spending-select > .ts-select {
+.ts-spending-price > .ts-input {
   padding-inline-start: var(--ts-s8);
 }
 
@@ -236,7 +207,6 @@
 }
 
 .ts-spending-select > .ts-select {
-  width: 100%;
   padding-inline-start: var(--ts-s10);
 }
 
@@ -252,25 +222,14 @@
 
 .ts-spending-excess > input {
   appearance: none;
-  position: relative;
-  flex: none;
   width: 40px;
   height: 24px;
-  border: 1px solid var(--ts-control-line);
-  border-radius: var(--ts-radius-pill);
-  background: var(--ts-surface-3);
-  cursor: pointer;
+  border-color: var(--ts-control-line);
 }
 
 .ts-spending-excess > input::after {
-  content: "";
-  position: absolute;
   top: 3px;
   left: 3px;
-  width: 16px;
-  height: 16px;
-  border-radius: var(--ts-radius-pill);
-  background: var(--ts-ink-2);
   transition: transform var(--ts-fast) var(--ts-ease);
 }
 
@@ -284,11 +243,7 @@
   background: var(--ts-on-accent);
 }
 
-.ts-spending-database + .ts-spending-database {
-  padding-block-start: var(--ts-s5);
-  border-block-start: 1px solid var(--ts-line);
-}
-
+.ts-spending-database + .ts-spending-database,
 .ts-spending-actions {
   padding-block-start: var(--ts-s5);
   border-block-start: 1px solid var(--ts-line);

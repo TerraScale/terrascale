@@ -2602,7 +2602,7 @@ func spendingControlsTab(data pageData, csrfToken string) templ.Component {
 				}()
 			}
 			ctx = templ.InitializeContext(ctx)
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 242, "<fieldset class=\"ts-spending-fields\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 242, "<fieldset class=\"ts-stack\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -2646,7 +2646,7 @@ func spendingControlsTab(data pageData, csrfToken string) templ.Component {
 				return templ_7745c5c3_Err
 			}
 			if data.InternalBill == nil {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 248, "<label class=\"ts-spending-excess\" for=\"paid-excess\"><span class=\"ts-stack-sm\"><strong>Allow usage beyond included plan resources</strong><span class=\"ts-hint\" id=\"paid-excess-hint\">Additional usage is billed according to your plan.</span></span> <input class=\"ts-checkbox\" id=\"paid-excess\" type=\"checkbox\" role=\"switch\" name=\"paidExcess\" value=\"true\"")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 248, "<label class=\"ts-spending-excess\" for=\"paid-excess\"><span class=\"ts-stack-sm\"><strong>Allow usage beyond included plan resources</strong><span class=\"ts-hint\" id=\"paid-excess-hint\">Additional usage is billed according to your plan.</span></span> <input class=\"ts-switch\" id=\"paid-excess\" type=\"checkbox\" role=\"switch\" name=\"paidExcess\" value=\"true\"")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
@@ -2776,14 +2776,14 @@ func spendingControlsTab(data pageData, csrfToken string) templ.Component {
 				return templ_7745c5c3_Err
 			}
 			for _, project := range data.SpendingProjects {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 263, "<div class=\"ts-spending-project\" data-project-id=\"")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 263, "<div class=\"ts-stack ts-spending-project\" data-project-id=\"")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 				var templ_7745c5c3_Var118 string
 				templ_7745c5c3_Var118, templ_7745c5c3_Err = templ.ResolveAttributeValue(project.ID)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/usage/usage.templ`, Line: 564, Col: 65}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/usage/usage.templ`, Line: 564, Col: 74}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var118)
 				if templ_7745c5c3_Err != nil {
@@ -2799,7 +2799,7 @@ func spendingControlsTab(data pageData, csrfToken string) templ.Component {
 						return templ_7745c5c3_Err
 					}
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 266, " data-attr:hidden=\"$spendingProject !== el.dataset.projectId\"><fieldset class=\"ts-spending-fields\"")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 266, " data-attr:hidden=\"$spendingProject !== el.dataset.projectId\"><fieldset class=\"ts-stack\"")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
@@ -2873,14 +2873,14 @@ func spendingControlsTab(data pageData, csrfToken string) templ.Component {
 				}
 			}
 			for _, project := range data.SpendingProjects {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 272, "<div class=\"ts-spending-databases\" data-project-id=\"")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 272, "<div class=\"ts-stack ts-spending-databases\" data-project-id=\"")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 				var templ_7745c5c3_Var122 string
 				templ_7745c5c3_Var122, templ_7745c5c3_Err = templ.ResolveAttributeValue(project.ID)
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/usage/usage.templ`, Line: 578, Col: 67}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `features/usage/usage.templ`, Line: 578, Col: 76}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ_7745c5c3_Var122)
 				if templ_7745c5c3_Err != nil {
@@ -2938,7 +2938,7 @@ func spendingControlsTab(data pageData, csrfToken string) templ.Component {
 					}
 				}
 				for _, database := range project.Databases {
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 278, "<fieldset class=\"ts-spending-database ts-spending-fields\"")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 278, "<fieldset class=\"ts-spending-database ts-stack\"")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}

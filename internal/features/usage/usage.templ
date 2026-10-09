@@ -529,7 +529,7 @@ templ spendingControlsTab(data pageData, csrfToken string) {
 	<form id="spending-controls" class="ts-spending-form" method="post" action="/api/v1/dashboard/usage/spending-controls" data-submit-once data-signals={ spendingSignals(data.SelectedProject) } data-on:invalid__capture="$spendingProject = el.querySelector('input:invalid')?.closest('[data-project-id]')?.dataset.projectId || $spendingProject">
 		<input type="hidden" name="_csrf" value={ csrfToken }/>
 		@ui.Card(ui.CardProps{ID: "organization-controls", Title: "Organization", Description: "Set the monthly budget shared by all projects and databases."}) {
-			<fieldset class="ts-spending-fields" disabled?={ !data.CanManage }>
+			<fieldset class="ts-stack" disabled?={ !data.CanManage }>
 				<legend class="ts-sr-only">Organization spending limits</legend>
 				<div class="ts-spending-identity">
 					@icons.Building2(20)
@@ -541,7 +541,7 @@ templ spendingControlsTab(data pageData, csrfToken string) {
 				if data.InternalBill == nil {
 					<label class="ts-spending-excess" for="paid-excess">
 						<span class="ts-stack-sm"><strong>Allow usage beyond included plan resources</strong><span class="ts-hint" id="paid-excess-hint">Additional usage is billed according to your plan.</span></span>
-						<input class="ts-checkbox" id="paid-excess" type="checkbox" role="switch" name="paidExcess" value="true" checked?={ data.PaidExcess } aria-describedby="paid-excess-hint"/>
+						<input class="ts-switch" id="paid-excess" type="checkbox" role="switch" name="paidExcess" value="true" checked?={ data.PaidExcess } aria-describedby="paid-excess-hint"/>
 					</label>
 				}
 			</fieldset>
@@ -561,8 +561,8 @@ templ spendingControlsTab(data pageData, csrfToken string) {
 				</div>
 			}
 			for _, project := range data.SpendingProjects {
-				<div class="ts-spending-project" data-project-id={ project.ID } hidden?={ project.ID != data.SelectedProject } data-attr:hidden="$spendingProject !== el.dataset.projectId">
-					<fieldset class="ts-spending-fields" disabled?={ !data.CanManage }>
+				<div class="ts-stack ts-spending-project" data-project-id={ project.ID } hidden?={ project.ID != data.SelectedProject } data-attr:hidden="$spendingProject !== el.dataset.projectId">
+					<fieldset class="ts-stack" disabled?={ !data.CanManage }>
 						<legend class="ts-sr-only">{ project.Name + " project limits" }</legend>
 						@spendingLimitFields("project", "proj", project.ID, project.SpendCap, project.Operations)
 					</fieldset>
@@ -575,14 +575,14 @@ templ spendingControlsTab(data pageData, csrfToken string) {
 				@ui.Empty("No databases yet", "Create a project and database to configure database spending controls.")
 			}
 			for _, project := range data.SpendingProjects {
-				<div class="ts-spending-databases" data-project-id={ project.ID } hidden?={ project.ID != data.SelectedProject } data-attr:hidden="$spendingProject !== el.dataset.projectId">
+				<div class="ts-stack ts-spending-databases" data-project-id={ project.ID } hidden?={ project.ID != data.SelectedProject } data-attr:hidden="$spendingProject !== el.dataset.projectId">
 					if len(project.Databases) == 0 {
 						@ui.Empty("No databases yet", "Create a database in this project to configure its spending controls.") {
 							<a class="ts-link" href={ "/databases?project=" + url.QueryEscape(project.ID) }>View databases</a>
 						}
 					}
 					for _, database := range project.Databases {
-						<fieldset class="ts-spending-database ts-spending-fields" disabled?={ !data.CanManage }>
+						<fieldset class="ts-spending-database ts-stack" disabled?={ !data.CanManage }>
 							<legend class="ts-sr-only">{ database.Name + " database limits" }</legend>
 							<div class="ts-spending-database-heading">
 								<div class="ts-spending-identity">@icons.Database(18)<h3 class="ts-section-title ts-break">{ database.Name }</h3></div>
