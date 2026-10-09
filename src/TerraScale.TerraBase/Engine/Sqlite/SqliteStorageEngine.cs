@@ -4,6 +4,7 @@ using System.Diagnostics.Metrics;
 using System.IO.Enumeration;
 using System.Runtime.CompilerServices;
 using TerraBase.Configuration;
+using TerraBase.Engine.Lattices;
 using TerraBase.Features.Memory;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
@@ -74,6 +75,9 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
 
     /// <summary>Runs every SQLite call of this engine.</summary>
     internal SqliteIoPool Io { get; }
+
+    /// <summary>This member's replica id: who mints the dots of the writes it makes (docs/design/anna-core.md).</summary>
+    internal ReplicaId ReplicaId { get; }
     private readonly string _pragmas;
     private bool _heapInitialized;
 
@@ -350,6 +354,10 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
         _ownership = Own(dataDirectory);
         try
         {
+            ReplicaId = ReplicaIdentityFile.Start(dataDirectory);
+            meter.CreateObservableGauge("terrabase.replica.member", () => (long)ReplicaId.Member, description: "This member's number in its replica id.");
+            meter.CreateObservableGauge("terrabase.replica.epoch", () => (long)ReplicaId.Epoch, description: "Unclean starts of this member since its number was taken.");
+
             // Last construction step: the pool owns rollback of any partially started workers.
             Io = new(threads, queue, meter, createWorker);
         }
@@ -690,6 +698,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
                 var link = (entry.Attributes & FileAttributes.ReparsePoint) != 0;
                 var reservedRootName = entry.Directory.SequenceEqual(entry.RootDirectory)
                     && (entry.FileName.SequenceEqual(LockFileName)
+                        || entry.FileName.SequenceEqual(ReplicaIdentityFile.FileName)
                         || entry.FileName.SequenceEqual(SystemName + FileExtension)
                         || entry.FileName.SequenceEqual(SystemName + FileExtension + "-wal")
                         || entry.FileName.SequenceEqual(SystemName + FileExtension + "-shm")
@@ -952,6 +961,19 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
         catch (Exception error)
         {
             errors.Add(error);
+        }
+
+        // Every store closed without error: the next start may keep this replica id. Any other ending raises its epoch.
+        if (errors.Count == 0)
+        {
+            try
+            {
+                ReplicaIdentityFile.Stop(_dataDirectory, ReplicaId);
+            }
+            catch (Exception error)
+            {
+                errors.Add(error);
+            }
         }
 
         // Even workers that were closing sessions are now gone: only here can another process take over.

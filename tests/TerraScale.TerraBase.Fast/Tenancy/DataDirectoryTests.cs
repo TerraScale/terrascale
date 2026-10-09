@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
@@ -21,6 +22,7 @@ namespace TerraBase.Fast.Tenancy;
 public sealed class DataDirectoryTests
 {
     private const string LockFileName = ".terrabase.lock";
+    private const string ReplicaFileName = ".terrabase.replica";
     private const string InUse = "data-directory is in use by another TerraBase process; stop it, then start again";
     private const string PreTenancyLayout = "data directory uses the pre-tenancy layout; start with an empty data directory (no automatic migration)";
 
@@ -342,6 +344,7 @@ public sealed class DataDirectoryTests
     [Arguments("system-only", PreTenancyLayout)]
     [Arguments("stray-database", PreTenancyLayout)]
     [Arguments("system-prefixed", PreTenancyLayout)]
+    [Arguments("unrecorded-identity", PreTenancyLayout)]
     [Arguments("unknown-layout", "data directory has a layout this build does not support")]
     public async Task A_data_directory_from_before_tenancy_is_refused_without_changing_a_byte(string layout, string message)
     {
@@ -373,6 +376,10 @@ public sealed class DataDirectoryTests
                     // A data directory of this build with a database from before tenancy copied into it.
                     await TerraBaseTestServer.InitializeDataDirectoryAsync(dataDirectory);
                     await DocumentFiles.WriteAsync(Path.Combine(dataDirectory, "shop.db"), ("orders", "o1", "{}"));
+                    break;
+                case "unrecorded-identity":
+                    // A replica identity copied into a directory no server recorded: refused, not adopted.
+                    await WriteReplicaAsync(dataDirectory, 1, [7, 0, 0, 0], [0, 0], running: false);
                     break;
                 default:
                     // A layout record this build does not know, from a newer build.
@@ -424,6 +431,215 @@ public sealed class DataDirectoryTests
                 + (Directory.Exists(entry) ? "directory" : Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(entry)))))
             .Order(StringComparer.Ordinal),
     ];
+
+    // TS-647 step 4b (docs/design/anna-core.md, Identities and dots): the member's replica id survives a clean stop, and
+    // every other start raises its epoch before anything can mint a dot, so a member recovered from an OS crash never
+    // mints again a dot its peers may already hold.
+    [Test]
+    public async Task A_clean_restart_keeps_the_replica_id_and_any_other_start_raises_its_epoch()
+    {
+        var dataDirectory = Directory.CreateTempSubdirectory("terrabase-replica-").FullName;
+        try
+        {
+            var (member, epoch) = await ReplicaAsync(dataDirectory);
+            await Assert.That(member).IsNotEqualTo(0d);
+            await Assert.That(epoch).IsEqualTo(0d);
+            await Assert.That(await ReplicaAsync(dataDirectory)).IsEqualTo((member, 0d));
+            for (var crash = 1; crash <= 2; crash++)
+            {
+                // A crash leaves the identity as the start wrote it: still running.
+                var identity = await File.ReadAllBytesAsync(Path.Combine(dataDirectory, ReplicaFileName));
+                await Assert.That(identity[7]).IsEqualTo((byte)1);
+                await WriteReplicaAsync(dataDirectory, 1, identity.AsSpan(1, 4).ToArray(), identity.AsSpan(5, 2).ToArray(), running: true);
+                await Assert.That(await ReplicaAsync(dataDirectory)).IsEqualTo((member, (double)crash));
+            }
+
+            await Assert.That(await ReplicaAsync(dataDirectory)).IsEqualTo((member, 2d));
+        }
+        finally
+        {
+            Directory.Delete(dataDirectory, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task A_member_past_its_last_epoch_takes_a_new_number()
+    {
+        var dataDirectory = Directory.CreateTempSubdirectory("terrabase-replica-").FullName;
+        try
+        {
+            var (member, _) = await ReplicaAsync(dataDirectory);
+            // The member at epoch 65535, still running: an unclean start past the last epoch.
+            var identity = await File.ReadAllBytesAsync(Path.Combine(dataDirectory, ReplicaFileName));
+            await WriteReplicaAsync(dataDirectory, 1, identity.AsSpan(1, 4).ToArray(), [0xff, 0xff], running: true);
+            var (renumbered, epoch) = await ReplicaAsync(dataDirectory);
+            await Assert.That(renumbered).IsNotEqualTo(member);
+            await Assert.That(renumbered).IsNotEqualTo(0d);
+            await Assert.That(epoch).IsEqualTo(0d);
+        }
+        finally
+        {
+            Directory.Delete(dataDirectory, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task An_unclean_start_carries_the_epoch_past_its_low_byte()
+    {
+        var dataDirectory = Directory.CreateTempSubdirectory("terrabase-replica-").FullName;
+        try
+        {
+            var (member, _) = await ReplicaAsync(dataDirectory);
+            var identity = await File.ReadAllBytesAsync(Path.Combine(dataDirectory, ReplicaFileName));
+            await WriteReplicaAsync(dataDirectory, 1, identity.AsSpan(1, 4).ToArray(), [0xff, 0x00], running: true);
+            await Assert.That(await ReplicaAsync(dataDirectory)).IsEqualTo((member, 256d));
+        }
+        finally
+        {
+            Directory.Delete(dataDirectory, recursive: true);
+        }
+    }
+
+    [Test]
+    [Arguments("empty")]
+    [Arguments("a partial first write")]
+    [Arguments("a torn epoch")]
+    public async Task A_replica_identity_a_crash_left_unfinished_is_a_new_member(string damage)
+    {
+        var dataDirectory = Directory.CreateTempSubdirectory("terrabase-replica-").FullName;
+        try
+        {
+            var (member, _) = await ReplicaAsync(dataDirectory);
+            var path = Path.Combine(dataDirectory, ReplicaFileName);
+            var identity = await File.ReadAllBytesAsync(path);
+            switch (damage)
+            {
+                case "empty":
+                    // Killed between creating the file and writing it: nothing could have minted under it.
+                    await File.WriteAllBytesAsync(path, []);
+                    break;
+                case "a partial first write":
+                    // Killed while the new file grew: only the format byte and part of the member reached disk.
+                    await File.WriteAllBytesAsync(path, identity[..3]);
+                    break;
+                default:
+                    // A running record at epoch 0x0100 whose rewrite to 0x0101 a power loss tore after the epoch landed:
+                    // the epoch reads 0x0101 under the old checksum, so no part of the record can be trusted.
+                    await WriteReplicaAsync(dataDirectory, 1, identity.AsSpan(1, 4).ToArray(), [0x00, 0x01], running: true);
+                    identity = await File.ReadAllBytesAsync(path);
+                    identity[5] = 1;
+                    await File.WriteAllBytesAsync(path, identity);
+                    break;
+            }
+
+            var (renumbered, epoch) = await ReplicaAsync(dataDirectory);
+            await Assert.That(renumbered).IsNotEqualTo(0d);
+            await Assert.That(renumbered).IsNotEqualTo(member);
+            await Assert.That(epoch).IsEqualTo(0d);
+        }
+        finally
+        {
+            Directory.Delete(dataDirectory, recursive: true);
+        }
+    }
+
+    [Test]
+    [Arguments("an unknown format")]
+    [Arguments("an unknown format with another checksum")]
+    [Arguments("an unknown state")]
+    [Arguments("member zero")]
+    [Arguments("a short record of another format")]
+    [Arguments("a longer record")]
+    [Arguments("a much larger file")]
+    public async Task A_replica_identity_this_build_cannot_read_stops_the_start(string problem)
+    {
+        var dataDirectory = Directory.CreateTempSubdirectory("terrabase-replica-").FullName;
+        try
+        {
+            await (await TerraBaseTestServer.StartAsync(settings => settings["data-directory"] = dataDirectory)).DisposeAsync();
+            var path = Path.Combine(dataDirectory, ReplicaFileName);
+            switch (problem)
+            {
+                case "an unknown format":
+                    await WriteReplicaAsync(dataDirectory, 2, [1, 0, 0, 0], [0, 0], running: false);
+                    break;
+                case "an unknown format with another checksum":
+                    // A newer build may checksum differently: still its identity, not a torn record of this format.
+                    await File.WriteAllBytesAsync(path, [2, 1, 0, 0, 0, 0, 0, 1, 0xde, 0xad, 0xbe, 0xef]);
+                    break;
+                case "an unknown state":
+                    await WriteReplicaAsync(dataDirectory, 1, [1, 0, 0, 0], [0, 0], running: false, state: 2);
+                    break;
+                case "member zero":
+                    await WriteReplicaAsync(dataDirectory, 1, [0, 0, 0, 0], [0, 0], running: false);
+                    break;
+                case "a short record of another format":
+                    await File.WriteAllBytesAsync(path, [2, 1, 0]);
+                    break;
+                case "a much larger file":
+                    // Replaced by something else entirely: refused after reading one byte past a record.
+                    await File.WriteAllBytesAsync(path, [.. await File.ReadAllBytesAsync(path), .. new byte[1 << 20]]);
+                    break;
+                default:
+                    await File.WriteAllBytesAsync(path, [.. await File.ReadAllBytesAsync(path), 0]);
+                    break;
+            }
+
+            var identity = await File.ReadAllBytesAsync(path);
+            await AssertStartupRefusedAsync(dataDirectory, "data directory has a replica identity this build does not support");
+            // Nothing rewrote it: the operator can still inspect what an unknown build left.
+            await Assert.That((await File.ReadAllBytesAsync(path)).SequenceEqual(identity)).IsTrue().Because(problem);
+        }
+        finally
+        {
+            Directory.Delete(dataDirectory, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task A_replica_identity_that_is_a_link_stops_the_start_without_touching_its_target()
+    {
+        var dataDirectory = Directory.CreateTempSubdirectory("terrabase-replica-").FullName;
+        var elsewhere = Directory.CreateTempSubdirectory("terrabase-replica-target-").FullName;
+        try
+        {
+            await (await TerraBaseTestServer.StartAsync(settings => settings["data-directory"] = dataDirectory)).DisposeAsync();
+            var path = Path.Combine(dataDirectory, ReplicaFileName);
+            var target = Path.Combine(elsewhere, ReplicaFileName);
+            File.Move(path, target);
+            var identity = await File.ReadAllBytesAsync(target);
+            File.CreateSymbolicLink(path, target);
+            await AssertStartupRefusedAsync(dataDirectory, "data directory has a replica identity that is a link; replace it with the file itself");
+            await Assert.That((await File.ReadAllBytesAsync(target)).SequenceEqual(identity)).IsTrue();
+        }
+        finally
+        {
+            Directory.Delete(dataDirectory, recursive: true);
+            Directory.Delete(elsewhere, recursive: true);
+        }
+    }
+
+    // The member number and epoch a server on dataDirectory reports, after which it stops cleanly. While it serves, its
+    // identity is already on disk marked running, as a crash would leave it.
+    private static async Task<(double Member, double Epoch)> ReplicaAsync(string dataDirectory)
+    {
+        await using var server = await TerraBaseTestServer.StartAsync(settings => settings["data-directory"] = dataDirectory);
+        var identity = await File.ReadAllBytesAsync(Path.Combine(dataDirectory, ReplicaFileName));
+        var (member, epoch) = (await server.MetricAsync("terrabase_replica_member"), await server.MetricAsync("terrabase_replica_epoch"));
+        await Assert.That(identity.Length).IsEqualTo(12);
+        await Assert.That(identity[7]).IsEqualTo((byte)0);
+        await Assert.That(identity.AsSpan(8).SequenceEqual(SHA256.HashData(identity.AsSpan(0, 8)).AsSpan(0, 4))).IsTrue();
+        await Assert.That((double)BinaryPrimitives.ReadUInt32LittleEndian(identity.AsSpan(1))).IsEqualTo(member);
+        await Assert.That((double)BinaryPrimitives.ReadUInt16LittleEndian(identity.AsSpan(5))).IsEqualTo(epoch);
+        return (member, epoch);
+    }
+
+    // An identity as a process left it, with a valid checksum: format, member and epoch (little-endian) and its state.
+    private static Task WriteReplicaAsync(string dataDirectory, byte format, byte[] member, byte[] epoch, bool running, byte? state = null)
+    {
+        byte[] record = [format, .. member, .. epoch, state ?? (running ? (byte)0 : (byte)1)];
+        return File.WriteAllBytesAsync(Path.Combine(dataDirectory, ReplicaFileName), [.. record, .. SHA256.HashData(record).AsSpan(0, 4)]);
+    }
 
     // Runs the real binary on the directory: it must print the message and exit with code 2.
     private static async Task AssertStartupRefusedAsync(string dataDirectory, string message)
