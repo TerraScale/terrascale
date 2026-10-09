@@ -397,8 +397,8 @@ internal sealed partial class ReplicationSender(
     private async Task<ReplicationTurn> SyncAsync(Peer peer, V1.Replication.ReplicationClient client, DatabaseIncarnation identity, CancellationToken stoppingToken)
     {
         // Include local snapshot/proof acquisition in the attempt budget, not only network waits.
-        using var progress = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
-        progress.CancelAfter(ReplicationProtocol.ProgressTimeout);
+        using var deadline = new CancellationTokenSource(ReplicationProtocol.ProgressTimeout, time);
+        using var progress = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken, deadline.Token);
         var database = identity.Tenant;
         // Peers refuse a database their catalog does not register, so send none of a database that is neither registered nor being
         // created (backup snapshots and restore staging are primary-local storage): its groups would count as lag forever.
@@ -476,7 +476,7 @@ internal sealed partial class ReplicationSender(
         peer.Region = peerRegion;
         var receiverIncarnation = new Ulid(peerMember.MemberIncarnation.Span);
 
-        progress.CancelAfter(ReplicationProtocol.ProgressTimeout);
+        deadline.CancelAfter(ReplicationProtocol.ProgressTimeout);
 
         // Resume after the peer's durable prefix of this origin; a missing frontier means none.
         var frontier = welcome.Frontiers.FirstOrDefault(frontier => frontier.Origin?.Incarnation.Span.SequenceEqual(origin.Span) == true);
@@ -680,7 +680,7 @@ internal sealed partial class ReplicationSender(
                 // Only an acknowledgment that advances the durable prefix extends the deadline; stale ones do not.
                 if (released)
                 {
-                    progress.CancelAfter(ReplicationProtocol.ProgressTimeout);
+                    deadline.CancelAfter(ReplicationProtocol.ProgressTimeout);
                 }
             }
 

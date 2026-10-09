@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
@@ -457,8 +458,24 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
         private readonly Lock _cleanupGate = new();
         private Task? _cleanup;
 
-        public Task CleanupAsync(string directory) => WaitForCleanupAsync(
-            BeginCleanupAsync(directory), ReportCleanupFailure, cancellationToken);
+        public async Task CleanupAsync(string directory)
+        {
+            var entered = Stopwatch.GetTimestamp();
+            var suiteElapsed = SuiteDiagnostics.Elapsed;
+            var canceledAtEntry = cancellationToken.IsCancellationRequested;
+            var cleanup = BeginCleanupAsync(directory);
+            try
+            {
+                await WaitForCleanupAsync(cleanup, ReportCleanupFailure, cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                // A canceled wait replaces the test body's failure. Record whether cleanup started late or hung.
+                TUnit.Core.TestContext.Current?.OutputWriter.WriteLine(string.Create(CultureInfo.InvariantCulture,
+                    $"Test cleanup wait canceled: suite_elapsed_s={suiteElapsed.TotalSeconds:F3} cleanup_wait_s={Stopwatch.GetElapsedTime(entered).TotalSeconds:F3} canceled_at_entry={canceledAtEntry} cleanup_status={cleanup.Status}"));
+                throw;
+            }
+        }
 
         public Task BeginCleanupAsync(string directory)
         {

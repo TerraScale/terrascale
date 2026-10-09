@@ -8,6 +8,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Sqlite;
 using TerraBase.Features.Replication;
@@ -358,51 +359,72 @@ public sealed class ReplicationSlowTests
     {
         using var peerTls = new PeerTls();
         using var clientTls = new ClientTls();
-        var streams = new System.Collections.Concurrent.ConcurrentQueue<TimeSpan>();
-        var clock = Stopwatch.StartNew();
-        await using var peer = await FakePeer.StartAsync(peerTls, async (requests, responses, context) =>
+        var data = Directory.CreateTempSubdirectory("terrabase-slow-stale-").FullName;
+        var clock = new ProgressClock();
+        var streams = new System.Collections.Concurrent.ConcurrentQueue<HeldStream>();
+        try
         {
-            await requests.MoveNext(context.CancellationToken);
-            await responses.WriteAsync(FakePeer.Welcome(requests.Current.Hello, out var member));
-            if (!await requests.MoveNext(context.CancellationToken))
+            var database = await SeedAsync(clientTls, data);
+            await using var peer = await FakePeer.StartAsync(peerTls, async (requests, responses, context) =>
             {
-                return;
-            }
-
-            var batch = requests.Current.CommittedGroup
-                ?? throw new InvalidDataException("the sender did not send a committed group after Welcome");
-            // Discovery can finish an empty stream; only a received group starts the stale-ACK timeout probe.
-            streams.Enqueue(clock.Elapsed);
-            var stale = FakePeer.Ack(member, batch, 0);
-            try
-            {
-                // Valid but stale acknowledgments, forever: they must not keep the stream alive.
-                while (true)
+                await requests.MoveNext(context.CancellationToken);
+                var hello = requests.Current.Hello;
+                if (hello.LocalIdentity.DatabaseId != database)
                 {
-                    await responses.WriteAsync(stale, context.CancellationToken);
-                    await Task.Delay(TimeSpan.FromMilliseconds(200), context.CancellationToken);
+                    await AcknowledgeAsync(hello, requests, responses, context);
+                    return;
                 }
-            }
-            catch (Exception error) when (error is OperationCanceledException or InvalidOperationException or IOException)
-            {
-                // The sender gave up on this stream.
-            }
-        });
-        await using var sender = await TerraBaseTestServer.StartAsync(settings =>
+
+                var stream = new HeldStream();
+                streams.Enqueue(stream);
+                // One group in flight, so only an acknowledgment that releases the first group lets the second travel.
+                var limits = hello.Limits.Clone();
+                limits.MaxInFlightBatches = 1;
+                try
+                {
+                    await responses.WriteAsync(FakePeer.Welcome(hello, out var member, limits), context.CancellationToken);
+                    var group = await NextGroupAsync(requests, context.CancellationToken);
+                    stream.Group.TrySetResult(group);
+                    await stream.Release.Task.WaitAsync(context.CancellationToken);
+                    // A valid but stale acknowledgment, then an advancing one behind it on the same stream: the
+                    // second group proves the sender processed both, in order.
+                    await responses.WriteAsync(FakePeer.Ack(member, group, 0), context.CancellationToken);
+                    await responses.WriteAsync(FakePeer.Ack(member, group, group.EventId.Sequence), context.CancellationToken);
+                    stream.Next.TrySetResult(await NextGroupAsync(requests, context.CancellationToken));
+                    await Task.Delay(Timeout.InfiniteTimeSpan, context.CancellationToken);
+                }
+                catch (Exception error) when (error is OperationCanceledException or IOException or InvalidOperationException or InvalidDataException)
+                {
+                    // The sender gave up on this stream.
+                    stream.Group.TrySetException(error);
+                    stream.Next.TrySetException(error);
+                    stream.Abandoned.TrySetResult();
+                }
+            });
+            await using var sender = await StartSenderAsync(peerTls, data, peer, clock);
+
+            // Time stands still until the first group arrives, so every deadline below is exact.
+            var stream = await FirstAsync(streams);
+            await stream.Group.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            clock.Advance(TimeSpan.FromSeconds(10));
+            var armed = clock.Rearms.Count;
+            stream.Release.TrySetResult();
+            await stream.Next.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            // Only the advancing acknowledgment re-armed the deadline; the stale one before it did not.
+            await Assert.That(clock.Rearms.Count - armed).IsEqualTo(1);
+            var extended = clock.GetUtcNow() + ReplicationProtocol.ProgressTimeout;
+
+            clock.Advance(ReplicationProtocol.ProgressTimeout - TimeSpan.FromTicks(1));
+            await Assert.That(clock.Expired.Task.IsCompleted).IsFalse();
+            clock.Advance(TimeSpan.FromTicks(1));
+            await Assert.That(await clock.Expired.Task.WaitAsync(TimeSpan.FromSeconds(30))).IsEqualTo(extended);
+            await stream.Abandoned.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            await RetriedAsync(clock, streams);
+        }
+        finally
         {
-            peerTls.Apply(settings);
-            clientTls.Apply(settings);
-            settings["peer-addresses"] = peer.Address.ToString();
-        });
-        var tenant = await ReplicationTenant.CreateAsync(sender, "race");
-        using var writer = clientTls.CreateClient(sender.ClientAddress!, await tenant.KeyAsync(sender, "documents:write"));
-        await CreateCollectionAsync(writer, tenant.Path("race"));
-
-        await PutAsync(writer, tenant.Path("race"), "stuck", new Faker());
-
-        await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(streams.Count >= 2), TimeSpan.FromSeconds(60));
-        var times = streams.ToArray();
-        await Assert.That(times[1] - times[0]).IsGreaterThanOrEqualTo(ReplicationProtocol.ProgressTimeout - TimeSpan.FromSeconds(1));
+            Directory.Delete(data, recursive: true);
+        }
     }
 
     [Test]
@@ -410,37 +432,110 @@ public sealed class ReplicationSlowTests
     {
         using var peerTls = new PeerTls();
         using var clientTls = new ClientTls();
-        var streams = new System.Collections.Concurrent.ConcurrentQueue<TimeSpan>();
-        var clock = Stopwatch.StartNew();
-        await using var peer = await FakePeer.StartAsync(peerTls, async (requests, _, context) =>
+        var data = Directory.CreateTempSubdirectory("terrabase-slow-hello-").FullName;
+        var clock = new ProgressClock();
+        var streams = new System.Collections.Concurrent.ConcurrentQueue<HeldStream>();
+        try
         {
-            streams.Enqueue(clock.Elapsed);
-            try
+            var database = await SeedAsync(clientTls, data);
+            await using var peer = await FakePeer.StartAsync(peerTls, async (requests, responses, context) =>
             {
-                // Reads Hello and then never answers.
                 await requests.MoveNext(context.CancellationToken);
-                await Task.Delay(Timeout.InfiniteTimeSpan, context.CancellationToken);
-            }
-            catch (Exception error) when (error is OperationCanceledException or IOException)
-            {
-                // The sender gave up on this stream.
-            }
-        });
-        await using var sender = await TerraBaseTestServer.StartAsync(settings =>
+                var hello = requests.Current.Hello;
+                if (hello.LocalIdentity.DatabaseId != database)
+                {
+                    await AcknowledgeAsync(hello, requests, responses, context);
+                    return;
+                }
+
+                var stream = new HeldStream();
+                streams.Enqueue(stream);
+                try
+                {
+                    // Reads Hello and then never answers.
+                    await Task.Delay(Timeout.InfiniteTimeSpan, context.CancellationToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    // The sender gave up on this stream.
+                    stream.Abandoned.TrySetResult();
+                }
+            });
+            await using var sender = await StartSenderAsync(peerTls, data, peer, clock);
+
+            // The attempt's deadline was armed before its snapshot and Hello, at the frozen start time.
+            var stream = await FirstAsync(streams);
+            clock.Advance(ReplicationProtocol.ProgressTimeout);
+            await Assert.That(await clock.Expired.Task.WaitAsync(TimeSpan.FromSeconds(30))).IsEqualTo(clock.Start + ReplicationProtocol.ProgressTimeout);
+            await stream.Abandoned.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            await RetriedAsync(clock, streams);
+        }
+        finally
         {
-            peerTls.Apply(settings);
-            clientTls.Apply(settings);
-            settings["peer-addresses"] = peer.Address.ToString();
-        });
-        var tenant = await ReplicationTenant.CreateAsync(sender, "race");
-        using var writer = clientTls.CreateClient(sender.ClientAddress!, await tenant.KeyAsync(sender, "documents:write"));
-        await CreateCollectionAsync(writer, tenant.Path("race"));
-        await PutAsync(writer, tenant.Path("race"), "unanswered", new Faker());
+            Directory.Delete(data, recursive: true);
+        }
+    }
 
-        await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(streams.Count >= 2), TimeSpan.FromSeconds(60));
-        var times = streams.ToArray();
+    [Test]
+    public async Task A_Welcome_one_tick_before_the_progress_deadline_keeps_the_stream()
+    {
+        using var peerTls = new PeerTls();
+        using var clientTls = new ClientTls();
+        var data = Directory.CreateTempSubdirectory("terrabase-slow-welcome-").FullName;
+        var clock = new ProgressClock();
+        var streams = new System.Collections.Concurrent.ConcurrentQueue<HeldStream>();
+        var scripted = 0;
+        try
+        {
+            var database = await SeedAsync(clientTls, data);
+            await using var peer = await FakePeer.StartAsync(peerTls, async (requests, responses, context) =>
+            {
+                await requests.MoveNext(context.CancellationToken);
+                var hello = requests.Current.Hello;
+                // Only the first stream is held; a later verification stream must not wait for a release.
+                if (hello.LocalIdentity.DatabaseId != database || Interlocked.Exchange(ref scripted, 1) == 1)
+                {
+                    await AcknowledgeAsync(hello, requests, responses, context);
+                    return;
+                }
 
-        await Assert.That(times[1] - times[0]).IsGreaterThanOrEqualTo(ReplicationProtocol.ProgressTimeout - TimeSpan.FromSeconds(1));
+                var stream = new HeldStream();
+                streams.Enqueue(stream);
+                PeerIdentity member;
+                try
+                {
+                    await stream.Release.Task.WaitAsync(context.CancellationToken);
+                    await responses.WriteAsync(FakePeer.Welcome(hello, out member), context.CancellationToken);
+                    var group = await NextGroupAsync(requests, context.CancellationToken);
+                    stream.Group.TrySetResult(group);
+                    await responses.WriteAsync(FakePeer.Ack(member, group, group.EventId.Sequence), context.CancellationToken);
+                }
+                catch (Exception error) when (error is OperationCanceledException or IOException or InvalidOperationException or InvalidDataException)
+                {
+                    // The sender gave up on this stream before its first group.
+                    stream.Group.TrySetException(error);
+                    return;
+                }
+
+                while (await requests.MoveNext(context.CancellationToken))
+                {
+                    var batch = requests.Current.CommittedGroup;
+                    await responses.WriteAsync(FakePeer.Ack(member, batch, batch.EventId.Sequence), context.CancellationToken);
+                }
+            });
+            await using var sender = await StartSenderAsync(peerTls, data, peer, clock);
+
+            var stream = await FirstAsync(streams);
+            clock.Advance(ReplicationProtocol.ProgressTimeout - TimeSpan.FromTicks(1));
+            await Assert.That(clock.Expired.Task.IsCompleted).IsFalse();
+            stream.Release.TrySetResult();
+            var group = await stream.Group.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            await Assert.That(group.EventId.Sequence).IsEqualTo(1UL);
+        }
+        finally
+        {
+            Directory.Delete(data, recursive: true);
+        }
     }
 
     [Test]
@@ -890,5 +985,121 @@ public sealed class ReplicationSlowTests
         using var page = JsonDocument.Parse(await client.GetStringAsync(new Uri($"{path}/collections/items/documents?limit=100", UriKind.Relative)));
         return [.. page.RootElement.GetProperty("items").EnumerateArray().Select(document =>
             $"{document.GetProperty("id").GetString()} {document.GetProperty("document").GetRawText()}")];
+    }
+
+    // Two committed groups (the collection and one document) on disk before the sender starts, so its first
+    // stream for the database carries groups. Returns the database id its Hello names.
+    private static async Task<Google.Protobuf.ByteString> SeedAsync(ClientTls clientTls, string data)
+    {
+        await using var seed = await TerraBaseTestServer.StartAsync(settings =>
+        {
+            clientTls.Apply(settings);
+            settings["data-directory"] = data;
+        });
+        var tenant = await ReplicationTenant.CreateAsync(seed, "race");
+        using var writer = clientTls.CreateClient(seed.ClientAddress!, await tenant.KeyAsync(seed, "documents:write"));
+        await CreateCollectionAsync(writer, tenant.Path("race"));
+        await PutAsync(writer, tenant.Path("race"), "held", new Faker());
+        return ReplicationProtocol.CreateHello(tenant.Database("race"), new byte[16]).LocalIdentity.DatabaseId;
+    }
+
+    private static Task<TerraBaseTestServer> StartSenderAsync(PeerTls peerTls, string data, FakePeer peer, ProgressClock clock) =>
+        TerraBaseTestServer.StartAsync(settings =>
+        {
+            peerTls.Apply(settings);
+            settings["data-directory"] = data;
+            settings["peer-addresses"] = peer.Address.ToString();
+        }, services => services.AddSingleton<TimeProvider>(clock));
+
+    private static async Task<HeldStream> FirstAsync(System.Collections.Concurrent.ConcurrentQueue<HeldStream> streams)
+    {
+        await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(!streams.IsEmpty), TimeSpan.FromSeconds(30));
+        return streams.TryPeek(out var first) ? first : throw new InvalidOperationException("no stream was opened");
+    }
+
+    // The retry backoff runs on the same frozen clock: move it forward until the next attempt opens a stream.
+    private static Task RetriedAsync(ProgressClock clock, System.Collections.Concurrent.ConcurrentQueue<HeldStream> streams) =>
+        TerraBaseTestServer.EventuallyAsync(_ =>
+        {
+            if (streams.Count >= 2)
+            {
+                return Task.FromResult(true);
+            }
+
+            clock.Advance(TimeSpan.FromMilliseconds(100));
+            return Task.FromResult(false);
+        }, TimeSpan.FromSeconds(30));
+
+    private static async Task<CommittedGroupBatch> NextGroupAsync(IAsyncStreamReader<SyncRequest> requests, CancellationToken cancellationToken) =>
+        await requests.MoveNext(cancellationToken) && requests.Current.CommittedGroup is { } group
+            ? group
+            : throw new InvalidDataException("the sender did not send a committed group");
+
+    // A database the test does not script replicates normally.
+    private static async Task AcknowledgeAsync(
+        Hello hello, IAsyncStreamReader<SyncRequest> requests, IServerStreamWriter<SyncResponse> responses, ServerCallContext context)
+    {
+        await responses.WriteAsync(FakePeer.Welcome(hello, out var member), context.CancellationToken);
+        while (await requests.MoveNext(context.CancellationToken))
+        {
+            var batch = requests.Current.CommittedGroup;
+            await responses.WriteAsync(FakePeer.Ack(member, batch, batch.EventId.Sequence), context.CancellationToken);
+        }
+    }
+
+    private sealed class HeldStream
+    {
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource<CommittedGroupBatch> Group { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource<CommittedGroupBatch> Next { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource Abandoned { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    }
+
+    // Frozen time that reports the sender's progress deadline (the only one-shot ProgressTimeout timer on this
+    // clock): every re-arm, and the instant it first expires. FakeTimeProvider runs due callbacks inside Advance.
+    private sealed class ProgressClock : FakeTimeProvider
+    {
+        public ProgressClock()
+            : base(DateTimeOffset.UtcNow)
+        {
+        }
+
+        public System.Collections.Concurrent.ConcurrentQueue<DateTimeOffset> Rearms { get; } = new();
+
+        public TaskCompletionSource<DateTimeOffset> Expired { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            if (dueTime != ReplicationProtocol.ProgressTimeout || period != Timeout.InfiniteTimeSpan)
+            {
+                return base.CreateTimer(callback, state, dueTime, period);
+            }
+
+            return new Deadline(this, base.CreateTimer(value =>
+            {
+                Expired.TrySetResult(GetUtcNow());
+                callback(value);
+            }, state, dueTime, period));
+        }
+
+        private sealed class Deadline(ProgressClock clock, ITimer timer) : ITimer
+        {
+            public bool Change(TimeSpan dueTime, TimeSpan period)
+            {
+                if (dueTime == ReplicationProtocol.ProgressTimeout)
+                {
+                    clock.Rearms.Enqueue(clock.GetUtcNow());
+                }
+
+                return timer.Change(dueTime, period);
+            }
+
+            public void Dispose() => timer.Dispose();
+
+            public ValueTask DisposeAsync() => timer.DisposeAsync();
+        }
     }
 }

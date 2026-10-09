@@ -251,13 +251,14 @@ public sealed class SenderLifecycleTests
 
         public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
         {
-            var timer = base.CreateTimer(callback, state, Timeout.InfiniteTimeSpan, period);
-            if (dueTime != Timeout.InfiniteTimeSpan)
+            // Hold only short one-shot timers such as the retry backoff; progress deadlines and periodic timers run.
+            if (dueTime < TimeSpan.Zero || dueTime >= ReplicationProtocol.ProgressTimeout || period != Timeout.InfiniteTimeSpan)
             {
-                Scheduled.TrySetResult();
+                return base.CreateTimer(callback, state, dueTime, period);
             }
 
-            return timer;
+            Scheduled.TrySetResult();
+            return base.CreateTimer(callback, state, Timeout.InfiniteTimeSpan, period);
         }
     }
 

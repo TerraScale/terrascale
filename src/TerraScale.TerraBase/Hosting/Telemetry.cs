@@ -50,8 +50,8 @@ public static class Telemetry
                 }
 
                 // The SDK eagerly allocates 2,002 points per stream by default, including unlabeled gauges.
-                // Only known unlabeled instruments need one series; other instruments retain the SDK defaults.
-                // Adding labels to an instrument requires removing it from this list.
+                // Known streams need only their complete label domain; other streams retain the SDK defaults.
+                // Adding a label or value requires increasing the limit or removing the instrument from this list.
                 return instrument.Name switch
                 {
                     "terrabase_pressure_cpu_util" or "terrabase_pressure_mem_util"
@@ -62,6 +62,7 @@ public static class Telemetry
                         or "terrabase_pressure_write_qps" or "terrabase_pressure_connections"
                         or "terrabase_pressure_sampled_at_seconds" or "terrabase_pressure_storage_sampled_at_seconds"
                         or "terrabase_pressure_sample_window_seconds" or "terrabase_pressure_untracked_tenant_requests"
+                        or "terrabase_pressure_info"
                         or "terrabase.memory.reserved"
                         or "terrabase.storage.admitted" or "terrabase.storage.running"
                         or "terrabase.storage.rejected" or "terrabase.storage.unknown_files"
@@ -81,6 +82,15 @@ public static class Telemetry
                         or "terrabase.replication.sender.durable_lag" or "terrabase.replication.sender.initialized"
                         or "terrabase.replication.observability.omitted" or "terrabase.wan.served.groups"
                         => new MetricStreamConfiguration { CardinalityLimit = 1 },
+                    "terrabase.auth.key_fetches" => new MetricStreamConfiguration { CardinalityLimit = 2 },
+                    "terrabase_pressure_listener_request_rate" or "terrabase_pressure_listener_p95_latency_ms"
+                        or "terrabase_pressure_listener_requests" or "terrabase.document_cache.evictions"
+                        => new MetricStreamConfiguration { CardinalityLimit = 3 },
+                    "terrabase.document_cache.lookups" => new MetricStreamConfiguration { CardinalityLimit = 4 },
+                    "terrabase.query_shapes.dropped" => new MetricStreamConfiguration { CardinalityLimit = 7 },
+                    "terrabase_pressure_top_tenant_request_rate" or "terrabase_pressure_top_tenant_storage_bytes"
+                        => new MetricStreamConfiguration { CardinalityLimit = 10 },
+                    "terrabase_pressure_available" => new MetricStreamConfiguration { CardinalityLimit = 11 },
                     _ => null,
                 };
             });
