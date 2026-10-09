@@ -38,7 +38,9 @@ internal sealed class UsageReceiver(TerraBaseOptions options, UsageMeter meter, 
         using var reservation = memory.TryReserve(MemoryLane.Replication, Math.Max(4096, request.Counts.Sum(count => (long)count.Measurements.Length) * 4))
             ?? throw new RpcException(new Status(StatusCode.ResourceExhausted, "usage memory admission exhausted"));
 
-        if (!request.Counts.All(ValidMeasurements))
+        // An observation from the future would outrank every later one; a sender's clock may run at most MaxSkew ahead.
+        var horizon = time.GetUtcNow() + MaxSkew;
+        if (!request.Counts.All(count => ValidMeasurements(count, horizon)))
         {
             throw new RpcException(new Status(StatusCode.InvalidArgument, "invalid usage measurements"));
         }
@@ -99,7 +101,9 @@ internal sealed class UsageReceiver(TerraBaseOptions options, UsageMeter meter, 
     private static IReadOnlyDictionary<string, UsageReading>? Measurements(UsageCount count) => count.Measurements.IsEmpty ? null
         : JsonSerializer.Deserialize(count.Measurements.Span, TerraBaseJsonContext.Default.OpCounts)?.Meters;
 
-    private static bool ValidMeasurements(UsageCount count)
+    private static readonly TimeSpan MaxSkew = TimeSpan.FromMinutes(5);
+
+    private static bool ValidMeasurements(UsageCount count, DateTimeOffset horizon)
     {
         if (count.Measurements.Length > UsageMeter.MaxEntryMeasurementBytes)
         {
@@ -123,8 +127,8 @@ internal sealed class UsageReceiver(TerraBaseOptions options, UsageMeter meter, 
                     && (reading.State is null || dimension.Meter is "replicated_ops" or "replication_status"
                         && double.IsFinite(reading.State.LagMs) && reading.State.LagMs >= 0 && reading.State.Remaining >= 0
                         && (reading.State.ConvergenceMs is null || double.IsFinite(reading.State.ConvergenceMs.Value) && reading.State.ConvergenceMs >= 0)
-                        && reading.State.ObservedAt >= DateTimeOffset.UnixEpoch
-                        && (reading.State.LastApplied is null || reading.State.LastApplied >= DateTimeOffset.UnixEpoch)));
+                        && reading.State.ObservedAt >= DateTimeOffset.UnixEpoch && reading.State.ObservedAt <= horizon
+                        && (reading.State.LastApplied is null || reading.State.LastApplied >= DateTimeOffset.UnixEpoch && reading.State.LastApplied <= horizon)));
         }
         catch (JsonException)
         {

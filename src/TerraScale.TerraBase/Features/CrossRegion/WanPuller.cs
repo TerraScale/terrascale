@@ -52,9 +52,10 @@ internal sealed partial class WanPuller(
     private readonly Dictionary<(IDatabaseStore Store, string Origin), long> _applied = [];
     private readonly Dictionary<string, (long At, DatabaseAdoption Why)> _refused = [with(StringComparer.Ordinal)];
     private readonly HashSet<string> _clashes = [with(StringComparer.Ordinal)];
-    // Database origins that answered Ahead; divergence holds until a pull from that origin succeeds again. Bounded.
-    private readonly HashSet<string> _ahead = [with(StringComparer.Ordinal)];
-    private const int MaxAheadOrigins = 4096;
+    // Database origins that answered Ahead or sent a group conflicting with the applied journal; divergence holds until a pull
+    // from that origin verifiably extends the applied journal again. Bounded.
+    private readonly HashSet<string> _diverged = [with(StringComparer.Ordinal)];
+    private const int MaxDivergedOrigins = 4096;
 
     public override Task StartAsync(CancellationToken cancellationToken)
     {
@@ -207,12 +208,12 @@ internal sealed partial class WanPuller(
             var applied = await AppliedAsync(store, origin, cancellationToken).ConfigureAwait(false);
             var gone = false;
             // Only the origin's explicit Ahead answer or a journal-proof mismatch is divergence; a head snapshot may be stale.
-            // An origin that answered Ahead stays diverged, even once its heads no longer exceed what this member applied.
-            var aheadKey = Name(database) + "/" + Convert.ToHexString(origin.Span);
+            // A diverged origin stays so, even once its heads no longer exceed what this member applied or its next pull fails.
+            var divergedKey = Name(database) + "/" + Convert.ToHexString(origin.Span);
             bool diverged;
             lock (_gate)
             {
-                diverged = _ahead.Contains(aheadKey);
+                diverged = _diverged.Contains(divergedKey);
             }
 
             var failed = false;
@@ -221,7 +222,7 @@ internal sealed partial class WanPuller(
             // Any origin found behind starts the backlog, not only the first member's advertisement.
             if ((long)head.Sequence > applied && behind.Add(database))
             {
-                usage.RecordReplicationState(database, region, (long)head.Sequence - applied, false);
+                usage.RecordReplicationState(database, region, (long)head.Sequence - applied, diverged);
             }
             if (applied < (long)head.Sequence)
             {
@@ -231,25 +232,30 @@ internal sealed partial class WanPuller(
                         || retrying.Contains(RetryKey(member, head))
                         ? ReplicationTrafficKind.Handoff : ReplicationTrafficKind.Delta;
                     (var pulled, gone) = await PullAsync(region, cell, member, database, store, origin, applied, (long)head.Sequence, traffic, cancellationToken).ConfigureAwait(false);
-                    progressed |= pulled > applied;
-                    applied = pulled;
-                    // The origin served this member's prefix again: whatever it answered Ahead for is resolved.
-                    lock (_gate)
+                    // Only groups that verifiably extended the applied journal resolve divergence; an unknown origin, a
+                    // placement refusal or fragments without a whole group prove nothing.
+                    if (pulled > applied)
                     {
-                        _ = _ahead.Remove(aheadKey);
+                        lock (_gate)
+                        {
+                            _ = _diverged.Remove(divergedKey);
+                        }
+
+                        diverged = false;
                     }
 
-                    diverged = false;
+                    progressed |= pulled > applied;
+                    applied = pulled;
                 }
                 catch (Exception error) when (!cancellationToken.IsCancellationRequested)
                 {
                     diverged |= error is OriginAheadException or JournalConflictException;
                     failed = true;
-                    if (error is OriginAheadException)
+                    if (error is OriginAheadException or JournalConflictException)
                     {
                         lock (_gate)
                         {
-                            _ = _ahead.Count < MaxAheadOrigins && _ahead.Add(aheadKey);
+                            _ = _diverged.Count < MaxDivergedOrigins && _diverged.Add(divergedKey);
                         }
                     }
 

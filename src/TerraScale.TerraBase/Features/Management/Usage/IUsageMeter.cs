@@ -17,8 +17,11 @@ public interface IUsageMeter
     /// <summary>Records one completed client request and the body bytes read and written since its last report.</summary>
     void RecordRequest(TenantContext database, string method, int status, TimeSpan elapsed, long received, long sent);
 
-    /// <summary>Records client body bytes a request still in progress read and wrote since its last report.</summary>
-    void RecordClientBytes(TenantContext database, long received, long sent);
+    /// <summary>Records client body bytes a request still in progress read and wrote, in the minute it transferred them.</summary>
+    void RecordClientBytes(TenantContext database, long received, long sent, DateTimeOffset? transferredAt = null);
+
+    /// <summary>Has <paramref name="report"/> run on each flush tick until the returned registration is disposed.</summary>
+    IDisposable TrackActive(Action report);
 
     /// <summary>Counts encoded replication message bytes on each transport attempt, separately from client traffic.</summary>
     void RecordReplicationBytes(TenantContext database, string peerRegion, string kind, bool sent, long bytes);

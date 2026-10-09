@@ -345,7 +345,7 @@ public sealed class UsageAnalyticsTests
     }
 
     [Test]
-    public async Task An_open_subscription_reports_its_bytes_into_the_minute_they_flow_in_before_it_ends()
+    public async Task A_sparse_subscription_reports_its_bytes_into_the_minutes_they_flowed_in_while_open()
     {
         // Tokens are checked against real time: start at this real minute.
         var now = DateTimeOffset.UtcNow;
@@ -367,25 +367,53 @@ public sealed class UsageAnalyticsTests
             ManagementApi.Uri($"/projects/{database.Project}/databases/{database.Name}/collections/items/subscribe"), HttpCompletionOption.ResponseHeadersRead, deadline.Token);
         subscription.EnsureSuccessStatusCode();
         using var events = new StreamReader(await subscription.Content.ReadAsStreamAsync(deadline.Token));
-        while (await events.ReadLineAsync(deadline.Token) is { Length: > 0 })
-        {
-        }
+        var (snapshotBytes, _) = await FrameAsync();
 
-        // A minute later a change reaches the still-open subscription; the write that delivers it reports what it sent.
-        clock.Advance(TimeSpan.FromMinutes(1));
+        // Idle for three minutes, then one change: the snapshot stays in its own minute, the change lands in the later one.
+        clock.Advance(TimeSpan.FromMinutes(3));
+        var id = ManagementApi.DocumentId("later");
         using var written = await data.PutAsJsonAsync(ManagementApi.Uri(ManagementApi.DocumentPath(database, "items", "later")), new { name = new Faker().Name.FullName() }, deadline.Token);
         written.EnsureSuccessStatusCode();
         var putBytes = (await written.Content.ReadAsByteArrayAsync(deadline.Token)).Length;
-        while (await events.ReadLineAsync(deadline.Token) is { } line && !line.StartsWith("data:", StringComparison.Ordinal))
+        // Live waits on the fake clock may add empty up-to-date frames before or after the advance; all follow the snapshot.
+        var (change, later) = (0L, 0L);
+        while (change == 0)
         {
+            var (bytes, text) = await FrameAsync();
+            later += bytes;
+            change = text.Contains(id, StringComparison.Ordinal) ? bytes : 0;
         }
 
-        await api.Server.Services.GetRequiredService<UsageMeter>().FlushAsync(deadline.Token);
-        var analytics = await ReadAsync(data, ManagementApi.Uri($"/projects/{database.Project}/analytics?range=1h&region=gru-1"));
-        var minute = analytics.GetProperty("items")[0].GetProperty("series").EnumerateArray()
-            .Single(point => point.GetProperty("start").GetDateTimeOffset() == start.AddMinutes(1));
-        // More than the PUT's own response: the subscription's bytes are there while it is still open.
-        await Assert.That(minute.GetProperty("clientBandwidth").GetProperty("bytesSent").GetInt64()).IsGreaterThan(putBytes);
+        await api.Server.Services.GetServices<IHostedService>().OfType<UsageFlushService>().Single().FlushAsync(deadline.Token);
+        var series = (await ReadAsync(data, ManagementApi.Uri($"/projects/{database.Project}/analytics?range=1h&region=gru-1")))
+            .GetProperty("items")[0].GetProperty("series").EnumerateArray().ToArray();
+        long Sent(DateTimeOffset minute)
+        {
+            return series.Single(point => point.GetProperty("start").GetDateTimeOffset() == minute)
+                .GetProperty("clientBandwidth").GetProperty("bytesSent").GetInt64();
+        }
+
+        await Assert.That(Sent(start)).IsGreaterThanOrEqualTo(snapshotBytes);
+        await Assert.That(Sent(start.AddMinutes(3))).IsGreaterThanOrEqualTo(putBytes + change);
+        await Assert.That(Sent(start.AddMinutes(3))).IsLessThanOrEqualTo(putBytes + later);
+
+        // One server-sent event: its lines through the blank line that ends it, and their UTF-8 bytes.
+        async Task<(long Bytes, string Text)> FrameAsync()
+        {
+            var (bytes, text) = (0L, new StringBuilder());
+            while (await events.ReadLineAsync(deadline.Token) is { } line)
+            {
+                bytes += Encoding.UTF8.GetByteCount(line) + 1;
+                if (line.Length == 0)
+                {
+                    break;
+                }
+
+                text.AppendLine(line);
+            }
+
+            return (bytes, text.ToString());
+        }
     }
 
     [Test]

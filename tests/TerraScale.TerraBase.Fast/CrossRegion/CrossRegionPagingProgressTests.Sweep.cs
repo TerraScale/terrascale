@@ -4,8 +4,11 @@ using System.Net;
 using System.Text.Json;
 using Bogus;
 using Google.Protobuf;
+using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Features.CrossRegion;
 using TerraBase.Features.CrossRegion.V1;
+using TerraBase.Features.Management.Usage;
+using TerraBase.Tenancy;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.CrossRegion;
@@ -582,6 +585,98 @@ public sealed partial class CrossRegionPagingProgressTests
                 {
                     await Assert.That(await sfo.Server.MetricAsync("terrabase_wan_lag", GruLabel, token)).IsEqualTo(0);
                 }
+            }
+            finally
+            {
+                bus.Begin.TrySetResult();
+                bus.ReleaseAll();
+            }
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task Origin_divergence_holds_through_failed_or_unverified_pulls_until_the_journal_extends()
+    {
+        var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
+        var faker = new Faker();
+        var network = new FakeRegionNetwork();
+        var clock = new ProgressClock(DateTimeOffset.UtcNow);
+        var bus = new ProgressBus(network.Join("sfo", "sfo-a"), fullMembership: false);
+        var directory = Directory.CreateTempSubdirectory("terrabase-wan-divergence-").FullName;
+        try
+        {
+            var credentials = Path.Combine(directory, "user.creds");
+            await File.WriteAllTextAsync(credentials, Credentials, token);
+            await using var gru = await StartAsync(network, credentials, "gru-1", "gru", "gru-a");
+            await using var sfo = await StartAsync(network, credentials, "sfo-1", "sfo", "sfo-a", bus, clock);
+            try
+            {
+                var organization = Guid.NewGuid().ToString("D");
+                var project = Guid.NewGuid().ToString("D");
+                foreach (var api in new[] { gru, sfo })
+                {
+                    using var service = api.Service(api.User);
+                    using var registered = await service.PostAsJsonAsync(ManagementApi.Uri("/v1/management/commits"), new
+                    {
+                        id = Guid.NewGuid().ToString("D"),
+                        ops = new object[]
+                        {
+                            new { op = "create_organization", id = organization, name = faker.Company.CompanyName() },
+                            new { op = "create_project", organization, id = project, name = faker.Random.AlphaNumeric(12) },
+                        },
+                    }, token);
+                    registered.EnsureSuccessStatusCode();
+                }
+
+                var database = await CreatePlacedAsync(gru, organization, project, "diverged", token);
+                var id = WanProtocol.Id(database.Id);
+                var document = ManagementApi.Uri(ManagementApi.DocumentPath(database, "items", "saved"));
+                using var source = await gru.CreateClientAsync(organization, "documents:read", "documents:write");
+                using var target = await sfo.CreateClientAsync(organization, "documents:read", "documents:write");
+                await ManagementApi.CreateCollectionAsync(source, database, "items");
+                bus.Begin.TrySetResult();
+                await clock.PausedAsync(token);
+                var value = faker.Lorem.Sentence();
+                string version;
+                using (var written = await source.PutAsJsonAsync(document, new { value }, token))
+                {
+                    await Assert.That(written.StatusCode).IsEqualTo(HttpStatusCode.Created);
+                    version = written.Headers.ETag!.Tag;
+                }
+
+                var meter = sfo.Server.Services.GetRequiredService<UsageMeter>();
+                var tenant = new TenantContext(organization, PlanTier.Hobby, project, database.Id);
+                async Task<bool> DivergedAsync()
+                {
+                    var (lifetime, _) = await meter.GetObservationsAsync(tenant, new UsageWindow(UsageWindow.Hour, clock.GetUtcNow().ToUnixTimeSeconds() / 3600, 1), token);
+                    return lifetime.Meters!["replication_status|sfo-1|gru-1|inbound"].State!.Diverged;
+                }
+
+                // The origin answers Ahead: divergence.
+                bus.Slow = true;
+                bus.AheadOf = id;
+                await AdvanceSweepRoundAsync(bus, clock, token);
+                await Assert.That(await DivergedAsync()).IsTrue();
+
+                // A transport failure, then an unknown origin, verify nothing: divergence holds.
+                bus.AheadOf = null;
+                bus.FailPullsOf = id;
+                await AdvanceSweepRoundAsync(bus, clock, token);
+                await Assert.That(await DivergedAsync()).IsTrue();
+                bus.FailPullsOf = null;
+                bus.UnknownOriginOf = id;
+                await AdvanceSweepRoundAsync(bus, clock, token);
+                await Assert.That(await DivergedAsync()).IsTrue();
+
+                // A pull that extends the applied journal resolves it.
+                bus.UnknownOriginOf = null;
+                await AdvanceSweepRoundAsync(bus, clock, token);
+                await AssertReadAsync(target, document, value, version, token);
+                await Assert.That(await DivergedAsync()).IsFalse();
             }
             finally
             {

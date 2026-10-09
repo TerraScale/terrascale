@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
 using TerraBase.Features.Memory;
 using TerraBase.Hosting;
@@ -38,6 +39,8 @@ internal sealed partial class UsageMeter
     // Parsed readings, strings, dictionaries and histograms per byte of measurement JSON.
     private const long ParsedBytesPerJsonByte = 4;
     private readonly Lock _measurements = new();
+    // Requests in progress that report their transferred bytes on each flush tick; bounded by the server's open requests.
+    private readonly ConcurrentDictionary<object, Action> _active = new();
     private readonly Dictionary<UsageKey, List<IMemoryReservation>> _measurementMemory = [];
     // Open backlogs by database and peer region; when full, the least recently observed one (a removed database or peer) goes.
     private readonly Dictionary<(DatabaseOwner Database, string Region), (DateTimeOffset Started, DateTimeOffset? Applied, DateTimeOffset Seen)> _backlogs = [];
@@ -64,10 +67,31 @@ internal sealed partial class UsageMeter
         RecordClientBytes(database, received, sent);
     }
 
-    public void RecordClientBytes(TenantContext database, long received, long sent)
+    public void RecordClientBytes(TenantContext database, long received, long sent, DateTimeOffset? transferredAt = null)
     {
-        Record(database, new(new("client_bytes", options.Region, "", "received"), received));
-        Record(database, new(new("client_bytes", options.Region, "", "sent"), sent));
+        Record(database, new(new("client_bytes", options.Region, "", "received"), received), transferredAt);
+        Record(database, new(new("client_bytes", options.Region, "", "sent"), sent), transferredAt);
+    }
+
+    public IDisposable TrackActive(Action report)
+    {
+        var key = new object();
+        _active[key] = report;
+        return new Tracked(_active, key);
+    }
+
+    // Each flush tick first reports what requests still in progress transferred.
+    internal void ReportActive()
+    {
+        foreach (var report in _active.Values)
+        {
+            report();
+        }
+    }
+
+    private sealed class Tracked(ConcurrentDictionary<object, Action> active, object key) : IDisposable
+    {
+        public void Dispose() => active.TryRemove(key, out _);
     }
 
     public void RecordReplicationBytes(TenantContext database, string peerRegion, string kind, bool sent, long bytes)
@@ -169,14 +193,14 @@ internal sealed partial class UsageMeter
             _ => false,
         };
 
-    private void Record(TenantContext database, UsageReading reading)
+    private void Record(TenantContext database, UsageReading reading, DateTimeOffset? at = null)
     {
         if (!ValidDimension(reading.Dimension) || reading.IsZero)
         {
             return;
         }
 
-        var minute = time.GetUtcNow().ToUnixTimeSeconds() / 60;
+        var minute = (at ?? time.GetUtcNow()).ToUnixTimeSeconds() / 60;
         var key = new UsageKey(DatabaseOwner.Of(database), minute / 60, UsageScope.Minute, (int)(minute % 60));
         Add(key, new(0, 0, new Dictionary<string, UsageReading>(StringComparer.Ordinal) { [reading.Dimension.Key] = reading }));
     }

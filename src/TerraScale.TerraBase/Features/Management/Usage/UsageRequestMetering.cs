@@ -49,25 +49,27 @@ public static class UsageRequestMetering
         return app;
     }
 
-    // A request's body streams. A long request, such as a subscription, reports its body bytes into the buckets they flow in
-    // at most every ReportInterval, and the rest with its count and latency when it ends.
+    // A request's body streams. Bytes are reported into the minute they were transferred in: when the request moves on to
+    // another minute, on each flush tick while it stays open (a subscription may idle for long), and when it ends.
     private sealed class Transfer : IDisposable
     {
-        private static readonly TimeSpan ReportInterval = TimeSpan.FromSeconds(10);
         private readonly HttpContext _context;
         private readonly IUsageMeter _meter;
         private readonly TimeProvider _time;
+        private readonly IDisposable _tracked;
         private readonly Lock _gate = new();
-        private long _reportedReceived;
-        private long _reportedSent;
-        private long _reportedAt;
+        private TenantContext? _database;
+        private bool _resolved;
+        private long _received;
+        private long _sent;
+        private DateTimeOffset _transferredAt;
 
         public Transfer(HttpContext context, IUsageMeter meter, TimeProvider time)
         {
             (_context, _meter, _time) = (context, meter, time);
-            _reportedAt = time.GetTimestamp();
-            Received = new CountingStream(context.Request.Body, Progress);
-            Sent = new CountingStream(context.Response.Body, Progress);
+            Received = new CountingStream(context.Request.Body, count => Moved(count, 0));
+            Sent = new CountingStream(context.Response.Body, count => Moved(0, count));
+            _tracked = meter.TrackActive(Report);
         }
 
         public CountingStream Received { get; }
@@ -76,55 +78,75 @@ public static class UsageRequestMetering
 
         public void Complete(int status, TimeSpan elapsed)
         {
-            if (Database() is { } database)
+            lock (_gate)
             {
-                lock (_gate)
+                Resolve();
+                ReportLocked();
+                if (_database is { } database)
                 {
-                    var (received, sent) = Take();
-                    _meter.RecordRequest(database, _context.Request.Method, status, elapsed, received, sent);
+                    _meter.RecordRequest(database, _context.Request.Method, status, elapsed, 0, 0);
                 }
             }
         }
 
         public void Dispose()
         {
+            _tracked.Dispose();
             Received.Dispose();
             Sent.Dispose();
         }
 
-        private void Progress()
+        // On the request's own I/O, where its features may be read.
+        private void Moved(long received, long sent)
         {
-            if (_time.GetElapsedTime(Volatile.Read(ref _reportedAt)) < ReportInterval || Database() is not { } database)
-            {
-                return;
-            }
-
             lock (_gate)
             {
-                if (_time.GetElapsedTime(_reportedAt) >= ReportInterval)
+                Resolve();
+                var now = _time.GetUtcNow();
+                if (_received + _sent > 0 && now.ToUnixTimeSeconds() / 60 != _transferredAt.ToUnixTimeSeconds() / 60)
                 {
-                    var (received, sent) = Take();
-                    Volatile.Write(ref _reportedAt, _time.GetTimestamp());
-                    _meter.RecordClientBytes(database, received, sent);
+                    ReportLocked();
                 }
+
+                if (_received + _sent == 0)
+                {
+                    _transferredAt = now;
+                }
+
+                (_received, _sent) = (_received + received, _sent + sent);
             }
         }
 
-        // Under _gate: the bytes not reported yet.
-        private (long Received, long Sent) Take()
+        // From the flush tick: uses only the database resolved on the request's own thread.
+        private void Report()
         {
-            var (received, sent) = (Received.ReadBytes - _reportedReceived, Sent.WrittenBytes - _reportedSent);
-            (_reportedReceived, _reportedSent) = (_reportedReceived + received, _reportedSent + sent);
-            return (received, sent);
+            lock (_gate)
+            {
+                ReportLocked();
+            }
+        }
+
+        private void ReportLocked()
+        {
+            if (_received + _sent > 0 && _database is { } database)
+            {
+                _meter.RecordClientBytes(database, _received, _sent, _transferredAt);
+                (_received, _sent) = (0, 0);
+            }
         }
 
         // The authorized database, once resolved; a follower that relayed the request to the catalog primary leaves it to the
         // primary, which resolved its database.
-        private TenantContext? Database()
+        private void Resolve()
         {
+            if (_resolved)
+            {
+                return;
+            }
+
             if (_context.Features.Get<CatalogForwarder.Relayed>() is not null)
             {
-                return null;
+                return;
             }
 
             var database = _context.Features.Get<TenantContext>();
@@ -136,18 +158,16 @@ public static class UsageRequestMetering
                 database = new(access.OrganizationId, PlanTier.Hobby, access.ProjectId, id);
             }
 
-            return database?.DatabaseId is null ? null : database;
+            if (database?.DatabaseId is not null)
+            {
+                (_database, _resolved) = (database, true);
+            }
         }
     }
 
     // The wrapper owns no buffer and never closes the server's streams.
-    private sealed class CountingStream(Stream inner, Action progress) : Stream
+    private sealed class CountingStream(Stream inner, Action<int> counted) : Stream
     {
-        private long _read;
-        private long _written;
-
-        public long ReadBytes => Interlocked.Read(ref _read);
-        public long WrittenBytes => Interlocked.Read(ref _written);
         public override bool CanRead => inner.CanRead;
         public override bool CanSeek => inner.CanSeek;
         public override bool CanWrite => inner.CanWrite;
@@ -164,16 +184,14 @@ public static class UsageRequestMetering
         public override int Read(Span<byte> buffer)
         {
             var count = inner.Read(buffer);
-            Interlocked.Add(ref _read, count);
-            progress();
+            counted(count);
             return count;
         }
 
         public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
             var count = await inner.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
-            Interlocked.Add(ref _read, count);
-            progress();
+            counted(count);
             return count;
         }
 
@@ -185,15 +203,13 @@ public static class UsageRequestMetering
         public override void Write(ReadOnlySpan<byte> buffer)
         {
             inner.Write(buffer);
-            Interlocked.Add(ref _written, buffer.Length);
-            progress();
+            counted(buffer.Length);
         }
 
         public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
         {
             await inner.WriteAsync(buffer, cancellationToken).ConfigureAwait(false);
-            Interlocked.Add(ref _written, buffer.Length);
-            progress();
+            counted(buffer.Length);
         }
 
         public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>

@@ -24,6 +24,8 @@ internal sealed partial class UsageFlushService(
     private const int MaxSamplesPerMinute = 128;
     private long _sampledMinute = -1;
     private int _slots = 1;
+    // Per slot, how many of its databases the next visit passes over: an overfull slot continues where it stopped.
+    private readonly Dictionary<long, int> _continue = [];
 
     private static readonly TimeSpan Interval = TimeSpan.FromSeconds(10);
 
@@ -85,6 +87,7 @@ internal sealed partial class UsageFlushService(
     // Each flush runs on its own; a failed one keeps its counts pending for the next and never stops the process.
     internal async Task FlushAsync(CancellationToken cancellationToken)
     {
+        meter.ReportActive();
         foreach (var flush in new Func<CancellationToken, ValueTask>[] { SampleAsync }.Concat(Flushes))
         {
             try
@@ -128,31 +131,43 @@ internal sealed partial class UsageFlushService(
             return;
         }
 
-        // Each minute samples the databases whose stable hash falls in its slot: about MaxSamplesPerMinute of them, and every
-        // database within ceil(n / MaxSamplesPerMinute) minutes. No positional cursor, so an unordered listing cannot skip any.
+        // Each minute samples the databases whose owner hash falls in its slot, at most MaxSamplesPerMinute of them. A slot
+        // holding more continues on its next visit after the ones it sampled, so every database is sampled in turn.
         _sampledMinute = minute;
         var slots = _slots;
+        var slot = minute % slots;
+        var skip = _continue.GetValueOrDefault(slot);
         var listed = 0;
         var matched = 0;
         await foreach (var database in engine.ListDatabasesAsync(cancellationToken).ConfigureAwait(false))
         {
             listed++;
-            // The cap bounds the first pass, before the population is known, and hash skew.
-            if ((uint)StringComparer.Ordinal.GetHashCode(database.DatabaseId ?? "") % slots != minute % slots)
+            if ((uint)HashCode.Combine(database.OrganizationId, database.ProjectId, database.DatabaseId) % slots != slot
+                || matched++ < skip || matched > skip + MaxSamplesPerMinute)
             {
                 continue;
             }
 
-            if (++matched <= MaxSamplesPerMinute && await engine.GetDatabaseSizeAsync(database, cancellationToken).ConfigureAwait(false) is { } size)
+            if (await engine.GetDatabaseSizeAsync(database, cancellationToken).ConfigureAwait(false) is { } size)
             {
                 meter.RecordStorage(database, size);
             }
         }
 
-        // A slot holding more than the cap doubles the slots for good, so every slot comes to fit and none starves; there are
-        // never more slots than databases.
-        var needed = Math.Max(1, (listed + MaxSamplesPerMinute - 1) / MaxSamplesPerMinute);
-        _slots = Math.Min(Math.Max(1, listed), Math.Max(needed, matched > MaxSamplesPerMinute ? slots * 2 : slots));
+        if (matched > skip + MaxSamplesPerMinute)
+        {
+            _continue[slot] = skip + MaxSamplesPerMinute;
+        }
+        else
+        {
+            _ = _continue.Remove(slot);
+        }
+
+        _slots = Math.Max(1, (listed + MaxSamplesPerMinute - 1) / MaxSamplesPerMinute);
+        if (_slots != slots)
+        {
+            _continue.Clear();
+        }
     }
 
     // A tick sends one bounded batch; a follower's backlog drains a batch per tick.

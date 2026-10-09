@@ -55,9 +55,9 @@ Each point contains:
   requests above 65,536 ms and reports that boundary.
 - `storageBytes`: the average sampled physical database size, including the
   engine's sidecars; null before any sample. Each node samples once per minute:
-  the databases whose stable hash falls in that minute's slot, at most 128 per
-  minute. Slots start at ceil(databases / 128); a slot found holding more than
-  128 doubles them for good, so no database is starved.
+  the databases whose owner hash falls in that minute's slot (ceil(databases /
+  128) slots), at most 128 per minute. A slot holding more continues on its next
+  visit after the ones it sampled, so every database is sampled in turn.
 - `clientBandwidth` and `replicationBandwidth`, each with `bytesSent` and
   `bytesReceived`. Client bandwidth counts actual HTTP body reads and writes
   after a request resolves an authorized database; it excludes HTTP/TLS headers.
@@ -67,10 +67,11 @@ Each point contains:
 
 Failed writes do not become committed operation counts. Client request counts,
 errors and latency still include failed requests that resolved their database.
-Long-lived streaming requests, such as subscriptions, report their body bytes at
-most every ten seconds into the bucket they flow in, and the rest with their
-request count and elapsed time when they finish; their body wrapper preserves
-cancellation and streaming.
+Body bytes count in the minute they were transferred: a request reports its
+pending bytes when it moves on to another minute, on every ten-second flush tick
+while it stays open (an idle subscription included), and when it finishes, with
+its request count and elapsed time. The body wrapper preserves cancellation and
+streaming.
 
 ## Replication response and byte meter
 
@@ -109,7 +110,9 @@ not network round-trip latency. `divergence` denotes detected journal conflict
 (a verified prefix conflict, an origin's explicit ahead answer, or a group that
 conflicts with the applied journal prefix; malformed or oversized messages are
 failed pulls, not divergence), not a full comparison of document contents. An
-origin's ahead answer holds until a pull from that origin succeeds again. Health sources
+origin's ahead answer or journal conflict holds, through later failed or
+unverified pulls, until a pull from that origin verifiably extends the applied
+journal. Health sources
 refresh every ten seconds: each sender's peer observations and each WAN round.
 Every peer observed in the last ten minutes counts. Without any observation from
 the last 30 seconds, status is `stopped` with null lag and divergence. Otherwise
@@ -134,12 +137,16 @@ admit at most 256 keys and 256 meter dimensions per key; open replication
 backlogs keep at most 256 database/peer pairs, evicting the least recently
 observed. Rolled-up hour, day and lifetime maps are not capped: they hold the
 deployed regions' dimensions, and capping them would break subtraction.
-`terrabase.usage.observations.dropped` reports bounded admission drops. Usage
+Replication observations from a follower more than five minutes ahead of the
+primary's clock are refused. `terrabase.usage.observations.dropped` reports
+bounded admission drops. Usage
 totals skip the meters JSON when reading. Analytics reads keep only the requested
 region's dimensions of each entry as they read it and admit memory for what they
 keep; exhausted admission returns 400. A follower entry whose folded meters exceed
 the 256 KiB entry limit is sent with its counts only, and the dropped meters are
 counted. A follower batch carries at most 1 MiB of measurement JSON,
 256 KiB per entry, with validated meter names, dimensions and histogram sizes.
+Deploying this format is a whole-fleet cutover (verify, wipe, deploy, re-bootstrap),
+never a rolling mix: an older catalog primary refuses minute-scoped usage entries.
 There are no migrations or backfills; existing entity-ID generation is owned by
 TS-754, and this slice introduces no ID encoding or compatibility fallback.
