@@ -331,14 +331,13 @@ func TestUsageIncompleteOrganizationNeverReportsPartialAllowances(t *testing.T) 
 	}
 }
 
-// Usage requests TerraBase IDs while keeping dashboard IDs in the report.
-func TestUsageMapsProjectAndDatabaseIDs(t *testing.T) {
-	for _, projectID := range []string{"", core.NewULID()} {
+// Meter scopes and reports use the same entity IDs.
+func TestUsageKeepsEntityIDsInMeterScopesAndReports(t *testing.T) {
+	for _, projectID := range []string{"", core.NewID()} {
 		t.Run(cmp.Or(projectID, "derived"), func(t *testing.T) {
 			meter := &fakeMeter{reads: 7, writes: 3, logicalBytes: 2048}
 			service, principal, _ := meterFixture(t, meter)
 			dashboardID := meter.databaseID
-			meter.databaseID = core.NewULID()
 			originalProjectID := principal.ProjectID
 			if err := service.deps.Store.UpdateAs(t.Context(), principal, func(a *core.Account) error {
 				org := a.Organizations[principal.OrganizationID]
@@ -348,7 +347,7 @@ func TestUsageMapsProjectAndDatabaseIDs(t *testing.T) {
 					project.ID = projectID
 				}
 				database := project.Databases[dashboardID]
-				database.ProjectID, database.TerraBaseID = project.ID, meter.databaseID
+				database.ProjectID = project.ID
 				project.Databases[dashboardID] = database
 				org.Projects[project.ID] = project
 				a.Organizations[org.ID] = org

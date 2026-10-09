@@ -56,14 +56,14 @@ func realSyncFixtures(t *testing.T, transport func(http.RoundTripper) http.Round
 	if err != nil {
 		t.Fatal(err)
 	}
-	user := core.User{ID: core.NewULID(), Name: "Owner", Email: "sync@example.test", PasswordHash: "unused", Role: "owner", CreatedAt: testPeriodEnd}
+	user := core.User{ID: core.NewID(), Name: "Owner", Email: "sync@example.test", PasswordHash: "unused", Role: "owner", CreatedAt: testPeriodEnd}
 	org := core.Organization{
-		ID: core.NewULID(), Name: "Personal", Kind: "personal", Status: "active", OwnerUserID: user.ID,
+		ID: core.NewID(), Name: "Personal", Kind: "personal", Status: "active", OwnerUserID: user.ID,
 		PlanID: free.ID, BillingStatus: "active", CreatedAt: testPeriodEnd,
 		Members:  map[string]core.Member{user.ID: {UserID: user.ID, Email: user.Email, Name: user.Name, Role: "owner", Status: "active", CreatedAt: testPeriodEnd}},
 		Projects: map[string]core.Project{}, Invitations: map[string]core.Invitation{}, CheckoutSessions: map[string]core.CheckoutSession{},
 	}
-	account := core.Account{ID: core.NewULID(), User: user, Organizations: map[string]core.Organization{org.ID: org}, ActiveOrganizationID: org.ID, CreatedAt: testPeriodEnd}
+	account := core.Account{ID: core.NewID(), User: user, Organizations: map[string]core.Organization{org.ID: org}, ActiveOrganizationID: org.ID, CreatedAt: testPeriodEnd}
 	if err := a.store.InsertAccount(t.Context(), account); err != nil {
 		t.Fatal(err)
 	}

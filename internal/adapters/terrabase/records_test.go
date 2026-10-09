@@ -16,6 +16,19 @@ func TestEntityKeysCarryIdentityAndPreserveReferences(t *testing.T) {
 		t.Fatal(err)
 	}
 	org := account.Organizations[account.ActiveOrganizationID]
+	token, _, err := core.NewAccessToken("fresh token", time.Hour, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	account.AccessTokens = []core.AccessToken{token}
+	project := org.Projects[account.ActiveProjectID]
+	databaseID, backupID := core.NewID(), core.NewID()
+	backupDocument := []byte(`{"id":"application-data","total":42}`)
+	project.Databases[databaseID] = core.Database{
+		ID: databaseID, ProjectID: project.ID,
+		Backups: []core.Backup{{ID: backupID, DatabaseID: databaseID, Documents: map[string]map[string][]byte{"orders": {"order": backupDocument}}}},
+	}
+	org.Projects[project.ID] = project
 	state := memstore.State{Accounts: map[string]core.Account{account.ID: account}, Organizations: map[string]core.Organization{org.ID: org}}
 	records, err := encodeCore(state, time.Now())
 	if err != nil {
@@ -38,7 +51,7 @@ func TestEntityKeysCarryIdentityAndPreserveReferences(t *testing.T) {
 				t.Fatalf("%s repeats its document key in payload", key.collection)
 			}
 		}
-		if len(record.Data) > 0 {
+		if len(record.Data) > 0 && record.Data[0] == '{' {
 			if err := json.Unmarshal(record.Data, &fields); err != nil {
 				t.Fatal(err)
 			}
@@ -56,8 +69,27 @@ func TestEntityKeysCarryIdentityAndPreserveReferences(t *testing.T) {
 	if err != nil || got.ID != account.ID || got.User.ID != account.User.ID || got.ActiveOrganizationID != org.ID {
 		t.Fatalf("account identity/references changed: %+v, %v", got, err)
 	}
-	project, err := decodeData[core.Project](records[recordKey("projects", account.ActiveProjectID)])
-	if err != nil || project.ID != account.ActiveProjectID || project.OrganizationID != org.ID {
-		t.Fatalf("project identity/references changed: %+v, %v", project, err)
+	loadedProject, err := decodeData[core.Project](records[recordKey("projects", account.ActiveProjectID)])
+	if err != nil || loadedProject.ID != account.ActiveProjectID || loadedProject.OrganizationID != org.ID {
+		t.Fatalf("project identity/references changed: %+v, %v", loadedProject, err)
+	}
+	tokenClaim := records[claimKey("access_tokens", "token_hash", token.SecretHash)]
+	loadedToken, err := decodeData[core.AccessToken](records[recordKey("access_tokens", tokenClaim.OwnerID)])
+	if err != nil || tokenClaim.OwnerID != token.ID || loadedToken.ID != token.ID || loadedToken.SecretHash != token.SecretHash {
+		t.Fatal("fresh token claim did not resolve its ULID-addressed token", err)
+	}
+	var databaseRecords []coreRecord
+	for key, record := range records {
+		if key.collection == "databases" && record.Kind == "record" {
+			databaseRecords = append(databaseRecords, record)
+		}
+	}
+	loadedOrg := core.CloneOrganization(org)
+	if err := materializeDatabases(&loadedOrg, databaseRecords); err != nil {
+		t.Fatal(err)
+	}
+	backups := loadedOrg.Projects[project.ID].Databases[databaseID].Backups
+	if len(backups) != 1 || backups[0].ID != backupID || backups[0].DatabaseID != databaseID || string(backups[0].Documents["orders"]["order"]) != string(backupDocument) {
+		t.Fatalf("fresh backup identity, references or content changed: %+v", backups)
 	}
 }

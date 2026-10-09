@@ -368,7 +368,7 @@ func (store *invalidLoadedStore) Save(ctx context.Context, state payments.Custom
 }
 
 func TestSyncRejectsInvalidLoadedStateBeforeReadingStripe(t *testing.T) {
-	otherOrganization := core.NewULID()
+	otherOrganization := core.NewID()
 	for _, test := range []struct {
 		name   string
 		mutate func(*payments.CustomerState, *string)
@@ -395,7 +395,7 @@ func TestSyncRejectsInvalidLoadedStateBeforeReadingStripe(t *testing.T) {
 
 func TestMemoryStateStoreInitializesBoundState(t *testing.T) {
 	store := payments.NewMemoryStateStore()
-	organizationID := core.NewULID()
+	organizationID := core.NewID()
 	if _, err := store.BindCustomer(t.Context(), organizationID, "cus_test"); err != nil {
 		t.Fatal(err)
 	}

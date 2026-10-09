@@ -19,7 +19,7 @@ func TestBillingServiceRejectsReservedInternalPlanSelection(t *testing.T) {
 		}
 		t.Run(mode, func(t *testing.T) {
 			for _, tc := range []struct{ name, id, key string }{
-				{"reserved key", core.NewULID(), "internal"},
+				{"reserved key", core.NewID(), "internal"},
 			} {
 				t.Run(tc.name, func(t *testing.T) {
 					store := memstore.New()
