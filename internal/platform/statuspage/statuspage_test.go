@@ -276,12 +276,12 @@ func TestClientServesStaleNoticesWhileTheStatusPageFails(t *testing.T) {
 }
 
 func TestNewRejectsRelativeOrNonHTTPURLs(t *testing.T) {
-	for _, raw := range []string{"", "/api/v2/summary.json", "ftp://status.terrascale.tech/summary.json", "https://"} {
+	for _, raw := range []string{"", "/api/v1/summary.json", "ftp://status.terrascale.tech/summary.json", "https://"} {
 		if _, err := New(raw); err == nil {
 			t.Errorf("New(%q) accepted an invalid summary URL", raw)
 		}
 	}
-	client, err := New("https://status.terrascale.tech/api/v2/summary.json")
+	client, err := New("https://status.terrascale.tech/api/v1/summary.json")
 	if err != nil || client.home != home {
 		t.Fatalf("New() = %+v, %v; want home %q", client, err, home)
 	}
@@ -304,6 +304,10 @@ func newSummaryServer(t *testing.T) *summaryServer {
 	s := &summaryServer{status: http.StatusOK, body: sampleSummary}
 	s.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.hits.Add(1)
+		if r.URL.Path != "/api/v1/summary.json" {
+			http.NotFound(w, r)
+			return
+		}
 		if s.gate != nil {
 			select {
 			case <-s.gate:
@@ -347,7 +351,7 @@ func (c *fakeClock) advance(d time.Duration) {
 
 func newTestClient(t *testing.T, serverURL string) (*Client, *fakeClock) {
 	t.Helper()
-	client, err := New(serverURL + "/api/v2/summary.json")
+	client, err := New(serverURL + "/api/v1/summary.json")
 	if err != nil {
 		t.Fatal(err)
 	}

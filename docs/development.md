@@ -203,7 +203,7 @@ Go's embedded VCS revision, or `dev`.
 The signed-in shell shows a banner for unresolved incidents and for
 maintenance in progress or starting within 24 hours, read from the status
 page's Statuspage-compatible summary
-(`https://status.terrascale.tech/api/v2/summary.json`). An incident quotes
+(`https://status.terrascale.tech/api/v1/summary.json`). An incident quotes
 the first paragraph of its latest update, cut to about 200 characters and
 two lines; "View status" opens the full update. Set
 `DASHBOARD_STATUS_SUMMARY_URL` to read another summary, or to an empty value

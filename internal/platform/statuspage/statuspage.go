@@ -1,5 +1,5 @@
 // Package statuspage reads the public TerraScale status page summary, a
-// Statuspage-compatible /api/v2/summary.json, so the signed-in shell can
+// Statuspage-compatible /api/v1/summary.json, so the signed-in shell can
 // announce unresolved incidents and current or upcoming maintenance.
 //
 // The summary is fetched server-side and cached in memory. Any failure hides

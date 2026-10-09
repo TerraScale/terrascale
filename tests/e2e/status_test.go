@@ -37,7 +37,11 @@ func TestShellAnnouncesStatusPageIncidentsAndMaintenance(t *testing.T) {
 	starts := time.Now().UTC().Add(3 * time.Hour).Truncate(time.Hour)
 	// A long, two-paragraph update: the banner quotes the start of the first.
 	update := strings.Repeat("We are investigating elevated error rates in gru. ", 12) + `\n\nRoot cause: a saturated connection pool.`
-	statusPage := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	statusPage := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/summary.json" {
+			http.NotFound(w, r)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
 			"status": {"indicator": "major", "description": "Partial System Outage"},
@@ -51,7 +55,7 @@ func TestShellAnnouncesStatusPageIncidentsAndMaintenance(t *testing.T) {
 		}`))
 	}))
 	t.Cleanup(statusPage.Close)
-	application, err := app.New(config.Config{Demo: true, StatusURL: statusPage.URL + "/api/v2/summary.json"})
+	application, err := app.New(config.Config{Demo: true, StatusURL: statusPage.URL + "/api/v1/summary.json"})
 	must(t, err)
 	dashboard := httptest.NewServer(application.Handler)
 	t.Cleanup(dashboard.Close)
