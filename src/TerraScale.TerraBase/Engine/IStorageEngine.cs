@@ -32,6 +32,12 @@ public interface IStorageEngine : IAsyncDisposable
     long CommittedWrites { get; }
 
     /// <summary>
+    /// Current admitted storage transactions and maintenance operations, including work waiting for a worker or writer.
+    /// Null when admission is unavailable or closed; this is neither device queue depth nor IOPS.
+    /// </summary>
+    long? IoAdmittedCount { get; }
+
+    /// <summary>
     /// Refreshes physical storage from file metadata, including unopened databases. Invoke periodically off the request
     /// path: scanning runs synchronously on the caller's thread. Concurrent refreshes are skipped, not queued.
     /// A failed or cancelled scan publishes an unknown snapshot; cancellation is propagated.

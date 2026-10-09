@@ -92,6 +92,7 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
         public string Name => inner.Name;
         public StoragePressure StoragePressure => inner.StoragePressure;
         public long CommittedWrites => inner.CommittedWrites;
+        public long? IoAdmittedCount => inner.IoAdmittedCount;
         public ValueTask RefreshStoragePressureAsync(CancellationToken cancellationToken) => inner.RefreshStoragePressureAsync(cancellationToken);
         public ValueTask<bool> CreateDatabaseAsync(TenantContext database, CancellationToken cancellationToken) => inner.CreateDatabaseAsync(database, cancellationToken);
         public async ValueTask<IDatabaseStore?> OpenDatabaseAsync(TenantContext database, CancellationToken cancellationToken) =>

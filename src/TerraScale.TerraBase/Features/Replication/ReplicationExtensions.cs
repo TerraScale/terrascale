@@ -37,6 +37,7 @@ public static class ReplicationExtensions
         {
             builder.Services.AddSingleton<IReplicationWait, NoReplicationWait>();
             builder.Services.AddSingleton<IReplicationStatus, NoReplicationStatus>();
+            builder.Services.AddSingleton<IReplicationPressure, NoReplicationWait>();
         }
 
         if (options.PeerPort is not { } port)
@@ -87,6 +88,7 @@ public static class ReplicationExtensions
             builder.Services.AddSingleton<ReplicationSender>();
             builder.Services.AddSingleton<IReplicationWait>(provider => provider.GetRequiredService<ReplicationSender>());
             builder.Services.AddSingleton<IReplicationStatus>(provider => provider.GetRequiredService<ReplicationSender>());
+            builder.Services.AddSingleton<IReplicationPressure>(provider => provider.GetRequiredService<ReplicationSender>());
             builder.Services.AddHostedService(provider => provider.GetRequiredService<ReplicationSender>());
         }
 

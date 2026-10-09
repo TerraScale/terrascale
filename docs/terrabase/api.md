@@ -245,7 +245,7 @@ These are not operations in the document ([API reference](api-reference.md)). Un
 
 | Method | Route | Old route | Use |
 | --- | --- | --- | --- |
-| GET | `/admin/node/pressure` | `/v1/node/pressure` | Node pressure ([node pressure](node-pressure.md)) |
+| GET | `/admin/node/pressure` | — | Node pressure ([node pressure](node-pressure.md)) |
 | GET | `/metrics` | unchanged | Prometheus scrape |
 
 ## Hidden legacy identity and dashboard routes
@@ -273,7 +273,6 @@ Old management database, backup, index, schema, usage, SQL and saved-query paths
 still address databases by catalog id and require their existing organization membership or loopback service
 credential. Canonical routes address database names and require project JWT scopes. Existing `tb_` keys still
 reach document routes and the hidden data-plane database `PUT` under their existing scope and tenant rules.
-The old `/v1/node/pressure` path aliases `/admin/node/pressure` on the administrative listener.
 
 Keep these compatibility paths until COS confirms that the SDKs and production callers have migrated. No
 production wipe, re-foundation or storage reset is part of TS-589. Existing documents, versions, snapshots and

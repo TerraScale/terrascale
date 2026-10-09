@@ -19,23 +19,54 @@ public sealed class PressureTests
     private static readonly Uri Metrics = new("/metrics", UriKind.Relative);
 
     [Test]
-    [Arguments("/v1/node/pressure")]
-    [Arguments("/v1/node/pressure/")]
-    [Arguments("/V1/NODE/PRESSURE")]
-    [Arguments("/V1/NODE/PRESSURE/")]
-    public async Task Legacy_pressure_aliases_serve_admin_snapshots_and_remain_hidden_from_clients(string path)
+    public async Task Instance_bound_pressure_keeps_local_readiness_separate_from_member_readiness()
     {
-        using var tls = new ClientTls();
-        await using var server = await TerraBaseTestServer.StartAsync(tls.Apply);
-        using var client = tls.CreateClient(server.ClientAddress!);
+        await using var server = await TerraBaseTestServer.StartAsync(settings =>
+        {
+            settings["node-name"] = "gru-1-db-2";
+            settings["instance-id"] = "ocid1.instance.test";
+        });
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
-        var uri = new Uri(path, UriKind.Relative);
-        using var response = await server.Client.GetAsync(uri, deadline.Token);
-        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        using var snapshot = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync(deadline.Token), cancellationToken: deadline.Token);
-        await AssertSnapshotAsync(snapshot.RootElement);
-        using var hidden = await client.GetAsync(uri, deadline.Token);
-        await Assert.That(hidden.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        JsonElement snapshot = default;
+        await TerraBaseTestServer.EventuallyAsync(async token =>
+        {
+            snapshot = await ReadAsync(server, token);
+            return snapshot.GetProperty("local_ready").ValueKind == JsonValueKind.True;
+        }, TimeSpan.FromSeconds(25));
+        using var readiness = await server.Client.GetAsync(new Uri("/readyz", UriKind.Relative), deadline.Token);
+        await Assert.That(readiness.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(snapshot.GetProperty("schema").GetInt32()).IsEqualTo(2);
+        await Assert.That(snapshot.GetProperty("node").GetString()).IsEqualTo("gru-1-db-2");
+        await Assert.That(snapshot.GetProperty("instance_id").GetString()).IsEqualTo("ocid1.instance.test");
+        await Assert.That(snapshot.GetProperty("state").GetString()).IsEqualTo("unknown");
+        await Assert.That(snapshot.GetProperty("sender_durable_lag_seq").GetInt64()).IsEqualTo(0);
+        await Assert.That(snapshot.GetProperty("load").GetProperty("replication_lag_seq").ValueKind).IsEqualTo(JsonValueKind.Null);
+        await Assert.That(snapshot.GetProperty("load").GetProperty("storage_bytes").ValueKind).IsEqualTo(JsonValueKind.Null);
+        await Assert.That(snapshot.GetProperty("disk_iops").ValueKind).IsEqualTo(JsonValueKind.Null);
+        await Assert.That(snapshot.GetProperty("io_queue_depth").ValueKind).IsEqualTo(JsonValueKind.Null);
+        await Assert.That(snapshot.TryGetProperty("top_tenants", out _)).IsFalse();
+        await Assert.That(snapshot.GetProperty("top_organizations").GetArrayLength()).IsEqualTo(0);
+        using var evidence = await server.Client.GetAsync(Pressure, deadline.Token);
+        await Assert.That(evidence.Headers.CacheControl!.NoStore).IsTrue();
+    }
+
+    [Test]
+    public async Task Unconfigured_instance_identity_is_unknown_and_closed_storage_is_not_locally_ready()
+    {
+        await using var server = await TerraBaseTestServer.StartAsync();
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
+        var original = await ReadAsync(server, deadline.Token);
+        await Assert.That(original.GetProperty("instance_id").ValueKind).IsEqualTo(JsonValueKind.Null);
+        await server.Services.GetRequiredService<IStorageEngine>().DisposeAsync();
+        await TerraBaseTestServer.EventuallyAsync(async token =>
+        {
+            var snapshot = await ReadAsync(server, token);
+            return snapshot.GetProperty("sampled_at").GetDateTimeOffset() > original.GetProperty("sampled_at").GetDateTimeOffset()
+                && snapshot.GetProperty("local_ready").ValueKind == JsonValueKind.False
+                && snapshot.GetProperty("io_admitted_count").ValueKind == JsonValueKind.Null;
+        }, TimeSpan.FromSeconds(25));
+        using var readiness = await server.Client.GetAsync(new Uri("/readyz", UriKind.Relative), deadline.Token);
+        await Assert.That(readiness.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
     }
 
     [Test]
@@ -54,8 +85,8 @@ public sealed class PressureTests
         try
         {
             var faker = new Faker();
-            var project = Directory.CreateDirectory(Path.Combine(external, faker.Random.Guid().ToString(), faker.Random.Guid().ToString()));
-            await File.WriteAllBytesAsync(Path.Combine(project.FullName, faker.Random.Guid() + ".db"), faker.Random.Bytes(4096), deadline.Token);
+            var project = Directory.CreateDirectory(Path.Combine(external, Ulid.NewUlid().ToString(), Ulid.NewUlid().ToString()));
+            await File.WriteAllBytesAsync(Path.Combine(project.FullName, Ulid.NewUlid() + ".db"), faker.Random.Bytes(4096), deadline.Token);
             Directory.Move(server.DataDirectory, original);
             Directory.CreateSymbolicLink(server.DataDirectory, external);
             // Sample only after the link exists; the temporary missing root must not satisfy the assertion.
@@ -71,7 +102,7 @@ public sealed class PressureTests
                 && snapshot.GetProperty("data_bytes").GetInt64() == 0);
 
             await Assert.That(snapshot.GetProperty("data_bytes").ValueKind).IsEqualTo(JsonValueKind.Null);
-            await Assert.That(snapshot.GetProperty("top_tenants_by_storage").GetArrayLength()).IsEqualTo(0);
+            await Assert.That(snapshot.GetProperty("top_organizations_by_storage").GetArrayLength()).IsEqualTo(0);
         }
         finally
         {
@@ -139,6 +170,8 @@ public sealed class PressureTests
     [Arguments("memory-budget", "9223372036854775808")]
     [Arguments("node-name", "bad/name")]
     [Arguments("node-name", "node name")]
+    [Arguments("instance-id", "bad/id")]
+    [Arguments("instance-id", "instance name")]
     public async Task Invalid_pressure_settings_refuse_real_host_startup(string setting, string value)
     {
         await Assert.That(async () =>
@@ -186,7 +219,7 @@ public sealed class PressureTests
         }
 
         var metrics = await api.Server.Client.GetStringAsync(Metrics, deadline.Token);
-        foreach (var signal in new[] { "disk_iops", "io_queue_depth", "io_admitted_count", "storage_bytes", "replication_lag_seq" })
+        foreach (var signal in new[] { "disk_iops", "io_queue_depth", "storage_bytes", "replication_lag_seq" })
         {
             await Assert.That(MetricValues(metrics, "terrabase_pressure_" + signal)).IsEmpty();
             await Assert.That(MetricValues(metrics, "terrabase_pressure_available", $"signal=\"{signal}\""))
@@ -214,8 +247,8 @@ public sealed class PressureTests
         await Assert.That(original.GetProperty("node").GetString()).IsEqualTo(Environment.MachineName);
         await Assert.That(other.GetProperty("node").GetString()).IsEqualTo("pressure-test-node");
         var incarnation = Incarnation(original);
-        await Assert.That(incarnation).IsNotEqualTo(Guid.Empty);
-        await Assert.That(Incarnation(other)).IsNotEqualTo(Guid.Empty);
+        await Assert.That(incarnation).IsNotEqualTo(default);
+        await Assert.That(Incarnation(other)).IsNotEqualTo(default);
         await Assert.That(Incarnation(other)).IsNotEqualTo(incarnation);
         await Assert.That(Incarnation(repeated)).IsEqualTo(incarnation);
     }
@@ -328,9 +361,9 @@ public sealed class PressureTests
             var stored = await read.Content.ReadFromJsonAsync<JsonElement>(deadline.Token);
             await Assert.That(stored.GetProperty("document").GetProperty("n").GetInt32()).IsEqualTo(writes);
             snapshot = await ReadAsync(api.Server, deadline.Token);
-            var top = snapshot.GetProperty("top_tenants").EnumerateArray().Any(tenant =>
+            var top = snapshot.GetProperty("top_organizations").EnumerateArray().Any(tenant =>
                 tenant.GetProperty("org").GetString() == api.Tenant.OrganizationId && tenant.GetProperty("request_rate").GetDouble() > 0);
-            var storage = snapshot.GetProperty("top_tenants_by_storage").EnumerateArray().Any(tenant =>
+            var storage = snapshot.GetProperty("top_organizations_by_storage").EnumerateArray().Any(tenant =>
                 tenant.GetProperty("org").GetString() == api.Tenant.OrganizationId && tenant.GetProperty("bytes").GetInt64() > 0);
             var data = snapshot.GetProperty("data_bytes");
             var storageTime = snapshot.GetProperty("storage_sampled_at");
@@ -360,12 +393,12 @@ public sealed class PressureTests
         await Assert.That(Listener(snapshot, "client").GetProperty("requests_total").GetInt64()).IsGreaterThan(clientBefore);
         await Assert.That(snapshot.GetProperty("load").GetProperty("connections").GetInt64()).IsGreaterThan(0);
         await Assert.That(MetricValues(metrics, "terrabase_pressure_connections").Any(value => value > 0)).IsTrue();
-        await Assert.That(snapshot.GetProperty("top_tenants").EnumerateArray()
+        await Assert.That(snapshot.GetProperty("top_organizations").EnumerateArray()
             .Single(tenant => tenant.GetProperty("org").GetString() == api.Tenant.OrganizationId).GetProperty("plan").GetString()).IsEqualTo("hobby");
         await Assert.That(Listener(snapshot, "admin").GetProperty("requests_total").GetInt64())
             .IsGreaterThan(Listener(before, "admin").GetProperty("requests_total").GetInt64());
         await Assert.That(snapshot.GetProperty("data_bytes").GetInt64()).IsGreaterThanOrEqualTo(
-            snapshot.GetProperty("top_tenants_by_storage").EnumerateArray()
+            snapshot.GetProperty("top_organizations_by_storage").EnumerateArray()
                 .Single(tenant => tenant.GetProperty("org").GetString() == api.Tenant.OrganizationId).GetProperty("bytes").GetInt64());
 
         foreach (var name in new[] { "memory_used_bytes", "memory_budget_bytes", "request_rate", "p95_latency_ms", "data_bytes", "write_qps" })
@@ -415,7 +448,7 @@ public sealed class PressureTests
     private static JsonElement Listener(JsonElement snapshot, string listener) =>
         snapshot.GetProperty("listeners").EnumerateArray().Single(item => item.GetProperty("listener").GetString() == listener);
 
-    private static Guid Incarnation(JsonElement snapshot) => Guid.Parse(snapshot.GetProperty("process_id").GetString()!);
+    private static Ulid Incarnation(JsonElement snapshot) => Ulid.Parse(snapshot.GetProperty("process_id").GetString()!);
 
     private static double[] MetricValues(string metrics, string name, string? label = null) =>
         [.. metrics.Split('\n').Where(line =>
@@ -561,10 +594,10 @@ public sealed class PressureTests
 
     private static async Task AssertSnapshotAsync(JsonElement snapshot)
     {
-        await Assert.That(snapshot.GetProperty("schema").GetInt32()).IsEqualTo(1);
+        await Assert.That(snapshot.GetProperty("schema").GetInt32()).IsEqualTo(2);
         await Assert.That(snapshot.GetProperty("state").GetString()).IsEqualTo("unknown");
         await Assert.That(snapshot.GetProperty("node").GetString()).IsNotEmpty();
-        await Assert.That(Incarnation(snapshot)).IsNotEqualTo(Guid.Empty);
+        await Assert.That(Incarnation(snapshot)).IsNotEqualTo(default);
         await Assert.That(snapshot.GetProperty("release").GetString()).IsEqualTo(
             typeof(Program).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()!.InformationalVersion);
         await Assert.That(snapshot.GetProperty("region").GetString()).IsNotEmpty();
@@ -598,7 +631,7 @@ public sealed class PressureTests
             }
         }
 
-        foreach (var name in new[] { "disk_iops", "io_queue_depth", "io_admitted_count" })
+        foreach (var name in new[] { "disk_iops", "io_queue_depth" })
         {
             await Assert.That(snapshot.GetProperty(name).ValueKind).IsEqualTo(JsonValueKind.Null);
         }
@@ -608,6 +641,7 @@ public sealed class PressureTests
             await Assert.That(snapshot.GetProperty("load").GetProperty(name).ValueKind).IsEqualTo(JsonValueKind.Null);
         }
 
+        await Assert.That(snapshot.GetProperty("io_admitted_count").GetInt64()).IsGreaterThanOrEqualTo(0);
         await Assert.That(snapshot.GetProperty("load").GetProperty("write_qps").GetDouble()).IsGreaterThanOrEqualTo(0);
         await Assert.That(snapshot.GetProperty("load").GetProperty("connections").GetInt64()).IsGreaterThanOrEqualTo(0);
         await Assert.That(snapshot.GetProperty("request_rate").GetDouble()).IsGreaterThanOrEqualTo(0);
@@ -623,14 +657,14 @@ public sealed class PressureTests
             await Assert.That(listener.GetProperty("p95_latency_ms").GetDouble()).IsGreaterThanOrEqualTo(0);
         }
 
-        foreach (var name in new[] { "top_tenants", "top_tenants_by_storage" })
+        foreach (var name in new[] { "top_organizations", "top_organizations_by_storage" })
         {
             var tenants = snapshot.GetProperty(name);
             await Assert.That(tenants.GetArrayLength()).IsLessThanOrEqualTo(10);
             foreach (var tenant in tenants.EnumerateArray())
             {
                 await Assert.That(tenant.GetProperty("org").GetString()).IsNotEmpty();
-                if (name == "top_tenants")
+                if (name == "top_organizations")
                 {
                     await Assert.That(tenant.GetProperty("cpu_share").ValueKind).IsEqualTo(JsonValueKind.Null);
                     await Assert.That(tenant.GetProperty("request_rate").GetDouble()).IsGreaterThanOrEqualTo(0);

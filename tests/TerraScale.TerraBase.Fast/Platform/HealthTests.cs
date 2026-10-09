@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Sqlite;
 using TerraBase.Testing;
@@ -87,18 +88,17 @@ public sealed class HealthTests
         using var tls = new ClientTls();
         var shutdown = new HeldShutdown();
         var providerDisposed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var clock = new ProbeClock();
+        var barrier = new ProbeBarrier();
         await using var server = await TerraBaseTestServer.StartAsync(tls.Apply, services =>
         {
+            ConfigureReadiness(services, clock, barrier);
             services.AddHostedService(_ => shutdown);
             services.AddSingleton<IStartupFilter>(_ => new ObserveProviderDisposal(providerDisposed));
         });
         using var client = tls.CreateClient(server.ClientAddress!);
         var provider = server.Services;
         var engine = provider.GetRequiredService<SqliteStorageEngine>();
-        var clock = new ProbeClock();
-        var barrier = new ProbeBarrier();
-        engine.ReadinessClock = clock;
-        engine.BeforeReadinessProbe = barrier.HoldAsync;
         var pending = AssertProbeAsync(client, "/readyz", HttpStatusCode.ServiceUnavailable, "unavailable");
         try
         {
@@ -137,12 +137,14 @@ public sealed class HealthTests
     public async Task Readyz_keeps_one_disk_probe_after_timeout_or_cancellation_and_recovers(bool cancelCaller)
     {
         var requests = new ObserveCanceledRequest();
-        await using var server = await TerraBaseTestServer.StartAsync(services: services => services.AddSingleton<IStartupFilter>(requests));
-        var engine = server.Services.GetRequiredService<SqliteStorageEngine>();
         var clock = new ProbeClock(expectedWaiters: 2);
         var barrier = new ProbeBarrier();
-        engine.ReadinessClock = clock;
-        engine.BeforeReadinessProbe = barrier.HoldAsync;
+        await using var server = await TerraBaseTestServer.StartAsync(services: services =>
+        {
+            ConfigureReadiness(services, clock, barrier);
+            services.AddSingleton<IStartupFilter>(requests);
+        });
+        var engine = server.Services.GetRequiredService<SqliteStorageEngine>();
         using var cancellation = new CancellationTokenSource();
         var pending = server.Client.GetAsync(new Uri("/readyz", UriKind.Relative), cancellation.Token);
         try
@@ -191,13 +193,11 @@ public sealed class HealthTests
     public async Task Readyz_concurrent_requests_await_one_probe_when_the_clock_starts_at_zero()
     {
         using var tls = new ClientTls();
-        await using var server = await TerraBaseTestServer.StartAsync(tls.Apply);
-        using var client = tls.CreateClient(server.ClientAddress!);
-        var engine = server.Services.GetRequiredService<SqliteStorageEngine>();
         var clock = new ProbeClock(expectedWaiters: 16);
         var barrier = new ProbeBarrier();
-        engine.ReadinessClock = clock;
-        engine.BeforeReadinessProbe = barrier.HoldAsync;
+        await using var server = await TerraBaseTestServer.StartAsync(tls.Apply, services => ConfigureReadiness(services, clock, barrier));
+        using var client = tls.CreateClient(server.ClientAddress!);
+        var engine = server.Services.GetRequiredService<SqliteStorageEngine>();
         var pending = Enumerable.Range(0, 16).Select(_ => AssertProbeAsync(client, "/readyz", HttpStatusCode.OK, "ready")).ToArray();
         try
         {
@@ -223,6 +223,9 @@ public sealed class HealthTests
     public async Task Readyz_reuses_completed_disk_checks_for_the_configured_ttl(string? configured, int seconds)
     {
         using var tls = new ClientTls();
+        var clock = new ProbeClock();
+        var probes = new ProbeBarrier();
+        probes.Release.TrySetResult();
         await using var server = await TerraBaseTestServer.StartAsync(settings =>
         {
             tls.Apply(settings);
@@ -230,14 +233,8 @@ public sealed class HealthTests
             {
                 settings["readiness-cache-seconds"] = configured;
             }
-        });
+        }, services => ConfigureReadiness(services, clock, probes));
         using var client = tls.CreateClient(server.ClientAddress!);
-        var engine = server.Services.GetRequiredService<SqliteStorageEngine>();
-        var clock = new ProbeClock();
-        var probes = new ProbeBarrier();
-        probes.Release.TrySetResult();
-        engine.ReadinessClock = clock;
-        engine.BeforeReadinessProbe = probes.HoldAsync;
 
         // Sequential requests finish the previous check before sending the next one, so single-flight alone cannot pass.
         for (var request = 0; request < 16; request++)
@@ -259,14 +256,16 @@ public sealed class HealthTests
     {
         using var tls = new ClientTls();
         var shutdown = new HeldShutdown();
-        await using var server = await TerraBaseTestServer.StartAsync(tls.Apply, services => services.AddHostedService(_ => shutdown));
-        using var client = tls.CreateClient(server.ClientAddress!);
-        var engine = server.Services.GetRequiredService<SqliteStorageEngine>();
+        var clock = new ProbeClock();
         var probes = new ProbeBarrier();
         probes.Release.TrySetResult();
         // Freeze the TTL at zero so the successful result stays cached throughout shutdown.
-        engine.ReadinessClock = new ProbeClock();
-        engine.BeforeReadinessProbe = probes.HoldAsync;
+        await using var server = await TerraBaseTestServer.StartAsync(tls.Apply, services =>
+        {
+            ConfigureReadiness(services, clock, probes);
+            services.AddHostedService(_ => shutdown);
+        });
+        using var client = tls.CreateClient(server.ClientAddress!);
         await AssertProbeAsync(client, "/readyz", HttpStatusCode.OK, "ready");
         await Assert.That(probes.Calls).IsEqualTo(1);
 
@@ -296,18 +295,15 @@ public sealed class HealthTests
         {
             var dataDirectory = Path.Combine(root, "data");
             using var tls = new ClientTls();
+            var clock = new ProbeClock();
+            var probes = new ProbeBarrier();
+            probes.Release.TrySetResult();
             await using var server = await TerraBaseTestServer.StartAsync(settings =>
             {
                 tls.Apply(settings);
                 settings["data-directory"] = dataDirectory;
-            });
+            }, services => ConfigureReadiness(services, clock, probes));
             using var client = tls.CreateClient(server.ClientAddress!);
-            var engine = server.Services.GetRequiredService<SqliteStorageEngine>();
-            var clock = new ProbeClock();
-            var probes = new ProbeBarrier();
-            probes.Release.TrySetResult();
-            engine.ReadinessClock = clock;
-            engine.BeforeReadinessProbe = probes.HoldAsync;
             await AssertProbeAsync(client, "/readyz", HttpStatusCode.OK, "ready");
 
             // A lost volume: nothing can be created in the data directory any more.
@@ -337,13 +333,28 @@ public sealed class HealthTests
     [Test]
     public async Task Readyz_leaves_no_probe_files_in_the_data_directory()
     {
-        await using var server = await TerraBaseTestServer.StartAsync();
+        // Only the public requests create probes while this test compares the directory before and after them.
+        await using var server = await TerraBaseTestServer.StartAsync(services: services => services.AddSingleton<TimeProvider>(new FakeTimeProvider()));
         var before = Directory.GetFileSystemEntries(server.DataDirectory).Order(StringComparer.Ordinal).ToList();
 
         await Task.WhenAll(Enumerable.Range(0, 16).Select(_ => AssertProbeAsync(server.Client, "/readyz", HttpStatusCode.OK, "ready")));
         await server.Services.GetRequiredService<SqliteStorageEngine>().ReadinessProbeTask.WaitAsync(TimeSpan.FromSeconds(30));
 
         await Assert.That(Directory.GetFileSystemEntries(server.DataDirectory).Order(StringComparer.Ordinal).ToList()).IsEquivalentTo(before);
+    }
+
+    // Set the hooks before the engine can be observed by the background pressure sampler or any HTTP request.
+    private static void ConfigureReadiness(IServiceCollection services, ProbeClock clock, ProbeBarrier barrier)
+    {
+        var registration = services.Single(service => service.ServiceType == typeof(SqliteStorageEngine));
+        services.Remove(registration);
+        services.AddSingleton(provider =>
+        {
+            var engine = (SqliteStorageEngine)registration.ImplementationFactory!(provider);
+            engine.ReadinessClock = clock;
+            engine.BeforeReadinessProbe = barrier.HoldAsync;
+            return engine;
+        });
     }
 
     // Registered after the application's services, so it stops before the listeners do: shutdown has begun, and the

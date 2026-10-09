@@ -28,6 +28,8 @@ internal sealed class StampingStorageEngine(IStorageEngine inner, ISystemReplica
 
     public long CommittedWrites => inner.CommittedWrites;
 
+    public long? IoAdmittedCount => inner.IoAdmittedCount;
+
     public ValueTask RefreshStoragePressureAsync(CancellationToken cancellationToken) =>
         inner.RefreshStoragePressureAsync(cancellationToken);
 
