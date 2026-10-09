@@ -215,6 +215,10 @@ primitive records; recovery-code pages contain strings.
 **deprecated legacy entrypoints**. SQLite stays opt-in for development only and
 refuses CI, production, staging, qualification and deployment environments.
 It is no longer the required Dashboard backend and does not qualify the C# API.
+Local SQLite uses fresh format 2. Older stores are refused before records are
+read: stop the runtime, delete the exact configured `databasePath` and its
+`-wal`/`-shm` files, then restart. Startup recreates bootstrap state; old auth
+records and references are discarded together. There is no migration.
 The PostgreSQL listener and retired tenant/shard client are outside the default
 v1 API. Existing framework, schema and SQL entrypoints are separate legacy
 surfaces; the root entrypoint exposes the C# v1 client API.

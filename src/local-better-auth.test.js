@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
+import { DatabaseSync } from "node:sqlite";
+import { rm } from "node:fs/promises";
 import { test } from "vitest";
 import { isValidId } from "./ids.js";
 import { TerraScaleSqliteStore } from "./local/store.js";
 import { createLocalBetterAuthAdapter } from "./local/better-auth.js";
+import { createTerraScaleSqliteRuntime } from "./local/index.js";
 import {
   localSqliteUnitTestsAllowed,
   localFixture,
@@ -20,6 +23,39 @@ const user = (email) => ({
   emailVerified: false,
   createdAt: new Date(),
   updatedAt: new Date(),
+});
+
+test.skipIf(!localSqliteUnitTestsAllowed)("old auth storage requires a reset before startup and fresh storage recreates bootstrap state", async () => {
+  const fixture = await localFixture();
+  /** @type {ReturnType<typeof createTerraScaleSqliteRuntime> | undefined} */
+  let fresh;
+  try {
+    await fixture.runtime.close();
+    const legacy = new DatabaseSync(fixture.databasePath);
+    try {
+      legacy.exec("PRAGMA user_version = 0; CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL); INSERT INTO schema_migrations VALUES (1, 'legacy');");
+      const insert = legacy.prepare("INSERT INTO records (namespace, scope, id, value) VALUES ('local-auth', ?, ?, ?)");
+      const oldId = "00000000-0000-4000-8000-000000000001";
+      insert.run("user", oldId, JSON.stringify({ id: oldId, email: "old@example.test" }));
+      insert.run("session", "00000000-0000-4000-8000-000000000002", JSON.stringify({ userId: oldId }));
+    } finally {
+      legacy.close();
+    }
+    assert.throws(() => createTerraScaleSqliteRuntime({ sqlite: { enabled: true, databasePath: fixture.databasePath } }), /TS-754: unsupported local SQLite format.*delete.*fresh ULID storage/u);
+    for (const suffix of ["", "-wal", "-shm"])
+      await rm(`${fixture.databasePath}${suffix}`, { force: true });
+    fresh = createTerraScaleSqliteRuntime({ sqlite: { enabled: true, databasePath: fixture.databasePath } });
+    assert.ok(isValidId(fresh.scope.tenant));
+    assert.ok(isValidId(fresh.scope.database));
+    const adapter = (await fresh.createBetterAuthAdapter())(options);
+    assert.equal(await adapter.count({ model: "user" }), 0);
+    assert.equal(await adapter.count({ model: "session" }), 0);
+    const created = /** @type {{ id: string }} */ (await adapter.create({ model: "user", data: user("fresh@example.test") }));
+    assert.ok(isValidId(created.id));
+  } finally {
+    await fresh?.close();
+    await fixture.close();
+  }
 });
 
 test.skipIf(!localSqliteUnitTestsAllowed)("scoped entries preserve record keys and exclude unrelated models and namespaces", () => {
