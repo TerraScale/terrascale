@@ -222,7 +222,7 @@ internal sealed partial class ReplicationService(
         {
             prefix = await journal.AppendAsync(store, origin, sequence, changes, batch.PreviousJournalDigest.Memory, batch.JournalDigest.Memory, cancellationToken).ConfigureAwait(false);
         }
-        catch (Exception error) when (error is InvalidDataException or DocumentValidationException)
+        catch (Exception error) when (error is InvalidDataException or JournalConflictException or DocumentValidationException)
         {
             metrics.Received("rejected");
             return (applied, digest, StreamErrorCode.StreamErrorInvalidBatch);

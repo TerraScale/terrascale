@@ -30,7 +30,7 @@ internal sealed class UsageReceiver(TerraBaseOptions options, UsageMeter meter, 
         // A day of clock skew is tolerated; later hours could not be stored as a bucket.
         var latest = (time.GetUtcNow().ToUnixTimeSeconds() / 3600) + 24;
         if (request.Protocol != Protocol || request.Epoch.Length != 16 || request.Sequence is 0 or > long.MaxValue
-            || request.Sender.Length is < 1 or > 128 || request.Counts.Count > UsageMeter.MaxBatch || request.Counts.Sum(count => (long)count.Measurements.Length) > 1024 * 1024 || !request.Counts.All(count => Valid(count, latest)))
+            || request.Sender.Length is < 1 or > 128 || request.Counts.Count > UsageMeter.MaxBatch || request.Counts.Sum(count => (long)count.Measurements.Length) > UsageMeter.MaxBatchMeasurementBytes || !request.Counts.All(count => Valid(count, latest)))
         {
             throw new RpcException(new Status(StatusCode.InvalidArgument, "invalid usage batch"));
         }
@@ -101,7 +101,7 @@ internal sealed class UsageReceiver(TerraBaseOptions options, UsageMeter meter, 
 
     private static bool ValidMeasurements(UsageCount count)
     {
-        if (count.Measurements.Length > 256 * 1024)
+        if (count.Measurements.Length > UsageMeter.MaxEntryMeasurementBytes)
         {
             return false;
         }

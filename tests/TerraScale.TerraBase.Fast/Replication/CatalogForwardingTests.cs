@@ -716,6 +716,44 @@ public sealed class CatalogForwardingTests
     }
 
     [Test]
+    public async Task A_management_request_a_follower_relays_is_metered_once_by_the_primary_that_resolved_its_database()
+    {
+        using var peers = new PeerTls();
+        using var tls = new ClientTls();
+        using var issuer = new TestIssuer();
+        await using var primary = await TerraBaseTestServer.StartAsync(settings =>
+        {
+            peers.Apply(settings);
+            tls.Apply(settings);
+            TestIssuer.Configure(settings);
+            settings["region"] = "gru-1";
+        }, issuer.Route);
+        await using var follower = await StartFollowerAsync(peers, tls, issuer, primary.PeerAddress!, region: "gru-1");
+        await ReadyAsync(follower);
+        var faker = new Faker();
+        var project = faker.Random.Guid().ToString();
+        var token = issuer.Mint("tsk_" + faker.Random.Guid().ToString("N"), claims =>
+        {
+            claims.Claims["project_id"] = project;
+            claims.Claims["scope"] = "databases:read databases:write";
+        });
+        using var relayed = tls.CreateClient(follower.ClientAddress!, token);
+        (await relayed.PostAsJsonAsync(Relative($"/v1/projects/{project}/databases"), new { name = "main" })).EnsureSuccessStatusCode();
+        var reads = faker.Random.Int(1, 3);
+        for (var i = 0; i < reads; i++)
+        {
+            (await relayed.GetAsync(Relative($"/v1/projects/{project}/databases/main"))).EnsureSuccessStatusCode();
+        }
+
+        // Neither the relaying follower (no resolved database) nor a second observation on the primary may count them.
+        using var direct = tls.CreateClient(primary.ClientAddress!, token);
+        var analytics = await direct.GetFromJsonAsync<JsonElement>(Relative($"/projects/{project}/databases/main/analytics?range=1h&region=gru-1"));
+        var gets = analytics.GetProperty("items")[0].GetProperty("series").EnumerateArray()
+            .Sum(point => point.GetProperty("requests").TryGetProperty("get", out var count) ? count.GetInt64() : 0);
+        await Assert.That(gets).IsEqualTo(reads);
+    }
+
+    [Test]
     public async Task A_followers_reads_and_writes_reach_its_primarys_usage_once_also_when_an_acknowledgement_is_lost()
     {
         using var peers = new PeerTls();
@@ -998,13 +1036,17 @@ public sealed class CatalogForwardingTests
     private static Uri Relative(string path) => new(path, UriKind.Relative);
 
     private static Task<TerraBaseTestServer> StartFollowerAsync(
-        PeerTls peers, ClientTls tls, TestIssuer issuer, Uri primary, Action<IServiceCollection>? services = null) =>
+        PeerTls peers, ClientTls tls, TestIssuer issuer, Uri primary, Action<IServiceCollection>? services = null, string? region = null) =>
         TerraBaseTestServer.StartAsync(settings =>
         {
             peers.Apply(settings);
             tls.Apply(settings);
             TestIssuer.Configure(settings);
             settings["catalog-primary"] = primary.ToString();
+            if (region is not null)
+            {
+                settings["region"] = region;
+            }
         }, collection =>
         {
             issuer.Route(collection);

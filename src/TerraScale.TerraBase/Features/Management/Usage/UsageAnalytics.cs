@@ -24,6 +24,7 @@ internal sealed class UsageAnalytics(IManagementService management, UsageMeter m
         }
 
         using var reservation = Reserve(databases, window, region);
+        using var loaded = new Loaded(memory);
         var items = new List<DatabaseAnalytics>();
         foreach (var record in databases)
         {
@@ -34,7 +35,8 @@ internal sealed class UsageAnalytics(IManagementService management, UsageMeter m
                 continue;
             }
 
-            var (lifetime, series) = await meter.GetObservationsAsync(tenant, window.Usage, cancellationToken, () => CheckDeadline(started)).ConfigureAwait(false);
+            var (lifetime, series) = await meter.GetObservationsAsync(tenant, window.Usage, cancellationToken, () => CheckDeadline(started), loaded.Filter(region))
+                .ConfigureAwait(false);
             foreach (var observing in Regions(record, lifetime, region))
             {
                 items.Add(new(record.Id, record.Name, observing, [.. series.Select((point, index) => Point(
@@ -57,6 +59,7 @@ internal sealed class UsageAnalytics(IManagementService management, UsageMeter m
         }
 
         using var reservation = Reserve(databases, window, region);
+        using var loaded = new Loaded(memory);
         var items = new List<DatabaseReplication>();
         foreach (var record in databases)
         {
@@ -67,7 +70,8 @@ internal sealed class UsageAnalytics(IManagementService management, UsageMeter m
                 continue;
             }
 
-            var (lifetime, series) = await meter.GetObservationsAsync(tenant, window.Usage, cancellationToken, () => CheckDeadline(started)).ConfigureAwait(false);
+            var (lifetime, series) = await meter.GetObservationsAsync(tenant, window.Usage, cancellationToken, () => CheckDeadline(started), loaded.Filter(region))
+                .ConfigureAwait(false);
             foreach (var observing in Regions(record, lifetime, region))
             {
                 var readings = Readings(lifetime, observing).ToArray();
@@ -145,6 +149,29 @@ internal sealed class UsageAnalytics(IManagementService management, UsageMeter m
 
         return memory.TryReserve(MemoryLane.Foreground, 16L * 1024 * 1024 + points * 2048L)
             ?? throw new QueryCapacityException("analytics memory admission exhausted");
+    }
+
+    // Memory admitted for the observations a request keeps as it reads them, beyond its output reservation.
+    private sealed class Loaded(IMemoryBudget memory) : IDisposable
+    {
+        private readonly List<IMemoryReservation> _reservations = [];
+
+        public ObservationFilter Filter(string? region) => new(dimension => region is null || dimension.Region == region, bytes =>
+        {
+            if (bytes > 0)
+            {
+                _reservations.Add(memory.TryReserve(MemoryLane.Foreground, bytes)
+                    ?? throw new QueryCapacityException("analytics memory admission exhausted"));
+            }
+        });
+
+        public void Dispose()
+        {
+            foreach (var reservation in _reservations)
+            {
+                reservation.Dispose();
+            }
+        }
     }
 
     private IEnumerable<string> Regions(ManagedDatabase record, OpCounts lifetime, string? region) =>

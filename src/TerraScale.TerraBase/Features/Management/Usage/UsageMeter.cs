@@ -10,6 +10,15 @@ using static TerraBase.Features.Management.SystemCatalog;
 
 namespace TerraBase.Features.Management.Usage;
 
+/// <summary>The dimensions an observation read keeps, and the memory admission charged, in bytes, for what it keeps.</summary>
+internal sealed record ObservationFilter(Func<UsageDimension, bool> Keep, Action<long> Admit);
+
+/// <summary>Only the read and write totals of a persisted <see cref="OpCounts"/>; its meters are skipped, not materialized.</summary>
+internal sealed record UsageTotals(long Reads, long Writes)
+{
+    public OpCounts Counts => new(Reads, Writes);
+}
+
 /// <summary>
 /// Operation counts; persisted per managed database as document <c>ops</c> of its <c>usage</c> state collection (lifetime),
 /// and as one document per UTC hour and per UTC day of its <c>usage-hours</c> and <c>usage-days</c> collections.
@@ -294,18 +303,27 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
     public async ValueTask<(OpCounts Lifetime, OpCounts[] Series)> GetAsync(
         TenantContext database, UsageWindow window, CancellationToken cancellationToken, Action? proceed = null)
     {
-        return await ReadAsync(database, window, meters: false, proceed, cancellationToken).ConfigureAwait(false);
+        return await ReadAsync(database, window, meters: false, filter: null, proceed, cancellationToken).ConfigureAwait(false);
     }
 
-    /// <summary>Like <see cref="GetAsync"/>, with regional meters; callers reserve memory for them.</summary>
+    /// <summary>
+    /// Like <see cref="GetAsync"/>, with regional meters. <paramref name="filter"/>, when set, keeps only its dimensions of
+    /// each entry as it is read and admits memory for what it keeps.
+    /// </summary>
     public async ValueTask<(OpCounts Lifetime, OpCounts[] Series)> GetObservationsAsync(
-        TenantContext database, UsageWindow window, CancellationToken cancellationToken, Action? proceed = null) =>
-        await ReadAsync(database, window, meters: true, proceed, cancellationToken).ConfigureAwait(false);
+        TenantContext database, UsageWindow window, CancellationToken cancellationToken, Action? proceed = null, ObservationFilter? filter = null) =>
+        await ReadAsync(database, window, meters: true, filter, proceed, cancellationToken).ConfigureAwait(false);
 
-    // Counts-only reads drop every entry's meters as it is read, so usage totals retain no analytics observations.
+    // Counts-only reads skip every entry's meters as it is read, so usage totals retain no analytics observations.
     private async ValueTask<(OpCounts Lifetime, OpCounts[] Series)> ReadAsync(
-        TenantContext database, UsageWindow window, bool meters, Action? proceed, CancellationToken cancellationToken)
+        TenantContext database, UsageWindow window, bool meters, ObservationFilter? filter, Action? proceed, CancellationToken cancellationToken)
     {
+
+        OpCounts Shape(OpCounts counts)
+        {
+            return !meters ? Strip(counts, meters) : filter is null ? counts : Retain(counts, filter);
+        }
+
         var owner = DatabaseOwner.Of(database);
         await _flush.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -319,14 +337,16 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
 
             var (lifetime, series) = await catalog.ReadAsync(
                 async transaction => (
-                    Strip(await SystemCatalog.GetAsync(transaction, UsageCollection(owner.DatabaseId), Ops, TerraBaseJsonContext.Default.OpCounts, cancellationToken).ConfigureAwait(false) ?? OpCounts.Zero, meters),
-                    await ReadSeriesAsync(transaction, owner.DatabaseId, window, meters, proceed, cancellationToken).ConfigureAwait(false)),
+                    meters
+                        ? Shape(await SystemCatalog.GetAsync(transaction, UsageCollection(owner.DatabaseId), Ops, TerraBaseJsonContext.Default.OpCounts, cancellationToken).ConfigureAwait(false) ?? OpCounts.Zero)
+                        : (await SystemCatalog.GetAsync(transaction, UsageCollection(owner.DatabaseId), Ops, TerraBaseJsonContext.Default.UsageTotals, cancellationToken).ConfigureAwait(false))?.Counts ?? OpCounts.Zero,
+                    await ReadSeriesAsync(transaction, owner.DatabaseId, window, meters, Shape, proceed, cancellationToken).ConfigureAwait(false)),
                 cancellationToken).ConfigureAwait(false);
             // A follower's own counts reach these totals once the primary saved them and they replicated here; adding the
             // ones still pending could count a batch twice, the primary having saved it before its acknowledgement came.
             foreach (var (key, entry) in options.CatalogPrimary is null && _pending.TryGetValue(owner, out var pending) ? pending : [])
             {
-                var counts = Strip(entry, meters);
+                var counts = Shape(entry);
                 lifetime += counts;
                 if (key.In(window.Granularity) && window.IndexOf(key.Hour, key.Minute) is { } index)
                 {
@@ -635,7 +655,22 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
                 if (_pending.TryGetValue(key.Database, out var pending) && pending.TryGetValue(key, out var counts))
                 {
                     var bytes = counts.Meters is null ? 0 : JsonSerializer.SerializeToUtf8Bytes(new OpCounts(0, 0, counts.Meters), TerraBaseJsonContext.Default.OpCounts).Length;
-                    if (measurementBytes + bytes > 1024 * 1024)
+                    if (bytes > MaxEntryMeasurementBytes)
+                    {
+                        // Folding merged more meters than one entry carries: send its counts and drop the meters, counted, so it
+                        // neither waits forever nor makes the primary refuse the whole batch. A concurrent add retries next round.
+                        var trimmed = counts with { Meters = null };
+                        if (!pending.TryUpdate(key, trimmed, counts))
+                        {
+                            _turns.Enqueue(key);
+                            break;
+                        }
+
+                        _measurementDrops.Add(1);
+                        (counts, bytes) = (trimmed, 0);
+                    }
+
+                    if (measurementBytes + bytes > MaxBatchMeasurementBytes)
                     {
                         _turns.Enqueue(key);
                         break;
@@ -743,8 +778,21 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
     // proceed runs before each page, so a read that ends past a request's deadline starts no further one.
     private static OpCounts Strip(OpCounts counts, bool meters) => meters || counts.Meters is null ? counts : counts with { Meters = null };
 
+    private static OpCounts Retain(OpCounts counts, ObservationFilter filter)
+    {
+        if (counts.Meters is null)
+        {
+            return counts;
+        }
+
+        var kept = counts.Meters.Where(entry => filter.Keep(entry.Value.Dimension)).ToDictionary(entry => entry.Key, entry => entry.Value, StringComparer.Ordinal);
+        filter.Admit(kept.Count * MeasurementBytes);
+        return counts with { Meters = kept.Count == 0 ? null : kept };
+    }
+
     private static async ValueTask<OpCounts[]> ReadSeriesAsync(
-        IStorageTransaction transaction, string databaseId, UsageWindow window, bool meters, Action? proceed, CancellationToken cancellationToken)
+        IStorageTransaction transaction, string databaseId, UsageWindow window, bool meters, Func<OpCounts, OpCounts> shape, Action? proceed,
+        CancellationToken cancellationToken)
     {
         var series = Enumerable.Repeat(OpCounts.Zero, window.Count).ToArray();
         var collection = Collection(databaseId, window.Granularity);
@@ -765,7 +813,10 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
                 // Coarser analytics buckets read finer persisted buckets after the preceding boundary.
                 if (index >= 0 && index < series.Length)
                 {
-                    series[index] += Strip(JsonSerializer.Deserialize(document.Json.Span, TerraBaseJsonContext.Default.OpCounts)!, meters);
+                    // Counts-only reads skip the meters JSON instead of materializing it.
+                    series[index] += meters
+                        ? shape(JsonSerializer.Deserialize(document.Json.Span, TerraBaseJsonContext.Default.OpCounts)!)
+                        : JsonSerializer.Deserialize(document.Json.Span, TerraBaseJsonContext.Default.UsageTotals)!.Counts;
                 }
             }
 

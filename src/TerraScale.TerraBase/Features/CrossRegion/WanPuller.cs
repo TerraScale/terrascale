@@ -204,6 +204,7 @@ internal sealed partial class WanPuller(
             var gone = false;
             // Only the origin's explicit Ahead answer or a journal-proof mismatch is divergence; a head snapshot may be stale.
             var diverged = false;
+            var failed = false;
             // Bounded by this round's heads and retries, so every replicated database reports health each round.
             if (observations.TryAdd(database, (0, false)))
             {
@@ -225,17 +226,31 @@ internal sealed partial class WanPuller(
                 }
                 catch (Exception error) when (!cancellationToken.IsCancellationRequested)
                 {
-                    diverged = error is OriginAheadException or InvalidDataException;
+                    diverged = error is OriginAheadException or JournalConflictException;
+                    failed = true;
                     metrics.Failed(region, error switch
                     {
                         OriginAheadException => "ahead",
-                        InvalidDataException or DocumentValidationException => "apply",
+                        InvalidDataException or JournalConflictException or DocumentValidationException => "apply",
                         _ => "pull",
                     });
                     if (failures++ == 0 && !quiet)
                     {
                         LogPullFailed(logger, error, region);
                     }
+                }
+            }
+
+            // A pull can commit groups before it fails: count only what is still missing.
+            if (failed)
+            {
+                try
+                {
+                    applied = Math.Max(applied, await AppliedAsync(store, origin, cancellationToken).ConfigureAwait(false));
+                }
+                catch (Exception) when (!cancellationToken.IsCancellationRequested)
+                {
+                    // The store failed too; the round's earlier prefix stays the estimate.
                 }
             }
 

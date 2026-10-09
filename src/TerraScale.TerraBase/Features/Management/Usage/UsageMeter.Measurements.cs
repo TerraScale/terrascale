@@ -28,6 +28,9 @@ internal sealed partial class UsageMeter
     }
 
     internal const int MaxDimensions = 256;
+    // What a follower's usage batch carries as measurement JSON, per entry and in total; the primary refuses more.
+    internal const int MaxEntryMeasurementBytes = 256 * 1024;
+    internal const int MaxBatchMeasurementBytes = 1024 * 1024;
     private const int MaxMeasurementKeys = 256;
     // Owner/dimension strings, dictionaries, histogram arrays and overlapping immutable snapshots.
     private const long MeasurementBytes = 2048;

@@ -100,6 +100,7 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(OciGenerateDataKeyRequest))]
 [JsonSerializable(typeof(OciKeyResponse))]
 [JsonSerializable(typeof(OpCounts))]
+[JsonSerializable(typeof(UsageTotals))]
 [JsonSerializable(typeof(UsageReading))]
 [JsonSerializable(typeof(UsageSender))]
 [JsonSerializable(typeof(Organization))]

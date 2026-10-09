@@ -55,13 +55,14 @@ Each point contains:
   requests above 65,536 ms and reports that boundary.
 - `storageBytes`: the average sampled physical database size, including the
   engine's sidecars; null before any sample. Each node samples once per minute:
-  the databases whose stable hash falls in that minute's slot, about 128 per
-  minute, so every database is sampled within ceil(databases / 128) minutes.
+  the databases whose stable hash falls in that minute's slot, at most 128 per
+  minute, so every database is sampled within about ceil(databases / 128) minutes.
 - `clientBandwidth` and `replicationBandwidth`, each with `bytesSent` and
   `bytesReceived`. Client bandwidth counts actual HTTP body reads and writes
   after a request resolves an authorized database; it excludes HTTP/TLS headers.
-  A request a catalog follower forwards is metered once, where the client sent it;
-  requests naming an unknown database record nothing.
+  A request a catalog follower relays is metered once, by the catalog primary that
+  resolves its database (latency there excludes the relay hop); requests naming an
+  unknown database record nothing.
 
 Failed writes do not become committed operation counts. Client request counts,
 errors and latency still include failed requests that resolved their database.
@@ -101,8 +102,9 @@ Prometheus labels; regional/database dimensions live in bounded usage records.
 Health builds on TS-681's verified peer prefixes, divergence and catch-up timing,
 plus WAN applied-prefix observations. `lagMs` is the observed backlog's age,
 not network round-trip latency. `divergence` denotes detected journal conflict
-(a verified prefix conflict, an origin's explicit ahead answer, or a journal
-proof mismatch), not a full comparison of document contents. Health sources
+(a verified prefix conflict, an origin's explicit ahead answer, or a group that
+conflicts with the applied journal prefix; malformed or oversized messages are
+failed pulls, not divergence), not a full comparison of document contents. Health sources
 refresh every ten seconds: each sender's peer observations and each WAN round.
 Every peer observed in the last ten minutes counts. Status is `diverged` if any
 reports divergence, `stopped` if any has been silent for more than 30 seconds
@@ -127,7 +129,11 @@ backlogs keep at most 256 database/peer pairs, evicting the least recently
 observed. Rolled-up hour, day and lifetime maps are not capped: they hold the
 deployed regions' dimensions, and capping them would break subtraction.
 `terrabase.usage.observations.dropped` reports bounded admission drops. Usage
-totals read counts only; analytics reads reserve memory for their meters. A follower batch carries at most 1 MiB of measurement JSON,
+totals skip the meters JSON when reading. Analytics reads keep only the requested
+region's dimensions of each entry as they read it and admit memory for what they
+keep; exhausted admission returns 400. A follower entry whose folded meters exceed
+the 256 KiB entry limit is sent with its counts only, and the dropped meters are
+counted. A follower batch carries at most 1 MiB of measurement JSON,
 256 KiB per entry, with validated meter names, dimensions and histogram sizes.
 There are no migrations or backfills; existing entity-ID generation is owned by
 TS-754, and this slice introduces no ID encoding or compatibility fallback.

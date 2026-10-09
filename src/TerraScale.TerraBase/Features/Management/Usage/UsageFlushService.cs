@@ -133,12 +133,15 @@ internal sealed partial class UsageFlushService(
         _sampledMinute = minute;
         var slots = Math.Max(1, (_listed + MaxSamplesPerMinute - 1) / MaxSamplesPerMinute);
         var listed = 0;
+        var sampled = 0;
         await foreach (var database in engine.ListDatabasesAsync(cancellationToken).ConfigureAwait(false))
         {
             listed++;
-            if ((uint)StringComparer.Ordinal.GetHashCode(database.DatabaseId ?? "") % slots == minute % slots
+            // The cap bounds the first pass, before the population is known, and hash skew.
+            if (sampled < MaxSamplesPerMinute && (uint)StringComparer.Ordinal.GetHashCode(database.DatabaseId ?? "") % slots == minute % slots
                 && await engine.GetDatabaseSizeAsync(database, cancellationToken).ConfigureAwait(false) is { } size)
             {
+                sampled++;
                 meter.RecordStorage(database, size);
             }
         }

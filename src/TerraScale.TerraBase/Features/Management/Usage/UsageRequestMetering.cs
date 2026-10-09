@@ -16,8 +16,7 @@ public static class UsageRequestMetering
         var meter = app.Services.GetRequiredService<IUsageMeter>();
         app.Use(async (context, next) =>
         {
-            // The follower that relayed a forwarded request already meters it at the client edge.
-            if (Listeners.ArrivedOn(context) != TerraBaseListener.Client || context.Features.Get<ForwardedRequests.ForwardedRequest>() is not null)
+            if (Listeners.ArrivedOn(context) != TerraBaseListener.Client)
             {
                 await next(context).ConfigureAwait(false);
                 return;
@@ -53,7 +52,8 @@ public static class UsageRequestMetering
                     database = new(access.OrganizationId, PlanTier.Hobby, access.ProjectId, id);
                 }
 
-                if (database?.DatabaseId is not null)
+                // A follower that relayed the request to the catalog primary leaves it to the primary, which resolved its database.
+                if (database?.DatabaseId is not null && context.Features.Get<CatalogForwarder.Relayed>() is null)
                 {
                     meter.RecordRequest(database, context.Request.Method, failed ? 500 : context.Response.StatusCode,
                         Stopwatch.GetElapsedTime(started), received.ReadBytes, sent.WrittenBytes);

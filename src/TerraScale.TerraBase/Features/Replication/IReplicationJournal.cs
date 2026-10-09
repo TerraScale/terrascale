@@ -65,7 +65,7 @@ internal sealed class EngineReplicationJournal(IStorageEngine engine) : IReplica
             {
                 if (sequence == appliedSequence && !digest.Span.SequenceEqual(appliedDigest.Span))
                 {
-                    throw new InvalidDataException("the duplicate group has a different journal identity");
+                    throw new JournalConflictException("the duplicate group has a different journal identity");
                 }
 
                 return (appliedSequence, appliedDigest, false);
@@ -73,7 +73,7 @@ internal sealed class EngineReplicationJournal(IStorageEngine engine) : IReplica
 
             if (!previousDigest.Span.SequenceEqual(appliedDigest.Span))
             {
-                throw new InvalidDataException("the group does not extend the applied journal prefix");
+                throw new JournalConflictException("the group does not extend the applied journal prefix");
             }
 
             // Validate the complete group against one starting head before any document, collection,
@@ -108,3 +108,6 @@ internal sealed class EngineReplicationJournal(IStorageEngine engine) : IReplica
             ?? throw new InvalidOperationException("the database was deleted while a peer opened it");
     }
 }
+
+/// <summary>A group conflicts with the applied journal prefix: the journals diverged, unlike a malformed or oversized message.</summary>
+internal sealed class JournalConflictException(string message) : Exception(message);
