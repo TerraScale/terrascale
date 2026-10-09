@@ -389,5 +389,5 @@ public sealed class UniqueReplicationTests
         await Assert.That(document.GetProperty("id").GetString()).IsEqualTo(id);
     }
 
-    private static Uri Document(ReplicationTenant tenant, string id, string database = "db") => new(tenant.Path(database) + "/collections/people/documents/" + id, UriKind.Relative);
+    private static Uri Document(ReplicationTenant tenant, string id, string database = "db") => new(tenant.Path(database) + "/collections/people/documents/by-key?id=" + Uri.EscapeDataString(id), UriKind.Relative);
 }

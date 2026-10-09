@@ -388,7 +388,7 @@ public sealed class UniqueConstraintTests
     private static Task DuplicateAsync(Task<HttpResponseMessage> response) =>
         ErrorAssert.ErrorAsync(response, HttpStatusCode.Conflict, "unique_violation", "a unique field or compound key is already taken");
 
-    internal static Uri Document(ManagedDatabaseRef database, string id) => Uri(database.Data + "/collections/people/documents/" + id);
+    internal static Uri Document(ManagedDatabaseRef database, string id) => Uri(database.Data + "/collections/people/documents/by-key?id=" + System.Uri.EscapeDataString(id));
 
     private static Uri Uri(string path) => new(path, UriKind.Relative);
 }

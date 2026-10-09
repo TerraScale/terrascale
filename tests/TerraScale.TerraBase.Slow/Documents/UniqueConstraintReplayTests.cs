@@ -57,9 +57,9 @@ public sealed class UniqueConstraintReplayTests
         page.EnsureSuccessStatusCode();
         var documents = await page.Content.ReadFromJsonAsync<JsonElement>();
         await Assert.That(documents.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("id").GetString()!)).IsEquivalentTo([middle, high]);
-        using var missing = await client.GetAsync(new Uri(database.Data + "/collections/people/documents/" + low, UriKind.Relative));
+        using var missing = await client.GetAsync(new Uri(database.Data + "/collections/people/documents/by-key?id=" + low, UriKind.Relative));
         await Assert.That(missing.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-        using var duplicate = await client.PutAsJsonAsync(new Uri(database.Data + "/collections/people/documents/" + Ulid.NewUlid(), UriKind.Relative), new { a = 2, b = 4 });
+        using var duplicate = await client.PutAsJsonAsync(new Uri(database.Data + "/collections/people/documents/by-key?id=" + Ulid.NewUlid(), UriKind.Relative), new { a = 2, b = 4 });
         await Assert.That(duplicate.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
     }
 }
