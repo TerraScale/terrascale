@@ -25,7 +25,7 @@ const defaultTSAuthOrigin = "https://gru.auth.terrascale.tech"
 type Config struct {
 	PublicURL          string
 	Addr               string
-	Demo               bool
+	Demo               bool // Disables Stripe; backend configuration selects the memory simulator.
 	Dev                bool
 	SecureCookies      bool
 	AdminEmail         string
@@ -55,8 +55,8 @@ type Config struct {
 	// sends none.
 	CSPReportURL string
 	// CSRFSecret keys CSRF tokens, from TS_DASHBOARD_CSRF_SECRET. Every
-	// machine serving the dashboard must share it, so it is required outside
-	// the demo; an empty value in the demo draws a random key per process.
+	// machine serving the dashboard must share it, so TerraBase persistence
+	// requires it; the memory demo draws a random key per process.
 	CSRFSecret []byte
 	// TSAuth signs users in through ts-auth when its Issuer is set; unset,
 	// the dashboard keeps its own password sign-in.
@@ -101,9 +101,8 @@ func Load() (Config, error) {
 	if err := c.ValidateBackend(); err != nil {
 		return Config{}, err
 	}
-	// Persistence configuration selects live mode, independently of the old
-	// deployment's demo flag. Unconfigured deployments retain the memory demo.
-	c.Demo = c.TerraBaseURL == ""
+	// Backend configuration must not override explicit provider isolation.
+	c.Demo = c.Demo || c.TerraBaseURL == ""
 	if c.Addr == "" {
 		c.Addr = ":8080"
 	}
@@ -145,8 +144,8 @@ func Load() (Config, error) {
 			return Config{}, fmt.Errorf("TS_DASHBOARD_CSRF_SECRET must be at least %d bytes", minCSRFSecret)
 		}
 		c.CSRFSecret = []byte(secret)
-	} else if !c.Demo {
-		return Config{}, errors.New("TS_DASHBOARD_CSRF_SECRET is required outside the demo")
+	} else if c.TerraBaseURL != "" {
+		return Config{}, errors.New("TS_DASHBOARD_CSRF_SECRET is required with TerraBase persistence")
 	}
 	c.SecureCookies = os.Getenv("DASHBOARD_SECURE_COOKIES") == "1" ||
 		(os.Getenv("DASHBOARD_SECURE_COOKIES") != "0" && !c.Dev &&
@@ -161,7 +160,7 @@ func Load() (Config, error) {
 	}
 	// Users' databases live in TerraBase only when the dashboard can act
 	// as the user there, with their ts-auth access token.
-	if !c.Demo && c.TSAuth.Issuer == "" && os.Getenv("FLY_APP_NAME") != "" {
+	if c.TerraBaseURL != "" && c.TSAuth.Issuer == "" && os.Getenv("FLY_APP_NAME") != "" {
 		return Config{}, errors.New("TS_AUTH_ISSUER is required with TerraBase on Fly.io: without it users' databases would not live in TerraBase")
 	}
 	if (c.AdminEmail == "") != (c.AdminPassword == "") {

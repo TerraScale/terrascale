@@ -4,6 +4,11 @@ Preparation does not authorize activating live keys. Keep local development
 and tests in `TS_DASHBOARD_PRODUCTION_DEMO=1`. Production keeps its existing
 TerraBase persistence and native dashboard sign-in.
 
+`TS_DASHBOARD_PRODUCTION_DEMO=1` suppresses Stripe even when TerraBase is
+configured. Persistent apps retain their real stores, sessions and ts-auth;
+billing stays unavailable. The memory simulator runs only without a configured
+backend and cannot grant simulated entitlements to persistent accounts.
+
 ## Verify the serving target
 
 The production Fly app is `ts-dashboard` (`fly.toml`). The public origin is
@@ -91,10 +96,10 @@ Never print the decoded bundle or put secret values in command arguments.
 
 ## Test-to-live gate
 
-This preparation slice does **not** authorize cutover. Runtime hardening must
-be reviewed and delivered first: verify that demo configuration cannot contact
-Stripe without changing the serving app's TerraBase persistence; replace
-wall-clock projection ordering with ordering tied to conditional state saves.
+This preparation does **not** authorize cutover. Replace wall-clock projection
+ordering with ordering tied to conditional state saves before approval.
+Explicit demo configuration now suppresses Stripe while retaining TerraBase
+persistence and keeping simulated billing and security operations unavailable.
 Missing billing collections or databases now return retryable webhook failures;
 the default persistence HTTP client limits each request to 15 seconds. Exercise
 these paths against TerraBase before approval. The existing duplicate-event
@@ -128,6 +133,11 @@ tests alone do not establish those guarantees.
 
 ## Activate only after confirmation
 
+Require `TS_DASHBOARD_PRODUCTION_DEMO` to be absent from production settings.
+If it is set as a Fly secret, stage its removal after confirmation with
+`fly secrets unset --stage -a ts-dashboard TS_DASHBOARD_PRODUCTION_DEMO`.
+Keep the flag absent from `fly.toml`; the deployment check enforces this.
+
 Import the audited Vault-derived configuration into the verified existing app
 as one staged set, then deploy the reviewed current image in place:
 
@@ -136,7 +146,7 @@ fly secrets import --stage -a ts-dashboard < "$stripe_live_env"
 fly deploy -c fly.toml --remote-only --strategy immediate --ha=false
 ```
 
-Preserve every non-Stripe secret and production persistence setting. Do not
+Preserve production persistence, ts-auth, CSRF and all unrelated settings. Do not
 enable the demo simulator in production. Record the resulting release and
 Machine IDs and confirm readiness and native login again.
 

@@ -67,8 +67,8 @@ func New(cfg config.Config) (*Application, error) {
 	probe := status.Options{Backend: "memstore"}
 	var db *v1.Database
 	var meter core.UsageMeter
-	cfg.Demo = cfg.TerraBaseURL == ""
-	if cfg.Demo {
+	memoryDemo := cfg.TerraBaseURL == ""
+	if memoryDemo {
 		store = memstore.New()
 		if err := seedAdmin(ctx, store, cfg.AdminEmail, cfg.AdminPassword); err != nil {
 			return nil, err
@@ -121,7 +121,7 @@ func New(cfg config.Config) (*Application, error) {
 			return os.Getenv(name)
 		}
 	}
-	billing, err := payments.New(ctx, cfg.Demo, billingLookup, db)
+	billing, err := payments.New(ctx, cfg.Demo || memoryDemo, billingLookup, db)
 	if err != nil {
 		return nil, err
 	}
@@ -173,7 +173,7 @@ func New(cfg config.Config) (*Application, error) {
 	renderer := render.New(store, guard, notices, sessions.NoticeScope, cfg.Dev).ReportCSPViolationsTo(cfg.CSPReportURL)
 	deps := core.Deps{
 		Store: store, Sessions: sessions, CSRF: guard, Render: renderer,
-		Events: datastar.Events{}, Demo: cfg.Demo, Tools: core.NewTools(store),
+		Events: datastar.Events{}, Demo: memoryDemo, Tools: core.NewTools(store),
 		SDK: sdkFactory, Management: management, Usage: meter, DocumentsOnly: db != nil && management == nil,
 		Throttle: throttle.New(throttle.Options{ClientHeader: cfg.ClientIPHeader, Store: throttleStore}),
 		SignUpMail: throttle.New(throttle.Options{
@@ -193,7 +193,7 @@ func New(cfg config.Config) (*Application, error) {
 	deviceAuthorization := auth.NewDeviceAuthorization(deps, grants, cfg.SecureCookies, cfg.PublicURL)
 	deviceAuthorization.MountBrowser(mux)
 	admin.Mount(mux, deps)
-	emails := authentication.NewEmailBackend(cfg.TSAuth.Issuer, cfg.TSAuth.ClientID, cfg.TSAuth.ClientSecret, cfg.Demo)
+	emails := authentication.NewEmailBackend(cfg.TSAuth.Issuer, cfg.TSAuth.ClientID, cfg.TSAuth.ClientSecret, memoryDemo)
 	authentication.Mount(mux, deps, cfg.TSAuthOrigin, emails)
 	onboarding.Mount(mux, deps, billing, tsAuth)
 	profile.Mount(mux, deps)

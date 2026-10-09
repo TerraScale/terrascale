@@ -141,13 +141,18 @@ func TestTerraBaseBackendConfiguration(t *testing.T) {
 		t.Fatal("partial config accepted")
 	}
 	t.Setenv("TERRABASE_API_KEY", "tb_"+strings.Repeat("a", 43))
-	t.Setenv("TERRABASE_PROJECT_ID", "11111111-1111-4111-8111-111111111111")
+	t.Setenv("TERRABASE_PROJECT_ID", "01ARZ3NDEKTSV4RRFFQ69G5FAV")
 	t.Setenv("TERRABASE_DATABASE", "dashboard")
 	t.Setenv("TS_DASHBOARD_PRODUCTION_DEMO", "1")
 	if _, err := Load(); err == nil {
 		t.Fatal("persistent backend accepted without stable CSRF key")
 	}
 	t.Setenv("TS_DASHBOARD_CSRF_SECRET", strings.Repeat("a", 32))
+	cfg, err = Load()
+	if err != nil || !cfg.Demo || cfg.TerraBaseDatabase != "dashboard" {
+		t.Fatalf("isolated provider with persistent backend: demo=%v database=%q err=%v", cfg.Demo, cfg.TerraBaseDatabase, err)
+	}
+	t.Setenv("TS_DASHBOARD_PRODUCTION_DEMO", "0")
 	cfg, err = Load()
 	if err != nil || cfg.Demo || cfg.TerraBaseDatabase != "dashboard" {
 		t.Fatalf("persistent backend: demo=%v database=%q err=%v", cfg.Demo, cfg.TerraBaseDatabase, err)
@@ -229,8 +234,9 @@ func TestTSAuthConfiguration(t *testing.T) {
 // token, so the dashboard refuses to start without ts-auth.
 func TestFlyTerraBaseNeedsTSAuth(t *testing.T) {
 	for key, value := range map[string]string{
-		"TERRABASE_URL": "https://gru.api.example", "TERRABASE_API_KEY": "tb_key", "TERRABASE_PROJECT_ID": "project",
-		"TERRABASE_DATABASE": "dashboard", "TS_DASHBOARD_CSRF_SECRET": strings.Repeat("s", 32), "FLY_APP_NAME": "ts-dashboard",
+		"TERRABASE_URL": "https://gru.api.example", "TERRABASE_API_KEY": "tb_key", "TERRABASE_PROJECT_ID": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+		"TS_DASHBOARD_PRODUCTION_DEMO": "1",
+		"TERRABASE_DATABASE":           "dashboard", "TS_DASHBOARD_CSRF_SECRET": strings.Repeat("s", 32), "FLY_APP_NAME": "ts-dashboard",
 		"DASHBOARD_PUBLIC_URL": "https://dash.example", "DASHBOARD_DEMO_ADMIN_EMAIL": "", "DASHBOARD_DEMO_ADMIN_PASSWORD": "",
 		"TS_AUTH_ISSUER": "", "TS_AUTH_CLIENT_ID": "", "TS_AUTH_CLIENT_SECRET": "", "TS_AUTH_REDIRECT_URL": "",
 	} {
@@ -242,7 +248,7 @@ func TestFlyTerraBaseNeedsTSAuth(t *testing.T) {
 	t.Setenv("TS_AUTH_ISSUER", "https://gru.auth.example/terrascale")
 	t.Setenv("TS_AUTH_CLIENT_ID", "ts-dashboard")
 	t.Setenv("TS_AUTH_CLIENT_SECRET", "secret")
-	if cfg, err := Load(); err != nil || cfg.Demo {
-		t.Fatalf("Fly with TerraBase and ts-auth = %+v, %v; want live", cfg, err)
+	if cfg, err := Load(); err != nil || !cfg.Demo {
+		t.Fatalf("Fly with TerraBase, ts-auth and provider isolation = %+v, %v", cfg, err)
 	}
 }

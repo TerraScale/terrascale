@@ -55,14 +55,15 @@ webhook failure instead of acknowledging an unsynced delivery.
 - **Demo** (local `TS_DASHBOARD_PRODUCTION_DEMO=1`, with no TerraBase connection): no Stripe
   client is created and every `STRIPE_*` setting is ignored. Checkout, plan
   changes, and the portal use the in-memory simulator.
-- **Live**: `payments.New` loads and validates the settings below once at
+- **Provider billing** (TerraBase configured, demo flag unset): `payments.New`
+  loads and validates the settings below once at
   startup and builds one shared stripe-go client. Any invalid setting stops
   startup with a single error listing every problem.
 
-Persistence configuration currently takes precedence over the explicit demo
-flag in the application. Do not rely on that flag to isolate Stripe when a
-TerraBase connection is configured; the cutover's runtime hardening gate must
-resolve that precedence while preserving production persistence.
+The explicit demo flag always disables Stripe. With TerraBase configured, the
+application retains persistent stores and native sign-in; billing is unavailable
+and the simulator cannot grant simulated entitlements into persistent state.
+The memory simulator runs only without a configured backend.
 
 In-place plan changes (upgrade, scheduled downgrade, Personal to Free) are
 enabled only when `STRIPE_MODE=test` until the staging gate in
