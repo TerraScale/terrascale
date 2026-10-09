@@ -2560,7 +2560,7 @@ func spendingControlsTab(data pageData, csrfToken string) templ.Component {
 			templ_7745c5c3_Var109 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 241, "<div class=\"ts-row-between\"><div class=\"ts-stack-sm\"><h2 class=\"ts-section-title ts-spending-title\">Spending controls</h2><p class=\"ts-meta\">Manage monthly budgets and operation limits across your organization.</p></div>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 241, "<div class=\"ts-row-between\"><div class=\"ts-stack-sm\"><h2 class=\"ts-section-title\">Spending controls</h2><p class=\"ts-meta\">Manage monthly budgets and operation limits across your organization.</p></div>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

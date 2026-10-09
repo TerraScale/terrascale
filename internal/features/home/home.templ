@@ -12,29 +12,19 @@ import (
 
 templ homeView(data pageData) {
 	<main class="ts-page ts-home">
-		@ui.PageHeader(homeTitle(data.Tab)) {
-			<a class="ts-btn ts-btn-secondary" href="/api-keys">@icons.KeyRound(16)
+		<h1 class="ts-sr-only">{ homeTitle(data.Tab) }</h1>
+		<div class="ts-toolbar ts-home-toolbar">
+			@ui.Tabs("Overview sections", []ui.Tab{
+				{Label: "Overview", URL: "/", Active: data.Tab != "connect"},
+				{Label: "Connect", URL: "/?tab=connect", Active: data.Tab == "connect"},
+			})
+			<div class="ts-page-actions">
+				<a class="ts-btn ts-btn-secondary" href="/api-keys">@icons.KeyRound(16)
 <span>API keys</span></a>
-			<a class="ts-btn ts-btn-primary" href="/databases">@icons.Plus(16)
+				<a class="ts-btn ts-btn-primary" href="/databases">@icons.Plus(16)
 <span>New database</span></a>
-			if data.Tab == "overview" {
-				<form class="ts-filters" method="get" action="/" aria-label="Filter overview analytics" data-submit-once>
-					<label class="ts-filter-inline" for="overview-range">
-						<span class="ts-filter-inline-label">Range</span>
-						<select class="ts-select" id="overview-range" name="range">
-							for _, rangeKey := range []string{"1h", "24h", "7d", "30d"} {
-								<option value={ rangeKey } selected?={ rangeKey == data.ActivityRange }>{ rangeKey }</option>
-							}
-						</select>
-					</label>
-					<button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">Apply</button>
-				</form>
-			}
-		}
-		@ui.Tabs("Overview sections", []ui.Tab{
-			{Label: "Overview", URL: "/", Active: data.Tab != "connect"},
-			{Label: "Connect", URL: "/?tab=connect", Active: data.Tab == "connect"},
-		})
+			</div>
+		</div>
 		if data.Tab == "connect" {
 			@connectView(data)
 		} else {
@@ -44,25 +34,24 @@ templ homeView(data pageData) {
 }
 
 templ overviewView(data pageData) {
-	<p class="ts-meta ts-measurement-loading" role="status">Loading analytics, replication and regions…</p>
-	@analytics.Home(data.Analytics)
-	<div class="ts-grid ts-grid-2">
-		@regionsPanel(data.Regions)
-		@replication.Summary(data.Replication)
-	</div>
 	@ui.Stats("Workspace metrics") {
 		@ui.Stat("Databases", fmt.Sprint(data.DatabaseCount), data.DatabaseDetail)
 		@ui.Stat("Organization members", fmt.Sprint(data.OrganizationMembers), data.OrganizationMembersDetail)
 		@ui.Stat("Unread alerts", fmt.Sprint(data.UnreadNotifications), fmt.Sprint(data.TotalNotifications)+" "+data.NotificationsDetail)
 	}
-	<div class="ts-split">
+	<div class="ts-split ts-home-overview">
 		@ui.Card(ui.CardProps{ID: "home-activity", Title: "Activity", Description: data.ActivityNote, Actions: activityRange(data)}) {
 			if len(data.ActivityChart.Paths) > 0 {
 				<p class="ts-home-activity-total">
-					<span class="ts-chart-swatch ts-cat-1" aria-hidden="true"></span> Reads <strong>{ fmt.Sprint(data.ActivityReads) }</strong>
-					<span class="ts-chart-swatch ts-cat-2" aria-hidden="true"></span> Writes <strong>{ fmt.Sprint(data.ActivityWrites) }</strong>
+					<span class="ts-chart-swatch" aria-hidden="true"></span>
+					if data.ActivitySample {
+						Sample operations
+					} else {
+						Operations
+					}
+					<strong>{ fmt.Sprint(data.ActivityReads + data.ActivityWrites) }</strong>
 				</p>
-				<div class="ts-chart-shell" role="region" aria-label="Reads and writes chart. Scroll horizontally for the full plot." tabindex="0">
+				<div class="ts-chart-shell" role="region" aria-label={ data.ActivityChart.Label } tabindex="0">
 					@charts.Line(data.ActivityChart)
 				</div>
 			} else {
@@ -78,6 +67,23 @@ templ overviewView(data pageData) {
 			<a class="ts-btn ts-btn-secondary ts-btn-block" href="/?tab=connect">@icons.Zap(16)
 <span>Connect your AI or platform</span></a>
 		}
+	</div>
+	<form class="ts-filters" method="get" action="/" aria-label="Filter overview analytics" data-submit-once>
+		<label class="ts-filter-inline" for="overview-range">
+			<span class="ts-filter-inline-label">Range</span>
+			<select class="ts-select" id="overview-range" name="range">
+				for _, rangeKey := range []string{"1h", "24h", "7d", "30d"} {
+					<option value={ rangeKey } selected?={ rangeKey == data.ActivityRange }>{ rangeKey }</option>
+				}
+			</select>
+		</label>
+		<button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">Apply</button>
+	</form>
+	<p class="ts-meta ts-measurement-loading" role="status">Loading analytics, replication and regions…</p>
+	@analytics.Home(data.Analytics)
+	<div class="ts-grid ts-grid-2">
+		@regionsPanel(data.Regions)
+		@replication.Summary(data.Replication)
 	</div>
 }
 

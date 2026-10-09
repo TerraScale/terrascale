@@ -31,13 +31,16 @@ func changedPaidExcess(values url.Values) (*bool, bool) {
 			return nil, false
 		}
 	}
-	if initial, exists := values["initial_paidExcess"]; exists {
-		if len(initial) != 1 || (initial[0] != "true" && initial[0] != "false") {
-			return nil, false
-		}
-		if initial[0] == strconv.FormatBool(paid) {
-			return nil, true
-		}
+	initial, exists := values["initial_paidExcess"]
+	if !exists {
+		// Internal-billing pages omit this control; leave it unchanged.
+		return nil, true
+	}
+	if len(initial) != 1 || (initial[0] != "true" && initial[0] != "false") {
+		return nil, false
+	}
+	if initial[0] == strconv.FormatBool(paid) {
+		return nil, true
 	}
 	return &paid, true
 }

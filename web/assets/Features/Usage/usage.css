@@ -110,14 +110,6 @@
   display: none;
 }
 
-.ts-spending-notice > .ts-alert {
-  background: var(--ts-surface);
-}
-
-.ts-spending-title {
-  font-size: var(--ts-fs-xl);
-}
-
 .ts-spending-form > .ts-card {
   display: grid;
   grid-template-columns: minmax(160px, 220px) minmax(0, 1fr);
@@ -127,18 +119,13 @@
   border-block-start: 1px solid var(--ts-line);
 }
 
-.ts-spending-form .ts-card-heading {
-  gap: var(--ts-s2);
-}
-
-.ts-spending-identity {
+.ts-spending-identity,
+.ts-spending-excess {
   flex-wrap: nowrap;
-  gap: var(--ts-s2);
 }
 
 .ts-spending-identity > svg {
   flex: none;
-  color: var(--ts-ink-3);
 }
 
 .ts-spending-limit-grid {
@@ -152,14 +139,9 @@
 }
 
 .ts-spending-excess {
-  flex-wrap: nowrap;
   padding-block-start: var(--ts-s4);
   border-block-start: 1px solid var(--ts-line);
   cursor: pointer;
-}
-
-.ts-spending-excess > input {
-  border-color: var(--ts-control-line);
 }
 
 .ts-spending-database + .ts-spending-database,

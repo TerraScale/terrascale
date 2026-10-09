@@ -72,12 +72,16 @@ func mountTools(tools *core.Tools, service Service) {
 		if err := addCaps(controls.DatabaseCaps, in.DatabaseCaps, "database"); err != nil {
 			return usageReport{}, err
 		}
-		for _, cap := range in.ProjectCaps {
-			controls.ProjectOperations[cap.ID] = cap.operationLimitChange
+		addOperations := func(target map[string]operationLimitChange, caps []capChange) {
+			for _, cap := range caps {
+				change := cap.operationLimitChange
+				if change.ReadLimit != nil || change.WriteLimit != nil || change.ReplicationLimit != nil {
+					target[cap.ID] = change
+				}
+			}
 		}
-		for _, cap := range in.DatabaseCaps {
-			controls.DatabaseOperations[cap.ID] = cap.operationLimitChange
-		}
+		addOperations(controls.ProjectOperations, in.ProjectCaps)
+		addOperations(controls.DatabaseOperations, in.DatabaseCaps)
 		if err := service.SetSpendingControls(ctx, p, controls); err != nil {
 			return usageReport{}, err
 		}

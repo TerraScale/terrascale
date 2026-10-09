@@ -49,6 +49,9 @@ type activity struct {
 	Labels      []string `json:"labels" jsonschema:"Each interval's start, aligned with reads."`
 	TotalReads  int64    `json:"totalReads"`
 	TotalWrites int64    `json:"totalWrites"`
+
+	bucketStarts []time.Time
+	observedAt   time.Time
 }
 
 type task struct {
@@ -128,7 +131,8 @@ func (s Service) projectActivity(ctx context.Context, token string, account core
 	} else if s.deps.Usage == nil || token == "" {
 		result.Note = "Reads and writes are metered by TerraBase for browser sessions signed in through TerraScale."
 	} else {
-		granularity, from := core.UsageBuckets(result.Range, time.Now())
+		result.observedAt = time.Now()
+		granularity, from := core.UsageBuckets(result.Range, result.observedAt)
 		orgID, projectID := project.TerraBaseIDs(org.ID)
 		usage, err := s.deps.Usage.Usage(ctx, token, core.UsageScope{OrganizationID: orgID, ProjectID: projectID, Granularity: granularity, From: from})
 		switch {
@@ -139,6 +143,7 @@ func (s Service) projectActivity(ctx context.Context, token string, account core
 		default:
 			result.Metered, result.Note = true, "Reads and writes metered by TerraBase."
 			for _, point := range usage.Series {
+				result.bucketStarts = append(result.bucketStarts, point.Start)
 				label := point.Start.UTC().Format("Jan 2, 15:04 UTC")
 				if granularity == "day" {
 					label = point.Start.UTC().Format("Jan 2")
