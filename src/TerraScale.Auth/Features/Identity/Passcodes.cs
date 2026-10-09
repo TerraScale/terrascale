@@ -170,10 +170,22 @@ public sealed class Passcodes(AuthStore store, Users users, Sessions sessions, T
     /// expired, used, exhausted or superseded code alike. The code is consumed before the session is written, so a
     /// failed session write costs the user a new code and never grants a second session.
     /// </summary>
-    public async Task<IssuedSession?> VerifyAsync(string instanceId, string email, string code, CancellationToken cancellationToken = default) =>
-        await this.RedeemAsync(instanceId, email, code, PasscodePurpose.SignIn, cancellationToken).ConfigureAwait(false) is { } user
-            ? await sessions.CreateAsync(user, cancellationToken).ConfigureAwait(false)
-            : null;
+    public async Task<IssuedSession?> VerifyAsync(string instanceId, string email, string code, CancellationToken cancellationToken = default)
+    {
+        if (await this.RedeemAsync(instanceId, email, code, PasscodePurpose.SignIn, cancellationToken).ConfigureAwait(false) is not { } user)
+        {
+            return null;
+        }
+
+        try
+        {
+            return await sessions.CreateAsync(user, cancellationToken).ConfigureAwait(false);
+        }
+        catch (ApiException error) when (error.Status == 401 && error.Code == "invalid_credentials")
+        {
+            return null;
+        }
+    }
 
     /// <summary>
     /// Redeems a sign-in or password-reset code and returns the account as it was when the code was issued (its

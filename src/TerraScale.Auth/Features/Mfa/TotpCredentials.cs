@@ -14,7 +14,7 @@ namespace TerraScale.Auth.Features.Mfa;
 
 /// <summary>
 /// Internal TOTP and recovery credentials. Callers must authenticate and reauthenticate before enrollment or disabling.
-/// No HTTP flow exposes this service until sign-in enforcement lands. Every proof and credential change is conditional
+/// No HTTP flow exposes credential changes until server-verified MFA sign-in lands. Every proof and credential change is conditional
 /// on both the credential version and the user's authentication epoch in the same TerraBase transaction.
 /// Proof expiry is checked before the transaction; an acknowledged commit always reports its successful outcome.
 /// </summary>
@@ -24,6 +24,24 @@ public sealed class TotpCredentials(AuthStore store, Users users, AttemptLimiter
     private static readonly TimeSpan RecoveryLifetime = TimeSpan.FromDays(365);
     private static readonly TimeSpan AttemptWindow = TimeSpan.FromMinutes(15);
     private const int RecoveryCount = 8;
+
+    /// <summary>
+    /// Whether the current account can authenticate with only its primary credential. Active factors are refused
+    /// until a server-verified MFA sign-in flow exists; invalid or unavailable factor state fails closed.
+    /// </summary>
+    public async Task<bool> AllowsPrimaryAuthenticationAsync(UserRecord caller, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(caller);
+        try
+        {
+            return (await this.ReadAsync(caller, cancellationToken).ConfigureAwait(false))?.Record.Enabled != true
+                && await this.CurrentUserAsync(caller, cancellationToken).ConfigureAwait(false) is not null;
+        }
+        catch (Exception error) when (error is HttpRequestException or TimeoutException)
+        {
+            throw ApiException.Unavailable(error);
+        }
+    }
 
     /// <summary>Begins or supersedes inactive enrollment, or null for an active factor, stale caller or lost race.</summary>
     public Task<TotpEnrollment?> BeginAsync(UserRecord caller, CancellationToken cancellationToken = default) =>

@@ -110,7 +110,7 @@ public static partial class OpenApiSetup
             Type = SecuritySchemeType.Http,
             Scheme = "bearer",
             BearerFormat = "JWT",
-            Description = "A sign-in access token of the terrascale tenant (typ at+jwt, aud including the issuer). Organization, project, API key and service tokens are refused.",
+            Description = "A sign-in access token of the terrascale tenant (typ at+jwt, aud including the issuer), with the user's current authentication epoch. Primary-only tokens for active MFA accounts are refused; unavailable or corrupt MFA state fails closed. Organization, project, API key and service tokens are refused.",
         },
     };
 

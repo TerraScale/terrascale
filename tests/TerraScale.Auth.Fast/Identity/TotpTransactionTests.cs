@@ -26,7 +26,7 @@ public sealed class TotpTransactionTests(TerraBaseFixture fixture)
         var caller = await oidc.CreateUserAsync();
         var userBefore = await store.GetAsync(AuthStore.UserCollection, caller.InstanceId, caller.Id);
 
-        var begin = await AuthorizationAsync(sessions, store, caller, clock);
+        var begin = await AuthorizationAsync(store, caller, clock);
         var pending = await mfa.BeginAsync(caller, begin.Authorization);
         await Assert.That(pending).IsNotNull();
         await Assert.That(await store.GetAsync(AuthStore.SessionCollection, caller.InstanceId, begin.Session.Session.TokenHash)).IsNull();
@@ -38,7 +38,7 @@ public sealed class TotpTransactionTests(TerraBaseFixture fixture)
         await Assert.That(stored.EnrollmentExpiresAt).IsEqualTo(pending!.ExpiresAt);
         await UnchangedAsync(userBefore, await store.GetAsync(AuthStore.UserCollection, caller.InstanceId, caller.Id));
 
-        var confirm = await AuthorizationAsync(sessions, store, caller, clock);
+        var confirm = await AuthorizationAsync(store, caller, clock);
         var active = await mfa.ConfirmAsync(caller, Code(pending, clock), confirm.Authorization);
         await Assert.That(active).IsNotNull();
         await Assert.That(await store.GetAsync(AuthStore.SessionCollection, caller.InstanceId, confirm.Session.Session.TokenHash)).IsNull();
@@ -54,7 +54,7 @@ public sealed class TotpTransactionTests(TerraBaseFixture fixture)
         await Assert.That(activatedUser.Document.GetProperty("authEpoch").GetInt64()).IsEqualTo(active.User.AuthEpoch);
 
         clock.UtcNow = clock.UtcNow.AddSeconds(30);
-        var verify = await AuthorizationAsync(sessions, store, active.User, clock);
+        var verify = await AuthorizationAsync(store, active.User, clock);
         await Assert.That(await mfa.VerifyAsync(active.User, Code(pending, clock), verify.Authorization)).IsTrue();
         await Assert.That(await store.GetAsync(AuthStore.SessionCollection, caller.InstanceId, verify.Session.Session.TokenHash)).IsNull();
         var verified = (await store.GetAsync(AuthStore.MfaCollection, caller.InstanceId, caller.Id))!;
@@ -63,7 +63,7 @@ public sealed class TotpTransactionTests(TerraBaseFixture fixture)
         await Assert.That(stored.LastAcceptedStep).IsEqualTo(clock.UtcNow.ToUnixTimeSeconds() / 30);
         await UnchangedAsync(activatedUser, await store.GetAsync(AuthStore.UserCollection, caller.InstanceId, caller.Id));
 
-        var recover = await AuthorizationAsync(sessions, store, active.User, clock);
+        var recover = await AuthorizationAsync(store, active.User, clock);
         await Assert.That(await mfa.VerifyAsync(active.User, active.Codes[0], recover.Authorization)).IsTrue();
         await Assert.That(await store.GetAsync(AuthStore.SessionCollection, caller.InstanceId, recover.Session.Session.TokenHash)).IsNull();
         stored = (await store.GetAsync(AuthStore.MfaCollection, caller.InstanceId, caller.Id))!
@@ -71,7 +71,7 @@ public sealed class TotpTransactionTests(TerraBaseFixture fixture)
         await Assert.That(stored.RecoveryHashes).IsEquivalentTo(active.Codes.Skip(1).Select(Tokens.Sha256Hex));
         await UnchangedAsync(activatedUser, await store.GetAsync(AuthStore.UserCollection, caller.InstanceId, caller.Id));
 
-        var disable = await AuthorizationAsync(sessions, store, active.User, clock);
+        var disable = await AuthorizationAsync(store, active.User, clock);
         await Assert.That(await mfa.DisableAsync(active.User, active.Codes[1], disable.Authorization)).IsTrue();
         await Assert.That(await store.GetAsync(AuthStore.SessionCollection, caller.InstanceId, disable.Session.Session.TokenHash)).IsNull();
         stored = (await store.GetAsync(AuthStore.MfaCollection, caller.InstanceId, caller.Id))!
@@ -102,11 +102,10 @@ public sealed class TotpTransactionTests(TerraBaseFixture fixture)
         await using var replica = await oidc.StartReplicaAsync(clock: clock);
         var mfa = oidc.Server.App.Services.GetRequiredService<TotpCredentials>();
         var store = oidc.Server.App.Services.GetRequiredService<AuthStore>();
-        var sessions = oidc.Server.App.Services.GetRequiredService<Sessions>();
         var competingStore = replica.App.Services.GetRequiredService<AuthStore>();
         var competingSessions = replica.App.Services.GetRequiredService<Sessions>();
         var (caller, code) = await PrepareAsync(oidc, mfa, clock, transition);
-        var authorization = await AuthorizationAsync(sessions, store, caller, clock);
+        var authorization = await AuthorizationAsync(store, caller, clock);
         var credentialBefore = await store.GetAsync(AuthStore.MfaCollection, caller.InstanceId, caller.Id);
         var userBefore = await store.GetAsync(AuthStore.UserCollection, caller.InstanceId, caller.Id);
 
@@ -137,7 +136,7 @@ public sealed class TotpTransactionTests(TerraBaseFixture fixture)
         await UnchangedAsync(userBefore, await store.GetAsync(AuthStore.UserCollection, caller.InstanceId, caller.Id));
         await UnchangedAsync(sessionAfterCompetition, await store.GetAsync(AuthStore.SessionCollection, caller.InstanceId, authorization.Session.Session.TokenHash));
 
-        var fresh = await AuthorizationAsync(sessions, store, caller, clock);
+        var fresh = await AuthorizationAsync(store, caller, clock);
         await Assert.That(await OperateAsync(mfa, caller, transition, code, fresh.Authorization)).IsTrue();
         await Assert.That(await store.GetAsync(AuthStore.SessionCollection, caller.InstanceId, fresh.Session.Session.TokenHash)).IsNull();
     }
@@ -154,7 +153,7 @@ public sealed class TotpTransactionTests(TerraBaseFixture fixture)
         var store = oidc.Server.App.Services.GetRequiredService<AuthStore>();
         var sessions = oidc.Server.App.Services.GetRequiredService<Sessions>();
         var (caller, code) = await PrepareAsync(oidc, mfa, clock, transition);
-        var authorization = await AuthorizationAsync(sessions, store, caller, clock);
+        var authorization = await AuthorizationAsync(store, caller, clock);
         var credentialBefore = await store.GetAsync(AuthStore.MfaCollection, caller.InstanceId, caller.Id);
         var userBefore = await store.GetAsync(AuthStore.UserCollection, caller.InstanceId, caller.Id);
 
@@ -162,7 +161,7 @@ public sealed class TotpTransactionTests(TerraBaseFixture fixture)
         await UnchangedAsync(credentialBefore, await store.GetAsync(AuthStore.MfaCollection, caller.InstanceId, caller.Id));
         await UnchangedAsync(userBefore, await store.GetAsync(AuthStore.UserCollection, caller.InstanceId, caller.Id));
         await UnchangedAsync(authorization.Document, await store.GetAsync(AuthStore.SessionCollection, caller.InstanceId, authorization.Session.Session.TokenHash));
-        await Assert.That(await sessions.ResolveAsync(caller.InstanceId, authorization.Session.Token)).IsNotNull();
+        await Assert.That((await sessions.ResolveAsync(caller.InstanceId, authorization.Session.Token)).HasValue).IsEqualTo(transition is "begin" or "confirm");
         await Assert.That(await OperateAsync(mfa, caller, transition, code, authorization.Authorization)).IsTrue();
         await Assert.That(await store.GetAsync(AuthStore.SessionCollection, caller.InstanceId, authorization.Session.Session.TokenHash)).IsNull();
     }
@@ -178,11 +177,10 @@ public sealed class TotpTransactionTests(TerraBaseFixture fixture)
         var first = oidc.Server.App.Services.GetRequiredService<TotpCredentials>();
         var second = replica.App.Services.GetRequiredService<TotpCredentials>();
         var store = oidc.Server.App.Services.GetRequiredService<AuthStore>();
-        var sessions = oidc.Server.App.Services.GetRequiredService<Sessions>();
         var caller = await oidc.CreateUserAsync();
         var pending = (await first.BeginAsync(caller))!;
         var active = (await first.ConfirmAsync(caller, Code(pending, clock)))!;
-        var authorization = await AuthorizationAsync(sessions, store, active.User, clock);
+        var authorization = await AuthorizationAsync(store, active.User, clock);
         var userBefore = await store.GetAsync(AuthStore.UserCollection, caller.InstanceId, caller.Id);
 
         var losing = await pause.HoldNextAsync(() => first.VerifyAsync(active.User, active.Codes[0], authorization.Authorization));
@@ -206,7 +204,7 @@ public sealed class TotpTransactionTests(TerraBaseFixture fixture)
         // A fresh credential read cannot make the consumed caller session reusable.
         await Assert.That(await first.VerifyAsync(active.User, active.Codes[0], authorization.Authorization)).IsFalse();
         await UnchangedAsync(credentialAfter, await store.GetAsync(AuthStore.MfaCollection, caller.InstanceId, caller.Id));
-        var fresh = await AuthorizationAsync(sessions, store, active.User, clock);
+        var fresh = await AuthorizationAsync(store, active.User, clock);
         await Assert.That(await first.VerifyAsync(active.User, active.Codes[0], fresh.Authorization)).IsTrue();
         await Assert.That(await store.GetAsync(AuthStore.SessionCollection, caller.InstanceId, fresh.Session.Session.TokenHash)).IsNull();
         stored = (await store.GetAsync(AuthStore.MfaCollection, caller.InstanceId, caller.Id))!
@@ -232,7 +230,7 @@ public sealed class TotpTransactionTests(TerraBaseFixture fixture)
         var caller = await oidc.CreateUserAsync();
         var pending = (await mfa.BeginAsync(caller))!;
         var active = (await mfa.ConfirmAsync(caller, Code(pending, clock)))!;
-        var authorization = await AuthorizationAsync(sessions, store, active.User, clock);
+        var authorization = await AuthorizationAsync(store, active.User, clock);
         var credentialBefore = await store.GetAsync(AuthStore.MfaCollection, caller.InstanceId, caller.Id);
 
         var operating = await pause.HoldNextAsync(() => disable
@@ -258,7 +256,7 @@ public sealed class TotpTransactionTests(TerraBaseFixture fixture)
 
         var current = (await users.GetAsync(caller.InstanceId, caller.Id))!;
         await Assert.That(current.AuthEpoch).IsEqualTo(active.User.AuthEpoch + 1);
-        var fresh = await AuthorizationAsync(sessions, store, current, clock);
+        var fresh = await AuthorizationAsync(store, current, clock);
         await Assert.That(await mfa.VerifyAsync(current, active.Codes[0], fresh.Authorization)).IsTrue();
         await Assert.That(await store.GetAsync(AuthStore.SessionCollection, caller.InstanceId, fresh.Session.Session.TokenHash)).IsNull();
         await UnchangedAsync(authorization.Document, await store.GetAsync(AuthStore.SessionCollection, caller.InstanceId, authorization.Session.Session.TokenHash));
@@ -297,7 +295,7 @@ public sealed class TotpTransactionTests(TerraBaseFixture fixture)
             caller = active.User;
         }
 
-        var authorization = await AuthorizationAsync(sessions, store, caller, clock);
+        var authorization = await AuthorizationAsync(store, caller, clock);
         var expiresAt = authorization.Authorization.ExpiresAt;
         // The factor is valid at the resumed read's time; only caller authorization has expired.
         var code = transition == "confirm" ? Code(pending!, expiresAt) : active?.Codes[0] ?? string.Empty;
@@ -322,9 +320,9 @@ public sealed class TotpTransactionTests(TerraBaseFixture fixture)
         await UnchangedAsync(credentialBefore, await store.GetAsync(AuthStore.MfaCollection, caller.InstanceId, caller.Id));
         await UnchangedAsync(userBefore, await store.GetAsync(AuthStore.UserCollection, caller.InstanceId, caller.Id));
         await UnchangedAsync(authorization.Document, await store.GetAsync(AuthStore.SessionCollection, caller.InstanceId, authorization.Session.Session.TokenHash));
-        await Assert.That(await sessions.ResolveAsync(caller.InstanceId, authorization.Session.Token)).IsNotNull();
+        await Assert.That((await sessions.ResolveAsync(caller.InstanceId, authorization.Session.Token)).HasValue).IsEqualTo(transition is "begin" or "confirm");
 
-        var fresh = await AuthorizationAsync(sessions, store, caller, clock);
+        var fresh = await AuthorizationAsync(store, caller, clock);
         await Assert.That(await OperateAsync(mfa, caller, transition, code, fresh.Authorization)).IsTrue();
         await Assert.That(await store.GetAsync(AuthStore.SessionCollection, caller.InstanceId, fresh.Session.Session.TokenHash)).IsNull();
         await UnchangedAsync(authorization.Document, await store.GetAsync(AuthStore.SessionCollection, caller.InstanceId, authorization.Session.Session.TokenHash));
@@ -339,9 +337,8 @@ public sealed class TotpTransactionTests(TerraBaseFixture fixture)
         await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock, services: services => services.AddSingleton(http));
         var mfa = oidc.Server.App.Services.GetRequiredService<TotpCredentials>();
         var store = oidc.Server.App.Services.GetRequiredService<AuthStore>();
-        var sessions = oidc.Server.App.Services.GetRequiredService<Sessions>();
         var caller = await oidc.CreateUserAsync();
-        var authorization = await AuthorizationAsync(sessions, store, caller, clock);
+        var authorization = await AuthorizationAsync(store, caller, clock);
         var evaluatedAt = clock.UtcNow;
         transport.AfterNextCommit(() => clock.UtcNow = evaluatedAt.AddMinutes(11));
 
@@ -374,9 +371,8 @@ public sealed class TotpTransactionTests(TerraBaseFixture fixture)
         await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock, services: services => services.AddSingleton(http));
         var mfa = oidc.Server.App.Services.GetRequiredService<TotpCredentials>();
         var store = oidc.Server.App.Services.GetRequiredService<AuthStore>();
-        var sessions = oidc.Server.App.Services.GetRequiredService<Sessions>();
         var (caller, code) = await PrepareAsync(oidc, mfa, clock, transition);
-        var authorization = await AuthorizationAsync(sessions, store, caller, clock);
+        var authorization = await AuthorizationAsync(store, caller, clock);
         var credentialBefore = await store.GetAsync(AuthStore.MfaCollection, caller.InstanceId, caller.Id);
         var userBefore = (await store.GetAsync(AuthStore.UserCollection, caller.InstanceId, caller.Id))!;
         var lost = false;
@@ -437,14 +433,14 @@ public sealed class TotpTransactionTests(TerraBaseFixture fixture)
         await UnchangedAsync(userAfter, await store.GetAsync(AuthStore.UserCollection, caller.InstanceId, caller.Id));
     }
 
-    private static async Task<(IssuedSession Session, TerraBaseDocument Document, MfaAuthorization Authorization)> AuthorizationAsync(Sessions sessions, AuthStore store, UserRecord caller, StoreTestClock clock)
+    private static async Task<(IssuedSession Session, TerraBaseDocument Document, MfaAuthorization Authorization)> AuthorizationAsync(AuthStore store, UserRecord caller, StoreTestClock clock)
     {
-        var session = await sessions.CreateAsync(caller);
-        var key = Tokens.Sha256Hex(session.Token);
-        var live = await sessions.ResolveAsync(caller.InstanceId, session.Token);
-        await Assert.That(live).IsNotNull();
-        await Assert.That(live!.Value.User.Id).IsEqualTo(caller.Id);
-        await Assert.That(live.Value.User.AuthEpoch).IsEqualTo(caller.AuthEpoch);
+        // Synthetic weak sessions exercise authorization composition, including users with an active factor.
+        var token = Tokens.RandomToken(48);
+        var key = Tokens.Sha256Hex(token);
+        var session = new IssuedSession(token, new SessionRecord(caller.InstanceId, caller.Id, key, caller.AuthEpoch, clock.UtcNow, clock.UtcNow + Sessions.Lifetime));
+        await store.CreateAsync(AuthStore.SessionCollection, caller.InstanceId, key,
+            JsonSerializer.SerializeToElement(session.Session, IdentityJson.Default.SessionRecord));
         var document = (await store.GetAsync(AuthStore.SessionCollection, caller.InstanceId, key))!;
         var record = document.Document.Deserialize(IdentityJson.Default.SessionRecord)!;
         await Assert.That(record.InstanceId).IsEqualTo(caller.InstanceId);

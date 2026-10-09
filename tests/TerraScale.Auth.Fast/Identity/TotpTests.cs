@@ -59,10 +59,21 @@ public sealed class TotpTests(TerraBaseFixture fixture)
         await Assert.That(await mfa.VerifyAsync(activated.User, Code(pending, clock))).IsTrue();
         await Assert.That(await mfa.VerifyAsync(activated.User, Code(pending, clock))).IsFalse();
 
-        var after = await sessions.CreateAsync(activated.User);
+        var refusal = await Assert.ThrowsAsync<ApiException>(() => sessions.CreateAsync(activated.User));
+        await Assert.That(refusal!.Status).IsEqualTo(401);
+        // Synthetic weak session: disabling must advance its epoch even though primary authentication refuses it.
+        var token = Tokens.RandomToken(48);
+        var after = new SessionRecord(caller.InstanceId, caller.Id, Tokens.Sha256Hex(token), activated.User.AuthEpoch, clock.UtcNow, clock.UtcNow + Sessions.Lifetime);
+        var store = oidc.Server.App.Services.GetRequiredService<AuthStore>();
+        await store.CreateAsync(AuthStore.SessionCollection, caller.InstanceId, after.TokenHash,
+            JsonSerializer.SerializeToElement(after, IdentityJson.Default.SessionRecord));
+        var beforeDisable = (await store.GetAsync(AuthStore.SessionCollection, caller.InstanceId, after.TokenHash))!;
         await Assert.That(await mfa.DisableAsync(activated.User, "bad-code")).IsFalse();
         await Assert.That(await mfa.DisableAsync(activated.User, activated.Codes[0])).IsTrue();
-        await Assert.That(await sessions.ResolveAsync(caller.InstanceId, after.Token)).IsNull();
+        await Assert.That(await sessions.ResolveAsync(caller.InstanceId, token)).IsNull();
+        var afterDisable = (await store.GetAsync(AuthStore.SessionCollection, caller.InstanceId, after.TokenHash))!;
+        await Assert.That(afterDisable.Version).IsEqualTo(beforeDisable.Version);
+        await Assert.That(afterDisable.Document.GetProperty("authEpoch").GetInt64()).IsEqualTo(activated.User.AuthEpoch);
         var disabled = (await users.GetAsync(caller.InstanceId, caller.Id))!;
         await Assert.That(disabled.AuthEpoch).IsEqualTo(caller.AuthEpoch + 2);
         await Assert.That(await mfa.VerifyAsync(disabled, activated.Codes[1])).IsFalse();

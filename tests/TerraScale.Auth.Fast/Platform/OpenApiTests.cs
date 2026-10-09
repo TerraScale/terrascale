@@ -24,6 +24,12 @@ public sealed partial class OpenApiTests
         var document = JsonSerializer.Deserialize<JsonElement>(await response.Content.ReadAsStringAsync());
         var paths = document.GetProperty("paths");
 
+        var userInfo = paths.GetProperty("/{slug}/oauth/userinfo").GetProperty("get");
+        await Assert.That(userInfo.GetProperty("responses").GetProperty("503").GetProperty("content").GetProperty("application/json")
+            .GetProperty("schema").GetProperty("$ref").GetString()).IsEqualTo("#/components/schemas/OAuthErrorBody");
+        await Assert.That(document.GetProperty("components").GetProperty("securitySchemes").GetProperty("platformUser")
+            .GetProperty("description").GetString()).Contains("active MFA");
+
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(document.GetProperty("openapi").GetString()).StartsWith("3.");
         await Assert.That(document.GetProperty("info").GetProperty("title").GetString()).IsEqualTo("TerraScale Auth API");

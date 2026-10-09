@@ -6,6 +6,7 @@ using TerraScale.Auth.Configuration;
 using TerraScale.Auth.Contracts;
 using TerraScale.Auth.Features.Email;
 using TerraScale.Auth.Features.Identity;
+using TerraScale.Auth.Features.Mfa;
 using TerraScale.Auth.Features.Oidc;
 using TerraScale.Auth.Features.RateLimiting;
 using TerraScale.Auth.Features.SignIn;
@@ -34,7 +35,7 @@ public static class HeadlessGrants
 /// budget), and calls that send mail have a tighter per-IP budget; password attempts are also limited per email. Limits are shared by every replica and apply alike to addresses with and without an account,
 /// and every failure answers the same whatever the account state, so nothing tells an account from a stranger.
 /// </summary>
-public sealed partial class HeadlessAuth(Users users, Passcodes passcodes, PasswordHasher passwords, AttemptLimiter limiter, SignInMail mail,
+public sealed partial class HeadlessAuth(Users users, Passcodes passcodes, TotpCredentials mfa, PasswordHasher passwords, AttemptLimiter limiter, SignInMail mail,
     TimeProvider clock, AuthOptions options, ILogger<HeadlessAuth> logger)
 {
     /// <summary>Calls per end-user IP per minute.</summary>
@@ -126,7 +127,7 @@ public sealed partial class HeadlessAuth(Users users, Passcodes passcodes, Passw
             }
         }
 
-        if (user is null)
+        if (user is null || !await mfa.AllowsPrimaryAuthenticationAsync(user, cancellationToken))
         {
             LogRefused(logger, method);
             return OidcResults.Forbid(Errors.InvalidGrant, "The email, password or code is wrong, or the code has expired.");

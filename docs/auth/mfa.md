@@ -1,8 +1,9 @@
 # Dashboard MFA (TS-707)
 
-The internal slices implement TOTP and recovery-code persistence and atomic
-composition with the caller's authorization transition. The service
-does not expose enrollment endpoints or enforce MFA during sign-in yet. The
+The internal slices implement TOTP and recovery-code persistence, atomic
+composition with the caller's authorization transition, and refusal of
+primary-only authentication for users with active MFA. The service
+does not expose enrollment or MFA sign-in endpoints yet. The
 headless API, WebAuthn, and organization policies follow in separate slices;
 dashboard authentication stays on the dashboard's native pages.
 
@@ -69,6 +70,29 @@ subsequently be confirmed.
 
 ## Deployment and next slice
 
+Existing password and email-code grants (including sign-up for an existing
+email), hosted session creation and resolution, authorization-code and
+refresh redemption, UserInfo, platform management authentication, and token
+exchange refuse users with active factors. They read and validate the
+tenant/user-bound credential on every check, including its ciphertext;
+corrupt or unavailable state grants nothing. Pending and disabled factors
+permit primary authentication. UserInfo also checks the account epoch, so
+password resets and sign-out everywhere invalidate old access tokens there.
+Machine client credentials and API keys are independent of user MFA.
+Unavailable or corrupt MFA state returns OAuth 503 errors at the token and
+UserInfo endpoints with `Cache-Control: no-store` and `Pragma: no-cache`.
+
+The current refusal is deliberately the existing generic credential error,
+not an MFA challenge: no proof-bearing sign-in flow exists yet. A refused
+email-code sign-in can consume its code but never creates a session or token.
+Session creation checks the account epoch in the same transaction as the
+session write; activation or revocation that wins first prevents issuance.
+Other authentication checks re-read the epoch after checking factor state.
+An authentication concurrent with activation may complete if its final check
+preceded activation, but online checks subsequently reject its old epoch;
+JWTs already accepted offline remain subject to their documented expiry limit.
+Password reset remains available and never disables an active factor.
+
 Before deploying a release that requires `mfa_credentials`, explicitly
 provision that collection in the existing auth database through the pinned
 SDK. `AuthStore.ProvisionAsync` includes it, and `/readyz` requires it. Never
@@ -79,10 +103,10 @@ and adds no uniqueness-claim documents.
 
 The internal service assumes its caller has authenticated and performed the
 reauthentication required for enrollment and disabling. It is not a public
-authorization boundary. Before exposing it, the next slice must add the
-headless API and OpenAPI contract together with login, hosted-session,
-authorization-code, refresh, and token-exchange checks that prevent bypassing
-an active factor. Tests of those HTTP boundaries belong in `fast`. Organization
+authorization boundary. Before exposing it, later slices must add the
+headless MFA API and OpenAPI contract with server-verified assurance that
+survives refresh and token exchange. Tests of those HTTP boundaries belong
+in `fast`. Organization
 policies and WebAuthn must enforce their decisions on the server.
 Persistent authentication challenges use the shared plain-ULID storage
 boundary after the TS-754 cutover; this composition slice adds no challenge

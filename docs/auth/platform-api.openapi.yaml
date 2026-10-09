@@ -962,7 +962,8 @@ paths:
       description: |
         The grants this contract adds. The existing ones (authorization_code, refresh_token, the TS-582 headless
         grants) are unchanged and described in the served OpenAPI. Tokens are ES256 JWTs with typ at+jwt;
-        docs/platform-contract.md section 6.3 lists their claims.
+        docs/platform-contract.md section 6.3 lists their claims. Token exchange refuses primary-only sign-in
+        tokens for users with active MFA; unavailable or corrupt MFA state answers 503 temporarily_unavailable.
       security:
         - clientBasic: []
       requestBody:
@@ -1024,7 +1025,8 @@ components:
       bearerFormat: JWT
       description: |
         A sign-in access token of the terrascale tenant (typ at+jwt, aud including the issuer). Organization,
-        project, API key and service tokens are refused.
+        project, API key and service tokens are refused. The user's authentication epoch must still match;
+        primary-only tokens for active MFA accounts are refused. Unavailable or corrupt MFA state fails closed.
     clientBasic:
       type: http
       scheme: basic

@@ -102,7 +102,8 @@ public sealed class VerifyPasscodeEndpoint(Passcodes passcodes, Sessions session
         Post("/ui/{slug}/sign-in/verify");
         Name("ui_sign_in_verify_code");
         Summary("Sign in with an emailed code");
-        Description("Same-origin form post. A code works once, for 10 minutes, and dies after 5 wrong guesses. Hosted and headless sign-in share 30 calls per IP per minute and 5 attempts per normalized email per 15 minutes, including unknown emails and replaced codes; exhaustion answers 429 with Retry-After. An account-budget refusal temporarily blocks code redemption until the stored window ends and queues one best-effort lockout email notice per real account for that deadline, in the browser language; recovery remains separate. Success sets the tsauth_session cookie (Secure, HttpOnly, SameSite=Lax) and continues to next.");
+        Description("Same-origin form post. A code works once, for 10 minutes, and dies after 5 wrong guesses. Hosted and headless sign-in share 30 calls per IP per minute and 5 attempts per normalized email per 15 minutes, including unknown emails and replaced codes; exhaustion answers 429 with Retry-After. An account-budget refusal temporarily blocks code redemption until the stored window ends and queues one best-effort lockout email notice per real account for that deadline, in the browser language; recovery remains separate. Success sets the tsauth_session cookie (Secure, HttpOnly, SameSite=Lax) and continues to next."
+            + " Active MFA users receive the same generic credential refusal without a session cookie; corrupt or unavailable MFA state fails closed.");
         Tags("Sign-in");
         Accepts<SignInForm>("application/x-www-form-urlencoded");
         Produces<string>(StatusCodes.Status200OK, "text/html");

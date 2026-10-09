@@ -175,7 +175,10 @@ service tokens are refused there (`401`). Every request re-reads the user and
 its sign-in, so a deleted user or a revoked sign-in (RFC 7009 revocation or
 refresh-token reuse) is refused at once. Sign-in access tokens carry the user's
 authentication epoch (`ts_auth_epoch`), so after sign-out everywhere or a
-password reset the management API refuses every token issued before.
+password reset the management API refuses every token issued before. TS-707
+also refuses primary-only sign-in tokens for users with active MFA; factor
+state is read and validated on each request. Corrupt or unavailable state
+fails closed. Public MFA enrollment and sign-in remain later slices.
 
 Authorization fails closed. A caller who is neither member nor collaborator of
 an organization gets `404` for it and everything under it, exactly as for an id
@@ -278,7 +281,10 @@ grant_type=urn:ietf:params:oauth:grant-type:token-exchange
 Answer: `{"access_token":"…","issued_token_type":"urn:ietf:params:oauth:token-type:access_token","token_type":"Bearer","expires_in":900,"scope":"…"}`.
 The token expires after 15 minutes or with the subject token, whichever is
 first. Membership and roles are read at the exchange, so a role change applies
-to the next exchange.
+to the next exchange. TS-707 refuses primary-only subject tokens for active
+MFA accounts with `invalid_grant`; corrupt or unavailable factor state
+answers `503 temporarily_unavailable`. Machine client credentials and API
+keys remain independent of user MFA.
 
 ### 6.3 Claims
 

@@ -1,9 +1,15 @@
+using Microsoft.Extensions.DependencyInjection;
+using OtpNet;
 using System.Globalization;
+using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using TerraScale.Auth.Configuration;
+using TerraScale.Auth.Contracts;
 using TerraScale.Auth.Features.Identity;
+using TerraScale.Auth.Features.Mfa;
+using TerraScale.Auth.Features.RateLimiting;
 using TerraScale.Auth.Store;
 using TerraScale.Auth.Tests;
 using TerraScale.DotNet.TerraBase;
@@ -15,6 +21,101 @@ namespace TerraScale.Auth.Fast.Identity;
 public sealed class PasscodeTests(TerraBaseFixture fixture)
 {
     private const string Email = "alice@example.test";
+
+    [Test]
+    [Arguments("active", HttpStatusCode.Unauthorized)]
+    [Arguments("corrupt", HttpStatusCode.ServiceUnavailable)]
+    [Arguments("unavailable", HttpStatusCode.ServiceUnavailable)]
+    public async Task Hosted_verification_never_sets_a_cookie_for_active_corrupt_or_unavailable_factors(string factor, HttpStatusCode expected)
+    {
+        var clock = new StoreTestClock();
+        await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock);
+        var caller = await oidc.CreateUserAsync(Email);
+        var mfa = oidc.Server.App.Services.GetRequiredService<TotpCredentials>();
+        var store = oidc.Server.App.Services.GetRequiredService<AuthStore>();
+        if (factor == "active")
+        {
+            var pending = (await mfa.BeginAsync(caller))!;
+            await Assert.That(await mfa.ConfirmAsync(caller, Code(pending, clock))).IsNotNull();
+        }
+
+        using var request = await oidc.PostFormAsync("/ui/terrascale/sign-in", new() { ["email"] = Email });
+        await Assert.That(request.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        var code = await oidc.Email.NextCodeAsync(Email);
+        if (factor == "corrupt")
+        {
+            await store.CreateAsync(AuthStore.MfaCollection, caller.InstanceId, caller.Id, TerraBaseFixture.Json("{\"enabled\":false}"));
+        }
+        else if (factor == "unavailable")
+        {
+            await oidc.Database.DropCollectionAsync(AuthStore.MfaCollection);
+        }
+
+        using var verify = await oidc.PostFormAsync("/ui/terrascale/sign-in/verify", new() { ["email"] = Email, ["code"] = code });
+        await Assert.That(verify.StatusCode).IsEqualTo(expected);
+        await Assert.That(OidcHarness.SessionCookie(verify)).IsNull();
+        if (factor == "active")
+        {
+            await Assert.That(await verify.Content.ReadAsStringAsync()).Contains("That code is wrong or has expired.");
+        }
+
+        await Assert.That((await oidc.Database.ListDocumentsAsync(AuthStore.SessionCollection)).Items.Count).IsEqualTo(0);
+        await Assert.That((await oidc.Database.ListDocumentsAsync(AuthStore.PasscodeCollection)).Items.Single().Document.GetProperty("consumed").GetBoolean()).IsTrue();
+        using var replay = await oidc.PostFormAsync("/ui/terrascale/sign-in/verify", new() { ["email"] = Email, ["code"] = code });
+        await Assert.That(replay.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        await Assert.That(OidcHarness.SessionCookie(replay)).IsNull();
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Hosted_passcode_signin_accepts_pending_and_disabled_factors(bool disable)
+    {
+        var clock = new StoreTestClock();
+        await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock);
+        var caller = await oidc.CreateUserAsync(Email);
+        var mfa = oidc.Server.App.Services.GetRequiredService<TotpCredentials>();
+        var pending = (await mfa.BeginAsync(caller))!;
+        if (disable)
+        {
+            var active = (await mfa.ConfirmAsync(caller, Code(pending, clock)))!;
+            await Assert.That(await mfa.DisableAsync(active.User, active.Codes[0])).IsTrue();
+        }
+
+        var token = await oidc.SignInAsync(Email);
+        var sessions = oidc.Server.App.Services.GetRequiredService<Sessions>();
+        await Assert.That(await sessions.ResolveAsync(caller.InstanceId, token)).IsNotNull();
+        await Assert.That((await oidc.Database.ListDocumentsAsync(AuthStore.SessionCollection)).Items.Count).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task A_reset_racing_session_issuance_consumes_the_passcode_and_returns_a_normal_refusal()
+    {
+        var clock = new StoreTestClock();
+        var pause = new PausingTransactions { InnerHandler = fixture.NewHandler() };
+        using var http = new HttpClient(pause);
+        await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock, services: services => services.AddSingleton(http));
+        await using var replica = await oidc.StartReplicaAsync(clock: clock);
+        var caller = await oidc.CreateUserAsync(Email);
+        var passcodes = oidc.Server.App.Services.GetRequiredService<Passcodes>();
+        var users = replica.App.Services.GetRequiredService<Users>();
+        var code = (await passcodes.RequestAsync(caller.InstanceId, Email))!;
+        var verifying = await pause.HoldNextAsync(() => passcodes.VerifyAsync(caller.InstanceId, Email, code.Code));
+        IssuedSession? result;
+        try
+        {
+            await Assert.That(await users.SetPasswordAsync(caller.InstanceId, caller.Id, caller.AuthEpoch, "synthetic-password-hash")).IsTrue();
+        }
+        finally
+        {
+            result = await pause.ReleaseAsync(verifying);
+        }
+
+        await Assert.That(result).IsNull();
+        await Assert.That((await oidc.Database.ListDocumentsAsync(AuthStore.SessionCollection)).Items.Count).IsEqualTo(0);
+        await Assert.That((await oidc.Database.ListDocumentsAsync(AuthStore.PasscodeCollection)).Items.Single().Document.GetProperty("consumed").GetBoolean()).IsTrue();
+        await Assert.That(await passcodes.VerifyAsync(caller.InstanceId, Email, code.Code)).IsNull();
+    }
 
     [Test]
     public async Task Only_a_master_keyed_hmac_of_the_code_is_stored()
@@ -508,11 +609,15 @@ public sealed class PasscodeTests(TerraBaseFixture fixture)
         await Assert.That(left.GetProperty("email").GetString()).IsEqualTo(late.Email);
     }
 
+    private static string Code(TotpEnrollment enrollment, StoreTestClock clock) =>
+        new Totp(Base32Encoding.ToBytes(enrollment.Secret)).ComputeTotp(clock.UtcNow.UtcDateTime);
+
     private (Users Users, Sessions Sessions, Passcodes Passcodes) Stack(TerraBaseTestTenant tenant, TimeProvider clock, AuthOptions options)
     {
         var store = new AuthStore(fixture.Server.Documents(tenant.ApiKey).Database(tenant.Project.Id, "auth"), clock);
         var users = new Users(store, clock);
-        var sessions = new Sessions(store, users, clock);
+        var totp = new TotpCredentials(store, users, new AttemptLimiter(new TerraBaseDocumentStore(store), clock, options), options, clock);
+        var sessions = new Sessions(store, users, totp, clock);
         return (users, sessions, new Passcodes(store, users, sessions, clock, options));
     }
 }

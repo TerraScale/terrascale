@@ -9,6 +9,7 @@ using TerraScale.Auth.Configuration;
 using TerraScale.Auth.Contracts;
 using TerraScale.Auth.Features.Headless;
 using TerraScale.Auth.Features.Identity;
+using TerraScale.Auth.Features.Mfa;
 using TerraScale.Auth.Features.Platform;
 using TerraScale.Auth.Features.Ui;
 using TerraScale.Auth.Hosting;
@@ -101,7 +102,8 @@ public sealed class AuthorizeEndpoint(Sessions sessions, TimeProvider clock, Aut
         Get("/{slug}/oauth/authorize");
         Name("oauth_authorize");
         Summary("Authorization endpoint");
-        Description("Authorization code flow (response_type=code) with PKCE code_challenge_method=S256 required. Without a live tsauth_session cookie the browser is redirected to /ui/{slug}/sign-in and returns here. prompt=none answers login_required without a session; prompt=login, consent and select_account are not supported and answer login_required, consent_required and account_selection_required. Errors after client and redirect validation are redirected to the client. The response is a 302 to the client, or with response_mode=form_post a 200 page that posts the result to it.");
+        Description("Authorization code flow (response_type=code) with PKCE code_challenge_method=S256 required. Without a live tsauth_session cookie the browser is redirected to /ui/{slug}/sign-in and returns here. prompt=none answers login_required without a session; prompt=login, consent and select_account are not supported and answer login_required, consent_required and account_selection_required. Errors after client and redirect validation are redirected to the client. The response is a 302 to the client, or with response_mode=form_post a 200 page that posts the result to it."
+            + " Sessions for active MFA users are refused until MFA sign-in is available; corrupt or unavailable factor state fails closed with temporarily_unavailable.");
         Tags("OAuth");
         Produces<string>(StatusCodes.Status200OK, "text/html");
         Produces<OAuthErrorBody>(StatusCodes.Status400BadRequest);
@@ -125,7 +127,16 @@ public sealed class AuthorizeEndpoint(Sessions sessions, TimeProvider clock, Aut
             }
         }
 
-        var live = await sessions.ResolveAsync(OidcIssuer.InstanceId, this.HttpContext.Request.Cookies[SecuritySchemes.SessionCookieName], cancellationToken);
+        (SessionRecord Session, UserRecord User)? live;
+        try
+        {
+            live = await sessions.ResolveAsync(OidcIssuer.InstanceId, this.HttpContext.Request.Cookies[SecuritySchemes.SessionCookieName], cancellationToken);
+        }
+        catch (ApiException error) when (error.Status == StatusCodes.Status503ServiceUnavailable)
+        {
+            return OidcResults.Forbid(Errors.TemporarilyUnavailable, error.Message);
+        }
+
         var authenticatedAt = live?.Session.ExpiresAt - Sessions.Lifetime;
         if (live is not { } signedIn || request.MaxAge is { } maxAge && authenticatedAt!.Value.AddSeconds(maxAge) < clock.GetUtcNow())
         {
@@ -147,7 +158,7 @@ public sealed class AuthorizeEndpoint(Sessions sessions, TimeProvider clock, Aut
 /// client-credentials access token. Each code and refresh token works once: a second presentation, even a concurrent
 /// one, fails and revokes every token of that sign-in. Tokens are refused once the user signed out everywhere.
 /// </summary>
-public sealed class TokenEndpoint(Users users, HeadlessAuth headless, PlatformGrants platform, AuthOptions options) : EndpointWithoutRequest<IResult>
+public sealed class TokenEndpoint(Users users, TotpCredentials mfa, HeadlessAuth headless, PlatformGrants platform, AuthOptions options) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()
@@ -155,7 +166,8 @@ public sealed class TokenEndpoint(Users users, HeadlessAuth headless, PlatformGr
         Post("/{slug}/oauth/token");
         Name("oauth_token");
         Summary("Token endpoint");
-        Description("application/x-www-form-urlencoded grant_type=authorization_code (code, redirect_uri, code_verifier), grant_type=refresh_token (refresh_token) or, for service clients only, grant_type=client_credentials. Every POST to /terrascale/oauth/token, including invalid client credentials and malformed requests, charges the socket peer's shared minute budget before client authentication: TS_AUTH_RATE_LIMIT (or --rate-limit), default 1000, per IPv4 address or IPv6 /64, with an additional IPv6 /48 budget at four times that capacity. Forwarding is disabled by default. With TS_AUTH_TRUSTED_PROXIES (or --trusted-proxies) configured, exact trusted socket peers have four times the aggregate peer capacity in separate trusted-proxy buckets and also charge a separate resolved-client budget of TS_AUTH_RATE_LIMIT per IPv4 address or IPv6 /64, with an additional resolved-client IPv6 /48 budget at four times that capacity; both apply before authentication. ASP.NET processes only the rightmost X-Forwarded-For hop from these peers. Missing or malformed rightmost addresses retain the proxy address and share its client budget. Other forwarding headers and submitted client identifiers do not select a budget. Exhaustion answers 429 rate_limited with Retry-After in seconds; missing peer addresses or unavailable limiter storage answer 503 temporarily_unavailable. Both are OAuth JSON errors with Cache-Control: no-store. For ts-dashboard only, the headless extension grants (TS-582) sign a user in from credentials the client collected: grant_type=urn:terrascale:params:oauth:grant-type:password (email, password, ip_address) and grant_type=urn:terrascale:params:oauth:grant-type:email-code (email, code, ip_address; a sign-in code, or a sign-up code with the pending_token its sign-up answered, which creates the account). ip_address is the end user's IP address; each IP (IPv6 per /64, and 120 per /48) may make 30 headless calls a minute and each email 10 password attempts per 15 minutes, beyond which the answer is 429 rate_limited with Retry-After. Code redemption permits 5 attempts per normalized email per 15 minutes, shared with hosted sign-in and including unknown emails and replaced codes. A password or code account-budget refusal temporarily blocks that method until its stored window ends and queues one best-effort lockout email notice per real account and method for that deadline; recovery budgets remain separate. All email-code, sign-up and password-reset mail starts share 5 per normalized email per UTC clock hour. Every wrong email, password or code answers invalid_grant alike. Confidential clients authenticate with client_secret_basic or client_secret_post. Access tokens are ES256 JWTs with typ at+jwt whose aud holds TS_AUTH_ACCESS_TOKEN_AUDIENCES; a user's carry email and email_verified, a service client's have sub = client id and no scopes. Refresh tokens rotate on every use and expire 14 days after the authorization code is redeemed.");
+        Description("application/x-www-form-urlencoded grant_type=authorization_code (code, redirect_uri, code_verifier), grant_type=refresh_token (refresh_token) or, for service clients only, grant_type=client_credentials. Every POST to /terrascale/oauth/token, including invalid client credentials and malformed requests, charges the socket peer's shared minute budget before client authentication: TS_AUTH_RATE_LIMIT (or --rate-limit), default 1000, per IPv4 address or IPv6 /64, with an additional IPv6 /48 budget at four times that capacity. Forwarding is disabled by default. With TS_AUTH_TRUSTED_PROXIES (or --trusted-proxies) configured, exact trusted socket peers have four times the aggregate peer capacity in separate trusted-proxy buckets and also charge a separate resolved-client budget of TS_AUTH_RATE_LIMIT per IPv4 address or IPv6 /64, with an additional resolved-client IPv6 /48 budget at four times that capacity; both apply before authentication. ASP.NET processes only the rightmost X-Forwarded-For hop from these peers. Missing or malformed rightmost addresses retain the proxy address and share its client budget. Other forwarding headers and submitted client identifiers do not select a budget. Exhaustion answers 429 rate_limited with Retry-After in seconds; missing peer addresses or unavailable limiter storage answer 503 temporarily_unavailable. Both are OAuth JSON errors with Cache-Control: no-store. For ts-dashboard only, the headless extension grants (TS-582) sign a user in from credentials the client collected: grant_type=urn:terrascale:params:oauth:grant-type:password (email, password, ip_address) and grant_type=urn:terrascale:params:oauth:grant-type:email-code (email, code, ip_address; a sign-in code, or a sign-up code with the pending_token its sign-up answered, which creates the account). ip_address is the end user's IP address; each IP (IPv6 per /64, and 120 per /48) may make 30 headless calls a minute and each email 10 password attempts per 15 minutes, beyond which the answer is 429 rate_limited with Retry-After. Code redemption permits 5 attempts per normalized email per 15 minutes, shared with hosted sign-in and including unknown emails and replaced codes. A password or code account-budget refusal temporarily blocks that method until its stored window ends and queues one best-effort lockout email notice per real account and method for that deadline; recovery budgets remain separate. All email-code, sign-up and password-reset mail starts share 5 per normalized email per UTC clock hour. Every wrong email, password or code answers invalid_grant alike. Confidential clients authenticate with client_secret_basic or client_secret_post. Access tokens are ES256 JWTs with typ at+jwt whose aud holds TS_AUTH_ACCESS_TOKEN_AUDIENCES; a user's carry email and email_verified, a service client's have sub = client id and no scopes. Refresh tokens rotate on every use and expire 14 days after the authorization code is redeemed."
+            + " All primary-only user grants, including authorization-code and refresh redemption, refuse active MFA users with invalid_grant. Pending and disabled factors permit primary authentication; corrupt or unavailable factor state answers 503 temporarily_unavailable. Machine client credentials and API keys are independent of user MFA.");
         Tags("OAuth");
         Accepts<Dictionary<string, string>>("application/x-www-form-urlencoded");
         Produces<TokenBody>();
@@ -168,6 +180,20 @@ public sealed class TokenEndpoint(Users users, HeadlessAuth headless, PlatformGr
 
     /// <inheritdoc />
     public override async Task<IResult> HandleAsync(CancellationToken cancellationToken)
+    {
+        this.HttpContext.Response.Headers.CacheControl = "no-store";
+        this.HttpContext.Response.Headers.Pragma = "no-cache";
+        try
+        {
+            return await this.GrantAsync(cancellationToken);
+        }
+        catch (ApiException error) when (error.Status == StatusCodes.Status503ServiceUnavailable)
+        {
+            return Results.Json(new OAuthErrorBody(Errors.TemporarilyUnavailable, error.Message), statusCode: StatusCodes.Status503ServiceUnavailable);
+        }
+    }
+
+    private async Task<IResult> GrantAsync(CancellationToken cancellationToken)
     {
         if (this.HttpContext.GetOpenIddictServerRequest() is not { } request)
         {
@@ -213,7 +239,8 @@ public sealed class TokenEndpoint(Users users, HeadlessAuth headless, PlatformGr
             ?? throw new InvalidOperationException("OpenIddict passed a token request without a principal.");
         var user = principal.GetClaim(Claims.Subject) is { } subject ? await users.GetAsync(OidcIssuer.InstanceId, subject, cancellationToken) : null;
         if (user is null || principal.GetClaim(OidcIssuer.EpochClaim) != user.AuthEpoch.ToString(System.Globalization.CultureInfo.InvariantCulture)
-            || !long.TryParse(principal.GetClaim(Claims.AuthenticationTime), System.Globalization.CultureInfo.InvariantCulture, out var authenticatedAt))
+            || !long.TryParse(principal.GetClaim(Claims.AuthenticationTime), System.Globalization.CultureInfo.InvariantCulture, out var authenticatedAt)
+            || !await mfa.AllowsPrimaryAuthenticationAsync(user, cancellationToken))
         {
             return OidcResults.Forbid(Errors.InvalidGrant, "The user is no longer signed in.");
         }
@@ -223,7 +250,7 @@ public sealed class TokenEndpoint(Users users, HeadlessAuth headless, PlatformGr
 }
 
 /// <summary><c>GET /{slug}/oauth/userinfo</c>: claims about the user of a valid access token.</summary>
-public sealed class UserInfoEndpoint(Users users) : EndpointWithoutRequest<IResult>
+public sealed class UserInfoEndpoint(Users users, TotpCredentials mfa) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
     public override void Configure()
@@ -231,14 +258,29 @@ public sealed class UserInfoEndpoint(Users users) : EndpointWithoutRequest<IResu
         Get("/{slug}/oauth/userinfo");
         Name("oauth_userinfo");
         Summary("UserInfo endpoint");
-        Description("Requires an access token issued by this issuer and not revoked. Identity tokens are rejected.");
+        Description("Requires an access token issued by this issuer and not revoked, with the user's current authentication epoch. Primary-only tokens for active MFA accounts and identity tokens are rejected. Unavailable or corrupt MFA state answers 503 temporarily_unavailable.");
         Tags("OAuth");
         Produces<UserInfoBody>();
         Produces<OAuthErrorBody>(StatusCodes.Status401Unauthorized);
+        Produces<OAuthErrorBody>(StatusCodes.Status503ServiceUnavailable);
     }
 
     /// <inheritdoc />
     public override async Task<IResult> HandleAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await this.ClaimsAsync(cancellationToken);
+        }
+        catch (ApiException error) when (error.Status == StatusCodes.Status503ServiceUnavailable)
+        {
+            this.HttpContext.Response.Headers.CacheControl = "no-store";
+            this.HttpContext.Response.Headers.Pragma = "no-cache";
+            return Results.Json(new OAuthErrorBody(Errors.TemporarilyUnavailable, error.Message), statusCode: StatusCodes.Status503ServiceUnavailable);
+        }
+    }
+
+    private async Task<IResult> ClaimsAsync(CancellationToken cancellationToken)
     {
         if (this.HttpContext.GetOpenIddictServerRequest() is null)
         {
@@ -246,7 +288,9 @@ public sealed class UserInfoEndpoint(Users users) : EndpointWithoutRequest<IResu
         }
 
         var principal = (await this.HttpContext.AuthenticateAsync(OpenIddictServerAspNetCoreDefaults.AuthenticationScheme)).Principal;
-        if (principal?.GetClaim(Claims.Subject) is not { } subject || await users.GetAsync(OidcIssuer.InstanceId, subject, cancellationToken) is not { } user)
+        if (principal?.GetClaim(Claims.Subject) is not { } subject || await users.GetAsync(OidcIssuer.InstanceId, subject, cancellationToken) is not { } user
+            || principal.GetClaim(OidcIssuer.EpochClaim) != user.AuthEpoch.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            || !await mfa.AllowsPrimaryAuthenticationAsync(user, cancellationToken))
         {
             return Results.Challenge(OidcResults.Error(Errors.InvalidToken, "The access token no longer identifies a user."), [OpenIddictServerAspNetCoreDefaults.AuthenticationScheme]);
         }

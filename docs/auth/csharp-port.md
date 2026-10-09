@@ -629,8 +629,10 @@ peers or current network enforcement. No deployment values are inferred from it.
 
 ### Limitations
 
-- No MFA step: MFA is not ported (TS-434), so no account can have it. When it
-  lands, the two grants answer an MFA challenge instead of tokens.
+- No MFA step yet: TS-707's internal TOTP layer refuses primary-only user
+  authentication for active factors on both grants and every other online
+  user authentication path. Public enrollment and proof-bearing sign-in
+  remain later slices; see [MFA](mfa.md).
 - Users have no name; `profile` adds no claims.
 - Code records (pending sign-ups included) are deleted by `SessionPruner`
   once their issue window and every code issued in it have ended (70 minutes

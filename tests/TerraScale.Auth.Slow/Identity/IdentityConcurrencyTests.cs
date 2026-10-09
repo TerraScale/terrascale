@@ -1,6 +1,8 @@
 using System.Globalization;
 using TerraScale.Auth.Configuration;
 using TerraScale.Auth.Features.Identity;
+using TerraScale.Auth.Features.Mfa;
+using TerraScale.Auth.Features.RateLimiting;
 using TerraScale.Auth.Store;
 using TerraScale.Auth.Tests;
 using TerraScale.DotNet.Testing;
@@ -106,7 +108,8 @@ public sealed class IdentityConcurrencyTests(TerraBaseFixture fixture)
     {
         var store = new AuthStore(fixture.Server.Documents(tenant.ApiKey).Database(tenant.Project.Id, "auth"), TimeProvider.System);
         var users = new Users(store, TimeProvider.System);
-        var sessions = new Sessions(store, users, TimeProvider.System);
+        var totp = new TotpCredentials(store, users, new AttemptLimiter(new TerraBaseDocumentStore(store), TimeProvider.System, options), options, TimeProvider.System);
+        var sessions = new Sessions(store, users, totp, TimeProvider.System);
         return (users, sessions, new Passcodes(store, users, sessions, TimeProvider.System, options));
     }
 }

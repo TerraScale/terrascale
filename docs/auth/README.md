@@ -67,9 +67,11 @@ disabled until its actual socket peers and rightmost client-IP header are
 verified; see [the ingress checklist](docs/csharp-port.md#trusted-proxy-ingress).
 
 The internal TOTP and recovery-code credential layer, atomic authorization
-composition (TS-707), deployment prerequisite, and remaining dashboard MFA
-slices are documented in [`docs/mfa.md`](docs/mfa.md). MFA endpoints and sign-in enforcement are not
-served by this slice.
+composition, and primary-only authentication guards (TS-707), deployment
+prerequisite, and remaining dashboard MFA slices are documented in
+[`docs/mfa.md`](docs/mfa.md). Active MFA accounts are refused by existing user
+sign-in and online authorization paths; public enrollment and MFA sign-in
+endpoints are not served yet.
 
 ## Target feature inventory
 
