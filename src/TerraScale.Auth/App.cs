@@ -3,6 +3,7 @@ using TerraScale.Auth.Configuration;
 using TerraScale.Auth.Features.Email;
 using TerraScale.Auth.Features.Headless;
 using TerraScale.Auth.Features.Identity;
+using TerraScale.Auth.Features.Mfa;
 using TerraScale.Auth.Features.Observability;
 using TerraScale.Auth.Features.Oidc;
 using TerraScale.Auth.Features.Platform;
@@ -75,6 +76,7 @@ public static partial class App
         builder.Services.AddSingleton<Passcodes>();
         builder.Services.AddSingleton<PasswordHasher>();
         builder.Services.AddSingleton<HeadlessAuth>();
+        builder.Services.AddSingleton<TotpCredentials>();
         builder.Services.AddSingleton<PlatformDirectory>();
         builder.Services.AddSingleton<PlatformAuthentication>();
         builder.Services.AddSingleton<ApiKeys>();

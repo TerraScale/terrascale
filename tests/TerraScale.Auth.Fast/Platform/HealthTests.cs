@@ -20,7 +20,7 @@ public sealed class HealthTests
 
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(body.GetProperty("status").GetString()).IsEqualTo("ok");
-        await Assert.That(body.GetProperty("version").GetString()).StartsWith("0.1.0");
+        await Assert.That(body.GetProperty("version").GetString()).StartsWith("0.1.0-alpha");
     }
 
     [Test]

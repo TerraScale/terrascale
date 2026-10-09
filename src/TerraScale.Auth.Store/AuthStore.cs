@@ -39,6 +39,9 @@ public sealed class AuthStore(TerraBaseDatabase database, TimeProvider clock)
     /// <summary>Email passcodes, one per user, addressed by instance and user id.</summary>
     public const string PasscodeCollection = "passcodes";
 
+    /// <summary>TOTP and recovery credentials, addressed by instance and user id (TS-707).</summary>
+    public const string MfaCollection = "mfa_credentials";
+
     /// <summary>OpenID Connect clients, addressed by instance and client id.</summary>
     public const string OidcApplicationCollection = "oidc_applications";
 
@@ -81,7 +84,7 @@ public sealed class AuthStore(TerraBaseDatabase database, TimeProvider clock)
         "signing_key_rings", OidcApplicationCollection, OidcAuthorizationCollection, OidcTokenCollection,
         "rate_limits", "email_configs", "email_config_versions",
         OrganizationCollection, MembershipCollection, ProjectCollection, ProjectMemberCollection, ApiKeyCollection,
-        InvitationCollection, AuditEventCollection,
+        InvitationCollection, AuditEventCollection, MfaCollection,
     ];
 
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);

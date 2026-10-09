@@ -2,7 +2,7 @@
   <PropertyGroup>
     <RootNamespace>TerraScale.Auth</RootNamespace>
     <AssemblyName>ts-auth</AssemblyName>
-    <Version>0.1.0</Version>
+    <Version>0.1.0-alpha</Version>
     <!-- /healthz reports "<version>+<revision>"; CI passes TS_AUTH_REVISION. -->
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <InformationalVersion Condition="'$(TS_AUTH_REVISION)' != ''">$(Version)+$(TS_AUTH_REVISION)</InformationalVersion>
@@ -37,6 +37,7 @@
          generator and reorders log state, which SafeLogging renders positionally. -->
     <PackageReference Include="OpenIddict.Core" />
     <PackageReference Include="OpenIddict.Server.AspNetCore" />
+    <PackageReference Include="Otp.NET" />
   </ItemGroup>
 
   <ItemGroup>

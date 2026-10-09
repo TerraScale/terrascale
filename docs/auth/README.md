@@ -66,6 +66,11 @@ See [the budget table](docs/csharp-port.md#limits). Production forwarding remain
 disabled until its actual socket peers and rightmost client-IP header are
 verified; see [the ingress checklist](docs/csharp-port.md#trusted-proxy-ingress).
 
+The internal TOTP and recovery-code credential layer (first TS-707 slice), its
+deployment prerequisite, and the remaining dashboard MFA slices are documented
+in [`docs/mfa.md`](docs/mfa.md). MFA endpoints and sign-in enforcement are not
+served by this slice.
+
 ## Target feature inventory
 
 | Area | Target capability |
@@ -397,7 +402,7 @@ SDK-pinned binary. `/readyz` checks the existing `uniques`,
 `signing_key_rings`, `oidc_applications`, `oidc_authorizations`,
 `oidc_tokens`, `rate_limits`, `email_configs`, `email_config_versions`,
 `organizations`, `memberships`, `projects`, `project_members`, `api_keys`,
-`invitations` and `audit_events` collections, then creates, reads
+`invitations`, `audit_events` and `mfa_credentials` collections, then creates, reads
 and conditionally deletes a synthetic document in `storage_health`. It returns
 200 only on success, otherwise 503, without provisioning, repair or in-memory
 fallback. Observations coalesce and are cached for one second after
@@ -424,10 +429,11 @@ the provisioning plan; live production execution belongs to TS-470:
    TS-488 `signing_key_rings` and `rate_limits`, the TS-491 `oidc_applications`,
    `oidc_authorizations` and `oidc_tokens`, the TS-583 `email_configs` and
    `email_config_versions`, and the TS-598 `organizations`, `memberships`,
-   `projects`, `project_members`, `api_keys`, `invitations` and `audit_events`
+   `projects`, `project_members`, `api_keys`, `invitations`, `audit_events`
+   and the TS-707 `mfa_credentials`
    collections; later feature streams own their other collections. `/readyz`
-   requires all twenty, so a
-   database provisioned before a release that adds one (TS-583, TS-598)
+   requires all twenty-one, so a
+   database provisioned before a release that adds one (TS-583, TS-598, TS-707)
    reports 503 until this step is repeated. Run it before rolling out a release
    that adds collections; a configured dashboard or service client also stops
    startup while its collection is missing.

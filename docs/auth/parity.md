@@ -23,7 +23,7 @@ Nothing here implies acceptance against a live TerraBase deployment.
 | OAuth 2.0/OIDC provider on OpenIddict: authorization code with S256 PKCE, rotating refresh tokens, discovery, JWKS, userinfo, RP-initiated logout | TS-491 (TS-433 design) | Served for one issuer, `{public origin}/terrascale`, and the `ts-dashboard` client. ES256 access tokens (`at+jwt`, configured audiences, email claims) and identity tokens from the key ring; client credentials for configured service clients; exactly-once code and refresh redemption with reuse revocation. Fast test covers sign-in, code redemption, token verification with IdentityModel, userinfo and identity-token rejection (see below) |
 | Introspection, per-instance issuers, client management API, token pruning | TS-433 design (not in TS-491) | Not implemented; TS-704 adds peer-IP admission limits on every token grant and IP/email limits on hosted sign-in |
 | Device flow, guest accounts, browser CORS | TS-495 (TS-433 design) | Not implemented |
-| MFA (TOTP, recovery codes, step-up) | TS-434 | Not yet ported; email passcodes moved to TS-490 |
+| MFA (TOTP, recovery codes, step-up) | TS-707 (TS-434 design) | Internal TOTP and recovery-code persistence implemented; no MFA HTTP endpoints or sign-in enforcement yet. [Slice status and deployment prerequisite](mfa.md). Email passcodes moved to TS-490 |
 | Passkeys | TS-435 | Not yet ported |
 | OIDC, GitHub and SAML federation | TS-436 | Not yet ported |
 | Platform organizations, projects, organization and project roles | TS-598 | Served under `/v1/terrascale/…` with the caller's sign-in access token (see below); contract in [`platform-contract.md`](platform-contract.md) |

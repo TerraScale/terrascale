@@ -477,6 +477,7 @@
           "OpenTelemetry.Instrumentation.AspNetCore": "[1.19.0, )",
           "OpenTelemetry.Instrumentation.Http": "[1.19.0, )",
           "OpenTelemetry.Instrumentation.Runtime": "[1.19.0, )",
+          "Otp.NET": "[1.4.1, )",
           "RazorSlices": "[0.12.1, )",
           "Scalar.AspNetCore": "[2.17.13, )",
           "Sentry.AspNetCore": "[6.12.0, )",
@@ -590,6 +591,12 @@
         "dependencies": {
           "OpenTelemetry.Api": "[1.19.0, 2.0.0)"
         }
+      },
+      "Otp.NET": {
+        "type": "CentralTransitive",
+        "requested": "[1.4.1, )",
+        "resolved": "1.4.1",
+        "contentHash": "UXjZ80T6BfVACJWmEcz4UFZ93hwX3STKojKvVpPk3qUhubjnLwIiZMsI4Hh91HhYxC0JlatNdNrVK2wkv4O9/Q=="
       },
       "RazorSlices": {
         "type": "CentralTransitive",
