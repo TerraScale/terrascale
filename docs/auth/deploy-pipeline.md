@@ -22,6 +22,9 @@ prefix; the new qualified helper must use the serving `releases/services` prefix
 before live acceptance. It reads the service release key from OCI Vault, signs a
 cell-scoped claim, and publishes to each cell's regional head bucket. The script
 polls every five seconds with a 30-minute regional deadline.
+The deployment job allows 120 minutes for two regional waits, three downloads
+of up to 15 minutes each, and 15 minutes for setup/cleanup. This budget adds no
+delay to healthy rollouts.
 Independent regional signing and delivery require TS-768's qualified helper
 release; the current pin still processes regions sequentially. Each cell's native
 service controller drains and updates replicas behind its existing readiness
