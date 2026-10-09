@@ -48,7 +48,7 @@ Database-wide placement currently has one shard (zero).
 Invalid membership peer addresses are logged without their values and skipped; a failed peer does
 not stop reconciliation with the remaining members or configured peers.
 The closed-beta `terrabase.alpha.AntiEntropy` gRPC contract uses the existing mutual-TLS listener and
-LZ4 application envelopes; it adds no public HTTP API. Schema 9 adds two partial key indexes so
+LZ4 application envelopes; it adds no public HTTP API. Fresh schema 10 includes two partial key indexes so
 excluded empty or oversized keys do not lengthen document or retained-deletion scans.
 
 A transient Merkle tree has 16 leaves, selected by the high nibble of SHA-256 of each length-framed
