@@ -147,6 +147,9 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
     /// </summary>
     internal const long MaxCount = 1_000_000_000_000;
 
+    // Byte meters aggregate past MaxCount (a day of storage samples, lifetime bandwidth); they are bounded only by long.
+    internal static bool ByteMeter(string meter) => meter is "client_bytes" or "replication_bytes" or "storage_bytes";
+
     private const string Ops = "ops";
 
     // The id of the last flush that added to a database's counts, saved in the same write.
@@ -445,6 +448,16 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
             // Usage reads go on while the primary answers. If this throws or is cancelled, the batch stays unsent and goes
             // again with its sequence, which the primary adds once.
             var added = await send(sequence, batch, cancellationToken).ConfigureAwait(false);
+            // Measurements are best effort; read and write totals are not. A primary that refuses the batch, for a measurement
+            // it rejects or a scope it predates, gets the totals alone once, under the same sequence it did not save.
+            KeyValuePair<UsageKey, OpCounts>[] totals = [.. batch.Where(entry => entry.Value.Reads != 0 || entry.Value.Writes != 0)
+                .Select(entry => KeyValuePair.Create(entry.Key, entry.Value with { Meters = null }))];
+            if (!added && totals.Length > 0 && (totals.Length < batch.Length || batch.Any(entry => entry.Value.Meters is not null)))
+            {
+                _measurementDrops.Add(1);
+                added = await send(sequence, totals, cancellationToken).ConfigureAwait(false);
+            }
+
             await _flush.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {

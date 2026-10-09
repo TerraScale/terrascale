@@ -36,8 +36,8 @@ catalog is omitted. ts-go selects and pins regional client endpoints through
 Atlas to read those regions; regions retain independent catalogs and do not
 connect to each other's private peer listeners.
 
-Requests read at most 100 databases and 16,384 database-region buckets (after
-the `region` filter) within five seconds, with memory admission held until the
+Requests read at most 100 databases and 16,384 emitted database-region buckets
+(after the `region` filter; unobserved remote placements count nothing) within five seconds, with memory admission held until the
 response has been sent. Invalid
 filters/ranges and excessive queries return 400; exceeding the five-second
 execution budget returns 503 `capacity`. Cancellation
@@ -158,6 +158,11 @@ the 256 KiB entry limit is sent with its counts only, and the dropped meters are
 counted. A follower batch carries at most 1 MiB of measurement JSON,
 256 KiB per entry, with validated meter names, dimensions and histogram sizes.
 Deploying this format is a whole-fleet cutover (verify, wipe, deploy, re-bootstrap),
-never a rolling mix: an older catalog primary refuses minute-scoped usage entries.
+never a rolling mix. Measurements are best effort while read and write totals are
+not: when the primary refuses a follower batch, for a measurement it rejects or a
+minute scope it predates, the follower resends the totals alone once under the
+same sequence, and the dropped measurements are counted. Byte meters (client and
+replication bandwidth, storage) are bounded only by their 64-bit range, since
+their aggregates outgrow the 10^12 operation-count bound.
 There are no migrations or backfills; existing entity-ID generation is owned by
 TS-754, and this slice introduces no ID encoding or compatibility fallback.

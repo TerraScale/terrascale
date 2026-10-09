@@ -302,7 +302,7 @@ internal sealed partial class WanPuller(
         var failures = 0;
         var unregistered = new HashSet<string>(StringComparer.Ordinal);
         var clashes = new HashSet<string>(StringComparer.Ordinal);
-        var observations = new Dictionary<TenantContext, (long Remaining, bool Diverged)>();
+        var observations = new Dictionary<TenantContext, (long Remaining, bool Diverged, bool Untracked)>();
         var behind = new HashSet<TenantContext>();
         foreach (var (member, head) in heads)
         {
@@ -327,7 +327,7 @@ internal sealed partial class WanPuller(
             var untracked = false;
             var failed = false;
             // Bounded by this round's heads and retries, so every replicated database reports health each round.
-            _ = observations.TryAdd(database, (0, false));
+            _ = observations.TryAdd(database, (0, false, false));
             // Any origin found behind starts the backlog, not only the first member's advertisement.
             if ((long)head.Sequence > applied && behind.Add(database))
             {
@@ -383,10 +383,11 @@ internal sealed partial class WanPuller(
 
             var remaining = Math.Max(0, (long)head.Sequence - applied);
             // Best effort past the bound: an untracked backlog only loses retention across rounds.
-            _ = Retain(region, database, origin, target: (long)head.Sequence, applied: applied);
+            var tracked = Retain(region, database, origin, target: (long)head.Sequence, applied: applied);
             if (observations.TryGetValue(database, out var observed))
             {
-                observations[database] = (observed.Remaining + Math.Min(remaining, long.MaxValue - observed.Remaining), observed.Diverged || untracked);
+                observations[database] = (observed.Remaining + Math.Min(remaining, long.MaxValue - observed.Remaining), observed.Diverged || untracked,
+                    observed.Untracked || !tracked);
             }
             lag += Math.Min(remaining, long.MaxValue - lag);
             // Bounded like one heads reply; anything beyond waits for a fresh scan to advertise it again. A member that no longer
@@ -402,8 +403,11 @@ internal sealed partial class WanPuller(
         ForgetUnseen(region);
         foreach (var (database, observed) in observations)
         {
+            // Per origin, its highest target less its latest verified prefix, once: members advertising the same origin, or
+            // one failing where another caught up, count nothing twice. Past the bound, this round's view is the estimate.
             var (outstanding, divergent) = Retained(region, database);
-            usage.RecordReplicationState(database, region, Math.Max(observed.Remaining, outstanding), observed.Diverged || divergent);
+            usage.RecordReplicationState(database, region, observed.Untracked ? Math.Max(observed.Remaining, outstanding) : outstanding,
+                observed.Diverged || divergent);
         }
 
         discovery.Retry.Clear();

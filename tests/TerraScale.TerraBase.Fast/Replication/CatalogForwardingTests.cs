@@ -849,6 +849,14 @@ public sealed class CatalogForwardingTests
             var ahead = Batch(ByteString.CopyFrom(Guid.NewGuid().ToByteArray()), 1, organization, project, database, hour + 48, reads: 1, sender: "ahead");
             await Assert.That(await follower.Services.GetRequiredService<CatalogPrimaryClient>().AddUsageAsync(ahead, CancellationToken.None)).IsFalse();
 
+            // Byte aggregates outgrow the operation-count bound (10^12): an hour of 20 GB storage samples folded during an outage is valid.
+            var folded = Batch(ByteString.CopyFrom(Guid.NewGuid().ToByteArray()), 1, organization, project, database, hour, reads: 0, sender: "folded");
+            var storage = new UsageDimension("storage_bytes", "gru-1", "", "sample");
+            folded.Counts[0].Measurements = ByteString.CopyFrom(JsonSerializer.SerializeToUtf8Bytes(
+                new OpCounts(0, 0, new Dictionary<string, UsageReading> { [storage.Key] = new(storage, 60, 60 * 20_000_000_000L) }),
+                TerraBase.Hosting.TerraBaseJsonContext.Default.OpCounts));
+            await Assert.That(await follower.Services.GetRequiredService<CatalogPrimaryClient>().AddUsageAsync(folded, CancellationToken.None)).IsTrue();
+
             // A clean shutdown sends every pending batch, not only the first 4,096 database hours: here 4,097, one of them this
             // database's. The others belong to a project the primary does not have, which it checks once and drops.
             meter.Add(new UsageKey(new DatabaseOwner(organization, project, database), hour), new OpCounts(1, 0));

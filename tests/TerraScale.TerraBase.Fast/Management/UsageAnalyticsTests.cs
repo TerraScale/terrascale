@@ -489,6 +489,49 @@ public sealed class UsageAnalyticsTests
     }
 
     [Test]
+    public async Task A_primary_refusing_measurements_still_receives_the_read_and_write_totals()
+    {
+        await using var api = await ManagementApi.StartAsync(settings => settings["region"] = "gru-1");
+        var database = await api.CreateManagedDatabaseAsync();
+        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
+        using var client = ProjectClient(api, database.Project);
+        await ManagementApi.CreateCollectionAsync(client, database, "people");
+        using (var written = await client.PutAsJsonAsync(ManagementApi.Uri(ManagementApi.DocumentPath(database, "people", "one")), new { name = new Faker().Name.FullName() }))
+        {
+            written.EnsureSuccessStatusCode();
+        }
+
+        var reads = new Faker().Random.Int(1, 3);
+        for (var i = 0; i < reads; i++)
+        {
+            (await client.GetAsync(ManagementApi.Uri(ManagementApi.DocumentPath(database, "people", "one")))).EnsureSuccessStatusCode();
+        }
+
+        // A primary that predates minute scopes and measurements refuses any batch carrying them, as the older validator did.
+        var received = new List<KeyValuePair<UsageKey, OpCounts>>();
+        var refused = 0;
+        var meter = api.Server.Services.GetRequiredService<UsageMeter>();
+        while (await meter.SendAsync((_, batch, _) =>
+        {
+            if (batch.Any(entry => entry.Key.Scope == TerraBase.Features.Management.Usage.UsageScope.Minute || entry.Value.Meters is not null))
+            {
+                refused++;
+                return Task.FromResult(false);
+            }
+
+            received.AddRange(batch);
+            return Task.FromResult(true);
+        }, CancellationToken.None))
+        {
+        }
+
+        await Assert.That(refused).IsGreaterThan(0);
+        var owned = received.Where(entry => entry.Key.Database.DatabaseId == database.Id).ToArray();
+        await Assert.That(owned.Sum(entry => entry.Value.Reads)).IsEqualTo(reads);
+        await Assert.That(owned.Sum(entry => entry.Value.Writes)).IsGreaterThanOrEqualTo(1);
+    }
+
+    [Test]
     public async Task A_request_for_an_unknown_database_name_records_no_measurements()
     {
         await using var api = await ManagementApi.StartAsync(settings => settings["region"] = "gru-1");

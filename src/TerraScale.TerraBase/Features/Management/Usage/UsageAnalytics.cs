@@ -140,8 +140,8 @@ internal sealed class UsageAnalytics(IManagementService management, UsageMeter m
 
     private (IMemoryReservation Reservation, int Points) Reserve(IReadOnlyList<ManagedDatabase> databases, AnalyticsWindow window, string? region)
     {
-        // At most nine placement regions, after the region filter; bounded extra room for observed peer regions and two catalog read pages.
-        // Regions observed outside the current placement are admitted as they are found (Loaded.Items).
+        // The local item of each database placed here; bounded extra room for two catalog read pages. Every other region a
+        // database has observations for is admitted as it is found (Loaded.Items).
         var points = databases.Sum(record => Placed(record, region)) * window.Usage.Count;
         if (points > MaxPoints)
         {
@@ -152,8 +152,9 @@ internal sealed class UsageAnalytics(IManagementService management, UsageMeter m
             ?? throw new QueryCapacityException("analytics memory admission exhausted"), points);
     }
 
+    // The item every request emits for a database: its local region while placed here. Observed regions are admitted as found.
     private int Placed(ManagedDatabase record, string? region) =>
-        Math.Max(1, record.Regions(options.Region).Count(observing => region is null || observing == region));
+        record.Regions(options.Region).Contains(options.Region) && (region is null || region == options.Region) ? 1 : 0;
 
     // Memory admitted for a request: its output reservation, extra output items and the observations it keeps. A returned result
     // hands all of it to the caller, who holds it until the result has been sent; otherwise it is released here.

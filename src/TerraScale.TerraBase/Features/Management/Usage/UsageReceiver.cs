@@ -121,7 +121,8 @@ internal sealed class UsageReceiver(TerraBaseOptions options, UsageMeter meter, 
             return payload is { Reads: 0, Writes: 0, Meters: { } readings }
                 && readings.All(entry => entry.Value is { Dimension: { } dimension } reading
                     && entry.Key == dimension.Key && UsageMeter.ValidDimension(dimension)
-                    && reading.Count is >= 0 and <= UsageMeter.MaxCount && reading.Value is >= 0 and <= UsageMeter.MaxCount
+                    && (UsageMeter.ByteMeter(dimension.Meter) ? reading.Count >= 0 && reading.Value >= 0
+                        : reading.Count is >= 0 and <= UsageMeter.MaxCount && reading.Value is >= 0 and <= UsageMeter.MaxCount)
                     && (reading.Latency is null || dimension.Meter == "requests" && reading.Latency.Length == UsageReading.LatencyBounds.Count
                         && reading.Latency.All(value => value is >= 0 and <= UsageMeter.MaxCount) && reading.Latency.Sum() == reading.Count)
                     && (reading.State is null || dimension.Meter is "replicated_ops" or "replication_status"
