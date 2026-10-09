@@ -104,8 +104,10 @@ A gRPC Hello is charged to the region its Welcome names; a handshake that fails
 without any answer falls back to the region of that peer's previous stream, and
 before any stream identified it, cannot be attributed to a region pair.
 
-Kinds are `delta` (current replication), `anti_entropy` (frontier handshakes and
-WAN discovery), and `handoff` (peer or WAN journal replay after a failed transfer,
+Kinds are `delta` (current replication), `anti_entropy` (frontier handshakes, WAN
+discovery and TS-678 Merkle repair: digests, range pages and merges, attributed by
+the regions the caller sends in its shard identity and the peer returns with its
+digest), and `handoff` (peer or WAN journal replay after a failed transfer,
 initial catch-up, or a backlog longer than one 256-group sender turn). A peer
 replay stays `handoff` across turns until a turn ends with the peer at the head. Shared discovery payloads are divided across advertised
 databases, conserving their encoded length. No tenant identifiers are used as

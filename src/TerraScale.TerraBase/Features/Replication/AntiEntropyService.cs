@@ -1,11 +1,15 @@
 using Google.Protobuf;
 using Grpc.Core;
+using TerraBase.Configuration;
+using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Replication.Alpha;
+using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Replication;
 
-internal sealed class AntiEntropyService(IAntiEntropyState state, IMemoryBudget memory, TimeProvider time) : Alpha.AntiEntropy.AntiEntropyBase
+internal sealed class AntiEntropyService(
+    IAntiEntropyState state, IMemoryBudget memory, TimeProvider time, IUsageMeter usage, TerraBaseOptions options) : Alpha.AntiEntropy.AntiEntropyBase
 {
     private int _calls;
 
@@ -26,28 +30,40 @@ internal sealed class AntiEntropyService(IAntiEntropyState state, IMemoryBudget 
         }
 
         var digest = await state.DigestAsync(store, token).ConfigureAwait(false);
-        return new MerkleDigest
+        return Metered(request, request, new MerkleDigest
         {
             Incarnation = ByteString.CopyFrom(store.Incarnation.ToByteArray(bigEndian: true)),
             Envelope = ByteString.CopyFrom(ApplicationEnvelope.Encode(digest).Span),
             Origin = origin,
             AppliedSource = applied,
-        };
+            Region = options.Region,
+        });
     }, context, AntiEntropyState.DigestTimeout);
 
     public override Task<StatePage> ReadRange(RangeRequest request, ServerCallContext context) => ServeAsync(async token =>
     {
         RequireIncarnation(request.Identity);
         var store = await state.OpenAsync(request.Identity, token).ConfigureAwait(false);
-        return await state.ReadAsync(store, request, token).ConfigureAwait(false);
+        return Metered(request.Identity, request, await state.ReadAsync(store, request, token).ConfigureAwait(false));
     }, context);
 
     public override Task<MergeResult> Merge(StateRequest request, ServerCallContext context) => ServeAsync(async token =>
     {
         RequireIncarnation(request.Identity);
         var store = await state.OpenAsync(request.Identity, token).ConfigureAwait(false);
-        return new MergeResult { RepairedKeys = await state.MergeAsync(store, request.Identity, request.Envelope, token).ConfigureAwait(false) };
+        return Metered(request.Identity, request,
+            new MergeResult { RepairedKeys = await state.MergeAsync(store, request.Identity, request.Envelope, token).ConfigureAwait(false) });
     }, context);
+
+    // A served exchange, charged to the initiating member's region: each message's encoded bytes plus the gRPC prefix.
+    private T Metered<T>(ShardIdentity identity, IMessage received, T response)
+        where T : IMessage
+    {
+        var database = new TenantContext(identity.Organization, PlanTier.Hobby, identity.Project, identity.Database);
+        usage.RecordReplicationBytes(database, identity.Region, "anti_entropy", false, received.CalculateSize() + 5L);
+        usage.RecordReplicationBytes(database, identity.Region, "anti_entropy", true, response.CalculateSize() + 5L);
+        return response;
+    }
 
     private async Task<T> ServeAsync<T>(Func<CancellationToken, Task<T>> work, ServerCallContext context, TimeSpan? budget = null)
     {

@@ -25,6 +25,8 @@ message ShardIdentity {
   // Initiator's proof at the target's applied prefix, and vice versa.
   JournalProof source_proof = 8;
   JournalProof target_proof = 9;
+  // The initiating member's region, for per-region-pair replication bandwidth.
+  string region = 10;
 }
 message JournalProof {
   bytes origin = 1;
@@ -37,6 +39,8 @@ message MerkleDigest {
   bytes envelope = 2;
   bytes origin = 3;
   JournalProof applied_source = 4;
+  // The answering member's region, for per-region-pair replication bandwidth.
+  string region = 5;
 }
 message RangeRequest {
   ShardIdentity identity = 1;

@@ -4,6 +4,7 @@ using Grpc.Core;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
+using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Replication.Alpha;
 using TerraBase.Tenancy;
@@ -13,7 +14,8 @@ namespace TerraBase.Features.Replication;
 // One maintenance exchange at a time; it cannot consume normal replication's credits.
 internal sealed partial class AntiEntropyWorker(
     IStorageEngine engine, ITenantDirectory tenants, IMembership membership, IAntiEntropyState state,
-    PeerCredentials credentials, TerraBaseOptions options, ILogger<AntiEntropyWorker> logger, TimeProvider time, IMemoryBudget memory) : BackgroundService
+    PeerCredentials credentials, TerraBaseOptions options, ILogger<AntiEntropyWorker> logger, TimeProvider time, IMemoryBudget memory,
+    IUsageMeter usage) : BackgroundService
 {
     internal static readonly TimeSpan ReconcileInterval = TimeSpan.FromSeconds(5);
     internal static readonly TimeSpan ExchangeTimeout = TimeSpan.FromMinutes(15);
@@ -107,7 +109,13 @@ internal sealed partial class AntiEntropyWorker(
         CancellationTokenSource progress, CancellationToken cancellationToken)
     {
         using var reservation = AntiEntropyState.Reserve(memory);
-        var identity = new ShardIdentity { Organization = database.OrganizationId, Project = database.ProjectId!, Database = database.DatabaseId! };
+        var identity = new ShardIdentity
+        {
+            Organization = database.OrganizationId,
+            Project = database.ProjectId!,
+            Database = database.DatabaseId!,
+            Region = options.Region,
+        };
         progress.CancelAfter(ReplicationProtocol.ProgressTimeout);
         var store = await state.OpenAsync(identity, cancellationToken).ConfigureAwait(false);
         progress.CancelAfter(ReplicationProtocol.ProgressTimeout);
@@ -122,6 +130,9 @@ internal sealed partial class AntiEntropyWorker(
         progress.CancelAfter(AntiEntropyState.DigestTimeout);
         using var digestCall = client.DigestAsync(identity, cancellationToken: cancellationToken);
         var remote = await digestCall.ResponseAsync.ConfigureAwait(false);
+        // Anti-entropy traffic is metered once the digest names the peer's region, like a replication Hello.
+        var peerRegion = remote.Region;
+        Metered(database, peerRegion, identity, remote);
         if (remote.Incarnation.Length != 16 || remote.Origin.Length != 16 || remote.Envelope.Length > 1024
             || remote.AppliedSource is not { } applied || !applied.Origin.Equals(identity.Origin)
             || applied.Sequence > long.MaxValue || applied.Digest.Length != JournalDigest.Length)
@@ -162,6 +173,7 @@ internal sealed partial class AntiEntropyWorker(
             progress.CancelAfter(ReplicationProtocol.ProgressTimeout);
             using var readCall = client.ReadRangeAsync(request, cancellationToken: cancellationToken);
             var page = await readCall.ResponseAsync.ConfigureAwait(false);
+            Metered(database, peerRegion, request, page);
             CheckPage(page, request);
             if (!page.Envelope.IsEmpty)
             {
@@ -188,8 +200,9 @@ internal sealed partial class AntiEntropyWorker(
             if (!page.Envelope.IsEmpty)
             {
                 progress.CancelAfter(ReplicationProtocol.ProgressTimeout);
-                using var mergeCall = client.MergeAsync(new StateRequest { Identity = identity, Envelope = page.Envelope }, cancellationToken: cancellationToken);
-                _ = await mergeCall.ResponseAsync.ConfigureAwait(false);
+                var merge = new StateRequest { Identity = identity, Envelope = page.Envelope };
+                using var mergeCall = client.MergeAsync(merge, cancellationToken: cancellationToken);
+                Metered(database, peerRegion, merge, await mergeCall.ResponseAsync.ConfigureAwait(false));
             }
 
             if (!page.HasMore)
@@ -200,6 +213,13 @@ internal sealed partial class AntiEntropyWorker(
             request.AfterCollection = page.AfterCollection;
             request.AfterId = page.AfterId;
         }
+    }
+
+    // A unary exchange on the wire: each message's encoded bytes plus the five-byte gRPC message prefix.
+    private void Metered(TenantContext database, string peerRegion, IMessage sent, IMessage received)
+    {
+        usage.RecordReplicationBytes(database, peerRegion, "anti_entropy", true, sent.CalculateSize() + 5L);
+        usage.RecordReplicationBytes(database, peerRegion, "anti_entropy", false, received.CalculateSize() + 5L);
     }
 
     private static void CheckPage(StatePage page, RangeRequest request)

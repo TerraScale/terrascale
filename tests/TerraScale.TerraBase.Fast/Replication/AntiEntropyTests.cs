@@ -243,6 +243,69 @@ public sealed class AntiEntropyTests
 
     [Test]
     [Timeout(60_000)]
+    public async Task Both_regions_meter_the_same_anti_entropy_bytes_for_a_repair(CancellationToken cancellationToken)
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var token = deadline.Token;
+        using var peerTls = new PeerTls();
+        using var clientTls = new ClientTls();
+        var started = DateTimeOffset.UtcNow;
+        var clock = new RepairClock(started);
+        await using var receiver = await TerraBaseTestServer.StartAsync(settings =>
+        {
+            peerTls.Apply(settings);
+            clientTls.Apply(settings);
+            settings["region"] = "gru-1";
+        }, services => services.AddSingleton<TimeProvider>(new FakeTimeProvider(started)));
+        await using var source = await TerraBaseTestServer.StartAsync(settings =>
+        {
+            peerTls.Apply(settings);
+            clientTls.Apply(settings);
+            settings["region"] = "sfo-1";
+            settings["peer-addresses"] = receiver.PeerAddress!.ToString();
+        }, services => services.AddSingleton<TimeProvider>(clock));
+        await clock.PausedAsync(token);
+        var tenant = await ReplicationTenant.CreateAsync(source, ["repair"], cancellationToken);
+        await tenant.BindAsync(receiver);
+        using var writer = clientTls.CreateClient(source.ClientAddress!, await tenant.KeyAsync(source, ["documents:write"], cancellationToken));
+        var ids = await SeedAsync(writer, tenant, token);
+        await TerraBaseTestServer.ReplicatedAsync(source);
+        var database = tenant.Database("repair");
+        async Task<long> BytesAsync(TerraBaseTestServer node, string key)
+        {
+            var window = new TerraBase.Features.Management.Usage.UsageWindow(
+                TerraBase.Features.Management.Usage.UsageWindow.Hour, DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 3600, 1);
+            var (lifetime, _) = await node.Services.GetRequiredService<TerraBase.Features.Management.Usage.UsageMeter>().GetObservationsAsync(database, window, token);
+            return lifetime.Meters?.GetValueOrDefault(key)?.Count ?? 0;
+        }
+
+        // Before the repair only replication handshakes were charged as anti-entropy.
+        var before = await BytesAsync(source, "replication_bytes|sfo-1|gru-1|anti_entropy:sent");
+        await using (var connection = new SqliteConnection(DocumentApi.ConnectionString(tenant.File(receiver, "repair"))))
+        {
+            await connection.OpenAsync(token);
+            using var corrupt = connection.CreateCommand();
+            corrupt.CommandText = "UPDATE documents SET version = 1, body = '{\"name\":\"stale\"}' WHERE collection = 'items' AND id = $id;";
+            corrupt.Parameters.AddWithValue("$id", ids[0]);
+            await Assert.That(await corrupt.ExecuteNonQueryAsync(token)).IsEqualTo(1);
+        }
+
+        using var repairs = new RepairCounter(receiver);
+        clock.Advance(AntiEntropyWorker.ReconcileInterval);
+        await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(repairs.Keys >= 1));
+        await clock.PausedAsync(token);
+
+        // The repair's Merkle exchange is charged too, once at each end, to the same directed region pair.
+        var sent = await BytesAsync(source, "replication_bytes|sfo-1|gru-1|anti_entropy:sent");
+        await Assert.That(sent).IsGreaterThan(before);
+        await Assert.That(await BytesAsync(receiver, "replication_bytes|gru-1|sfo-1|anti_entropy:received")).IsEqualTo(sent);
+        var returned = await BytesAsync(receiver, "replication_bytes|gru-1|sfo-1|anti_entropy:sent");
+        await Assert.That(returned).IsGreaterThan(0);
+        await Assert.That(await BytesAsync(source, "replication_bytes|sfo-1|gru-1|anti_entropy:received")).IsEqualTo(returned);
+    }
+
+    [Test]
+    [Timeout(60_000)]
     public async Task Dropped_collection_deletion_evidence_repairs_a_resurrected_row_without_recreating_the_collection(CancellationToken cancellationToken)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
