@@ -97,6 +97,78 @@
   color: var(--ts-ink);
 }
 
-.ts-usage-caps {
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr));
+/* Spending controls: flat sections with a consistent category grid. */
+.ts-spending-notice {
+  align-self: end;
+  width: min(100%, 400px);
+}
+
+/* Respect native hidden state before Datastar initializes. */
+.ts-spending-notice[hidden],
+.ts-spending-project[hidden],
+.ts-spending-databases[hidden] {
+  display: none;
+}
+
+.ts-spending-form > .ts-card {
+  display: grid;
+  grid-template-columns: minmax(160px, 220px) minmax(0, 1fr);
+  align-items: start;
+  gap: var(--ts-s8);
+  padding-block-start: var(--ts-s6);
+  border-block-start: 1px solid var(--ts-line);
+}
+
+.ts-spending-identity,
+.ts-spending-excess {
+  flex-wrap: nowrap;
+}
+
+.ts-spending-identity > svg {
+  flex: none;
+}
+
+.ts-spending-limit-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--ts-s4);
+}
+
+.ts-spending-control {
+  max-width: 400px;
+}
+
+.ts-spending-excess {
+  padding-block-start: var(--ts-s4);
+  border-block-start: 1px solid var(--ts-line);
+  cursor: pointer;
+}
+
+.ts-spending-database + .ts-spending-database,
+.ts-spending-actions {
+  padding-block-start: var(--ts-s5);
+  border-block-start: 1px solid var(--ts-line);
+}
+
+@container page (width < 1100px) {
+  .ts-spending-limit-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@container page (width < 768px) {
+  .ts-spending-form > .ts-card {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--ts-s4);
+  }
+}
+
+@container page (width < 400px) {
+  .ts-spending-limit-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ts-spending-actions > .ts-btn {
+    width: 100%;
+  }
 }

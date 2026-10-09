@@ -25,8 +25,9 @@ func TestMCPUsageReportsAndSetsSpendingControls(t *testing.T) {
 		ProjectEffectiveCapCents int64
 		CanManage                bool
 		Projects                 []struct {
-			ID            string
-			SpendCapCents int64
+			ID              string
+			SpendCapCents   int64
+			OperationLimits struct{ ReadLimit, WriteLimit, ReplicationLimit int64 }
 		}
 		Databases []struct {
 			ID                string
@@ -43,7 +44,7 @@ func TestMCPUsageReportsAndSetsSpendingControls(t *testing.T) {
 	var capped report
 	callTool(t, session, "set_spending_controls", map[string]any{
 		"organizationCapCents": 5000, "paidExcess": true,
-		"projectCaps":  []map[string]any{{"id": usage.ProjectID, "capCents": 2500}},
+		"projectCaps":  []map[string]any{{"id": usage.ProjectID, "capCents": 2500, "readLimit": 1000, "writeLimit": 2000, "replicationLimit": 3000}},
 		"databaseCaps": []map[string]any{{"id": database.ID, "capCents": 1000}},
 	}, &capped)
 	if capped.SpendCapCents != 5000 || !capped.PaidExcessEnabled || capped.ProjectEffectiveCapCents != 2500 {
@@ -57,6 +58,19 @@ func TestMCPUsageReportsAndSetsSpendingControls(t *testing.T) {
 	})
 	if index < 0 || capped.Databases[index].EffectiveCapCents != 1000 {
 		t.Errorf("database caps after set_spending_controls = %+v, want %s capped at 1000", capped.Databases, database.ID)
+	}
+
+	var partial report
+	callTool(t, session, "set_spending_controls", map[string]any{
+		"projectCaps": []map[string]any{{"id": usage.ProjectID, "readLimit": 0}},
+	}, &partial)
+	for _, project := range partial.Projects {
+		if project.ID == usage.ProjectID && (project.SpendCapCents != 2500 || project.OperationLimits.ReadLimit != 0 || project.OperationLimits.WriteLimit != 2000 || project.OperationLimits.ReplicationLimit != 3000) {
+			t.Errorf("partial operation change = %+v, want preserved price, writes and replication", project)
+		}
+	}
+	if message := callToolError(t, session, "set_spending_controls", map[string]any{"projectCaps": []map[string]any{{"id": usage.ProjectID, "readLimit": -1}}}); !strings.Contains(message, "zero or positive") {
+		t.Errorf("negative operation limit error = %q, want the operation limit rule", message)
 	}
 
 	if message := callToolError(t, session, "set_spending_controls", map[string]any{"organizationCapCents": -1}); !strings.Contains(message, "zero or positive") {

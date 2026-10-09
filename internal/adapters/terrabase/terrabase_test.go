@@ -59,6 +59,20 @@ func TestPersistsAcrossDashboardRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	limits := core.OperationLimits{ReadLimit: 1000, WriteLimit: 2000, ReplicationLimit: 3000}
+	databaseID := core.NewID()
+	if err := store.UpdateAs(t.Context(), want.Principal(), func(a *core.Account) error {
+		org := a.Organizations[a.ActiveOrganizationID]
+		project := org.Projects[a.ActiveProjectID]
+		project.OperationLimits = limits
+		project.Databases[databaseID] = core.Database{ID: databaseID, ProjectID: project.ID, Name: "limits", OperationLimits: limits}
+		org.Projects[project.ID] = project
+		a.Organizations[org.ID] = org
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
 	client, err := v1.New(v1.Config{BaseURL: tb.URL, Token: key, HTTPClient: tb.Client})
 	if err != nil {
 		t.Fatal(err)
@@ -70,6 +84,10 @@ func TestPersistsAcrossDashboardRestart(t *testing.T) {
 	}
 	if got.ID != want.ID || got.User.ID != want.User.ID {
 		t.Fatalf("restarted account = %+v, want %+v", got, want)
+	}
+	project := got.Organizations[got.ActiveOrganizationID].Projects[got.ActiveProjectID]
+	if project.OperationLimits != limits || project.Databases[databaseID].OperationLimits != limits {
+		t.Fatalf("operation limits did not persist across restart: %+v", project)
 	}
 }
 
