@@ -68,6 +68,8 @@ Point GET of a retained loser answers `409 unique_violation` and carries the sou
 with PUT/PATCH or deleted, including with that ETag. Another document cannot acquire a locally contested value while
 any retained state still claims it. Once a winner deletes or changes its key, the next contender becomes visible.
 The engine records those visibility changes in shape history in the same transaction as the triggering write.
+The collection change feed uses that history: hiding emits a deletion and promotion emits an upsert with the
+retained JSON, at the triggering commit's offset. Identical repair emits no change-feed events.
 Baseline replication includes losing source states, so a new replica computes the same result and does not lose
 the information needed to release a key later.
 Merkle digests and repair ranges also use retained source bodies, including hidden contenders; a visibility

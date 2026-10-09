@@ -1,8 +1,10 @@
 using System.Net;
+using System.Text.Json;
 using Bogus;
 using Google.Protobuf;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
+using TerraBase.Fast.Documents;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.Alpha;
 using TerraBase.Testing;
@@ -23,11 +25,25 @@ public sealed partial class UniqueReplicationTests
         var email = new Faker().Internet.Email();
         await SeedAsync(source, tenant, ids[1], email, cancellationToken);
         await SeedAsync(receiver, tenant, ids[0], email, cancellationToken);
-        await ReplayAsync(source.Server, receiver.Server, tls, tenant.Database("db"), cancellationToken);
+        using var owner = source.As(tenant.UserId);
+        await source.VerifyProjectBindingAsync(tenant.OrganizationId, tenant.ProjectId, owner);
+        using var feed = source.WithToken(source.Issuer.Mint(tenant.UserId, jwt =>
+        {
+            jwt.Claims["project_id"] = tenant.ProjectId;
+            jwt.Claims["scope"] = "documents:read";
+        }));
+        var feedRoute = $"/projects/{tenant.ProjectId}/databases/db/collections/people/changes";
+        var start = await DocumentApi.SendAsync(feed, HttpMethod.Get, feedRoute, cancellationToken: cancellationToken);
+        start.Status.ShouldBe(HttpStatusCode.OK);
+        await Assert.That(start.Json.GetProperty("changes").EnumerateArray().Single().GetProperty("id").GetString()).IsEqualTo(ids[1]);
         await ReplayAsync(receiver.Server, source.Server, tls, tenant.Database("db"), cancellationToken);
+        await ReplayAsync(source.Server, receiver.Server, tls, tenant.Database("db"), cancellationToken);
+        var merged = await DocumentApi.SendAsync(feed, HttpMethod.Get,
+            $"{feedRoute}?resume_token={start.Json.GetProperty("resume_token").GetString()}", cancellationToken: cancellationToken);
+        await AssertUniqueFeedTransitionAsync(merged, ids[1], ids[0], email);
 
-        using var client = receiver.Tls.CreateClient(receiver.Server.ClientAddress!,
-            await tenant.KeyAsync(receiver.Server, ["documents:read", "documents:write"], cancellationToken));
+        using var client = source.Tls.CreateClient(source.Server.ClientAddress!,
+            await tenant.KeyAsync(source.Server, ["documents:read", "documents:write"], cancellationToken));
         using var sourceChannel = tls.CreateChannel(source.Server.PeerAddress!);
         using var receiverChannel = tls.CreateChannel(receiver.Server.PeerAddress!);
         var sourceRpc = new AntiEntropy.AntiEntropyClient(sourceChannel);
@@ -39,20 +55,25 @@ public sealed partial class UniqueReplicationTests
 
         var request = new RangeRequest
         {
-            Identity = await UniqueRepairIdentityAsync(receiver.Server, source.Server, tenant, cancellationToken),
+            Identity = await UniqueRepairIdentityAsync(source.Server, receiver.Server, tenant, cancellationToken),
             Ranges = ushort.MaxValue,
         };
-        using var readCall = sourceRpc.ReadRangeAsync(request, cancellationToken: cancellationToken);
+        using var readCall = receiverRpc.ReadRangeAsync(request, cancellationToken: cancellationToken);
         var page = await readCall.ResponseAsync;
         await Assert.That(page.HasMore).IsFalse();
         var changes = ChangeGroup.Decode(ApplicationEnvelope.Decode(page.Envelope.Span, ReplicationProtocol.MaxApplicationBytes));
         await Assert.That(changes.Single(change => change.Collection == "people" && change.Id == ids[1]).Json is not null).IsTrue();
-        using var mergeCall = receiverRpc.MergeAsync(new StateRequest
+        using var mergeCall = sourceRpc.MergeAsync(new StateRequest
         {
-            Identity = await UniqueRepairIdentityAsync(source.Server, receiver.Server, tenant, cancellationToken),
+            Identity = await UniqueRepairIdentityAsync(receiver.Server, source.Server, tenant, cancellationToken),
             Envelope = page.Envelope,
         }, cancellationToken: cancellationToken);
         await Assert.That((await mergeCall.ResponseAsync).RepairedKeys).IsEqualTo(0U);
+        var unchanged = await DocumentApi.SendAsync(feed, HttpMethod.Get,
+            $"{feedRoute}?resume_token={merged.Json.GetProperty("resume_token").GetString()}", cancellationToken: cancellationToken);
+        unchanged.Status.ShouldBe(HttpStatusCode.OK);
+        await Assert.That(unchanged.Json.GetProperty("changes").GetArrayLength()).IsEqualTo(0);
+        await Assert.That(unchanged.Json.GetProperty("resume_token").GetString()).IsEqualTo(merged.Json.GetProperty("resume_token").GetString());
         using (var hidden = await client.GetAsync(Document(tenant, ids[1]), cancellationToken))
         {
             await Assert.That(hidden.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
@@ -64,10 +85,30 @@ public sealed partial class UniqueReplicationTests
         }
 
         await VisibleAsync(client, tenant, ids[1], cancellationToken);
-        await ReplayAsync(receiver.Server, source.Server, tls, tenant.Database("db"), cancellationToken);
+        var promoted = await DocumentApi.SendAsync(feed, HttpMethod.Get,
+            $"{feedRoute}?resume_token={unchanged.Json.GetProperty("resume_token").GetString()}", cancellationToken: cancellationToken);
+        await AssertUniqueFeedTransitionAsync(promoted, ids[0], ids[1], email);
+        await ReplayAsync(source.Server, receiver.Server, tls, tenant.Database("db"), cancellationToken);
         using var sourceAfter = sourceRpc.DigestAsync(identity, cancellationToken: cancellationToken);
         using var receiverAfter = receiverRpc.DigestAsync(identity, cancellationToken: cancellationToken);
         await Assert.That((await sourceAfter.ResponseAsync).Envelope).IsEqualTo((await receiverAfter.ResponseAsync).Envelope);
+    }
+
+    private static async Task AssertUniqueFeedTransitionAsync(ApiResponse page, string deletedId, string visibleId, string email)
+    {
+        page.Status.ShouldBe(HttpStatusCode.OK);
+        var changes = page.Json.GetProperty("changes").EnumerateArray().ToArray();
+        await Assert.That(changes.Length).IsEqualTo(2);
+        var deleted = changes.Single(change => change.GetProperty("id").GetString() == deletedId);
+        var visible = changes.Single(change => change.GetProperty("id").GetString() == visibleId);
+        await Assert.That(deleted.GetProperty("operation").GetString()).IsEqualTo("delete");
+        await Assert.That(deleted.GetProperty("document").ValueKind).IsEqualTo(JsonValueKind.Null);
+        await Assert.That(visible.GetProperty("operation").GetString()).IsEqualTo("upsert");
+        await Assert.That(visible.GetProperty("document").GetProperty("email").GetString()).IsEqualTo(email);
+        await Assert.That(changes[0].GetProperty("offset").GetString()).IsEqualTo(changes[1].GetProperty("offset").GetString());
+        await Assert.That(long.Parse(changes[0].GetProperty("sequence").GetString()!, System.Globalization.CultureInfo.InvariantCulture))
+            .IsLessThan(long.Parse(changes[1].GetProperty("sequence").GetString()!, System.Globalization.CultureInfo.InvariantCulture));
+        await Assert.That(page.Json.GetProperty("has_more").GetBoolean()).IsFalse();
     }
 
     private static async Task<ShardIdentity> UniqueRepairIdentityAsync(
