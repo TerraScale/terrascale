@@ -15,6 +15,7 @@ public sealed class QueryPlanTests
     private static readonly Dictionary<string, string> Expected = new(StringComparer.Ordinal)
     {
         ["Get"] = "SEARCH documents USING PRIMARY KEY (collection=? AND id=?)",
+        ["UniqueRawDocument"] = "SEARCH d USING PRIMARY KEY (collection=? AND id=?) | SEARCH c USING PRIMARY KEY (collection=? AND id=?) LEFT-JOIN",
         ["ReplicationRetainedBody"] = "CO-ROUTINE latest | SEARCH change_log USING INDEX change_log_by_document (collection=? AND generation=? AND id=?) | SCALAR SUBQUERY 1 | SEARCH collections USING PRIMARY KEY (name=?) | SCAN latest | SCALAR SUBQUERY 3 | SEARCH unique_conflicts USING PRIMARY KEY (collection=? AND id=?) | SEARCH d USING PRIMARY KEY (collection=? AND id=?) | CORRELATED SCALAR SUBQUERY 4 | SEARCH changes USING INDEX changes_deleted (collection=? AND id=? AND version>?)",
         ["ReplicationRetainedBodyBytes"] = "SEARCH change_log USING INTEGER PRIMARY KEY (rowid=?)",
         ["RestoreReplicationBody"] = "SEARCH documents USING PRIMARY KEY (collection=? AND id=?) | SCALAR SUBQUERY 1 | SEARCH unique_conflicts USING PRIMARY KEY (collection=? AND id=?)",

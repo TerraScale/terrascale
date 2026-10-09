@@ -12,7 +12,7 @@ internal sealed partial class SqliteStorageTransaction
                 SELECT 1 FROM unique_conflicts c WHERE c.collection = d.collection AND c.id = d.id)) LIMIT 1;
         """;
 
-    private void IndexUniqueKeys(string collection, string id, string? body, bool local, CancellationToken cancellationToken)
+    private void IndexUniqueKeys(string collection, string id, string? body, IReadOnlyList<UniqueConstraint> constraints, bool local, CancellationToken cancellationToken)
     {
         var delete = Command(UniqueDeleteKeys, collection);
         delete.Parameters.AddWithValue("$id", id);
@@ -20,7 +20,6 @@ internal sealed partial class SqliteStorageTransaction
         delete = Command("DELETE FROM unique_invalid WHERE collection = $collection AND id = $id;", collection);
         delete.Parameters.AddWithValue("$id", id);
         delete.ExecuteNonQuery();
-        var constraints = ReadUniqueConstraints(collection);
         if (body is null || constraints.Count == 0)
         {
             return;

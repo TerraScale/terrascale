@@ -12,11 +12,6 @@ internal sealed partial class SqliteStorageTransaction
         FROM documents d WHERE d.collection = $collection AND d.id = $id;
         """;
     private const string UniqueDefinitions = "SELECT body FROM documents WHERE collection = '_unique' AND id = $collection;";
-    private const string UniqueRawDocument = """
-        SELECT d.version, coalesce(c.body, d.body), c.body IS NOT NULL
-        FROM documents d LEFT JOIN unique_conflicts c ON c.collection = d.collection AND c.id = d.id
-        WHERE d.collection = $collection AND d.id = $id;
-        """;
     private const string UniqueOtherContender = """
         SELECT 1 FROM unique_keys mine JOIN unique_keys other
         ON other.collection = mine.collection AND other.constraint_name = mine.constraint_name AND other.value = mine.value
@@ -76,7 +71,7 @@ internal sealed partial class SqliteStorageTransaction
 
     private StoredDocument? ReadUniqueDocument(string collection, string id)
     {
-        var command = Command(UniqueRawDocument, collection);
+        var command = Command(SqliteStatements.UniqueRawDocument, collection);
         command.Parameters.AddWithValue("$id", id);
         using var reader = command.ExecuteReader();
         return reader.Read() && !reader.IsDBNull(1)
@@ -87,7 +82,13 @@ internal sealed partial class SqliteStorageTransaction
     // All contenders retain their merged state. Visibility is a deterministic projection of the current keys.
     private IEnumerable<string> ReplaceUniqueKeys(string collection, string id, string? body, CancellationToken cancellationToken)
     {
-        if (!Shaped || ReadUniqueConstraints(collection).Count == 0)
+        if (!Shaped)
+        {
+            return [];
+        }
+
+        var constraints = ReadUniqueConstraints(collection);
+        if (constraints.Count == 0)
         {
             return [];
         }
@@ -95,7 +96,7 @@ internal sealed partial class SqliteStorageTransaction
         BeginUniqueAffected();
         Command("DELETE FROM temp.unique_affected;").ExecuteNonQuery();
         QueueUniqueContenders(collection, id);
-        IndexUniqueKeys(collection, id, body, local: true, cancellationToken);
+        IndexUniqueKeys(collection, id, body, constraints, local: true, cancellationToken);
         var contenders = Command(UniqueOtherContender, collection);
         contenders.Parameters.AddWithValue("$id", id);
         if (contenders.ExecuteScalar() is not null)
@@ -173,12 +174,13 @@ internal sealed partial class SqliteStorageTransaction
 
     private bool ApplyUniqueState(DocumentChange change, string? body, CancellationToken cancellationToken)
     {
-        if (ReadUniqueConstraints(change.Collection).Count == 0)
+        var constraints = ReadUniqueConstraints(change.Collection);
+        if (constraints.Count == 0)
         {
             return ApplyState(change, body);
         }
 
-        var command = Command(UniqueRawDocument, change.Collection);
+        var command = Command(SqliteStatements.UniqueRawDocument, change.Collection);
         command.Parameters.AddWithValue("$id", change.Id);
         using (var reader = command.ExecuteReader())
         {
@@ -194,7 +196,7 @@ internal sealed partial class SqliteStorageTransaction
         }
 
         QueueUniqueContenders(change.Collection, change.Id);
-        IndexUniqueKeys(change.Collection, change.Id, body, local: false, cancellationToken);
+        IndexUniqueKeys(change.Collection, change.Id, body, constraints, local: false, cancellationToken);
         QueueUniqueContenders(change.Collection, change.Id);
         ClearUniqueConflict(change.Collection, change.Id);
         var put = BodyCommand(SqliteStatements.Put, change.Collection, change.Id);
@@ -222,7 +224,8 @@ internal sealed partial class SqliteStorageTransaction
 
     private void DropUniqueStatesBefore(string collection, long version, CancellationToken cancellationToken)
     {
-        if (ReadUniqueConstraints(collection).Count == 0)
+        var constraints = ReadUniqueConstraints(collection);
+        if (constraints.Count == 0)
         {
             return;
         }
@@ -239,7 +242,7 @@ internal sealed partial class SqliteStorageTransaction
         command.ExecuteNonQuery();
         foreach (var id in UniqueProjectionIds(collection, affected: false, cancellationToken, beforeVersion: version))
         {
-            IndexUniqueKeys(collection, id, body: null, local: false, cancellationToken);
+            IndexUniqueKeys(collection, id, body: null, constraints, local: false, cancellationToken);
             ClearUniqueConflict(collection, id);
             var deletion = new DocumentChange(collection, id, version, null);
             if (ApplyState(deletion, admittedBody: null))
@@ -259,6 +262,7 @@ internal sealed partial class SqliteStorageTransaction
             throw new InvalidDataException("a unique schema names an invalid collection");
         }
 
+        IReadOnlyList<UniqueConstraint> constraints = [];
         if (body is not null)
         {
             try
@@ -268,6 +272,8 @@ internal sealed partial class SqliteStorageTransaction
                 {
                     throw new InvalidDataException("invalid replicated unique schema");
                 }
+
+                constraints = schema.Constraints;
             }
             catch (JsonException error)
             {
@@ -286,7 +292,7 @@ internal sealed partial class SqliteStorageTransaction
         foreach (var id in UniqueProjectionIds(change.Id, affected: false, cancellationToken))
         {
             var raw = ReadUniqueDocument(change.Id, id);
-            IndexUniqueKeys(change.Id, id, raw is null ? null : StrictUtf8.GetString(raw.Json.Span), local: false, cancellationToken);
+            IndexUniqueKeys(change.Id, id, raw is null ? null : StrictUtf8.GetString(raw.Json.Span), constraints, local: false, cancellationToken);
         }
 
         ReconcileUnique(change.Id, UniqueProjectionIds(change.Id, affected: false, cancellationToken), writtenId: null, cancellationToken);
