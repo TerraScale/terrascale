@@ -17,7 +17,7 @@ func TestSidebarNavigationTonesDoNotRepeat(t *testing.T) {
 		layout string
 		count  int
 	}{
-		{name: "dashboard", layout: "shell", count: 5},
+		{name: "dashboard", layout: "shell", count: 6},
 		{name: "admin", layout: "admin", count: 8},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

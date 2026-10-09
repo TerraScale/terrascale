@@ -604,8 +604,10 @@ type Deps struct {
 	SDK        SDKFactory
 	Management *v1.Management
 	// Usage reads TerraBase's metered usage; nil without TerraBase.
-	Usage    UsageMeter
-	Throttle Throttle
+	Usage        UsageMeter
+	Metrics      MetricsReader
+	RegionHealth RegionHealthReader
+	Throttle     Throttle
 	// SignUpMail limits verification emails to one per minute per address.
 	SignUpMail Throttle
 	Tools      *Tools

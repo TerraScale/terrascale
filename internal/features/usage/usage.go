@@ -19,6 +19,7 @@ import (
 	"terrascale.tech/dashboard/internal/core"
 	"terrascale.tech/dashboard/internal/features/demovisuals"
 	"terrascale.tech/dashboard/internal/features/payments"
+	"terrascale.tech/dashboard/internal/features/replication"
 	"terrascale.tech/dashboard/internal/features/subscriptions"
 	"terrascale.tech/dashboard/internal/ui/charts"
 )
@@ -124,6 +125,7 @@ type invoicePage struct {
 
 type pageData struct {
 	InternalBill          *internalBill
+	Replication           replication.View
 	OrganizationBilling   bool
 	Tab                   string
 	Projects              []projectRow
@@ -260,6 +262,9 @@ func pageHandler(deps core.Deps, billing *payments.Stripe, wrap func(core.Page, 
 			return
 		}
 		data.ExplicitProjectFilter = r.URL.Query().Get("project") == project.ID
+		if tab == "overview" {
+			data.Replication = replication.Load(ctx, deps, p, project.ID, databaseFilter, data.HistoryRange)
+		}
 		if demovisuals.IsSeededMarioAccount(deps.Demo, account, org) {
 			addMarioSampleVisuals(&data)
 		}
@@ -636,6 +641,9 @@ func buildPage(ctx context.Context, service Service, p core.Principal, token str
 		StorageMeasured: report.Totals.StorageMeasured, OrganizationStorageMeasured: report.Allowances[2].Measured,
 		HistoryRange: report.Totals.Range, HistoryRangeLabel: demovisuals.RangeLabel(report.Totals.Range),
 	}
+	if data.HistoryRange == "1h" {
+		data.HistoryRangeLabel = "Current UTC hour"
+	}
 	for _, item := range report.Allowances {
 		gauge := allowanceGauge{Name: item.Name, Allowance: item.Allowance, Used: "Not metered", Note: item.Allowance}
 		if item.Measured {
@@ -806,6 +814,7 @@ func addMarioSampleVisuals(data *pageData) {
 	values := demovisuals.Workload(data.HistoryRange)
 	reads, writes, replication := demovisuals.Operations(values)
 	data.SampleHistory = true
+	data.HistoryRangeLabel = demovisuals.RangeLabel(data.HistoryRange)
 	data.HistoryChart = charts.NewLine(
 		"Illustrative organization reads, writes, and replication, "+data.HistoryRangeLabel,
 		demovisuals.TickLabels(data.HistoryRange), demovisuals.PointLabels(data.HistoryRange, len(values)), 200,

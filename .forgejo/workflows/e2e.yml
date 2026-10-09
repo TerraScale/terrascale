@@ -69,16 +69,17 @@ jobs:
           TERRABASE_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
           TERRABASE_REQUIRE: "1"
         run: make test-unit
-  # Each shard is its own process with an in-process dashboard and Chromium,
-  # still serial inside, so together the shards run make test-slow's browser
-  # half: every test runs in exactly one shard.
+  # One browser worker runs every test once. This Forgejo runner does not
+  # enforce matrix max-parallel, so multiple shards can starve Chromium.
   browser:
+    # Keep race builds and real-server unit tests out of Chromium's CPU budget.
+    needs: [lint, unit]
     runs-on: terrascale-builder
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1]
     steps:
       - name: Check out the event revision
         uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -89,7 +90,9 @@ jobs:
         run: npm ci --no-audit --no-fund
       - name: Run Go browser and account-to-ts-go tests (shard ${{ matrix.shard }})
         env:
-          GO_TEST_FLAGS: "-race -count=1 -v"
+          # The complete serial suite exceeded Go's default ten-minute limit.
+          # Leave five minutes in the job budget for setup and cleanup.
+          GO_TEST_FLAGS: "-race -count=1 -v -timeout=15m"
           NODE_OPTIONS: "--trace-warnings"
           TERRABASE_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
           TERRABASE_REQUIRE: "1"

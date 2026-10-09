@@ -175,11 +175,42 @@ database tooling (backups, index recommendations, schema, project usage, SQL che
 invitation lookup and general Management commits. Not served:
 query `explain`, `Idempotency-Key` and the `/v1/dashboard` control plane.
 
+### Replication and analytics (TS-762)
+
+`Analytics` and `Replication` read TerraBase's unversioned project routes using
+a ts-auth **project access token**. Project and database IDs are plain ULIDs.
+The wire shape is provisional until TerraBase's TS-762 OpenAPI lands; see
+[the contract](contracts/replication-analytics.md). Do not merge the SDK PR
+before the TerraBase PR has merged and this contract has been reconciled.
+
+```go
+m, err := tb.NewManagement(tb.Config{BaseURL: origin})
+u := m.WithToken(projectAccessToken)
+opts := tb.MetricsOptions{Range: tb.Range24Hours, DatabaseID: databaseID, Region: "gru"}
+analytics, err := u.Analytics(ctx, projectID, opts)
+replication, err := u.Replication(ctx, projectID, opts)
+// Fetch the next analytics page with the same filters.
+opts.After = analytics.Next // empty means the last page
+```
+
+Each call returns one page; pass `Next` as `MetricsOptions.After` when non-empty.
+TerraBase chooses time buckets for `1h`, `24h`, `7d`, or `30d`. Analytics includes
+requests and operations by type, errors, p50/p95/p99 latency, storage, client
+bandwidth and directed replication bandwidth. Replication reports period ops
+and bytes by region pair, lag, divergence, convergence time, last applied and
+status per database and region. `replication_bytes` is a separate meter from
+client bandwidth; nullable observations distinguish missing data from zero.
+The methods share the client's context cancellation, response bounds, API
+errors and safe-read retries.
+
 ### Tests
 
 TerraBase storage and management journeys run against the real release.
 Focused HTTP boundary tests also check generated IDs and malformed response
-envelopes without simulating persistence. The importable `terrascale.tech/sdk/terrabasetest` package is the
+envelopes without simulating persistence. TS-762's `v1/metrics_test.go` uses
+`httptest` for the provisional replication and analytics contract while the
+server endpoints are being added in parallel. The importable
+`terrascale.tech/sdk/terrabasetest` package is the
 shared harness for SDK and downstream tests: it pins the release
 by version and SHA-256, downloads it once with `TERRABASE_TOKEN` (read access
 to TerraScale/terrabase) into the user cache directory (or `TERRABASE_CACHE`),
@@ -193,7 +224,7 @@ TerraBase assigns both listener ports. Startup is bounded to
 TERRABASE_TOKEN=… TERRABASE_REQUIRE=1 nice -n 19 go test ./v1/ ./terrabasetest/
 ```
 
-`v1/integration_test.go` exercises every SDK call against it. Its recording
+`v1/integration_test.go` exercises the pinned release's SDK calls. Its recording
 transport checks the real traffic: each request is a route of
 `v1/testdata/openapi.json` (the executable's own `/openapi/v1.json` on the
 client listener; `TERRABASE_REPIN=1` rewrites it) or an admin-listener route,
@@ -244,6 +275,58 @@ execute SQL over HTTP. The explicit pgx-backed PostgreSQL client uses separate
 listener configuration, credentials, and CA trust. Actual PostgreSQL execution
 requires its producer protocol and an admitted signed listener; source and
 package checks do not qualify an actual admitted PostgreSQL runtime.
+
+## Region latency (`client.Status`)
+
+`client.Status.Latency(ctx, "")` reads all regions from the public
+`https://status.terrascale.tech/api/latency` endpoint. Pass a region code such
+as `"gru"` to send `?region=gru`; codes are trimmed and lowercased without
+restricting the available regions. Override the origin with `Config.StatusBaseURL`
+(HTTPS, or HTTP on loopback and `.test` origins for development). Status calls
+need no credentials and do not use auth discovery.
+
+```go
+client, err := sdk.NewClient(sdk.Config{MaxRetryAttempts: 2})
+if err != nil {
+    return err
+}
+latency, err := client.Status.Latency(ctx, "gru")
+if err != nil {
+    return err
+}
+for _, region := range latency.Regions {
+    if region.Consensus != nil && region.Consensus.MedianMS != nil {
+        fmt.Printf("%s: %d ms (%s)\n", region.Name, *region.Consensus.MedianMS, region.Status)
+    }
+}
+```
+
+`LatencyResponse.GeneratedAt` is a parsed RFC3339 timestamp; `Window` is `"1h"`.
+Each region contains its code, name, ping URL, status, consensus, and individual
+vantages. Median and p95 measurements are `*int` milliseconds: `nil` means no
+measurement, while a pointer to zero is a measured zero. Consensus may also be
+`nil`. `Samples` is an integer count. Status is `operational`, `degraded`, `down`,
+or `planned`. These are probe measurements, not the caller's own browser ping.
+
+The client shares the SDK's bounded HTTP transport, `RequestTimeout`, retries
+on transient failures (`MaxRetryAttempts`, `RetryDelay`, and `Retry-After`),
+and `*sdk.APIError` responses. Retries default to zero; redirects are refused.
+The service briefly caches responses; the SDK adds no cache.
+[`status_example_test.go`](status_example_test.go) contains a compilable example.
+
+Unit tests use `httptest`. The live contract test is opt-in and skips HTTP 404
+until the endpoint is deployed:
+
+```sh
+TERRASCALE_STATUS_LIVE=1 nice -n 19 go test . -run '^TestStatusLatencyLive$' -v
+```
+
+Before merging this client, require the deployed endpoint to match the response,
+region filter, public CORS, and cache contract (404 now fails):
+
+```sh
+TERRASCALE_STATUS_REQUIRE_LATENCY=1 nice -n 19 go test . -run '^TestStatusLatencyLive$' -v
+```
 
 ## Atlas publishing (`terrascale.tech/sdk/atlas`)
 
@@ -349,9 +432,9 @@ The edge artifacts and pins are in `contracts/edge/v1`.
 
 ```sh
 test -z "$(gofmt -l .)"
-go vet ./...
-go build ./...
-go test -race ./...
+nice -n 19 go vet ./...
+nice -n 19 go build ./...
+nice -n 19 go test -race ./...
 ```
 
 The module requires Go 1.25 and has no CGO dependency. CI runs the pinned

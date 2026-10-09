@@ -322,3 +322,11 @@
 .ts-card-actions > .ts-filters {
   flex-wrap: nowrap;
 }
+
+.ts-measurement-loading {
+  display: none;
+}
+
+body.ts-nav-pending .ts-measurement-loading {
+  display: block;
+}

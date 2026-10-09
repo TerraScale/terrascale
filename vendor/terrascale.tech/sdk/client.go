@@ -1,7 +1,7 @@
 // Package sdk is the TerraScale Go SDK (terrascale.tech/sdk).
 //
-// It holds the hosted ts-auth clients (Client.TSAuth) and the schema and SQL
-// builders; the TerraBase client is package v1.
+// It holds the hosted ts-auth and status clients (Client.TSAuth, Client.Status)
+// and the schema and SQL builders; the TerraBase client is package v1.
 package sdk
 
 import (
@@ -78,11 +78,14 @@ type Config struct {
 	TSAuthUseReverseProxy bool
 	// DiscoveryBaseURL overrides Atlas metadata for public Auth discovery.
 	DiscoveryBaseURL string
+	// StatusBaseURL overrides the public ts-status origin (default
+	// https://status.terrascale.tech). It does not use auth discovery.
+	StatusBaseURL string
 	// HTTPClient defaults to one with a 30s timeout. The SDK copies it and
 	// disables redirects; explicit 421 placement repair remains supported.
 	HTTPClient *http.Client
-	// MaxRetryAttempts is retries for idempotent mutations on transient
-	// statuses (0-8, default 0).
+	// MaxRetryAttempts is retries for safe reads on transient failures
+	// (0-8, default 0). Mutations are never retried.
 	MaxRetryAttempts int
 	// RetryDelay is the base retry backoff (default 250ms, max 30s).
 	RetryDelay time.Duration
@@ -99,6 +102,7 @@ type Client struct {
 	authDiscovery tsAuthEndpointDiscovery
 
 	TSAuth *TSAuthClient
+	Status *StatusClient
 }
 
 // NewClient validates local configuration and constructs a Client;
@@ -158,6 +162,11 @@ func NewClient(cfg Config) (*Client, error) {
 		}
 	}
 
+	statusBase, err := statusResolveBase(cfg.StatusBaseURL)
+	if err != nil {
+		return nil, err
+	}
+
 	if cfg.MaxRetryAttempts < 0 || cfg.MaxRetryAttempts > 8 {
 		return nil, fmt.Errorf("sdk: max retry attempts must be between 0 and 8")
 	}
@@ -190,12 +199,14 @@ func NewClient(cfg Config) (*Client, error) {
 		TSAuthBaseURL:         strings.TrimSpace(cfg.TSAuthBaseURL),
 		TSAuthUseReverseProxy: cfg.TSAuthUseReverseProxy,
 		DiscoveryBaseURL:      discoveryBase,
+		StatusBaseURL:         statusBase,
 		HTTPClient:            httpClient,
 		MaxRetryAttempts:      cfg.MaxRetryAttempts,
 		RetryDelay:            retryDelay,
 		RequestTimeout:        requestTimeout,
 	}, http: httpClient}
 	c.TSAuth = &TSAuthClient{c: c}
+	c.Status = &StatusClient{c: c}
 	return c, nil
 }
 

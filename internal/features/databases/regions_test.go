@@ -56,7 +56,7 @@ func TestDatabasePlacementIsGRUSFOOrBothFromDiscovery(t *testing.T) {
 	if err != nil || !slices.Equal(moved.Placement, []string{"GRU", "SFO"}) || moved.Region != "GRU" {
 		t.Fatalf("set regions = %+v, %v", moved, err)
 	}
-	if got := replicationDisplay(moved.Placement); got != "Replicated across GRU, SFO · lag not reported" {
+	if got := replicationDisplay(moved.Placement); got != "Replicated across GRU, SFO" {
 		t.Fatalf("replication = %q", got)
 	}
 	if _, err := service.SetRegions(t.Context(), p, db.ID, "SFO"); !errors.Is(err, errHomeRegion) {

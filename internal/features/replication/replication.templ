@@ -1,0 +1,92 @@
+package replication
+
+import (
+	"fmt"
+	"terrascale.tech/dashboard/internal/ui"
+	"terrascale.tech/dashboard/internal/ui/charts"
+)
+
+templ Section(v View) {
+	@ui.Card(ui.CardProps{ID: "replication", Title: "Replication", Description: "Per database and region · " + v.Range + " · TerraBase replication_bytes meter"}) {
+		if v.Error != "" {
+			@ui.Alert("warning", "Replication unavailable", v.Error)
+		} else if len(v.Regions) == 0 && len(v.Pairs) == 0 {
+			@ui.Empty(v.Empty, "")
+		} else {
+			@ui.Stats("Replication totals") {
+				@ui.Stat("Replicated ops", fmt.Sprint(v.ReplicatedOps), "Across database regions")
+				@ui.Stat("Replication sent", ui.FormatBytes(v.SentBytes), "Metered separately from client bandwidth")
+				@ui.Stat("Replication received", ui.FormatBytes(v.ReceivedBytes), "Received at destination regions")
+				@ui.Stat("Worst lag", milliseconds(v.WorstLagMS), "Current maximum across regions")
+			}
+			if len(v.Chart.Paths) > 0 {
+				@charts.Legend(v.Chart)
+				<div class="ts-chart-shell" role="region" aria-label="Replication bandwidth chart" tabindex="0">@charts.Line(v.Chart)</div>
+			} else {
+				@ui.Empty("No replication bandwidth samples for this period.", "")
+			}
+			@RegionTable(v)
+			@PairTable(v)
+		}
+		<a class="ts-link" href={ v.analyticsURL() }>View analytics →</a>
+	}
+}
+
+templ RegionTable(v View) {
+	if len(v.Regions) > 0 {
+		<div class="ts-table-wrap" role="region" aria-label="Replication health table" tabindex="0"><table class="ts-table">
+			<caption class="ts-sr-only">Replication health per database and region</caption>
+			<thead><tr><th>Database</th><th>Region</th><th>Health</th><th class="ts-num">Replicated ops</th><th class="ts-num">Lag</th><th class="ts-num">Divergence</th><th class="ts-num">Convergence time</th><th>Last applied</th></tr></thead>
+			<tbody>
+				for _, row := range v.Regions {
+					<tr><th scope="row">{ row.DatabaseName }</th><td>{ row.Region }</td><td>@ui.Badge(StatusTone(row.Status), row.Status)</td><td class="ts-num">{ fmt.Sprint(row.ReplicatedOps) }</td><td class="ts-num">{ milliseconds(row.LagMS) }</td><td class="ts-num">{ divergence(row.Divergence) }</td><td class="ts-num">{ milliseconds(row.ConvergenceMS) }</td><td>{ applied(row.LastApplied) }</td></tr>
+				}
+			</tbody>
+		</table></div>
+	}
+}
+
+templ PairTable(v View) {
+	if len(v.Pairs) > 0 {
+		<div class="ts-table-wrap" role="region" aria-label="Replication bandwidth table" tabindex="0"><table class="ts-table">
+			<caption class="ts-sr-only">Replication bandwidth per ordered region pair</caption>
+			<thead><tr><th>Database</th><th>Region pair</th><th class="ts-num">Sent</th><th class="ts-num">Received</th></tr></thead>
+			<tbody>
+				for _, row := range v.Pairs {
+					<tr><th scope="row">{ row.DatabaseName }</th><td>{ row.FromRegion + " → " + row.ToRegion }</td><td class="ts-num">{ ui.FormatBytes(row.SentBytes) }</td><td class="ts-num">{ ui.FormatBytes(row.ReceivedBytes) }</td></tr>
+				}
+			</tbody>
+		</table></div>
+	}
+}
+
+templ Summary(v View) {
+	@ui.Card(ui.CardProps{ID: "home-replication", Title: "Replication", Description: "Selected project · " + v.Range}) {
+		if v.Error != "" {
+			@ui.Alert("warning", "Replication unavailable", v.Error)
+		} else if len(v.Regions) == 0 && len(v.Pairs) == 0 {
+			@ui.Empty(v.Empty, "")
+		} else {
+			@ui.Stats("Replication health") {
+				@ui.Stat("Healthy", fmt.Sprint(v.Healthy), "Database regions")
+				@ui.Stat("Lagging", fmt.Sprint(v.Lagging), "Database regions")
+				@ui.Stat("Diverged", fmt.Sprint(v.Diverged), "Database regions")
+				@ui.Stat("Stopped", fmt.Sprint(v.Stopped), "Database regions")
+			}
+			@ui.Stats("Replication bandwidth and lag") {
+				@ui.Stat("Worst lag", milliseconds(v.WorstLagMS), "Current maximum")
+				@ui.Stat("Replication bandwidth", ui.FormatBytes(v.SentBytes), "Sent during " + v.Range)
+				@ui.Stat("Received", ui.FormatBytes(v.ReceivedBytes), "During " + v.Range)
+			}
+			@ui.Stats("Replication bandwidth by direction") {
+				for _, pair := range v.Directions {
+					@ui.Stat(pair.FromRegion + " → " + pair.ToRegion, ui.FormatBytes(pair.SentBytes), "Sent across project databases")
+				}
+			}
+		}
+		<div class="ts-row">
+			<a class="ts-link" href={ "/usage?range=" + v.Range + "#replication" }>View usage replication →</a>
+			<a class="ts-link" href={ v.analyticsURL() }>View analytics →</a>
+		</div>
+	}
+}

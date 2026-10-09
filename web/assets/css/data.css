@@ -301,6 +301,7 @@ code:not(pre code) {
 
 .ts-chart-dot.ts-cat-2 { stroke: var(--ts-cat-2); }
 .ts-chart-dot.ts-cat-3 { stroke: var(--ts-cat-3); }
+.ts-chart-dot.ts-chart-marker { opacity: 1; }
 
 .ts-chart-column:is(:hover, :focus-visible) :is(.ts-chart-guide, .ts-chart-dot, .ts-chart-tip),
 .ts-chart-column:last-of-type .ts-chart-dot {
@@ -336,8 +337,11 @@ code:not(pre code) {
   font-variant-numeric: tabular-nums;
 }
 
-.ts-chart-tip-swatch { fill: var(--ts-chart-1); }
-.ts-chart-tip-swatch[class*="ts-cat-"] { fill: var(--series); }
+.ts-chart-tip-swatch {
+  stroke: var(--series, var(--ts-chart-1));
+  stroke-width: 2;
+  stroke-linecap: round;
+}
 
 .ts-chart-legend {
   display: flex;
@@ -368,7 +372,16 @@ code:not(pre code) {
 .ts-cat-2 { --series: var(--ts-cat-2); }
 .ts-cat-3 { --series: var(--ts-cat-3); }
 .ts-chart .ts-chart-line[class*="ts-cat-"] { stroke: var(--series); }
-.ts-chart-swatch[class*="ts-cat-"] { background: var(--series); }
+span.ts-chart-swatch[class*="ts-cat-"] { background: var(--series); }
+svg.ts-chart-swatch {
+  width: 32px;
+  height: 8px;
+  flex: none;
+  background: none;
+  stroke: var(--series, var(--ts-chart-1));
+  stroke-width: 2.25;
+  stroke-linecap: round;
+}
 
 /* Share bar and utilization ring (SVG, sized by viewBox attributes). Each
    sits in a focusable meter that shows its name and value above it. */
