@@ -212,29 +212,32 @@ public sealed class TokenEndpoint(Users users, TotpCredentials mfa, HeadlessAuth
             return await headless.GrantAsync(request, cancellationToken);
         }
 
-        if (request.IsClientCredentialsGrantType()
-            && await applications.FindByClientIdAsync(request.ClientId!, cancellationToken) is { } application
-            && application.ClientSecret?.StartsWith(ApiKeyApplicationManager.DigestPrefix, StringComparison.Ordinal) == true)
+        if (request.IsClientCredentialsGrantType())
         {
-            // An API key (TS-598) OpenIddict has authenticated: an organization or project token.
-            return await platform.ApiKeyAsync(this.HttpContext, request, cancellationToken);
+            var application = await applications.FindByClientIdAsync(request.ClientId!, cancellationToken);
+            if (application is null)
+            {
+                return OidcResults.Forbid(Errors.InvalidClient, "The client is unknown, revoked or expired.");
+            }
+
+            if (application.ClientSecret?.StartsWith(ApiKeyApplicationManager.DigestPrefix, StringComparison.Ordinal) == true)
+            {
+                // An API key (TS-598) OpenIddict has authenticated: an organization or project token.
+                return await platform.ApiKeyAsync(this.HttpContext, request, cancellationToken);
+            }
+
+            // OpenIddict authenticated this resolved service client and checked its client-credentials permission.
+            var service = new ClaimsIdentity(TokenValidationParameters.DefaultAuthenticationType, Claims.Name, Claims.Role)
+                .SetClaim(Claims.Subject, request.ClientId)
+                .SetResources(options.AccessTokenAudiences);
+            service.SetDestinations(_ => [Destinations.AccessToken]);
+            return Results.SignIn(new ClaimsPrincipal(service), null, OpenIddictServerAspNetCoreDefaults.AuthenticationScheme);
         }
 
         if (request.IsTokenExchangeGrantType())
         {
             // OpenIddict has validated the subject token and the client's token-exchange permission.
             return await platform.ExchangeAsync(this.HttpContext, request, cancellationToken);
-        }
-
-        if (request.IsClientCredentialsGrantType())
-        {
-            // OpenIddict has authenticated the client and checked its client-credentials permission. The client is the
-            // subject; no scope is granted, so neither an identity nor a refresh token is issued.
-            var service = new ClaimsIdentity(TokenValidationParameters.DefaultAuthenticationType, Claims.Name, Claims.Role)
-                .SetClaim(Claims.Subject, request.ClientId)
-                .SetResources(options.AccessTokenAudiences);
-            service.SetDestinations(_ => [Destinations.AccessToken]);
-            return Results.SignIn(new ClaimsPrincipal(service), null, OpenIddictServerAspNetCoreDefaults.AuthenticationScheme);
         }
 
         var principal = (await this.HttpContext.AuthenticateAsync(OpenIddictServerAspNetCoreDefaults.AuthenticationScheme)).Principal

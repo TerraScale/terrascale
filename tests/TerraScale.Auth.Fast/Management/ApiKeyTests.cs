@@ -2,6 +2,8 @@ using System.Net;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.DependencyInjection;
+using OpenIddict.Abstractions;
+using OpenIddict.Server;
 using TerraScale.Auth.Configuration;
 using TerraScale.Auth.Store;
 using TerraScale.Auth.Tests;
@@ -20,6 +22,58 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
     private static readonly string[] ReadOnly = ["documents:read"];
     private static readonly string[] ReadWrite = ["documents:read", "documents:write"];
     private static readonly string[] Browse = ["databases:read", "documents:read"];
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task A_key_revoked_or_expired_after_client_authentication_cannot_become_a_service_client(bool expires)
+    {
+        var clock = new ManualClock(DateTimeOffset.UtcNow);
+        Func<Task>? invalidate = null;
+        string? clientId = null;
+        var invalidated = false;
+        await using var oidc = await OidcHarness.StartAsync(fixture, values => values["access-token-audiences"] = Audience,
+            clock: clock, services: services => services.AddOpenIddict().AddServer(server =>
+                server.AddEventHandler<OpenIddictServerEvents.ValidateTokenRequestContext>(handler => handler
+                    // Client authentication and grant checks finish before the passthrough endpoint runs.
+                    .SetOrder(int.MaxValue)
+                    .UseInlineHandler(async context =>
+                    {
+                        if (context.Request.IsClientCredentialsGrantType() && context.Request.ClientId == clientId && invalidate is not null)
+                        {
+                            await invalidate();
+                            invalidated = true;
+                        }
+                    }))));
+        var (_, token) = await oidc.SignInUserAsync("client-race@example.test");
+        var organization = await oidc.CreateOrganizationAsync(token);
+        var keys = $"{Organizations}/{organization}/api-keys";
+        var created = await oidc.OkAsync(HttpMethod.Post, keys, token,
+            new { name = "race", scopes = ReadOnly, expires_at = clock.GetUtcNow().AddMinutes(5) }, HttpStatusCode.Created);
+        var key = created.GetProperty("key").GetString()!;
+        await Assert.That((await TokenErrorAsync(oidc.ApiKeyTokenAsync(key))).Status).IsEqualTo(200);
+
+        clientId = key[..26];
+        invalidate = async () =>
+        {
+            if (expires)
+            {
+                clock.Advance(TimeSpan.FromMinutes(5));
+            }
+            else
+            {
+                await oidc.OkAsync(HttpMethod.Delete, $"{keys}/{clientId}", token, status: HttpStatusCode.NoContent);
+            }
+        };
+        using var refused = await oidc.ApiKeyTokenAsync(key);
+        var body = await OidcHarness.JsonAsync(refused);
+        await Assert.That(invalidated).IsTrue();
+        await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        await Assert.That(body.GetProperty("error").GetString()).IsEqualTo("invalid_client");
+        await Assert.That(body.TryGetProperty("access_token", out _)).IsFalse();
+        await Assert.That(body.TryGetProperty("refresh_token", out _)).IsFalse();
+        await Assert.That(body.TryGetProperty("id_token", out _)).IsFalse();
+    }
 
     [Test]
     public async Task A_project_key_is_shown_once_and_exchanged_for_a_project_token_with_the_contract_claims()
