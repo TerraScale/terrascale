@@ -61,9 +61,6 @@ func Load(ctx context.Context, deps core.Deps, p core.Principal, projectID, data
 	names := make(map[string]string)
 	for _, db := range project.Databases {
 		names[db.ID] = db.Name
-		if db.TerraBaseID != "" {
-			names[db.TerraBaseID] = db.Name
-		}
 	}
 	for _, row := range result.Regions {
 		v.Regions = append(v.Regions, Region{ReplicationRegion: row, DatabaseName: databaseName(names, row.DatabaseID)})

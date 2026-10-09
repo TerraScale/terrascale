@@ -64,9 +64,6 @@ func Load(ctx context.Context, deps core.Deps, p core.Principal, projectID, data
 	regionInProject := false
 	for _, db := range project.Databases {
 		v.databaseNames[db.ID] = db.Name
-		if db.TerraBaseID != "" {
-			v.databaseNames[db.TerraBaseID] = db.Name
-		}
 		v.Databases = append(v.Databases, Option{ID: db.ID, Name: db.Name})
 		regionInProject = regionInProject || db.Region == region || slices.Contains(db.Regions, region)
 		if databaseID == "" || db.ID == databaseID {

@@ -49,12 +49,9 @@ func (d Deps) MetricsSelection(ctx context.Context, p Principal, projectID, data
 	}
 	scope := MetricsScope{OrganizationID: p.OrganizationID, ProjectID: project.ID, DatabaseID: databaseID, Region: region, Range: MetricsRange(rangeKey)}
 	if databaseID != "" {
-		db, ok := project.Databases[databaseID]
+		_, ok := project.Databases[databaseID]
 		if !ok {
 			return Project{}, MetricsScope{}, ErrNotFound
-		}
-		if db.TerraBaseID != "" {
-			scope.DatabaseID = db.TerraBaseID
 		}
 	}
 	if region != "" {

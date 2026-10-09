@@ -34,13 +34,12 @@ func TestScopeAuthorizationAndProviderIDs(t *testing.T) {
 	}
 	p := account.Principal()
 	const databaseID = "01JC9Q8Y5N7P9R3T5V7X9Z2AC"
-	const providerID = "01JC9Q9Y5N7P9R3T5V7X9Z2AC"
 	const otherID = "01JC9QA15N7P9R3T5V7X9Z2AC"
 	err = store.UpdateAs(t.Context(), p, func(a *core.Account) error {
 		org := a.Organizations[p.OrganizationID]
-		org.PlanID = "plan_starter"
+		org.PlanID = core.StarterPlanID
 		project := org.Projects[p.ProjectID]
-		project.Databases[databaseID] = core.Database{ID: databaseID, TerraBaseID: providerID, Name: "primary", Region: "GRU", Regions: []string{"GRU", "SFO"}}
+		project.Databases[databaseID] = core.Database{ID: databaseID, Name: "primary", Region: "GRU", Regions: []string{"GRU", "SFO"}}
 		project.Databases[otherID] = core.Database{ID: otherID, Name: "other", Region: "FRA"}
 		org.Projects[project.ID] = project
 		a.Organizations[org.ID] = org
@@ -58,7 +57,7 @@ func TestScopeAuthorizationAndProviderIDs(t *testing.T) {
 			t.Fatal(err)
 		}
 		got := client.scopes[len(client.scopes)-1]
-		if got.OrganizationID != p.OrganizationID || got.ProjectID != p.ProjectID || got.DatabaseID != providerID || got.Region != "SFO" || got.Range != rangeKey || client.token != "user-access-token" {
+		if got.OrganizationID != p.OrganizationID || got.ProjectID != p.ProjectID || got.DatabaseID != databaseID || got.Region != "SFO" || got.Range != rangeKey || client.token != "user-access-token" {
 			t.Fatalf("scope=%+v", got)
 		}
 	}
