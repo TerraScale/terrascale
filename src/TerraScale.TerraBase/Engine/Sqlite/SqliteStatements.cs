@@ -212,7 +212,7 @@ internal static class SqliteStatements
         ORDER BY collection, id LIMIT $limit;
         """;
 
-    // Shared with the partial-index migration: SQLite needs matching predicates to use the index.
+    // Shared with the fresh partial-index bootstrap: SQLite needs matching predicates to use the index.
     internal const string BoundedReplicationKeys = BoundedBaselineKeys + " AND collection != '' AND id != ''";
 
     // Seek the latest actual winner, including imported equal-version conflicts, in this generation.

@@ -49,7 +49,7 @@ Invalid membership peer addresses are logged without their values and skipped; a
 not stop reconciliation with the remaining members or configured peers.
 The closed-beta `terrabase.alpha.AntiEntropy` gRPC contract uses the existing mutual-TLS listener and
 LZ4 application envelopes; it adds no public HTTP API. Schema 9 adds two partial key indexes so
-excluded empty or oversized legacy keys do not lengthen document or retained-deletion scans.
+excluded empty or oversized keys do not lengthen document or retained-deletion scans.
 
 A transient Merkle tree has 16 leaves, selected by the high nibble of SHA-256 of each length-framed
 collection/id key. Each leaf hashes current states in key order, including versions, exact JSON bytes,
@@ -106,8 +106,8 @@ Unary responses are explicitly flushed before application completion, keeping bl
 writes inside admission. Reservations remain held through application response completion
 or cancellation; this does not establish peer consumption or final network delivery. Reads return
 their SQLite sessions before network waits, except the local digest scan, which holds a consistent
-read snapshot without network I/O. Oversized legacy keys excluded by baseline replication are also
-excluded from repair. Other inadmissible legacy keys are skipped before body materialization, local
+read snapshot without network I/O. Oversized keys excluded by baseline replication are also
+excluded from repair. Other inadmissible keys are skipped before body materialization, local
 repair or hashing. Scan cursors retain the last examined key, even for empty pages, and allow at
 most 63 collection bytes and 1024 id bytes so scans advance past these keys. Transferred states
 retain the normal collection/id validation. The system catalog continues to use its existing primary/follower protocol.
@@ -150,7 +150,7 @@ follows it. Design, limits and failover: [0009](decisions/0009-catalog-replicati
   A primary that cannot be reached answers `503 catalog_primary_unavailable` with `Retry-After: 1`. The
   administrative listener is never forwarded: on a follower its catalog writes (`POST /admin/api-keys`, the
   service credential's Management writes) answer `503 not_primary`. A follower runs no catalog writer of its own
-  (intent recovery, migration, backups, usage flushes); it sends its usage counts to the primary every 10 seconds
+  (intent recovery, bootstrap, backups, usage flushes); it sends its usage counts to the primary every 10 seconds
   over `CatalogUsage.Add`, numbered per process, which the primary adds once per sequence.
 - A follower authenticates API keys and resolves organizations, projects and databases from its replica, and
   serves a registered database before any of its documents arrived (an empty local file that client replication
@@ -367,7 +367,7 @@ independent of sender journal sequences (see `shape-reads.md`).
 | Frontier reconciliation | Every 5 s discovers persisted client databases and retries failed opens; pending requests coalesce |
 | Retry backoff | Per database incarnation: 100 ms doubling to 10 s, full jitter, reset after a successful sync |
 
-Startup discovery isolates database open, migration, baseline and head-read failures. Peer workers run
+Startup discovery isolates database open, bootstrap, baseline and head-read failures. Peer workers run
 alongside the initial scan, so healthy commits do not wait for the whole scan. Each database open
 and head read shares one 15-second discovery budget; incomplete discovery is retried on reconciliation. Healthy
 stores continue replicating; the next reconciliation retries failed discovery without a separate

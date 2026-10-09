@@ -1340,7 +1340,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
             return initialization;
         }
 
-        // Migration and seeding run on the I/O pool; keep them off the lifecycle lock. Nested transactions
+        // Bootstrap and seeding run on the I/O pool; keep them off the lifecycle lock. Nested transactions
         // reuse the initialization's own admission, taken only once the caller released its creation admission.
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _awaitingRelease.Add(release);

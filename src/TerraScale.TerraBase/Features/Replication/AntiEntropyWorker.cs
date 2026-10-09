@@ -152,7 +152,7 @@ internal sealed partial class AntiEntropyWorker(
         }
 
         var receiving = identity.Clone();
-        receiving.Incarnation = ByteString.CopyFrom(store.Incarnation.ToByteArray(bigEndian: true));
+        receiving.Incarnation = ByteString.CopyFrom(store.Incarnation.ToByteArray());
         receiving.Origin = remote.Origin;
         (receiving.SourceProof, receiving.TargetProof) = (identity.TargetProof, identity.SourceProof);
         var request = new RangeRequest { Identity = identity, Ranges = ranges };
@@ -204,7 +204,7 @@ internal sealed partial class AntiEntropyWorker(
 
     private static void CheckPage(StatePage page, RangeRequest request)
     {
-        // Scan cursors can include excluded legacy keys; SQLite orders both parts by UTF-8 bytes.
+        // Scan cursors can include excluded keys; SQLite orders both parts by UTF-8 bytes.
         var collectionOrder = Encoding.UTF8.GetBytes(page.AfterCollection).AsSpan()
             .SequenceCompareTo(Encoding.UTF8.GetBytes(request.AfterCollection));
         if (page.Envelope.Length > ReplicationProtocol.MaxApplicationBytes

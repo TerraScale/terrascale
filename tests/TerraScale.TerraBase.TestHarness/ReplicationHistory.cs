@@ -4,6 +4,7 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using Bogus;
+using TerraBase.Primitives;
 
 namespace TerraBase.Testing;
 
@@ -63,7 +64,7 @@ internal sealed class ReplicationHistory(int seed, string databasePath)
             _jsonBytes += PayloadBytes;
             try
             {
-                var operationSeed = BinaryPrimitives.ReadInt32LittleEndian(Guid.Parse(id).ToByteArray());
+                var operationSeed = BinaryPrimitives.ReadInt32LittleEndian(Ulid.Parse(id).ToByteArray());
                 var faker = new Faker { Random = new Randomizer(operationSeed) };
                 var json = "{\"value\":\"" + faker.Random.AlphaNumeric(ValueLength) + "\"}";
                 operation = new Operation(++_sequence, null, phase, node, id, json, null, null, "invoked");
@@ -82,7 +83,7 @@ internal sealed class ReplicationHistory(int seed, string databasePath)
         var outcome = "indeterminate";
         try
         {
-            using var request = new HttpRequestMessage(HttpMethod.Put, new Uri($"{_collectionPath}/{id}", UriKind.Relative));
+            using var request = new HttpRequestMessage(HttpMethod.Put, new Uri($"{_collectionPath}/by-key?id={Uri.EscapeDataString(id)}", UriKind.Relative));
             request.Headers.IfNoneMatch.ParseAdd("*");
             request.Content = new StringContent(operation.Json, Encoding.UTF8, "application/json");
             using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token);
@@ -253,7 +254,7 @@ internal sealed class ReplicationHistory(int seed, string databasePath)
                 {
                     var id = item.GetProperty("id").GetString();
                     var version = item.GetProperty("version").GetString();
-                    if (id is null || !Guid.TryParseExact(id, "D", out _) || version is null || !IsVersion(version))
+                    if (!EntityIds.IsValid(id) || version is null || !IsVersion(version))
                     {
                         throw Failure($"node {node} page {page} contains a corrupt ID or version");
                     }

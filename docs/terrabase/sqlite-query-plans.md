@@ -90,11 +90,11 @@ the recursive distinct deletion keys for the union, and one orders the canonical
 The storage reader supplies `$limit = 129` (128 page entries plus one continuation probe). The recursive
 deletion arm is limited to 129 rows, both ordered key arms feed the union under that limit, and the
 materialized evidence contains at most 129 rows. Recursive index seeks advance past each distinct
-`(collection, id)` rather than walking every retained journal revision for that key. Schema 9 adds
+`(collection, id)` rather than walking every retained journal revision for that key. Fresh schema 9 includes
 partial indexes containing only nonempty keys within the 63-byte collection and 1024-byte ID cursor
-limits. The key arms seek those indexes, so excluded legacy prefixes do not consume scan work.
-Invalid legacy key syntax within the byte limits is filtered by the storage paging reader. Existing
-files build both indexes once during the transactional migration; later writes maintain them. The
+limits. The key arms seek those indexes, so excluded keys do not consume scan work.
+Invalid key syntax within the byte limits is filtered by the storage paging reader. Fresh
+files create both indexes during bootstrap; later writes maintain them. The
 additional index storage and write work leave document, journal and frontier bytes unchanged.
 
 The sorters and materialized evidence contain bounded keys, versions, deletion flags and byte lengths,

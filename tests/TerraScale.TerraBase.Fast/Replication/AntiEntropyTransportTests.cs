@@ -11,6 +11,7 @@ using TerraBase.Fast.Documents;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.Alpha;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Replication;
@@ -48,7 +49,7 @@ public sealed class AntiEntropyTransportTests
             collection.EnsureSuccessStatusCode();
         }
 
-        using (var created = await writer.PutAsJsonAsync(new Uri($"{tenant.Path("repair")}/collections/items/documents/{DocumentApi.NewId()}", UriKind.Relative),
+        using (var created = await writer.PutAsJsonAsync(new Uri($"{tenant.Path("repair")}/collections/items/documents/by-key?id={DocumentApi.NewId()}", UriKind.Relative),
             new { payload = new Faker().Random.AlphaNumeric(900_000) }, cancellationToken))
         {
             created.EnsureSuccessStatusCode();
@@ -61,7 +62,7 @@ public sealed class AntiEntropyTransportTests
         {
             var digest = await digestCall.ResponseAsync;
             identity.Incarnation = digest.Incarnation;
-            identity.Origin = ByteString.CopyFrom(Guid.NewGuid().ToByteArray(bigEndian: true));
+            identity.Origin = ByteString.CopyFrom(EntityIds.New().ToByteArray());
             identity.SourceProof = new JournalProof { Origin = identity.Origin, Digest = ByteString.CopyFrom(JournalDigest.Initial(identity.Origin.Span)) };
             identity.TargetProof = new JournalProof { Origin = digest.Origin, Digest = ByteString.CopyFrom(JournalDigest.Initial(digest.Origin.Span)) };
         }

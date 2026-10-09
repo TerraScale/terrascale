@@ -196,7 +196,7 @@ public sealed class ReplicationChaosTests
 
             await Assert.That(history.AcknowledgedCount).IsEqualTo(15);
             await history.CheckAsync([client], token);
-            var target = new Uri($"{tenant.Path("chaos")}/collections/items/documents/{ids.Order(StringComparer.Ordinal).Last()}", UriKind.Relative);
+            var target = new Uri($"{tenant.Path("chaos")}/collections/items/documents/by-key?id={ids.Order(StringComparer.Ordinal).Last()}", UriKind.Relative);
             using var corrupt = changeBody
                 ? await client.PutAsJsonAsync(target, new { value = "corrupted" }, token)
                 : await client.DeleteAsync(target, token);
@@ -270,7 +270,7 @@ public sealed class ReplicationChaosTests
         public List<HttpClient> Clients { get; } = [];
         public string Path => Tenant!.Path("chaos");
 
-        public Uri Document(string id) => new($"{Path}/collections/items/documents/{id}", UriKind.Relative);
+        public Uri Document(string id) => new($"{Path}/collections/items/documents/by-key?id={id}", UriKind.Relative);
 
         public static async Task<ChaosCluster> StartAsync(CancellationToken token)
         {
