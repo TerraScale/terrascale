@@ -5,11 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"time"
+
+	"terrascale.tech/dashboard/internal/core"
 )
 
 // syncAttempts bounds how often SyncCustomer re-reads Stripe after a
-// concurrent sync saved first.
+// concurrent sync saved or projected first.
 const syncAttempts = 3
 
 // SyncCustomer is the single path that updates billing state. It reads the
@@ -30,9 +33,15 @@ func (billing *Stripe) SyncCustomer(ctx context.Context, flow BillingFlow, custo
 		return CustomerState{}, ErrUnknownCustomer
 	}
 	for range syncAttempts {
-		_, version, err := billing.store.Load(ctx, customerID)
+		previous, version, err := billing.store.Load(ctx, customerID)
 		if err != nil {
 			return CustomerState{}, err
+		}
+		if version == "" || previous.CustomerID != customerID || previous.OrganizationID != organizationID {
+			return CustomerState{}, fmt.Errorf("%w: bound Stripe customer state is missing or mismatched", core.ErrUnavailable)
+		}
+		if previous.Revision == math.MaxUint64 {
+			return CustomerState{}, fmt.Errorf("%w: Stripe customer revision exhausted", core.ErrUnavailable)
 		}
 		customer, err := billing.provider.FetchCustomer(ctx, customerID)
 		if err != nil {
@@ -42,6 +51,7 @@ func (billing *Stripe) SyncCustomer(ctx context.Context, flow BillingFlow, custo
 			return CustomerState{}, errors.New("Stripe customer is bound to another organization")
 		}
 		state := billing.customerState(organizationID, customer)
+		state.Revision = previous.Revision + 1
 		switch err := billing.store.Save(ctx, state, version); {
 		case errors.Is(err, ErrStaleState):
 			continue
@@ -52,7 +62,10 @@ func (billing *Stripe) SyncCustomer(ctx context.Context, flow BillingFlow, custo
 		if err != nil {
 			return CustomerState{}, err
 		}
-		if err := flow.ProjectCustomerState(ctx, state, checkout); err != nil {
+		switch err := flow.ProjectCustomerState(ctx, state, checkout); {
+		case errors.Is(err, ErrStaleState):
+			continue
+		case err != nil:
 			return CustomerState{}, fmt.Errorf("project Stripe state: %w", err)
 		}
 		return state, nil

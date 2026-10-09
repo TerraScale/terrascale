@@ -21,8 +21,7 @@ const (
 // commit atomically; synced customer state uses the loaded document version.
 type terraBaseStateStore struct{ db *v1.Database }
 
-// customerDocument is the stored form of CustomerState. Times are Unix
-// seconds and every field is declared in the collection schema.
+// customerDocument stores CustomerState with Unix-second timestamps.
 type customerDocument struct {
 	OrganizationID     string         `json:"organizationId"`
 	SubscriptionID     string         `json:"subscriptionId"`
@@ -44,6 +43,7 @@ type customerDocument struct {
 	PaymentExpMonth    int64          `json:"paymentExpMonth"`
 	PaymentExpYear     int64          `json:"paymentExpYear"`
 	Invoices           []core.Invoice `json:"invoices"`
+	Revision           uint64         `json:"revision"`
 	SyncedAt           int64          `json:"syncedAt"`
 }
 
@@ -160,7 +160,7 @@ func documentFromState(state CustomerState) customerDocument {
 		CurrentPeriodStart: unixSeconds(state.CurrentPeriodStart), CurrentPeriodEnd: unixSeconds(state.CurrentPeriodEnd),
 		CancelAtPeriodEnd: state.CancelAtPeriodEnd, PendingPlanKey: state.PendingPlanKey, PendingInterval: state.PendingInterval,
 		ScheduleID: state.ScheduleID, ScheduledPlanKey: state.ScheduledPlanKey, ScheduledInterval: state.ScheduledInterval,
-		TrialUsed: state.TrialUsed, Invoices: state.Invoices, SyncedAt: unixSeconds(state.SyncedAt),
+		TrialUsed: state.TrialUsed, Invoices: state.Invoices, Revision: state.Revision, SyncedAt: unixSeconds(state.SyncedAt),
 	}
 	if method := state.PaymentMethod; method != nil {
 		document.PaymentBrand, document.PaymentLast4 = method.Brand, method.Last4
@@ -176,7 +176,7 @@ func (document customerDocument) state(customerID string) CustomerState {
 		CurrentPeriodStart: fromUnix(document.CurrentPeriodStart), CurrentPeriodEnd: fromUnix(document.CurrentPeriodEnd),
 		CancelAtPeriodEnd: document.CancelAtPeriodEnd, PendingPlanKey: document.PendingPlanKey, PendingInterval: document.PendingInterval,
 		ScheduleID: document.ScheduleID, ScheduledPlanKey: document.ScheduledPlanKey, ScheduledInterval: document.ScheduledInterval,
-		TrialUsed: document.TrialUsed, Invoices: document.Invoices, SyncedAt: fromUnix(document.SyncedAt),
+		TrialUsed: document.TrialUsed, Invoices: document.Invoices, Revision: document.Revision, SyncedAt: fromUnix(document.SyncedAt),
 	}
 	if document.PaymentLast4 != "" {
 		state.PaymentMethod = &PaymentMethod{

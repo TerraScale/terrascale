@@ -155,6 +155,7 @@ func TestTerraBaseStateStoreSavesConditionally(t *testing.T) {
 		PaymentMethod: &PaymentMethod{Brand: "visa", Last4: "4242", ExpMonth: 8, ExpYear: 2028},
 		Invoices:      []core.Invoice{{ID: "in_a", Status: "paid", AmountCents: 5000, Currency: "usd", CreatedAt: periodEnd.AddDate(0, -1, 0)}},
 		SyncedAt:      periodEnd,
+		Revision:      (1 << 53) + 1,
 	}
 	if err := store.Save(ctx, state, version); err != nil {
 		t.Fatal(err)

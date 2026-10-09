@@ -2,7 +2,9 @@ package payments_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"reflect"
 	"testing"
@@ -42,16 +44,74 @@ func TestCheckoutReturnReportsProcessingUntilPaymentConfirms(t *testing.T) {
 func TestSyncIgnoresOlderStateProjectedLate(t *testing.T) {
 	fixture := newBillingFixture(t)
 	fixture.sync(t)
+	fixture.sync(t)
 	newer := fixture.organization(t)
 	stale := payments.CustomerState{
 		CustomerID: "cus_test", OrganizationID: fixture.principal.OrganizationID, Status: payments.StatusNone,
-		SyncedAt: newer.Billing.SyncedAt.Add(-time.Second),
+		Revision: newer.Billing.Revision - 1, SyncedAt: newer.Billing.SyncedAt.Add(time.Hour),
 	}
-	if err := fixture.service.ProjectCustomerState(t.Context(), stale, nil); err != nil {
-		t.Fatal(err)
+	if err := fixture.service.ProjectCustomerState(t.Context(), stale, nil); !errors.Is(err, payments.ErrStaleState) {
+		t.Fatalf("older revision with future clock = %v, want ErrStaleState", err)
 	}
 	if org := fixture.organization(t); !reflect.DeepEqual(org, newer) {
 		t.Fatalf("older state replaced newer billing:\n got %#v\nwant %#v", org.Billing, newer.Billing)
+	}
+	current := stale
+	current.Revision = newer.Billing.Revision + 1
+	current.SyncedAt = newer.Billing.SyncedAt.Add(-time.Hour)
+	if err := fixture.service.ProjectCustomerState(t.Context(), current, nil); err != nil {
+		t.Fatal(err)
+	}
+	org := fixture.organization(t)
+	free, err := fixture.store.Plan(t.Context(), "free")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if org.Billing.Revision != current.Revision || !org.Billing.SyncedAt.Equal(current.SyncedAt) || org.Billing.Status != payments.StatusNone || org.PlanID != free.ID || org.Billing.SubscriptionID != "" || len(org.Billing.Invoices) != 0 || org.Billing.PaymentMethodLastFour != "" {
+		t.Fatalf("higher revision with past clock did not replace billing: %#v", org.Billing)
+	}
+}
+
+func TestProjectionRejectsZeroRevision(t *testing.T) {
+	fixture := newBillingFixture(t)
+	before := fixture.organization(t)
+	state := payments.CustomerState{CustomerID: "cus_test", OrganizationID: fixture.principal.OrganizationID, Status: payments.StatusNone}
+	if err := fixture.service.ProjectCustomerState(t.Context(), state, &fixture.provider.checkout); !errors.Is(err, payments.ErrInvalidBillingInput) {
+		t.Fatalf("zero revision = %v, want ErrInvalidBillingInput", err)
+	}
+	if !reflect.DeepEqual(before, fixture.organization(t)) {
+		t.Fatal("zero revision changed organization or checkout")
+	}
+}
+
+func TestProjectionReappliesEqualRevisionForCheckout(t *testing.T) {
+	fixture := newBillingFixture(t)
+	subscription := activeSubscription("price_pro_monthly")
+	subscription.ScheduleID, subscription.ScheduledPriceID = "sub_sched_test", "price_starter_monthly"
+	fixture.provider.customer.Subscriptions = []payments.SubscriptionSnapshot{subscription}
+	fixture.provider.checkout.Status = "open"
+	fixture.sync(t)
+	state, _, err := fixture.state.Load(t.Context(), "cus_test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := fixture.organization(t)
+	if before.Billing.CheckoutID != "cs_test" || before.Billing.ChangeVersion == 0 {
+		t.Fatalf("fixture has no open checkout or scheduled change: %#v", before.Billing)
+	}
+	fixture.provider.checkout.Status = "complete"
+	if err := fixture.service.ProjectCustomerState(t.Context(), state, &fixture.provider.checkout); err != nil {
+		t.Fatal(err)
+	}
+	after := fixture.organization(t)
+	if after.Billing.Revision != state.Revision || after.Billing.ChangeVersion != before.Billing.ChangeVersion || after.Billing.CheckoutID != "" || after.CheckoutSessions["cs_test"].Status != "complete" {
+		t.Fatalf("equal revision did not reconcile checkout idempotently: %#v", after.Billing)
+	}
+	if err := fixture.service.ProjectCustomerState(t.Context(), state, &fixture.provider.checkout); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(after, fixture.organization(t)) {
+		t.Fatal("repeated equal revision changed billing or checkout")
 	}
 }
 
@@ -188,6 +248,9 @@ func TestSyncRereadsStripeAfterConcurrentSave(t *testing.T) {
 		t.Fatalf("Stripe reads = %d, want a re-read after the conflict", fixture.provider.fetches)
 	}
 	stored, _, _ := racing.Load(t.Context(), "cus_test")
+	if stored.Revision != 2 || fixture.organization(t).Billing.Revision != 2 {
+		t.Fatalf("revision after one competing save and one successful retry = %d, want 2", stored.Revision)
+	}
 	if stored.PlanKey != payments.PlanBusiness || fixture.organization(t).PlanID != "plan_business" {
 		t.Fatalf("stored plan = %q, want the state read after the competing save", stored.PlanKey)
 	}
@@ -225,5 +288,120 @@ func TestCheckoutReturnReportsStoreOutageAsUnavailable(t *testing.T) {
 	response := fixture.request(http.MethodGet, "/billing/checkout/return?session_id=cs_test")
 	if response.Code != http.StatusServiceUnavailable {
 		t.Fatalf("return during a store outage = %d, want 503", response.Code)
+	}
+}
+
+// projectionFlow fails before applying billing, without changing the real service.
+type projectionFlow struct {
+	payments.BillingFlow
+	err             error
+	failures, calls int
+	provider        *fakeProvider
+}
+
+func (flow *projectionFlow) ProjectCustomerState(ctx context.Context, state payments.CustomerState, checkout *payments.CheckoutSession) error {
+	flow.calls++
+	if flow.calls <= flow.failures {
+		if flow.provider != nil {
+			flow.provider.customer.Subscriptions = []payments.SubscriptionSnapshot{activeSubscription("price_business_monthly")}
+		}
+		return flow.err
+	}
+	return flow.BillingFlow.ProjectCustomerState(ctx, state, checkout)
+}
+
+func TestSyncRetriesOnlyStaleProjection(t *testing.T) {
+	projectionError := errors.New("projection unavailable")
+	for _, test := range []struct {
+		name               string
+		failures, attempts int
+		err, wantErr       error
+	}{
+		{"retry", 1, 2, payments.ErrStaleState, nil},
+		{"exhausted", 3, 3, payments.ErrStaleState, payments.ErrStaleState},
+		{"other error", 1, 1, projectionError, projectionError},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newBillingFixture(t)
+			before := fixture.organization(t)
+			flow := &projectionFlow{BillingFlow: fixture.service, failures: test.failures, err: test.err, provider: fixture.provider}
+			state, err := fixture.billing.SyncCustomer(t.Context(), flow, "cus_test")
+			if !errors.Is(err, test.wantErr) {
+				t.Fatalf("sync = %v, want %v", err, test.wantErr)
+			}
+			stored, _, loadErr := fixture.state.Load(t.Context(), "cus_test")
+			if loadErr != nil || stored.Revision != uint64(test.attempts) || fixture.provider.fetches != test.attempts || flow.calls != test.attempts {
+				t.Fatalf("revision = %d, reads = %d, projections = %d, load error = %v; want %d attempts", stored.Revision, fixture.provider.fetches, flow.calls, loadErr, test.attempts)
+			}
+			if test.wantErr != nil {
+				if !reflect.DeepEqual(before, fixture.organization(t)) {
+					t.Fatal("failed projection changed organization billing")
+				}
+			} else {
+				plan, err := fixture.store.Plan(t.Context(), payments.PlanBusiness)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if state.PlanKey != payments.PlanBusiness || fixture.organization(t).PlanID != plan.ID || fixture.organization(t).Billing.Revision != stored.Revision {
+					t.Fatal("projection retry did not refetch and project current Stripe state")
+				}
+			}
+		})
+	}
+}
+
+type invalidLoadedStore struct {
+	payments.StateStore
+	mutate func(*payments.CustomerState, *string)
+	saves  int
+}
+
+func (store *invalidLoadedStore) Load(ctx context.Context, customerID string) (payments.CustomerState, string, error) {
+	state, version, err := store.StateStore.Load(ctx, customerID)
+	store.mutate(&state, &version)
+	return state, version, err
+}
+
+func (store *invalidLoadedStore) Save(ctx context.Context, state payments.CustomerState, version string) error {
+	store.saves++
+	return store.StateStore.Save(ctx, state, version)
+}
+
+func TestSyncRejectsInvalidLoadedStateBeforeReadingStripe(t *testing.T) {
+	otherOrganization := core.NewULID()
+	for _, test := range []struct {
+		name   string
+		mutate func(*payments.CustomerState, *string)
+	}{
+		{"missing state", func(state *payments.CustomerState, _ *string) { *state = payments.CustomerState{} }},
+		{"missing version", func(_ *payments.CustomerState, version *string) { *version = "" }},
+		{"wrong customer", func(state *payments.CustomerState, _ *string) { state.CustomerID = "cus_other" }},
+		{"wrong organization", func(state *payments.CustomerState, _ *string) { state.OrganizationID = otherOrganization }},
+		{"revision overflow", func(state *payments.CustomerState, _ *string) { state.Revision = math.MaxUint64 }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := &invalidLoadedStore{StateStore: payments.NewMemoryStateStore(), mutate: test.mutate}
+			fixture := newBillingFixtureWithStore(t, store)
+			before := fixture.organization(t)
+			if _, err := fixture.billing.SyncCustomer(t.Context(), fixture.service, "cus_test"); !errors.Is(err, core.ErrUnavailable) {
+				t.Fatalf("invalid loaded state = %v, want ErrUnavailable", err)
+			}
+			if fixture.provider.fetches != 0 || store.saves != 0 || !reflect.DeepEqual(before, fixture.organization(t)) {
+				t.Fatalf("invalid loaded state read Stripe %d times, saved %d times, or changed billing", fixture.provider.fetches, store.saves)
+			}
+		})
+	}
+}
+
+func TestMemoryStateStoreInitializesBoundState(t *testing.T) {
+	store := payments.NewMemoryStateStore()
+	organizationID := core.NewULID()
+	if _, err := store.BindCustomer(t.Context(), organizationID, "cus_test"); err != nil {
+		t.Fatal(err)
+	}
+	state, version, err := store.Load(t.Context(), "cus_test")
+	want := payments.CustomerState{CustomerID: "cus_test", OrganizationID: organizationID, Status: payments.StatusNone}
+	if err != nil || version != "1" || !reflect.DeepEqual(state, want) {
+		t.Fatalf("bound state = %#v, version %q, error %v; want %#v at version 1", state, version, err, want)
 	}
 }

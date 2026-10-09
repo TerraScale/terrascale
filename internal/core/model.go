@@ -369,8 +369,9 @@ type Billing struct {
 	PaidExcessEnabled     bool
 	SpendCapCents         int64
 	Invoices              []Invoice
-	// SyncedAt is when the projected Stripe state was read, so a slower
-	// sync cannot project older state over a newer one.
+	// Revision orders projections by conditional customer saves across replicas.
+	Revision uint64
+	// SyncedAt records the Stripe read time for diagnostics only.
 	SyncedAt time.Time
 }
 

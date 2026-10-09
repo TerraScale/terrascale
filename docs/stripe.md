@@ -24,20 +24,19 @@ projected; an event only says which customer to sync.
 
 The save is conditional on the version loaded before reading Stripe. When two
 syncs race, the loser re-reads Stripe, so the stored state always comes from a
-read that started after the previous save. The organization records when its
-projected state was read and ignores an older one that a slower sync projects
-late. Duplicate, late, and out-of-order events therefore converge on Stripe's
-current state without event IDs.
-
-Current projection ordering relies on replica wall clocks. The live cutover
-gate requires ordering tied to conditional saves before relying on this model
-across replicas with clock skew.
+read that started after the previous save. Each successful save advances the
+customer's revision atomically with its snapshot. The organization applies
+revisions in order within its own conditional update; a stale projection
+re-reads Stripe and retries. Replica clock skew cannot discard newer saved
+billing. `SyncedAt` is diagnostic metadata only. Duplicate, late, and out-of-order
+events converge without an event ledger; exhausted retries return an error so
+Stripe can redeliver.
 
 ## State store
 
 Live mode stores synced state in the dashboard's own TerraBase database through
-ts-go. Demo mode keeps everything in memory and never contacts Stripe or
-TerraBase.
+ts-go. Local demos without a backend keep everything in memory and never contact
+Stripe or TerraBase.
 
 | Collection | Document ID | Contents |
 | --- | --- | --- |

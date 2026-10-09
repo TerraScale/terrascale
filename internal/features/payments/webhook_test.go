@@ -243,8 +243,12 @@ func TestWebhookSyncIsIdempotentAcrossEventOrder(t *testing.T) {
 			t.Fatalf("%s = %d", event.Type, response.Code)
 		}
 	}
-	// Only the time of the latest Stripe read may change.
+	// Each delivery records a new Stripe read without changing business state.
 	again := fixture.organization(t)
+	if again.Billing.Revision != first.Billing.Revision+3 {
+		t.Fatalf("revision after three redeliveries = %d, want %d", again.Billing.Revision, first.Billing.Revision+3)
+	}
+	again.Billing.Revision = first.Billing.Revision
 	again.Billing.SyncedAt = first.Billing.SyncedAt
 	if !reflect.DeepEqual(first, again) {
 		t.Fatalf("replayed and older events changed the organization:\nfirst %#v\nagain %#v", first.Billing, again.Billing)
@@ -427,5 +431,32 @@ func TestWebhookUnavailableInDemoMode(t *testing.T) {
 	mux.ServeHTTP(response, httptest.NewRequest(http.MethodPost, payments.WebhookPath, bytes.NewReader([]byte("{}"))))
 	if response.Code != http.StatusServiceUnavailable {
 		t.Fatalf("demo webhook = %d", response.Code)
+	}
+}
+
+func TestWebhookRedeliversAfterProjectionError(t *testing.T) {
+	fixture := newBillingFixture(t)
+	before := fixture.organization(t)
+	flow := &projectionFlow{BillingFlow: fixture.service, failures: 1, err: errors.New("projection unavailable")}
+	fixture.mux = http.NewServeMux()
+	payments.Mount(fixture.mux, core.Deps{Store: fixture.store, Sessions: fixtureSessions{principal: fixture.principal}}, flow, fixture.billing)
+	event := testEvent{ID: "evt_projection_retry", Type: "invoice.paid"}
+	if response := fixture.deliver(t, event, testWebhookSecret); response.Code != http.StatusInternalServerError {
+		t.Fatalf("failed projection = %d, want 500", response.Code)
+	}
+	stored, _, err := fixture.state.Load(t.Context(), "cus_test")
+	if err != nil || stored.Revision != 1 || fixture.provider.fetches != 1 || !reflect.DeepEqual(before, fixture.organization(t)) {
+		t.Fatalf("failed projection: saved revision %d, reads %d, load error %v; want saved state and unchanged organization", stored.Revision, fixture.provider.fetches, err)
+	}
+	if response := fixture.deliver(t, event, testWebhookSecret); response.Code != http.StatusOK {
+		t.Fatalf("redelivery = %d, want 200", response.Code)
+	}
+	org := fixture.organization(t)
+	plan, err := fixture.store.Plan(t.Context(), payments.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if org.Billing.Revision != 2 || fixture.provider.fetches != 2 || org.PlanID != plan.ID || org.Billing.CheckoutID != "" || org.CheckoutSessions["cs_test"].Status != "complete" || len(org.Billing.Invoices) != 1 {
+		t.Fatalf("redelivery did not converge billing and checkout: %#v", org.Billing)
 	}
 }

@@ -455,8 +455,7 @@ func (service BillingService) PendingCheckoutID(ctx context.Context, organizatio
 // ProjectCustomerState applies a customer's synced Stripe state to its
 // organization. Every billing field is derived from the state alone, so
 // applying the same state twice is harmless. Concurrent syncs save in order
-// but can project out of order, so a state read from Stripe before the
-// projected one is ignored.
+// but can project out of order; a stale revision asks the sync to retry.
 func (service BillingService) ProjectCustomerState(ctx context.Context, state payments.CustomerState, checkout *payments.CheckoutSession) error {
 	return service.store.UpdateOrganization(ctx, state.OrganizationID, func(organization *core.Organization, plans map[string]core.Plan) error {
 		if organization.Billing.Internal {
@@ -469,9 +468,13 @@ func (service BillingService) ProjectCustomerState(ctx context.Context, state pa
 		default:
 			return core.ErrConflict
 		}
-		if state.SyncedAt.Before(organization.Billing.SyncedAt) {
-			return nil
+		if state.Revision == 0 {
+			return payments.ErrInvalidBillingInput
 		}
+		if state.Revision < organization.Billing.Revision {
+			return payments.ErrStaleState
+		}
+		organization.Billing.Revision = state.Revision
 		organization.Billing.SyncedAt = state.SyncedAt
 		if err := projectSubscription(organization, state, plans); err != nil {
 			return err

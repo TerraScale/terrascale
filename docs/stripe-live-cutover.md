@@ -96,14 +96,16 @@ Never print the decoded bundle or put secret values in command arguments.
 
 ## Test-to-live gate
 
-This preparation does **not** authorize cutover. Replace wall-clock projection
-ordering with ordering tied to conditional state saves before approval.
+This preparation does **not** authorize cutover. Customer snapshots and
+organization projections now carry revisions ordered by conditional saves,
+independent of replica clocks. A stale projection re-reads Stripe and retries;
+exhaustion returns a webhook failure so Stripe can redeliver.
 Explicit demo configuration now suppresses Stripe while retaining TerraBase
 persistence and keeping simulated billing and security operations unavailable.
 Missing billing collections or databases now return retryable webhook failures;
-the default persistence HTTP client limits each request to 15 seconds. Exercise
-these paths against TerraBase before approval. The existing duplicate-event
-tests alone do not establish those guarantees.
+the default persistence HTTP client limits each request to 15 seconds. Real
+TerraBase regressions cover clock skew, competing saves and reversed projections.
+Verified Stripe sandbox deliveries remain required before live approval.
 
 1. Complete [`stripe-sandbox-dsh207.md`](stripe-sandbox-dsh207.md), including
    signed deliveries, duplicate/out-of-order events, failed-payment recovery,
@@ -115,7 +117,8 @@ tests alone do not establish those guarantees.
    sessions and prices cannot be reused in live mode. Check both
    `stripe_customers`/`stripe_organizations` and organization billing projections.
    Unconfigured billing today does not prove older test references are absent.
-3. If any test bindings exist, delete obsolete test data through ts-go and
+3. If test bindings or pre-revision Stripe snapshots/projections exist, delete
+   obsolete billing data through ts-go and
    re-bootstrap the application with the current schemas in the existing
    provisioned database. The closed beta permits resetting users, organizations
    and sessions; do not retain old records through migrations, backfills or

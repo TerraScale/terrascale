@@ -52,7 +52,7 @@ func TestCustomerCannotSelectReservedInternalPlan(t *testing.T) {
 						{"Stripe projection", func() error {
 							return service.ProjectCustomerState(t.Context(), payments.CustomerState{
 								OrganizationID: principal.OrganizationID, CustomerID: "cus_other", SubscriptionID: "sub_other",
-								Status: "active", PlanKey: plan.Key, Interval: interval, SyncedAt: time.Now(),
+								Status: "active", PlanKey: plan.Key, Interval: interval, SyncedAt: time.Now(), Revision: 1,
 							}, nil)
 						}},
 					} {

@@ -15,9 +15,8 @@ import (
 const StatusNone = "none"
 
 var (
-	// ErrStaleState reports that another sync saved the customer's state after
-	// it was loaded; the caller must re-read Stripe and try again.
-	ErrStaleState = errors.New("stored Stripe state changed during sync")
+	// ErrStaleState reports a newer saved or projected state; re-read Stripe and retry.
+	ErrStaleState = errors.New("Stripe billing state changed during sync")
 	// ErrUnknownCustomer reports a Stripe customer no organization is bound to.
 	ErrUnknownCustomer = errors.New("Stripe customer is not bound to an organization")
 )
@@ -52,6 +51,7 @@ type CustomerState struct {
 	TrialUsed          bool
 	PaymentMethod      *PaymentMethod
 	Invoices           []core.Invoice
+	Revision           uint64
 	SyncedAt           time.Time
 }
 
@@ -103,6 +103,9 @@ func (store *memoryStateStore) BindCustomer(_ context.Context, organizationID, c
 	}
 	store.customerByOrg[organizationID] = customerID
 	store.orgByCustomer[customerID] = organizationID
+	store.states[customerID] = versionedState{
+		state: CustomerState{CustomerID: customerID, OrganizationID: organizationID, Status: StatusNone}, version: 1,
+	}
 	return customerID, nil
 }
 
