@@ -10,8 +10,8 @@ import (
 func TestRestoredNameFitsLimitWithSuffix(t *testing.T) {
 	long := strings.Repeat("a", 60)
 	project := core.Project{Databases: map[string]core.Database{
-		"db_1": {Name: "orders-restore"},
-		"db_2": {Name: long[:55] + "-restore"},
+		"19T9WF6BRDZ1HTM3X1C9G1V4YJ": {Name: "orders-restore"},
+		"1HVDPNK0T6S19MHKKAKCJEYFZS": {Name: long[:55] + "-restore"},
 	}}
 	tests := []struct{ source, want string }{
 		{source: "users", want: "users-restore"},

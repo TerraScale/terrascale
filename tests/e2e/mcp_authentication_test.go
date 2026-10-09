@@ -72,7 +72,7 @@ func TestMCPAuthenticationConsoleManagesInstance(t *testing.T) {
 	if message := callToolError(t, session, "auth_list_resources", map[string]any{"section": "overview"}); !strings.Contains(message, "enum") {
 		t.Errorf("non-list section error = %q, want the section enum to reject it", message)
 	}
-	if message := callToolError(t, session, "auth_list_resources", map[string]any{"section": "users", "projectId": "prj_missing"}); !strings.Contains(message, "not found") {
+	if message := callToolError(t, session, "auth_list_resources", map[string]any{"section": "users", "projectId": "2K8BYPK0FZH8V1KTS834E6C45C"}); !strings.Contains(message, "not found") {
 		t.Errorf("foreign project scope error = %q, want not found", message)
 	}
 

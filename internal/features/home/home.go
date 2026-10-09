@@ -4,16 +4,22 @@ package home
 import (
 	"errors"
 	"net/http"
+	"sync"
 
 	"github.com/a-h/templ"
 
 	"terrascale.tech/dashboard/internal/core"
+	"terrascale.tech/dashboard/internal/features/analytics"
 	"terrascale.tech/dashboard/internal/features/demovisuals"
 	"terrascale.tech/dashboard/internal/features/notfound"
+	"terrascale.tech/dashboard/internal/features/replication"
 	"terrascale.tech/dashboard/internal/ui/charts"
 )
 
 type pageData struct {
+	Analytics                 analytics.View
+	Replication               replication.View
+	Regions                   regionsView
 	Tab                       string
 	ProjectName               string
 	ActivityRange             string
@@ -45,7 +51,7 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 		if !ok {
 			return
 		}
-		summary, err := service.Overview(r.Context(), p, core.UserToken(r.Context()), r.URL.Query().Get("range"))
+		summary, err := service.Overview(r.Context(), p, core.UserToken(r.Context()), core.MetricsRange(r.URL.Query().Get("range")))
 		switch {
 		case errors.Is(err, errFirstProjectNeeded):
 			http.Redirect(w, r, "/organization?newOrganization=project", http.StatusSeeOther)
@@ -62,10 +68,14 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 			tab = "connect"
 		}
 		activity := summary.Activity
+		activityLabel := demovisuals.RangeLabel(activity.Range)
+		if activity.Metered && activity.Range == "1h" {
+			activityLabel = "Current UTC hour"
+		}
 		data := pageData{
 			Tab: tab, ProjectName: summary.ProjectName, ActivityRange: activity.Range,
 			ActivityNote: activity.Note, ActivityReads: activity.TotalReads, ActivityWrites: activity.TotalWrites,
-			ActivityChart: charts.NewLine("Reads and writes, "+demovisuals.RangeLabel(activity.Range)+": "+activity.Note,
+			ActivityChart: charts.NewLine("Reads and writes, "+activityLabel+": "+activity.Note,
 				activityTicks(activity), activity.Labels, 180,
 				charts.Series{Name: "Reads", Values: activity.Reads}, charts.Series{Name: "Writes", Values: activity.Writes}),
 			DatabaseCount: summary.DatabaseCount, OrganizationMembers: summary.OrganizationMembers,
@@ -76,6 +86,19 @@ func Mount(mux *http.ServeMux, deps core.Deps) {
 		}
 		if data.DatabaseCount == 0 {
 			data.DatabaseDetail = "none saved"
+		}
+		if tab == "overview" {
+			var reads sync.WaitGroup
+			reads.Go(func() {
+				view, loadErr := analytics.Load(r.Context(), deps, p, "", "", "", data.ActivityRange)
+				if loadErr != nil {
+					view = analytics.View{Error: "Analytics scope is unavailable."}
+				}
+				data.Analytics = view
+			})
+			reads.Go(func() { data.Replication = replication.Load(r.Context(), deps, p, "", "", data.ActivityRange) })
+			reads.Go(func() { data.Regions = loadRegions(r.Context(), deps, p) })
+			reads.Wait()
 		}
 		if data.OrganizationMembers == 1 {
 			data.OrganizationMembersDetail = "active organization member"

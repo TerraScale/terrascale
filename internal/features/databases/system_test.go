@@ -69,8 +69,8 @@ func TestStalledTerraBaseLeavesCountsUnavailable(t *testing.T) {
 	budget := countBudget
 	countBudget = 100 * time.Millisecond
 	t.Cleanup(func() { countBudget = budget })
-	db := core.Database{ID: "01a1105a-7389-78d7-b95d-45e0966f1408", ProjectID: "01a1105a-7350-7f48-a96e-d71bbb45d7a8", Name: "dashboard"}
-	p := core.Principal{UserID: "usr_admin", OrganizationID: "01a11059-a8df-7b4d-b9b9-ac5ba2d25c35", PlatformAdmin: true}
+	db := core.Database{System: true, ID: "01M485MWW9F3BVJQA5W2B6Y508", ProjectID: "01M485MWTGFX4AJVPQ3EXMBNX8", Name: "dashboard"}
+	p := core.Principal{UserID: "21YDES3QSMXC1HQKX9PXCZ2PY0", OrganizationID: "01M485KA6ZFD6VKEDCBEHD4Q1N", PlatformAdmin: true}
 	ctx := core.WithUserToken(t.Context(), func() (string, bool) { return "access-token", true })
 	start := time.Now()
 	summary := summarize(ctx, core.Deps{Management: management}, p, core.Project{Databases: map[string]core.Database{db.ID: db}})

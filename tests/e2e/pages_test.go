@@ -60,6 +60,7 @@ var parityRouteStates = []routeState{
 	{key: "profile", path: "/profile", heading: "Profile"},
 	{key: "subscriptions", path: "/subscriptions", heading: "Shared result configuration"},
 	{key: "usage", path: "/usage", heading: "Usage"},
+	{key: "analytics", path: "/analytics", heading: "Analytics"},
 	{key: "agent-approve", path: "/agent/approve", heading: "Approve agent access"},
 	{key: "cli-approve", path: "/cli/approve", heading: "Approve CLI access"},
 	{key: "login", path: "/login", heading: "Sign in", anonymous: true},
@@ -212,7 +213,7 @@ var publicPaths = []string{"/agent/approve", "/cli/approve", "/reset-password"}
 func TestPagesSignedOutVisitorsRedirectToLogin(t *testing.T) {
 	t.Parallel()
 	context := newContext(t, baseURL)
-	paths := []string{"/databases/db_missing", "/databases/db_missing/backups", "/databases/db_missing/documents", "/databases/db_missing/sql"}
+	paths := []string{"/databases/7CWZH5HEGFV2Z8DWE3144TJQSS", "/databases/7CWZH5HEGFV2Z8DWE3144TJQSS/backups", "/databases/7CWZH5HEGFV2Z8DWE3144TJQSS/documents", "/databases/7CWZH5HEGFV2Z8DWE3144TJQSS/sql"}
 	for _, route := range parityRouteStates {
 		if !route.anonymous && !slices.Contains(publicPaths, route.path) {
 			paths = append(paths, route.path)
@@ -343,7 +344,7 @@ func TestPagesPreloadTheMonospaceFontOnlyWhenSignedIn(t *testing.T) {
 	payment := onboardingStep(t, page, "payment-method")
 	must(t, payment.Locator(`[name="plan"][value="starter"]`).Check())
 	click(t, byRole(payment, *playwright.AriaRoleButton, "Continue to checkout"))
-	must(t, page.WaitForURL(regexp.MustCompile(`/checkout/cs_local_`)))
+	must(t, page.WaitForURL(regexp.MustCompile(`/checkout/[0-7][0-9A-HJKMNP-TV-Z]{25}(?:[?#]|$)`)))
 	must(t, expect.Locator(preload).ToHaveCount(1))
 	eventually(t, "monospace font request", func() bool { return monoRequests.Load() > 0 })
 }

@@ -1,0 +1,85 @@
+package analytics
+
+import (
+	"fmt"
+	"terrascale.tech/dashboard/internal/ui"
+	"terrascale.tech/dashboard/internal/ui/charts"
+)
+
+templ pageView(v View) {
+	<main class="ts-page">
+		@ui.PageHeader("Analytics")
+		<form class="ts-filters" method="get" action="/analytics" role="search" aria-label="Filter analytics" data-submit-once>
+			<input type="hidden" name="project" value={ v.ProjectID }/>
+			<label class="ts-filter-field" for="analytics-range"><span class="ts-label">Range</span><select class="ts-select" id="analytics-range" name="range">
+				for _, value := range []string{"1h", "24h", "7d", "30d"} {
+					<option value={ value } selected?={ value == v.Range }>{ value }</option>
+				}
+			</select></label>
+			<label class="ts-filter-field" for="analytics-database"><span class="ts-label">Database</span><select class="ts-select" id="analytics-database" name="database">
+				<option value="">All databases</option>
+				for _, db := range v.Databases {
+					<option value={ db.ID } selected?={ db.ID == v.DatabaseID }>{ db.Name }</option>
+				}
+			</select></label>
+			<label class="ts-filter-field" for="analytics-region"><span class="ts-label">Region</span><select class="ts-select" id="analytics-region" name="region">
+				<option value="">All regions</option>
+				for _, region := range v.Regions {
+					<option value={ region } selected?={ region == v.Region }>{ region }</option>
+				}
+			</select></label>
+			<button class="ts-btn ts-btn-secondary" type="submit">Apply</button>
+		</form>
+		<p class="ts-meta ts-measurement-loading" role="status">Loading analytics measurements…</p>
+		<p class="ts-meta">Measured by TerraBase. Time buckets are selected automatically for the range. Replication uses its own replication_bytes meter.</p>
+		@Summary(v)
+		if v.Available {
+			<div class="ts-grid ts-grid-2">
+				for _, chart := range v.Charts {
+					@chartView(chart)
+				}
+			</div>
+		}
+	</main>
+}
+
+templ Summary(v View) {
+	@ui.Card(ui.CardProps{ID: "analytics-summary", Title: "Key analytics", Description: "Selected project · " + v.Range}) {
+		if v.Error != "" {
+			@ui.Alert("warning", "Analytics unavailable", v.Error)
+		} else if !v.Available {
+			@ui.Empty(v.Empty, "")
+		} else {
+			@ui.Stats("Key analytics") {
+				@ui.Stat("Requests", fmt.Sprint(v.Requests), "In the selected period")
+				@ui.Stat("Errors", fmt.Sprint(v.Errors), "In the selected period")
+				@ui.Stat("Worst p95 latency", latency(v.LatestP95MS), "Across database regions in the latest bucket")
+				@ui.Stat("Storage", ui.FormatBytes(v.StorageBytes), "Database regions in the latest bucket")
+			}
+			@ui.Stats("Operations and bandwidth") {
+				@ui.Stat("Operations", fmt.Sprint(v.Operations), "In the selected period")
+				@ui.Stat("Client bandwidth", ui.FormatBytes(v.ClientBytes), "Sent + received")
+				@ui.Stat("Replication bandwidth", ui.FormatBytes(v.ReplicationBytes), "Separate replication_bytes meter")
+			}
+		}
+	}
+}
+
+templ Home(v View) {
+	@Summary(v)
+	if v.Available && len(v.Charts) > 0 {
+		@chartView(v.Charts[0])
+	}
+	<a class="ts-link" href={ "/analytics?range=" + v.Range }>Explore analytics →</a>
+}
+
+templ chartView(chart Chart) {
+	@ui.Card(ui.CardProps{Title: chart.Title}) {
+		if len(chart.Data.Paths) > 0 {
+			@charts.Legend(chart.Data)
+			<div class="ts-chart-shell" role="region" aria-label={ chart.Title + " chart" } tabindex="0">@charts.Line(chart.Data)</div>
+		} else {
+			@ui.Empty("No samples for " + chart.Title + ".", "")
+		}
+	}
+}

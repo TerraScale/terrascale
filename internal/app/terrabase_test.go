@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"terrascale.tech/dashboard/internal/adapters/terrabase"
+	"terrascale.tech/dashboard/internal/core"
 	"terrascale.tech/dashboard/internal/platform/config"
 	"terrascale.tech/dashboard/internal/platform/terrabasetest"
 	"terrascale.tech/sdk/v1"
@@ -26,7 +27,7 @@ func (o *observedTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	return o.base.RoundTrip(r)
 }
 
-func TestTerraBaseStartupAndReadinessNeverProvision(t *testing.T) {
+func TestTerraBaseStartupRecreatesBootstrapAndReadinessNeverWrites(t *testing.T) {
 	if testing.Short() {
 		t.Skip("starts pinned TerraBase release")
 	}
@@ -49,14 +50,25 @@ func TestTerraBaseStartupAndReadinessNeverProvision(t *testing.T) {
 			t.Fatalf("readiness = %d %s", response.Code, response.Body.String())
 		}
 	}
-	check(http.StatusServiceUnavailable)
 	collections, err := db.Collections(t.Context(), v1.ListOptions{Limit: 200})
-	if err != nil || len(collections.Items) != 0 {
-		t.Fatalf("startup/health provisioned collections: %v %v", collections, err)
+	if err != nil || len(collections.Items) == 0 {
+		t.Fatalf("startup did not recreate collections: %v %v", collections, err)
 	}
-	if err := terrabase.EnsureCollections(t.Context(), db); err != nil {
+	plan, err := terrabase.New(db).Plan(t.Context(), "free")
+	if err != nil || !core.ValidID(plan.ID) {
+		t.Fatalf("startup did not recreate a ULID plan catalog: %+v %v", plan, err)
+	}
+	if _, err := New(cfg); err != nil {
 		t.Fatal(err)
 	}
+	again, err := terrabase.New(db).Plan(t.Context(), "free")
+	if err != nil || again.ID != plan.ID {
+		t.Fatalf("repeated startup changed plan identity: %+v %v", again, err)
+	}
+	observed.mu.Lock()
+	observed.methods = nil
+	observed.mu.Unlock()
+	check(http.StatusOK)
 	check(http.StatusOK)
 	observed.mu.Lock()
 	defer observed.mu.Unlock()

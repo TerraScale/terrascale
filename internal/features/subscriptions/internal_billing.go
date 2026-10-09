@@ -68,7 +68,7 @@ func ConfigureInternalBilling(ctx context.Context, store core.Store, principal c
 	case err == nil:
 		plan.ID = internal.ID
 	case errors.Is(err, core.ErrNotFound):
-		plan.ID = core.NewULID()
+		plan.ID = core.NewID()
 	default:
 		return err
 	}

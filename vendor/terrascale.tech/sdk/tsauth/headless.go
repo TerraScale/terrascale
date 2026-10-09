@@ -29,6 +29,9 @@ type Headless struct {
 type HeadlessConfig struct {
 	// Issuer is the tenant issuer; empty means DefaultIssuer.
 	Issuer string
+	// AllowInsecureHTTP permits non-loopback HTTP issuers for development
+	// only. Keep false in production: HTTP exposes credentials and tokens.
+	AllowInsecureHTTP bool
 	// ClientID and ClientSecret are a confidential client allowed the
 	// headless grants.
 	ClientID, ClientSecret string
@@ -56,7 +59,7 @@ func NewHeadless(cfg HeadlessConfig) (*Headless, error) {
 	if cfg.ClientID == "" || cfg.ClientSecret == "" {
 		return nil, errors.New("tsauth: the headless API needs a confidential client: ClientID and ClientSecret")
 	}
-	u, err := parseIssuer(cfg.Issuer)
+	u, err := parseIssuerWithInsecureHTTP(cfg.Issuer, cfg.AllowInsecureHTTP)
 	if err != nil {
 		return nil, err
 	}
@@ -133,6 +136,19 @@ func (h *Headless) tokens(ctx context.Context, form url.Values) (*Tokens, error)
 // when the address has an account; it succeeds either way.
 func (h *Headless) StartEmailCode(ctx context.Context, email, ip string) error {
 	return h.call(ctx, "email-code/start", map[string]string{"email": email}, ip, nil)
+}
+
+// ResendEmailCode emails another code. Pass the pending token from SignUp
+// to resend its verification code while preserving the pending sign-up;
+// otherwise pass "" for a sign-in code. Rate limits return ErrRateLimited
+// with APIError.RetryAfter. An invalid pending token succeeds without sending
+// an email, to prevent account enumeration.
+func (h *Headless) ResendEmailCode(ctx context.Context, email, ip, pendingToken string) error {
+	body := map[string]string{"email": email}
+	if pendingToken != "" {
+		body["pending_token"] = pendingToken
+	}
+	return h.call(ctx, "email-code/start", body, ip, nil)
 }
 
 // SignUp emails a verification code to a new address and returns the

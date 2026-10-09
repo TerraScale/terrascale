@@ -119,7 +119,7 @@ func TestPlanReviewWarnsWhenTheOrganizationExceedsTheTargetPlan(t *testing.T) {
 	fixture.update(t, func(org *core.Organization) {
 		org.BillingRenewal = renewal
 		for id, project := range org.Projects {
-			project.Databases = map[string]core.Database{"db_one": {ID: "db_one", Name: "one"}, "db_two": {ID: "db_two", Name: "two"}}
+			project.Databases = map[string]core.Database{"42W0JDM4NSFQ0APASJNEBF71G2": {ID: "42W0JDM4NSFQ0APASJNEBF71G2", Name: "one"}, "1NHBFYG32BH19K0VX9KVJKSKEA": {ID: "1NHBFYG32BH19K0VX9KVJKSKEA", Name: "two"}}
 			org.Projects[id] = project
 		}
 	})

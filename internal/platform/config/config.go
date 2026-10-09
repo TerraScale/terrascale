@@ -42,6 +42,9 @@ type Config struct {
 	// StatusURL is the Statuspage-compatible summary.json the shell banner
 	// reads; empty disables the banner.
 	StatusURL string
+	// RegionStatusURL is the public ts-status origin used by the ts-go latency client.
+	// Empty disables regional measurements in explicitly constructed test configs.
+	RegionStatusURL string
 	// ClientIPHeader names the header in which the reverse proxy in front of
 	// the dashboard reports the client address; empty means the connection's
 	// remote address is the client's.
@@ -84,6 +87,7 @@ const minCSRFSecret = 32
 
 func Load() (Config, error) {
 	c := Config{
+		RegionStatusURL:    "https://status.terrascale.tech",
 		PublicURL:          strings.TrimRight(strings.TrimSpace(os.Getenv("DASHBOARD_PUBLIC_URL")), "/"),
 		Addr:               strings.TrimSpace(os.Getenv("DASHBOARD_ADDR")),
 		Demo:               os.Getenv("TS_DASHBOARD_PRODUCTION_DEMO") == "1",
@@ -97,6 +101,9 @@ func Load() (Config, error) {
 		SentryDSN:          strings.TrimSpace(os.Getenv("SENTRY_DSN")),
 		SentryEnvironment:  strings.TrimSpace(os.Getenv("SENTRY_ENVIRONMENT")),
 		CSPReportURL:       strings.TrimSpace(os.Getenv("DASHBOARD_CSP_REPORT_URL")),
+	}
+	if value, set := os.LookupEnv("TS_STATUS_URL"); set {
+		c.RegionStatusURL = strings.TrimSpace(value)
 	}
 	if err := c.ValidateBackend(); err != nil {
 		return Config{}, err

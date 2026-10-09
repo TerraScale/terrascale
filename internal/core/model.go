@@ -147,6 +147,7 @@ type Invitation struct {
 }
 
 type Project struct {
+	System                    bool
 	ID                        string
 	OrganizationID            string
 	Name                      string
@@ -176,23 +177,13 @@ type Project struct {
 // DataKey is a TerraBase data API key (tb_…) with its ID.
 type DataKey struct{ ID, Secret string }
 
-// TerraBaseIDs returns the IDs under which TerraBase knows the project of
-// organization orgID. A project mirrored from TerraBase has its own. For any
-// other they are derived from the dashboard IDs (name-based UUIDs), so every
-// region and every retry agrees on them without recording them.
-// TODO(TS-599): ts-auth's organization and project IDs replace them.
-func (p Project) TerraBaseIDs(orgID string) (organization, project string) {
-	if terraBaseID.MatchString(p.ID) {
-		return orgID, p.ID
-	}
-	return v1.DocumentIDFor("terrabase-organizations", orgID), v1.DocumentIDFor("terrabase-projects", p.ID)
-}
+// TerraBaseIDs uses the same entity IDs in the dashboard and TerraBase.
+func (p Project) TerraBaseIDs(orgID string) (organization, project string) { return orgID, p.ID }
 
 type Database struct {
-	ID        string
-	ProjectID string
-	// TerraBaseID is the database's ID in its project's TerraBase project.
-	TerraBaseID          string
+	System               bool
+	ID                   string
+	ProjectID            string
 	Name                 string
 	Status               string
 	Region               string
@@ -228,6 +219,7 @@ type IndexBuild struct {
 }
 
 type AdminAction struct {
+	ID          string
 	ActorUserID string
 	Action      string
 	Target      string
@@ -612,8 +604,10 @@ type Deps struct {
 	SDK        SDKFactory
 	Management *v1.Management
 	// Usage reads TerraBase's metered usage; nil without TerraBase.
-	Usage    UsageMeter
-	Throttle Throttle
+	Usage        UsageMeter
+	Metrics      MetricsReader
+	RegionHealth RegionHealthReader
+	Throttle     Throttle
 	// SignUpMail limits verification emails to one per minute per address.
 	SignUpMail Throttle
 	Tools      *Tools
@@ -775,7 +769,7 @@ func (o Organization) CanWrite(userID string) bool {
 // principal took in its selected scope and returns it.
 func (a *Account) RecordAudit(p Principal, action, target, targetType string, at time.Time) AuditEvent {
 	event := AuditEvent{
-		ID: NewID("evt"), OrganizationID: p.OrganizationID, ProjectID: p.ProjectID,
+		ID: NewID(), OrganizationID: p.OrganizationID, ProjectID: p.ProjectID,
 		Actor: a.User.Email, Action: action, Target: target, TargetType: targetType,
 		Risk: "low", Source: "dashboard", OccurredAt: at,
 	}

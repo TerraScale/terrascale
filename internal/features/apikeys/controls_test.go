@@ -19,7 +19,7 @@ func TestCredentialTabControls(t *testing.T) {
 		{"m2m", "Search M2M clients", "Create client", "create-m2m"},
 	} {
 		t.Run(tc.search, func(t *testing.T) {
-			data := pageData{listFilters: listFilters{Kind: tc.kind, Status: "inactive", DatabaseID: "db_orders", Search: "deploy"}, CanManage: true, Databases: []databaseChoice{{ID: "db_orders", Name: "orders"}}}
+			data := pageData{listFilters: listFilters{Kind: tc.kind, Status: "inactive", DatabaseID: "16KDJ28DR0XG7QGWEZ4VJ9Z1VX", Search: "deploy"}, CanManage: true, Databases: []databaseChoice{{ID: "16KDJ28DR0XG7QGWEZ4VJ9Z1VX", Name: "orders"}}}
 			var body strings.Builder
 			if err := apiKeysContent(core.Page{}, data).Render(context.Background(), &body); err != nil {
 				t.Fatal(err)
@@ -34,7 +34,7 @@ func TestCredentialTabControls(t *testing.T) {
 				`placeholder="` + tc.search + `" aria-label="` + tc.search + `"`,
 				`commandfor="` + tc.dialog + `"`, `<span>` + tc.create + `</span>`,
 				`<option value="active">Active</option>`, `<option value="inactive" selected>Inactive</option>`,
-				`<option value="db_orders" selected>orders</option>`,
+				`<option value="16KDJ28DR0XG7QGWEZ4VJ9Z1VX" selected>orders</option>`,
 				`No credentials match these filters.`,
 				`href="` + strings.ReplaceAll(data.clearURL(), "&", "&amp;") + `">Clear</a>`,
 			} {
@@ -52,14 +52,14 @@ func TestCredentialTabControls(t *testing.T) {
 }
 
 func TestCredentialTabNavigationKeepsCompatibleFilters(t *testing.T) {
-	filters := readFilters(url.Values{"kind": {"m2m"}, "status": {"inactive"}, "databaseId": {"db_orders"}, "q": {" deploy "}})
+	filters := readFilters(url.Values{"kind": {"m2m"}, "status": {"inactive"}, "databaseId": {"16KDJ28DR0XG7QGWEZ4VJ9Z1VX"}, "q": {" deploy "}})
 	for _, kind := range []string{"", "key", "m2m"} {
 		u, err := url.Parse(filters.tabURL(kind))
 		if err != nil {
 			t.Fatal(err)
 		}
 		q := u.Query()
-		if q.Get("kind") != kind || q.Get("status") != "inactive" || q.Get("databaseId") != "db_orders" || q.Get("q") != "deploy" {
+		if q.Get("kind") != kind || q.Get("status") != "inactive" || q.Get("databaseId") != "16KDJ28DR0XG7QGWEZ4VJ9Z1VX" || q.Get("q") != "deploy" {
 			t.Errorf("tab %q: filters = %v", kind, q)
 		}
 		clear, err := url.Parse(filters.forTab(kind).clearURL())
@@ -77,14 +77,14 @@ func TestCredentialTabNavigationKeepsCompatibleFilters(t *testing.T) {
 }
 
 func TestCredentialDatabaseFilterBelongsToSelectedProject(t *testing.T) {
-	project := core.Project{Databases: map[string]core.Database{"db_orders": {ID: "db_orders"}}}
+	project := core.Project{Databases: map[string]core.Database{"16KDJ28DR0XG7QGWEZ4VJ9Z1VX": {ID: "16KDJ28DR0XG7QGWEZ4VJ9Z1VX"}}}
 	for _, kind := range []string{"", "key", "m2m"} {
-		filters := listFilters{Kind: kind, Status: "active", DatabaseID: "db_foreign", Search: "deploy"}.forProject(project)
+		filters := listFilters{Kind: kind, Status: "active", DatabaseID: "2JX6P92TTFT18Y918DHVBVFJ9W", Search: "deploy"}.forProject(project)
 		if filters.DatabaseID != "" || filters.Kind != kind || filters.Status != "active" || filters.Search != "deploy" {
 			t.Errorf("foreign database filter was not cleared independently: %+v", filters)
 		}
-		filters.DatabaseID = "db_orders"
-		if got := filters.forProject(project).DatabaseID; got != "db_orders" {
+		filters.DatabaseID = "16KDJ28DR0XG7QGWEZ4VJ9Z1VX"
+		if got := filters.forProject(project).DatabaseID; got != "16KDJ28DR0XG7QGWEZ4VJ9Z1VX" {
 			t.Errorf("compatible project database selection = %q", got)
 		}
 	}
@@ -119,16 +119,16 @@ func TestCredentialFiltersCombineWithinSelectedProjectAndKind(t *testing.T) {
 		org := a.Organizations[owner.OrganizationID]
 		project := org.Projects[owner.ProjectID]
 		project.APIKeys = map[string]core.APIKey{
-			"key":          {ID: "key", Kind: kindAPIKey, Name: "Deploy key", DatabaseID: "db_orders"},
-			"client":       {ID: "client", Kind: kindM2M, Name: "Deploy client", DatabaseID: "db_orders"},
-			"revoked":      {ID: "revoked", Kind: kindM2M, Name: "Deploy revoked", DatabaseID: "db_orders", RevokedAt: now},
-			"expired":      {ID: "expired", Kind: kindAPIKey, Name: "Deploy expired", DatabaseID: "db_orders", ExpiresAt: now.Add(-time.Hour)},
-			"other-db":     {ID: "other-db", Kind: kindAPIKey, Name: "Deploy elsewhere", DatabaseID: "db_users"},
-			"other-name":   {ID: "other-name", Kind: kindAPIKey, Name: "Read only", DatabaseID: "db_orders"},
+			"key":          {ID: "key", Kind: kindAPIKey, Name: "Deploy key", DatabaseID: "16KDJ28DR0XG7QGWEZ4VJ9Z1VX"},
+			"client":       {ID: "client", Kind: kindM2M, Name: "Deploy client", DatabaseID: "16KDJ28DR0XG7QGWEZ4VJ9Z1VX"},
+			"revoked":      {ID: "revoked", Kind: kindM2M, Name: "Deploy revoked", DatabaseID: "16KDJ28DR0XG7QGWEZ4VJ9Z1VX", RevokedAt: now},
+			"expired":      {ID: "expired", Kind: kindAPIKey, Name: "Deploy expired", DatabaseID: "16KDJ28DR0XG7QGWEZ4VJ9Z1VX", ExpiresAt: now.Add(-time.Hour)},
+			"other-db":     {ID: "other-db", Kind: kindAPIKey, Name: "Deploy elsewhere", DatabaseID: "51ZVM7GAJHERHSP6VTQCFHMDVJ"},
+			"other-name":   {ID: "other-name", Kind: kindAPIKey, Name: "Read only", DatabaseID: "16KDJ28DR0XG7QGWEZ4VJ9Z1VX"},
 			"project-wide": {ID: "project-wide", Kind: kindM2M, Name: "Deploy project"},
 		}
 		org.Projects[owner.ProjectID] = project
-		org.Projects["other-project"] = core.Project{ID: "other-project", OrganizationID: owner.OrganizationID, APIKeys: map[string]core.APIKey{"foreign": {ID: "foreign", Kind: kindAPIKey, Name: "Deploy foreign", DatabaseID: "db_orders"}}}
+		org.Projects["other-project"] = core.Project{ID: "other-project", OrganizationID: owner.OrganizationID, APIKeys: map[string]core.APIKey{"foreign": {ID: "foreign", Kind: kindAPIKey, Name: "Deploy foreign", DatabaseID: "16KDJ28DR0XG7QGWEZ4VJ9Z1VX"}}}
 		a.Organizations[owner.OrganizationID] = org
 		return nil
 	})
@@ -147,7 +147,7 @@ func TestCredentialFiltersCombineWithinSelectedProjectAndKind(t *testing.T) {
 		{"key", "inactive", []string{"expired"}},
 		{"m2m", "inactive", []string{"revoked"}},
 	} {
-		items, err := service.List(ctx, owner, credentialFilter{Kind: controlsFor(tc.kind).CredentialKind, Status: tc.status, DatabaseID: "db_orders", Search: "DEPLOY"})
+		items, err := service.List(ctx, owner, credentialFilter{Kind: controlsFor(tc.kind).CredentialKind, Status: tc.status, DatabaseID: "16KDJ28DR0XG7QGWEZ4VJ9Z1VX", Search: "DEPLOY"})
 		if err != nil {
 			t.Fatal(err)
 		}

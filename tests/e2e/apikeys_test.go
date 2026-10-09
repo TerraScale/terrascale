@@ -29,17 +29,17 @@ func TestAPIKeyFiltersInListHeader(t *testing.T) {
 				}
 				fill(t, form.Locator(`[name="q"]`), "core")
 				selectOption(t, form.Locator(`[name="status"]`), "active")
-				selectOption(t, form.Locator(`[name="databaseId"]`), "db_01JC9Q8Y5N7P9R3T5V7X9Z2AC")
+				selectOption(t, form.Locator(`[name="databaseId"]`), "0Z793APJ2ECFW2F7P6J9F2RKVY")
 				must(t, expect.Locator(form.Locator(`[name="databaseId"]`)).ToHaveAttribute("title", "core-primary"))
 				click(t, byRole(form, *playwright.AriaRoleButton, "Filter"))
 				waitForPath(t, page, func(u *url.URL) bool {
 					q := u.Query()
 					return u.Path == "/api-keys" && q.Get("kind") == kind && q.Get("q") == "core" &&
-						q.Get("status") == "active" && q.Get("databaseId") == "db_01JC9Q8Y5N7P9R3T5V7X9Z2AC"
+						q.Get("status") == "active" && q.Get("databaseId") == "0Z793APJ2ECFW2F7P6J9F2RKVY"
 				})
 				must(t, expect.Locator(form.Locator(`[name="q"]`)).ToHaveValue("core"))
 				must(t, expect.Locator(form.Locator(`[name="status"]`)).ToHaveValue("active"))
-				must(t, expect.Locator(form.Locator(`[name="databaseId"]`)).ToHaveValue("db_01JC9Q8Y5N7P9R3T5V7X9Z2AC"))
+				must(t, expect.Locator(form.Locator(`[name="databaseId"]`)).ToHaveValue("0Z793APJ2ECFW2F7P6J9F2RKVY"))
 				must(t, expect.Locator(form.Locator(`[name="databaseId"]`)).ToHaveAttribute("title", "core-primary"))
 				assertAPIKeyHeaderLayout(t, page)
 			})

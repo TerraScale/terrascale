@@ -113,7 +113,7 @@ func (s Service) Attach(ctx context.Context, p core.Principal, in attachInput) (
 		return subscriptionView{}, core.Invalid("Choose HTTP + CDN or WebSocket delivery.")
 	}
 	config := core.SharedResultConfig{
-		ID: core.NewID("cfg"), DatabaseID: in.DatabaseID, Name: name, Query: query,
+		ID: core.NewID(), DatabaseID: in.DatabaseID, Name: name, Query: query,
 		Transport: in.Transport, Status: "saved", CreatedAt: time.Now().UTC(),
 	}
 	var databaseName string

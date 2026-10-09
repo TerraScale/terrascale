@@ -66,7 +66,7 @@ func internalUsageFixture(t *testing.T, store core.Store) (Service, core.Princip
 		org.Name, org.Kind = "terrascale", "business"
 		org.Projects = map[string]core.Project{}
 		for i, name := range []string{"ts-dashboard", "ts-auth", "ts-router", "ts-status", "ts-orchestrator", "ku", "ts-reviewer"} {
-			id := core.NewULID()
+			id := core.NewID()
 			if i == 0 {
 				id = p.ProjectID
 			}
@@ -167,7 +167,7 @@ func TestInternalBillUsesExactCentsAndRejectsOverflow(t *testing.T) {
 		}
 	}
 	report := usageReport{Allowances: []allowanceUsage{{Measured: true}, {Measured: true, Used: 1}, {Measured: true}}}
-	bill := computeInternalBill(core.Plan{ID: core.NewULID(), PriceCents: math.MaxInt64, WriteCentsPerMillion: 100}, report, core.UsagePeriod{})
+	bill := computeInternalBill(core.Plan{ID: core.NewID(), PriceCents: math.MaxInt64, WriteCentsPerMillion: 100}, report, core.UsagePeriod{})
 	if bill.Available || bill.CapReached {
 		t.Fatalf("overflow bill = %+v", bill)
 	}
@@ -179,7 +179,7 @@ func TestInternalBillKeepsTheMeteredMonthAcrossMidnight(t *testing.T) {
 		To:   time.Date(2026, 10, 31, 23, 59, 59, 0, time.UTC),
 	}
 	report := usageReport{SpendCapCents: 500, Allowances: []allowanceUsage{{Measured: true}, {Measured: true}, {Measured: true}}}
-	bill := computeInternalBill(core.Plan{ID: core.NewULID(), PriceCents: 500}, report, period)
+	bill := computeInternalBill(core.Plan{ID: core.NewID(), PriceCents: 500}, report, period)
 	if !bill.Available || !bill.CapReached || bill.PeriodStart != period.From || bill.PeriodEnd != period.To {
 		t.Fatalf("bill changed the measured October window: %+v", bill)
 	}

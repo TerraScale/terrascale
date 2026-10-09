@@ -15,7 +15,7 @@ var stateCollections = []string{
 }
 
 // EnsureCollections explicitly provisions the already-selected state database.
-// Constructors and health checks must not call it. The current Documents API
+// Startup calls it; health checks only observe state. The current Documents API
 // has no native constraints, indexes or TTL to provision.
 func EnsureCollections(ctx context.Context, db *v1.Database) error {
 	for _, name := range stateCollections {

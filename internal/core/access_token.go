@@ -51,7 +51,7 @@ func NewAccessToken(name string, lifetime time.Duration, now time.Time) (AccessT
 	rand.Read(random[:])
 	secret := AccessTokenPrefix + base64.RawURLEncoding.EncodeToString(random[:])
 	return AccessToken{
-		ID: NewID("pat"), Name: name, LastFour: secret[len(secret)-4:],
+		ID: NewID(), Name: name, LastFour: secret[len(secret)-4:],
 		SecretHash: HashAccessToken(secret), CreatedAt: now, ExpiresAt: now.Add(lifetime),
 	}, secret, nil
 }

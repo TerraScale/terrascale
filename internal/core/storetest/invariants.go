@@ -63,7 +63,7 @@ func TestRegistrationIdentity(t *testing.T, s core.Store) {
 	duplicate := core.CloneAccount(a)
 	duplicate.User.Email = "other@example.test"
 	want(t, s.InsertAccount(ctx, duplicate), core.ErrConflict)
-	duplicate.ID, duplicate.User.ID = core.NewID("acct"), core.NewID("usr")
+	duplicate.ID, duplicate.User.ID = core.NewID(), core.NewID()
 	want(t, s.InsertAccount(ctx, duplicate), core.ErrConflict)
 	_, err = s.FindByEmail(ctx, "other@example.test")
 	want(t, err, core.ErrNotFound)
@@ -189,7 +189,7 @@ func TestAccessTokenCapAndExpiry(t *testing.T, s core.Store) {
 func TestConcurrentOrganizationDatabaseLimit(t *testing.T, s core.Store) {
 	a := account(t, s, "database-race@example.test")
 	p := a.Principal()
-	extraID := core.NewID("prj")
+	extraID := core.NewID()
 	want(t, s.UpdateAs(ctx, p, func(a *core.Account) error {
 		org := a.Organizations[p.OrganizationID]
 		org.Projects[extraID] = core.Project{ID: extraID, OrganizationID: org.ID, Name: "Extra", Status: "active", Databases: make(map[string]core.Database)}
@@ -270,7 +270,7 @@ func TestPlanCatalogAndExternalReferences(t *testing.T, s core.Store) {
 	admin, err := s.CreateAccount(ctx, core.User{Name: "Admin", Email: "admin@example.test", PasswordHash: "hash", PlatformAdmin: true})
 	want(t, err, nil)
 	p := admin.Principal()
-	plan := core.Plan{ID: "plan_custom", Key: "custom", Name: "Custom", MaxDatabases: 2}
+	plan := core.Plan{ID: "76M6T869HYQFDRP1RNEJP7HMH8", Key: "custom", Name: "Custom", MaxDatabases: 2}
 	want(t, s.UpsertPlanAs(ctx, p, plan), nil)
 	for _, conflict := range []core.Plan{
 		{ID: plan.ID, Key: "changed"}, {ID: "other", Key: plan.Key},
@@ -281,7 +281,7 @@ func TestPlanCatalogAndExternalReferences(t *testing.T, s core.Store) {
 	other := account(t, s, "other@example.test").Principal()
 	want(t, setPlan(s, other, plan.ID), nil)
 	want(t, s.DeletePlanAs(ctx, p, plan.ID), core.ErrConflict)
-	want(t, setPlan(s, other, "plan_free"), nil)
+	want(t, setPlan(s, other, core.FreePlanID), nil)
 	checkout := core.CheckoutSession{ID: "checkout_provider", PlanID: plan.ID, Status: "open", ExpiresAt: time.Now().Add(-time.Hour)}
 	want(t, s.UpdateOrganization(ctx, other.OrganizationID, func(org *core.Organization, _ map[string]core.Plan) error {
 		org.CheckoutSessions[checkout.ID] = checkout
@@ -337,7 +337,7 @@ func TestScopeGuardAndMembershipRemoval(t *testing.T, s core.Store) {
 	// resource, which only a principal without an account is not.
 	_, err = s.ScopedPrincipal(ctx, p, core.Scope{OrganizationID: owner.OrganizationID})
 	want(t, err, core.ErrNotFound)
-	_, err = s.ScopedPrincipal(ctx, core.Principal{AccountID: "acct_missing", UserID: p.UserID}, core.Scope{})
+	_, err = s.ScopedPrincipal(ctx, core.Principal{AccountID: "1X1GA5H0YDJ92W6VNKZKY2C32N", UserID: p.UserID}, core.Scope{})
 	want(t, err, core.ErrUnauthorized)
 }
 

@@ -16,7 +16,7 @@ import (
 // payloads avoids a second, independently maintained copy of the core model.
 type coreRecord struct {
 	Kind           string          `json:"kind"`
-	ID             string          `json:"id"`
+	ID             string          `json:"-"`
 	OwnerID        string          `json:"owner_id,omitempty"`
 	AccountID      string          `json:"account_id,omitempty"`
 	UserID         string          `json:"user_id,omitempty"`
@@ -71,9 +71,41 @@ func claim(collection, owner string, parts ...string) (coreKey, coreRecord) {
 	return k, coreRecord{Kind: "unique_claim", ID: k.id, OwnerID: owner}
 }
 
+// Only the document key carries a record's identity. Domain structs receive it
+// when loaded, while reference fields remain in the persisted payload.
+func encodeData(data any) (json.RawMessage, error) {
+	body, err := json.Marshal(data)
+	if err != nil {
+		return nil, err
+	}
+	if len(body) > 0 && body[0] == '{' {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(body, &fields); err != nil {
+			return nil, err
+		}
+		delete(fields, "ID")
+		delete(fields, "id")
+		return json.Marshal(fields)
+	}
+	return body, nil
+}
+
 func decodeData[T any](r coreRecord) (T, error) {
 	var value T
-	err := v1.Decode(r.Data, &value)
+	data := r.Data
+	if len(data) > 0 && data[0] == '{' {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(data, &fields); err != nil {
+			return value, coreUnavailable(err)
+		}
+		fields["ID"], _ = json.Marshal(r.ID)
+		var err error
+		data, err = json.Marshal(fields)
+		if err != nil {
+			return value, coreUnavailable(err)
+		}
+	}
+	err := v1.Decode(data, &value)
 	if err != nil {
 		return value, fmt.Errorf("%w: decode %s: %v", core.ErrUnavailable, r.ID, err)
 	}
@@ -87,11 +119,12 @@ func encodeCore(state memstore.State, now time.Time) (map[coreKey]coreRecord, er
 	add := func(collection, key string, data any, r coreRecord) error {
 		r.Kind = "record"
 		var err error
-		r.Data, err = json.Marshal(data)
+		r.Data, err = encodeData(data)
 		if err != nil {
 			return fmt.Errorf("%w: encode %s: %v", core.ErrInvalid, collection, err)
 		}
 		k := recordKey(collection, key)
+		r.ID = k.id
 		if _, exists := records[k]; exists {
 			return core.ErrConflict
 		}
@@ -124,7 +157,10 @@ func encodeCore(state memstore.State, now time.Time) (map[coreKey]coreRecord, er
 			}
 		}
 		for _, token := range a.AccessTokens {
-			if err := add("access_tokens", token.SecretHash, token, coreRecord{ID: token.ID, AccountID: a.ID, UserID: a.User.ID, TokenHash: token.SecretHash, AuthVersion: a.AuthVersion, ExpiresAt: token.ExpiresAt, CreatedAt: token.CreatedAt}); err != nil {
+			if err := unique("access_tokens", token.ID, "token_hash", token.SecretHash); err != nil {
+				return nil, err
+			}
+			if err := add("access_tokens", token.ID, token, coreRecord{ID: token.ID, AccountID: a.ID, UserID: a.User.ID, TokenHash: token.SecretHash, AuthVersion: a.AuthVersion, ExpiresAt: token.ExpiresAt, CreatedAt: token.CreatedAt}); err != nil {
 				return nil, err
 			}
 		}

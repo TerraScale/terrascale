@@ -13,7 +13,7 @@ func TestOrganizationSectionsKeepTheirActions(t *testing.T) {
 	login(t, page, sampleAccount.Email, sampleAccount.Password)
 	goToOK(t, page, "/organization")
 	tabs := pageByRole(page, *playwright.AriaRoleNavigation, "Organization sections")
-	must(t, expect.Locator(tabs.Locator("a")).ToHaveText([]string{"Organization", "Members", "Projects"}))
+	must(t, expect.Locator(tabs.Locator("a")).ToHaveText([]string{"Organization", "Members", "Projects", "Billing", "Audit"}))
 	must(t, expect.Locator(tabs.Locator("[aria-current=page]")).ToHaveText("Organization"))
 	visible(t, page.Locator("#organization-details"))
 	visible(t, page.Locator("#organization-ownership"))
@@ -61,7 +61,7 @@ func TestOrganizationSectionsKeepTheirActions(t *testing.T) {
 // sample organization and cancels it again. It stays serial so no parallel
 // test sees the sample organization mid-transfer.
 func TestOwnershipTransferIsConfirmedAndCanBeCanceled(t *testing.T) {
-	const ravi = "usr_01JC9S9V6Q1X4Z6B8D0F3H6JN"
+	const ravi = "2Q9DGMCYH1PHHNXHC03FEZNSME"
 	page := newPage(t)
 	login(t, page, sampleAccount.Email, sampleAccount.Password)
 	goToOK(t, page, "/organization")

@@ -4,13 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 	"time"
 	"unicode"
+
+	"terrascale.tech/sdk/internal/entityid"
 )
 
 // Management is a client of the TerraBase Management API (/v1/management).
@@ -56,6 +57,9 @@ func (m *Management) WithToken(accessToken string) *ManagementUser {
 // caller: never take it from browser input.
 func (m *Management) As(userID string) *ManagementUser {
 	u := &ManagementUser{c: m.c, header: http.Header{"X-Terrabase-User-Id": {userID}}}
+	if err := checkID(userID); err != nil {
+		u.err = err
+	}
 	if m.c.token == "" {
 		u.err = errors.New("terrabase: As needs Config.Token, the management service credential")
 	}
@@ -95,17 +99,17 @@ const (
 
 // Organization is a TerraBase organization, the tenant that owns projects.
 type Organization struct {
-	ID        string    `json:"id"`
+	ID        string    `json:"id" ulid:"required"`
 	Name      string    `json:"name"`
-	CreatedBy string    `json:"createdBy"`
+	CreatedBy string    `json:"createdBy" ulid:"required"`
 	CreatedAt time.Time `json:"createdAt"`
 	Plan      Plan      `json:"plan"`
 }
 
 // Project is a folder of databases inside an organization.
 type Project struct {
-	ID             string    `json:"id"`
-	OrganizationID string    `json:"organizationId"`
+	ID             string    `json:"id" ulid:"required"`
+	OrganizationID string    `json:"organizationId" ulid:"required"`
 	Name           string    `json:"name"`
 	CreatedAt      time.Time `json:"createdAt"`
 }
@@ -113,11 +117,11 @@ type Project struct {
 // ManagedDatabase is a database as the Management API returns it. Its Name
 // addresses it in the Documents API: Client.Database(ProjectID, Name).
 type ManagedDatabase struct {
-	ID        string `json:"id"`
-	ProjectID string `json:"projectId"`
+	ID        string `json:"id" ulid:"required"`
+	ProjectID string `json:"projectId" ulid:"required"`
 	Name      string `json:"name"`
 	// BranchedFrom is the id of the database this one was branched from.
-	BranchedFrom *string   `json:"branchedFrom"`
+	BranchedFrom *string   `json:"branchedFrom" ulid:"optional"`
 	CreatedAt    time.Time `json:"createdAt"`
 	// Region is the Atlas region id, such as gru-1, of the node that answered.
 	Region string `json:"region"`
@@ -145,7 +149,7 @@ type CollectionStats struct {
 
 // DatabaseUsage is a database's storage and its metered reads and writes.
 type DatabaseUsage struct {
-	DatabaseID   string `json:"databaseId"`
+	DatabaseID   string `json:"databaseId" ulid:"required"`
 	StorageBytes int64  `json:"storageBytes"`
 	Collections  int64  `json:"collections"`
 	Documents    int64  `json:"documents"`
@@ -165,7 +169,7 @@ type SQLResult struct {
 // SQLRow is one selected document: all of it for SELECT *, otherwise one
 // member per selected field.
 type SQLRow struct {
-	ID    string          `json:"id"`
+	ID    string          `json:"id" documentkey:"required"`
 	Value json.RawMessage `json:"value"`
 }
 
@@ -189,13 +193,13 @@ type IndexRequest struct {
 
 // ProjectAPIKey is a project's data API key (tb_…) without its secret.
 type ProjectAPIKey struct {
-	ID        string   `json:"id"`
-	ProjectID string   `json:"projectId"`
+	ID        string   `json:"id" ulid:"required"`
+	ProjectID string   `json:"projectId" ulid:"required"`
 	Name      string   `json:"name"`
 	Scopes    []string `json:"scopes"`
 	// DatabaseID is the only database the key reaches; empty for every
 	// database of the project.
-	DatabaseID string    `json:"databaseId"`
+	DatabaseID string    `json:"databaseId" ulid:"optional"`
 	LastFour   string    `json:"lastFour"`
 	CreatedAt  time.Time `json:"createdAt"`
 }
@@ -206,7 +210,7 @@ type ProjectAPIKey struct {
 type ProjectAPIKeyRequest struct {
 	Name       string   `json:"name"`
 	Scopes     []string `json:"scopes"`
-	DatabaseID string   `json:"databaseId,omitempty"`
+	DatabaseID string   `json:"databaseId,omitempty" ulid:"optional"`
 }
 
 // CreatedProjectAPIKey is a new key with its secret, returned only once.
@@ -217,17 +221,17 @@ type CreatedProjectAPIKey struct {
 
 // Member is a user's membership in an organization.
 type Member struct {
-	UserID   string    `json:"userId"`
+	UserID   string    `json:"userId" ulid:"required"`
 	Role     Role      `json:"role"`
 	JoinedAt time.Time `json:"joinedAt"`
 }
 
 // Invitation is an invitation; a pending one expires after 7 days.
 type Invitation struct {
-	ID        string           `json:"id"`
+	ID        string           `json:"id" ulid:"required"`
 	Email     string           `json:"email"`
 	Role      Role             `json:"role"`
-	InvitedBy string           `json:"invitedBy"`
+	InvitedBy string           `json:"invitedBy" ulid:"required"`
 	CreatedAt time.Time        `json:"createdAt"`
 	ExpiresAt time.Time        `json:"expiresAt"`
 	Status    InvitationStatus `json:"status"`
@@ -252,16 +256,16 @@ type CreatedInvitation struct {
 
 // OwnershipTransfer is an organization's pending ownership transfer.
 type OwnershipTransfer struct {
-	FromUserID string    `json:"fromUserId"`
-	ToUserID   string    `json:"toUserId"`
+	FromUserID string    `json:"fromUserId" ulid:"required"`
+	ToUserID   string    `json:"toUserId" ulid:"required"`
 	CreatedAt  time.Time `json:"createdAt"`
 	ExpiresAt  time.Time `json:"expiresAt"`
 }
 
 // AuditEvent is one recorded access change.
 type AuditEvent struct {
-	ID         string    `json:"id"`
-	Actor      string    `json:"actor"`
+	ID         string    `json:"id" ulid:"required"`
+	Actor      string    `json:"actor" ulid:"required"`
 	Action     string    `json:"action"`
 	Target     string    `json:"target"`
 	Detail     string    `json:"detail"`
@@ -298,6 +302,21 @@ func (o PageOptions) query() url.Values {
 func (u *ManagementUser) call(ctx context.Context, method string, path []string, query url.Values, in, out any) error {
 	if u.err != nil {
 		return u.err
+	}
+	if err := entityid.Path(path); err != nil {
+		return err
+	}
+	if in != nil {
+		body, err := json.Marshal(in)
+		if err != nil {
+			return err
+		}
+		if err := entityid.Body(body); err != nil {
+			return err
+		}
+		if err := entityid.Model(in); err != nil {
+			return err
+		}
 	}
 	req := request{
 		method:     method,
@@ -413,13 +432,13 @@ func (u *ManagementUser) DeleteProject(ctx context.Context, org, project string)
 // RegisterProject registers an organization and project in the called region
 // under the ids and names they have in another region, through one
 // Management commit, so a database placed in this region can replicate there
-// (TS-643). What the region already has is left as it is. The commit id is
-// derived from the ids, so retrying a registration is safe.
+// (TS-643). What the region already has is left as it is. Repeating a
+// completed registration reads the existing identities and makes no commit.
 func (u *ManagementUser) RegisterProject(ctx context.Context, org Organization, project Project) error {
 	type op struct {
 		Op           string `json:"op"`
 		Organization string `json:"organization,omitempty"`
-		ID           string `json:"id"`
+		ID           string `json:"id" ulid:"required"`
 		Name         string `json:"name"`
 	}
 	var ops []op
@@ -441,9 +460,9 @@ func (u *ManagementUser) RegisterProject(ctx context.Context, org Organization, 
 		return nil
 	}
 	commit := struct {
-		ID  string `json:"id"`
+		ID  string `json:"id" ulid:"required"`
 		Ops []op   `json:"ops"`
-	}{formatUUID(uuidV5(namespaceURL, fmt.Sprintf("terrabase:register-project:%+v", ops))), ops}
+	}{NewID(), ops}
 	return u.call(ctx, http.MethodPost, []string{"commits"}, nil, commit, nil)
 }
 

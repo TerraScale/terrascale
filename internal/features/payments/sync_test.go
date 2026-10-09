@@ -20,7 +20,7 @@ func TestCheckoutReturnSyncsBeforeWebhooksArrive(t *testing.T) {
 	if response.Code != http.StatusSeeOther || response.Header().Get("Location") != "/usage?payment=success&tab=billing" {
 		t.Fatalf("return = %d %q", response.Code, response.Header().Get("Location"))
 	}
-	if org := fixture.organization(t); org.PlanID != "plan_pro" || org.Billing.Status != "active" {
+	if org := fixture.organization(t); org.PlanID != "7CNW2H87JE68ATZX224CV2G625" || org.Billing.Status != "active" {
 		t.Fatalf("billing after return = %#v", org.Billing)
 	}
 }
@@ -36,7 +36,7 @@ func TestCheckoutReturnReportsProcessingUntilPaymentConfirms(t *testing.T) {
 		t.Fatalf("return = %q", response.Header().Get("Location"))
 	}
 	org := fixture.organization(t)
-	if org.PlanID != "plan_free" || org.Billing.CheckoutID != "cs_test" {
+	if org.PlanID != "3BN8V1JQWTB3R3NSZ26SERTHWT" || org.Billing.CheckoutID != "cs_test" {
 		t.Fatalf("unconfirmed payment changed the plan or released checkout: %#v", org.Billing)
 	}
 }
@@ -121,7 +121,7 @@ func TestSyncReleasesExpiredCheckout(t *testing.T) {
 	fixture.provider.checkout.Status, fixture.provider.checkout.SubscriptionID = "expired", ""
 	fixture.sync(t)
 	org := fixture.organization(t)
-	if org.Billing.CheckoutID != "" || org.CheckoutSessions["cs_test"].Status != "canceled" || org.Billing.Status != payments.StatusNone || org.PlanID != "plan_free" {
+	if org.Billing.CheckoutID != "" || org.CheckoutSessions["cs_test"].Status != "canceled" || org.Billing.Status != payments.StatusNone || org.PlanID != "3BN8V1JQWTB3R3NSZ26SERTHWT" {
 		t.Fatalf("billing after expiry = %#v, sessions = %#v", org.Billing, org.CheckoutSessions)
 	}
 }
@@ -137,7 +137,7 @@ func TestSyncProjectsScheduledPendingAndCanceledChanges(t *testing.T) {
 	fixture.sync(t)
 	fixture.sync(t)
 	org := fixture.organization(t)
-	if org.Billing.ScheduledPlanKey != payments.PlanStarter || org.Billing.ScheduleID != "sub_sched_test" || !org.Billing.ScheduledAt.Equal(testPeriodEnd) || org.PlanID != "plan_pro" {
+	if org.Billing.ScheduledPlanKey != payments.PlanStarter || org.Billing.ScheduleID != "sub_sched_test" || !org.Billing.ScheduledAt.Equal(testPeriodEnd) || org.PlanID != "7CNW2H87JE68ATZX224CV2G625" {
 		t.Fatalf("scheduled change = %#v", org.Billing)
 	}
 	if org.Billing.ChangeVersion != version+1 {
@@ -156,7 +156,7 @@ func TestSyncProjectsScheduledPendingAndCanceledChanges(t *testing.T) {
 	canceling.CancelAtPeriodEnd = true
 	fixture.provider.customer.Subscriptions = []payments.SubscriptionSnapshot{canceling}
 	fixture.sync(t)
-	if org := fixture.organization(t); org.Billing.ScheduledPlanKey != "free" || org.PlanID != "plan_pro" {
+	if org := fixture.organization(t); org.Billing.ScheduledPlanKey != "free" || org.PlanID != "7CNW2H87JE68ATZX224CV2G625" {
 		t.Fatalf("scheduled cancellation = %#v", org.Billing)
 	}
 
@@ -164,7 +164,7 @@ func TestSyncProjectsScheduledPendingAndCanceledChanges(t *testing.T) {
 	canceled.Status = "canceled"
 	fixture.provider.customer.Subscriptions = []payments.SubscriptionSnapshot{canceled}
 	fixture.sync(t)
-	if org := fixture.organization(t); org.PlanID != "plan_free" || org.Billing.PlanKey != "free" || org.Billing.ScheduledPlanKey != "" || org.BillingStatus != "active" {
+	if org := fixture.organization(t); org.PlanID != "3BN8V1JQWTB3R3NSZ26SERTHWT" || org.Billing.PlanKey != "free" || org.Billing.ScheduledPlanKey != "" || org.BillingStatus != "active" {
 		t.Fatalf("Personal after cancellation = %#v", org.Billing)
 	}
 }
@@ -199,7 +199,7 @@ func TestSyncKeepsPersonalPlanDuringDunning(t *testing.T) {
 			fixture.sync(t)
 
 			org := fixture.organization(t)
-			if org.PlanID != "plan_pro" || org.Billing.PlanKey != payments.PlanPro || org.Billing.Status != status || org.BillingStatus != "billing_required" {
+			if org.PlanID != "7CNW2H87JE68ATZX224CV2G625" || org.Billing.PlanKey != payments.PlanPro || org.Billing.Status != status || org.BillingStatus != "billing_required" {
 				t.Fatalf("Personal during %s = %#v", status, org)
 			}
 		})
@@ -215,7 +215,7 @@ func TestSyncPicksCurrentSubscriptionAndRemembersTrials(t *testing.T) {
 	current.CreatedAt = old.CreatedAt.AddDate(0, 0, -1)
 	fixture.provider.customer.Subscriptions = []payments.SubscriptionSnapshot{old, current}
 	fixture.sync(t)
-	if org := fixture.organization(t); org.Billing.SubscriptionID != "sub_test" || org.PlanID != "plan_pro" || !org.Billing.TrialUsed {
+	if org := fixture.organization(t); org.Billing.SubscriptionID != "sub_test" || org.PlanID != "7CNW2H87JE68ATZX224CV2G625" || !org.Billing.TrialUsed {
 		t.Fatalf("current subscription = %#v", org.Billing)
 	}
 }
@@ -251,7 +251,7 @@ func TestSyncRereadsStripeAfterConcurrentSave(t *testing.T) {
 	if stored.Revision != 2 || fixture.organization(t).Billing.Revision != 2 {
 		t.Fatalf("revision after one competing save and one successful retry = %d, want 2", stored.Revision)
 	}
-	if stored.PlanKey != payments.PlanBusiness || fixture.organization(t).PlanID != "plan_business" {
+	if stored.PlanKey != payments.PlanBusiness || fixture.organization(t).PlanID != "09XCWRH05BWWBADSBPTPDMFA7D" {
 		t.Fatalf("stored plan = %q, want the state read after the competing save", stored.PlanKey)
 	}
 }
@@ -368,7 +368,7 @@ func (store *invalidLoadedStore) Save(ctx context.Context, state payments.Custom
 }
 
 func TestSyncRejectsInvalidLoadedStateBeforeReadingStripe(t *testing.T) {
-	otherOrganization := core.NewULID()
+	otherOrganization := core.NewID()
 	for _, test := range []struct {
 		name   string
 		mutate func(*payments.CustomerState, *string)
@@ -395,7 +395,7 @@ func TestSyncRejectsInvalidLoadedStateBeforeReadingStripe(t *testing.T) {
 
 func TestMemoryStateStoreInitializesBoundState(t *testing.T) {
 	store := payments.NewMemoryStateStore()
-	organizationID := core.NewULID()
+	organizationID := core.NewID()
 	if _, err := store.BindCustomer(t.Context(), organizationID, "cus_test"); err != nil {
 		t.Fatal(err)
 	}

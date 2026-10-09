@@ -92,7 +92,7 @@ func TestDatabaseRegionsPersistInTerraBase(t *testing.T) {
 	selectDatabaseRegions(t, dialog, "GRU", "SFO")
 	fill(t, dialog.Locator("#database-name"), "replicated")
 	submitAndExpect(t, page, "/api/v1/dashboard/databases", 303, byRole(dialog, *playwright.AriaRoleButton, "Create database").Click)
-	waitForPath(t, page, func(u *url.URL) bool { return strings.HasPrefix(u.Path, "/databases/db_") })
+	waitForPath(t, page, func(u *url.URL) bool { return entityPath(u.Path, "/databases/") })
 	must(t, expect.Locator(page.Locator("#placement")).ToContainText("Replicated across GRU, SFO"))
 	databasePath := currentPath(t, page)
 	stored := func() []string {

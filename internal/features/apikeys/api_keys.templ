@@ -157,21 +157,21 @@ templ createCredential(page core.Page, d pageData, kind, action, title, descript
 				}
 			</div>
 			<fieldset class="ts-permissions" aria-describedby={ kind + "-permissions-hint" }>
-				<legend>Database permissions</legend>
+				<legend class="ts-label">Database permissions</legend>
 				<p class="ts-hint" id={ kind + "-permissions-hint" }>Choose the minimum access your application needs.</p>
 				<div class="ts-permission-options">
 					@permissionOption(kind, "read", "Read only", "Read and query records. Cannot change or delete data.", readAccess, d.accessFor(kind) == readAccess, true)
 					@permissionOption(kind, "write", "Read and write", "Read, create, update, and delete records. Use for apps that change data.", readWriteAccess, d.accessFor(kind) == readWriteAccess, false)
 				</div>
 				<details class="ts-permission-advanced" open?={ d.accessFor(kind) == writeAccess }>
-					<summary>More access options</summary>
+					<summary class="ts-meta ts-muted">More access options</summary>
 					@permissionOption(kind, "write-only", "Write only", "Create, update, and delete records without reading them. For ingestion services.", writeAccess, d.accessFor(kind) == writeAccess, false)
 				</details>
 			</fieldset>
 			<section class="ts-permission-review" aria-label="Authorization summary" aria-live="polite" aria-atomic="true">
 				@icons.ShieldCheck(20)
-				<div>
-					<h3>Access summary</h3>
+				<div class="ts-field">
+					<h3 class="ts-hint ts-muted">Access summary</h3>
 					<p class="ts-strong" data-text={ "$_" + kind + "Database" }>{ d.databaseFor(kind) }</p>
 					<p class="ts-hint" data-text={ permissionSummary(kind) }>
 						if d.accessFor(kind) == readWriteAccess {
@@ -196,8 +196,8 @@ templ createCredential(page core.Page, d pageData, kind, action, title, descript
 templ permissionOption(kind, id, label, description, scopes string, selected, recommended bool) {
 	<label class="ts-permission-option" for={ kind + "-access-" + id }>
 		<input type="radio" id={ kind + "-access-" + id } name="scopes" value={ scopes } checked?={ selected } required data-bind={ "_" + kind + "Access" } aria-labelledby={ kind + "-access-" + id + "-label" } aria-describedby={ kind + "-access-" + id + "-description" }/>
-		<span class="ts-permission-body">
-			<span class="ts-permission-heading">
+		<span class="ts-field ts-permission-body">
+			<span class="ts-row">
 				if recommended {
 					@icons.Eye(18)
 				} else {
@@ -206,10 +206,10 @@ templ permissionOption(kind, id, label, description, scopes string, selected, re
 				<strong id={ kind + "-access-" + id + "-label" }>{ label }</strong>
 			</span>
 			if recommended {
-				<span class="ts-permission-recommended">Recommended</span>
+				<span class="ts-hint">Recommended</span>
 			}
-			<span class="ts-permission-description" id={ kind + "-access-" + id + "-description" }>{ description }</span>
-			<span class="ts-permission-scopes">
+			<span class="ts-meta ts-muted" id={ kind + "-access-" + id + "-description" }>{ description }</span>
+			<span class="ts-row ts-apikeys-scopes">
 				for _, scope := range formScopes(scopes) {
 					<code>{ scope }</code>
 				}

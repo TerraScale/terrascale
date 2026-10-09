@@ -40,7 +40,7 @@ type overview struct {
 // activity is the project's reads and writes per interval. Each read is one
 // read and each write one write; they are never added together.
 type activity struct {
-	Range       string   `json:"range" jsonschema:"Plotted range: 24h, 7d, or 30d."`
+	Range       string   `json:"range" jsonschema:"Plotted range: 1h, 24h, 7d, or 30d."`
 	Sample      bool     `json:"sample" jsonschema:"True when the series is illustrative demo data rather than measured traffic."`
 	Metered     bool     `json:"metered" jsonschema:"True when TerraBase measured the series."`
 	Note        string   `json:"note"`

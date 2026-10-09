@@ -72,7 +72,6 @@ dialog.ts-credential-dialog {
 
 .ts-permissions > legend {
   margin-bottom: var(--ts-s1);
-  font-size: var(--ts-fs-sm);
 }
 
 .ts-permissions > .ts-hint {
@@ -85,30 +84,29 @@ dialog.ts-credential-dialog {
   gap: var(--ts-s3);
 }
 
-.ts-permission-advanced {
-  margin-top: var(--ts-s3);
-}
-
-.ts-permission-advanced > summary {
-  color: var(--ts-ink-2);
-  font-size: var(--ts-fs-sm);
-  cursor: pointer;
-}
-
+.ts-permission-advanced,
 .ts-permission-advanced > .ts-permission-option {
   margin-top: var(--ts-s3);
 }
 
-.ts-permission-option {
+.ts-permission-advanced > summary {
+  cursor: pointer;
+}
+
+.ts-permission-option,
+.ts-permission-review {
   display: flex;
   align-items: flex-start;
   gap: var(--ts-s3);
   padding: var(--ts-s4);
-  border: 1px solid var(--ts-control-line);
+  border: 1px solid var(--ts-line-strong);
   border-radius: var(--ts-radius-lg);
   background: var(--ts-surface-2);
+}
+
+.ts-permission-option {
+  border-color: var(--ts-control-line);
   cursor: pointer;
-  transition: border-color var(--ts-fast), background var(--ts-fast);
 }
 
 .ts-permission-option:hover {
@@ -134,85 +132,22 @@ dialog.ts-credential-dialog {
 }
 
 .ts-permission-body {
-  display: grid;
-  align-content: start;
-  gap: var(--ts-s2);
-  min-width: 0;
-}
-
-.ts-permission-heading {
-  display: flex;
-  align-items: center;
   gap: var(--ts-s2);
 }
 
-.ts-permission-heading > svg {
-  flex: none;
-  color: var(--ts-link);
-}
-
-.ts-permission-heading > strong {
-  font-size: var(--ts-fs-md);
-}
-
-.ts-permission-recommended {
-  justify-self: start;
-  color: var(--ts-link);
-  font-size: var(--ts-fs-xs);
-  font-weight: 600;
-}
-
-.ts-permission-description {
-  color: var(--ts-ink-2);
-  font-size: var(--ts-fs-sm);
-  line-height: 1.6;
-}
-
-.ts-permission-scopes {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--ts-s1);
-  margin-top: var(--ts-s1);
-}
-
-.ts-permission-scopes > code {
-  max-width: 100%;
-  padding: 2px 6px;
-  border: 1px solid var(--ts-line-strong);
-  border-radius: var(--ts-radius-sm);
-  background: var(--ts-surface);
-  color: var(--ts-ink-2);
-  font-size: 11px;
-  overflow-wrap: anywhere;
-}
-
-.ts-permission-review {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--ts-s3);
-  padding: var(--ts-s4);
-  border: 1px solid var(--ts-line-strong);
-  border-radius: var(--ts-radius-lg);
-  background: var(--ts-surface-2);
-}
-
+.ts-permission-option svg,
 .ts-permission-review > svg {
   flex: none;
-  margin-top: 2px;
   color: var(--ts-link);
+}
+
+.ts-permission-body code {
+  font-size: 11px;
 }
 
 .ts-permission-review > div {
-  display: grid;
   gap: var(--ts-s1);
-  min-width: 0;
   overflow-wrap: anywhere;
-}
-
-.ts-permission-review h3 {
-  color: var(--ts-ink-2);
-  font-size: var(--ts-fs-xs);
-  font-weight: 500;
 }
 
 @media (max-width: 540px) {

@@ -7,13 +7,13 @@ import (
 	"terrascale.tech/dashboard/internal/core"
 )
 
-const demoLabsOrganizationID = "org_01JC9Q5V2N4P6T8R0X2Z4B6D8"
+const demoLabsOrganizationID = "7N1PZ3BD9WCGBVV4V50V508NRX"
 
 func seedMarioDemoFixture(account *core.Account) {
 	const (
-		coreProjectID    = "prj_01JC9Q6W3M5N7P9R2T4V6X8ZA"
-		edgeProjectID    = "prj_01JC9R2X4P6T8V1Z3B5D7F9HC"
-		sandboxProjectID = "prj_01JC9S4Y6R8T0V2X4Z6B8D1FE"
+		coreProjectID    = "1X1TETYPPH2APBVN5WGY9D3S3G"
+		edgeProjectID    = "1411Y0F25R3D1RAZWB7628Q3JH"
+		sandboxProjectID = "06RCAG0WTSX0132AWJ5NEK4KR8"
 	)
 
 	// Demo projects use only the supported GRU and SFO regions.
@@ -21,18 +21,18 @@ func seedMarioDemoFixture(account *core.Account) {
 	edgeProject := newMarioProject(edgeProjectID, "edge-analytics", "GRU", false, demoTime(2026, time.February, 3, 14, 2))
 	sandboxProject := newMarioProject(sandboxProjectID, "staging-sandbox", "GRU", false, demoTime(2026, time.March, 21, 11, 47))
 
-	corePrimaryID := "db_01JC9Q8Y5N7P9R3T5V7X9Z2AC"
-	coreSessionsID := "db_01JC9R3Z6P8T0V4X6Z8B2D4GE"
-	edgeEventsID := "db_01JC9S5A7R9V1X3Z5B7D9F3HI"
-	sandboxDBID := "db_01JC9T6B8S0X2Z4B6D8F1H3JK"
+	corePrimaryID := "0Z793APJ2ECFW2F7P6J9F2RKVY"
+	coreSessionsID := "3S7V1R9W8CKJM87P94PBACW79D"
+	edgeEventsID := "185JTBEGC768240CCVHG6TGQH4"
+	sandboxDBID := "0YF85EHHPE3AVMCTS72XX4RVYA"
 	coreProject.Databases[corePrimaryID] = marioPrimaryDatabase(corePrimaryID, coreProjectID)
 	coreProject.Databases[coreSessionsID] = core.Database{
 		ID: coreSessionsID, ProjectID: coreProjectID, Name: "core-sessions", Status: "ready",
 		Region: "SFO", CreatedAt: demoTime(2026, time.January, 14, 10, 2),
 		Documents: map[string]map[string][]byte{
 			"sessions": {
-				"ses_1001": []byte(`{"userId":"usr_1001","startedAt":"2026-09-17T10:24:00Z","status":"active"}`),
-				"ses_1002": []byte(`{"userId":"usr_1002","startedAt":"2026-09-12T08:10:00Z","status":"expired"}`),
+				"488YCSAW1HEH6XFB1KYKT1YQB4": []byte(`{"userId":"2RXDD6A70VYXH8M0SDAKFWAQT1","startedAt":"2026-09-17T10:24:00Z","status":"active"}`),
+				"7KM4NDWC9RDSEHJQ64DRBNMK69": []byte(`{"userId":"5KPC8W3N5TA88HVG4S068X0MD7","startedAt":"2026-09-12T08:10:00Z","status":"expired"}`),
 			},
 		},
 		Schemas: map[string][]byte{
@@ -44,8 +44,8 @@ func seedMarioDemoFixture(account *core.Account) {
 		Region: "GRU", CreatedAt: demoTime(2026, time.February, 3, 14, 11),
 		Documents: map[string]map[string][]byte{
 			"events": {
-				"evt_1001": []byte(`{"type":"checkout.completed","occurredAt":"2026-09-17T14:10:00Z"}`),
-				"evt_1002": []byte(`{"type":"session.started","occurredAt":"2026-09-17T14:12:00Z"}`),
+				"12K95R3TTQBAV0C4VSQ4H3H1D1": []byte(`{"type":"checkout.completed","occurredAt":"2026-09-17T14:10:00Z"}`),
+				"133XABR9K9YRWKZ26JVK0K7R3R": []byte(`{"type":"session.started","occurredAt":"2026-09-17T14:12:00Z"}`),
 			},
 		},
 		Schemas: map[string][]byte{
@@ -60,19 +60,19 @@ func seedMarioDemoFixture(account *core.Account) {
 
 	coreProject.APIKeys = marioAPIKeys(coreProjectID, corePrimaryID)
 	coreProject.SavedQueries = map[string]core.SavedQuery{
-		"sq_01JC9XN4R6T8V1X4Z7B9D3F6H": {
-			ID: "sq_01JC9XN4R6T8V1X4Z7B9D3F6H", Name: "orders-over-500",
+		"39ZEVV1QSZ378459T0K4B2R2WJ": {
+			ID: "39ZEVV1QSZ378459T0K4B2R2WJ", Name: "orders-over-500",
 			SQL: "SELECT * FROM orders WHERE total > 500", CreatedAt: demoTime(2026, time.September, 16, 10, 20),
 		},
-		"sq_01JC9XP5S7U9W2Y5A8C1E5G7J": {
-			ID: "sq_01JC9XP5S7U9W2Y5A8C1E5G7J", Name: "sessions-active-7d",
+		"01RDCAGXABDJ1KBJ6RGJZM0FE3": {
+			ID: "01RDCAGXABDJ1KBJ6RGJZM0FE3", Name: "sessions-active-7d",
 			SQL: "SELECT id, startedAt FROM sessions WHERE startedAt > now() - 7d", CreatedAt: demoTime(2026, time.September, 14, 16, 44),
 		},
 	}
 
 	account.Organizations[demoLabsOrganizationID] = core.Organization{
 		ID: demoLabsOrganizationID, Name: "TerraScale Labs", Kind: "business", Slug: "terrascale-labs",
-		Status: "active", OwnerUserID: account.User.ID, PlanID: "plan_pro",
+		Status: "active", OwnerUserID: account.User.ID, PlanID: core.ProPlanID,
 		BillingStatus: "active", PaymentMethodValidated: true,
 		Billing: core.Billing{
 			Status: "active", PlanKey: "pro", Interval: "monthly", Invoices: marioInvoices(),
@@ -86,23 +86,23 @@ func seedMarioDemoFixture(account *core.Account) {
 				UserID: account.User.ID, Email: account.User.Email, Name: account.User.Name,
 				Role: "owner", Status: "active", CreatedAt: demoTime(2026, time.September, 18, 7, 12),
 			},
-			"usr_01JC9R8U5P0W3Y5A7C9E2G5IK": {
-				UserID: "usr_01JC9R8U5P0W3Y5A7C9E2G5IK", Email: "ana@terrascale.tech", Name: "Ana Souza",
+			"09MMHD518NFARFD5HB841BS8EA": {
+				UserID: "09MMHD518NFARFD5HB841BS8EA", Email: "ana@terrascale.tech", Name: "Ana Souza",
 				Role: "admin", Status: "active", CreatedAt: demoTime(2026, time.September, 17, 18, 40),
 			},
-			"usr_01JC9S9V6Q1X4Z6B8D0F3H6JN": {
-				UserID: "usr_01JC9S9V6Q1X4Z6B8D0F3H6JN", Email: "ravi@terrascale.tech", Name: "Ravi Patel",
+			"2Q9DGMCYH1PHHNXHC03FEZNSME": {
+				UserID: "2Q9DGMCYH1PHHNXHC03FEZNSME", Email: "ravi@terrascale.tech", Name: "Ravi Patel",
 				Role: "member", Status: "active", CreatedAt: demoTime(2026, time.September, 15, 9, 3),
 			},
 		},
 		Invitations: map[string]core.Invitation{
-			"inv_01JC9TAB2S4U6W8Y1B3D5F8HK": {
-				ID: "inv_01JC9TAB2S4U6W8Y1B3D5F8HK", Email: "jules@contractor.dev", Role: "member",
+			"6BVZ3K6NF18GQYWT9YEJFDS2BF": {
+				ID: "6BVZ3K6NF18GQYWT9YEJFDS2BF", Email: "jules@contractor.dev", Role: "member",
 				Status: "pending", OrganizationID: demoLabsOrganizationID, InviterEmail: account.User.Email,
 				CreatedAt: demoTime(2026, time.September, 16, 15, 0),
 			},
-			"inv_01JC9TBC3T5V7X9Z2C4E6G9JL": {
-				ID: "inv_01JC9TBC3T5V7X9Z2C4E6G9JL", Email: "former@terrascale.tech", Role: "member",
+			"08R1MGH1KJ1EEAWJPEG21CSY22": {
+				ID: "08R1MGH1KJ1EEAWJPEG21CSY22", Email: "former@terrascale.tech", Role: "member",
 				Status: "expired", OrganizationID: demoLabsOrganizationID, InviterEmail: "ana@terrascale.tech",
 				CreatedAt: demoTime(2026, time.July, 2, 11, 30),
 			},
@@ -134,16 +134,16 @@ func marioPrimaryDatabase(id, projectID string) core.Database {
 		CreatedAt: demoTime(2026, time.January, 12, 9, 31),
 		Documents: map[string]map[string][]byte{
 			"orders": {
-				"ord_1001": []byte(`{"customerId":"cus_1001","createdAt":"2026-09-17T07:02:00Z","status":"paid","total":725.5}`),
-				"ord_1002": []byte(`{"customerId":"cus_1002","createdAt":"2026-09-16T12:15:00Z","status":"paid","total":980.0}`),
-				"ord_1003": []byte(`{"customerId":"cus_1003","createdAt":"2026-09-15T15:44:00Z","status":"open","total":140.0}`),
+				"01K78000000000000000001001": []byte(`{"customerId":"cus_1001","createdAt":"2026-09-17T07:02:00Z","status":"paid","total":725.5}`),
+				"01K78000000000000000001002": []byte(`{"customerId":"cus_1002","createdAt":"2026-09-16T12:15:00Z","status":"paid","total":980.0}`),
+				"01K78000000000000000001003": []byte(`{"customerId":"cus_1003","createdAt":"2026-09-15T15:44:00Z","status":"open","total":140.0}`),
 			},
 		},
 		Schemas: map[string][]byte{
 			"orders": []byte(`{"name":"orders","fields":[{"name":"customerId","type":"string","required":true,"indexed":true},{"name":"status","type":"string","required":true,"indexed":false},{"name":"total","type":"float","required":true,"indexed":false},{"name":"createdAt","type":"timestamp","required":false,"indexed":false}],"historyRetentionDays":7,"mergePolicy":"last-write-wins"}`),
 		},
 		IndexRecommendations: []core.IndexRecommendation{{
-			ID: "idxrec_01JC9YQ8T0V2X5A8C1E4G7J0N", DatabaseID: id, Collection: "orders",
+			ID: "2B1WW8AN8VQ2TWKMCFPTEQAGHP", DatabaseID: id, Collection: "orders",
 			Fields: []string{"total"}, Reason: "Filter-heavy order lookups use total.", State: "recommended",
 		}},
 	}
@@ -151,29 +151,29 @@ func marioPrimaryDatabase(id, projectID string) core.Database {
 
 func marioAPIKeys(projectID, databaseID string) map[string]core.APIKey {
 	return map[string]core.APIKey{
-		"key_01JC9Q9Z6N8P1R4T7V0X3Z6B9": {
-			ID: "key_01JC9Q9Z6N8P1R4T7V0X3Z6B9", Kind: "api-key", ProjectID: projectID, DatabaseID: databaseID,
+		"1ZMH7QP4P8FHK6VA2FDKKBBCG5": {
+			ID: "1ZMH7QP4P8FHK6VA2FDKKBBCG5", Kind: "api-key", ProjectID: projectID, DatabaseID: databaseID,
 			Name: "ci-deploy", Prefix: "tsk_demo_seed", LastFour: "DEMO", Scopes: []string{"databases:read", "documents:write"},
 			CreatedAt: demoTime(2026, time.February, 10, 12, 0), ExpiresAt: demoTime(2026, time.December, 10, 12, 0),
 		},
-		"key_01JC9R4A8P0T3V6X9Z2C5E8HB": {
-			ID: "key_01JC9R4A8P0T3V6X9Z2C5E8HB", Kind: "api-key", ProjectID: projectID,
+		"3ZNHR6VGWYWZMVJY6GCRCVZ5V1": {
+			ID: "3ZNHR6VGWYWZMVJY6GCRCVZ5V1", Kind: "api-key", ProjectID: projectID,
 			Name: "local-dev", Prefix: "tsk_demo_seed", LastFour: "DEMO", Scopes: []string{"databases:read"},
 			CreatedAt: demoTime(2026, time.March, 2, 9, 15),
 		},
-		"key_01JC9S6B9R1X4Z7B0D3F6J9LM": {
-			ID: "key_01JC9S6B9R1X4Z7B0D3F6J9LM", Kind: "api-key", ProjectID: projectID,
+		"6WJRYMX85ATTMSHXJ39CG96YGA": {
+			ID: "6WJRYMX85ATTMSHXJ39CG96YGA", Kind: "api-key", ProjectID: projectID,
 			Name: "retired-key", Prefix: "tsk_demo_seed", LastFour: "DEMO", Scopes: []string{"*"},
 			CreatedAt: demoTime(2025, time.November, 4, 16, 20), ExpiresAt: demoTime(2026, time.May, 4, 16, 20),
 			RevokedAt: demoTime(2026, time.May, 1, 8, 0),
 		},
-		"m2m_01JC9Q8A2C4E6G8J0L2N4Q7ST": {
-			ID: "m2m_01JC9Q8A2C4E6G8J0L2N4Q7ST", Kind: "m2m", ProjectID: projectID,
+		"01JC9Q8A2C4E6G8J0M2N4Q7STV": {
+			ID: "01JC9Q8A2C4E6G8J0M2N4Q7STV", Kind: "m2m", ProjectID: projectID,
 			Name: "ingest-worker", Prefix: "tsm_demo_seed", LastFour: "DEMO", Scopes: []string{"documents:write"},
 			CreatedAt: demoTime(2026, time.February, 18, 8, 0),
 		},
-		"m2m_01JC9R9B3D5F7H9K1M3P5S8UV": {
-			ID: "m2m_01JC9R9B3D5F7H9K1M3P5S8UV", Kind: "m2m", ProjectID: projectID,
+		"01JC9R9B3D5F7H9K1M3P5S8TVW": {
+			ID: "01JC9R9B3D5F7H9K1M3P5S8TVW", Kind: "m2m", ProjectID: projectID,
 			Name: "edge-sync", Prefix: "tsm_demo_seed", LastFour: "DEMO", Scopes: []string{"databases:read"},
 			CreatedAt: demoTime(2026, time.March, 5, 13, 30),
 		},
@@ -182,20 +182,20 @@ func marioAPIKeys(projectID, databaseID string) map[string]core.APIKey {
 
 func marioNotifications() []core.Notification {
 	return []core.Notification{
-		{ID: "ntf_01JC9UBD4U6W8Y0B3D5F7J2NP", OrganizationID: demoLabsOrganizationID, ProjectID: "prj_01JC9Q6W3M5N7P9R2T4V6X8ZA", Type: "api-key-expiry", Title: "API key expiring soon", Body: "ci-deploy expires in 7 days. Rotate it to avoid breaking the pipeline.", Status: "unread", Severity: "warning", URL: "/api-keys", CreatedAt: demoTime(2026, time.September, 17, 9, 0)},
-		{ID: "ntf_01JC9UCE5V7X9Z1C4E6H1M4OQ", OrganizationID: demoLabsOrganizationID, Type: "invitation", Title: "Invitation pending", Body: "jules@contractor.dev has not accepted the invitation yet.", Status: "unread", Severity: "info", URL: "/organization?tab=invitations", CreatedAt: demoTime(2026, time.September, 16, 15, 5)},
-		{ID: "ntf_01JC9UDF6W8Y0D2E5F7J2N5PR", OrganizationID: demoLabsOrganizationID, ProjectID: "prj_01JC9Q6W3M5N7P9R2T4V6X8ZA", Type: "quota", Title: "Storage at 82%", Body: "core-primary is using 82% of the plan storage quota.", Status: "read", Severity: "warning", URL: "/usage", CreatedAt: demoTime(2026, time.September, 14, 20, 30)},
-		{ID: "ntf_01JC9UEG7X9Z1E3F6G8K3P6ST", OrganizationID: demoLabsOrganizationID, ProjectID: "prj_01JC9Q6W3M5N7P9R2T4V6X8ZA", Type: "backup", Title: "Backup completed", Body: "core-primary nightly backup finished in 42s.", Status: "read", Severity: "success", URL: "/databases/db_01JC9Q8Y5N7P9R3T5V7X9Z2AC/backups", CreatedAt: demoTime(2026, time.September, 14, 3, 12)},
+		{ID: "68946KQMGJWXNF2WTSWP370GJ6", OrganizationID: demoLabsOrganizationID, ProjectID: "1X1TETYPPH2APBVN5WGY9D3S3G", Type: "api-key-expiry", Title: "API key expiring soon", Body: "ci-deploy expires in 7 days. Rotate it to avoid breaking the pipeline.", Status: "unread", Severity: "warning", URL: "/api-keys", CreatedAt: demoTime(2026, time.September, 17, 9, 0)},
+		{ID: "258GKYJS87W1EJH7BPDK6C3NNF", OrganizationID: demoLabsOrganizationID, Type: "invitation", Title: "Invitation pending", Body: "jules@contractor.dev has not accepted the invitation yet.", Status: "unread", Severity: "info", URL: "/organization?tab=invitations", CreatedAt: demoTime(2026, time.September, 16, 15, 5)},
+		{ID: "3M2P9VGAHSCQ1YVCCKYECN54DS", OrganizationID: demoLabsOrganizationID, ProjectID: "1X1TETYPPH2APBVN5WGY9D3S3G", Type: "quota", Title: "Storage at 82%", Body: "core-primary is using 82% of the plan storage quota.", Status: "read", Severity: "warning", URL: "/usage", CreatedAt: demoTime(2026, time.September, 14, 20, 30)},
+		{ID: "71W1N22DQNY5B9QSBVA965QT67", OrganizationID: demoLabsOrganizationID, ProjectID: "1X1TETYPPH2APBVN5WGY9D3S3G", Type: "backup", Title: "Backup completed", Body: "core-primary nightly backup finished in 42s.", Status: "read", Severity: "success", URL: "/databases/0Z793APJ2ECFW2F7P6J9F2RKVY/backups", CreatedAt: demoTime(2026, time.September, 14, 3, 12)},
 	}
 }
 
 func marioAuditEvents() []core.AuditEvent {
 	return []core.AuditEvent{
-		{ID: "aud_01JC9VFH8Y0A2C5E8H0K4S8WX", OrganizationID: demoLabsOrganizationID, ProjectID: "prj_01JC9Q6W3M5N7P9R2T4V6X8ZA", Actor: "mario@terrascale.tech", Action: "api_key.created", Target: "ci-deploy", TargetType: "api_key", Risk: "low", Source: "dashboard", OccurredAt: demoTime(2026, time.September, 18, 7, 5)},
-		{ID: "aud_01JC9VGI9Z1B3D6F9I1L5T9YA", OrganizationID: demoLabsOrganizationID, Actor: "ana@terrascale.tech", Action: "member.role_changed", Target: "ravi@terrascale.tech", TargetType: "member", Risk: "medium", Source: "dashboard", OccurredAt: demoTime(2026, time.September, 17, 14, 22)},
-		{ID: "aud_01JC9VHJ0B2C4E7G0J2M6U1ZB", OrganizationID: demoLabsOrganizationID, ProjectID: "prj_01JC9Q6W3M5N7P9R2T4V6X8ZA", Actor: "ci-deploy (api key)", Action: "document.batch_upsert", Target: "core-primary/orders", TargetType: "database", Risk: "low", Source: "api", OccurredAt: demoTime(2026, time.September, 17, 6, 41)},
-		{ID: "aud_01JC9VIK1C3D5F8H1K3N7V3AC", OrganizationID: demoLabsOrganizationID, ProjectID: "prj_01JC9Q6W3M5N7P9R2T4V6X8ZA", Actor: "mario@terrascale.tech", Action: "database.deleted", Target: "old-reporting", TargetType: "database", Risk: "high", Source: "dashboard", OccurredAt: demoTime(2026, time.September, 12, 11, 4)},
-		{ID: "aud_01JC9VJM2D4E6G9I2L4P8W5BD", OrganizationID: demoLabsOrganizationID, Actor: "system", Action: "backup.restore_completed", Target: "core-sessions", TargetType: "database", Risk: "medium", Source: "scheduled", OccurredAt: demoTime(2026, time.September, 10, 2, 48)},
+		{ID: "0S3WH091P8NPAFZ2Y5HVHTE8JQ", OrganizationID: demoLabsOrganizationID, ProjectID: "1X1TETYPPH2APBVN5WGY9D3S3G", Actor: "mario@terrascale.tech", Action: "api_key.created", Target: "ci-deploy", TargetType: "api_key", Risk: "low", Source: "dashboard", OccurredAt: demoTime(2026, time.September, 18, 7, 5)},
+		{ID: "611MYHE1QDJXYERR85EY869Z5B", OrganizationID: demoLabsOrganizationID, Actor: "ana@terrascale.tech", Action: "member.role_changed", Target: "ravi@terrascale.tech", TargetType: "member", Risk: "medium", Source: "dashboard", OccurredAt: demoTime(2026, time.September, 17, 14, 22)},
+		{ID: "5XXTNQMZNMDGT8DZ986C7XZYEC", OrganizationID: demoLabsOrganizationID, ProjectID: "1X1TETYPPH2APBVN5WGY9D3S3G", Actor: "ci-deploy (api key)", Action: "document.batch_upsert", Target: "core-primary/orders", TargetType: "database", Risk: "low", Source: "api", OccurredAt: demoTime(2026, time.September, 17, 6, 41)},
+		{ID: "7T7392ARW2ZDPAX02X93X92S81", OrganizationID: demoLabsOrganizationID, ProjectID: "1X1TETYPPH2APBVN5WGY9D3S3G", Actor: "mario@terrascale.tech", Action: "database.deleted", Target: "old-reporting", TargetType: "database", Risk: "high", Source: "dashboard", OccurredAt: demoTime(2026, time.September, 12, 11, 4)},
+		{ID: "0AMW61HE983N01PBS2240P39Q8", OrganizationID: demoLabsOrganizationID, Actor: "system", Action: "backup.restore_completed", Target: "core-sessions", TargetType: "database", Risk: "medium", Source: "scheduled", OccurredAt: demoTime(2026, time.September, 10, 2, 48)},
 	}
 }
 

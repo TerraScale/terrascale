@@ -48,7 +48,7 @@ func TestAPIKeyPermissionSelection(t *testing.T) {
 	must(t, expect.Locator(review).ToContainText("Can read, create, update, and delete"))
 	// Each dialog has its own signals: choosing write in one cannot grant it in another.
 	must(t, expect.Locator(page.Locator("#m2m-access-read")).ToBeChecked())
-	databaseID := "db_01JC9Q8Y5N7P9R3T5V7X9Z2AC"
+	databaseID := "0Z793APJ2ECFW2F7P6J9F2RKVY"
 	selectOption(t, dialog.Locator(`[name="databaseId"]`), databaseID)
 	must(t, expect.Locator(review.Locator(".ts-strong")).ToHaveText("core-primary"))
 	keyName := uniqueName("permission-write")

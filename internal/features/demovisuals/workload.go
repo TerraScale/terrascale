@@ -11,8 +11,8 @@ import (
 )
 
 const (
-	MarioOrganizationID = "org_01JC9Q5V2N4P6T8R0X2Z4B6D8"
-	MarioUserID         = "usr_01JC9Q7T4N8Y2M3P5R7V9X1ZAB"
+	MarioOrganizationID = "7N1PZ3BD9WCGBVV4V50V508NRX"
+	MarioUserID         = "7CVZQJY80VY06TJG7VP8TQ44DM"
 )
 
 const (
@@ -28,7 +28,7 @@ func IsSeededMarioAccount(demo bool, account core.Account, org core.Organization
 
 func NormalizeRange(value string) string {
 	switch value {
-	case "24h", "7d", "30d":
+	case "1h", "24h", "7d", "30d":
 		return value
 	default:
 		return "7d"
@@ -37,6 +37,8 @@ func NormalizeRange(value string) string {
 
 func RangeLabel(value string) string {
 	switch NormalizeRange(value) {
+	case "1h":
+		return "Last hour"
 	case "24h":
 		return "Last 24 hours"
 	case "30d":
@@ -48,6 +50,8 @@ func RangeLabel(value string) string {
 
 func TickLabels(value string) []string {
 	switch NormalizeRange(value) {
+	case "1h":
+		return []string{"1h ago", "45m", "30m", "15m", "Now"}
 	case "24h":
 		return []string{"24h ago", "18h", "12h", "6h", "Now"}
 	case "30d":
@@ -62,6 +66,8 @@ func TickLabels(value string) []string {
 func PointLabels(value string, count int) []string {
 	span := 7 * 24 * time.Hour
 	switch NormalizeRange(value) {
+	case "1h":
+		span = time.Hour
 	case "24h":
 		span = 24 * time.Hour
 	case "30d":
@@ -77,6 +83,8 @@ func PointLabels(value string, count int) []string {
 func ago(elapsed time.Duration) string {
 	days, hours := int(elapsed/(24*time.Hour)), int(elapsed%(24*time.Hour)/time.Hour)
 	switch {
+	case elapsed > 0 && elapsed < time.Hour:
+		return fmt.Sprintf("%dm ago", int(elapsed/time.Minute))
 	case days == 0 && hours == 0:
 		return "Now"
 	case days == 0:
@@ -93,6 +101,8 @@ func ago(elapsed time.Duration) string {
 func Workload(value string) []int64 {
 	count, baseline, variance := 168, 880.0, 320.0
 	switch NormalizeRange(value) {
+	case "1h":
+		count, baseline, variance = 12, 950, 180
 	case "24h":
 		count, baseline, variance = 24, 950, 180
 	case "30d":

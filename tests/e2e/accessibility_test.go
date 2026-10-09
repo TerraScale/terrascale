@@ -155,7 +155,7 @@ func TestAccessibilityAdminPages(t *testing.T) {
 	// A recorded estate action fills the operations log, whose table scrolls.
 	goToOK(t, setup, "/admin/estate?tab=operations")
 	form := setup.Locator(`form[action="/api/v1/admin/estate/action"]`)
-	fill(t, form.Locator(`[name="targetId"]`), uniqueName("db_a11y"))
+	fill(t, form.Locator(`[name="targetId"]`), uniqueName("4VPGYB0SJQMTF9NXAFXET0PDSP"))
 	fill(t, form.Locator(`[name="reason"]`), "Accessibility check of the recorded actions log")
 	submitAndExpect(t, setup, "/api/v1/admin/estate/action", 303, byRole(form, *playwright.AriaRoleButton, "Record action").Click)
 	for _, path := range adminAccessibilityPaths {

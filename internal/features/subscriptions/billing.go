@@ -177,7 +177,7 @@ func (service BillingService) BeginDemoCheckout(ctx context.Context, principal c
 	}
 	now := service.now()
 	session := core.CheckoutSession{
-		ID: core.NewID("cs_local"), OwnerUserID: principal.UserID,
+		ID: core.NewID(), OwnerUserID: principal.UserID,
 		OrganizationID: principal.OrganizationID, Interval: interval,
 		ReturnPath: returnPath, Status: checkoutOpen, Demo: true, CreatedAt: now,
 		ExpiresAt: now.Add(30 * time.Minute),
@@ -280,7 +280,7 @@ func (service BillingService) CompleteDemoCheckout(ctx context.Context, principa
 			}
 			session.Status = checkoutDone
 			organization.PlanID = plan.ID
-			organization.Billing.SubscriptionID = core.NewID("sub_local")
+			organization.Billing.SubscriptionID = core.NewID()
 			organization.Billing.TrialUsed = true
 			organization.Billing.PlanKey = normalizePlanKey(plan.Key)
 			organization.Billing.Interval = session.Interval
@@ -517,7 +517,7 @@ func projectSubscription(organization *core.Organization, state payments.Custome
 	case organization.Kind == "personal" && !payments.IsDunningStatus(state.Status):
 		// Personal workspaces fall back to Free when no subscription grants
 		// the plan, including while a first payment is pending or after it ends.
-		organization.PlanID = "plan_free"
+		organization.PlanID = core.FreePlanID
 		billing.PlanKey = "free"
 		billing.Interval = ""
 		organization.BillingStatus = "active"

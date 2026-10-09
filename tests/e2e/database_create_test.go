@@ -4,7 +4,6 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
-	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -106,7 +105,7 @@ func TestCreateDatabaseDialogValidatesShowsProgressAndEndsReady(t *testing.T) {
 	// The real create opens the database on its ready state.
 	created := uniqueName("ready")
 	createDatabase(t, page, created, "GRU")
-	waitForPath(t, page, func(u *url.URL) bool { return strings.HasPrefix(u.Path, "/databases/db_") })
+	waitForPath(t, page, func(u *url.URL) bool { return entityPath(u.Path, "/databases/") })
 	ready := page.Locator(".ts-db-created")
 	must(t, expect.Locator(ready).ToHaveAttribute("data-status", "ready"))
 	must(t, expect.Locator(ready).ToContainText(created+" is ready"))

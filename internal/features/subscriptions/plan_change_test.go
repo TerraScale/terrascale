@@ -67,7 +67,7 @@ func TestPersonalPlanChangeUsesExistingSubscriptionAndSchedulesFree(t *testing.T
 	}
 	current, _ := store.SnapshotAs(t.Context(), principal)
 	org := current.Organizations[principal.OrganizationID]
-	if org.PlanID != "plan_pro" || org.Billing.Interval != "annual" || org.Billing.SubscriptionID != originalID {
+	if org.PlanID != "7CNW2H87JE68ATZX224CV2G625" || org.Billing.Interval != "annual" || org.Billing.SubscriptionID != originalID {
 		t.Fatalf("upgrade created another subscription or failed to change plan: %#v", org.Billing)
 	}
 	downgrade := post("/billing/change", url.Values{"plan": {"starter"}, "interval": {"monthly"}})
@@ -76,7 +76,7 @@ func TestPersonalPlanChangeUsesExistingSubscriptionAndSchedulesFree(t *testing.T
 	}
 	current, _ = store.SnapshotAs(t.Context(), principal)
 	org = current.Organizations[principal.OrganizationID]
-	if org.PlanID != "plan_pro" || org.Billing.ScheduledPlanKey != "starter" || org.Billing.ScheduledInterval != "monthly" || org.Billing.ChangeVersion != 1 {
+	if org.PlanID != "7CNW2H87JE68ATZX224CV2G625" || org.Billing.ScheduledPlanKey != "starter" || org.Billing.ScheduledInterval != "monthly" || org.Billing.ChangeVersion != 1 {
 		t.Fatalf("downgrade was applied early or not scheduled: %#v", org.Billing)
 	}
 	if response := post("/billing/change/undo", nil); response.Code != http.StatusSeeOther {
@@ -97,7 +97,7 @@ func TestPersonalPlanChangeUsesExistingSubscriptionAndSchedulesFree(t *testing.T
 	}
 	current, _ = store.SnapshotAs(t.Context(), principal)
 	org = current.Organizations[principal.OrganizationID]
-	if org.PlanID != "plan_pro" || org.Billing.ScheduledPlanKey != "free" || org.Billing.SubscriptionID != originalID {
+	if org.PlanID != "7CNW2H87JE68ATZX224CV2G625" || org.Billing.ScheduledPlanKey != "free" || org.Billing.SubscriptionID != originalID {
 		t.Fatalf("Free canceled early: %#v", org.Billing)
 	}
 	if response := post("/billing/change", url.Values{"plan": {"unknown"}, "interval": {"monthly"}}); response.Code != http.StatusBadRequest {

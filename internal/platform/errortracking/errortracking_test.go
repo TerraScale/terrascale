@@ -68,7 +68,7 @@ func TestMiddlewareReportsServerErrorsWithoutSecrets(t *testing.T) {
 	mux.HandleFunc("GET /ok", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("ok")) })
 	handler := Middleware(mux)
 
-	req := httptest.NewRequest(http.MethodPost, "/projects/prj_1?user_code=ABCD-EFGH&returnTo=%2Fcli%2Fapprove%3Fuser_code%3DWXYZ-1234", strings.NewReader("password=hunter2"))
+	req := httptest.NewRequest(http.MethodPost, "/projects/6T3ANS9YMBPBSRGZE2158QZ7VM?user_code=ABCD-EFGH&returnTo=%2Fcli%2Fapprove%3Fuser_code%3DWXYZ-1234", strings.NewReader("password=hunter2"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Cookie", "session=secret-session")
 	req.Header.Set("Authorization", "Bearer secret-token")
@@ -153,7 +153,7 @@ func TestLogHandlerReportsErrors(t *testing.T) {
 	var out bytes.Buffer
 	logger := slog.New(LogHandler(slog.NewTextHandler(&out, nil))).With("component", "stripe").WithGroup("req")
 	logger.Info("listening", "addr", ":8080")
-	logger.Error("bind Stripe customer", "organization_id", "org_1", "error", errors.New("stripe unavailable"))
+	logger.Error("bind Stripe customer", "organization_id", "1MZ7GT1142NZMAQXJE73TYTFZW", "error", errors.New("stripe unavailable"))
 
 	if !strings.Contains(out.String(), "listening") || !strings.Contains(out.String(), "stripe unavailable") {
 		t.Fatalf("records did not reach the wrapped handler: %s", out.String())
@@ -167,7 +167,7 @@ func TestLogHandlerReportsErrors(t *testing.T) {
 		t.Fatalf("event message=%q exception=%+v", event.Message, event.Exception)
 	}
 	log := event.Contexts["log"]
-	if log["component"] != "stripe" || log["req.organization_id"] != "org_1" {
+	if log["component"] != "stripe" || log["req.organization_id"] != "1MZ7GT1142NZMAQXJE73TYTFZW" {
 		t.Fatalf("log context=%v", log)
 	}
 }

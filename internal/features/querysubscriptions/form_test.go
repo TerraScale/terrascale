@@ -24,7 +24,7 @@ func TestSignedOutFormPostReturnsToLogin(t *testing.T) {
 
 	issued := httptest.NewRecorder()
 	token := guard.Token(issued, httptest.NewRequest(http.MethodGet, "/", nil))
-	form := url.Values{"configId": {"cfg_1"}, "_csrf": {token}}
+	form := url.Values{"configId": {"0R9Z7Y4E5S790WPJF1AQ0D23HM"}, "_csrf": {token}}
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/dashboard/subscriptions/pause", strings.NewReader(form.Encode()))
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	request.Header.Set("Accept", "text/html")

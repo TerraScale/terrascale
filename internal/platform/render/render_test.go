@@ -14,17 +14,17 @@ import (
 func TestShellReturnURLIsTheCurrentSection(t *testing.T) {
 	t.Parallel()
 	for target, want := range map[string]string{
-		"/":                                    "/",
-		"/?tab=connect&range=24h":              "/",
-		"/databases":                           "/databases",
-		"/databases/db_1/data?collection=a":    "/databases",
-		"/auth":                                "/auth/overview",
-		"/auth/overview":                       "/auth/overview",
-		"/auth/users?q=ada&page=2":             "/auth/users",
-		"/usage?project=prj_1&tab=billing":     "/usage",
-		"/organization?newOrganization=create": "/organization",
-		"/profile?tab=security":                "/profile?tab=security",
-		"//evil.example/path":                  "/",
+		"/":                       "/",
+		"/?tab=connect&range=24h": "/",
+		"/databases":              "/databases",
+		"/databases/19T9WF6BRDZ1HTM3X1C9G1V4YJ/data?collection=a": "/databases",
+		"/auth":                    "/auth",
+		"/auth/overview":           "/auth/overview",
+		"/auth/users?q=ada&page=2": "/auth/users?q=ada&page=2",
+		"/usage?project=6T3ANS9YMBPBSRGZE2158QZ7VM&tab=billing": "/usage",
+		"/organization?newOrganization=create":                  "/organization",
+		"/profile?tab=security":                                 "/profile?tab=security",
+		"//evil.example/path":                                   "/",
 	} {
 		shell := shellFor(core.Account{}, core.Principal{}, "shell", httptest.NewRequest("GET", target, nil))
 		if shell.ReturnURL != want {
@@ -35,20 +35,20 @@ func TestShellReturnURLIsTheCurrentSection(t *testing.T) {
 
 func TestShellNavigationNamesItsCounts(t *testing.T) {
 	t.Parallel()
-	p := core.Principal{AccountID: "acc_1", UserID: "usr_1", OrganizationID: "org_1", ProjectID: "prj_1"}
+	p := core.Principal{AccountID: "acc_1", UserID: "4535YKH20T3JR5H77D86GA0KDS", OrganizationID: "1MZ7GT1142NZMAQXJE73TYTFZW", ProjectID: "6T3ANS9YMBPBSRGZE2158QZ7VM"}
 	account := core.Account{
 		ID: p.AccountID, User: core.User{ID: p.UserID},
 		Organizations: map[string]core.Organization{
-			"org_1": {Name: "Acme", OwnerUserID: p.UserID},
-			"org_2": {Name: "Globex", OwnerUserID: p.UserID},
+			"1MZ7GT1142NZMAQXJE73TYTFZW": {Name: "Acme", OwnerUserID: p.UserID},
+			"74HHC6CSDPQX1TQ8CRT3750K68": {Name: "Globex", OwnerUserID: p.UserID},
 		},
 	}
 	for range 120 {
-		account.Notifications = append(account.Notifications, core.Notification{OrganizationID: "org_1", Status: "unread"})
+		account.Notifications = append(account.Notifications, core.Notification{OrganizationID: "1MZ7GT1142NZMAQXJE73TYTFZW", Status: "unread"})
 	}
 	account.Notifications = append(account.Notifications,
-		core.Notification{OrganizationID: "org_1", Status: "read"},
-		core.Notification{OrganizationID: "org_2", Status: "unread"},
+		core.Notification{OrganizationID: "1MZ7GT1142NZMAQXJE73TYTFZW", Status: "read"},
+		core.Notification{OrganizationID: "74HHC6CSDPQX1TQ8CRT3750K68", Status: "unread"},
 	)
 
 	shell := shellFor(account, p, "shell", httptest.NewRequest("GET", "/", nil))
@@ -60,7 +60,7 @@ func TestShellNavigationNamesItsCounts(t *testing.T) {
 	}
 	for _, group := range shell.Navigation {
 		for _, item := range group.Items {
-			if item.URL == "/notifications" || item.URL == "/audit" {
+			if item.URL == "/notifications" || item.URL == "/audit" || item.URL == "/auth" || strings.HasPrefix(item.URL, "/auth/") {
 				t.Errorf("%s must not appear in the sidebar navigation", item.URL)
 			}
 			if expected, ok := want[item.URL]; ok {

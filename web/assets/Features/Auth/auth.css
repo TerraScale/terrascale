@@ -99,6 +99,64 @@
   border-top: 1px solid var(--ts-line);
 }
 
+/* Keep a usable native field until Datastar has initialized the digit boxes. */
+.ts-email-code {
+  position: relative;
+  min-width: 0;
+}
+
+.ts-email-code-slots {
+  display: none;
+}
+
+.ts-email-code-ready .ts-email-code-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: text;
+}
+
+.ts-email-code-ready .ts-email-code-slots {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: var(--ts-s2);
+  pointer-events: none;
+}
+
+.ts-email-code-slot {
+  display: grid;
+  place-items: center;
+  height: var(--ts-s12);
+  border: 1px solid var(--ts-accent);
+  border-radius: var(--ts-radius);
+  background: var(--ts-canvas);
+  color: var(--ts-ink);
+  font-size: var(--ts-fs-2xl);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  box-shadow: inset 0 0 12px var(--ts-accent-soft);
+}
+
+.ts-email-code:focus-within .ts-email-code-active {
+  outline: 2px solid var(--ts-accent);
+  outline-offset: 2px;
+  background: var(--ts-accent-soft);
+}
+
+.ts-email-code:focus-within .ts-email-code-selected {
+  background: var(--ts-accent-soft);
+}
+
+.ts-email-code:has([aria-invalid="true"]) .ts-email-code-slot {
+  border-color: var(--ts-danger);
+}
+
+.ts-email-code:has([aria-invalid="true"]):focus-within .ts-email-code-active {
+  outline-color: var(--ts-danger);
+}
+
 @media (max-width: 64rem) {
   .ts-login {
     grid-template-columns: minmax(0, 1fr);

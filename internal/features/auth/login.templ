@@ -128,10 +128,7 @@ templ codeView(data codePageData, csrfToken string) {
 					<input type="hidden" name="signUp" value="1"/>
 					<input type="hidden" name="name" value={ data.Name }/>
 				}
-				{{ code := ui.FieldProps{ID: "code", Label: "Code", Error: data.CodeError} }}
-				@ui.Field(code) {
-					<input class="ts-input ts-input-lg" id="code" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="64" required autofocus { code.ControlAttrs()... }/>
-				}
+				@emailCodeInput(data.CodeError)
 				<button class="ts-btn ts-btn-primary ts-btn-lg ts-btn-block" type="submit">Continue</button>
 			</form>
 			if data.SignUp && data.ResendUnavailable {

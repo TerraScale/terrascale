@@ -1,7 +1,6 @@
 package usage
 
 import (
-	"crypto/rand"
 	"errors"
 	"strings"
 	"testing"
@@ -44,7 +43,7 @@ func TestSystemDatabaseUsageComesFromTerraBase(t *testing.T) {
 	p := system.Principal
 	if err := store.UpdateAs(ctx, p, func(a *core.Account) error {
 		project := a.Organizations[p.OrganizationID].Projects[p.ProjectID]
-		project.Databases["db_local"] = core.Database{ID: "db_local", ProjectID: project.ID, Name: "local", Status: "ready",
+		project.Databases["0C7YTA02YA8YQMSHY75W7SDF5X"] = core.Database{ID: "0C7YTA02YA8YQMSHY75W7SDF5X", ProjectID: project.ID, Name: "local", Status: "ready",
 			Documents: map[string]map[string][]byte{"items": {"a": []byte(`{}`), "b": []byte(`{}`), "c": []byte(`{}`)}}}
 		a.Organizations[p.OrganizationID].Projects[p.ProjectID] = project
 		return nil
@@ -81,7 +80,7 @@ func TestSystemDatabaseOfAnotherMember(t *testing.T) {
 	tb := terrabasetest.Start(t)
 	store := memstore.New()
 	system := terrabasetest.SystemDatabase(t, tb, store)
-	outsider := tb.Token(t, "user-"+rand.Text(), "outsider@example.test")
+	outsider := tb.Token(t, core.NewID(), "outsider@example.test")
 	ctx := core.WithUserToken(t.Context(), func() (string, bool) { return outsider, true })
 	deps := core.Deps{Store: store, Management: system.Management}
 

@@ -4,6 +4,7 @@ import (
 	"strconv"
 
 	"terrascale.tech/dashboard/internal/core"
+	"terrascale.tech/dashboard/internal/features/replication"
 	"terrascale.tech/dashboard/internal/ui"
 	"terrascale.tech/dashboard/internal/ui/icons"
 )
@@ -45,6 +46,8 @@ templ detailContent(page core.Page, d detailData) {
 					@ui.ToneStat("slate", "Created", d.Database.CreatedAt.UTC().Format("Jan 2"), d.Database.CreatedAt.UTC().Format("2006 · 15:04 UTC"))
 				}
 				@detailPlacement(page, d)
+				<p class="ts-meta ts-measurement-loading" role="status">Loading replication measurements…</p>
+				@replication.Section(d.Replication)
 				if d.CanManage {
 					@detailDelete(page, d)
 				}
@@ -90,7 +93,7 @@ templ detailPlacement(page core.Page, d detailData) {
 			{Label: "Generation", Value: "Not reported"},
 			{Label: "Replication", Value: replicationDisplay(databaseRegions(d.Database))},
 		})
-		@ui.Alert("info", "Configured regions", "The dashboard records the database regions. Provider placement status, generation, and replication lag are not available in this dashboard.")
+		@ui.Alert("info", "Configured regions", "The dashboard records the database regions. Replication measurements are shown below.")
 		if d.CanManage {
 			<form method="post" action="/api/v1/dashboard/databases/regions" class="ts-form" aria-label="Change regions">
 				<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
