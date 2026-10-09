@@ -1,7 +1,7 @@
 # Preparatory actor transport (TS-648)
 
-TS-648 waits for TS-647's persisted lattice state, delta protocol and owner operations. This slice supplies only the
-transport behind `IActorRouter`. `Program` does not register it, and document requests still use today's engine.
+Full TS-648 execution still requires actor-owned state, lattice delivery and flush completion. This slice supplies only
+the transport behind `IActorRouter`. `Program` does not register it, and document requests still use today's engine.
 It does not change storage, public APIs, replication formats, replica identities or the existing TS-648 markers.
 
 `services.AddTerraBaseActors(actorCount, maxItemsPerActor, maxBytesPerActor)` opts a consumer into a fixed set of
@@ -30,6 +30,6 @@ The Fast suite drives the real health endpoint through a test-only routing middl
 serialization, bounded admission, cancellation, failures and shutdown. The companion `ts-benchmark` actor harness
 measures this transport with actor-count and uniform/Zipf workloads. These measurements do not prove database scaling.
 
-After TS-647 lands, wire the router into key ownership and the shared lattice delta delivery path, add per-actor
+To complete TS-648, wire the router into key ownership and the shared lattice delta delivery path, add per-actor
 state and flush completion, integrate cross-actor transactions, and rerun the database workload matrix. Thread
 affinity, recovery, causal delivery and durable visibility remain unimplemented here.
