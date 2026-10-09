@@ -51,14 +51,15 @@ public sealed class GetDocumentEndpoint(IDocumentService documents, ITenantDirec
 
     private IResult Conditional(DocumentKey key, StoredDocument? document, CancellationToken cancellationToken)
     {
-        if (document is { UniqueConflict: true })
+        var version = document is null ? null : ETags.Version(document.Scope, key.Collection, document.Id, document.Version, document.Json, document.Deleted);
+        var condition = ETags.CheckNotModified(HttpContext, document is { Deleted: false }, version);
+        if (document is { UniqueConflict: true } && condition is not Validation)
         {
-            ETags.Set(HttpContext, ETags.Version(document.Scope, key.Collection, document.Id, document.Version, document.Json));
+            ETags.Set(HttpContext, version!);
             return ErrorResponse.From(new Conflict("the document lost a replicated uniqueness conflict", "unique_violation"));
         }
 
-        var version = document is null ? null : ETags.Version(document.Scope, key.Collection, document.Id, document.Version, document.Json, document.Deleted);
-        return ETags.CheckNotModified(HttpContext, document is { Deleted: false }, version) switch
+        return condition switch
         {
             Validation error => ErrorResponse.From(error),
             PreconditionFailed error => ErrorResponse.From(error),

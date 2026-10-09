@@ -77,6 +77,19 @@ public sealed partial class UniqueReplicationTests
         using (var hidden = await client.GetAsync(Document(tenant, ids[1]), cancellationToken))
         {
             await Assert.That(hidden.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+            foreach (var header in new[] { "If-Match", "If-None-Match" })
+            {
+                var malformed = await DocumentApi.SendAsync(client, HttpMethod.Get, Document(tenant, ids[1]).OriginalString,
+                    configure: request => request.Headers.TryAddWithoutValidation(header, "not-an-entity-tag"), cancellationToken: cancellationToken);
+                await Assert.That((malformed.Status, malformed.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_request"));
+                foreach (var value in new[] { hidden.Headers.ETag!.ToString(), "*" })
+                {
+                    var conditional = await DocumentApi.SendAsync(client, HttpMethod.Get, Document(tenant, ids[1]).OriginalString,
+                        configure: request => request.Headers.TryAddWithoutValidation(header, value), cancellationToken: cancellationToken);
+                    await Assert.That((conditional.Status, conditional.Code)).IsEqualTo((HttpStatusCode.Conflict, "unique_violation"));
+                    await Assert.That(conditional.ETag).IsEqualTo(hidden.Headers.ETag.Tag.Trim('"'));
+                }
+            }
         }
 
         using (var deleted = await client.DeleteAsync(Document(tenant, ids[0]), cancellationToken))
