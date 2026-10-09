@@ -7,6 +7,7 @@ using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Sqlite;
 using TerraBase.Features.Backup;
+using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -48,13 +49,14 @@ public sealed class BackupShutdownTests
             }, time);
             backup = api.Server.Services.GetRequiredService<ContinuousBackup>();
             var engine = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
+            await WaitForSnapshotsAsync(api, deadline.Token, "v1/_system");
             var database = await api.CreateManagedDatabaseAsync("main");
             var other = await api.CreateManagedDatabaseAsync(database.Organization, database.Project, "other");
             using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
             await ManagementApi.CreateCollectionAsync(data, database, "people");
             await ManagementApi.CreateCollectionAsync(data, other, "people");
             time.Advance(TimeSpan.FromSeconds(10));
-            await backup.RunOnceAsync(deadline.Token);
+            await WaitForSnapshotsAsync(api, deadline.Token, "v1/_system", File(database), File(other));
             await Assert.That(backup.Status.Files.Select(file => file.File)).IsEquivalentTo(
                 ["v1/_system", File(database), File(other)]);
             await Assert.That(backup.Status.Files.All(file => file.Generation is not null)).IsTrue();
@@ -158,13 +160,14 @@ public sealed class BackupShutdownTests
             }, time);
             var backup = api.Server.Services.GetRequiredService<ContinuousBackup>();
             var engine = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
+            await WaitForSnapshotsAsync(api, token, "v1/_system");
             var database = await api.CreateManagedDatabaseAsync("main");
             var other = await api.CreateManagedDatabaseAsync(database.Organization, database.Project, "other");
             using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
             await ManagementApi.CreateCollectionAsync(data, database, "people");
             await ManagementApi.CreateCollectionAsync(data, other, "people");
             time.Advance(TimeSpan.FromSeconds(10));
-            await backup.RunOnceAsync(token);
+            await WaitForSnapshotsAsync(api, token, "v1/_system", File(database), File(other));
             await Assert.That(backup.Status.Files.Count).IsEqualTo(3);
 
             stop = backup.StopAsync(CancellationToken.None);
@@ -184,6 +187,19 @@ public sealed class BackupShutdownTests
         finally
         {
             await CleanupAsync(stop, taps, api, directory);
+        }
+    }
+
+    private static async Task WaitForSnapshotsAsync(ManagementApi api, CancellationToken cancellationToken, params string[] files)
+    {
+        // The real timer owns these jobs; a skip-busy manual pass cannot join their snapshot uploads and drills.
+        while (true)
+        {
+            var status = await api.Server.Client.GetFromJsonAsync(ManagementApi.Uri("/v1/backup"), TerraBaseJsonContext.Default.BackupStatus, cancellationToken);
+            if (files.All(prefix => status!.Files.Any(file => file.File == prefix && file.Generation is not null && file.LastDrill is not null)))
+            {
+                return;
+            }
         }
     }
 

@@ -127,15 +127,22 @@ the new database and `Location: /v1/projects/{project}/databases/{restored-name}
 organization route and restored database ID in `Location`.
 Encryption, `TBK1` objects and the catalog schema are unchanged; restoring either source still requires OCI KMS access.
 In `both` mode, shipping succeeds only when both uploads succeed; a failed destination delays this project's progress
-and starts a fresh generation after backoff to avoid overlapping WAL segments after a partial upload. Other projects
-continue shipping. Retention scans both configured buckets independently, including earlier platform backups in
-customer-only mode; drills exercise the customer copy. Retention processes at most 10,000 expired snapshots per file
+and starts a fresh generation after backoff to avoid overlapping WAL segments after a partial upload. Platform files
+and eligible customer jobs in other organizations continue shipping. Retention scans both configured buckets
+independently, including earlier platform backups in customer-only mode; drills exercise the customer copy.
+Retention processes at most 10,000 expired snapshots per file
 and bucket per pass, checking later snapshots before removing their generations' segments. Expired segments are deleted
 in batches of sixteen. Object locks may delay cleanup, and a bucket entirely outside the plan's window returns no
 restore window. Customer-written junk keys inside the requested prefix are skipped; foreign or nonascending listing
 responses are rejected.
 Customer object operations have a fifteen-minute deadline covering response headers, streamed body decoding and all
 pages of a listing.
+Shipping admits at most four file jobs, with at most two customer jobs and one customer job per organization;
+platform-only files, including `_system`, can use the remaining capacity. A stalled customer job holds its organization's
+customer slot until completion or cancellation. Background ticks skip busy files and admit
+the least recently scheduled eligible files without waiting for earlier customer jobs. Each file keeps its target
+until its job finishes. Database removal and shutdown cancel and join active jobs before disposing their resources;
+shutdown then attempts final shipping with the supplied shutdown token.
 
 SDK/dashboard integration must consume these `/v1` project contracts through typed `ts-go` methods, with a ts-auth
 project access token granting the scope above. User sign-in tokens belong to the hidden organization aliases.

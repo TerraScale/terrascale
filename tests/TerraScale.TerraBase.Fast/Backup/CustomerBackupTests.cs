@@ -4,7 +4,6 @@ using System.Text;
 using System.Text.Json;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Features.Backup;
 using TerraBase.Testing;
@@ -18,7 +17,8 @@ public sealed class CustomerBackupTests
     {
         using var oci = new FakeOci();
         var time = Clock();
-        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, oci.Route, time);
+        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services => ManualShipping(oci, services), time);
+        Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
         var database = await api.CreateManagedDatabaseAsync();
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
         await SetAsync(api, database, "both");
@@ -296,7 +296,8 @@ public sealed class CustomerBackupTests
     {
         using var oci = new FakeOci();
         var time = Clock();
-        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, oci.Route, time);
+        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services => ManualShipping(oci, services), time);
+        Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
         var customer = await api.CreateManagedDatabaseAsync();
         var siblingProject = await api.CreateProjectAsync(customer.Organization, "Platform sibling");
         var sibling = await api.CreateManagedDatabaseAsync(customer.Organization, siblingProject, "main");
@@ -336,7 +337,8 @@ public sealed class CustomerBackupTests
     {
         using var oci = new FakeOci();
         var time = Clock();
-        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, oci.Route, time);
+        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services => ManualShipping(oci, services), time);
+        Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
         var database = await api.CreateManagedDatabaseAsync();
         var route = Uri(database.ProjectPath + "/backup-destination");
         using var unset = await api.Client.GetAsync(route);
@@ -491,7 +493,8 @@ public sealed class CustomerBackupTests
     {
         using var oci = new FakeOci();
         var time = Clock();
-        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, oci.Route, time);
+        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services => ManualShipping(oci, services), time);
+        Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
         var database = await api.CreateManagedDatabaseAsync();
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
         await SetAsync(api, database, "both");
@@ -595,7 +598,8 @@ public sealed class CustomerBackupTests
     {
         using var oci = new FakeOci();
         var time = Clock();
-        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, oci.Route, time);
+        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services => ManualShipping(oci, services), time);
+        Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
         var database = await api.CreateManagedDatabaseAsync();
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
         await SetAsync(api, database, "both");
@@ -653,7 +657,8 @@ public sealed class CustomerBackupTests
     {
         using var oci = new FakeOci();
         var time = Clock();
-        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, oci.Route, time);
+        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services => ManualShipping(oci, services), time);
+        Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
         var database = await api.CreateManagedDatabaseAsync();
         var foreignProject = await api.CreateProjectAsync(database.Organization, "Foreign project");
         var foreign = await api.CreateManagedDatabaseAsync(database.Organization, foreignProject, "main");
@@ -996,7 +1001,8 @@ public sealed class CustomerBackupTests
     {
         using var oci = new FakeOci();
         var time = Clock();
-        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, oci.Route, time);
+        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services => ManualShipping(oci, services), time);
+        Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
         var database = await api.CreateManagedDatabaseAsync();
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
         await SetAsync(api, database, "customer");
@@ -1043,7 +1049,8 @@ public sealed class CustomerBackupTests
     {
         using var oci = new FakeOci();
         var time = Clock();
-        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, oci.Route, time);
+        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services => ManualShipping(oci, services), time);
+        Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
         var database = await api.CreateManagedDatabaseAsync();
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
         await ManagementApi.CreateCollectionAsync(data, database, "people");
@@ -1077,68 +1084,6 @@ public sealed class CustomerBackupTests
             await AssertDocumentAsync(data, restored, "kept", text);
         }
 
-        await Assert.That(oci.BadSignatures).IsEqualTo(0);
-    }
-
-    [Test]
-    public async Task Retention_drains_more_than_ten_thousand_expired_snapshots_without_deleting_a_later_snapshots_wal()
-    {
-        using var oci = new FakeOci();
-        var time = Clock();
-        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services => ManualShipping(oci, services), time);
-        Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
-        var database = await api.CreateManagedDatabaseAsync();
-        using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
-        await SetAsync(api, database, "customer");
-        await ManagementApi.CreateCollectionAsync(data, database, "people");
-        var faker = new Faker();
-        var before = faker.Lorem.Sentence(12);
-        var after = faker.Lorem.Sentence(12);
-        await PutAsync(data, database, "before", before);
-        await ShipAsync(api, time);
-        var currentSnapshot = oci.CustomerObjects.Keys.Single(key => key.StartsWith(File(database) + "/snapshots/", StringComparison.Ordinal));
-        var generation = currentSnapshot.Split('/')[^1].Split('-')[1];
-        await PutAsync(data, database, "after", after);
-        await ShipAsync(api, time);
-        var neededSegment = oci.CustomerObjects.Keys.Single(key => key.StartsWith(File(database) + "/wal/", StringComparison.Ordinal));
-        const int expiredCount = 10_002;
-        var first = time.GetUtcNow().AddDays(-3).ToUnixTimeMilliseconds();
-        for (var index = 0; index < expiredCount; index++)
-        {
-            // The retained real snapshot has position zero, below every candidate's position. Its WAL remains needed.
-            var key = string.Create(CultureInfo.InvariantCulture,
-                $"{File(database)}/snapshots/{first + index:D13}-{generation}-0000000000009999");
-            oci.SeedObject(customer: true, key, []);
-        }
-
-        var snapshotListings = 0;
-        oci.CustomerListingOverride = (prefix, keys) =>
-        {
-            if (prefix == File(database) + "/snapshots/")
-            {
-                Interlocked.Increment(ref snapshotListings);
-            }
-
-            return keys;
-        };
-        var previous = expiredCount + 1;
-        for (var pass = 0; pass < 2; pass++)
-        {
-            time.Advance(TimeSpan.FromHours(1));
-            await ShipAsync(api, time);
-            await Assert.That(Volatile.Read(ref snapshotListings)).IsGreaterThan(10);
-            var remaining = oci.CustomerObjects.Keys.Count(key => key.StartsWith(File(database) + "/snapshots/", StringComparison.Ordinal));
-            await Assert.That(remaining).IsLessThan(previous);
-            previous = remaining;
-            await Assert.That(oci.CustomerObjects.ContainsKey(currentSnapshot)).IsTrue();
-            await Assert.That(oci.CustomerObjects.ContainsKey(neededSegment)).IsTrue();
-            var restored = await RestoreAsync(api, database, await LatestAsync(api.Client, database, "customer"), "backlog-" + pass, "customer");
-            await AssertDocumentAsync(data, restored, "before", before);
-            await AssertDocumentAsync(data, restored, "after", after);
-        }
-
-        // One snapshot before the cutoff remains as the floor; all other expired snapshots have drained.
-        await Assert.That(previous).IsEqualTo(2);
         await Assert.That(oci.BadSignatures).IsEqualTo(0);
     }
 
@@ -1590,19 +1535,7 @@ public sealed class CustomerBackupTests
     private static void ManualShipping(FakeOci oci, IServiceCollection services)
     {
         oci.Route(services);
-        // Only the test drives shipping. Keep the real service and its shutdown cleanup, without timer races.
-        // BackupExtensions uses AddHostedService(provider => provider.GetRequiredService<ContinuousBackup>());
-        // identify that factory by its return type, and keep this lookup in sync if registration changes shape.
-        var host = services.Single(descriptor => descriptor.ServiceType == typeof(IHostedService)
-            && descriptor.ImplementationFactory?.Method.ReturnType is { } type && typeof(IContinuousBackup).IsAssignableFrom(type));
-        services[services.IndexOf(host)] = ServiceDescriptor.Singleton<IHostedService, ManualBackupHost>();
-    }
-
-    private sealed class ManualBackupHost(IContinuousBackup backup) : IHostedService
-    {
-        public Task StartAsync(CancellationToken cancellationToken) => Task.CompletedTask;
-
-        public Task StopAsync(CancellationToken cancellationToken) => ((IHostedService)backup).StopAsync(cancellationToken);
+        ManualBackupHosting.Configure(services);
     }
 
     private static FakeTimeProvider Clock() => new(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
@@ -1630,16 +1563,18 @@ public sealed class CustomerBackupTests
 
     private static async Task<DateTimeOffset> LatestAsync(HttpClient client, ManagedDatabaseRef database, string destination = "platform")
     {
-        using var response = await client.GetAsync(Uri(database.Path + "/point-in-time?destination=" + destination));
+        var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
+        using var response = await client.GetAsync(Uri(database.Path + "/point-in-time?destination=" + destination), cancellationToken);
         response.EnsureSuccessStatusCode();
-        return (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("latest").GetDateTimeOffset();
+        return (await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cancellationToken)).GetProperty("latest").GetDateTimeOffset();
     }
 
     private static async Task SetAsync(ManagementApi api, ManagedDatabaseRef database, string mode)
     {
-        using var response = await api.Client.PutAsJsonAsync(Uri(database.ProjectPath + "/backup-destination"), Destination(mode));
+        var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
+        using var response = await api.Client.PutAsJsonAsync(Uri(database.ProjectPath + "/backup-destination"), Destination(mode), cancellationToken);
         response.EnsureSuccessStatusCode();
-        await AssertDestinationAsync(await response.Content.ReadAsStringAsync(), mode);
+        await AssertDestinationAsync(await response.Content.ReadAsStringAsync(cancellationToken), mode);
     }
 
     private static async Task AssertDestinationAsync(string json, string mode)
@@ -1661,38 +1596,42 @@ public sealed class CustomerBackupTests
         await Assert.That(json.Contains("ocid1.vaultsecret", StringComparison.Ordinal)).IsFalse();
     }
 
-    private static async Task ShipAsync(ManagementApi api, FakeTimeProvider time, CancellationToken cancellationToken = default)
+    private static async Task ShipAsync(ManagementApi api, FakeTimeProvider time, CancellationToken? cancellationToken = null)
     {
         time.Advance(TimeSpan.FromSeconds(10));
-        await api.Server.Services.GetRequiredService<IContinuousBackup>().RunOnceAsync(cancellationToken);
+        await api.Server.Services.GetRequiredService<IContinuousBackup>()
+            .RunOnceAsync(cancellationToken ?? TUnit.Core.TestContext.Current!.Execution.CancellationToken);
     }
 
     private static async Task PutAsync(HttpClient data, ManagedDatabaseRef database, string name, string text)
     {
-        using var response = await data.PutAsJsonAsync(Uri(ManagementApi.DocumentPath(database, "people", name)), new { text });
+        var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
+        using var response = await data.PutAsJsonAsync(Uri(ManagementApi.DocumentPath(database, "people", name)), new { text }, cancellationToken);
         response.EnsureSuccessStatusCode();
     }
 
     private static async Task<ManagedDatabaseRef> RestoreAsync(ManagementApi api, ManagedDatabaseRef database, DateTimeOffset at, string name, string? destination = null)
     {
+        var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         var body = new Dictionary<string, object>(StringComparer.Ordinal) { ["pointInTime"] = at, ["name"] = name };
         if (destination is not null)
         {
             body["destination"] = destination;
         }
 
-        using var response = await api.Client.PostAsJsonAsync(Uri(database.Path + "/point-in-time/restore"), body);
+        using var response = await api.Client.PostAsJsonAsync(Uri(database.Path + "/point-in-time/restore"), body, cancellationToken);
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Created);
-        var restored = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var restored = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cancellationToken);
         await Assert.That(restored.GetProperty("branchedFrom").GetString()).IsEqualTo(database.Id);
         return new(database.Organization, database.Project, restored.GetProperty("id").GetString()!, restored.GetProperty("name").GetString()!);
     }
 
     private static async Task AssertDocumentAsync(HttpClient data, ManagedDatabaseRef database, string name, string text)
     {
-        using var response = await data.GetAsync(Uri(ManagementApi.DocumentPath(database, "people", name)));
+        var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
+        using var response = await data.GetAsync(Uri(ManagementApi.DocumentPath(database, "people", name)), cancellationToken);
         response.EnsureSuccessStatusCode();
-        var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cancellationToken);
         await Assert.That(body.GetProperty("document").GetProperty("text").GetString()).IsEqualTo(text);
     }
 

@@ -37,7 +37,7 @@ public interface IContinuousBackup
     /// <summary>When the newest platform data was read, if this node ships <paramref name="database"/> and the requested generation to the platform.</summary>
     DateTimeOffset? LastShipped(TenantContext database, Ulid? generation = null);
 
-    /// <summary>One pass: finds new and deleted files when due, then ships each file once. Passes never overlap.</summary>
+    /// <summary>Finds new and deleted files when due, then waits for the jobs this pass starts. Already busy files are skipped.</summary>
     Task RunOnceAsync(CancellationToken cancellationToken);
 }
 
@@ -49,7 +49,7 @@ public interface IContinuousBackup
 /// </summary>
 /// <remarks>
 /// ponytail: every start opens every database and stores a fresh snapshot of each; resume generations across restarts when
-/// that upload gets expensive. Files ship four at a time in one pass, so a large fleet stretches the one-second interval.
+/// that upload gets expensive. Four jobs ship at a time, so a large fleet stretches each file's one-second interval.
 /// </remarks>
 internal sealed partial class ContinuousBackup : BackgroundService, IContinuousBackup
 {
@@ -59,6 +59,8 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
 
     // Frames read but not stored, per file, before its generation is abandoned for a fresh snapshot (bounds scratch disk).
     private const long MaxPendingBytes = 256L * 1024 * 1024;
+    private const int MaxJobs = 4;
+    private const int MaxCustomerJobs = 2;
 
     private readonly IWalBackup _engine;
     private readonly IStorageEngine _storage;
@@ -72,6 +74,11 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
     private readonly string _scratch;
     private readonly ConcurrentDictionary<string, ShippedFile> _files = new(StringComparer.Ordinal);
     private readonly SemaphoreSlim _pass = new(1, 1);
+    // Only the scheduling gate owns admission and the counter; jobs alone own their file's shipping state.
+    private readonly List<ShippingJob> _jobs = [with(capacity: MaxJobs)];
+    private readonly CancellationTokenSource _jobCancellation = new();
+    private long _scheduleCounter;
+    private volatile bool _stopped;
     private readonly Lock _stopGate = new();
     private Task? _stopping;
     private readonly Counter<long> _uploaded;
@@ -125,21 +132,152 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
 
     public async Task RunOnceAsync(CancellationToken cancellationToken)
     {
-        await _pass.WaitAsync(cancellationToken).ConfigureAwait(false);
+        long? pass = null;
+        var pending = new List<Task>(MaxJobs);
         try
         {
+            while (true)
+            {
+                pass = await ScheduleAsync(pass, pending, cancellationToken).ConfigureAwait(false);
+                if (pending.Count == 0)
+                {
+                    return;
+                }
+
+                // A slow job cannot stop this invocation from filling slots freed by its healthy siblings.
+                await Task.WhenAny(pending).ConfigureAwait(false);
+                for (var index = pending.Count - 1; index >= 0; index--)
+                {
+                    if (pending[index].IsCompleted)
+                    {
+                        var completed = pending[index];
+                        pending.RemoveAt(index);
+                        await completed.ConfigureAwait(false);
+                    }
+                }
+            }
+        }
+        finally
+        {
+            await Task.WhenAll(pending).ConfigureAwait(false);
+        }
+    }
+
+    private async Task<long> ScheduleAsync(long? pass, List<Task>? pending, CancellationToken cancellationToken)
+    {
+        using var scheduling = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _jobCancellation.Token);
+        var schedulingToken = scheduling.Token;
+        await _pass.WaitAsync(schedulingToken).ConfigureAwait(false);
+        try
+        {
+            if (_stopped)
+            {
+                return pass ?? _scheduleCounter;
+            }
+
+            for (var index = _jobs.Count - 1; index >= 0; index--)
+            {
+                var job = _jobs[index];
+                if (!job.Completion.IsCompleted || job.Cancelling is { IsCompleted: false })
+                {
+                    continue;
+                }
+
+                await job.Completion.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+                if (job.Cancelling is { } cancelling)
+                {
+                    await cancelling.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+                }
+
+                job.Cancellation.Dispose();
+                job.File.Job = null;
+                // A later manual pass must not adopt a job that was busy when that pass began.
+                job.File.ScheduledAt = ++_scheduleCounter;
+                _jobs.RemoveAt(index);
+            }
+
             if (_time.GetUtcNow() >= _nextDiscovery)
             {
-                await DiscoverAsync(cancellationToken).ConfigureAwait(false);
+                await DiscoverAsync(schedulingToken).ConfigureAwait(false);
                 _nextDiscovery = _time.GetUtcNow() + DiscoveryInterval;
             }
 
-            await Parallel.ForEachAsync(_files.Values, new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = cancellationToken },
-                async (file, token) => await ShipAsync(file, token).ConfigureAwait(false)).ConfigureAwait(false);
+            var boundary = pass ?? _scheduleCounter;
+            foreach (var (prefix, file) in _files)
+            {
+                if (file.Job is not null)
+                {
+                    continue;
+                }
+
+                if (file.Removed)
+                {
+                    _files.TryRemove(prefix, out _);
+                    await file.DisposeAsync().ConfigureAwait(false);
+                }
+                else if (file.ScheduledAt <= boundary)
+                {
+                    try
+                    {
+                        // Local catalog reads classify customer work before it can take reserved platform capacity.
+                        await RefreshConfigurationAsync(file, schedulingToken).ConfigureAwait(false);
+                    }
+                    catch (Exception error) when (!schedulingToken.IsCancellationRequested)
+                    {
+                        Failed(file, error);
+                        file.PendingBytes = file.Pending.Length;
+                        file.ScheduledAt = ++_scheduleCounter;
+                    }
+                }
+            }
+
+            while (!_stopped && _jobs.Count < MaxJobs && (pending is null || pending.Count < MaxJobs))
+            {
+                ShippedFile? next = null;
+                foreach (var (_, file) in _files)
+                {
+                    if (!file.Removed && file.Job is null && file.ScheduledAt <= boundary && CanAdmit(file)
+                        && (next is null || file.ScheduledAt < next.ScheduledAt))
+                    {
+                        next = file;
+                    }
+                }
+
+                if (next is null)
+                {
+                    break;
+                }
+
+                schedulingToken.ThrowIfCancellationRequested();
+                var job = new ShippingJob(next, CustomerWork(next), CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _jobCancellation.Token));
+                next.ScheduledAt = ++_scheduleCounter;
+                next.Job = job;
+                _jobs.Add(job);
+                job.Completion = Task.Run(() => ShipAsync(job.File, job.Cancellation.Token), CancellationToken.None);
+                pending?.Add(job.Completion);
+            }
+
+            return boundary;
         }
         finally
         {
             _pass.Release();
+        }
+    }
+
+    private static bool CustomerWork(ShippedFile file) =>
+        file.Configuration is not null || file.Target.Revision != BackupDestinationNames.Platform;
+
+    private bool CanAdmit(ShippedFile file) => !CustomerWork(file)
+        || (_jobs.Count(job => job.Customer) < MaxCustomerJobs
+            && !_jobs.Any(job => job.Customer && job.File.Database!.OrganizationId == file.Database!.OrganizationId));
+
+    private async Task RefreshConfigurationAsync(ShippedFile file, CancellationToken cancellationToken)
+    {
+        if (_time.GetUtcNow() >= file.RetryAt && _time.GetUtcNow() >= file.NextConfiguration)
+        {
+            file.Configuration = await _targets.ConfigurationAsync(file.Database, cancellationToken).ConfigureAwait(false);
+            file.NextConfiguration = _time.GetUtcNow() + DiscoveryInterval;
         }
     }
 
@@ -159,19 +297,26 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         using var timer = new PeriodicTimer(Interval, _time);
-        do
+        try
         {
-            try
+            do
             {
-                await RunOnceAsync(stoppingToken).ConfigureAwait(false);
+                try
+                {
+                    _ = await ScheduleAsync(null, null, stoppingToken).ConfigureAwait(false);
+                }
+                catch (Exception error) when (!stoppingToken.IsCancellationRequested && !_jobCancellation.IsCancellationRequested)
+                {
+                    // A failed discovery must not stop the host; the next tick retries.
+                    LogPassFailed(_logger, error);
+                }
             }
-            catch (Exception error) when (!stoppingToken.IsCancellationRequested)
-            {
-                // A failed discovery must not stop the host; the next tick retries.
-                LogPassFailed(_logger, error);
-            }
+            while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false));
         }
-        while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false));
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested || _jobCancellation.IsCancellationRequested)
+        {
+            // Service shutdown can interrupt discovery or the timer wait without failing the host.
+        }
     }
 
     // The host can be stopped twice at once (WebApplicationFactory stops it while Program's RunAsync stops and then
@@ -186,43 +331,95 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
 
     private async Task StopOnceAsync(CancellationToken cancellationToken)
     {
-        await base.StopAsync(cancellationToken).ConfigureAwait(false);
-        // Ship what committed since the last pass, then give the taps' connections back before the engine closes.
-        await _pass.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+        // Close future scheduling and signal in-flight discovery/jobs before joining the gate.
+        _stopped = true;
         var errors = new List<Exception>();
         try
         {
-            foreach (var file in _files.Values)
-            {
-                try
-                {
-                    if (!cancellationToken.IsCancellationRequested)
-                    {
-                        await ShipAsync(file, cancellationToken).ConfigureAwait(false);
-                    }
-                }
-                catch (Exception error)
-                {
-                    errors.Add(error);
-                }
+            await _jobCancellation.CancelAsync().ConfigureAwait(false);
+        }
+        catch (Exception error)
+        {
+            errors.Add(error);
+        }
 
-                try
-                {
-                    await file.DisposeAsync().ConfigureAwait(false);
-                }
-                catch (Exception error)
-                {
-                    errors.Add(error);
-                }
-            }
+        // Discovery and manual schedulers observe the service signal before this join.
+        await _pass.WaitAsync(CancellationToken.None).ConfigureAwait(false);
+        _pass.Release();
 
-            _files.Clear();
+        try
+        {
+            await base.StopAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception error)
+        {
+            errors.Add(error);
         }
         finally
         {
-            _pass.Release();
+            if (ExecuteTask is { } execution)
+            {
+                await execution.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            }
         }
 
+        // Admission is closed. Join even when the shutdown token expired before touching any file resources.
+        foreach (var job in _jobs)
+        {
+            try
+            {
+                if (job.Cancelling is { } cancelling)
+                {
+                    await cancelling.ConfigureAwait(false);
+                }
+
+                await job.Completion.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (job.Cancellation.IsCancellationRequested)
+            {
+                // Active jobs use the service token; final shipping below uses the supplied shutdown token.
+            }
+            catch (Exception error)
+            {
+                errors.Add(error);
+            }
+            finally
+            {
+                // A cancellation callback failure must not leave its shipping task unjoined.
+                await job.Completion.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+                job.File.Job = null;
+                job.Cancellation.Dispose();
+            }
+        }
+
+        _jobs.Clear();
+        // Ship what committed since the last pass, then give every tap back before the engine closes.
+        foreach (var (_, file) in _files)
+        {
+            try
+            {
+                if (!file.Removed && !cancellationToken.IsCancellationRequested)
+                {
+                    await RefreshConfigurationAsync(file, cancellationToken).ConfigureAwait(false);
+                    await ShipAsync(file, cancellationToken).ConfigureAwait(false);
+                }
+            }
+            catch (Exception error)
+            {
+                errors.Add(error);
+            }
+
+            try
+            {
+                await file.DisposeAsync().ConfigureAwait(false);
+            }
+            catch (Exception error)
+            {
+                errors.Add(error);
+            }
+        }
+
+        _files.Clear();
         if (errors.Count != 0)
         {
             throw new AggregateException("continuous backup shutdown failed", errors).Flatten();
@@ -240,9 +437,13 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
 
         foreach (var (prefix, file) in _files)
         {
-            if (!present.Contains(prefix) && _files.TryRemove(prefix, out _))
+            if (!present.Contains(prefix))
             {
-                await file.DisposeAsync().ConfigureAwait(false);
+                file.Removed = true;
+                if (file.Job is { } job)
+                {
+                    job.Cancelling ??= job.Cancellation.CancelAsync();
+                }
             }
         }
     }
@@ -294,17 +495,11 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
                 return;
             }
 
-            // Refresh one catalog record per file at discovery cadence, keeping a generation's stores fixed until it
-            // starts over. Failed catalog or Vault reads fail closed: customer-only data never falls back to platform.
+            // Admission already classified the catalog record. Only this job may switch or dispose its fixed target;
+            // failed catalog or Vault reads fail closed: customer-only data never falls back to platform.
             var due = _time.GetUtcNow() >= file.RetryAt;
             if (due)
             {
-                if (_time.GetUtcNow() >= file.NextConfiguration)
-                {
-                    file.Configuration = await _targets.ConfigurationAsync(file.Database, cancellationToken).ConfigureAwait(false);
-                    file.NextConfiguration = _time.GetUtcNow() + DiscoveryInterval;
-                }
-
                 if (file.Target.Revision != (file.Configuration?.Revision ?? BackupDestinationNames.Platform))
                 {
                     var target = await _targets.ShippingAsync(file.Database, file.Configuration, cancellationToken).ConfigureAwait(false);
@@ -396,18 +591,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         }
         catch (Exception error) when (!cancellationToken.IsCancellationRequested)
         {
-            // A mirror may have accepted an object in only one bucket. End this generation instead of retrying
-            // an expanding segment under a different timestamp, which would leave overlapping segments there.
-            if (file.Target.Revision != BackupDestinationNames.Platform)
-            {
-                Abandon(file);
-            }
-
-            _failures.Add(1);
-            file.LastError = error.GetType().Name;
-            file.Failures++;
-            file.RetryAt = _time.GetUtcNow() + Backoff(file.Failures);
-            LogShipFailed(_logger, file.Prefix, error);
+            Failed(file, error);
         }
         finally
         {
@@ -419,6 +603,21 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
 
             file.PendingBytes = file.Pending.Length;
         }
+    }
+
+    private void Failed(ShippedFile file, Exception error)
+    {
+        // A partial mirror acknowledgement must not be retried as an expanding, overlapping segment.
+        if (file.Target.Revision != BackupDestinationNames.Platform)
+        {
+            Abandon(file);
+        }
+
+        _failures.Add(1);
+        file.LastError = error.GetType().Name;
+        file.Failures++;
+        file.RetryAt = _time.GetUtcNow() + Backoff(file.Failures);
+        LogShipFailed(_logger, file.Prefix, error);
     }
 
     // Whether this member ships the file now. A new epoch means the file is shipped from another physical copy or history
@@ -590,6 +789,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
 
     public override void Dispose()
     {
+        _jobCancellation.Dispose();
         _pass.Dispose();
         base.Dispose();
     }
@@ -612,10 +812,22 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
     [LoggerMessage(Level = LogLevel.Information, Message = "This member now ships {File}")]
     private static partial void LogShipping(ILogger logger, string file);
 
-    /// <summary>One shipped file. Only the pass that ships it touches it, so it needs no lock.</summary>
+    private sealed class ShippingJob(ShippedFile file, bool customer, CancellationTokenSource cancellation)
+    {
+        public ShippedFile File { get; } = file;
+        public bool Customer { get; } = customer;
+        public CancellationTokenSource Cancellation { get; } = cancellation;
+        public Task Completion { get; set; } = Task.CompletedTask;
+        public Task? Cancelling { get; set; }
+    }
+
+    /// <summary>One shipped file. The scheduler owns admission fields; its single job owns shipping state.</summary>
     private sealed class ShippedFile(TenantContext? database, string prefix, string scope, IWalTap tap, FileStream pending, DateTimeOffset opened, BackupTarget target)
         : IAsyncDisposable
     {
+        public ShippingJob? Job { get; set; }
+        public long ScheduledAt { get; set; }
+        public bool Removed { get; set; }
         public BackupTarget Target { get; set; } = target;
         public ProjectBackupDestinationRecord? Configuration { get; set; }
         public DateTimeOffset NextConfiguration { get; set; } = DateTimeOffset.MinValue;
@@ -674,8 +886,14 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
             }
             finally
             {
-                await Pending.DisposeAsync().ConfigureAwait(false);
-                Target.Dispose();
+                try
+                {
+                    await Pending.DisposeAsync().ConfigureAwait(false);
+                }
+                finally
+                {
+                    Target.Dispose();
+                }
             }
         }
     }

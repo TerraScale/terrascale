@@ -28,12 +28,13 @@ public sealed class SnapshotTimestampTests
         await using var api = await ManagementApi.StartAsync(oci.Configure, services =>
         {
             oci.Route(services);
+            ManualBackupHosting.Configure(services);
             services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock,
                 new FakeTimeProvider(new DateTimeOffset(2000, 1, 1, 0, 0, 0, TimeSpan.Zero)));
             services.AddSingleton<IWalBackup>(provider => new PausedBackup(provider.GetRequiredService<SqliteStorageEngine>(), pause));
         }, time, managementCredential: true);
         var backup = api.Server.Services.GetRequiredService<IContinuousBackup>();
-        // Finish startup discovery before creating the tenant; periodic timers remain dormant.
+        // Discover the system file before creating the tenant; only explicit passes ship.
         await backup.RunOnceAsync(cancellationToken);
         var database = await api.CreateManagedDatabaseAsync();
         pause.Database = database;

@@ -151,9 +151,9 @@ public sealed class BackupKeyCacheTests
             Directory.Delete(coldDirectory, recursive: true);
         }
 
-        Task<ManagementApi> StartAsync(string dataDirectory)
+        async Task<ManagementApi> StartAsync(string dataDirectory)
         {
-            return ManagementApi.StartAsync(settings =>
+            var api = await ManagementApi.StartAsync(settings =>
             {
                 oci.Configure(settings);
                 settings["data-directory"] = dataDirectory;
@@ -280,9 +280,9 @@ public sealed class BackupKeyCacheTests
             Directory.Delete(coldDirectory, recursive: true);
         }
 
-        Task<ManagementApi> StartAsync(string dataDirectory)
+        async Task<ManagementApi> StartAsync(string dataDirectory)
         {
-            return ManagementApi.StartAsync(settings =>
+            var api = await ManagementApi.StartAsync(settings =>
             {
                 oci.Configure(settings);
                 settings["data-directory"] = dataDirectory;
