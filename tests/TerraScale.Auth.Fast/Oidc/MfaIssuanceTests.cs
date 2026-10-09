@@ -24,7 +24,7 @@ public sealed class MfaIssuanceTests(TerraBaseFixture fixture)
     private const string Password = "correct horse battery";
     private const string Ip = "203.0.113.7";
     private const string Audience = "https://gru.api.terrascale.tech";
-    private const string ServiceId = "ts-orchestrator";
+    private const string ServiceId = "01M4EQ2FRJ8S8B29E8TQVWNW4K";
     private const string ServiceSecret = "service-test-secret-0123456789abcdefghij";
     private static readonly string[] ReadScopes = ["documents:read"];
 
@@ -448,7 +448,7 @@ public sealed class MfaIssuanceTests(TerraBaseFixture fixture)
             await Assert.That(apiKey.StatusCode).IsEqualTo(HttpStatusCode.OK);
             var apiTokens = await OidcHarness.JsonAsync(apiKey);
             var apiAccess = await oidc.ValidateAsync(apiTokens.GetProperty("access_token").GetString()!, Audience);
-            await Assert.That(apiAccess.Subject).IsEqualTo(key[..24]);
+            await Assert.That(apiAccess.Subject).IsEqualTo(created.GetProperty("api_key").GetProperty("id").GetString()!);
             await Assert.That(apiAccess.GetClaim("org_id").Value).IsEqualTo(artifacts.Organization);
             await Assert.That(apiAccess.GetClaim("scope").Value).IsEqualTo("documents:read");
             await Assert.That(apiTokens.TryGetProperty("id_token", out _)).IsFalse();

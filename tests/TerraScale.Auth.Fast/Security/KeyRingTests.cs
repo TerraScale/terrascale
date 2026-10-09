@@ -15,6 +15,7 @@ using TerraScale.Auth.Features.SigningKeys;
 using TerraScale.Auth.Security;
 using TerraScale.Auth.Store;
 using TerraScale.Auth.Tests;
+using TerraScale.DotNet;
 
 namespace TerraScale.Auth.Fast.Security;
 
@@ -145,7 +146,7 @@ public sealed class KeyRingTests(TerraBaseFixture fixture)
         var kid = key.GetProperty("kid").GetString()!;
 
         await Assert.That(again.GetProperty("keys").EnumerateArray().Single().GetProperty("kid").GetString()).IsEqualTo(kid);
-        await Assert.That(kid).Matches(@"\Askey_[A-Za-z0-9]{40}\z");
+        await Assert.That(TerraScaleIds.IsValid(kid)).IsTrue();
         await Assert.That(key.GetProperty("kty").GetString()).IsEqualTo("EC");
         await Assert.That(key.GetProperty("crv").GetString()).IsEqualTo("P-256");
         await Assert.That(key.GetProperty("alg").GetString()).IsEqualTo("ES256");
@@ -163,6 +164,64 @@ public sealed class KeyRingTests(TerraBaseFixture fixture)
         await Assert.That(Base64UrlEncoder.Encode(secret[64..])).IsEqualTo(key.GetProperty("y").GetString());
         await Assert.That(target.Vault.Read("ins_a")!.Value.GetRawText()).DoesNotContain(Convert.ToBase64String(secret[..32]));
         await Assert.That(() => SecretBox.Open(masterKey, boxed, $"signing-key:{kid}:ins_b")).Throws<CryptographicException>();
+    }
+
+    [Test]
+    [Arguments("skey_01M4EQ2FRJ8S8B29E8TQVWNW4N")]
+    [Arguments("01m4eq2frj8s8b29e8tqvwnw4n")]
+    [Arguments("abcdef01-2345-6789-abcd-ef0123456789")]
+    [Arguments("81M4EQ2FRJ8S8B29E8TQVWNW4N")]
+    [Arguments("I1M4EQ2FRJ8S8B29E8TQVWNW4N")]
+    public async Task Noncanonical_key_ids_fail_closed_and_startup_creates_a_fresh_ring(string invalidId)
+    {
+        var target = await SharedStateTarget.CreateAsync(fixture);
+        var masterKey = RandomNumberGenerator.GetBytes(32);
+        var instance = OidcIssuer.InstanceId;
+        string originalId;
+        await using (var server = await StartAsync(target, Convert.ToBase64String(masterKey), refresh: TimeSpan.Zero))
+        {
+            await server.App.Services.GetRequiredService<SigningKeyRotation>().Bootstrapped.WaitAsync(TimeSpan.FromSeconds(30));
+            var ring = JsonNode.Parse(target.Vault.Read(instance)!.Value.GetRawText())!;
+            var record = ring["keys"]![0]!;
+            originalId = record["id"]!.GetValue<string>();
+            var secret = SecretBox.Open(masterKey, record["secretBox"]!.GetValue<string>(), $"signing-key:{originalId}:{instance}");
+            try
+            {
+                record["id"] = invalidId;
+                record["secretBox"] = SecretBox.Seal(masterKey, secret, $"signing-key:{invalidId}:{instance}");
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(secret);
+            }
+
+            // Authenticate the fixture so the ID check, rather than the MAC or sealed box, rejects it.
+            var metadataKey = HKDF.DeriveKey(HashAlgorithmName.SHA256, masterKey, 32, info: "ts-auth signing public metadata v1"u8.ToArray());
+            record["publicMetadataMac"] = Convert.ToHexStringLower(HMACSHA256.HashData(metadataKey, JsonSerializer.SerializeToUtf8Bytes(new[]
+            {
+                instance, invalidId, record["algorithm"]!.GetValue<string>(),
+                record["createdAt"]!.GetValue<long>().ToString(CultureInfo.InvariantCulture),
+                record["activatesAt"]!.GetValue<long>().ToString(CultureInfo.InvariantCulture),
+                record["x"]!.GetValue<string>(), record["y"]!.GetValue<string>(),
+            })));
+            target.Vault.Put(instance, JsonSerializer.SerializeToElement(ring));
+            var before = target.Vault.Current(instance);
+            using var refused = await server.Client.GetAsync($"/__test/instances/{instance}/jwks");
+            await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.InternalServerError);
+            await Assert.That(target.Vault.Current(instance).Version).IsEqualTo(before.Version);
+        }
+
+        await using var restarted = await StartAsync(target, Convert.ToBase64String(masterKey));
+        await restarted.App.Services.GetRequiredService<SigningKeyRotation>().Bootstrapped.WaitAsync(TimeSpan.FromSeconds(30));
+        using var response = await restarted.Client.GetAsync($"/__test/instances/{instance}/jwks");
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        var keys = (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("keys");
+        await Assert.That(keys.GetArrayLength()).IsEqualTo(1);
+        var newId = keys[0].GetProperty("kid").GetString()!;
+        await Assert.That(TerraScaleIds.IsValid(newId)).IsTrue();
+        await Assert.That(newId).IsNotEqualTo(originalId);
+        await Assert.That(newId).IsNotEqualTo(invalidId);
+        await Assert.That(target.Vault.Read(instance)!.Value.GetProperty("keys")[0].GetProperty("id").GetString()).IsEqualTo(newId);
     }
 
     [Test]
@@ -220,7 +279,7 @@ public sealed class KeyRingTests(TerraBaseFixture fixture)
 
         await Assert.That(await ValidateAsync(server, "ins_a", Sign($"{{\"alg\":\"ES256\",\"typ\":\"{AccessType}\",\"kid\":\"{kid}\"}}", HashAlgorithmName.SHA256)))
             .IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(await ValidateAsync(server, "ins_a", Sign($"{{\"alg\":\"ES256\",\"typ\":\"{AccessType}\",\"kid\":\"skey_unknown\"}}", HashAlgorithmName.SHA256)))
+        await Assert.That(await ValidateAsync(server, "ins_a", Sign($"{{\"alg\":\"ES256\",\"typ\":\"{AccessType}\",\"kid\":\"01M4EQ2FRJ8S8B29E8TQVWNW4N\"}}", HashAlgorithmName.SHA256)))
             .IsEqualTo(HttpStatusCode.Unauthorized);
         await Assert.That(await ValidateAsync(server, "ins_a", Sign($"{{\"alg\":\"ES256\",\"typ\":\"{AccessType}\"}}", HashAlgorithmName.SHA256)))
             .IsEqualTo(HttpStatusCode.Unauthorized);
@@ -412,7 +471,7 @@ public sealed class KeyRingTests(TerraBaseFixture fixture)
         // the writer keeps signing with the first one.
         clock.Advance(TimeSpan.FromSeconds(51));
         target.Vault.Failing = "read";
-        await Assert.That(await ValidateAsync(verifier, "ins_a", UnknownKeyToken("skey_unknown"))).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        await Assert.That(await ValidateAsync(verifier, "ins_a", UnknownKeyToken("01M4EQ2FRJ8S8B29E8TQVWNW4N"))).IsEqualTo(HttpStatusCode.ServiceUnavailable);
         target.Vault.Failing = null;
         clock.Advance(TimeSpan.FromSeconds(5));
         var token = await SignAsync(writer, "ins_a", AccessType);
@@ -449,7 +508,7 @@ public sealed class KeyRingTests(TerraBaseFixture fixture)
         // It spends its unknown-key reread at second 59; at 65 the writer signs with the new key.
         clock.Advance(TimeSpan.FromSeconds(50));
         target.Vault.Failing = "read";
-        await Assert.That(await ValidateAsync(verifier, "ins_a", UnknownKeyToken("skey_unknown"))).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        await Assert.That(await ValidateAsync(verifier, "ins_a", UnknownKeyToken("01M4EQ2FRJ8S8B29E8TQVWNW4N"))).IsEqualTo(HttpStatusCode.ServiceUnavailable);
         target.Vault.Failing = null;
         clock.Advance(TimeSpan.FromSeconds(6));
         var after = await SignAsync(writer, "ins_a", AccessType);
@@ -568,7 +627,7 @@ public sealed class KeyRingTests(TerraBaseFixture fixture)
         var statuses = new List<HttpStatusCode>();
         for (var index = 0; index < 5; index++)
         {
-            statuses.Add(await ValidateAsync(server, "ins_a", UnknownKeyToken($"skey_unknown{index}")));
+            statuses.Add(await ValidateAsync(server, "ins_a", UnknownKeyToken(AuthStore.NewId())));
         }
 
         await Assert.That(target.Vault.CurrentReads("ins_a")).IsEqualTo(reads + 1);
@@ -630,7 +689,7 @@ public sealed class KeyRingTests(TerraBaseFixture fixture)
         await reached.WaitAsync(TimeSpan.FromSeconds(30));
         target.Vault.Recreate("ins_a", target.Vault.Read("ins_a")!.Value);
         var reads = target.Vault.CurrentReads("ins_a");
-        await Assert.That(await ValidateAsync(server, "ins_a", UnknownKeyToken("skey_unknown"))).IsEqualTo(HttpStatusCode.Unauthorized);
+        await Assert.That(await ValidateAsync(server, "ins_a", UnknownKeyToken("01M4EQ2FRJ8S8B29E8TQVWNW4N"))).IsEqualTo(HttpStatusCode.Unauthorized);
         await Assert.That(target.Vault.CurrentReads("ins_a")).IsEqualTo(reads + 1);
         release();
         await rotation;
@@ -669,7 +728,7 @@ public sealed class KeyRingTests(TerraBaseFixture fixture)
         {
             instanceId = OidcIssuer.InstanceId,
             masterKeyId = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(16)),
-            keys = new[] { new { id = "skey_damaged", algorithm = "ES256" } },
+            keys = new[] { new { id = "01M4EQ2FRJ8S8B29E8TQVWNW4P", algorithm = "ES256" } },
         }));
         var before = target.Vault.Current(OidcIssuer.InstanceId);
 
@@ -702,7 +761,7 @@ public sealed class KeyRingTests(TerraBaseFixture fixture)
         // The verifier spends its unknown-key reread five seconds before its cached ring is due for a refresh.
         clock.Advance(TimeSpan.FromMilliseconds(54_001));
         target.Vault.Failing = "read";
-        await Assert.That(await ValidateAsync(verifier, "ins_a", UnknownKeyToken("skey_unknown"))).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        await Assert.That(await ValidateAsync(verifier, "ins_a", UnknownKeyToken("01M4EQ2FRJ8S8B29E8TQVWNW4N"))).IsEqualTo(HttpStatusCode.ServiceUnavailable);
         target.Vault.Failing = null;
 
         // At 12:01:00 the signer rereads the ring with an exact Date: its tokens still name a key the verifier holds.
@@ -1217,7 +1276,7 @@ public sealed class KeyRingTests(TerraBaseFixture fixture)
         }
         else
         {
-            ring["keys"]![0]!["id"] = "skey_" + new string('a', 40);
+            ring["keys"]![0]!["id"] = AuthStore.NewId();
         }
 
         // A storage writer can change ownership or kid, but cannot replace the original MAC.

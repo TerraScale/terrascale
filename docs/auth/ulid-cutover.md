@@ -2,7 +2,7 @@
 
 Auth uses the maintained `TerraScaleIdGenerator` from the pinned `ts-dotnet`
 SDK for monotonic canonical uppercase ULIDs. User, organization, project,
-invitation, audit, API-key client, OIDC authorization and OIDC token identifiers
+invitation, audit, signing-key, API-key client, OIDC authorization and OIDC token identifiers
 use that generator. API-key credentials are `<26-character ULID>_<52-character
 random secret>`; only their digest is stored. Opaque session and invitation
 bearer secrets remain cryptographically random secrets.
@@ -37,6 +37,11 @@ unfenced automatic failover exception cannot authorize credential effects.
 The accepted rollout is a clean reset: fence old writers, verify the exact Auth
 database/collection targets, delete their old state, recreate bootstrap state,
 then qualify GRU/SFO sign-in and TerraBase JWT acceptance before reopening.
-Preserve master-key bytes, derivation and sealed material with TS-703/TS-745.
+Preserve master-key bytes and derivation with TS-703/TS-745. Signing keys use
+canonical ULID `kid` values, including the TS-703 Vault ring. Noncanonical key
+identities fail closed at runtime; the existing bootstrap replaces an invalid
+ring of the configured master key with a fresh ring, without relabelling keys.
+The sealing context, authenticated metadata and rotation policy are unchanged.
+A ring naming another master key is never replaced by a misconfigured replica.
 No migration, backfill, id rewrite, compatibility path or legacy fallback is
 permitted. No production data has been deleted by this preparation.
