@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using TerraBase.Features.Management;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
@@ -108,6 +109,8 @@ public sealed class PeerRegionTests
             await using (var alone = await TerraBaseTestServer.StartAsync(Sender))
             {
                 tenant = await ReplicationTenant.CreateAsync(alone, "turns");
+                // Hobby admission would throttle the burst of writes below; the plan does not change replication.
+                await alone.Services.GetRequiredService<IManagementService>().SetPlanAsync(tenant.UserId, tenant.OrganizationId, PlanTier.Enterprise, CancellationToken.None);
                 using var writer = clientTls.CreateClient(alone.ClientAddress!, await tenant.KeyAsync(alone, "documents:write"));
                 using (var collection = await writer.PostAsJsonAsync(new Uri($"{tenant.Path("turns")}/collections", UriKind.Relative), new { name = "items" }))
                 {
@@ -118,7 +121,7 @@ public sealed class PeerRegionTests
                 for (var i = 0; i < 300; i++)
                 {
                     using var put = await writer.PutAsJsonAsync(
-                        new Uri($"{tenant.Path("turns")}/collections/items/documents/{ReplicationDocuments.Id($"turn-{i}")}", UriKind.Relative),
+                        new Uri($"{tenant.Path("turns")}/collections/items/documents/by-key?id={Uri.EscapeDataString(ReplicationDocuments.Id($"turn-{i}"))}", UriKind.Relative),
                         new { name = faker.Name.FullName() });
                     put.EnsureSuccessStatusCode();
                 }
