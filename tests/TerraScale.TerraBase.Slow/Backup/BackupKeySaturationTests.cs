@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Diagnostics;
 using System.Globalization;
 using System.Net;
 using System.Security.Cryptography;
@@ -114,9 +115,11 @@ public sealed class BackupKeySaturationTests
             var keyGets = 0;
             var primingObjectGets = 0;
             var targetObjectGets = 0;
+            var lastGetTicks = Stopwatch.GetTimestamp();
             var allTargetObjectsStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             oci.BeforeGet = async (key, token) =>
             {
+                Interlocked.Exchange(ref lastGetTicks, Stopwatch.GetTimestamp());
                 if (key.StartsWith(keys, StringComparison.Ordinal))
                 {
                     Interlocked.Increment(ref keyGets);
@@ -182,13 +185,24 @@ public sealed class BackupKeySaturationTests
 
             async Task RestoreAsync(string name, DateTimeOffset pointInTime)
             {
-                using var restored = await owner.PostAsJsonAsync(ManagementApi.Uri(database.Path + "/point-in-time/restore"), new { pointInTime, name }, cancellationToken);
-                await Assert.That(restored.StatusCode).IsEqualTo(HttpStatusCode.Created);
-                using var read = await reader.GetAsync(ManagementApi.Uri($"/v1/projects/{database.Project}/databases/{name}/collections/items/documents/by-key?id={ManagementApi.DocumentId("before")}"), cancellationToken);
-                read.EnsureSuccessStatusCode();
-                await Assert.That((await read.Content.ReadFromJsonAsync<JsonElement>(cancellationToken)).GetProperty("document").GetProperty("text").GetString()).IsEqualTo(text);
-                using var deleted = await owner.DeleteAsync(restored.Headers.Location, cancellationToken);
-                deleted.EnsureSuccessStatusCode();
+                var started = Stopwatch.GetTimestamp();
+                try
+                {
+                    using var restored = await owner.PostAsJsonAsync(ManagementApi.Uri(database.Path + "/point-in-time/restore"), new { pointInTime, name }, cancellationToken);
+                    await Assert.That(restored.StatusCode).IsEqualTo(HttpStatusCode.Created);
+                    using var read = await reader.GetAsync(ManagementApi.Uri($"/v1/projects/{database.Project}/databases/{name}/collections/items/documents/by-key?id={ManagementApi.DocumentId("before")}"), cancellationToken);
+                    read.EnsureSuccessStatusCode();
+                    await Assert.That((await read.Content.ReadFromJsonAsync<JsonElement>(cancellationToken)).GetProperty("document").GetProperty("text").GetString()).IsEqualTo(text);
+                    using var deleted = await owner.DeleteAsync(restored.Headers.Location, cancellationToken);
+                    deleted.EnsureSuccessStatusCode();
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    // TUnit replaces cancellation exceptions at its deadline; preserve progress in captured output.
+                    Console.Error.WriteLine(string.Create(CultureInfo.InvariantCulture,
+                        $"Restore '{name}' cancelled after {Stopwatch.GetElapsedTime(started).TotalSeconds:F1}s: keyGets={Volatile.Read(ref keyGets)}, primingObjectGets={Volatile.Read(ref primingObjectGets)}, targetObjectGets={Volatile.Read(ref targetObjectGets)}, targetKeyGets={targetRequests.Gets}, lastGetSecondsAgo={Stopwatch.GetElapsedTime(Volatile.Read(ref lastGetTicks)).TotalSeconds:F1}"));
+                    throw;
+                }
             }
         }
         finally

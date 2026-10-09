@@ -464,6 +464,11 @@ public sealed class ReplicationSlowTests
         var furtherBusy = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseFurther = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var fairnessFailure = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        // Busy relay progress, reported only when quiet replication fails.
+        var progress = new Lock();
+        var clock = Stopwatch.StartNew();
+        ulong busyForwarded = 0, busyAcked = 0;
+        long busyForwardedAt = -1, busyAckedAt = -1, releasedAt = -1;
         Google.Protobuf.ByteString? busyId = null, quietId = null;
         await using var gate = await FakePeer.StartAsync(peerTls, async (requests, responses, context) =>
         {
@@ -504,6 +509,17 @@ public sealed class ReplicationSlowTests
                     }
 
                     await call.RequestStream.WriteAsync(requests.Current, token);
+                    if (database == busyId && requests.Current.CommittedGroup is { } forwarded)
+                    {
+                        lock (progress)
+                        {
+                            if (forwarded.EventId.Sequence > busyForwarded)
+                            {
+                                busyForwarded = forwarded.EventId.Sequence;
+                                busyForwardedAt = clock.ElapsedMilliseconds;
+                            }
+                        }
+                    }
                 }
                 while (await requests.MoveNext(token));
                 await call.RequestStream.CompleteAsync();
@@ -537,6 +553,18 @@ public sealed class ReplicationSlowTests
                     if (database == busyId && response.Durable is { DurablePrefix: >= 258 })
                     {
                         busyDurable.TrySetResult();
+                    }
+
+                    if (database == busyId && response.Durable is { } acked)
+                    {
+                        lock (progress)
+                        {
+                            if (acked.DurablePrefix > busyAcked)
+                            {
+                                busyAcked = acked.DurablePrefix;
+                                busyAckedAt = clock.ElapsedMilliseconds;
+                            }
+                        }
                     }
 
                     await responses.WriteAsync(response, token);
@@ -604,6 +632,7 @@ public sealed class ReplicationSlowTests
             });
             using var quietResponse = await quietWriter.PutAsJsonAsync(new Uri($"{tenant.Path("quiet")}/collections/items/documents/by-key?id={ReplicationDocuments.Id("q1")}", UriKind.Relative), new { note = "quiet" });
             quietResponse.EnsureSuccessStatusCode();
+            releasedAt = clock.ElapsedMilliseconds;
             releaseFirst.TrySetResult();
             var quietReads = 0;
             HttpStatusCode? quietStatus = null;
@@ -624,8 +653,16 @@ public sealed class ReplicationSlowTests
             }
             catch (Exception error)
             {
+                var now = clock.ElapsedMilliseconds;
+                string busyProgress;
+                lock (progress)
+                {
+                    busyProgress = $"busyForwarded={busyForwarded}@{busyForwardedAt}ms, busyAcked={busyAcked}@{busyAckedAt}ms";
+                }
+
                 throw new InvalidOperationException(
-                    $"Quiet replication did not finish: reads={quietReads}, status={quietStatus}, durable={quietDurable.Task.Status}, busyGate={furtherBusy.Task.Status}, fairness={fairnessFailure.Task.Status}", error);
+                    $"Quiet replication did not finish: reads={quietReads}, status={quietStatus}, durable={quietDurable.Task.Status}, busyGate={furtherBusy.Task.Status}, fairness={fairnessFailure.Task.Status}, " +
+                    $"{busyProgress}, releasedAt={releasedAt}ms, sinceRelease={now - releasedAt}ms, now={now}ms", error);
             }
 
             // Holding request 259 proves 258 was forwarded; its durable response proves it committed.

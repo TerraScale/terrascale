@@ -344,6 +344,9 @@ public sealed class ReplicationSlotPromotionTests
             var slotLabel = $"database=\"{removed.Slot.ToString(CultureInfo.InvariantCulture)}\"";
             var convergences = await server.MetricAsync("terrabase_replication_convergence_seconds_count", "", token);
             var slotConvergences = await server.MetricAsync("terrabase_replication_convergence_seconds_count", slotLabel, token);
+            var parkedSlotLabel = revalidationInProgress ? null : $"database=\"{observed[1].Slot.ToString(CultureInfo.InvariantCulture)}\"";
+            var parkedConvergences = parkedSlotLabel is null ? 0
+                : await server.MetricAsync("terrabase_replication_convergence_seconds_count", parkedSlotLabel, token);
             await Assert.That(slotConvergences).IsGreaterThan(0);
 
             // Park the single sender worker before deletion: either the omitted database is revalidating,
@@ -395,7 +398,10 @@ public sealed class ReplicationSlotPromotionTests
                 await Assert.That(promoted.ConvergenceSeconds).IsNull();
                 await Assert.That(await server.MetricAsync("terrabase_replication_database_catchup_seconds", slotLabel, token)).IsEqualTo(0);
                 // Histogram samples remain attached to the reused slot, but promotion adds no sample.
-                await Assert.That(await server.MetricAsync("terrabase_replication_convergence_seconds_count", "", token)).IsEqualTo(convergences);
+                // The other parked database can legitimately record recovery if its Hello exceeds the progress deadline.
+                var expectedConvergences = convergences + (parkedSlotLabel is null ? 0
+                    : await server.MetricAsync("terrabase_replication_convergence_seconds_count", parkedSlotLabel, token) - parkedConvergences);
+                await Assert.That(await server.MetricAsync("terrabase_replication_convergence_seconds_count", "", token)).IsEqualTo(expectedConvergences);
                 await Assert.That(await server.MetricAsync("terrabase_replication_convergence_seconds_count", slotLabel, token)).IsEqualTo(slotConvergences);
             }
         }

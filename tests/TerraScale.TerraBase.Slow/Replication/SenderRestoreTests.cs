@@ -150,6 +150,9 @@ public sealed class SenderRestoreTests
                 return new ReplicationMetrics(meters);
             }));
             await rejected.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            // A peer can reject its first database while discovery is still reading the remaining databases.
+            await TerraBaseTestServer.EventuallyAsync(async token =>
+                await sender.MetricAsync("terrabase_replication_sender_initialized", "", token) == 1, TimeSpan.FromSeconds(30));
             await Assert.That(await sender.MetricAsync("terrabase_replication_sender_initialized")).IsEqualTo(1);
             await Assert.That(await sender.MetricAsync("terrabase_replication_sender_durable_lag")).IsEqualTo(replacementHead);
             await Assert.That(Volatile.Read(ref sent)).IsEqualTo(0);
