@@ -34,8 +34,10 @@
 }
 
 .ts-sidebar-brand {
-  justify-self: center;
-  padding: var(--ts-s1) var(--ts-s2);
+  display: grid;
+  place-items: center;
+  padding: var(--ts-s1) var(--ts-s2) var(--ts-s3);
+  border-bottom: 1px solid var(--ts-line);
 }
 
 .ts-sidebar-brand img {
@@ -339,7 +341,6 @@ details[open] > .ts-context-trigger {
   display: grid;
   gap: var(--ts-s2);
   padding-top: var(--ts-s3);
-  border-top: 1px solid var(--ts-line);
 }
 
 .ts-account-trigger {
