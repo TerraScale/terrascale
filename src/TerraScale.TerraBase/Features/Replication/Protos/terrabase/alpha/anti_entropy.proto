@@ -1,0 +1,63 @@
+syntax = "proto3";
+package terrabase.alpha;
+option csharp_namespace = "TerraBase.Features.Replication.Alpha";
+
+// Closed-beta anti-entropy. Control fields are protobuf; trees and state pages
+// reuse the checked LZ4 application envelope. No journal frontier is advanced.
+service AntiEntropy {
+  rpc Digest(ShardIdentity) returns (MerkleDigest);
+  rpc ReadRange(RangeRequest) returns (StatePage);
+  rpc Merge(StateRequest) returns (MergeResult);
+}
+
+message ShardIdentity {
+  string organization = 1;
+  string project = 2;
+  string database = 3;
+  // Database-wide placement currently has one shard, numbered zero.
+  uint64 shard = 4;
+  // Alpha revision zero; refuse unknown revisions.
+  uint32 revision = 5;
+  // Required after Digest; pins all pages and merges to that file's lifetime.
+  bytes incarnation = 6;
+  // Initiating member's journal identity. Repair must preserve the journal's restore fence.
+  bytes origin = 7;
+  // Initiator's proof at the target's applied prefix, and vice versa.
+  JournalProof source_proof = 8;
+  JournalProof target_proof = 9;
+}
+message JournalProof {
+  bytes origin = 1;
+  uint64 sequence = 2;
+  bytes digest = 3;
+}
+message MerkleDigest {
+  bytes incarnation = 1;
+  // SHA-256 root followed by 16 ordered leaf digests (544 decoded bytes).
+  bytes envelope = 2;
+  bytes origin = 3;
+  JournalProof applied_source = 4;
+}
+message RangeRequest {
+  ShardIdentity identity = 1;
+  // Bit i selects hash range i: high nibble of SHA-256 of the framed key.
+  uint32 ranges = 2;
+  string after_collection = 3;
+  string after_id = 4;
+}
+message StatePage {
+  // Existing ChangeGroup bytes in an LZ4 envelope; empty for no selected rows.
+  bytes envelope = 1;
+  bool has_more = 2;
+  // Last examined key, including pages with no selected rows.
+  string after_collection = 3;
+  string after_id = 4;
+}
+message StateRequest {
+  ShardIdentity identity = 1;
+  bytes envelope = 2;
+}
+message MergeResult {
+  // Keys actually changed by the durable merge, excluding duplicates/losers.
+  uint32 repaired_keys = 1;
+}

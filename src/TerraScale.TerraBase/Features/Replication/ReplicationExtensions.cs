@@ -72,6 +72,9 @@ public static class ReplicationExtensions
         builder.Services.AddSingleton<ReplicationMetrics>();
         builder.Services.AddSingleton<IReplicationJournal, EngineReplicationJournal>();
         builder.Services.AddSingleton<ReplicationService>();
+        builder.Services.AddSingleton<IAntiEntropyState, AntiEntropyState>();
+        builder.Services.AddSingleton<AntiEntropyService>();
+        builder.Services.AddHostedService<AntiEntropyWorker>();
         builder.Services.AddSingleton<CatalogFeed>();
         builder.Services.AddSingleton<ForwardedRequests>();
         builder.Services.AddGrpc(grpc =>
@@ -97,8 +100,25 @@ public static class ReplicationExtensions
         if (app.Services.GetRequiredService<TerraBaseOptions>().PeerPort is not null)
         {
             app.MapGrpcService<ReplicationService>().WithMetadata(ListenerMetadata.Peer);
+            app.MapGrpcService<AntiEntropyService>().WithMetadata(ListenerMetadata.Peer);
             app.MapGrpcService<CatalogFeed>().WithMetadata(ListenerMetadata.Peer);
             app.MapGrpcService<ForwardedRequests>().WithMetadata(ListenerMetadata.Peer);
+        }
+
+        return app;
+    }
+
+    /// <summary>Keeps anti-entropy response backpressure inside its admission and transmission deadline.</summary>
+    public static WebApplication UseTerraBaseAntiEntropyResponses(this WebApplication app)
+    {
+        ArgumentNullException.ThrowIfNull(app);
+        if (app.Services.GetRequiredService<TerraBaseOptions>().PeerPort is not null)
+        {
+            app.Use(async (context, next) =>
+            {
+                await next(context).ConfigureAwait(false);
+                await AntiEntropyService.FlushResponseAsync(context).ConfigureAwait(false);
+            });
         }
 
         return app;

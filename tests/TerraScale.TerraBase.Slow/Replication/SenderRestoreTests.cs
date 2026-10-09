@@ -1,9 +1,12 @@
 using System.Diagnostics.Metrics;
 using System.Text.Json;
+using Google.Protobuf;
+using Grpc.Core;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Features.Replication;
+using TerraBase.Features.Replication.Alpha;
 using TerraBase.Testing;
 
 namespace TerraBase.Slow.Replication;
@@ -77,6 +80,8 @@ public sealed class SenderRestoreTests
                 await connection.OpenAsync();
                 await using var legacy = connection.CreateCommand();
                 legacy.CommandText = """
+                    DROP INDEX documents_replication_keys;
+                    DROP INDEX changes_replication_deleted;
                     DROP TABLE journal_prefixes;
                     DROP TABLE applied;
                     CREATE TABLE applied (origin BLOB PRIMARY KEY, sequence INTEGER NOT NULL) WITHOUT ROWID;
@@ -291,10 +296,48 @@ public sealed class SenderRestoreTests
             await Assert.That(Volatile.Read(ref sent)).IsEqualTo(0);
             using (var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30)))
             {
+                // Complete repair RPCs too: anti-entropy must not bypass the journal's rollback fence.
+                source = (await sender.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(database, deadline.Token))!;
+                await using var local = await source.BeginTransactionAsync(write: false, deadline.Token);
                 await using var read = await target.BeginTransactionAsync(write: false, deadline.Token);
                 var (applied, digest) = await read.GetAppliedFrontierAsync(origin, deadline.Token);
                 await Assert.That(applied).IsEqualTo(100);
                 await Assert.That(digest.Span.SequenceEqual(acknowledgedDigest.Span)).IsTrue();
+                using var channel = peerTls.CreateChannel(receiver.PeerAddress!);
+                var repair = new AntiEntropy.AntiEntropyClient(channel);
+                var identity = new ShardIdentity
+                {
+                    Organization = tenant.OrganizationId,
+                    Project = tenant.ProjectId,
+                    Database = database.DatabaseId!,
+                    Origin = ByteString.CopyFrom(origin.Span),
+                };
+                using var digestCall = repair.DigestAsync(identity, cancellationToken: deadline.Token);
+                var remoteDigest = await digestCall.ResponseAsync;
+                await Assert.That(remoteDigest.AppliedSource.Sequence).IsEqualTo(100UL);
+                identity.Incarnation = remoteDigest.Incarnation;
+                identity.SourceProof = new JournalProof
+                {
+                    Origin = identity.Origin,
+                    Sequence = 100,
+                    Digest = ByteString.CopyFrom((await local.GetChangeDigestAsync(100, deadline.Token))!.Value.Span),
+                };
+                var (targetSequence, targetDigest) = await local.GetAppliedFrontierAsync(remoteDigest.Origin.Memory, deadline.Token);
+                identity.TargetProof = new JournalProof
+                {
+                    Origin = remoteDigest.Origin,
+                    Sequence = checked((ulong)targetSequence),
+                    Digest = ByteString.CopyFrom(targetDigest.Span),
+                };
+                using var rangeCall = repair.ReadRangeAsync(new RangeRequest { Identity = identity, Ranges = ushort.MaxValue }, cancellationToken: deadline.Token);
+                var rangeRejected = await Assert.That(async () => await rangeCall.ResponseAsync).Throws<RpcException>();
+                await Assert.That(rangeRejected!.StatusCode).IsEqualTo(StatusCode.FailedPrecondition);
+                var replacement = (await local.GetAsync("items", id, deadline.Token))!;
+                var envelope = ByteString.CopyFrom(ApplicationEnvelope.Encode(ChangeGroup.Encode(
+                    [new DocumentChange("items", id, replacement.Version, replacement.Json)])).Span);
+                using var mergeCall = repair.MergeAsync(new StateRequest { Identity = identity, Envelope = envelope }, cancellationToken: deadline.Token);
+                var mergeRejected = await Assert.That(async () => await mergeCall.ResponseAsync).Throws<RpcException>();
+                await Assert.That(mergeRejected!.StatusCode).IsEqualTo(StatusCode.FailedPrecondition);
                 using var reader = clientTls.CreateClient(receiver.ClientAddress!, await tenant.KeyAsync(receiver, "documents:read"));
                 await AssertBodyAsync(reader, path, id, "original-100", deadline.Token);
             }

@@ -179,6 +179,7 @@ public sealed class StorageHistoryTests
                 await connection.OpenAsync(deadline.Token);
                 await using var command = connection.CreateCommand();
                 command.CommandText = """
+                    DROP INDEX documents_replication_keys;
                     DROP TABLE journal_prefixes;
                     DROP TABLE changes;
                     DROP TABLE applied;
@@ -238,6 +239,7 @@ public sealed class StorageHistoryTests
                 await connection.OpenAsync();
                 await using var command = connection.CreateCommand();
                 command.CommandText = """
+                    DROP INDEX documents_replication_keys;
                     DROP TRIGGER change_log_birth;
                     DROP TABLE change_log_births;
                     DROP TABLE change_log_high;

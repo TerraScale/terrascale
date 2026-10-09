@@ -14,6 +14,7 @@ internal sealed class ReplicationMetrics
     private readonly Counter<long> _prefixMismatches;
     private readonly Counter<long> _divergenceDetections;
     private readonly Counter<long> _discoveryPasses;
+    private readonly Counter<long> _repairedKeys;
     private readonly Histogram<double> _writeWaits;
     private readonly Histogram<double> _convergence;
     private readonly Meter _meter;
@@ -29,6 +30,7 @@ internal sealed class ReplicationMetrics
         _prefixMismatches = meter.CreateCounter<long>("terrabase.replication.sender.prefix.mismatches", description: "Peer journal prefixes rejected because their content differs");
         _discoveryPasses = meter.CreateCounter<long>("terrabase.replication.sender.discovery.passes", description: "Completed journal discovery passes, including passes with failures.");
         _divergenceDetections = meter.CreateCounter<long>("terrabase.replication.divergence.detections", description: "Detected journal conflicts across every database, including those omitted from detail.");
+        _repairedKeys = meter.CreateCounter<long>("terrabase.replication.repaired.keys", "{key}", "Keys changed by durable anti-entropy merges, excluding duplicates and losing states.");
         _creditWaits = meter.CreateCounter<long>(
             "terrabase.replication.sender.credit.waits", "{wait}", "Prepared groups held until durable acknowledgments release byte credit.");
         _convergence = meter.CreateHistogram<double>(
@@ -79,6 +81,7 @@ internal sealed class ReplicationMetrics
     public void PrefixMismatch() => _prefixMismatches.Add(1);
 
     public void DetectedDivergence(string reason) => _divergenceDetections.Add(1, new KeyValuePair<string, object?>("reason", reason));
+    public void Repaired(uint keys) => _repairedKeys.Add(keys);
 
     public void CreditWait() => _creditWaits.Add(1);
 

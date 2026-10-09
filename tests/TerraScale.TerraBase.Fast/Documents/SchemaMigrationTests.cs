@@ -58,7 +58,9 @@ public sealed class SchemaMigrationTests
                     await check.OpenAsync();
                     await using var command = check.CreateCommand();
                     command.CommandText = "PRAGMA user_version;";
-                    await Assert.That(await command.ExecuteScalarAsync()).IsEqualTo(8L);
+                    await Assert.That(await command.ExecuteScalarAsync()).IsEqualTo(9L);
+                    command.CommandText = "SELECT count(*) FROM sqlite_schema WHERE type = 'index' AND name IN ('documents_replication_keys', 'changes_replication_deleted');";
+                    await Assert.That(await command.ExecuteScalarAsync()).IsEqualTo(2L);
                     command.CommandText = "SELECT incarnation FROM commit_offset WHERE id = 1;";
                     await Assert.That(Guid.TryParseExact((string?)await command.ExecuteScalarAsync(), "N", out var persisted)).IsTrue();
                     await Assert.That(store.Incarnation).IsEqualTo(persisted);

@@ -78,6 +78,12 @@ public sealed class DocumentCaptureTests
                 }
             }
 
+            // Verify physical removal while this writer excludes background repair.
+            foreach (var id in ids)
+            {
+                await Assert.That(await deletion.GetVersionAsync("items", id, token)).IsNull();
+            }
+
             await Assert.That(await deletion.CommitAsync(token)).IsEqualTo(2);
         }
 
@@ -93,6 +99,7 @@ public sealed class DocumentCaptureTests
         await using (var again = await source.BeginTransactionAsync(write: true, token))
         {
             await again.DeleteAsync("items", ids[1], token);
+            await Assert.That(await again.GetVersionAsync("items", ids[1], token)).IsNull();
             await Assert.That(await again.CommitAsync(token)).IsEqualTo(4);
         }
 
@@ -121,8 +128,14 @@ public sealed class DocumentCaptureTests
 
         await using (var read = await source.BeginTransactionAsync(write: false, token))
         {
-            await Assert.That(await read.GetVersionAsync("items", ids[0], token)).IsNull();
-            await Assert.That(await read.GetVersionAsync("items", ids[1], token)).IsNull();
+            // Repair may materialize the retained deletion, preserving its exact version and deleted state.
+            foreach (var id in ids.Take(2))
+            {
+                var state = await read.GetVersionAsync("items", id, token);
+                await Assert.That(state is null || state == new DocumentVersion(id == ids[0] ? 2 : 4, Deleted: true)).IsTrue();
+                await Assert.That(await read.GetAsync("items", id, token)).IsNull();
+            }
+
             await Assert.That(await read.GetLastChangeSequenceAsync(token)).IsEqualTo(4);
             await Assert.That(await read.GetAppliedSequenceAsync(remoteOrigin, token)).IsEqualTo(1);
         }
@@ -270,20 +283,24 @@ public sealed class DocumentCaptureTests
             else if (operation == "deletePut")
             {
                 await write.DeleteAsync("items", a, deadline.Token);
+                await Assert.That(await write.GetVersionAsync("items", a, deadline.Token)).IsNull();
                 await write.PutAsync("items", a, "{\"a\":true}"u8.ToArray(), deadline.Token);
             }
             else if (operation == "putDelete")
             {
                 await write.PutAsync("items", a, "{\"z\":true}"u8.ToArray(), deadline.Token);
                 await write.DeleteAsync("items", a, deadline.Token);
+                await Assert.That(await write.GetVersionAsync("items", a, deadline.Token)).IsNull();
             }
             else if (operation == "rollbackDrop")
             {
                 await Assert.That(await write.DropCollectionAsync("items", deadline.Token)).IsTrue();
+                await Assert.That(await write.GetVersionAsync("items", a, deadline.Token)).IsNull();
             }
             else
             {
                 await Assert.That(await write.DeleteAsync("items", a, deadline.Token)).IsTrue();
+                await Assert.That(await write.GetVersionAsync("items", a, deadline.Token)).IsNull();
             }
 
             if (operation is "rollbackDelete" or "rollbackDrop")
@@ -321,8 +338,18 @@ public sealed class DocumentCaptureTests
             foreach (var change in changes)
             {
                 var local = await sourceRead.GetVersionAsync("items", change.Id, deadline.Token);
-                await Assert.That(local).IsEqualTo(operation is "physicalDelete" or "putDelete" or "drop"
-                    ? (DocumentVersion?)null : new DocumentVersion(change.Version, change.Json is null));
+                var expected = new DocumentVersion(change.Version, change.Json is null);
+                if (operation is "physicalDelete" or "putDelete" or "drop")
+                {
+                    // Maintenance can restore the captured tombstone after the physical mutation committed.
+                    await Assert.That(local is null || local == expected).IsTrue();
+                    await Assert.That(await sourceRead.GetAsync("items", change.Id, deadline.Token)).IsNull();
+                }
+                else
+                {
+                    await Assert.That(local).IsEqualTo(expected);
+                }
+
                 var state = await targetRead.GetVersionAsync("items", change.Id, deadline.Token);
                 await Assert.That(state!.Value.Version).IsEqualTo(change.Version);
                 await Assert.That(state.Value.Deleted).IsEqualTo(change.Json is null);
@@ -395,8 +422,10 @@ public sealed class DocumentCaptureTests
                     await write.CreateCollectionAsync(new CollectionInfo("capture-tests", 1), deadline.Token);
                     await write.PutAsync("capture-tests", "physical", "{}"u8.ToArray(), deadline.Token);
                     await Assert.That(await write.DeleteAsync("capture-tests", "physical", deadline.Token)).IsTrue();
+                    await Assert.That(await write.GetVersionAsync("capture-tests", "physical", deadline.Token)).IsNull();
                     await write.PutAsync("capture-tests", "dropped", "{}"u8.ToArray(), deadline.Token);
                     await Assert.That(await write.DropCollectionAsync("capture-tests", deadline.Token)).IsTrue();
+                    await Assert.That(await write.GetVersionAsync("capture-tests", "dropped", deadline.Token)).IsNull();
                 }
                 else
                 {
@@ -444,8 +473,8 @@ public sealed class DocumentCaptureTests
             targetMetadata = await read.GetCollectionAsync("items", cancellationToken);
         }
 
-        // Delayed live bodies and tombstones must leave the physical absence intact, at both lower
-        // and equal versions. The peer keeps the corresponding tombstone; neither node recaptures imports.
+        // Delayed live bodies and tombstones must preserve deletion at both lower and equal versions.
+        // Repair can materialize the exact retained tombstone; neither node recaptures imports.
         foreach (var delayedVersion in new[] { version - 1, version })
         {
             foreach (var tombstone in new[] { false, true })
@@ -465,8 +494,17 @@ public sealed class DocumentCaptureTests
                     foreach (var deletion in deletions)
                     {
                         await Assert.That(await read.GetAsync("items", deletion.Id, cancellationToken)).IsNull();
-                        await Assert.That(await read.GetVersionAsync("items", deletion.Id, cancellationToken)).IsEqualTo(store == source
-                            ? (DocumentVersion?)null : new DocumentVersion(version, Deleted: true));
+                        var state = await read.GetVersionAsync("items", deletion.Id, cancellationToken);
+                        var expected = new DocumentVersion(version, Deleted: true);
+                        if (store == source)
+                        {
+                            await Assert.That(state is null || state == expected).IsTrue();
+                        }
+                        else
+                        {
+                            await Assert.That(state).IsEqualTo(expected);
+                        }
+
                         using var response = await http.GetAsync(Document(tenant, deletion.Id), cancellationToken);
                         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
                     }

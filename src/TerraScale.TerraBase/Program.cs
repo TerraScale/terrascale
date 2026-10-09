@@ -114,6 +114,7 @@ try
     app.UseTerraBaseLegacyRoutes();
     app.UseRouting();
     app.UseTerraBaseListeners();
+    app.UseTerraBaseAntiEntropyResponses();
     app.UseTerraBaseQueryShapeAdmission();
     app.UseAuthentication();
     app.UseTerraBaseProjectCheck();

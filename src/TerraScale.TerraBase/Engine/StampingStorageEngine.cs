@@ -384,14 +384,33 @@ internal sealed class StampingStorageEngine(IStorageEngine inner, ISystemReplica
         public ValueTask<IReadOnlyList<DocumentChange>?> ReadChangesAsync(long sequence, CancellationToken cancellationToken) =>
             RunAsync(() => inner.ReadChangesAsync(sequence, cancellationToken), cancellationToken);
 
+        public ValueTask<ReplicationStatePage> ReadReplicationStateAsync(string? afterCollection, string? afterId, CancellationToken cancellationToken) =>
+            RunAsync(() => inner.ReadReplicationStateAsync(afterCollection, afterId, cancellationToken), cancellationToken);
+
         public ValueTask<ReadOnlyMemory<byte>?> GetChangeDigestAsync(long sequence, CancellationToken cancellationToken) =>
             RunAsync(() => inner.GetChangeDigestAsync(sequence, cancellationToken), cancellationToken);
 
         public ValueTask<bool> ApplyAsync(DocumentChange change, CancellationToken cancellationToken)
         {
             ArgumentNullException.ThrowIfNull(change);
+            if (change.Collection is DocumentChange.Collections or DocumentChange.Indexes)
+            {
+                return WriteCollectionAsync(() => inner.ApplyAsync(change, cancellationToken), cancellationToken);
+            }
+
             // A replicated state may also create its collection; both stripes move like a local write.
             return WriteAsync(change.Collection, change.Id, () => inner.ApplyAsync(change, cancellationToken), cancellationToken);
+        }
+
+        public ValueTask<bool> RepairReplicationStateAsync(DocumentChange change, CancellationToken cancellationToken)
+        {
+            ArgumentNullException.ThrowIfNull(change);
+            if (change.Collection is DocumentChange.Collections or DocumentChange.Indexes)
+            {
+                return WriteCollectionAsync(() => inner.RepairReplicationStateAsync(change, cancellationToken), cancellationToken);
+            }
+
+            return WriteAsync(change.Collection, change.Id, () => inner.RepairReplicationStateAsync(change, cancellationToken), cancellationToken);
         }
 
         public ValueTask<long> GetAppliedSequenceAsync(ReadOnlyMemory<byte> origin, CancellationToken cancellationToken) =>

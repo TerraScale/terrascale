@@ -715,7 +715,7 @@ public sealed record TerraBaseOptions : IDisposable
         name.Length is >= 1 and <= 63 && name[0] != '-' && name[^1] != '-' && name.All(c => c is (>= 'a' and <= 'z') or (>= '0' and <= '9') or '-');
 
     // An https://host:port origin of a peer listener (the port defaults to 443).
-    private static bool TryParsePeerAddress(string value, [NotNullWhen(true)] out Uri? address) =>
+    internal static bool TryParsePeerAddress(string value, [NotNullWhen(true)] out Uri? address) =>
         Uri.TryCreate(value, UriKind.Absolute, out address)
         && address.Scheme == Uri.UriSchemeHttps
         && address.Port != 0

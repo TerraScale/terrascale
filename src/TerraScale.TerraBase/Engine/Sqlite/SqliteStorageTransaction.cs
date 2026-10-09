@@ -1109,90 +1109,99 @@ internal sealed partial class SqliteStorageTransaction(
             : null;
     }
 
-    public async ValueTask<bool> ApplyAsync(DocumentChange change, CancellationToken cancellationToken)
+    public ValueTask<bool> ApplyAsync(DocumentChange change, CancellationToken cancellationToken) =>
+        RunAsync(() => Apply(change, cancellationToken), cancellationToken, mutation: true);
+
+    private bool Apply(DocumentChange change, CancellationToken cancellationToken)
     {
-        return await RunAsync(() =>
+        ThrowIfReadOnly();
+        DocumentMutation(replicated: true);
+        ArgumentNullException.ThrowIfNull(change);
+        if (Shaped && !DocumentChange.HasValidKey(change.Collection, change.Id))
         {
-            ThrowIfReadOnly();
-            DocumentMutation(replicated: true);
-            ArgumentNullException.ThrowIfNull(change);
-            if (Shaped && !DocumentChange.HasValidKey(change.Collection, change.Id))
+            throw new InvalidDataException("a replicated change has an invalid collection or id");
+        }
+
+        _importedFromOffset ??= _offset is { } metadataOffset ? metadataOffset - 1 : GetOffset();
+        // Every direct Apply in this transaction uses the same starting clock, so several
+        // individually small advances cannot chain past the whole-group admission limit.
+        VersionClock.ValidateImport(change.Version, _importedFromOffset.Value);
+        var bytes = ContentBytes(change);
+        if (_importedCount == IStorageTransaction.MaxChangeGroupChanges
+            || bytes > IStorageTransaction.MaxChangeGroupBytes - _importedBytes)
+        {
+            throw new InvalidOperationException(
+                $"a replicated transaction holds at most {IStorageTransaction.MaxChangeGroupChanges} changes and {IStorageTransaction.MaxChangeGroupBytes} bytes");
+        }
+
+        var admittedBody = change.Json is { } incoming ? Admit(incoming) : null;
+        if (Shaped)
+        {
+            // Bound the complete imported commit, including shape framing.
+            var historyBytes = (change.Json?.Length ?? 0) + (long)JsonEncodedText.Encode(change.Id).EncodedUtf8Bytes.Length + OpFramingBytes;
+            if (_writtenBytes + historyBytes > MaxWrittenBytes)
             {
-                throw new InvalidDataException("a replicated change has an invalid collection or id");
+                throw new StorageWriteLimitException("a replicated transaction's shape history fits at most 7 MiB with framing");
             }
 
-            _importedFromOffset ??= _offset is { } metadataOffset ? metadataOffset - 1 : GetOffset();
-            // Every direct Apply in this transaction uses the same starting clock, so several
-            // individually small advances cannot chain past the whole-group admission limit.
-            VersionClock.ValidateImport(change.Version, _importedFromOffset.Value);
-            var bytes = ContentBytes(change);
-            if (_importedCount == IStorageTransaction.MaxChangeGroupChanges
-                || bytes > IStorageTransaction.MaxChangeGroupBytes - _importedBytes)
-            {
-                throw new InvalidOperationException(
-                    $"a replicated transaction holds at most {IStorageTransaction.MaxChangeGroupChanges} changes and {IStorageTransaction.MaxChangeGroupBytes} bytes");
-            }
+            _writtenBytes += historyBytes;
+            // Own the bytes so the stored state and its deferred history cannot diverge.
+            change = change with { Json = change.Json is { } body ? body.ToArray() : (ReadOnlyMemory<byte>?)null };
+        }
 
-            var admittedBody = change.Json is { } incoming ? Admit(incoming) : null;
+        _importedCount++;
+        _importedBytes += bytes;
+        // Advance even for a losing state: a subsequent local transaction must supersede what was observed.
+        var offset = Command(SqliteStatements.ObserveOffset);
+        offset.Parameters.AddWithValue("$version", change.Version);
+        offset.ExecuteNonQuery();
+
+        var retained = Command(SqliteStatements.RetainedDeletion, change.Collection);
+        retained.Parameters.AddWithValue("$id", change.Id);
+        retained.Parameters.AddWithValue("$version", change.Version);
+        retained.Parameters.AddWithValue("$inclusive", change.Json is not null);
+        // Retained deletions fence older states and equal live values. An equal tombstone can
+        // restore a row lost after its ACK without replacing newer deletion evidence.
+        if (retained.ExecuteScalar() is not null)
+        {
+            return false;
+        }
+
+        if (Shaped && change.Collection is DocumentChange.Collections or DocumentChange.Indexes)
+        {
+            return ApplyMetadata(change, admittedBody, cancellationToken);
+        }
+
+        if (Shaped && Dropped(change))
+        {
+            return false;
+        }
+
+        var changed = ApplyState(change, admittedBody);
+        if (changed && WinningStateImpliesCollection(change))
+        {
+            CreateCollection(new CollectionInfo(change.Collection, 0));
             if (Shaped)
             {
-                // Bound the complete imported commit, including shape framing.
-                var historyBytes = (change.Json?.Length ?? 0) + (long)JsonEncodedText.Encode(change.Id).EncodedUtf8Bytes.Length + OpFramingBytes;
-                if (_writtenBytes + historyBytes > MaxWrittenBytes)
-                {
-                    throw new StorageWriteLimitException("a replicated transaction's shape history fits at most 7 MiB with framing");
-                }
-
-                _writtenBytes += historyBytes;
-                // Own the bytes so the stored state and its deferred history cannot diverge.
-                change = change with { Json = change.Json is { } body ? body.ToArray() : (ReadOnlyMemory<byte>?)null };
+                _appliedChanges.Add(change);
             }
+        }
 
-            _importedCount++;
-            _importedBytes += bytes;
-            // Advance even for a losing state: a subsequent local transaction must supersede what was observed.
-            var offset = Command(SqliteStatements.ObserveOffset);
-            offset.Parameters.AddWithValue("$version", change.Version);
-            offset.ExecuteNonQuery();
-
-            var retained = Command(SqliteStatements.RetainedDeletion, change.Collection);
-            retained.Parameters.AddWithValue("$id", change.Id);
-            retained.Parameters.AddWithValue("$version", change.Version);
-            if (retained.ExecuteScalar() is not null)
-            {
-                return false;
-            }
-
-            if (Shaped && change.Collection is DocumentChange.Collections or DocumentChange.Indexes)
-            {
-                return ApplyMetadata(change, admittedBody, cancellationToken);
-            }
-
-            if (Shaped && Dropped(change))
-            {
-                return false;
-            }
-
-            var changed = ApplyState(change, admittedBody);
-            if (changed)
-            {
-                // A winning state implies its collection, whether or not its creation replicated; a losing one changes
-                // nothing, so it cannot revive a collection a replicated drop removed.
-                CreateCollection(new CollectionInfo(change.Collection, 0));
-                if (Shaped)
-                {
-                    _appliedChanges.Add(change);
-                }
-            }
-
-            return changed;
-        }, cancellationToken, mutation: true).ConfigureAwait(false);
+        return changed;
     }
 
-    private bool Dropped(DocumentChange change)
+    // A winning state implies its collection, whether or not its creation replicated; a losing one changes
+    // nothing. A dropped collection's tombstone restores only its state: appending shape history
+    // would create a new collection generation again at commit.
+    private bool WinningStateImpliesCollection(DocumentChange change) =>
+        !Shaped || change.Json is not null || !Dropped(change, inclusive: true)
+            || Command(SqliteStatements.GetCollection, change.Collection).ExecuteScalar() is not null;
+
+    private bool Dropped(DocumentChange change, bool inclusive = false)
     {
         var dropped = Command(SqliteStatements.DroppedCollection, change.Collection);
         dropped.Parameters.AddWithValue("$version", change.Version);
+        dropped.Parameters.AddWithValue("$inclusive", inclusive);
         return dropped.ExecuteScalar() is not null;
     }
 

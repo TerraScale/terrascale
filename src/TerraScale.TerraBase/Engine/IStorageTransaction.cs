@@ -18,6 +18,15 @@ public sealed record StoredDocument(string Id, long Version, ReadOnlyMemory<byte
 /// <param name="HasMore">Whether documents after the last one exist.</param>
 public sealed record DocumentPage(IReadOnlyList<StoredDocument> Documents, bool HasMore);
 
+/// <summary>One bounded page of current live documents and tombstones in collection and id order.</summary>
+/// <param name="Changes">The current states in this page, including collection and index metadata.</param>
+/// <param name="HasMore">Whether keys after the returned cursor remain.</param>
+/// <param name="LocalRepairs">Canonical states in <paramref name="Changes"/> needing local repair: tombstones that restore absent or losing physical rows, and live bodies whose retained winner differs from the stored row.</param>
+/// <param name="AfterCollection">Last examined collection, including an excluded legacy key; null before any key.</param>
+/// <param name="AfterId">Last examined id, including an excluded legacy key; null before any key.</param>
+public sealed record ReplicationStatePage(IReadOnlyList<DocumentChange> Changes, bool HasMore, IReadOnlyList<DocumentChange> LocalRepairs,
+    string? AfterCollection, string? AfterId);
+
 /// <summary>The version of a document or its tombstone, read without its body.</summary>
 /// <param name="Version">Merge version of the last write.</param>
 /// <param name="Deleted">Whether the document is a tombstone.</param>
@@ -250,6 +259,19 @@ public interface IStorageTransaction : IAsyncDisposable
     ValueTask<IReadOnlyList<DocumentChange>?> ReadChangesAsync(long sequence, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Reads current live documents and tombstones, including collection and index metadata, after the
+    /// (<paramref name="afterCollection"/>, <paramref name="afterId"/>) cursor in collection and id order.
+    /// Both cursor parts are null for the first page. Each page examines at most 128 bounded keys and holds
+    /// at most 128 admissible states and
+    /// <see cref="MaxChangeGroupBytes"/> UTF-8 bytes of keys and bodies, including the first state.
+    /// Oversized legacy keys are excluded, as in baseline replication. Invalid stored body sizes throw
+    /// <see cref="InvalidDataException"/> before their bodies are materialized.
+    /// Continue from the returned cursor even when excluded keys leave the page empty.
+    /// Reuse one transaction for every page to read a consistent state.
+    /// </summary>
+    ValueTask<ReplicationStatePage> ReadReplicationStateAsync(string? afterCollection, string? afterId, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Reads the SHA-256 identity of the captured prefix through <paramref name="sequence"/>, or null for a missing group.
     /// Sequence 0 returns <see cref="JournalDigest.Initial"/> for this database's origin.
     /// </summary>
@@ -261,6 +283,14 @@ public interface IStorageTransaction : IAsyncDisposable
     /// changes in any order ends in the same state. Returns whether the stored state changed.
     /// </summary>
     ValueTask<bool> ApplyAsync(DocumentChange change, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Restores a live row's unchanged-version body from its latest retained winner in the current
+    /// collection generation, then applies normal replicated conflict ordering. Returns whether either
+    /// operation changed the row. Body restoration preserves existing history and journal frontiers;
+    /// absent, differently versioned or unproven states retain normal merge behavior.
+    /// </summary>
+    ValueTask<bool> RepairReplicationStateAsync(DocumentChange change, CancellationToken cancellationToken);
 
     /// <summary>The last change group of <paramref name="origin"/> applied to this database; 0 when none.</summary>
     ValueTask<long> GetAppliedSequenceAsync(ReadOnlyMemory<byte> origin, CancellationToken cancellationToken);

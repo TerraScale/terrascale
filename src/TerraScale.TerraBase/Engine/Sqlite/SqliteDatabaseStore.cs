@@ -24,7 +24,7 @@ internal sealed partial class SqliteDatabaseStore(
         : this(name, path, pool, io, pragmas, null, time, null, committed) { }
 
     /// <summary>On-disk schema version, stored in <c>PRAGMA user_version</c>.</summary>
-    private const int SchemaVersion = 8;
+    private const int SchemaVersion = 9;
 
     // Migrations[n] moves user_version n to n + 1.
     private static readonly string[] Migrations =
@@ -154,6 +154,13 @@ internal sealed partial class SqliteDatabaseStore(
         ) WITHOUT ROWID;
         ALTER TABLE applied ADD COLUMN digest BLOB CHECK (digest IS NULL OR length(digest) = 32);
         DELETE FROM applied;
+        """,
+        // Version 9: repair seeks only cursor-sized keys, even behind excluded legacy prefixes.
+        $$"""
+        CREATE INDEX documents_replication_keys ON documents (collection, id)
+            WHERE {{SqliteStatements.BoundedReplicationKeys}};
+        CREATE INDEX changes_replication_deleted ON changes (collection, id, version)
+            WHERE body IS NULL AND {{SqliteStatements.BoundedReplicationKeys}};
         """,
     ];
 

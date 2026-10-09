@@ -39,6 +39,86 @@ UTF-8 object without duplicate properties, at most 1 MiB, 16 container levels an
 the document API numeric limits. Rejected writes fault their transaction; client transactions report
 the operation index. Shapes embed admitted JSON without reparsing it.
 
+## Merkle anti-entropy (TS-678)
+
+Every member with a peer listener reconciles registered client databases with the current cell members and
+explicit `peer-addresses`, waiting 5 seconds after each completed pass. A slow or failed pass still
+leaves this idle gap; unchanged journal heads cannot reveal physical state corruption.
+Database-wide placement currently has one shard (zero).
+Invalid membership peer addresses are logged without their values and skipped; a failed peer does
+not stop reconciliation with the remaining members or configured peers.
+The closed-beta `terrabase.alpha.AntiEntropy` gRPC contract uses the existing mutual-TLS listener and
+LZ4 application envelopes; it adds no public HTTP API. Schema 9 adds two partial key indexes so
+excluded empty or oversized legacy keys do not lengthen document or retained-deletion scans.
+
+A transient Merkle tree has 16 leaves, selected by the high nibble of SHA-256 of each length-framed
+collection/id key. Each leaf hashes current states in key order, including versions, exact JSON bytes,
+tombstones and collection/index metadata. Each key resolves its stored row and latest retained journal
+deletion with the same version/tombstone ordering as the merge path; newer live resurrections survive.
+Before hashing, each bounded page durably restores retained tombstones over missing, older or tied
+live rows. This also repairs identical resurrected rows on both members, even when their roots match.
+Live bodies at an unchanged merge version use the latest immutable winner in the current collection
+generation's shape history, including winners imported from validated journal groups. Indexed history
+seeks read sizes before bodies. Digest and range pages use these retained bytes; a repair writer rechecks
+the latest winner before restoring a damaged row, then applies ordinary conflict ordering. A larger
+damaged body therefore cannot poison an unchanged peer or block a legitimate equal-version winner.
+Body restoration invalidates document caches and preserves existing history and the merge version.
+Restoration and incoming merge share one transaction operation; queued commit or disposal waits for both.
+The same live history evidence restores a row whose body alone became NULL; retained real tombstones
+remain deletions. Restoration skips keys with accepted changes awaiting commit in the same transaction.
+Equal or newer retained journal deletions always prevent live-body restoration.
+It does not infer a canonical body from an arbitrary peer or an older losing journal entry. Missing
+history, metadata bodies, changed merge versions, oversized damaged bodies, or damage to the retained
+history itself lack this same-version evidence and retain the ordinary merge behavior; history is not
+an independent cryptographic corruption proof. Each repair transaction bounds locally restored bodies to 2 MiB in addition to its
+bounded incoming state page; overflow rolls back and subsequent digest pages restore them separately.
+Materializing an intentional physical deletion and restoring a lost tombstone use the same path;
+both count only rows actually changed, without appending journal groups or advancing applied frontiers.
+Domain-separated binary parent hashes produce the root.
+The root and leaf digests use 544 decoded bytes per shard. Equal trees transfer no states; differing
+leaves select the ranges exchanged as bounded state pages. The initiating member pulls first, merges
+durably, and pushes its joined states back, so one configured peer link repairs both directions.
+
+Repair uses the engine's existing deterministic merge and JSON admission rules. Duplicate and losing
+states change nothing. It does not reset, advance or manufacture a journal frontier or acknowledge a
+transaction group. Database incarnations pin requests; an unregistered, deleted or replaced database
+cannot be recreated by repair. Concurrent writes can make a pass stale; subsequent passes retry.
+Before transferring states, each pair checks both origins against the other's applied journal prefix.
+Range reads and durable merges enforce those proofs in their storage transaction; a missing, reused
+or mismatched prefix fails closed, and a moving frontier retries. These pairwise proofs preserve the
+direct restore fence; states do not carry transitive origin provenance, so this is not a global
+quarantine mechanism for restored histories relayed through other members.
+`terrabase.replication.repaired.keys` counts keys actually changed after a durable repair commit, with
+no tenant, database or peer labels.
+
+Maintenance runs one exchange at a time. Each scan page examines at most 128 bounded keys plus one
+lookahead and transfers at most 128 admissible states and 2 MiB of key/body bytes;
+each exchange or incoming call reserves 16 MiB until its buffers have been consumed. Incoming calls
+are limited to 16. Each range read or merge has a fresh 15-second progress budget; an exchange can
+continue beyond 15 seconds while its pages make progress. Local and remote digest construction each
+have a separate five-minute budget, with a fresh 15-second budget for each local scan/repair page.
+An independent 15-minute budget caps the complete per-database exchange, including both digests and
+both page loops. Progress cannot renew it; expiry releases maintenance to the next database or peer,
+and a later pass retries remaining work.
+Continuation cursors must advance in SQLite key order. A fresh 15-second transmission budget
+remains active after each handler returns; expiry aborts an unread response stream.
+Unary responses are explicitly flushed before application completion, keeping blocked
+writes inside admission. Reservations remain held through application response completion
+or cancellation; this does not establish peer consumption or final network delivery. Reads return
+their SQLite sessions before network waits, except the local digest scan, which holds a consistent
+read snapshot without network I/O. Oversized legacy keys excluded by baseline replication are also
+excluded from repair. Other inadmissible legacy keys are skipped before body materialization, local
+repair or hashing. Scan cursors retain the last examined key, even for empty pages, and allow at
+most 63 collection bytes and 1024 id bytes so scans advance past these keys. Transferred states
+retain the normal collection/id validation. The system catalog continues to use its existing primary/follower protocol.
+
+Deletion-key enumeration seeks past repeated versions using the existing journal index, and reads
+only the latest retained deletion for each key. Repeated delete/recreate cycles do not force a full
+history scan for that key. This first implementation rebuilds trees from bounded pages and scans the keyspace to select ranges:
+CPU work is O(keys) per pass even when trees match. A shard that cannot complete within the deadline
+needs incremental persisted tree maintenance; this implementation does not claim bounded convergence
+time under continuous writes, memory pressure or an oversized shard.
+
 ## Write-wait
 
 A member answers a client write on a client database (documents, transactions, collection create and drop) only once

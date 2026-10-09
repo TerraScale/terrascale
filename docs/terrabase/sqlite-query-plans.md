@@ -7,6 +7,14 @@ SQLite that Microsoft.Data.Sqlite bundles (3.53.4). The Fast suite
 
 ## Inventory
 
+Anti-entropy body restoration also uses these indexed statements:
+
+| Statement | Access and bound |
+| --- | --- |
+| `ReplicationRetainedBody` | Seek `change_log_by_document` for the latest entry in the current collection generation; join one current document by primary key and require the same merge version. A `changes_deleted` seek excludes equal/newer retained deletions. Read byte lengths before materializing either body. |
+| `ReplicationRetainedBodyBytes` | Fetch one already-admitted history body by integer primary key. |
+| `RestoreReplicationBody` | Update one current row by primary key only after the writer rechecks its retained winner; preserve its merge version and shape history. |
+
 Only the engine runs SQL. Catalog and indexing have no SQL yet (their slices are interfaces only);
 replication uses the engine journal statements below. API keys and the Management slice (organizations, projects, databases) are
 documents in `_system` and use the document statements: lookups by id or unique name use `Get`, creates
@@ -28,9 +36,10 @@ Schema v7 also separates the merge version (`change_log.document_version`) from 
 shape history offset (`change_log.version`); migration preserves every existing history entry.
 
 The partial `changes_deleted (collection, id, version) WHERE body IS NULL` index retains physical
-delete/drop merge evidence without changing public document/version reads. Incoming puts and tombstones
-seek at most one deletion at or above their version before creating collection metadata; the shared
-clock still observes every incoming version. A newer state remains eligible for the document merge.
+delete/drop merge evidence without changing public document/version reads. Incoming puts seek a deletion
+at or above their version; incoming tombstones seek a strictly newer deletion, so an equal tombstone
+can repair a missing row. Both probes stop at the first match before creating collection metadata; the
+shared clock still observes every incoming version. A newer state remains eligible for the document merge.
 `shape_history (id, floor)` records the history baseline; `change_log` retains client-database
 changes with collection generation, document id, commit version and sequence. Its two indexes
 support the shape seeks described below. `_system` has the same schema but retains no shape history.
@@ -50,11 +59,11 @@ support the shape seeks described below. `_system` has the same schema but retai
 | List, first page: `… WHERE collection = ? ORDER BY id LIMIT ?` | list without cursor | `SEARCH documents USING PRIMARY KEY (collection=?)` | `SEARCH documents USING INDEX documents_live (collection=?)` (`ListFirst`), skipping tombstones |
 | List, next page: `… WHERE collection = ? AND id > ? ORDER BY id LIMIT ?` | list with cursor | `SEARCH documents USING PRIMARY KEY (collection=?)` — one statement used `($after IS NULL OR id > $after)`, which kept SQLite from seeking to the cursor: every page walked the collection from its first id | `SEARCH documents USING INDEX documents_live (collection=? AND id>?)` (`ListAfter`) |
 | `ObserveOffset`, `Origin` | imported clock, stream identity | — | integer-primary-key search on `commit_offset` |
-| `RetainedDeletion`: `… WHERE collection = ? AND id = ? AND version >= ? AND body IS NULL LIMIT 1` | both replicated merge paths | — | `SEARCH changes USING INDEX changes_deleted (collection=? AND id=? AND version>?)`; stops at the first match, reads no JSON |
+| `RetainedDeletion`: `… WHERE collection = ? AND id = ? AND version >= ? AND (version > ? OR $inclusive) AND body IS NULL LIMIT 1` | replicated merge, before applying document state | — | `SEARCH changes USING INDEX changes_deleted (collection=? AND id=? AND version>?)`; `$inclusive = true` fences equal live values, `false` allows equal tombstone repair; stops at the first match, reads no JSON |
 | `MaterializeRetainedDeletions` | copy preparation, before resetting its journal | — | `SCAN changes USING INDEX changes_deleted`; groups keys in index order without a sorter and upserts only deletions that beat the copied document state |
 | `ApplyDocument`, `ApplyTombstone` | replicated merge | — | insert/upsert, no plan rows; conflicts probe the document primary key |
 | `CollectionDocumentIds` | captured collection drop | — | document primary-key range under a count limit; no JSON loaded |
-| `DroppedCollection`: `… WHERE collection = '_collections' AND id = ? AND version > ? AND body IS NULL` | replicated merge, per incoming document | — | `SEARCH documents USING PRIMARY KEY (collection=? AND id=?)`: one register lookup, no JSON |
+| `DroppedCollection`: `… WHERE collection = '_collections' AND id = ? AND version >= ? AND (version > ? OR $inclusive) AND body IS NULL` | replicated merge and collection-recreation guard | — | `SEARCH documents USING PRIMARY KEY (collection=? AND id=?)`: one register lookup, no JSON; `$inclusive = false` matches strictly newer drops, `true` also matches ties when deciding whether a tombstone recreates collection metadata |
 | `TombstoneCollection`: `UPDATE … WHERE collection = ? AND version < ? AND body IS NOT NULL RETURNING id` | replicated collection drop | — | `SEARCH documents USING PRIMARY KEY (collection=?)`: the dropped collection's key range only |
 | `LiveDocument` | replicated collection drop | — | `SEARCH documents USING INDEX documents_live (collection=?)`; stops at the first live row |
 | `LastSequence`, `NextSequence`, `AppendChange`, `ReadChanges` | journal append/send | — | journal primary-key search; insert has no plan rows |
@@ -62,6 +71,8 @@ support the shape seeks described below. `_system` has the same schema but retai
 | `Complete`, `MarkComplete` | baseline state | — | integer-primary-key lookup on `replication_state` |
 | `CountOversizedBaselineKeys` | baseline admission, once on copy/upgrade | — | one metadata-only scan; key values never enter managed memory |
 | `Baseline…First`, `Baseline…After` | bounded baseline, once on copy/upgrade | — | key-order scan under LIMIT, or primary-key continuation range; recorded by the Fast plan test |
+| `ReplicationStateFirst` | first canonical state page for anti-entropy Merkle rebuild/repair | — | `SCAN documents USING COVERING INDEX documents_replication_keys` in key order; seed `SCAN changes USING INDEX changes_replication_deleted`, then distinct retained-deletion key seeks `SEARCH changes USING INDEX changes_replication_deleted (collection=? AND id>?)` / `(collection>?)`; `MERGE (UNION)` consumes both key arms under the 129-key limit; `MATERIALIZE evidence` projects at most 129 metadata rows with `SEARCH documents USING PRIMARY KEY (collection=? AND id=?) LEFT-JOIN` and indexed `(collection=? AND id=?)` deletion-version lookup; two `USE TEMP B-TREE FOR ORDER BY` steps |
+| `ReplicationStateAfter` | continuation canonical state page for anti-entropy Merkle rebuild/repair | — | `SEARCH documents USING COVERING INDEX documents_replication_keys ((collection,id)>(?,?))`; retained-deletion seed and recursive distinct-key seeks use `SEARCH changes USING INDEX changes_replication_deleted (collection=? AND id>?)` / `(collection>?)`; `MERGE (UNION)` consumes both key arms under the 129-key limit; `MATERIALIZE evidence` projects at most 129 metadata rows with `SEARCH documents USING PRIMARY KEY (collection=? AND id=?) LEFT-JOIN` and indexed `(collection=? AND id=?)` deletion-version lookup; two `USE TEMP B-TREE FOR ORDER BY` steps |
 | `PRAGMA user_version`, `PRAGMA journal_mode = WAL`, `CREATE TABLE` | once per database per process (migration) | DDL, no plan | unchanged |
 | `VACUUM INTO $path` | database copy (Management API), rare | maintenance, `EXPLAIN QUERY PLAN` returns no rows | unchanged; runs on a pooled connection |
 | `CountDocuments`: `SELECT count(*) … WHERE collection = ? AND body IS NOT NULL` | schema inference, query-field records in `_system` (Management API) | — | `SEARCH documents USING PRIMARY KEY (collection=?)`; tests each record header's body type, never loads a body. `documents_live` would not cover the `body` test and would add a lookup per row |
@@ -74,9 +85,25 @@ support the shape seeks described below. `_system` has the same schema but retai
 | `ReplaceDocument` | every replicated catalog change on a follower | — | upsert, no plan rows |
 | `SystemLastSequence`, `TruncateChanges`, `TruncatePrefixes` | every `_system` commit (journal head and its 1024-group tail) | — | `SEARCH journal_prefixes USING PRIMARY KEY`; `SEARCH changes USING PRIMARY KEY (sequence<?)`; `SEARCH journal_prefixes USING PRIMARY KEY (sequence<?)` |
 
-No fixed statement sorts in a temporary B-tree. The first collections and baseline pages scan in key
-order up to their limits; copy preparation scans the retained deletion index once. On the destination only,
-it materializes the latest deletion per key as a tombstone before clearing the old journal and applied
+`ReplicationStateFirst` and `ReplicationStateAfter` each have two temporary B-tree sorts: one orders
+the recursive distinct deletion keys for the union, and one orders the canonical metadata projection.
+The storage reader supplies `$limit = 129` (128 page entries plus one continuation probe). The recursive
+deletion arm is limited to 129 rows, both ordered key arms feed the union under that limit, and the
+materialized evidence contains at most 129 rows. Recursive index seeks advance past each distinct
+`(collection, id)` rather than walking every retained journal revision for that key. Schema 9 adds
+partial indexes containing only nonempty keys within the 63-byte collection and 1024-byte ID cursor
+limits. The key arms seek those indexes, so excluded legacy prefixes do not consume scan work.
+Invalid legacy key syntax within the byte limits is filtered by the storage paging reader. Existing
+files build both indexes once during the transactional migration; later writes maintain them. The
+additional index storage and write work leave document, journal and frontier bytes unchanged.
+
+The sorters and materialized evidence contain bounded keys, versions, deletion flags and byte lengths,
+not JSON bodies. `octet_length` reads body size metadata; the reader fetches a live body separately only
+after page byte admission. These plan and cardinality properties do not establish measured latency or
+throughput. Other fixed statements have no temporary B-tree sort in the recorded plans. The first
+collections and baseline pages scan in key order up to their limits; copy preparation scans the
+retained deletion index once. On the destination only, it materializes the latest deletion per key
+as a tombstone before clearing the old journal and applied
 frontiers, in the same transaction that renews the incarnation. Its baseline then carries those deletions
 under its fresh origin; higher document versions, including resurrections, remain intact.
 
@@ -127,7 +154,7 @@ failure closes the session instead of pooling it.
 | `mmap_size` | `memory-budget`, at least 256 MiB | Reads map pages instead of copying them through `read()`: about 5–10 % faster point reads and 25 % faster full listings in the benchmark below. Address space only; pages are the OS page cache, not the heap, so it can be as large as the budget. SQLite caps it at its compile-time maximum (2 GiB by default). |
 | `cache_size` | ¼ of `memory-budget` ÷ `storage-threads`, at least 2 MiB | The page cache holds pages that writes change and pages mmap does not cover. A quarter of the budget, split across the connections that run at once (one per storage thread). Idle pooled connections keep their cache; it grows only with pages actually read. |
 | `soft_heap_limit` | ¼ of `memory-budget` | Process-wide (`sqlite3_soft_heap_limit64`, set once per engine): SQLite frees page cache to keep its whole heap under the page-cache quarter, so idle connections cannot add up past it. Soft: allocations never fail because of it. Another engine in the same process (tests run several) only raises it. |
-| `temp_store` | default | No fixed statement uses temporary storage (asserted: no `TEMP B-TREE` in any plan); a query sorted on a document field does. |
+| `temp_store` | default | Repair state pages use two temporary B-tree sorts over bounded keys/metadata and materialize at most 129 evidence rows, without JSON bodies. Document-field query sorts also use temporary storage. The default does not guarantee that temporary storage stays in memory. |
 | `foreign_keys` | default | The schema has no foreign keys. |
 
 Connections are pooled by the engine (`SqliteSessionPool`; Microsoft.Data.Sqlite pooling is off).

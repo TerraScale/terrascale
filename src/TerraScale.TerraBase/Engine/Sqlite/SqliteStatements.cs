@@ -101,11 +101,12 @@ internal static class SqliteStatements
     // Incoming versions advance the shared clock even when their document state loses the merge.
     public const string ObserveOffset = "UPDATE commit_offset SET value = max(value, $version) WHERE id = 1;";
 
-    // Physical deletes retain their merge evidence in the journal, while public version reads stay absent.
+    // Physical deletes retain merge evidence in the journal; repair can materialize the exact tombstone.
     // The partial index seeks one matching deletion, without scanning the journal or loading JSON.
     public const string RetainedDeletion = """
         SELECT 1 FROM changes INDEXED BY changes_deleted
-        WHERE collection = $collection AND id = $id AND version >= $version AND body IS NULL LIMIT 1;
+        WHERE collection = $collection AND id = $id AND version >= $version
+            AND (version > $version OR $inclusive) AND body IS NULL LIMIT 1;
         """;
 
     // On a copy only: retain physical-delete/drop evidence before its journal is reset. The deletion
@@ -137,7 +138,7 @@ internal static class SqliteStatements
 
     // A replicated collection drop (a tombstone in _collections) removed every state of the collection older than itself.
     public const string DroppedCollection =
-        $"SELECT 1 FROM documents WHERE collection = '{DocumentChange.Collections}' AND id = $collection AND version > $version AND body IS NULL;";
+        $"SELECT 1 FROM documents WHERE collection = '{DocumentChange.Collections}' AND id = $collection AND version >= $version AND (version > $version OR $inclusive) AND body IS NULL;";
 
     // A replicated drop ends the live states older than itself, as the dropping member did; ties go to the document.
     public const string TombstoneCollection =
@@ -209,6 +210,107 @@ internal static class SqliteStatements
         ORDER BY collection, id LIMIT $limit;
         """;
 
+    // Shared with the partial-index migration: SQLite needs matching predicates to use the index.
+    internal const string BoundedReplicationKeys = BoundedBaselineKeys + " AND collection != '' AND id != ''";
+
+    // Seek the latest actual winner, including imported equal-version conflicts, in this generation.
+    // Matching an older entry by document_version could restore a losing state instead.
+    public const string ReplicationRetainedBody = """
+        WITH latest AS (
+            SELECT sequence, document_version, octet_length(body) AS bytes
+            FROM change_log INDEXED BY change_log_by_document
+            WHERE collection = $collection AND id = $id
+                AND generation = (SELECT generation FROM collections WHERE name = $collection)
+            ORDER BY version DESC, sequence DESC LIMIT 1
+        )
+        SELECT latest.sequence, latest.document_version, latest.bytes, coalesce(octet_length(d.body), 0)
+        FROM latest JOIN documents d ON d.collection = $collection AND d.id = $id
+            AND d.version = latest.document_version
+        WHERE latest.bytes IS NOT NULL AND NOT EXISTS (
+            SELECT 1 FROM changes INDEXED BY changes_deleted
+            WHERE collection = $collection AND id = $id AND body IS NULL AND version >= d.version
+        );
+        """;
+
+    public const string ReplicationRetainedBodyBytes = "SELECT body FROM change_log WHERE sequence = $sequence;";
+
+    // Only a writer that re-read matching retained winner evidence may bypass the body tie-break.
+    public const string RestoreReplicationBody = """
+        UPDATE documents SET body = $body WHERE collection = $collection AND id = $id
+            AND version = $version AND (body IS NULL OR CAST(body AS BLOB) != CAST($body AS BLOB));
+        """;
+
+    // Seek past each distinct deletion key, skipping its repeated journal entries. Both key streams
+    // and the metadata projection stay bounded; JSON is fetched only after byte admission.
+    private const string ReplicationDeletionKeys = $$"""
+            UNION ALL
+            SELECT
+                coalesce(
+                    (SELECT collection FROM changes INDEXED BY changes_replication_deleted
+                        WHERE body IS NULL AND collection = deleted_keys.collection AND id > deleted_keys.id AND {{BoundedReplicationKeys}}
+                        ORDER BY id LIMIT 1),
+                    (SELECT collection FROM changes INDEXED BY changes_replication_deleted
+                        WHERE body IS NULL AND collection > deleted_keys.collection AND {{BoundedReplicationKeys}}
+                        ORDER BY collection, id LIMIT 1)),
+                coalesce(
+                    (SELECT id FROM changes INDEXED BY changes_replication_deleted
+                        WHERE body IS NULL AND collection = deleted_keys.collection AND id > deleted_keys.id AND {{BoundedReplicationKeys}}
+                        ORDER BY id LIMIT 1),
+                    (SELECT id FROM changes INDEXED BY changes_replication_deleted
+                        WHERE body IS NULL AND collection > deleted_keys.collection AND {{BoundedReplicationKeys}}
+                        ORDER BY collection, id LIMIT 1))
+            FROM deleted_keys WHERE collection IS NOT NULL LIMIT $limit
+        ), keys AS (
+        """;
+
+    private const string ReplicationStateProjection = """
+            UNION
+            SELECT collection, id FROM deleted_keys WHERE collection IS NOT NULL
+            ORDER BY collection, id LIMIT $limit
+        ), evidence AS MATERIALIZED (
+            SELECT keys.collection, keys.id, documents.version AS current_version,
+                documents.body IS NULL AS current_deleted, coalesce(octet_length(documents.body), 0) AS body_bytes,
+                (SELECT max(version) FROM changes INDEXED BY changes_deleted
+                    WHERE collection = keys.collection AND id = keys.id AND body IS NULL) AS deleted_version
+            FROM keys LEFT JOIN documents ON documents.collection = keys.collection AND documents.id = keys.id
+        ), canonical AS (
+            SELECT *, deleted_version IS NOT NULL AND (current_version IS NULL OR deleted_version > current_version
+                OR (deleted_version = current_version AND NOT current_deleted)) AS deleted_wins
+            FROM evidence
+        )
+        SELECT collection, id,
+            CASE WHEN deleted_wins THEN deleted_version ELSE current_version END,
+            current_deleted OR deleted_wins, CASE WHEN deleted_wins THEN 0 ELSE body_bytes END,
+            octet_length(collection) + octet_length(id), deleted_wins
+        FROM canonical ORDER BY collection, id;
+        """;
+
+    public const string ReplicationStateFirst = $$"""
+        WITH RECURSIVE deleted_keys(collection, id) AS (
+            SELECT
+                (SELECT collection FROM changes INDEXED BY changes_replication_deleted WHERE body IS NULL AND {{BoundedReplicationKeys}} ORDER BY collection, id LIMIT 1),
+                (SELECT id FROM changes INDEXED BY changes_replication_deleted WHERE body IS NULL AND {{BoundedReplicationKeys}} ORDER BY collection, id LIMIT 1)
+        """ + ReplicationDeletionKeys + $$"""
+            SELECT collection, id FROM documents INDEXED BY documents_replication_keys WHERE {{BoundedReplicationKeys}}
+        """ + ReplicationStateProjection;
+
+    public const string ReplicationStateAfter = $$"""
+        WITH RECURSIVE deleted_keys(collection, id) AS (
+            SELECT
+                coalesce(
+                    (SELECT collection FROM changes INDEXED BY changes_replication_deleted
+                        WHERE body IS NULL AND collection = $collection AND id > $id AND {{BoundedReplicationKeys}} ORDER BY id LIMIT 1),
+                    (SELECT collection FROM changes INDEXED BY changes_replication_deleted
+                        WHERE body IS NULL AND collection > $collection AND {{BoundedReplicationKeys}} ORDER BY collection, id LIMIT 1)),
+                coalesce(
+                    (SELECT id FROM changes INDEXED BY changes_replication_deleted
+                        WHERE body IS NULL AND collection = $collection AND id > $id AND {{BoundedReplicationKeys}} ORDER BY id LIMIT 1),
+                    (SELECT id FROM changes INDEXED BY changes_replication_deleted
+                        WHERE body IS NULL AND collection > $collection AND {{BoundedReplicationKeys}} ORDER BY collection, id LIMIT 1))
+        """ + ReplicationDeletionKeys + $$"""
+            SELECT collection, id FROM documents INDEXED BY documents_replication_keys WHERE (collection, id) > ($collection, $id) AND {{BoundedReplicationKeys}}
+        """ + ReplicationStateProjection;
+
     // System database replication (docs/decisions/0009). A snapshot reads live documents in key order, any collection.
     public const string SystemDocumentsFirst = "SELECT collection, id, version, body FROM documents WHERE body IS NOT NULL ORDER BY collection, id LIMIT $limit;";
 
@@ -247,6 +349,9 @@ internal static class SqliteStatements
     public static IReadOnlyDictionary<string, string> All { get; } = new Dictionary<string, string>(StringComparer.Ordinal)
     {
         [nameof(Get)] = Get,
+        [nameof(ReplicationRetainedBody)] = ReplicationRetainedBody,
+        [nameof(ReplicationRetainedBodyBytes)] = ReplicationRetainedBodyBytes,
+        [nameof(RestoreReplicationBody)] = RestoreReplicationBody,
         [nameof(Version)] = Version,
         [nameof(Put)] = Put,
         [nameof(Delete)] = Delete,
@@ -299,6 +404,8 @@ internal static class SqliteStatements
         [nameof(BaselineDocumentsAfter)] = BaselineDocumentsAfter,
         [nameof(BaselineTombstonesFirst)] = BaselineTombstonesFirst,
         [nameof(BaselineTombstonesAfter)] = BaselineTombstonesAfter,
+        [nameof(ReplicationStateFirst)] = ReplicationStateFirst,
+        [nameof(ReplicationStateAfter)] = ReplicationStateAfter,
         [nameof(SystemDocumentsFirst)] = SystemDocumentsFirst,
         [nameof(SystemDocumentsAfter)] = SystemDocumentsAfter,
         [nameof(GroupSize)] = GroupSize,

@@ -555,7 +555,12 @@ public sealed class PeerTransportTests
                 clientTls.Apply(settings);
                 settings["peer-addresses"] = peer.Address.ToString();
                 settings["data-directory"] = directory;
-            }, services => services.AddSingleton<TimeProvider>(clock));
+            }, services =>
+            {
+                // This fake peer scripts only the journal protocol and owns the first TLS handshake.
+                services.Remove(services.Single(service => service.ImplementationType == typeof(AntiEntropyWorker)));
+                services.AddSingleton<TimeProvider>(clock);
+            });
 
             await Assert.That(await documentConnection.Task.WaitAsync(TimeSpan.FromSeconds(30))).IsEqualTo(1);
             await TerraBaseTestServer.EventuallyAsync(_ =>
