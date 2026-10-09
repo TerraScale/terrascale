@@ -410,6 +410,9 @@ public sealed class SubscriptionAdmissionTests
             services.AddSingleton<ShapeSubscriptionService>();
             services.AddSingleton<IShapeSubscriptionService>(provider => new ObservedSubscription(
                 provider.GetRequiredService<ShapeSubscriptionService>(), this));
+            // Advancing the fake clock past a flush tick would run usage flushes and storage samples on the same SQLite I/O
+            // pool these tests assert is released; usage is not under test here.
+            services.Remove(services.Single(service => service.ServiceType == typeof(IHostedService) && service.ImplementationType == typeof(UsageFlushService)));
         }
 
         private sealed class ObservedSubscription(IShapeSubscriptionService inner, BlockedWrites writes) : IShapeSubscriptionService
