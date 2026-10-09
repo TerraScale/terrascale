@@ -257,11 +257,11 @@ public sealed class ContinuousBackupTests
     {
         using var oci = new FakeOci();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
-        await using var api = await ManagementApi.StartAsync(oci.Configure, oci.Route, time);
+        await using var api = await ManagementApi.StartAsync(oci.Configure, oci.Route, time, managementCredential: true);
         var backup = api.Server.Services.GetRequiredService<IContinuousBackup>();
         var hobby = await api.CreateManagedDatabaseAsync("main");
         var pro = await api.CreateManagedDatabaseAsync("main");
-        (await api.Client.PutAsJsonAsync(Uri($"/v1/management/organizations/{pro.Organization}/plan"), new { plan = "pro" })).EnsureSuccessStatusCode();
+        await api.SetPlanAsync(api.User, pro.Organization, "pro");
         using var data = await api.CreateClientAsync(hobby.Organization, "documents:read", "documents:write");
         await ManagementApi.CreateCollectionAsync(data, hobby, "people");
         time.Advance(TimeSpan.FromSeconds(10));

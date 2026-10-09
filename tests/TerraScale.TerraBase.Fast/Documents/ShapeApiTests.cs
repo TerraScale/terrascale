@@ -8,9 +8,11 @@ using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Engine.Sqlite;
 using TerraBase.Fast.Management;
+using TerraBase.Fast.Storage;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Documents;
 using TerraBase.Hosting;
+using TerraBase.Tenancy;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Documents;
@@ -312,6 +314,7 @@ public sealed class ShapeApiTests
     {
         const int Pollers = 25;
         await using var api = await DocumentApi.StartAsync();
+        await StorageFixture.SetPlanAsync(api.Management, api.Tenant, PlanTier.Enterprise);
         using var shapes = await api.ClientWithScopesAsync("shapes:read");
         using var metrics = new ShapeMetrics(api.Server.Services);
         var (handle, head) = await SnapshotAsync(shapes, $"{api.Shape}?offset=-1");
@@ -382,6 +385,7 @@ public sealed class ShapeApiTests
     {
         var clock = new ShapeClock { UnixSeconds = 20001 };
         await using var api = await DocumentApi.StartAsync(services: services => services.AddSingleton<TimeProvider>(clock));
+        await StorageFixture.SetPlanAsync(api.Management, api.Tenant, PlanTier.Enterprise);
         var server = api.Server;
         using var client = await api.ClientWithScopesAsync("documents:read", "documents:write", "shapes:read");
         using var metrics = new ShapeMetrics(server.Services);

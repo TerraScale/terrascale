@@ -99,6 +99,12 @@ public enum ManagementError
 
     /// <summary>Another invitation already has the token hash.</summary>
     TokenTaken,
+
+    /// <summary>Publishing the copied database would exceed the organization's live JSON quota.</summary>
+    StorageQuota,
+
+    /// <summary>Bounded storage accounting cannot currently measure the staged database.</summary>
+    StorageAccountingBusy,
 }
 
 /// <summary>A value or the reason there is none.</summary>

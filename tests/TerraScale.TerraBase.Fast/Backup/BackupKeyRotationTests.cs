@@ -488,7 +488,7 @@ public sealed class BackupKeyRotationTests
             oci.Configure(settings);
             settings["data-directory"] = directory;
             settings["backup-key-rotation-days"] = rotation;
-        }, oci.Route, time);
+        }, oci.Route, time, managementCredential: true);
 
     private static async Task<(ManagedDatabaseRef Database, string User)> SeedAsync(
         FakeOci oci, FakeTimeProvider time, string directory, string text, string rotation = "1")
@@ -500,10 +500,7 @@ public sealed class BackupKeyRotationTests
     private static async Task<(ManagedDatabaseRef Database, string User)> SeedAsync(ManagementApi api, FakeTimeProvider time, string text)
     {
         var database = await api.CreateManagedDatabaseAsync("main");
-        using (var plan = await api.Client.PutAsJsonAsync(ManagementApi.Uri($"/v1/management/organizations/{database.Organization}/plan"), new { plan = "pro" }))
-        {
-            plan.EnsureSuccessStatusCode();
-        }
+        await api.SetPlanAsync(api.User, database.Organization, "pro");
 
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
         await ManagementApi.CreateCollectionAsync(data, database, "people");

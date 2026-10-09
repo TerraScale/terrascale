@@ -241,8 +241,9 @@ logged and counted as unknown while management requests keep returning `503`.
 - A database carries `region` (the region that answered), `homeRegion` and `replicaRegions` (its [placement](#region-placement)).
 - The data API addresses a database as `/v1/projects/{projectId}/databases/{name}/collections/…`,
   with the database name from this API. The API key's organization selects the tenant.
-- Every organization has a `plan`: `hobby` (default), `pro` or `enterprise`. It is stored only;
-  nothing enforces it yet.
+- Every organization has a trusted resource `plan`: `hobby` (default), `pro` or `enterprise`.
+  [Organization QoS](qos.md) enforces request, query, memory/cache and live-document storage ceilings.
+  Only the management service credential acting as an owner can publish a plan; public user tokens cannot upgrade it.
 
 ## Endpoints
 
@@ -254,7 +255,7 @@ Base path: `/v1/management`.
 | `GET` | `/organizations` | page of the acting user's organizations |
 | `GET` | `/organizations/{organization}` | organization |
 | `PATCH` | `/organizations/{organization}` | `{name}` → renamed organization, `409` name taken; needs `admin` |
-| `PUT` | `/organizations/{organization}/plan` | `{plan}` (`hobby`, `pro` or `enterprise`) → organization; `400` for any other value; needs `owner`. Recorded in the audit log as `settings.plan_updated` |
+| `PUT` | `/organizations/{organization}/plan` | `{plan}` (`hobby`, `pro` or `enterprise`) → organization; `400` for any other value; needs the management service credential acting as an `owner` (`403` for public user tokens). Recorded in the audit log as `settings.plan_updated` |
 | `DELETE` | `/organizations/{organization}` | `204`; `409` while it has projects; needs `owner`. Also deletes its members, invitations, transfer and audit log |
 | `GET` | `/current-organization` | the organization the acting user last switched to; `404` if none or no longer a member |
 | `PUT` | `/current-organization` | `{organizationId}` → organization; `404` if the user is not a member |

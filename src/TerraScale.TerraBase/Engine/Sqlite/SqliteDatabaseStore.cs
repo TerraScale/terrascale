@@ -155,7 +155,7 @@ internal sealed partial class SqliteDatabaseStore(
     private long _writerTaken;
 
     /// <summary>The thread this database's write transactions run on, apart from the read pool.</summary>
-    internal SqliteWriteLane WriteLane { get; } = new(name);
+    internal SqliteWriteLane WriteLane { get; } = new(name, io);
 
     // Boxed so a catalog follower can adopt its primary's incarnation without torn reads.
     private volatile StrongBox<Ulid> _incarnation = new(Ulid.Empty);
@@ -454,7 +454,17 @@ internal sealed partial class SqliteDatabaseStore(
 
             if (start)
             {
-                _ = Task.Run(RunBatchesAsync, CancellationToken.None);
+                if (ExecutionContext.IsFlowSuppressed())
+                {
+                    _ = Task.Run(RunBatchesAsync, CancellationToken.None);
+                }
+                else
+                {
+                    using (ExecutionContext.SuppressFlow())
+                    {
+                        _ = Task.Run(RunBatchesAsync, CancellationToken.None);
+                    }
+                }
             }
 
             return await write.Task.ConfigureAwait(false);
@@ -586,6 +596,7 @@ internal sealed partial class SqliteDatabaseStore(
     {
         private readonly TaskCompletionSource<(T, long)> _done = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private T _result = default!;
+        private readonly QosContext.Snapshot _context = QosContext.Capture();
 
         public Task<(T Result, long Offset)> Task => _done.Task;
 
@@ -593,6 +604,8 @@ internal sealed partial class SqliteDatabaseStore(
 
         public async ValueTask<bool> RunAsync(IStorageTransaction transaction)
         {
+            // Borrow request ownership while retaining the original batch's admission across awaits.
+            using var scope = QosContext.Restore(_context);
             _result = await work(transaction, cancellationToken).ConfigureAwait(false);
             return keep(_result);
         }

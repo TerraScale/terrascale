@@ -5,7 +5,7 @@ namespace TerraBase.Engine.Sqlite;
 /// so a long read (a <c>runSql</c>, a branch copy) never holds up the database's writes. The thread starts with the
 /// first call and exits after it has been idle for <see cref="IdleTimeout"/>, so only databases being written hold one.
 /// </summary>
-internal sealed class SqliteWriteLane(string database) : SqliteRunner
+internal sealed class SqliteWriteLane(string database, SqliteIoPool io) : SqliteRunner
 {
     internal static readonly TimeSpan IdleTimeout = TimeSpan.FromSeconds(10);
 
@@ -39,6 +39,7 @@ internal sealed class SqliteWriteLane(string database) : SqliteRunner
         var result = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
 
         // 0 queued, 1 running, 2 cancelled before it ran.
+        var context = io.CaptureContext();
         var state = 0;
         var node = new LinkedListNode<Action>(Run);
         using var cancellation = cancellationToken.Register(() =>
@@ -70,7 +71,10 @@ internal sealed class SqliteWriteLane(string database) : SqliteRunner
                 else
                 {
                     _started = true;
-                    new Thread(Work) { IsBackground = true, Name = "terrabase-sqlite-writer" }.Start();
+                    using (ExecutionContext.SuppressFlow())
+                    {
+                        new Thread(Work) { IsBackground = true, Name = "terrabase-sqlite-writer" }.Start();
+                    }
                 }
             }
         }

@@ -8,6 +8,7 @@ using TerraBase.Errors;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Management.Backups;
 using TerraBase.Features.Memory;
+using TerraBase.Features.Qos;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 
@@ -78,6 +79,17 @@ internal sealed partial class EngineManagementService
             return Replay(recorded, requestHash);
         }
 
+        string[] organizations = [.. operations.OfType<ManagementCommitOperation>()
+            .Where(operation => operation.Request.Op == "branch_database")
+            .Select(operation => operation.Request.Organization!).Distinct(StringComparer.Ordinal)];
+        using var admission = await quota.Value.EnterOrganizationsAsync(organizations, cancellationToken).ConfigureAwait(false);
+        // A duplicate may have committed while these gates were queued, even deleting its own branch source.
+        if (organizations.Length > 0
+            && await ReadCatalogAsync(transaction => RecordedAsync(transaction, userId, commitId, cancellationToken), cancellationToken).ConfigureAwait(false) is { } afterAdmission)
+        {
+            return Replay(afterAdmission, requestHash);
+        }
+
         var prepared = await PrepareDatabasesAsync(userId, operations, cancellationToken).ConfigureAwait(false);
         if (prepared is CommitRejected rejected)
         {
@@ -89,10 +101,20 @@ internal sealed partial class EngineManagementService
         CommitResult result;
         try
         {
+            if (await CheckPreparedQuotaAsync(userId, operations, created, admission, cancellationToken).ConfigureAwait(false) is { } exceeded)
+            {
+                return await AbandonAsync(created, exceeded).ConfigureAwait(false);
+            }
+
             result = await WriteCatalogAsync(
                 transaction => ApplyCommitAsync(transaction, userId, email, commitId, requestHash, operations, created, deleted, cancellationToken), cancellationToken,
                 keep: applied => applied is CommitOutcome { Replayed: false })
                 .ConfigureAwait(false);
+        }
+        catch (QueryCapacityException) when (created.Values.Any(database => database.Database.BranchedFrom is not null))
+        {
+            return await AbandonAsync(created, new CommitRejected(StorageQuota.AccountingUnavailable,
+                created.First(pair => pair.Value.Database.BranchedFrom is not null).Key)).ConfigureAwait(false);
         }
         catch
         {
@@ -127,6 +149,55 @@ internal sealed partial class EngineManagementService
         }
 
         return result;
+    }
+
+    // Read staged growth and registered deletions before taking the system writer: quota accounting reads the catalog.
+    private async ValueTask<CommitRejected?> CheckPreparedQuotaAsync(
+        string userId, IReadOnlyList<CommitOperation> operations, IReadOnlyDictionary<int, AddedDatabase> created,
+        StorageQuotaGroupLease admission, CancellationToken cancellationToken)
+    {
+        var growth = new Dictionary<string, (long Bytes, int Op)>(StringComparer.Ordinal);
+        foreach (var (i, added) in created)
+        {
+            if (added.Database.BranchedFrom is null || !admission.RequiresAccounting(added.Tenant.OrganizationId))
+            {
+                continue;
+            }
+
+            var organization = added.Tenant.OrganizationId;
+            var bytes = await quota.Value.ReadBytesAsync(added.Tenant, cancellationToken).ConfigureAwait(false);
+            growth[organization] = (checked(growth.GetValueOrDefault(organization).Bytes + bytes), i);
+        }
+
+        var removed = new HashSet<(string Organization, string Project, string Database)>();
+        foreach (var operation in operations.OfType<ManagementCommitOperation>())
+        {
+            var request = operation.Request;
+            if (request.Op != "delete_database" || !growth.ContainsKey(request.Organization!)
+                || !removed.Add((request.Organization!, request.Project!, request.Database!)))
+            {
+                continue;
+            }
+
+            if (await GetDatabaseAsync(userId, request.Organization!, request.Project!, request.Database!, cancellationToken).ConfigureAwait(false) is { } database
+                && PlacementError(database, options.Region) == ManagementError.None)
+            {
+                var bytes = await quota.Value.ReadBytesAsync(new TenantContext(request.Organization!, PlanTier.Hobby, request.Project, request.Database), cancellationToken)
+                    .ConfigureAwait(false);
+                var (currentBytes, currentOp) = growth[request.Organization!];
+                growth[request.Organization!] = (checked(currentBytes - bytes), currentOp);
+            }
+        }
+
+        foreach (var (organization, (bytes, i)) in growth)
+        {
+            if (await admission.CheckAsync(organization, bytes, cancellationToken).ConfigureAwait(false) is { } exceeded)
+            {
+                return new CommitRejected(exceeded, i);
+            }
+        }
+
+        return null;
     }
 
     public ValueTask<Found<byte[]>> GetCommitAsync(string userId, string commitId, CancellationToken cancellationToken) =>
@@ -705,6 +776,8 @@ internal sealed partial class EngineManagementService
     {
         ManagementError.NotFound => new NotFound(Message(error)),
         ManagementError.Forbidden => new Forbidden(Message(error)),
+        ManagementError.StorageQuota => new QuotaExceeded("the organization storage quota would be exceeded", "storage_quota"),
+        ManagementError.StorageAccountingBusy => StorageQuota.AccountingUnavailable,
         _ => new Conflict(Message(error), Code(error)),
     };
 

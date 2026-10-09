@@ -8,7 +8,16 @@ namespace TerraBase.Engine.Sqlite;
 internal static class SqliteStatements
 {
     // A tombstone has a NULL body.
-    public const string Get = "SELECT version, body FROM documents WHERE collection = $collection AND id = $id;";
+    public const string Get = "SELECT version, body, octet_length(body) FROM documents WHERE collection = $collection AND id = $id;";
+
+    // octet_length inspects stored JSON size without materializing or decoding its body.
+    public const string DocumentBytes = "SELECT coalesce(octet_length(body), 0) FROM documents WHERE collection = $collection AND id = $id;";
+
+    // One scalar result, independent of the number of collections; metadata outside collections never counts.
+    public const string StoredDocumentBytes = """
+        SELECT coalesce(sum((SELECT sum(octet_length(body)) FROM documents WHERE collection = collections.name)), 0)
+        FROM collections;
+        """;
 
     public const string UniqueRawDocument = """
         SELECT d.version, coalesce(c.body, d.body), c.body IS NOT NULL

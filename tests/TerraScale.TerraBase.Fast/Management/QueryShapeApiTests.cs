@@ -185,8 +185,9 @@ public sealed class QueryShapeApiTests
     [Test]
     public async Task Cardinality_is_bounded_in_pending_and_persisted_statistics()
     {
-        await using var api = await ManagementApi.StartAsync(time: new FakeTimeProvider());
+        await using var api = await ManagementApi.StartAsync(time: new FakeTimeProvider(), managementCredential: true);
         var database = await api.CreateManagedDatabaseAsync();
+        await api.SetPlanAsync(api.User, database.Organization, "enterprise");
         using var data = await SeedAsync(api, database);
         for (var i = 0; i < 130; i++)
         {
@@ -403,8 +404,10 @@ public sealed class QueryShapeApiTests
     {
         var responseGate = new ResponseGate();
         await using var api = await ManagementApi.StartAsync(
-            settings => settings["memory-budget"] = "8388608", services => services.AddSingleton<IStartupFilter>(responseGate), time: new FakeTimeProvider());
+            settings => settings["memory-budget"] = "8388608", services => services.AddSingleton<IStartupFilter>(responseGate),
+            time: new FakeTimeProvider(), managementCredential: true);
         var database = await api.CreateManagedDatabaseAsync();
+        await api.SetPlanAsync(api.User, database.Organization, "enterprise");
         using var data = await SeedAsync(api, database);
         await PostAsync(data, Query(database), new { filter = Eq("/n", 1) });
         using var request = new HttpRequestMessage(HttpMethod.Get, ManagementApi.Uri(Stats(database)));
@@ -431,8 +434,9 @@ public sealed class QueryShapeApiTests
     [Test]
     public async Task Concurrent_cache_hits_increment_frequency_once_each()
     {
-        await using var api = await ManagementApi.StartAsync();
+        await using var api = await ManagementApi.StartAsync(managementCredential: true);
         var database = await api.CreateManagedDatabaseAsync();
+        await api.SetPlanAsync(api.User, database.Organization, "enterprise");
         using var data = await SeedAsync(api, database);
         var request = new { filter = Eq("/n", 1) };
         await PostAsync(data, Query(database), request);

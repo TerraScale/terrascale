@@ -440,13 +440,20 @@ public sealed class MemoryBudgetTests
     {
         // About 1 MiB: most of the cache's share, so its reservation shows in the budget.
         const int Padding = 768 * 1024;
-        var management = await ManagementApi.StartAsync(values => values["memory-budget"] = Budget.ToString(CultureInfo.InvariantCulture));
+        var management = await ManagementApi.StartAsync(values => values["memory-budget"] = Budget.ToString(CultureInfo.InvariantCulture), managementCredential: true);
         var server = management.Server;
         IMemoryBudget budget;
         try
         {
             budget = server.Services.GetRequiredService<IMemoryBudget>();
             using var tenant = await management.CreateTenantAsync("documents:read", "documents:write");
+            using (var owner = management.Service(tenant.User))
+            using (var changed = await owner.PutAsJsonAsync(
+                new Uri($"/v1/management/organizations/{tenant.OrganizationId}/plan", UriKind.Relative), new { plan = "enterprise" }))
+            {
+                changed.EnsureSuccessStatusCode();
+            }
+
             var client = tenant.Data;
             using (var created = await client.PutAsync(new Uri($"/v1/projects/{tenant.ProjectId}/databases/shop", UriKind.Relative), null))
             {

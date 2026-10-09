@@ -39,6 +39,10 @@ internal sealed partial class EngineManagementService
     // The same validity for the records the placement check reads on every data request (docs/cross-region.md).
     private readonly ConcurrentDictionary<(string Organization, string Project, string Database), (long Sequence, ManagedDatabase? Record)> _records = new();
 
+    // Request admission must not queue catalog reads behind a noisy query while the catalog is unchanged.
+    private readonly Lock _planGate = new();
+    private readonly Dictionary<string, (Guid Incarnation, long Sequence, PlanTier Plan)> _plans = [];
+
     public async ValueTask<TenantContext?> FindDatabaseAsync(string organizationId, string projectId, string database, CancellationToken cancellationToken)
     {
         var sequence = (await engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false)).CommitSequence;
@@ -337,12 +341,39 @@ internal sealed partial class EngineManagementService
         return record;
     }
 
-    public ValueTask<PlanTier> PlanAsync(string organizationId, CancellationToken cancellationToken) =>
-        ReadCatalogAsync(async transaction =>
+    public async ValueTask<PlanTier> PlanAsync(string organizationId, CancellationToken cancellationToken)
+    {
+        var store = await engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false);
+        var incarnation = store.Incarnation;
+        var sequence = store.CommitSequence;
+        lock (_planGate)
+        {
+            if (_plans.TryGetValue(organizationId, out var cached) && cached.Incarnation == incarnation && cached.Sequence == sequence)
+            {
+                return cached.Plan;
+            }
+        }
+
+        var plan = await ReadCatalogAsync(async transaction =>
             Interprets(await GetAsync(transaction, Catalog, CatalogVersionId, Id, cancellationToken).ConfigureAwait(false))
                 ? await PlanUncheckedAsync(transaction, organizationId, cancellationToken).ConfigureAwait(false)
                 : PlanTier.Hobby,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
+        if (store.Incarnation == incarnation && store.CommitSequence == sequence)
+        {
+            lock (_planGate)
+            {
+                if (_plans.Count == MaxCachedTenants)
+                {
+                    _plans.Clear();
+                }
+
+                _plans[organizationId] = (incarnation, sequence, plan);
+            }
+        }
+
+        return plan;
+    }
 
     public ValueTask<bool?> RegisteredAsync(TenantContext database, CancellationToken cancellationToken)
     {

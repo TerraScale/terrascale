@@ -214,12 +214,14 @@ internal sealed partial class EngineManagedBackupService(
         return ManagementErrors.NameTaken;
     }
 
-    // CopyDatabaseAsync fails with NotFound, Forbidden (a viewer) or NameTaken only.
+    // Preserve copied-database failures, including storage admission, on the restore route.
     private static RestoreBackupResult Restored(ManagementResult<ManagedDatabase> copied) => copied switch
     {
         { Value: { } database } => database,
         { Error: ManagementError.NameTaken } => ManagementErrors.NameTaken,
         { Error: ManagementError.Forbidden } => ManagementErrors.RoleTooLow,
+        { Error: ManagementError.StorageQuota } => new QuotaExceeded("the organization storage quota would be exceeded", "storage_quota"),
+        { Error: ManagementError.StorageAccountingBusy } => new Unavailable("storage accounting is at capacity; retry later", "storage_accounting_busy"),
         _ => new NotFound(),
     };
 

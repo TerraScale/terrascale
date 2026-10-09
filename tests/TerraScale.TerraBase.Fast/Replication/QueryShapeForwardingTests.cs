@@ -15,6 +15,7 @@ using TerraBase.Features.Management;
 using TerraBase.Features.Management.Queries;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Memory;
+using TerraBase.Features.Qos;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
 using TerraBase.Hosting;
@@ -518,13 +519,15 @@ public sealed class QueryShapeForwardingTests
         }
         public TaskCompletionSource FourEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public IMemoryReservation? TryReserve(MemoryLane lane, long bytes)
+        public IMemoryReservation? TryReserve(MemoryLane lane, long bytes) => TryReserve(lane, bytes, QosContext.Current);
+
+        public IMemoryReservation? TryReserve(MemoryLane lane, long bytes, TenantContext? tenant)
         {
             if (lane != MemoryLane.Replication || bytes != 8L * 1024 * 1024)
             {
-                return inner.TryReserve(lane, bytes);
+                return inner.TryReserve(lane, bytes, tenant);
             }
-            if (Refuse || inner.TryReserve(lane, bytes) is not { } reservation)
+            if (Refuse || inner.TryReserve(lane, bytes, tenant) is not { } reservation)
             {
                 return null;
             }

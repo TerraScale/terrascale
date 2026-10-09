@@ -14,6 +14,7 @@ using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
 using TerraBase.Features.Management;
 using TerraBase.Features.Memory;
+using TerraBase.Features.Qos;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -24,7 +25,7 @@ namespace TerraBase.Fast.Management;
 public sealed class ExplainSqlBoundaryTests
 {
     private const int MaxBodyBytes = 128 * 1024;
-    private const long Budget = 4 * 1024 * 1024;
+    private const long Budget = 8 * 1024 * 1024;
     private const string Sql = "SELECT * FROM people LIMIT 1";
     private const string Json = """{"sql":"SELECT * FROM people LIMIT 1"}""";
     private static readonly string[] EmailFields = ["email"];
@@ -108,6 +109,7 @@ public sealed class ExplainSqlBoundaryTests
     {
         await using var api = await StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
+        await api.SetPlanAsync(api.User, database.Organization, "enterprise");
         await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var client = ProjectClient(api, wrongScope ? database.Project : EntityIds.New().ToString(),
             wrongScope ? "documents:read" : "databases:read");
@@ -147,10 +149,19 @@ public sealed class ExplainSqlBoundaryTests
         var time = new FakeTimeProvider();
         var hook = new UsageCommitHook();
         await using var api = await ManagementApi.StartAsync(
-            settings => settings["memory-budget"] = Budget.ToString(CultureInfo.InvariantCulture), hook.Install, time: time);
+            settings => settings["memory-budget"] = Budget.ToString(CultureInfo.InvariantCulture), services =>
+            {
+                hook.Install(services);
+                if (catalogLookup == 0)
+                {
+                    InstallMemoryProbe(services);
+                }
+            }, time: time, managementCredential: true);
         var database = await CreateDatabaseAsync(api);
         using var client = ProjectClient(api, database.Project);
         var reserved = ReservedBytes(api);
+        var admission = catalogLookup == 0 ? api.Server.Services.GetRequiredService<MemoryProbe>().Observe() : null;
+        ObservedReservation? reservation = null;
         var catalogEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var catalogLookups = 0;
         if (catalogLookup > 0)
@@ -196,11 +207,9 @@ public sealed class ExplainSqlBoundaryTests
             }
             else
             {
-                while (ReservedBytes(api) != reserved + MaxBodyBytes * 8)
-                {
-                    deadline.Token.ThrowIfCancellationRequested();
-                    await Task.Yield();
-                }
+                reservation = await admission!.WaitAsync(deadline.Token);
+                await Assert.That(reservation.Bytes).IsEqualTo(MaxBodyBytes * 8L);
+                await Assert.That(reservation.Active).IsTrue();
             }
 
             time.Advance(TimeSpan.FromSeconds(31));
@@ -209,6 +218,10 @@ public sealed class ExplainSqlBoundaryTests
             await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.RequestTimeout);
             var body = await response.Content.ReadFromJsonAsync<JsonElement>(deadline.Token);
             await Assert.That(body.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("request_timeout");
+            if (reservation is not null)
+            {
+                await Assert.That(reservation.Active).IsFalse();
+            }
             await AssertMemoryReleasedAsync(api, reserved);
             await AssertRecoveryAsync(client, database);
             await AssertMemoryReleasedAsync(api, reserved);
@@ -231,7 +244,7 @@ public sealed class ExplainSqlBoundaryTests
         await using var api = await ManagementApi.StartAsync(
             settings => settings["memory-budget"] = Budget.ToString(CultureInfo.InvariantCulture),
             services => services.Configure<KestrelServerOptions>(options =>
-                options.Limits.MinRequestBodyDataRate = new MinDataRate(1024, TimeSpan.FromSeconds(2))), time);
+                options.Limits.MinRequestBodyDataRate = new MinDataRate(1024, TimeSpan.FromSeconds(2))), time, managementCredential: true);
         var database = await CreateDatabaseAsync(api);
         using var client = ProjectClient(api, database.Project);
         var reserved = ReservedBytes(api);
@@ -293,8 +306,9 @@ public sealed class ExplainSqlBoundaryTests
     {
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         using var peers = new PeerTls();
-        await using var primary = await ManagementApi.StartAsync(peers.Apply);
+        await using var primary = await ManagementApi.StartAsync(peers.Apply, managementCredential: true);
         var database = await primary.CreateManagedDatabaseAsync();
+        await primary.SetPlanAsync(primary.User, database.Organization, "enterprise");
         await primary.VerifyProjectBindingAsync(database.Organization, database.Project);
         await using var follower = await ManagementApi.StartAsync(settings =>
         {
@@ -625,15 +639,16 @@ public sealed class ExplainSqlBoundaryTests
             services.AddSingleton(network.Join("gru"));
             services.AddSingleton<IMemberStore>(new FakeMemberStore(TimeProvider.System));
             hook?.Install(services);
-        });
+        }, managementCredential: true);
     }
 
     private static Task<ManagementApi> StartAsync() =>
-        ManagementApi.StartAsync(settings => settings["memory-budget"] = Budget.ToString(CultureInfo.InvariantCulture));
+        ManagementApi.StartAsync(settings => settings["memory-budget"] = Budget.ToString(CultureInfo.InvariantCulture), managementCredential: true);
 
     private static async Task<ManagedDatabaseRef> CreateDatabaseAsync(ManagementApi api)
     {
         var database = await api.CreateManagedDatabaseAsync();
+        await api.SetPlanAsync(api.User, database.Organization, "enterprise");
         await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var data = await api.CreateClientAsync(database.Organization, "documents:write");
         await ManagementApi.CreateCollectionAsync(data, database, "people");
@@ -663,6 +678,63 @@ public sealed class ExplainSqlBoundaryTests
 
     private static async Task AssertMemoryReleasedAsync(ManagementApi api, long baseline) =>
         await Assert.That(ReservedBytes(api)).IsEqualTo(baseline);
+
+    private static void InstallMemoryProbe(IServiceCollection services)
+    {
+        var registration = services.Single(service => service.ServiceType == typeof(IMemoryBudget));
+        services.Remove(registration);
+        services.AddSingleton(provider => new MemoryProbe((IMemoryBudget)registration.ImplementationFactory!(provider)));
+        services.AddSingleton<IMemoryBudget>(provider => provider.GetRequiredService<MemoryProbe>());
+    }
+
+    private sealed class MemoryProbe(IMemoryBudget inner) : IMemoryBudget
+    {
+        private TaskCompletionSource<ObservedReservation>? _observation;
+
+        public Task<ObservedReservation> Observe()
+        {
+            var observation = new TaskCompletionSource<ObservedReservation>(TaskCreationOptions.RunContinuationsAsynchronously);
+            Volatile.Write(ref _observation, observation);
+            return observation.Task;
+        }
+
+        public IMemoryReservation? TryReserve(MemoryLane lane, long bytes) => TryReserve(lane, bytes, QosContext.Current);
+
+        public IMemoryReservation? TryReserve(MemoryLane lane, long bytes, TenantContext? tenant)
+        {
+            if (inner.TryReserve(lane, bytes, tenant) is not { } admitted)
+            {
+                return null;
+            }
+
+            var observation = lane == MemoryLane.Foreground && bytes == MaxBodyBytes * 8L
+                ? Interlocked.Exchange(ref _observation, null) : null;
+            if (observation is null)
+            {
+                return admitted;
+            }
+
+            var reservation = new ObservedReservation(admitted);
+            observation.TrySetResult(reservation);
+            return reservation;
+        }
+    }
+
+    private sealed class ObservedReservation(IMemoryReservation inner) : IMemoryReservation
+    {
+        private int _disposed;
+
+        public long Bytes => inner.Bytes;
+        public bool Active => Volatile.Read(ref _disposed) == 0;
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) == 0)
+            {
+                inner.Dispose();
+            }
+        }
+    }
 
     private static long ReservedBytes(ManagementApi api)
     {

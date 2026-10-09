@@ -7,6 +7,7 @@ using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Memory;
+using TerraBase.Features.Qos;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 
@@ -19,8 +20,10 @@ internal sealed class ShapeSubscriptionService(
 {
     internal static readonly QuotaExceeded Busy = new("subscriptions are at capacity; retry later", "subscription_busy");
     private const int MaxConnections = 128;
-    // Covers the feed's retained rows, commit serialization and final body (each bounded by the existing 8 MiB page ceiling).
+    // Process safety for bounded shape serialization; actual rows/results and send scratch also charge the tenant.
     private const long PageMemory = 32 * 1024 * 1024;
+    private const int SendBufferBytes = 16 * 1024;
+    private const int EventMemory = SendBufferBytes + 2048;
     private static readonly byte[] EventEnd = "\n\n"u8.ToArray();
     private readonly UpDownCounter<long> _connections = meters.Create(Telemetry.MeterName)
         .CreateUpDownCounter<long>("terrabase.subscriptions.active", "{connection}", "Active SSE subscriptions.");
@@ -41,21 +44,25 @@ internal sealed class ShapeSubscriptionService(
         {
             while (!stop.IsCancellationRequested)
             {
-                using var reservation = memory.TryReserve(MemoryLane.Foreground, PageMemory);
+                using var reservation = memory.TryReserve(MemoryLane.Foreground, PageMemory, tenant: null);
                 if (reservation is null)
                 {
                     return await FailAsync(context, Busy, stop.Token).ConfigureAwait(false);
                 }
 
+                // A flushed event releases its flight reference before the next live wait, rather than at disconnect.
+                using var results = QosContext.Enter(request.Database, memory);
                 var current = await tenants.RegisteredAsync(request.Database, stop.Token).ConfigureAwait(false) == true
                     ? await tenants.FindDatabaseAsync(request.Database.OrganizationId, request.Database.ProjectId!,
                         (string)context.Request.RouteValues["database"]!, stop.Token).ConfigureAwait(false)
                     : null;
-                if (current?.DatabaseId != request.Database.DatabaseId)
+                if (current is not { } database || database.DatabaseId != request.Database.DatabaseId)
                 {
                     return await FailAsync(context, DocumentRoute.UnknownDatabase, stop.Token).ConfigureAwait(false);
                 }
 
+                using var tenant = QosContext.Enter(database);
+                request = request with { Database = database };
                 var read = await shapes.ReadAsync(request, stop.Token, drainOnCancellation: true).ConfigureAwait(false);
                 if (read is not ShapeResult page)
                 {
@@ -64,7 +71,7 @@ internal sealed class ShapeSubscriptionService(
                         NotFound error => await FailAsync(context, error, stop.Token).ConfigureAwait(false),
                         Validation error => await FailAsync(context, error, stop.Token).ConfigureAwait(false),
                         QuotaExceeded error => await FailAsync(context, error, stop.Token).ConfigureAwait(false),
-                        ShapeResult => throw new InvalidOperationException("the shape result was handled"),
+                        _ => throw new InvalidOperationException("the shape read returned no result"),
                     };
                 }
 
@@ -100,6 +107,16 @@ internal sealed class ShapeSubscriptionService(
         catch (OperationCanceledException) when (stop.IsCancellationRequested)
         {
             // Cancellation ends the connection; all admission and memory reservations return through finally/using.
+        }
+        catch (QosMemoryException) when (!stop.IsCancellationRequested)
+        {
+            using var tenant = QosContext.Enter(request.Database);
+            if (!context.Response.HasStarted)
+            {
+                context.Response.Headers.RetryAfter = "1";
+            }
+
+            return await FailAsync(context, new QuotaExceeded("organization memory budget exceeded", "tenant_memory"), stop.Token).ConfigureAwait(false);
         }
         catch (StorageBusyException error) when (!stop.IsCancellationRequested)
         {
@@ -139,9 +156,9 @@ internal sealed class ShapeSubscriptionService(
             Unavailable error => new ErrorDetail(error.Code, error.Message),
             _ => new ErrorDetail("subscription_closed", "the subscription closed"),
         };
-        var body = JsonSerializer.SerializeToUtf8Bytes(new ErrorBody(detail), TerraBaseJsonContext.Default.ErrorBody);
         try
         {
+            var body = JsonSerializer.SerializeToUtf8Bytes(new ErrorBody(detail), TerraBaseJsonContext.Default.ErrorBody);
             await EventAsync(context, "error", body, null, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception error) when (error is IOException || (error is OperationCanceledException && cancellationToken.IsCancellationRequested))
@@ -154,13 +171,15 @@ internal sealed class ShapeSubscriptionService(
 
     private async Task EventAsync(HttpContext context, string kind, ReadOnlyMemory<byte> body, string? id, CancellationToken cancellationToken)
     {
+        // Reserve before encoding the bounded header or renting the compaction buffer; release after flush.
+        using var scratch = memory.TryReserve(MemoryLane.Foreground, EventMemory) ?? throw new QosMemoryException();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10), time);
         using var send = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
         try
         {
             var stream = context.Response.Body;
             await stream.WriteAsync(Encoding.UTF8.GetBytes($"event: {kind}\n{(id is null ? "" : $"id: {id}\n")}data: "), send.Token).ConfigureAwait(false);
-            var buffer = ArrayPool<byte>.Shared.Rent(16 * 1024);
+            var buffer = ArrayPool<byte>.Shared.Rent(SendBufferBytes);
             try
             {
                 // Physical CR/LF in validated JSON are insignificant whitespace; string line breaks are escaped.
@@ -168,7 +187,7 @@ internal sealed class ShapeSubscriptionService(
                 var written = 0;
                 while (!body.IsEmpty)
                 {
-                    var length = Math.Min(body.Length, (16 * 1024) - written);
+                    var length = Math.Min(body.Length, SendBufferBytes - written);
                     foreach (var value in body.Span[..length])
                     {
                         if (value is not (byte)'\r' and not (byte)'\n')
@@ -178,7 +197,7 @@ internal sealed class ShapeSubscriptionService(
                     }
 
                     body = body[length..];
-                    if (written == 16 * 1024 || (body.IsEmpty && written > 0))
+                    if (written == SendBufferBytes || (body.IsEmpty && written > 0))
                     {
                         await stream.WriteAsync(buffer.AsMemory(0, written), send.Token).ConfigureAwait(false);
                         written = 0;

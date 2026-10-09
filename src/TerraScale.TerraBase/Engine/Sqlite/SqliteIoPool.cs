@@ -1,4 +1,6 @@
 using System.Diagnostics.Metrics;
+using TerraBase.Features.Qos;
+using TerraBase.Tenancy;
 
 namespace TerraBase.Engine.Sqlite;
 
@@ -17,8 +19,8 @@ namespace TerraBase.Engine.Sqlite;
 /// <c>storage-queue</c> admitted transactions, each with at most one queued call, so the queue is
 /// bounded by admission; beyond that callers get <see cref="StorageBusyException"/>. One long call
 /// (<c>VACUUM INTO</c> for a branch, a wait on another process's lock) holds a thread for its whole
-/// duration. Add per-database fairness, priority lanes or a separate maintenance thread when one hot
-/// database or a large copy must not starve the others.
+/// duration. Scheduling weights apply to calls, not elapsed time: long calls are not preempted. With at least two
+/// workers, Hobby can occupy at most all but one; a one-worker pool cannot isolate running calls.
 /// </remarks>
 internal sealed class SqliteIoPool : SqliteRunner, IAsyncDisposable
 {
@@ -44,12 +46,38 @@ internal sealed class SqliteIoPool : SqliteRunner, IAsyncDisposable
         }
     }
 
-    private sealed class AdmissionScope
+    internal sealed class AdmissionScope
     {
         internal bool Active { get; set; } = true;
     }
 
-    private readonly LinkedList<Action> _work = [];
+    internal readonly record struct CallContext(QosContext.Snapshot Qos, AdmissionScope? Admission);
+
+    internal CallContext CaptureContext() => new(QosContext.Capture(), _currentAdmission.Value);
+
+    internal IDisposable RestoreContext(CallContext context)
+    {
+        var previous = _currentAdmission.Value;
+        var qos = QosContext.Restore(context.Qos);
+        _currentAdmission.Value = context.Admission;
+        return new ContextScope(this, previous, qos);
+    }
+
+    private sealed class ContextScope(SqliteIoPool pool, AdmissionScope? previous, IDisposable qos) : IDisposable
+    {
+        public void Dispose()
+        {
+            pool._currentAdmission.Value = previous;
+            qos.Dispose();
+        }
+    }
+
+    private readonly LinkedList<WorkItem> _work = [];
+    private long _virtualTime;
+    private readonly int _maxHobbyRunning;
+    private int _runningHobby;
+
+    private sealed record WorkItem(string? Organization, long Finish, bool Hobby, Action Run);
     // ponytail: one short queue lock across storage threads; per-worker queues if contention is measured.
     // LinkedList lets cancellation unlink a node immediately; BlockingCollection retains cancelled closures.
     private readonly object _queueGate = new();
@@ -73,6 +101,7 @@ internal sealed class SqliteIoPool : SqliteRunner, IAsyncDisposable
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(threads);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxAdmitted);
         _maxAdmitted = maxAdmitted;
+        _maxHobbyRunning = Math.Max(1, threads - 1);
         _disposal = new(DrainAsync);
         meter.CreateObservableGauge(
             "terrabase.storage.admitted", () => Volatile.Read(ref _admitted), description: "Storage transactions and maintenance calls admitted.");
@@ -139,7 +168,15 @@ internal sealed class SqliteIoPool : SqliteRunner, IAsyncDisposable
             throw new ObjectDisposedException(nameof(SqliteIoPool));
         }
 
-        if (admitted > _maxAdmitted)
+        // Reserve a quarter for Pro/Enterprise/system, and an eighth for Enterprise/system.
+        // With a one-slot pool every plan can still make progress.
+        var limit = QosContext.Current?.Plan switch
+        {
+            PlanTier.Hobby when _maxAdmitted > 1 => _maxAdmitted - Math.Max(_maxAdmitted > 2 ? 2 : 1, _maxAdmitted / 4),
+            PlanTier.Pro when _maxAdmitted > 2 => _maxAdmitted - Math.Max(1, _maxAdmitted / 8),
+            _ => _maxAdmitted,
+        };
+        if (admitted > limit)
         {
             Release();
             throw Busy();
@@ -191,7 +228,10 @@ internal sealed class SqliteIoPool : SqliteRunner, IAsyncDisposable
         // Queued (0), started (1) or cancelled (2), decided once: a cancelled call never starts, and a started
         // one is awaited to the end, because the caller still owns its connection while it runs.
         var state = 0;
-        var node = new LinkedListNode<Action>(Run);
+        var tenant = QosContext.Current;
+        var context = CaptureContext();
+        var weight = tenant is null ? 16 : QosPolicy.For(tenant.Plan).Weight;
+        var node = new LinkedListNode<WorkItem>(new WorkItem(tenant?.OrganizationId, 0, tenant?.Plan == PlanTier.Hobby, Run));
         using var cancellation = cancellationToken.Register(() =>
         {
             if (Interlocked.CompareExchange(ref state, 2, 0) == 0)
@@ -212,8 +252,19 @@ internal sealed class SqliteIoPool : SqliteRunner, IAsyncDisposable
             ObjectDisposedException.ThrowIf(_completed, this);
             if (Volatile.Read(ref state) == 0)
             {
+                // ponytail: bounded queue scans under one lock; use a heap if queue contention is measured.
+                var finish = _virtualTime;
+                foreach (var queued in _work)
+                {
+                    if (queued.Organization == tenant?.OrganizationId)
+                    {
+                        finish = Math.Max(finish, queued.Finish);
+                    }
+                }
+
+                node.Value = node.Value with { Finish = finish + 65536 / weight };
                 _work.AddLast(node);
-                Monitor.Pulse(_queueGate);
+                Monitor.PulseAll(_queueGate);
             }
         }
 
@@ -230,6 +281,7 @@ internal sealed class SqliteIoPool : SqliteRunner, IAsyncDisposable
             Interlocked.Increment(ref _running);
             try
             {
+                using var scope = RestoreContext(context);
                 result.TrySetResult(call());
             }
             catch (Exception error)
@@ -281,24 +333,63 @@ internal sealed class SqliteIoPool : SqliteRunner, IAsyncDisposable
     {
         while (true)
         {
-            Action call;
+            WorkItem item;
             lock (_queueGate)
             {
-                while (_work.Count == 0 && !_completed)
+                LinkedListNode<WorkItem>? chosen;
+                while (true)
                 {
+                    chosen = null;
+                    for (var candidate = _work.First; candidate is not null; candidate = candidate.Next)
+                    {
+                        if (candidate.Value.Hobby && _runningHobby >= _maxHobbyRunning)
+                        {
+                            continue;
+                        }
+
+                        if (chosen is null || candidate.Value.Finish < chosen.Value.Finish)
+                        {
+                            chosen = candidate;
+                        }
+                    }
+
+                    if (chosen is not null)
+                    {
+                        break;
+                    }
+
+                    if (_completed)
+                    {
+                        return;
+                    }
+
                     Monitor.Wait(_queueGate);
                 }
 
-                if (_work.First is not { } node)
+                item = chosen.Value;
+                _virtualTime = Math.Max(_virtualTime, item.Finish);
+                _work.Remove(chosen);
+                if (item.Hobby)
                 {
-                    return;
+                    _runningHobby++;
                 }
-
-                call = node.Value;
-                _work.RemoveFirst();
             }
 
-            call();
+            try
+            {
+                item.Run();
+            }
+            finally
+            {
+                if (item.Hobby)
+                {
+                    lock (_queueGate)
+                    {
+                        _runningHobby--;
+                        Monitor.PulseAll(_queueGate);
+                    }
+                }
+            }
         }
     }
 }

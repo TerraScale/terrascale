@@ -134,6 +134,14 @@ override, and pin a session to the selected region. Keep regional endpoints out
 of client code. See [the region contract](docs/region-identity.md) for pinning
 and Atlas compatibility.
 
+## Organization resource admission
+
+Requests authenticated with project JWTs or document credentials share their organization's
+[plan resource policy](docs/qos.md): rate and concurrency admission, SQLite read scheduling,
+query costs, memory/cache shares and live-document storage quotas. The platform publishes the
+resource plan using the trusted management service credential; public user tokens cannot grant
+Enterprise admission. Rate, concurrency and memory refusals include `Retry-After`.
+
 ## Node pressure
 
 `GET /admin/node/pressure` and pressure metrics are available only on the loopback

@@ -37,7 +37,7 @@ public readonly union CreateBackupResult(DatabaseBackup, NotFound);
 public readonly union SetBackupPolicyResult(BackupPolicy, NotFound, Forbidden);
 
 /// <summary>The database a backup was restored into, or why it was not restored; a taken name is a conflict.</summary>
-public readonly union RestoreBackupResult(ManagedDatabase, NotFound, Conflict, Forbidden, Validation);
+public readonly union RestoreBackupResult(ManagedDatabase, NotFound, Conflict, Forbidden, Validation, QuotaExceeded, Unavailable);
 
 /// <summary>Backups of managed databases, their policy, and restoring them into new databases.</summary>
 public interface IManagedBackupService

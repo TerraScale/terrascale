@@ -189,9 +189,10 @@ public sealed class StoragePoolTests
         {
             settings["storage-threads"] = "1";
             settings["storage-queue"] = "2";
-        }, StorageTransactionTests.ConfigurePool, time: new FakeTimeProvider(DateTimeOffset.UtcNow));
+        }, StorageTransactionTests.ConfigurePool, time: new FakeTimeProvider(DateTimeOffset.UtcNow), managementCredential: true);
         var server = management.Server;
         using var tenant = await management.CreateTenantAsync("documents:read", "documents:write");
+        await StorageFixture.SetPlanAsync(management, tenant, PlanTier.Enterprise);
         var client = tenant.Data;
         using var created = await client.PutAsync(new Uri($"/v1/projects/{tenant.ProjectId}/databases/busy", UriKind.Relative), null, deadline.Token);
         created.EnsureSuccessStatusCode();
@@ -247,7 +248,7 @@ public sealed class StoragePoolTests
         using var operationTimeout = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         // Keep periodic catalog writes from returning a session between the fixture's controlled evictions.
         await using var management = await ManagementApi.StartAsync(
-            services: StorageTransactionTests.ConfigurePool, time: new FakeTimeProvider(DateTimeOffset.UtcNow));
+            services: StorageTransactionTests.ConfigurePool, time: new FakeTimeProvider(DateTimeOffset.UtcNow), managementCredential: true);
         var server = management.Server;
         using var tenant = await management.CreateTenantAsync("documents:read", "documents:write");
         var client = tenant.Data;
@@ -294,9 +295,10 @@ public sealed class StoragePoolTests
         {
             settings["storage-threads"] = "1";
             settings["storage-queue"] = "2";
-        }, StorageTransactionTests.ConfigurePool, time: new FakeTimeProvider(DateTimeOffset.UtcNow));
+        }, StorageTransactionTests.ConfigurePool, time: new FakeTimeProvider(DateTimeOffset.UtcNow), managementCredential: true);
         var server = management.Server;
         using var tenant = await management.CreateTenantAsync("documents:read", "documents:write");
+        await StorageFixture.SetPlanAsync(management, tenant, PlanTier.Enterprise);
         var client = tenant.Data;
         using var created = await client.PutAsync(new Uri($"/v1/projects/{tenant.ProjectId}/databases/busy", UriKind.Relative), null, deadline.Token);
         created.EnsureSuccessStatusCode();

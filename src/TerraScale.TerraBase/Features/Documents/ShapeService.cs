@@ -5,7 +5,10 @@ using System.Text;
 using System.Text.Json;
 using TerraBase.Engine;
 using TerraBase.Errors;
+using TerraBase.Features.Memory;
+using TerraBase.Features.Qos;
 using TerraBase.Hosting;
+using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Documents;
 
@@ -18,8 +21,7 @@ namespace TerraBase.Features.Documents;
 /// waits included, so N concurrent pollers cost one storage read. The flight runs on its own token,
 /// so one requester leaving does not cancel it; it is cancelled when its last requester leaves.
 /// Every requester gets the same serialized body.
-/// ponytail: fixed admission caps bound concurrent reads; use the shared memory budget when it
-/// exists to charge these reads alongside other features.
+/// Shared result reservations outlive the flight until every consumer response releases its reference.
 /// </remarks>
 internal sealed class ShapeService : IShapeService
 {
@@ -43,6 +45,7 @@ internal sealed class ShapeService : IShapeService
     private readonly Lock _gate = new();
     private readonly Dictionary<string, Flight> _flights = [];
     private readonly IStorageEngine _engine;
+    private readonly IMemoryBudget _budget;
     private readonly TimeProvider _time;
     private readonly CancellationToken _stopping;
     private readonly Counter<long> _reads;
@@ -52,9 +55,10 @@ internal sealed class ShapeService : IShapeService
     private int _running;
     private int _requesters;
 
-    public ShapeService(IStorageEngine engine, TimeProvider time, IHostApplicationLifetime lifetime, IMeterFactory meters)
+    public ShapeService(IStorageEngine engine, IMemoryBudget budget, TimeProvider time, IHostApplicationLifetime lifetime, IMeterFactory meters)
     {
         _engine = engine;
+        _budget = budget;
         _time = time;
         _stopping = lifetime.ApplicationStopping;
         var meter = meters.Create(Telemetry.MeterName);
@@ -66,7 +70,9 @@ internal sealed class ShapeService : IShapeService
 
     public async ValueTask<ShapeReadResult> ReadAsync(ShapeRequest request, CancellationToken cancellationToken, bool drainOnCancellation = false)
     {
-        var key = string.Join('\0', request.Scope, request.Handle, request.Offset, request.Live);
+        var tenant = QosContext.Current ?? request.Database;
+        // A new request after a plan change must not join a flight admitted under the old plan.
+        var key = string.Join('\0', request.Scope, request.Handle, request.Offset, request.Live, tenant.Plan);
         Flight? flight;
         var start = false;
         lock (_gate)
@@ -85,9 +91,26 @@ internal sealed class ShapeService : IShapeService
 
                 _running++;
                 _active.Add(1);
-                flight = new Flight();
+                flight = new Flight(_budget);
                 _flights[key] = flight;
                 start = true;
+            }
+
+            try
+            {
+                QosContext.AttachResults(flight.Memory);
+            }
+            catch
+            {
+                if (start)
+                {
+                    _flights.Remove(key);
+                    _running--;
+                    _active.Add(-1);
+                    flight.Memory.Dispose();
+                }
+
+                throw;
             }
 
             flight.Requesters++;
@@ -96,7 +119,7 @@ internal sealed class ShapeService : IShapeService
 
         if (start)
         {
-            _ = RunAsync(request, key, flight);
+            _ = RunAsync(request, key, flight, tenant);
         }
 
         _waiting.Add(1);
@@ -133,8 +156,9 @@ internal sealed class ShapeService : IShapeService
         flight.Cancel.Cancel();
     }
 
-    private async Task RunAsync(ShapeRequest request, string key, Flight flight)
+    private async Task RunAsync(ShapeRequest request, string key, Flight flight, TenantContext tenant)
     {
+        using var scope = QosContext.EnterFlight(tenant, flight.Memory);
         try
         {
             using var token = CancellationTokenSource.CreateLinkedTokenSource(_stopping, flight.Cancel.Token);
@@ -160,6 +184,7 @@ internal sealed class ShapeService : IShapeService
                 _active.Add(-1);
             }
 
+            flight.Memory.Dispose();
             flight.Stopped.SetResult();
         }
     }
@@ -480,9 +505,11 @@ internal sealed class ShapeService : IShapeService
     // One op of a body: an upsert carries the version and the stored document bytes.
     private sealed record Op(string Kind, string Id, string? Version, ReadOnlyMemory<byte> Document);
 
-    private sealed class Flight
+    private sealed class Flight(IMemoryBudget budget)
     {
         public TaskCompletionSource Stopped { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public QosContext.ResultMemory Memory { get; } = new(budget);
+
         public TaskCompletionSource<ShapeReadResult> Result { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         // Never disposed: it has no timer, and a late Cancel must not throw.

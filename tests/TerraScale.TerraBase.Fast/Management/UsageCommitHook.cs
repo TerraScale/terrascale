@@ -2,13 +2,14 @@ using System.Collections.Concurrent;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
+using TerraBase.Features.Qos;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Fast.Management;
 
 // Decorates the real engine. Only the catalog commits that put a matching document (usage, unless told otherwise) or one
 // explicitly armed write start are intercepted.
-internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>, bool>? intercepts = null)
+internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>, bool>? intercepts = null, Func<PlanTier, long>? storageLimit = null)
 {
     private readonly Func<string, string, ReadOnlyMemory<byte>, bool> _intercepts = intercepts ?? IsUsage;
     private readonly ConcurrentQueue<Gate> _commits = new();
@@ -16,6 +17,13 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
     private Gate? _write;
 
     public Func<TenantContext, CancellationToken, ValueTask>? BeforeCopy { get; set; }
+
+    // Lifecycle prechecks complete before quota takes the organization gate.
+    public Func<CancellationToken, ValueTask>? BeforeQuota { get; set; }
+
+    public Func<TenantContext, CancellationToken, ValueTask>? BeforeDocumentQuota { get; set; }
+
+    public Func<TenantContext, CancellationToken, ValueTask>? AfterQuotaBytes { get; set; }
 
     public Func<TenantContext, CancellationToken, ValueTask>? BeforeDelete { get; set; }
 
@@ -30,6 +38,9 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
 
     // Runs after a catalog row is captured, so tests can change its mapping before the next lookup.
     public Func<string, string, CancellationToken, ValueTask>? AfterGet { get; set; }
+
+    // Observes catalog materialization; used to prove memory refusal precedes tenant resolution.
+    public Action<string>? BeforeGet { get; set; }
 
     // A user database for which this returns true opens as missing storage, while the catalog still lists it.
     public Func<TenantContext, bool>? Hidden { get; set; }
@@ -64,6 +75,49 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
         var registration = services.Single(service => service.ServiceType == typeof(IStorageEngine));
         services.Remove(registration);
         services.AddSingleton<IStorageEngine>(provider => new Engine((IStorageEngine)registration.ImplementationFactory!(provider), this));
+        InstallQuota(services);
+    }
+
+    public void InstallQuota(IServiceCollection services)
+    {
+        services.AddSingleton<IStorageQuota>(provider => new Quota(new StorageQuota(provider.GetRequiredService<IStorageEngine>(),
+            provider.GetRequiredService<ITenantDirectory>(), storageLimit ?? (plan => QosPolicy.For(plan).StorageBytes)), this));
+    }
+
+    private sealed class Quota(StorageQuota inner, UsageCommitHook hook) : IStorageQuota, IDisposable
+    {
+        public async ValueTask<StorageQuotaLease> EnterAsync(TenantContext database, IDatabaseStore store, CancellationToken cancellationToken)
+        {
+            if (hook.BeforeDocumentQuota is { } before)
+            {
+                await before(database, cancellationToken);
+            }
+
+            return await inner.EnterAsync(database, store, cancellationToken);
+        }
+
+        public async ValueTask<StorageQuotaGroupLease> EnterOrganizationsAsync(IReadOnlyList<string> organizationIds, CancellationToken cancellationToken)
+        {
+            if (hook.BeforeQuota is { } before)
+            {
+                await before(cancellationToken);
+            }
+
+            return await inner.EnterOrganizationsAsync(organizationIds, cancellationToken);
+        }
+
+        public async ValueTask<long> ReadBytesAsync(TenantContext database, CancellationToken cancellationToken)
+        {
+            var bytes = await inner.ReadBytesAsync(database, cancellationToken);
+            if (hook.AfterQuotaBytes is { } after)
+            {
+                await after(database, cancellationToken);
+            }
+
+            return bytes;
+        }
+
+        public void Dispose() => inner.Dispose();
     }
 
     private static bool IsUsage(string collection, string id, ReadOnlyMemory<byte> json) =>
@@ -195,7 +249,7 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
             }
 
             var transaction = await inner.BeginTransactionAsync(write, cancellationToken);
-            return write || hook.BeforeList is not null || hook.AfterGet is not null ? new Transaction(transaction, hook) : transaction;
+            return write || hook.BeforeList is not null || hook.AfterGet is not null || hook.BeforeGet is not null ? new Transaction(transaction, hook) : transaction;
         }
     }
 
@@ -223,6 +277,12 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
 
     private sealed class Transaction(IStorageTransaction inner, UsageCommitHook hook) : IStorageTransaction
     {
+        public ValueTask<long> GetDocumentBytesAsync(string collection, string id, CancellationToken cancellationToken) =>
+            inner.GetDocumentBytesAsync(collection, id, cancellationToken);
+
+        public ValueTask<long> GetStoredDocumentBytesAsync(CancellationToken cancellationToken) =>
+            inner.GetStoredDocumentBytesAsync(cancellationToken);
+
         private bool _intercepted;
 
         public ValueTask<CollectionChangePage> ReadCollectionChangesAsync(string collection, long afterOffset, long afterSequence, int limit, long maxBytes, CancellationToken cancellationToken) => inner.ReadCollectionChangesAsync(collection, afterOffset, afterSequence, limit, maxBytes, cancellationToken);
@@ -235,6 +295,7 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
         public Guid Scope => inner.Scope;
         public async ValueTask<StoredDocument?> GetAsync(string collection, string id, CancellationToken cancellationToken)
         {
+            hook.BeforeGet?.Invoke(collection);
             var document = await inner.GetAsync(collection, id, cancellationToken);
             if (hook.AfterGet is { } afterGet)
             {
@@ -243,6 +304,7 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
 
             return document;
         }
+
         public ValueTask<DocumentVersion?> GetVersionAsync(string collection, string id, CancellationToken cancellationToken) => inner.GetVersionAsync(collection, id, cancellationToken);
         public ValueTask<bool> DeleteAsync(string collection, string id, CancellationToken cancellationToken) => inner.DeleteAsync(collection, id, cancellationToken);
         public ValueTask<long?> TombstoneAsync(string collection, string id, CancellationToken cancellationToken) => inner.TombstoneAsync(collection, id, cancellationToken);

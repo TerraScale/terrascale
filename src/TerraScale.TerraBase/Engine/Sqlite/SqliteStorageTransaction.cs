@@ -85,6 +85,17 @@ internal sealed partial class SqliteStorageTransaction(
     public ValueTask<StoredDocument?> GetAsync(string collection, string id, CancellationToken cancellationToken) =>
         RunAsync(() => ReadDocument(collection, id), cancellationToken);
 
+    public ValueTask<long> GetDocumentBytesAsync(string collection, string id, CancellationToken cancellationToken) =>
+        RunAsync(() =>
+        {
+            var command = Command(SqliteStatements.DocumentBytes, collection);
+            command.Parameters.AddWithValue("$id", id);
+            return command.ExecuteScalar() as long? ?? 0;
+        }, cancellationToken);
+
+    public ValueTask<long> GetStoredDocumentBytesAsync(CancellationToken cancellationToken) =>
+        RunAsync(() => (long)Command(SqliteStatements.StoredDocumentBytes).ExecuteScalar()!, cancellationToken);
+
     // Worker-only: query readers fetch bodies after their id/key page has admitted the row.
     private StoredDocument? ReadDocument(string collection, string id)
     {
@@ -96,9 +107,13 @@ internal sealed partial class SqliteStorageTransaction(
         var command = Command(SqliteStatements.Get, collection);
         command.Parameters.AddWithValue("$id", id);
         using var reader = command.ExecuteReader();
-        return reader.Read() && !reader.IsDBNull(1)
-            ? new StoredDocument(id, reader.GetInt64(0), reader.GetFieldValue<byte[]>(1), Scope)
-            : null;
+        if (!reader.Read() || reader.IsDBNull(1))
+        {
+            return null;
+        }
+
+        ReserveJson(reader.GetInt64(2));
+        return new StoredDocument(id, reader.GetInt64(0), reader.GetFieldValue<byte[]>(1), Scope);
     }
 
     public async ValueTask<DocumentVersion?> GetVersionAsync(string collection, string id, CancellationToken cancellationToken)
@@ -325,6 +340,7 @@ internal sealed partial class SqliteStorageTransaction(
                 }
 
                 bytes += size;
+                ReserveJson(size);
                 documents.Add(new StoredDocument(reader.GetString(0), reader.GetInt64(1), reader.GetFieldValue<byte[]>(2), Scope));
             }
 
@@ -354,7 +370,7 @@ internal sealed partial class SqliteStorageTransaction(
         try
         {
             var result = execute();
-            if (budget.Spent >= store.QueryBudget)
+            if (budget.Exceeded)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 throw new QueryCapacityException("query execution budget exceeded");
@@ -373,19 +389,40 @@ internal sealed partial class SqliteStorageTransaction(
         }
     }
 
+    private static bool ScansLimited => QosContext.Current is { } current && QosPolicy.For(current.Plan).ScanRows != long.MaxValue;
+
     private const int MaxSnapshotSteps = 10_000;
     private const int MaxSnapshotSkips = 50_000;
 
     // The handler and its removal run only on workers while this transaction owns the connection.
     private QueryBudget StartQueryBudget(CancellationToken cancellationToken)
     {
-        var budget = new QueryBudget(store.Time);
+        var budget = new QueryBudget(store.Time, store.QueryBudget, QosContext.Current is { } tenant ? QosPolicy.For(tenant.Plan) : null);
         raw.sqlite3_progress_handler(session.Connection.Handle, 1000,
-            _ => cancellationToken.IsCancellationRequested || ++budget.Callbacks >= 5000 || budget.Spent >= store.QueryBudget ? 1 : 0, null);
+            _ => cancellationToken.IsCancellationRequested || budget.Progress() ? 1 : 0, null);
+        if (budget.ScansLimited)
+        {
+            // octet_length reads the stored byte size without decoding or copying the JSON body.
+            session.Connection.CreateFunction<long, long>("tb_qos_scan", size =>
+            {
+                if (budget.Scan(size))
+                {
+                    raw.sqlite3_interrupt(session.Connection.Handle);
+                    return 0;
+                }
+
+                return 1;
+            });
+        }
+
         return budget;
     }
 
-    private void StopQueryBudget() => raw.sqlite3_progress_handler(session.Connection.Handle, 0, null, null);
+    private void StopQueryBudget()
+    {
+        raw.sqlite3_progress_handler(session.Connection.Handle, 0, null, null);
+        session.Connection.CreateFunction<long, long>("tb_qos_scan", null);
+    }
 
     private static QueryCapacityException Exhausted(SqliteException error, CancellationToken cancellationToken)
     {
@@ -394,13 +431,40 @@ internal sealed partial class SqliteStorageTransaction(
     }
 
     // A stream accumulates SQLite execution time, excluding worker queueing and consumer time between rows.
-    private sealed class QueryBudget(TimeProvider time)
+    private sealed class QueryBudget(TimeProvider time, TimeSpan defaultDeadline, QosPolicy? policy)
     {
         private bool _running = true;
         private long _started = time.GetTimestamp();
         private TimeSpan _paused;
 
-        public int Callbacks { get; set; }
+        private long _instructions;
+        private long _rows;
+        private long _bytes;
+        private bool ScanExceeded { get; set; }
+
+        public bool ScansLimited => policy is not null && (policy.ScanRows != long.MaxValue || policy.ScanBytes != long.MaxValue);
+
+        public bool Exceeded => ScanExceeded || _instructions >= (policy?.QuerySteps ?? 5_000_000)
+            || (policy?.QueryTimeout ?? defaultDeadline) is var deadline && deadline != Timeout.InfiniteTimeSpan && Spent >= deadline;
+
+        public bool Progress()
+        {
+            _instructions += 1000;
+            return Exceeded;
+        }
+
+        public bool Scan(long size)
+        {
+            if (_rows >= policy!.ScanRows || size > policy.ScanBytes - _bytes)
+            {
+                ScanExceeded = true;
+                return true;
+            }
+
+            _rows++;
+            _bytes += size;
+            return false;
+        }
 
         public TimeSpan Spent => _running ? _paused + time.GetElapsedTime(_started) : _paused;
 
@@ -454,7 +518,7 @@ internal sealed partial class SqliteStorageTransaction(
     {
         // Compiled per request so every new filter shape does not grow the session's command cache.
         using var command = Uncached(query.Collection);
-        command.CommandText = new SqliteQueryCompiler(command.Parameters).Compile(query, observation is not null);
+        command.CommandText = new SqliteQueryCompiler(command.Parameters, ScansLimited).Compile(query, observation is not null);
         var rows = new List<QueryRow>();
         long bytes = 0;
         using var reader = command.ExecuteReader();
@@ -473,6 +537,8 @@ internal sealed partial class SqliteStorageTransaction(
             }
 
             bytes += size;
+            // ReadDocument admits the body's detached copies before the body and sort keys allocate.
+            var document = ReadDocument(query.Collection, reader.GetString(0))!;
             var keys = new object?[reader.FieldCount - 3];
             for (var i = 0; i < keys.Length; i++)
             {
@@ -483,7 +549,7 @@ internal sealed partial class SqliteStorageTransaction(
                         : reader.GetValue(3 + i);
             }
 
-            rows.Add(new QueryRow(ReadDocument(query.Collection, reader.GetString(0))!, keys));
+            rows.Add(new QueryRow(document, keys));
         }
 
         return new QueryPage(rows, HasMore: false);
@@ -495,7 +561,7 @@ internal sealed partial class SqliteStorageTransaction(
         return await RunAsync(() => WithQueryBudget(() =>
         {
             using var command = Uncached(collection);
-            command.CommandText = new SqliteQueryCompiler(command.Parameters).CompileCount(filter, maxExamined, observation is not null);
+            command.CommandText = new SqliteQueryCompiler(command.Parameters, ScansLimited).CompileCount(filter, maxExamined, observation is not null);
             using var reader = command.ExecuteReader();
             cancellationToken.ThrowIfCancellationRequested();
             reader.Read();
@@ -522,7 +588,7 @@ internal sealed partial class SqliteStorageTransaction(
             using var command = Uncached(query.Collection);
             // One streamed read of the births key in id order: each id that existed at the offset is a step with
             // its last write at the offset, so the cost follows the ids read, never the depth of their history.
-            command.CommandText = new SqliteQueryCompiler(command.Parameters).CompileSnapshot(query.Filter, generation, offset);
+            command.CommandText = new SqliteQueryCompiler(command.Parameters, ScansLimited).CompileSnapshot(query.Filter, generation, offset);
             command.Parameters.AddWithValue("$after", query.After?.Id ?? "");
             var rows = new List<QueryRow>();
             long bytes = 0;
@@ -555,7 +621,7 @@ internal sealed partial class SqliteStorageTransaction(
                         return new SnapshotPage(rows, HasMore: false, ResumeAfter: null);
                     }
 
-                    if (budget.Spent >= store.QueryBudget)
+                    if (budget.Exceeded)
                     {
                         cancellationToken.ThrowIfCancellationRequested();
                         throw new QueryCapacityException("query execution budget exceeded");
@@ -583,7 +649,7 @@ internal sealed partial class SqliteStorageTransaction(
                     }
 
                     bytes += reader.GetInt64(4);
-                    rows.Add(new QueryRow(new StoredDocument(id, reader.GetInt64(2), ReadShapeJson(reader, 3), Scope), []));
+                    rows.Add(new QueryRow(new StoredDocument(id, reader.GetInt64(2), ReadShapeJson(reader, 3, reader.GetInt64(4)), Scope), []));
                     examined = id;
                     // The last row may cross the byte limit; the caller trims the page to its serialized size.
                     if (bytes >= query.MaxBytes)
@@ -614,7 +680,7 @@ internal sealed partial class SqliteStorageTransaction(
         ReadBudgetedAsync(() =>
         {
             var command = Uncached(collection);
-            command.CommandText = new SqliteQueryCompiler(command.Parameters).CompileChanges(filter, after, through);
+            command.CommandText = new SqliteQueryCompiler(command.Parameters, ScansLimited).CompileChanges(filter, after, through);
             return command;
         }, cancellationToken);
 
@@ -633,6 +699,7 @@ internal sealed partial class SqliteStorageTransaction(
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 session.ObserveQueries(observation);
+                using var interrupt = cancellationToken.Register(() => raw.sqlite3_interrupt(session.Connection.Handle));
                 budget = StartQueryBudget(cancellationToken);
                 command = createCommand();
                 try
@@ -664,13 +731,19 @@ internal sealed partial class SqliteStorageTransaction(
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     queryBudget.Resume();
+                    using var interrupt = cancellationToken.Register(() => raw.sqlite3_interrupt(session.Connection.Handle));
                     try
                     {
                         var read = changes.Read();
-                        if (queryBudget.Spent >= store.QueryBudget)
+                        if (queryBudget.Exceeded)
                         {
                             cancellationToken.ThrowIfCancellationRequested();
                             throw new QueryCapacityException("query execution budget exceeded");
+                        }
+
+                        if (read && query is null && changes.IsDBNull(2))
+                        {
+                            ReserveJson(0);
                         }
 
                         // ChangesAsync rows are (id, version, body, history offset).
@@ -679,9 +752,9 @@ internal sealed partial class SqliteStorageTransaction(
                             : changes.IsDBNull(2)
                                 ? new StoredDocument(changes.GetString(0), changes.GetInt64(1), ReadOnlyMemory<byte>.Empty, Scope, Deleted: true,
                                     HistoryOffset: changes.GetInt64(3))
-                                : new StoredDocument(changes.GetString(0), changes.GetInt64(1), ReadShapeJson(changes, 2), Scope,
+                                : new StoredDocument(changes.GetString(0), changes.GetInt64(1), ReadShapeJson(changes, 2, changes.GetInt64(4)), Scope,
                                     HistoryOffset: changes.GetInt64(3));
-                        if (queryBudget.Spent >= store.QueryBudget)
+                        if (queryBudget.Exceeded)
                         {
                             cancellationToken.ThrowIfCancellationRequested();
                             throw new QueryCapacityException("query execution budget exceeded");
@@ -1677,8 +1750,26 @@ internal sealed partial class SqliteStorageTransaction(
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 RunPendingSavepoint();
-                return call();
+                // Interrupting a mutation rolls back SQLite's entire transaction, including other batch savepoints.
+                // Writes cancel between statements; read-only transactions can interrupt their native calls.
+                using var interrupt = write ? default : cancellationToken.Register(() => raw.sqlite3_interrupt(session.Connection.Handle));
+                var result = call();
+                if (mutation)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                }
+
+                return result;
             }, cancellationToken).ConfigureAwait(false);
+        }
+        catch (SqliteException error) when (error.SqliteErrorCode == raw.SQLITE_INTERRUPT && cancellationToken.IsCancellationRequested)
+        {
+            if (mutation)
+            {
+                _faulted = true;
+            }
+
+            throw new OperationCanceledException("the storage operation was cancelled", error, cancellationToken);
         }
         catch when (mutation)
         {
@@ -1719,8 +1810,15 @@ internal sealed partial class SqliteStorageTransaction(
         return command;
     }
 
-    private static byte[] ReadShapeJson(SqliteDataReader reader, int ordinal)
+    // Native octet_length projections inspect size without copying JSON; GetBytes/GetStream would allocate first.
+    private void ReserveJson(long size)
     {
+        QosContext.ReserveResult(checked(size * 3 + 2048), store.IsSystem ? null : QosContext.Current);
+    }
+
+    private byte[] ReadShapeJson(SqliteDataReader reader, int ordinal, long size)
+    {
+        ReserveJson(size);
         var json = reader.GetFieldValue<byte[]>(ordinal);
         DocumentJson.ValidateStored(json);
         return json;

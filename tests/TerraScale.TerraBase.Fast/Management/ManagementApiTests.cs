@@ -43,7 +43,7 @@ public sealed class ManagementApiTests
     }
 
     [Test]
-    public async Task An_organization_plan_defaults_to_hobby_and_is_set_only_by_owners()
+    public async Task An_organization_plan_defaults_to_hobby_and_needs_the_service_credential_acting_as_owner()
     {
         await using var api = await ManagementApi.StartAsync();
         using var other = api.As(EntityIds.New().ToString());
@@ -51,8 +51,10 @@ public sealed class ManagementApiTests
         var plan = $"/v1/management/organizations/{organization}/plan";
 
         var initial = await api.Client.GetFromJsonAsync<JsonElement>(Uri($"/v1/management/organizations/{organization}"));
-        using var pro = await api.Client.PutAsJsonAsync(Uri(plan), new { plan = "pro" });
-        using var enterprise = await api.Client.PutAsJsonAsync(Uri(plan), new { plan = "enterprise" });
+        using var service = api.Service(api.User);
+        using var byOwner = await api.Client.PutAsJsonAsync(Uri(plan), new { plan = "enterprise" });
+        using var pro = await service.PutAsJsonAsync(Uri(plan), new { plan = "pro" });
+        using var enterprise = await service.PutAsJsonAsync(Uri(plan), new { plan = "enterprise" });
         var read = await api.Client.GetFromJsonAsync<JsonElement>(Uri($"/v1/management/organizations/{organization}"));
         using var listed = JsonDocument.Parse(await api.Client.GetStringAsync(Uri("/v1/management/organizations")));
         using var nonMember = await other.PutAsJsonAsync(Uri(plan), new { plan = "hobby" });
@@ -69,7 +71,8 @@ public sealed class ManagementApiTests
         await Assert.That(read.GetProperty("plan").GetString()).IsEqualTo("enterprise");
         await Assert.That(listed.RootElement.GetProperty("items")[0].GetProperty("plan").GetString()).IsEqualTo("enterprise");
         await Assert.That(nonMember.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-        // The plan is billing: admins and members may not change it.
+        await Assert.That(byOwner.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+        // User tokens cannot grant a resource entitlement, regardless of organization role.
         await Assert.That(byAdmin.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
         await Assert.That(byMember.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
         await Assert.That(afterRefused.GetProperty("plan").GetString()).IsEqualTo("enterprise");

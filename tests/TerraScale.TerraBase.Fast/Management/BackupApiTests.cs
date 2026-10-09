@@ -52,17 +52,27 @@ public sealed class BackupApiTests
         using var gate = new UsageCommitHook.Gate(fail: false);
         var bothPrechecked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var copies = 0;
-        hook.BeforeCopy = async (source, cancellationToken) =>
+        var prechecks = 0;
+        hook.BeforeQuota = async cancellationToken =>
         {
-            if (source.DatabaseId == backupId && Interlocked.Increment(ref copies) <= 2)
+            if (Interlocked.Increment(ref prechecks) <= 2)
             {
-                if (Volatile.Read(ref copies) == 2)
+                if (Volatile.Read(ref prechecks) == 2)
                 {
                     bothPrechecked.TrySetResult();
                 }
 
                 await gate.WaitAsync(cancellationToken);
             }
+        };
+        hook.BeforeCopy = (source, _) =>
+        {
+            if (source.DatabaseId == backupId)
+            {
+                Interlocked.Increment(ref copies);
+            }
+
+            return ValueTask.CompletedTask;
         };
 
         var first = api.Client.PostAsJsonAsync(Uri($"{database.Path}/backups/{backupId}/restore"), new { });
@@ -191,27 +201,34 @@ public sealed class BackupApiTests
         created.EnsureSuccessStatusCode();
         var backupId = (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!;
 
-        // Both requests pass the name precheck and start their copies before either registers the name.
+        // Both requests pass the name precheck before either acquires the organization publication gate.
         using var gate = new UsageCommitHook.Gate(fail: false);
-        var bothCopying = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var bothPrechecked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var prechecks = 0;
         var copies = 0;
-        hook.BeforeCopy = async (source, cancellationToken) =>
+        hook.BeforeQuota = async cancellationToken =>
+        {
+            if (Interlocked.Increment(ref prechecks) == 2)
+            {
+                bothPrechecked.TrySetResult();
+            }
+
+            await gate.WaitAsync(cancellationToken);
+        };
+        hook.BeforeCopy = (source, _) =>
         {
             if (source.DatabaseId == backupId)
             {
-                if (Interlocked.Increment(ref copies) == 2)
-                {
-                    bothCopying.TrySetResult();
-                }
-
-                await gate.WaitAsync(cancellationToken);
+                Interlocked.Increment(ref copies);
             }
+
+            return ValueTask.CompletedTask;
         };
 
         var restores = Enumerable.Range(0, 2)
             .Select(_ => api.Client.PostAsJsonAsync(Uri($"{database.Path}/backups/{backupId}/restore"), new { name = "restored" }))
             .ToArray();
-        await bothCopying.Task.WaitAsync(TimeSpan.FromSeconds(30));
+        await bothPrechecked.Task.WaitAsync(TimeSpan.FromSeconds(30));
         gate.Dispose();
         var responses = await Task.WhenAll(restores);
         try
