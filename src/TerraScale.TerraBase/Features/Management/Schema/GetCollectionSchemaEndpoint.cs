@@ -15,7 +15,7 @@ public sealed class GetCollectionSchemaEndpoint(IManagementService management, I
         Get(ProjectApiRoute.Database + "/schema/{collection}");
         Name("getCollectionSchema");
         Summary("Infers the fields of a collection");
-        Description("Read-only and inferred: TerraBase has no declared schemas. Samples the first 1000 live documents in id order (at most 8 MiB of JSON) and reports object paths up to depth 8, how many sampled documents contain them and their JSON types. Arrays are not descended into. At most 10000 paths, 1024 UTF-8 bytes per path, 1 MiB of paths total and an 8 MiB response; excess or an exhausted scan budget answers 400 invalid_query, schema too expensive. 404 when the collection does not exist; an empty collection has no fields." + " " + ProjectApiRoute.IdentityDescription);
+        Description("Read-only inferred fields, independently of any declared validation schema. Samples the first 1000 live documents in id order (at most 8 MiB of JSON) and reports object paths up to depth 8, how many sampled documents contain them and their JSON types. Arrays are not descended into. At most 10000 paths, 1024 UTF-8 bytes per path, 1 MiB of paths total and an 8 MiB response; excess or an exhausted scan budget answers 400 invalid_query, schema too expensive. 404 when the collection does not exist; an empty collection has no fields." + " " + ProjectApiRoute.IdentityDescription);
         Tags("Schema");
         Produces<CollectionSchema>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);

@@ -12,12 +12,14 @@ public sealed class ApiReferenceTests
     // Every operation of the public document with its security scheme and required JWT scopes. Update it with every public endpoint;
     // an admin-listener operation appearing here is a leak.
     private const string Operations = """
+        DELETE /projects/{project}/databases/{database}/collections/{collection}/schema TsAuth(documents:write) deleteDeclaredCollectionSchema Collections
         DELETE /v1/projects/{project}/databases/{database} TsAuth(databases:write) deleteDatabase Databases
         DELETE /v1/projects/{project}/databases/{database}/collections/{collection} TsAuth(documents:write) dropCollection Collections
         DELETE /v1/projects/{project}/databases/{database}/collections/{collection}/documents/{id} TsAuth(documents:write) deleteDocument Documents
         DELETE /v1/projects/{project}/databases/{database}/indexes/{index} TsAuth(databases:write) dropIndex Indexes
         DELETE /v1/projects/{project}/saved-queries/{query} TsAuth(databases:write) deleteSavedQuery Queries
         GET /healthz anonymous healthz Health
+        GET /projects/{project}/databases/{database}/collections/{collection}/schema TsAuth(documents:read) getDeclaredCollectionSchema Collections
         GET /projects/{project}/databases/{database}/collections/{collection}/subscribe TsAuth(shapes:read) subscribeCollection Live
         GET /readyz anonymous readyz Health
         GET /v1/projects/{project}/databases TsAuth(databases:read) listDatabases Databases
@@ -55,6 +57,7 @@ public sealed class ApiReferenceTests
         POST /v1/projects/{project}/databases/{database}/sql/check TsAuth(databases:read) checkSql Queries
         POST /v1/projects/{project}/databases/{database}/transactions TsAuth(documents:write) runTransaction Transactions
         POST /v1/projects/{project}/saved-queries TsAuth(databases:write) createSavedQuery Queries
+        PUT /projects/{project}/databases/{database}/collections/{collection}/schema TsAuth(documents:write) putDeclaredCollectionSchema Collections
         PUT /v1/projects/{project}/databases/{database}/backup-policy TsAuth(databases:write) setBackupPolicy Backups
         PUT /v1/projects/{project}/databases/{database}/collections/{collection}/documents/{id} TsAuth(documents:write) putDocument Documents
         PUT /v1/projects/{project}/saved-queries/{query} TsAuth(databases:write) updateSavedQuery Queries
@@ -138,6 +141,16 @@ public sealed class ApiReferenceTests
             }
 
             var responses = operation.GetProperty("responses").EnumerateObject().ToList();
+            if (operation.GetProperty("operationId").GetString() is "getDeclaredCollectionSchema" or "putDeclaredCollectionSchema" or "deleteDeclaredCollectionSchema")
+            {
+                await Assert.That(responses.Any(status => status.Name == "503")).IsTrue().Because(line);
+            }
+
+            if (operation.GetProperty("operationId").GetString() == "putDeclaredCollectionSchema")
+            {
+                await Assert.That(responses.Any(status => status.Name == "415")).IsTrue().Because(line);
+            }
+
             if (operation.GetProperty("operationId").GetString() is "getDatabaseUsage" or "getProjectUsage")
             {
                 await Assert.That(operation.GetProperty("responses").GetProperty("400").GetProperty("description").GetString()).Contains("invalid_query");

@@ -4,6 +4,7 @@ using System.Diagnostics.Metrics;
 using System.IO.Enumeration;
 using System.Runtime.CompilerServices;
 using TerraBase.Configuration;
+using TerraBase.Features.Memory;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 
@@ -62,6 +63,8 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
     private readonly FileStream _ownership;
     private readonly string _dataDirectory;
     private readonly long _memoryBudget;
+    private readonly IMemoryBudget? _schemaMemory;
+    private readonly Counter<long> _schemaEvaluations;
     private readonly ILogger<SqliteStorageEngine> _logger;
     private readonly TimeSpan _shutdownGrace;
     private readonly DatabaseLifecycleCheckpoint _checkpoint;
@@ -317,16 +320,19 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
     /// <param name="systemReplica">Whether this node follows a catalog primary: its system database accepts only replicated writes.</param>
     /// <param name="walTaps">Whether continuous backup ships from this node: its <see cref="IWalTap"/>s checkpoint every database, not SQLite.</param>
     /// <param name="backupTime">The host's UTC clock for snapshot boundaries, independent of query deadlines.</param>
+    /// <param name="schemaMemory">Shared process admission for collection schema evaluation.</param>
     public SqliteStorageEngine(
         string dataDirectory, int threads, int queue, long memoryBudget, Meter meter, ILogger<SqliteStorageEngine> logger,
         TimeSpan shutdownGrace, int? maxIdle = null, int? maxIdlePerDatabase = null, Func<ThreadStart, Thread>? createWorker = null,
         TimeSpan? readinessCacheTtl = null, DatabaseLifecycleCheckpoint? checkpoint = null, TimeProvider? time = null,
         Action<SqliteDatabaseStore>? afterMigration = null, bool systemReplica = false, bool walTaps = false, TimeSpan? queryBudget = null,
-        TimeProvider? backupTime = null)
+        TimeProvider? backupTime = null, IMemoryBudget? schemaMemory = null)
     {
         _systemReplica = systemReplica;
         _dataDirectory = dataDirectory;
         _memoryBudget = memoryBudget;
+        _schemaMemory = schemaMemory;
+        _schemaEvaluations = meter.CreateCounter<long>("terrabase.schema.keyword_evaluations", description: "Collection schema keyword evaluations started by local writes.");
         _logger = logger;
         _shutdownGrace = shutdownGrace;
         _checkpoint = checkpoint ?? (static (_, _) => { });
@@ -1348,7 +1354,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
         var tenant = new TenantContext(key.Organization, PlanTier.Hobby, key.Project, key.Database);
         SqliteDatabaseStore? store = null;
         store = new SqliteDatabaseStore(key.Database, path, Pool, Io, _pragmas, tenant, Time,
-            sequence => Notify(ChangesCommitted, new ChangeGroupCommitted(store!, sequence), key.Database), RecordCommittedWrite, _logger)
+            sequence => Notify(ChangesCommitted, new ChangeGroupCommitted(store!, sequence), key.Database), RecordCommittedWrite, _logger, _schemaMemory, _schemaEvaluations)
         {
             QueryBudget = QueryBudget,
         };

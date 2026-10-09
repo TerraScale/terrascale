@@ -163,5 +163,7 @@ without failures, gaps or unverifiable counter resets.
 
 ## Layout
 
+Optional declared JSON Schema per collection: [attach, validate, and detach](docs/collection-schemas.md).
+
 Feature-sliced: `src/TerraBase/Features/<Feature>/` holds everything
 a slice needs. See `AGENTS.md` for the full structure and rules.

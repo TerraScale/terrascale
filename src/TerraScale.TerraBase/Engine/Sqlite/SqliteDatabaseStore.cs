@@ -1,7 +1,9 @@
 using System.Collections.Frozen;
+using System.Diagnostics.Metrics;
 using System.Runtime.CompilerServices;
 using Microsoft.Data.Sqlite;
 using TerraBase.Configuration;
+using TerraBase.Features.Memory;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Engine.Sqlite;
@@ -16,10 +18,15 @@ namespace TerraBase.Engine.Sqlite;
 /// <param name="changesCommitted">Receives the last captured sequence after a write commits.</param>
 /// <param name="committed">Optional engine notification after a successful commit that changed this database.</param>
 /// <param name="logger">Receives the warning about a long wait for this database's writer.</param>
+/// <param name="schemaMemory">Shared process admission for schema evaluation, when hosted.</param>
+/// <param name="schemaEvaluations">Host-owned counter of collection schema keyword evaluations.</param>
 internal sealed partial class SqliteDatabaseStore(
     string name, string path, SqliteSessionPool pool, SqliteIoPool io, string pragmas, TenantContext? tenant, TimeProvider? time,
-    Action<long>? changesCommitted, Action? committed, ILogger? logger = null) : IDatabaseStore, IDisposable
+    Action<long>? changesCommitted, Action? committed, ILogger? logger = null, IMemoryBudget? schemaMemory = null, Counter<long>? schemaEvaluations = null) : IDatabaseStore, IDisposable
 {
+    internal IMemoryBudget? SchemaMemory { get; } = schemaMemory;
+    internal Counter<long>? SchemaEvaluations { get; } = schemaEvaluations;
+
     internal SqliteDatabaseStore(string name, string path, SqliteSessionPool pool, SqliteIoPool io, string pragmas, TimeProvider? time = null, Action? committed = null)
         : this(name, path, pool, io, pragmas, null, time, null, committed) { }
 

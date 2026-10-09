@@ -239,7 +239,9 @@ internal static class DocumentRoute
         return RequestJson.IsText(json) ? json : new Validation(RequestJson.TextRule, code);
     }
 
-    private static PayloadTooLarge TooLarge(int maxBytes) => new($"the body is at most {maxBytes / 1024 / 1024} MiB");
+    private static PayloadTooLarge TooLarge(int maxBytes) => new(maxBytes >= 1024 * 1024
+        ? $"the body is at most {maxBytes / 1024 / 1024} MiB"
+        : $"the body is at most {maxBytes / 1024} KiB");
 
     /// <summary>Reads a document body: one JSON object within the document limits.</summary>
     public static ValueTask<BodyResult> CheckDocumentAsync(HttpContext context, CancellationToken cancellationToken) =>

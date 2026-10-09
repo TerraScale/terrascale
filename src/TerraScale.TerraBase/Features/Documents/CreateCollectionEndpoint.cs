@@ -16,7 +16,7 @@ public sealed class CreateCollectionEndpoint(IDocumentService documents, ITenant
         Post(DocumentRoute.Collections);
         Name("createCollection");
         Summary("Creates a collection");
-        Description("Body {\"name\":…}; names match ^[a-z][a-z0-9_-]{0,62}$. Collections are schemaless; schema, ttl_path, unique, indexes and advisor are not supported yet and fail as unknown members. An existing name fails with 409 name_taken.");
+        Description("Body {\"name\":…}; names match ^[a-z][a-z0-9_-]{0,62}$. Collections start schemaless; attach optional JSON Schema with the collection schema endpoint. This request accepts only name. An existing name fails with 409 name_taken.");
         Tags("Collections");
         Metadata(new RequestBodyMetadata(typeof(CreateCollectionRequest), DocumentRoute.JsonMediaType));
         Produces<CollectionBody>(StatusCodes.Status201Created);

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Tenancy;
@@ -110,6 +111,12 @@ public readonly union ApplyOutcome(OperationResult, DocumentRejected);
 /// <summary>JSON document operations for the client API, over <see cref="IStorageEngine"/>, with Documents API v1 failures.</summary>
 public interface IDocumentService
 {
+    /// <summary>Reads the declared collection schema; null schema means optional validation is disabled.</summary>
+    ValueTask<CollectionSchemaResult> GetCollectionSchemaAsync(TenantContext database, string name, CancellationToken cancellationToken);
+
+    /// <summary>Attaches or replaces a declared schema, or detaches it when null; affects future local writes.</summary>
+    ValueTask<CollectionSchemaResult> SetCollectionSchemaAsync(TenantContext database, string name, JsonElement? schema, CancellationToken cancellationToken);
+
     /// <summary>Creates a collection; <c>name_taken</c> when it exists.</summary>
     ValueTask<CollectionResult> CreateCollectionAsync(TenantContext database, string name, CancellationToken cancellationToken);
 

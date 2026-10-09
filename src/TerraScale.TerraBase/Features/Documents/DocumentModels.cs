@@ -41,7 +41,7 @@ public sealed record CollectionBody(string Name, [property: JsonPropertyName("cr
 /// <param name="NextCursor">Cursor of the next page; <see langword="null"/> on the last page.</param>
 public sealed record CollectionPageBody(IReadOnlyList<CollectionBody> Items, [property: JsonPropertyName("next_cursor")] string? NextCursor);
 
-/// <summary>A collection to create. Schemas, TTL, unique constraints and indexes are not supported yet.</summary>
+/// <summary>A collection to create. Optional JSON Schema is attached through the schema endpoint.</summary>
 /// <param name="Name">Collection name: <c>^[a-z][a-z0-9_-]{0,62}$</c>.</param>
 public sealed record CreateCollectionRequest(string? Name);
 

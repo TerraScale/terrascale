@@ -357,6 +357,11 @@ public sealed class QueryCacheIntegrationTests
         public ValueTask<QueryResult> QueryAsync(
             IStorageTransaction transaction, DocumentQuery query, long? countLimit, CancellationToken cancellationToken, QueryObservation? observation = null) =>
             inner.QueryAsync(transaction, query, countLimit, cancellationToken, observation);
+        public ValueTask<CollectionSchemaResult> GetCollectionSchemaAsync(TenantContext database, string name, CancellationToken cancellationToken) =>
+            inner.GetCollectionSchemaAsync(database, name, cancellationToken);
+
+        public ValueTask<CollectionSchemaResult> SetCollectionSchemaAsync(TenantContext database, string name, JsonElement? schema, CancellationToken cancellationToken) =>
+            inner.SetCollectionSchemaAsync(database, name, schema, cancellationToken);
     }
 
 }

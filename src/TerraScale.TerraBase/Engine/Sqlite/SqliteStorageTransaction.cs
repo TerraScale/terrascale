@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using SQLitePCL;
+using TerraBase.Features.Memory;
 using TerraBase.Primitives;
 
 namespace TerraBase.Engine.Sqlite;
@@ -120,6 +121,12 @@ internal sealed partial class SqliteStorageTransaction(
             ThrowIfReadOnly();
             DocumentMutation(replicated: false);
             var body = Admit(json);
+            using var schemaReservation = Shaped ? ReserveCollectionMetadata(collection) : null;
+            if (Shaped && ReadCollectionSchema(collection) is { } schema)
+            {
+                CollectionSchemaValidation.Validate(schema, json, cancellationToken, store.SchemaMemory, store.SchemaEvaluations);
+            }
+
             Reserve(collection, id, json.Length);
             return Write(offset =>
             {
@@ -1230,7 +1237,7 @@ internal sealed partial class SqliteStorageTransaction(
             throw new InvalidDataException("replicated metadata names an invalid collection or index");
         }
 
-        var created = body is null ? null : ReadMetadata(change.Id, body, collections);
+        var created = body is null ? null : ReadMetadata(change.Id, body, collections, cancellationToken);
         if (!ApplyState(change, body))
         {
             return false;
@@ -1239,6 +1246,8 @@ internal sealed partial class SqliteStorageTransaction(
         switch (created)
         {
             case CollectionInfo collection:
+                _metadataChanged = true;
+                _collectionsChanged = true;
                 CreateCollection(collection);
                 break;
             case IndexDefinition index:
@@ -1257,14 +1266,22 @@ internal sealed partial class SqliteStorageTransaction(
     }
 
     // The documents WriteMetadata records; anything else fails the replicated group.
-    private static object ReadMetadata(string name, string body, bool collection)
+    private object ReadMetadata(string name, string body, bool collection, CancellationToken cancellationToken)
     {
         try
         {
+            using var reservation = ReserveSchemaMemory(8L * Encoding.UTF8.GetByteCount(body), MemoryLane.Replication);
             using var json = JsonDocument.Parse(body);
             var root = json.RootElement;
             if (collection)
             {
+                if (root.TryGetProperty("schema", out var schema)
+                    && (!root.TryGetProperty("schema_dialect", out var dialect) || dialect.GetString() != CollectionSchemaValidation.Dialect
+                        || CollectionSchemaValidation.Check(schema, store.SchemaMemory, MemoryLane.Replication, cancellationToken: cancellationToken) is not null))
+                {
+                    throw new InvalidDataException("replicated metadata contains an invalid collection schema");
+                }
+
                 return new CollectionInfo(name, root.GetProperty("created_at").GetInt64());
             }
 

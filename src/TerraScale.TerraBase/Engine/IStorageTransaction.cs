@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json;
 
 namespace TerraBase.Engine;
 
@@ -93,8 +94,8 @@ public sealed record DocumentChange(string Collection, string Id, long Version, 
 
 /// <summary>Document and collection operations inside one engine transaction.</summary>
 /// <remarks>
-/// Local document mutation calls (<see cref="PutAsync"/>, <see cref="DeleteAsync"/>, <see cref="TombstoneAsync"/>
-/// and <see cref="DropCollectionAsync"/>) cannot share a transaction with <see cref="ApplyAsync"/>, in either order,
+/// Local document mutation calls (<see cref="PutAsync"/>, <see cref="DeleteAsync"/>, <see cref="TombstoneAsync"/>,
+/// <see cref="SetCollectionSchemaAsync"/> and <see cref="DropCollectionAsync"/>) cannot share a transaction with <see cref="ApplyAsync"/>, in either order,
 /// even when a call changes nothing. Mixing them throws and makes the transaction rollback-only.
 /// Collection creation and applied-frontier updates remain available to replicated transactions.
 /// </remarks>
@@ -193,6 +194,15 @@ public interface IStorageTransaction : IAsyncDisposable
 
     /// <summary>Reads a collection, or <see langword="null"/> when it does not exist.</summary>
     ValueTask<CollectionInfo?> GetCollectionAsync(string name, CancellationToken cancellationToken);
+
+    /// <summary>Reads a collection's attached schema, or <see langword="null"/> when none is attached or the collection is absent.</summary>
+    ValueTask<JsonElement?> GetCollectionSchemaAsync(string name, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Attaches a schema of at most 64 KiB of UTF-8 JSON, or detaches it with <see langword="null"/>;
+    /// <see langword="false"/> when the collection is absent. Preserves collection creation time and generation.
+    /// </summary>
+    ValueTask<bool> SetCollectionSchemaAsync(string name, JsonElement? schema, CancellationToken cancellationToken);
 
     /// <summary>Lists at most <paramref name="limit"/> collections with names after <paramref name="afterName"/>, in name order.</summary>
     ValueTask<(IReadOnlyList<CollectionInfo> Collections, bool HasMore)> ListCollectionsAsync(

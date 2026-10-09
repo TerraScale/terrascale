@@ -2,6 +2,7 @@ using System.Diagnostics.Metrics;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using TerraBase.Configuration;
 using TerraBase.Engine.Sqlite;
+using TerraBase.Features.Memory;
 using TerraBase.Hosting;
 
 namespace TerraBase.Engine;
@@ -26,6 +27,7 @@ public static class EngineExtensions
         services.TryAddSingleton<DatabaseLifecycleCheckpoint>(_ => static (_, _) => { });
         // The engine records metrics; AddMetrics is idempotent and the host adds it too.
         services.AddMetrics();
+        services.AddTerraBaseMemory(options);
         services.AddLogging();
         // A factory registration lets the container own, and dispose, the engine.
         services.AddSingleton(provider =>
@@ -38,7 +40,8 @@ public static class EngineExtensions
                 checkpoint: provider.GetRequiredService<DatabaseLifecycleCheckpoint>(),
                 time: provider.GetKeyedService<TimeProvider>(QueryDeadlineClock), queryBudget: configured.QueryBudget,
                 systemReplica: configured.CatalogPrimary is not null,
-                walTaps: configured.Backup is not null, backupTime: provider.GetService<TimeProvider>());
+                walTaps: configured.Backup is not null, backupTime: provider.GetService<TimeProvider>(),
+                schemaMemory: provider.GetRequiredService<IMemoryBudget>());
         });
         services.AddSingleton<IWalBackup>(provider => provider.GetRequiredService<SqliteStorageEngine>());
         services.AddSingleton(provider =>

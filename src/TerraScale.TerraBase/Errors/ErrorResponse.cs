@@ -13,7 +13,7 @@ internal static class ErrorResponse
     {
         NotFound e => new Response(StatusCodes.Status404NotFound, e.Code, e.Message, op),
         Conflict e => new Response(StatusCodes.Status409Conflict, e.Code, e.Message, op),
-        Validation e => new Response(StatusCodes.Status400BadRequest, e.Code, e.Message, op),
+        Validation e => new Response(StatusCodes.Status400BadRequest, e.Code, e.Message, op, e.Details),
         PreconditionFailed e => new Response(StatusCodes.Status412PreconditionFailed, e.Code, e.Message, op),
         Unauthorized e => new Response(StatusCodes.Status401Unauthorized, e.Code, e.Message, op),
         Forbidden e => new Response(StatusCodes.Status403Forbidden, e.Code, e.Message, op),
@@ -25,12 +25,12 @@ internal static class ErrorResponse
         RequestTimeout e => new Response(StatusCodes.Status408RequestTimeout, e.Code, e.Message, op),
     };
 
-    private sealed class Response(int status, string code, string? message, int? op) : IResult
+    private sealed class Response(int status, string code, string? message, int? op, IReadOnlyList<ValidationDetail>? details = null) : IResult
     {
         public Task ExecuteAsync(HttpContext httpContext)
         {
             httpContext.Response.Headers.CacheControl = "no-store";
-            return BadRequests.WriteAsync(httpContext, status, code, message, op);
+            return BadRequests.WriteAsync(httpContext, status, code, message, op, details);
         }
     }
 }

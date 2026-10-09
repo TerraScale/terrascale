@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Engine;
@@ -330,6 +331,12 @@ internal sealed class StampingStorageEngine(IStorageEngine inner, ISystemReplica
 
         public ValueTask<CollectionInfo?> GetCollectionAsync(string name, CancellationToken cancellationToken) =>
             RunAsync(() => inner.GetCollectionAsync(name, cancellationToken), cancellationToken);
+
+        public ValueTask<JsonElement?> GetCollectionSchemaAsync(string name, CancellationToken cancellationToken) =>
+            RunAsync(() => inner.GetCollectionSchemaAsync(name, cancellationToken), cancellationToken);
+
+        public ValueTask<bool> SetCollectionSchemaAsync(string name, JsonElement? schema, CancellationToken cancellationToken) =>
+            WriteCollectionAsync(() => inner.SetCollectionSchemaAsync(name, schema, cancellationToken), cancellationToken);
 
         public ValueTask<(IReadOnlyList<CollectionInfo> Collections, bool HasMore)> ListCollectionsAsync(
             string? afterName, int limit, CancellationToken cancellationToken) =>

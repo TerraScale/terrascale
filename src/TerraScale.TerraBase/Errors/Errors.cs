@@ -17,7 +17,13 @@ public sealed record Conflict(string Message, string Code = "conflict");
 /// <summary>The request is malformed or breaks an input rule.</summary>
 /// <param name="Message">The rule that failed.</param>
 /// <param name="Code">Stable machine-readable code.</param>
-public sealed record Validation(string Message, string Code = "invalid_request");
+/// <param name="Details">Bounded JSON Pointer paths and failed schema keywords, when applicable.</param>
+public sealed record Validation(string Message, string Code = "invalid_request", IReadOnlyList<ValidationDetail>? Details = null);
+
+/// <summary>A schema rule that failed, without the document's values.</summary>
+/// <param name="Path">JSON Pointer to the failing document location; empty for the root.</param>
+/// <param name="Keyword">JSON Schema keyword that failed.</param>
+public sealed record ValidationDetail(string Path, string Keyword);
 
 /// <summary>A precondition of the request no longer holds, such as a stale version: re-read and retry.</summary>
 /// <param name="Message">The rule that failed.</param>

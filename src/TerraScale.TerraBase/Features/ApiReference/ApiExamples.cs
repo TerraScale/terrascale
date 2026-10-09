@@ -10,6 +10,7 @@ internal static class ApiExamples
     private const string Database = """
         {"id":"00000000-0000-4000-8000-000000000001","projectId":"00000000-0000-4000-8000-000000000002","name":"main","branchedFrom":null,"createdAt":"2026-10-07T12:00:00Z","region":"gru-1","homeRegion":"gru-1","replicaRegions":[]}
         """;
+    private const string DeclaredSchema = """{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","required":["name"],"properties":{"name":{"type":"string"}}}""";
     private const string Collection = """{"name":"people","created_at":"1791374400000"}""";
     private const string Document = """{"id":"00000000-0000-7000-8000-000000000003","version":"opaque-version-from-server","state":"value","document":{"name":"Ada"}}""";
     private const string Write = """{"id":"00000000-0000-7000-8000-000000000003","version":"opaque-version-from-server","offset":"1","durability":"local_durable"}""";
@@ -82,6 +83,7 @@ internal static class ApiExamples
         "setBackupPolicy" => """{"fullBackupCron":"0 2 * * *","retentionDays":7,"disabled":false}""",
         "createIndex" => """{"collection":"people","fields":["name"],"name":"people_name"}""",
         "createCollection" => """{"name":"people"}""",
+        "putDeclaredCollectionSchema" => DeclaredSchema,
         "createDocument" or "putDocument" => """{"name":"Ada"}""",
         "patchDocument" when mediaType == "application/vnd.terrabase.ops+json" => """{"ops":[{"op":"set","path":"/name","value":"Ada"}]}""",
         "patchDocument" => """{"name":"Ada"}""",
@@ -116,6 +118,8 @@ internal static class ApiExamples
         "getDatabaseUsage" => Usage.Replace("PERIOD", Period, StringComparison.Ordinal).Replace("SERIES", Series, StringComparison.Ordinal),
         "getProjectUsage" => "{\"projectId\":\"00000000-0000-4000-8000-000000000002\",\"databases\":0,\"storageBytes\":0,\"logicalBytes\":0,\"documents\":0,\"reads\":0,\"writes\":0,\"period\":" + Period + ",\"series\":" + Series + ",\"items\":[]}",
         "createCollection" or "getCollection" or "dropCollection" => Collection,
+        "getDeclaredCollectionSchema" or "putDeclaredCollectionSchema" => "{\"schema\":" + DeclaredSchema + ",\"dialect\":\"https://json-schema.org/draft/2020-12/schema\"}",
+        "deleteDeclaredCollectionSchema" => """{"schema":null}""",
         "listCollections" => DataPage(Collection),
         "getDocument" => Document,
         "createDocument" or "putDocument" or "patchDocument" or "deleteDocument" => Write,
@@ -137,10 +141,12 @@ internal static class ApiExamples
         "400" when id == "queryDocuments" => "invalid_request, invalid_query, invalid_cursor, sort_requires_index",
         "400" when id is "getDatabaseSchema" or "getCollectionSchema" or "runSql" or "checkSql" or "explainSql" or "getDatabaseUsage" or "getProjectUsage" =>
             "invalid_request, invalid_query",
-        "400" when id == "patchDocument" => "invalid_request, invalid_patch",
+        "400" when id == "putDeclaredCollectionSchema" => "invalid_request, invalid_schema",
+        "400" when id is "createDocument" or "putDocument" => "invalid_request, schema_validation_failed",
+        "400" when id == "patchDocument" => "invalid_request, invalid_patch, schema_validation_failed",
         "400" when id == "listCollections" => "invalid_request, invalid_cursor",
         "400" when id == "listDocuments" => "invalid_request, invalid_cursor, invalid_query",
-        "400" when id == "runTransaction" => "invalid_request, invalid_patch, invalid_query, assert_requires_index",
+        "400" when id == "runTransaction" => "invalid_request, invalid_patch, invalid_query, assert_requires_index, schema_validation_failed",
         "400" when id is "getShape" or "subscribeCollection" => "invalid_request, invalid_query",
         "400" => "invalid_request",
         "401" => "invalid_key",
@@ -148,6 +154,7 @@ internal static class ApiExamples
         "403" => "forbidden_scope",
         "404" when id is "createCollection" or "listCollections" => "unknown_database",
         "404" when id is "getDocument" or "patchDocument" or "deleteDocument" or "runTransaction" => "unknown_database, unknown_collection, not_found",
+        "404" when id is "getDeclaredCollectionSchema" or "putDeclaredCollectionSchema" or "deleteDeclaredCollectionSchema" => "unknown_database, unknown_collection",
         "404" when id is "getCollection" or "dropCollection" or "getShape" or "subscribeCollection" or "listDocuments" or "createDocument" or "putDocument" or "queryDocuments" => "unknown_database, unknown_collection",
         "404" when id is "createDatabase" or "getDatabase" or "listDatabases" or "updateDatabase" or "deleteDatabase" or "branchDatabase" or "getDatabaseUsage" or "getProjectUsage" => "unknown_database, unknown_route",
         "404" => "unknown_database, unknown_route, not_found",

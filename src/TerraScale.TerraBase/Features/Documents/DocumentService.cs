@@ -1,3 +1,4 @@
+using System.Diagnostics.Metrics;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using TerraBase.Engine;
@@ -16,12 +17,14 @@ namespace TerraBase.Features.Documents;
 /// A committed client write answers only after <see cref="IReplicationWait"/>, outside its transaction: the database's
 /// writer lock must not wait on the network, and a peer applying this member's groups needs it.
 /// </remarks>
-internal sealed class DocumentService(IStorageEngine engine, TimeProvider time, DocumentCache cache, IUsageMeter usage, IReplicationWait replication,
-    IQueryShapeTracker shapes, IMemoryBudget memory)
+internal sealed partial class DocumentService(IStorageEngine engine, TimeProvider time, DocumentCache cache, IUsageMeter usage, IReplicationWait replication,
+    IQueryShapeTracker shapes, IMemoryBudget memory, IMeterFactory meters)
     : IDocumentService, ISystemDocumentReader
 {
     // assert_count examines at most this many documents.
     private const long MaxAssertCount = 10_000;
+
+    private readonly Counter<long> _schemaRejections = meters.Create(Telemetry.MeterName).CreateCounter<long>("terrabase.schema.validation_failures", "{write}");
 
     private static readonly NotFound UnknownCollection = new("the collection does not exist", "unknown_collection");
     private static readonly NotFound DocumentMissing = new("the document does not exist", "not_found");
@@ -299,6 +302,11 @@ internal sealed class DocumentService(IStorageEngine engine, TimeProvider time, 
         catch (DocumentValidationException error)
         {
             return new DocumentRejected(error.TooLarge ? new PayloadTooLarge(error.Message) : new Validation(error.Message));
+        }
+        catch (CollectionSchemaException error)
+        {
+            _schemaRejections.Add(1);
+            return new DocumentRejected(new Validation("the document does not satisfy the collection schema", "schema_validation_failed", error.Details));
         }
         catch (StorageWriteLimitException)
         {

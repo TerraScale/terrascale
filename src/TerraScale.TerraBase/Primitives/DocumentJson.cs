@@ -71,17 +71,17 @@ internal static class DocumentJson
         }
     }
 
-    public static void ValidateValue(JsonElement value)
+    public static void ValidateValue(JsonElement value, int maxValues = 4096)
     {
         var nodes = 0;
-        Validate(value, 1, ref nodes);
+        Validate(value, 1, ref nodes, maxValues);
     }
 
-    private static void Validate(JsonElement value, int depth, ref int nodes)
+    private static void Validate(JsonElement value, int depth, ref int nodes, int maxValues = 4096)
     {
-        if (++nodes > 4096)
+        if (++nodes > maxValues)
         {
-            throw new DocumentValidationException("a JSON value holds at most 4096 values");
+            throw new DocumentValidationException($"a JSON value holds at most {maxValues} values");
         }
 
         switch (value.ValueKind)
@@ -92,14 +92,14 @@ internal static class DocumentJson
                 foreach (var member in value.EnumerateObject())
                 {
                     _ = member.Name;
-                    Validate(member.Value, depth + 1, ref nodes);
+                    Validate(member.Value, depth + 1, ref nodes, maxValues);
                 }
 
                 break;
             case JsonValueKind.Array:
                 foreach (var item in value.EnumerateArray())
                 {
-                    Validate(item, depth + 1, ref nodes);
+                    Validate(item, depth + 1, ref nodes, maxValues);
                 }
 
                 break;

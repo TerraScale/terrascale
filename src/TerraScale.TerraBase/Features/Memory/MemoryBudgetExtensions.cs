@@ -13,7 +13,9 @@ public static class MemoryBudgetExtensions
     {
         ArgumentNullException.ThrowIfNull(options);
         services.TryAddSingleton(options);
-        return services.AddMetrics().AddSingleton<IMemoryBudget>(provider =>
+        services.AddMetrics();
+        services.TryAddSingleton<IMemoryBudget>(provider =>
             new MemoryBudget(provider.GetRequiredService<TerraBaseOptions>().MemoryBudget, provider.GetRequiredService<IMeterFactory>().Create(Telemetry.MeterName)));
+        return services;
     }
 }
