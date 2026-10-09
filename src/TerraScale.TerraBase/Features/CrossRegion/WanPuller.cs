@@ -1,6 +1,7 @@
 using Google.Protobuf;
 using TerraBase.Configuration;
 using TerraBase.Engine;
+using TerraBase.Errors;
 using TerraBase.Features.CrossRegion.V1;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Replication;
@@ -343,6 +344,7 @@ internal sealed partial class WanPuller(
             // Only the origin's explicit Ahead answer or a journal conflict is divergence; a head snapshot may be stale.
             var untracked = false;
             var failed = false;
+            Conflict? diverged = null;
             // Bounded by this round's heads and retries, so every replicated database reports health each round.
             _ = observations.TryAdd(database, (0, false, false));
             // Any origin found behind starts the backlog, not only the first member's advertisement.
@@ -358,30 +360,42 @@ internal sealed partial class WanPuller(
                     var traffic = applied == 0 && head.Sequence > 1
                         || retrying.Contains(RetryKey(member, head))
                         ? ReplicationTrafficKind.Handoff : ReplicationTrafficKind.Delta;
-                    (var pulled, gone) = await PullAsync(region, cell, member, database, store, origin, applied, (long)head.Sequence, traffic, cancellationToken).ConfigureAwait(false);
-                    progressed |= pulled > applied;
-                    applied = pulled;
+                    switch (await PullAsync(region, cell, member, database, store, origin, applied, (long)head.Sequence, traffic, cancellationToken).ConfigureAwait(false))
+                    {
+                        case Pulled pulled:
+                            progressed |= pulled.Applied > applied;
+                            (applied, gone) = (pulled.Applied, pulled.Gone);
+                            break;
+                        case Conflict conflict:
+                            diverged = conflict;
+                            break;
+                    }
                 }
                 catch (Exception error) when (!cancellationToken.IsCancellationRequested)
                 {
                     failed = true;
-                    // A conflict past the bounded set is still reported for this round, and logged.
-                    if (error is OriginAheadException or JournalConflictException && !Retain(region, database, origin, diverge: true))
-                    {
-                        untracked = true;
-                        LogDivergenceUntracked(logger, region);
-                    }
-
-                    metrics.Failed(region, error switch
-                    {
-                        OriginAheadException => "ahead",
-                        InvalidDataException or JournalConflictException or DocumentValidationException => "apply",
-                        _ => "pull",
-                    });
+                    metrics.Failed(region, error is InvalidDataException or DocumentValidationException ? "apply" : "pull");
                     if (failures++ == 0 && !quiet)
                     {
                         LogPullFailed(logger, error, region);
                     }
+                }
+            }
+
+            if (diverged is not null)
+            {
+                failed = true;
+                // A conflict past the bounded set is still reported for this round, and logged.
+                if (!Retain(region, database, origin, diverge: true))
+                {
+                    untracked = true;
+                    LogDivergenceUntracked(logger, region);
+                }
+
+                metrics.Failed(region, diverged == OriginAhead ? "ahead" : "apply");
+                if (failures++ == 0 && !quiet)
+                {
+                    LogPullDiverged(logger, region, diverged.Message);
                 }
             }
 
@@ -922,8 +936,8 @@ internal sealed partial class WanPuller(
     private sealed record HeadsPage(List<Head> Heads, HashSet<string> Members, bool Complete, ByteString? After, bool Invalid = false);
 
     // Pulls an origin from the member that holds it, up to the head it reported or the round's budget; returns the applied
-    // prefix, and whether the member no longer holds that origin.
-    private async Task<(long Applied, bool Gone)> PullAsync(
+    // prefix and whether the member no longer holds that origin, or the conflict when the journals diverged.
+    private async Task<PullOutcome> PullAsync(
         string region, string cell, string member, TenantContext database, IDatabaseStore store, ReadOnlyMemory<byte> origin, long applied, long head,
         ReplicationTrafficKind traffic, CancellationToken cancellationToken)
     {
@@ -958,9 +972,9 @@ internal sealed partial class WanPuller(
                     break;
                 case PullReply.Types.Status.UnknownOrigin or PullReply.Types.Status.NotPlaced:
                     // The member no longer holds the origin; the next round's heads tell where it is, if anywhere.
-                    return (applied, true);
+                    return new Pulled(applied, true);
                 case PullReply.Types.Status.Ahead:
-                    throw new OriginAheadException();
+                    return OriginAhead;
                 default:
                     throw new IOException($"the member answered the pull with {reply.Status} and no groups");
             }
@@ -993,8 +1007,19 @@ internal sealed partial class WanPuller(
                 }
 
                 var changes = ReplicationProtocol.Read(new SyncRequest { CommittedGroup = batch }, database, origin, ReplicationProtocol.Limits);
-                var (sequence, _, newlyApplied) = await journal.AppendAsync(
+                var append = await journal.AppendAsync(
                     store, origin, (long)batch.EventId.Sequence, changes, batch.PreviousJournalDigest.Memory, batch.JournalDigest.Memory, cancellationToken).ConfigureAwait(false);
+                if (append is Conflict conflict)
+                {
+                    return conflict;
+                }
+
+                var sequence = append switch
+                {
+                    JournalApplied group => group.Sequence,
+                    JournalUnchanged unchanged => unchanged.Sequence,
+                    Conflict => applied,
+                };
                 lock (_gate)
                 {
                     _applied[(store, Convert.ToHexString(origin.Span))] = sequence;
@@ -1006,7 +1031,7 @@ internal sealed partial class WanPuller(
                 }
 
                 applied = sequence;
-                if (newlyApplied)
+                if (append is JournalApplied)
                 {
                     // Its journal proof extended the applied journal: whatever this origin diverged on is resolved.
                     Converged(region, database, origin, sequence);
@@ -1016,7 +1041,7 @@ internal sealed partial class WanPuller(
             }
         }
 
-        return (applied, false);
+        return new Pulled(applied, false);
     }
 
     // The store of a database this region serves, opened (and created on a member that has no file yet) the way the in-region
@@ -1139,7 +1164,13 @@ internal sealed partial class WanPuller(
         return applied;
     }
 
-    private sealed class OriginAheadException() : Exception("this member applied change groups the origin never committed; restore recovery is required");
+    private static readonly Conflict OriginAhead = new("this member applied change groups the origin never committed; restore recovery is required", "origin_ahead");
+
+    // The applied prefix after a pull, and whether the member no longer holds the origin.
+    private sealed record Pulled(long Applied, bool Gone);
+
+    // A pull ends with its applied prefix or, when the journals diverged, the conflict.
+    private readonly union PullOutcome(Pulled, Conflict);
 
     private static string Name(TenantContext database) => $"{database.OrganizationId}/{database.ProjectId}/{database.DatabaseId}";
 
@@ -1160,4 +1191,7 @@ internal sealed partial class WanPuller(
 
     [LoggerMessage(LogLevel.Warning, "Pulling an origin from region {Region} failed; retrying next round")]
     private static partial void LogPullFailed(ILogger logger, Exception error, string region);
+
+    [LoggerMessage(LogLevel.Warning, "An origin from region {Region} diverged: {Reason}; retrying next round")]
+    private static partial void LogPullDiverged(ILogger logger, string region, string reason);
 }

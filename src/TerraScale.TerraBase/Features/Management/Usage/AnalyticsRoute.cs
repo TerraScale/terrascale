@@ -1,4 +1,3 @@
-using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.UserAuth;
 
@@ -32,26 +31,20 @@ internal static class AnalyticsRoute
         database = database is "" ? null : database;
         var region = context.Request.Query["region"].ToString();
         region = region is "" ? null : region;
-        using var deadline = new CancellationTokenSource(UsageService.Deadline);
-        using var bounded = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
-        try
-        {
-            if (replication)
+        return replication
+            ? await analytics.ReplicationAsync(access, window, database, region, context.Response.RegisterForDispose, cancellationToken).ConfigureAwait(false) switch
             {
-                return await analytics.ReplicationAsync(access, window, database, region, context.Response.RegisterForDispose, bounded.Token).ConfigureAwait(false) is { } result
-                    ? TypedResults.Ok(result) : ErrorResponse.From(new NotFound());
+                ProjectReplication result => TypedResults.Ok(result),
+                NotFound error => ErrorResponse.From(error),
+                Validation error => ErrorResponse.From(error),
+                Unavailable error => ErrorResponse.From(error),
             }
-
-            return await analytics.AnalyticsAsync(access, window, database, region, context.Response.RegisterForDispose, bounded.Token).ConfigureAwait(false) is { } series
-                ? TypedResults.Ok(series) : ErrorResponse.From(new NotFound());
-        }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-        {
-            return ErrorResponse.From(new Unavailable("analytics exceeded its execution budget", "capacity"));
-        }
-        catch (QueryCapacityException)
-        {
-            return ErrorResponse.From(new Validation("query too expensive", "invalid_query"));
-        }
+            : await analytics.AnalyticsAsync(access, window, database, region, context.Response.RegisterForDispose, cancellationToken).ConfigureAwait(false) switch
+            {
+                ProjectAnalytics series => TypedResults.Ok(series),
+                NotFound error => ErrorResponse.From(error),
+                Validation error => ErrorResponse.From(error),
+                Unavailable error => ErrorResponse.From(error),
+            };
     }
 }

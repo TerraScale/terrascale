@@ -1,5 +1,6 @@
 using TerraBase.Configuration;
 using TerraBase.Engine;
+using TerraBase.Errors;
 using TerraBase.Features.Memory;
 using TerraBase.Features.UserAuth;
 
@@ -13,7 +14,40 @@ internal sealed class UsageAnalytics(IManagementService management, UsageMeter m
     private static readonly TimeSpan Fresh = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan Forget = TimeSpan.FromMinutes(10);
 
-    public async ValueTask<ProjectAnalytics?> AnalyticsAsync(
+    public ValueTask<AnalyticsRead<ProjectAnalytics>> AnalyticsAsync(
+        ProjectAccess access, AnalyticsWindow window, string? database, string? region, Action<IDisposable> retain, CancellationToken cancellationToken) =>
+        BoundedAsync(bounded => ReadAnalyticsAsync(access, window, database, region, retain, bounded), cancellationToken);
+
+    public ValueTask<AnalyticsRead<ProjectReplication>> ReplicationAsync(
+        ProjectAccess access, AnalyticsWindow window, string? database, string? region, Action<IDisposable> retain, CancellationToken cancellationToken) =>
+        BoundedAsync(bounded => ReadReplicationAsync(access, window, database, region, retain, bounded), cancellationToken);
+
+    // Runs a read within the usage deadline; the read's capacity and deadline failures become cases.
+    private static async ValueTask<AnalyticsRead<T>> BoundedAsync<T>(Func<CancellationToken, ValueTask<T?>> read, CancellationToken cancellationToken)
+        where T : class
+    {
+        using var deadline = new CancellationTokenSource(UsageService.Deadline);
+        using var bounded = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
+        try
+        {
+            if (await read(bounded.Token).ConfigureAwait(false) is { } result)
+            {
+                return result;
+            }
+
+            return new NotFound();
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return new Unavailable("analytics exceeded its execution budget", "capacity");
+        }
+        catch (QueryCapacityException)
+        {
+            return new Validation("query too expensive", "invalid_query");
+        }
+    }
+
+    private async ValueTask<ProjectAnalytics?> ReadAnalyticsAsync(
         ProjectAccess access, AnalyticsWindow window, string? database, string? region, Action<IDisposable> retain, CancellationToken cancellationToken)
     {
         var started = time.GetTimestamp();
@@ -52,7 +86,7 @@ internal sealed class UsageAnalytics(IManagementService management, UsageMeter m
         return loaded.HandOff(retain, new ProjectAnalytics(access.ProjectId, window.Range, window.Usage.From, window.Usage.To, window.Usage.Granularity.Minutes * 60, items));
     }
 
-    public async ValueTask<ProjectReplication?> ReplicationAsync(
+    private async ValueTask<ProjectReplication?> ReadReplicationAsync(
         ProjectAccess access, AnalyticsWindow window, string? database, string? region, Action<IDisposable> retain, CancellationToken cancellationToken)
     {
         var started = time.GetTimestamp();
@@ -239,7 +273,7 @@ internal sealed class UsageAnalytics(IManagementService management, UsageMeter m
     {
         if (time.GetElapsedTime(started) >= UsageService.Deadline)
         {
-            // The route answers this like its own deadline: a transient 503, not an invalid query.
+            // Answered like the token deadline: a transient Unavailable, not an invalid query.
             throw new OperationCanceledException("analytics exceeded its execution budget");
         }
     }

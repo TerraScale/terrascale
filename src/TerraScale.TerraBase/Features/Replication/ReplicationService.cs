@@ -2,6 +2,7 @@ using Google.Protobuf;
 using Grpc.Core;
 using TerraBase.Configuration;
 using TerraBase.Engine;
+using TerraBase.Errors;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Replication.V1;
 using TerraBase.Hosting;
@@ -217,24 +218,34 @@ internal sealed partial class ReplicationService(
 
         var sequence = (long)batch.EventId.Sequence;
         // The persisted prefix is consulted for duplicates too; stream-local state is no durability proof.
-        (long Sequence, ReadOnlyMemory<byte> Digest, bool Applied) prefix;
+        JournalAppend prefix;
         try
         {
             prefix = await journal.AppendAsync(store, origin, sequence, changes, batch.PreviousJournalDigest.Memory, batch.JournalDigest.Memory, cancellationToken).ConfigureAwait(false);
         }
-        catch (Exception error) when (error is InvalidDataException or JournalConflictException or DocumentValidationException)
+        catch (Exception error) when (error is InvalidDataException or DocumentValidationException)
         {
             metrics.Received("rejected");
             return (applied, digest, StreamErrorCode.StreamErrorInvalidBatch);
         }
 
-        if (prefix.Applied)
+        if (prefix is JournalApplied)
         {
             usage.RecordReplicatedOperations(store.Tenant!, peerRegion, changes.Count);
         }
 
-        metrics.Received(prefix.Applied ? "applied" : prefix.Sequence >= sequence ? "duplicate" : "rejected");
-        return (prefix.Sequence, prefix.Digest, StreamErrorCode.StreamErrorUnspecified);
+        metrics.Received(prefix switch
+        {
+            JournalApplied => "applied",
+            JournalUnchanged unchanged => unchanged.Sequence >= sequence ? "duplicate" : "rejected",
+            Conflict => "rejected",
+        });
+        return prefix switch
+        {
+            JournalApplied group => (group.Sequence, group.Digest, StreamErrorCode.StreamErrorUnspecified),
+            JournalUnchanged unchanged => (unchanged.Sequence, unchanged.Digest, StreamErrorCode.StreamErrorUnspecified),
+            Conflict => (applied, digest, StreamErrorCode.StreamErrorInvalidBatch),
+        };
     }
 
     private static SyncResponse Welcome(PeerIdentity member, ReadOnlyMemory<byte> origin, long applied, ReadOnlyMemory<byte> digest, TransferLimits limits)

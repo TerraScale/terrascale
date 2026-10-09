@@ -1,4 +1,5 @@
 using TerraBase.Engine;
+using TerraBase.Errors;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Replication;
@@ -20,9 +21,10 @@ public interface IReplicationJournal
     /// on the pinned <paramref name="store"/>, and returns the applied prefix afterwards. A retired store
     /// fails instead of reopening the database by tenant identity. A group at or below the
     /// prefix is a duplicate and changes nothing; a prefix below <paramref name="sequence"/> means a gap.
-    /// Applied is true only when this call committed a new group, including with concurrent streams.
+    /// Only a call that committed a new group returns <see cref="JournalApplied"/>, also with concurrent streams.
+    /// A group whose identity conflicts with the applied prefix is a <see cref="Conflict"/>: the journals diverged.
     /// </summary>
-    ValueTask<(long Sequence, ReadOnlyMemory<byte> Digest, bool Applied)> AppendAsync(
+    ValueTask<JournalAppend> AppendAsync(
         IDatabaseStore store, ReadOnlyMemory<byte> origin, long sequence, IReadOnlyList<DocumentChange> changes,
         ReadOnlyMemory<byte> previousDigest, ReadOnlyMemory<byte> digest, CancellationToken cancellationToken);
 }
@@ -41,7 +43,7 @@ internal sealed class EngineReplicationJournal(IStorageEngine engine) : IReplica
         }
     }
 
-    public async ValueTask<(long Sequence, ReadOnlyMemory<byte> Digest, bool Applied)> AppendAsync(
+    public async ValueTask<JournalAppend> AppendAsync(
         IDatabaseStore store, ReadOnlyMemory<byte> origin, long sequence, IReadOnlyList<DocumentChange> changes,
         ReadOnlyMemory<byte> previousDigest, ReadOnlyMemory<byte> digest, CancellationToken cancellationToken)
     {
@@ -65,15 +67,15 @@ internal sealed class EngineReplicationJournal(IStorageEngine engine) : IReplica
             {
                 if (sequence == appliedSequence && !digest.Span.SequenceEqual(appliedDigest.Span))
                 {
-                    throw new JournalConflictException("the duplicate group has a different journal identity");
+                    return JournalConflicts.Identity;
                 }
 
-                return (appliedSequence, appliedDigest, false);
+                return new JournalUnchanged(appliedSequence, appliedDigest);
             }
 
             if (!previousDigest.Span.SequenceEqual(appliedDigest.Span))
             {
-                throw new JournalConflictException("the group does not extend the applied journal prefix");
+                return JournalConflicts.Prefix;
             }
 
             // Validate the complete group against one starting head before any document, collection,
@@ -92,7 +94,7 @@ internal sealed class EngineReplicationJournal(IStorageEngine engine) : IReplica
             await transaction.SetAppliedFrontierAsync(origin, sequence, digest, cancellationToken).ConfigureAwait(false);
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
             ObjectDisposedException.ThrowIf(store.IsClosed, store);
-            return (sequence, digest, true);
+            return new JournalApplied(sequence, digest);
         }
     }
 
@@ -109,5 +111,17 @@ internal sealed class EngineReplicationJournal(IStorageEngine engine) : IReplica
     }
 }
 
-/// <summary>A group conflicts with the applied journal prefix: the journals diverged, unlike a malformed or oversized message.</summary>
-internal sealed class JournalConflictException(string message) : Exception(message);
+/// <summary>The applied prefix after this call committed a new group.</summary>
+public sealed record JournalApplied(long Sequence, ReadOnlyMemory<byte> Digest);
+
+/// <summary>The unchanged applied prefix: the group was a duplicate, or it left a gap.</summary>
+public sealed record JournalUnchanged(long Sequence, ReadOnlyMemory<byte> Digest);
+
+/// <summary>Whether a group committed, left the prefix unchanged, or conflicts with it, unlike a malformed or oversized message.</summary>
+public readonly union JournalAppend(JournalApplied, JournalUnchanged, Conflict);
+
+internal static class JournalConflicts
+{
+    public static readonly Conflict Identity = new("the duplicate group has a different journal identity", "journal_conflict");
+    public static readonly Conflict Prefix = new("the group does not extend the applied journal prefix", "journal_conflict");
+}
