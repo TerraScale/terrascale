@@ -39,9 +39,11 @@ public sealed class ProductionReplicationCheckTests
     private static readonly TimeSpan TestDeadline = TimeSpan.FromSeconds(105);
 
     // A checker run has three convergence windows of --max-lag-seconds each (documents, listings, host lag), plus
-    // interpreter startup, canary writes and host commands; past this guard a run counts as hung.
-    private const int MaxLagSeconds = 10;
-    private static readonly TimeSpan CheckerRun = TimeSpan.FromSeconds(60);
+    // interpreter startup, canary writes and host commands; past this guard a run counts as hung. The windows use the
+    // checker's own default: with up to 17 canaries replicating at once on a runner whose disk is shared, the follower
+    // has needed more than 10 s (CI run 821; locally with every fsync delayed by 175 ms).
+    private const int MaxLagSeconds = 15;
+    private static readonly TimeSpan CheckerRun = TimeSpan.FromSeconds(75);
 
     // These need both members converged, and durable lag is server-wide, so each scenario owns its member pair.
     [Test]
@@ -308,19 +310,21 @@ public sealed class ProductionReplicationCheckTests
                     and values.get("terrabase_catalog_follower_connected", 1) == 1 and values.get("terrabase_catalog_follower_lag", 0) == 0)
 
 
-        # One real scrape within 5 s. Reported-fault cases stop the checker at its first sample, so there a member's real
-        # baseline is read again within the same 5 s until it is converged; the last real sample is returned either way.
+        # One real scrape within 15 s. Reported-fault cases stop the checker at its first sample, so there a member's real
+        # baseline is read again within the same 15 s until it is converged; the last real sample is returned either way.
+        # The host script's curl allows 5 s, but here up to 17 checkers sample both members at once on a shared runner, and
+        # a healthy member's scrape has taken longer (CI run 825). The checker allows a host command 120 s.
         def scrape(url):
             baseline = "reported-faults" in os.environ["CHECKER_FAULT"]
             started = time.monotonic()
             while True:
                 try:
-                    with urllib.request.urlopen(url, timeout=max(0.1, 5 - (time.monotonic() - started))) as response:
+                    with urllib.request.urlopen(url, timeout=max(0.1, 15 - (time.monotonic() - started))) as response:
                         lines = response.read(1048576).decode().splitlines()
                 except Exception as error:
                     # The checker reports only the last 200 characters of stderr: this message is the whole of it.
                     sys.exit(f"{type(error).__name__}: {error} reading {url} after {time.monotonic() - started:.1f}s")
-                if not baseline or converged(lines) or time.monotonic() - started >= 5:
+                if not baseline or converged(lines) or time.monotonic() - started >= 15:
                     return lines
                 time.sleep(0.1)
         """;
