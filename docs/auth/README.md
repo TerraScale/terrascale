@@ -66,9 +66,9 @@ See [the budget table](docs/csharp-port.md#limits). Production forwarding remain
 disabled until its actual socket peers and rightmost client-IP header are
 verified; see [the ingress checklist](docs/csharp-port.md#trusted-proxy-ingress).
 
-The internal TOTP and recovery-code credential layer (first TS-707 slice), its
-deployment prerequisite, and the remaining dashboard MFA slices are documented
-in [`docs/mfa.md`](docs/mfa.md). MFA endpoints and sign-in enforcement are not
+The internal TOTP and recovery-code credential layer, atomic authorization
+composition (TS-707), deployment prerequisite, and remaining dashboard MFA
+slices are documented in [`docs/mfa.md`](docs/mfa.md). MFA endpoints and sign-in enforcement are not
 served by this slice.
 
 ## Target feature inventory

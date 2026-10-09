@@ -1,6 +1,7 @@
 # Dashboard MFA (TS-707)
 
-The first slice implements internal TOTP and recovery-code persistence. It
+The internal slices implement TOTP and recovery-code persistence and atomic
+composition with the caller's authorization transition. The service
 does not expose enrollment endpoints or enforce MFA during sign-in yet. The
 headless API, WebAuthn, and organization policies follow in separate slices;
 dashboard authentication stays on the dashboard's native pages.
@@ -52,6 +53,20 @@ a spent proof or clearing a credential. Replica clocks must be synchronized.
 The storage authority's durability and failover limitations
 documented in the port guide also apply to these security-critical writes.
 
+Internal overloads let a trusted caller include a version-conditional change
+to a separate authorization document in the same transaction as enrollment,
+confirmation, verification, or disabling. A failed authorization precondition
+leaves the credential, factor proof, and user epoch untouched. The caller must
+validate its proof's tenant, user, client, purpose, secret, and expiry before
+invoking the service; these overloads do not authenticate a user. Its authorization
+deadline is checked again immediately before transaction submission, after
+the asynchronous credential reads. Starting enrollment caps the pending
+credential's expiry at that deadline and never renews reauthentication.
+No factor result or recovery codes are returned before the transaction is
+acknowledged. Enrollment start also reports its committed result when the
+response arrives after expiry; the expired pending enrollment cannot
+subsequently be confirmed.
+
 ## Deployment and next slice
 
 Before deploying a release that requires `mfa_credentials`, explicitly
@@ -69,3 +84,6 @@ headless API and OpenAPI contract together with login, hosted-session,
 authorization-code, refresh, and token-exchange checks that prevent bypassing
 an active factor. Tests of those HTTP boundaries belong in `fast`. Organization
 policies and WebAuthn must enforce their decisions on the server.
+Persistent authentication challenges use the shared plain-ULID storage
+boundary after the TS-754 cutover; this composition slice adds no challenge
+entity, collection, or alternate addressing scheme.

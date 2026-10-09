@@ -10,6 +10,40 @@ namespace TerraScale.Auth.Fast.Store;
 public sealed class AuthStoreTests(TerraBaseFixture fixture)
 {
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task A_missing_conditional_delete_rolls_back_and_preserves_the_operation_index_but_missing_collections_propagate(bool missingCollection)
+    {
+        var (_, database) = await fixture.CreateDatabaseAsync(provision: false);
+        await database.CreateCollectionAsync(AuthStore.MembershipCollection);
+        if (!missingCollection)
+        {
+            await database.CreateCollectionAsync(AuthStore.SessionCollection);
+        }
+
+        var store = new AuthStore(database, TimeProvider.System);
+        var original = await store.CreateAsync(AuthStore.MembershipCollection, "terrascale", "org/user", Json("""{"role":"member"}"""));
+        StoreOperation[] operations =
+        [
+            AuthStore.Require(AuthStore.MembershipCollection, "terrascale", "org/user", Json("""{"eq":["/role","member"]}"""), original.Version),
+            AuthStore.Replace(AuthStore.MembershipCollection, "terrascale", "org/user", Json("""{"role":"admin"}"""), original.Version),
+            AuthStore.Delete(AuthStore.SessionCollection, "terrascale", new string('c', 64), original.Version),
+        ];
+        if (missingCollection)
+        {
+            await Assert.ThrowsAsync<TerraBaseNotFoundException>(() => store.TransactAsync(operations));
+        }
+        else
+        {
+            await Assert.That(await store.TransactAsync(operations)).IsEqualTo(2);
+        }
+
+        var after = (await store.GetAsync(AuthStore.MembershipCollection, "terrascale", "org/user"))!;
+        await Assert.That(after.Version).IsEqualTo(original.Version);
+        await Assert.That(after.Document.GetProperty("role").GetString()).IsEqualTo("member");
+    }
+
+    [Test]
     public async Task An_assertion_holds_only_at_the_version_its_check_read_when_the_transaction_writes_the_same_document()
     {
         // TS-598: a role checked at one version must not be re-asserted through a write at a later version.

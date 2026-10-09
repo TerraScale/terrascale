@@ -346,7 +346,7 @@ public sealed class AuthStore(TerraBaseDatabase database, TimeProvider clock)
 
     /// <summary>
     /// Commits <paramref name="operations"/> in one TerraBase transaction: all of them or none. Returns null on success,
-    /// or the index of the operation whose precondition or assertion failed (another writer won, or a claim is taken).
+    /// or the index of a failed precondition, assertion or conditional delete of a missing document.
     /// Assertions see the state before the transaction's writes. TerraBase refuses two operations on one document, so an
     /// assertion made at a version (<see cref="Require"/>) on a document another operation writes at a version is left
     /// out when the two versions are the same (that write requires exactly what the caller checked), and otherwise fails
@@ -384,7 +384,9 @@ public sealed class AuthStore(TerraBaseDatabase database, TimeProvider clock)
             await database.TransactAsync([.. sent.Select(item => item.Operation.Operation)], cancellationToken).ConfigureAwait(false);
             return null;
         }
-        catch (TerraBasePreconditionFailedException error) when (error.ErrorCode == "precondition_failed" && error.OperationIndex is { } index && index < sent.Count)
+        catch (TerraBaseException error) when (error.OperationIndex is { } index && index >= 0 && index < sent.Count
+            && (error is TerraBasePreconditionFailedException && error.ErrorCode == "precondition_failed"
+                || error is TerraBaseNotFoundException && error.ErrorCode == "not_found" && sent[index].Operation.Operation.Op == "delete"))
         {
             return sent[index].Index;
         }

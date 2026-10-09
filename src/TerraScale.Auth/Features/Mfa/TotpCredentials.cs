@@ -26,7 +26,11 @@ public sealed class TotpCredentials(AuthStore store, Users users, AttemptLimiter
     private const int RecoveryCount = 8;
 
     /// <summary>Begins or supersedes inactive enrollment, or null for an active factor, stale caller or lost race.</summary>
-    public async Task<TotpEnrollment?> BeginAsync(UserRecord caller, CancellationToken cancellationToken = default)
+    public Task<TotpEnrollment?> BeginAsync(UserRecord caller, CancellationToken cancellationToken = default) =>
+        this.BeginAsync(caller, null, cancellationToken);
+
+    /// <summary>Includes the caller's validated authorization transition in the credential transaction.</summary>
+    internal async Task<TotpEnrollment?> BeginAsync(UserRecord caller, MfaAuthorization? authorization, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(caller);
         if (await this.CurrentUserAsync(caller, cancellationToken).ConfigureAwait(false) is not { } user)
@@ -54,8 +58,13 @@ public sealed class TotpCredentials(AuthStore store, Users users, AttemptLimiter
         }
 
         var expires = clock.GetUtcNow() + EnrollmentLifetime;
+        if (authorization is not null && authorization.ExpiresAt < expires)
+        {
+            expires = authorization.ExpiresAt;
+        }
+
         var pending = new TotpCredentialRecord(caller.InstanceId, caller.Id, boxed, false, caller.AuthEpoch, expires, -1, [], null);
-        if (!await this.CommitAsync(user.User, pending, current?.Version, null, cancellationToken).ConfigureAwait(false) || expires <= clock.GetUtcNow())
+        if (!await this.CommitAsync(user.User, pending, current?.Version, null, authorization, cancellationToken).ConfigureAwait(false))
         {
             return null;
         }
@@ -64,7 +73,11 @@ public sealed class TotpCredentials(AuthStore store, Users users, AttemptLimiter
     }
 
     /// <summary>Confirms enrollment and atomically advances the user epoch; returns recovery codes once.</summary>
-    public async Task<IssuedRecoveryCodes?> ConfirmAsync(UserRecord caller, string code, CancellationToken cancellationToken = default)
+    public Task<IssuedRecoveryCodes?> ConfirmAsync(UserRecord caller, string code, CancellationToken cancellationToken = default) =>
+        this.ConfirmAsync(caller, code, null, cancellationToken);
+
+    /// <summary>Consumes the caller's validated authorization atomically with activation and epoch advancement.</summary>
+    internal async Task<IssuedRecoveryCodes?> ConfirmAsync(UserRecord caller, string code, MfaAuthorization? authorization, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(caller);
         await this.LimitAsync(caller, cancellationToken).ConfigureAwait(false);
@@ -88,13 +101,17 @@ public sealed class TotpCredentials(AuthStore store, Users users, AttemptLimiter
             RecoveryExpiresAt = recoveryExpires,
         };
         var advanced = user.User with { AuthEpoch = checked(user.User.AuthEpoch + 1) };
-        return await this.CommitAsync(user.User, active, current.Version, (advanced, user.Version), cancellationToken).ConfigureAwait(false)
+        return await this.CommitAsync(user.User, active, current.Version, (advanced, user.Version), authorization, cancellationToken).ConfigureAwait(false)
             ? new IssuedRecoveryCodes(advanced, codes, recoveryExpires)
             : null;
     }
 
     /// <summary>Consumes an active TOTP step or recovery code exactly once; a stale caller never receives a proof.</summary>
-    public async Task<bool> VerifyAsync(UserRecord caller, string code, CancellationToken cancellationToken = default)
+    public Task<bool> VerifyAsync(UserRecord caller, string code, CancellationToken cancellationToken = default) =>
+        this.VerifyAsync(caller, code, null, cancellationToken);
+
+    /// <summary>Consumes the caller's validated authorization and the factor proof in one transaction.</summary>
+    internal async Task<bool> VerifyAsync(UserRecord caller, string code, MfaAuthorization? authorization, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(caller);
         await this.LimitAsync(caller, cancellationToken).ConfigureAwait(false);
@@ -105,11 +122,15 @@ public sealed class TotpCredentials(AuthStore store, Users users, AttemptLimiter
             return false;
         }
 
-        return await this.CommitAsync(user.User, proof, current.Version, null, cancellationToken).ConfigureAwait(false);
+        return await this.CommitAsync(user.User, proof, current.Version, null, authorization, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>Consumes a proof, disables the factor and recovery codes, and advances the epoch atomically.</summary>
-    public async Task<bool> DisableAsync(UserRecord caller, string code, CancellationToken cancellationToken = default)
+    public Task<bool> DisableAsync(UserRecord caller, string code, CancellationToken cancellationToken = default) =>
+        this.DisableAsync(caller, code, null, cancellationToken);
+
+    /// <summary>Consumes the caller's validated authorization atomically with disabling and epoch advancement.</summary>
+    internal async Task<bool> DisableAsync(UserRecord caller, string code, MfaAuthorization? authorization, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(caller);
         await this.LimitAsync(caller, cancellationToken).ConfigureAwait(false);
@@ -122,7 +143,7 @@ public sealed class TotpCredentials(AuthStore store, Users users, AttemptLimiter
 
         var disabled = current.Record with { SecretBox = null, Enabled = false, EnrollmentExpiresAt = null, LastAcceptedStep = -1, RecoveryHashes = [], RecoveryExpiresAt = null };
         var advanced = user.User with { AuthEpoch = checked(user.User.AuthEpoch + 1) };
-        return await this.CommitAsync(user.User, disabled, current.Version, (advanced, user.Version), cancellationToken).ConfigureAwait(false);
+        return await this.CommitAsync(user.User, disabled, current.Version, (advanced, user.Version), authorization, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<(UserRecord User, string Version)?> CurrentUserAsync(UserRecord caller, CancellationToken cancellationToken) =>
@@ -220,7 +241,7 @@ public sealed class TotpCredentials(AuthStore store, Users users, AttemptLimiter
     }
 
     private async Task<bool> CommitAsync(UserRecord user, TotpCredentialRecord record, string? version,
-        (UserRecord User, string Version)? advanced, CancellationToken cancellationToken)
+        (UserRecord User, string Version)? advanced, MfaAuthorization? authorization, CancellationToken cancellationToken)
     {
         var serialized = JsonSerializer.SerializeToElement(record, MfaJson.Default.TotpCredentialRecord);
         var credential = version is null ? AuthStore.Create(AuthStore.MfaCollection, user.InstanceId, user.Id, serialized)
@@ -236,7 +257,12 @@ public sealed class TotpCredentials(AuthStore store, Users users, AttemptLimiter
         var account = advanced is { } change
             ? AuthStore.Replace(AuthStore.UserCollection, user.InstanceId, user.Id, JsonSerializer.SerializeToElement(change.User, IdentityJson.Default.UserRecord), change.Version)
             : AuthStore.Require(AuthStore.UserCollection, user.InstanceId, user.Id, filter.RootElement);
-        return await store.TransactAsync([account, credential], cancellationToken).ConfigureAwait(false) is null;
+        if (authorization is not null && authorization.ExpiresAt <= clock.GetUtcNow())
+        {
+            return false;
+        }
+
+        return await store.TransactAsync(authorization is null ? [account, credential] : [account, credential, authorization.Operation], cancellationToken).ConfigureAwait(false) is null;
     }
 
     private async Task LimitAsync(UserRecord caller, CancellationToken cancellationToken)
@@ -249,6 +275,9 @@ public sealed class TotpCredentials(AuthStore store, Users users, AttemptLimiter
 
     private static string Context(UserRecord user) => "totp:" + AuthStore.NaturalKeyId(user.InstanceId, AuthStore.MfaCollection, user.Id);
 }
+
+/// <summary>A trusted caller's validated, expiring authorization transition, committed with the MFA change.</summary>
+internal sealed record MfaAuthorization(StoreOperation Operation, DateTimeOffset ExpiresAt);
 
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase, UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
     RespectRequiredConstructorParameters = true)]
