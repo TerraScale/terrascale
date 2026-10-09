@@ -14,26 +14,26 @@ const navigationScrollStorageKey = "ts-dashboard:nav-scroll"
 func TestNavigationScrollDesktopAndKeyboard(t *testing.T) {
 	t.Parallel()
 	page := newNavigationScrollPage(t)
-	must(t, page.SetViewportSize(1440, 600))
+	must(t, page.SetViewportSize(1440, 360))
 	registerAndOnboard(t, page, newAccount("nav-scroll-desktop"))
-	goToOK(t, page, "/auth/users")
+	goToOK(t, page, "/databases")
 	waitNavigationScrollReady(t, page)
 
 	for _, destination := range []struct {
 		path, label string
 		keyboard    bool
 	}{
-		{"/auth/branding", "Branding", false},
-		{"/auth/keys", "Management keys", true},
-		{"/auth/branding", "Branding", false},
+		{"/organization", "Organization", false},
+		{"/usage", "Usage", true},
+		{"/organization", "Organization", false},
 	} {
 		link := page.Locator(`nav.ts-sidebar-content a[href="` + destination.path + `"]`)
-		must(t, expect.Locator(link).ToHaveText(destination.label))
+		must(t, expect.Locator(link.Locator(".ts-nav-label")).ToHaveText(destination.label))
 		must(t, link.ScrollIntoViewIfNeeded())
 		if destination.keyboard {
 			must(t, link.Focus())
 			must(t, expect.Locator(link).ToBeFocused())
-			// Branding is tall: only the menu offset should survive navigation.
+			// Organization is tall: only the menu offset should survive navigation.
 			windowTop, err := page.Evaluate(`() => {
 				window.scrollTo(0, document.documentElement.scrollHeight);
 				return window.scrollY;
@@ -69,22 +69,22 @@ func TestNavigationScrollDesktopAndKeyboard(t *testing.T) {
 func TestNavigationScrollMobileReopensAtSavedOffset(t *testing.T) {
 	t.Parallel()
 	page := newNavigationScrollPage(t)
-	must(t, page.SetViewportSize(390, 600))
+	must(t, page.SetViewportSize(390, 360))
 	registerAndOnboard(t, page, newAccount("nav-scroll-mobile"))
-	goToOK(t, page, "/auth/users")
+	goToOK(t, page, "/databases")
 	waitNavigationScrollReady(t, page)
 
 	toggle := page.Locator("button.ts-fab-nav")
 	click(t, toggle)
 	must(t, expect.Locator(toggle).ToHaveAttribute("aria-expanded", "true"))
-	link := page.Locator(`nav.ts-sidebar-content a[href="/auth/keys"]`)
+	link := page.Locator(`nav.ts-sidebar-content a[href="/usage"]`)
 	must(t, link.ScrollIntoViewIfNeeded())
-	viewportScreenshot(t, page, "ts330/mobile-before-keys")
+	viewportScreenshot(t, page, "ts330/mobile-before-usage")
 	click(t, link)
-	waitNavigationScrollDestination(t, page, "/auth/keys")
+	waitNavigationScrollDestination(t, page, "/usage")
 	top := navigationScrollActivationTop(t, page)
 	if top <= 0 {
-		t.Fatalf("mobile Management keys activated at unscrolled offset %v", top)
+		t.Fatalf("mobile Usage activated at unscrolled offset %v", top)
 	}
 	must(t, expect.Locator(toggle).ToHaveAttribute("aria-expanded", "false"))
 	must(t, expect.Locator(page.Locator(".ts-shell")).Not().ToHaveClass(regexp.MustCompile(`nav-open`)))
@@ -94,29 +94,29 @@ func TestNavigationScrollMobileReopensAtSavedOffset(t *testing.T) {
 	assertNavigationScrollTop(t, page, top)
 	assertNavigationScrollActiveInViewport(t, page)
 	assertNavigationScrollConsumed(t, page)
-	viewportScreenshot(t, page, "ts330/mobile-after-reopen-keys")
+	viewportScreenshot(t, page, "ts330/mobile-after-reopen-usage")
 }
 
 func TestNavigationScrollDoesNotLeakOutsideMenu(t *testing.T) {
 	t.Parallel()
 	page := newNavigationScrollPage(t)
-	must(t, page.SetViewportSize(1440, 600))
+	must(t, page.SetViewportSize(1440, 360))
 	registerAndOnboard(t, page, newAccount("nav-scroll-scope"))
 
 	for _, destination := range []struct {
 		name, path string
 		activate   func(*testing.T)
 	}{
-		{"direct navigation", "/auth/keys", func(t *testing.T) { goToOK(t, page, "/auth/keys") }},
+		{"direct navigation", "/usage", func(t *testing.T) { goToOK(t, page, "/usage") }},
 		{"account menu", "/profile", func(t *testing.T) {
 			click(t, page.Locator("details.ts-account > summary"))
 			click(t, page.Locator(`details.ts-account a[href="/profile"]`))
 		}},
 	} {
 		t.Run(destination.name, func(t *testing.T) {
-			goToOK(t, page, "/auth/users")
+			goToOK(t, page, "/databases")
 			waitNavigationScrollReady(t, page)
-			must(t, page.Locator(`nav.ts-sidebar-content a[href="/auth/keys"]`).ScrollIntoViewIfNeeded())
+			must(t, page.Locator(`nav.ts-sidebar-content a[href="/usage"]`).ScrollIntoViewIfNeeded())
 			if navigationScrollTop(t, page) <= 0 {
 				t.Fatal("scope test needs a scrolled sidebar")
 			}
@@ -125,9 +125,9 @@ func TestNavigationScrollDoesNotLeakOutsideMenu(t *testing.T) {
 			waitNavigationScrollReady(t, page)
 			assertNavigationScrollTop(t, page, 0)
 			assertNavigationScrollConsumed(t, page)
-			// Returning directly to Authentication must not resurrect an earlier offset.
-			goToOK(t, page, "/auth/users")
-			waitNavigationScrollDestination(t, page, "/auth/users")
+			// Returning directly to Databases must not resurrect an earlier offset.
+			goToOK(t, page, "/databases")
+			waitNavigationScrollDestination(t, page, "/databases")
 			assertNavigationScrollTop(t, page, 0)
 		})
 	}
@@ -136,7 +136,7 @@ func TestNavigationScrollDoesNotLeakOutsideMenu(t *testing.T) {
 func TestNavigationScrollStorageIsValidatedAndOneShot(t *testing.T) {
 	t.Parallel()
 	page := newNavigationScrollPage(t)
-	must(t, page.SetViewportSize(1440, 600))
+	must(t, page.SetViewportSize(1440, 360))
 	registerAndOnboard(t, page, newAccount("nav-scroll-storage"))
 
 	for _, scenario := range []struct {
@@ -151,13 +151,13 @@ func TestNavigationScrollStorageIsValidatedAndOneShot(t *testing.T) {
 		{"nonfinite offset", `{"href":"DESTINATION","top":1e999}`, 0},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
-			goToOK(t, page, "/auth/users")
+			goToOK(t, page, "/databases")
 			waitNavigationScrollReady(t, page)
 			_, err := page.Evaluate(`value => sessionStorage.setItem('ts-dashboard:nav-scroll',
-				value.replace('DESTINATION', new URL('/auth/keys', location.href).href))`, scenario.value)
+				value.replace('DESTINATION', new URL('/usage', location.href).href))`, scenario.value)
 			must(t, err)
-			goToOK(t, page, "/auth/keys")
-			waitNavigationScrollDestination(t, page, "/auth/keys")
+			goToOK(t, page, "/usage")
+			waitNavigationScrollDestination(t, page, "/usage")
 			assertNavigationScrollTop(t, page, scenario.want)
 			assertNavigationScrollConsumed(t, page)
 			windowTop, err := page.Evaluate(`() => window.scrollY`)
@@ -167,7 +167,7 @@ func TestNavigationScrollStorageIsValidatedAndOneShot(t *testing.T) {
 			}
 			_, err = page.Reload()
 			must(t, err)
-			waitNavigationScrollDestination(t, page, "/auth/keys")
+			waitNavigationScrollDestination(t, page, "/usage")
 			assertNavigationScrollTop(t, page, 0)
 		})
 	}
@@ -176,7 +176,7 @@ func TestNavigationScrollStorageIsValidatedAndOneShot(t *testing.T) {
 func TestNavigationScrollBlockedStorageStillNavigates(t *testing.T) {
 	t.Parallel()
 	page := newNavigationScrollPage(t)
-	must(t, page.SetViewportSize(1440, 600))
+	must(t, page.SetViewportSize(1440, 360))
 	registerAndOnboard(t, page, newAccount("nav-scroll-blocked"))
 	must(t, page.AddInitScript(playwright.Script{Content: new(`
 		for (const method of ['getItem', 'setItem', 'removeItem']) {
@@ -186,12 +186,12 @@ func TestNavigationScrollBlockedStorageStillNavigates(t *testing.T) {
 				return original.call(this, key, ...args);
 			};
 		}`)}))
-	goToOK(t, page, "/auth/users")
+	goToOK(t, page, "/databases")
 	waitNavigationScrollReady(t, page)
-	link := page.Locator(`nav.ts-sidebar-content a[href="/auth/keys"]`)
+	link := page.Locator(`nav.ts-sidebar-content a[href="/usage"]`)
 	must(t, link.ScrollIntoViewIfNeeded())
 	click(t, link)
-	waitNavigationScrollDestination(t, page, "/auth/keys")
+	waitNavigationScrollDestination(t, page, "/usage")
 	assertNavigationScrollTop(t, page, 0)
 	// watchedPage also rejects console errors and uncaught errors from either hook.
 }
@@ -231,7 +231,6 @@ func waitNavigationScrollDestination(t *testing.T, page playwright.Page, path st
 	waitNavigationScrollReady(t, page)
 	link := page.Locator(`nav.ts-sidebar-content a[href="` + path + `"]`)
 	must(t, expect.Locator(link).ToHaveAttribute("aria-current", "page"))
-	must(t, expect.Locator(page.Locator("details.ts-nav-collapsible").Filter(playwright.LocatorFilterOptions{Has: page.Locator(`a[href="` + path + `"]`)})).ToHaveAttribute("open", ""))
 }
 
 func assertNavigationScrollActiveInViewport(t *testing.T, page playwright.Page) {
