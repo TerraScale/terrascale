@@ -212,15 +212,29 @@ public sealed class AuthenticationTimeTests(TerraBaseFixture fixture)
 
     [Test]
     [Arguments(false, "original")]
+    [Arguments(false, "zero")]
     [Arguments(false, "missing")]
     [Arguments(false, "malformed")]
+    [Arguments(false, "numeric-string")]
+    [Arguments(false, "array")]
+    [Arguments(false, "array-many")]
+    [Arguments(false, "object")]
+    [Arguments(false, "boolean")]
+    [Arguments(false, "null")]
     [Arguments(false, "negative")]
     [Arguments(false, "far-future")]
     [Arguments(false, "fractional")]
     [Arguments(false, "overflowing")]
     [Arguments(true, "original")]
+    [Arguments(true, "zero")]
     [Arguments(true, "missing")]
     [Arguments(true, "malformed")]
+    [Arguments(true, "numeric-string")]
+    [Arguments(true, "array")]
+    [Arguments(true, "array-many")]
+    [Arguments(true, "object")]
+    [Arguments(true, "boolean")]
+    [Arguments(true, "null")]
     [Arguments(true, "negative")]
     [Arguments(true, "far-future")]
     [Arguments(true, "fractional")]
@@ -246,7 +260,14 @@ public sealed class AuthenticationTimeTests(TerraBaseFixture fixture)
             payload["auth_time"] = authenticationTime switch
             {
                 "original" => JsonValue.Create(authenticatedAt),
+                "zero" => JsonValue.Create(0),
                 "malformed" => JsonValue.Create("not-a-time"),
+                "numeric-string" => JsonValue.Create(authenticatedAt.ToString(CultureInfo.InvariantCulture)),
+                "array" => new JsonArray(JsonValue.Create(0)),
+                "array-many" => new JsonArray(JsonValue.Create(0), JsonValue.Create(authenticatedAt)),
+                "object" => new JsonObject { ["time"] = authenticatedAt },
+                "boolean" => JsonValue.Create(true),
+                "null" => null,
                 "negative" => JsonValue.Create(-1),
                 "far-future" => JsonValue.Create(authenticatedAt + 3600),
                 "fractional" => JsonValue.Create(authenticatedAt + 0.5m),
@@ -273,10 +294,10 @@ public sealed class AuthenticationTimeTests(TerraBaseFixture fixture)
             }
 
             using var exchange = await oidc.ExchangeAsync(access, target, replica.Client);
-            if (authenticationTime == "original")
+            if (authenticationTime is "original" or "zero")
             {
                 await Assert.That(exchange.StatusCode).IsEqualTo(HttpStatusCode.OK);
-                await AssertExchangedAuthenticationTimeAsync(oidc, await OidcHarness.JsonAsync(exchange), user.Id, organization, project, authenticatedAt);
+                await AssertExchangedAuthenticationTimeAsync(oidc, await OidcHarness.JsonAsync(exchange), user.Id, organization, project, authenticationTime == "zero" ? 0 : authenticatedAt);
             }
             else
             {

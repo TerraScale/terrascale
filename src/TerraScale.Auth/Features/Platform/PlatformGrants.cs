@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
 using OpenIddict.Abstractions;
 using OpenIddict.Server.AspNetCore;
@@ -90,12 +91,16 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, Us
         var issuer = OidcIssuer.Issuer(options).AbsoluteUri;
         // Only a sign-in token (its audiences include the issuer) issued to this very client, for a user that still exists
         // and has not signed out everywhere or reset its password since (the token's epoch is still the user's).
+        // Claims flatten arrays, so inspect the scalar payload of the subject JWT OpenIddict already validated.
         if (subject is null || !subject.GetAudiences().Contains(issuer, StringComparer.Ordinal)
             || request.ClientId is not { } clientId || !subject.GetPresenters().Contains(clientId, StringComparer.Ordinal)
             || subject.GetClaim(Claims.Subject) is not { } userId
             || await users.GetAsync(PlatformDirectory.Instance, userId, cancellationToken) is not { } user
             || subject.GetClaim(OidcIssuer.EpochClaim) != user.AuthEpoch.ToString(CultureInfo.InvariantCulture)
             || subject.GetExpirationDate() is not { } expires || expires <= clock.GetUtcNow()
+            || request.SubjectToken is not { } encoded
+            || !new JsonWebToken(encoded).TryGetPayloadValue<object>(Claims.AuthenticationTime, out var rawAuthenticationTime)
+            || rawAuthenticationTime is not (int or long)
             || !long.TryParse(subject.GetClaim(Claims.AuthenticationTime), NumberStyles.None, CultureInfo.InvariantCulture, out var authenticatedAt)
             || authenticatedAt > clock.GetUtcNow().Add(AuthenticationTimeClockSkew).ToUnixTimeSeconds()
             || !await mfa.AllowsPrimaryAuthenticationAsync(user, cancellationToken))
