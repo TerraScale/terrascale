@@ -99,12 +99,31 @@ test("hosted-auth validates entity references and leaves customer metadata untou
 test("hosted-auth entity pages reject primitives and nested arrays while recovery codes remain strings", () => {
   for (const entry of [null, "legacy-id", 1, true, [], [ { id } ], undefined]) {
     expect(() => validateTsAuthIds({ data: [entry] }, "tsauth.users.list")).toThrow(TypeError);
-    expect(() => validateTsAuthIds({ user: entry }, "tsauth.organizations.members")).toThrow(TypeError);
+    if (entry !== null)
+      expect(() => validateTsAuthIds({ user: entry }, "tsauth.organizations.listMemberships")).toThrow(TypeError);
   }
   expect(() => validateTsAuthIds({ passkeys: [{ id }] }, "tsauth.users.passkeys")).not.toThrow();
   expect(() => validateTsAuthIds({ data: ["recovery-code"] }, "tsauth.users.regenerateRecoveryCodes")).not.toThrow();
   for (const entry of [null, 1, true, {}, []])
     expect(() => validateTsAuthIds({ data: [entry] }, "tsauth.users.regenerateRecoveryCodes")).toThrow(TypeError);
+});
+
+test("single hosted-auth entities require their ID without imposing it on acknowledgments or wrappers", () => {
+  for (const route of ["tsauth.organizations.get", "tsauth.organizations.create", "tsauth.organizations.update",
+    "tsauth.instance.get", "tsauth.instance.update", "tsauth.apiKeys.create", "tsauth.directories.rotate"])
+    for (const value of [{}, null, [], "legacy-id", { id: undefined }, { id: "org_legacy" }])
+      expect(() => validateTsAuthIds(value, route)).toThrow(TypeError);
+  expect(() => validateTsAuthIds({ replayed: true }, "tsauth.webhooks.replayDeadLetter")).not.toThrow();
+  expect(() => validateTsAuthIds({ data: [{ id }] }, "tsauth.users.list")).not.toThrow();
+  expect(() => validateTsAuthIds({ client: { id }, client_secret: null }, "tsauth.oauthClients.create")).not.toThrow();
+});
+
+test("conflict siblings obey the same key/payload separation as the winning document", () => {
+  const base = { id, version: "opaque", state: "conflict", document: { name: "winner" } };
+  const siblings = [{ version: "other", document: { name: "sibling", metadata: { id: "customer-key" } }, future: true }];
+  expect(decodeDocument({ ...base, siblings }).siblings).toEqual(siblings);
+  for (const body of [{ id: "legacy" }, { id }, null, []])
+    expect(() => decodeDocument({ ...base, siblings: [{ version: "other", document: /** @type {any} */ (body) }] })).toThrow(TypeError);
 });
 
 test("dead-letter selectors contain exactly two canonical ULID entity references", () => {

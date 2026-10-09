@@ -105,7 +105,9 @@ export function decodeDocument(value) {
   const state = string(raw.state, "document state");
   const document = documentObject(raw.document);
   if (raw.siblings === undefined) return Object.freeze({ id, version, state, document });
-  return Object.freeze({ id, version, state, document, siblings: Object.freeze(array(raw.siblings, "document siblings")) });
+  const siblings = array(raw.siblings, "document siblings");
+  for (const sibling of siblings) documentObject(object(sibling, "document sibling").document);
+  return Object.freeze({ id, version, state, document, siblings: Object.freeze(siblings) });
 }
 
 /**

@@ -1,5 +1,18 @@
 import { requireId } from "./ids.js";
 
+const singleEntityRoutes = new Set([
+  "tsauth.users.get", "tsauth.users.create", "tsauth.users.update",
+  "tsauth.apiKeys.create",
+  "tsauth.organizations.get", "tsauth.organizations.create", "tsauth.organizations.update",
+  "tsauth.organizations.createMembership", "tsauth.organizations.updateMembership",
+  "tsauth.organizations.createInvitation", "tsauth.organizations.revokeInvitation", "tsauth.organizations.createDomain",
+  "tsauth.connections.create", "tsauth.connections.update",
+  "tsauth.directories.create", "tsauth.directories.rotate",
+  "tsauth.jwtTemplates.create", "tsauth.jwtTemplates.update",
+  "tsauth.webhooks.create",
+  "tsauth.instance.get", "tsauth.instance.update",
+]);
+
 /**
  * Validate the documented endpointId:eventId delivery selector.
  * @param {unknown} value
@@ -21,7 +34,7 @@ export function requireDeadLetterId(value) {
  * @param {boolean} [entity]
  * @returns {void}
  */
-export function validateTsAuthIds(value, route, entity = false) {
+export function validateTsAuthIds(value, route, entity = singleEntityRoutes.has(route)) {
   if (entity && (typeof value !== "object" || value === null || Array.isArray(value)))
     throw new TypeError("Hosted-auth entity must be an object with a ULID.");
   if (Array.isArray(value)) {
@@ -54,13 +67,14 @@ export function validateTsAuthIds(value, route, entity = false) {
     validateTsAuthIds(Reflect.get(value, "data"), route);
   for (const field of ["passkeys", "clients", "resources"])
     if (Object.hasOwn(value, field)) validateTsAuthIds(Reflect.get(value, field), route);
-  for (const field of ["organization", "user"])
-    if (Object.hasOwn(value, field)) validateTsAuthIds(Reflect.get(value, field), route, true);
+  for (const field of ["organization", "user"]) {
+    if (Object.hasOwn(value, field) && Reflect.get(value, field) !== null)
+      validateTsAuthIds(Reflect.get(value, field), route, true);
+  }
   if (Object.hasOwn(value, "allowed_client_ids")) {
     const ids = Reflect.get(value, "allowed_client_ids");
     if (!Array.isArray(ids)) throw new TypeError("allowed_client_ids must be an array of ULIDs.");
     for (const id of ids) requireId(id, "allowed_client_ids");
   }
-  if (/^tsauth\.users\.(get|create|update)$/u.test(route)) requireId(Reflect.get(value, "id"), "user id");
   if (route === "tsauth.oidc.userinfo") requireId(Reflect.get(value, "sub"), "subject id");
 }
