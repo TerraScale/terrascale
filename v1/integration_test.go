@@ -220,14 +220,18 @@ func testRegisterProject(t *testing.T, tb *terrabasetest.Server, hc *http.Client
 	cara := user(t, tb, management(t, tb, hc), "01ARZ3NDEKTSV4RRFFQ69G5FA3", "cara@example.com")
 	org := v1.Organization{ID: "01K70DW000E008000000000001", Name: "Replicated"}
 	project := v1.Project{ID: "01K70DW000E008000000000002", Name: "Orders"}
-	must(0, cara.RegisterProject(ctx, org, project))(t)
-	must(0, cara.RegisterProject(ctx, org, project))(t) // registered: nothing to do
+	registration := must(cara.PrepareProjectRegistration(ctx, org, project))(t)
+	must(0, registration.Commit(ctx))(t)
+	must(0, registration.Commit(ctx))(t) // same commit: replay the recorded outcome
+	registration = must(cara.PrepareProjectRegistration(ctx, org, project))(t)
+	must(0, registration.Commit(ctx))(t) // registered: nothing to do
 	if got := must(cara.Project(ctx, org.ID, project.ID))(t); got.Name != project.Name {
 		t.Fatalf("project: %+v", got)
 	}
 	// An organization the region has gets only the missing project.
 	second := v1.Project{ID: "01K70DW000E008000000000003", Name: "Billing"}
-	must(0, cara.RegisterProject(ctx, org, second))(t)
+	registration = must(cara.PrepareProjectRegistration(ctx, org, second))(t)
+	must(0, registration.Commit(ctx))(t)
 	if got := must(cara.Organization(ctx, org.ID))(t); got.Name != org.Name {
 		t.Fatalf("organization: %+v", got)
 	}

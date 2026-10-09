@@ -429,12 +429,29 @@ func (u *ManagementUser) DeleteProject(ctx context.Context, org, project string)
 	return u.call(ctx, http.MethodDelete, projectPath(org, project), nil, nil, nil)
 }
 
-// RegisterProject registers an organization and project in the called region
-// under the ids and names they have in another region, through one
-// Management commit, so a database placed in this region can replicate there
-// (TS-643). What the region already has is left as it is. Repeating a
-// completed registration reads the existing identities and makes no commit.
-func (u *ManagementUser) RegisterProject(ctx context.Context, org Organization, project Project) error {
+// ProjectRegistration holds one immutable Management commit for a replica
+// region. Reuse it after an uncertain outcome; preparing again creates a new ID.
+type ProjectRegistration struct {
+	user *ManagementUser
+	body json.RawMessage
+}
+
+// Commit submits the captured registration. Retrying this handle sends the same
+// ULID and byte-identical body without repeating the existence checks.
+func (r *ProjectRegistration) Commit(ctx context.Context) error {
+	if r == nil || r.user == nil {
+		return errors.New("terrabase: project registration was not prepared")
+	}
+	if r.body == nil {
+		return nil
+	}
+	return r.user.call(ctx, http.MethodPost, []string{"commits"}, nil, r.body, nil)
+}
+
+// PrepareProjectRegistration captures the missing organization/project creation
+// operations under their IDs and names from another region (TS-643). It makes no
+// commit. Call Commit on the returned handle and reuse it for any retries.
+func (u *ManagementUser) PrepareProjectRegistration(ctx context.Context, org Organization, project Project) (*ProjectRegistration, error) {
 	type op struct {
 		Op           string `json:"op"`
 		Organization string `json:"organization,omitempty"`
@@ -453,17 +470,23 @@ func (u *ManagementUser) RegisterProject(ctx context.Context, org Organization, 
 		case errors.Is(err, ErrUnknownRoute):
 			ops = append(ops, check.op)
 		case err != nil:
-			return err
+			return nil, err
 		}
 	}
+	registration := &ProjectRegistration{user: u}
 	if len(ops) == 0 {
-		return nil
+		return registration, nil
 	}
 	commit := struct {
 		ID  string `json:"id" ulid:"required"`
 		Ops []op   `json:"ops"`
 	}{NewID(), ops}
-	return u.call(ctx, http.MethodPost, []string{"commits"}, nil, commit, nil)
+	body, err := json.Marshal(commit)
+	if err != nil {
+		return nil, err
+	}
+	registration.body = body
+	return registration, nil
 }
 
 // CreateDatabase creates an empty database in a project, homed in the

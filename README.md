@@ -163,9 +163,12 @@ never changes), and deleting a replicated database fails with
 `ErrWrongRegion`, on Management and Documents routes alike, and the
 `*tb.APIError` carries `HomeRegion` and `Regions`. The client never retries
 it elsewhere: resolve the region through Atlas. Before placing a database in
-a replica region, `RegisterProject(ctx, org, project)` on that region's client
-registers the organization and project there under the ids they have in the
-home region (one Management commit; what exists is left as it is).
+a replica region, call `PrepareProjectRegistration(ctx, org, project)` on that
+region's client, then `registration.Commit(ctx)`. The handle captures one ULID
+and the missing organization/project operations under their home-region IDs.
+If Commit returns `ErrCommitUncertain`, retry the same handle with a fresh
+context; it resends the exact body without repeating existence checks or
+creating a new commit ID. Retain the handle until the outcome is resolved.
 
 Served by TerraBase but not in the client yet (TS-590 adds them): shapes,
 database tooling (backups, index recommendations, schema, project usage, SQL check) and saved queries,
