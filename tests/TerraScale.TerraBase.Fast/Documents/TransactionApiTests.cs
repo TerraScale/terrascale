@@ -320,6 +320,96 @@ public sealed class TransactionApiTests
         await Assert.That(unchanged.Json.GetProperty("document").GetRawText()).IsEqualTo("""{"n":1,"a":[1]}""");
     }
 
+    [Test]
+    public async Task Runs_of_unconditional_puts_write_new_existing_and_deleted_documents_and_invalidate_cached_reads()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        (await api.SendAsync(HttpMethod.Post, $"{api.Project}/databases/db/collections", new { name = "other" })).Status.ShouldBe(HttpStatusCode.Created);
+        var (fresh, existing, deleted, conditional, elsewhere, last) =
+            (DocumentApi.NewId(), DocumentApi.NewId(), DocumentApi.NewId(), DocumentApi.NewId(), DocumentApi.NewId(), DocumentApi.NewId());
+        await api.PutAsync(existing, new { n = 1 });
+        // Served from the cache from now on, until a write moves its stamp.
+        (await api.GetAsync(existing)).Status.ShouldBe(HttpStatusCode.OK);
+        await api.PutAsync(deleted, new { n = 1 });
+        (await api.SendAsync(HttpMethod.Delete, api.Document(deleted))).Status.ShouldBe(HttpStatusCode.OK);
+        (await api.GetAsync(deleted)).Status.ShouldBe(HttpStatusCode.NotFound);
+        var before = await api.PutAsync(conditional, new { n = 1 });
+
+        var result = await api.TransactAsync(
+            new { op = "assert", collection = "items", id = DocumentApi.NewId(), absent = true },
+            new { op = "put", collection = "items", id = fresh, document = new { n = 2 } },
+            new { op = "put", collection = "items", id = existing, document = new { n = 2 } },
+            new { op = "put", collection = "items", id = deleted, document = new { n = 2 } },
+            new { op = "put", collection = "items", id = conditional, document = new { n = 2 }, if_match = before.Version },
+            new { op = "put", collection = "other", id = elsewhere, document = new { n = 2 } },
+            new { op = "put", collection = "items", id = last, document = new { n = 2 } });
+        var results = result.Json.GetProperty("results");
+        var reads = new List<ApiResponse>();
+        foreach (var id in new[] { fresh, existing, deleted, conditional })
+        {
+            reads.Add(await api.GetAsync(id));
+        }
+
+        reads.Add(await api.SendAsync(HttpMethod.Get, $"{api.Project}/databases/db/collections/other/documents/{elsewhere}"));
+        reads.Add(await api.GetAsync(last));
+        // A single put reports whether it created the document from the version it replaced.
+        var recreated = await api.PutAsync(deleted, new { n = 3 });
+        (await api.SendAsync(HttpMethod.Delete, api.Document(deleted))).Status.ShouldBe(HttpStatusCode.OK);
+        var afterDelete = await api.PutAsync(deleted, new { n = 4 });
+
+        await Assert.That(result.Status).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(results.GetArrayLength()).IsEqualTo(7);
+        await Assert.That(results[0].GetRawText()).IsEqualTo("""{"asserted":true}""");
+        for (var i = 0; i < reads.Count; i++)
+        {
+            await Assert.That(reads[i].Status).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That(reads[i].Json.GetProperty("document").GetProperty("n").GetInt32()).IsEqualTo(2);
+            await Assert.That(reads[i].Version).IsEqualTo(results[i + 1].GetProperty("version").GetString());
+        }
+
+        await Assert.That(recreated.Status).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(afterDelete.Status).IsEqualTo(HttpStatusCode.Created);
+    }
+
+    [Test]
+    public async Task A_put_refused_inside_a_run_names_its_operation_and_rolls_back_the_run()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        var existing = DocumentApi.NewId();
+        var original = await api.PutAsync(existing, new { n = 1 });
+        var (first, second) = (DocumentApi.NewId(), DocumentApi.NewId());
+        static string Put(string id, string document, string collection = "items")
+        {
+            return $$"""{"op":"put","collection":"{{collection}}","id":"{{id}}","document":{{document}}}""";
+        }
+        var large = "{\"padding\":\"" + new string('x', (1024 * 1024) - "{\"padding\":\"\"}".Length) + "\"}";
+
+        // Two 1 MiB documents exceed capture's 2 MiB inside one run; the unknown collection after them is never reached.
+        var capacity = await api.SendRawAsync(HttpMethod.Post, api.Transactions,
+            Ops(Put(existing, large), Put(first, large), Put(second, "{}", "nope")), "application/json");
+        var unknown = await api.SendRawAsync(HttpMethod.Post, api.Transactions,
+            Ops(Put(first, "{}"), Put(existing, """{"n":2}"""), Put(second, "{}", "nope")), "application/json");
+        var legacy = await api.SendRawAsync(HttpMethod.Post, api.Transactions,
+            Ops(Put(first, "{}"), Put(existing, """{"n":2}"""), Put("NOT-A-UUID", "{}"), Put(second, "{}")), "application/json");
+        var exists = await api.SendRawAsync(HttpMethod.Post, api.Transactions,
+            Ops(Put(first, "{}"), $$$"""{"op":"create","collection":"items","id":"{{{existing}}}","document":{}}""", Put(second, "{}", "nope")),
+            "application/json");
+        var unchanged = await api.GetAsync(existing);
+        var absent = await api.GetAsync(first);
+        var next = await api.PutAsync(DocumentApi.NewId(), new { });
+
+        await Assert.That((capacity.Status, capacity.Code, capacity.Op)).IsEqualTo((HttpStatusCode.ServiceUnavailable, "capacity", (int?)1));
+        await Assert.That((unknown.Status, unknown.Code, unknown.Op)).IsEqualTo((HttpStatusCode.NotFound, "unknown_collection", (int?)2));
+        await Assert.That((legacy.Status, legacy.Message, legacy.Op))
+            .IsEqualTo((HttpStatusCode.BadRequest, "a new id must be a lowercase hyphenated UUID", (int?)2));
+        await Assert.That((exists.Status, exists.Code, exists.Op)).IsEqualTo((HttpStatusCode.PreconditionFailed, "precondition_failed", (int?)1));
+        await Assert.That(unchanged.Version).IsEqualTo(original.Version);
+        await Assert.That(unchanged.Json.GetProperty("document").GetRawText()).IsEqualTo("""{"n":1}""");
+        await Assert.That(absent.Status).IsEqualTo(HttpStatusCode.NotFound);
+        // Nothing of the refused transactions committed.
+        await Assert.That(Offset(next)).IsEqualTo(Offset(original) + 1);
+    }
+
     private static string Ops(params string[] ops) => $$"""{"ops":[{{string.Join(",", ops)}}]}""";
 
     private static string Patch(string id, string ops) => $$"""{"op":"patch","collection":"items","id":"{{id}}","ops":[{{ops}}]}""";

@@ -96,9 +96,12 @@ public static class SuiteDiagnostics
     }
 
     // This process's cgroup v2 directory, or null (fields report -1) when no visible cgroup2 mount contains it. Runs once.
-    // /proc/self/cgroup gives "0::/path" relative to the hierarchy (or cgroup namespace) root; each cgroup2 line in
-    // /proc/self/mountinfo gives the subtree root it exposes (field 4) at a mountpoint (field 5). The most specific mount
-    // whose root is the membership path or a "/"-bounded prefix of it maps the remainder below its mountpoint.
+    // /proc/self/cgroup gives "0::/path" relative to the cgroup namespace root; each cgroup2 line in /proc/self/mountinfo
+    // gives the subtree root it exposes (field 4), relative to the same namespace root, at a mountpoint (field 5). Both
+    // may climb above the namespace root with leading "/.." components. With equal climbs, the most specific mount whose
+    // root is the membership path or a "/"-bounded prefix of it maps the remainder below its mountpoint. A mount whose
+    // root is only further climbs (inherited from outside a cgroup namespace) hides the names between, so its directory
+    // is searched and validated instead.
     private static string? CgroupDirectory()
     {
         var membership = ReadSmall("/proc/self/cgroup", 4096)?.Split('\n').SkipLast(1)
@@ -110,8 +113,10 @@ public static class SuiteDiagnostics
             return null;
         }
 
+        var (climb, names) = SplitClimb(membership);
         string? directory = null;
         var matched = -1;
+        List<(int Depth, string Mountpoint)> inherited = [];
         foreach (var line in mountinfo[..(mountinfo.LastIndexOf('\n') + 1)].Split('\n'))
         {
             var fields = line.Split(' ');
@@ -121,15 +126,80 @@ public static class SuiteDiagnostics
                 continue;
             }
 
-            var root = Unescape(fields[3]).TrimEnd('/');
-            if (root.Length > matched && (membership == root || membership.StartsWith(root + "/", StringComparison.Ordinal)))
+            var (rootClimb, root) = SplitClimb(Unescape(fields[3]).TrimEnd('/'));
+            var mountpoint = Unescape(fields[4]).TrimEnd('/');
+            if (rootClimb == climb && root.Length > matched && (names == root || names.StartsWith(root + "/", StringComparison.Ordinal)))
             {
                 matched = root.Length;
-                directory = Unescape(fields[4]).TrimEnd('/') + membership[root.Length..];
+                directory = mountpoint + names[root.Length..];
+            }
+            else if (rootClimb > climb && root.Length == 0)
+            {
+                inherited.Add((rootClimb - climb, mountpoint));
             }
         }
 
-        return directory;
+        return directory ?? inherited.OrderBy(mount => mount.Depth)
+            .Select(mount => FindInherited(mount.Mountpoint, mount.Depth, names)).FirstOrDefault(found => found is not null);
+    }
+
+    // Splits a namespace-relative cgroup path into its leading "/.." count and the remaining "/"-prefixed names.
+    private static (int Climb, string Names) SplitClimb(string path)
+    {
+        var climb = 0;
+        while (path == "/.." || path.StartsWith("/../", StringComparison.Ordinal))
+        {
+            climb++;
+            path = path[3..];
+        }
+
+        return (climb, path);
+    }
+
+    // The directory depth levels below mountpoint, then names, whose cgroup.procs lists this process. A process belongs
+    // to exactly one cgroup, so at most one candidate matches. Visits at most 4096 directories, else null.
+    private static string? FindInherited(string mountpoint, int depth, string names)
+    {
+        List<string> level = [mountpoint];
+        var visited = 0;
+        for (var index = 0; index < depth; index++)
+        {
+            List<string> next = [];
+            foreach (var parent in level)
+            {
+                try
+                {
+                    foreach (var child in Directory.EnumerateDirectories(parent + "/"))
+                    {
+                        if (++visited > 4096)
+                        {
+                            return null;
+                        }
+
+                        next.Add(child);
+                    }
+                }
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+                {
+                    // An unreadable branch is skipped; if it held this process, no candidate matches and fields report -1.
+                }
+            }
+
+            level = next;
+        }
+
+        var pid = Environment.ProcessId.ToString(CultureInfo.InvariantCulture);
+        return level.Select(candidate => candidate + names).FirstOrDefault(candidate =>
+        {
+            try
+            {
+                return File.ReadLines(candidate + "/cgroup.procs").Contains(pid);
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                return false;
+            }
+        });
     }
 
     // mountinfo octal-escapes space, tab, newline and backslash; backslash goes last so "\134040" stays a literal "\040".

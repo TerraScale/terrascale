@@ -120,13 +120,16 @@ internal sealed partial class SqliteStorageTransaction(
 
     public async ValueTask<DocumentVersion?> GetVersionAsync(string collection, string id, CancellationToken cancellationToken)
     {
-        return await RunAsync<DocumentVersion?>(() =>
-        {
-            var command = Command(UniqueVersion, collection);
-            command.Parameters.AddWithValue("$id", id);
-            using var reader = command.ExecuteReader();
-            return reader.Read() ? new DocumentVersion(reader.GetInt64(0), reader.GetBoolean(1)) : null;
-        }, cancellationToken).ConfigureAwait(false);
+        return await RunAsync(() => ReadVersion(collection, id), cancellationToken).ConfigureAwait(false);
+    }
+
+    // Worker-only.
+    private DocumentVersion? ReadVersion(string collection, string id)
+    {
+        var command = Command(UniqueVersion, collection);
+        command.Parameters.AddWithValue("$id", id);
+        using var reader = command.ExecuteReader();
+        return reader.Read() ? new DocumentVersion(reader.GetInt64(0), reader.GetBoolean(1)) : null;
     }
 
     // Worker-only; runs inside a mutation, so a rejected document also makes the transaction roll back only.
@@ -136,35 +139,60 @@ internal sealed partial class SqliteStorageTransaction(
 
     public async ValueTask<long> PutAsync(string collection, string id, ReadOnlyMemory<byte> json, CancellationToken cancellationToken)
     {
-        return await RunAsync(() =>
+        return await RunAsync(() => Put(collection, id, json, cancellationToken), cancellationToken, mutation: true).ConfigureAwait(false);
+    }
+
+    // One call for the whole run: each put otherwise costs two hops through the write lane and back.
+    public async ValueTask PutBatchAsync(
+        IReadOnlyList<(string Collection, string Id, ReadOnlyMemory<byte> Json)> puts, Memory<(long Version, DocumentVersion? Previous)> results,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(puts);
+        ArgumentOutOfRangeException.ThrowIfLessThan(results.Length, puts.Count);
+        results.Span[..puts.Count].Clear();
+        await RunAsync(() =>
         {
-            ThrowIfReadOnly();
-            DocumentMutation(replicated: false);
-            var body = Admit(json);
-            using var schemaReservation = Shaped ? ReserveCollectionMetadata(collection) : null;
-            if (Shaped && ReadCollectionSchema(collection) is { } schema)
+            for (var i = 0; i < puts.Count; i++)
             {
-                CollectionSchemaValidation.Validate(schema, json, cancellationToken, store.SchemaMemory, store.SchemaEvaluations);
+                cancellationToken.ThrowIfCancellationRequested();
+                var (collection, id, json) = puts[i];
+                var previous = ReadVersion(collection, id);
+                results.Span[i] = (Put(collection, id, json, cancellationToken), previous);
             }
 
-            Reserve(collection, id, json.Length);
-            var affected = ReplaceUniqueKeys(collection, id, body, cancellationToken);
-            ClearUniqueConflict(collection, id);
-            return Write(offset =>
-            {
-                if (_changes is not null)
-                {
-                    Capture(new DocumentChange(collection, id, offset, json));
-                }
-
-                var put = BodyCommand(SqliteStatements.Put, collection, id);
-                put.Parameters.AddWithValue("$version", offset);
-                put.Parameters.AddWithValue("$body", body);
-                put.ExecuteNonQuery();
-                ReconcileUnique(collection, affected, id, cancellationToken);
-                AppendChange(collection, id, offset, offset, body, cancellationToken);
-            }, cancellationToken);
+            return true;
         }, cancellationToken, mutation: true).ConfigureAwait(false);
+    }
+
+    // Worker-only, inside a mutation.
+    private long Put(string collection, string id, ReadOnlyMemory<byte> json, CancellationToken cancellationToken)
+    {
+        ThrowIfReadOnly();
+        DocumentMutation(replicated: false);
+        var body = Admit(json);
+        using var schemaReservation = Shaped ? ReserveCollectionMetadata(collection) : null;
+        if (Shaped && ReadCollectionSchema(collection) is { } schema)
+        {
+            CollectionSchemaValidation.Validate(schema, json, cancellationToken, store.SchemaMemory, store.SchemaEvaluations);
+        }
+
+        Reserve(collection, id, json.Length);
+        var affected = ReplaceUniqueKeys(collection, id, body, cancellationToken);
+        ClearUniqueConflict(collection, id);
+        return Write(offset =>
+        {
+            if (_changes is not null)
+            {
+                Capture(new DocumentChange(collection, id, offset, json));
+            }
+
+            var put = BodyCommand(SqliteStatements.Put, collection, id);
+            put.Parameters.AddWithValue("$version", offset);
+            put.Parameters.AddWithValue("$body", body);
+            put.ExecuteNonQuery();
+            ReconcileUnique(collection, affected, id, cancellationToken);
+            AppendChange(collection, id, offset, offset, body, cancellationToken);
+        }, cancellationToken);
     }
 
     public async ValueTask<bool> DeleteAsync(string collection, string id, CancellationToken cancellationToken)

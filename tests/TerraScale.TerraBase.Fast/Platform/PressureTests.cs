@@ -527,7 +527,8 @@ public sealed class PressureTests
             Interlocked.Increment(ref process ? ref _processReads : ref _storageReads);
             if (!t_inCallback && !_released.IsSet)
             {
-                (process ? ProcessHeld : StorageHeld).TrySetResult();
+                // This worker blocks next; publish the signal on a worker that can run its awaiters.
+                _ = ThreadPool.QueueUserWorkItem(static held => held.TrySetResult(), process ? ProcessHeld : StorageHeld, preferLocal: false);
                 // Until the test's finally releases it: a hold that expired would let the sampler run ticks early.
                 _released.Wait();
             }

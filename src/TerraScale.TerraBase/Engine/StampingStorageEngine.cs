@@ -257,6 +257,24 @@ internal sealed class StampingStorageEngine(IStorageEngine inner, ISystemReplica
         public ValueTask<bool> DeleteAsync(string collection, string id, CancellationToken cancellationToken) =>
             WriteAsync(collection, id, () => inner.DeleteAsync(collection, id, cancellationToken), cancellationToken);
 
+        public async ValueTask PutBatchAsync(
+            IReadOnlyList<(string Collection, string Id, ReadOnlyMemory<byte> Json)> puts, Memory<(long Version, DocumentVersion? Previous)> results,
+            CancellationToken cancellationToken)
+        {
+            ArgumentNullException.ThrowIfNull(puts);
+            ArgumentOutOfRangeException.ThrowIfLessThan(results.Length, puts.Count);
+            await RunAsync(async () =>
+            {
+                foreach (var (collection, id, _) in puts)
+                {
+                    Stamp(collection, id);
+                }
+
+                await inner.PutBatchAsync(puts, results, cancellationToken).ConfigureAwait(false);
+                return true;
+            }, cancellationToken, mutation: true).ConfigureAwait(false);
+        }
+
         public ValueTask<DocumentPage> ListAsync(string collection, string? afterId, int limit, long maxBytes, CancellationToken cancellationToken) =>
             RunAsync(() => inner.ListAsync(collection, afterId, limit, maxBytes, cancellationToken), cancellationToken);
 
@@ -503,16 +521,20 @@ internal sealed class StampingStorageEngine(IStorageEngine inner, ISystemReplica
 
         private ValueTask<T> WriteAsync<T>(string collection, string id, Func<ValueTask<T>> write, CancellationToken cancellationToken) => RunAsync(async () =>
         {
-            // The document's and its collection's stamps move before the write reaches storage.
+            Stamp(collection, id);
+            return await write().ConfigureAwait(false);
+        }, cancellationToken, mutation: true);
+
+        // The document's and its collection's stamps move before the write reaches storage.
+        private void Stamp(string collection, string id)
+        {
             _written ??= new ulong[Stripes / 64];
             foreach (var stripe in (ReadOnlySpan<int>)[DocumentStripe(database, collection, id), CollectionStripe(database, collection)])
             {
                 engine.Touch(stripe);
                 _written[stripe / 64] |= 1UL << (stripe % 64);
             }
-
-            return await write().ConfigureAwait(false);
-        }, cancellationToken, mutation: true);
+        }
 
         private Task EnterAsync(CancellationToken cancellationToken, bool stream = false, bool mutation = false)
         {
