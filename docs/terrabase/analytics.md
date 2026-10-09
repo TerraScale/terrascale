@@ -116,9 +116,10 @@ not network round-trip latency. `divergence` denotes detected journal conflict
 (a verified prefix conflict, an origin's explicit ahead answer, or a group that
 conflicts with the applied journal prefix; malformed or oversized messages are
 failed pulls, not divergence), not a full comparison of document contents. WAN
-health is kept per peer region, database and origin: an origin still behind
-keeps its backlog, so a round that does not reach it cannot report its database
-caught up; an ahead answer or journal conflict holds, through later failed or
+health is kept per peer region, database and origin: the highest sequence an
+origin advertised stays its target until the verified applied prefix reaches
+it, so neither a round that does not reach it nor a stale lower advertisement
+can report its database caught up; an ahead answer or journal conflict holds, through later failed or
 unverified pulls, until a group from that origin verifiably extends the applied
 journal. Entries go with their database, and an undiverged one unseen for ten
 minutes. At most 4,096 origins are retained per member; a divergence beyond that

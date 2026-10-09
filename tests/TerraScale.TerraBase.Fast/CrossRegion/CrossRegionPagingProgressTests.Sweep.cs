@@ -691,6 +691,95 @@ public sealed partial class CrossRegionPagingProgressTests
     }
 
     [Test]
+    public async Task A_stale_lower_head_after_a_failed_pull_keeps_the_known_backlog()
+    {
+        var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
+        var faker = new Faker();
+        var network = new FakeRegionNetwork();
+        var clock = new ProgressClock(DateTimeOffset.UtcNow);
+        var bus = new ProgressBus(network.Join("sfo", "sfo-a"), fullMembership: false);
+        var directory = Directory.CreateTempSubdirectory("terrabase-wan-stale-head-").FullName;
+        try
+        {
+            var credentials = Path.Combine(directory, "user.creds");
+            await File.WriteAllTextAsync(credentials, Credentials, token);
+            await using var gru = await StartAsync(network, credentials, "gru-1", "gru", "gru-a");
+            await using var sfo = await StartAsync(network, credentials, "sfo-1", "sfo", "sfo-a", bus, clock);
+            try
+            {
+                var organization = Guid.NewGuid().ToString("D");
+                var project = Guid.NewGuid().ToString("D");
+                foreach (var api in new[] { gru, sfo })
+                {
+                    using var service = api.Service(api.User);
+                    using var registered = await service.PostAsJsonAsync(ManagementApi.Uri("/v1/management/commits"), new
+                    {
+                        id = Guid.NewGuid().ToString("D"),
+                        ops = new object[]
+                        {
+                            new { op = "create_organization", id = organization, name = faker.Company.CompanyName() },
+                            new { op = "create_project", organization, id = project, name = faker.Random.AlphaNumeric(12) },
+                        },
+                    }, token);
+                    registered.EnsureSuccessStatusCode();
+                }
+
+                var database = await CreatePlacedAsync(gru, organization, project, "stale", token);
+                var id = WanProtocol.Id(database.Id);
+                var document = ManagementApi.Uri(ManagementApi.DocumentPath(database, "items", "saved"));
+                using var source = await gru.CreateClientAsync(organization, "documents:read", "documents:write");
+                using var target = await sfo.CreateClientAsync(organization, "documents:read", "documents:write");
+                await ManagementApi.CreateCollectionAsync(source, database, "items");
+                bus.Begin.TrySetResult();
+                await clock.PausedAsync(token);
+                var value = faker.Lorem.Sentence();
+                string version = "";
+                for (var write = 0; write < 3; write++)
+                {
+                    using var written = await source.PutAsJsonAsync(document, new { value, write }, token);
+                    written.EnsureSuccessStatusCode();
+                    version = written.Headers.ETag!.Tag;
+                }
+
+                var meter = sfo.Server.Services.GetRequiredService<UsageMeter>();
+                var tenant = new TenantContext(organization, PlanTier.Hobby, project, database.Id);
+                async Task<long> RemainingAsync()
+                {
+                    var (lifetime, _) = await meter.GetObservationsAsync(tenant, new UsageWindow(UsageWindow.Hour, clock.GetUtcNow().ToUnixTimeSeconds() / 3600, 1), token);
+                    return lifetime.Meters!["replication_status|sfo-1|gru-1|inbound"].State!.Remaining;
+                }
+
+                // The pull fails: the advertised head is now the known target.
+                bus.Slow = true;
+                bus.FailPullsOf = id;
+                await AdvanceSweepRoundAsync(bus, clock, token);
+                await Assert.That(await RemainingAsync()).IsGreaterThan(0);
+
+                // A stale advertisement below that target supersedes the retry: the known backlog must still be reported.
+                bus.FailPullsOf = null;
+                bus.CorruptFirstHead = head => head.Sequence = 1;
+                await AdvanceSweepRoundAsync(bus, clock, token);
+                await Assert.That(bus.CorruptFirstHead is null).IsTrue();
+                await Assert.That(await RemainingAsync()).IsGreaterThan(0);
+
+                // A fresh advertisement is pulled to its head: caught up.
+                await AdvanceSweepRoundAsync(bus, clock, token);
+                await AssertReadAsync(target, document, value, version, token);
+                await Assert.That(await RemainingAsync()).IsEqualTo(0);
+            }
+            finally
+            {
+                bus.Begin.TrySetResult();
+                bus.ReleaseAll();
+            }
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Test]
     public async Task A_malformed_fresh_head_does_not_supersede_a_valid_retry()
     {
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
