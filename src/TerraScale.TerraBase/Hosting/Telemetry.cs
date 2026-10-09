@@ -1,5 +1,6 @@
 using System.Diagnostics.Metrics;
 using System.Runtime.CompilerServices;
+using Microsoft.Extensions.Diagnostics.Metrics;
 using OpenTelemetry;
 using OpenTelemetry.Metrics;
 
@@ -17,6 +18,16 @@ public static class Telemetry
     /// <summary>Path of the Prometheus scrape endpoint on the administrative listener.</summary>
     public const string MetricsPath = "/metrics";
 
+    // The built-in meters enabled by OpenTelemetry's ASP.NET Core instrumentation on .NET 11.
+    private static readonly string[] AspNetCoreMeters =
+    [
+        "Microsoft.AspNetCore.Hosting", "Microsoft.AspNetCore.Server.Kestrel", "Microsoft.AspNetCore.Http.Connections",
+        "Microsoft.AspNetCore.Routing", "Microsoft.AspNetCore.Diagnostics", "Microsoft.AspNetCore.RateLimiting",
+        "Microsoft.AspNetCore.Components", "Microsoft.AspNetCore.Components.Server.Circuits", "Microsoft.AspNetCore.Components.Lifecycle",
+        "Microsoft.AspNetCore.Authorization", "Microsoft.AspNetCore.Authentication", "Microsoft.AspNetCore.Identity",
+        "Microsoft.AspNetCore.MemoryPool",
+    ];
+
     /// <summary>Registers runtime, HTTP server and TerraBase meters.</summary>
     public static IServiceCollection AddTerraBaseTelemetry(this IServiceCollection services)
     {
@@ -27,10 +38,17 @@ public static class Telemetry
         }
 
         services.AddOpenTelemetry().WithMetrics(metrics => metrics
-            .AddMeter(MeterName)
-            .AddAspNetCoreInstrumentation()
             .AddRuntimeInstrumentation()
             .AddPrometheusExporter());
+        // Native subscriptions reject foreign host scopes before the SDK allocates publishing state.
+        services.AddMetrics(metrics =>
+        {
+            metrics.EnableMetrics(MeterName, listenerName: "OpenTelemetry");
+            foreach (var name in AspNetCoreMeters)
+            {
+                metrics.EnableMetrics(name, listenerName: "OpenTelemetry");
+            }
+        });
         // Meters are matched by name across the whole process, so a process with several hosts (the
         // integration suites) would report every host's instruments. Keep those created through this
         // host's IMeterFactory and the process-wide ones (no scope), such as the runtime's.
@@ -66,7 +84,11 @@ public static class Telemetry
 
                 if (instrument.Meter.Name != MeterName)
                 {
-                    return null;
+                    // Native meter rules match prefixes; retain the original exact-name subscriptions.
+                    return string.Equals(instrument.Meter.Name, MeterName, StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(instrument.Meter.Name, "System.Runtime", StringComparison.OrdinalIgnoreCase)
+                        || AspNetCoreMeters.Contains(instrument.Meter.Name, StringComparer.OrdinalIgnoreCase)
+                        ? null : MetricStreamConfiguration.Drop;
                 }
 
                 // The SDK eagerly allocates 2,002 points per stream by default, including unlabeled gauges.

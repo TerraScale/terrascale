@@ -151,7 +151,13 @@ internal static class BackupObject
                     data = unpacked.AsMemory(0, length);
                 }
 
-                await output.WriteAsync(data, cancellationToken).ConfigureAwait(false);
+                cancellationToken.ThrowIfCancellationRequested();
+                // A zero-byte write still allocates a FileStream buffer.
+                if (!data.IsEmpty)
+                {
+                    await output.WriteAsync(data, cancellationToken).ConfigureAwait(false);
+                }
+
                 if ((flags & LastChunk) != 0)
                 {
                     return;

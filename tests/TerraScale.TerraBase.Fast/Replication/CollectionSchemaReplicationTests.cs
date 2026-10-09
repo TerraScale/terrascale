@@ -153,39 +153,46 @@ public sealed class CollectionSchemaReplicationTests
         await TerraBaseTestServer.ReplicatedAsync(source, receiver);
 
         Volatile.Write(ref holdGroups, 1);
-        var body = new { legacy = new Faker().Commerce.ProductName() };
-        var committed = await DocumentApi.SendAsync(writer, HttpMethod.Put, document, JsonContent.Create(body), cancellationToken: token);
-        await Assert.That(committed.Status).IsEqualTo(HttpStatusCode.Created);
-        await held.Task.WaitAsync(token);
-        var absent = await DocumentApi.SendAsync(reader, HttpMethod.Get, document, cancellationToken: token);
-        await Assert.That(absent.Status).IsEqualTo(HttpStatusCode.NotFound);
-
-        var attached = await SetSchemaAsync(reader, schema, token);
-        await Assert.That(attached.Status).IsEqualTo(HttpStatusCode.OK);
-        // The held request stream also delays acknowledgments in this direction.
-        // Observe schema delivery before releasing it; assert durable acknowledgment afterward.
-        using var expectedSchema = JsonDocument.Parse(NameSchema);
-        await TerraBaseTestServer.EventuallyAsync(async cancellationToken =>
+        try
         {
-            var response = await DocumentApi.SendAsync(writer, HttpMethod.Get, schema, cancellationToken: cancellationToken);
-            return response.Status == HttpStatusCode.OK
-                && JsonElement.DeepEquals(response.Json.GetProperty("schema"), expectedSchema.RootElement);
-        });
-        await SchemaAsync(writer, schema, attached: true, token);
-        var rejected = await DocumentApi.SendAsync(reader, HttpMethod.Put, document, JsonContent.Create(body), cancellationToken: token);
-        await Assert.That((rejected.Status, rejected.Code)).IsEqualTo((HttpStatusCode.BadRequest, "schema_validation_failed"));
+            var body = new { legacy = new Faker().Commerce.ProductName() };
+            var committed = await DocumentApi.SendAsync(writer, HttpMethod.Put, document, JsonContent.Create(body), cancellationToken: token);
+            await Assert.That(committed.Status).IsEqualTo(HttpStatusCode.Created);
+            await held.Task.WaitAsync(token);
+            var absent = await DocumentApi.SendAsync(reader, HttpMethod.Get, document, cancellationToken: token);
+            await Assert.That(absent.Status).IsEqualTo(HttpStatusCode.NotFound);
 
-        release.SetResult();
-        await TerraBaseTestServer.ReplicatedAsync(source, receiver);
-        var local = await DocumentApi.SendAsync(writer, HttpMethod.Get, document, cancellationToken: token);
-        var remote = await DocumentApi.SendAsync(reader, HttpMethod.Get, document, cancellationToken: token);
-        await Assert.That(local.Status).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(remote.Status).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(local.ETag).IsEqualTo(committed.ETag);
-        await Assert.That(local.Json.GetProperty("document").GetProperty("legacy").GetString()).IsEqualTo(body.legacy);
-        await Assert.That(JsonElement.DeepEquals(remote.Json.GetProperty("document"), local.Json.GetProperty("document"))).IsTrue();
-        await Assert.That(remote.ETag).IsEqualTo(local.ETag);
-        await SchemaAsync(reader, schema, attached: true, token);
+            var attached = await SetSchemaAsync(reader, schema, token);
+            await Assert.That(attached.Status).IsEqualTo(HttpStatusCode.OK);
+            // The held request stream also delays acknowledgments in this direction.
+            // Observe schema delivery before releasing it; assert durable acknowledgment afterward.
+            using var expectedSchema = JsonDocument.Parse(NameSchema);
+            await TerraBaseTestServer.EventuallyAsync(async cancellationToken =>
+            {
+                var response = await DocumentApi.SendAsync(writer, HttpMethod.Get, schema, cancellationToken: cancellationToken);
+                return response.Status == HttpStatusCode.OK
+                    && JsonElement.DeepEquals(response.Json.GetProperty("schema"), expectedSchema.RootElement);
+            });
+            await SchemaAsync(writer, schema, attached: true, token);
+            var rejected = await DocumentApi.SendAsync(reader, HttpMethod.Put, document, JsonContent.Create(body), cancellationToken: token);
+            await Assert.That((rejected.Status, rejected.Code)).IsEqualTo((HttpStatusCode.BadRequest, "schema_validation_failed"));
+
+            release.SetResult();
+            await TerraBaseTestServer.ReplicatedAsync(source, receiver);
+            var local = await DocumentApi.SendAsync(writer, HttpMethod.Get, document, cancellationToken: token);
+            var remote = await DocumentApi.SendAsync(reader, HttpMethod.Get, document, cancellationToken: token);
+            await Assert.That(local.Status).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That(remote.Status).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That(local.ETag).IsEqualTo(committed.ETag);
+            await Assert.That(local.Json.GetProperty("document").GetProperty("legacy").GetString()).IsEqualTo(body.legacy);
+            await Assert.That(JsonElement.DeepEquals(remote.Json.GetProperty("document"), local.Json.GetProperty("document"))).IsTrue();
+            await Assert.That(remote.ETag).IsEqualTo(local.ETag);
+            await SchemaAsync(reader, schema, attached: true, token);
+        }
+        finally
+        {
+            release.TrySetResult();
+        }
     }
 
     private static void Configure(Dictionary<string, string> settings, PeerTls peers, ClientTls tls, int own, int other)

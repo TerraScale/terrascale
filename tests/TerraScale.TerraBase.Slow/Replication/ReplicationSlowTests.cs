@@ -10,7 +10,6 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
-using TerraBase.Engine.Sqlite;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
 using TerraBase.Tenancy;
@@ -29,8 +28,8 @@ public sealed class ReplicationSlowTests
         using var clientTls = new ClientTls();
         var data = Directory.CreateTempSubdirectory("terrabase-journal-deadline-").FullName;
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(60));
-        var started = new TaskCompletionSource<TerraBaseTestServer>(TaskCreationOptions.RunContinuationsAsynchronously);
         var blockedWelcome = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var lockReady = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var healthyReceived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var discoveryTimeout = new DiscoveryTimeoutEvidence();
         TerraBaseTestServer? sender = null;
@@ -59,16 +58,21 @@ public sealed class ReplicationSlowTests
                 put.EnsureSuccessStatusCode();
             }
 
+            // WAL readers ignore writer locks; change mode while no live host can repool a connection.
+            var file = Path.Combine(data, tenant.OrganizationId, tenant.ProjectId, tenant.Database("broken").DatabaseId + ".db");
+            locked = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = file, Pooling = false }.ToString());
+            await locked.OpenAsync(deadline.Token);
+            using (var mode = locked.CreateCommand())
+            {
+                mode.CommandText = "PRAGMA journal_mode = DELETE;";
+                await Assert.That((string)(await mode.ExecuteScalarAsync(deadline.Token))!).IsEqualTo("delete");
+            }
+
             if (beforeDiscovery)
             {
                 // Hold the native lock before the sender exists, covering its first open/migration
                 // as well as discovery's later head read. No in-memory store has been published yet.
-                var file = Path.Combine(data, tenant.OrganizationId, tenant.ProjectId, tenant.Database("broken").DatabaseId + ".db");
-                locked = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = file, Pooling = false }.ToString());
-                await locked.OpenAsync(deadline.Token);
                 using var hold = locked.CreateCommand();
-                hold.CommandText = "PRAGMA journal_mode = DELETE;";
-                await Assert.That((string)(await hold.ExecuteScalarAsync(deadline.Token))!).IsEqualTo("delete");
                 hold.CommandText = "BEGIN EXCLUSIVE;";
                 await hold.ExecuteNonQueryAsync(deadline.Token);
             }
@@ -81,32 +85,17 @@ public sealed class ReplicationSlowTests
                 var broken = hello.LocalIdentity.DatabaseId == brokenId;
                 if (broken && !beforeDiscovery && Interlocked.Exchange(ref lockedOnce, 1) == 0)
                 {
-                    var node = await started.Task.WaitAsync(context.CancellationToken);
-                    var engine = node.Services.GetRequiredService<SqliteStorageEngine>();
-                    var store = (SqliteDatabaseStore)(await engine.OpenDatabaseAsync(tenant.Database("broken"), context.CancellationToken))!;
-                    var session = engine.Pool.Rent(store) ?? throw new InvalidOperationException("the sender snapshot left no idle session");
-                    try
-                    {
-                        while (store.IdleCount > 0)
-                        {
-                            engine.Pool.Discard(engine.Pool.Rent(store)!);
-                        }
+                    // Hello follows the ended fixed-head snapshot; only now block its source-proof read.
+                    using var hold = locked.CreateCommand();
+                    hold.CommandText = "BEGIN EXCLUSIVE;";
+                    await hold.ExecuteNonQueryAsync(deadline.Token);
+                    lockReady.TrySetResult();
+                }
 
-                        // WAL readers do not wait behind writers. Use rollback mode for this native
-                        // lock-contention fixture, after the sender has ended its fixed-head snapshot.
-                        using var mode = session.Connection.CreateCommand();
-                        mode.CommandText = "PRAGMA journal_mode = DELETE;";
-                        await Assert.That((string)(await mode.ExecuteScalarAsync(context.CancellationToken))!).IsEqualTo("delete");
-                        locked = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = tenant.File(node, "broken"), Pooling = false }.ToString());
-                        await locked.OpenAsync(context.CancellationToken);
-                        using var hold = locked.CreateCommand();
-                        hold.CommandText = "BEGIN EXCLUSIVE;";
-                        await hold.ExecuteNonQueryAsync(context.CancellationToken);
-                    }
-                    finally
-                    {
-                        store.Return(session);
-                    }
+                if (broken && !beforeDiscovery)
+                {
+                    // A retry may arrive while the first handler is still preparing the native lock.
+                    await lockReady.Task.WaitAsync(context.CancellationToken);
                 }
 
                 await responses.WriteAsync(FakePeer.Welcome(hello, out var member), context.CancellationToken);
@@ -134,7 +123,6 @@ public sealed class ReplicationSlowTests
                 settings["data-directory"] = data;
                 settings["peer-addresses"] = peer.Address.ToString();
             }, services => services.AddSingleton<ILoggerProvider>(discoveryTimeout));
-            started.TrySetResult(sender);
             if (!beforeDiscovery)
             {
                 await blockedWelcome.Task.WaitAsync(deadline.Token);
@@ -166,7 +154,6 @@ public sealed class ReplicationSlowTests
         }
         finally
         {
-            started.TrySetCanceled(deadline.Token);
             if (locked is not null)
             {
                 await locked.DisposeAsync();
@@ -375,7 +362,7 @@ public sealed class ReplicationSlowTests
                     return;
                 }
 
-                var stream = new HeldStream();
+                var stream = new HeldStream(clock.ActiveDeadline);
                 streams.Enqueue(stream);
                 // One group in flight, so only an acknowledgment that releases the first group lets the second travel.
                 var limits = hello.Limits.Clone();
@@ -407,17 +394,17 @@ public sealed class ReplicationSlowTests
             var stream = await FirstAsync(streams);
             await stream.Group.Task.WaitAsync(TimeSpan.FromSeconds(30));
             clock.Advance(TimeSpan.FromSeconds(10));
-            var armed = clock.Rearms.Count;
+            var armed = stream.Deadline.Rearms.Count;
             stream.Release.TrySetResult();
             await stream.Next.Task.WaitAsync(TimeSpan.FromSeconds(30));
             // Only the advancing acknowledgment re-armed the deadline; the stale one before it did not.
-            await Assert.That(clock.Rearms.Count - armed).IsEqualTo(1);
+            await Assert.That(stream.Deadline.Rearms.Count - armed).IsEqualTo(1);
             var extended = clock.GetUtcNow() + ReplicationProtocol.ProgressTimeout;
 
             clock.Advance(ReplicationProtocol.ProgressTimeout - TimeSpan.FromTicks(1));
-            await Assert.That(clock.Expired.Task.IsCompleted).IsFalse();
+            await Assert.That(stream.Deadline.Expired.Task.IsCompleted).IsFalse();
             clock.Advance(TimeSpan.FromTicks(1));
-            await Assert.That(await clock.Expired.Task.WaitAsync(TimeSpan.FromSeconds(30))).IsEqualTo(extended);
+            await Assert.That(await stream.Deadline.Expired.Task.WaitAsync(TimeSpan.FromSeconds(30))).IsEqualTo(extended);
             await stream.Abandoned.Task.WaitAsync(TimeSpan.FromSeconds(30));
             await RetriedAsync(clock, streams);
         }
@@ -448,7 +435,7 @@ public sealed class ReplicationSlowTests
                     return;
                 }
 
-                var stream = new HeldStream();
+                var stream = new HeldStream(clock.ActiveDeadline);
                 streams.Enqueue(stream);
                 try
                 {
@@ -466,7 +453,7 @@ public sealed class ReplicationSlowTests
             // The attempt's deadline was armed before its snapshot and Hello, at the frozen start time.
             var stream = await FirstAsync(streams);
             clock.Advance(ReplicationProtocol.ProgressTimeout);
-            await Assert.That(await clock.Expired.Task.WaitAsync(TimeSpan.FromSeconds(30))).IsEqualTo(clock.Start + ReplicationProtocol.ProgressTimeout);
+            await Assert.That(await stream.Deadline.Expired.Task.WaitAsync(TimeSpan.FromSeconds(30))).IsEqualTo(clock.Start + ReplicationProtocol.ProgressTimeout);
             await stream.Abandoned.Task.WaitAsync(TimeSpan.FromSeconds(30));
             await RetriedAsync(clock, streams);
         }
@@ -500,7 +487,7 @@ public sealed class ReplicationSlowTests
                     return;
                 }
 
-                var stream = new HeldStream();
+                var stream = new HeldStream(clock.ActiveDeadline);
                 streams.Enqueue(stream);
                 PeerIdentity member;
                 try
@@ -529,13 +516,13 @@ public sealed class ReplicationSlowTests
 
             var stream = await FirstAsync(streams);
             clock.Advance(ReplicationProtocol.ProgressTimeout - TimeSpan.FromTicks(1));
-            await Assert.That(clock.Expired.Task.IsCompleted).IsFalse();
+            await Assert.That(stream.Deadline.Expired.Task.IsCompleted).IsFalse();
             stream.Release.TrySetResult();
             var group = await stream.Group.Task.WaitAsync(TimeSpan.FromSeconds(30));
             await Assert.That(group.EventId.Sequence).IsEqualTo(1UL);
             // The first group proves Welcome was processed; no ACK may extend the deadline yet.
             clock.Advance(TimeSpan.FromTicks(1));
-            await Assert.That(clock.Expired.Task.IsCompleted).IsFalse();
+            await Assert.That(stream.Deadline.Expired.Task.IsCompleted).IsFalse();
             releaseAcknowledgment.TrySetResult();
         }
         finally
@@ -1015,7 +1002,7 @@ public sealed class ReplicationSlowTests
             peerTls.Apply(settings);
             settings["data-directory"] = data;
             settings["peer-addresses"] = peer.Address.ToString();
-        }, services => services.AddSingleton<TimeProvider>(clock));
+        }, services => services.AddSingleton(provider => ActivatorUtilities.CreateInstance<ReplicationSender>(provider, clock)));
 
     private static async Task<HeldStream> FirstAsync(System.Collections.Concurrent.ConcurrentQueue<HeldStream> streams)
     {
@@ -1053,8 +1040,10 @@ public sealed class ReplicationSlowTests
         }
     }
 
-    private sealed class HeldStream
+    private sealed class HeldStream(ProgressClock.Deadline deadline)
     {
+        public ProgressClock.Deadline Deadline { get; } = deadline;
+
         public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public TaskCompletionSource<CommittedGroupBatch> Group { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -1064,18 +1053,18 @@ public sealed class ReplicationSlowTests
         public TaskCompletionSource Abandoned { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 
-    // Frozen time that reports the sender's progress deadline (the only one-shot ProgressTimeout timer on this
-    // clock): every re-arm, and the instant it first expires. FakeTimeProvider runs due callbacks inside Advance.
+    // Only the sender uses this clock, with one stream at a time for the test's single peer.
+    // Each Hello binds its own deadline; anti-entropy and later attempts cannot contaminate its observations.
     private sealed class ProgressClock : FakeTimeProvider
     {
+        private Deadline? _activeDeadline;
+
         public ProgressClock()
             : base(DateTimeOffset.UtcNow)
         {
         }
 
-        public System.Collections.Concurrent.ConcurrentQueue<DateTimeOffset> Rearms { get; } = new();
-
-        public TaskCompletionSource<DateTimeOffset> Expired { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public Deadline ActiveDeadline => Volatile.Read(ref _activeDeadline) ?? throw new InvalidOperationException("no sender deadline was armed");
 
         public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
         {
@@ -1084,20 +1073,27 @@ public sealed class ReplicationSlowTests
                 return base.CreateTimer(callback, state, dueTime, period);
             }
 
-            return new Deadline(this, base.CreateTimer(value =>
+            var expired = new TaskCompletionSource<DateTimeOffset>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var deadline = new Deadline(this, base.CreateTimer(value =>
             {
-                Expired.TrySetResult(GetUtcNow());
+                expired.TrySetResult(GetUtcNow());
                 callback(value);
-            }, state, dueTime, period));
+            }, state, dueTime, period), expired);
+            Volatile.Write(ref _activeDeadline, deadline);
+            return deadline;
         }
 
-        private sealed class Deadline(ProgressClock clock, ITimer timer) : ITimer
+        public sealed class Deadline(ProgressClock clock, ITimer timer, TaskCompletionSource<DateTimeOffset> expired) : ITimer
         {
+            public System.Collections.Concurrent.ConcurrentQueue<DateTimeOffset> Rearms { get; } = new();
+
+            public TaskCompletionSource<DateTimeOffset> Expired { get; } = expired;
+
             public bool Change(TimeSpan dueTime, TimeSpan period)
             {
                 if (dueTime == ReplicationProtocol.ProgressTimeout)
                 {
-                    clock.Rearms.Enqueue(clock.GetUtcNow());
+                    Rearms.Enqueue(clock.GetUtcNow());
                 }
 
                 return timer.Change(dueTime, period);

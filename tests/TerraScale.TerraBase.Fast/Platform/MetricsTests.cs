@@ -2,6 +2,7 @@ using System.Diagnostics.Metrics;
 using System.Globalization;
 using System.Net;
 using Microsoft.Extensions.DependencyInjection;
+using OpenTelemetry.Metrics;
 using TerraBase.Features.Memory;
 using TerraBase.Hosting;
 using TerraBase.Testing;
@@ -13,12 +14,36 @@ public sealed class MetricsTests
     [Test]
     public async Task Each_server_exports_only_its_own_http_and_feature_measurements()
     {
-        await using var first = await TerraBaseTestServer.StartAsync();
+        var name = "terrabase_test_isolation_" + Guid.NewGuid().ToString("N");
+        var foreignPublished = 0;
+        await using var first = await TerraBaseTestServer.StartAsync(services: services =>
+            services.ConfigureOpenTelemetryMeterProvider((provider, metrics) =>
+            {
+                var factory = provider.GetRequiredService<IMeterFactory>();
+                metrics.AddView(instrument =>
+                {
+                    if (instrument.Name == name && instrument.Meter.Scope is not null && !ReferenceEquals(instrument.Meter.Scope, factory))
+                    {
+                        Interlocked.Increment(ref foreignPublished);
+                    }
+
+                    return null;
+                });
+            }));
         await using var second = await TerraBaseTestServer.StartAsync();
         var firstMeter = first.Services.GetRequiredService<IMeterFactory>().Create(Telemetry.MeterName);
         var secondMeter = second.Services.GetRequiredService<IMeterFactory>().Create(Telemetry.MeterName);
-        firstMeter.CreateCounter<long>("terrabase_test_isolation").Add(7);
-        secondMeter.CreateCounter<long>("terrabase_test_isolation").Add(11);
+        firstMeter.CreateCounter<long>(name).Add(7);
+        secondMeter.CreateCounter<long>(name).Add(11);
+        await Assert.That(Volatile.Read(ref foreignPublished)).IsEqualTo(0);
+        using var globalMeter = new Meter(Telemetry.MeterName);
+        globalMeter.CreateCounter<long>(name + "_global").Add(13);
+        using var lowerCaseMeter = new Meter(Telemetry.MeterName.ToLowerInvariant());
+        lowerCaseMeter.CreateCounter<long>(name + "_case").Add(17);
+        using var unmatchedMeter = new Meter(Telemetry.MeterName + ".unsubscribed");
+        unmatchedMeter.CreateCounter<long>(name + "_unmatched").Add(1);
+        using var unmatchedHttpMeter = new Meter("Microsoft.AspNetCore.Hosting.unsubscribed");
+        unmatchedHttpMeter.CreateCounter<long>(name + "_unmatched_http").Add(1);
         using var health = await first.Client.GetAsync(new Uri("/healthz", UriKind.Relative));
         health.EnsureSuccessStatusCode();
         using var firstReservation = first.Services.GetRequiredService<IMemoryBudget>().TryReserve(MemoryLane.Foreground, 7);
@@ -30,10 +55,16 @@ public sealed class MetricsTests
         var secondMetrics = await second.Client.GetStringAsync(new Uri("/metrics", UriKind.Relative));
         await Assert.That(firstMetrics).Contains("http_route=\"/healthz\"");
         await Assert.That(secondMetrics).DoesNotContain("http_route=\"/healthz\"");
-        await Assert.That(firstMetrics.Split('\n').Single(line => line.StartsWith("terrabase_test_isolation_total{", StringComparison.Ordinal)).Split(' ')[1])
+        await Assert.That(firstMetrics.Split('\n').Single(line => line.StartsWith(name + "_total{", StringComparison.Ordinal)).Split(' ')[1])
             .IsEqualTo("7");
-        await Assert.That(secondMetrics.Split('\n').Single(line => line.StartsWith("terrabase_test_isolation_total{", StringComparison.Ordinal)).Split(' ')[1])
+        await Assert.That(secondMetrics.Split('\n').Single(line => line.StartsWith(name + "_total{", StringComparison.Ordinal)).Split(' ')[1])
             .IsEqualTo("11");
+        foreach (var metrics in new[] { firstMetrics, secondMetrics })
+        {
+            await Assert.That(Sample(metrics, name + "_global_total")).IsEqualTo("13");
+            await Assert.That(Sample(metrics, name + "_case_total")).IsEqualTo("17");
+            await Assert.That(metrics).DoesNotContain(name + "_unmatched");
+        }
         await Assert.That(Sample(firstMetrics, "terrabase_memory_reserved_bytes")).IsEqualTo("7");
         await Assert.That(Sample(secondMetrics, "terrabase_memory_reserved_bytes")).IsEqualTo("11");
     }
