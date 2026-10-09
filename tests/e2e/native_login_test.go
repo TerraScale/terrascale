@@ -474,6 +474,41 @@ func TestNativeEmailCodeInputEditing(t *testing.T) {
 	screenshot(t, page, "email-code-error")
 }
 
+func TestNativeEmailCodeFormattedDrop(t *testing.T) {
+	t.Parallel()
+	base, _ := tsAuthDashboard(t)
+	page := rejectingPage(t, base)
+	goTo(t, page, "/login/code")
+	fill(t, page.Locator("#email"), "drop-code@example.test")
+	click(t, pageByRole(page, *playwright.AriaRoleButton, "Email me a code"))
+	code := page.Locator("#code")
+	visible(t, page.Locator(".ts-email-code-slot").First())
+	for _, test := range []struct{ name, text, want string }{
+		{"spaces", "123 456", "123456"},
+		{"leading zeros", "012-345", "012345"},
+		{"long code", "123 456 789", "123456"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fill(t, code, "")
+			_, err := page.Evaluate(`text => {
+				document.querySelector('#code-drag-source')?.remove();
+				const source = document.createElement('div');
+				source.id = 'code-drag-source';
+				source.draggable = true;
+				source.textContent = text;
+				source.style.cssText = 'position:fixed;top:8px;left:8px;padding:8px;z-index:9999';
+				source.addEventListener('dragstart', event => event.dataTransfer.setData('text/plain', text));
+				document.body.append(source);
+			}`, test.text)
+			must(t, err)
+			// Use a real native drop so the browser applies maxlength before input.
+			must(t, page.Locator("#code-drag-source").DragTo(code))
+			must(t, expect.Locator(code).ToHaveValue(test.want))
+			must(t, expect.Locator(page.Locator(".ts-email-code-slot")).ToHaveText(strings.Split(test.want, "")))
+		})
+	}
+}
+
 func TestNativeEmailCodePasteUndo(t *testing.T) {
 	t.Parallel()
 	base, _ := tsAuthDashboard(t)
@@ -486,6 +521,8 @@ func TestNativeEmailCodePasteUndo(t *testing.T) {
 		{"digits", "908027", "908027", 0, 6},
 		{"formatted", "908 027", "908027", 0, 6},
 		{"selected range", "9 0", "09045", 1, 4},
+		{"long digits", "908027123", "908027", 0, 6},
+		{"long selected range", "98765", "098745", 1, 4},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			goTo(t, page, "/login/code")
@@ -516,36 +553,46 @@ func TestNativeEmailCodePasteUndo(t *testing.T) {
 func TestNativeEmailCodeBeforeDatastarLoads(t *testing.T) {
 	t.Parallel()
 	base, _ := tsAuthDashboard(t)
-	page := watchedPage(t, newContext(t, base))
-	goTo(t, page, "/login/code")
-	fill(t, page.Locator("#email"), "early-code@example.test")
+	for _, test := range []struct {
+		name, text string
+		end        int
+	}{
+		{"digits", "012345", 4},
+		{"formatted", "012 345", 5},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			page := watchedPage(t, newContext(t, base))
+			goTo(t, page, "/login/code")
+			fill(t, page.Locator("#email"), "early-code@example.test")
 
-	// Hold the real module response so the fallback field can receive input
-	// before binding, without replacing the script or bypassing its integrity.
-	pending := make(chan playwright.Route, 1)
-	must(t, page.Route("**/js/datastar.js*", func(route playwright.Route) { pending <- route }))
-	_, err := pageByRole(page, *playwright.AriaRoleButton, "Email me a code").Evaluate(`button => button.click()`, nil)
-	must(t, err)
-	code := page.Locator("#code")
-	must(t, expect.Locator(code).ToBeVisible())
-	must(t, expect.Locator(page.Locator(".ts-email-code-ready")).ToHaveCount(0))
-	must(t, code.PressSequentially("012345"))
-	_, err = code.Evaluate(`input => input.setSelectionRange(1, 4)`, nil)
-	must(t, err)
-	select {
-	case route := <-pending:
-		must(t, route.Continue())
-	case <-time.After(10 * time.Second):
-		t.Fatal("Datastar module request was not intercepted")
+			// Hold the real module response so the fallback field can receive input
+			// before binding, without replacing the script or bypassing its integrity.
+			pending := make(chan playwright.Route, 1)
+			must(t, page.Route("**/js/datastar.js*", func(route playwright.Route) { pending <- route }))
+			_, err := pageByRole(page, *playwright.AriaRoleButton, "Email me a code").Evaluate(`button => button.click()`, nil)
+			must(t, err)
+			code := page.Locator("#code")
+			must(t, expect.Locator(code).ToBeVisible())
+			must(t, expect.Locator(page.Locator(".ts-email-code-ready")).ToHaveCount(0))
+			must(t, code.PressSequentially(test.text))
+			_, err = code.Evaluate(`(input, end) => input.setSelectionRange(1, end)`, test.end)
+			must(t, err)
+			select {
+			case route := <-pending:
+				must(t, route.Continue())
+			case <-time.After(10 * time.Second):
+				t.Fatal("Datastar module request was not intercepted")
+			}
+			must(t, expect.Locator(page.Locator(".ts-email-code-slot")).ToHaveText([]string{"0", "1", "2", "3", "4", "5"}))
+			must(t, expect.Locator(code).ToHaveValue("012345"))
+			selection, err := code.Evaluate(`input => input.selectionStart === 1 && input.selectionEnd === 4`, nil)
+			must(t, err)
+			if selection != true {
+				t.Fatal("Datastar initialization changed the selected digits")
+			}
+			must(t, expect.Locator(page.Locator(".ts-email-code-selected")).ToHaveCount(3))
+		})
 	}
-	must(t, expect.Locator(page.Locator(".ts-email-code-slot")).ToHaveText([]string{"0", "1", "2", "3", "4", "5"}))
-	must(t, expect.Locator(code).ToHaveValue("012345"))
-	selection, err := code.Evaluate(`input => input.selectionStart === 1 && input.selectionEnd === 4`, nil)
-	must(t, err)
-	if selection != true {
-		t.Fatal("Datastar initialization changed the native selection")
-	}
-	must(t, expect.Locator(page.Locator(".ts-email-code-selected")).ToHaveCount(3))
 }
 
 func TestNativeSignUpWithoutJavaScript(t *testing.T) {

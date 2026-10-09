@@ -51,18 +51,22 @@ if (digits !== el.value) {
 $_emailCode = el.value; $_codeCaret = el.selectionStart; $_codeEnd = el.selectionEnd;
 `
 
-// Only intercept formatted codes. insertText keeps the replacement in the
-// browser's undo history; setRangeText and assigning value do not.
+// Intercept formatted or oversized pastes before insertion. insertText keeps
+// the replacement in the browser's undo history; assigning value does not.
 const codePaste = `
 const text = evt.clipboardData?.getData('text');
-if (text == null || /^[0-9]*$/.test(text)) return;
+if (text == null) return;
+const capacity = Math.max(0, 6 - el.value.length + el.selectionEnd - el.selectionStart);
+if (/^[0-9]*$/.test(text) && text.length <= capacity) return;
 evt.preventDefault();
-const digits = text.replace(/[^0-9]/g, '').slice(0, 6 - el.value.length + el.selectionEnd - el.selectionStart);
+const digits = text.replace(/[^0-9]/g, '').slice(0, capacity);
 if (digits) document.execCommand('insertText', false, digits);
 `
 
 // One native input keeps paste, autofill, keyboard editing and screen readers
 // working as usual; Datastar mirrors its value and selection into six boxes.
+// Keep room for formatted insertions and normalize them, including early input,
+// before enforcing the six-digit limit.
 templ emailCodeInput(errorMessage string) {
 	{{ field := ui.FieldProps{ID: "code", Label: "Six-digit code", Error: errorMessage} }}
 	<div class="ts-field">
@@ -80,7 +84,7 @@ templ emailCodeInput(errorMessage string) {
 				autofocus
 				spellcheck="false"
 				data-bind="_emailCode"
-				data-init="el.maxLength = 6; $_codeCaret = el.selectionStart; $_codeEnd = el.selectionEnd; el.parentElement.classList.add('ts-email-code-ready')"
+				data-init={ codeInput + "el.parentElement.classList.add('ts-email-code-ready')" }
 				data-on:input={ codeInput }
 				data-on:select="$_codeCaret = el.selectionStart; $_codeEnd = el.selectionEnd"
 				data-on:keyup="$_codeCaret = el.selectionStart; $_codeEnd = el.selectionEnd"
