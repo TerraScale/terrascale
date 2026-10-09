@@ -142,6 +142,21 @@ retirement complete. OCI 404 responses remain pending because they can mask lost
 permissions or investigate an external deletion rather than treating 404 as proof of retirement. These records survive
 project deletion; no migration is required.
 
+Uncertain intents with no OCI match are never removed automatically. To release admission after a verified unsubmitted
+create, an operator with the management service credential can use the loopback-only recovery API:
+
+1. `GET /backup-secret-lifecycle` reads eight metadata-only intents; pass its `next` ULID as `?after=...` for another page.
+2. Investigate the exact `secretName` in the configured OCI vault and compartment, including pending create requests.
+   Confirm no credential exists or can still be accepted. Restore metadata permissions before investigating; an error
+   or authorization-masked 404 is not evidence of absence. If a secret exists, let ordinary reconciliation retire it.
+3. For a `recoverable` intent, `POST /backup-secret-lifecycle/{id}/confirm-absent` with
+   `{"secretName":"terrabase-backup-<id>","confirmAbsent":true}` releases its reserved slot in a FULL catalog transaction.
+
+Both routes require `management-credential-file`, Bearer service authentication and `X-TerraBase-User-Id`; the client
+listener returns 404. Recovery additionally checks an empty fresh OCI metadata listing and refuses live/unfenced,
+known-ID, mismatched or concurrently resolved rows. It does not delete or replay a remote secret. Incorrect operator
+confirmation can leave a late remote acceptance untracked, so do not use it solely because a metadata list is empty.
+
 Restore selection is explicit and never falls back between buckets:
 
 - `GET /v1/projects/{project}/databases/{database}/point-in-time?destination=platform|customer`

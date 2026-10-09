@@ -437,6 +437,12 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
                         }
                     }
 
+                    // A confirmed replacement/detachment must not inherit the failed destination's backoff.
+                    if (file.Target.Revision != (file.Configuration?.Revision ?? BackupDestinationNames.Platform))
+                    {
+                        file.RetryAt = DateTimeOffset.MinValue;
+                    }
+
                     await ShipAsync(file, cancellationToken).ConfigureAwait(false);
                 }
                 catch (Exception error)

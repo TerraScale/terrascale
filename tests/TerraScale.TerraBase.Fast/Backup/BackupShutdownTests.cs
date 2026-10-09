@@ -22,6 +22,47 @@ public sealed class BackupShutdownTests
     private static readonly TimeSpan CleanupDeadline = TimeSpan.FromSeconds(30);
 
     [Test]
+    public async Task A_failed_customer_upload_then_detachment_flushes_a_final_platform_snapshot_without_waiting_for_backoff()
+    {
+        var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
+        using var oci = new FakeOci();
+        var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 9, 12, 0, 0, TimeSpan.Zero));
+        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services =>
+        {
+            oci.Route(services);
+            ManualBackupHosting.Configure(services);
+        }, time);
+        Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
+        var database = await api.CreateManagedDatabaseAsync();
+        using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
+        await SetCustomerAsync(api, database, token);
+        await ManagementApi.CreateCollectionAsync(data, database, "people");
+        var text = new Faker().Lorem.Sentence();
+        await PutAsync(data, database, "before", text, token);
+        var backup = api.Server.Services.GetRequiredService<ContinuousBackup>();
+        time.Advance(TimeSpan.FromSeconds(10));
+        await backup.RunOnceAsync(token);
+        await PutAsync(data, database, "final", text, token);
+        oci.RejectCustomerWrites = key => key.StartsWith(File(database) + "/wal/", StringComparison.Ordinal);
+        time.Advance(TimeSpan.FromSeconds(10));
+        await backup.RunOnceAsync(token);
+        var failed = backup.Status.Files.Single(file => file.File == File(database));
+        await Assert.That(failed.LastError).IsNotNull();
+        await Assert.That(failed.Generation).IsNull();
+        await Assert.That(oci.Objects.Keys.Any(key => key.StartsWith(File(database) + "/snapshots/", StringComparison.Ordinal))).IsFalse();
+        using var detached = await api.Client.DeleteAsync(ManagementApi.Uri(database.ProjectPath + "/backup-destination"), token);
+        await Assert.That(detached.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+        var at = time.GetUtcNow();
+        await backup.StopAsync(token);
+        await Assert.That(time.GetUtcNow()).IsEqualTo(at);
+        await Assert.That(oci.Objects.Keys.Count(key => key.StartsWith(File(database) + "/snapshots/", StringComparison.Ordinal))).IsEqualTo(1);
+        await AssertRestoredAsync(api, data, database, at, "failed-detached", text, token);
+        await Assert.That(backup.Status.Files).IsEmpty();
+        await Assert.That(Directory.EnumerateFiles(Path.Combine(api.Server.DataDirectory, ".backup"))).IsEmpty();
+        await Assert.That(oci.BadSignatures).IsEqualTo(0);
+    }
+
+    [Test]
     public async Task Multiple_cached_customer_configuration_deadlines_cannot_precede_healthy_final_wal_and_restore()
     {
         const int customers = 3;

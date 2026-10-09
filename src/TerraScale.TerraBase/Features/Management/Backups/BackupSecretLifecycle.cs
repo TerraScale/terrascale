@@ -18,7 +18,7 @@ internal interface IBackupSecretLifecycle
 }
 
 internal sealed class BackupSecretLifecycle(
-    SystemCatalog catalog, TerraBaseOptions options, TimeProvider time, IOciVaultSecrets? secrets = null) : BackgroundService, IBackupSecretLifecycle
+    SystemCatalog catalog, TerraBaseOptions options, TimeProvider time, IOciVaultSecrets? secrets = null) : BackgroundService, IBackupSecretLifecycle, IBackupSecretRecovery
 {
     // Outside ProjectState: deleting a detached project must not discard its retirement work.
     internal const string Collection = "backup_secret_lifecycle";
@@ -39,6 +39,53 @@ internal sealed class BackupSecretLifecycle(
     private bool _closed;
     private QueryPosition? _knownAfter;
     private QueryPosition? _unknownAfter;
+
+    public async ValueTask<BackupSecretRecoveryPage> ListAsync(string? after, CancellationToken cancellationToken)
+    {
+        var page = await catalog.ReadAsync(transaction => transaction.QueryAsync(new(Collection, UnknownIdFilter, [],
+            after is null ? null : new QueryPosition([], after), BatchSize, BatchSize * MaxRecordBytes), cancellationToken), cancellationToken).ConfigureAwait(false);
+        var items = page.Rows.Where(row => row.Document.Json.Length <= MaxRecordBytes)
+            .Select(row => JsonSerializer.Deserialize(row.Document.Json.Span, TerraBaseJsonContext.Default.BackupSecretWork))
+            .OfType<BackupSecretWork>().Where(work => work is { Version: 1, SecretName: not null })
+            .Select(work => new BackupSecretRecoveryIntent(work.Id, work.SecretName!, work.Retiring)).ToArray();
+        return new(items, page.HasMore ? page.Rows[^1].Document.Id : null);
+    }
+
+    public async Task<bool> ConfirmAbsentAsync(string id, string secretName, CancellationToken cancellationToken)
+    {
+        if (secrets is null || !TryEnter())
+        {
+            throw new HttpRequestException("backup secret recovery is unavailable");
+        }
+
+        try
+        {
+            using var timeout = OperationTimeout(cancellationToken);
+            var work = await catalog.ReadAsync(transaction =>
+                GetAsync(transaction, Collection, id, TerraBaseJsonContext.Default.BackupSecretWork, timeout.Token), timeout.Token).ConfigureAwait(false);
+            if (work is not { Version: 1, Retiring: true, SecretId: null } || work.SecretName != secretName)
+            {
+                return false;
+            }
+
+            // Empty metadata is insufficient for automatic deletion; this path additionally requires operator attestation.
+            if (await secrets.FindAsync(secretName, timeout.Token).ConfigureAwait(false) is not null)
+            {
+                return false;
+            }
+
+            return await catalog.WriteDurableAsync(async transaction =>
+            {
+                var current = await GetAsync(transaction, Collection, id, TerraBaseJsonContext.Default.BackupSecretWork, timeout.Token).ConfigureAwait(false);
+                return current is { Version: 1, Retiring: true, SecretId: null } && current.SecretName == secretName
+                    && await transaction.DeleteAsync(Collection, id, timeout.Token).ConfigureAwait(false);
+            }, timeout.Token).ConfigureAwait(false);
+        }
+        finally
+        {
+            ExitOperation();
+        }
+    }
 
     public ValueTask<BackupSecretWork?> BeginCreateAsync(CancellationToken cancellationToken) =>
         catalog.WriteDurableAsync<BackupSecretWork?>(async transaction =>

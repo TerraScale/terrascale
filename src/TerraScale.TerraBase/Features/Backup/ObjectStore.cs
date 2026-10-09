@@ -107,7 +107,8 @@ internal sealed class S3ObjectStore : IObjectStore, IDisposable
 
         using (response)
         {
-            await read(response.ResponseStream, cancellationToken).ConfigureAwait(false);
+            var body = _customer ? new CustomerBody(response.ResponseStream) : response.ResponseStream;
+            await read(body, cancellationToken).ConfigureAwait(false);
             return true;
         }
     }
@@ -231,6 +232,51 @@ internal sealed class S3ObjectStore : IObjectStore, IDisposable
         {
             throw new HttpRequestException("customer backup object operation failed");
         }
+    }
+
+    // Sanitize transport reads only: validation in the consumer must keep its own integrity errors.
+    private sealed class CustomerBody(Stream inner) : Stream
+    {
+        public override bool CanRead => inner.CanRead;
+        public override bool CanSeek => inner.CanSeek;
+        public override bool CanWrite => false;
+        public override long Length => inner.Length;
+        public override long Position { get => inner.Position; set => inner.Position = value; }
+        public override void Flush() => inner.Flush();
+        public override long Seek(long offset, SeekOrigin origin) => inner.Seek(offset, origin);
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override int Read(byte[] buffer, int offset, int count) => Read(buffer.AsSpan(offset, count));
+
+        public override int Read(Span<byte> buffer)
+        {
+            try
+            {
+                return inner.Read(buffer);
+            }
+            catch (Exception error) when (IsBodyTransportFailure(error))
+            {
+                throw new HttpRequestException("customer backup object body could not be read");
+            }
+        }
+
+        public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
+            ReadAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
+
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            try
+            {
+                return await inner.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception error) when (IsBodyTransportFailure(error))
+            {
+                throw new HttpRequestException("customer backup object body could not be read");
+            }
+        }
+
+        private static bool IsBodyTransportFailure(Exception error) => error is IOException or HttpRequestException or AmazonClientException
+            or System.Net.Sockets.SocketException or System.Security.Authentication.AuthenticationException;
     }
 
     // Requests go through IHttpClientFactory, so tests replace the transport like every other outbound client.

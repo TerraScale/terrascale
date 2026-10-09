@@ -53,19 +53,28 @@ internal sealed partial class ContinuousBackup
         var cutoff = now - TimeSpan.FromDays(file.RetentionDays) - RetentionGrace;
         long size = 0;
         var measure = now - file.SizedAt >= SizeInterval;
+        var complete = true;
         foreach (var store in file.Target.RetentionStores)
         {
-            await RetainStoreAsync(file, store, cutoff, cancellationToken).ConfigureAwait(false);
-            if (measure)
+            try
             {
-                await foreach (var item in store.ListAsync(file.Prefix + "/", null, cancellationToken).ConfigureAwait(false))
+                await RetainStoreAsync(file, store, cutoff, cancellationToken).ConfigureAwait(false);
+                if (measure)
                 {
-                    size = checked(size + item.Size);
+                    await foreach (var item in store.ListAsync(file.Prefix + "/", null, cancellationToken).ConfigureAwait(false))
+                    {
+                        size = checked(size + item.Size);
+                    }
                 }
+            }
+            catch (Exception error) when (!cancellationToken.IsCancellationRequested)
+            {
+                complete = false;
+                LogRetentionFailed(_logger, file.Prefix, error);
             }
         }
 
-        if (measure)
+        if (measure && complete)
         {
             (file.SizeBytes, file.SizedAt) = (size, now);
         }

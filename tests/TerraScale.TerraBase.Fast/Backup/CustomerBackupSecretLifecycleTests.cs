@@ -21,6 +21,55 @@ namespace TerraBase.Fast.Backup;
 public sealed class CustomerBackupSecretLifecycleTests
 {
     [Test]
+    public async Task Operator_recovery_refuses_live_known_and_remotely_present_intents_and_preserves_provider_errors()
+    {
+        var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
+        using var oci = new FakeOci();
+        var time = Clock();
+        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services => Manual(oci, services), time, managementCredential: true);
+        var database = await api.CreateManagedDatabaseAsync();
+        await SaveAsync(api, Uri(database.ProjectPath + "/backup-destination"), "customer", token);
+        var pair = oci.SecretNames.Single();
+        var present = new BackupSecretWork(1, pair.Key["terrabase-backup-".Length..], pair.Key, null, true, time.GetUtcNow().AddDays(1));
+        var activeId = Ulid.NewUlid().ToString();
+        var active = new BackupSecretWork(1, activeId, "terrabase-backup-" + activeId, null, false, time.GetUtcNow().AddDays(1));
+        var knownId = Ulid.NewUlid().ToString();
+        var known = new BackupSecretWork(1, knownId, "terrabase-backup-" + knownId, pair.Value, true, time.GetUtcNow().AddDays(1));
+        var unknownId = Ulid.NewUlid().ToString();
+        var unknown = new BackupSecretWork(1, unknownId, "terrabase-backup-" + unknownId, null, true, time.GetUtcNow().AddDays(1));
+        await api.Server.Services.GetRequiredService<SystemCatalog>().WriteDurableAsync(async transaction =>
+        {
+            foreach (var work in new[] { present, active, known, unknown })
+            {
+                await SystemCatalog.PutAsync(transaction, BackupSecretLifecycle.Collection, work.Id, work, TerraBaseJsonContext.Default.BackupSecretWork, token);
+            }
+
+            return true;
+        }, token);
+        using var service = api.Service(api.User);
+        foreach (var work in new[] { present, active, known })
+        {
+            using var refused = await service.PostAsJsonAsync(Uri("/backup-secret-lifecycle/" + work.Id + "/confirm-absent"),
+                new { secretName = work.SecretName, confirmAbsent = true }, token);
+            await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+        }
+
+        oci.SecretResponseOverride = (method, path) => method == HttpMethod.Get && path == "/20180608/secrets"
+            ? new(HttpStatusCode.ServiceUnavailable) : null;
+        using var unavailable = await service.PostAsJsonAsync(Uri("/backup-secret-lifecycle/" + unknown.Id + "/confirm-absent"),
+            new { secretName = unknown.SecretName, confirmAbsent = true }, token);
+        await Assert.That(unavailable.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        await Assert.That((await PendingAsync(api, token)).Count).IsEqualTo(4);
+        oci.SecretResponseOverride = null;
+        using var released = await service.PostAsJsonAsync(Uri("/backup-secret-lifecycle/" + unknown.Id + "/confirm-absent"),
+            new { secretName = unknown.SecretName, confirmAbsent = true }, token);
+        await Assert.That(released.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+        await Assert.That((await PendingAsync(api, token)).Count).IsEqualTo(3);
+        await Assert.That(oci.ScheduledSecrets.Count).IsEqualTo(0);
+        await Assert.That(oci.BadSignatures).IsEqualTo(0);
+    }
+
+    [Test]
     [Arguments(HttpStatusCode.BadRequest)]
     [Arguments(HttpStatusCode.Unauthorized)]
     [Arguments(HttpStatusCode.Forbidden)]
@@ -726,7 +775,7 @@ public sealed class CustomerBackupSecretLifecycleTests
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         using var oci = new FakeOci();
         var time = Clock();
-        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services => Manual(oci, services), time);
+        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services => Manual(oci, services), time, managementCredential: true);
         var failing = await api.CreateManagedDatabaseAsync();
         var unrelated = await api.CreateManagedDatabaseAsync();
         var failingRoute = Uri(failing.ProjectPath + "/backup-destination");
@@ -806,6 +855,25 @@ public sealed class CustomerBackupSecretLifecycleTests
         await Assert.That(oci.ScheduledSecrets).IsEquivalentTo([current, unrelatedId]);
         await Assert.That((await PendingAsync(api, token)).Count).IsEqualTo(BackupSecretLifecycle.MaxCreates);
         await AssertMetadataOnlyAsync(api, token);
+
+        using var service = api.Service(api.User);
+        using var privateRoute = await api.Client.GetAsync(Uri("/backup-secret-lifecycle"), token);
+        await Assert.That(privateRoute.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        using var unauthorized = await api.Server.Client.GetAsync(Uri("/backup-secret-lifecycle"), token);
+        await Assert.That(unauthorized.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+        var page = await service.GetFromJsonAsync<BackupSecretRecoveryPage>(Uri("/backup-secret-lifecycle"), token);
+        await Assert.That(page!.Items.Count).IsEqualTo(8);
+        await Assert.That(page.Next).IsNotNull();
+        var recover = page.Items[0];
+        await Assert.That(recover.Recoverable).IsTrue();
+        var recoveryRoute = Uri("/backup-secret-lifecycle/" + recover.Id + "/confirm-absent");
+        using var refused = await service.PostAsJsonAsync(recoveryRoute, new { secretName = recover.SecretName, confirmAbsent = false }, token);
+        await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        using var released = await service.PostAsJsonAsync(recoveryRoute, new { secretName = recover.SecretName, confirmAbsent = true }, token);
+        await Assert.That(released.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+        await Assert.That((await PendingAsync(api, token)).Count).IsEqualTo(BackupSecretLifecycle.MaxCreates - 1);
+        await SaveAsync(api, failingRoute, "both", token);
+        await Assert.That((await PendingAsync(api, token)).Count).IsEqualTo(BackupSecretLifecycle.MaxCreates - 1);
         await Assert.That(oci.BadSignatures).IsEqualTo(0);
     }
 

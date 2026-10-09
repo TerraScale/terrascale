@@ -9,6 +9,7 @@ public static class BackupsExtensions
             .AddSingleton<IManagedBackupService, EngineManagedBackupService>()
             .AddSingleton<BackupSecretLifecycle>()
             .AddSingleton<IBackupSecretLifecycle>(provider => provider.GetRequiredService<BackupSecretLifecycle>())
+            .AddSingleton<IBackupSecretRecovery>(provider => provider.GetRequiredService<BackupSecretLifecycle>())
             .AddHostedService(provider => provider.GetRequiredService<BackupSecretLifecycle>())
             .AddSingleton<TerraBase.Features.Backup.IProjectBackupDestinations, ProjectBackupDestinations>()
             .AddHostedService<BackupScheduler>();
