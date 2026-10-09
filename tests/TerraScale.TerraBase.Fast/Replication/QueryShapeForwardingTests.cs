@@ -489,7 +489,7 @@ public sealed class QueryShapeForwardingTests
         public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public Task<bool> AddUsageAsync(UsageBatch batch, CancellationToken cancellationToken) => inner.AddUsageAsync(batch, cancellationToken);
+        public Task<AddUsageResult> AddUsageAsync(UsageBatch batch, CancellationToken cancellationToken) => inner.AddUsageAsync(batch, cancellationToken);
 
         public async Task<bool> AddQueryShapesAsync(QueryShapesBatch batch, CancellationToken cancellationToken)
         {

@@ -4,6 +4,7 @@ using Grpc.Core;
 using Grpc.Net.Client;
 using TerraBase.Configuration;
 using TerraBase.Engine;
+using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Replication.V1;
 using TerraBase.Tenancy;
 
@@ -23,7 +24,7 @@ namespace TerraBase.Features.Replication;
 /// </remarks>
 internal sealed partial class ReplicationSender(
     IStorageEngine engine, ITenantDirectory tenants, PeerCredentials credentials, TerraBaseOptions options, ReplicationMetrics metrics, ILogger<ReplicationSender> logger,
-    TimeProvider time)
+    TimeProvider time, IUsageMeter usage)
     : BackgroundService, IReplicationWait, IReplicationStatus, IReplicationPressure
 {
     // Groups one stream sends before the database goes to the back of the queue, so a database that is
@@ -350,6 +351,10 @@ internal sealed partial class ReplicationSender(
                     {
                         peer.MarkDirty(database);
                     }
+                    else
+                    {
+                        peer.CaughtUp(database);
+                    }
                 }
                 catch (Exception error) when (!stoppingToken.IsCancellationRequested)
                 {
@@ -398,8 +403,28 @@ internal sealed partial class ReplicationSender(
         // The deadline covers the handshake and then every wait for an acknowledgment. Only a valid Welcome
         // and acknowledgments that advance the durable prefix extend it.
         using var call = client.Sync(cancellationToken: progress.Token);
-        await call.RequestStream.WriteAsync(new SyncRequest { Hello = ReplicationProtocol.CreateHello(database, origin, options.Region) }, progress.Token).ConfigureAwait(false);
-        var opening = await NextAsync(call, progress.Token).ConfigureAwait(false);
+        var hello = new SyncRequest { Hello = ReplicationProtocol.CreateHello(database, origin, options.Region) };
+        await call.RequestStream.WriteAsync(hello, progress.Token).ConfigureAwait(false);
+        // Hello is charged to the region this Welcome names; only a handshake that fails unanswered falls back to the region
+        // of the peer's previous stream.
+        var answered = false;
+        SyncResponse opening;
+        try
+        {
+            opening = await NextAsync(call, progress.Token, observed: response =>
+            {
+                answered = true;
+                var observingPeer = response.Welcome?.LocalIdentity?.Region ?? peer.Region;
+                usage.RecordReplicationBytes(database, observingPeer, "anti_entropy", true, hello.CalculateSize() + 5L);
+                usage.RecordReplicationBytes(database, observingPeer, "anti_entropy", false, response.CalculateSize() + 5L);
+            }).ConfigureAwait(false);
+        }
+        catch when (!answered)
+        {
+            usage.RecordReplicationBytes(database, peer.Region, "anti_entropy", true, hello.CalculateSize() + 5L);
+            throw;
+        }
+
         var welcome = opening.Welcome
             ?? throw new InvalidDataException("the peer did not answer Hello with Welcome");
         // Fail closed on anything but what Hello offered: protocol 2.0, format and merge policy 1, LZ4, this
@@ -412,6 +437,8 @@ internal sealed partial class ReplicationSender(
         var limits = welcome.Limits;
         CheckResponse(opening, limits);
         var peerMember = welcome.LocalIdentity;
+        var peerRegion = peerMember.Region;
+        peer.Region = peerRegion;
         var receiverIncarnation = new Ulid(peerMember.MemberIncarnation.Span);
 
         progress.CancelAfter(ReplicationProtocol.ProgressTimeout);
@@ -458,6 +485,10 @@ internal sealed partial class ReplicationSender(
         peer.Welcomed(identity, receiverIncarnation, acknowledged);
         Progressed();
         LogPeerRegion(logger, peer.Number, options.Region, peerMember.Region is "" ? "unknown" : peerMember.Region);
+        // Replay after a failure, an initial catch-up or a backlog longer than one turn stays handoff until a turn reaches the head.
+        var traffic = peer.Handoff(identity, peer.Retrying(identity) || acknowledged == 0 && head > 1 || head - acknowledged > MaxGroupsPerTurn)
+            ? ReplicationTrafficKind.Handoff : ReplicationTrafficKind.Delta;
+        var kind = traffic == ReplicationTrafficKind.Handoff ? "handoff" : "delta";
         var inFlight = new Queue<(long Sequence, uint Bytes, ReadOnlyMemory<byte> Digest)>();
         ulong inFlightBytes = 0;
         var next = acknowledged;
@@ -491,32 +522,48 @@ internal sealed partial class ReplicationSender(
                             ?? throw new InvalidDataException("the local journal has a gap before its committed head");
                     }
 
-                    pending = new SyncRequest { CommittedGroup = ReplicationProtocol.CreateBatch(database, origin, next + 1, changes, preceding) };
+                    pending = new SyncRequest { TrafficKind = traffic, CommittedGroup = ReplicationProtocol.CreateBatch(database, origin, next + 1, changes, preceding) };
                     budget--;
                     // The receiver runs the same check before it decodes the group.
                     ReplicationProtocol.CheckLimits(pending, limits, ChangeGroup.ContentBytes(changes));
                 }
 
-                var batch = pending?.CommittedGroup;
-                if (batch is null || inFlightBytes + batch.EncodedApplicationBytes > limits.ByteCredit)
+                if (pending is not { CommittedGroup: { } batch } request || inFlightBytes + batch.EncodedApplicationBytes > limits.ByteCredit)
                 {
                     break;
                 }
 
-                var writing = call.RequestStream.WriteAsync(pending, progress.Token);
+                var writing = SendAsync(request);
                 inFlight.Enqueue((++next, batch.EncodedApplicationBytes, batch.JournalDigest.Memory));
                 inFlightBytes += batch.EncodedApplicationBytes;
-                while (!writing.IsCompleted)
+                try
                 {
-                    await Task.WhenAny(writing, reading).ConfigureAwait(false);
-                    if (reading.IsCompleted)
+                    while (!writing.IsCompleted)
                     {
-                        await ReceiveAsync().ConfigureAwait(false);
+                        await Task.WhenAny(writing, reading).ConfigureAwait(false);
+                        if (reading.IsCompleted)
+                        {
+                            await ReceiveAsync().ConfigureAwait(false);
+                        }
                     }
+
+                    await writing.ConfigureAwait(false);
+                }
+                catch
+                {
+                    progress.Cancel();
+                    try
+                    {
+                        await writing.ConfigureAwait(false);
+                    }
+                    catch (Exception)
+                    {
+                        // Observe the canceled write while preserving the failure that ended this stream.
+                    }
+
+                    throw;
                 }
 
-                await writing.ConfigureAwait(false);
-                metrics.Sent(batch);
                 pending = null;
             }
 
@@ -541,6 +588,13 @@ internal sealed partial class ReplicationSender(
 
         return next < head;
 
+        async Task SendAsync(SyncRequest request)
+        {
+            await call.RequestStream.WriteAsync(request, progress.Token).ConfigureAwait(false);
+            metrics.Sent(request.CommittedGroup);
+            usage.RecordReplicationBytes(database, peerRegion, kind, true, request.CalculateSize() + 5L);
+        }
+
         async Task<bool> ReceiveAsync(bool completing = false)
         {
             if (!await reading.ConfigureAwait(false))
@@ -549,6 +603,7 @@ internal sealed partial class ReplicationSender(
             }
 
             var response = call.ResponseStream.Current;
+            usage.RecordReplicationBytes(database, peerRegion, kind, false, response.CalculateSize() + 5L);
             CheckResponse(response, limits);
             ThrowIfError(response);
             if (response.Durable is { } durable)
@@ -599,13 +654,14 @@ internal sealed partial class ReplicationSender(
         }
     }
 
-    private static async Task<SyncResponse> NextAsync(AsyncDuplexStreamingCall<SyncRequest, SyncResponse> call, CancellationToken cancellationToken, TransferLimits? limits = null)
+    private static async Task<SyncResponse> NextAsync(AsyncDuplexStreamingCall<SyncRequest, SyncResponse> call, CancellationToken cancellationToken, TransferLimits? limits = null, Action<SyncResponse>? observed = null)
     {
         if (!await call.ResponseStream.MoveNext(cancellationToken).ConfigureAwait(false))
         {
             throw new IOException("the peer ended the Sync stream early");
         }
 
+        observed?.Invoke(call.ResponseStream.Current);
         CheckResponse(call.ResponseStream.Current, limits);
         ThrowIfError(call.ResponseStream.Current);
         return call.ResponseStream.Current;
@@ -709,6 +765,8 @@ internal sealed partial class ReplicationSender(
         private readonly HashSet<DatabaseIncarnation> _dirty = [];
         // Bounded by the sender's 128 slots; removed with the database incarnation.
         private readonly Dictionary<DatabaseIncarnation, Observation> _observations = [];
+        // Databases whose journal replay spans turns; bounded like the observations and removed with the incarnation.
+        private readonly HashSet<DatabaseIncarnation> _handoffs = [];
 
         private sealed class Observation
         {
@@ -786,6 +844,8 @@ internal sealed partial class ReplicationSender(
             }
         }
 
+        public string Region { get; set; } = "";
+
         public ReplicationPeerStatus Snapshot()
         {
             lock (state)
@@ -801,7 +861,7 @@ internal sealed partial class ReplicationSender(
                         observation?.Started is { } started ? time.GetElapsedTime(started).TotalSeconds : 0,
                         observation?.ConvergenceSeconds);
                 }).OrderBy(database => database.Slot).ToArray();
-                return new(number, Lag(), databases);
+                return new(number, Lag(), databases, Region);
             }
         }
 
@@ -903,6 +963,7 @@ internal sealed partial class ReplicationSender(
                 _retries.Remove(database);
                 _acknowledged.Remove(database);
                 _observations.Remove(database);
+                _handoffs.Remove(database);
             }
         }
 
@@ -979,6 +1040,35 @@ internal sealed partial class ReplicationSender(
             lock (state)
             {
                 _retries.Remove(database);
+            }
+        }
+
+        public bool Handoff(DatabaseIncarnation database, bool starts)
+        {
+            lock (state)
+            {
+                if (starts && heads.ContainsKey(database))
+                {
+                    _handoffs.Add(database);
+                }
+
+                return _handoffs.Contains(database);
+            }
+        }
+
+        public void CaughtUp(DatabaseIncarnation database)
+        {
+            lock (state)
+            {
+                _handoffs.Remove(database);
+            }
+        }
+
+        public bool Retrying(DatabaseIncarnation database)
+        {
+            lock (state)
+            {
+                return _retries.ContainsKey(database);
             }
         }
 

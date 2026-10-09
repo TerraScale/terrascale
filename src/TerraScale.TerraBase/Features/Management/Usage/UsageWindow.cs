@@ -10,18 +10,21 @@ namespace TerraBase.Features.Management.Usage;
 /// <param name="Format">Bucket document id format, which sorts as the bucket's start.</param>
 public sealed record UsageGranularity(string Name, int Hours, int Kept, string Format)
 {
+    /// <summary>Minutes per bucket, including the minute analytics granularity.</summary>
+    public int Minutes { get; init; } = Hours * 60;
+
     /// <summary>The state collection of a database that holds these buckets.</summary>
     public string Collection => "usage-" + Name + "s";
 
     /// <summary>The start of <paramref name="bucket"/>, counted in buckets since the Unix epoch.</summary>
-    public DateTimeOffset Start(long bucket) => DateTimeOffset.UnixEpoch.AddHours(bucket * Hours);
+    public DateTimeOffset Start(long bucket) => DateTimeOffset.UnixEpoch.AddMinutes(bucket * Minutes);
 
     /// <summary>The document id of <paramref name="bucket"/>.</summary>
     public string Id(long bucket) => Start(bucket).ToString(Format, CultureInfo.InvariantCulture);
 
     /// <summary>The bucket of a document id.</summary>
     public long Parse(string id) =>
-        DateTimeOffset.ParseExact(id, Format, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal).ToUnixTimeSeconds() / 3600 / Hours;
+        DateTimeOffset.ParseExact(id, Format, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal).ToUnixTimeSeconds() / 60 / Minutes;
 }
 
 /// <summary>The period a usage request reads: <paramref name="Count"/> buckets from bucket <paramref name="First"/>.</summary>
@@ -30,6 +33,9 @@ public sealed record UsageGranularity(string Name, int Hours, int Kept, string F
 /// <param name="Count">Buckets, 1 to <see cref="UsageGranularity.Kept"/>.</param>
 public sealed record UsageWindow(UsageGranularity Granularity, long First, int Count)
 {
+    /// <summary>Minute buckets, kept two hours.</summary>
+    public static UsageGranularity Minute { get; } = new("minute", 0, 120, "yyyy-MM-dd'T'HH:mm") { Minutes = 1 };
+
     /// <summary>Hourly buckets, kept 35 days.</summary>
     public static UsageGranularity Hour { get; } = new("hour", 1, 35 * 24, "yyyy-MM-dd'T'HH");
 
@@ -46,7 +52,7 @@ public sealed record UsageWindow(UsageGranularity Granularity, long First, int C
     ];
 
     /// <summary>Every granularity; each flush saves counts at all of them.</summary>
-    public static IReadOnlyList<UsageGranularity> Granularities { get; } = [Hour, Day];
+    public static IReadOnlyList<UsageGranularity> Granularities { get; } = [Minute, Hour, Day];
 
     /// <summary>Query parameters of every usage route.</summary>
     public const string Description =
@@ -61,7 +67,7 @@ public sealed record UsageWindow(UsageGranularity Granularity, long First, int C
     public DateTimeOffset To => Granularity.Start(First + Count);
 
     /// <summary>The position in this window of the bucket holding <paramref name="hour"/> (hours since the Unix epoch).</summary>
-    public int? IndexOf(long hour) => (hour / Granularity.Hours) - First is var index && index >= 0 && index < Count ? (int)index : null;
+    public int? IndexOf(long hour, int minute = 0) => ((hour * 60 + minute) / Granularity.Minutes) - First is var index && index >= 0 && index < Count ? (int)index : null;
 
     /// <summary>The window of a usage request's <c>granularity</c>, <c>from</c> and <c>to</c> query parameters.</summary>
     public static Valid<UsageWindow> Parse(IQueryCollection query, DateTimeOffset now)
@@ -89,7 +95,7 @@ public sealed record UsageWindow(UsageGranularity Granularity, long First, int C
             return new Validation("from must be before to, at most 840 hours or 400 days earlier");
         }
 
-        var ticks = granularity.Hours * TimeSpan.TicksPerHour;
+        var ticks = granularity.Minutes * TimeSpan.TicksPerMinute;
         var end = ((to - DateTimeOffset.UnixEpoch).Ticks + ticks - 1) / ticks;
         var first = query.ContainsKey("from") ? (from - DateTimeOffset.UnixEpoch).Ticks / ticks : end - (granularity == Hour ? 24 : 30);
         return end - first is >= 1 and var count && count <= granularity.Kept

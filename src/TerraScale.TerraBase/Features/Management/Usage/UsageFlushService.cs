@@ -1,11 +1,13 @@
 using System.Text.Json;
 using Google.Protobuf;
 using TerraBase.Configuration;
+using TerraBase.Engine;
 using TerraBase.Features.Management.Queries;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
+using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Management.Usage;
 
@@ -17,8 +19,19 @@ namespace TerraBase.Features.Management.Usage;
 /// </summary>
 internal sealed partial class UsageFlushService(
     UsageMeter meter, QueryFieldRecorder recorder, QueryShapeRecorder shapes, TimeProvider time, TerraBaseOptions options, ILogger<UsageFlushService> logger,
-    ICatalogPrimaryClient? primary = null) : BackgroundService
+    IStorageEngine engine, IReplicationStatus replication, ICatalogPrimaryClient? primary = null) : BackgroundService
 {
+    // Storage is sampled once per minute bucket, so an idle node neither lists databases nor writes usage every tick.
+    private const int MaxSamplesPerMinute = 128;
+    private long _sampledMinute = -1;
+    // The owner of the last database sampled: each minute samples the next MaxSamplesPerMinute owners in ordinal order after it,
+    // wrapping, so every database is sampled in turn whatever order the engine lists them in.
+    private string? _cursor;
+    // Databases already sampled in _samplingMinute, so a pass retried after a failure records none of them twice. At most the cap.
+    private readonly HashSet<string> _sampled = [with(StringComparer.Ordinal)];
+    private long _samplingMinute = -1;
+    private readonly SemaphoreSlim _sampling = new(1, 1);
+
     private static readonly TimeSpan Interval = TimeSpan.FromSeconds(10);
 
     // Shared process epoch; usage and query shapes number their own independent batches.
@@ -55,17 +68,21 @@ internal sealed partial class UsageFlushService(
         }
     }
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    // Storage sampling lists every database, so it runs on its own loop: a slow volume never delays usage delivery.
+    protected override Task ExecuteAsync(CancellationToken stoppingToken) =>
+        Task.WhenAll(LoopAsync(FlushAsync, stoppingToken), LoopAsync(SampleStorageAsync, stoppingToken));
+
+    private async Task LoopAsync(Func<CancellationToken, Task> work, CancellationToken stoppingToken)
     {
         using var timer = new PeriodicTimer(Interval, time);
-        while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false))
+        while (await NextTickAsync(timer, stoppingToken).ConfigureAwait(false))
         {
             // The tick resumes this loop on the clock's callback thread. Leave it, as the pressure samplers do (TS-517): a
             // flush reads the clock and the catalog, and a test clock advanced by days would otherwise flush inline.
             await Task.Yield();
             try
             {
-                await FlushAsync(stoppingToken).ConfigureAwait(false);
+                await work(stoppingToken).ConfigureAwait(false);
             }
             // FlushAsync stops catching once shutdown begins, so any send failure would otherwise fault this task and the
             // host's shutdown. StopAsync's drain resends what is still pending and logs what it cannot save.
@@ -76,10 +93,41 @@ internal sealed partial class UsageFlushService(
         }
     }
 
+    // A loop idle at shutdown ends cleanly, like one stopped mid-work.
+    private static async Task<bool> NextTickAsync(PeriodicTimer timer, CancellationToken stoppingToken)
+    {
+        try
+        {
+            return await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            return false;
+        }
+    }
+
+    // One storage sampling pass at a time; a failed one is logged and retried on the next tick.
+    internal async Task SampleStorageAsync(CancellationToken cancellationToken)
+    {
+        await _sampling.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await SampleAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception error) when (!cancellationToken.IsCancellationRequested)
+        {
+            LogFlushFailed(logger, error);
+        }
+        finally
+        {
+            _sampling.Release();
+        }
+    }
+
     // Each flush runs on its own; a failed one keeps its counts pending for the next and never stops the process.
     internal async Task FlushAsync(CancellationToken cancellationToken)
     {
-        foreach (var flush in Flushes)
+        foreach (var flush in new Func<CancellationToken, ValueTask>[] { ReportActive, RecordPeers }.Concat(Flushes))
         {
             try
             {
@@ -95,6 +143,93 @@ internal sealed partial class UsageFlushService(
     private Func<CancellationToken, ValueTask>[] Flushes => options.CatalogPrimary is null
         ? [meter.FlushAsync, recorder.FlushAsync, shapes.FlushAsync]
         : [SendOnceAsync, SendShapesOnceAsync];
+
+    private ValueTask ReportActive(CancellationToken cancellationToken)
+    {
+        meter.ReportActive();
+        return ValueTask.CompletedTask;
+    }
+
+    private ValueTask RecordPeers(CancellationToken cancellationToken)
+    {
+        if (!UsageMeter.ValidRegion(options.Region))
+        {
+            return ValueTask.CompletedTask;
+        }
+
+        var status = replication.Snapshot();
+        if (status.Initialized)
+        {
+            foreach (var group in status.Peers.SelectMany(peer => peer.Databases.Select(database => (peer.Region, Database: database)))
+                .GroupBy(observation => (observation.Database.OrganizationId, observation.Database.ProjectId, observation.Database.DatabaseId, observation.Region)))
+            {
+                var (organization, project, database, region) = group.Key;
+                meter.RecordPeerState(new(organization, PlanTier.Hobby, project, database), region,
+                    group.Max(observation => observation.Database.DurableLag), group.Max(observation => observation.Database.CatchupSeconds) * 1000,
+                    group.Any(observation => observation.Database.Diverged), group.Max(observation => observation.Database.ConvergenceSeconds) * 1000);
+            }
+        }
+
+        return ValueTask.CompletedTask;
+    }
+
+    private async ValueTask SampleAsync(CancellationToken cancellationToken)
+    {
+        if (!UsageMeter.ValidRegion(options.Region))
+        {
+            return;
+        }
+
+        // Every sample of a pass belongs to the minute it started in, however long sizing takes.
+        var sampledAt = time.GetUtcNow();
+        var minute = sampledAt.ToUnixTimeSeconds() / 60;
+        if (minute == _sampledMinute)
+        {
+            return;
+        }
+
+        if (minute != _samplingMinute)
+        {
+            _samplingMinute = minute;
+            _sampled.Clear();
+        }
+
+        // The smallest owners after the cursor, then from the start: two bounded selections over one listing.
+        var after = new SortedDictionary<string, TenantContext>(StringComparer.Ordinal);
+        var wrapped = new SortedDictionary<string, TenantContext>(StringComparer.Ordinal);
+        await foreach (var database in engine.ListDatabasesAsync(cancellationToken).ConfigureAwait(false))
+        {
+            var key = $"{database.OrganizationId}/{database.ProjectId}/{database.DatabaseId}";
+            var selection = _cursor is null || string.CompareOrdinal(key, _cursor) > 0 ? after : wrapped;
+            selection[key] = database;
+            if (selection.Count > MaxSamplesPerMinute)
+            {
+                _ = selection.Remove(selection.Keys.Last());
+            }
+        }
+
+        string? last = null;
+        foreach (var (key, database) in after.Concat(wrapped).Take(MaxSamplesPerMinute))
+        {
+            last = key;
+            try
+            {
+                if (!_sampled.Contains(key) && await engine.GetDatabaseSizeAsync(database, cancellationToken).ConfigureAwait(false) is { } size)
+                {
+                    meter.RecordStorage(database, size, sampledAt);
+                    _ = _sampled.Add(key);
+                }
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                // One database's failure, such as its file vanishing while sized, costs only its own sample.
+            }
+        }
+
+        // Only a complete pass marks its minute sampled and moves the cursor; a listing failure leaves both to the next tick.
+        _sampledMinute = minute;
+        _cursor = last ?? _cursor;
+    }
 
     // A tick sends one bounded batch; a follower's backlog drains a batch per tick.
     private async ValueTask SendOnceAsync(CancellationToken cancellationToken) => await meter.SendAsync(SendAsync, cancellationToken).ConfigureAwait(false);
@@ -153,7 +288,7 @@ internal sealed partial class UsageFlushService(
     }
 
     // Counts past MaxCount, which no real hour reaches, are not sent: the primary would refuse the whole batch for good.
-    private Task<bool> SendAsync(long sequence, KeyValuePair<UsageKey, OpCounts>[] batch, CancellationToken cancellationToken)
+    private Task<AddUsageResult> SendAsync(long sequence, KeyValuePair<UsageKey, OpCounts>[] batch, CancellationToken cancellationToken)
     {
         var request = new UsageBatch { Protocol = UsageReceiver.Protocol, Epoch = _epoch, Sequence = (ulong)sequence, Sender = options.NodeName };
         request.Counts.AddRange(batch.Select(entry => new UsageCount
@@ -165,6 +300,9 @@ internal sealed partial class UsageFlushService(
             Reads = (ulong)Math.Min(entry.Value.Reads, UsageMeter.MaxCount),
             Writes = (ulong)Math.Min(entry.Value.Writes, UsageMeter.MaxCount),
             Scope = (Replication.V1.UsageScope)entry.Key.Scope,
+            Minute = (uint)entry.Key.Minute,
+            Measurements = entry.Value.Meters is null ? ByteString.Empty
+                : ByteString.CopyFrom(JsonSerializer.SerializeToUtf8Bytes(new OpCounts(0, 0, entry.Value.Meters), TerraBaseJsonContext.Default.OpCounts)),
         }));
         return primary!.AddUsageAsync(request, cancellationToken);
     }

@@ -39,7 +39,7 @@ public sealed class SubscriptionLifetimeTests
         {
             if (instrument.Name == "terrabase.memory.reserved")
             {
-                reserved = value;
+                reserved = value - api.Server.Services.GetRequiredService<UsageMeter>().ReservedMeasurementBytes;
             }
             else if (value == 1)
             {
@@ -47,7 +47,7 @@ public sealed class SubscriptionLifetimeTests
             }
         });
         listener.Start();
-        listener.RecordObservableInstruments();
+        api.Server.Services.GetRequiredService<UsageMeter>().ObserveMemory(listener.RecordObservableInstruments);
         var baseline = reserved;
         var token = api.Issuer.Mint(api.User, descriptor =>
         {
@@ -66,14 +66,14 @@ public sealed class SubscriptionLifetimeTests
         }
 
         await liveEntered.Task.WaitAsync(deadline.Token);
-        listener.RecordObservableInstruments();
+        api.Server.Services.GetRequiredService<UsageMeter>().ObserveMemory(listener.RecordObservableInstruments);
         await Assert.That(reserved).IsGreaterThan(baseline);
         clock.Advance(TimeSpan.FromSeconds(6));
         while (await reader.ReadLineAsync(deadline.Token) is not null)
         {
         }
 
-        listener.RecordObservableInstruments();
+        api.Server.Services.GetRequiredService<UsageMeter>().ObserveMemory(listener.RecordObservableInstruments);
         await Assert.That(reserved).IsEqualTo(baseline);
     }
 

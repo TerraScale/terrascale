@@ -178,6 +178,10 @@ message UsageCount {
   uint64 writes = 6;
   // Which buckets the counts belong in: counts the follower held past the kept hours or days were folded.
   UsageScope scope = 7;
+  // Minute within hour for minute-scoped observations.
+  uint32 minute = 8;
+  // Source-generated OpCounts JSON containing regional meters; at most 256 KiB per entry, 1 MiB per batch.
+  bytes measurements = 9;
 }
 
 enum UsageScope {
@@ -187,6 +191,8 @@ enum UsageScope {
   USAGE_SCOPE_DAY = 1;
   // Only the lifetime totals; `hour` is 0.
   USAGE_SCOPE_LIFETIME = 2;
+  // The minute within hour, and its hour and day.
+  USAGE_SCOPE_MINUTE = 3;
 }
 
 message UsageAck {

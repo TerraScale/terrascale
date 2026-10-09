@@ -219,7 +219,14 @@ message StreamError {
   bool retryable = 2;
 }
 
+enum ReplicationTrafficKind {
+  REPLICATION_TRAFFIC_KIND_DELTA = 0;
+  REPLICATION_TRAFFIC_KIND_HANDOFF = 1;
+}
+
 message SyncRequest {
+  // Journal replay following a failed transfer or initial catch-up is handoff; current writes are delta.
+  ReplicationTrafficKind traffic_kind = 5;
   oneof frame {
     Hello hello = 1;
     CommittedGroupBatch committed_group = 2;

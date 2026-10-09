@@ -316,6 +316,7 @@ public sealed class SubscriptionAdmissionTests
     {
         private readonly MeterListener _listener = new();
         private readonly SqliteStorageEngine _engine;
+        private readonly UsageMeter _usage;
         private long _reserved;
         private long _active;
         private long _flights;
@@ -324,6 +325,7 @@ public sealed class SubscriptionAdmissionTests
         public SubscriptionResources(ManagementApi api)
         {
             _engine = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
+            _usage = api.Server.Services.GetRequiredService<UsageMeter>();
             var meter = api.Server.Services.GetRequiredService<IMeterFactory>().Create(Telemetry.MeterName);
             _listener.InstrumentPublished = (instrument, observer) =>
             {
@@ -338,7 +340,7 @@ public sealed class SubscriptionAdmissionTests
                 switch (instrument.Name)
                 {
                     case "terrabase.memory.reserved":
-                        Interlocked.Exchange(ref _reserved, value);
+                        Interlocked.Exchange(ref _reserved, value - api.Server.Services.GetRequiredService<UsageMeter>().ReservedMeasurementBytes);
                         break;
                     case "terrabase.subscriptions.active":
                         Interlocked.Add(ref _active, value);
@@ -358,7 +360,7 @@ public sealed class SubscriptionAdmissionTests
         {
             get
             {
-                _listener.RecordObservableInstruments();
+                _usage.ObserveMemory(_listener.RecordObservableInstruments);
                 return Volatile.Read(ref _reserved);
             }
         }
@@ -410,6 +412,9 @@ public sealed class SubscriptionAdmissionTests
             services.AddSingleton<ShapeSubscriptionService>();
             services.AddSingleton<IShapeSubscriptionService>(provider => new ObservedSubscription(
                 provider.GetRequiredService<ShapeSubscriptionService>(), this));
+            // Advancing the fake clock past a flush tick would run usage flushes and storage samples on the same SQLite I/O
+            // pool these tests assert is released; usage is not under test here.
+            services.Remove(services.Single(service => service.ServiceType == typeof(IHostedService) && service.ImplementationType == typeof(UsageFlushService)));
         }
 
         private sealed class ObservedSubscription(IShapeSubscriptionService inner, BlockedWrites writes) : IShapeSubscriptionService

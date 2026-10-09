@@ -5,6 +5,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Features.Documents;
+using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Memory;
 using TerraBase.Testing;
 
@@ -107,6 +108,8 @@ public sealed class ShapeMemoryIsolationTests
                 .IsEqualTo(padding);
             await barrier.SecondCompleted.Task.WaitAsync(deadline.Token);
             api.Server.Services.GetRequiredService<DocumentCache>().Dispose();
+            // Pending usage observations hold admission until the usage flush.
+            await api.Server.Services.GetRequiredService<UsageMeter>().FlushAsync(deadline.Token);
             using var all = budget.TryReserve(MemoryLane.Foreground, Budget, null);
             await Assert.That(all).IsNotNull();
         }

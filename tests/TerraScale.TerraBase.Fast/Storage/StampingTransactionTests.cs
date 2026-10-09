@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Sqlite;
 using TerraBase.Fast.Documents;
@@ -82,7 +83,7 @@ public sealed class StampingTransactionTests
         var management = await ManagementApi.StartAsync(settings =>
         {
             settings["storage-threads"] = "1";
-        }, StorageTransactionTests.ConfigurePool);
+        }, StorageTransactionTests.ConfigurePool, time: new FakeTimeProvider(DateTimeOffset.UtcNow));
         var server = management.Server;
         await using var serverCleanup = management;
         using var tenant = await management.CreateTenantAsync("documents:read", "documents:write");

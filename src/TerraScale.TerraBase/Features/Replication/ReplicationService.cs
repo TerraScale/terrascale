@@ -2,6 +2,8 @@ using Google.Protobuf;
 using Grpc.Core;
 using TerraBase.Configuration;
 using TerraBase.Engine;
+using TerraBase.Errors;
+using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Replication.V1;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
@@ -17,7 +19,7 @@ namespace TerraBase.Features.Replication;
 /// </summary>
 internal sealed partial class ReplicationService(
     IStorageEngine engine, IReplicationJournal journal, ITenantDirectory tenants, ReplicationMetrics metrics, TerraBaseOptions options, ILogger<ReplicationService> logger,
-    DatabaseLifecycleCheckpoint checkpoint, IHostApplicationLifetime application)
+    DatabaseLifecycleCheckpoint checkpoint, IHostApplicationLifetime application, IUsageMeter usage)
     : V1.Replication.ReplicationBase
 {
     // One instance per node (registered as a singleton), so this bounds the node's open streams.
@@ -34,7 +36,7 @@ internal sealed partial class ReplicationService(
         {
             using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(context.CancellationToken, application.ApplicationStopping);
             using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellation.Token);
-            var stream = new Stream(requestStream, responseStream, lifetime);
+            var stream = new Stream(requestStream, responseStream, lifetime, usage);
             if (Interlocked.Increment(ref _streams) > ReplicationProtocol.MaxOpenStreams)
             {
                 await stream.SendAsync(Error(StreamErrorCode.StreamErrorResourceExhausted, retryable: true)).ConfigureAwait(false);
@@ -64,6 +66,9 @@ internal sealed partial class ReplicationService(
         }
 
         stream.MaxMessageBytes = limits.MaxGrpcMessageBytes;
+        stream.Database = database;
+        stream.PeerRegion = first.Hello.LocalIdentity.Region;
+        usage.RecordReplicationBytes(database, stream.PeerRegion, "anti_entropy", false, first.CalculateSize() + 5L);
 
         // Refuse limits that cannot carry the largest required Welcome or acknowledgment.
         var maximumMember = ReplicationProtocol.Member(database, origin, options.Region);
@@ -142,7 +147,7 @@ internal sealed partial class ReplicationService(
                 {
                     case SyncRequest.FrameOneofCase.CommittedGroup:
                         var batch = request.CommittedGroup;
-                        var (prefix, proof, invalid) = await ApplyAsync(request, store, origin, limits, applied, digest, lifetime.Token).ConfigureAwait(false);
+                        var (prefix, proof, invalid) = await ApplyAsync(request, store, origin, limits, applied, digest, stream.PeerRegion, lifetime.Token).ConfigureAwait(false);
                         if (invalid != StreamErrorCode.StreamErrorUnspecified)
                         {
                             await stream.SendAsync(Error(invalid, retryable: false)).ConfigureAwait(false);
@@ -197,7 +202,7 @@ internal sealed partial class ReplicationService(
 
     // The applied prefix after the batch, or why the batch is refused.
     private async Task<(long Prefix, ReadOnlyMemory<byte> Digest, StreamErrorCode Invalid)> ApplyAsync(
-        SyncRequest request, IDatabaseStore store, ReadOnlyMemory<byte> origin, TransferLimits limits, long applied, ReadOnlyMemory<byte> digest, CancellationToken cancellationToken)
+        SyncRequest request, IDatabaseStore store, ReadOnlyMemory<byte> origin, TransferLimits limits, long applied, ReadOnlyMemory<byte> digest, string peerRegion, CancellationToken cancellationToken)
     {
         var batch = request.CommittedGroup;
         List<DocumentChange> changes;
@@ -213,7 +218,7 @@ internal sealed partial class ReplicationService(
 
         var sequence = (long)batch.EventId.Sequence;
         // The persisted prefix is consulted for duplicates too; stream-local state is no durability proof.
-        (long Sequence, ReadOnlyMemory<byte> Digest) prefix;
+        JournalAppend prefix;
         try
         {
             prefix = await journal.AppendAsync(store, origin, sequence, changes, batch.PreviousJournalDigest.Memory, batch.JournalDigest.Memory, cancellationToken).ConfigureAwait(false);
@@ -224,8 +229,23 @@ internal sealed partial class ReplicationService(
             return (applied, digest, StreamErrorCode.StreamErrorInvalidBatch);
         }
 
-        metrics.Received(sequence <= applied ? "duplicate" : prefix.Sequence >= sequence ? "applied" : "rejected");
-        return (prefix.Sequence, prefix.Digest, StreamErrorCode.StreamErrorUnspecified);
+        if (prefix is JournalApplied)
+        {
+            usage.RecordReplicatedOperations(store.Tenant!, peerRegion, changes.Count);
+        }
+
+        metrics.Received(prefix switch
+        {
+            JournalApplied => "applied",
+            JournalUnchanged unchanged => unchanged.Sequence >= sequence ? "duplicate" : "rejected",
+            Conflict => "rejected",
+        });
+        return prefix switch
+        {
+            JournalApplied group => (group.Sequence, group.Digest, StreamErrorCode.StreamErrorUnspecified),
+            JournalUnchanged unchanged => (unchanged.Sequence, unchanged.Digest, StreamErrorCode.StreamErrorUnspecified),
+            Conflict => (applied, digest, StreamErrorCode.StreamErrorInvalidBatch),
+        };
     }
 
     private static SyncResponse Welcome(PeerIdentity member, ReadOnlyMemory<byte> origin, long applied, ReadOnlyMemory<byte> digest, TransferLimits limits)
@@ -262,13 +282,34 @@ internal sealed partial class ReplicationService(
     // a sender that stops sending, or stops reading so that a response cannot be written, holds no stream slot forever.
     private sealed class Stream(
         IAsyncStreamReader<SyncRequest> requests, IServerStreamWriter<SyncResponse> responses,
-        CancellationTokenSource lifetime)
+        CancellationTokenSource lifetime, IUsageMeter meter)
     {
+        public TenantContext? Database { get; set; }
+
+        public string PeerRegion { get; set; } = "";
+
+        private string _kind = "anti_entropy";
+
         public uint MaxMessageBytes { get; set; } = ReplicationProtocol.MaxMessageBytes;
 
         public async Task<SyncRequest?> NextAsync()
         {
             var request = await WithinIdleTimeoutAsync(async token => await requests.MoveNext(token).ConfigureAwait(false) ? requests.Current : null).ConfigureAwait(false);
+            if (request?.CommittedGroup is not null)
+            {
+                _kind = request.TrafficKind switch
+                {
+                    ReplicationTrafficKind.Delta => "delta",
+                    ReplicationTrafficKind.Handoff => "handoff",
+                    _ => throw new RpcException(new Status(StatusCode.InvalidArgument, "unknown replication traffic kind")),
+                };
+            }
+
+            if (request is not null && Database is { } database)
+            {
+                meter.RecordReplicationBytes(database, PeerRegion, _kind, false, request.CalculateSize() + 5L);
+            }
+
             if (request?.CalculateSize() > MaxMessageBytes && request.CommittedGroup is null)
             {
                 throw new RpcException(new Status(StatusCode.ResourceExhausted, "the request exceeds the negotiated gRPC message size"));
@@ -287,6 +328,11 @@ internal sealed partial class ReplicationService(
             await WithinIdleTimeoutAsync(async token =>
             {
                 await responses.WriteAsync(response, token).ConfigureAwait(false);
+                if (Database is { } database)
+                {
+                    meter.RecordReplicationBytes(database, PeerRegion, _kind, true, response.CalculateSize() + 5L);
+                }
+
                 return true;
             }).ConfigureAwait(false);
         }

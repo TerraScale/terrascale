@@ -1,4 +1,5 @@
 using TerraBase.Engine;
+using TerraBase.Errors;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Replication;
@@ -20,8 +21,10 @@ public interface IReplicationJournal
     /// on the pinned <paramref name="store"/>, and returns the applied prefix afterwards. A retired store
     /// fails instead of reopening the database by tenant identity. A group at or below the
     /// prefix is a duplicate and changes nothing; a prefix below <paramref name="sequence"/> means a gap.
+    /// Only a call that committed a new group returns <see cref="JournalApplied"/>, also with concurrent streams.
+    /// A group whose identity conflicts with the applied prefix is a <see cref="Conflict"/>: the journals diverged.
     /// </summary>
-    ValueTask<(long Sequence, ReadOnlyMemory<byte> Digest)> AppendAsync(
+    ValueTask<JournalAppend> AppendAsync(
         IDatabaseStore store, ReadOnlyMemory<byte> origin, long sequence, IReadOnlyList<DocumentChange> changes,
         ReadOnlyMemory<byte> previousDigest, ReadOnlyMemory<byte> digest, CancellationToken cancellationToken);
 }
@@ -40,7 +43,7 @@ internal sealed class EngineReplicationJournal(IStorageEngine engine) : IReplica
         }
     }
 
-    public async ValueTask<(long Sequence, ReadOnlyMemory<byte> Digest)> AppendAsync(
+    public async ValueTask<JournalAppend> AppendAsync(
         IDatabaseStore store, ReadOnlyMemory<byte> origin, long sequence, IReadOnlyList<DocumentChange> changes,
         ReadOnlyMemory<byte> previousDigest, ReadOnlyMemory<byte> digest, CancellationToken cancellationToken)
     {
@@ -53,26 +56,26 @@ internal sealed class EngineReplicationJournal(IStorageEngine engine) : IReplica
         var transaction = await store.BeginDurableTransactionAsync(cancellationToken).ConfigureAwait(false);
         await using (transaction.ConfigureAwait(false))
         {
-            var applied = await transaction.GetAppliedFrontierAsync(origin, cancellationToken).ConfigureAwait(false);
+            var (appliedSequence, appliedDigest) = await transaction.GetAppliedFrontierAsync(origin, cancellationToken).ConfigureAwait(false);
             if (digest.Length != JournalDigest.Length || previousDigest.Length != JournalDigest.Length
                 || !digest.Span.SequenceEqual(JournalDigest.Compute(origin.Span, sequence, previousDigest.Span, changes)))
             {
                 throw new InvalidDataException("the group journal proof is invalid");
             }
 
-            if (sequence != applied.Sequence + 1)
+            if (sequence != appliedSequence + 1)
             {
-                if (sequence == applied.Sequence && !digest.Span.SequenceEqual(applied.Digest.Span))
+                if (sequence == appliedSequence && !digest.Span.SequenceEqual(appliedDigest.Span))
                 {
-                    throw new InvalidDataException("the duplicate group has a different journal identity");
+                    return JournalConflicts.Identity;
                 }
 
-                return applied;
+                return new JournalUnchanged(appliedSequence, appliedDigest);
             }
 
-            if (!previousDigest.Span.SequenceEqual(applied.Digest.Span))
+            if (!previousDigest.Span.SequenceEqual(appliedDigest.Span))
             {
-                throw new InvalidDataException("the group does not extend the applied journal prefix");
+                return JournalConflicts.Prefix;
             }
 
             // Validate the complete group against one starting head before any document, collection,
@@ -91,7 +94,7 @@ internal sealed class EngineReplicationJournal(IStorageEngine engine) : IReplica
             await transaction.SetAppliedFrontierAsync(origin, sequence, digest, cancellationToken).ConfigureAwait(false);
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
             ObjectDisposedException.ThrowIf(store.IsClosed, store);
-            return (sequence, digest);
+            return new JournalApplied(sequence, digest);
         }
     }
 
@@ -106,4 +109,19 @@ internal sealed class EngineReplicationJournal(IStorageEngine engine) : IReplica
         return await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false)
             ?? throw new InvalidOperationException("the database was deleted while a peer opened it");
     }
+}
+
+/// <summary>The applied prefix after this call committed a new group.</summary>
+public sealed record JournalApplied(long Sequence, ReadOnlyMemory<byte> Digest);
+
+/// <summary>The unchanged applied prefix: the group was a duplicate, or it left a gap.</summary>
+public sealed record JournalUnchanged(long Sequence, ReadOnlyMemory<byte> Digest);
+
+/// <summary>Whether a group committed, left the prefix unchanged, or conflicts with it, unlike a malformed or oversized message.</summary>
+public readonly union JournalAppend(JournalApplied, JournalUnchanged, Conflict);
+
+internal static class JournalConflicts
+{
+    public static readonly Conflict Identity = new("the duplicate group has a different journal identity", "journal_conflict");
+    public static readonly Conflict Prefix = new("the group does not extend the applied journal prefix", "journal_conflict");
 }

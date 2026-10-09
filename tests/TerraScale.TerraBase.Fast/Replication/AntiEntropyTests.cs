@@ -4,6 +4,8 @@ using System.Net;
 using System.Text.Json;
 using Bogus;
 using Google.Protobuf;
+using Grpc.Core;
+using Grpc.Core.Interceptors;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
@@ -240,6 +242,192 @@ public sealed class AntiEntropyTests
             using var repaired = await receiverReader.GetAsync(path, cancellationToken);
             await Assert.That(repaired.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         }
+    }
+
+    [Test]
+    [Timeout(60_000)]
+    public async Task Both_regions_meter_the_same_anti_entropy_bytes_for_a_repair(CancellationToken cancellationToken)
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var token = deadline.Token;
+        using var peerTls = new PeerTls();
+        using var clientTls = new ClientTls();
+        var started = DateTimeOffset.UtcNow;
+        var clock = new RepairClock(started);
+        await using var receiver = await TerraBaseTestServer.StartAsync(settings =>
+        {
+            peerTls.Apply(settings);
+            clientTls.Apply(settings);
+            settings["region"] = "gru-1";
+        }, services => services.AddSingleton<TimeProvider>(new FakeTimeProvider(started)));
+        await using var source = await TerraBaseTestServer.StartAsync(settings =>
+        {
+            peerTls.Apply(settings);
+            clientTls.Apply(settings);
+            settings["region"] = "sfo-1";
+            settings["peer-addresses"] = receiver.PeerAddress!.ToString();
+        }, services => services.AddSingleton<TimeProvider>(clock));
+        await clock.PausedAsync(token);
+        var tenant = await ReplicationTenant.CreateAsync(source, ["repair"], cancellationToken);
+        await tenant.BindAsync(receiver);
+        using var writer = clientTls.CreateClient(source.ClientAddress!, await tenant.KeyAsync(source, ["documents:write"], cancellationToken));
+        var ids = await SeedAsync(writer, tenant, token);
+        await TerraBaseTestServer.ReplicatedAsync(source);
+        var database = tenant.Database("repair");
+        async Task<long> BytesAsync(TerraBaseTestServer node, string key)
+        {
+            var window = new TerraBase.Features.Management.Usage.UsageWindow(
+                TerraBase.Features.Management.Usage.UsageWindow.Hour, DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 3600, 1);
+            var (lifetime, _) = await node.Services.GetRequiredService<TerraBase.Features.Management.Usage.UsageMeter>().GetObservationsAsync(database, window, token);
+            return lifetime.Meters?.GetValueOrDefault(key)?.Count ?? 0;
+        }
+
+        // Before the repair only replication handshakes were charged as anti-entropy.
+        var before = await BytesAsync(source, "replication_bytes|sfo-1|gru-1|anti_entropy:sent");
+        await using (var connection = new SqliteConnection(DocumentApi.ConnectionString(tenant.File(receiver, "repair"))))
+        {
+            await connection.OpenAsync(token);
+            using var corrupt = connection.CreateCommand();
+            corrupt.CommandText = "UPDATE documents SET version = 1, body = '{\"name\":\"stale\"}' WHERE collection = 'items' AND id = $id;";
+            corrupt.Parameters.AddWithValue("$id", ids[0]);
+            await Assert.That(await corrupt.ExecuteNonQueryAsync(token)).IsEqualTo(1);
+        }
+
+        using var repairs = new RepairCounter(receiver);
+        clock.Advance(AntiEntropyWorker.ReconcileInterval);
+        await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(repairs.Keys >= 1));
+        await clock.PausedAsync(token);
+
+        // The repair's Merkle exchange is charged too, once at each end, to the same directed region pair.
+        var sent = await BytesAsync(source, "replication_bytes|sfo-1|gru-1|anti_entropy:sent");
+        await Assert.That(sent).IsGreaterThan(before);
+        await Assert.That(await BytesAsync(receiver, "replication_bytes|gru-1|sfo-1|anti_entropy:received")).IsEqualTo(sent);
+        var returned = await BytesAsync(receiver, "replication_bytes|gru-1|sfo-1|anti_entropy:sent");
+        await Assert.That(returned).IsGreaterThan(0);
+        await Assert.That(await BytesAsync(source, "replication_bytes|sfo-1|gru-1|anti_entropy:received")).IsEqualTo(returned);
+    }
+
+    [Test]
+    [Timeout(60_000)]
+    public async Task An_unanswered_digest_is_charged_to_the_region_its_peer_named_before_even_in_a_failed_repair(CancellationToken cancellationToken)
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var token = deadline.Token;
+        using var peerTls = new PeerTls();
+        using var clientTls = new ClientTls();
+        var started = DateTimeOffset.UtcNow;
+        var clock = new RepairClock(started);
+        await using var receiver = await TerraBaseTestServer.StartAsync(settings =>
+        {
+            peerTls.Apply(settings);
+            clientTls.Apply(settings);
+            settings["region"] = "gru-1";
+        }, services =>
+        {
+            services.AddSingleton<TimeProvider>(new FakeTimeProvider(started));
+            services.AddSingleton<InvalidFirstDigest>();
+            services.AddGrpc(options => options.Interceptors.Add<InvalidFirstDigest>());
+        });
+        await using var source = await TerraBaseTestServer.StartAsync(settings =>
+        {
+            peerTls.Apply(settings);
+            clientTls.Apply(settings);
+            settings["region"] = "sfo-1";
+            settings["peer-addresses"] = receiver.PeerAddress!.ToString();
+        }, services => services.AddSingleton<TimeProvider>(clock));
+        await clock.PausedAsync(token);
+        var tenant = await ReplicationTenant.CreateAsync(source, ["repair"], cancellationToken);
+        await tenant.BindAsync(receiver);
+        using var writer = clientTls.CreateClient(source.ClientAddress!, await tenant.KeyAsync(source, ["documents:write"], cancellationToken));
+        var ids = await SeedAsync(writer, tenant, token);
+        await TerraBaseTestServer.ReplicatedAsync(source);
+        var database = tenant.Database("repair");
+        async Task<long> BytesAsync(TerraBaseTestServer node, string key)
+        {
+            var window = new TerraBase.Features.Management.Usage.UsageWindow(
+                TerraBase.Features.Management.Usage.UsageWindow.Hour, DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 3600, 1);
+            var (lifetime, _) = await node.Services.GetRequiredService<TerraBase.Features.Management.Usage.UsageMeter>().GetObservationsAsync(database, window, token);
+            return lifetime.Meters?.GetValueOrDefault(key)?.Count ?? 0;
+        }
+
+        // An answered digest names the peer's region, though the source refuses it and that repair fails.
+        clock.Advance(AntiEntropyWorker.ReconcileInterval);
+        await TerraBaseTestServer.EventuallyAsync(async _ => await BytesAsync(receiver, "replication_bytes|gru-1|sfo-1|anti_entropy:received")
+            == await BytesAsync(source, "replication_bytes|sfo-1|gru-1|anti_entropy:sent") && await BytesAsync(source, "replication_bytes|sfo-1|gru-1|anti_entropy:received") > 0);
+        await clock.PausedAsync(token);
+        var before = await BytesAsync(receiver, "replication_bytes|gru-1|sfo-1|anti_entropy:received");
+
+        // The receiver can no longer answer a digest: the delivered request still counts on both ends.
+        await using (var connection = new SqliteConnection(DocumentApi.ConnectionString(tenant.File(receiver, "repair"))))
+        {
+            await connection.OpenAsync(token);
+            using var corrupt = connection.CreateCommand();
+            corrupt.CommandText = "UPDATE documents SET body = '{\"payload\":\"' || replace(hex(zeroblob(1048577)), '00', 'x') || '\"}' WHERE collection = 'items' AND id = $id;";
+            corrupt.Parameters.AddWithValue("$id", ids[0]);
+            await Assert.That(await corrupt.ExecuteNonQueryAsync(token)).IsEqualTo(1);
+        }
+
+        clock.Advance(AntiEntropyWorker.ReconcileInterval);
+        await TerraBaseTestServer.EventuallyAsync(async _ => await BytesAsync(receiver, "replication_bytes|gru-1|sfo-1|anti_entropy:received") > before);
+        await clock.PausedAsync(token);
+        await Assert.That(await BytesAsync(source, "replication_bytes|sfo-1|gru-1|anti_entropy:sent"))
+            .IsEqualTo(await BytesAsync(receiver, "replication_bytes|gru-1|sfo-1|anti_entropy:received"));
+    }
+
+    // Answers the first digest without its applied source, which the requester refuses after reading the region it names.
+    private sealed class InvalidFirstDigest : Interceptor
+    {
+        private int _digests;
+
+        public override async Task<TResponse> UnaryServerHandler<TRequest, TResponse>(
+            TRequest request, ServerCallContext context, UnaryServerMethod<TRequest, TResponse> continuation)
+        {
+            var response = await continuation(request, context);
+            if (response is MerkleDigest digest && Interlocked.Increment(ref _digests) == 1)
+            {
+                digest.AppliedSource = null;
+            }
+
+            return response;
+        }
+    }
+
+    [Test]
+    [Timeout(60_000)]
+    public async Task A_rejected_anti_entropy_request_still_counts_its_delivered_bytes(CancellationToken cancellationToken)
+    {
+        using var peerTls = new PeerTls();
+        using var clientTls = new ClientTls();
+        await using var server = await TerraBaseTestServer.StartAsync(settings =>
+        {
+            peerTls.Apply(settings);
+            clientTls.Apply(settings);
+            settings["region"] = "gru-1";
+        });
+        var tenant = await ReplicationTenant.CreateAsync(server, ["repair"], cancellationToken);
+        using var channel = peerTls.CreateChannel(server.PeerAddress!);
+        var client = new AntiEntropy.AntiEntropyClient(channel);
+        var database = tenant.Database("repair");
+        var identity = new ShardIdentity { Organization = tenant.OrganizationId, Project = tenant.ProjectId, Database = database.DatabaseId!, Region = "sfo-1" };
+        var digestBytes = identity.CalculateSize() + 5L;
+        using (var digestCall = client.DigestAsync(identity, cancellationToken: cancellationToken))
+        {
+            identity.Incarnation = (await digestCall.ResponseAsync).Incarnation;
+        }
+
+        // Valid enough to be served, then refused by the repair state: it still crossed the wire.
+        var merge = new StateRequest { Identity = identity, Envelope = ByteString.CopyFrom(ApplicationEnvelope.Encode(ChangeGroup.Encode([])).Span) };
+        using (var mergeCall = client.MergeAsync(merge, cancellationToken: cancellationToken))
+        {
+            var refused = await Assert.ThrowsAsync<RpcException>(async () => await mergeCall.ResponseAsync);
+            await Assert.That(refused!.StatusCode).IsEqualTo(StatusCode.InvalidArgument);
+        }
+
+        var window = new TerraBase.Features.Management.Usage.UsageWindow(
+            TerraBase.Features.Management.Usage.UsageWindow.Hour, DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 3600, 1);
+        var (lifetime, _) = await server.Services.GetRequiredService<TerraBase.Features.Management.Usage.UsageMeter>()
+            .GetObservationsAsync(database, window, cancellationToken);
+        await Assert.That(lifetime.Meters!["replication_bytes|gru-1|sfo-1|anti_entropy:received"].Count).IsEqualTo(digestBytes + merge.CalculateSize() + 5L);
     }
 
     [Test]

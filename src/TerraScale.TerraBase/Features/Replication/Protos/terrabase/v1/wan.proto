@@ -22,6 +22,8 @@ message WanRequest {
 }
 
 message HeadsRequest {
+  // Observing region for per-database discovery bandwidth attribution.
+  string region = 2;
   // The page starts after this database: its tenant, project and database ULIDs (16 bytes each, network byte order),
   // concatenated; empty for the first page.
   bytes after = 1;
@@ -60,6 +62,8 @@ message HeadsReply {
 }
 
 message PullRequest {
+  // The same traffic classification at both ends of a pull, including resumed catch-up.
+  ReplicationTrafficKind traffic_kind = 8;
   // The asking member's region: a member serves a database's groups only to regions its placement names.
   string region = 7;
   bytes tenant_id = 1;

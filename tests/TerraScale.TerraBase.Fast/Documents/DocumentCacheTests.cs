@@ -10,6 +10,7 @@ using TerraBase.Engine;
 using TerraBase.Fast.Storage;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Management.Queries;
+using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Memory;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
@@ -54,6 +55,7 @@ public sealed class DocumentCacheTests
         await Assert.That((await GetAsync(tenant, "clock", "items", "b", deadline.Token)).Name).IsEqualTo("first");
         await Assert.That((await GetAsync(tenant, "clock", "items", "c", deadline.Token)).Name).IsEqualTo("disk");
         await Assert.That((await GetAsync(tenant, "clock", "items", "a", deadline.Token)).Name).IsEqualTo("disk");
+        await management.Server.Services.GetRequiredService<UsageMeter>().FlushAsync(deadline.Token);
         using var rest = management.Server.Services.GetRequiredService<IMemoryBudget>()
             .TryReserve(MemoryLane.Foreground, Budget - (Budget / 4));
         await Assert.That(rest).IsNotNull();
@@ -325,6 +327,7 @@ public sealed class DocumentCacheTests
             // and the completed storage read must retain no reservation.
             // Persist the separate query statistics so their pending reservation does not mask a cache leak.
             await server.Services.GetRequiredService<QueryShapeRecorder>().FlushAsync(operationTimeout.Token);
+            await server.Services.GetRequiredService<UsageMeter>().FlushAsync(operationTimeout.Token);
             var budget = server.Services.GetRequiredService<IMemoryBudget>();
             using var recoveredBudget = budget.TryReserve(MemoryLane.Foreground, Budget);
             await Assert.That(recoveredBudget).IsNotNull();
@@ -577,6 +580,7 @@ public sealed class DocumentCacheTests
 
         // Measured through the budget: capacity eviction releases reservations synchronously and the
         // tier holds at most its quarter immediately after the last read.
+        await server.Services.GetRequiredService<UsageMeter>().FlushAsync(CancellationToken.None);
         var budget = server.Services.GetRequiredService<IMemoryBudget>();
         using (var everything = budget.TryReserve(MemoryLane.Foreground, Budget))
         {
@@ -618,11 +622,11 @@ public sealed class DocumentCacheTests
 
         var client = tenant.Data;
         var file = await tenant.FileAsync(server, "oversized");
-        // Leave HTTP/catalog admission headroom alongside a page's transient result and this useful cached entry.
-        // Each test warms either a point read or a list page.
+        // Leave HTTP/catalog admission and pending usage observation headroom alongside a page's transient result and this
+        // useful cached entry. Each test warms either a point read or a list page.
         using (var response = await client.PutAsJsonAsync(
             new Uri($"/v1/projects/{tenant.ProjectId}/databases/oversized/collections/small/documents/by-key?id={StorageFixture.Id("a")}", UriKind.Relative),
-            new { name = "first", padding = new string('x', 1000 * 1024) }))
+            new { name = "first", padding = new string('x', 960 * 1024) }))
         {
             response.EnsureSuccessStatusCode();
         }

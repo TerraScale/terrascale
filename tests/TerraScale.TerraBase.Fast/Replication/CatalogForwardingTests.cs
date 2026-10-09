@@ -9,9 +9,12 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
+using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Management;
 using TerraBase.Features.Management.Usage;
+using TerraBase.Features.Memory;
+using TerraBase.Features.Qos;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
 using TerraBase.Primitives;
@@ -717,6 +720,108 @@ public sealed class CatalogForwardingTests
     }
 
     [Test]
+    public async Task A_management_request_a_follower_relays_is_metered_once_by_the_primary_that_resolved_its_database()
+    {
+        using var peers = new PeerTls();
+        using var tls = new ClientTls();
+        using var issuer = new TestIssuer();
+        await using var primary = await TerraBaseTestServer.StartAsync(settings =>
+        {
+            peers.Apply(settings);
+            tls.Apply(settings);
+            TestIssuer.Configure(settings);
+            settings["region"] = "gru-1";
+        }, issuer.Route);
+        await using var follower = await StartFollowerAsync(peers, tls, issuer, primary.PeerAddress!, region: "gru-1");
+        await ReadyAsync(follower);
+        var faker = new Faker();
+        var project = Ulid.NewUlid().ToString();
+        var token = issuer.Mint(EntityIds.New().ToString(), claims =>
+        {
+            claims.Claims["project_id"] = project;
+            claims.Claims["scope"] = "databases:read databases:write";
+        });
+        using var relayed = tls.CreateClient(follower.ClientAddress!, token);
+        (await relayed.PostAsJsonAsync(Relative($"/v1/projects/{project}/databases"), new { name = "main" })).EnsureSuccessStatusCode();
+        var reads = faker.Random.Int(1, 3);
+        for (var i = 0; i < reads; i++)
+        {
+            (await relayed.GetAsync(Relative($"/v1/projects/{project}/databases/main"))).EnsureSuccessStatusCode();
+        }
+
+        // Neither the relaying follower (no resolved database) nor a second observation on the primary may count them: deliver
+        // whatever the follower metered before reading the primary's totals.
+        await follower.Services.GetServices<IHostedService>().OfType<UsageFlushService>().Single().FlushAsync(CancellationToken.None);
+        using var direct = tls.CreateClient(primary.ClientAddress!, token);
+        var analytics = await direct.GetFromJsonAsync<JsonElement>(Relative($"/projects/{project}/databases/main/analytics?range=1h&region=gru-1"));
+        var gets = analytics.GetProperty("items")[0].GetProperty("series").EnumerateArray()
+            .Sum(point => point.GetProperty("requests").TryGetProperty("get", out var count) ? count.GetInt64() : 0);
+        await Assert.That(gets).IsEqualTo(reads);
+    }
+
+    [Test]
+    public async Task A_primary_without_memory_for_a_batchs_measurements_still_adds_its_totals()
+    {
+        using var peers = new PeerTls();
+        using var tls = new ClientTls();
+        using var issuer = new TestIssuer();
+        await using var primary = await TerraBaseTestServer.StartAsync(settings =>
+        {
+            peers.Apply(settings);
+            tls.Apply(settings);
+            TestIssuer.Configure(settings);
+        }, services =>
+        {
+            issuer.Route(services);
+            var registration = services.Single(service => service.ServiceType == typeof(IMemoryBudget));
+            services.Remove(registration);
+            services.AddSingleton(provider => new MeasurementMemory((IMemoryBudget)registration.ImplementationFactory!(provider)));
+            services.AddSingleton<IMemoryBudget>(provider => provider.GetRequiredService<MeasurementMemory>());
+        });
+        await using var follower = await StartFollowerAsync(peers, tls, issuer, primary.PeerAddress!);
+        await ReadyAsync(follower);
+        using var dashboard = tls.CreateClient(primary.ClientAddress!, issuer.Mint(EntityIds.New().ToString()));
+        var organization = await CreatedIdAsync(dashboard, "/v1/management/organizations", new { name = "Measured" });
+        var project = await CreatedIdAsync(dashboard, $"/v1/management/organizations/{organization}/projects", new { name = "main" });
+        var database = await CreatedIdAsync(dashboard, $"/v1/management/organizations/{organization}/projects/{project}/databases", new { name = "orders" });
+        var hour = DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 3600;
+        var meters = new Dictionary<string, UsageReading>();
+        foreach (var peer in new[] { "sfo-1", "iad-1", "fra-1" })
+        {
+            foreach (var kind in new[] { "delta", "anti_entropy", "handoff" })
+            {
+                foreach (var direction in new[] { "sent", "received" })
+                {
+                    var dimension = new UsageDimension("replication_bytes", "gru-1", peer, $"{kind}:{direction}");
+                    meters[dimension.Key] = new(dimension, 1, 512);
+                }
+            }
+        }
+
+        // Measurements past 1 KiB need more than the 4 KiB a batch of totals reserves; this primary has no memory for them and
+        // refuses such a batch before it adds any of it.
+        primary.Services.GetRequiredService<MeasurementMemory>().Refuse = true;
+        var probe = Batch(ByteString.CopyFrom(EntityIds.New().ToByteArray()), 1, organization, project, database, hour, reads: 1, sender: "probe");
+        probe.Counts[0].Measurements = ByteString.CopyFrom(JsonSerializer.SerializeToUtf8Bytes(
+            new OpCounts(0, 0, meters), TerraBase.Hosting.TerraBaseJsonContext.Default.OpCounts));
+        await Assert.That(await follower.Services.GetRequiredService<ICatalogPrimaryClient>().AddUsageAsync(probe, CancellationToken.None) is QuotaExceeded).IsTrue();
+
+        // The follower then sends the batch's totals alone under its sequence: the reads count, the measurements are dropped.
+        var reads = new Faker().Random.Int(1, 9);
+        var owner = new DatabaseOwner(organization, project, database);
+        var local = follower.Services.GetRequiredService<UsageMeter>();
+        local.Add(new UsageKey(owner, hour), new OpCounts(reads, 0));
+        local.Add(new UsageKey(owner, hour), new OpCounts(0, 0, meters));
+        await follower.Services.GetServices<IHostedService>().OfType<UsageFlushService>().Single().FlushAsync(CancellationToken.None);
+        var meter = primary.Services.GetRequiredService<UsageMeter>();
+        await meter.FlushAsync(CancellationToken.None);
+        var (lifetime, _) = await meter.GetObservationsAsync(
+            new TenantContext(organization, PlanTier.Hobby, project, database), new UsageWindow(UsageWindow.Hour, hour, 1), CancellationToken.None);
+        await Assert.That(lifetime.Reads).IsEqualTo(reads);
+        await Assert.That(lifetime.Meters is null || lifetime.Meters.Keys.All(key => !meters.ContainsKey(key))).IsTrue();
+    }
+
+    [Test]
     public async Task A_followers_reads_and_writes_reach_its_primarys_usage_once_also_when_an_acknowledgement_is_lost()
     {
         using var peers = new PeerTls();
@@ -810,7 +915,31 @@ public sealed class CatalogForwardingTests
 
             // The follower's client reports a batch the primary refuses, here an hour two days ahead of its clock, as refused.
             var ahead = Batch(ByteString.CopyFrom(EntityIds.New().ToByteArray()), 1, organization, project, database, hour + 48, reads: 1, sender: "ahead");
-            await Assert.That(await follower.Services.GetRequiredService<CatalogPrimaryClient>().AddUsageAsync(ahead, CancellationToken.None)).IsFalse();
+            await Assert.That(await follower.Services.GetRequiredService<CatalogPrimaryClient>().AddUsageAsync(ahead, CancellationToken.None) is Validation).IsTrue();
+
+            // Byte aggregates outgrow the operation-count bound (10^12): an hour of 20 GB storage samples folded during an outage is valid.
+            var folded = Batch(ByteString.CopyFrom(Ulid.NewUlid().ToByteArray()), 1, organization, project, database, hour, reads: 0, sender: "folded");
+            var storage = new UsageDimension("storage_bytes", "gru-1", "", "sample");
+            folded.Counts[0].Measurements = ByteString.CopyFrom(JsonSerializer.SerializeToUtf8Bytes(
+                new OpCounts(0, 0, new Dictionary<string, UsageReading> { [storage.Key] = new(storage, 60, 60 * 20_000_000_000L) }),
+                TerraBase.Hosting.TerraBaseJsonContext.Default.OpCounts));
+            await Assert.That(await follower.Services.GetRequiredService<CatalogPrimaryClient>().AddUsageAsync(folded, CancellationToken.None) is Done).IsTrue();
+
+            // Two accepted byte readings past half the 64-bit range merge at its saturation, never into negative bandwidth.
+            var sentBytes = new UsageDimension("client_bytes", "gru-1", "", "sent");
+            foreach (var sender in new[] { "large-a", "large-b" })
+            {
+                var large = Batch(ByteString.CopyFrom(Ulid.NewUlid().ToByteArray()), 1, organization, project, database, hour, reads: 0, sender: sender);
+                large.Counts[0].Measurements = ByteString.CopyFrom(JsonSerializer.SerializeToUtf8Bytes(
+                    new OpCounts(0, 0, new Dictionary<string, UsageReading> { [sentBytes.Key] = new(sentBytes, (long.MaxValue / 2) + 1) }),
+                    TerraBase.Hosting.TerraBaseJsonContext.Default.OpCounts));
+                await Assert.That(await follower.Services.GetRequiredService<CatalogPrimaryClient>().AddUsageAsync(large, CancellationToken.None) is Done).IsTrue();
+            }
+
+            await primary.Services.GetRequiredService<UsageMeter>().FlushAsync(CancellationToken.None);
+            var (merged, _) = await primary.Services.GetRequiredService<UsageMeter>().GetObservationsAsync(
+                new TenantContext(organization, PlanTier.Hobby, project, database), new UsageWindow(UsageWindow.Hour, hour, 1), CancellationToken.None);
+            await Assert.That(merged.Meters![sentBytes.Key].Count).IsEqualTo(long.MaxValue);
 
             // A clean shutdown sends every pending batch, not only the first 4,096 database hours: here 4,097, one of them this
             // database's. The others belong to a project the primary does not have, which it checks once and drops.
@@ -972,6 +1101,17 @@ public sealed class CatalogForwardingTests
         return batch;
     }
 
+    // Refuses the replication-lane reservations above the 4 KiB that a usage batch of totals alone takes, while Refuse is set.
+    private sealed class MeasurementMemory(IMemoryBudget inner) : IMemoryBudget
+    {
+        public bool Refuse { get; set; }
+
+        public IMemoryReservation? TryReserve(MemoryLane lane, long bytes) => TryReserve(lane, bytes, QosContext.Current);
+
+        public IMemoryReservation? TryReserve(MemoryLane lane, long bytes, TenantContext? tenant) =>
+            Refuse && lane == MemoryLane.Replication && bytes > 4096 ? null : inner.TryReserve(lane, bytes, tenant);
+    }
+
     // Delivers every batch, but fails the first call as if its acknowledgement had been lost.
     private sealed class LostFirstAcknowledgement(CatalogPrimaryClient inner) : ICatalogPrimaryClient
     {
@@ -980,7 +1120,7 @@ public sealed class CatalogForwardingTests
         public Task<bool> AddQueryShapesAsync(QueryShapesBatch batch, CancellationToken cancellationToken) =>
             inner.AddQueryShapesAsync(batch, cancellationToken);
 
-        public async Task<bool> AddUsageAsync(UsageBatch batch, CancellationToken cancellationToken)
+        public async Task<AddUsageResult> AddUsageAsync(UsageBatch batch, CancellationToken cancellationToken)
         {
             var added = await inner.AddUsageAsync(batch, cancellationToken);
             lock (Sequences)
@@ -999,13 +1139,17 @@ public sealed class CatalogForwardingTests
     private static Uri Relative(string path) => new(path, UriKind.Relative);
 
     private static Task<TerraBaseTestServer> StartFollowerAsync(
-        PeerTls peers, ClientTls tls, TestIssuer issuer, Uri primary, Action<IServiceCollection>? services = null) =>
+        PeerTls peers, ClientTls tls, TestIssuer issuer, Uri primary, Action<IServiceCollection>? services = null, string? region = null) =>
         TerraBaseTestServer.StartAsync(settings =>
         {
             peers.Apply(settings);
             tls.Apply(settings);
             TestIssuer.Configure(settings);
             settings["catalog-primary"] = primary.ToString();
+            if (region is not null)
+            {
+                settings["region"] = region;
+            }
         }, collection =>
         {
             issuer.Route(collection);

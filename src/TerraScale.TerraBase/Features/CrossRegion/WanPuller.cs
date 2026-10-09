@@ -1,7 +1,9 @@
 using Google.Protobuf;
 using TerraBase.Configuration;
 using TerraBase.Engine;
+using TerraBase.Errors;
 using TerraBase.Features.CrossRegion.V1;
+using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
 using TerraBase.Primitives;
@@ -24,7 +26,7 @@ namespace TerraBase.Features.CrossRegion;
 /// </remarks>
 internal sealed partial class WanPuller(
     IRegionBus bus, IStorageEngine engine, IReplicationJournal journal, ITenantDirectory tenants, TerraBaseOptions options, WanMetrics metrics,
-    TimeProvider time, ILogger<WanPuller> logger) : BackgroundService
+    TimeProvider time, ILogger<WanPuller> logger, IUsageMeter usage) : BackgroundService
 {
     /// <summary>Pause between rounds that found nothing more to pull.</summary>
     public static readonly TimeSpan Interval = TimeSpan.FromSeconds(1);
@@ -51,6 +53,14 @@ internal sealed partial class WanPuller(
     private readonly Dictionary<(IDatabaseStore Store, string Origin), long> _applied = [];
     private readonly Dictionary<string, (long At, DatabaseAdoption Why)> _refused = [with(StringComparer.Ordinal)];
     private readonly HashSet<string> _clashes = [with(StringComparer.Ordinal)];
+    // Per peer region, database and origin: the highest sequence it advertised, the verified applied prefix, and whether it
+    // diverged (answered Ahead or sent a group conflicting with the applied journal). An origin is kept while its applied
+    // prefix is below that target, so neither a round that does not reach it nor a stale lower advertisement can certify its
+    // database caught up, and while diverged, until a group from it verifiably extends the applied journal. Entries go with
+    // their database, and an undiverged one a complete sweep did not advertise. Bounded.
+    private readonly Dictionary<(string Region, string Database), RetainedOrigins> _origins = [];
+    private int _retainedOrigins;
+    private const int MaxOrigins = 4096;
 
     public override Task StartAsync(CancellationToken cancellationToken)
     {
@@ -74,6 +84,11 @@ internal sealed partial class WanPuller(
             if (store.Tenant is { } tenant)
             {
                 _ = _stores.Remove(Name(tenant));
+                foreach (var key in _origins.Keys.Where(key => key.Database == Name(tenant)).ToList())
+                {
+                    _retainedOrigins -= _origins[key].Count;
+                    _ = _origins.Remove(key);
+                }
             }
 
             foreach (var key in _applied.Keys.Where(key => ReferenceEquals(key.Store, store)).ToList())
@@ -81,6 +96,130 @@ internal sealed partial class WanPuller(
                 _ = _applied.Remove(key);
             }
         }
+    }
+
+    private (long Remaining, bool Diverged) Retained(string region, TenantContext database)
+    {
+        lock (_gate)
+        {
+            var (remaining, diverged) = (0L, false);
+            foreach (var state in (IEnumerable<OriginState>?)_origins.GetValueOrDefault((region, Name(database)))?.Values ?? [])
+            {
+                var behind = Math.Max(0, state.Target - state.Applied);
+                (remaining, diverged) = (remaining + Math.Min(behind, long.MaxValue - remaining), diverged || state.Diverged);
+            }
+
+            return (remaining, diverged);
+        }
+    }
+
+    // Records an origin's advertised target, verified applied prefix or divergence; false when the bound left no room for it.
+    // Advertised marks a fresh discovery advertisement, the only evidence that keeps an origin through a complete sweep.
+    private bool Retain(
+        string region, TenantContext database, ReadOnlyMemory<byte> origin, long target = 0, long applied = 0, bool diverge = false, bool advertised = false)
+    {
+        lock (_gate)
+        {
+            var origins = _origins.GetValueOrDefault((region, Name(database)));
+            var key = Convert.ToHexString(origin.Span);
+            var state = default(OriginState);
+            var found = origins?.TryGetValue(key, out state) == true;
+            var next = new OriginState(Math.Max(state.Target, target), Math.Max(state.Applied, applied), state.Diverged || diverge,
+                advertised ? time.GetTimestamp() : state.Advertised);
+            if (next.Applied >= next.Target && !next.Diverged)
+            {
+                Drop(region, database, key);
+                return true;
+            }
+
+            if (!found && _retainedOrigins >= MaxOrigins)
+            {
+                return false;
+            }
+
+            if (origins is null)
+            {
+                _origins[(region, Name(database))] = origins = new RetainedOrigins(database);
+            }
+
+            _retainedOrigins += found ? 0 : 1;
+            origins[key] = next;
+            return true;
+        }
+    }
+
+    // A group from the origin verifiably extended the applied journal to applied: whatever it diverged on is resolved, and a
+    // target advertised before the divergence belongs to a journal it no longer follows.
+    private void Converged(string region, TenantContext database, ReadOnlyMemory<byte> origin, long applied)
+    {
+        lock (_gate)
+        {
+            var key = Convert.ToHexString(origin.Span);
+            if (_origins.GetValueOrDefault((region, Name(database))) is { } origins && origins.TryGetValue(key, out var state))
+            {
+                var next = state with { Applied = Math.Max(state.Applied, applied), Diverged = false };
+                next = state.Diverged ? next with { Target = next.Applied } : next;
+                if (next.Applied >= next.Target)
+                {
+                    Drop(region, database, key);
+                }
+                else
+                {
+                    origins[key] = next;
+                }
+            }
+        }
+    }
+
+    // Under _gate.
+    private void Drop(string region, TenantContext database, string origin)
+    {
+        if (_origins.GetValueOrDefault((region, Name(database))) is { } origins && origins.Remove(origin))
+        {
+            _retainedOrigins--;
+            if (origins.Count == 0)
+            {
+                _ = _origins.Remove((region, Name(database)));
+            }
+        }
+    }
+
+    // Drops undiverged origins a complete sweep, begun at started, never freshly advertised: they are certified gone. Returns
+    // the databases that lost one, whose certified state the round then publishes.
+    private List<TenantContext> ForgetUnswept(string region, long started)
+    {
+        lock (_gate)
+        {
+            var affected = new List<TenantContext>();
+            foreach (var (key, origins) in _origins.Where(entry => entry.Key.Region == region).ToList())
+            {
+                var gone = origins.Where(entry => !entry.Value.Diverged && entry.Value.Advertised < started).Select(entry => entry.Key).ToList();
+                foreach (var origin in gone)
+                {
+                    _ = origins.Remove(origin);
+                    _retainedOrigins--;
+                }
+
+                if (gone.Count > 0)
+                {
+                    affected.Add(origins.Database);
+                }
+
+                if (origins.Count == 0)
+                {
+                    _ = _origins.Remove(key);
+                }
+            }
+
+            return affected;
+        }
+    }
+
+    private readonly record struct OriginState(long Target, long Applied, bool Diverged, long Advertised);
+
+    private sealed class RetainedOrigins(TenantContext database) : Dictionary<string, OriginState>(StringComparer.Ordinal)
+    {
+        public TenantContext Database { get; } = database;
     }
 
     private async Task RunAsync(string region, string cell, CancellationToken stoppingToken)
@@ -139,7 +278,7 @@ internal sealed partial class WanPuller(
         var previouslyLagging = discovery.Lagging;
         // Heads can advance the saved sweep before pulling finishes. An interrupted round must not certify catch-up.
         discovery.Lagging = true;
-        var (members, sweepEnded, heads) = await HeadsAsync(cell, discovery, cancellationToken).ConfigureAwait(false);
+        var (members, sweepEnded, heads) = await HeadsAsync(region, cell, discovery, cancellationToken).ConfigureAwait(false);
         // Unanswered discovery certifies nothing and measures no lag, but retained retries still pull from their members.
         var unanswered = heads.Count == 0 && members == 0;
         var complete = !unanswered && sweepEnded && !discovery.Invalid;
@@ -172,6 +311,7 @@ internal sealed partial class WanPuller(
         // Retries replicate only; they never witness a sweep.
         // Only a head this round can replicate supersedes; a malformed one is skipped below and must not drop the retry.
         var fresh = new HashSet<string>(heads.Where(entry => Replicable(entry.Head)).Select(entry => RetryKey(entry.Member, entry.Head)), StringComparer.Ordinal);
+        var retrying = discovery.Retry.Select(entry => RetryKey(entry.Member, entry.Head)).ToHashSet(StringComparer.Ordinal);
         heads.AddRange(discovery.Retry.Where(entry => !fresh.Contains(RetryKey(entry.Member, entry.Head))));
         var retry = new List<(string Member, Head Head)>();
         long retryBytes = 0;
@@ -180,6 +320,8 @@ internal sealed partial class WanPuller(
         var failures = 0;
         var unregistered = new HashSet<string>(StringComparer.Ordinal);
         var clashes = new HashSet<string>(StringComparer.Ordinal);
+        var observations = new Dictionary<TenantContext, (long Remaining, bool Diverged, bool Untracked)>();
+        var behind = new HashSet<TenantContext>();
         foreach (var (member, head) in heads)
         {
             if (WanProtocol.Database(head.TenantId, head.ProjectId, head.DatabaseId) is not { } database || head.Origin.Length != 16 || head.Sequence > long.MaxValue)
@@ -199,22 +341,40 @@ internal sealed partial class WanPuller(
 
             var applied = await AppliedAsync(store, origin, cancellationToken).ConfigureAwait(false);
             var gone = false;
+            // Only the origin's explicit Ahead answer or a journal conflict is divergence; a head snapshot may be stale.
+            var untracked = false;
+            var failed = false;
+            Conflict? diverged = null;
+            // Bounded by this round's heads and retries, so every replicated database reports health each round.
+            _ = observations.TryAdd(database, (0, false, false));
+            // Any origin found behind starts the backlog, not only the first member's advertisement.
+            if ((long)head.Sequence > applied && behind.Add(database))
+            {
+                var (outstanding, divergent) = Retained(region, database);
+                usage.RecordReplicationState(database, region, Math.Max((long)head.Sequence - applied, outstanding), divergent);
+            }
             if (applied < (long)head.Sequence)
             {
                 try
                 {
-                    (var pulled, gone) = await PullAsync(region, cell, member, database, store, origin, applied, (long)head.Sequence, cancellationToken).ConfigureAwait(false);
-                    progressed |= pulled > applied;
-                    applied = pulled;
+                    var traffic = applied == 0 && head.Sequence > 1
+                        || retrying.Contains(RetryKey(member, head))
+                        ? ReplicationTrafficKind.Handoff : ReplicationTrafficKind.Delta;
+                    switch (await PullAsync(region, cell, member, database, store, origin, applied, (long)head.Sequence, traffic, cancellationToken).ConfigureAwait(false))
+                    {
+                        case Pulled pulled:
+                            progressed |= pulled.Applied > applied;
+                            (applied, gone) = (pulled.Applied, pulled.Gone);
+                            break;
+                        case Conflict conflict:
+                            diverged = conflict;
+                            break;
+                    }
                 }
                 catch (Exception error) when (!cancellationToken.IsCancellationRequested)
                 {
-                    metrics.Failed(region, error switch
-                    {
-                        OriginAheadException => "ahead",
-                        InvalidDataException or DocumentValidationException => "apply",
-                        _ => "pull",
-                    });
+                    failed = true;
+                    metrics.Failed(region, error is InvalidDataException or DocumentValidationException ? "apply" : "pull");
                     if (failures++ == 0 && !quiet)
                     {
                         LogPullFailed(logger, error, region);
@@ -222,7 +382,44 @@ internal sealed partial class WanPuller(
                 }
             }
 
+            if (diverged is not null)
+            {
+                failed = true;
+                // A conflict past the bounded set is still reported for this round, and logged.
+                if (!Retain(region, database, origin, diverge: true))
+                {
+                    untracked = true;
+                    LogDivergenceUntracked(logger, region);
+                }
+
+                metrics.Failed(region, diverged == OriginAhead ? "ahead" : "apply");
+                if (failures++ == 0 && !quiet)
+                {
+                    LogPullDiverged(logger, region, diverged.Message);
+                }
+            }
+
+            // A pull can commit groups before it fails: count only what is still missing.
+            if (failed)
+            {
+                try
+                {
+                    applied = Math.Max(applied, await AppliedAsync(store, origin, cancellationToken).ConfigureAwait(false));
+                }
+                catch (Exception) when (!cancellationToken.IsCancellationRequested)
+                {
+                    // The store failed too; the round's earlier prefix stays the estimate.
+                }
+            }
+
             var remaining = Math.Max(0, (long)head.Sequence - applied);
+            // Best effort past the bound: an untracked backlog only loses retention across rounds.
+            var tracked = Retain(region, database, origin, target: (long)head.Sequence, applied: applied, advertised: fresh.Contains(RetryKey(member, head)));
+            if (observations.TryGetValue(database, out var observed))
+            {
+                observations[database] = (observed.Remaining + Math.Min(remaining, long.MaxValue - observed.Remaining), observed.Diverged || untracked,
+                    observed.Untracked || !tracked);
+            }
             lag += Math.Min(remaining, long.MaxValue - lag);
             // Bounded like one heads reply; anything beyond waits for a fresh scan to advertise it again. A member that no longer
             // holds the origin cannot serve a retry.
@@ -231,6 +428,25 @@ internal sealed partial class WanPuller(
                 retry.Add((member, head));
                 retryBytes += head.CalculateSize();
             }
+        }
+
+        // Every retained origin of a database counts, also one this round did not reach: a partial sweep certifies nothing.
+        // Only a complete sweep certifies an origin gone; an incomplete one keeps every outstanding target, however long it runs.
+        if (complete)
+        {
+            foreach (var certified in ForgetUnswept(region, discovery.SweepStarted))
+            {
+                _ = observations.TryAdd(certified, (0, false, false));
+            }
+        }
+
+        foreach (var (database, observed) in observations)
+        {
+            // Per origin, its highest target less its latest verified prefix, once: members advertising the same origin, or
+            // one failing where another caught up, count nothing twice. Past the bound, this round's view is the estimate.
+            var (outstanding, divergent) = Retained(region, database);
+            usage.RecordReplicationState(database, region, observed.Untracked ? Math.Max(observed.Remaining, outstanding) : outstanding,
+                observed.Diverged || divergent);
         }
 
         discovery.Retry.Clear();
@@ -246,6 +462,7 @@ internal sealed partial class WanPuller(
         metrics.Rounded(region, lag, members, unregistered.Count, clashes.Count, caughtUp: complete && !discovery.Lagging, time.GetTimestamp());
         if (sweepEnded)
         {
+            discovery.SweepStarted = time.GetTimestamp();
             discovery.Records = null;
             discovery.Candidates.Clear();
             discovery.Present.Clear();
@@ -280,7 +497,7 @@ internal sealed partial class WanPuller(
 
     // Every member's heads, all pages. Discover members from every reply, including direct replies and later pages:
     // different members may hold different views. Ask each discovered member at most once this round.
-    private async Task<(int Members, bool SweepEnded, List<(string Member, Head Head)> Heads)> HeadsAsync(string cell, HeadsProgress progress, CancellationToken cancellationToken)
+    private async Task<(int Members, bool SweepEnded, List<(string Member, Head Head)> Heads)> HeadsAsync(string region, string cell, HeadsProgress progress, CancellationToken cancellationToken)
     {
         using var deadline = new CancellationTokenSource(HeadsDeadline, time);
         using var discovery = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
@@ -300,7 +517,7 @@ internal sealed partial class WanPuller(
         var queued = new HashSet<string>(deferredMembers, StringComparer.Ordinal);
         var continuations = new Dictionary<string, HeadsReply>(StringComparer.Ordinal);
         var pending = new List<Task<(string Member, HeadsPage? Page)>>();
-        var first = new WanRequest { Version = WanProtocol.Version, Heads = new HeadsRequest() }.ToByteArray();
+        var first = new WanRequest { Version = WanProtocol.Version, Heads = new HeadsRequest { Region = options.Region } }.ToByteArray();
         var budget = new HeadsBudget(MaxHeadsPerRound, MaxHeadBytesPerRound);
         // Scattered first pages repeat every round: at most half the budget, so saved cursors and deferred members progress.
         var scatterBudget = new HeadsBudget(MaxHeadsPerRound / 2, MaxHeadBytesPerRound / 2);
@@ -555,9 +772,9 @@ internal sealed partial class WanPuller(
 
                 for (var pages = 1; reply.More && reply.Heads.Count > 0 && pages < MaxHeadsPagesPerMember && !budget.Exhausted; pages++)
                 {
-                    var next = new WanRequest { Version = WanProtocol.Version, Heads = new HeadsRequest { After = after! } };
+                    var next = new WanRequest { Version = WanProtocol.Version, Heads = new HeadsRequest { After = after!, Region = options.Region } };
                     var member = reply.Member;
-                    var following = Parse(await bus.RequestAsync(WanProtocol.MemberSubject(cell, member), next.ToByteArray(), discovery.Token).ConfigureAwait(false)) is { } page && page.Member == member
+                    var following = Parse(await bus.RequestAsync(WanProtocol.MemberSubject(cell, member), next.ToByteArray(), discovery.Token).ConfigureAwait(false), next.CalculateSize()) is { } page && page.Member == member
                         ? page
                         : throw new InvalidDataException("a member answered a heads page with an invalid reply");
                     if (following.Members.Distinct(StringComparer.Ordinal).Count(candidate => !members.Contains(candidate)) > MaxMembersPerRound - members.Count)
@@ -629,11 +846,16 @@ internal sealed partial class WanPuller(
             return ByteString.CopyFrom([.. head.TenantId.Span, .. head.ProjectId.Span, .. head.DatabaseId.Span]);
         }
 
-        static HeadsReply? Parse(ReadOnlyMemory<byte> data)
+        HeadsReply? Parse(ReadOnlyMemory<byte> data, int requestBytes = 0)
         {
             try
             {
                 var reply = data.Length <= WanProtocol.MaxMessageBytes ? HeadsReply.Parser.ParseFrom(data.Span) : null;
+                if (reply is not null)
+                {
+                    WanUsage.Heads(usage, region, reply, requestBytes == 0 ? first.Length : requestBytes, data.Length, responding: false);
+                }
+
                 // The member names the subject of its next requests: it must be a single subject token.
                 return reply is not null && (!reply.More || reply.Heads.Count > 0)
                     && WanProtocol.IsMember(reply.Member) && reply.Heads.Count <= WanProtocol.MaxHeadsPerReply
@@ -670,6 +892,9 @@ internal sealed partial class WanPuller(
         public bool Invalid { get; set; }
 
         public bool CleanupBlocked { get; set; }
+
+        // When the current sweep began; origins it does not see by its complete end were certified absent.
+        public long SweepStarted { get; set; }
     }
 
     // The heads one round holds in memory across every member and page, by count and serialized bytes.
@@ -711,10 +936,10 @@ internal sealed partial class WanPuller(
     private sealed record HeadsPage(List<Head> Heads, HashSet<string> Members, bool Complete, ByteString? After, bool Invalid = false);
 
     // Pulls an origin from the member that holds it, up to the head it reported or the round's budget; returns the applied
-    // prefix, and whether the member no longer holds that origin.
-    private async Task<(long Applied, bool Gone)> PullAsync(
+    // prefix and whether the member no longer holds that origin, or the conflict when the journals diverged.
+    private async Task<PullOutcome> PullAsync(
         string region, string cell, string member, TenantContext database, IDatabaseStore store, ReadOnlyMemory<byte> origin, long applied, long head,
-        CancellationToken cancellationToken)
+        ReplicationTrafficKind traffic, CancellationToken cancellationToken)
     {
         var subject = WanProtocol.MemberSubject(cell, member);
         byte[]? parts = null;
@@ -726,6 +951,7 @@ internal sealed partial class WanPuller(
                 Version = WanProtocol.Version,
                 Pull = new PullRequest
                 {
+                    TrafficKind = traffic,
                     Region = options.Region,
                     TenantId = WanProtocol.Id(database.OrganizationId),
                     ProjectId = WanProtocol.Id(database.ProjectId!),
@@ -735,7 +961,10 @@ internal sealed partial class WanPuller(
                     Offset = (uint)received,
                 },
             };
-            var data = await bus.RequestAsync(subject, request.ToByteArray(), cancellationToken).ConfigureAwait(false);
+            var payload = request.ToByteArray();
+            usage.RecordReplicationBytes(database, region, WanUsage.Kind(traffic), true, payload.Length);
+            var data = await bus.RequestAsync(subject, payload, cancellationToken).ConfigureAwait(false);
+            usage.RecordReplicationBytes(database, region, WanUsage.Kind(traffic), false, data.Length);
             var reply = data.Length <= WanProtocol.MaxMessageBytes ? PullReply.Parser.ParseFrom(data.Span) : throw new InvalidDataException("the pull reply is too large");
             switch (reply.Status)
             {
@@ -743,9 +972,9 @@ internal sealed partial class WanPuller(
                     break;
                 case PullReply.Types.Status.UnknownOrigin or PullReply.Types.Status.NotPlaced:
                     // The member no longer holds the origin; the next round's heads tell where it is, if anywhere.
-                    return (applied, true);
+                    return new Pulled(applied, true);
                 case PullReply.Types.Status.Ahead:
-                    throw new OriginAheadException();
+                    return OriginAhead;
                 default:
                     throw new IOException($"the member answered the pull with {reply.Status} and no groups");
             }
@@ -778,8 +1007,19 @@ internal sealed partial class WanPuller(
                 }
 
                 var changes = ReplicationProtocol.Read(new SyncRequest { CommittedGroup = batch }, database, origin, ReplicationProtocol.Limits);
-                var (sequence, _) = await journal.AppendAsync(
+                var append = await journal.AppendAsync(
                     store, origin, (long)batch.EventId.Sequence, changes, batch.PreviousJournalDigest.Memory, batch.JournalDigest.Memory, cancellationToken).ConfigureAwait(false);
+                if (append is Conflict conflict)
+                {
+                    return conflict;
+                }
+
+                var sequence = append switch
+                {
+                    JournalApplied group => group.Sequence,
+                    JournalUnchanged unchanged => unchanged.Sequence,
+                    Conflict => applied,
+                };
                 lock (_gate)
                 {
                     _applied[(store, Convert.ToHexString(origin.Span))] = sequence;
@@ -791,11 +1031,22 @@ internal sealed partial class WanPuller(
                 }
 
                 applied = sequence;
+                // Its journal proof extended the applied journal, or matched the head another stream extended it with first (the
+                // journal compares a duplicate's digest only at its head): whatever this origin diverged on is resolved.
+                if (append is JournalApplied || append is JournalUnchanged duplicate && duplicate.Sequence == (long)batch.EventId.Sequence)
+                {
+                    Converged(region, database, origin, sequence);
+                }
+
+                if (append is JournalApplied)
+                {
+                    usage.RecordReplicatedOperations(database, region, changes.Count);
+                }
                 metrics.Pulled(region, batch.EncodedApplicationBytes);
             }
         }
 
-        return (applied, false);
+        return new Pulled(applied, false);
     }
 
     // The store of a database this region serves, opened (and created on a member that has no file yet) the way the in-region
@@ -918,7 +1169,13 @@ internal sealed partial class WanPuller(
         return applied;
     }
 
-    private sealed class OriginAheadException() : Exception("this member applied change groups the origin never committed; restore recovery is required");
+    private static readonly Conflict OriginAhead = new("this member applied change groups the origin never committed; restore recovery is required", "origin_ahead");
+
+    // The applied prefix after a pull, and whether the member no longer holds the origin.
+    private sealed record Pulled(long Applied, bool Gone);
+
+    // A pull ends with its applied prefix or, when the journals diverged, the conflict.
+    private readonly union PullOutcome(Pulled, Conflict);
 
     private static string Name(TenantContext database) => $"{database.OrganizationId}/{database.ProjectId}/{database.DatabaseId}";
 
@@ -934,6 +1191,12 @@ internal sealed partial class WanPuller(
     [LoggerMessage(LogLevel.Warning, "No member of region {Region} answered; retrying every round")]
     private static partial void LogUnanswered(ILogger logger, string region);
 
+    [LoggerMessage(LogLevel.Warning, "A diverged origin from region {Region} exceeds the tracked bound; it is reported diverged only while it fails")]
+    private static partial void LogDivergenceUntracked(ILogger logger, string region);
+
     [LoggerMessage(LogLevel.Warning, "Pulling an origin from region {Region} failed; retrying next round")]
     private static partial void LogPullFailed(ILogger logger, Exception error, string region);
+
+    [LoggerMessage(LogLevel.Warning, "An origin from region {Region} diverged: {Reason}; retrying next round")]
+    private static partial void LogPullDiverged(ILogger logger, string region, string reason);
 }

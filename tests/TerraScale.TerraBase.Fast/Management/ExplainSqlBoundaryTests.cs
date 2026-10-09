@@ -13,6 +13,7 @@ using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
 using TerraBase.Features.Management;
+using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
 using TerraBase.Hosting;
@@ -751,8 +752,15 @@ public sealed class ExplainSqlBoundaryTests
         };
         listener.SetMeasurementEventCallback<long>((_, value, _, _) => reserved = value);
         listener.Start();
-        listener.RecordObservableInstruments();
-        return reserved ?? throw new InvalidOperationException("the server's memory budget gauge was not observed");
+        var usage = api.Server.Services.GetRequiredService<UsageMeter>();
+        long result = 0;
+        usage.ObserveMemory(() =>
+        {
+            listener.RecordObservableInstruments();
+            result = (reserved ?? throw new InvalidOperationException("the server's memory budget gauge was not observed"))
+                - usage.ReservedMeasurementBytes;
+        });
+        return result;
     }
 
     private static async Task SeedRemotePlacementAsync(ManagementApi api, ManagedDatabaseRef database, CancellationToken token)

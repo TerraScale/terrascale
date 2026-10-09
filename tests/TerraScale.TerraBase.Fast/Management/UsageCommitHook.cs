@@ -39,6 +39,13 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
     // Runs after a catalog row is captured, so tests can change its mapping before the next lookup.
     public Func<string, string, CancellationToken, ValueTask>? AfterGet { get; set; }
 
+    // Lists databases in reverse engine order while set, as an unordered listing may.
+    public bool ReverseDatabases
+    {
+        get => Volatile.Read(ref field);
+        set => Volatile.Write(ref field, value);
+    }
+
     // Observes catalog materialization; used to prove memory refusal precedes tenant resolution.
     public Action<string>? BeforeGet { get; set; }
 
@@ -202,7 +209,29 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
             return await inner.GetDatabaseSizeAsync(database, cancellationToken);
         }
 
-        public IAsyncEnumerable<TenantContext> ListDatabasesAsync(CancellationToken cancellationToken) => inner.ListDatabasesAsync(cancellationToken);
+        public async IAsyncEnumerable<TenantContext> ListDatabasesAsync([System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+        {
+            if (!hook.ReverseDatabases)
+            {
+                await foreach (var database in inner.ListDatabasesAsync(cancellationToken))
+                {
+                    yield return database;
+                }
+
+                yield break;
+            }
+
+            var listed = new List<TenantContext>();
+            await foreach (var database in inner.ListDatabasesAsync(cancellationToken))
+            {
+                listed.Add(database);
+            }
+
+            for (var i = listed.Count - 1; i >= 0; i--)
+            {
+                yield return listed[i];
+            }
+        }
         public ValueTask DisposeAsync() => inner.DisposeAsync();
 
         public event EventHandler<ChangeGroupCommitted>? ChangesCommitted

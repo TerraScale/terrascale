@@ -1,5 +1,6 @@
 using Grpc.Core;
 using TerraBase.Configuration;
+using TerraBase.Errors;
 using TerraBase.Features.Replication.V1;
 
 namespace TerraBase.Features.Replication;
@@ -8,10 +9,11 @@ namespace TerraBase.Features.Replication;
 public interface ICatalogPrimaryClient
 {
     /// <summary>
-    /// Sends <paramref name="batch"/> to <c>CatalogUsage.Add</c>: <see langword="true"/> once the primary acknowledged it,
-    /// <see langword="false"/> when it refused it as invalid (it added none of it). Throws when the outcome is unknown.
+    /// Sends <paramref name="batch"/> to <c>CatalogUsage.Add</c>: <see cref="Done"/> once the primary acknowledged it,
+    /// <see cref="Validation"/> when it refused it as invalid and <see cref="QuotaExceeded"/> when it lacked the capacity to
+    /// take it; it added none of a refused batch. Throws when the outcome is unknown.
     /// </summary>
-    Task<bool> AddUsageAsync(UsageBatch batch, CancellationToken cancellationToken);
+    Task<AddUsageResult> AddUsageAsync(UsageBatch batch, CancellationToken cancellationToken);
 
     /// <summary>
     /// Sends <paramref name="batch"/> to <c>CatalogQueryShapes.Add</c>: true after durable acknowledgement,
@@ -20,12 +22,15 @@ public interface ICatalogPrimaryClient
     Task<bool> AddQueryShapesAsync(QueryShapesBatch batch, CancellationToken cancellationToken);
 }
 
+/// <summary>What a catalog primary did with a usage batch: added it, refused it for good, or lacked the capacity to take it.</summary>
+public readonly union AddUsageResult(Done, Validation, QuotaExceeded);
+
 internal sealed class CatalogPrimaryClient(TerraBaseOptions options, PeerCredentials credentials) : ICatalogPrimaryClient
 {
     // Batches are bounded; query shapes are durably committed before acknowledgement.
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(10);
 
-    public async Task<bool> AddUsageAsync(UsageBatch batch, CancellationToken cancellationToken)
+    public async Task<AddUsageResult> AddUsageAsync(UsageBatch batch, CancellationToken cancellationToken)
     {
         using var lease = credentials.Capture();
         // ponytail: a channel (TLS handshake) per batch, one every 10 seconds; keep one per credential generation if that matters.
@@ -36,7 +41,7 @@ internal sealed class CatalogPrimaryClient(TerraBaseOptions options, PeerCredent
             await new CatalogUsage.CatalogUsageClient(channel)
                 .AddAsync(batch, deadline: DateTime.UtcNow.Add(Timeout), cancellationToken: cancellationToken)
                 .ConfigureAwait(false);
-            return true;
+            return new Done();
         }
         catch (RpcException error) when (error.StatusCode == StatusCode.Cancelled && cancellationToken.IsCancellationRequested)
         {
@@ -46,7 +51,12 @@ internal sealed class CatalogPrimaryClient(TerraBaseOptions options, PeerCredent
         catch (RpcException error) when (error.StatusCode == StatusCode.InvalidArgument)
         {
             // The primary validates a whole batch before it adds any of it, so a retry would be refused the same way.
-            return false;
+            return new Validation("the catalog primary refused the usage batch");
+        }
+        catch (RpcException error) when (error.StatusCode == StatusCode.ResourceExhausted)
+        {
+            // Memory admission and the sender bound refuse a batch before any of it is added; a smaller one may fit.
+            return new QuotaExceeded("the catalog primary lacked the capacity for the usage batch");
         }
     }
 

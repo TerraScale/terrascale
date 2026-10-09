@@ -161,6 +161,11 @@ routes (TS-581) go in this group and follow these conventions. Both routes take 
 `from` and `to`, and answer that period's reads and writes and one point per bucket (TS-581,
 [management API](management-api.md#usage)). There is no organization usage: ts-dashboard sums its projects.
 
+TS-762 adds versionless project and database `/analytics` and `/replication`
+routes with the same project JWT scope and database-name path selectors.
+Ranges, regional ownership, response fields, wire-byte accounting and limits:
+[Project replication and analytics](analytics.md).
+
 ## Data
 
 ### Collections

@@ -541,6 +541,20 @@ public sealed partial class CrossRegionPagingProgressTests
             set => Volatile.Write(ref field, value);
         }
 
+        // Answers every pull of this database as Ahead while set, as an origin that rolled back its journal would.
+        public ByteString? AheadOf
+        {
+            get => Volatile.Read(ref field);
+            set => Volatile.Write(ref field, value);
+        }
+
+        // Sees each pull reply before the puller does, as another stream that commits its groups first.
+        public Func<PullRequest, ReadOnlyMemory<byte>, CancellationToken, ValueTask>? BeforePullReply
+        {
+            get => Volatile.Read(ref field);
+            set => Volatile.Write(ref field, value);
+        }
+
         // Fails every pull of this database while set.
         public ByteString? FailPullsOf
         {
@@ -657,12 +671,23 @@ public sealed partial class CrossRegionPagingProgressTests
                     throw new IOException("injected pull failure");
                 }
 
+                if (AheadOf is { } ahead && pull.DatabaseId == ahead)
+                {
+                    return new PullReply { Status = PullReply.Types.Status.Ahead }.ToByteArray();
+                }
+
                 if (UnknownOriginOf is { } unknown && pull.DatabaseId == unknown)
                 {
                     return new PullReply { Status = PullReply.Types.Status.UnknownOrigin }.ToByteArray();
                 }
 
-                return await inner.RequestAsync(subject, request, cancellationToken);
+                var reply = await inner.RequestAsync(subject, request, cancellationToken);
+                if (BeforePullReply is { } before)
+                {
+                    await before(pull, reply, cancellationToken);
+                }
+
+                return reply;
             }
 
             if (!Slow)

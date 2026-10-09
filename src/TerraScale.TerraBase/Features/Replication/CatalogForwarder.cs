@@ -95,6 +95,12 @@ internal static class ForwardingProtocol
 /// </summary>
 internal sealed partial class CatalogForwarder
 {
+    /// <summary>Marks a request this follower relayed to the catalog primary.</summary>
+    internal sealed class Relayed
+    {
+        public static Relayed Instance { get; } = new();
+    }
+
     private readonly TerraBaseOptions _options;
     private readonly PeerCredentials _credentials;
     private readonly CatalogFollower _follower;
@@ -133,6 +139,8 @@ internal sealed partial class CatalogForwarder
 
     public async Task ForwardAsync(HttpContext context)
     {
+        // The primary serves, resolves and meters the request; this member only relays it.
+        context.Features.Set(Relayed.Instance);
         var aborted = context.RequestAborted;
         try
         {

@@ -194,7 +194,7 @@ public sealed class SubscriptionResourceTests
             switch (instrument.Name)
             {
                 case "terrabase.memory.reserved":
-                    Interlocked.Exchange(ref reserved, value);
+                    Interlocked.Exchange(ref reserved, value - api.Server.Services.GetRequiredService<UsageMeter>().ReservedMeasurementBytes);
                     break;
                 case "terrabase.shape.requests.waiting":
                     var count = Interlocked.Add(ref waiting, value);
@@ -218,7 +218,7 @@ public sealed class SubscriptionResourceTests
             }
         });
         listener.Start();
-        listener.RecordObservableInstruments();
+        api.Server.Services.GetRequiredService<UsageMeter>().ObserveMemory(listener.RecordObservableInstruments);
         var baseline = Volatile.Read(ref reserved);
 
         using var held = new UsageCommitHook.Gate(fail: false);
@@ -244,7 +244,7 @@ public sealed class SubscriptionResourceTests
             var (cancelled, completed) = await cancelledRead.Task.WaitAsync(deadline.Token);
             await Assert.That(cancelled).IsTrue();
             await Assert.That(completed).IsFalse();
-            listener.RecordObservableInstruments();
+            api.Server.Services.GetRequiredService<UsageMeter>().ObserveMemory(listener.RecordObservableInstruments);
             await Assert.That(Volatile.Read(ref reserved) - baseline).IsGreaterThanOrEqualTo(32 * 1024 * 1024);
             await Assert.That(Volatile.Read(ref flights)).IsEqualTo(1);
             await Assert.That(Volatile.Read(ref waiting)).IsEqualTo(2);
@@ -259,7 +259,7 @@ public sealed class SubscriptionResourceTests
             using var subscriptionResponse = await subscription.WaitAsync(deadline.Token);
             await Assert.That(subscriptionResponse.StatusCode).IsEqualTo(HttpStatusCode.OK);
             await Assert.That(await subscriptionResponse.Content.ReadAsStringAsync(deadline.Token)).IsEqualTo("");
-            listener.RecordObservableInstruments();
+            api.Server.Services.GetRequiredService<UsageMeter>().ObserveMemory(listener.RecordObservableInstruments);
             await Assert.That(Volatile.Read(ref reserved)).IsEqualTo(baseline);
             await Assert.That(Volatile.Read(ref flights)).IsEqualTo(0);
             await Assert.That(Volatile.Read(ref waiting)).IsEqualTo(0);
@@ -366,7 +366,7 @@ public sealed class SubscriptionResourceTests
             switch (instrument.Name)
             {
                 case "terrabase.memory.reserved":
-                    Interlocked.Exchange(ref reserved, value);
+                    Interlocked.Exchange(ref reserved, value - api.Server.Services.GetRequiredService<UsageMeter>().ReservedMeasurementBytes);
                     break;
                 case "terrabase.shape.flights.active":
                     Interlocked.Add(ref flights, value);
@@ -380,7 +380,7 @@ public sealed class SubscriptionResourceTests
             }
         });
         listener.Start();
-        listener.RecordObservableInstruments();
+        api.Server.Services.GetRequiredService<UsageMeter>().ObserveMemory(listener.RecordObservableInstruments);
         var baseline = Volatile.Read(ref reserved);
         using var client = api.WithToken(api.Issuer.Mint(api.User, token =>
         {
@@ -409,7 +409,7 @@ public sealed class SubscriptionResourceTests
         }
 
         await liveEntered.Task.WaitAsync(deadline.Token);
-        listener.RecordObservableInstruments();
+        api.Server.Services.GetRequiredService<UsageMeter>().ObserveMemory(listener.RecordObservableInstruments);
         await Assert.That(Volatile.Read(ref reserved) - baseline).IsGreaterThanOrEqualTo(32 * 1024 * 1024);
 
         // The subscription has sent its snapshot and released its storage transaction. Holding the sole
@@ -436,7 +436,7 @@ public sealed class SubscriptionResourceTests
             await Task.Yield();
         }
 
-        listener.RecordObservableInstruments();
+        api.Server.Services.GetRequiredService<UsageMeter>().ObserveMemory(listener.RecordObservableInstruments);
         await Assert.That(Volatile.Read(ref reserved)).IsEqualTo(baseline);
         await Assert.That(Volatile.Read(ref flights)).IsEqualTo(0);
         await Assert.That(Volatile.Read(ref waiting)).IsEqualTo(0);

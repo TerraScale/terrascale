@@ -29,7 +29,7 @@ public sealed class ChangeFeedRecoveryTests
         var id = DocumentApi.NewId();
         (await api.PutAsync(id, new { name = new Faker().Name.FirstName() })).Status.ShouldBe(HttpStatusCode.Created);
         var route = $"/projects/{api.Tenant.ProjectId}/databases/db/collections/items/changes";
-        var reserved = await api.Server.MetricAsync("terrabase_memory_reserved_bytes");
+        var reserved = await api.ReservedBytesAsync();
         var database = await api.TenantOfAsync();
         hook.BeforeBegin = (tenant, _) =>
         {
@@ -47,7 +47,7 @@ public sealed class ChangeFeedRecoveryTests
             clock.Armed = false;
         }
         await Assert.That(await api.Server.MetricAsync("terrabase_change_feed_active")).IsEqualTo(0);
-        await Assert.That(await api.Server.MetricAsync("terrabase_memory_reserved_bytes")).IsEqualTo(reserved);
+        await Assert.That(await api.ReservedBytesAsync()).IsEqualTo(reserved);
         var recovered = await DocumentApi.SendAsync(feed, HttpMethod.Get, route);
         await Assert.That(recovered.Status).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(recovered.Json.GetProperty("changes").EnumerateArray().Single().GetProperty("id").GetString()).IsEqualTo(id);

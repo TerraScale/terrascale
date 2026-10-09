@@ -1,6 +1,9 @@
 using System.Collections.Concurrent;
+using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using TerraBase.Features.Management;
+using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
 using TerraBase.Primitives;
@@ -83,6 +86,72 @@ public sealed class PeerRegionTests
         await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(
             receiving.Messages.Contains("Replication receiving in region gru-1 from peer region iad-1")
             && sending.Messages.Contains("Replication sending from region iad-1 to peer #0 in region gru-1")));
+    }
+
+    [Test]
+    public async Task Journal_replay_longer_than_one_turn_is_metered_as_handoff_until_the_peer_reaches_the_head()
+    {
+        using var tls = new PeerTls();
+        using var clientTls = new ClientTls();
+        var senderData = Directory.CreateTempSubdirectory("terrabase-handoff-turns-").FullName;
+        try
+        {
+            void Sender(Dictionary<string, string> settings)
+            {
+                tls.Apply(settings);
+                clientTls.Apply(settings);
+                settings["region"] = "iad-1";
+                settings["data-directory"] = senderData;
+            }
+
+            // More groups than the sender's 256-group turn, committed before it knows any peer: replay spans turns.
+            ReplicationTenant tenant;
+            await using (var alone = await TerraBaseTestServer.StartAsync(Sender))
+            {
+                tenant = await ReplicationTenant.CreateAsync(alone, "turns");
+                // Hobby admission would throttle the burst of writes below; the plan does not change replication.
+                await alone.Services.GetRequiredService<IManagementService>().SetPlanAsync(tenant.UserId, tenant.OrganizationId, PlanTier.Enterprise, CancellationToken.None);
+                using var writer = clientTls.CreateClient(alone.ClientAddress!, await tenant.KeyAsync(alone, "documents:write"));
+                using (var collection = await writer.PostAsJsonAsync(new Uri($"{tenant.Path("turns")}/collections", UriKind.Relative), new { name = "items" }))
+                {
+                    collection.EnsureSuccessStatusCode();
+                }
+
+                var faker = new Faker();
+                for (var i = 0; i < 300; i++)
+                {
+                    using var put = await writer.PutAsJsonAsync(
+                        new Uri($"{tenant.Path("turns")}/collections/items/documents/by-key?id={Uri.EscapeDataString(ReplicationDocuments.Id($"turn-{i}"))}", UriKind.Relative),
+                        new { name = faker.Name.FullName() });
+                    put.EnsureSuccessStatusCode();
+                }
+            }
+
+            await using var receiver = await TerraBaseTestServer.StartAsync(settings =>
+            {
+                tls.Apply(settings);
+                clientTls.Apply(settings);
+                settings["region"] = "gru-1";
+            });
+            await tenant.BindAsync(receiver);
+            await using var sender = await TerraBaseTestServer.StartAsync(settings =>
+            {
+                Sender(settings);
+                settings["peer-addresses"] = receiver.PeerAddress!.ToString();
+            });
+            await TerraBaseTestServer.ReplicatedAsync(sender);
+
+            var hour = DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 3600;
+            var (lifetime, _) = await sender.Services.GetRequiredService<UsageMeter>()
+                .GetObservationsAsync(tenant.Database("turns"), new UsageWindow(UsageWindow.Hour, hour, 1), CancellationToken.None);
+            var meters = lifetime.Meters ?? new Dictionary<string, UsageReading>();
+            await Assert.That(meters.GetValueOrDefault("replication_bytes|iad-1|gru-1|handoff:sent")?.Count ?? 0).IsGreaterThan(0);
+            await Assert.That(meters.ContainsKey("replication_bytes|iad-1|gru-1|delta:sent")).IsFalse();
+        }
+        finally
+        {
+            Directory.Delete(senderData, recursive: true);
+        }
     }
 
     private sealed class RegionLogs : ILoggerProvider, ILogger

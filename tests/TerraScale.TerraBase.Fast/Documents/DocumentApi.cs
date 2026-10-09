@@ -5,6 +5,7 @@ using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
+using TerraBase.Features.Management.Usage;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
@@ -49,6 +50,16 @@ internal sealed class DocumentApi : IAsyncDisposable
     public Tenant Tenant { get; }
 
     public TerraBaseTestServer Server => Management.Server;
+
+    /// <summary>
+    /// Process memory reserved once pending usage observations are flushed: they hold admission until the next usage flush,
+    /// so a request's own observations do not read as a leak.
+    /// </summary>
+    public async Task<double> ReservedBytesAsync(CancellationToken cancellationToken = default)
+    {
+        await Server.Services.GetRequiredService<UsageMeter>().FlushAsync(cancellationToken);
+        return await Server.MetricAsync("terrabase_memory_reserved_bytes", cancellationToken: cancellationToken);
+    }
 
     public HttpClient Client => Tenant.Data;
 

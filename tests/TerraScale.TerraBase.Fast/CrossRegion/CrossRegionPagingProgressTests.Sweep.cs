@@ -4,9 +4,14 @@ using System.Net;
 using System.Text.Json;
 using Bogus;
 using Google.Protobuf;
+using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Features.CrossRegion;
 using TerraBase.Features.CrossRegion.V1;
+using TerraBase.Features.Management.Usage;
+using TerraBase.Features.Replication;
+using TerraBase.Features.Replication.V1;
 using TerraBase.Primitives;
+using TerraBase.Tenancy;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.CrossRegion;
@@ -606,6 +611,205 @@ public sealed partial class CrossRegionPagingProgressTests
                 {
                     await Assert.That(await sfo.Server.MetricAsync("terrabase_wan_lag", GruLabel, token)).IsEqualTo(0);
                 }
+            }
+            finally
+            {
+                bus.Begin.TrySetResult();
+                bus.ReleaseAll();
+            }
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task Origin_divergence_holds_through_failed_or_unverified_pulls_until_the_journal_extends_by_any_stream()
+    {
+        var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
+        var faker = new Faker();
+        var network = new FakeRegionNetwork();
+        var clock = new ProgressClock(DateTimeOffset.UtcNow);
+        var bus = new ProgressBus(network.Join("sfo", "sfo-a"), fullMembership: false);
+        var directory = Directory.CreateTempSubdirectory("terrabase-wan-divergence-").FullName;
+        try
+        {
+            var credentials = Path.Combine(directory, "user.creds");
+            await File.WriteAllTextAsync(credentials, Credentials, token);
+            await using var gru = await StartAsync(network, credentials, "gru-1", "gru", "gru-a");
+            await using var sfo = await StartAsync(network, credentials, "sfo-1", "sfo", "sfo-a", bus, clock);
+            try
+            {
+                var organization = Ulid.NewUlid().ToString();
+                var project = Ulid.NewUlid().ToString();
+                foreach (var api in new[] { gru, sfo })
+                {
+                    using var service = api.Service(api.User);
+                    using var registered = await service.PostAsJsonAsync(ManagementApi.Uri("/v1/management/commits"), new
+                    {
+                        id = Ulid.NewUlid().ToString(),
+                        ops = new object[]
+                        {
+                            new { op = "create_organization", id = organization, name = faker.Company.CompanyName() },
+                            new { op = "create_project", organization, id = project, name = faker.Random.AlphaNumeric(12) },
+                        },
+                    }, token);
+                    registered.EnsureSuccessStatusCode();
+                }
+
+                var database = await CreatePlacedAsync(gru, organization, project, "diverged", token);
+                var id = WanProtocol.Id(database.Id);
+                var document = ManagementApi.Uri(ManagementApi.DocumentPath(database, "items", "saved"));
+                using var source = await gru.CreateClientAsync(organization, "documents:read", "documents:write");
+                using var target = await sfo.CreateClientAsync(organization, "documents:read", "documents:write");
+                await ManagementApi.CreateCollectionAsync(source, database, "items");
+                bus.Begin.TrySetResult();
+                await clock.PausedAsync(token);
+                var value = faker.Lorem.Sentence();
+                string version;
+                using (var written = await source.PutAsJsonAsync(document, new { value }, token))
+                {
+                    await Assert.That(written.StatusCode).IsEqualTo(HttpStatusCode.Created);
+                    version = written.Headers.ETag!.Tag;
+                }
+
+                var meter = sfo.Server.Services.GetRequiredService<UsageMeter>();
+                var tenant = new TenantContext(organization, PlanTier.Hobby, project, database.Id);
+                async Task<bool> DivergedAsync()
+                {
+                    var (lifetime, _) = await meter.GetObservationsAsync(tenant, new UsageWindow(UsageWindow.Hour, clock.GetUtcNow().ToUnixTimeSeconds() / 3600, 1), token);
+                    return lifetime.Meters!["replication_status|sfo-1|gru-1|inbound"].State!.Diverged;
+                }
+
+                // The origin answers Ahead: divergence.
+                bus.Slow = true;
+                bus.AheadOf = id;
+                await AdvanceSweepRoundAsync(bus, clock, token);
+                await Assert.That(await DivergedAsync()).IsTrue();
+
+                // A transport failure, then an unknown origin, verify nothing: divergence holds.
+                bus.AheadOf = null;
+                bus.FailPullsOf = id;
+                await AdvanceSweepRoundAsync(bus, clock, token);
+                await Assert.That(await DivergedAsync()).IsTrue();
+                bus.FailPullsOf = null;
+                bus.UnknownOriginOf = id;
+                await AdvanceSweepRoundAsync(bus, clock, token);
+                await Assert.That(await DivergedAsync()).IsTrue();
+
+                // Another stream commits the pulled group first: the pull's duplicate matches the extended head, which resolves it.
+                bus.UnknownOriginOf = null;
+                var journal = sfo.Server.Services.GetRequiredService<IReplicationJournal>();
+                var won = 0;
+                bus.BeforePullReply = async (pull, reply, cancellation) =>
+                {
+                    var groups = PullReply.Parser.ParseFrom(reply.Span).Groups;
+                    var (store, _, _, _) = await journal.OpenAsync(tenant, pull.Origin.Memory, cancellation);
+                    foreach (var group in groups)
+                    {
+                        var changes = ReplicationProtocol.Read(new SyncRequest { CommittedGroup = group }, tenant, pull.Origin.Memory, ReplicationProtocol.Limits);
+                        if (await journal.AppendAsync(store, pull.Origin.Memory, (long)group.EventId.Sequence, changes,
+                            group.PreviousJournalDigest.Memory, group.JournalDigest.Memory, cancellation) is JournalApplied)
+                        {
+                            _ = Interlocked.Increment(ref won);
+                        }
+                    }
+                };
+                await AdvanceSweepRoundAsync(bus, clock, token);
+                bus.BeforePullReply = null;
+                await AssertReadAsync(target, document, value, version, token);
+                await Assert.That(won).IsEqualTo(1);
+                await Assert.That(await DivergedAsync()).IsFalse();
+            }
+            finally
+            {
+                bus.Begin.TrySetResult();
+                bus.ReleaseAll();
+            }
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Test]
+    public async Task A_stale_lower_head_after_a_failed_pull_keeps_the_known_backlog()
+    {
+        var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
+        var faker = new Faker();
+        var network = new FakeRegionNetwork();
+        var clock = new ProgressClock(DateTimeOffset.UtcNow);
+        var bus = new ProgressBus(network.Join("sfo", "sfo-a"), fullMembership: false);
+        var directory = Directory.CreateTempSubdirectory("terrabase-wan-stale-head-").FullName;
+        try
+        {
+            var credentials = Path.Combine(directory, "user.creds");
+            await File.WriteAllTextAsync(credentials, Credentials, token);
+            await using var gru = await StartAsync(network, credentials, "gru-1", "gru", "gru-a");
+            await using var sfo = await StartAsync(network, credentials, "sfo-1", "sfo", "sfo-a", bus, clock);
+            try
+            {
+                var organization = Ulid.NewUlid().ToString();
+                var project = Ulid.NewUlid().ToString();
+                foreach (var api in new[] { gru, sfo })
+                {
+                    using var service = api.Service(api.User);
+                    using var registered = await service.PostAsJsonAsync(ManagementApi.Uri("/v1/management/commits"), new
+                    {
+                        id = Ulid.NewUlid().ToString(),
+                        ops = new object[]
+                        {
+                            new { op = "create_organization", id = organization, name = faker.Company.CompanyName() },
+                            new { op = "create_project", organization, id = project, name = faker.Random.AlphaNumeric(12) },
+                        },
+                    }, token);
+                    registered.EnsureSuccessStatusCode();
+                }
+
+                var database = await CreatePlacedAsync(gru, organization, project, "stale", token);
+                var id = WanProtocol.Id(database.Id);
+                var document = ManagementApi.Uri(ManagementApi.DocumentPath(database, "items", "saved"));
+                using var source = await gru.CreateClientAsync(organization, "documents:read", "documents:write");
+                using var target = await sfo.CreateClientAsync(organization, "documents:read", "documents:write");
+                await ManagementApi.CreateCollectionAsync(source, database, "items");
+                bus.Begin.TrySetResult();
+                await clock.PausedAsync(token);
+                var value = faker.Lorem.Sentence();
+                string version = "";
+                for (var write = 0; write < 3; write++)
+                {
+                    using var written = await source.PutAsJsonAsync(document, new { value, write }, token);
+                    written.EnsureSuccessStatusCode();
+                    version = written.Headers.ETag!.Tag;
+                }
+
+                var meter = sfo.Server.Services.GetRequiredService<UsageMeter>();
+                var tenant = new TenantContext(organization, PlanTier.Hobby, project, database.Id);
+                async Task<long> RemainingAsync()
+                {
+                    var (lifetime, _) = await meter.GetObservationsAsync(tenant, new UsageWindow(UsageWindow.Hour, clock.GetUtcNow().ToUnixTimeSeconds() / 3600, 1), token);
+                    return lifetime.Meters!["replication_status|sfo-1|gru-1|inbound"].State!.Remaining;
+                }
+
+                // The pull fails: the advertised head is now the known target.
+                bus.Slow = true;
+                bus.FailPullsOf = id;
+                await AdvanceSweepRoundAsync(bus, clock, token);
+                await Assert.That(await RemainingAsync()).IsGreaterThan(0);
+
+                // A stale advertisement below that target supersedes the retry: the known backlog must still be reported.
+                bus.FailPullsOf = null;
+                bus.CorruptFirstHead = head => head.Sequence = 1;
+                await AdvanceSweepRoundAsync(bus, clock, token);
+                await Assert.That(bus.CorruptFirstHead is null).IsTrue();
+                await Assert.That(await RemainingAsync()).IsGreaterThan(0);
+
+                // A fresh advertisement is pulled to its head: caught up.
+                await AdvanceSweepRoundAsync(bus, clock, token);
+                await AssertReadAsync(target, document, value, version, token);
+                await Assert.That(await RemainingAsync()).IsEqualTo(0);
             }
             finally
             {
