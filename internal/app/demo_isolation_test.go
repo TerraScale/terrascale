@@ -159,6 +159,7 @@ func TestPersistentDemoIsolatesLiveStripe(t *testing.T) {
 		status       int
 	}{
 		{http.MethodPost, payments.WebhookPath, nil, http.StatusServiceUnavailable},
+		{http.MethodPost, payments.LegacyWebhookPath, nil, http.StatusServiceUnavailable},
 		{http.MethodGet, "/checkout/" + db.Project(), nil, http.StatusNotFound},
 		{http.MethodPost, "/checkout/" + db.Project() + "/complete", url.Values{"_csrf": {csrfToken}}, http.StatusNotFound},
 		{http.MethodPost, "/billing/checkout", url.Values{"_csrf": {csrfToken}, "plan": {payments.PlanStarter}, "interval": {payments.IntervalMonthly}, "return": {"/onboarding"}}, http.StatusServiceUnavailable},

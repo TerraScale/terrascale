@@ -96,7 +96,11 @@ endpoints, Events, and portal configurations.
 
 ## Webhook endpoint
 
-Create one endpoint per app at `<DASHBOARD_PUBLIC_ORIGIN>/api/auth/stripe/webhook`
+The former `/api/auth/stripe/webhook` URL remains a compatibility alias with the
+same signature validation and customer sync. Keep only one Stripe endpoint
+configured per app, using either URL, to avoid duplicate deliveries.
+
+Create one endpoint per app at `<DASHBOARD_PUBLIC_ORIGIN>/api/v1/billing/stripe/webhook`
 with the API version stripe-go decodes (`stripe.APIVersion` in
 `vendor/github.com/stripe/stripe-go/v*/api_version.go`). Events rendered with
 an incompatible API release train are rejected with `400` and logged, because

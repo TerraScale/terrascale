@@ -63,6 +63,24 @@ class StripeAuditTest(unittest.TestCase):
                 self.assertTrue(report["passed"])
                 self.assertGreater(calls, 0)
 
+    def test_webhook_routes_and_duplicate_configuration(self):
+        for paths, expected in (
+            (["/api/v1/billing/stripe/webhook"], True),
+            (["/api/auth/stripe/webhook"], True),
+            (["/api/v1/billing/stripe/webhook", "/api/auth/stripe/webhook"], False),
+            (["/api/v1/billing/stripe/webhook/other"], False),
+        ):
+            with self.subTest(paths=paths):
+                def response(key, path, params=None):
+                    value = self.response("test", path, params)
+                    if path == "webhook_endpoints":
+                        endpoint = value["data"][0]
+                        value["data"] = [dict(endpoint, url="https://dash.terrascale.tech" + route) for route in paths]
+                    return value
+                status, report, _ = self.run_audit(self.environment("test"), ["--mode", "test", "--online"], response)
+                self.assertEqual(status, 0 if expected else 1)
+                self.assertEqual(report["checks"]["webhook_endpoint"], expected)
+
     def test_wrong_mode_never_contacts_stripe(self):
         for expected, configured, key_mode in (("test", "live", "live"), ("live", "live", "test"), ("live", "test", "live")):
             with self.subTest(expected=expected, configured=configured, key_mode=key_mode):

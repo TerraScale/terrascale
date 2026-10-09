@@ -118,7 +118,8 @@ def main():
                 plan in product.get("name", "").lower(),
             ))
         endpoints = stripe_get(key, "webhook_endpoints", {"limit": 100}).get("data", [])
-        matches = [item for item in endpoints if item.get("url") == origin + "/api/auth/stripe/webhook" and item.get("livemode") is live]
+        webhook_urls = {origin + "/api/v1/billing/stripe/webhook", origin + "/api/auth/stripe/webhook"}
+        matches = [item for item in endpoints if item.get("url") in webhook_urls and item.get("livemode") is live]
         details["enabled_invoice_created_endpoints"] = sum(
             item.get("status") == "enabled" and item.get("livemode") is live
             and ("invoice.created" in item.get("enabled_events", []) or "*" in item.get("enabled_events", []))

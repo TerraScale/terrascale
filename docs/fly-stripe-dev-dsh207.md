@@ -54,7 +54,7 @@ fly config validate --strict -c fly.dev.toml -a terrascale-dashboard-dev
 ## 3. Stripe e segredos
 
 No Stripe Workbench em modo teste, crie um endpoint exclusivo para
-`https://terrascale-dashboard-dev.fly.dev/api/auth/stripe/webhook` na versão de
+`https://terrascale-dashboard-dev.fly.dev/api/v1/billing/stripe/webhook` na versão de
 API do stripe-go (`stripe.APIVersion`, hoje `2026-08-26.dahlia`) com todos os
 eventos listados em [`stripe.md`](stripe.md#webhook-endpoint). Em Settings →
 Checkout, habilite "Limit customers to one subscription".

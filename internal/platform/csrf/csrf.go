@@ -98,7 +98,7 @@ func (g *Guard) Protect(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if r.Method == http.MethodPost && r.URL.Path == "/api/auth/stripe/webhook" {
+		if r.Method == http.MethodPost && (r.URL.Path == "/api/v1/billing/stripe/webhook" || r.URL.Path == "/api/auth/stripe/webhook") {
 			next.ServeHTTP(w, r)
 			return
 		}

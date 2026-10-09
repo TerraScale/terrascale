@@ -16,7 +16,10 @@ import (
 
 // WebhookPath is the Stripe webhook endpoint. CSRF protection skips it
 // because every request is authenticated by its Stripe signature instead.
-const WebhookPath = "/api/auth/stripe/webhook"
+const WebhookPath = "/api/v1/billing/stripe/webhook"
+
+// LegacyWebhookPath keeps configured Stripe endpoints working during migration.
+const LegacyWebhookPath = "/api/auth/stripe/webhook"
 
 const maxStripeWebhookBody = 1 << 20
 

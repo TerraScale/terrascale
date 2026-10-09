@@ -13,7 +13,7 @@ backend and cannot grant simulated entitlements to persistent accounts.
 
 The production Fly app is `ts-dashboard` (`fly.toml`). The public origin is
 `https://dash.terrascale.tech`; the webhook is
-`https://dash.terrascale.tech/api/auth/stripe/webhook`. Verify the app, serving
+`https://dash.terrascale.tech/api/v1/billing/stripe/webhook`. Verify the app, serving
 Machine, release, secret names/digests, readiness and native login immediately
 before any change:
 
