@@ -36,14 +36,19 @@ project-token contract. PUT documents 400 validation, 403 insufficient scope, 40
 resources, and 409 schema conflicts; GET documents 400 inference-budget/validation and 404 missing
 resources, with authentication/scope errors enforced by shared middleware. No pagination or checkpoint
 is used. Calls are cancellation-aware, deadline-bound and sent once. Identical declarations are
-idempotent; changed declarations require a collection with no retained document states.
+idempotent; declarations can only change when the collection has no retained document states,
+including tombstones.
 
 Source evidence: `Features/Management/Schema/{PutCollectionSchemaEndpoint,GetCollectionSchemaEndpoint,
 IUniqueSchemaService,ISchemaService,UniqueSchemaService}.cs`, `Engine/UniqueConstraint.cs`,
 `Features/Management/ProjectApiRoute.cs`, and `Tests/TerraBase.Fast/Platform/ApiReferenceTests.cs`.
 The producer's real-listener reference test checks generated OpenAPI against its public operation
 manifest, including both schema operations and TsAuth scopes. Local SDK checks cover serialization,
-required/null response boundaries and conflict parsing; generated live parity awaits the new release.
+required/null response boundaries and conflict parsing. A pass-through recorder also verifies that
+both schema methods send the producer's verbs, exact paths, media type and body over HTTPS to the
+real pinned listener. That older release returns 404 because it predates these routes; no response
+is fabricated. Successful declaration/read-back, populated-collection conflict and generated live
+parity coverage still await the new release.
 
 ## Guarantees and limits
 
@@ -80,6 +85,14 @@ Current Documents calls already send a caller-supplied canonical ULID key unchan
 transaction `id`. The envelope's `Id` owns document identity; Auth entity payloads must omit `id`.
 Caller-supplied document keys retain the producer's bounded-key exception; entity IDs use
 `TerraScaleIds.Validate` and `TerraScaleIdGenerator.NewId`. Do not encode hashes as pseudo-ULIDs.
+
+The producer has selected `GET/PUT/PATCH/DELETE …/documents/by-key?id=<encoded raw key>` to replace
+point routes that put keys in a path segment ([owner contract comment](https://git.terrascale.tech/TerraScale/ts-dotnet/pulls/29#issuecomment-22961)).
+At the inspected heads, #117 `770e95008b718ff5ad249c20e90a774b01094c1b` and #118 `1c2a7e082829bcebf816691537001f6aba168d9a`
+still contain the old point route. The SDK wire cutover requires its exact committed owner revision
+and a verified combined release. Current tests do not qualify arbitrary slash/dot-segment keys.
+The new route must receive one query-encoded original key, without pre-unescaping or a legacy fallback;
+lists and generated POST creation keep their routes, and transactions keep the original raw key.
 
 No migration, compatibility path, reset, deployment or production data deletion is included here.
 Production data deleted: none. Reset/deployment remains gated on approved admission and qualified pins.

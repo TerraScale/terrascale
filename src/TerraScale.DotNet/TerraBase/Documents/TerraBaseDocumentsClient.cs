@@ -106,8 +106,9 @@ public sealed class TerraBaseDatabase
 
     /// <summary>
     /// Declares single and compound unique keys (<c>PUT …/schema/{collection}</c>). Requires a ts-auth project token
-    /// with <c>databases:write</c> in the current producer contract. Changing declarations requires no retained document
-    /// states; identical declarations are idempotent. A populated collection throws <see cref="TerraBaseConflictException"/>
+    /// with <c>databases:write</c> in the current producer contract. Declarations may only change when the collection
+    /// has no retained document states (including tombstones); identical declarations are idempotent.
+    /// Otherwise, <see cref="TerraBaseConflictException"/> is thrown
     /// with <c>schema_requires_empty_collection</c>. Local duplicate writes throw <c>unique_violation</c> and roll back
     /// the whole transaction. Replicas can admit competing claims during partitions; this is not globally exclusive admission.
     /// </summary>

@@ -19,7 +19,7 @@ public sealed record TerraBaseUniqueSchemaField(string Name, bool Unique = false
 /// <param name="Name">Lowercase constraint name, following collection-name rules.</param>
 /// <param name="Fields">One to four distinct dotted member paths.</param>
 /// <param name="Unique">Whether to enforce uniqueness.</param>
-/// <param name="Normalization"><c>none</c> (default), invariant <c>lowercase</c>, or Unicode-whitespace trimming followed by invariant <c>trim_lowercase</c>.</param>
+/// <param name="Normalization"><c>none</c> (default), invariant <c>lowercase</c>, or <c>trim_lowercase</c> (Unicode-whitespace trimming followed by invariant lowercasing).</param>
 public sealed record TerraBaseUniqueSchemaIndex(string Name, IReadOnlyList<string> Fields, bool Unique = false, string? Normalization = null);
 
 /// <summary>A persisted unique scalar or compound key. Key encoding is bounded to 16 KiB per key and 64 KiB per document.</summary>
@@ -41,7 +41,7 @@ public sealed record TerraBaseUniqueSchema(IReadOnlyList<TerraBaseUniqueConstrai
 /// <summary>Declared unique keys alongside fields inferred from up to 1000 live documents and 8 MiB of JSON.</summary>
 /// <param name="Collection">Collection name.</param>
 /// <param name="Documents">Live document count.</param>
-/// <param name="SampledDocuments">Number of sampled documents, in key order.</param>
+/// <param name="SampledDocuments">Number of documents included in the schema sample.</param>
 /// <param name="Fields">Inferred fields, in path order; arrays are not descended into.</param>
 /// <param name="UniqueConstraints">Declared unique keys.</param>
 public sealed record TerraBaseCollectionSchema(
