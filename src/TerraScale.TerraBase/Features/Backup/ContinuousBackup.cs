@@ -128,8 +128,8 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
     }
 
     public DateTimeOffset? LastShipped(TenantContext database, Ulid? generation = null) =>
-        _files.TryGetValue(BackupLayout.File(database), out var file) && file.Shipping && file.Target.Revision == BackupDestinationNames.Platform
-            && (generation is null || file.Generation == generation) ? file.LastShipped : null;
+        _files.TryGetValue(BackupLayout.File(database), out var file) && file.Shipping && file.PlatformProgress is { } progress
+            && (generation is null || progress.Generation == generation) ? progress.At : null;
 
     public async Task RunOnceAsync(CancellationToken cancellationToken)
     {
@@ -272,9 +272,9 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         || (_jobs.Count(job => job.Customer) < MaxCustomerJobs
             && !_jobs.Any(job => job.Customer && job.File.Database!.OrganizationId == file.Database!.OrganizationId));
 
-    private async Task RefreshConfigurationAsync(ShippedFile file, CancellationToken cancellationToken)
+    private async Task RefreshConfigurationAsync(ShippedFile file, CancellationToken cancellationToken, bool force = false)
     {
-        if (_time.GetUtcNow() >= file.RetryAt && _time.GetUtcNow() >= file.NextConfiguration)
+        if (force || _time.GetUtcNow() >= file.RetryAt && _time.GetUtcNow() >= file.NextConfiguration)
         {
             // Cancel and join the catalog read before releasing admission; its timeout uses the file's normal backoff.
             using var timeout = new CancellationTokenSource(ConfigurationTimeout, _time);
@@ -398,22 +398,41 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         }
 
         _jobs.Clear();
-        // Ship what committed since the last pass, then give every tap back before the engine closes.
-        foreach (var (_, file) in _files)
+        // Refresh and flush platform files before restarting customer I/O; each phase admits one job at a time.
+        foreach (var customer in new[] { false, true })
         {
-            try
+            foreach (var (_, file) in _files)
             {
-                if (!file.Removed && !cancellationToken.IsCancellationRequested)
+                if (file.Removed || cancellationToken.IsCancellationRequested || customer && !file.FinalCustomer)
                 {
-                    await RefreshConfigurationAsync(file, cancellationToken).ConfigureAwait(false);
+                    continue;
+                }
+
+                try
+                {
+                    if (!customer)
+                    {
+                        await RefreshConfigurationAsync(file, cancellationToken, force: true).ConfigureAwait(false);
+                        // Refresh even cached customer records: a detached destination now belongs to platform.
+                        file.FinalCustomer = file.Configuration is not null;
+                        if (file.FinalCustomer)
+                        {
+                            continue;
+                        }
+                    }
+
                     await ShipAsync(file, cancellationToken).ConfigureAwait(false);
                 }
+                catch (Exception error)
+                {
+                    errors.Add(error);
+                }
             }
-            catch (Exception error)
-            {
-                errors.Add(error);
-            }
+        }
 
+        // Every job has joined, including after an expired token; return every tap before the engine closes.
+        foreach (var (_, file) in _files)
+        {
             try
             {
                 await file.DisposeAsync().ConfigureAwait(false);
@@ -671,6 +690,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
             var key = BackupLayout.Snapshot(file.Prefix, at, generation, 0);
             await StoreAsync(file, key, snapshot, "snapshot", cancellationToken).ConfigureAwait(false);
             (file.Generation, file.Position, file.PendingStart, file.LastSnapshot, file.LastShipped, file.BehindSince) = (generation, 0, 0, at, at, null);
+            AcknowledgePlatform(file, at);
             _generations.Add(1);
             if (at - file.DrilledAt >= DrillInterval)
             {
@@ -724,6 +744,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
             var key = BackupLayout.Snapshot(file.Prefix, at, file.Generation!.Value, file.Position);
             await StoreAsync(file, key, snapshot, "snapshot", cancellationToken).ConfigureAwait(false);
             (file.LastSnapshot, file.LastShipped) = (at, at);
+            AcknowledgePlatform(file, at);
             if (at - file.DrilledAt >= DrillInterval)
             {
                 await DrillAsync(file, new SnapshotKey(key, at, file.Generation.Value, file.Position), snapshot, cancellationToken).ConfigureAwait(false);
@@ -744,6 +765,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
                 cancellationToken).ConfigureAwait(false);
             file.Pending.SetLength(0);
             (file.PendingStart, file.LastShipped, file.BehindSince) = (file.Position, file.PendingAt, null);
+            AcknowledgePlatform(file, file.PendingAt);
         }
         finally
         {
@@ -778,9 +800,14 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
 
     private static void Abandon(ShippedFile file)
     {
+        file.PlatformProgress = null;
         file.Generation = null;
         file.Pending.SetLength(0);
     }
+
+    // Publish generation and time together only after the fixed target acknowledges all its destinations.
+    private static void AcknowledgePlatform(ShippedFile file, DateTimeOffset at) =>
+        file.PlatformProgress = file.Target.IncludesPlatform ? new(file.Generation!.Value, at) : null;
 
     private static double Lag(ShippedFile file, DateTimeOffset now) => file.BehindSince is { } since ? Math.Max(0, (now - since).TotalSeconds) : 0;
 
@@ -831,6 +858,8 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         public Task? Cancelling { get; set; }
     }
 
+    private sealed record ShippingProgress(Ulid Generation, DateTimeOffset At);
+
     /// <summary>One shipped file. The scheduler owns admission fields; its single job owns shipping state.</summary>
     private sealed class ShippedFile(TenantContext? database, string prefix, string scope, IWalTap tap, FileStream pending, DateTimeOffset opened, BackupTarget target)
         : IAsyncDisposable
@@ -838,6 +867,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         public ShippingJob? Job { get; set; }
         public long ScheduledAt { get; set; }
         public bool Removed { get; set; }
+        public bool FinalCustomer { get; set; }
         public BackupTarget Target { get; set; } = target;
         public ProjectBackupDestinationRecord? Configuration { get; set; }
         public DateTimeOffset NextConfiguration { get; set; } = DateTimeOffset.MinValue;
@@ -861,6 +891,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         public DateTimeOffset PendingAt { get; set; }
         public DateTimeOffset LastSnapshot { get; set; }
         public DateTimeOffset? LastShipped { get; set; }
+        public ShippingProgress? PlatformProgress { get; set; }
 
         /// <summary>Since when committed data waits to reach the bucket; null when none waits.</summary>
         public DateTimeOffset? BehindSince { get; set; } = opened;

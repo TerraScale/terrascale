@@ -22,21 +22,28 @@ internal sealed class BackupSecretLifecycle(
 {
     // Outside ProjectState: deleting a detached project must not discard its retirement work.
     internal const string Collection = "backup_secret_lifecycle";
-    internal const int MaxPending = 1024;
+    internal const int MaxCreates = 1024;
+    internal const int MaxRetirements = 1024;
+    internal const int MaxPending = MaxCreates + MaxRetirements;
     internal const int MaxRecordBytes = 2048;
     private const int BatchSize = 8;
+    private static readonly DocumentFilter RetirementFilter = new CompareFilter(new(["secretName"]), Comparison.Equal, new(ScalarKind.Null, null));
+    private static readonly DocumentFilter CreateFilter = new NotFilter(RetirementFilter);
+    private static readonly DocumentFilter UnknownIdFilter = new CompareFilter(new(["secretId"]), Comparison.Equal, new(ScalarKind.Null, null));
+    private static readonly DocumentFilter KnownIdFilter = new NotFilter(UnknownIdFilter);
     private static readonly TimeSpan RetryInterval = TimeSpan.FromMinutes(1);
     private readonly Lock _operations = new();
     private readonly CancellationTokenSource _shutdown = new();
     private readonly TaskCompletionSource _drained = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private int _active;
     private bool _closed;
-    private string? _after;
+    private QueryPosition? _knownAfter;
+    private QueryPosition? _unknownAfter;
 
     public ValueTask<BackupSecretWork?> BeginCreateAsync(CancellationToken cancellationToken) =>
         catalog.WriteDurableAsync<BackupSecretWork?>(async transaction =>
         {
-            if (!await HasRoomAsync(transaction, cancellationToken).ConfigureAwait(false))
+            if (!await HasRoomAsync(transaction, creating: true, cancellationToken).ConfigureAwait(false))
             {
                 return null;
             }
@@ -57,7 +64,7 @@ internal sealed class BackupSecretLifecycle(
     public async ValueTask<BackupSecretWork?> QueueRetirementAsync(
         IStorageTransaction transaction, ProjectBackupDestinationRecord record, CancellationToken cancellationToken)
     {
-        if (!await HasRoomAsync(transaction, cancellationToken).ConfigureAwait(false))
+        if (!await HasRoomAsync(transaction, creating: false, cancellationToken).ConfigureAwait(false))
         {
             return null;
         }
@@ -97,6 +104,7 @@ internal sealed class BackupSecretLifecycle(
                             return null;
                         }
 
+                        // A known ID keeps this create's reserved slot even when predecessor retirement is full.
                         var abandoned = intent with { Retiring = true, SecretId = secretId ?? intent.SecretId, DueAt = time.GetUtcNow().Add(RetryInterval) };
                         await PutWorkAsync(transaction, abandoned, timeout.Token).ConfigureAwait(false);
                         return abandoned;
@@ -184,7 +192,9 @@ internal sealed class BackupSecretLifecycle(
         try
         {
             using var timeout = OperationTimeout(cancellationToken);
-            await ProcessBatchAsync(timeout.Token).ConfigureAwait(false);
+            // Independent cursors keep unresolved names from delaying known retirements.
+            await ProcessBatchAsync(known: true, timeout.Token).ConfigureAwait(false);
+            await ProcessBatchAsync(known: false, timeout.Token).ConfigureAwait(false);
         }
         finally
         {
@@ -192,13 +202,24 @@ internal sealed class BackupSecretLifecycle(
         }
     }
 
-    private async Task ProcessBatchAsync(CancellationToken cancellationToken)
+    private async Task ProcessBatchAsync(bool known, CancellationToken cancellationToken)
     {
         var page = await catalog.ReadAsync(transaction =>
-            transaction.ListAsync(Collection, _after, BatchSize, BatchSize * MaxRecordBytes, cancellationToken), cancellationToken).ConfigureAwait(false);
-        foreach (var document in page.Documents)
+            transaction.QueryAsync(new(Collection, known ? KnownIdFilter : UnknownIdFilter, [], known ? _knownAfter : _unknownAfter,
+                BatchSize, BatchSize * MaxRecordBytes), cancellationToken), cancellationToken).ConfigureAwait(false);
+        foreach (var row in page.Rows)
         {
-            _after = document.Id;
+            var document = row.Document;
+            var after = new QueryPosition(row.Keys, document.Id);
+            if (known)
+            {
+                _knownAfter = after;
+            }
+            else
+            {
+                _unknownAfter = after;
+            }
+
             if (document.Json.Length > MaxRecordBytes)
             {
                 continue;
@@ -238,7 +259,14 @@ internal sealed class BackupSecretLifecycle(
 
         if (!page.HasMore)
         {
-            _after = null;
+            if (known)
+            {
+                _knownAfter = null;
+            }
+            else
+            {
+                _unknownAfter = null;
+            }
         }
     }
 
@@ -270,10 +298,11 @@ internal sealed class BackupSecretLifecycle(
         await catalog.WriteDurableAsync(transaction => transaction.DeleteAsync(Collection, work.Id, cancellationToken), cancellationToken).ConfigureAwait(false);
     }
 
-    private static async ValueTask<bool> HasRoomAsync(IStorageTransaction transaction, CancellationToken cancellationToken)
+    private static async ValueTask<bool> HasRoomAsync(IStorageTransaction transaction, bool creating, CancellationToken cancellationToken)
     {
-        var (count, complete) = await transaction.CountAsync(Collection, null, MaxPending, cancellationToken).ConfigureAwait(false);
-        return complete && count < MaxPending;
+        // Named intents retain their admission through reconciliation, independently of predecessor retirement.
+        var (count, complete) = await transaction.CountAsync(Collection, creating ? CreateFilter : RetirementFilter, MaxPending, cancellationToken).ConfigureAwait(false);
+        return complete && count < (creating ? MaxCreates : MaxRetirements);
     }
 
     private static async ValueTask PutWorkAsync(IStorageTransaction transaction, BackupSecretWork work, CancellationToken cancellationToken)

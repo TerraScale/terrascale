@@ -5,9 +5,10 @@ using TerraBase.Tenancy;
 namespace TerraBase.Features.Backup;
 
 /// <summary>A fixed set of destinations for a generation or restore; a caller owns customer resources.</summary>
-internal sealed class BackupTarget(string revision, IObjectStore store, DataKeys keys, BackupReader reader, IReadOnlyList<IObjectStore> retentionStores, IDisposable? customer = null) : IDisposable
+internal sealed class BackupTarget(string revision, IObjectStore store, DataKeys keys, BackupReader reader, IReadOnlyList<IObjectStore> retentionStores, bool includesPlatform, IDisposable? customer = null) : IDisposable
 {
     public string Revision { get; } = revision;
+    public bool IncludesPlatform { get; } = includesPlatform;
     public IObjectStore Store { get; } = store;
     public DataKeys Keys { get; } = keys;
     public BackupReader Reader { get; } = reader;
@@ -31,7 +32,7 @@ internal sealed class BackupTargets(
     private readonly SemaphoreSlim _customerKeyReads = new(DataKeys.MaxReads, DataKeys.MaxReads);
 
     public void Dispose() => _customerKeyReads.Dispose();
-    public BackupTarget Platform { get; } = new(BackupDestinationNames.Platform, platform, platformKeys, platformReader, [platform]);
+    public BackupTarget Platform { get; } = new(BackupDestinationNames.Platform, platform, platformKeys, platformReader, [platform], includesPlatform: true);
 
     public async ValueTask<ProjectBackupDestinationRecord?> ConfigurationAsync(TenantContext? database, CancellationToken cancellationToken) =>
         database is null ? null : await destinations.ReadAsync(database.OrganizationId, database.ProjectId!, cancellationToken).ConfigureAwait(false);
@@ -70,7 +71,7 @@ internal sealed class BackupTargets(
         var scopedCustomer = new ProjectStore(customer, scope);
         IObjectStore store = mirror ? new MirroredStore(new ProjectStore(platform, scope), scopedCustomer) : scopedCustomer;
         var keys = new DataKeys(store, master, time, options.Backup!, freshKey, _customerKeyReads);
-        return new(record.Revision, store, keys, new BackupReader(engine, store, keys, options), [new ProjectStore(platform, scope), scopedCustomer], customer);
+        return new(record.Revision, store, keys, new BackupReader(engine, store, keys, options), [new ProjectStore(platform, scope), scopedCustomer], mirror, customer);
     }
 
     // Enforce the project boundary on every operation, including keys fabricated by an untrusted S3 listing.

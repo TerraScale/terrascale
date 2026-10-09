@@ -31,6 +31,7 @@ public sealed class FakeOci : IDisposable
     private const string KeyId = "ocid1.key.oc1.test.master";
     private const string ApiKey = "ocid1.tenancy.oc1..test/ocid1.user.oc1..test/aa:bb:cc";
     private static readonly XNamespace S3 = "http://s3.amazonaws.com/doc/2006-03-01/";
+    private static readonly IComparer<byte[]> S3KeyOrder = Comparer<byte[]>.Create((left, right) => left.AsSpan().SequenceCompareTo(right));
 
     private readonly ConcurrentDictionary<string, byte[]> _objects = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, KeyRequests> _keyRequests = new(StringComparer.Ordinal);
@@ -89,6 +90,9 @@ public sealed class FakeOci : IDisposable
 
     /// <summary>Replaces customer GET content, including a streamed body; null retains the normal body.</summary>
     public Func<string, HttpContent?>? CustomerContentOverride { get; set; }
+
+    /// <summary>Adjusts headers on a successful existing-object customer GET, after content and ETag creation.</summary>
+    public Action<string, HttpResponseMessage>? CustomerGetResponseCreated { get; set; }
 
     /// <summary>Runs before a customer PUT is accepted; gates must observe the request's cancellation token.</summary>
     public Func<string, CancellationToken, Task>? BeforeCustomerWrite { get; set; }
@@ -302,8 +306,11 @@ public sealed class FakeOci : IDisposable
             }
 
             var maxKeys = Math.Clamp(int.Parse(query["max-keys"] ?? "1000", CultureInfo.InvariantCulture), 0, 1000);
-            IReadOnlyList<string> keys = [.. objects.Keys.Where(item => item.StartsWith(prefix, StringComparison.Ordinal) && string.CompareOrdinal(item, after) > 0)
-                .Order(StringComparer.Ordinal).Take(1001)];
+            var afterBytes = Encoding.UTF8.GetBytes(after);
+            IReadOnlyList<string> keys = [.. objects.Keys.Where(item => item.StartsWith(prefix, StringComparison.Ordinal))
+                .Select(item => (Key: item, Bytes: Encoding.UTF8.GetBytes(item)))
+                .Where(item => item.Bytes.AsSpan().SequenceCompareTo(afterBytes) > 0)
+                .OrderBy(item => item.Bytes, S3KeyOrder).Take(1001).Select(item => item.Key)];
             if (customer && CustomerListingOverride is { } listing)
             {
                 keys = listing(prefix, keys);
@@ -375,6 +382,11 @@ public sealed class FakeOci : IDisposable
             };
             get.Headers.ETag = new(ETag(stored));
             get.Content.Headers.LastModified = new DateTimeOffset(2026, 10, 7, 0, 0, 0, TimeSpan.Zero);
+            if (customer)
+            {
+                CustomerGetResponseCreated?.Invoke(key, get);
+            }
+
             return get;
         }
 

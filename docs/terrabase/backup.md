@@ -91,8 +91,9 @@ Saving, replacing or detaching an existing destination advances the organization
 stale fences. Deleting an unset destination leaves that version unchanged.
 
 The bucket must allow read, write, list and delete under `v1/<organization>/<project>/` and read/write/list under
-`v1/keys/<organization>/<project>/`. Saving checks the object permissions using a small non-secret probe, which may
-remain if a bucket retention rule protects it. Customer endpoints must use HTTPS and public IP addresses. Redirects,
+`v1/keys/<organization>/<project>/`. Saving checks the object permissions using a small non-secret probe and verifies
+the exact returned bytes, reading at most one byte beyond the expected payload. The probe may remain if a bucket
+retention rule protects it. Customer endpoints must use HTTPS and globally reachable IP addresses. Redirects,
 proxies and connections to private, loopback or metadata addresses are blocked; private-network S3 endpoints are not
 supported.
 
@@ -128,9 +129,12 @@ discards even while remote cleanup is full. Local catalog failures retry within 
 Shutdown before removal commits, or catalog unavailability through that deadline, can leave an intent pending for
 operator investigation.
 
-The lifecycle backlog admits at most 1,024 records of 2 KiB each. A full backlog returns fixed 503 before changing a
-destination; an already detached destination still returns 204. Maintenance reads at most eight records / 16 KiB per
-pass, with bounded remote operations. Keep Vault and compartment settings available until pending reconciliation and
+The lifecycle backlog separately admits at most 1,024 named create intents and 1,024 predecessor/detachment retirements,
+each bounded to 2 KiB. An abandoned create keeps its reserved intent slot even after its OCID becomes known. Unresolved
+creates can exhaust new-save admission, but cannot consume detachment retirement capacity. A full retirement pool rejects
+replacement or detachment with fixed 503 before changing the destination; an already detached destination still returns
+204. Maintenance independently reads at most eight known-ID and eight unresolved records / 32 KiB per pass, processing
+known IDs first with bounded remote operations. Keep Vault and compartment settings available until pending reconciliation and
 retirement complete. OCI 404 responses remain pending because they can mask lost authorization; restore metadata
 permissions or investigate an external deletion rather than treating 404 as proof of retirement. These records survive
 project deletion; no migration is required.
@@ -157,7 +161,7 @@ Retention processes at most 10,000 expired snapshots per file
 and bucket per pass, checking later snapshots before removing their generations' segments. Expired segments are deleted
 in batches of sixteen. Object locks may delay cleanup, and a bucket entirely outside the plan's window returns no
 restore window. Customer-written junk keys inside the requested prefix are skipped; foreign or nonascending listing
-responses are rejected.
+responses are rejected. Listing order follows S3's UTF-8 byte ordering, including unrelated Unicode objects.
 Customer object operations have a fifteen-minute deadline covering response headers, streamed body decoding and all
 pages of a listing.
 Shipping admits at most four file jobs, with at most two customer jobs and one customer job per organization;
@@ -165,7 +169,8 @@ platform-only files, including `_system`, can use the remaining capacity. A stal
 customer slot until completion or cancellation. Background ticks skip busy files and admit
 the least recently scheduled eligible files without waiting for earlier customer jobs. Each file keeps its target
 until its job finishes. Database removal and shutdown cancel and join active jobs before disposing their resources;
-shutdown then attempts final shipping with the supplied shutdown token.
+shutdown refreshes configuration and attempts final platform-only shipping before restarting customer work, using
+the supplied shutdown token. Mirrored acknowledgements also provide platform freshness for their matching generation.
 Configuration reads are limited to four admission candidates per scheduling pass. Wrapped-key reads have separate
 host-wide admission pools of eight for platform and customer work, so customer prefetch cannot exhaust platform reads.
 

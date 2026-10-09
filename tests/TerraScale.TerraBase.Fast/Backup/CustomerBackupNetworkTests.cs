@@ -35,13 +35,24 @@ public sealed class CustomerBackupNetworkTests
     [Arguments("127.0.0.1")]
     [Arguments("100.64.0.1")]
     [Arguments("198.18.0.1")]
+    [Arguments("192.0.0.1")]
+    [Arguments("192.0.2.1")]
+    [Arguments("192.88.99.2")]
+    [Arguments("198.51.100.1")]
+    [Arguments("203.0.113.1")]
     [Arguments("::1")]
     [Arguments("fc00::1")]
     [Arguments("fe80::1")]
     [Arguments("::ffff:127.0.0.1")]
     [Arguments("::ffff:10.0.0.1")]
+    [Arguments("::ffff:192.0.0.1")]
+    [Arguments("64:ff9b::a00:1")]
     [Arguments("2002:7f00:1::")]
     [Arguments("2001:0:4136:e378:8000:63bf:3fff:fdd2")]
+    [Arguments("2001:2::1")]
+    [Arguments("2001:db8::1")]
+    [Arguments("2001:5::1")]
+    [Arguments("3fff::1")]
     public async Task Mixed_public_and_forbidden_DNS_answers_never_reach_the_connector(string forbidden)
     {
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
@@ -65,6 +76,17 @@ public sealed class CustomerBackupNetworkTests
     [Arguments("https://169.254.169.254")]
     [Arguments("https://[::ffff:127.0.0.1]")]
     [Arguments("https://[::ffff:10.0.0.1]")]
+    [Arguments("https://[::ffff:192.0.0.1]")]
+    [Arguments("https://[64:ff9b::a00:1]")]
+    [Arguments("https://192.0.0.1")]
+    [Arguments("https://192.0.2.1")]
+    [Arguments("https://192.88.99.2")]
+    [Arguments("https://198.51.100.1")]
+    [Arguments("https://203.0.113.1")]
+    [Arguments("https://[2001:2::1]")]
+    [Arguments("https://[2001:db8::1]")]
+    [Arguments("https://[2001:5::1]")]
+    [Arguments("https://[3fff::1]")]
     public async Task Forbidden_literals_are_rejected_before_DNS_or_connect(string endpoint)
     {
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
@@ -84,6 +106,15 @@ public sealed class CustomerBackupNetworkTests
     [Arguments("93.184.216.34")]
     [Arguments("::ffff:93.184.216.34")]
     [Arguments("2606:4700:4700::1111")]
+    [Arguments("192.0.0.9")]
+    [Arguments("192.0.0.10")]
+    [Arguments("2001:1::1")]
+    [Arguments("2001:1::2")]
+    [Arguments("2001:1::3")]
+    [Arguments("2001:3::1")]
+    [Arguments("2001:4:112::1")]
+    [Arguments("2001:20::1")]
+    [Arguments("2001:30::1")]
     public async Task Public_answers_complete_the_real_TLS_probe_without_proxy_routing(string address)
     {
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
@@ -104,6 +135,31 @@ public sealed class CustomerBackupNetworkTests
         await Assert.That(network.Lists).IsEqualTo(1);
         await Assert.That(network.Deletes).IsEqualTo(1);
         await Assert.That(oci.Secrets.Count).IsEqualTo(1);
+    }
+
+    [Test]
+    [Arguments("https://192.0.0.9")]
+    [Arguments("https://192.0.0.10")]
+    [Arguments("https://[2001:1::3]")]
+    [Arguments("https://[2001:3::1]")]
+    [Arguments("https://[2001:4:112::1]")]
+    [Arguments("https://[2001:20::1]")]
+    [Arguments("https://[2001:30::1]")]
+    public async Task Globally_reachable_special_purpose_literals_pass_validation_before_the_fixture_refuses_the_host(string endpoint)
+    {
+        var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
+        await using var network = await CustomerBackupNetworkFixture.StartAsync(cancellationToken);
+        using var oci = new FakeOci();
+        await using var api = await StartAsync(oci.ConfigureCustomer, services => network.Configure(oci, services));
+        var database = await api.CreateManagedDatabaseAsync();
+
+        // This DNS fixture accepts only its TLS listener's hostname, so a validated literal stops at resolution.
+        using var response = await SaveAsync(api, database, new Uri(endpoint), cancellationToken);
+
+        await UnavailableAsync(response, cancellationToken);
+        await Assert.That(network.Resolutions).IsGreaterThan(0);
+        await Assert.That(network.Connections).IsEqualTo(0);
+        await Assert.That(oci.Secrets.Count).IsEqualTo(0);
     }
 
     [Test]

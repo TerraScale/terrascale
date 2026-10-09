@@ -132,14 +132,13 @@ internal sealed class ProjectBackupDestinations(
                 return (new Unavailable("customer backup credential creation was claimed for retirement"), null);
             }
 
-            await lifecycle.CompleteCreateAsync(transaction, record.Revision, cancellationToken).ConfigureAwait(false);
             var retirement = replaced is null ? null : await lifecycle.QueueRetirementAsync(transaction, replaced, cancellationToken).ConfigureAwait(false);
             if (replaced is not null && retirement is null)
             {
-                // Removing the intent reserved exactly this slot; an invariant failure must roll back.
-                throw new InvalidDataException("backup secret lifecycle reserved capacity was lost");
+                return (new Unavailable("customer backup credential lifecycle backlog is full"), null);
             }
 
+            await lifecycle.CompleteCreateAsync(transaction, record.Revision, cancellationToken).ConfigureAwait(false);
             await EngineManagementService.TouchOrganizationAsync(transaction, organizationId, cancellationToken).ConfigureAwait(false);
             await PutAsync(transaction, Collection(projectId), Current, record, TerraBaseJsonContext.Default.ProjectBackupDestinationRecord, cancellationToken).ConfigureAwait(false);
             return (record.Destination, retirement);
@@ -187,11 +186,20 @@ internal sealed class ProjectBackupDestinations(
     {
         var prefix = BackupLayout.Data($"{organizationId}/{projectId}");
         var key = $"{prefix}.probe/{Ulid.NewUlid()}";
-        using var content = new MemoryStream(Encoding.ASCII.GetBytes("TerraBase backup access check"));
+        var expected = Encoding.ASCII.GetBytes("TerraBase backup access check");
+        using var content = new MemoryStream(expected);
         try
         {
             await bucket.PutAsync(key, content, cancellationToken).ConfigureAwait(false);
-            if (!await bucket.ReadAsync(key, (stream, readToken) => stream.CopyToAsync(Stream.Null, readToken), cancellationToken).ConfigureAwait(false))
+            if (!await bucket.ReadAsync(key, async (stream, readToken) =>
+            {
+                var received = new byte[expected.Length + 1];
+                var length = await stream.ReadAtLeastAsync(received, received.Length, throwOnEndOfStream: false, readToken).ConfigureAwait(false);
+                if (length != expected.Length || !received.AsSpan(0, length).SequenceEqual(expected))
+                {
+                    throw new IOException("customer bucket returned an invalid access check");
+                }
+            }, cancellationToken).ConfigureAwait(false))
             {
                 throw new IOException("customer bucket cannot read the access check");
             }

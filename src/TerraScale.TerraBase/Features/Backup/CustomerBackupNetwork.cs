@@ -8,6 +8,29 @@ namespace TerraBase.Features.Backup;
 // the addresses just checked, so a DNS rebind cannot reach node services or instance metadata.
 internal static class CustomerBackupNetwork
 {
+    // IANA IPv4/IPv6 Special-Purpose Address Registries, reviewed 2026-10-09:
+    // https://www.iana.org/assignments/iana-ipv4-special-registry/
+    // https://www.iana.org/assignments/iana-ipv6-special-registry/
+    // Block non-global/deprecated assignments, preserving their explicitly globally reachable subprefixes.
+    private static readonly IPNetwork[] DeniedNetworks =
+    [
+        IPNetwork.Parse("0.0.0.0/8"), IPNetwork.Parse("10.0.0.0/8"), IPNetwork.Parse("100.64.0.0/10"),
+        IPNetwork.Parse("127.0.0.0/8"), IPNetwork.Parse("169.254.0.0/16"), IPNetwork.Parse("172.16.0.0/12"),
+        IPNetwork.Parse("192.0.0.0/24"), IPNetwork.Parse("192.0.2.0/24"), IPNetwork.Parse("192.88.99.0/24"),
+        IPNetwork.Parse("192.168.0.0/16"), IPNetwork.Parse("198.18.0.0/15"), IPNetwork.Parse("198.51.100.0/24"),
+        IPNetwork.Parse("203.0.113.0/24"), IPNetwork.Parse("224.0.0.0/4"), IPNetwork.Parse("240.0.0.0/4"),
+        IPNetwork.Parse("2001::/23"), IPNetwork.Parse("2001:db8::/32"), IPNetwork.Parse("2002::/16"),
+        IPNetwork.Parse("3fff::/20"),
+    ];
+    private static readonly IPNetwork[] GloballyReachableExceptions =
+    [
+        IPNetwork.Parse("192.0.0.9/32"), IPNetwork.Parse("192.0.0.10/32"),
+        IPNetwork.Parse("2001:1::1/128"), IPNetwork.Parse("2001:1::2/128"), IPNetwork.Parse("2001:1::3/128"),
+        IPNetwork.Parse("2001:3::/32"), IPNetwork.Parse("2001:4:112::/48"),
+        IPNetwork.Parse("2001:20::/28"), IPNetwork.Parse("2001:30::/28"),
+    ];
+    private static readonly IPNetwork GlobalUnicastV6 = IPNetwork.Parse("2000::/3");
+
     public static Valid<Uri> Endpoint(string? value) =>
         value is { Length: <= 2048 } && Uri.TryCreate(value, UriKind.Absolute, out var uri)
         && uri.Scheme == Uri.UriSchemeHttps && uri.UserInfo.Length == 0 && uri.PathAndQuery == "/" && uri.Fragment.Length == 0
@@ -42,23 +65,15 @@ internal static class CustomerBackupNetwork
             address = address.MapToIPv4();
         }
 
-        if (IPAddress.IsLoopback(address))
+        // Keep IPv6 restricted to global unicast: NAT64 and other transition addresses can carry internal IPv4.
+        if (address.AddressFamily != AddressFamily.InterNetwork
+            && (address.AddressFamily != AddressFamily.InterNetworkV6 || !GlobalUnicastV6.Contains(address)))
         {
             return false;
         }
 
-        var bytes = address.GetAddressBytes();
-        if (address.AddressFamily == AddressFamily.InterNetworkV6)
-        {
-            // Only globally routable unicast; reject transition mechanisms that can carry an internal IPv4 address.
-            return (bytes[0] & 0xe0) == 0x20 && !(bytes[0] == 0x20 && bytes[1] == 0x02)
-                && !(bytes[0] == 0x20 && bytes[1] == 0x01 && bytes[2] == 0 && bytes[3] == 0);
-        }
-
-        return bytes[0] is not (0 or 10 or 127) && bytes[0] < 224
-            && !(bytes[0] == 169 && bytes[1] == 254) && !(bytes[0] == 172 && bytes[1] is >= 16 and <= 31)
-            && !(bytes[0] == 192 && bytes[1] == 168) && !(bytes[0] == 100 && bytes[1] is >= 64 and <= 127)
-            && !(bytes[0] == 198 && bytes[1] is 18 or 19);
+        return !DeniedNetworks.Any(network => network.Contains(address))
+            || GloballyReachableExceptions.Any(network => network.Contains(address));
     }
 }
 

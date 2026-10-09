@@ -129,7 +129,7 @@ internal sealed class S3ObjectStore : IObjectStore, IDisposable
                     throw new InvalidDataException("backup object listing returned a key outside its prefix");
                 }
 
-                if (previous is not null && string.CompareOrdinal(key, previous) <= 0)
+                if (previous is not null && CompareKeys(key, previous) <= 0)
                 {
                     throw new InvalidDataException("backup object listing returned an out-of-order key");
                 }
@@ -178,6 +178,28 @@ internal sealed class S3ObjectStore : IObjectStore, IDisposable
     }
 
     public void Dispose() => _s3.Dispose();
+
+    // S3 orders UTF-8 bytes; valid Unicode scalar values have the same order, without allocating encoded keys.
+    private static int CompareKeys(string left, string right)
+    {
+        var leftRunes = left.EnumerateRunes();
+        var rightRunes = right.EnumerateRunes();
+        while (leftRunes.MoveNext())
+        {
+            if (!rightRunes.MoveNext())
+            {
+                return 1;
+            }
+
+            var comparison = leftRunes.Current.Value.CompareTo(rightRunes.Current.Value);
+            if (comparison != 0)
+            {
+                return comparison;
+            }
+        }
+
+        return rightRunes.MoveNext() ? -1 : 0;
+    }
 
     private async Task<T> SafeAsync<T>(Task<T> request)
     {

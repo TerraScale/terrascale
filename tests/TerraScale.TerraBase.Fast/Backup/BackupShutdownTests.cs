@@ -1,8 +1,11 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Net;
+using System.Text.Json;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Sqlite;
@@ -16,6 +19,250 @@ namespace TerraBase.Fast.Backup;
 public sealed class BackupShutdownTests
 {
     private static readonly TimeSpan CleanupDeadline = TimeSpan.FromSeconds(30);
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Final_customer_io_waits_until_platform_wal_and_a_cached_detachment_are_restorable(bool detach)
+    {
+        var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
+        using var oci = new FakeOci();
+        using var shutdown = CancellationTokenSource.CreateLinkedTokenSource(token);
+        var directory = Directory.CreateTempSubdirectory("terrabase-final-customer-").FullName;
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var exited = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var joinRelease = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
+        ManagementApi? api = null;
+        TrackedBackup? taps = null;
+        ContinuousBackup? backup = null;
+        Task? stop = null;
+        try
+        {
+            api = await ManagementApi.StartAsync(settings =>
+            {
+                oci.ConfigureCustomer(settings);
+                settings["data-directory"] = directory;
+            }, services =>
+            {
+                oci.Route(services);
+                services.AddSingleton<IWalBackup>(provider => taps = new TrackedBackup(provider.GetRequiredService<SqliteStorageEngine>()));
+                var registration = services.Single(descriptor => descriptor.ServiceType == typeof(IHostedService)
+                    && descriptor.ImplementationFactory?.Method.ReturnType == typeof(ContinuousBackup));
+                services[services.IndexOf(registration)] = ServiceDescriptor.Singleton<IHostedService>(provider =>
+                    new BackupLifetime(provider.GetRequiredService<ContinuousBackup>(), manual: true));
+            }, time);
+            Directory.CreateDirectory(Path.Combine(directory, ".backup"));
+            backup = api.Server.Services.GetRequiredService<ContinuousBackup>();
+            var customer = await api.CreateManagedDatabaseAsync("customer");
+            var healthy = await api.CreateManagedDatabaseAsync("healthy");
+            var stalled = detach ? await api.CreateManagedDatabaseAsync("stalled") : null;
+            using var customerData = await api.CreateClientAsync(customer.Organization, "documents:write");
+            using var healthyData = await api.CreateClientAsync(healthy.Organization, "documents:read", "documents:write");
+            using var stalledData = stalled is null ? null : await api.CreateClientAsync(stalled.Organization, "documents:write");
+            await SetCustomerAsync(api, customer, token);
+            await ManagementApi.CreateCollectionAsync(customerData, customer, "people");
+            await ManagementApi.CreateCollectionAsync(healthyData, healthy, "people");
+            var text = new Faker().Lorem.Sentence();
+            await PutAsync(customerData, customer, "before", text, token);
+            await PutAsync(healthyData, healthy, "before", text, token);
+            if (stalled is not null)
+            {
+                await SetCustomerAsync(api, stalled, token);
+                await ManagementApi.CreateCollectionAsync(stalledData!, stalled, "people");
+                await PutAsync(stalledData!, stalled, "before", text, token);
+            }
+
+            time.Advance(TimeSpan.FromSeconds(10));
+            var initial = backup.RunOnceAsync(token);
+            await initial;
+            var snapshot = backup.Status.Files.Single(file => file.File == File(healthy));
+            await Assert.That(snapshot.Generation).IsNotNull();
+            await Assert.That(oci.Objects.Keys.Any(key => key.StartsWith(File(healthy) + "/wal/", StringComparison.Ordinal))).IsFalse();
+            var customerObjects = oci.CustomerObjects.Count;
+            if (detach)
+            {
+                // Keep the ten-second shipping cache fresh: final refresh must still notice this committed detachment.
+                using var removed = await api.Client.DeleteAsync(ManagementApi.Uri(customer.ProjectPath + "/backup-destination"), token);
+                await Assert.That(removed.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+            }
+
+            time.Advance(TimeSpan.FromSeconds(1));
+            var committed = new Faker().Lorem.Sentence();
+            await PutAsync(healthyData, healthy, "final", committed, token);
+            await PutAsync(customerData, customer, "final", committed, token);
+            if (stalled is not null)
+            {
+                await PutAsync(stalledData!, stalled, "final", committed, token);
+            }
+
+            oci.BeforeCustomerWrite = async (key, cancellationToken) =>
+            {
+                if (!key.Contains("/wal/", StringComparison.Ordinal) && !key.Contains("/snapshots/", StringComparison.Ordinal))
+                {
+                    return;
+                }
+
+                await Assert.That(initial.IsCompletedSuccessfully).IsTrue();
+                entered.TrySetResult();
+                try
+                {
+                    await release.Task.WaitAsync(cancellationToken);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    cancelled.TrySetResult();
+                    await joinRelease.Task;
+                    throw;
+                }
+                finally
+                {
+                    exited.TrySetResult();
+                }
+            };
+            var budget = api.Server.Services.GetRequiredService<IOptions<HostOptions>>().Value.ShutdownTimeout;
+            shutdown.CancelAfter(budget);
+            var elapsed = Stopwatch.StartNew();
+            stop = backup.StopAsync(shutdown.Token);
+            await entered.Task.WaitAsync(shutdown.Token);
+            var finalWal = oci.Objects.Keys.Single(key => key.StartsWith(File(healthy) + "/wal/", StringComparison.Ordinal));
+            var finalAt = BackupLayout.ParseSegment(finalWal)!.At;
+            await Assert.That(finalAt).IsGreaterThan(snapshot.LastShippedAt!.Value);
+            await Assert.That(oci.Objects.Keys.Count(key => key.StartsWith(File(healthy) + "/snapshots/", StringComparison.Ordinal))).IsEqualTo(1);
+            await AssertRestoredAsync(api, healthyData, healthy, finalAt, "final-wal", committed, shutdown.Token);
+            if (detach)
+            {
+                var detachedAt = backup.Status.Files.Single(file => file.File == File(customer)).LastShippedAt!.Value;
+                using var detachedData = await api.CreateClientAsync(customer.Organization, "documents:read");
+                await AssertRestoredAsync(api, detachedData, customer, detachedAt, "detached", committed, shutdown.Token);
+                await Assert.That(oci.CustomerObjects.Count).IsEqualTo(customerObjects);
+            }
+
+            await Assert.That(shutdown.IsCancellationRequested).IsFalse();
+            await Assert.That(elapsed.Elapsed).IsLessThan(budget);
+            await Assert.That(stop.IsCompleted).IsFalse();
+            await shutdown.CancelAsync();
+            await cancelled.Task.WaitAsync(token);
+            await Assert.That(stop.IsCompleted).IsFalse();
+            await Assert.That(taps!.Taps.All(tap => !tap.Returned)).IsTrue();
+            joinRelease.TrySetResult();
+            var failure = await Assert.ThrowsAsync<AggregateException>(() => stop.WaitAsync(token));
+            await Assert.That(failure!.InnerExceptions.All(error => error is OperationCanceledException)).IsTrue();
+            await Assert.That(exited.Task.IsCompletedSuccessfully).IsTrue();
+            await Assert.That(taps.Taps.All(tap => tap.Returned)).IsTrue();
+            await Assert.That(backup.Status.Files).IsEmpty();
+            await Assert.That(Directory.EnumerateFiles(Path.Combine(directory, ".backup"))).IsEmpty();
+            await Assert.That(oci.BadSignatures).IsEqualTo(0);
+        }
+        finally
+        {
+            release.TrySetResult();
+            joinRelease.TrySetResult();
+            await shutdown.CancelAsync();
+            oci.BeforeCustomerWrite = null;
+            stop ??= backup?.StopAsync(shutdown.Token);
+            await CleanupAsync(stop, taps, api, directory);
+        }
+    }
+
+    [Test]
+    public async Task An_already_expired_stop_token_joins_active_customer_io_before_disposing_any_tap()
+    {
+        var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
+        using var oci = new FakeOci();
+        using var shutdown = new CancellationTokenSource();
+        var directory = Directory.CreateTempSubdirectory("terrabase-expired-customer-stop-").FullName;
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var exited = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var joinRelease = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
+        ManagementApi? api = null;
+        TrackedBackup? taps = null;
+        ContinuousBackup? backup = null;
+        Task? pass = null;
+        Task? stop = null;
+        try
+        {
+            api = await ManagementApi.StartAsync(settings =>
+            {
+                oci.ConfigureCustomer(settings);
+                settings["data-directory"] = directory;
+            }, services =>
+            {
+                oci.Route(services);
+                services.AddSingleton<IWalBackup>(provider => taps = new TrackedBackup(provider.GetRequiredService<SqliteStorageEngine>()));
+                var registration = services.Single(descriptor => descriptor.ServiceType == typeof(IHostedService)
+                    && descriptor.ImplementationFactory?.Method.ReturnType == typeof(ContinuousBackup));
+                services[services.IndexOf(registration)] = ServiceDescriptor.Singleton<IHostedService>(provider =>
+                    new BackupLifetime(provider.GetRequiredService<ContinuousBackup>(), manual: true));
+            }, time);
+            Directory.CreateDirectory(Path.Combine(directory, ".backup"));
+            backup = api.Server.Services.GetRequiredService<ContinuousBackup>();
+            var customer = await api.CreateManagedDatabaseAsync("customer");
+            await SetCustomerAsync(api, customer, token);
+            oci.BeforeCustomerWrite = async (key, cancellationToken) =>
+            {
+                if (!key.StartsWith(File(customer) + "/snapshots/", StringComparison.Ordinal))
+                {
+                    return;
+                }
+
+                entered.TrySetResult();
+                try
+                {
+                    await release.Task.WaitAsync(cancellationToken);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    cancelled.TrySetResult();
+                    await joinRelease.Task;
+                    throw;
+                }
+                finally
+                {
+                    exited.TrySetResult();
+                }
+            };
+            time.Advance(TimeSpan.FromSeconds(10));
+            pass = backup.RunOnceAsync(token);
+            await entered.Task.WaitAsync(token);
+            await shutdown.CancelAsync();
+            stop = backup.StopAsync(shutdown.Token);
+            await cancelled.Task.WaitAsync(token);
+            await Assert.That(stop.IsCompleted).IsFalse();
+            await Assert.That(taps!.Taps.All(tap => !tap.Returned)).IsTrue();
+            joinRelease.TrySetResult();
+            await stop.WaitAsync(token);
+            await pass.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            await Assert.That(pass.IsCompleted).IsTrue();
+            await Assert.That(exited.Task.IsCompletedSuccessfully).IsTrue();
+            await Assert.That(taps.Taps.Count).IsEqualTo(2);
+            await Assert.That(taps.Taps.All(tap => tap.Returned)).IsTrue();
+            await Assert.That(backup.Status.Files).IsEmpty();
+            await Assert.That(Directory.EnumerateFiles(Path.Combine(directory, ".backup"))).IsEmpty();
+            await Assert.That(oci.Objects.Keys.Any(key => key.StartsWith(File(customer) + "/", StringComparison.Ordinal))).IsFalse();
+            await Assert.That(oci.CustomerObjects.Keys.Any(key => key.StartsWith(File(customer) + "/", StringComparison.Ordinal))).IsFalse();
+            await Assert.That(oci.BadSignatures).IsEqualTo(0);
+        }
+        finally
+        {
+            release.TrySetResult();
+            joinRelease.TrySetResult();
+            await shutdown.CancelAsync();
+            oci.BeforeCustomerWrite = null;
+            stop ??= backup?.StopAsync(shutdown.Token);
+            if (pass is not null)
+            {
+                await pass.WaitAsync(CleanupDeadline).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            }
+
+            await CleanupAsync(stop, taps, api, directory);
+        }
+    }
 
     [Test]
     public async Task Cancelling_the_final_upload_returns_every_tap_and_allows_the_data_directory_to_reopen()
@@ -265,9 +512,39 @@ public sealed class BackupShutdownTests
 
     private static string File(ManagedDatabaseRef database) => $"v1/{database.Organization}/{database.Project}/{database.Id}";
 
-    private sealed class BackupLifetime(ContinuousBackup backup) : IHostedService
+    private static async Task SetCustomerAsync(ManagementApi api, ManagedDatabaseRef database, CancellationToken token)
     {
-        public Task StartAsync(CancellationToken cancellationToken) => backup.StartAsync(cancellationToken);
+        using var response = await api.Client.PutAsJsonAsync(ManagementApi.Uri(database.ProjectPath + "/backup-destination"), new
+        {
+            endpoint = FakeOci.CustomerEndpoint,
+            region = "test-region-1",
+            bucket = FakeOci.CustomerBucket,
+            accessKeyId = FakeOci.CustomerAccessKey,
+            secretKey = FakeOci.CustomerSecretKey,
+            mode = "customer",
+        }, token);
+        response.EnsureSuccessStatusCode();
+    }
+
+    private static async Task PutAsync(HttpClient data, ManagedDatabaseRef database, string name, string text, CancellationToken token)
+    {
+        using var response = await data.PutAsJsonAsync(ManagementApi.Uri(ManagementApi.DocumentPath(database, "people", name)), new { text }, token);
+        response.EnsureSuccessStatusCode();
+    }
+
+    private static async Task AssertRestoredAsync(ManagementApi api, HttpClient data, ManagedDatabaseRef database, DateTimeOffset at, string name, string expected, CancellationToken token)
+    {
+        using var restored = await api.Client.PostAsJsonAsync(ManagementApi.Uri(database.Path + "/point-in-time/restore"), new { pointInTime = at, name }, token);
+        await Assert.That(restored.StatusCode).IsEqualTo(HttpStatusCode.Created);
+        using var read = await data.GetAsync(ManagementApi.Uri($"/v1/projects/{database.Project}/databases/{name}/collections/people/documents/{ManagementApi.DocumentId("final")}"), token);
+        read.EnsureSuccessStatusCode();
+        var document = await read.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: token);
+        await Assert.That(document.GetProperty("document").GetProperty("text").GetString()).IsEqualTo(expected);
+    }
+
+    private sealed class BackupLifetime(ContinuousBackup backup, bool manual = false) : IHostedService
+    {
+        public Task StartAsync(CancellationToken cancellationToken) => manual ? Task.CompletedTask : backup.StartAsync(cancellationToken);
 
         public async Task StopAsync(CancellationToken cancellationToken) =>
             await backup.StopAsync(cancellationToken).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
