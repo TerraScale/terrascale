@@ -331,6 +331,13 @@ internal sealed class SqliteWalTap(SqliteDatabaseStore store, SqliteIoPool io, S
             {
                 await using (segment.ConfigureAwait(false))
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    // Avoid allocating an empty segment's FileStream buffer just to read EOF.
+                    if (segment.CanSeek && segment.Position == segment.Length)
+                    {
+                        continue;
+                    }
+
                     int read;
                     while ((read = await segment.ReadAtLeastAsync(frame, frameBytes, throwOnEndOfStream: false, cancellationToken).ConfigureAwait(false)) == frameBytes)
                     {

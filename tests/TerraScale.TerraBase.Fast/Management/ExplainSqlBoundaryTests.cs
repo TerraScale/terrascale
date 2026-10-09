@@ -196,7 +196,13 @@ public sealed class ExplainSqlBoundaryTests
             var pending = client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadline.Token);
             if (catalogLookup > 0)
             {
-                await catalogEntered.Task.WaitAsync(deadline.Token);
+                await Task.WhenAny(catalogEntered.Task, pending).WaitAsync(deadline.Token);
+                if (!catalogEntered.Task.IsCompleted)
+                {
+                    using var early = await pending;
+                    throw new InvalidOperationException($"Explain returned HTTP {(int)early.StatusCode} before catalog lookup {catalogLookup}; observed {catalogLookups} lookups.");
+                }
+
                 if (catalogLookup == 2)
                 {
                     await Assert.That(ReservedBytes(api)).IsGreaterThanOrEqualTo(reserved + MaxBodyBytes * 8);

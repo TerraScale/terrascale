@@ -146,6 +146,29 @@ public interface IStorageTransaction : IAsyncDisposable
     /// </summary>
     ValueTask<long> PutAsync(string collection, string id, ReadOnlyMemory<byte> json, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Runs <see cref="GetVersionAsync"/> then <see cref="PutAsync"/> for each of <paramref name="puts"/> in order, under
+    /// the same limits and errors, and fills <paramref name="results"/> (at least as long) with each new version and
+    /// the state it replaced. An entry is filled only once its put succeeded: when a put throws, every entry from its
+    /// index on keeps version 0, and the puts before it remain written (a rejected write prevents committing anyway).
+    /// </summary>
+    /// <remarks>Engines override this to run the whole run in one call; the default makes two calls per put.</remarks>
+    async ValueTask PutBatchAsync(
+        IReadOnlyList<(string Collection, string Id, ReadOnlyMemory<byte> Json)> puts, Memory<(long Version, DocumentVersion? Previous)> results,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(puts);
+        ArgumentOutOfRangeException.ThrowIfLessThan(results.Length, puts.Count);
+        results.Span[..puts.Count].Clear();
+        for (var i = 0; i < puts.Count; i++)
+        {
+            var (collection, id, json) = puts[i];
+            var previous = await GetVersionAsync(collection, id, cancellationToken).ConfigureAwait(false);
+            var version = await PutAsync(collection, id, json, cancellationToken).ConfigureAwait(false);
+            results.Span[i] = (version, previous);
+        }
+    }
+
     /// <summary>Removes a document or its tombstone without a trace; <see langword="false"/> when there was none.</summary>
     ValueTask<bool> DeleteAsync(string collection, string id, CancellationToken cancellationToken);
 

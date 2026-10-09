@@ -5,12 +5,47 @@ using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Sqlite;
 using TerraBase.Fast.Documents;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Storage;
 
 public sealed class StampingTransactionTests
 {
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task A_batch_refused_by_the_wrapper_clears_its_result_prefix_without_writing(bool streaming)
+    {
+        var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
+        await using var api = await DocumentApi.StartAsync(cancellationToken: token);
+        (await api.PutAsync(DocumentApi.NewId(), new { n = 1 }, cancellationToken: token)).Status.ShouldBe(System.Net.HttpStatusCode.Created);
+        var engine = api.Server.Services.GetRequiredService<IStorageEngine>();
+        var store = (await engine.OpenDatabaseAsync(await api.TenantOfAsync(cancellationToken: token), token))!;
+        var id = DocumentApi.NewId();
+        (long Version, DocumentVersion? Previous)[] results = [(7, new DocumentVersion(3, false)), (8, new DocumentVersion(4, false))];
+        await using (var transaction = await store.BeginTransactionAsync(write: true, token))
+        {
+            await using var changes = transaction.ChangesAsync(DocumentApi.Collection, null, 0, long.MaxValue, token).GetAsyncEnumerator();
+            if (streaming)
+            {
+                await Assert.That(await changes.MoveNextAsync()).IsTrue();
+            }
+            else
+            {
+                await Assert.ThrowsAsync<DocumentValidationException>(() =>
+                    transaction.PutAsync(DocumentApi.Collection, id, "[]"u8.ToArray(), token).AsTask());
+            }
+
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                transaction.PutBatchAsync([(DocumentApi.Collection, id, "{}"u8.ToArray())], results, token).AsTask());
+            await Assert.That(results[0]).IsEqualTo((0L, (DocumentVersion?)null));
+            await Assert.That(results[1]).IsEqualTo((8L, (DocumentVersion?)new DocumentVersion(4, false)));
+        }
+
+        (await api.GetAsync(id, cancellationToken: token)).Status.ShouldBe(System.Net.HttpStatusCode.NotFound);
+    }
+
     [Test]
     [Arguments(false)]
     [Arguments(true)]

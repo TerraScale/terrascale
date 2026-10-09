@@ -36,6 +36,7 @@ internal sealed class SqliteWriteLane(string database, SqliteIoPool io) : Sqlite
     public override async Task<T> RunAsync<T>(Func<T> call, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        using var diagnostic = Diagnostics?.Submit();
         var result = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
 
         // 0 queued, 1 running, 2 cancelled before it ran.
@@ -55,6 +56,7 @@ internal sealed class SqliteWriteLane(string database, SqliteIoPool io) : Sqlite
                     }
                 }
 
+                diagnostic?.Cancel();
                 result.TrySetCanceled(cancellationToken);
             }
         });
@@ -89,6 +91,7 @@ internal sealed class SqliteWriteLane(string database, SqliteIoPool io) : Sqlite
             }
 
             Interlocked.Increment(ref _executing);
+            diagnostic?.Begin();
             T? value = default;
             Exception? failure = null;
             try
@@ -102,6 +105,7 @@ internal sealed class SqliteWriteLane(string database, SqliteIoPool io) : Sqlite
             }
             finally
             {
+                diagnostic?.Complete();
                 Interlocked.Decrement(ref _executing);
             }
 

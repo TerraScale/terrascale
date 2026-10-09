@@ -15,7 +15,13 @@ Every member of a region **pulls** each other region's change groups:
 
 1. **Heads.** Once a second, a member asks `ts.orch.v1.<cell>.query.terrabase-wan.heads`. A member of that region answers
    with the head of each origin it holds: one origin per database that it wrote to, with the sequence of its last
-   committed change group. More than 4096 heads page through the member's own subject.
+   committed change group. More than 4096 heads, or a page reaching the 960 KiB protobuf reply budget, page through
+   the member's own subject. The whole `HeadsReply` travels in the existing versioned `TBLZ4E01` LZ4 application
+   envelope ([0007](decisions/0007-lz4-application-envelope-replication.md)). Its header, encoded payload and decoded
+   payload checksums are validated before parsing any heads, membership or EOF evidence. A reply that fails integrity
+   validation cannot authorize adoption, placement changes, cursor progress or deletion, even when its ULIDs would still
+   parse as valid protobuf. Encoded and decoded heads replies are each bounded to 1 MiB; the reply budget leaves room
+   for the envelope header and LZ4 expansion.
 
    The answer also lists every member the answering member sees in its cell. ts-orchestrator's interregion link
    imports each cell's `query` subjects as a Singleton service, so a request gets one reply across the link. The asking
@@ -57,7 +63,12 @@ Every member of a region **pulls** each other region's change groups:
    a deadline that cuts a fresh scan after the scattered replies ends the sweep like that member failing to answer. Malformed evidence taints the sweep;
    its eventual EOF starts a fresh scan of the same catalog page without cleanup or a staleness reset.
    Sweep proof, carryover and the overflow cleanup block are in-memory; restarting begins a fresh sweep.
-2. **Pull.** For each origin it is behind on, the member asks the member that holds it, on
+2. **Pull.** Independent database targets are prepared up to eight heads ahead, while pulls remain in heads order.
+   Duplicate database ids and names within a project prepare one at a time. With at least 32 queue slots per remote,
+   current targets and lookahead use at most a sixteenth of `storage-queue` across all remotes; smaller queues keep inline
+   preparation. Every started preparation finishes before the next round, and registration is checked again before
+   pulling a prepared target.
+   For each origin it is behind on, the member asks the member that holds it, on
    `ts.orch.v1.<cell>.query.terrabase-wan.member.<node-name>`, for the change groups after its own applied prefix.
    Replies hold whole groups, LZ4-compressed in the same versioned envelope as in-region replication
    ([0007](decisions/0007-lz4-application-envelope-replication.md)), up to 960 KiB. A larger group crosses in parts
@@ -72,8 +83,13 @@ Every member of a region **pulls** each other region's change groups:
 A round that pulled something and is still behind starts the next one at once; otherwise the next one starts a
 second later. Each origin gets at most 16 pull requests per round, so a busy origin does not hold up the others.
 
-The messages are protobuf, `Features/Replication/Protos/terrabase/v1/wan.proto`, version 1. Every request and reply is
-at most 1 MiB, NATS's default `max_payload`, which the leafnode links between regions keep.
+The messages use the protobuf schema `Features/Replication/Protos/terrabase/v1/wan.proto`, with WAN request version 3.
+This is a breaking wire change: version 1 and 2 requests and raw protobuf heads replies are rejected, with no fallback or
+migration. Regions must use version 3 to replicate with each other; a version mismatch postpones replication and cannot
+authorize inventory cleanup. The protobuf package and `ts.orch.v1` subjects remain unchanged: that subject version
+belongs to ts-orchestrator's fabric, separately from the WAN request version and application envelope major version 1.
+Pull replies retain their protobuf framing and existing change-group envelopes. Every request and encoded reply is at
+most 1 MiB, NATS's default `max_payload`, which the leafnode links between regions keep.
 
 ### Version tokens across regions
 
@@ -221,6 +237,8 @@ Alert on `terrabase_wan_staleness_seconds` above a minute, and on any `ahead` fa
   head left behind on a resumed page without reviving a database certified deleted, the round's heads budget across
   members, saturating scattered first pages, retries during unanswered discovery, retries
   for an origin their member no longer holds, and malformed prefix/head preservation and healing.
+  `CrossRegionPagingProgressTests.Preparation.cs` covers bounded independent cold preparation, inline admission with
+  `storage-queue=1`, and deletion or placement removal between target preparation and its ordered pull.
 - **Slow** (`CrossRegion/CrossRegionPartitionTests.cs`) is the partition suite:
   - two regions of two members each (a catalog primary and its follower);
   - a link that drops, delays, duplicates and corrupts replies, with a partition and a heal;

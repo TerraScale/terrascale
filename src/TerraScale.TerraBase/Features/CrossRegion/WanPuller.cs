@@ -7,6 +7,7 @@ using TerraBase.Features.CrossRegion.V1;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
+using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
 
@@ -27,7 +28,7 @@ namespace TerraBase.Features.CrossRegion;
 /// </remarks>
 internal sealed partial class WanPuller(
     IRegionBus bus, IStorageEngine engine, IReplicationJournal journal, ITenantDirectory tenants, TerraBaseOptions options, WanMetrics metrics,
-    TimeProvider time, ILogger<WanPuller> logger, IUsageMeter usage) : BackgroundService
+    TimeProvider time, ILogger<WanPuller> logger, IUsageMeter usage, DatabaseLifecycleCheckpoint checkpoint) : BackgroundService
 {
     /// <summary>Pause between rounds that found nothing more to pull.</summary>
     public static readonly TimeSpan Interval = TimeSpan.FromSeconds(1);
@@ -38,11 +39,16 @@ internal sealed partial class WanPuller(
     // Bound membership discovery and its requests; member names are at most 63 characters each.
     private const int MaxMembersPerRound = 1024;
     private const int MaxConcurrentHeads = 8;
+    private const int MaxTargetsAhead = 8;
     private const int MaxHeadsPagesPerMember = 16;
     // One member's full page allowance, shared by every member and page of a round: 1,024 members cannot hold 16 GiB.
     private const int MaxHeadsPerRound = MaxHeadsPagesPerMember * WanProtocol.MaxHeadsPerReply;
     private const long MaxHeadBytesPerRound = (long)MaxHeadsPagesPerMember * WanProtocol.MaxMessageBytes;
     private static readonly TimeSpan HeadsDeadline = TimeSpan.FromSeconds(10);
+
+    // Admission rejects rather than waits: concurrent lookahead uses at most a sixteenth of the queue across remotes.
+    // Small queues prepare inline, as before. The division order avoids overflowing with many remote regions.
+    internal int TargetsAhead => Math.Clamp(options.StorageQueue / options.Wan!.Remotes.Count / 16 - 1, 0, MaxTargetsAhead);
 
     // How long a database this region does not take is not asked about again.
     private static readonly TimeSpan RefusalTtl = TimeSpan.FromSeconds(10);
@@ -223,6 +229,15 @@ internal sealed partial class WanPuller(
         public TenantContext Database { get; } = database;
     }
 
+    /// <summary>Whether this puller still pins a store of <paramref name="incarnation"/> or an applied prefix in one; for tests.</summary>
+    internal bool Holds(Ulid incarnation)
+    {
+        lock (_gate)
+        {
+            return _stores.Values.Any(store => store.Incarnation == incarnation) || _applied.Keys.Any(key => key.Store.Incarnation == incarnation);
+        }
+    }
+
     private async Task RunAsync(string region, string cell, CancellationToken stoppingToken)
     {
         // Failures are logged when they start, not every round; the metric counts every one.
@@ -337,128 +352,188 @@ internal sealed partial class WanPuller(
         var clashes = new HashSet<string>(StringComparer.Ordinal);
         var observations = new Dictionary<TenantContext, (long Remaining, bool Diverged, bool Untracked)>();
         var behind = new HashSet<TenantContext>();
-        foreach (var (member, head) in heads)
+        // Prepare independent targets ahead, but consume heads and pull origins in their original order.
+        // Cleanup and the next round wait for every preparation, including when an earlier head fails.
+        var ahead = TargetsAhead;
+        var prepared = new Queue<(string Member, Head Head, TenantContext Database, DatabasePlacement Placement, string Named,
+            Task<TargetResult> Target)>();
+        var preparing = new HashSet<string>(StringComparer.Ordinal);
+        var next = 0;
+        try
         {
-            if (WanProtocol.Database(head.TenantId, head.ProjectId, head.DatabaseId) is not { } database || head.Origin.Length != 16 || head.Sequence > long.MaxValue)
+            while (true)
             {
-                continue;
-            }
-
-            var origin = head.Origin.Memory;
-            // A head without a recorded home comes from a member that records none: the database is placed there only.
-            var placement = new DatabasePlacement(head.HomeRegion.Length > 0 ? head.HomeRegion : region, [.. head.ReplicaRegions], (long)head.PlacementVersion);
-            var target = await TargetAsync(region, database, head.DatabaseName, placement, origin, cancellationToken).ConfigureAwait(false);
-            if (target is not TargetStore opened)
-            {
-                var category = target switch
+                for (; next < heads.Count && prepared.Count <= ahead; next++)
                 {
-                    Conflict error when error.Code == "name_taken" => "clash",
-                    Conflict or NotFound => "unregistered",
-                    Unavailable => "unavailable",
-                    TargetStore => throw new UnreachableException(),
-                };
-                if (category == "unavailable")
-                {
-                    failures += UnavailableFailure();
-                    RetainRetry(member, head);
-                }
-                else
-                {
-                    _ = (category == "clash" ? clashes : unregistered).Add(Name(database));
-                }
-
-                continue;
-            }
-
-            var store = opened.Store;
-            var applied = await AppliedAsync(store, origin, cancellationToken).ConfigureAwait(false);
-            var gone = false;
-            // Only the origin's explicit Ahead answer or a journal conflict is divergence; a head snapshot may be stale.
-            var untracked = false;
-            var failed = false;
-            Conflict? diverged = null;
-            // Bounded by this round's heads and retries, so every replicated database reports health each round.
-            _ = observations.TryAdd(database, (0, false, false));
-            // Any origin found behind starts the backlog, not only the first member's advertisement.
-            if ((long)head.Sequence > applied && behind.Add(database))
-            {
-                var (outstanding, divergent) = Retained(region, database);
-                usage.RecordReplicationState(database, region, Math.Max((long)head.Sequence - applied, outstanding), divergent);
-            }
-            if (applied < (long)head.Sequence)
-            {
-                try
-                {
-                    var traffic = applied == 0 && head.Sequence > 1
-                        || retrying.Contains(RetryKey(member, head))
-                        ? ReplicationTrafficKind.Handoff : ReplicationTrafficKind.Delta;
-                    switch (await PullAsync(region, cell, member, database, store, origin, applied, (long)head.Sequence, traffic, cancellationToken).ConfigureAwait(false))
+                    var (holder, candidate) = heads[next];
+                    if (!Replicable(candidate))
                     {
-                        case Pulled pulled:
-                            progressed |= pulled.Applied > applied;
-                            (applied, gone) = (pulled.Applied, pulled.Gone);
-                            break;
-                        case Conflict conflict:
-                            diverged = conflict;
-                            break;
+                        continue;
+                    }
+
+                    var targetDatabase = WanProtocol.Database(candidate.TenantId, candidate.ProjectId, candidate.DatabaseId)!;
+                    var named = candidate.DatabaseName.Length > 0 ? targetDatabase.ProjectId + "/" + candidate.DatabaseName : targetDatabase.DatabaseId!;
+                    if (preparing.Contains(targetDatabase.DatabaseId!) || preparing.Contains(named))
+                    {
+                        // Catalog intents use database id alone; conflicting names retain the original registration order.
+                        break;
+                    }
+
+                    _ = preparing.Add(targetDatabase.DatabaseId!);
+                    _ = preparing.Add(named);
+                    // A missing home places the database only in the region that advertised it.
+                    var placed = new DatabasePlacement(candidate.HomeRegion.Length > 0 ? candidate.HomeRegion : region,
+                        [.. candidate.ReplicaRegions], (long)candidate.PlacementVersion);
+                    var candidateOrigin = candidate.Origin.Memory;
+                    prepared.Enqueue((holder, candidate, targetDatabase, placed, named, ahead == 0
+                        ? TargetAsync(region, targetDatabase, candidate.DatabaseName, placed, candidateOrigin, cancellationToken)
+                        : Task.Run(() => TargetAsync(region, targetDatabase, candidate.DatabaseName, placed, candidateOrigin, cancellationToken), cancellationToken)));
+                }
+
+                if (!prepared.TryDequeue(out var current))
+                {
+                    break;
+                }
+
+                var (member, head, database, placement, preparedName, preparation) = current;
+                var origin = head.Origin.Memory;
+                var target = await preparation.ConfigureAwait(false);
+                if (target is TargetStore { Store.IsClosed: true })
+                {
+                    target = await TargetAsync(region, database, head.DatabaseName, placement, origin, cancellationToken).ConfigureAwait(false);
+                }
+
+                // Placement or catalog deletion may have committed while an earlier head was being pulled.
+                if (target is TargetStore)
+                {
+                    target = await tenants.RegisteredAsync(database, cancellationToken).ConfigureAwait(false) switch
+                    {
+                        true => target,
+                        false => new NotFound(),
+                        Unavailable error => error,
+                    };
+                }
+
+                _ = preparing.Remove(database.DatabaseId!);
+                _ = preparing.Remove(preparedName);
+                if (target is not TargetStore opened)
+                {
+                    var category = target switch
+                    {
+                        Conflict error when error.Code == "name_taken" => "clash",
+                        Conflict or NotFound => "unregistered",
+                        Unavailable => "unavailable",
+                        TargetStore => throw new UnreachableException(),
+                    };
+                    if (category == "unavailable")
+                    {
+                        failures += UnavailableFailure();
+                        RetainRetry(member, head);
+                    }
+                    else
+                    {
+                        _ = (category == "clash" ? clashes : unregistered).Add(Name(database));
+                    }
+
+                    continue;
+                }
+
+                var store = opened.Store;
+                var applied = await AppliedAsync(store, origin, cancellationToken).ConfigureAwait(false);
+                var gone = false;
+                // Only the origin's explicit Ahead answer or a journal conflict is divergence; a head snapshot may be stale.
+                var untracked = false;
+                var failed = false;
+                Conflict? diverged = null;
+                // Bounded by this round's heads and retries, so every replicated database reports health each round.
+                _ = observations.TryAdd(database, (0, false, false));
+                // Any origin found behind starts the backlog, not only the first member's advertisement.
+                if ((long)head.Sequence > applied && behind.Add(database))
+                {
+                    var (outstanding, divergent) = Retained(region, database);
+                    usage.RecordReplicationState(database, region, Math.Max((long)head.Sequence - applied, outstanding), divergent);
+                }
+                if (applied < (long)head.Sequence)
+                {
+                    try
+                    {
+                        var traffic = applied == 0 && head.Sequence > 1
+                            || retrying.Contains(RetryKey(member, head))
+                            ? ReplicationTrafficKind.Handoff : ReplicationTrafficKind.Delta;
+                        switch (await PullAsync(region, cell, member, database, store, origin, applied, (long)head.Sequence, traffic, cancellationToken).ConfigureAwait(false))
+                        {
+                            case Pulled pulled:
+                                progressed |= pulled.Applied > applied;
+                                (applied, gone) = (pulled.Applied, pulled.Gone);
+                                break;
+                            case Conflict conflict:
+                                diverged = conflict;
+                                break;
+                        }
+                    }
+                    catch (Exception error) when (!cancellationToken.IsCancellationRequested)
+                    {
+                        failed = true;
+                        metrics.Failed(region, error is InvalidDataException or DocumentValidationException ? "apply" : "pull");
+                        if (failures++ == 0 && !quiet)
+                        {
+                            LogPullFailed(logger, error, region);
+                        }
                     }
                 }
-                catch (Exception error) when (!cancellationToken.IsCancellationRequested)
+
+                if (diverged is not null)
                 {
                     failed = true;
-                    metrics.Failed(region, error is InvalidDataException or DocumentValidationException ? "apply" : "pull");
+                    // A conflict past the bounded set is still reported for this round, and logged.
+                    if (!Retain(region, database, origin, diverge: true))
+                    {
+                        untracked = true;
+                        LogDivergenceUntracked(logger, region);
+                    }
+
+                    metrics.Failed(region, diverged == OriginAhead ? "ahead" : "apply");
                     if (failures++ == 0 && !quiet)
                     {
-                        LogPullFailed(logger, error, region);
+                        LogPullDiverged(logger, region, diverged.Message);
                     }
                 }
-            }
 
-            if (diverged is not null)
-            {
-                failed = true;
-                // A conflict past the bounded set is still reported for this round, and logged.
-                if (!Retain(region, database, origin, diverge: true))
+                // A pull can commit groups before it fails: count only what is still missing.
+                if (failed)
                 {
-                    untracked = true;
-                    LogDivergenceUntracked(logger, region);
+                    try
+                    {
+                        applied = Math.Max(applied, await AppliedAsync(store, origin, cancellationToken).ConfigureAwait(false));
+                    }
+                    catch (Exception) when (!cancellationToken.IsCancellationRequested)
+                    {
+                        // The store failed too; the round's earlier prefix stays the estimate.
+                    }
                 }
 
-                metrics.Failed(region, diverged == OriginAhead ? "ahead" : "apply");
-                if (failures++ == 0 && !quiet)
+                var remaining = Math.Max(0, (long)head.Sequence - applied);
+                // Best effort past the bound: an untracked backlog only loses retention across rounds.
+                var tracked = Retain(region, database, origin, target: (long)head.Sequence, applied: applied, advertised: fresh.Contains(RetryKey(member, head)));
+                if (observations.TryGetValue(database, out var observed))
                 {
-                    LogPullDiverged(logger, region, diverged.Message);
+                    observations[database] = (observed.Remaining + Math.Min(remaining, long.MaxValue - observed.Remaining), observed.Diverged || untracked,
+                        observed.Untracked || !tracked);
+                }
+                lag += Math.Min(remaining, long.MaxValue - lag);
+                // Bounded like one heads reply; anything beyond waits for a fresh scan to advertise it again. A member that no longer
+                // holds the origin cannot serve a retry.
+                if (remaining > 0 && !gone)
+                {
+                    RetainRetry(member, head);
                 }
             }
-
-            // A pull can commit groups before it fails: count only what is still missing.
-            if (failed)
-            {
-                try
-                {
-                    applied = Math.Max(applied, await AppliedAsync(store, origin, cancellationToken).ConfigureAwait(false));
-                }
-                catch (Exception) when (!cancellationToken.IsCancellationRequested)
-                {
-                    // The store failed too; the round's earlier prefix stays the estimate.
-                }
-            }
-
-            var remaining = Math.Max(0, (long)head.Sequence - applied);
-            // Best effort past the bound: an untracked backlog only loses retention across rounds.
-            var tracked = Retain(region, database, origin, target: (long)head.Sequence, applied: applied, advertised: fresh.Contains(RetryKey(member, head)));
-            if (observations.TryGetValue(database, out var observed))
-            {
-                observations[database] = (observed.Remaining + Math.Min(remaining, long.MaxValue - observed.Remaining), observed.Diverged || untracked,
-                    observed.Untracked || !tracked);
-            }
-            lag += Math.Min(remaining, long.MaxValue - lag);
-            // Bounded like one heads reply; anything beyond waits for a fresh scan to advertise it again. A member that no longer
-            // holds the origin cannot serve a retry.
-            if (remaining > 0 && !gone)
-            {
-                RetainRetry(member, head);
-            }
+        }
+        finally
+        {
+            var unreached = Task.WhenAll(prepared.Select(entry => entry.Target));
+            await ((Task)unreached).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            _ = unreached.Exception;
         }
 
         // Every retained origin of a database counts, also one this round did not reach: a partial sweep certifies nothing.
@@ -916,18 +991,15 @@ internal sealed partial class WanPuller(
         {
             try
             {
-                var reply = data.Length <= WanProtocol.MaxMessageBytes ? HeadsReply.Parser.ParseFrom(data.Span) : null;
-                if (reply is not null)
-                {
-                    WanUsage.Heads(usage, region, reply, requestBytes == 0 ? first.Length : requestBytes, data.Length, responding: false);
-                }
+                var reply = WanProtocol.DecodeHeads(data);
+                WanUsage.Heads(usage, region, reply, requestBytes == 0 ? first.Length : requestBytes, data.Length, responding: false);
 
                 // The member names the subject of its next requests: it must be a single subject token.
-                return reply is not null && (!reply.More || reply.Heads.Count > 0)
+                return (!reply.More || reply.Heads.Count > 0)
                     && WanProtocol.IsMember(reply.Member) && reply.Heads.Count <= WanProtocol.MaxHeadsPerReply
                     && reply.Members.Count <= MaxMembersPerRound && reply.Members.All(WanProtocol.IsMember) ? reply : null;
             }
-            catch (InvalidProtocolBufferException)
+            catch (InvalidDataException)
             {
                 return null;
             }
@@ -1088,7 +1160,11 @@ internal sealed partial class WanPuller(
                 };
                 lock (_gate)
                 {
-                    _applied[(store, Convert.ToHexString(origin.Span))] = sequence;
+                    // A store deleted meanwhile was already forgotten; recording it would pin it.
+                    if (!store.IsClosed)
+                    {
+                        _applied[(store, Convert.ToHexString(origin.Span))] = sequence;
+                    }
                 }
 
                 if (sequence < (long)batch.EventId.Sequence)
@@ -1222,7 +1298,7 @@ internal sealed partial class WanPuller(
             return Refuse(new NotFound());
         }
 
-        var (store, _, _, _) = await journal.OpenAsync(database, origin, cancellationToken).ConfigureAwait(false);
+        var (store, _, applied, _) = await journal.OpenAsync(database, origin, cancellationToken).ConfigureAwait(false);
         var afterRegistration = await tenants.RegisteredAsync(database, cancellationToken).ConfigureAwait(false);
         if (afterRegistration is not bool stillRegistered)
         {
@@ -1245,9 +1321,15 @@ internal sealed partial class WanPuller(
 
         lock (_gate)
         {
-            _stores[key] = store;
+            if (!store.IsClosed)
+            {
+                _stores[key] = store;
+                // Open read this frontier already.
+                _ = _applied.TryAdd((store, Convert.ToHexString(origin.Span)), applied);
+            }
         }
 
+        checkpoint("wan.targeted", database);
         return new TargetStore(store);
 
         TargetResult Refuse(TargetRefusal why)

@@ -423,7 +423,7 @@ public sealed class PressureTests
             foreach (var name in new[] { "request_rate", "p95_latency_ms", "requests_total" })
             {
                 var values = MetricValues(metrics, "terrabase_pressure_listener_" + name, $"listener=\"{listener}\"");
-                await Assert.That(values).IsNotEmpty();
+                await Assert.That(values.Length).IsEqualTo(1);
                 await Assert.That(values).All().Satisfy(value => value.IsGreaterThanOrEqualTo(0));
             }
         }
@@ -431,11 +431,24 @@ public sealed class PressureTests
         foreach (var name in new[] { "top_tenant_request_rate", "top_tenant_storage_bytes" })
         {
             var values = MetricValues(metrics, "terrabase_pressure_" + name, "rank=\"");
-            await Assert.That(values.Length).IsGreaterThan(0);
-            await Assert.That(values.Length).IsLessThanOrEqualTo(10);
+            await Assert.That(values.Length).IsEqualTo(10);
             await Assert.That(values.Any(value => value > 0)).IsTrue();
+            for (var rank = 1; rank <= 10; rank++)
+            {
+                await Assert.That(MetricValues(metrics, "terrabase_pressure_" + name, $"rank=\"{rank}\"").Length).IsEqualTo(1);
+            }
         }
 
+        await Assert.That(MetricValues(metrics, "terrabase_pressure_info")).IsEquivalentTo([1d]);
+        await Assert.That(MetricValues(metrics, "terrabase_pressure_available").Length).IsEqualTo(13);
+        foreach (var signal in new[] { "cpu_util", "mem_util", "disk", "data_bytes", "disk_iops", "io_queue_depth",
+            "io_admitted_count", "connections", "storage_bytes", "replication_lag_seq", "tenant_cpu_share", "sender_durable_lag_seq", "local_ready" })
+        {
+            await Assert.That(MetricValues(metrics, "terrabase_pressure_available", $"signal=\"{signal}\"").Length).IsEqualTo(1);
+        }
+
+        await Assert.That(metrics.Split('\n').Where(line => line.StartsWith("terrabase_pressure_", StringComparison.Ordinal))
+            .Any(line => line.Contains("otel_metric_overflow", StringComparison.Ordinal))).IsFalse();
         await Assert.That(metrics.Split('\n').Where(line => line.StartsWith("terrabase_pressure_", StringComparison.Ordinal))
             .Any(line => line.Contains(api.Tenant.OrganizationId, StringComparison.Ordinal))).IsFalse();
     }
@@ -514,7 +527,8 @@ public sealed class PressureTests
             Interlocked.Increment(ref process ? ref _processReads : ref _storageReads);
             if (!t_inCallback && !_released.IsSet)
             {
-                (process ? ProcessHeld : StorageHeld).TrySetResult();
+                // This worker blocks next; publish the signal on a worker that can run its awaiters.
+                _ = ThreadPool.QueueUserWorkItem(static held => held.TrySetResult(), process ? ProcessHeld : StorageHeld, preferLocal: false);
                 // Until the test's finally releases it: a hold that expired would let the sampler run ticks early.
                 _released.Wait();
             }

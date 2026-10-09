@@ -181,6 +181,37 @@ public sealed class CatalogForwardingTests
     }
 
     [Test]
+    public async Task A_follower_with_a_frozen_earlier_clock_forwards_a_catalog_write_over_the_real_peer_listener()
+    {
+        using var peers = new PeerTls();
+        using var tls = new ClientTls();
+        using var issuer = new TestIssuer();
+        var frozen = DateTimeOffset.UtcNow.AddMinutes(-3);
+        var time = new FakeTimeProvider(frozen);
+        await using var primary = await TerraBaseTestServer.StartAsync(settings =>
+        {
+            peers.Apply(settings);
+            tls.Apply(settings);
+            TestIssuer.Configure(settings);
+        }, issuer.Route);
+        await using var follower = await StartFollowerAsync(peers, tls, issuer, primary.PeerAddress!,
+            services => services.AddSingleton<TimeProvider>(time));
+        await ReadyAsync(follower);
+        var token = issuer.Mint(EntityIds.New().ToString(), descriptor => descriptor.NotBefore = time.GetUtcNow().UtcDateTime);
+        using var client = tls.CreateClient(follower.ClientAddress!, token);
+        var name = new Faker().Company.CompanyName();
+        var organization = await CreatedIdAsync(client, "/v1/management/organizations", new { name });
+        foreach (var address in new[] { primary.ClientAddress!, follower.ClientAddress! })
+        {
+            using var reader = tls.CreateClient(address, token);
+            var saved = await reader.GetFromJsonAsync<JsonElement>(Relative($"/v1/management/organizations/{organization}"));
+            await Assert.That(saved.GetProperty("name").GetString()).IsEqualTo(name);
+        }
+
+        await Assert.That(time.GetUtcNow()).IsEqualTo(frozen);
+    }
+
+    [Test]
     public async Task Management_requests_through_a_follower_are_served_by_the_primary_as_the_follower_and_what_they_wrote_serves_there_at_once()
     {
         using var peers = new PeerTls();

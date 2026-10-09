@@ -11,6 +11,7 @@ using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine.Cluster;
 using TerraBase.Features.CrossRegion;
 using TerraBase.Features.CrossRegion.V1;
+using TerraBase.Features.Replication;
 using TerraBase.Primitives;
 using TerraBase.Testing;
 
@@ -330,7 +331,7 @@ public sealed partial class CrossRegionPagingProgressTests
     }
 
     private static Task<ManagementApi> StartAsync(
-        FakeRegionNetwork network, string credentials, string region, string cell, string node, IRegionBus? bus = null, ProgressClock? clock = null) =>
+        FakeRegionNetwork network, string credentials, string region, string cell, string node, IRegionBus? bus = null, ProgressClock? clock = null, Action<Task>? failedStartCleanup = null) =>
         ManagementApi.StartAsync(settings =>
         {
             settings["region"] = region;
@@ -350,7 +351,7 @@ public sealed partial class CrossRegionPagingProgressTests
                     provider => ActivatorUtilities.CreateInstance<WanPuller>(provider, clock));
                 services.AddSingleton(provider => ActivatorUtilities.CreateInstance<WanMetrics>(provider, clock));
             }
-        }, managementCredential: true);
+        }, managementCredential: true, failedStartCleanup: failedStartCleanup);
 
     private static async Task<ManagedDatabaseRef> CreatePlacedAsync(ManagementApi api, string organization, string project, string name, CancellationToken token)
     {
@@ -364,13 +365,14 @@ public sealed partial class CrossRegionPagingProgressTests
 
     // Many databases with few catalog commits: at most 16 database operations each, the commit limit.
     private static async Task<List<ManagedDatabaseRef>> CreatePlacedAsync(
-        ManagementApi api, string organization, string project, IEnumerable<string> names, CancellationToken token)
+        ManagementApi api, string organization, string project, IEnumerable<string> names, CancellationToken token,
+        SuiteDiagnostics.StorageObservation? observation = null)
     {
         var output = TUnit.Core.TestContext.Current!.OutputWriter;
         var databases = new List<ManagedDatabaseRef>();
         foreach (var batch in names.Select(name => new ManagedDatabaseRef(organization, project, EntityIds.New().ToString(), name)).Chunk(16))
         {
-            output.WriteLine($"paging inventory: seed batch starts after {databases.Count} databases, adding {batch.Length}");
+            observation?.Phase("home.commit." + (databases.Count + batch.Length).ToString(CultureInfo.InvariantCulture));
             using var created = await api.Client.PostAsJsonAsync(ManagementApi.Uri("/v1/management/commits"), new
             {
                 id = EntityIds.New().ToString(),
@@ -638,15 +640,15 @@ public sealed partial class CrossRegionPagingProgressTests
             if (Slow && MalformedFirstReply)
             {
                 MalformedFirstReply = false;
-                yield return new byte[] { 0x0a, 0x01 }; // Truncated length-delimited protobuf field, followed by real usable heads.
+                yield return ApplicationEnvelope.Encode((byte[])[0x0a, 0x01]); // Truncated length-delimited protobuf field, followed by real usable heads.
             }
 
-            yield return reply.ToByteArray();
+            yield return WanProtocol.EncodeHeads(reply);
             if (Slow && Scatter is { } scatter)
             {
                 foreach (var extra in scatter())
                 {
-                    yield return extra.ToByteArray();
+                    yield return WanProtocol.EncodeHeads(extra);
                 }
             }
         }
@@ -759,7 +761,7 @@ public sealed partial class CrossRegionPagingProgressTests
                     }
 
                     call.Replied.TrySetResult();
-                    return fabricated.ToByteArray();
+                    return WanProtocol.EncodeHeads(fabricated);
                 }
 
                 // The silent member holds no databases: once it answers, its whole scan is one empty final page.
@@ -781,7 +783,7 @@ public sealed partial class CrossRegionPagingProgressTests
                 }
 
                 call.Replied.TrySetResult();
-                return reply.ToByteArray();
+                return WanProtocol.EncodeHeads(reply);
             }
             finally
             {
@@ -796,13 +798,13 @@ public sealed partial class CrossRegionPagingProgressTests
         {
             if (!SnapshotHeads)
             {
-                return HeadsReply.Parser.ParseFrom((await inner.RequestAsync(subject, request, cancellationToken)).Span);
+                return WanProtocol.DecodeHeads(await inner.RequestAsync(subject, request, cancellationToken));
             }
 
             if (!_snapshots.TryGetValue(subject, out var snapshot))
             {
                 var everything = new WanRequest { Version = WanProtocol.Version, Heads = new HeadsRequest() }.ToByteArray();
-                snapshot = _snapshots.GetOrAdd(subject, HeadsReply.Parser.ParseFrom((await inner.RequestAsync(subject, everything, cancellationToken)).Span));
+                snapshot = _snapshots.GetOrAdd(subject, WanProtocol.DecodeHeads(await inner.RequestAsync(subject, everything, cancellationToken)));
             }
 
             // The responder's own cut: every head whose 48-byte key follows the cursor, in key order.

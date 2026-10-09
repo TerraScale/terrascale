@@ -1,7 +1,5 @@
-using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Globalization;
-using System.Text;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using TerraBase.Configuration;
@@ -288,62 +286,7 @@ public sealed class MemoryBudgetTests
         if (Environment.GetEnvironmentVariable(ChildFlag) != "1")
         {
             // SQLite's limit cannot be restored safely while other tests are using it.
-            var executable = Environment.ProcessPath ?? throw new InvalidOperationException("The test executable path is unavailable.");
-            var start = new ProcessStartInfo(executable)
-            {
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-            };
-            // dotnet <suite.dll> and the suite's apphost both run without rebuilding.
-            if (string.Equals(Path.GetFileNameWithoutExtension(executable), "dotnet", StringComparison.OrdinalIgnoreCase))
-            {
-                start.ArgumentList.Add(Environment.GetCommandLineArgs()[0]);
-            }
-
-            start.ArgumentList.Add("--treenode-filter");
-            start.ArgumentList.Add("/TerraBase.Fast/TerraBase.Fast.Platform/MemoryBudgetTests/" + nameof(Engines_starting_together_never_lower_the_process_heap_limit));
-            start.ArgumentList.Add("--minimum-expected-tests");
-            start.ArgumentList.Add("1");
-            start.ArgumentList.Add("--no-progress");
-            start.ArgumentList.Add("--disable-logo");
-            start.ArgumentList.Add("--exit-on-process-exit");
-            start.ArgumentList.Add(Environment.ProcessId.ToString(CultureInfo.InvariantCulture));
-            start.Environment[ChildFlag] = "1";
-
-            using var child = Process.Start(start) ?? throw new InvalidOperationException("The isolated heap-limit test could not start.");
-            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
-            using var outputCancellation = new CancellationTokenSource();
-            var stdout = ReadChildOutputAsync(child.StandardOutput, outputCancellation.Token);
-            var stderr = ReadChildOutputAsync(child.StandardError, outputCancellation.Token);
-            // Retain actual exit even when the test's wait or its output readers are cancelled.
-            var exited = child.WaitForExitAsync(outputCancellation.Token);
-            var completed = Task.WhenAll(exited, stdout, stderr);
-            Exception? primaryFailure = null;
-            try
-            {
-                await completed.WaitAsync(deadline.Token);
-                if (child.ExitCode != 0)
-                {
-                    throw new InvalidOperationException($"Isolated heap-limit test exited with code {child.ExitCode}.\n{await stdout}\n{await stderr}");
-                }
-            }
-            catch (OperationCanceledException error)
-            {
-                var failure = new TimeoutException("The isolated heap-limit test exceeded two minutes.", error);
-                primaryFailure = failure;
-                throw failure;
-            }
-            catch (Exception error)
-            {
-                primaryFailure = error;
-                throw;
-            }
-            finally
-            {
-                deadline.Cancel();
-                await IsolatedTestChild.CleanupAsync(child, completed, outputCancellation, primaryFailure);
-            }
+            await IsolatedTestChild.RunAsync(typeof(MemoryBudgetTests), nameof(Engines_starting_together_never_lower_the_process_heap_limit), ChildFlag);
 
             return;
         }
@@ -418,21 +361,6 @@ public sealed class MemoryBudgetTests
                 }
             }
         }
-    }
-
-    internal static async Task<string> ReadChildOutputAsync(StreamReader reader, CancellationToken cancellationToken)
-    {
-        const int MaxCharacters = 64 * 1024;
-        var output = new StringBuilder();
-        var buffer = new char[4096];
-        int read;
-        while ((read = await reader.ReadAsync(buffer.AsMemory(), cancellationToken)) != 0)
-        {
-            // Keep draining after the capture fills so verbose failures cannot block the child.
-            output.Append(buffer, 0, Math.Min(read, MaxCharacters - output.Length));
-        }
-
-        return output.ToString();
     }
 
     [Test]

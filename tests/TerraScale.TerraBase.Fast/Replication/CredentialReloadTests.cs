@@ -231,7 +231,8 @@ public sealed class CredentialReloadTests
         {
             lock (_gate)
             {
-                _entered.TrySetResult();
+                // This worker blocks next; publish the signal on a worker that can run its awaiters.
+                _ = ThreadPool.QueueUserWorkItem(static entered => entered.TrySetResult(), _entered, preferLocal: false);
                 while (!_released)
                 {
                     if (!Monitor.Wait(_gate, TimeSpan.FromSeconds(30)))

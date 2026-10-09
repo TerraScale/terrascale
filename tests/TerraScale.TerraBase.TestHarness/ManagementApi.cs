@@ -21,6 +21,7 @@ public sealed class ManagementApi : IAsyncDisposable
 
     // Holds the credential file of a server started with the management service credential.
     private readonly string? _credentialDirectory;
+    private readonly Lazy<Task> _cleanup;
 
     private ManagementApi(TerraBaseTestServer server, ClientTls tls, TestIssuer issuer, string user, string? credentialDirectory)
     {
@@ -29,6 +30,7 @@ public sealed class ManagementApi : IAsyncDisposable
         Issuer = issuer;
         User = user;
         _credentialDirectory = credentialDirectory;
+        _cleanup = new(() => CleanupAssetsAsync(server.CleanupCompletion, tls, issuer, credentialDirectory));
         Client = As(user);
     }
 
@@ -44,6 +46,8 @@ public sealed class ManagementApi : IAsyncDisposable
     /// <summary>A client acting as <see cref="User"/>.</summary>
     public HttpClient Client { get; }
 
+    internal Task CleanupCompletion => _cleanup.Value;
+
     /// <summary>
     /// Starts a server; <paramref name="configure"/> edits its settings after the client listener and the credential are
     /// configured, <paramref name="time"/> replaces its clock and <paramref name="services"/> its other services.
@@ -51,11 +55,13 @@ public sealed class ManagementApi : IAsyncDisposable
     /// </summary>
     public static async Task<ManagementApi> StartAsync(
         Action<Dictionary<string, string>>? configure = null, Action<IServiceCollection>? services = null, TimeProvider? time = null,
-        bool managementCredential = false)
+        bool managementCredential = false, CancellationToken? cancellationToken = null, Action<Task>? failedStartCleanup = null)
     {
         var tls = new ClientTls();
         var issuer = new TestIssuer();
         var credentialDirectory = managementCredential ? Directory.CreateTempSubdirectory("terrabase-service-").FullName : null;
+        TerraBaseTestServer? server = null;
+        var failedCleanup = Task.CompletedTask;
         try
         {
             if (credentialDirectory is not null)
@@ -63,7 +69,7 @@ public sealed class ManagementApi : IAsyncDisposable
                 await File.WriteAllTextAsync(Path.Combine(credentialDirectory, "credential"), ServiceCredential + "\n");
             }
 
-            var server = await TerraBaseTestServer.StartAsync(settings =>
+            server = await TerraBaseTestServer.StartAsync(settings =>
             {
                 tls.Apply(settings);
                 TestIssuer.Configure(settings);
@@ -82,23 +88,29 @@ public sealed class ManagementApi : IAsyncDisposable
                 }
 
                 services?.Invoke(collection);
-            });
+            }, cancellationToken: cancellationToken, failedStartCleanup: task => failedCleanup = task);
             // Startup waited for the issuer's keys, so tokens work from the first request.
             return new ManagementApi(server, tls, issuer, EntityIds.New().ToString(), credentialDirectory);
         }
-        catch
+        catch (Exception startupError)
         {
+            server?.Client.Dispose();
+            var cleanup = CleanupAssetsAsync(server?.CleanupCompletion ?? failedCleanup, tls, issuer, credentialDirectory);
             try
             {
-                tls.Dispose();
+                failedStartCleanup?.Invoke(cleanup);
+                if (cleanup.IsCompleted)
+                {
+                    await cleanup;
+                }
+            }
+            catch (Exception cleanupError)
+            {
+                throw new AggregateException(startupError, cleanupError);
             }
             finally
             {
-                issuer.Dispose();
-                if (credentialDirectory is not null)
-                {
-                    Directory.Delete(credentialDirectory, recursive: true);
-                }
+                ObserveDeferredCleanup(cleanup);
             }
 
             throw;
@@ -301,19 +313,45 @@ public sealed class ManagementApi : IAsyncDisposable
             }
             finally
             {
-                try
+                var cleanup = CleanupCompletion;
+                ObserveDeferredCleanup(cleanup);
+                if (cleanup.IsCompleted)
                 {
-                    Tls.Dispose();
-                }
-                finally
-                {
-                    Issuer.Dispose();
-                    if (_credentialDirectory is not null)
-                    {
-                        Directory.Delete(_credentialDirectory, recursive: true);
-                    }
+                    await cleanup;
                 }
             }
+        }
+    }
+
+    private static async Task CleanupAssetsAsync(Task completion, ClientTls tls, TestIssuer issuer, string? credentialDirectory)
+    {
+        try
+        {
+            await completion;
+        }
+        finally
+        {
+            try
+            {
+                tls.Dispose();
+            }
+            finally
+            {
+                issuer.Dispose();
+                if (credentialDirectory is not null)
+                {
+                    Directory.Delete(credentialDirectory, recursive: true);
+                }
+            }
+        }
+    }
+
+    private static void ObserveDeferredCleanup(Task cleanup)
+    {
+        if (!cleanup.IsCompleted)
+        {
+            _ = cleanup.ContinueWith(task => TerraBaseTestServer.ReportCleanupFailure(task.Exception!.Flatten()), CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
         }
     }
 

@@ -54,8 +54,8 @@ public sealed class IsolatedTestChildTests
             holderStart.ArgumentList.Add($"/proc/{childPid}/fd/2");
             pipeHolder = Process.Start(holderStart) ?? throw new InvalidOperationException("The pipe holder could not start.");
             await Assert.That(await pipeHolder.StandardOutput.ReadLineAsync(deadline.Token)).IsEqualTo("ready");
-            var stdout = MemoryBudgetTests.ReadChildOutputAsync(child.StandardOutput, outputCancellation.Token);
-            var stderr = MemoryBudgetTests.ReadChildOutputAsync(child.StandardError, outputCancellation.Token);
+            var stdout = IsolatedTestChild.ReadChildOutputAsync(child.StandardOutput, outputCancellation.Token);
+            var stderr = IsolatedTestChild.ReadChildOutputAsync(child.StandardError, outputCancellation.Token);
             var exited = child.WaitForExitAsync(outputCancellation.Token);
             completed = Task.WhenAll(exited, stdout, stderr);
             await child.StandardInput.WriteLineAsync("exit".AsMemory(), deadline.Token);

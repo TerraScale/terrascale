@@ -179,7 +179,9 @@ public sealed class CollectionSchemaTests
     }
 
     [Test]
-    public async Task Schema_failures_name_the_transaction_operation_and_roll_back_every_write_and_offset()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Schema_failures_name_the_transaction_operation_and_roll_back_every_write_and_offset(bool batchPuts)
     {
         await using var api = await DocumentApi.StartAsync();
         await AttachedAsync(await api.SendRawAsync(HttpMethod.Put, SchemaPath(api), NameSchema, "application/json"), NameSchema);
@@ -198,7 +200,7 @@ public sealed class CollectionSchemaTests
         {
             var fresh = DocumentApi.NewId();
             var result = await api.TransactAsync(
-                new { op = "create", collection = "items", id = fresh, document = new { name, count = 0 } }, invalid);
+                new { op = batchPuts ? "put" : "create", collection = "items", id = fresh, document = new { name, count = 0 } }, invalid);
             await ValidationFailureAsync(result, 1);
             await Assert.That((await api.GetAsync(fresh)).Status).IsEqualTo(HttpStatusCode.NotFound);
             await Assert.That((await api.GetAsync(id)).Version).IsEqualTo(original.Version);

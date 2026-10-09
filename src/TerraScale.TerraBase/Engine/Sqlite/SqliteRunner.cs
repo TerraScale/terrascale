@@ -6,6 +6,13 @@ namespace TerraBase.Engine.Sqlite;
 /// </summary>
 internal abstract class SqliteRunner
 {
+    /// <summary>Installed only by selected integration fixtures; absent on production runners.</summary>
+    internal SqliteRunnerDiagnostics? Diagnostics
+    {
+        get => Volatile.Read(ref field);
+        set => Volatile.Write(ref field, value);
+    }
+
     public abstract Task<T> RunAsync<T>(Func<T> call, CancellationToken cancellationToken);
 
     public Task RunAsync(Action call, CancellationToken cancellationToken) => RunAsync(() =>

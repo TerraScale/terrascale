@@ -78,6 +78,9 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
 
     /// <summary>This member's replica id: who mints the dots of the writes it makes (docs/design/anna-core.md).</summary>
     internal ReplicaId ReplicaId { get; }
+
+    /// <summary>The published system store, without opening it or checking its files, for integration diagnostics.</summary>
+    internal SqliteDatabaseStore? SystemStore => Volatile.Read(ref _system);
     private readonly string _pragmas;
     private bool _heapInitialized;
 
