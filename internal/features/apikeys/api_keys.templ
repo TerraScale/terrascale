@@ -1,8 +1,6 @@
 package apikeys
 
 import (
-	"cmp"
-
 	"terrascale.tech/dashboard/internal/core"
 	"terrascale.tech/dashboard/internal/ui"
 	"terrascale.tech/dashboard/internal/ui/icons"
@@ -36,8 +34,8 @@ templ apiKeysContent(page core.Page, d pageData) {
 			</section>
 		}
 		if d.CanManage {
-			@createCredential(page, d, "key", "Create key", "New project key", "Project keys authenticate application requests to this project's databases.", "database:read,database:write")
-			@createCredential(page, d, "m2m", "Create client", "New machine credential", "Machine clients authenticate services that call TerraScale without a user.", "database:read")
+			@createCredential(page, d, "key", "Create key", "New project key", "Project keys authenticate application requests to this project's databases.")
+			@createCredential(page, d, "m2m", "Create client", "New machine credential", "Machine clients authenticate services that call TerraScale without a user.")
 			if d.Kind == "" {
 				@chooseCredential(d.listFilters)
 			}
@@ -138,32 +136,86 @@ templ chooseCredential(filters listFilters) {
 	}
 }
 
-templ createCredential(page core.Page, d pageData, kind, action, title, description, scopes string) {
-	@ui.Dialog(ui.DialogProps{ID: "create-" + kind, Title: title, Description: description, Open: d.Create == kind}) {
-		<form method="post" action={ d.with("/api/v1/dashboard/credentials/" + kind) } class="ts-form">
+templ createCredential(page core.Page, d pageData, kind, action, title, description string) {
+	@ui.Dialog(ui.DialogProps{ID: "create-" + kind, Title: title, Description: description, Open: d.Create == kind, Class: "ts-credential-dialog"}) {
+		<form method="post" action={ d.with("/api/v1/dashboard/credentials/" + kind) } class="ts-form ts-credential-form" data-signals={ d.permissionSignals(kind) }>
 			<input type="hidden" name="_csrf" value={ page.CSRFToken }/>
 			if d.Error != "" && d.Create == kind {
 				@ui.Alert("danger", "", d.Error)
 			}
-			@ui.Field(ui.FieldProps{ID: kind + "-name", Label: "Name"}) {
-				<input class="ts-input" id={ kind + "-name" } name="name" value={ d.draftFor(kind).Name } maxlength="128" required/>
-			}
-			@ui.Field(ui.FieldProps{ID: kind + "-scopes", Label: "Scopes", Hint: "Comma-separated, for example database:read,database:write."}) {
-				<input class="ts-input" id={ kind + "-scopes" } name="scopes" value={ cmp.Or(d.draftFor(kind).Scopes, scopes) } required/>
-			}
-			@ui.Field(ui.FieldProps{ID: kind + "-database", Label: "Database"}) {
-				<select class="ts-select" id={ kind + "-database" } name="databaseId">
-					<option value="">All project databases</option>
-					for _, db := range d.Databases {
-						<option value={ db.ID } selected?={ d.draftFor(kind).DatabaseID == db.ID }>{ db.Name }</option>
-					}
-				</select>
-			}
+			<div class="ts-form-grid">
+				@ui.Field(ui.FieldProps{ID: kind + "-name", Label: "Credential name", Hint: "A name to recognize this credential later."}) {
+					<input class="ts-input" id={ kind + "-name" } name="name" value={ d.draftFor(kind).Name } placeholder="e.g. production-api" maxlength="128" aria-describedby={ kind + "-name-hint" } required/>
+				}
+				@ui.Field(ui.FieldProps{ID: kind + "-database", Label: "Database access", Hint: "Limit access to the database this app needs."}) {
+					<select class="ts-select" id={ kind + "-database" } name="databaseId" aria-describedby={ kind + "-database-hint" } data-on:change={ "$_" + kind + "Database = el.selectedOptions[0].textContent" }>
+						<option value="">All project databases (current and future)</option>
+						for _, db := range d.Databases {
+							<option value={ db.ID } selected?={ d.draftFor(kind).DatabaseID == db.ID }>{ db.Name }</option>
+						}
+					</select>
+				}
+			</div>
+			<fieldset class="ts-permissions" aria-describedby={ kind + "-permissions-hint" }>
+				<legend class="ts-label">Database permissions</legend>
+				<p class="ts-hint" id={ kind + "-permissions-hint" }>Choose the minimum access your application needs.</p>
+				<div class="ts-permission-options">
+					@permissionOption(kind, "read", "Read only", "Read and query records. Cannot change or delete data.", readAccess, d.accessFor(kind) == readAccess, true)
+					@permissionOption(kind, "write", "Read and write", "Read, create, update, and delete records. Use for apps that change data.", readWriteAccess, d.accessFor(kind) == readWriteAccess, false)
+				</div>
+				<details class="ts-permission-advanced" open?={ d.accessFor(kind) == writeAccess }>
+					<summary class="ts-meta ts-muted">More access options</summary>
+					@permissionOption(kind, "write-only", "Write only", "Create, update, and delete records without reading them. For ingestion services.", writeAccess, d.accessFor(kind) == writeAccess, false)
+				</details>
+			</fieldset>
+			<section class="ts-permission-review" aria-label="Authorization summary" aria-live="polite" aria-atomic="true">
+				@icons.ShieldCheck(20)
+				<div class="ts-field">
+					<h3 class="ts-hint ts-muted">Access summary</h3>
+					<p class="ts-strong" data-text={ "$_" + kind + "Database" }>{ d.databaseFor(kind) }</p>
+					<p class="ts-hint" data-text={ permissionSummary(kind) }>
+						if d.accessFor(kind) == readWriteAccess {
+							Can read, create, update, and delete records.
+						} else if d.accessFor(kind) == readAccess {
+							Can read records. Cannot create, update, or delete them.
+						} else if d.accessFor(kind) == writeAccess {
+							Can create, update, and delete records. Cannot read or query them.
+						} else {
+							Choose an access level before creating this credential.
+						}
+					</p>
+				</div>
+			</section>
 			@ui.DialogActions("create-" + kind) {
 				<button class="ts-btn ts-btn-primary" type="submit">{ action }</button>
 			}
 		</form>
 	}
+}
+
+templ permissionOption(kind, id, label, description, scopes string, selected, recommended bool) {
+	<label class="ts-permission-option" for={ kind + "-access-" + id }>
+		<input type="radio" id={ kind + "-access-" + id } name="scopes" value={ scopes } checked?={ selected } required data-bind={ "_" + kind + "Access" } aria-labelledby={ kind + "-access-" + id + "-label" } aria-describedby={ kind + "-access-" + id + "-description" }/>
+		<span class="ts-field ts-permission-body">
+			<span class="ts-row">
+				if recommended {
+					@icons.Eye(18)
+				} else {
+					@icons.Pencil(18)
+				}
+				<strong id={ kind + "-access-" + id + "-label" }>{ label }</strong>
+			</span>
+			if recommended {
+				<span class="ts-hint">Recommended</span>
+			}
+			<span class="ts-meta ts-muted" id={ kind + "-access-" + id + "-description" }>{ description }</span>
+			<span class="ts-row ts-apikeys-scopes">
+				for _, scope := range formScopes(scopes) {
+					<code>{ scope }</code>
+				}
+			</span>
+		</span>
+	</label>
 }
 
 func credentialIcon(kind string) templ.Component {

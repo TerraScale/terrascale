@@ -107,6 +107,7 @@ type credentialType struct {
 
 var (
 	readWriteKey  = credentialType{Label: "Read-write key", Tone: "amber", Icon: icons.KeyRound}
+	writeOnlyKey  = credentialType{Label: "Write-only key", Tone: "amber", Icon: icons.Pencil}
 	readOnlyKey   = credentialType{Label: "Read-only key", Tone: "sky", Icon: icons.Eye}
 	fullAccessKey = credentialType{Label: "Full-access key", Tone: "rose", Icon: icons.ShieldAlert}
 	machineClient = credentialType{Label: "M2M client", Tone: "violet", Icon: icons.Bot}
@@ -119,7 +120,10 @@ func typeOf(kind string, scopes []string) credentialType {
 	case slices.Contains(scopes, "*"):
 		return fullAccessKey
 	case slices.ContainsFunc(scopes, func(scope string) bool { return strings.HasSuffix(scope, ":write") }):
-		return readWriteKey
+		if slices.ContainsFunc(scopes, func(scope string) bool { return strings.HasSuffix(scope, ":read") }) {
+			return readWriteKey
+		}
+		return writeOnlyKey
 	default:
 		return readOnlyKey
 	}
@@ -185,7 +189,7 @@ func redirectPageError(w http.ResponseWriter, r *http.Request, err error, create
 	reopen := false
 	switch {
 	case errors.Is(err, core.ErrInvalid):
-		message = "Enter a name of up to 128 characters and 1 to 16 scopes of up to 128 characters each, such as database:read."
+		message = "Enter a name of up to 128 characters and choose a database access level."
 		reopen = true
 	case errors.Is(err, errUnknownDatabase):
 		message = "That database no longer exists. Choose another database or all project databases."

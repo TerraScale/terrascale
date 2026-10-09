@@ -117,7 +117,7 @@ func TestCreateDialogKeepsTheDraft(t *testing.T) {
 	data := pageData{
 		CanManage: true,
 		Create:    "key",
-		Draft:     draft{Name: "ci-deploy", Scopes: "database:admin", DatabaseID: "16KDJ28DR0XG7QGWEZ4VJ9Z1VX"},
+		Draft:     draft{Name: "ci-deploy", Scopes: readWriteAccess, DatabaseID: "16KDJ28DR0XG7QGWEZ4VJ9Z1VX"},
 		Databases: []databaseChoice{{ID: "16KDJ28DR0XG7QGWEZ4VJ9Z1VX", Name: "orders"}, {ID: "51ZVM7GAJHERHSP6VTQCFHMDVJ", Name: "users"}},
 		Error:     "Enter a name.",
 	}
@@ -126,12 +126,12 @@ func TestCreateDialogKeepsTheDraft(t *testing.T) {
 		t.Fatal(err)
 	}
 	html := body.String()
-	for _, want := range []string{`id="key-name" name="name" value="ci-deploy"`, `id="key-scopes" name="scopes" value="database:admin"`, `<option value="16KDJ28DR0XG7QGWEZ4VJ9Z1VX" selected>`} {
+	for _, want := range []string{`id="key-name" name="name" value="ci-deploy"`, `id="key-access-write" name="scopes" value="database:read,database:write" checked`, `<option value="16KDJ28DR0XG7QGWEZ4VJ9Z1VX" selected>`} {
 		if !strings.Contains(html, want) {
 			t.Errorf("the reopened dialog is missing %s", want)
 		}
 	}
-	if !strings.Contains(html, `id="m2m-name" name="name" value=""`) || !strings.Contains(html, `id="m2m-scopes" name="scopes" value="database:read"`) {
+	if !strings.Contains(html, `id="m2m-name" name="name" value=""`) || !strings.Contains(html, `id="m2m-access-read" name="scopes" value="database:read" checked`) {
 		t.Error("the other create dialog must keep its defaults")
 	}
 }

@@ -49,3 +49,109 @@
 .ts-apikeys-secret > .ts-alert-title {
   font-size: var(--ts-fs-md);
 }
+
+/* Credential authorization: select the resource, then a least-privilege preset. */
+dialog.ts-credential-dialog {
+  width: min(40rem, calc(100vw - 2 * var(--ts-s4)));
+}
+
+.ts-credential-form {
+  gap: var(--ts-s6);
+}
+
+/* Keep creation reachable while a short viewport scrolls the permissions. */
+.ts-credential-form > .ts-dialog-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  margin: 0 calc(-1 * var(--ts-s6)) calc(-1 * var(--ts-s6));
+  padding: var(--ts-s4) var(--ts-s6) var(--ts-s6);
+  border-top: 1px solid var(--ts-line);
+  background: var(--ts-surface);
+}
+
+.ts-permissions > legend {
+  margin-bottom: var(--ts-s1);
+}
+
+.ts-permissions > .ts-hint {
+  margin-bottom: var(--ts-s3);
+}
+
+.ts-permission-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--ts-s3);
+}
+
+.ts-permission-advanced,
+.ts-permission-advanced > .ts-permission-option {
+  margin-top: var(--ts-s3);
+}
+
+.ts-permission-advanced > summary {
+  cursor: pointer;
+}
+
+.ts-permission-option,
+.ts-permission-review {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--ts-s3);
+  padding: var(--ts-s4);
+  border: 1px solid var(--ts-line-strong);
+  border-radius: var(--ts-radius-lg);
+  background: var(--ts-surface-2);
+}
+
+.ts-permission-option {
+  border-color: var(--ts-control-line);
+  cursor: pointer;
+}
+
+.ts-permission-option:hover {
+  border-color: var(--ts-control-line-hover);
+}
+
+.ts-permission-option:has(input:checked) {
+  border-color: var(--ts-link);
+  background: var(--ts-accent-soft);
+}
+
+.ts-permission-option:has(input:focus-visible) {
+  outline: 2px solid var(--ts-link);
+  outline-offset: 3px;
+}
+
+.ts-permission-option > input {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  accent-color: var(--ts-accent-fill);
+}
+
+.ts-permission-body {
+  gap: var(--ts-s2);
+}
+
+.ts-permission-option svg,
+.ts-permission-review > svg {
+  flex: none;
+  color: var(--ts-link);
+}
+
+.ts-permission-body code {
+  font-size: 11px;
+}
+
+.ts-permission-review > div {
+  gap: var(--ts-s1);
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 540px) {
+  .ts-permission-options {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
