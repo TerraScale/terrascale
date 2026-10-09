@@ -3,6 +3,7 @@ package usage
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -124,6 +125,8 @@ type invoicePage struct {
 }
 
 type pageData struct {
+	SpendingProjects      []spendingProject
+	OrganizationName      string
 	InternalBill          *internalBill
 	Replication           replication.View
 	OrganizationBilling   bool
@@ -242,7 +245,7 @@ func pageHandler(deps core.Deps, billing *payments.Stripe, wrap func(core.Page, 
 			projectID = p.ProjectID
 			project = org.Projects[projectID]
 		}
-		if project.ID == "" && tab != "billing" {
+		if project.ID == "" && tab == "overview" {
 			// Without a project, Overview leads to the project setup.
 			http.Redirect(w, r, "/", http.StatusSeeOther)
 			return
@@ -387,20 +390,31 @@ func spendingHandler(deps core.Deps, service Service) http.HandlerFunc {
 			return
 		}
 		var controls spendingControls
-		organizationCap, hasOrganizationCap, valid := formCap(r.Form, "spendCap")
+		organizationCap, hasOrganizationCap, valid := changedFormCap(r.Form, "spendCap")
 		if !valid {
 			redirect(w, r, "invalid")
 			return
 		}
 		if hasOrganizationCap {
-			paidExcess := r.FormValue("paidExcess") == "true" || r.FormValue("paidExcess") == "on"
-			controls.OrganizationCapCents, controls.PaidExcess = &organizationCap, &paidExcess
+			controls.OrganizationCapCents = &organizationCap
 		}
-		if controls.ProjectCaps, valid = capsFromForm(r.Form, "projCap_"); !valid {
+		if controls.PaidExcess, valid = changedPaidExcess(r.Form); !valid {
 			redirect(w, r, "invalid")
 			return
 		}
-		if controls.DatabaseCaps, valid = capsFromForm(r.Form, "dbCap_"); !valid {
+		if controls.ProjectCaps, valid = changedCapsFromForm(r.Form, "projCap_"); !valid {
+			redirect(w, r, "invalid")
+			return
+		}
+		if controls.DatabaseCaps, valid = changedCapsFromForm(r.Form, "dbCap_"); !valid {
+			redirect(w, r, "invalid")
+			return
+		}
+		if controls.ProjectOperations, valid = changedOperationsFromForm(r.Form, "proj"); !valid {
+			redirect(w, r, "invalid")
+			return
+		}
+		if controls.DatabaseOperations, valid = changedOperationsFromForm(r.Form, "db"); !valid {
 			redirect(w, r, "invalid")
 			return
 		}
@@ -629,6 +643,7 @@ func buildPage(ctx context.Context, service Service, p core.Principal, token str
 	}
 	slices.SortFunc(databaseOptions, func(a, b databaseOption) int { return strings.Compare(a.Name, b.Name) })
 	data := pageData{
+		SpendingProjects: spendingProjects(org), OrganizationName: org.Name,
 		Tab: tab, Projects: projects, DatabaseOptions: databaseOptions, Databases: databases, SelectedProject: project.ID,
 		SelectedDatabase: databaseFilter, OrganizationCap: dollars(report.SpendCapCents), InternalBill: report.InternalBill,
 		PaidExcess: report.PaidExcessEnabled, EffectiveCap: capLabel(report.ProjectEffectiveCapCents),
@@ -988,6 +1003,9 @@ func capLabel(cents int64) string {
 
 func redirect(w http.ResponseWriter, r *http.Request, saved string) {
 	query := url.Values{"tab": {"settings"}, "saved": {saved}}
+	if project := r.FormValue("project"); project != "" {
+		query.Set("project", project)
+	}
 	http.Redirect(w, r, "/usage?"+query.Encode(), http.StatusSeeOther)
 }
 
@@ -999,4 +1017,37 @@ func writeError(w http.ResponseWriter, err error) {
 	default:
 		http.Error(w, "invalid request", http.StatusBadRequest)
 	}
+}
+
+// Spending controls do not depend on the Overview's database filter or metering.
+type spendingProject struct {
+	ID, Name, Region, SpendCap, Effective string
+	Operations                            core.OperationLimits
+	Databases                             []spendingDatabase
+}
+
+type spendingDatabase struct {
+	ID, Name, Region, SpendCap, Effective string
+	Operations                            core.OperationLimits
+}
+
+func spendingProjects(org core.Organization) []spendingProject {
+	projects := make([]spendingProject, 0, len(org.Projects))
+	for _, project := range org.Projects {
+		row := spendingProject{ID: project.ID, Name: project.Name, Region: project.Region,
+			SpendCap: dollars(project.SpendCapCents), Effective: capLabel(effectiveCapCents(org.Billing.SpendCapCents, project.SpendCapCents)), Operations: project.OperationLimits}
+		for _, database := range project.Databases {
+			row.Databases = append(row.Databases, spendingDatabase{ID: database.ID, Name: database.Name, Region: database.Region,
+				SpendCap: dollars(database.SpendCapCents), Effective: capLabel(effectiveCapCents(org.Billing.SpendCapCents, project.SpendCapCents, database.SpendCapCents)), Operations: database.OperationLimits})
+		}
+		slices.SortFunc(row.Databases, func(a, b spendingDatabase) int { return strings.Compare(a.Name, b.Name) })
+		projects = append(projects, row)
+	}
+	slices.SortFunc(projects, func(a, b spendingProject) int { return strings.Compare(a.Name, b.Name) })
+	return projects
+}
+
+func spendingSignals(project string) string {
+	encoded, _ := json.Marshal(map[string]string{"spendingProject": project})
+	return string(encoded)
 }

@@ -1,4 +1,45 @@
-/* Overview page: activity total, getting-started steps, connect options. */
+/* Overview page: compact toolbar, metrics, activity, and setup steps. */
+
+.ts-home {
+  padding-inline: var(--ts-s8);
+}
+
+.ts-home-toolbar {
+  align-items: center;
+  gap: var(--ts-s2) var(--ts-s6);
+}
+
+.ts-home-toolbar > .ts-page-actions {
+  padding-bottom: var(--ts-s1);
+}
+
+.ts-home-overview {
+  grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr);
+}
+
+.ts-home-overview .ts-home-steps {
+  gap: var(--ts-s5);
+}
+
+.ts-home-overview .ts-home-step .ts-link {
+  font-size: var(--ts-fs-sm);
+}
+
+@container page (width < 960px) {
+  .ts-home-overview {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 47.99rem) {
+  .ts-home {
+    padding-inline: var(--ts-s4);
+  }
+
+  .ts-home-toolbar > .ts-page-actions {
+    margin-left: auto;
+  }
+}
 
 .ts-home-activity-total {
   display: flex;
@@ -8,8 +49,10 @@
   font-size: var(--ts-fs-sm);
 }
 
-.ts-home-activity-total > .ts-dot {
-  color: var(--ts-accent);
+.ts-home-activity-total > .ts-chart-swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
 }
 
 .ts-home-steps {

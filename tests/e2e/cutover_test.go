@@ -256,12 +256,13 @@ func TestCutoverSeededChartsRenderLabelledSamplesForSelectedRange(t *testing.T) 
 	activity := page.Locator("#home-activity svg.ts-chart")
 	visible(t, activity)
 	must(t, expect.Locator(activity).ToHaveAttribute("aria-label", regexp.MustCompile(`Sample organization activity`)))
-	sevenDayLine := requiredAttribute(t, activity.Locator("path.ts-chart-line.ts-cat-1"), "d", "activity chart must plot reads")
-	must(t, expect.Locator(activity.Locator("path.ts-chart-line.ts-cat-2")).ToHaveCount(1))
-	must(t, expect.Locator(page.Locator(".ts-home-activity-total")).ToContainText("Writes"))
+	sevenDayLine := requiredAttribute(t, activity.Locator("path.ts-chart-line.ts-chart-series-1"), "d", "activity chart must plot sample operations")
+	must(t, expect.Locator(activity.Locator("path.ts-chart-line")).ToHaveCount(1))
+	must(t, expect.Locator(page.Locator(".ts-home-activity-total")).ToContainText("Sample operations"))
+	must(t, expect.Locator(activity.Locator("path.ts-chart-area")).ToHaveCount(1))
 	goToOK(t, page, "/?range=24h")
 	must(t, expect.Locator(page.Locator("#home-activity svg.ts-chart")).ToHaveAttribute("aria-label", regexp.MustCompile(`Last 24 hours`)))
-	if requiredAttribute(t, page.Locator("#home-activity path.ts-chart-line.ts-cat-1"), "d", "24h activity chart must plot reads") == sevenDayLine {
+	if requiredAttribute(t, page.Locator("#home-activity path.ts-chart-line.ts-chart-series-1"), "d", "24h activity chart must plot sample operations") == sevenDayLine {
 		t.Fatal("24h activity must plot a different line than 7d")
 	}
 

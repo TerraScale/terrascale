@@ -17,13 +17,12 @@ import (
 // of a page transfers.
 type weightBudget map[string]int
 
-// pageBudget sits about a fifth above what the pages transfer today, so a
-// heavier stylesheet, font, script or image fails here instead of shipping.
-var pageBudget = weightBudget{"document": 25_000, "stylesheet": 20_000, "font": 65_000, "script": 30_000, "image": 15_000}
+// The stylesheet cap includes the shared Overview and credential controls.
+var pageBudget = weightBudget{"document": 25_000, "stylesheet": 21_000, "font": 65_000, "script": 30_000, "image": 15_000}
 
 // codeEditorBudget adds Monaco, which pages with a code editor download once
 // they have loaded, and its icon font, fetched once the editor shows an icon.
-var codeEditorBudget = weightBudget{"document": 25_000, "stylesheet": 20_000, "font": 140_000, "script": 1_350_000, "image": 15_000}
+var codeEditorBudget = weightBudget{"document": 25_000, "stylesheet": 21_000, "font": 140_000, "script": 1_350_000, "image": 15_000}
 
 // collectTransfers lists the navigation and every resource with the
 // compressed body size the browser received.

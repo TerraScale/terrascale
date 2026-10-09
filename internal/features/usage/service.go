@@ -17,32 +17,34 @@ import (
 )
 
 type projectUsage struct {
-	ID                string `json:"id"`
-	Name              string `json:"name"`
-	Region            string `json:"region"`
-	DatabaseCount     int    `json:"databaseCount"`
-	SpendCapCents     int64  `json:"spendCapCents" jsonschema:"The project's own monthly spend cap in US cents; 0 means none."`
-	EffectiveCapCents int64  `json:"effectiveCapCents" jsonschema:"The smallest of the organization and project caps in US cents; 0 means no limit."`
-	LogicalBytes      int64  `json:"logicalBytes" jsonschema:"Logical storage: the bytes of the project's live documents."`
-	Unavailable       bool   `json:"unavailable,omitempty" jsonschema:"TerraBase did not report one of its system databases, so LogicalBytes is incomplete."`
-	SharePercent      int    `json:"sharePercent" jsonschema:"The project's share of the organization's logical storage."`
-	Selected          bool   `json:"selected"`
+	OperationLimits   core.OperationLimits `json:"operationLimits"`
+	ID                string               `json:"id"`
+	Name              string               `json:"name"`
+	Region            string               `json:"region"`
+	DatabaseCount     int                  `json:"databaseCount"`
+	SpendCapCents     int64                `json:"spendCapCents" jsonschema:"The project's own monthly spend cap in US cents; 0 means none."`
+	EffectiveCapCents int64                `json:"effectiveCapCents" jsonschema:"The smallest of the organization and project caps in US cents; 0 means no limit."`
+	LogicalBytes      int64                `json:"logicalBytes" jsonschema:"Logical storage: the bytes of the project's live documents."`
+	Unavailable       bool                 `json:"unavailable,omitempty" jsonschema:"TerraBase did not report one of its system databases, so LogicalBytes is incomplete."`
+	SharePercent      int                  `json:"sharePercent" jsonschema:"The project's share of the organization's logical storage."`
+	Selected          bool                 `json:"selected"`
 }
 
 type databaseUsage struct {
-	ID                string `json:"id"`
-	Name              string `json:"name"`
-	Region            string `json:"region"`
-	Status            string `json:"status"`
-	Documents         int64  `json:"documents"`
-	LogicalBytes      int64  `json:"logicalBytes" jsonschema:"Logical storage: the bytes of the database's live documents."`
-	Unavailable       bool   `json:"unavailable,omitempty" jsonschema:"TerraBase did not report this system database, so its counts are unknown."`
-	SharePercent      int    `json:"sharePercent" jsonschema:"The database's share of the listed databases' logical storage."`
-	Metered           bool   `json:"metered" jsonschema:"Whether TerraBase meters this database; its reads and writes are 0 otherwise."`
-	Reads             int64  `json:"reads" jsonschema:"Reads in the range."`
-	Writes            int64  `json:"writes" jsonschema:"Writes in the range."`
-	SpendCapCents     int64  `json:"spendCapCents" jsonschema:"The database's own monthly spend cap in US cents; 0 means none."`
-	EffectiveCapCents int64  `json:"effectiveCapCents" jsonschema:"The smallest of the organization, project, and database caps in US cents; 0 means no limit."`
+	OperationLimits   core.OperationLimits `json:"operationLimits"`
+	ID                string               `json:"id"`
+	Name              string               `json:"name"`
+	Region            string               `json:"region"`
+	Status            string               `json:"status"`
+	Documents         int64                `json:"documents"`
+	LogicalBytes      int64                `json:"logicalBytes" jsonschema:"Logical storage: the bytes of the database's live documents."`
+	Unavailable       bool                 `json:"unavailable,omitempty" jsonschema:"TerraBase did not report this system database, so its counts are unknown."`
+	SharePercent      int                  `json:"sharePercent" jsonschema:"The database's share of the listed databases' logical storage."`
+	Metered           bool                 `json:"metered" jsonschema:"Whether TerraBase meters this database; its reads and writes are 0 otherwise."`
+	Reads             int64                `json:"reads" jsonschema:"Reads in the range."`
+	Writes            int64                `json:"writes" jsonschema:"Writes in the range."`
+	SpendCapCents     int64                `json:"spendCapCents" jsonschema:"The database's own monthly spend cap in US cents; 0 means none."`
+	EffectiveCapCents int64                `json:"effectiveCapCents" jsonschema:"The smallest of the organization, project, and database caps in US cents; 0 means no limit."`
 }
 
 // usageTotals are the selected project's, or database's, metered reads and
@@ -103,6 +105,8 @@ type spendingControls struct {
 	PaidExcess           *bool
 	ProjectCaps          map[string]int64
 	DatabaseCaps         map[string]int64
+	ProjectOperations    map[string]operationLimitChange
+	DatabaseOperations   map[string]operationLimitChange
 }
 
 // Service owns usage reporting and spending controls for a principal's
@@ -178,7 +182,8 @@ func (s Service) report(ctx context.Context, p core.Principal, token string, org
 	// figures replace them below where TerraBase stores the resource.
 	for _, item := range org.Projects {
 		row := projectUsage{
-			ID: item.ID, Name: item.Name, Region: item.Region, DatabaseCount: len(item.Databases), SpendCapCents: max(item.SpendCapCents, 0),
+			OperationLimits: item.OperationLimits,
+			ID:              item.ID, Name: item.Name, Region: item.Region, DatabaseCount: len(item.Databases), SpendCapCents: max(item.SpendCapCents, 0),
 			EffectiveCapCents: effectiveCapCents(org.Billing.SpendCapCents, item.SpendCapCents), Selected: item.ID == project.ID,
 		}
 		if strings.TrimSpace(row.Region) == "" {
@@ -201,7 +206,8 @@ func (s Service) report(ctx context.Context, p core.Principal, token string, org
 			continue
 		}
 		report.Databases = append(report.Databases, databaseUsage{
-			ID: database.ID, Name: database.Name, Region: database.Region, Status: database.Status,
+			OperationLimits: database.OperationLimits,
+			ID:              database.ID, Name: database.Name, Region: database.Region, Status: database.Status,
 			Documents: documents(database), LogicalBytes: stored(database), Unavailable: failed[database.ID] != nil, SpendCapCents: max(database.SpendCapCents, 0),
 			EffectiveCapCents: effectiveCapCents(org.Billing.SpendCapCents, project.SpendCapCents, database.SpendCapCents),
 		})
@@ -490,6 +496,13 @@ func (s Service) SetSpendingControls(ctx context.Context, p core.Principal, cont
 			return core.Invalid("spend caps must be zero or positive US cents")
 		}
 	}
+	for _, changes := range []map[string]operationLimitChange{controls.ProjectOperations, controls.DatabaseOperations} {
+		for _, change := range changes {
+			if !change.valid() {
+				return core.Invalid("operation limits must be zero or positive whole numbers")
+			}
+		}
+	}
 	return s.deps.Store.UpdateAs(ctx, p, func(current *core.Account) error {
 		org, err := current.OrganizationFor(p, p.OrganizationID)
 		if err != nil {
@@ -529,8 +542,33 @@ func (s Service) SetSpendingControls(ctx context.Context, p core.Principal, cont
 				return fmt.Errorf("%w: database %q", core.ErrNotFound, databaseID)
 			}
 		}
+		for projectID, change := range controls.ProjectOperations {
+			project, exists := org.Projects[projectID]
+			if !exists {
+				return fmt.Errorf("%w: project %q", core.ErrNotFound, projectID)
+			}
+			change.apply(&project.OperationLimits)
+			org.Projects[projectID] = project
+		}
+		for databaseID, change := range controls.DatabaseOperations {
+			found := false
+			for projectID, project := range org.Projects {
+				database, exists := project.Databases[databaseID]
+				if !exists {
+					continue
+				}
+				change.apply(&database.OperationLimits)
+				project.Databases[databaseID] = database
+				org.Projects[projectID] = project
+				found = true
+				break
+			}
+			if !found {
+				return fmt.Errorf("%w: database %q", core.ErrNotFound, databaseID)
+			}
+		}
 		current.Organizations[org.ID] = org
-		if controls.OrganizationCapCents != nil || controls.PaidExcess != nil || len(controls.ProjectCaps) > 0 || len(controls.DatabaseCaps) > 0 {
+		if controls.OrganizationCapCents != nil || controls.PaidExcess != nil || len(controls.ProjectCaps) > 0 || len(controls.DatabaseCaps) > 0 || len(controls.ProjectOperations) > 0 || len(controls.DatabaseOperations) > 0 {
 			current.RecordAudit(p, "usage.spending_controls_updated", org.Name, "usage control", time.Now().UTC())
 		}
 		return nil

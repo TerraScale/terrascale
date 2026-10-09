@@ -166,6 +166,7 @@ type Project struct {
 	SecuritySettingsUpdatedAt time.Time
 	BackupPolicies            map[string]BackupPolicy
 	SpendCapCents             int64
+	OperationLimits           OperationLimits
 	CreatedAt                 time.Time
 	// DataKeys are the data API keys TerraBase issued the dashboard for the
 	// project's TerraBase project, by Atlas region ID (TerraBase issues one
@@ -179,6 +180,13 @@ type DataKey struct{ ID, Secret string }
 
 // TerraBaseIDs uses the same entity IDs in the dashboard and TerraBase.
 func (p Project) TerraBaseIDs(orgID string) (organization, project string) { return orgID, p.ID }
+
+// OperationLimits stores monthly operation caps; zero leaves a category unlimited.
+type OperationLimits struct {
+	ReadLimit        int64 `json:"readLimit"`
+	WriteLimit       int64 `json:"writeLimit"`
+	ReplicationLimit int64 `json:"replicationLimit"`
+}
 
 type Database struct {
 	System               bool
@@ -200,6 +208,7 @@ type Database struct {
 	BackupSchedule       string
 	BackupRetentionDays  int
 	SpendCapCents        int64
+	OperationLimits      OperationLimits
 }
 
 type IndexRecommendation struct {

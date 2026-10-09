@@ -3,6 +3,7 @@ package usage
 import (
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"reflect"
 	"strings"
 	"testing"
@@ -10,7 +11,63 @@ import (
 	"github.com/a-h/templ"
 	"terrascale.tech/dashboard/internal/core"
 	"terrascale.tech/dashboard/internal/core/memstore"
+	"terrascale.tech/dashboard/internal/platform/csrf"
 )
+
+func TestInternalSpendingFormAuditsOnlySubmittedChanges(t *testing.T) {
+	service, principal, _ := internalUsageFixture(t, memstore.New())
+	deps := service.deps
+	deps.Sessions = reviewSessions{principal: principal}
+	deps.CSRF = csrf.New(deps.Sessions, csrf.Options{})
+	deps.Render = viewRenderer{}
+	deps.Tools = core.NewTools(deps.Store)
+	deps.Demo = true
+	mux := http.NewServeMux()
+	Mount(mux, deps, nil)
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/usage?tab=settings", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("settings page = %d: %s", response.Code, response.Body.String())
+	}
+	requireOmits(t, response.Body.String(), `name="paidExcess"`, `name="initial_paidExcess"`)
+	csrfResponse := httptest.NewRecorder()
+	token := deps.CSRF.Token(csrfResponse, httptest.NewRequest(http.MethodGet, "/usage", nil))
+	cookies := csrfResponse.Result().Cookies()
+	before, err := deps.Store.SnapshotAs(t.Context(), principal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := url.Values{"spendCap": {"8.40"}, "initial_spendCap": {"8.40"}, "_csrf": {token}}
+	for _, edited := range []bool{false, true} {
+		if edited {
+			values.Set("spendCap", "9.00")
+		}
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/dashboard/usage/spending-controls", strings.NewReader(values.Encode()))
+		request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		for _, cookie := range cookies {
+			request.AddCookie(cookie)
+		}
+		response := httptest.NewRecorder()
+		mux.ServeHTTP(response, request)
+		if response.Code != http.StatusSeeOther || !strings.Contains(response.Header().Get("Location"), "saved=ok") {
+			t.Fatalf("save = %d: %s", response.Code, response.Body.String())
+		}
+		after, err := deps.Store.SnapshotAs(t.Context(), principal)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !edited {
+			if !reflect.DeepEqual(before, after) {
+				t.Fatal("saving untouched internal controls changed state or added an audit event")
+			}
+			continue
+		}
+		org := after.Organizations[principal.OrganizationID]
+		if org.Billing.SpendCapCents != 900 || !org.Billing.PaidExcessEnabled || len(after.AuditEvents) != len(before.AuditEvents)+1 || after.AuditEvents[len(after.AuditEvents)-1].Action != "usage.spending_controls_updated" {
+			t.Fatalf("edited internal cap was not saved and audited while preserving excess: %+v", after)
+		}
+	}
+}
 
 func TestInternalBillingPages(t *testing.T) {
 	for _, state := range []string{"metered", "missing-project", "missing-token", "missing-provider", "commercial"} {
