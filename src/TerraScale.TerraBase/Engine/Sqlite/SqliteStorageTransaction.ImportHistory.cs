@@ -16,6 +16,7 @@ internal sealed partial class SqliteStorageTransaction
             CREATE TEMP TABLE imported_history (
                 collection TEXT NOT NULL, id TEXT NOT NULL, version INTEGER NOT NULL, body TEXT
             );
+            CREATE INDEX temp.imported_history_keys ON imported_history (collection, id);
             """).ExecuteNonQuery();
         _importHistory = true;
     }

@@ -70,6 +70,8 @@ any retained state still claims it. Once a winner deletes or changes its key, th
 The engine records those visibility changes in shape history in the same transaction as the triggering write.
 Baseline replication includes losing source states, so a new replica computes the same result and does not lose
 the information needed to release a key later.
+Merkle digests and repair ranges also use retained source bodies, including hidden contenders; a visibility
+projection is never a source tombstone. Identical state repair preserves conflicts and performs no mutation.
 
 `unique_conflicts` stores the bodies excluded from the ordinary document view; `unique_keys` indexes every
 contender. Neither is a consumer-visible collection or a `kind=unique_claim` document. Both are part of the fresh

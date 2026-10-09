@@ -13,6 +13,49 @@ namespace TerraBase.Fast.Documents;
 public sealed class UniqueConstraintTests
 {
     [Test]
+    public async Task Declared_JSON_schema_and_native_uniqueness_coexist_without_changing_collection_identity()
+    {
+        await using var api = await ManagementApi.StartAsync();
+        var database = await api.CreateManagedDatabaseAsync();
+        using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
+        await DeclareAsync(api, data, database, new { fields = new[] { new { name = "email", unique = true } } });
+        var collection = Uri(database.Data + "/collections/people");
+        using var before = await data.GetAsync(collection);
+        before.EnsureSuccessStatusCode();
+        var identity = (await before.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString();
+        var schema = Uri($"/projects/{database.Project}/databases/{database.Name}/collections/people/schema");
+        using var schemaBody = new StringContent("""{"type":"object","required":["email"],"properties":{"email":{"type":"string"}}}""", Encoding.UTF8, "application/json");
+        using (var attached = await data.PutAsync(schema, schemaBody))
+        {
+            attached.EnsureSuccessStatusCode();
+        }
+
+        using (var invalid = await data.PutAsJsonAsync(Document(database, Ulid.NewUlid().ToString()), new { email = 123 }))
+        {
+            await Assert.That(invalid.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+            await Assert.That((await invalid.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error").GetProperty("code").GetString())
+                .IsEqualTo("schema_validation_failed");
+        }
+
+        var email = new Faker().Internet.Email();
+        using (var created = await data.PutAsJsonAsync(Document(database, Ulid.NewUlid().ToString()), new { email }))
+        {
+            created.EnsureSuccessStatusCode();
+        }
+
+        await DuplicateAsync(data.PutAsJsonAsync(Document(database, Ulid.NewUlid().ToString()), new { email }));
+        using (var detached = await data.DeleteAsync(schema))
+        {
+            detached.EnsureSuccessStatusCode();
+        }
+
+        await DuplicateAsync(data.PutAsJsonAsync(Document(database, Ulid.NewUlid().ToString()), new { email }));
+        using var after = await data.GetAsync(collection);
+        after.EnsureSuccessStatusCode();
+        await Assert.That((await after.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()).IsEqualTo(identity);
+    }
+
+    [Test]
     [Arguments("lowercase")]
     [Arguments("trim_lowercase")]
     public async Task Lowercase_normalization_handles_non_ASCII_without_promising_full_case_folding(string normalization)

@@ -10,7 +10,7 @@ using TerraBase.Testing;
 
 namespace TerraBase.Fast.Replication;
 
-public sealed class UniqueReplicationTests
+public sealed partial class UniqueReplicationTests
 {
     private static readonly string[] IncompatibleFields = ["email", "k1", "k2", "k3", "k4", "k5"];
 

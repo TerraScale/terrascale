@@ -428,7 +428,7 @@ internal sealed class StampingStorageEngine(IStorageEngine inner, ISystemReplica
         public ValueTask<bool> RepairReplicationStateAsync(DocumentChange change, CancellationToken cancellationToken)
         {
             ArgumentNullException.ThrowIfNull(change);
-            if (change.Collection is DocumentChange.Collections or DocumentChange.Indexes)
+            if (change.Collection is DocumentChange.Collections or DocumentChange.Indexes or DocumentChange.Unique)
             {
                 return WriteCollectionAsync(() => inner.RepairReplicationStateAsync(change, cancellationToken), cancellationToken);
             }
