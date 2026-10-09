@@ -1,13 +1,23 @@
 #!/usr/bin/env bash
 # Exercise scripts/ci/deploy.sh against a stub curl and a stub ts-orch: the
 # exact ts-orch invocation, with the release bytes, OCI config and key it
-# reads; cells split on any whitespace without pathname expansion; an empty
-# list refused; nothing run unless the asset matches its exact checksum line
+# reads; GRU and SFO always targeted without deployment switches;
+# nothing run unless the asset matches its exact checksum line
 # and ts-orch its pinned SHA-256; a ts-orch failure failing the job; and every
 # authenticated download staying on the Forgejo origin.
 set -euo pipefail
 
 repo=$(cd "$(dirname "$0")/../.." && pwd)
+# Deploy runs only after a successful publish on a main push, without opt-in.
+python3 - "$repo/.forgejo/workflows/ci.yml" "$repo/scripts/ci/deploy.sh" <<'PY'
+import pathlib, sys
+workflow, script = (pathlib.Path(path).read_text() for path in sys.argv[1:])
+deploy = workflow.split("\n  deploy:\n", 1)[1]
+assert "    needs: [publish-binary]\n" in deploy
+conditions = [line.strip() for line in deploy.splitlines() if line.strip().startswith("if:")]
+assert conditions == ["if: forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main'"]
+assert "TS_AUTO_DEPLOY_" not in workflow + script
+PY
 # The real-curl cases reach local origins directly, whatever proxy the
 # runner sets; deploy.sh itself keeps the runner's proxy.
 unset HTTPS_PROXY https_proxy HTTP_PROXY http_proxy ALL_PROXY all_proxy
@@ -95,7 +105,7 @@ chmod +x "$sandbox/bin/curl"
 head=$(git -C "$sandbox/repo" rev-parse HEAD)
 export PATH="$sandbox/bin:$PATH" GITHUB_SERVER_URL=https://git.example GITHUB_REPOSITORY=TerraScale/app \
 	GITHUB_SHA=$head ORG_READ_TOKEN=token TS_RELEASE_OCI_KEY=oci-private-key \
-	TS_ORCH_RELEASE=ci-x TS_AUTO_DEPLOY_ENVIRONMENT=canary TS_OBJECT_NAMESPACE=ns TS_RELEASE_VAULT_ID=vault \
+	TS_ORCH_RELEASE=ci-x TS_OBJECT_NAMESPACE=ns TS_RELEASE_VAULT_ID=vault \
 	TS_RELEASE_KEY_SECRET=secret TS_RELEASE_ACTOR=ci-release TS_RELEASE_OCI_USER=user TS_RELEASE_OCI_TENANCY=tenancy \
 	TS_RELEASE_OCI_FINGERPRINT=fingerprint
 # Optional inputs and stub controls keep their defaults unless a case sets
@@ -116,21 +126,21 @@ live() {
 }
 # emptied: deploy.sh, run with TMPDIR=$sandbox/tmp, left no key or token file.
 emptied() { [[ -z $(ls -A "$sandbox/tmp") ]] || fail "deploy.sh left its key and token files: $(ls -A "$sandbox/tmp")"; }
-# deploy CELLS SHA: run deploy.sh; its status, and whether ts-orch ran.
+# deploy SHA: run deploy.sh; its status, and whether ts-orch ran.
 deploy() {
 	rm -f -- "$sandbox/ran" "$sandbox/binary-seen" "$sandbox/config-seen" "$sandbox/key-seen" "$sandbox/urls" \
 		"$sandbox/calls" "$sandbox/auth-seen"
 	local status=0
-	(cd "$sandbox/repo" && TMPDIR=$sandbox/tmp TS_AUTO_DEPLOY_CELLS=$1 TS_ORCH_SHA256=$2 \
+	(cd "$sandbox/repo" && TMPDIR=$sandbox/tmp TS_ORCH_SHA256=$1 \
 		bash scripts/ci/deploy.sh app app-linux-arm64 v1) > "$sandbox/log" 2>&1 || status=$?
 	emptied
 	return "$status"
 }
 
-deploy $'GRU\n  SFO\tFRA\n' "$pinned" || { cat "$sandbox/log" >&2; fail "a multiline cell list failed"; }
+deploy "$pinned" || { cat "$sandbox/log" >&2; fail "the unconditional deployment failed"; }
 expected=(release service-deploy --role app --binary '*' --repository https://git.example/TerraScale/app
 	--commit "$head" --source-checkout . --environment canary --actor ci-release --signing-key-secret secret
-	--vault-id vault --namespace ns --cell GRU --cell SFO --cell FRA)
+	--vault-id vault --namespace ns --cell GRU --cell SFO)
 mapfile -t ran < "$sandbox/ran"
 ((${#ran[@]} == ${#expected[@]})) || fail "ts-orch ran with $(paste -sd' ' "$sandbox/ran")"
 for index in "${!expected[@]}"; do
@@ -162,17 +172,18 @@ done < "$sandbox/calls"
 [[ $(sort -u "$sandbox/auth-seen") == 'header = "Authorization: token token"' ]] ||
 	fail "the downloads did not authenticate with the read token"
 
-touch "$sandbox/repo/GRU"
-deploy '*' "$pinned" || fail "a literal * cell failed"
-[[ $(tail -n 1 "$sandbox/ran") == '*' ]] || fail "the cell * was expanded"
-if STUB_EXIT=3 deploy GRU "$pinned"; then fail "a failed ts-orch passed"; fi
+grep -Eq '^app deployment finished in [0-9]+s \(exit 0\)$' "$sandbox/log" || fail "deployment time was not logged"
+status=0
+STUB_EXIT=3 deploy "$pinned" || status=$?
+((status == 3)) || fail "ts-orch exit 3 became $status"
 [[ -e $sandbox/ran ]] || fail "ts-orch did not run before failing"
+grep -Eq '^app deployment finished in [0-9]+s \(exit 3\)$' "$sandbox/log" || fail "failed deployment time was not logged"
 # TERM to deploy.sh alone, while ts-orch runs: it stops ts-orch, killing
 # one that ignores TERM after 10 s, and removes the key and token files.
 for block in 1 stubborn; do
 rm -f -- "$sandbox/child" "$sandbox/terminated" "$sandbox/grandchild"
 mkdir -p "$sandbox/tmp"
-(cd "$sandbox/repo" && STUB_BLOCK=$block TMPDIR=$sandbox/tmp TS_AUTO_DEPLOY_CELLS=GRU TS_ORCH_SHA256=$pinned \
+(cd "$sandbox/repo" && STUB_BLOCK=$block TMPDIR=$sandbox/tmp TS_ORCH_SHA256=$pinned \
 	exec setsid bash scripts/ci/deploy.sh app app-linux-arm64 v1) > "$sandbox/log" 2>&1 &
 parent=$!
 groups+=("$parent")
@@ -202,28 +213,26 @@ emptied
 groups=()
 done
 # A curl that may send the read token across a redirect is refused.
-if STUB_CURL_VERSION=7.82.0 deploy GRU "$pinned" || [[ -e $sandbox/ran ]]; then fail "an old curl deployed"; fi
+if STUB_CURL_VERSION=7.82.0 deploy "$pinned" || [[ -e $sandbox/ran ]]; then fail "an old curl deployed"; fi
 grep -q 'curl 7.82.0 may send the read token' "$sandbox/log" || fail "the old curl was not named: $(<"$sandbox/log")"
-if deploy $' \n\t' "$pinned" || [[ -e $sandbox/ran ]]; then fail "a whitespace-only cell list deployed"; fi
-grep -q 'names no cell' "$sandbox/log" || fail "the empty cell list was not named"
-if deploy GRU "$(printf '%064d' 0)" || [[ -e $sandbox/ran ]]; then fail "an unpinned ts-orch ran"; fi
+if deploy "$(printf '%064d' 0)" || [[ -e $sandbox/ran ]]; then fail "an unpinned ts-orch ran"; fi
 grep -q 'does not match TS_ORCH_SHA256' "$sandbox/log" || fail "the ts-orch digest mismatch was not named"
 # A checksum line that names the asset with another hash must not pass.
 printf '%064d  app-linux-arm64\n' 0 > "$sandbox/serve/app-linux-arm64.sha256"
-if deploy GRU "$pinned" || [[ -e $sandbox/ran ]]; then fail "an asset whose checksum hash differs deployed"; fi
+if deploy "$pinned" || [[ -e $sandbox/ran ]]; then fail "an asset whose checksum hash differs deployed"; fi
 grep -q 'does not match its app-linux-arm64.sha256' "$sandbox/log" || fail "the hash mismatch was not named"
 # Only the exact line passes: not beside a conflicting line, nor followed by
 # other content.
 for checksum in "$(cat "$sandbox/good.sha256")"$'\n'"$(printf '%064d' 1)  app-linux-arm64" \
 	"$(cat "$sandbox/good.sha256") trailing"; do
 	printf '%s\n' "$checksum" > "$sandbox/serve/app-linux-arm64.sha256"
-	if deploy GRU "$pinned" || [[ -e $sandbox/ran ]]; then fail "a checksum file with more than the asset's line deployed"; fi
+	if deploy "$pinned" || [[ -e $sandbox/ran ]]; then fail "a checksum file with more than the asset's line deployed"; fi
 	grep -q 'does not match its app-linux-arm64.sha256' "$sandbox/log" || fail "the extra checksum content was not named"
 done
 # A checksum of another file must not pass for the asset.
 : > "$sandbox/serve/empty"
 (cd "$sandbox/serve" && sha256sum empty > app-linux-arm64.sha256)
-if deploy GRU "$pinned" || [[ -e $sandbox/ran ]]; then fail "an asset whose checksum names another file deployed"; fi
+if deploy "$pinned" || [[ -e $sandbox/ran ]]; then fail "an asset whose checksum names another file deployed"; fi
 grep -q 'does not match its app-linux-arm64.sha256' "$sandbox/log" || fail "the name mismatch was not named"
 
 # Real curl against two HTTPS origins: the Forgejo origin redirects the asset
@@ -301,7 +310,7 @@ for _ in $(seq 50); do [[ -s $sandbox/origins.ready ]] && break; sleep 0.1; done
 redirected() {
 	rm -f -- "$sandbox/ran" "$sandbox/binary-seen" "$sandbox/config-seen" "$sandbox/key-seen" "$sandbox/requests"
 	(cd "$sandbox/repo" && PATH=${PATH#"$sandbox/bin:"} CURL_CA_BUNDLE=$sandbox/tls.crt TMPDIR=$sandbox/tmp \
-		GITHUB_SERVER_URL=https://localhost:$(<"$sandbox/origins.ready") TS_AUTO_DEPLOY_CELLS=GRU TS_ORCH_SHA256=$pinned \
+		GITHUB_SERVER_URL=https://localhost:$(<"$sandbox/origins.ready") TS_ORCH_SHA256=$pinned \
 		bash scripts/ci/deploy.sh app app-linux-arm64 "$1") > "$sandbox/log" 2>&1 ||
 		{ cat "$sandbox/log" >&2; fail "the deployment through the $1 redirect failed"; }
 	emptied
@@ -325,7 +334,7 @@ redirected samehost
 rm -rf -- "$sandbox/tmp" "$sandbox/requests"
 mkdir "$sandbox/tmp"
 (cd "$sandbox/repo" && PATH=${PATH#"$sandbox/bin:"} CURL_CA_BUNDLE=$sandbox/tls.crt TMPDIR=$sandbox/tmp \
-	GITHUB_SERVER_URL=https://localhost:$(<"$sandbox/origins.ready") TS_AUTO_DEPLOY_CELLS=GRU TS_ORCH_SHA256=$pinned \
+	GITHUB_SERVER_URL=https://localhost:$(<"$sandbox/origins.ready") TS_ORCH_SHA256=$pinned \
 	exec setsid bash scripts/ci/deploy.sh app app-linux-arm64 stall) > "$sandbox/log" 2>&1 &
 parent=$!
 groups+=("$parent")
@@ -355,7 +364,7 @@ for bounds in "stall 1 100 Operation too slow" "trickle 60 2 Operation timed out
 	started=$SECONDS
 	if (cd "$sandbox/repo" && PATH=${PATH#"$sandbox/bin:"} CURL_CA_BUNDLE=$sandbox/tls.crt TS_DOWNLOAD_STALL_SECONDS=$stall \
 		TMPDIR=$sandbox/tmp TS_DOWNLOAD_MAX_SECONDS=$attempt GITHUB_SERVER_URL=https://localhost:$(<"$sandbox/origins.ready") \
-		TS_AUTO_DEPLOY_CELLS=GRU TS_ORCH_SHA256=$pinned timeout 60 bash scripts/ci/deploy.sh app app-linux-arm64 "$tag") \
+		TS_ORCH_SHA256=$pinned timeout 60 bash scripts/ci/deploy.sh app app-linux-arm64 "$tag") \
 		> "$sandbox/log" 2>&1; then
 		fail "a $tag download deployed"
 	fi
