@@ -233,6 +233,7 @@ internal sealed class SqliteIoPool : SqliteRunner, IAsyncDisposable
     public override async Task<T> RunAsync<T>(Func<T> call, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        using var diagnostic = Diagnostics?.Submit();
         // Continuations must not run on (and so block) a pool thread.
         var result = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
         // Queued (0), started (1) or cancelled (2), decided once: a cancelled call never starts, and a started
@@ -254,6 +255,7 @@ internal sealed class SqliteIoPool : SqliteRunner, IAsyncDisposable
                     }
                 }
 
+                diagnostic?.Cancel();
                 result.TrySetCanceled(cancellationToken);
             }
         });
@@ -289,10 +291,22 @@ internal sealed class SqliteIoPool : SqliteRunner, IAsyncDisposable
             }
 
             Interlocked.Increment(ref _running);
+            diagnostic?.Begin();
             try
             {
                 using var scope = RestoreContext(context);
-                result.TrySetResult(call());
+                T value;
+                try
+                {
+                    value = call();
+                }
+                finally
+                {
+                    // Record callback completion before making its asynchronous continuation runnable.
+                    diagnostic?.Complete();
+                }
+
+                result.TrySetResult(value);
             }
             catch (Exception error)
             {

@@ -28,11 +28,15 @@ public sealed class BackupKeySaturationTests
         var directory = Directory.CreateTempSubdirectory("terrabase-key-saturation-").FullName;
         var coldDirectory = Directory.CreateTempSubdirectory("terrabase-key-saturation-cold-").FullName;
         var text = new Faker().Lorem.Sentence(8);
+        ManagementApi? live = null;
+        ManagementApi? cold = null;
+        Exception? bodyFailure = null;
+        SuiteDiagnostics.StorageObservation? observation = null;
         try
         {
             ManagedDatabaseRef database;
             string user;
-            await using (var live = await StartAsync(directory))
+            live = await StartAsync(directory);
             {
                 database = await live.CreateManagedDatabaseAsync();
                 user = live.User;
@@ -47,6 +51,9 @@ public sealed class BackupKeySaturationTests
                 await Assert.That(status.LastError).IsNull();
                 await Assert.That(status.Generation).IsNotNull();
             }
+
+            await live.DisposeAsync();
+            live = null;
 
             // Start from a real shipped snapshot and stopped database. The cold node receives only the catalog and
             // layout marker; its project file and plaintext key caches do not come from the live node.
@@ -116,6 +123,9 @@ public sealed class BackupKeySaturationTests
             var primingObjectGets = 0;
             var targetObjectGets = 0;
             var lastGetTicks = Stopwatch.GetTimestamp();
+            var pipeline = new BackupReadObservation();
+            observation = SuiteDiagnostics.ObserveStorage("backup.key-saturation", progress: () => string.Create(CultureInfo.InvariantCulture,
+                $"gets={Volatile.Read(ref keyGets)}/{Volatile.Read(ref primingObjectGets)}/{Volatile.Read(ref targetObjectGets)}/{targetRequests.Gets} idle_ms={(long)Stopwatch.GetElapsedTime(Volatile.Read(ref lastGetTicks)).TotalMilliseconds} {pipeline.Progress()}"));
             var allTargetObjectsStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             oci.BeforeGet = async (key, token) =>
             {
@@ -143,7 +153,10 @@ public sealed class BackupKeySaturationTests
                 }
             };
 
-            await using var cold = await StartAsync(coldDirectory);
+            observation.Phase("cold.start");
+            cold = await StartAsync(coldDirectory, pipeline);
+            observation.ObserveServer("cold", cold.Server);
+            observation.Phase("cold.ship-system");
             var coldBackup = cold.Server.Services.GetRequiredService<IContinuousBackup>();
             await coldBackup.RunOnceAsync(cancellationToken);
             var systemStatus = coldBackup.Status.Files.Single(status => status.File == "v1/_system");
@@ -188,11 +201,14 @@ public sealed class BackupKeySaturationTests
                 var started = Stopwatch.GetTimestamp();
                 try
                 {
+                    observation.Phase(name == "primed" ? "priming.restore" : "saturated.restore");
                     using var restored = await owner.PostAsJsonAsync(ManagementApi.Uri(database.Path + "/point-in-time/restore"), new { pointInTime, name }, cancellationToken);
                     await Assert.That(restored.StatusCode).IsEqualTo(HttpStatusCode.Created);
+                    observation.Phase(name == "primed" ? "priming.read" : "saturated.read");
                     using var read = await reader.GetAsync(ManagementApi.Uri($"/v1/projects/{database.Project}/databases/{name}/collections/items/documents/by-key?id={ManagementApi.DocumentId("before")}"), cancellationToken);
                     read.EnsureSuccessStatusCode();
                     await Assert.That((await read.Content.ReadFromJsonAsync<JsonElement>(cancellationToken)).GetProperty("document").GetProperty("text").GetString()).IsEqualTo(text);
+                    observation.Phase(name == "primed" ? "priming.delete" : "saturated.delete");
                     using var deleted = await owner.DeleteAsync(restored.Headers.Location, cancellationToken);
                     deleted.EnsureSuccessStatusCode();
                 }
@@ -205,13 +221,30 @@ public sealed class BackupKeySaturationTests
                 }
             }
         }
+        catch (Exception error)
+        {
+            bodyFailure = error;
+            TestContext.Current!.OutputWriter.WriteLine("Backup diagnostics: gets=key/priming/target/target-key; phases=active/starts/oldest-active-ms; Body overlaps its Read/Key/Decode/Output scopes.");
+            observation?.BodyFailed(error);
+        }
         finally
         {
-            Directory.Delete(directory, recursive: true);
-            Directory.Delete(coldDirectory, recursive: true);
+            observation?.Phase("owners.dispose");
+            try
+            {
+                await SuiteDiagnostics.CleanupAfterBodyAsync(bodyFailure, () =>
+                {
+                    Directory.Delete(directory, recursive: true);
+                    Directory.Delete(coldDirectory, recursive: true);
+                }, cold, live);
+            }
+            finally
+            {
+                observation?.Dispose();
+            }
         }
 
-        async Task<ManagementApi> StartAsync(string dataDirectory)
+        async Task<ManagementApi> StartAsync(string dataDirectory, BackupReadObservation? pipeline = null)
         {
             var api = await ManagementApi.StartAsync(settings =>
             {
@@ -221,6 +254,11 @@ public sealed class BackupKeySaturationTests
             {
                 oci.Route(services);
                 ManualBackupHosting.Configure(services);
+                if (pipeline is not null)
+                {
+                    services.AddSingleton(pipeline);
+                }
+
                 // Bound captured output from the 65,536-key workload; warnings and errors remain visible.
                 services.AddLogging(logging => logging.AddFilter("System.Net.Http.HttpClient", LogLevel.Warning));
             }, time);

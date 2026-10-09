@@ -174,7 +174,8 @@ internal sealed partial class CatalogForwarder
             }
 
             // The deadline covers reading the body too: a slow upload holds a slot and a reservation no longer than any request.
-            var deadline = _time.GetUtcNow().UtcDateTime + ForwardingProtocol.Deadline;
+            // gRPC measures absolute deadlines on the system clock, independently of the injected expiry clock.
+            var deadline = DateTime.UtcNow + ForwardingProtocol.Deadline;
             using var expiry = new CancellationTokenSource(ForwardingProtocol.Deadline, _time);
             using var bounded = CancellationTokenSource.CreateLinkedTokenSource(aborted, expiry.Token);
             using var bodyMemory = new QosContext.ResultMemory(_budget);

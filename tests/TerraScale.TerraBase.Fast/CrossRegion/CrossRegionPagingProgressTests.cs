@@ -364,13 +364,14 @@ public sealed partial class CrossRegionPagingProgressTests
 
     // Many databases with few catalog commits: at most 16 database operations each, the commit limit.
     private static async Task<List<ManagedDatabaseRef>> CreatePlacedAsync(
-        ManagementApi api, string organization, string project, IEnumerable<string> names, CancellationToken token)
+        ManagementApi api, string organization, string project, IEnumerable<string> names, CancellationToken token,
+        SuiteDiagnostics.StorageObservation? observation = null)
     {
         var output = TUnit.Core.TestContext.Current!.OutputWriter;
         var databases = new List<ManagedDatabaseRef>();
         foreach (var batch in names.Select(name => new ManagedDatabaseRef(organization, project, EntityIds.New().ToString(), name)).Chunk(16))
         {
-            output.WriteLine($"paging inventory: seed batch starts after {databases.Count} databases, adding {batch.Length}");
+            observation?.Phase("home.commit." + (databases.Count + batch.Length).ToString(CultureInfo.InvariantCulture));
             using var created = await api.Client.PostAsJsonAsync(ManagementApi.Uri("/v1/management/commits"), new
             {
                 id = EntityIds.New().ToString(),

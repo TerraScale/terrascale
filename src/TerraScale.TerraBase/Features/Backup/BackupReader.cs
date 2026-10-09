@@ -10,7 +10,7 @@ namespace TerraBase.Features.Backup;
 /// Reads a file's backup back: lists its snapshots, and rebuilds the file in scratch space from a snapshot rolled forward
 /// through its generation's segments. Restores and restore drills both go through here.
 /// </summary>
-internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKeys keys, TerraBaseOptions options)
+internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKeys keys, TerraBaseOptions options, BackupReadObservation? observation = null)
 {
     private const int FrameHeaderBytes = 24;
 
@@ -50,7 +50,14 @@ internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKe
 
             var frameBytes = FrameHeaderBytes + await PageSizeAsync(restored, cancellationToken).ConfigureAwait(false);
             var reached = new StrongBox<long>(snapshot.Position);
-            if (!await engine.RollForwardAsync(restored, SegmentsAsync(file, scope, snapshot, at, until, frameBytes, reached, cancellationToken), cancellationToken)
+            var segments = SegmentsAsync(file, scope, snapshot, at, until, frameBytes, reached, cancellationToken);
+            using var replay = observation?.Enter(BackupReadObservation.Phase.Replay);
+            if (observation is not null)
+            {
+                segments = ObserveSegmentsAsync(segments, replay.GetValueOrDefault(), cancellationToken);
+            }
+
+            if (!await engine.RollForwardAsync(restored, segments, cancellationToken)
                 .ConfigureAwait(false))
             {
                 throw new InvalidDataException("the restored database fails its integrity check");
@@ -62,6 +69,49 @@ internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKe
         {
             Delete(restored);
             throw;
+        }
+    }
+
+    private async IAsyncEnumerable<Stream> ObserveSegmentsAsync(IAsyncEnumerable<Stream> segments, BackupReadObservation.Scope replay,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        var iterator = segments.GetAsyncEnumerator(cancellationToken);
+        try
+        {
+            while (true)
+            {
+                bool next;
+                replay.Pause();
+                try
+                {
+                    using var wait = observation!.Enter(BackupReadObservation.Phase.ReplayWait);
+                    next = await iterator.MoveNextAsync().ConfigureAwait(false);
+                }
+                finally
+                {
+                    replay.Resume();
+                }
+
+                if (!next)
+                {
+                    yield break;
+                }
+
+                yield return iterator.Current;
+            }
+        }
+        finally
+        {
+            replay.Pause();
+            try
+            {
+                using var wait = observation!.Enter(BackupReadObservation.Phase.ReplayWait);
+                await iterator.DisposeAsync().ConfigureAwait(false);
+            }
+            finally
+            {
+                replay.Resume();
+            }
         }
     }
 
@@ -178,8 +228,10 @@ internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKe
             bool found;
             try
             {
-                found = await store.ReadAsync(key, (content, readToken) => BackupObject.ReadAsync(content, output, key, id => keys.GetAsync(scope, id, readToken), readToken),
-                    cancellationToken).ConfigureAwait(false);
+                found = observation is null
+                    ? await store.ReadAsync(key, (content, readToken) => BackupObject.ReadAsync(content, output, key, id => keys.GetAsync(scope, id, readToken), readToken),
+                        cancellationToken).ConfigureAwait(false)
+                    : await ReadObservedAsync(key, scope, output, cancellationToken).ConfigureAwait(false);
             }
             catch (Exception error) when (attempt < 3 && error is not OperationCanceledException)
             {
@@ -194,6 +246,25 @@ internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKe
 
             return;
         }
+    }
+
+    private async Task<bool> ReadObservedAsync(string key, string scope, Stream output, CancellationToken cancellationToken)
+    {
+        using var fetch = observation!.Enter(BackupReadObservation.Phase.Fetch);
+        return await store.ReadAsync(key, async (content, readToken) =>
+        {
+            fetch.Pause();
+            try
+            {
+                using var body = observation.Enter(BackupReadObservation.Phase.Body);
+                await BackupObject.ReadAsync(content, output, key, id => keys.GetAsync(scope, id, readToken), readToken, observation).ConfigureAwait(false);
+            }
+            finally
+            {
+                // Fetch owns store completion and response cleanup outside the body callback.
+                fetch.Resume();
+            }
+        }, cancellationToken).ConfigureAwait(false);
     }
 
     // The page size at offset 16 of the database header; 1 means 65536.

@@ -40,6 +40,13 @@ public sealed class CrossRegionDiscoveryBudgetTests
     public async Task Discovery_refills_without_a_batch_barrier_and_expiry_preserves_heads_and_existing_replicas(string discovery)
     {
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
+        using var observation = discovery is "scattered-pages" or "page-overflow" or "transitive"
+            ? SuiteDiagnostics.ObserveStorage("wan.discovery." + discovery) : null;
+        ManagementApi? shared = null;
+        ManagementApi? direct = null;
+        ManagementApi? c = null;
+        ManagementApi? sfo = null;
+        Exception? bodyFailure = null;
         var overflow = discovery == "deferred-overflow";
         var rejected = discovery.StartsWith("scatter-", StringComparison.Ordinal) || discovery == "page-overflow";
         var faker = new Faker();
@@ -54,11 +61,19 @@ public sealed class CrossRegionDiscoveryBudgetTests
             // The singleton cross-link selects the first real responder; direct-page discovery starts at B.
             var sharedMember = discovery == "member-page" ? "gru-b" : "gru-a";
             var directMember = discovery == "member-page" ? "gru-a" : "gru-b";
-            await using var shared = await StartAsync(network, credentials, "gru-1", "gru", sharedMember);
-            await using var direct = await StartAsync(network, credentials, "gru-1", "gru", directMember);
+            observation?.Phase("shared.host.start");
+            shared = await StartAsync(network, credentials, "gru-1", "gru", sharedMember);
+            observation?.ObserveServer("shared", shared.Server);
+            observation?.Phase("direct.host.start");
+            direct = await StartAsync(network, credentials, "gru-1", "gru", directMember);
+            observation?.ObserveServer("direct", direct.Server);
             var a = discovery == "member-page" ? direct : shared;
-            await using var c = await StartAsync(network, credentials, "gru-1", "gru", "gru-c");
-            await using var sfo = await StartAsync(network, credentials, "sfo-1", "sfo", "sfo-a", bus, clock);
+            observation?.Phase("c.host.start");
+            c = await StartAsync(network, credentials, "gru-1", "gru", "gru-c");
+            observation?.ObserveServer("c", c.Server);
+            observation?.Phase("sfo.host.start");
+            sfo = await StartAsync(network, credentials, "sfo-1", "sfo", "sfo-a", bus, clock);
+            observation?.ObserveServer("sfo", sfo.Server);
             try
             {
                 var organization = EntityIds.New().ToString();
@@ -68,6 +83,7 @@ public sealed class CrossRegionDiscoveryBudgetTests
                 var organizationName = faker.Company.CompanyName();
                 var projectName = faker.Random.AlphaNumeric(12);
                 // A cannot adopt C's database from SFO's replies: only C and SFO register its project.
+                observation?.Phase("catalog.organization-project");
                 foreach (var (api, registeredOrganization, registeredProject) in new[]
                 {
                     (a, organization, project), (sfo, organization, project),
@@ -87,15 +103,18 @@ public sealed class CrossRegionDiscoveryBudgetTests
                     registered.EnsureSuccessStatusCode();
                 }
 
+                observation?.Phase("home.databases.create");
                 var first = await CreatePlacedAsync(a, organization, project, "page-one", token);
                 var second = await CreatePlacedAsync(a, organization, project, "page-two", token);
                 // ULID text has the same ordering as the protocol's big-endian keys within this project.
                 var healthy = string.CompareOrdinal(first.Id, second.Id) < 0 ? first : second;
                 var retained = await CreatePlacedAsync(c, holderOrganization, holderProject, "retained", token);
+                observation?.Phase("client.keys");
                 using var source = await a.CreateClientAsync(organization, "documents:read", "documents:write");
                 using var holder = await c.CreateClientAsync(holderOrganization, "documents:read", "documents:write");
                 using var target = await sfo.CreateClientAsync(organization, "documents:read", "documents:write");
                 using var retainedTarget = await sfo.CreateClientAsync(holderOrganization, "documents:read", "documents:write");
+                observation?.Phase("source.documents.seed");
                 foreach (var database in new[] { first, second })
                 {
                     await ManagementApi.CreateCollectionAsync(source, database, "items");
@@ -121,8 +140,10 @@ public sealed class CrossRegionDiscoveryBudgetTests
                     unlistedVersion = unlistedWrite.Headers.ETag!.Tag;
                 }
 
+                observation?.Phase("wan.cold-seed");
                 bus.Begin.TrySetResult();
                 await clock.PausedAsync(token);
+                observation?.Phase("wan.round.verify");
                 await AssertReadAsync(target, document, initial, written.Headers.ETag!.Tag, token);
                 var retainedVersion = retainedWrite.Headers.ETag!.Tag;
                 await AssertReadAsync(retainedTarget, retainedDocument, retainedValue, retainedVersion, token);
@@ -165,7 +186,9 @@ public sealed class CrossRegionDiscoveryBudgetTests
                     {
                         bus.NextRound();
                         clock.Advance(WanPuller.Interval);
+                        observation?.Phase("wan.round.wait");
                         await clock.PausedAsync(token);
+                        observation?.Phase("wan.round.verify");
                         await AssertReadAsync(target, document, update, updated.Headers.ETag!.Tag, token);
                         await AssertReadAsync(retainedTarget, retainedDocument, previousRetainedValue, previousRetainedVersion, token);
                         using var saved = await sfo.Client.GetAsync(ManagementApi.Uri(retained.Path), token);
@@ -223,7 +246,9 @@ public sealed class CrossRegionDiscoveryBudgetTests
                     bus.NextRound();
                     bus.Faulted = false;
                     clock.Advance(TimeSpan.FromMilliseconds(500));
+                    observation?.Phase("wan.round.wait");
                     await clock.PausedAsync(token);
+                    observation?.Phase("wan.round.verify");
                     await AssertReadAsync(retainedTarget, retainedDocument, retainedValue, retainedVersion, token);
                     await Assert.That(bus.Pulls.Single(pull => pull.DatabaseId == WanProtocol.Id(retained.Id)).After)
                         .IsEqualTo(bus.InitialSequences[WanProtocol.Id(retained.Id)]);
@@ -243,18 +268,24 @@ public sealed class CrossRegionDiscoveryBudgetTests
                 clock.Advance(WanPuller.Interval);
                 if (discovery == "scattered-pages")
                 {
+                    observation?.Phase("wan.wait.ScatteredEnumerated");
                     await bus.ScatteredEnumerated.Task.WaitAsync(TimeSpan.FromSeconds(30), token);
+                    observation?.Phase("wan.round.verify");
                     await Assert.That(bus.ScatteredReplies).IsEqualTo(11);
                     await Assert.That(bus.HeadsAtScatterCompletion).IsEqualTo(0);
                     await Assert.That(bus.HolderQueried.Task.IsCompleted).IsFalse();
                 }
 
+                observation?.Phase("wan.wait.Pending");
                 await bus.Pending.Task.WaitAsync(TimeSpan.FromSeconds(30), token);
+                observation?.Phase("wan.round.verify");
 
                 if (discovery == "refill")
                 {
                     // B reveals C while all seven other requests remain held, without advancing the deadline.
+                    observation?.Phase("wan.wait.HolderQueried");
                     await bus.HolderQueried.Task.WaitAsync(token);
+                    observation?.Phase("wan.round.verify");
                     await Assert.That(bus.ActiveHeads).IsEqualTo(8);
                     await Assert.That(bus.CancelledHeads).IsEqualTo(0);
                     await Assert.That(clock.GetUtcNow() - clock.Started).IsEqualTo(WanPuller.Interval);
@@ -265,7 +296,9 @@ public sealed class CrossRegionDiscoveryBudgetTests
                 {
                     await Assert.That(bus.CancelledHeads).IsEqualTo(0);
                     clock.Advance(TimeSpan.FromSeconds(10));
+                    observation?.Phase("wan.wait.Cancelled");
                     await bus.Cancelled.Task.WaitAsync(TimeSpan.FromSeconds(30), token);
+                    observation?.Phase("wan.round.verify");
                     var advertised = bus.OverflowAdvertisement!;
                     await Assert.That(advertised.Member).IsEqualTo("gru-a");
                     await Assert.That(advertised.Members.Count).IsEqualTo(1024);
@@ -302,7 +335,9 @@ public sealed class CrossRegionDiscoveryBudgetTests
                     if (discovery == "shared-page-live")
                     {
                         // C answers while A's continuation still occupies a slot and its discovery budget.
+                        observation?.Phase("wan.wait.HolderQueried");
                         await bus.HolderQueried.Task.WaitAsync(TimeSpan.FromSeconds(30), token);
+                        observation?.Phase("wan.round.verify");
                         await Assert.That(bus.ActiveHeads).IsEqualTo(2);
                         await Assert.That(bus.CancelledHeads).IsEqualTo(0);
                         await Assert.That(bus.HeadRequests).IsEqualTo(2);
@@ -310,21 +345,27 @@ public sealed class CrossRegionDiscoveryBudgetTests
                         await Assert.That(clock.GetUtcNow() - clock.Started).IsEqualTo(WanPuller.Interval);
                         await AssertReadAsync(retainedTarget, retainedDocument, previousRetainedValue, previousRetainedVersion, token);
                         bus.ReleaseHolder.TrySetResult();
+                        observation?.Phase("wan.wait.HolderReplied");
                         await bus.HolderReplied.Task.WaitAsync(TimeSpan.FromSeconds(30), token);
+                        observation?.Phase("wan.round.verify");
                     }
 
                     await Assert.That(bus.ActiveHeads).IsEqualTo(bus.ExpectedPending);
                     clock.Advance(TimeSpan.FromSeconds(9));
                     await Assert.That(bus.CancelledHeads).IsEqualTo(0);
                     clock.Advance(TimeSpan.FromSeconds(1));
+                    observation?.Phase("wan.wait.Cancelled");
                     await bus.Cancelled.Task.WaitAsync(token);
+                    observation?.Phase("wan.round.verify");
                     // Cancelled tasks deliberately have not returned yet: pulling must join them first.
                     await Assert.That(bus.ActiveHeads).IsEqualTo(bus.ExpectedPending);
                     await Assert.That(bus.PullRequests).IsEqualTo(0);
                     bus.ReleaseCancelled.TrySetResult();
                 }
 
+                observation?.Phase("wan.round.wait");
                 await clock.PausedAsync(token);
+                observation?.Phase("wan.round.verify");
                 await AssertReadAsync(target, document, update, updated.Headers.ETag!.Tag, token);
                 await AssertReadAsync(retainedTarget, retainedDocument, retainedValue, retainedVersion, token);
                 using var preserved = await sfo.Client.GetAsync(ManagementApi.Uri(retained.Path), token);
@@ -379,7 +420,9 @@ public sealed class CrossRegionDiscoveryBudgetTests
                     {
                         bus.NextRound();
                         clock.Advance(TimeSpan.FromMilliseconds(500));
+                        observation?.Phase("wan.round.wait");
                         await clock.PausedAsync(token);
+                        observation?.Phase("wan.round.verify");
                         await Assert.That(bus.HolderQueried.Task.IsCompleted).IsTrue();
                         await Assert.That(bus.HiddenAdvertisements).IsEqualTo(1);
                         await Assert.That(bus.HeadRequests).IsEqualTo(overflow && round == 0 ? 1021 : hiddenRequests);
@@ -404,7 +447,9 @@ public sealed class CrossRegionDiscoveryBudgetTests
                     bus.HealHolder = true;
                     bus.ReleaseHolder.TrySetResult();
                     clock.Advance(TimeSpan.FromMilliseconds(500));
+                    observation?.Phase("wan.round.wait");
                     await clock.PausedAsync(token);
+                    observation?.Phase("wan.round.verify");
                     await Assert.That(bus.HolderQueried.Task.IsCompleted).IsTrue();
                     await Assert.That(bus.HiddenAdvertisements).IsEqualTo(2);
                     await Assert.That(bus.HeadRequests).IsEqualTo(hiddenRequests);
@@ -440,12 +485,16 @@ public sealed class CrossRegionDiscoveryBudgetTests
 
                         bus.NextRound();
                         clock.Advance(TimeSpan.FromMilliseconds(500));
+                        observation?.Phase("wan.wait.ScatteredEnumerated");
                         await bus.ScatteredEnumerated.Task.WaitAsync(TimeSpan.FromSeconds(30), token);
+                        observation?.Phase("wan.round.verify");
                         await Assert.That(bus.ScatteredReplies).IsEqualTo(11);
                         await Assert.That(bus.HeadsAtScatterCompletion).IsEqualTo(0);
                         if (queriesHolder)
                         {
+                            observation?.Phase("wan.wait.HolderQueried");
                             await bus.HolderQueried.Task.WaitAsync(TimeSpan.FromSeconds(30), token);
+                            observation?.Phase("wan.round.verify");
                             await Assert.That(bus.ActiveHeads).IsEqualTo(8);
                             await Assert.That(bus.CancelledHeads).IsEqualTo(0);
                             await Assert.That(bus.PullRequests).IsEqualTo(0);
@@ -453,18 +502,24 @@ public sealed class CrossRegionDiscoveryBudgetTests
                             bus.ReleaseHolder.TrySetResult();
                         }
 
+                        observation?.Phase("wan.wait.Pending");
                         await bus.Pending.Task.WaitAsync(TimeSpan.FromSeconds(30), token);
+                        observation?.Phase("wan.round.verify");
                         await Assert.That(bus.HolderQueried.Task.IsCompleted).IsEqualTo(queriesHolder);
                         await Assert.That(bus.ActiveHeads).IsEqualTo(8);
                         await Assert.That(bus.HeadRequests).IsEqualTo(queriesHolder ? 9 : 8);
                         await Assert.That(bus.CancelledHeads).IsEqualTo(0);
                         await Assert.That(clock.GetUtcNow() - clock.Started).IsEqualTo(TimeSpan.FromSeconds(11 * (round - 1) + 1));
                         clock.Advance(TimeSpan.FromSeconds(10));
+                        observation?.Phase("wan.wait.Cancelled");
                         await bus.Cancelled.Task.WaitAsync(TimeSpan.FromSeconds(30), token);
+                        observation?.Phase("wan.round.verify");
                         await Assert.That(bus.ActiveHeads).IsEqualTo(8);
                         await Assert.That(bus.PullRequests).IsEqualTo(0);
                         bus.ReleaseCancelled.TrySetResult();
+                        observation?.Phase("wan.round.wait");
                         await clock.PausedAsync(token);
+                        observation?.Phase("wan.round.verify");
                         await AssertReadAsync(target, document, update, updated.Headers.ETag!.Tag, token);
                         await AssertReadAsync(target, unlistedDocument, unlistedValue, unlistedVersion!, token);
                         await AssertReadAsync(retainedTarget, retainedDocument, retainedValue, retainedVersion, token);
@@ -506,8 +561,12 @@ public sealed class CrossRegionDiscoveryBudgetTests
                         await Assert.That(bus.HolderQueried.Task.IsCompleted).IsFalse();
                         bus.NextRound();
                         clock.Advance(TimeSpan.FromMilliseconds(500));
+                        observation?.Phase("wan.wait.BridgeReplied");
                         await bus.BridgeReplied.Task.WaitAsync(TimeSpan.FromSeconds(30), token);
+                        observation?.Phase("wan.round.verify");
+                        observation?.Phase("wan.wait.Pending");
                         await bus.Pending.Task.WaitAsync(TimeSpan.FromSeconds(30), token);
+                        observation?.Phase("wan.round.verify");
                         await Assert.That(bus.HolderQueried.Task.IsCompleted).IsFalse();
                         await Assert.That(bus.ActiveHeads).IsEqualTo(8);
                         await Assert.That(bus.CancelledHeads).IsEqualTo(0);
@@ -516,11 +575,15 @@ public sealed class CrossRegionDiscoveryBudgetTests
                         await Assert.That(clock.GetUtcNow() - clock.Started).IsEqualTo(TimeSpan.FromSeconds(12));
                         await AssertReadAsync(retainedTarget, retainedDocument, beforeHolderUpdate, retainedVersion, token);
                         clock.Advance(TimeSpan.FromSeconds(10));
+                        observation?.Phase("wan.wait.Cancelled");
                         await bus.Cancelled.Task.WaitAsync(TimeSpan.FromSeconds(30), token);
+                        observation?.Phase("wan.round.verify");
                         await Assert.That(bus.ActiveHeads).IsEqualTo(8);
                         await Assert.That(bus.PullRequests).IsEqualTo(0);
                         bus.ReleaseCancelled.TrySetResult();
+                        observation?.Phase("wan.round.wait");
                         await clock.PausedAsync(token);
+                        observation?.Phase("wan.round.verify");
                         await AssertReadAsync(retainedTarget, retainedDocument, beforeHolderUpdate, retainedVersion, token);
                         using var bridgeRoundPreserved = await sfo.Client.GetAsync(ManagementApi.Uri(retained.Path), token);
                         await Assert.That(bridgeRoundPreserved.StatusCode).IsEqualTo(HttpStatusCode.OK);
@@ -541,18 +604,26 @@ public sealed class CrossRegionDiscoveryBudgetTests
                     // Deferred C must precede repeated silent listings in the next discovery budget.
                     bus.NextRound();
                     clock.Advance(TimeSpan.FromMilliseconds(500));
+                    observation?.Phase("wan.wait.HolderQueried");
                     await bus.HolderQueried.Task.WaitAsync(TimeSpan.FromSeconds(30), token);
+                    observation?.Phase("wan.round.verify");
                     await Assert.That(bus.ActiveHeads).IsEqualTo(8);
                     await Assert.That(bus.CancelledHeads).IsEqualTo(0);
                     await Assert.That(clock.GetUtcNow() - clock.Started).IsEqualTo(TimeSpan.FromSeconds(discovery == "transitive" ? 23 : 12));
                     await AssertReadAsync(retainedTarget, retainedDocument, beforeHolderUpdate, retainedVersion, token);
                     bus.ReleaseHolder.TrySetResult();
+                    observation?.Phase("wan.wait.Pending");
                     await bus.Pending.Task.WaitAsync(token);
+                    observation?.Phase("wan.round.verify");
                     clock.Advance(TimeSpan.FromSeconds(10));
+                    observation?.Phase("wan.wait.Cancelled");
                     await bus.Cancelled.Task.WaitAsync(token);
+                    observation?.Phase("wan.round.verify");
                     await Assert.That(bus.PullRequests).IsEqualTo(0);
                     bus.ReleaseCancelled.TrySetResult();
+                    observation?.Phase("wan.round.wait");
                     await clock.PausedAsync(token);
+                    observation?.Phase("wan.round.verify");
                     await AssertReadAsync(retainedTarget, retainedDocument, retainedValue, holderUpdated.Headers.ETag!.Tag, token);
                     using var stillRegistered = await sfo.Client.GetAsync(ManagementApi.Uri(retained.Path), token);
                     await Assert.That(stillRegistered.StatusCode).IsEqualTo(HttpStatusCode.OK);
@@ -581,9 +652,16 @@ public sealed class CrossRegionDiscoveryBudgetTests
                 bus.ReleaseHolder.TrySetResult();
             }
         }
+        catch (Exception error)
+        {
+            bodyFailure = error;
+            observation?.BodyFailed(error);
+            throw;
+        }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            observation?.Phase("cleanup");
+            await SuiteDiagnostics.CleanupAfterBodyAsync(bodyFailure, () => Directory.Delete(directory, recursive: true), sfo, c, direct, shared);
         }
     }
 

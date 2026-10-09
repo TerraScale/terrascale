@@ -176,6 +176,10 @@ public sealed partial class CrossRegionPagingProgressTests
     public async Task A_seventeen_page_inventory_completes_across_rounds_and_advances_the_local_cleanup_page(bool malformedPrefix)
     {
         var elapsed = Stopwatch.StartNew();
+        using var observation = SuiteDiagnostics.ObserveStorage("wan.inventory." + malformedPrefix.ToString(CultureInfo.InvariantCulture));
+        ManagementApi? gru = null;
+        ManagementApi? sfo = null;
+        Exception? bodyFailure = null;
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         var output = TUnit.Core.TestContext.Current!.OutputWriter;
         var faker = new Faker();
@@ -187,17 +191,19 @@ public sealed partial class CrossRegionPagingProgressTests
         {
             var credentials = Path.Combine(directory, "user.creds");
             await File.WriteAllTextAsync(credentials, Credentials, token);
-            output.WriteLine("paging inventory: starting home server");
-            await using var gru = await StartAsync(network, credentials, "gru-1", "gru", "gru-a");
-            output.WriteLine("paging inventory: starting replica server");
-            await using var sfo = await StartAsync(network, credentials, "sfo-1", "sfo", "sfo-a", bus, clock);
+            observation.Phase("gru.host.start");
+            gru = await StartAsync(network, credentials, "gru-1", "gru", "gru-a");
+            observation.ObserveServer("gru", gru.Server);
+            observation.Phase("sfo.host.start");
+            sfo = await StartAsync(network, credentials, "sfo-1", "sfo", "sfo-a", bus, clock);
+            observation.ObserveServer("sfo", sfo.Server);
             try
             {
                 var organization = EntityIds.New().ToString();
                 var project = EntityIds.New().ToString();
                 var organizationName = faker.Company.CompanyName();
                 var projectName = faker.Random.AlphaNumeric(12);
-                output.WriteLine("paging inventory: registering organization and project on both servers");
+                observation.Phase("catalog.organization-project");
                 foreach (var api in new[] { gru, sfo })
                 {
                     using var service = api.Service(api.User);
@@ -215,7 +221,7 @@ public sealed partial class CrossRegionPagingProgressTests
 
                 output.WriteLine("paging inventory: creating 103 home databases");
                 var databases = await CreatePlacedAsync(gru, organization, project,
-                    Enumerable.Range(0, 103).Select(index => "sweep-" + index.ToString(CultureInfo.InvariantCulture)), token);
+                    Enumerable.Range(0, 103).Select(index => "sweep-" + index.ToString(CultureInfo.InvariantCulture)), token, observation);
 
                 // Within one project, canonical ULID text orders like both the catalog and 48-byte WAN cursors.
                 databases.Sort((left, right) => string.CompareOrdinal(left.Id, right.Id));
@@ -225,9 +231,10 @@ public sealed partial class CrossRegionPagingProgressTests
                 var documents = observed.Select(database => ManagementApi.Uri(ManagementApi.DocumentPath(database, "items", "saved"))).ToArray();
                 var values = observed.Select(_ => faker.Lorem.Sentence()).ToArray();
                 var versions = new string[observed.Length];
-                output.WriteLine("paging inventory: creating document clients");
+                observation.Phase("client.keys");
                 using var source = await gru.CreateClientAsync(organization, "documents:read", "documents:write");
                 using var target = await sfo.CreateClientAsync(organization, "documents:read", "documents:write");
+                observation.Phase("source.documents.seed");
                 for (var index = 0; index < observed.Length; index++)
                 {
                     output.WriteLine($"paging inventory: seeding observed document {index}");
@@ -239,7 +246,7 @@ public sealed partial class CrossRegionPagingProgressTests
                 }
 
                 // One unlimited real heads scan seeds every record and replica file before pagination is constrained.
-                output.WriteLine("paging inventory: waiting for initial WAN seed round to pause");
+                observation.Phase("wan.cold-seed");
                 var setupSeconds = elapsed.Elapsed.TotalSeconds;
                 var seedPause = GC.GetTotalPauseDuration();
                 bus.Begin.TrySetResult();
@@ -263,6 +270,7 @@ public sealed partial class CrossRegionPagingProgressTests
                         $"WAN cold seed: malformed={malformedPrefix} setup_s={setupSeconds:F3} seed_s={elapsed.Elapsed.TotalSeconds - setupSeconds:F3} gc_pause_s={(GC.GetTotalPauseDuration() - seedPause).TotalSeconds:F3} db_files={files} advertised={bus.LastAdvertisement?.Heads.Count ?? -1}"));
                     throw;
                 }
+                observation.Phase("wan.seed.verify");
                 HashSet<string> removed = [with(StringComparer.Ordinal)];
                 output.WriteLine("paging inventory: validating initial inventory and documents");
                 await AssertSweepInventoryAsync(sfo, databases, removed, token);
@@ -274,7 +282,7 @@ public sealed partial class CrossRegionPagingProgressTests
                 await Assert.That(bus.LastAdvertisement!.Heads.Count).IsEqualTo(103);
                 await Assert.That(bus.LastAdvertisement.More).IsFalse();
                 await Assert.That(await sfo.Server.MetricAsync("terrabase_wan_staleness_seconds", GruLabel, token)).IsEqualTo(0);
-                output.WriteLine("paging inventory: unplacing and deleting two home databases");
+                observation.Phase("source.databases.delete");
                 foreach (var database in new[] { firstPageDeleted, nextPageDeleted })
                 {
                     using var unplaced = await gru.Client.PatchAsJsonAsync(ManagementApi.Uri(database.Path), new { replicaRegions = Array.Empty<string>() }, token);
@@ -295,9 +303,9 @@ public sealed partial class CrossRegionPagingProgressTests
                     bus.MalformedFirstReply = true;
                     for (var round = 0; round < 2; round++)
                     {
-                        output.WriteLine($"paging inventory: malformed-prefix round {round} advancing");
+                        observation.Phase("wan.malformed-round.wait");
                         await AdvanceSweepRoundAsync(bus, clock, token);
-                        output.WriteLine($"paging inventory: malformed-prefix round {round} validating");
+                        observation.Phase("wan.malformed-round.verify");
                         await Assert.That(bus.MalformedFirstReply).IsFalse();
                         await AssertSweepPagesAsync(bus, live, resumed: round == 1);
                         // A clean final suffix retires tainted evidence, but must not clean or advance this local page.
@@ -318,7 +326,7 @@ public sealed partial class CrossRegionPagingProgressTests
                 // Both cases must now start at the prefix and qualify the same first local catalog page, then the next.
                 for (var cycle = 0; cycle < 2; cycle++)
                 {
-                    output.WriteLine($"paging inventory: clean cycle {cycle} writing observed documents");
+                    observation.Phase("source.documents.update");
                     var previousTailValue = values[^1];
                     var previousTailVersion = versions[^1];
                     for (var index = 0; index < observed.Length; index++)
@@ -331,9 +339,9 @@ public sealed partial class CrossRegionPagingProgressTests
 
                     for (var round = 0; round < 2; round++)
                     {
-                        output.WriteLine($"paging inventory: clean cycle {cycle} round {round} advancing");
+                        observation.Phase("wan.round.wait");
                         await AdvanceSweepRoundAsync(bus, clock, token);
-                        output.WriteLine($"paging inventory: clean cycle {cycle} round {round} validating pages and documents");
+                        observation.Phase("wan.round.verify");
                         await AssertSweepPagesAsync(bus, live, resumed: round == 1);
                         await Assert.That(bus.Pulls.Any(pull => pull.DatabaseId == WanProtocol.Id(observed[^1].Id))).IsEqualTo(round == 1);
                         await Assert.That(bus.ActiveAtFirstPull).IsEqualTo(0);
@@ -374,9 +382,16 @@ public sealed partial class CrossRegionPagingProgressTests
                 bus.ReleaseAll();
             }
         }
+        catch (Exception error)
+        {
+            bodyFailure = error;
+            observation.BodyFailed(error);
+            throw;
+        }
         finally
         {
-            Directory.Delete(directory, recursive: true);
+            observation.Phase("cleanup");
+            await SuiteDiagnostics.CleanupAfterBodyAsync(bodyFailure, () => Directory.Delete(directory, recursive: true), sfo, gru);
         }
     }
 

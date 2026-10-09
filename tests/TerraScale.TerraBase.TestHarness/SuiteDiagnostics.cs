@@ -6,7 +6,7 @@ using System.Text;
 namespace TerraBase.Testing;
 
 /// <summary>Reports new bounded runtime samples at integration failures, before a CI job can be killed.</summary>
-public static class SuiteDiagnostics
+public static partial class SuiteDiagnostics
 {
     private const int Capacity = 600;
     private static readonly Queue<Sample> Samples = new(Capacity);
@@ -92,6 +92,7 @@ public static class SuiteDiagnostics
             }
 
             Samples.Enqueue(sample);
+            CaptureStorage(sample.Elapsed, sample.Pause);
         }
     }
 
