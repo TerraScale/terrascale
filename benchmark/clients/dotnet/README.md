@@ -29,10 +29,18 @@ The prepared checkout must remain clean; preparation refuses local changes and
 requires the pinned revision to be an ancestor of official `origin/main`.
 `make build`, `make test` and `make check` prepare a missing checkout before
 restore; a stamp inside `.sdk/.git` avoids fetching on every invocation.
-Preparation and verification serialize with `.sdk.lock`. If an
+Preparation holds an exclusive `.sdk.lock`; verification takes a shared lock.
+Every Makefile `dotnet` command runs through `with-sdk.sh`, holding a shared
+lock for the complete restore, build, formatting or test process. Preparation
+cannot replace SDK sources during compilation. Direct MSBuild invocations are
+rejected; use `make` or `bash clients/dotnet/with-sdk.sh dotnet ...`, which
+preserves the caller's working directory. Do not set its internal
+`TS_BENCH_SDK_LOCKED` marker yourself. If an
 interrupted clone leaves an unusable `.sdk`, move it aside before preparing again.
 Every build verifies the SDK origin, clean worktree and exact pinned HEAD before
 compilation, so diagnostics cannot silently report a different SDK source.
+Preparation fetches explicitly into `refs/remotes/origin/main` regardless of
+the checkout's configured fetch mapping.
 `nice` is applied by the local caller, never embedded in the Makefile or CI.
 This slice does not modify the repository-wide workflow, which does not yet
 run .NET client checks; the checks above are local validation only.

@@ -6,7 +6,11 @@ if [[ $# -gt 1 || ($# -eq 1 && "$1" != --verify) ]]; then
   exit 1
 fi
 exec 9>.sdk.lock
-flock 9
+if [[ ${1:-} == --verify ]]; then
+  flock --shared 9
+else
+  flock --exclusive 9
+fi
 revision=$(cat sdk.rev)
 if [[ ! "$revision" =~ ^[0-9a-f]{40}$ ]]; then
   echo 'sdk.rev must contain one full Git revision.' >&2
@@ -37,7 +41,7 @@ if [[ ${1:-} == --verify ]]; then
     exit 1
   fi
 else
-  git -C .sdk fetch origin main
+  git -C .sdk fetch origin refs/heads/main:refs/remotes/origin/main
 fi
 if ! git -C .sdk merge-base --is-ancestor "$revision" origin/main; then
   echo 'sdk.rev is not an ancestor of official origin/main; update the pin or refresh with prepare-sdk.sh.' >&2
