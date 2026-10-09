@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text.Json;
+using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Management.Backups;
@@ -34,7 +35,7 @@ internal sealed partial class EngineManagementService
             Unavailable error => error,
         };
 
-    // Bounded by count; each entry holds three ids of at most a few hundred bytes.
+    // Identity entries hold bounded ids; placement entries retain only the product's bounded name and region domain.
     private const int MaxCachedTenants = 4096;
 
     // Every data request resolves its database here. A lookup stays valid while the catalog has not committed since it
@@ -49,6 +50,14 @@ internal sealed partial class EngineManagementService
     private readonly Lock _planGate = new();
     private readonly Dictionary<string, (Ulid Incarnation, long Sequence, PlanTier Plan)> _plans = [];
 
+    // The same validity, keyed by database id, for the placement and registration checks replication makes on every head,
+    // pull and stream.
+    private readonly ConcurrentDictionary<(string Organization, string Project, string DatabaseId), (long Sequence, DatabaseRecordResult Value)> _placements = new();
+    private readonly ConcurrentDictionary<(string Organization, string Project, string DatabaseId), (long Sequence, RegisteredDatabaseResult Value)> _registrations = new();
+
+    // Serializes insertions so concurrent misses cannot grow a cache past MaxCachedTenants; never held across an await.
+    private readonly Lock _cacheInsertion = new();
+
     public async ValueTask<FindDatabaseResult> FindDatabaseAsync(string organizationId, string projectId, string database, CancellationToken cancellationToken)
     {
         var sequence = (await engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false)).CommitSequence;
@@ -61,16 +70,53 @@ internal sealed partial class EngineManagementService
         var found = await FindUncachedAsync(organizationId, projectId, database, cancellationToken).ConfigureAwait(false);
         if (found is TenantContext tenant)
         {
-            if (_tenants.Count >= MaxCachedTenants)
-            {
-                _tenants.Clear();
-            }
-
-            _tenants[key] = (sequence, tenant);
+            Cache(_tenants, key, sequence, tenant);
         }
 
         return found;
     }
+
+    private void Cache<T>(ConcurrentDictionary<(string, string, string), (long, T)> cache, (string, string, string) key, long sequence, T value)
+    {
+        lock (_cacheInsertion)
+        {
+            if (cache.Count >= MaxCachedTenants)
+            {
+                cache.Clear();
+            }
+
+            cache[key] = (sequence, value);
+        }
+    }
+
+    // A catalog read of database's identity, reused while the catalog has not committed since the read began.
+    private async ValueTask<T> ReadCachedAsync<T>(
+        ConcurrentDictionary<(string, string, string), (long Sequence, T Value)> cache, TenantContext database,
+        Func<IStorageTransaction, ValueTask<T>> read, Func<Unavailable, T> unavailable, CancellationToken cancellationToken, Func<T, bool> admit)
+    {
+        RequireNoCommit();
+        // Taken before the read: a commit racing it leaves the entry stale-tagged, never an older snapshot under a newer tag.
+        var sequence = (await engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false)).CommitSequence;
+        var key = (database.OrganizationId, database.ProjectId!, database.DatabaseId!);
+        if (cache.TryGetValue(key, out var cached) && cached.Sequence == sequence)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return cached.Value;
+        }
+
+        var value = await ReadAsync(read, unavailable, cancellationToken).ConfigureAwait(false);
+        if (admit(value))
+        {
+            Cache(cache, key, sequence, value);
+        }
+
+        return value;
+    }
+
+    // At most ten 63-character strings, about 2 KiB per entry. Larger remote records are answered without retaining them.
+    private static bool Admits((string Name, DatabasePlacement Placement)? record) =>
+        record is not { } value || (value.Name.Length <= 63 && TerraBaseOptions.IsRegion(value.Placement.Home)
+            && value.Placement.Replicas.Count <= DatabaseRegions.MaxReplicas && value.Placement.Replicas.All(TerraBaseOptions.IsRegion));
 
     private async ValueTask<FindDatabaseResult> FindUncachedAsync(string organizationId, string projectId, string database, CancellationToken cancellationToken)
     {
@@ -151,14 +197,19 @@ internal sealed partial class EngineManagementService
         ArgumentNullException.ThrowIfNull(database);
         return database.ProjectId is null || database.DatabaseId is null
             ? ValueTask.FromResult<DatabaseRecordResult>(ManagementErrors.NotFound)
-            : ReadAsync<DatabaseRecordResult>(async transaction =>
+            : ReadCachedAsync<DatabaseRecordResult>(_placements, database, async transaction =>
                 !Interprets(await GetAsync(transaction, Catalog, CatalogVersionId, Id, cancellationToken).ConfigureAwait(false))
                     ? UnreadableCatalog
                     : await GetAsync(transaction, Databases(database.ProjectId), database.DatabaseId, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken)
                         .ConfigureAwait(false) is { } record
                         ? new TenantDatabaseRecord(record.Name, record.Placement(options.Region))
                         : ManagementErrors.NotFound,
-                static error => error, cancellationToken);
+                static error => error, cancellationToken, static value => value switch
+                {
+                    TenantDatabaseRecord record => Admits((record.Name, record.Placement)),
+                    NotFound => true,
+                    Unavailable => false,
+                });
     }
 
     public ValueTask<ReadDatabaseRecordsResult> ReadDatabaseRecordsAsync(string homeRegion, TenantContext? after, CancellationToken cancellationToken) =>
@@ -424,12 +475,11 @@ internal sealed partial class EngineManagementService
             return found;
         }
 
-        if (_records.Count >= MaxCachedTenants)
+        var record = found is ManagedDatabase database ? database : null;
+        if (record is null || Admits((record.Name, record.Placement(options.Region))))
         {
-            _records.Clear();
+            Cache(_records, key, sequence, record);
         }
-
-        _records[key] = (sequence, found is ManagedDatabase database ? database : null);
         return found;
     }
 
@@ -478,14 +528,14 @@ internal sealed partial class EngineManagementService
         ArgumentNullException.ThrowIfNull(database);
         return database.ProjectId is null || database.DatabaseId is null
             ? ValueTask.FromResult<RegisteredDatabaseResult>(false)
-            : ReadAsync<RegisteredDatabaseResult>(async transaction =>
+            : ReadCachedAsync<RegisteredDatabaseResult>(_registrations, database, async transaction =>
                 !Interprets(await GetAsync(transaction, Catalog, CatalogVersionId, Id, cancellationToken).ConfigureAwait(false))
                     ? UnreadableCatalog
                     : await ScopeExistsUncheckedAsync(transaction, database.OrganizationId, database.ProjectId, database.DatabaseId, cancellationToken).ConfigureAwait(false)
                         && (options.Wan is null
                             || (await GetAsync(transaction, Databases(database.ProjectId), database.DatabaseId, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken)
                                 .ConfigureAwait(false))?.PlacedIn(options.Region) == true),
-                static error => error, cancellationToken);
+                static error => error, cancellationToken, static value => value is bool);
     }
 
     public ValueTask<ReplicatesDatabaseResult> ReplicatesAsync(TenantContext database, CancellationToken cancellationToken)

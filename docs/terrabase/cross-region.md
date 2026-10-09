@@ -57,7 +57,12 @@ Every member of a region **pulls** each other region's change groups:
    a deadline that cuts a fresh scan after the scattered replies ends the sweep like that member failing to answer. Malformed evidence taints the sweep;
    its eventual EOF starts a fresh scan of the same catalog page without cleanup or a staleness reset.
    Sweep proof, carryover and the overflow cleanup block are in-memory; restarting begins a fresh sweep.
-2. **Pull.** For each origin it is behind on, the member asks the member that holds it, on
+2. **Pull.** Independent database targets are prepared up to eight heads ahead, while pulls remain in heads order.
+   Duplicate database ids and names within a project prepare one at a time. With at least 32 queue slots per remote,
+   current targets and lookahead use at most a sixteenth of `storage-queue` across all remotes; smaller queues keep inline
+   preparation. Every started preparation finishes before the next round, and registration is checked again before
+   pulling a prepared target.
+   For each origin it is behind on, the member asks the member that holds it, on
    `ts.orch.v1.<cell>.query.terrabase-wan.member.<node-name>`, for the change groups after its own applied prefix.
    Replies hold whole groups, LZ4-compressed in the same versioned envelope as in-region replication
    ([0007](decisions/0007-lz4-application-envelope-replication.md)), up to 960 KiB. A larger group crosses in parts
@@ -221,6 +226,8 @@ Alert on `terrabase_wan_staleness_seconds` above a minute, and on any `ahead` fa
   head left behind on a resumed page without reviving a database certified deleted, the round's heads budget across
   members, saturating scattered first pages, retries during unanswered discovery, retries
   for an origin their member no longer holds, and malformed prefix/head preservation and healing.
+  `CrossRegionPagingProgressTests.Preparation.cs` covers bounded independent cold preparation, inline admission with
+  `storage-queue=1`, and deletion or placement removal between target preparation and its ordered pull.
 - **Slow** (`CrossRegion/CrossRegionPartitionTests.cs`) is the partition suite:
   - two regions of two members each (a catalog primary and its follower);
   - a link that drops, delays, duplicates and corrupts replies, with a partition and a heal;

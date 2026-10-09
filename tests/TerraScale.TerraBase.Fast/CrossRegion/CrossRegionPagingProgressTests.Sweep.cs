@@ -260,7 +260,7 @@ public sealed partial class CrossRegionPagingProgressTests
                     }
 
                     Console.Error.WriteLine(string.Create(CultureInfo.InvariantCulture,
-                        $"WAN cold seed: malformed={malformedPrefix} setup_s={setupSeconds:F3} seed_s={elapsed.Elapsed.TotalSeconds - setupSeconds:F3} gc_pause_s={(GC.GetTotalPauseDuration() - seedPause).TotalSeconds:F3} db_files={files} advertised={bus.LastAdvertisement?.Heads.Count ?? -1} pulls={bus.Pulls.Count} active_heads={bus.ActiveHeads}"));
+                        $"WAN cold seed: malformed={malformedPrefix} setup_s={setupSeconds:F3} seed_s={elapsed.Elapsed.TotalSeconds - setupSeconds:F3} gc_pause_s={(GC.GetTotalPauseDuration() - seedPause).TotalSeconds:F3} db_files={files} advertised={bus.LastAdvertisement?.Heads.Count ?? -1}"));
                     throw;
                 }
                 HashSet<string> removed = [with(StringComparer.Ordinal)];

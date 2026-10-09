@@ -19,7 +19,7 @@ public sealed record DatabaseRegionsRequest(string? Name, string? HomeRegion, IR
 /// </summary>
 public static class DatabaseRegions
 {
-    private const int MaxReplicas = 8;
+    internal const int MaxReplicas = 8;
 
     internal readonly union HomeRegionCheck(Done, Misdirected, NotFound, Unavailable);
 
