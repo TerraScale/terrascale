@@ -9,5 +9,6 @@ public static class DocumentsExtensions
             .AddSingleton<IDocumentService>(provider => provider.GetRequiredService<DocumentService>())
             .AddSingleton<ISystemDocumentReader>(provider => provider.GetRequiredService<DocumentService>())
             .AddSingleton<IShapeService, ShapeService>()
-            .AddSingleton<IShapeSubscriptionService, ShapeSubscriptionService>();
+            .AddSingleton<IShapeSubscriptionService, ShapeSubscriptionService>()
+            .AddSingleton<IChangeFeedService, ChangeFeedService>();
 }

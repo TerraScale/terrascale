@@ -10,7 +10,7 @@ using TerraBase.Tenancy;
 namespace TerraBase.Features.Management.Indexes;
 
 /// <remarks>Indexes live in the managed database's storage; recommendations come from the <see cref="QueryFieldUsage"/> records the SQL endpoint keeps.</remarks>
-internal sealed partial class IndexService(IStorageEngine engine, QueryFieldRecorder recorder) : IIndexService
+internal sealed partial class IndexService(IStorageEngine engine, QueryFieldRecorder recorder, SystemCatalog catalog) : IIndexService
 {
     private const int MaxNameLength = 63;
     private const int HashLength = 8;

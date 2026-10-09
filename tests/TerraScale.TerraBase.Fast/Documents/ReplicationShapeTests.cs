@@ -17,18 +17,34 @@ public sealed class ReplicationShapeTests
     [Arguments(true)]
     public async Task Imported_winners_below_the_receiver_head_wake_shapes_without_rewriting_merge_versions(bool equalVersion)
     {
+        using var issuer = new TestIssuer();
         using var peerTls = new PeerTls();
         using var clientTls = new ClientTls();
         await using var server = await TerraBaseTestServer.StartAsync(settings =>
         {
             peerTls.Apply(settings);
             clientTls.Apply(settings);
-        });
+            TestIssuer.Configure(settings);
+        }, issuer.Route);
         var tenant = await ReplicationTenant.CreateAsync(server, "db");
         using var client = clientTls.CreateClient(server.ClientAddress!, await tenant.KeyAsync(server, "documents:read", "documents:write", "shapes:read"));
         var collections = $"{tenant.Path("db")}/collections";
         var documents = $"{collections}/items/documents";
         var shape = $"{collections}/items/shape";
+        var feed = $"/projects/{tenant.Database("db").ProjectId}/databases/db/collections/items/changes";
+        var ownerToken = issuer.Mint(tenant.UserId);
+        issuer.GrantProject(ownerToken, tenant.OrganizationId, tenant.ProjectId);
+        using (var owner = clientTls.CreateClient(server.ClientAddress!, ownerToken))
+        using (var bound = await owner.PostAsJsonAsync(ManagementApi.Uri(
+            $"/v1/management/organizations/{tenant.OrganizationId}/projects/{tenant.ProjectId}/binding"), new { organization = tenant.OrganizationId }))
+        {
+            bound.EnsureSuccessStatusCode();
+        }
+        using var feedClient = clientTls.CreateClient(server.ClientAddress!, issuer.Mint(tenant.UserId, jwt =>
+        {
+            jwt.Claims["project_id"] = tenant.ProjectId;
+            jwt.Claims["scope"] = "documents:read";
+        }));
         (await DocumentApi.SendAsync(client, HttpMethod.Post, collections, JsonContent.Create(new { name = "items" }))).Status.ShouldBe(HttpStatusCode.Created);
         var originalId = DocumentApi.NewId();
         var original = await DocumentApi.SendAsync(client, HttpMethod.Put, $"{documents}/{originalId}", JsonContent.Create(new { state = "a-original" }));
@@ -41,6 +57,9 @@ public sealed class ReplicationShapeTests
             (await DocumentApi.SendAsync(client, HttpMethod.Put, $"{documents}/{clockId}", JsonContent.Create(new { index }))).Status.ShouldBe(index == 0 ? HttpStatusCode.Created : HttpStatusCode.OK);
         }
 
+        var feedStart = await DocumentApi.SendAsync(feedClient, HttpMethod.Get, feed);
+        feedStart.Status.ShouldBe(HttpStatusCode.OK);
+        var feedToken = feedStart.Json.GetProperty("resume_token").GetString();
         var start = await DocumentApi.SendAsync(client, HttpMethod.Get, shape + "?offset=-1");
         start.Status.ShouldBe(HttpStatusCode.TemporaryRedirect);
         var snapshotUri = start.Location!.OriginalString;
@@ -101,6 +120,13 @@ public sealed class ReplicationShapeTests
         await Assert.That(op.GetProperty("id").GetString()).IsEqualTo(id);
         await Assert.That(op.GetProperty("op").GetString()).IsEqualTo("upsert");
         await Assert.That(op.GetProperty("document").GetRawText()).IsEqualTo("{\"state\":\"z-winner\"}");
+        var feedPage = await DocumentApi.SendAsync(feedClient, HttpMethod.Get, $"{feed}?resume_token={feedToken}");
+        feedPage.Status.ShouldBe(HttpStatusCode.OK);
+        var feedEvent = feedPage.Json.GetProperty("changes").EnumerateArray().Single();
+        await Assert.That(feedEvent.GetProperty("id").GetString()).IsEqualTo(id);
+        await Assert.That(feedEvent.GetProperty("document").GetRawText()).IsEqualTo("{\"state\":\"z-winner\"}");
+        await Assert.That(feedEvent.GetProperty("offset").GetString()).IsEqualTo((head + 1).ToString(CultureInfo.InvariantCulture));
+        feedToken = feedPage.Json.GetProperty("resume_token").GetString();
         var imported = await DocumentApi.SendAsync(client, HttpMethod.Get, $"{documents}/{id}");
         imported.Status.ShouldBe(HttpStatusCode.OK);
         await Assert.That(imported.ETag).IsEqualTo(ETags.Version(etagScope, "items", id, mergeVersion, "{\"state\":\"z-winner\"}"u8.ToArray()));
@@ -158,6 +184,12 @@ public sealed class ReplicationShapeTests
         // An equal-version tombstone wins over the imported live body without changing the merge clock.
         await ApplyAsync(2, new DocumentChange("items", id, mergeVersion, null));
         var deleted = await deletionPoll.WaitAsync(token);
+        var feedDeletion = await DocumentApi.SendAsync(feedClient, HttpMethod.Get, $"{feed}?resume_token={feedToken}");
+        feedDeletion.Status.ShouldBe(HttpStatusCode.OK);
+        var feedDelete = feedDeletion.Json.GetProperty("changes").EnumerateArray().Single();
+        await Assert.That(feedDelete.GetProperty("operation").GetString()).IsEqualTo("delete");
+        await Assert.That(feedDelete.GetProperty("id").GetString()).IsEqualTo(id);
+        await Assert.That(feedDelete.GetProperty("offset").GetString()).IsEqualTo((head + 2).ToString(CultureInfo.InvariantCulture));
         deleted.Status.ShouldBe(HttpStatusCode.OK);
         var deletion = deleted.Json.GetProperty("changes").EnumerateArray().Single();
         await Assert.That(deletion.GetProperty("offset").GetString()).IsEqualTo((head + 2).ToString(CultureInfo.InvariantCulture));

@@ -2,6 +2,7 @@ using System.Net;
 using System.Text.Json;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using Microsoft.IdentityModel.Tokens;
 using TerraBase.Features.UserAuth;
 using TerraBase.Testing;
@@ -18,7 +19,7 @@ public sealed class UserAuthTests
     [Test]
     public async Task Tokens_signed_with_a_published_ec_or_rsa_key_act_as_their_sub()
     {
-        await using var api = await ManagementApi.StartAsync();
+        await using var api = await ManagementApi.StartAsync(services: TerraBaseTestServer.EnableConnectionDiagnostics);
         var rsa = api.Issuer.AddKey(SecurityAlgorithms.RsaSha256);
         var user = Faker.Random.Guid().ToString();
         using var ec = api.WithToken(api.Issuer.Mint(user));
@@ -96,7 +97,7 @@ public sealed class UserAuthTests
     [Test]
     public async Task Tokens_without_a_usable_sub_or_of_a_guest_are_rejected()
     {
-        await using var api = await ManagementApi.StartAsync();
+        await using var api = await ManagementApi.StartAsync(services: TerraBaseTestServer.EnableConnectionDiagnostics);
         string?[] subjects = [null, "", new string('u', 257), "bad\u0001user"];
 
         var statuses = new List<HttpStatusCode>();
@@ -116,8 +117,8 @@ public sealed class UserAuthTests
     [Test]
     public async Task A_rotated_key_is_fetched_once_and_unknown_keys_refresh_at_most_every_30_seconds()
     {
-        var clock = new ShiftedTime();
-        await using var api = await ManagementApi.StartAsync(services: services => services.AddSingleton<TimeProvider>(clock));
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        await using var api = await ManagementApi.StartAsync(services: TerraBaseTestServer.EnableConnectionDiagnostics, time: clock);
         var fetchedAtStartup = api.Issuer.JwksFetches;
 
         // ts-auth publishes a new key and signs with it: concurrent requests share one refresh and all pass.
@@ -125,12 +126,13 @@ public sealed class UserAuthTests
         var rotated = await Task.WhenAll(Enumerable.Range(0, 8).Select(_ => SendOnceAsync(api.As(Faker.Random.Guid().ToString()))));
         var fetchedAfterRotation = api.Issuer.JwksFetches;
         // Within 30 s of that refresh, another unknown key (unpublished, then published) costs no fetch and fails.
+        clock.Advance(TsAuthKeys.UnknownKeyInterval - TimeSpan.FromTicks(1));
         var unpublished = api.Issuer.AddKey(SecurityAlgorithms.EcdsaSha256, publish: false);
         var forged = await SendOnceAsync(api.WithToken(api.Issuer.Mint("user", token => token.SigningCredentials = unpublished)));
         api.Issuer.Rotate();
         var tooSoon = await SendOnceAsync(api.As("user"));
         var fetchedWithinInterval = api.Issuer.JwksFetches;
-        clock.Offset = TimeSpan.FromSeconds(31);
+        clock.Advance(TimeSpan.FromTicks(1));
         var later = await SendOnceAsync(api.As("user"));
 
         await Assert.That(fetchedAtStartup).IsEqualTo(1);
@@ -415,14 +417,6 @@ public sealed class UserAuthTests
         {
             return await StatusAsync(client);
         }
-    }
-
-    /// <summary>The system clock moved by <see cref="Offset"/>.</summary>
-    private sealed class ShiftedTime : TimeProvider
-    {
-        public TimeSpan Offset { get; set; }
-
-        public override DateTimeOffset GetUtcNow() => base.GetUtcNow() + Offset;
     }
 
     /// <summary>The system clock with timers that fire only through <see cref="FireAsync"/>.</summary>

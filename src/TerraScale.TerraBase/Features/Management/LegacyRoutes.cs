@@ -10,12 +10,7 @@ public static class LegacyRoutes
         app.Use(async (context, next) =>
         {
             var original = context.Request.Path;
-            if (original.Equals(new PathString("/v1/node/pressure"), StringComparison.OrdinalIgnoreCase)
-                || original.Equals(new PathString("/v1/node/pressure/"), StringComparison.OrdinalIgnoreCase))
-            {
-                context.Request.Path = "/admin/node/pressure";
-            }
-            else if ((original.StartsWithSegments(ManagementRoute.Organizations, StringComparison.OrdinalIgnoreCase)
+            if ((original.StartsWithSegments(ManagementRoute.Organizations, StringComparison.OrdinalIgnoreCase)
                     || original.StartsWithSegments("/management/organizations", StringComparison.OrdinalIgnoreCase))
                 && Alias(context) is { } alias)
             {

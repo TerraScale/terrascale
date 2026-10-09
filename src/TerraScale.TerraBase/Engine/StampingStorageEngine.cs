@@ -28,6 +28,8 @@ internal sealed class StampingStorageEngine(IStorageEngine inner, ISystemReplica
 
     public long CommittedWrites => inner.CommittedWrites;
 
+    public long? IoAdmittedCount => inner.IoAdmittedCount;
+
     public ValueTask RefreshStoragePressureAsync(CancellationToken cancellationToken) =>
         inner.RefreshStoragePressureAsync(cancellationToken);
 
@@ -263,6 +265,10 @@ internal sealed class StampingStorageEngine(IStorageEngine inner, ISystemReplica
 
         public ValueTask<long> GetHistoryFloorAsync(CancellationToken cancellationToken) =>
             RunAsync(() => inner.GetHistoryFloorAsync(cancellationToken), cancellationToken);
+
+        public ValueTask<CollectionChangePage> ReadCollectionChangesAsync(
+            string collection, long afterOffset, long afterSequence, int limit, long maxBytes, CancellationToken cancellationToken) =>
+            RunAsync(() => inner.ReadCollectionChangesAsync(collection, afterOffset, afterSequence, limit, maxBytes, cancellationToken), cancellationToken);
 
         public async IAsyncEnumerable<StoredDocument> ChangesAsync(
             string collection, DocumentFilter? filter, long after, long through, [EnumeratorCancellation] CancellationToken cancellationToken)

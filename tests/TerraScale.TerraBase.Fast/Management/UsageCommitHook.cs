@@ -92,6 +92,7 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
         public string Name => inner.Name;
         public StoragePressure StoragePressure => inner.StoragePressure;
         public long CommittedWrites => inner.CommittedWrites;
+        public long? IoAdmittedCount => inner.IoAdmittedCount;
         public ValueTask RefreshStoragePressureAsync(CancellationToken cancellationToken) => inner.RefreshStoragePressureAsync(cancellationToken);
         public ValueTask<bool> CreateDatabaseAsync(TenantContext database, CancellationToken cancellationToken) => inner.CreateDatabaseAsync(database, cancellationToken);
         public async ValueTask<IDatabaseStore?> OpenDatabaseAsync(TenantContext database, CancellationToken cancellationToken) =>
@@ -220,6 +221,7 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
     {
         private bool _intercepted;
 
+        public ValueTask<CollectionChangePage> ReadCollectionChangesAsync(string collection, long afterOffset, long afterSequence, int limit, long maxBytes, CancellationToken cancellationToken) => inner.ReadCollectionChangesAsync(collection, afterOffset, afterSequence, limit, maxBytes, cancellationToken);
         public ValueTask<SnapshotPage> SnapshotAsync(DocumentQuery query, long offset, CancellationToken cancellationToken) => inner.SnapshotAsync(query, offset, cancellationToken);
         public ValueTask<long> GetHistoryFloorAsync(CancellationToken cancellationToken) => inner.GetHistoryFloorAsync(cancellationToken);
         public ValueTask<long> GetOffsetAsync(CancellationToken cancellationToken) => inner.GetOffsetAsync(cancellationToken);

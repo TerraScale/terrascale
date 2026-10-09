@@ -112,6 +112,7 @@ public sealed class ReplicationTests
         await using var receiver = await TerraBaseTestServer.StartAsync(peerTls.Apply);
         await Assert.That(() => receiver.MetricAsync("terrabase_replication_sender_durable_lag")).Throws<InvalidOperationException>();
         await Assert.That(() => TerraBaseTestServer.ReplicatedAsync(receiver)).Throws<InvalidOperationException>();
+        await TerraBaseTestServer.EventuallyAsync(async token => await ReplicationPressure.ReadAsync(receiver, token) == 0);
 
         await using var sender = await TerraBaseTestServer.StartAsync(settings =>
         {
@@ -125,6 +126,7 @@ public sealed class ReplicationTests
         await TerraBaseTestServer.ReplicatedAsync(sender);
         await Assert.That(await sender.MetricAsync("terrabase_replication_sender_initialized")).IsEqualTo(1);
         await Assert.That(await sender.MetricAsync("terrabase_replication_sender_durable_lag")).IsEqualTo(0);
+        await TerraBaseTestServer.EventuallyAsync(async token => await ReplicationPressure.ReadAsync(sender, token) == 0);
         await Assert.That(() => sender.MetricAsync("terrabase_replication_sender_durable_lag", "result=\"missing\""))
             .Throws<InvalidOperationException>();
     }

@@ -18,24 +18,30 @@ The main-only deploy job always runs after publication. Missing configuration
 fails the job instead of silently making deployment optional.
 `scripts/ci/deploy.sh` verifies the ARM64 release binary's SHA-256 sidecar and
 the pinned amd64 `ts-orch` helper, then invokes `release service-deploy`.
-The current pinned helper processes regions sequentially, with a 30-minute
-completion wait per region and five-second polling. The job budget is 120
-minutes: two regional waits, three downloads bounded to 15 minutes each, and
+The qualified helper discovers every region from orch's signed-spec topology
+published at Atlas, including regions whose routing health is down or unknown.
+It reads each region's fresh admitted environment, then signs, uploads, publishes
+and waits independently. A failed region cannot block the others. All regions
+share a parallel 30-minute completion wait and five-second polling. The job
+budget is 90 minutes: that wait, three downloads bounded to 15 minutes each, and
 15 minutes for setup/cleanup. This budget adds no delay to healthy rollouts.
-Independent regional signing and delivery require TS-768's qualified helper
-release and the matching tag/checksum pin. Each region retains its replica
+The retained helper tag and checksum must be qualified together before this
+pipeline is activated. Each region retains its replica
 ordering, load-balancer drain, readiness/canary gates and automatic rollback
 to the previous admitted release.
 
-TS-771 owns the standalone removal of repository deployment switches. Its
-initial script must target GRU and SFO in their currently signed `canary`
-environment. The qualified shared helper will discover every serving region
-and its signed environment automatically. Signed specs must authorize
+There is no opt-in, repository-maintained region list or fixed environment.
+The initial serving fleet is GRU and SFO, both admitted as `canary` on ARM64.
+Signed specs must authorize
 `terrabase` and the release actor in each cell. The scoped service-release OCI
 user needs the current release-prefix grant on both head buckets.
 `TS_ORCH_RELEASE` and `TS_ORCH_SHA256` pin the helper and must change together.
-The current pin uses the retired `releases/v1/services` prefix; live acceptance
-requires the qualified helper using `releases/services`.
+Verified pair: `ci-1e57e6c1736238e1f1d5a910dfe45c0cbdc20151-run-16180`
+and `f29dc054716f2ed50ab97960c675753f33c8ac158d6a49f74cd5c190a93ec771`
+(successful orch CI 1839, retained amd64 bytes checked against its manifest).
+The helper uses `releases/services`, the same current prefix as regional
+orchestrators. It requires fresh scope-producing controller reports; the
+initial activation of that schema belongs to the controller pipeline.
 Other variables are `TS_OBJECT_NAMESPACE`,
 `TS_RELEASE_VAULT_ID`, `TS_RELEASE_KEY_SECRET`, `TS_RELEASE_ACTOR`,
 `TS_RELEASE_OCI_USER`, `TS_RELEASE_OCI_TENANCY` and `TS_RELEASE_OCI_FINGERPRINT`.

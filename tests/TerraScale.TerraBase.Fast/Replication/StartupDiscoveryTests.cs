@@ -78,6 +78,7 @@ public sealed class StartupDiscoveryTests
             using var health = await sender.Client.GetAsync(new Uri("/healthz", UriKind.Relative));
             health.EnsureSuccessStatusCode();
             await Assert.That(await sender.MetricAsync("terrabase_replication_sender_initialized")).IsEqualTo(0);
+            await TerraBaseTestServer.EventuallyAsync(async token => await ReplicationPressure.ReadAsync(sender, token) is null);
 
             // SQLite serializes the repair with any concurrent discovery; never overwrite a file being opened.
             await using (var connection = new SqliteConnection($"Data Source={file};Pooling=False"))
@@ -88,6 +89,7 @@ public sealed class StartupDiscoveryTests
                 await command.ExecuteNonQueryAsync();
             }
             await TerraBaseTestServer.ReplicatedAsync(sender);
+            await TerraBaseTestServer.EventuallyAsync(async token => await ReplicationPressure.ReadAsync(sender, token) == 0);
             using var assertionDeadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
             using var recovered = await reader.GetAsync(Document(tenant, "broken"), assertionDeadline.Token);
             recovered.EnsureSuccessStatusCode();

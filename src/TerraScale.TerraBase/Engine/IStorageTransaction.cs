@@ -182,6 +182,23 @@ public interface IStorageTransaction : IAsyncDisposable
         string collection, DocumentFilter? filter, long after, long through, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Reads every retained write and tombstone of the current collection generation, including repeated writes,
+    /// in local (history offset, append sequence) order strictly after
+    /// (<paramref name="afterOffset"/>, <paramref name="afterSequence"/>). Both cursor parts are nonnegative;
+    /// resume with the last returned change's offset and sequence. This order is local to this database instance.
+    /// </summary>
+    /// <remarks>
+    /// <paramref name="limit"/> is 1 to 1000 and <paramref name="maxBytes"/> is 2 to 8 MiB, inclusive.
+    /// The page stays within both bounds, charging each row 2048 framing bytes plus its UTF-8 id and body bytes.
+    /// Sizes are checked before materializing ids or bodies; an oversized first row throws
+    /// <see cref="InvalidDataException"/>. Live JSON is validated without rewriting its stored bytes.
+    /// The caller reserves memory and validates database scope, incarnation, collection generation, head and
+    /// history floor. No history is pruned. A missing collection returns an empty page.
+    /// </remarks>
+    ValueTask<CollectionChangePage> ReadCollectionChangesAsync(
+        string collection, long afterOffset, long afterSequence, int limit, long maxBytes, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Counts live documents matching <paramref name="filter"/> while reading at most <paramref name="maxExamined"/> + 1
     /// rows (documents and tombstones) in id order. <c>Complete</c> is <see langword="false"/> when the collection holds
     /// more rows, so the count is a lower bound.

@@ -10,6 +10,17 @@ namespace TerraBase.Fast.Storage;
 public sealed class StoragePoolTests
 {
     [Test]
+    public async Task Closed_engine_reports_unavailable_storage_admission()
+    {
+        await using var server = await TerraBaseTestServer.StartAsync();
+        var engine = server.Services.GetRequiredService<IStorageEngine>();
+        await engine.DisposeAsync();
+        await Assert.That(engine.IoAdmittedCount).IsNull();
+        using var readiness = await server.Client.GetAsync(new Uri("/readyz", UriKind.Relative));
+        await Assert.That(readiness.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+    }
+
+    [Test]
     public async Task Lifecycle_intents_reuse_the_maintenance_slot_with_a_one_slot_queue()
     {
         await using var management = await ManagementApi.StartAsync(settings =>
@@ -53,6 +64,7 @@ public sealed class StoragePoolTests
         await StorageFixture.CreateCollectionAsync(tenant, "source", "items", deadline.Token);
         var server = management.Server;
         var engine = server.Services.GetRequiredService<SqliteStorageEngine>();
+        var pressure = server.Services.GetRequiredService<IStorageEngine>();
         var store = await engine.OpenDatabaseAsync(source, deadline.Token);
         var system = await engine.OpenSystemDatabaseAsync(deadline.Token);
         var target = source with { DatabaseId = Guid.NewGuid().ToString() };
@@ -79,6 +91,7 @@ public sealed class StoragePoolTests
             var copy = engine.CopyDatabaseAsync(source, target, deadline.Token).AsTask();
             pending.Add(copy);
             await WaitUntilAsync(() => engine.Io.Admitted == 2 && engine.Io.Queued == 1, deadline.Token);
+            await Assert.That(pressure.IoAdmittedCount).IsEqualTo(2);
 
             Task? cancelled = null;
             if (capacity == 3)
@@ -88,6 +101,7 @@ public sealed class StoragePoolTests
                 pending.Add(cancelled);
             }
             await Assert.That(engine.Io.Admitted).IsEqualTo(capacity);
+            await Assert.That(pressure.IoAdmittedCount).IsEqualTo(capacity);
             Func<CancellationToken, Task>[] operations =
             [
                 token => engine.CreateDatabaseAsync(cold, token).AsTask(),
@@ -120,6 +134,7 @@ public sealed class StoragePoolTests
                 cancellation.Cancel();
                 await cancelled.WaitAsync(deadline.Token);
                 await Assert.That(engine.Io.Admitted).IsEqualTo(2);
+                await Assert.That(pressure.IoAdmittedCount).IsEqualTo(2);
                 await Assert.That(copy.IsCompleted).IsFalse();
                 await Assert.That(engine.Io.Queued).IsEqualTo(1);
             }
@@ -130,6 +145,7 @@ public sealed class StoragePoolTests
             blockerAdmissionHeld = false;
             await Assert.That(await copy.WaitAsync(deadline.Token)).IsTrue();
             await Assert.That(engine.Io.Admitted).IsEqualTo(0);
+            await Assert.That(pressure.IoAdmittedCount).IsEqualTo(0);
             using var healthy = await tenant.Data.PutAsJsonAsync(new Uri(
                 $"/v1/projects/{tenant.ProjectId}/databases/source/collections/items/documents/{StorageFixture.Id("healthy")}", UriKind.Relative), new { n = 2 }, deadline.Token);
             healthy.EnsureSuccessStatusCode();
