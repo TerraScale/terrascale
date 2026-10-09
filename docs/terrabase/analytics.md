@@ -56,7 +56,8 @@ Each point contains:
 - `storageBytes`: the average sampled physical database size, including the
   engine's sidecars; null before any sample. Each node samples once per minute:
   the databases whose stable hash falls in that minute's slot, at most 128 per
-  minute, so every database is sampled within about ceil(databases / 128) minutes.
+  minute. Slots start at ceil(databases / 128); a slot found holding more than
+  128 doubles them for good, so no database is starved.
 - `clientBandwidth` and `replicationBandwidth`, each with `bytesSent` and
   `bytesReceived`. Client bandwidth counts actual HTTP body reads and writes
   after a request resolves an authorized database; it excludes HTTP/TLS headers.
@@ -66,8 +67,10 @@ Each point contains:
 
 Failed writes do not become committed operation counts. Client request counts,
 errors and latency still include failed requests that resolved their database.
-Long-lived streaming requests record their final request count and elapsed time
-when they finish, while their body wrapper preserves cancellation and streaming.
+Long-lived streaming requests, such as subscriptions, report their body bytes at
+most every ten seconds into the bucket they flow in, and the rest with their
+request count and elapsed time when they finish; their body wrapper preserves
+cancellation and streaming.
 
 ## Replication response and byte meter
 
@@ -89,8 +92,9 @@ Repeated transfers count bytes each time; replicated operations count only
 when the durable journal transaction applies a new group, including with
 concurrent duplicate streams. Incomplete writes do not provide an exact
 transport-level byte measurement.
-Failed handshakes before a gRPC peer identifies its region cannot be attributed
-to a region pair.
+A gRPC Hello is charged to the region its Welcome names; a handshake that fails
+without any answer falls back to the region of that peer's previous stream, and
+before any stream identified it, cannot be attributed to a region pair.
 
 Kinds are `delta` (current replication), `anti_entropy` (frontier handshakes and
 WAN discovery), and `handoff` (peer or WAN journal replay after a failed transfer,
@@ -104,12 +108,14 @@ plus WAN applied-prefix observations. `lagMs` is the observed backlog's age,
 not network round-trip latency. `divergence` denotes detected journal conflict
 (a verified prefix conflict, an origin's explicit ahead answer, or a group that
 conflicts with the applied journal prefix; malformed or oversized messages are
-failed pulls, not divergence), not a full comparison of document contents. Health sources
+failed pulls, not divergence), not a full comparison of document contents. An
+origin's ahead answer holds until a pull from that origin succeeds again. Health sources
 refresh every ten seconds: each sender's peer observations and each WAN round.
-Every peer observed in the last ten minutes counts. Status is `diverged` if any
-reports divergence, `stopped` if any has been silent for more than 30 seconds
-(or none was observed), `lagging` with remaining groups, otherwise `healthy`;
-`lagMs` is null without a fresh observation. A peer silent for ten minutes is
+Every peer observed in the last ten minutes counts. Without any observation from
+the last 30 seconds, status is `stopped` with null lag and divergence. Otherwise
+it is `diverged` if any reports divergence, `stopped` if any has been silent for
+more than 30 seconds, `lagging` with remaining groups, otherwise `healthy`. A WAN
+round reports a backlog for any origin it finds behind. A peer silent for ten minutes is
 treated as removed. `lastApplied` is the last newly applied received group; convergence
 is the latest completed observed catch-up in milliseconds.
 

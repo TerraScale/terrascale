@@ -35,6 +35,8 @@ internal sealed partial class UsageMeter
     // Owner/dimension strings, dictionaries, histogram arrays and overlapping immutable snapshots.
     private const long MeasurementBytes = 2048;
     private const long MeasurementKeyBytes = 4096;
+    // Parsed readings, strings, dictionaries and histograms per byte of measurement JSON.
+    private const long ParsedBytesPerJsonByte = 4;
     private readonly Lock _measurements = new();
     private readonly Dictionary<UsageKey, List<IMemoryReservation>> _measurementMemory = [];
     // Open backlogs by database and peer region; when full, the least recently observed one (a removed database or peer) goes.
@@ -59,6 +61,11 @@ internal sealed partial class UsageMeter
 
         latency[index] = 1;
         Record(database, new(new("requests", options.Region, "", kind), 1, status >= 400 ? 1 : 0, latency));
+        RecordClientBytes(database, received, sent);
+    }
+
+    public void RecordClientBytes(TenantContext database, long received, long sent)
+    {
         Record(database, new(new("client_bytes", options.Region, "", "received"), received));
         Record(database, new(new("client_bytes", options.Region, "", "sent"), sent));
     }

@@ -82,7 +82,8 @@ internal sealed class UsageAnalytics(IManagementService management, UsageMeter m
                 var recent = health.Where(state => now - state.ObservedAt <= Fresh).ToArray();
                 var applied = readings.Where(reading => reading.Dimension.Meter == "replicated_ops").Select(reading => reading.State?.LastApplied).Max();
                 var lag = recent.Length == 0 ? (double?)null : recent.Max(state => state.LagMs);
-                var diverged = health.Length == 0 ? (bool?)null : health.Any(state => state.Diverged);
+                // Without a fresh observation nothing is current: stopped, with neither lag nor divergence.
+                var diverged = recent.Length == 0 ? (bool?)null : health.Any(state => state.Diverged);
                 var status = diverged == true ? "diverged" : recent.Length < health.Length || recent.Length == 0 ? "stopped"
                     : recent.Any(state => state.Remaining > 0) ? "lagging" : "healthy";
                 var points = series.Select((point, index) =>
@@ -160,10 +161,12 @@ internal sealed class UsageAnalytics(IManagementService management, UsageMeter m
         {
             if (bytes > 0)
             {
-                _reservations.Add(memory.TryReserve(MemoryLane.Foreground, bytes)
-                    ?? throw new QueryCapacityException("analytics memory admission exhausted"));
+                _reservations.Add(Reserve(bytes));
             }
-        });
+        }, Reserve);
+
+        private IMemoryReservation Reserve(long bytes) =>
+            memory.TryReserve(MemoryLane.Foreground, bytes) ?? throw new QueryCapacityException("analytics memory admission exhausted");
 
         public void Dispose()
         {

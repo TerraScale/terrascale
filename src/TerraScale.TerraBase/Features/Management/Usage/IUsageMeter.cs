@@ -14,8 +14,11 @@ public interface IUsageMeter
     /// <summary>Counts committed operations by type: read, put, patch or delete.</summary>
     void RecordOperation(TenantContext database, string kind, int count);
 
-    /// <summary>Records one completed client request and the body bytes actually read and written.</summary>
+    /// <summary>Records one completed client request and the body bytes read and written since its last report.</summary>
     void RecordRequest(TenantContext database, string method, int status, TimeSpan elapsed, long received, long sent);
+
+    /// <summary>Records client body bytes a request still in progress read and wrote since its last report.</summary>
+    void RecordClientBytes(TenantContext database, long received, long sent);
 
     /// <summary>Counts encoded replication message bytes on each transport attempt, separately from client traffic.</summary>
     void RecordReplicationBytes(TenantContext database, string peerRegion, string kind, bool sent, long bytes);

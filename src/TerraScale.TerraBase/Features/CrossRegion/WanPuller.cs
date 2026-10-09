@@ -52,6 +52,9 @@ internal sealed partial class WanPuller(
     private readonly Dictionary<(IDatabaseStore Store, string Origin), long> _applied = [];
     private readonly Dictionary<string, (long At, DatabaseAdoption Why)> _refused = [with(StringComparer.Ordinal)];
     private readonly HashSet<string> _clashes = [with(StringComparer.Ordinal)];
+    // Database origins that answered Ahead; divergence holds until a pull from that origin succeeds again. Bounded.
+    private readonly HashSet<string> _ahead = [with(StringComparer.Ordinal)];
+    private const int MaxAheadOrigins = 4096;
 
     public override Task StartAsync(CancellationToken cancellationToken)
     {
@@ -183,6 +186,7 @@ internal sealed partial class WanPuller(
         var unregistered = new HashSet<string>(StringComparer.Ordinal);
         var clashes = new HashSet<string>(StringComparer.Ordinal);
         var observations = new Dictionary<TenantContext, (long Remaining, bool Diverged)>();
+        var behind = new HashSet<TenantContext>();
         foreach (var (member, head) in heads)
         {
             if (WanProtocol.Database(head.TenantId, head.ProjectId, head.DatabaseId) is not { } database || head.Origin.Length != 16 || head.Sequence > long.MaxValue)
@@ -203,15 +207,21 @@ internal sealed partial class WanPuller(
             var applied = await AppliedAsync(store, origin, cancellationToken).ConfigureAwait(false);
             var gone = false;
             // Only the origin's explicit Ahead answer or a journal-proof mismatch is divergence; a head snapshot may be stale.
-            var diverged = false;
+            // An origin that answered Ahead stays diverged, even once its heads no longer exceed what this member applied.
+            var aheadKey = Name(database) + "/" + Convert.ToHexString(origin.Span);
+            bool diverged;
+            lock (_gate)
+            {
+                diverged = _ahead.Contains(aheadKey);
+            }
+
             var failed = false;
             // Bounded by this round's heads and retries, so every replicated database reports health each round.
-            if (observations.TryAdd(database, (0, false)))
+            _ = observations.TryAdd(database, (0, false));
+            // Any origin found behind starts the backlog, not only the first member's advertisement.
+            if ((long)head.Sequence > applied && behind.Add(database))
             {
-                if ((long)head.Sequence > applied)
-                {
-                    usage.RecordReplicationState(database, region, (long)head.Sequence - applied, false);
-                }
+                usage.RecordReplicationState(database, region, (long)head.Sequence - applied, false);
             }
             if (applied < (long)head.Sequence)
             {
@@ -223,11 +233,26 @@ internal sealed partial class WanPuller(
                     (var pulled, gone) = await PullAsync(region, cell, member, database, store, origin, applied, (long)head.Sequence, traffic, cancellationToken).ConfigureAwait(false);
                     progressed |= pulled > applied;
                     applied = pulled;
+                    // The origin served this member's prefix again: whatever it answered Ahead for is resolved.
+                    lock (_gate)
+                    {
+                        _ = _ahead.Remove(aheadKey);
+                    }
+
+                    diverged = false;
                 }
                 catch (Exception error) when (!cancellationToken.IsCancellationRequested)
                 {
-                    diverged = error is OriginAheadException or JournalConflictException;
+                    diverged |= error is OriginAheadException or JournalConflictException;
                     failed = true;
+                    if (error is OriginAheadException)
+                    {
+                        lock (_gate)
+                        {
+                            _ = _ahead.Count < MaxAheadOrigins && _ahead.Add(aheadKey);
+                        }
+                    }
+
                     metrics.Failed(region, error switch
                     {
                         OriginAheadException => "ahead",

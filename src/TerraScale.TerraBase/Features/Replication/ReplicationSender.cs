@@ -375,21 +375,26 @@ internal sealed partial class ReplicationSender(
         using var call = client.Sync(cancellationToken: progress.Token);
         var hello = new SyncRequest { Hello = ReplicationProtocol.CreateHello(database, origin, options.Region) };
         await call.RequestStream.WriteAsync(hello, progress.Token).ConfigureAwait(false);
-        var sentHello = UsageMeter.ValidRegion(peer.Region);
-        if (sentHello)
+        // Hello is charged to the region this Welcome names; only a handshake that fails unanswered falls back to the region
+        // of the peer's previous stream.
+        var answered = false;
+        SyncResponse opening;
+        try
+        {
+            opening = await NextAsync(call, progress.Token, observed: response =>
+            {
+                answered = true;
+                var observingPeer = response.Welcome?.LocalIdentity?.Region ?? peer.Region;
+                usage.RecordReplicationBytes(database, observingPeer, "anti_entropy", true, hello.CalculateSize() + 5L);
+                usage.RecordReplicationBytes(database, observingPeer, "anti_entropy", false, response.CalculateSize() + 5L);
+            }).ConfigureAwait(false);
+        }
+        catch when (!answered)
         {
             usage.RecordReplicationBytes(database, peer.Region, "anti_entropy", true, hello.CalculateSize() + 5L);
+            throw;
         }
 
-        var opening = await NextAsync(call, progress.Token, observed: response =>
-        {
-            var observingPeer = response.Welcome?.LocalIdentity?.Region ?? peer.Region;
-            if (!sentHello)
-            {
-                usage.RecordReplicationBytes(database, observingPeer, "anti_entropy", true, hello.CalculateSize() + 5L);
-            }
-            usage.RecordReplicationBytes(database, observingPeer, "anti_entropy", false, response.CalculateSize() + 5L);
-        }).ConfigureAwait(false);
         var welcome = opening.Welcome
             ?? throw new InvalidDataException("the peer did not answer Hello with Welcome");
         // Fail closed on anything but what Hello offered: protocol 1.0, format and merge policy 1, LZ4, this

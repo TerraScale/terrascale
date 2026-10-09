@@ -327,11 +327,14 @@ public sealed class UsageAnalyticsTests
         // Silent past ten minutes, iad-1 counts as removed.
         await Assert.That((await ObserveAsync(TimeSpan.FromMinutes(10))).GetProperty("status").GetString()).IsEqualTo("healthy");
 
-        // Every peer silent: stopped, with no current lag.
+        // Every peer silent, the last one having diverged: stopped, with neither current lag nor divergence.
+        peers.State = new(true, true, 1, 0, [new(0, 0, [synced with { Diverged = true }], "sfo-1")]);
+        await Assert.That((await ObserveAsync(TimeSpan.FromSeconds(10))).GetProperty("status").GetString()).IsEqualTo("diverged");
         peers.State = new(true, true, 1, 0, []);
         var silent = await ObserveAsync(TimeSpan.FromSeconds(40));
         await Assert.That(silent.GetProperty("status").GetString()).IsEqualTo("stopped");
         await Assert.That(silent.GetProperty("lagMs").ValueKind).IsEqualTo(JsonValueKind.Null);
+        await Assert.That(silent.GetProperty("divergence").ValueKind).IsEqualTo(JsonValueKind.Null);
 
         async Task<JsonElement> ObserveAsync(TimeSpan advance)
         {
@@ -339,6 +342,50 @@ public sealed class UsageAnalyticsTests
             await flush.FlushAsync(CancellationToken.None);
             return (await ReadAsync(client, route)).GetProperty("items")[0];
         }
+    }
+
+    [Test]
+    public async Task An_open_subscription_reports_its_bytes_into_the_minute_they_flow_in_before_it_ends()
+    {
+        // Tokens are checked against real time: start at this real minute.
+        var now = DateTimeOffset.UtcNow;
+        var start = new DateTimeOffset(now.Year, now.Month, now.Day, now.Hour, now.Minute, 0, TimeSpan.Zero);
+        var clock = new FakeTimeProvider(start);
+        await using var api = await ManagementApi.StartAsync(settings => settings["region"] = "gru-1", time: clock);
+        var database = await api.CreateManagedDatabaseAsync();
+        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
+        using var data = ProjectClient(api, database.Project);
+        await ManagementApi.CreateCollectionAsync(data, database, "items");
+        using var subscriber = api.WithToken(api.Issuer.Mint(api.User, descriptor =>
+        {
+            descriptor.Claims["project_id"] = database.Project;
+            descriptor.Claims["scope"] = "shapes:read";
+            descriptor.Expires = clock.GetUtcNow().AddMinutes(10).UtcDateTime;
+        }));
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var subscription = await subscriber.GetAsync(
+            ManagementApi.Uri($"/projects/{database.Project}/databases/{database.Name}/collections/items/subscribe"), HttpCompletionOption.ResponseHeadersRead, deadline.Token);
+        subscription.EnsureSuccessStatusCode();
+        using var events = new StreamReader(await subscription.Content.ReadAsStreamAsync(deadline.Token));
+        while (await events.ReadLineAsync(deadline.Token) is { Length: > 0 })
+        {
+        }
+
+        // A minute later a change reaches the still-open subscription; the write that delivers it reports what it sent.
+        clock.Advance(TimeSpan.FromMinutes(1));
+        using var written = await data.PutAsJsonAsync(ManagementApi.Uri(ManagementApi.DocumentPath(database, "items", "later")), new { name = new Faker().Name.FullName() }, deadline.Token);
+        written.EnsureSuccessStatusCode();
+        var putBytes = (await written.Content.ReadAsByteArrayAsync(deadline.Token)).Length;
+        while (await events.ReadLineAsync(deadline.Token) is { } line && !line.StartsWith("data:", StringComparison.Ordinal))
+        {
+        }
+
+        await api.Server.Services.GetRequiredService<UsageMeter>().FlushAsync(deadline.Token);
+        var analytics = await ReadAsync(data, ManagementApi.Uri($"/projects/{database.Project}/analytics?range=1h&region=gru-1"));
+        var minute = analytics.GetProperty("items")[0].GetProperty("series").EnumerateArray()
+            .Single(point => point.GetProperty("start").GetDateTimeOffset() == start.AddMinutes(1));
+        // More than the PUT's own response: the subscription's bytes are there while it is still open.
+        await Assert.That(minute.GetProperty("clientBandwidth").GetProperty("bytesSent").GetInt64()).IsGreaterThan(putBytes);
     }
 
     [Test]

@@ -11,7 +11,10 @@ using static TerraBase.Features.Management.SystemCatalog;
 namespace TerraBase.Features.Management.Usage;
 
 /// <summary>The dimensions an observation read keeps, and the memory admission charged, in bytes, for what it keeps.</summary>
-internal sealed record ObservationFilter(Func<UsageDimension, bool> Keep, Action<long> Admit);
+/// <param name="Keep">Whether a read keeps a dimension.</param>
+/// <param name="Admit">Admits memory for what a read keeps.</param>
+/// <param name="Hold">Holds admission for a whole document while it is parsed, before Keep filters it.</param>
+internal sealed record ObservationFilter(Func<UsageDimension, bool> Keep, Action<long> Admit, Func<long, IDisposable> Hold);
 
 /// <summary>Only the read and write totals of a persisted <see cref="OpCounts"/>; its meters are skipped, not materialized.</summary>
 internal sealed record UsageTotals(long Reads, long Writes)
@@ -324,6 +327,18 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
             return !meters ? Strip(counts, meters) : filter is null ? counts : Retain(counts, filter);
         }
 
+        // Counts-only reads skip the meters JSON; analytics reads hold admission for the whole document while parsing it.
+        OpCounts Parse(StoredDocument document)
+        {
+            if (!meters)
+            {
+                return JsonSerializer.Deserialize(document.Json.Span, TerraBaseJsonContext.Default.UsageTotals)!.Counts;
+            }
+
+            using var parsing = filter?.Hold(document.Json.Length * ParsedBytesPerJsonByte);
+            return Shape(JsonSerializer.Deserialize(document.Json.Span, TerraBaseJsonContext.Default.OpCounts)!);
+        }
+
         var owner = DatabaseOwner.Of(database);
         await _flush.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -337,10 +352,8 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
 
             var (lifetime, series) = await catalog.ReadAsync(
                 async transaction => (
-                    meters
-                        ? Shape(await SystemCatalog.GetAsync(transaction, UsageCollection(owner.DatabaseId), Ops, TerraBaseJsonContext.Default.OpCounts, cancellationToken).ConfigureAwait(false) ?? OpCounts.Zero)
-                        : (await SystemCatalog.GetAsync(transaction, UsageCollection(owner.DatabaseId), Ops, TerraBaseJsonContext.Default.UsageTotals, cancellationToken).ConfigureAwait(false))?.Counts ?? OpCounts.Zero,
-                    await ReadSeriesAsync(transaction, owner.DatabaseId, window, meters, Shape, proceed, cancellationToken).ConfigureAwait(false)),
+                    await transaction.GetAsync(UsageCollection(owner.DatabaseId), Ops, cancellationToken).ConfigureAwait(false) is { } saved ? Parse(saved) : OpCounts.Zero,
+                    await ReadSeriesAsync(transaction, owner.DatabaseId, window, Parse, proceed, cancellationToken).ConfigureAwait(false)),
                 cancellationToken).ConfigureAwait(false);
             // A follower's own counts reach these totals once the primary saved them and they replicated here; adding the
             // ones still pending could count a batch twice, the primary having saved it before its acknowledgement came.
@@ -791,7 +804,7 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
     }
 
     private static async ValueTask<OpCounts[]> ReadSeriesAsync(
-        IStorageTransaction transaction, string databaseId, UsageWindow window, bool meters, Func<OpCounts, OpCounts> shape, Action? proceed,
+        IStorageTransaction transaction, string databaseId, UsageWindow window, Func<StoredDocument, OpCounts> parse, Action? proceed,
         CancellationToken cancellationToken)
     {
         var series = Enumerable.Repeat(OpCounts.Zero, window.Count).ToArray();
@@ -813,10 +826,7 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
                 // Coarser analytics buckets read finer persisted buckets after the preceding boundary.
                 if (index >= 0 && index < series.Length)
                 {
-                    // Counts-only reads skip the meters JSON instead of materializing it.
-                    series[index] += meters
-                        ? shape(JsonSerializer.Deserialize(document.Json.Span, TerraBaseJsonContext.Default.OpCounts)!)
-                        : JsonSerializer.Deserialize(document.Json.Span, TerraBaseJsonContext.Default.UsageTotals)!.Counts;
+                    series[index] += parse(document);
                 }
             }
 

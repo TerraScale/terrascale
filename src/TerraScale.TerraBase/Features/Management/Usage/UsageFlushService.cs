@@ -23,7 +23,7 @@ internal sealed partial class UsageFlushService(
     // Storage is sampled once per minute bucket, so an idle node neither lists databases nor writes usage every tick.
     private const int MaxSamplesPerMinute = 128;
     private long _sampledMinute = -1;
-    private int _listed;
+    private int _slots = 1;
 
     private static readonly TimeSpan Interval = TimeSpan.FromSeconds(10);
 
@@ -131,22 +131,28 @@ internal sealed partial class UsageFlushService(
         // Each minute samples the databases whose stable hash falls in its slot: about MaxSamplesPerMinute of them, and every
         // database within ceil(n / MaxSamplesPerMinute) minutes. No positional cursor, so an unordered listing cannot skip any.
         _sampledMinute = minute;
-        var slots = Math.Max(1, (_listed + MaxSamplesPerMinute - 1) / MaxSamplesPerMinute);
+        var slots = _slots;
         var listed = 0;
-        var sampled = 0;
+        var matched = 0;
         await foreach (var database in engine.ListDatabasesAsync(cancellationToken).ConfigureAwait(false))
         {
             listed++;
             // The cap bounds the first pass, before the population is known, and hash skew.
-            if (sampled < MaxSamplesPerMinute && (uint)StringComparer.Ordinal.GetHashCode(database.DatabaseId ?? "") % slots == minute % slots
-                && await engine.GetDatabaseSizeAsync(database, cancellationToken).ConfigureAwait(false) is { } size)
+            if ((uint)StringComparer.Ordinal.GetHashCode(database.DatabaseId ?? "") % slots != minute % slots)
             {
-                sampled++;
+                continue;
+            }
+
+            if (++matched <= MaxSamplesPerMinute && await engine.GetDatabaseSizeAsync(database, cancellationToken).ConfigureAwait(false) is { } size)
+            {
                 meter.RecordStorage(database, size);
             }
         }
 
-        _listed = listed;
+        // A slot holding more than the cap doubles the slots for good, so every slot comes to fit and none starves; there are
+        // never more slots than databases.
+        var needed = Math.Max(1, (listed + MaxSamplesPerMinute - 1) / MaxSamplesPerMinute);
+        _slots = Math.Min(Math.Max(1, listed), Math.Max(needed, matched > MaxSamplesPerMinute ? slots * 2 : slots));
     }
 
     // A tick sends one bounded batch; a follower's backlog drains a batch per tick.
