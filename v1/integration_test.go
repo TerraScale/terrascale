@@ -397,8 +397,7 @@ func testManagement(t *testing.T, tb *terrabasetest.Server, hc *http.Client) {
 	must(ana.CreateOrganization(ctx, "Other"))(t) // ana still acts elsewhere
 	inv2 := must(bia.CreateInvitation(ctx, org.ID, "ana@example.com", ""))(t)
 	must(ana.AcceptInvitation(ctx, inv2.Token))(t)
-	// An opaque user id is escaped as one segment; a slash or dot segment
-	// fails locally, since TerraBase matches %2F literally.
+	// Member selectors are canonical entity IDs, not raw document keys.
 	wantCode(t, bia.RemoveMember(ctx, org.ID, "01ARZ3NDEKTSV4RRFFQ69G5FAZ"), v1.ErrUnknownRoute)
 	for _, id := range []string{"a/b", ".."} {
 		if err := bia.RemoveMember(ctx, org.ID, id); err == nil || errors.As(err, new(*v1.APIError)) {
@@ -609,10 +608,10 @@ func testDocuments(t *testing.T, tb *terrabasetest.Server, hc *http.Client) {
 	if n != 2 {
 		t.Fatalf("items: %d", n)
 	}
-	// Legacy IDs never leave the client.
+	// Caller keys obey the producer bounds without requiring an entity format.
 	for _, id := range []string{"legacy id", strings.Repeat("界", 256), strings.Repeat("😀", 128)} {
-		if _, err := users.Get(ctx, id); err == nil || errors.As(err, new(*v1.APIError)) {
-			t.Fatalf("legacy ID was not rejected locally: %v", err)
+		if _, err := users.Get(ctx, id); !errors.Is(err, v1.ErrNotFound) {
+			t.Fatalf("valid caller key should reach the server: %v", err)
 		}
 	}
 	_, err = users.Query(ctx, v1.Query{Cursor: "garbage"})

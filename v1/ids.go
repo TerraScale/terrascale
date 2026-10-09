@@ -1,8 +1,12 @@
 package v1
 
 import (
+	"crypto/sha256"
+	"encoding/binary"
 	"fmt"
 	"regexp"
+
+	"github.com/oklog/ulid/v2"
 
 	"terrascale.tech/sdk/internal/entityid"
 )
@@ -28,6 +32,31 @@ func NewID() string { return entityid.New() }
 func ValidateID(id string) error { return entityid.Check(id) }
 
 func checkID(id string) error { return ValidateID(id) }
+
+// DocumentIDFor preserves canonical entity IDs and derives collection-scoped
+// ULID addresses for natural keys. Length framing prevents ambiguous tuples.
+func DocumentIDFor(collection, key string) string {
+	if ValidateID(key) == nil {
+		return key
+	}
+	h := sha256.New()
+	for _, part := range []string{collection, key} {
+		var size [8]byte
+		binary.BigEndian.PutUint64(size[:], uint64(len(part)))
+		h.Write(size[:])
+		h.Write([]byte(part))
+	}
+	return ulid.ULID(h.Sum(nil)[:16]).String()
+}
+
+// ValidateDocumentKey checks raw key bounds without changing the key.
+// Only generated keys and entity selectors follow the ULID contract.
+func ValidateDocumentKey(id string) error {
+	if err := entityid.DocumentKey(id); err != nil {
+		return fmt.Errorf("terrabase: %w", err)
+	}
+	return nil
+}
 
 // checkVersion treats versions as opaque (tbv1-…, tbv2-…, later formats) and
 // only rejects what cannot be sent as a quoted ETag.

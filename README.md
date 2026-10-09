@@ -8,9 +8,12 @@ and SQL builders.
 All entity IDs are canonical uppercase, 26-character Crockford ULIDs. Use
 `sdk.NewID()` (or `v1.NewID()`) to generate one and `ValidateID` to validate it.
 Generation is concurrency-safe and monotonic within a millisecond. UUIDs,
-prefixed IDs, lowercase IDs and legacy document keys are rejected at SDK
-boundaries. The TerraBase document key is the entity ID: document payloads
-must not contain a top-level `id` field. OAuth client names, database and
+prefixed IDs and lowercase IDs are rejected for entity selectors and generated
+keys. Caller-supplied document keys are unrestricted strings of 1–256 UTF-16
+units without control characters. `DocumentIDFor(collection, key)` preserves
+canonical entity keys and derives deterministic, collection-scoped ULID
+addresses for natural or composite keys. The TerraBase document key is the entity ID; TerraBase omits a matching root
+payload `id` when storing it. Other payload fields remain application data. OAuth client names, database and
 collection names, region/service catalog names, versions and credentials
 remain protocol names or opaque tokens, not entity IDs.
 
@@ -79,8 +82,10 @@ queries. Mutations return uncertain outcomes without a replay: use
 what to do. A transport failure matches that code and retains its original
 cause; a server response retains its `*tb.APIError`. Other writes and
 `500 internal_error` are never retried. Set `Config.MaxRetries` to change the
-budget. Path segments containing `/` fail locally: TerraBase would match an
-escaped `%2F` literally.
+budget. Point document operations use `/documents/by-key?id=…`, with the raw
+key query-encoded once. Keys never enter path segments and are never pre-decoded.
+Listing and generated creation use GET and POST `/documents`, respectively.
+The old `/documents/{id}` point routes are removed.
 
 Transactions apply up to 1024 ops atomically; failures name the op index:
 
