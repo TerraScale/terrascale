@@ -13,6 +13,7 @@ API-key path or synthetic capacity result replaces those requirements.
 The merged [Rust client preflight](clients/rust/README.md) validates the CLI
 contract and records its official SDK lifecycle, ULID and index prerequisites.
 It remains blocked from generating load.
+The [.NET client preflight](clients/dotnet/README.md) is SDK-linked; load generation awaits public SDK lifecycle/index APIs.
 
 ## Check locally
 

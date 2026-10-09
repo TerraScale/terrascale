@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk" InitialTargets="RequireSdkBuildWrapper">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <UseAppHost>false</UseAppHost>
+    <AssemblyName>bench-client</AssemblyName>
+    <RootNamespace>BenchClient</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../.sdk/src/TerraScale.DotNet/TerraScale.DotNet.csproj" />
+    <InternalsVisibleTo Include="BenchClient.Tests" />
+    <EmbeddedResource Include="../sdk.rev" LogicalName="BenchClient.sdk.rev" />
+  </ItemGroup>
+  <Target Name="RequireSdkBuildWrapper">
+    <Error Condition="'$(TS_BENCH_SDK_LOCKED)' != '1'" Text="Build through make or bash clients/dotnet/with-sdk.sh dotnet ... to hold the SDK lock throughout compilation." />
+  </Target>
+  <Target Name="RequireOfficialSdk" BeforeTargets="PrepareForBuild">
+    <Exec Command="bash &quot;$(MSBuildThisFileDirectory)../prepare-sdk.sh&quot; --verify" />
+  </Target>
+</Project>
