@@ -694,6 +694,7 @@ public sealed class BackupApiTests
     [Test]
     public async Task Every_database_gets_its_scheduled_backup_when_more_are_due_than_one_pass_takes()
     {
+        var output = TUnit.Core.TestContext.Current!.OutputWriter;
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 4, 10, 30, 0, TimeSpan.Zero));
         await using var api = await ManagementApi.StartAsync(time: time);
         var organization = await api.CreateOrganizationAsync(Faker.Company.CompanyName());
@@ -704,11 +705,14 @@ public sealed class BackupApiTests
             var database = await api.CreateManagedDatabaseAsync(organization, project, $"db-{i}");
             (await api.Client.PutAsJsonAsync(Uri($"{database.Path}/backup-policy"), new { fullBackupCron = "* * * * *", retentionDays = 35 })).EnsureSuccessStatusCode();
             databases.Add(database);
+            output.WriteLine($"backup schedule: {databases.Count}/17 databases and policies configured");
         }
 
         var backedUp = new HashSet<string>();
+        output.WriteLine("backup schedule: waiting for all scheduled backups");
         await WaitAsync(time, async () =>
         {
+            var before = backedUp.Count;
             foreach (var database in databases.Where(database => !backedUp.Contains(database.Id)))
             {
                 if ((await ListBackupsAsync(api, $"{database.Path}/backups")).Any(item => item.GetProperty("trigger").GetString() == "scheduled"))
@@ -717,10 +721,16 @@ public sealed class BackupApiTests
                 }
             }
 
+            if (backedUp.Count != before)
+            {
+                output.WriteLine($"backup schedule: {backedUp.Count}/17 scheduled backups observed");
+            }
+
             return backedUp.Count == databases.Count;
         });
 
         await Assert.That(backedUp.Count).IsEqualTo(17);
+        output.WriteLine("backup schedule: all 17 backups verified before cleanup");
     }
 
     [Test]

@@ -208,11 +208,11 @@ public sealed class ManagementApi : IAsyncDisposable
         $"{database.Data}/collections/{collection}/documents/{DocumentId(name)}";
 
     /// <summary>Creates <paramref name="collection"/> through the data API, unless it exists.</summary>
-    public static async Task CreateCollectionAsync(HttpClient data, ManagedDatabaseRef database, string collection)
+    public static async Task CreateCollectionAsync(HttpClient data, ManagedDatabaseRef database, string collection, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(data);
         ArgumentNullException.ThrowIfNull(database);
-        using var response = await data.PostAsJsonAsync(Uri($"{database.Data}/collections"), new { name = collection });
+        using var response = await data.PostAsJsonAsync(Uri($"{database.Data}/collections"), new { name = collection }, cancellationToken);
         if (response.StatusCode != HttpStatusCode.Conflict)
         {
             response.EnsureSuccessStatusCode();

@@ -29,7 +29,7 @@ public sealed class QueryShapeForwardingTests
     public async Task Follower_queries_forward_an_immutable_batch_retry_without_double_counting_and_drain_the_tail_on_shutdown()
     {
         using var peers = new PeerTls();
-        var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var time = new ManualFlushClock();
         var credential = string.Empty;
         await using var primary = await ManagementApi.StartAsync(settings =>
         {
@@ -391,7 +391,7 @@ public sealed class QueryShapeForwardingTests
     }
 
     private static Task<TerraBaseTestServer> StartFollowerAsync(
-        ManagementApi primary, PeerTls peers, FakeTimeProvider time, string? credential = null, Action<IServiceCollection>? services = null) =>
+        ManagementApi primary, PeerTls peers, TimeProvider time, string? credential = null, Action<IServiceCollection>? services = null) =>
         TerraBaseTestServer.StartAsync(settings =>
         {
             peers.Apply(settings);
@@ -468,6 +468,17 @@ public sealed class QueryShapeForwardingTests
         Sequence = sequence,
         Envelope = ByteString.CopyFrom(ApplicationEnvelope.Encode(JsonSerializer.SerializeToUtf8Bytes(payload, TerraBaseJsonContext.Default.QueryShapeForwardPayload)).Span),
     };
+
+    // Park periodic flushes while transport deadlines use current UTC and real timers.
+    private sealed class ManualFlushClock : TimeProvider
+    {
+        private readonly FakeTimeProvider _periodic = new();
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) =>
+            period == Timeout.InfiniteTimeSpan
+                ? base.CreateTimer(callback, state, dueTime, period)
+                : _periodic.CreateTimer(callback, state, dueTime, period);
+    }
 
     private sealed class LostShapeAcknowledgement(CatalogPrimaryClient inner) : ICatalogPrimaryClient
     {

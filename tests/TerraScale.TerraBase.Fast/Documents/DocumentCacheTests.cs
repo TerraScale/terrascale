@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Sqlite;
 using TerraBase.Fast.Storage;
@@ -583,6 +584,8 @@ public sealed class DocumentCacheTests
     {
         const long Budget = 4 * 1024 * 1024;
         const int CacheBytes = (int)(Budget / 4);
+        // Periodic catalog writes can share an invalidation stripe with the cached entry.
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
         await using var management = await ManagementApi.StartAsync(settings =>
         {
             settings["memory-budget"] = Budget.ToString(System.Globalization.CultureInfo.InvariantCulture);
@@ -593,7 +596,7 @@ public sealed class DocumentCacheTests
             services.Remove(registration);
             services.AddSingleton<IMemoryBudget>(provider => new ObservedMemoryBudget(
                 (IMemoryBudget)registration.ImplementationFactory!(provider), CacheBytes));
-        });
+        }, time: clock);
         var server = management.Server;
         using var tenant = await CreateTenantAsync(management, "oversized");
         var client = tenant.Data;

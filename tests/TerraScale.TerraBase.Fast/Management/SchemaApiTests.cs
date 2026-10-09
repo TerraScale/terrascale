@@ -162,7 +162,16 @@ public sealed class SchemaApiTests
             await api.PutStoredAsync(data, database, "big", $"d{i}", body);
         }
 
-        using var schema = JsonDocument.Parse(await api.Client.GetStringAsync(Uri($"{database.Path}/collections/big/schema")));
+        using var response = await api.Client.GetAsync(Uri($"{database.Path}/collections/big/schema"));
+        if (!response.IsSuccessStatusCode)
+        {
+            var memory = GC.GetGCMemoryInfo();
+            TUnit.Core.TestContext.Current!.OutputWriter.WriteLine(
+                $"schema sampling: status={(int)response.StatusCode}, heap={memory.HeapSizeBytes}, fragmented={memory.FragmentedBytes}, committed={memory.TotalCommittedBytes}, available={memory.TotalAvailableMemoryBytes}, load={memory.MemoryLoadBytes}");
+        }
+
+        response.EnsureSuccessStatusCode();
+        using var schema = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
 
         await Assert.That(schema.RootElement.GetProperty("documents").GetInt64()).IsEqualTo(9);
         await Assert.That(schema.RootElement.GetProperty("sampledDocuments").GetInt64()).IsEqualTo(8);
