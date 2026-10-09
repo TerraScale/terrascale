@@ -493,7 +493,10 @@ public sealed class RateLimitTests(TerraBaseFixture fixture)
         await Assert.That(body.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("temporarily_unavailable");
     }
 
-    /// <summary>Advances the clock after a real storage operation, including a version race with another notice claim.</summary>
+    /// <summary>
+    /// Advances the clock after a real limiter storage operation, including a version race with another notice claim.
+    /// Other collections (the background signing-ring bootstrap) pass through uncounted.
+    /// </summary>
     private sealed class ClockAdvancingStore(IDocumentStore inner, ManualClock clock) : IDocumentStore
     {
         private int reads;
@@ -504,15 +507,27 @@ public sealed class RateLimitTests(TerraBaseFixture fixture)
 
         public Task<Versioned<T>?> GetAsync<T>(string collection, string instanceId, string key, CancellationToken cancellationToken)
         {
+            if (collection != AttemptLimiter.Collection)
+            {
+                return inner.GetAsync<T>(collection, instanceId, key, cancellationToken);
+            }
+
             Interlocked.Increment(ref this.reads);
             return this.CompleteAsync("get", inner.GetAsync<T>(collection, instanceId, key, cancellationToken));
         }
 
         public Task<bool> TryCreateAsync<T>(string collection, string instanceId, string key, T document, CancellationToken cancellationToken) =>
-            this.CompleteAsync("create", inner.TryCreateAsync(collection, instanceId, key, document, cancellationToken));
+            collection != AttemptLimiter.Collection
+                ? inner.TryCreateAsync(collection, instanceId, key, document, cancellationToken)
+                : this.CompleteAsync("create", inner.TryCreateAsync(collection, instanceId, key, document, cancellationToken));
 
         public async Task<bool> TryReplaceAsync<T>(string collection, string instanceId, string key, T document, string version, CancellationToken cancellationToken)
         {
+            if (collection != AttemptLimiter.Collection)
+            {
+                return await inner.TryReplaceAsync(collection, instanceId, key, document, version, cancellationToken);
+            }
+
             if (this.AdvanceAfter == "contended-replace")
             {
                 // Another replica claims an intermediate deadline, so the original version loses.

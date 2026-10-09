@@ -83,10 +83,14 @@ public static partial class App
         builder.Services.AddSingleton<PlatformGrants>();
         builder.Services.AddSingleton<Invitations>();
         builder.Services.AddHostedService<SessionPruner>();
-        builder.Services.AddSingleton<IStorageHealth, TerraBaseStorageHealth>();
+        builder.Services.AddSingleton<TerraBaseStorageHealth>();
+        builder.Services.AddSingleton<IStorageHealth, SigningKeyReadiness>();
         builder.Services.AddSingleton<ReadinessProbe>();
         builder.Services.AddSingleton<IDocumentStore, TerraBaseDocumentStore>();
+        builder.Services.AddSingleton<ISigningKeyVault>(_ => options.SigningKeyVault is { } vault ? new OciSigningKeyVault(vault) : new UnconfiguredSigningKeyVault());
         builder.Services.AddSingleton<KeyRing>();
+        builder.Services.AddSingleton<SigningKeyRotation>();
+        builder.Services.AddHostedService(provider => provider.GetRequiredService<SigningKeyRotation>());
         builder.Services.AddSingleton<AttemptLimiter>();
         if (options.SmtpHost is null)
         {

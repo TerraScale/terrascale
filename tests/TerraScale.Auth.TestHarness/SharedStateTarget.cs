@@ -1,7 +1,6 @@
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using TerraScale.Auth.Features.RateLimiting;
-using TerraScale.Auth.Features.SigningKeys;
 using TerraScale.Auth.Store;
 using TerraScale.DotNet.Testing;
 using TerraScale.DotNet.TerraBase;
@@ -10,7 +9,7 @@ namespace TerraScale.Auth.Tests;
 
 /// <summary>
 /// A fresh tenant database on the real TerraBase fixture, provisioned with the infrastructure
-/// collections and the key-ring and attempt-limit collections. Several servers bound to one
+/// collections and the attempt-limit collection, and its OCI Vault. Several servers bound to one
 /// target are replicas of one deployment.
 /// </summary>
 public sealed class SharedStateTarget
@@ -28,13 +27,16 @@ public sealed class SharedStateTarget
     /// <summary>The database every bound server stores in.</summary>
     public TerraBaseDatabase Database { get; }
 
+    /// <summary>The OCI Vault holding every bound server's signing key rings.</summary>
+    public FakeOciVault Vault => FakeOciVault.For(this.tenant.Project.Id);
+
     /// <summary>Creates and provisions a database for one test.</summary>
     public static async Task<SharedStateTarget> CreateAsync(TerraBaseFixture fixture)
     {
         ArgumentNullException.ThrowIfNull(fixture);
         var (tenant, database) = await fixture.CreateDatabaseAsync();
-        // ProvisionAsync already creates the collections readiness requires, the key ring's among them.
-        foreach (var collection in new[] { KeyRing.Collection, AttemptLimiter.Collection }.Except(AuthStore.RequiredCollections))
+        // ProvisionAsync already creates the collections readiness requires.
+        foreach (var collection in new[] { AttemptLimiter.Collection }.Except(AuthStore.RequiredCollections))
         {
             await database.CreateCollectionAsync(collection);
         }
@@ -49,6 +51,7 @@ public sealed class SharedStateTarget
         values["terrascale-api-url"] = this.fixture.Server.ClientAddress.GetLeftPart(UriPartial.Authority);
         values["terrascale-api-key"] = this.tenant.ApiKey;
         values["database"] = $"{this.tenant.Project.Id}/auth";
+        this.Vault.Bind(values);
     }
 
     /// <summary>Trusts the fixture's TLS certificate for the server's storage client.</summary>
@@ -101,4 +104,34 @@ public sealed class ManualClock(DateTimeOffset start) : TimeProvider
 
     /// <inheritdoc />
     public override DateTimeOffset GetUtcNow() => new(Interlocked.Read(ref this.ticks), TimeSpan.Zero);
+}
+
+/// <summary>
+/// A clock whose wall time and monotonic timestamp both move only when the test advances them, so elapsed-time
+/// caches expire on demand; timers created through it still run on the system clock. <see cref="Step"/> moves the
+/// wall time alone, like an operator or NTP step.
+/// </summary>
+public sealed class SteppingClock(DateTimeOffset start) : TimeProvider
+{
+    private long wallTicks = start.UtcTicks;
+    private long monotonicTicks;
+
+    /// <inheritdoc />
+    public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+
+    /// <summary>Moves wall time and the monotonic timestamp together.</summary>
+    public void Advance(TimeSpan by)
+    {
+        Interlocked.Add(ref this.wallTicks, by.Ticks);
+        Interlocked.Add(ref this.monotonicTicks, by.Ticks);
+    }
+
+    /// <summary>Moves wall time only.</summary>
+    public void Step(TimeSpan by) => Interlocked.Add(ref this.wallTicks, by.Ticks);
+
+    /// <inheritdoc />
+    public override DateTimeOffset GetUtcNow() => new(Interlocked.Read(ref this.wallTicks), TimeSpan.Zero);
+
+    /// <inheritdoc />
+    public override long GetTimestamp() => Interlocked.Read(ref this.monotonicTicks);
 }

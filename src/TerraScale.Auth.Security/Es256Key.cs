@@ -3,7 +3,7 @@ using Microsoft.IdentityModel.Tokens;
 
 namespace TerraScale.Auth.Security;
 
-/// <summary>An ES256 (ECDSA P-256 with SHA-256) signing key and its key id.</summary>
+/// <summary>An ES256 (ECDSA P-256 with SHA-256) key and its key id.</summary>
 public sealed class Es256Key : IDisposable
 {
     private const int CoordinateSize = 32;
@@ -24,7 +24,7 @@ public sealed class Es256Key : IDisposable
     /// <summary>The <c>kid</c> published in JWT headers and the JWKS.</summary>
     public string KeyId { get; }
 
-    /// <summary>The key, private part included, for IdentityModel signing and validation.</summary>
+    /// <summary>The IdentityModel key for validation, and signing when it contains a private part.</summary>
     public ECDsaSecurityKey SecurityKey { get; }
 
     /// <summary>Generates a new key from the OS CSPRNG.</summary>
@@ -71,6 +71,27 @@ public sealed class Es256Key : IDisposable
         }
     }
 
+    /// <summary>
+    /// Imports only the public P-256 point from canonical, unpadded base64url JWK coordinates.
+    /// Throws <see cref="CryptographicException"/> for malformed coordinates or an invalid point.
+    /// </summary>
+    public static Es256Key ImportPublic(string keyId, string x, string y)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(keyId);
+        var point = new ECPoint { X = DecodeCoordinate(x), Y = DecodeCoordinate(y) };
+        var ecdsa = ECDsa.Create();
+        try
+        {
+            ecdsa.ImportParameters(new ECParameters { Curve = ECCurve.NamedCurves.nistP256, Q = point });
+            return new Es256Key(keyId, ecdsa);
+        }
+        catch
+        {
+            ecdsa.Dispose();
+            throw;
+        }
+    }
+
     /// <summary>The persisted form d ‖ X ‖ Y. It contains the private key: seal it, then zero it.</summary>
     public byte[] ExportSecret()
     {
@@ -103,4 +124,27 @@ public sealed class Es256Key : IDisposable
 
     /// <inheritdoc />
     public void Dispose() => this.ecdsa.Dispose();
+
+    private static byte[] DecodeCoordinate(string coordinate)
+    {
+        if (coordinate is null || coordinate.Length != 43)
+        {
+            throw new CryptographicException("An ES256 coordinate is 32 bytes in canonical base64url.");
+        }
+
+        try
+        {
+            var bytes = Base64UrlEncoder.DecodeBytes(coordinate);
+            if (bytes.Length != CoordinateSize || !string.Equals(Base64UrlEncoder.Encode(bytes), coordinate, StringComparison.Ordinal))
+            {
+                throw new CryptographicException("An ES256 coordinate is 32 bytes in canonical base64url.");
+            }
+
+            return bytes;
+        }
+        catch (FormatException exception)
+        {
+            throw new CryptographicException("An ES256 coordinate is 32 bytes in canonical base64url.", exception);
+        }
+    }
 }

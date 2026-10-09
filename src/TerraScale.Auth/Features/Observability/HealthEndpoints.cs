@@ -38,7 +38,7 @@ public sealed class HealthzEndpoint : EndpointWithoutRequest<StatusBody>
         Task.FromResult(new StatusBody("ok", ServiceVersion.Value));
 }
 
-/// <summary><c>GET /readyz</c>: the storage authority answered a probe within two seconds.</summary>
+/// <summary><c>GET /readyz</c>: storage, the signing-ring bootstrap and public signing metadata are usable within two seconds.</summary>
 public sealed class ReadyzEndpoint(ReadinessProbe probe) : EndpointWithoutRequest<IResult>
 {
     /// <inheritdoc />
@@ -47,7 +47,7 @@ public sealed class ReadyzEndpoint(ReadinessProbe probe) : EndpointWithoutReques
         Get("/readyz");
         Name("readyz");
         Summary("Readiness probe");
-        Description("Returns 200 only when the configured TerraBase auth database, required collections, reads and conditional writes are usable. Observations are cached for at most one second; probe deadline is two seconds.");
+        Description("Returns 200 only when the configured TerraBase auth database, required collections, reads and conditional writes are usable, this replica's startup signing-ring bootstrap has completed, and the serving issuer's signing ring, read from its OCI Vault secret for each observation, has valid authenticated public metadata and a clock within five minutes of this replica's. Observations are cached for at most one second; probe deadline is two seconds.");
         Tags("Observability");
         Produces<ReadyBody>();
         Produces<ReadyBody>(StatusCodes.Status503ServiceUnavailable);

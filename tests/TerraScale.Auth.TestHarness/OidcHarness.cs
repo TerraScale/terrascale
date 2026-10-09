@@ -11,6 +11,7 @@ using TerraScale.Auth.Contracts;
 using TerraScale.Auth.Features.Email;
 using TerraScale.Auth.Features.Identity;
 using TerraScale.Auth.Features.Oidc;
+using TerraScale.Auth.Features.SigningKeys;
 using TerraScale.DotNet.TerraBase;
 using TerraScale.DotNet.Testing;
 
@@ -136,6 +137,9 @@ public sealed class OidcHarness : IAsyncDisposable
 
     public TerraBaseDatabase Database { get; }
 
+    /// <summary>The OCI Vault holding every replica's signing key ring.</summary>
+    public FakeOciVault Vault => FakeOciVault.For(this.Tenant.Project.Id);
+
     public CapturingEmailSender Email { get; }
 
     public HttpClient Client => this.Server.Client;
@@ -162,10 +166,17 @@ public sealed class OidcHarness : IAsyncDisposable
             settings?.Invoke(values);
         }, clock: clock);
 
-    /// <summary>Another replica bound to the same database.</summary>
-    public static Task<AuthTestServer> StartServerAsync(TerraBaseFixture fixture, TerraBaseTestTenant tenant, CapturingEmailSender email, Action<Dictionary<string, string>>? settings = null,
-        CapturingLogs? logs = null, TimeProvider? clock = null, Action<IServiceCollection>? replace = null) =>
-        AuthTestServer.StartAsync(values =>
+    /// <summary>Another replica bound to the same database, returned once its signing-ring bootstrap completed.</summary>
+    public static async Task<AuthTestServer> StartServerAsync(TerraBaseFixture fixture, TerraBaseTestTenant tenant, CapturingEmailSender email, Action<Dictionary<string, string>>? settings = null,
+        CapturingLogs? logs = null, TimeProvider? clock = null, Action<IServiceCollection>? replace = null)
+    {
+        if (clock is not null)
+        {
+            // As in production, the vault's clock agrees with the replica's (KeyRing.MaxClockSkew).
+            FakeOciVault.For(tenant.Project.Id).Clock = clock;
+        }
+
+        var server = await AuthTestServer.StartAsync(values =>
         {
             values["terrascale-api-url"] = fixture.Server.ClientAddress.GetLeftPart(UriPartial.Authority);
             values["terrascale-api-key"] = tenant.ApiKey;
@@ -173,6 +184,7 @@ public sealed class OidcHarness : IAsyncDisposable
             values["dashboard-client-secret"] = ClientSecret;
             values["dashboard-redirect-uris"] = $"{RedirectUri};{LoopbackRedirectUri}";
             values["dashboard-post-logout-redirect-uris"] = PostLogoutRedirectUri;
+            FakeOciVault.For(tenant.Project.Id).Bind(values);
             settings?.Invoke(values);
         }, services =>
         {
@@ -190,6 +202,17 @@ public sealed class OidcHarness : IAsyncDisposable
 
             replace?.Invoke(services);
         });
+        try
+        {
+            await server.App.Services.GetRequiredService<SigningKeyRotation>().Bootstrapped.WaitAsync(TimeSpan.FromSeconds(30));
+            return server;
+        }
+        catch
+        {
+            await server.DisposeAsync();
+            throw;
+        }
+    }
 
     public async Task<UserRecord> CreateUserAsync(string address = "alice@example.test") =>
         await this.Server.App.Services.GetRequiredService<Users>().CreateAsync(OidcIssuer.InstanceId, address)

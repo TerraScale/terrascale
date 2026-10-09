@@ -117,6 +117,7 @@ public sealed class EmailTests
         {
             values.Remove("environment");
             values["terrascale-api-url"] = "https://api.terrascale.tech";
+            FakeOciVault.BindRefusing(values);
         });
 
         await Assert.That(logs.Text).Contains("TS_AUTH_SMTP_* is not configured: email is logged, not delivered");

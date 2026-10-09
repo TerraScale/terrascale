@@ -76,6 +76,106 @@ public sealed class ConfigurationTests
     }
 
     [Test]
+    public async Task Production_requires_the_signing_key_vault()
+    {
+        var exception = await Assert.ThrowsAsync<AuthConfigurationException>(() => AuthTestServer.StartAsync(settings: values =>
+        {
+            values.Remove("environment");
+            values["terrascale-api-url"] = "https://api.terrascale.tech";
+        }));
+
+        await Assert.That(exception!.Message).IsEqualTo("TS_AUTH_SIGNING_KEY_VAULT and its TS_AUTH_OCI_* credential are required outside Development");
+    }
+
+    [Test]
+    [Arguments("ocid1.vault.oc1.sa-saopaulo-1.ffvmfu2naagt6.abtxeljr7ebplea4ua3memgthsupcfn3crg6d56vipsw7o2butchdrx3urmq")]
+    [Arguments("ocid1.vault.oc1.sa-saopaulo-1.abtxeljr7ebplea4ua3memgthsupcfn3crg6d56vipsw7o2butchdrx3urmq")]
+    public async Task Realistic_vault_ocids_with_or_without_the_future_use_part_are_accepted(string vault)
+    {
+        var values = AuthTestServer.DefaultSettings();
+        FakeOciVault.For(Guid.NewGuid().ToString()).Bind(values);
+        values["signing-key-vault"] = vault;
+        values["oci-tenancy"] = "ocid1.tenancy.oc1..aaaaaaaaypdff62jbchkojfli5i22ybzm3qnptwwsbg3aa2t5ali6te52nzq";
+        values["oci-user"] = "ocid1.user.oc1..aaaaaaaa3jtbxsw3sxb2ilkntp2rzqxm6a7kbp2oyrqqqpicnqyzshtd5lca";
+
+        var options = AuthOptions.Load(values);
+
+        await Assert.That(options.SigningKeyVault!.VaultId).IsEqualTo(vault);
+    }
+
+    [Test]
+    public async Task Vaults_outside_the_commercial_realm_are_refused_explicitly()
+    {
+        var values = AuthTestServer.DefaultSettings();
+        FakeOciVault.For(Guid.NewGuid().ToString()).Bind(values);
+        values["oci-region"] = "us-gov-ashburn-1";
+        values["signing-key-vault"] = "ocid1.vault.oc2.us-gov-ashburn-1.bbbtest.vaulttest";
+
+        var exception = await Assert.ThrowsAsync<AuthConfigurationException>(() => Task.FromResult(AuthOptions.Load(values)));
+
+        await Assert.That(exception!.Message).IsEqualTo("TS_AUTH_SIGNING_KEY_VAULT must be a vault OCID in the commercial OCI realm (oc1)");
+    }
+
+    [Test]
+    public async Task An_oci_endpoint_alone_is_a_partial_vault_configuration()
+    {
+        var exception = await Assert.ThrowsAsync<AuthConfigurationException>(() => AuthTestServer.StartAsync(settings: values => values["oci-endpoint"] = "https://127.0.0.1:9"));
+
+        await Assert.That(exception!.Message).IsEqualTo("TS_AUTH_SIGNING_KEY_VAULT, TS_AUTH_SIGNING_KEY_SECRET and TS_AUTH_OCI_* are partially configured");
+    }
+
+    [Test]
+    public async Task Production_refuses_a_plain_http_oci_endpoint()
+    {
+        var exception = await Assert.ThrowsAsync<AuthConfigurationException>(() => AuthTestServer.StartAsync(settings: values =>
+        {
+            values.Remove("environment");
+            values["terrascale-api-url"] = "https://api.terrascale.tech";
+            FakeOciVault.For(Guid.NewGuid().ToString()).Bind(values);
+        }));
+
+        await Assert.That(exception!.Message).IsEqualTo("TS_AUTH_OCI_ENDPOINT must be a loopback origin, HTTPS outside Development");
+    }
+
+    [Test]
+    [Arguments("oci-private-key", null, "TS_AUTH_SIGNING_KEY_VAULT, TS_AUTH_SIGNING_KEY_SECRET and TS_AUTH_OCI_* are partially configured")]
+    [Arguments("oci-region", "us-sanjose-1", "TS_AUTH_SIGNING_KEY_VAULT must be a vault OCID in TS_AUTH_OCI_REGION")]
+    [Arguments("oci-region", "sa-saopaulo", "TS_AUTH_OCI_REGION must be an OCI region such as sa-saopaulo-1")]
+    [Arguments("signing-key-vault", "ocid1.vault.oc2.us-sanjose-1.bbbtest.vaulttest", "TS_AUTH_SIGNING_KEY_VAULT must be a vault OCID in the commercial OCI realm (oc1)")]
+    [Arguments("signing-key-vault", "secretvalue", "TS_AUTH_SIGNING_KEY_VAULT must be a vault OCID in the commercial OCI realm (oc1)")]
+    [Arguments("signing-key-secret", "Ring_Secret", "TS_AUTH_SIGNING_KEY_SECRET must be a lowercase hyphenated secret name")]
+    [Arguments("oci-fingerprint", "not-a-fingerprint", "TS_AUTH_OCI_TENANCY, TS_AUTH_OCI_USER and TS_AUTH_OCI_FINGERPRINT must be OCI identifiers and an API key fingerprint")]
+    [Arguments("oci-private-key", "-----BEGIN RSA PRIVATE KEY-----\nsecretvalue\n-----END RSA PRIVATE KEY-----", "TS_AUTH_OCI_PRIVATE_KEY must be an RSA private key in PEM")]
+    [Arguments("oci-endpoint", "https://vault.example", "TS_AUTH_OCI_ENDPOINT must be a loopback origin, HTTPS outside Development")]
+    [Arguments("oci-endpoint", "https://127.0.0.1:9/ring", "TS_AUTH_OCI_ENDPOINT must be a loopback origin, HTTPS outside Development")]
+    [Arguments("oci-endpoint", "https://127.0.0.1:9/?q=1", "TS_AUTH_OCI_ENDPOINT must be an absolute HTTP(S) URL")]
+    [Arguments("oci-private-key", "public", "TS_AUTH_OCI_PRIVATE_KEY must be an RSA private key in PEM")]
+    public async Task Signing_key_vault_settings_are_validated_without_echoing_them(string key, string? value, string message)
+    {
+        var exception = await Assert.ThrowsAsync<AuthConfigurationException>(() => AuthTestServer.StartAsync(settings: values =>
+        {
+            FakeOciVault.For(Guid.NewGuid().ToString()).Bind(values);
+            if (value is null)
+            {
+                values.Remove(key);
+            }
+            else if (value == "public")
+            {
+                using var rsa = RSA.Create();
+                rsa.ImportFromPem(values[key]);
+                values[key] = rsa.ExportSubjectPublicKeyInfoPem();
+            }
+            else
+            {
+                values[key] = value;
+            }
+        }));
+
+        await Assert.That(exception!.Message).IsEqualTo(message);
+        await Assert.That(exception.Message).DoesNotContain("secretvalue");
+    }
+
+    [Test]
     [Arguments("https://127.0.0.1:8420", "Production auth storage cannot use a loopback TerraScale API URL")]
     [Arguments("https://evil.example", "Global auth storage requires a TerraScale HTTPS API origin")]
     [Arguments("http://api.terrascale.tech", "TS_AUTH_TERRASCALE_API_URL must be an HTTPS origin without a path")]
@@ -405,6 +505,7 @@ public sealed class ConfigurationTests
         settings.Remove("environment");
         settings["terrascale-api-url"] = apiUrl;
         settings["terrascale-api-key"] = "Bearer  sk_test_production_start";
+        FakeOciVault.BindRefusing(settings);
         await using var service = await RunningBinary.StartAsync(settings);
 
         using var health = await service.Client.GetAsync("/healthz");

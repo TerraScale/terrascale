@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.Extensions.DependencyInjection;
 using TerraScale.Auth.Configuration;
+using TerraScale.Auth.Features.SigningKeys;
 
 namespace TerraScale.Auth.Tests;
 
@@ -58,7 +59,12 @@ public sealed class AuthTestServer : IAsyncDisposable
     {
         var values = DefaultSettings();
         settings?.Invoke(values);
-        var app = TerraScale.Auth.App.Build(AuthOptions.Load(values), builder => services?.Invoke(builder.Services));
+        var app = TerraScale.Auth.App.Build(AuthOptions.Load(values), builder =>
+        {
+            // Tests change rings behind the server's back; every lookup reads the vault unless a test opts in.
+            builder.Services.AddSingleton(new KeyRingRefresh(TimeSpan.Zero));
+            services?.Invoke(builder.Services);
+        });
         try
         {
             routes?.Invoke(app);

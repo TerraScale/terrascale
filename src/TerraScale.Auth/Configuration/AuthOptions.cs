@@ -48,6 +48,14 @@ public sealed partial record AuthOptions
         "access-token-audiences",
         "service-clients",
         "invitation-url",
+        "signing-key-vault",
+        "signing-key-secret",
+        "oci-region",
+        "oci-tenancy",
+        "oci-user",
+        "oci-fingerprint",
+        "oci-private-key",
+        "oci-endpoint",
         "environment");
 
     /// <summary>Plain-HTTP listen address; TLS terminates in front of the service.</summary>
@@ -145,6 +153,9 @@ public sealed partial record AuthOptions
     /// </summary>
     public Uri? InvitationUrl { get; init; }
 
+    /// <summary>The OCI Vault secret holding the signing key ring; required outside Development.</summary>
+    public SigningKeyVaultOptions? SigningKeyVault { get; init; }
+
     /// <summary>Whether <c>TS_AUTH_ENVIRONMENT=Development</c> disables the production guards.</summary>
     public bool Development { get; init; }
 
@@ -157,7 +168,8 @@ public sealed partial record AuthOptions
         + $"TerraScaleApiEndpoints = {this.TerraScaleApiEndpoints.Count}, "
         + $"Database = {this.Database}, Development = {this.Development}, Smtp = {(this.SmtpHost is null ? "off" : "on")}, "
         + $"ErrorReporting = {(this.SentryDsn is null ? "off" : "on")}, DashboardClient = {(this.DashboardClient is null ? "off" : "on")}, "
-        + $"AccessTokenAudiences = {this.AccessTokenAudiences.Count}, ServiceClients = {this.ServiceClients.Count} }}";
+        + $"AccessTokenAudiences = {this.AccessTokenAudiences.Count}, ServiceClients = {this.ServiceClients.Count}, "
+        + $"SigningKeyVault = {(this.SigningKeyVault is null ? "off" : "on")} }}";
 
     /// <summary>Reads <c>TS_AUTH_*</c> environment variables, then <c>--key=value</c> arguments, which win.</summary>
     public static AuthOptions FromProcess(IEnumerable<string> args)
@@ -313,6 +325,7 @@ public sealed partial record AuthOptions
             AccessTokenAudiences = ParseAudiences(Optional("access-token-audiences")),
             ServiceClients = ParseServiceClients(Optional("service-clients")),
             InvitationUrl = Optional("invitation-url") is { } invitationUrl ? ParseInvitationUrl(invitationUrl, development) : null,
+            SigningKeyVault = ParseSigningKeyVault(Optional, development),
             Development = development,
         };
         options.EnforceProductionGuards();
@@ -390,6 +403,11 @@ public sealed partial record AuthOptions
         if (this.AccessTokenAudiences.Any(audience => new Uri(audience) == issuer))
         {
             throw Invalid("TS_AUTH_ACCESS_TOKEN_AUDIENCES must not name this service's platform issuer");
+        }
+
+        if (!this.Development && this.SigningKeyVault is null)
+        {
+            throw Invalid("TS_AUTH_SIGNING_KEY_VAULT and its TS_AUTH_OCI_* credential are required outside Development");
         }
     }
 
@@ -638,6 +656,94 @@ public sealed partial record AuthOptions
             : raw;
     }
 
+    // All seven settings or none; the endpoint override is for local stand-ins of the OCI APIs.
+    private static SigningKeyVaultOptions? ParseSigningKeyVault(Func<string, string?> optional, bool development)
+    {
+        string?[] parts = [optional("signing-key-vault"), optional("signing-key-secret"), optional("oci-region"), optional("oci-tenancy"),
+            optional("oci-user"), optional("oci-fingerprint"), optional("oci-private-key")];
+        if (parts.All(part => part is null) && optional("oci-endpoint") is null)
+        {
+            return null;
+        }
+
+        if (parts.Any(part => part is null))
+        {
+            throw Invalid("TS_AUTH_SIGNING_KEY_VAULT, TS_AUTH_SIGNING_KEY_SECRET and TS_AUTH_OCI_* are partially configured");
+        }
+
+        var (vault, secret, region, tenancy, user, fingerprint, pem) = (parts[0]!, parts[1]!, parts[2]!, parts[3]!, parts[4]!, parts[5]!, parts[6]!);
+        if (!OciRegion().IsMatch(region))
+        {
+            throw Invalid("TS_AUTH_OCI_REGION must be an OCI region such as sa-saopaulo-1");
+        }
+
+        // The Secrets and Vault endpoints are derived for the commercial realm only (oci.oraclecloud.com).
+        if (!VaultOcid().IsMatch(vault) || vault.Split('.')[2] != "oc1")
+        {
+            throw Invalid("TS_AUTH_SIGNING_KEY_VAULT must be a vault OCID in the commercial OCI realm (oc1)");
+        }
+
+        // Region-local: the vault OCID names its region, which must be the configured one.
+        if (vault.Split('.')[3] != region)
+        {
+            throw Invalid("TS_AUTH_SIGNING_KEY_VAULT must be a vault OCID in TS_AUTH_OCI_REGION");
+        }
+
+        if (!SecretName().IsMatch(secret))
+        {
+            throw Invalid("TS_AUTH_SIGNING_KEY_SECRET must be a lowercase hyphenated secret name");
+        }
+
+        if (!TenancyOcid().IsMatch(tenancy) || !UserOcid().IsMatch(user) || !Fingerprint().IsMatch(fingerprint))
+        {
+            throw Invalid("TS_AUTH_OCI_TENANCY, TS_AUTH_OCI_USER and TS_AUTH_OCI_FINGERPRINT must be OCI identifiers and an API key fingerprint");
+        }
+
+        try
+        {
+            using var key = RSA.Create();
+            key.ImportFromPem(pem);
+            // A public key imports too; only a private key can sign.
+            _ = key.ExportParameters(includePrivateParameters: true);
+        }
+        catch (Exception error) when (error is ArgumentException or CryptographicException)
+        {
+            throw Invalid("TS_AUTH_OCI_PRIVATE_KEY must be an RSA private key in PEM");
+        }
+
+        Uri? endpoint = null;
+        if (optional("oci-endpoint") is { } rawEndpoint)
+        {
+            // Only a local stand-in of the OCI APIs: a remote override would receive signed requests and the ring.
+            endpoint = AbsoluteHttpUrl("oci-endpoint", rawEndpoint);
+            if (endpoint.AbsolutePath != "/" || !endpoint.IsLoopback || (endpoint.Scheme != Uri.UriSchemeHttps && !development))
+            {
+                throw Invalid("TS_AUTH_OCI_ENDPOINT must be a loopback origin, HTTPS outside Development");
+            }
+        }
+
+        return new SigningKeyVaultOptions(vault, secret, region, tenancy, user, fingerprint, pem, endpoint);
+    }
+
+    // ocid1.<type>.<realm>.[region][.future use].<unique id>: a vault names its region; tenancies and users name none.
+    [GeneratedRegex(@"\Aocid1\.vault\.oc[0-9]+\.[a-z0-9-]+(\.[a-z0-9]*)?\.[a-z0-9]+\z")]
+    private static partial Regex VaultOcid();
+
+    [GeneratedRegex(@"\Aocid1\.tenancy\.oc[0-9]+\.(\.[a-z0-9]*)?\.[a-z0-9]+\z")]
+    private static partial Regex TenancyOcid();
+
+    [GeneratedRegex(@"\Aocid1\.user\.oc[0-9]+\.(\.[a-z0-9]*)?\.[a-z0-9]+\z")]
+    private static partial Regex UserOcid();
+
+    [GeneratedRegex(@"\A[a-z]+(-[a-z]+)+-[0-9]+\z")]
+    private static partial Regex OciRegion();
+
+    [GeneratedRegex(@"\A[a-z0-9]+(-[a-z0-9]+)*\z")]
+    private static partial Regex SecretName();
+
+    [GeneratedRegex(@"\A[0-9a-f]{2}(:[0-9a-f]{2}){15}\z")]
+    private static partial Regex Fingerprint();
+
     private static string EnvName(string key) => $"TS_AUTH_{key.Replace('-', '_').ToUpperInvariant()}";
 
     private static AuthConfigurationException Invalid(string message) => new(message);
@@ -660,4 +766,19 @@ public sealed record ServiceClientOptions(string ClientId, string Secret)
 {
     /// <summary>Omits the secret, so formatting or logging the record never discloses it.</summary>
     public override string ToString() => $"{nameof(ServiceClientOptions)} {{ ClientId = {this.ClientId} }}";
+}
+
+/// <summary>The OCI Vault secret holding the signing key ring, and the API key that reads and versions it.</summary>
+/// <param name="VaultId">The region-local vault OCID.</param>
+/// <param name="SecretName">The ring secret's name, for example <c>gru-ts-auth-signing-key-ring</c>.</param>
+/// <param name="Region">The OCI region, for example <c>sa-saopaulo-1</c>.</param>
+/// <param name="TenancyId">The tenancy OCID.</param>
+/// <param name="UserId">The OCI user OCID owning the API key.</param>
+/// <param name="Fingerprint">The API key fingerprint.</param>
+/// <param name="PrivateKeyPem">The API private key in PEM.</param>
+/// <param name="Endpoint">Overrides both OCI API origins; for local test doubles only.</param>
+public sealed record SigningKeyVaultOptions(string VaultId, string SecretName, string Region, string TenancyId, string UserId, string Fingerprint, string PrivateKeyPem, Uri? Endpoint)
+{
+    /// <summary>Omits the private key, so formatting or logging the record never discloses it.</summary>
+    public override string ToString() => $"{nameof(SigningKeyVaultOptions)} {{ VaultId = {this.VaultId}, SecretName = {this.SecretName}, Region = {this.Region} }}";
 }

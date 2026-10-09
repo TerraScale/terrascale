@@ -37,7 +37,7 @@ public sealed class PlatformAuthentication(KeyRing ring, Users users, TotpCreden
 
         var issuer = OidcIssuer.Issuer(options).AbsoluteUri;
         IDictionary<string, object>? claims;
-        var keys = await ring.GetActiveAsync(OidcIssuer.InstanceId, cancellationToken).ConfigureAwait(false);
+        var keys = await ring.GetPublicAsync(OidcIssuer.InstanceId, Jwt.KeyId(token), cancellationToken).ConfigureAwait(false);
         try
         {
             claims = await Jwt.ValidateAsync(token, keys, "at+jwt", issuer, issuer).ConfigureAwait(false);

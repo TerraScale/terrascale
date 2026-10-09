@@ -3,8 +3,13 @@ using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.Extensions.DependencyInjection;
+using TerraScale.Auth.Features.Oidc;
+using TerraScale.Auth.Features.SigningKeys;
+using TerraScale.Auth.Store;
 using TerraScale.Auth.Tests;
+using TerraScale.DotNet.TerraBase;
 using TerraScale.DotNet.Testing;
 
 namespace TerraScale.Auth.Fast.Store;
@@ -41,6 +46,7 @@ public sealed class StorageReadinessTests(TerraBaseFixture fixture)
     {
         var (tenant, database) = await fixture.CreateDatabaseAsync();
         await using var auth = await StartAuthAsync(tenant);
+        await auth.App.Services.GetRequiredService<SigningKeyRotation>().Bootstrapped.WaitAsync(TimeSpan.FromSeconds(30));
         using var ready = await auth.Client.GetAsync("/readyz");
         await Assert.That(ready.StatusCode).IsEqualTo(HttpStatusCode.OK);
         var body = await ready.Content.ReadFromJsonAsync<JsonElement>();
@@ -51,6 +57,115 @@ public sealed class StorageReadinessTests(TerraBaseFixture fixture)
         await Assert.That(unavailable.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
         await Assert.That((await database.ListCollectionsAsync()).Items.Select(collection => collection.Name))
             .IsEquivalentTo(["api_keys", "audit_events", "email_config_versions", "email_configs", "invitations", "memberships", "mfa_credentials", "oidc_applications", "oidc_authorizations", "oidc_tokens", "organizations", "passcodes", "project_members", "projects", "rate_limits", "sessions", "signing_key_rings", "storage_health", "uniques", "users", "verification_tokens"]);
+    }
+
+    [Test]
+    public async Task Startup_replaces_a_legacy_signing_ring_before_reporting_ready()
+    {
+        var (tenant, database) = await fixture.CreateDatabaseAsync();
+        var vault = FakeOciVault.For(tenant.Project.Id);
+        var id = OidcIssuer.InstanceId;
+        // One master key: only the earlier format, not an unopenable box, triggers the replacement.
+        var masterKey = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+        await using (var previous = await StartAuthAsync(tenant, masterKey: masterKey))
+        {
+            await previous.App.Services.GetRequiredService<SigningKeyRotation>().Bootstrapped.WaitAsync(TimeSpan.FromSeconds(30));
+        }
+
+        // The ring format before public metadata, as an earlier release stored it.
+        var stored = vault.Current(id);
+        var ring = JsonNode.Parse(stored.Document.GetRawText())!.AsObject();
+        ring.Remove("instanceId");
+        foreach (var key in ring["keys"]!.AsArray())
+        {
+            foreach (var field in new[] { "activatesAt", "x", "y", "publicMetadataMac" })
+            {
+                key!.AsObject().Remove(field);
+            }
+        }
+
+        vault.Put(id, JsonSerializer.SerializeToElement(ring));
+        var legacyKid = ring["keys"]![0]!["id"]!.GetValue<string>();
+
+        await using var auth = await StartAuthAsync(tenant, masterKey: masterKey);
+        await Assert.That(await ReadyWithinAsync(auth, TimeSpan.FromSeconds(10))).IsTrue();
+        var replaced = vault.Current(id).Document;
+        await Assert.That(replaced.GetProperty("instanceId").GetString()).IsEqualTo(OidcIssuer.InstanceId);
+        await Assert.That(replaced.GetProperty("keys").GetArrayLength()).IsEqualTo(1);
+        var jwks = await auth.Client.GetFromJsonAsync<JsonElement>($"/{OidcIssuer.Slug}/.well-known/jwks.json");
+        var kid = jwks.GetProperty("keys").EnumerateArray().Single().GetProperty("kid").GetString();
+        await Assert.That(kid).IsEqualTo(replaced.GetProperty("keys")[0].GetProperty("id").GetString());
+        await Assert.That(kid).IsNotEqualTo(legacyKid);
+        // Key material lives only in the vault.
+        await Assert.That((await database.ListDocumentsAsync("signing_key_rings")).Items.Count).IsEqualTo(0);
+    }
+
+    [Test]
+    public async Task A_ring_emptied_after_startup_reports_not_ready_without_recreating_it()
+    {
+        var (tenant, _) = await fixture.CreateDatabaseAsync();
+        var vault = FakeOciVault.For(tenant.Project.Id);
+        await using var auth = await StartAuthAsync(tenant);
+        await Assert.That(await ReadyWithinAsync(auth, TimeSpan.FromSeconds(10))).IsTrue();
+        vault.Put(OidcIssuer.InstanceId, JsonDocument.Parse("{}").RootElement);
+        var emptied = vault.Current(OidcIssuer.InstanceId).Version;
+
+        // Readiness is cached for one second.
+        await Task.Delay(TimeSpan.FromMilliseconds(1100));
+        using var unavailable = await auth.Client.GetAsync("/readyz");
+        await Assert.That(unavailable.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        await Assert.That(vault.Current(OidcIssuer.InstanceId).Version).IsEqualTo(emptied);
+    }
+
+    [Test]
+    public async Task Readiness_checks_the_vault_ring_as_it_is_now_despite_the_production_refresh_interval()
+    {
+        var (tenant, _) = await fixture.CreateDatabaseAsync();
+        var vault = FakeOciVault.For(tenant.Project.Id);
+        await using var auth = await StartAuthAsync(tenant, refresh: TimeSpan.FromMinutes(1));
+        await Assert.That(await ReadyWithinAsync(auth, TimeSpan.FromSeconds(10))).IsTrue();
+        var ring = vault.Read(OidcIssuer.InstanceId)!.Value;
+
+        // Each change shows once the one-second readiness observation expires, not after the ring cache's minute.
+        vault.Put(OidcIssuer.InstanceId, JsonDocument.Parse("{}").RootElement);
+        await Task.Delay(TimeSpan.FromMilliseconds(1100));
+        using (var emptied = await auth.Client.GetAsync("/readyz"))
+        {
+            await Assert.That(emptied.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        }
+
+        vault.Put(OidcIssuer.InstanceId, ring);
+        await Task.Delay(TimeSpan.FromMilliseconds(1100));
+        using (var restored = await auth.Client.GetAsync("/readyz"))
+        {
+            await Assert.That(restored.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        }
+
+        vault.Failing = "read";
+        await Task.Delay(TimeSpan.FromMilliseconds(1100));
+        using var outage = await auth.Client.GetAsync("/readyz");
+        await Assert.That(outage.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+    }
+
+    [Test]
+    public async Task Malformed_public_signing_metadata_after_startup_reports_not_ready_without_repairing_the_ring()
+    {
+        var (tenant, _) = await fixture.CreateDatabaseAsync();
+        var vault = FakeOciVault.For(tenant.Project.Id);
+        await using var auth = await StartAuthAsync(tenant);
+        await auth.App.Services.GetRequiredService<SigningKeyRotation>().Bootstrapped.WaitAsync(TimeSpan.FromSeconds(30));
+        var id = OidcIssuer.InstanceId;
+        var stored = vault.Current(id);
+        var ring = JsonNode.Parse(stored.Document.GetRawText())!;
+        ring["keys"]![0]!["x"] = "not-a-coordinate";
+        vault.Put(id, JsonSerializer.SerializeToElement(ring));
+        var before = vault.Current(id);
+
+        using var unavailable = await auth.Client.GetAsync("/readyz");
+        await Assert.That(unavailable.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        var after = vault.Current(id);
+        await Assert.That(after.Version).IsEqualTo(before.Version);
+        await Assert.That(after.Document.GetRawText()).IsEqualTo(before.Document.GetRawText());
     }
 
     [Test]
@@ -149,13 +264,26 @@ public sealed class StorageReadinessTests(TerraBaseFixture fixture)
             values["terrascale-api-failover"] = failover ? "true" : "false";
             values["terrascale-api-key"] = tenant.ApiKey;
             values["database"] = $"{tenant.Project.Id}/auth";
+            FakeOciVault.For(tenant.Project.Id).Bind(values);
         });
 
-    private Task<AuthTestServer> StartAuthAsync(TerraBaseTestTenant tenant, string databaseName = "auth", string? apiKey = null) =>
+    private Task<AuthTestServer> StartAuthAsync(TerraBaseTestTenant tenant, string databaseName = "auth", string? apiKey = null, string? masterKey = null, TimeSpan? refresh = null) =>
         AuthTestServer.StartAsync(settings: values =>
         {
             values["terrascale-api-url"] = fixture.Server.ClientAddress.GetLeftPart(UriPartial.Authority);
             values["terrascale-api-key"] = apiKey ?? tenant.ApiKey;
             values["database"] = $"{tenant.Project.Id}/{databaseName}";
-        }, services: services => services.AddSingleton(fixture.Server.Http));
+            FakeOciVault.For(tenant.Project.Id).Bind(values);
+            if (masterKey is not null)
+            {
+                values["master-key"] = masterKey;
+            }
+        }, services: services =>
+        {
+            services.AddSingleton(fixture.Server.Http);
+            if (refresh is { } interval)
+            {
+                services.AddSingleton(new KeyRingRefresh(interval));
+            }
+        });
 }

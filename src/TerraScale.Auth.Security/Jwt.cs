@@ -11,8 +11,8 @@ namespace TerraScale.Auth.Security;
 public static class Jwt
 {
     /// <summary>
-    /// The longest lifetime a token may have. The key ring retains superseded keys until an
-    /// approved retirement design can prove their tokens have expired using trustworthy time.
+    /// The longest lifetime a token may have. The key ring keeps a superseded key published
+    /// for longer than this after its successor starts signing.
     /// </summary>
     public static readonly TimeSpan MaxLifetime = TimeSpan.FromHours(24);
 
@@ -23,6 +23,27 @@ public static class Jwt
     ];
 
     private static readonly JsonWebTokenHandler Handler = new() { SetDefaultTimesOnTokenCreation = false };
+
+    /// <summary>
+    /// The unverified <c>kid</c> header of a compact JWT, or <see langword="null"/>: only for choosing which keys
+    /// to verify with, never as evidence of anything.
+    /// </summary>
+    public static string? KeyId(string? token)
+    {
+        if (string.IsNullOrEmpty(token) || !Handler.CanReadToken(token))
+        {
+            return null;
+        }
+
+        try
+        {
+            return new JsonWebToken(token).Kid is { Length: > 0 } kid ? kid : null;
+        }
+        catch (ArgumentException)
+        {
+            return null;
+        }
+    }
 
     /// <summary>
     /// Signs <paramref name="claims"/> with <paramref name="key"/>. The issuer, audience and

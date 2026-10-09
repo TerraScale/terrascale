@@ -1,6 +1,28 @@
+using TerraScale.Auth.Features.Oidc;
+using TerraScale.Auth.Features.SigningKeys;
 using TerraScale.Auth.Store;
 
 namespace TerraScale.Auth.Features.Observability;
+
+/// <summary>
+/// Checks storage access, this replica's signing-ring bootstrap and the serving issuer's public
+/// signing metadata. The check itself never writes identity state.
+/// </summary>
+public sealed class SigningKeyReadiness(TerraBaseStorageHealth storage, KeyRing ring, SigningKeyRotation rotation) : IStorageHealth
+{
+    /// <inheritdoc />
+    public async Task<StorageHealthResult> CheckAsync(CancellationToken cancellationToken)
+    {
+        var result = await storage.CheckAsync(cancellationToken).ConfigureAwait(false);
+        if (result.Healthy)
+        {
+            await rotation.Bootstrapped.WaitAsync(cancellationToken).ConfigureAwait(false);
+            await ring.CheckPublicMetadataAsync(OidcIssuer.InstanceId, cancellationToken).ConfigureAwait(false);
+        }
+
+        return result;
+    }
+}
 
 /// <summary>One completed readiness observation.</summary>
 public sealed record ReadinessObservation(bool Ready, string? Region);

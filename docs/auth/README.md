@@ -144,6 +144,12 @@ nice -n 19 make test-slow  # slow suite
 nice -n 19 make dev        # dotnet watch, published over HTTPS on the tailnet for this worktree
 ```
 
+Signing keys live in one OCI Vault secret per region and rotate
+automatically: each replica bootstraps the serving ring at startup (replacing
+one it cannot verify, which signs everyone out) and publishes a new key every
+30 days, two days before it signs. See
+[bootstrap and automatic rotation](docs/csharp-port.md#bootstrap-and-automatic-rotation-ts-703).
+
 The service needs an explicitly configured TerraBase HTTPS origin, an
 organization-bound Documents API key and an existing database. Resolve the
 `ts-auth` project UUID through Management before deployment; this example expects
@@ -170,6 +176,8 @@ nice -n 19 dotnet run --project src/TerraScale.Auth
 | `TS_AUTH_TERRASCALE_API_KEY` | Organization-bound `tb_…` credential with `documents:read` and `documents:write`, restricted to the ts-auth project/database where appropriate. A leading `Bearer` scheme is stripped; runtime uses no management credential |
 | `TS_AUTH_DATABASE` | Required `project-uuid/database`, e.g. `<ts-auth-project-uuid>/auth`; lowercase hyphenated UUID and lowercase database name (at most 63 characters). Project labels are not accepted |
 | `TS_AUTH_MASTER_KEY` | Base64, 32 bytes; encrypts recoverable secrets (signing keys included) with AES-256-GCM. There is no re-encryption yet: changing it makes every sealed secret unreadable |
+| `TS_AUTH_SIGNING_KEY_VAULT` / `TS_AUTH_SIGNING_KEY_SECRET` | The region-local OCI Vault OCID and the pre-created secret holding the signing key ring, e.g. `gru-ts-auth-signing-key-ring` (initial content `{}`). Every bootstrap and rotation writes a new secret version. Required outside Development, together with `TS_AUTH_OCI_*` |
+| `TS_AUTH_OCI_REGION` / `_TENANCY` / `_USER` / `_FINGERPRINT` / `_PRIVATE_KEY` | The OCI API key that reads and versions only that secret: region (must be the vault's), tenancy and user OCIDs, key fingerprint and the RSA private key PEM (a Vault-delivered secret). `TS_AUTH_OCI_ENDPOINT` overrides the API origin for local test doubles only |
 | `TS_AUTH_AUDIT_SIGNING_KEY` | Base64 32-byte HMAC key for audit-event seals (required outside Development) |
 | `TS_AUTH_AUDIT_VERIFY_KEYS` | Optional semicolon-separated previous audit keys (at most 5), kept during rotation |
 | `TS_AUTH_OPERATOR_KEY` | Bearer key that can create instances (`POST /v1/instances`) |
@@ -531,7 +539,8 @@ rotation.
   same key when retrying that request so its first key can be recovered.
 - Liveness/readiness: `GET /healthz` is process liveness; `GET /readyz`
   checks the configured database, required collections and synthetic
-  create/read/conditional-delete access through Documents v1. Results are
+  create/read/conditional-delete access through Documents v1, this
+  replica's startup signing-ring bootstrap and the ring's public metadata. Results are
   coalesced and cached per process for one second after completion, with a
   two-second deadline. Both JSON bodies include the .NET service `version`;
   readiness omits `region` when unknown. Metrics are pushed over OTLP;

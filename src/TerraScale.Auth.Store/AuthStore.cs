@@ -74,7 +74,8 @@ public sealed class AuthStore(TerraBaseDatabase database, TimeProvider clock)
 
     /// <summary>
     /// Every collection the service needs; provisioning creates them and readiness requires them. <c>signing_key_rings</c>
-    /// belongs to the TS-488 key ring, which signs OpenID Connect tokens; <c>rate_limits</c> to the TS-488 attempt limiter,
+    /// held the TS-488 key ring until TS-703 moved it to OCI Vault and stays until its legacy document is removed;
+    /// <c>rate_limits</c> belongs to the TS-488 attempt limiter,
     /// which every headless call (TS-582) and email test send (TS-583) charges; and <c>email_configs</c> and
     /// <c>email_config_versions</c> to TS-583 email branding.
     /// </summary>

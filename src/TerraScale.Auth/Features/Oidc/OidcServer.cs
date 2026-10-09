@@ -187,7 +187,7 @@ public sealed class SignWithKeyRing(KeyRing ring) : IOpenIddictServerHandler<Gen
         ArgumentNullException.ThrowIfNull(context);
         if (context.TokenType is TokenTypeIdentifiers.AccessToken or TokenTypeIdentifiers.IdentityToken)
         {
-            var keys = await KeyRingKeys.LoadAsync(ring, context.Transaction, context.CancellationToken).ConfigureAwait(false);
+            var keys = await KeyRingKeys.LoadAsync(ring, context.Transaction, publicOnly: false, context.CancellationToken).ConfigureAwait(false);
             context.SigningCredentials = new SigningCredentials(keys[0].SecurityKey, SecurityAlgorithms.EcdsaSha256);
         }
     }
@@ -210,7 +210,7 @@ public sealed class ValidateWithKeyRing(KeyRing ring) : IOpenIddictServerHandler
             return;
         }
 
-        var keys = await KeyRingKeys.LoadAsync(ring, context.Transaction, context.CancellationToken).ConfigureAwait(false);
+        var keys = await KeyRingKeys.LoadAsync(ring, context.Transaction, publicOnly: true, context.CancellationToken, Jwt.KeyId(context.Token)).ConfigureAwait(false);
         context.TokenValidationParameters.IssuerSigningKeys = [.. internalKeys, .. keys.Select(key => key.SecurityKey)];
     }
 }
@@ -222,7 +222,7 @@ public sealed class PublishKeyRing(KeyRing ring) : IOpenIddictServerHandler<Hand
     public async ValueTask HandleAsync(HandleJsonWebKeySetRequestContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
-        foreach (var key in await KeyRingKeys.LoadAsync(ring, context.Transaction, context.CancellationToken).ConfigureAwait(false))
+        foreach (var key in await KeyRingKeys.LoadAsync(ring, context.Transaction, publicOnly: true, context.CancellationToken).ConfigureAwait(false))
         {
             context.Keys.Add(key.PublicJwk());
         }
@@ -397,18 +397,20 @@ public sealed class ClientRegistration(IServiceScopeFactory scopes, AuthOptions 
     }
 }
 
-/// <summary>Loads the instance's ring once per request; the keys are disposed with the response.</summary>
+/// <summary>Loads public and signing material separately per request; keys are disposed with the response.</summary>
 internal static class KeyRingKeys
 {
-    public static async Task<IReadOnlyList<Es256Key>> LoadAsync(KeyRing ring, OpenIddictServerTransaction transaction, CancellationToken cancellationToken)
+    public static async Task<IReadOnlyList<Es256Key>> LoadAsync(KeyRing ring, OpenIddictServerTransaction transaction, bool publicOnly, CancellationToken cancellationToken, string? keyId = null)
     {
-        const string property = "ts-auth:key-ring";
+        var property = publicOnly ? "ts-auth:public-key-ring" : "ts-auth:signing-key-ring";
         if (transaction.GetProperty<IReadOnlyList<Es256Key>>(property) is { } loaded)
         {
             return loaded;
         }
 
-        var keys = await ring.GetActiveAsync(OidcIssuer.InstanceId, cancellationToken).ConfigureAwait(false);
+        var keys = publicOnly
+            ? await ring.GetPublicAsync(OidcIssuer.InstanceId, keyId, cancellationToken).ConfigureAwait(false)
+            : await ring.GetActiveAsync(OidcIssuer.InstanceId, cancellationToken).ConfigureAwait(false);
         var response = transaction.GetHttpRequest()?.HttpContext.Response ?? throw new InvalidOperationException("OpenIddict ran outside an HTTP request.");
         foreach (var key in keys)
         {

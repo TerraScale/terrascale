@@ -25,6 +25,8 @@ public sealed class SharedStateConcurrencyTests(TerraBaseFixture fixture)
         settings: values =>
         {
             target.Bind(values);
+            // As in production, the vault's clock agrees with the replicas' (KeyRing.MaxClockSkew).
+            target.Vault.Clock = clock;
             values["master-key"] = masterKey;
         },
         services: services =>
@@ -84,7 +86,7 @@ public sealed class SharedStateConcurrencyTests(TerraBaseFixture fixture)
         }));
 
         await Assert.That(kids.Distinct().Count()).IsEqualTo(1);
-        await Assert.That((await KeysAsync(store, "ins_race")).Count).IsEqualTo(1);
+        await Assert.That(Keys(store, "ins_race").Count).IsEqualTo(1);
     }
 
     [Test]
@@ -95,15 +97,15 @@ public sealed class SharedStateConcurrencyTests(TerraBaseFixture fixture)
         await using var __ = second;
         var initial = (await first.Client.GetFromJsonAsync<JsonElement>("/__test/instances/ins_rotate/kid")).GetProperty("kid").GetString();
 
-        // Six rotators: each lost write implies another rotation committed, so every one
-        // finishes within the eight conditional attempts.
+        // Six rotators: each lost write means another rotation committed or is still being applied,
+        // and the backoff between attempts spreads them, so every one finishes within eight attempts.
         var rotated = await Task.WhenAll(Enumerable.Range(0, 6).Select(async index =>
         {
             using var response = await (index % 2 == 0 ? first : second).Client.PostAsync("/__test/instances/ins_rotate/keys/rotate", null);
             await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
             return (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("kid").GetString();
         }));
-        var stored = await KeysAsync(store, "ins_rotate");
+        var stored = Keys(store, "ins_rotate");
 
         await Assert.That(stored.Count).IsEqualTo(7);
         await Assert.That(stored.Distinct().Count()).IsEqualTo(7);
@@ -128,6 +130,8 @@ public sealed class SharedStateConcurrencyTests(TerraBaseFixture fixture)
         await Assert.That(statuses.Count(status => status == HttpStatusCode.TooManyRequests)).IsEqualTo(60 - Maximum);
     }
 
-    private static async Task<List<string>> KeysAsync(SharedStateTarget store, string instance) =>
-        [.. (await store.ReadAsync(KeyRing.Collection, instance, "ring"))!.Value.GetProperty("keys").EnumerateArray().Select(key => key.GetProperty("id").GetString()!)];
+    private static List<string> Keys(SharedStateTarget store, string instance) =>
+        store.Vault.Read(instance) is not { } ring
+            ? throw new InvalidOperationException($"The vault holds no signing key ring for '{instance}'.")
+            : [.. ring.GetProperty("keys").EnumerateArray().Select(key => key.GetProperty("id").GetString()!)];
 }
