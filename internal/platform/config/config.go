@@ -13,7 +13,7 @@ import (
 
 // defaultStatusURL is the public status page summary behind the shell's
 // incident and maintenance banner.
-const defaultStatusURL = "https://status.terrascale.tech/api/v2/summary.json"
+const defaultStatusURL = "https://status.terrascale.tech/api/v1/summary.json"
 
 // defaultAtlasURL is ts-atlas, whose discovery lists the regions a database
 // can be placed in.

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -250,5 +251,24 @@ func TestFlyTerraBaseNeedsTSAuth(t *testing.T) {
 	t.Setenv("TS_AUTH_CLIENT_SECRET", "secret")
 	if cfg, err := Load(); err != nil || !cfg.Demo {
 		t.Fatalf("Fly with TerraBase, ts-auth and provider isolation = %+v, %v", cfg, err)
+	}
+}
+
+func TestStatusSummaryDefaultsToV1(t *testing.T) {
+	t.Setenv("TS_DASHBOARD_PRODUCTION_DEMO", "1")
+	for _, name := range []string{"TERRABASE_URL", "TERRABASE_API_KEY", "TERRABASE_PROJECT_ID", "TERRABASE_DATABASE", "TS_AUTH_ISSUER", "TS_AUTH_CLIENT_ID", "TS_AUTH_CLIENT_SECRET", "TS_AUTH_REDIRECT_URL", "DASHBOARD_PUBLIC_URL", "FLY_APP_NAME", "DASHBOARD_DEMO_ADMIN_EMAIL", "DASHBOARD_DEMO_ADMIN_PASSWORD", "DASHBOARD_CSP_REPORT_URL", "TS_DASHBOARD_CSRF_SECRET"} {
+		t.Setenv(name, "")
+	}
+	// Restore the caller's environment after exercising the unset default.
+	t.Setenv("DASHBOARD_STATUS_SUMMARY_URL", "")
+	if err := os.Unsetenv("DASHBOARD_STATUS_SUMMARY_URL"); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.StatusURL != "https://status.terrascale.tech/api/v1/summary.json" {
+		t.Fatalf("status summary URL = %q, want the public v1 summary", cfg.StatusURL)
 	}
 }
