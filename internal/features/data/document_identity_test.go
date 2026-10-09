@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -42,6 +43,41 @@ func TestDemoDocumentKeyOwnsIdentity(t *testing.T) {
 	}
 	if !bytes.Equal(db.Documents["items"][id], body) {
 		t.Fatal("unrelated payload id was changed")
+	}
+}
+
+func TestDemoDocumentIdentityPreservesRawJSON(t *testing.T) {
+	const id = "01JC9Q8A2C4E6G8J0M2N4Q7STV"
+	cases := []struct{ name, body, want string }{
+		{"duplicate fields", `{"a":1,"a":2}`, `{"a":1,"a":2}`},
+		{"identity first", `{"id":"` + id + `","a":1,"a":2}`, `{"a":1,"a":2}`},
+		{"identity middle", `{"a":1,"id":"` + id + `","a":2}`, `{"a":1,"a":2}`},
+		{"identity last", `{"a":1,"a":2,"id":"` + id + `"}`, `{"a":1,"a":2}`},
+		{"identity only", `{"id":"` + id + `"}`, `{}`},
+		{"escaped names and nested duplicates", `{"\u0069d":"` + id + `","\u0061":{"id":"nested","x":1,"x":2},"n":1e+100}`, `{"\u0061":{"id":"nested","x":1,"x":2},"n":1e+100}`},
+		{"duplicate matching identity", `{"id":"` + id + `","a":1,"id":"` + id + `"}`, `{"a":1}`},
+		{"last identity matches", `{"id":"business","id":"` + id + `"}`, `{"id":"business"}`},
+		{"last identity differs", `{"id":"` + id + `","id":"business"}`, `{"id":"` + id + `","id":"business"}`},
+	}
+	large := `{"id":"` + id + `","raw":"` + strings.Repeat("<", maxDocumentBytes-len(`{"id":"`+id+`","raw":""}`)) + `"}`
+	cases = append(cases, struct{ name, body, want string }{"1 MiB payload", large, strings.Replace(large, `"id":"`+id+`",`, "", 1)})
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			db := core.Database{}
+			for _, operation := range []string{"create", "replace"} {
+				if err := writeDemoDocument(&db, "items", operation, id, []byte(tc.body)); err != nil {
+					t.Fatal(err)
+				}
+				if stored := db.Documents["items"][id]; !bytes.Equal(stored, []byte(tc.want)) {
+					t.Fatalf("%s changed application tokens: stored %d bytes, want %d", operation, len(stored), len(tc.want))
+				}
+			}
+		})
+	}
+	for _, body := range []string{`{"id":`, `{"x":1,}`, "{\"x\":\"\xff\"}"} {
+		if _, err := omitDocumentIdentity([]byte(body), id); !errors.Is(err, core.ErrInvalid) {
+			t.Fatalf("malformed payload must be a client error: %v", err)
+		}
 	}
 }
 
@@ -96,5 +132,10 @@ func TestRawDocumentKeysRemainDistinctInDemo(t *testing.T) {
 		if _, err := service.WriteDocument(ctx, p, db.ID, "items", "create", key, []byte(`{}`)); !errors.Is(err, core.ErrInvalid) {
 			t.Fatalf("invalid key %q: %v", key, err)
 		}
+	}
+	if _, err := service.WriteDocument(ctx, p, db.ID, "items", "create", "duplicates", []byte(`{"a":1,"a":2}`)); !errors.Is(err, core.ErrInvalid) {
+		t.Fatalf("duplicate-member input must be a client error: %v", err)
+	} else if status, _ := documentFailure(err, "duplicates", "items"); status != http.StatusBadRequest {
+		t.Fatalf("duplicate-member input was blamed on the data plane: HTTP %d", status)
 	}
 }

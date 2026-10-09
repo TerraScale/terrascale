@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"math/big"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -72,6 +73,21 @@ func TestFormErrorsShowBesideTheirInput(t *testing.T) {
 		if strings.Count(sql, "Only read-only statements run here.") != 1 || strings.Contains(sql, "Read-only statement accepted") {
 			t.Errorf("failed run with analysis %+v shows the statement check too", analysis)
 		}
+	}
+}
+
+func TestDocumentFormDisplaysValidationReason(t *testing.T) {
+	const reason = "Document IDs must be 1 to 256 characters without control characters."
+	status, message := documentFailure(fmt.Errorf("write: %w", core.Invalid(reason)), "bad", "orders")
+	if status != http.StatusBadRequest || message != reason {
+		t.Fatalf("validation failure = %d %q", status, message)
+	}
+	page := render(t, pageData{Section: "documents", CanWrite: true, FormError: message, Dialog: "add-document"})
+	if !strings.Contains(page, reason) {
+		t.Fatal("document form hides the input validation reason")
+	}
+	if status, message := documentFailure(core.ErrInvalid, "bad", "orders"); status != http.StatusBadRequest || message != "Check the values you entered." {
+		t.Fatalf("unspecified invalid input = %d %q", status, message)
 	}
 }
 

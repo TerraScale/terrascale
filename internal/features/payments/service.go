@@ -129,7 +129,7 @@ func (s Service) StartCheckout(ctx context.Context, p core.Principal, planKey, i
 	if organization.Billing.SubscriptionID != "" && organization.Billing.Status != "canceled" && organization.Billing.Status != "incomplete_expired" {
 		return "", ErrSubscriptionManaged
 	}
-	if organization.Billing.SubscriptionID == "" && organization.BillingStatus == "active" && organization.PlanID != "3BN8V1JQWTB3R3NSZ26SERTHWT" {
+	if organization.Billing.SubscriptionID == "" && organization.BillingStatus == "active" && organization.PlanID != core.FreePlanID {
 		return "", conflict("an existing active plan must be managed through its billing account")
 	}
 	plan, err := selectedPlan(ctx, s.store, planKey, interval)

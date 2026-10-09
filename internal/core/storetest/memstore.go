@@ -66,7 +66,7 @@ func TestUpdateKeepsDatabasesPastTheLimitAfterADowngrade(t *testing.T, store cor
 		t.Fatal(err)
 	}
 	p := account.Principal()
-	if err := setPlan(store, p, "443RCMMF70MNP6S1QMT230NF99"); err != nil {
+	if err := setPlan(store, p, core.StarterPlanID); err != nil {
 		t.Fatal(err)
 	}
 	for range 3 {
@@ -75,7 +75,7 @@ func TestUpdateKeepsDatabasesPastTheLimitAfterADowngrade(t *testing.T, store cor
 		}
 	}
 
-	if err := setPlan(store, p, "3BN8V1JQWTB3R3NSZ26SERTHWT"); err != nil {
+	if err := setPlan(store, p, core.FreePlanID); err != nil {
 		t.Fatalf("downgrade with 3 databases = %v, want the plan to change", err)
 	}
 	if err := store.UpdateAs(ctx, p, func(a *core.Account) error {

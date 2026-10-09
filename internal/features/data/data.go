@@ -333,6 +333,9 @@ func failure(err error, action string) (int, string) {
 	case errors.Is(err, core.ErrConflict):
 		return http.StatusConflict, "This change conflicts with the current data. Reload the page and try again."
 	case errors.Is(err, core.ErrInvalid):
+		if reason, ok := core.InvalidReason(err); ok {
+			return http.StatusBadRequest, reason
+		}
 		return http.StatusBadRequest, "Check the values you entered."
 	case errors.Is(err, core.ErrUnavailable):
 		return http.StatusServiceUnavailable, "The dashboard is unavailable right now. Try again in a moment."

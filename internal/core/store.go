@@ -208,7 +208,7 @@ func NewAccount(user User) (Account, error) {
 	}
 	org := Organization{
 		ID: NewID(), Name: "Personal", Kind: "personal", Status: "active",
-		OwnerUserID: user.ID, PlanID: "3BN8V1JQWTB3R3NSZ26SERTHWT", BillingStatus: "active",
+		OwnerUserID: user.ID, PlanID: FreePlanID, BillingStatus: "active",
 		Projects: make(map[string]Project), Members: map[string]Member{
 			user.ID: {UserID: user.ID, Email: user.Email, Name: user.Name, Role: "owner", Status: "active", CreatedAt: time.Now().UTC()},
 		}, Invitations: make(map[string]Invitation), CheckoutSessions: make(map[string]CheckoutSession),
@@ -230,15 +230,23 @@ func NewAccount(user User) (Account, error) {
 	}, nil
 }
 
+// Seeded plan identities are shared by account creation and billing.
+const (
+	FreePlanID     = "3BN8V1JQWTB3R3NSZ26SERTHWT"
+	StarterPlanID  = "443RCMMF70MNP6S1QMT230NF99"
+	ProPlanID      = "7CNW2H87JE68ATZX224CV2G625"
+	BusinessPlanID = "09XCWRH05BWWBADSBPTPDMFA7D"
+)
+
 // DefaultPlans is the catalog a new store starts with. Free's limits are
 // the public Hobby plan's (terrascale.tech/pricing.json). StorageMiB counts
 // a label's GB as a GiB, so utilization never runs out before the label.
 func DefaultPlans() []Plan {
 	return []Plan{
-		{ID: "3BN8V1JQWTB3R3NSZ26SERTHWT", Key: "free", Name: "Free", Visible: true, MaxDatabases: 1, OperationsPerMonth: 100_000, StorageMiB: 103, StorageLabel: "0.1 GB-region storage"},
-		{ID: "443RCMMF70MNP6S1QMT230NF99", Key: "starter", Name: "Starter", PriceCents: 500, AnnualPriceCents: 5000, TrialDays: 30, Visible: true, MaxDatabases: 5, MaxMembers: 5, OperationsPerMonth: 1_000_000, StorageMiB: 5 << 10, StorageLabel: "5 GB-region storage"},
-		{ID: "7CNW2H87JE68ATZX224CV2G625", Key: "pro", Name: "Pro", PriceCents: 5000, AnnualPriceCents: 50000, TrialDays: 30, Visible: true, MaxDatabases: 25, MaxMembers: 25, OperationsPerMonth: 100_000_000, StorageMiB: 25 << 10, StorageLabel: "25 GB-region storage"},
-		{ID: "09XCWRH05BWWBADSBPTPDMFA7D", Key: "business", Name: "Business", PriceCents: 9900, AnnualPriceCents: 99000, TrialDays: 30, Visible: true, MaxDatabases: 100, MaxMembers: 100, OperationsPerMonth: 50_000_000, StorageMiB: 5 << 20, StorageLabel: "5 TB-region storage"},
+		{ID: FreePlanID, Key: "free", Name: "Free", Visible: true, MaxDatabases: 1, OperationsPerMonth: 100_000, StorageMiB: 103, StorageLabel: "0.1 GB-region storage"},
+		{ID: StarterPlanID, Key: "starter", Name: "Starter", PriceCents: 500, AnnualPriceCents: 5000, TrialDays: 30, Visible: true, MaxDatabases: 5, MaxMembers: 5, OperationsPerMonth: 1_000_000, StorageMiB: 5 << 10, StorageLabel: "5 GB-region storage"},
+		{ID: ProPlanID, Key: "pro", Name: "Pro", PriceCents: 5000, AnnualPriceCents: 50000, TrialDays: 30, Visible: true, MaxDatabases: 25, MaxMembers: 25, OperationsPerMonth: 100_000_000, StorageMiB: 25 << 10, StorageLabel: "25 GB-region storage"},
+		{ID: BusinessPlanID, Key: "business", Name: "Business", PriceCents: 9900, AnnualPriceCents: 99000, TrialDays: 30, Visible: true, MaxDatabases: 100, MaxMembers: 100, OperationsPerMonth: 50_000_000, StorageMiB: 5 << 20, StorageLabel: "5 TB-region storage"},
 	}
 }
 

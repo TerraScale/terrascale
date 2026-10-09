@@ -286,7 +286,7 @@ func pageHandler(deps core.Deps, billing *payments.Stripe, wrap func(core.Page, 
 			return
 		}
 		data.ScheduledAt = org.Billing.ScheduledAt
-		if data.BillingPlanKey == "" && org.PlanID == "3BN8V1JQWTB3R3NSZ26SERTHWT" {
+		if data.BillingPlanKey == "" && org.PlanID == core.FreePlanID {
 			data.BillingPlanKey = "free"
 		}
 		for _, key := range []string{"starter", "pro", "business"} {

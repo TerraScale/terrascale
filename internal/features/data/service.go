@@ -789,22 +789,45 @@ func omitDocumentIdentity(body []byte, id string) ([]byte, error) {
 	if jsontext.Value(body).Kind() != '{' {
 		return body, nil
 	}
-	var fields map[string]jsontext.Value
-	if err := json.Unmarshal(body, &fields); err != nil {
-		return nil, err
+	decoder := jsontext.NewDecoder(bytes.NewReader(body), jsontext.AllowDuplicateNames(true))
+	if _, err := decoder.ReadToken(); err != nil {
+		return nil, core.Invalid("document must be valid JSON")
 	}
-	var value string
-	if raw := fields["id"]; raw.Kind() != '"' {
+	result := make([]byte, 1, len(body))
+	result[0] = '{'
+	lastIDMatches := false
+	for decoder.PeekKind() == '"' {
+		start := decoder.InputOffset()
+		name, err := decoder.ReadToken()
+		if err != nil {
+			return nil, core.Invalid("document must be valid JSON")
+		}
+		isID := name.String() == "id"
+		raw, err := decoder.ReadValue()
+		if err != nil {
+			return nil, core.Invalid("document must be valid JSON")
+		}
+		var value string
+		matches := isID && raw.Kind() == '"' && json.Unmarshal(raw, &value) == nil && value == id
+		if isID {
+			// TerraBase uses the last root id to decide whether to omit identity.
+			lastIDMatches = matches
+		}
+		if !matches {
+			if len(result) > 1 {
+				result = append(result, ',')
+			}
+			// Keep raw name/value bytes, including duplicate application fields.
+			result = append(result, bytes.TrimLeft(body[start:decoder.InputOffset()], ", \t\r\n")...)
+		}
+	}
+	if _, err := decoder.ReadToken(); err != nil {
+		return nil, core.Invalid("document must be valid JSON")
+	}
+	if !lastIDMatches {
 		return body, nil
 	}
-	if err := json.Unmarshal(fields["id"], &value); err != nil {
-		return nil, err
-	}
-	if value != id {
-		return body, nil
-	}
-	delete(fields, "id")
-	return json.Marshal(fields)
+	return append(result, '}'), nil
 }
 
 // History lists a document's recorded versions, oldest first. Demo versions

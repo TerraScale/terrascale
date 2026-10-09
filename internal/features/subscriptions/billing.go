@@ -517,7 +517,7 @@ func projectSubscription(organization *core.Organization, state payments.Custome
 	case organization.Kind == "personal" && !payments.IsDunningStatus(state.Status):
 		// Personal workspaces fall back to Free when no subscription grants
 		// the plan, including while a first payment is pending or after it ends.
-		organization.PlanID = "3BN8V1JQWTB3R3NSZ26SERTHWT"
+		organization.PlanID = core.FreePlanID
 		billing.PlanKey = "free"
 		billing.Interval = ""
 		organization.BillingStatus = "active"

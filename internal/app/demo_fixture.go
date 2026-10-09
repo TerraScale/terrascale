@@ -72,7 +72,7 @@ func seedMarioDemoFixture(account *core.Account) {
 
 	account.Organizations[demoLabsOrganizationID] = core.Organization{
 		ID: demoLabsOrganizationID, Name: "TerraScale Labs", Kind: "business", Slug: "terrascale-labs",
-		Status: "active", OwnerUserID: account.User.ID, PlanID: "7CNW2H87JE68ATZX224CV2G625",
+		Status: "active", OwnerUserID: account.User.ID, PlanID: core.ProPlanID,
 		BillingStatus: "active", PaymentMethodValidated: true,
 		Billing: core.Billing{
 			Status: "active", PlanKey: "pro", Interval: "monthly", Invoices: marioInvoices(),
@@ -167,13 +167,13 @@ func marioAPIKeys(projectID, databaseID string) map[string]core.APIKey {
 			CreatedAt: demoTime(2025, time.November, 4, 16, 20), ExpiresAt: demoTime(2026, time.May, 4, 16, 20),
 			RevokedAt: demoTime(2026, time.May, 1, 8, 0),
 		},
-		"m2m_01JC9Q8A2C4E6G8J0L2N4Q7ST": {
-			ID: "m2m_01JC9Q8A2C4E6G8J0L2N4Q7ST", Kind: "m2m", ProjectID: projectID,
+		"01JC9Q8A2C4E6G8J0M2N4Q7STV": {
+			ID: "01JC9Q8A2C4E6G8J0M2N4Q7STV", Kind: "m2m", ProjectID: projectID,
 			Name: "ingest-worker", Prefix: "tsm_demo_seed", LastFour: "DEMO", Scopes: []string{"documents:write"},
 			CreatedAt: demoTime(2026, time.February, 18, 8, 0),
 		},
-		"m2m_01JC9R9B3D5F7H9K1M3P5S8UV": {
-			ID: "m2m_01JC9R9B3D5F7H9K1M3P5S8UV", Kind: "m2m", ProjectID: projectID,
+		"01JC9R9B3D5F7H9K1M3P5S8TVW": {
+			ID: "01JC9R9B3D5F7H9K1M3P5S8TVW", Kind: "m2m", ProjectID: projectID,
 			Name: "edge-sync", Prefix: "tsm_demo_seed", LastFour: "DEMO", Scopes: []string{"databases:read"},
 			CreatedAt: demoTime(2026, time.March, 5, 13, 30),
 		},

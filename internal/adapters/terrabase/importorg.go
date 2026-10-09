@@ -56,7 +56,7 @@ func mirror(ctx context.Context, store core.Store, m *v1.ManagementUser, remote 
 			// databases never trip the Free limit; billing stays with the dashboard.
 			org = core.Organization{
 				ID: remote.ID, Kind: "business", Status: "active", OwnerUserID: a.User.ID,
-				PlanID: "09XCWRH05BWWBADSBPTPDMFA7D", BillingStatus: "active", CreatedAt: remote.CreatedAt,
+				PlanID: core.BusinessPlanID, BillingStatus: "active", CreatedAt: remote.CreatedAt,
 				Projects: map[string]core.Project{}, Members: map[string]core.Member{},
 				Invitations: map[string]core.Invitation{}, CheckoutSessions: map[string]core.CheckoutSession{},
 			}

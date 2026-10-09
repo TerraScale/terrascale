@@ -112,7 +112,7 @@ func (s Service) CreateBusiness(ctx context.Context, p core.Principal, name stri
 		id := core.NewID()
 		result = core.Organization{
 			ID: id, Name: name, Kind: kindBusiness, Slug: slug(name), Status: statusActive,
-			OwnerUserID: p.UserID, PlanID: "443RCMMF70MNP6S1QMT230NF99", BillingStatus: "billing_required",
+			OwnerUserID: p.UserID, PlanID: core.StarterPlanID, BillingStatus: "billing_required",
 			Projects: make(map[string]core.Project),
 			Members: map[string]core.Member{
 				p.UserID: {UserID: p.UserID, Email: a.User.Email, Name: a.User.Name, Role: roleOwner, Status: statusActive, CreatedAt: now},

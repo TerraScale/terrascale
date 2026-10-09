@@ -281,7 +281,7 @@ func TestPlanCatalogAndExternalReferences(t *testing.T, s core.Store) {
 	other := account(t, s, "other@example.test").Principal()
 	want(t, setPlan(s, other, plan.ID), nil)
 	want(t, s.DeletePlanAs(ctx, p, plan.ID), core.ErrConflict)
-	want(t, setPlan(s, other, "3BN8V1JQWTB3R3NSZ26SERTHWT"), nil)
+	want(t, setPlan(s, other, core.FreePlanID), nil)
 	checkout := core.CheckoutSession{ID: "checkout_provider", PlanID: plan.ID, Status: "open", ExpiresAt: time.Now().Add(-time.Hour)}
 	want(t, s.UpdateOrganization(ctx, other.OrganizationID, func(org *core.Organization, _ map[string]core.Plan) error {
 		org.CheckoutSessions[checkout.ID] = checkout
