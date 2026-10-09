@@ -52,9 +52,10 @@ internal sealed partial class WanPuller(
     private readonly Dictionary<(IDatabaseStore Store, string Origin), long> _applied = [];
     private readonly Dictionary<string, (long At, DatabaseAdoption Why)> _refused = [with(StringComparer.Ordinal)];
     private readonly HashSet<string> _clashes = [with(StringComparer.Ordinal)];
-    // Database origins that answered Ahead or sent a group conflicting with the applied journal; divergence holds until a pull
-    // from that origin verifiably extends the applied journal again. Bounded.
-    private readonly HashSet<string> _diverged = [with(StringComparer.Ordinal)];
+    // By database, its origins that answered Ahead or sent a group conflicting with the applied journal. An origin stays
+    // diverged until a group from it verifiably extends the applied journal, or the database is deleted here. Bounded.
+    private readonly Dictionary<string, HashSet<string>> _diverged = [with(StringComparer.Ordinal)];
+    private int _divergedOrigins;
     private const int MaxDivergedOrigins = 4096;
 
     public override Task StartAsync(CancellationToken cancellationToken)
@@ -79,11 +80,66 @@ internal sealed partial class WanPuller(
             if (store.Tenant is { } tenant)
             {
                 _ = _stores.Remove(Name(tenant));
+                if (_diverged.Remove(Name(tenant), out var origins))
+                {
+                    _divergedOrigins -= origins.Count;
+                }
             }
 
             foreach (var key in _applied.Keys.Where(key => ReferenceEquals(key.Store, store)).ToList())
             {
                 _ = _applied.Remove(key);
+            }
+        }
+    }
+
+    private bool Diverged(TenantContext database)
+    {
+        lock (_gate)
+        {
+            return _diverged.ContainsKey(Name(database));
+        }
+    }
+
+    // Whether the diverged origin is retained; false once the bound is reached.
+    private bool Diverge(TenantContext database, ReadOnlyMemory<byte> origin)
+    {
+        lock (_gate)
+        {
+            var key = Name(database);
+            if (_diverged.TryGetValue(key, out var origins) && origins.Contains(Convert.ToHexString(origin.Span)))
+            {
+                return true;
+            }
+
+            if (_divergedOrigins >= MaxDivergedOrigins)
+            {
+                return false;
+            }
+
+            if (origins is null)
+            {
+                _diverged[key] = origins = [with(StringComparer.Ordinal)];
+            }
+
+            _ = origins.Add(Convert.ToHexString(origin.Span));
+            _divergedOrigins++;
+            return true;
+        }
+    }
+
+    private void Converged(TenantContext database, ReadOnlyMemory<byte> origin)
+    {
+        lock (_gate)
+        {
+            var key = Name(database);
+            if (_diverged.TryGetValue(key, out var origins) && origins.Remove(Convert.ToHexString(origin.Span)))
+            {
+                _divergedOrigins--;
+                if (origins.Count == 0)
+                {
+                    _ = _diverged.Remove(key);
+                }
             }
         }
     }
@@ -207,22 +263,15 @@ internal sealed partial class WanPuller(
 
             var applied = await AppliedAsync(store, origin, cancellationToken).ConfigureAwait(false);
             var gone = false;
-            // Only the origin's explicit Ahead answer or a journal-proof mismatch is divergence; a head snapshot may be stale.
-            // A diverged origin stays so, even once its heads no longer exceed what this member applied or its next pull fails.
-            var divergedKey = Name(database) + "/" + Convert.ToHexString(origin.Span);
-            bool diverged;
-            lock (_gate)
-            {
-                diverged = _diverged.Contains(divergedKey);
-            }
-
+            // Only the origin's explicit Ahead answer or a journal conflict is divergence; a head snapshot may be stale.
+            var untracked = false;
             var failed = false;
             // Bounded by this round's heads and retries, so every replicated database reports health each round.
             _ = observations.TryAdd(database, (0, false));
             // Any origin found behind starts the backlog, not only the first member's advertisement.
             if ((long)head.Sequence > applied && behind.Add(database))
             {
-                usage.RecordReplicationState(database, region, (long)head.Sequence - applied, diverged);
+                usage.RecordReplicationState(database, region, (long)head.Sequence - applied, Diverged(database));
             }
             if (applied < (long)head.Sequence)
             {
@@ -232,31 +281,17 @@ internal sealed partial class WanPuller(
                         || retrying.Contains(RetryKey(member, head))
                         ? ReplicationTrafficKind.Handoff : ReplicationTrafficKind.Delta;
                     (var pulled, gone) = await PullAsync(region, cell, member, database, store, origin, applied, (long)head.Sequence, traffic, cancellationToken).ConfigureAwait(false);
-                    // Only groups that verifiably extended the applied journal resolve divergence; an unknown origin, a
-                    // placement refusal or fragments without a whole group prove nothing.
-                    if (pulled > applied)
-                    {
-                        lock (_gate)
-                        {
-                            _ = _diverged.Remove(divergedKey);
-                        }
-
-                        diverged = false;
-                    }
-
                     progressed |= pulled > applied;
                     applied = pulled;
                 }
                 catch (Exception error) when (!cancellationToken.IsCancellationRequested)
                 {
-                    diverged |= error is OriginAheadException or JournalConflictException;
                     failed = true;
-                    if (error is OriginAheadException or JournalConflictException)
+                    // A conflict past the bounded set is still reported for this round, and logged.
+                    if (error is OriginAheadException or JournalConflictException && !Diverge(database, origin))
                     {
-                        lock (_gate)
-                        {
-                            _ = _diverged.Count < MaxDivergedOrigins && _diverged.Add(divergedKey);
-                        }
+                        untracked = true;
+                        LogDivergenceUntracked(logger, region);
                     }
 
                     metrics.Failed(region, error switch
@@ -288,7 +323,7 @@ internal sealed partial class WanPuller(
             var remaining = Math.Max(0, (long)head.Sequence - applied);
             if (observations.TryGetValue(database, out var observed))
             {
-                observations[database] = (observed.Remaining + Math.Min(remaining, long.MaxValue - observed.Remaining), observed.Diverged || diverged);
+                observations[database] = (observed.Remaining + Math.Min(remaining, long.MaxValue - observed.Remaining), observed.Diverged || untracked);
             }
             lag += Math.Min(remaining, long.MaxValue - lag);
             // Bounded like one heads reply; anything beyond waits for a fresh scan to advertise it again. A member that no longer
@@ -300,9 +335,10 @@ internal sealed partial class WanPuller(
             }
         }
 
+        // Every retained diverged origin of a database counts, also one not advertised this round.
         foreach (var (database, observed) in observations)
         {
-            usage.RecordReplicationState(database, region, observed.Remaining, observed.Diverged);
+            usage.RecordReplicationState(database, region, observed.Remaining, observed.Diverged || Diverged(database));
         }
 
         discovery.Retry.Clear();
@@ -874,6 +910,8 @@ internal sealed partial class WanPuller(
                 applied = sequence;
                 if (newlyApplied)
                 {
+                    // Its journal proof extended the applied journal: whatever this origin diverged on is resolved.
+                    Converged(database, origin);
                     usage.RecordReplicatedOperations(database, region, changes.Count);
                 }
                 metrics.Pulled(region, batch.EncodedApplicationBytes);
@@ -1018,6 +1056,9 @@ internal sealed partial class WanPuller(
 
     [LoggerMessage(LogLevel.Warning, "No member of region {Region} answered; retrying every round")]
     private static partial void LogUnanswered(ILogger logger, string region);
+
+    [LoggerMessage(LogLevel.Warning, "A diverged origin from region {Region} exceeds the tracked bound; it is reported diverged only while it fails")]
+    private static partial void LogDivergenceUntracked(ILogger logger, string region);
 
     [LoggerMessage(LogLevel.Warning, "Pulling an origin from region {Region} failed; retrying next round")]
     private static partial void LogPullFailed(ILogger logger, Exception error, string region);

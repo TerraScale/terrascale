@@ -46,6 +46,9 @@ releases request admission.
 
 `ProjectAnalytics` contains `projectId`, `range`, `from`, `to`, `bucketSeconds`
 and `items`. Each item has `databaseId`, `databaseName`, `region` and `series`.
+Items cover the local region while the database is placed there and every region
+with retained observations, also one no longer in its placement; unobserved
+remote placements are omitted.
 Each point contains:
 
 - `start`, request counts by HTTP method, operation counts (`read`, `put`,
@@ -57,7 +60,9 @@ Each point contains:
   engine's sidecars; null before any sample. Each node samples once per minute:
   the databases whose owner hash falls in that minute's slot (ceil(databases /
   128) slots), at most 128 per minute. A slot holding more continues on its next
-  visit after the ones it sampled, so every database is sampled in turn.
+  visit after the ones it sampled, so every database is sampled in turn. A
+  database whose size cannot be read loses only its own sample, and a pass that
+  fails is retried within the minute without sampling a database twice.
 - `clientBandwidth` and `replicationBandwidth`, each with `bytesSent` and
   `bytesReceived`. Client bandwidth counts actual HTTP body reads and writes
   after a request resolves an authorized database; it excludes HTTP/TLS headers.
@@ -109,10 +114,12 @@ plus WAN applied-prefix observations. `lagMs` is the observed backlog's age,
 not network round-trip latency. `divergence` denotes detected journal conflict
 (a verified prefix conflict, an origin's explicit ahead answer, or a group that
 conflicts with the applied journal prefix; malformed or oversized messages are
-failed pulls, not divergence), not a full comparison of document contents. An
-origin's ahead answer or journal conflict holds, through later failed or
-unverified pulls, until a pull from that origin verifiably extends the applied
-journal. Health sources
+failed pulls, not divergence), not a full comparison of document contents. A
+WAN origin's ahead answer or journal conflict holds, through later failed or
+unverified pulls and rounds that do not advertise it, until a group from that
+origin verifiably extends the applied journal or the database is deleted there.
+At most 4,096 diverged origins are retained per member; one beyond that is
+reported diverged only in the rounds where it fails, and logged. Health sources
 refresh every ten seconds: each sender's peer observations and each WAN round.
 Every peer observed in the last ten minutes counts. Without any observation from
 the last 30 seconds, status is `stopped` with null lag and divergence. Otherwise

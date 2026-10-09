@@ -23,8 +23,9 @@ internal sealed class UsageAnalytics(IManagementService management, UsageMeter m
             return null;
         }
 
-        using var reservation = Reserve(databases, window, region);
-        using var loaded = new Loaded(memory);
+        var (reservation, reserved) = Reserve(databases, window, region);
+        using var held = reservation;
+        using var loaded = new Loaded(memory, reserved);
         var items = new List<DatabaseAnalytics>();
         foreach (var record in databases)
         {
@@ -37,7 +38,7 @@ internal sealed class UsageAnalytics(IManagementService management, UsageMeter m
 
             var (lifetime, series) = await meter.GetObservationsAsync(tenant, window.Usage, cancellationToken, () => CheckDeadline(started), loaded.Filter(region))
                 .ConfigureAwait(false);
-            foreach (var observing in Regions(record, lifetime, region))
+            foreach (var observing in Regions(record, lifetime, region, window, loaded))
             {
                 items.Add(new(record.Id, record.Name, observing, [.. series.Select((point, index) => Point(
                     window.Usage.Granularity.Start(window.Usage.First + index), Readings(point, observing)))]));
@@ -58,8 +59,9 @@ internal sealed class UsageAnalytics(IManagementService management, UsageMeter m
             return null;
         }
 
-        using var reservation = Reserve(databases, window, region);
-        using var loaded = new Loaded(memory);
+        var (reservation, reserved) = Reserve(databases, window, region);
+        using var held = reservation;
+        using var loaded = new Loaded(memory, reserved);
         var items = new List<DatabaseReplication>();
         foreach (var record in databases)
         {
@@ -72,7 +74,7 @@ internal sealed class UsageAnalytics(IManagementService management, UsageMeter m
 
             var (lifetime, series) = await meter.GetObservationsAsync(tenant, window.Usage, cancellationToken, () => CheckDeadline(started), loaded.Filter(region))
                 .ConfigureAwait(false);
-            foreach (var observing in Regions(record, lifetime, region))
+            foreach (var observing in Regions(record, lifetime, region, window, loaded))
             {
                 var readings = Readings(lifetime, observing).ToArray();
                 // Every peer observed within Forget counts; one fresh healthy peer cannot hide a silent or diverged one.
@@ -138,24 +140,45 @@ internal sealed class UsageAnalytics(IManagementService management, UsageMeter m
         return result;
     }
 
-    private IMemoryReservation Reserve(IReadOnlyList<ManagedDatabase> databases, AnalyticsWindow window, string? region)
+    private (IMemoryReservation Reservation, int Points) Reserve(IReadOnlyList<ManagedDatabase> databases, AnalyticsWindow window, string? region)
     {
         // At most nine placement regions, after the region filter; bounded extra room for observed peer regions and two catalog read pages.
-        var points = databases.Sum(record => Math.Max(1, record.Regions(options.Region).Count(observing => region is null || observing == region)))
-            * window.Usage.Count;
+        // Regions observed outside the current placement are admitted as they are found (Loaded.Items).
+        var points = databases.Sum(record => Placed(record, region)) * window.Usage.Count;
         if (points > MaxPoints)
         {
             throw new QueryCapacityException("analytics exceeds its result bucket limit");
         }
 
-        return memory.TryReserve(MemoryLane.Foreground, 16L * 1024 * 1024 + points * 2048L)
-            ?? throw new QueryCapacityException("analytics memory admission exhausted");
+        return (memory.TryReserve(MemoryLane.Foreground, 16L * 1024 * 1024 + points * 2048L)
+            ?? throw new QueryCapacityException("analytics memory admission exhausted"), points);
     }
 
+    private int Placed(ManagedDatabase record, string? region) =>
+        Math.Max(1, record.Regions(options.Region).Count(observing => region is null || observing == region));
+
     // Memory admitted for the observations a request keeps as it reads them, beyond its output reservation.
-    private sealed class Loaded(IMemoryBudget memory) : IDisposable
+    private sealed class Loaded(IMemoryBudget memory, int reserved) : IDisposable
     {
         private readonly List<IMemoryReservation> _reservations = [];
+        private int _points = reserved;
+
+        // Admits output items beyond those reserved for a database's current placement.
+        public void Items(int items, AnalyticsWindow window)
+        {
+            if (items <= 0)
+            {
+                return;
+            }
+
+            _points += items * window.Usage.Count;
+            if (_points > MaxPoints)
+            {
+                throw new QueryCapacityException("analytics exceeds its result bucket limit");
+            }
+
+            _reservations.Add(Reserve(items * window.Usage.Count * 2048L));
+        }
 
         public ObservationFilter Filter(string? region) => new(dimension => region is null || dimension.Region == region, bytes =>
         {
@@ -177,10 +200,16 @@ internal sealed class UsageAnalytics(IManagementService management, UsageMeter m
         }
     }
 
-    private IEnumerable<string> Regions(ManagedDatabase record, OpCounts lifetime, string? region) =>
-        record.Regions(options.Region).Where(observing => observing == options.Region
-            || lifetime.Meters?.Values.Any(reading => reading.Dimension.Region == observing) == true)
-            .Distinct(StringComparer.Ordinal).Where(observing => region is null || observing == region).Order(StringComparer.Ordinal);
+    // The local region while placed here, and every region with observations, including one no longer in the placement: its
+    // history remains readable. Unobserved remote placements are omitted.
+    private string[] Regions(ManagedDatabase record, OpCounts lifetime, string? region, AnalyticsWindow window, Loaded loaded)
+    {
+        var regions = record.Regions(options.Region).Where(observing => observing == options.Region)
+            .Concat(lifetime.Meters?.Values.Select(reading => reading.Dimension.Region) ?? [])
+            .Distinct(StringComparer.Ordinal).Where(observing => region is null || observing == region).Order(StringComparer.Ordinal).ToArray();
+        loaded.Items(regions.Length - Placed(record, region), window);
+        return regions;
+    }
 
     private void CheckDeadline(long started)
     {

@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
+using TerraBase.Features.Management;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
@@ -414,6 +415,40 @@ public sealed class UsageAnalyticsTests
 
             return (bytes, text.ToString());
         }
+    }
+
+    [Test]
+    public async Task Observed_history_stays_readable_after_its_region_leaves_the_placement()
+    {
+        await using var api = await ManagementApi.StartAsync(settings => settings["region"] = "gru-1");
+        var database = await api.CreateManagedDatabaseAsync();
+        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
+        using var client = ProjectClient(api, database.Project);
+        await ManagementApi.CreateCollectionAsync(client, database, "people");
+        using (var written = await client.PutAsJsonAsync(ManagementApi.Uri(ManagementApi.DocumentPath(database, "people", "one")), new { name = new Faker().Name.FullName() }))
+        {
+            written.EnsureSuccessStatusCode();
+        }
+
+        await api.Server.Services.GetRequiredService<UsageMeter>().FlushAsync(CancellationToken.None);
+
+        // The database moves to sfo-1 alone: gru-1 leaves its placement, but what gru-1 observed is retained history.
+        var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
+        var system = await api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(token);
+        await using (var transaction = await system.BeginTransactionAsync(write: true, token))
+        {
+            var record = new ManagedDatabase(database.Id, database.Project, database.Name, null, DateTimeOffset.UtcNow,
+                HomeRegion: "sfo-1", ReplicaRegions: [], PlacementVersion: 2);
+            await transaction.PutAsync($"projects/{database.Project}/databases", database.Id,
+                JsonSerializer.SerializeToUtf8Bytes(record, TerraBase.Hosting.TerraBaseJsonContext.Default.ManagedDatabase), token);
+            await transaction.CommitAsync(token);
+        }
+
+        var items = (await ReadAsync(client, ManagementApi.Uri($"/projects/{database.Project}/analytics?range=1h&region=gru-1"))).GetProperty("items");
+        await Assert.That(items.GetArrayLength()).IsEqualTo(1);
+        await Assert.That(items[0].GetProperty("region").GetString()).IsEqualTo("gru-1");
+        await Assert.That(items[0].GetProperty("series").EnumerateArray()
+            .Sum(point => point.GetProperty("requests").TryGetProperty("put", out var puts) ? puts.GetInt64() : 0)).IsGreaterThan(0);
     }
 
     [Test]

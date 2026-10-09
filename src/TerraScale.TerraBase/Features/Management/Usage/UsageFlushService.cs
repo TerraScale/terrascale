@@ -26,6 +26,9 @@ internal sealed partial class UsageFlushService(
     private int _slots = 1;
     // Per slot, how many of its databases the next visit passes over: an overfull slot continues where it stopped.
     private readonly Dictionary<long, int> _continue = [];
+    // Databases already sampled in _sampling, so a pass retried after a failure records none of them twice. At most the cap.
+    private readonly HashSet<string> _sampled = [with(StringComparer.Ordinal)];
+    private long _sampling = -1;
 
     private static readonly TimeSpan Interval = TimeSpan.FromSeconds(10);
 
@@ -133,7 +136,12 @@ internal sealed partial class UsageFlushService(
 
         // Each minute samples the databases whose owner hash falls in its slot, at most MaxSamplesPerMinute of them. A slot
         // holding more continues on its next visit after the ones it sampled, so every database is sampled in turn.
-        _sampledMinute = minute;
+        if (minute != _sampling)
+        {
+            _sampling = minute;
+            _sampled.Clear();
+        }
+
         var slots = _slots;
         var slot = minute % slots;
         var skip = _continue.GetValueOrDefault(slot);
@@ -148,11 +156,23 @@ internal sealed partial class UsageFlushService(
                 continue;
             }
 
-            if (await engine.GetDatabaseSizeAsync(database, cancellationToken).ConfigureAwait(false) is { } size)
+            var key = $"{database.OrganizationId}/{database.ProjectId}/{database.DatabaseId}";
+            try
             {
-                meter.RecordStorage(database, size);
+                if (!_sampled.Contains(key) && await engine.GetDatabaseSizeAsync(database, cancellationToken).ConfigureAwait(false) is { } size)
+                {
+                    meter.RecordStorage(database, size);
+                    _ = _sampled.Add(key);
+                }
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                // One database's failure, such as its file vanishing while sized, costs only its own sample.
             }
         }
+
+        // Only a complete pass marks its minute sampled; a listing failure leaves it to the next tick.
+        _sampledMinute = minute;
 
         if (matched > skip + MaxSamplesPerMinute)
         {
