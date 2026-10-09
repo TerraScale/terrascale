@@ -96,6 +96,8 @@ public sealed class CrossRegionTests
     public async Task Concurrent_writes_in_both_regions_converge_on_the_same_documents()
     {
         await using var regions = await Regions.StartAsync();
+        await regions.GruApi.SetPlanAsync(regions.GruApi.User, regions.Organization, "enterprise");
+        await regions.SfoApi.SetPlanAsync(regions.SfoApi.User, regions.Organization, "enterprise");
         var ids = Enumerable.Range(0, 12).Select(i => ReplicationDocuments.Id($"doc-{i}")).ToArray();
         var values = Enumerable.Range(0, 2 * ids.Length * 4).Select(_ => Faker.Random.Utf16String(1, 64)).ToArray();
         var writes = new List<Task>();

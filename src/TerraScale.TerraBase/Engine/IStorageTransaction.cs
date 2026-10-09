@@ -120,6 +120,16 @@ public interface IStorageTransaction : IAsyncDisposable
     /// <summary>Reads one live document, or <see langword="null"/> when it is absent or deleted.</summary>
     ValueTask<StoredDocument?> GetAsync(string collection, string id, CancellationToken cancellationToken);
 
+    /// <summary>Reads retained current JSON byte length, including hidden uniqueness conflicts, without materializing the document; missing documents and tombstones have zero bytes.</summary>
+    ValueTask<long> GetDocumentBytesAsync(string collection, string id, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Totals retained current document JSON, including hidden uniqueness conflicts, in this database's collections without materializing bodies or collection statistics.
+    /// Trusted storage accounting bypasses request query budgets; cancellation still stops the read.
+    /// History, tombstones and internal metadata outside collections are excluded.
+    /// </summary>
+    ValueTask<long> GetStoredDocumentBytesAsync(CancellationToken cancellationToken);
+
     /// <summary>
     /// Reads the version of a document or its tombstone without reading its body; <see langword="null"/> when it was
     /// never written or was removed with <see cref="DeleteAsync"/>.

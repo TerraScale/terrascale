@@ -4,10 +4,12 @@ using System.Globalization;
 using Google.Protobuf;
 using Grpc.Core;
 using Microsoft.AspNetCore.Http.Features;
+using NativeCompressions;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Features.Management;
 using TerraBase.Features.Memory;
+using TerraBase.Features.Qos;
 using TerraBase.Features.Replication.V1;
 using TerraBase.Hosting;
 
@@ -32,7 +34,7 @@ public sealed class ServedByCatalogPrimary
     public static ServedByCatalogPrimary BeforeHandling { get; } = new();
 
     /// <summary>Whether a follower forwards every request to <paramref name="endpoint"/>: a Management API endpoint.</summary>
-    internal static bool Always(Endpoint? endpoint) => ReferenceEquals(endpoint?.Metadata.GetMetadata<ListenerMetadata>(), ListenerMetadata.Management)
+    public static bool Always(Endpoint? endpoint) => ReferenceEquals(endpoint?.Metadata.GetMetadata<ListenerMetadata>(), ListenerMetadata.Management)
         || ReferenceEquals(endpoint?.Metadata.GetMetadata<ServedByCatalogPrimary>(), BeforeHandling);
 
     /// <summary>Whether the catalog primary serves forwarded requests to <paramref name="endpoint"/>.</summary>
@@ -148,12 +150,17 @@ internal sealed partial class CatalogForwarder
                 return;
             }
 
-            // The body as read (twice its size while a body of unknown length grows), its envelope and the serialized message,
-            // then a held-back response chunk and the next one's envelope and decoded bytes.
+            // Read scratch, a held-back response chunk and the next one's envelope and decoded bytes.
+            // Body growth and encoding are admitted separately before allocation, including chunked uploads.
             using var reservation = _budget.TryReserve(MemoryLane.Foreground,
-                (4 * bound) + (3 * ForwardingProtocol.ChunkBytes) + (2 * ApplicationEnvelope.HeaderBytes));
+                (16 * 1024) + (3 * ForwardingProtocol.ChunkBytes) + (2 * ApplicationEnvelope.HeaderBytes));
             if (reservation is null)
             {
+                if (QosContext.Current is not null)
+                {
+                    throw new QosMemoryException();
+                }
+
                 await UnavailableAsync(context, "capacity", "this member has no memory left to forward the request").ConfigureAwait(false);
                 return;
             }
@@ -162,10 +169,11 @@ internal sealed partial class CatalogForwarder
             var deadline = _time.GetUtcNow().UtcDateTime + ForwardingProtocol.Deadline;
             using var expiry = new CancellationTokenSource(ForwardingProtocol.Deadline, _time);
             using var bounded = CancellationTokenSource.CreateLinkedTokenSource(aborted, expiry.Token);
+            using var bodyMemory = new QosContext.ResultMemory(_budget);
             ForwardRequest? request;
             try
             {
-                request = await RequestAsync(context, declared, bounded.Token).ConfigureAwait(false);
+                request = await RequestAsync(context, declared, bodyMemory, bounded.Token).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (!aborted.IsCancellationRequested)
             {
@@ -214,6 +222,10 @@ internal sealed partial class CatalogForwarder
                 _forwarded.Add(1, new KeyValuePair<string, object?>("result", applied ? "answered" : "lagging"));
             }
         }
+        catch (QosMemoryException) when (QosContext.Current is null && !context.Response.HasStarted)
+        {
+            await UnavailableAsync(context, "capacity", "this member has no memory left to forward the request").ConfigureAwait(false);
+        }
         finally
         {
             Interlocked.Decrement(ref _inFlight);
@@ -221,11 +233,18 @@ internal sealed partial class CatalogForwarder
     }
 
     // Null when the body is larger than a forwarded request holds.
-    private async Task<ForwardRequest?> RequestAsync(HttpContext context, long? declared, CancellationToken cancellationToken)
+    private async Task<ForwardRequest?> RequestAsync(
+        HttpContext context, long? declared, QosContext.ResultMemory memory, CancellationToken cancellationToken)
     {
-        if (await ReadBodyAsync(context.Request.Body, declared, cancellationToken).ConfigureAwait(false) is not { } body)
+        if (await ReadBodyAsync(context.Request.Body, declared, memory, cancellationToken).ConfigureAwait(false) is not { } body)
         {
             return null;
+        }
+
+        if (body.Length > 0)
+        {
+            // Encoding retains its maximum-size backing array; gRPC also serializes the envelope.
+            memory.Reserve(2L * (ApplicationEnvelope.HeaderBytes + LZ4.Block.GetMaxCompressedLength(body.Length)), QosContext.Current);
         }
 
         var request = new ForwardRequest
@@ -252,10 +271,12 @@ internal sealed partial class CatalogForwarder
     }
 
     // The server enforces a declared Content-Length; a body of unknown length is read up to the bound.
-    private static async Task<byte[]?> ReadBodyAsync(Stream body, long? declared, CancellationToken cancellationToken)
+    private static async Task<byte[]?> ReadBodyAsync(
+        Stream body, long? declared, QosContext.ResultMemory memory, CancellationToken cancellationToken)
     {
         if (declared is { } length)
         {
+            memory.Reserve(length, QosContext.Current);
             var exact = new byte[length];
             await body.ReadExactlyAsync(exact, cancellationToken).ConfigureAwait(false);
             return exact;
@@ -271,9 +292,19 @@ internal sealed partial class CatalogForwarder
                 return null;
             }
 
+            if (buffer.Length + read > buffer.Capacity)
+            {
+                var capacity = (int)Math.Min(ForwardingProtocol.MaxRequestBytes,
+                    Math.Max(buffer.Length + read, Math.Max(256L, 2L * buffer.Capacity)));
+                // Retain prior growth credit too: old arrays may survive until GC while the new buffer is copied.
+                memory.Reserve(capacity, QosContext.Current);
+                buffer.Capacity = capacity;
+            }
+
             buffer.Write(chunk, 0, read);
         }
 
+        memory.Reserve(buffer.Length, QosContext.Current);
         return buffer.ToArray();
     }
 

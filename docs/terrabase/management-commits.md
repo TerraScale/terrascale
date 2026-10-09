@@ -173,7 +173,7 @@ under the same ids ([cross-region replication](cross-region.md#which-databases-r
 | --- | --- | --- | --- |
 | `create_organization` | `name`, `id`? | | organization; the user becomes its owner |
 | `rename_organization` | `organization`, `name` | admin | organization |
-| `set_plan` | `organization`, `plan` | owner | organization |
+| `set_plan` | `organization`, `plan` | management service credential acting as owner | organization |
 | `delete_organization` | `organization` | owner | none |
 | `set_current_organization` | `organization` | viewer | organization |
 | `create_project` | `organization`, `name`, `id`? | member; loopback service credential when `id` is supplied | project |
@@ -299,7 +299,7 @@ commit keeps the guarantees of the database lifecycle recovery in [management-ap
 | Invitations by token hash, single use, history, resend (invariant 12) | [Invitations by token hash](#invitations-by-token-hash) |
 | Viewer is read-only | native `viewer` role, never mapped to a writable one |
 | Exactly one owner, transfer swaps owner and nominee | the dashboard grants `owner` only through `start_transfer`/`confirm_transfer`; TerraBase refuses to leave an organization without an owner |
-| Billing plans (`plan_free`, …) | dashboard documents; the native `plan` (`hobby`, `pro`, `enterprise`) is unrelated quality-of-service metadata and is not derived from them. Billing behavior does not change |
+| Billing plans (`plan_free`, …) | dashboard documents; the native `plan` (`hobby`, `pro`, `enterprise`) is a trusted resource policy published by the platform service and enforced by TerraBase. TerraBase does not implement billing or derive subscriptions from it |
 | `commit_uncertain` retry with the same key | same commit id and body, or `GET /v1/management/commits/{id}` |
 
 ## Crash and restart

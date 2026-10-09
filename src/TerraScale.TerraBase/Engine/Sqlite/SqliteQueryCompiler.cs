@@ -17,7 +17,7 @@ namespace TerraBase.Engine.Sqlite;
 /// ponytail: no secondary indexes yet, so filters and sorts scan the collection's primary-key range;
 /// expression indexes belong to the Indexing slice.
 /// </remarks>
-internal sealed class SqliteQueryCompiler(SqliteParameterCollection parameters)
+internal sealed class SqliteQueryCompiler(SqliteParameterCollection parameters, bool budgetScans = false)
 {
     // Sort rank by JSON type: missing < null < false < true < numbers < strings < arrays/objects.
     private const string RankCases =
@@ -50,7 +50,7 @@ internal sealed class SqliteQueryCompiler(SqliteParameterCollection parameters)
         sql.Append(CultureInfo.InvariantCulture, $"""
             SELECT * FROM (
                 SELECT id, version, octet_length(body) AS size{columns}
-                FROM documents INDEXED BY documents_live WHERE collection = $collection AND {(observe ? "tb_query_scan() AND " : "")}body IS NOT NULL AND {Filter(query.Filter)}
+                FROM documents INDEXED BY documents_live WHERE collection = $collection AND {(observe ? "tb_query_scan() AND " : "")}body IS NOT NULL AND {BudgetedFilter(query.Filter)}
             ) WHERE {after}
             ORDER BY
             """);
@@ -81,7 +81,7 @@ internal sealed class SqliteQueryCompiler(SqliteParameterCollection parameters)
         SELECT count(*) + EXISTS (
             SELECT 1 FROM documents WHERE collection = $collection {(observe ? "AND tb_query_scan()" : "")} ORDER BY id LIMIT 1 OFFSET {Parameter(maxExamined)}
         ), coalesce(sum(matched), 0) FROM (
-            SELECT CASE WHEN body IS NOT NULL THEN {Filter(filter)} ELSE 0 END AS matched
+            SELECT {BudgetedFilter(filter, includeTombstones: true)} AS matched
             FROM documents WHERE collection = $collection {(observe ? "AND tb_query_scan()" : "")} ORDER BY id LIMIT {Parameter(maxExamined)}
         );
         """;
@@ -104,7 +104,7 @@ internal sealed class SqliteQueryCompiler(SqliteParameterCollection parameters)
             SELECT b.id, b.version <= {at}, write.version, CASE WHEN write.matches THEN write.body END, write.size
             FROM change_log_births b
             LEFT JOIN (
-                SELECT sequence, document_version AS version, body, length(CAST(body AS BLOB)) AS size, body IS NOT NULL AND {Filter(filter)} AS matches
+                SELECT sequence, document_version AS version, body, octet_length(body) AS size, body IS NOT NULL AND {BudgetedFilter(filter)} AS matches
                 FROM change_log
             ) write ON write.sequence = (
                 SELECT last.sequence FROM change_log last INDEXED BY change_log_by_document
@@ -129,8 +129,8 @@ internal sealed class SqliteQueryCompiler(SqliteParameterCollection parameters)
     /// </summary>
     public string CompileChanges(DocumentFilter? filter, long after, long through) =>
         $"""
-        SELECT id, document_version, CASE WHEN matches THEN body END, version FROM (
-            SELECT id, version, document_version, body, body IS NOT NULL AND {Filter(filter)} AS matches, sequence FROM change_log c
+        SELECT id, document_version, CASE WHEN matches THEN body END, version, octet_length(body) FROM (
+            SELECT id, version, document_version, body, body IS NOT NULL AND {BudgetedFilter(filter)} AS matches, sequence FROM change_log c
             WHERE collection = $collection AND generation = (SELECT generation FROM collections WHERE name = $collection)
                 AND version > {Parameter(after)} AND version <= {Parameter(through)}
                 AND sequence = (
@@ -138,6 +138,14 @@ internal sealed class SqliteQueryCompiler(SqliteParameterCollection parameters)
                     WHERE last.collection = c.collection AND last.generation = c.generation AND last.id = c.id AND last.version = c.version)
         ) ORDER BY version, sequence;
         """;
+
+    // CASE fixes evaluation order: account a candidate before any JSON predicate parses its body.
+    // This counts document candidates, not SQLite VM instructions, index entries or physical disk bytes.
+    private string BudgetedFilter(DocumentFilter? filter, bool includeTombstones = false)
+    {
+        var predicate = includeTombstones ? $"CASE WHEN body IS NOT NULL THEN {Filter(filter)} ELSE 0 END" : Filter(filter);
+        return budgetScans ? $"CASE WHEN tb_qos_scan(coalesce(octet_length(body), 0)) THEN {predicate} ELSE 0 END" : predicate;
+    }
 
     private string Filter(DocumentFilter? filter) => filter switch
     {

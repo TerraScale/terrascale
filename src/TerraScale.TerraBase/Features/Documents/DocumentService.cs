@@ -6,6 +6,7 @@ using TerraBase.Errors;
 using TerraBase.Features.Management.Queries;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Memory;
+using TerraBase.Features.Qos;
 using TerraBase.Features.Replication;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
@@ -18,7 +19,7 @@ namespace TerraBase.Features.Documents;
 /// writer lock must not wait on the network, and a peer applying this member's groups needs it.
 /// </remarks>
 internal sealed partial class DocumentService(IStorageEngine engine, TimeProvider time, DocumentCache cache, IUsageMeter usage, IReplicationWait replication,
-    IQueryShapeTracker shapes, IMemoryBudget memory, IMeterFactory meters)
+    IQueryShapeTracker shapes, IMemoryBudget memory, IMeterFactory meters, IStorageQuota quota)
     : IDocumentService, ISystemDocumentReader
 {
     // assert_count examines at most this many documents.
@@ -88,28 +89,32 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
 
     public async ValueTask<CollectionResult> DropCollectionAsync(TenantContext database, string name, CancellationToken cancellationToken)
     {
-        if (await BeginAsync(database, write: true, cancellationToken).ConfigureAwait(false) is not { } transaction)
+        if (await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
         {
             return DocumentRoute.UnknownDatabase;
         }
 
         CollectionInfo collection;
-        await using (transaction.ConfigureAwait(false))
+        using (await quota.EnterAsync(database, store, cancellationToken).ConfigureAwait(false))
         {
-            if (await transaction.GetCollectionAsync(name, cancellationToken).ConfigureAwait(false) is not { } existing)
+            var transaction = await store.BeginTransactionAsync(write: true, cancellationToken).ConfigureAwait(false);
+            await using (transaction.ConfigureAwait(false))
             {
-                return UnknownCollection;
-            }
+                if (await transaction.GetCollectionAsync(name, cancellationToken).ConfigureAwait(false) is not { } existing)
+                {
+                    return UnknownCollection;
+                }
 
-            collection = existing;
-            try
-            {
-                await transaction.DropCollectionAsync(name, cancellationToken).ConfigureAwait(false);
-                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-            }
-            catch (ChangeGroupCapacityException)
-            {
-                return ChangeGroupCapacity;
+                collection = existing;
+                try
+                {
+                    await transaction.DropCollectionAsync(name, cancellationToken).ConfigureAwait(false);
+                    await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+                }
+                catch (ChangeGroupCapacityException)
+                {
+                    return ChangeGroupCapacity;
+                }
             }
         }
 
@@ -342,8 +347,16 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
             return new DocumentRejected(DocumentRoute.UnknownDatabase);
         }
 
+        using var admission = await quota.EnterAsync(database, store, cancellationToken).ConfigureAwait(false);
+        var delta = 0L;
         var (outcome, offset) = await store.WriteAsync(
-            (transaction, token) => ApplyAllAsync(store, transaction, operations, indexErrors, token), outcome => outcome is WriteResult, cancellationToken)
+            async (transaction, token) =>
+            {
+                var (result, change, growthOp) = await ApplyAllAsync(store, transaction, operations, indexErrors, admission.RequiresAccounting, token).ConfigureAwait(false);
+                delta = change;
+                return result is WriteResult && await admission.CheckAsync(delta, token).ConfigureAwait(false) is { } exceeded
+                    ? new DocumentRejected(exceeded, indexErrors ? growthOp : null) : result;
+            }, outcome => outcome is WriteResult, cancellationToken)
             .ConfigureAwait(false);
         if (outcome is not WriteResult written)
         {
@@ -353,6 +366,7 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
         var writes = operations.Count(operation => operation is PutOperation or PatchOperation or DeleteOperation);
         if (writes > 0)
         {
+            admission.Committed(delta);
             usage.RecordWrites(database, writes);
         }
 
@@ -360,12 +374,14 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
     }
 
     // Every operation of one client write; the commit offset is filled in once its batch committed.
-    private async ValueTask<WriteOutcome> ApplyAllAsync(
-        IDatabaseStore store, IStorageTransaction transaction, IReadOnlyList<DocumentOperation> operations, bool indexErrors,
+    private async ValueTask<(WriteOutcome Outcome, long Delta, int? GrowthOp)> ApplyAllAsync(
+        IDatabaseStore store, IStorageTransaction transaction, IReadOnlyList<DocumentOperation> operations, bool indexErrors, bool accountStorage,
         CancellationToken cancellationToken)
     {
         var collections = new HashSet<string>(StringComparer.Ordinal);
         var results = new OperationResult[operations.Count];
+        var delta = 0L;
+        int? growthOp = null;
         // Assertions see the state before this transaction's writes.
         foreach (var assertions in new[] { true, false })
         {
@@ -377,18 +393,39 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
                     continue;
                 }
 
+                var id = operation switch
+                {
+                    PutOperation put => put.Id,
+                    PatchOperation patch => patch.Id,
+                    DeleteOperation delete => delete.Id,
+                    _ => null,
+                };
+                var before = accountStorage && id is not null
+                    ? await transaction.GetDocumentBytesAsync(operation.Collection, id, cancellationToken).ConfigureAwait(false) : 0;
                 switch (await ApplyCheckedAsync(store, transaction, operation, collections, cancellationToken).ConfigureAwait(false))
                 {
                     case OperationResult result:
                         results[i] = result;
+                        var after = !accountStorage ? 0 : operation switch
+                        {
+                            PutOperation put => await transaction.GetDocumentBytesAsync(put.Collection, put.Id, cancellationToken).ConfigureAwait(false),
+                            PatchOperation patch => await transaction.GetDocumentBytesAsync(patch.Collection, patch.Id, cancellationToken).ConfigureAwait(false),
+                            _ => 0,
+                        };
+                        delta += after - before;
+                        if (after > before)
+                        {
+                            growthOp = i;
+                        }
+
                         break;
                     case DocumentRejected rejected:
-                        return rejected with { Op = indexErrors ? i : null };
+                        return (rejected with { Op = indexErrors ? i : null }, 0, null);
                 }
             }
         }
 
-        return new WriteResult(0, results, transaction.Scope);
+        return (new WriteResult(0, results, transaction.Scope), delta, growthOp);
     }
 
     // One operation of a client transaction: its collection must exist.

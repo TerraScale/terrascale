@@ -8,10 +8,26 @@ namespace TerraBase.Engine.Sqlite;
 internal static class SqliteStatements
 {
     // A tombstone has a NULL body.
-    public const string Get = "SELECT version, body FROM documents WHERE collection = $collection AND id = $id;";
+    public const string Get = "SELECT version, body, octet_length(body) FROM documents WHERE collection = $collection AND id = $id;";
+
+    // octet_length inspects stored JSON size without materializing or decoding its body.
+    public const string DocumentBytes = """
+        SELECT coalesce(octet_length(c.body), octet_length(d.body), 0)
+        FROM documents d LEFT JOIN unique_conflicts c ON c.collection = d.collection AND c.id = d.id
+        WHERE d.collection = $collection AND d.id = $id;
+        """;
+
+    // One scalar result, independent of the number of collections; metadata outside collections never counts.
+    public const string StoredDocumentBytes = """
+        SELECT coalesce(sum((SELECT sum(coalesce(octet_length(c.body), octet_length(d.body), 0))
+            FROM documents d LEFT JOIN unique_conflicts c ON c.collection = d.collection AND c.id = d.id
+            WHERE d.collection = collections.name)), 0)
+        FROM collections;
+        """;
 
     public const string UniqueRawDocument = """
-        SELECT d.version, coalesce(c.body, d.body), c.body IS NOT NULL
+        SELECT d.version, coalesce(c.body, d.body), c.body IS NOT NULL,
+            coalesce(octet_length(c.body), octet_length(d.body), 0)
         FROM documents d LEFT JOIN unique_conflicts c ON c.collection = d.collection AND c.id = d.id
         WHERE d.collection = $collection AND d.id = $id;
         """;
@@ -363,6 +379,8 @@ internal static class SqliteStatements
     {
         [nameof(Get)] = Get,
         [nameof(UniqueRawDocument)] = UniqueRawDocument,
+        [nameof(DocumentBytes)] = DocumentBytes,
+        [nameof(StoredDocumentBytes)] = StoredDocumentBytes,
         [nameof(ReplicationRetainedBody)] = ReplicationRetainedBody,
         [nameof(ReplicationRetainedBodyBytes)] = ReplicationRetainedBodyBytes,
         [nameof(RestoreReplicationBody)] = RestoreReplicationBody,

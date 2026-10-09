@@ -257,6 +257,8 @@ internal static class ManagementRoute
         ManagementError.TokenTaken => TypedResults.Conflict("another invitation has this token"),
         ManagementError.WrongRegion => ErrorResponse.From(new Conflict("the database is managed in its home region", "wrong_region")),
         ManagementError.Replicated => ErrorResponse.From(new Conflict("remove the database's replica regions first", "database_replicated")),
+        ManagementError.StorageQuota => ErrorResponse.From(new QuotaExceeded("the organization storage quota would be exceeded", "storage_quota")),
+        ManagementError.StorageAccountingBusy => ErrorResponse.From(new Unavailable("storage accounting is at capacity; retry later", "storage_accounting_busy")),
         _ => throw new ArgumentOutOfRangeException(nameof(error)),
     };
 

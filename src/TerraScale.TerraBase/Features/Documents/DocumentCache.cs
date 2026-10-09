@@ -4,6 +4,7 @@ using System.Text.Json.Nodes;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Features.Memory;
+using TerraBase.Features.Qos;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 
@@ -12,10 +13,10 @@ namespace TerraBase.Features.Documents;
 /// <summary>
 /// Read-through cache of documents and list pages. Each entry keeps the <see cref="IWriteStamps"/> stamp taken
 /// before its storage read and is served only while that stamp is unchanged, so no read returns a version older
-/// than a write this node acknowledged. Clean snapshots share a CLOCK ring bounded to 4096 entries and a quarter
-/// of <c>memory-budget</c>; every entry is also charged to <see cref="IMemoryBudget"/>.
+/// than a write this node acknowledged. Tenant CLOCK rings share a 4096-entry and quarter-memory-budget bound.
+/// Each organization evicts only its own snapshots; every entry is also charged to <see cref="IMemoryBudget"/>.
 /// </summary>
-internal sealed class DocumentCache : IDisposable
+internal sealed class DocumentCache : IDocumentCacheQuota, IDisposable
 {
     // Rough per-entry overhead: entry, key, value objects and the cache's own bookkeeping.
     private const long EntryOverhead = 256;
@@ -29,13 +30,12 @@ internal sealed class DocumentCache : IDisposable
     private readonly IWriteStamps _stamps;
     private readonly long _sizeLimit;
     private readonly Dictionary<object, LinkedListNode<Entry>> _entries = [];
-    private readonly LinkedList<Entry> _clock = new();
+    private readonly Dictionary<string, Partition> _partitions = [];
     private readonly Counter<long> _lookups;
     private readonly Counter<long> _promotions;
     private readonly Counter<long> _evictions;
     // ponytail: one gate includes retained copies; split admission only if measured contention warrants it.
     private readonly Lock _gate = new();
-    private LinkedListNode<Entry>? _hand;
     private long _bytes;
     private int _entryCount;
     private bool _disposed;
@@ -58,19 +58,30 @@ internal sealed class DocumentCache : IDisposable
             description: "Retained clean snapshots across documents, system documents and query pages.");
     }
 
+    /// <summary>Releases this organization's old-plan cache excess before request memory admission.</summary>
+    public void Reconcile(TenantContext tenant)
+    {
+        ArgumentNullException.ThrowIfNull(tenant);
+        var share = QosPolicy.For(tenant.Plan).CacheShare;
+        lock (_gate)
+        {
+            Trim(tenant.OrganizationId, (long)(_sizeLimit * share), Math.Max(1, (int)(EntryLimit * share)));
+        }
+    }
+
     public ValueTask<StoredDocument?> GetAsync(DocumentKey key, Func<ValueTask<StoredDocument?>> read) =>
-        GetAsync(key, () => _stamps.Document(key.Database, key.Collection, key.Id), "document", read,
+        GetAsync(key, key.Database, () => _stamps.Document(key.Database, key.Collection, key.Id), "document", read,
             document => Size(document) + TenantSize(key.Database) + Chars(key.Collection) + Chars(key.Id), Copy);
 
     public ValueTask<StoredDocument?> GetSystemAsync(string collection, string id, Func<ValueTask<StoredDocument?>> read) =>
-        GetAsync((collection, id), () => _stamps.Document(null, collection, id), "document", read,
+        GetAsync((collection, id), null, () => _stamps.Document(null, collection, id), "document", read,
             document => Size(document) + Chars(collection) + Chars(id), Copy);
 
     public async ValueTask<CachedQuery> QueryAsync(
         TenantContext database, DocumentQuery query, long? countLimit, Func<ValueTask<CachedQuery>> read)
     {
         var key = new QueryKey(database, query.Collection, Normalize(query, countLimit));
-        return (await GetAsync(key, () => _stamps.Collection(database, query.Collection), "page",
+        return (await GetAsync(key, database, () => _stamps.Collection(database, query.Collection), "page",
             async () => (CachedQuery?)await read().ConfigureAwait(false),
             result => result.Page.Rows.Sum(row => Size(row.Document) + DocumentOverhead
                 + row.Keys.Sum(value => value is string text ? Chars(text) : sizeof(long)))
@@ -147,20 +158,30 @@ internal sealed class DocumentCache : IDisposable
             }
 
             _disposed = true;
-            while (_clock.First is { } entry)
+            while (_entries.Count > 0)
             {
-                Remove(entry, "disposed");
+                Remove(_entries.Values.First(), "disposed");
             }
         }
     }
 
-    private async ValueTask<T?> GetAsync<T>(object key, Func<long> currentStamp, string cache, Func<ValueTask<T?>> read, Func<T, long> size, Func<T, T> copy)
+    private async ValueTask<T?> GetAsync<T>(object key, TenantContext? tenant, Func<long> currentStamp, string cache, Func<ValueTask<T?>> read, Func<T, long> size, Func<T, T> copy)
         where T : class
     {
+        // The request's current plan wins over a database handle created before a plan change.
+        if (tenant is not null && QosContext.Current is { } current && current.OrganizationId == tenant.OrganizationId)
+        {
+            tenant = current;
+        }
+        var organization = tenant?.OrganizationId ?? string.Empty;
+        var share = tenant is null ? 1 : QosPolicy.For(tenant.Plan).CacheShare;
+        var byteLimit = (long)(_sizeLimit * share);
+        var countLimit = Math.Max(1, (int)(EntryLimit * share));
         var stamp = currentStamp();
         T? hit = null;
         lock (_gate)
         {
+            Trim(organization, byteLimit, countLimit);
             if (!_disposed && _entries.TryGetValue(key, out var node))
             {
                 var cached = node.Value;
@@ -181,6 +202,7 @@ internal sealed class DocumentCache : IDisposable
         if (hit is not null)
         {
             _lookups.Add(1, new("cache", cache), new("result", "hit"));
+            QosContext.ReserveResult(checked(size(hit) * 3 + EntryOverhead), tenant);
             return copy(hit);
         }
 
@@ -193,7 +215,7 @@ internal sealed class DocumentCache : IDisposable
 
         var bytes = size(value) + EntryOverhead;
         // Oversized reads bypass admission without displacing useful snapshots.
-        if (bytes > _sizeLimit || currentStamp() != stamp)
+        if (bytes > byteLimit || currentStamp() != stamp)
         {
             return value;
         }
@@ -212,12 +234,24 @@ internal sealed class DocumentCache : IDisposable
                 Remove(existing, "stale");
             }
 
-            while (_entries.Count >= EntryLimit || bytes > _sizeLimit - _bytes)
+            _partitions.TryGetValue(organization, out var partition);
+            if (partition is not null)
             {
-                Evict();
+                while (partition.Clock.Count > 0
+                    && (partition.Clock.Count >= countLimit || bytes > byteLimit - partition.Bytes
+                        || _entries.Count >= EntryLimit || bytes > _sizeLimit - _bytes))
+                {
+                    Evict(partition);
+                }
             }
 
-            if (_budget.TryReserve(MemoryLane.Foreground, bytes) is not { } reservation)
+            // Global pressure never displaces another organization's retained snapshots.
+            if (_entries.Count >= EntryLimit || bytes > _sizeLimit - _bytes)
+            {
+                return value;
+            }
+
+            if (_budget.TryReserve(MemoryLane.Foreground, bytes, tenant) is not { } reservation)
             {
                 return value;
             }
@@ -232,10 +266,13 @@ internal sealed class DocumentCache : IDisposable
                     return value;
                 }
 
-                var entry = new LinkedListNode<Entry>(new Entry(key, retained, stamp, bytes, reservation));
+                var entry = new LinkedListNode<Entry>(new Entry(key, organization, retained, stamp, bytes, reservation));
                 _entries.Add(key, entry);
-                _clock.AddLast(entry);
-                _hand ??= entry;
+                partition ??= new Partition();
+                _partitions[organization] = partition;
+                partition.Clock.AddLast(entry);
+                partition.Hand ??= entry;
+                partition.Bytes += bytes;
                 _bytes += bytes;
                 _entryCount = _entries.Count;
                 published = true;
@@ -253,12 +290,12 @@ internal sealed class DocumentCache : IDisposable
         return value;
     }
 
-    private void Evict()
+    private void Evict(Partition partition)
     {
         // Every retained entry is a clean storage snapshot, so no dirty state needs flushing or skipping.
-        while (_hand is { } entry)
+        while (partition.Hand is { } entry)
         {
-            _hand = entry.Next ?? _clock.First;
+            partition.Hand = entry.Next ?? partition.Clock.First;
             if (entry.Value.Referenced)
             {
                 entry.Value.Referenced = false;
@@ -271,24 +308,49 @@ internal sealed class DocumentCache : IDisposable
         }
     }
 
+    private void Trim(string organization, long byteLimit, int countLimit)
+    {
+        if (_partitions.TryGetValue(organization, out var partition))
+        {
+            while (partition.Clock.Count > countLimit || partition.Bytes > byteLimit)
+            {
+                Evict(partition);
+            }
+        }
+    }
+
     private void Remove(LinkedListNode<Entry> entry, string reason)
     {
-        if (_hand == entry)
+        var partition = _partitions[entry.Value.Organization];
+        if (partition.Hand == entry)
         {
-            _hand = entry.Next ?? _clock.First;
-            if (_hand == entry)
+            partition.Hand = entry.Next ?? partition.Clock.First;
+            if (partition.Hand == entry)
             {
-                _hand = null;
+                partition.Hand = null;
             }
         }
 
-        _clock.Remove(entry);
+        partition.Clock.Remove(entry);
+        partition.Bytes -= entry.Value.Bytes;
+        if (partition.Clock.Count == 0)
+        {
+            _partitions.Remove(entry.Value.Organization);
+        }
         _entries.Remove(entry.Value.Key);
         _bytes -= entry.Value.Bytes;
         _entryCount = _entries.Count;
         // Release synchronously, before another admission or Dispose can finish.
         entry.Value.Reservation.Dispose();
         _evictions.Add(1, new KeyValuePair<string, object?>("reason", reason));
+    }
+
+    // Empty partitions are removed, so their count is bounded by the global entry limit.
+    private sealed class Partition
+    {
+        public LinkedList<Entry> Clock { get; } = new();
+        public LinkedListNode<Entry>? Hand { get; set; }
+        public long Bytes { get; set; }
     }
 
     private static long Size(StoredDocument document) => DocumentOverhead + document.Json.Length + Chars(document.Id);
@@ -298,7 +360,7 @@ internal sealed class DocumentCache : IDisposable
 
     private static long Chars(string? value) => (value?.Length ?? 0) * sizeof(char);
 
-    private sealed record Entry(object Key, object Value, long Stamp, long Bytes, IMemoryReservation Reservation)
+    private sealed record Entry(object Key, string Organization, object Value, long Stamp, long Bytes, IMemoryReservation Reservation)
     {
         // Admission stays read-through; a subsequent hit earns a CLOCK second chance.
         public bool Referenced { get; set; }

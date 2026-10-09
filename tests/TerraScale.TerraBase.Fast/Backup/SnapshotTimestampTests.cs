@@ -31,14 +31,13 @@ public sealed class SnapshotTimestampTests
             services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock,
                 new FakeTimeProvider(new DateTimeOffset(2000, 1, 1, 0, 0, 0, TimeSpan.Zero)));
             services.AddSingleton<IWalBackup>(provider => new PausedBackup(provider.GetRequiredService<SqliteStorageEngine>(), pause));
-        }, time);
+        }, time, managementCredential: true);
         var backup = api.Server.Services.GetRequiredService<IContinuousBackup>();
         // Finish startup discovery before creating the tenant; periodic timers remain dormant.
         await backup.RunOnceAsync(cancellationToken);
         var database = await api.CreateManagedDatabaseAsync();
         pause.Database = database;
-        using var plan = await api.Client.PutAsJsonAsync(ManagementApi.Uri($"/v1/management/organizations/{database.Organization}/plan"), new { plan = "pro" }, cancellationToken);
-        plan.EnsureSuccessStatusCode();
+        await api.SetPlanAsync(api.User, database.Organization, "pro", cancellationToken);
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
         await ManagementApi.CreateCollectionAsync(data, database, "people");
         var faker = new Faker();

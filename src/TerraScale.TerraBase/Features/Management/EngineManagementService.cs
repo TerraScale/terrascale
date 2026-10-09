@@ -3,11 +3,13 @@ using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using TerraBase.Configuration;
 using TerraBase.Engine;
+using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Management.Backups;
 using TerraBase.Features.Management.Queries;
 using TerraBase.Features.Memory;
+using TerraBase.Features.Qos;
 using TerraBase.Features.Replication;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
@@ -39,7 +41,7 @@ namespace TerraBase.Features.Management;
 /// </remarks>
 internal sealed partial class EngineManagementService(
     IStorageEngine engine, TimeProvider time, TerraBaseOptions options, ILogger<EngineManagementService> logger, DatabaseLifecycleCheckpoint checkpoint, IMeterFactory meters,
-    Lazy<IDocumentService> documents, Lazy<IQueryShapeTracker> shapes, IMemoryBudget memory, IProjectAuthorityVerifier projectAuthority)
+    Lazy<IDocumentService> documents, Lazy<IQueryShapeTracker> shapes, IMemoryBudget memory, IProjectAuthorityVerifier projectAuthority, Lazy<IStorageQuota> quota)
     : IManagementService, IAccessService, IManagementCommits, ITenantDirectory, IHostedService, ICatalogGuard, ICatalogApplyObserver
 {
     private const string Organizations = "organizations";
@@ -586,6 +588,8 @@ internal sealed partial class EngineManagementService(
             return precheck.Error;
         }
 
+        using var admission = sourceId is not null
+            ? await quota.Value.EnterOrganizationsAsync([tenant.OrganizationId], cancellationToken).ConfigureAwait(false) : null;
         placement ??= new DatabasePlacement(options.Region, [], 1);
         var database = new ManagedDatabase(
             id ?? NewId(), tenant.ProjectId!, name, branchedFrom, time.GetUtcNow(), placement.Home, placement.Replicas.Count == 0 ? null : [.. placement.Replicas], placement.Version);
@@ -598,6 +602,15 @@ internal sealed partial class EngineManagementService(
         ManagementError error;
         try
         {
+            if (admission is not null
+                && admission.RequiresAccounting(tenant.OrganizationId)
+                && await admission.CheckAsync(tenant.OrganizationId,
+                    await quota.Value.ReadBytesAsync(storage, cancellationToken).ConfigureAwait(false), cancellationToken).ConfigureAwait(false) is { } exceeded)
+            {
+                await AbandonDatabaseAsync(storage).ConfigureAwait(false);
+                return exceeded is QuotaExceeded ? ManagementError.StorageQuota : ManagementError.StorageAccountingBusy;
+            }
+
             error = await WriteAsync(async transaction =>
             {
                 var registered = await RegisterDatabaseAsync(transaction, project, database, cancellationToken).ConfigureAwait(false);
@@ -613,6 +626,11 @@ internal sealed partial class EngineManagementService(
             {
                 checkpoint("create.committed", storage);
             }
+        }
+        catch (QueryCapacityException)
+        {
+            await AbandonDatabaseAsync(storage).ConfigureAwait(false);
+            return ManagementError.StorageAccountingBusy;
         }
         catch
         {

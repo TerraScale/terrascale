@@ -1,16 +1,21 @@
 using System.Diagnostics.Metrics;
+using TerraBase.Features.Qos;
+using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Memory;
 
-/// <summary>A fixed number of bytes shared by every lane.</summary>
-/// <remarks>
-/// ponytail: one shared limit, no per-lane quotas; add them when replication or bulk work reserves memory
-/// and must not be starved by caches.
-/// </remarks>
+/// <summary>A process limit with organization admission bounded by each trusted plan.</summary>
 internal sealed class MemoryBudget : IMemoryBudget
 {
+    private const int MaxTenants = 4096;
+    private const int MaxReservations = 65_536;
+    private const int MaxOrganizationChars = 256;
     private readonly long _limit;
+    // ponytail: one gate keeps process and tenant accounting atomic; split only after measuring contention.
+    private readonly Lock _gate = new();
+    private readonly Dictionary<string, TenantUsage> _tenants = [];
     private long _reserved;
+    private int _reservations;
 
     public MemoryBudget(long limit, Meter meter)
     {
@@ -18,31 +23,48 @@ internal sealed class MemoryBudget : IMemoryBudget
         meter.CreateObservableGauge("terrabase.memory.reserved", () => Volatile.Read(ref _reserved), "By", "Bytes reserved from memory-budget.");
     }
 
-    public IMemoryReservation? TryReserve(MemoryLane lane, long bytes)
+    public IMemoryReservation? TryReserve(MemoryLane lane, long bytes) => TryReserve(lane, bytes, QosContext.Current);
+
+    public IMemoryReservation? TryReserve(MemoryLane lane, long bytes, TenantContext? tenant)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(bytes);
-        // Checked before adding, so a large request cannot overflow and a refused one never touches the counter.
-        var reserved = Volatile.Read(ref _reserved);
-        while (true)
+        var share = tenant is null ? 1 : QosPolicy.For(tenant.Plan).MemoryShare;
+        var tenantLimit = share == 1 ? _limit : (long)(_limit * share);
+        var tenantReservations = Math.Min(MaxReservations - 4096, (int)(MaxReservations * share));
+        if (bytes == 0)
         {
-            if (bytes > _limit - reserved)
+            // Zero-byte leases retain no tenant or budget state, even when capacity is exhausted.
+            return EmptyReservation.Instance;
+        }
+
+        lock (_gate)
+        {
+            if (bytes > _limit - _reserved || _reservations == MaxReservations)
             {
                 return null;
             }
 
-            var seen = Interlocked.CompareExchange(ref _reserved, reserved + bytes, reserved);
-            if (seen == reserved)
+            if (tenant is not null)
             {
-                break;
+                var known = _tenants.TryGetValue(tenant.OrganizationId, out var reserved);
+                if (tenant.OrganizationId.Length > MaxOrganizationChars
+                    || (!known && _tenants.Count == MaxTenants)
+                    || reserved.Reservations >= tenantReservations
+                    || bytes > tenantLimit - reserved.Bytes)
+                {
+                    return null;
+                }
+
+                _tenants[tenant.OrganizationId] = new TenantUsage(reserved.Bytes + bytes, reserved.Reservations + 1);
             }
 
-            reserved = seen;
+            _reserved += bytes;
+            _reservations++;
+            return new Reservation(this, bytes, tenant?.OrganizationId);
         }
-
-        return new Reservation(this, bytes);
     }
 
-    private sealed class Reservation(MemoryBudget budget, long bytes) : IMemoryReservation
+    private sealed class Reservation(MemoryBudget budget, long bytes, string? organization) : IMemoryReservation
     {
         private int _released;
 
@@ -50,10 +72,42 @@ internal sealed class MemoryBudget : IMemoryBudget
 
         public void Dispose()
         {
-            if (Interlocked.Exchange(ref _released, 1) == 0)
+            if (Interlocked.Exchange(ref _released, 1) != 0)
             {
-                Interlocked.Add(ref budget._reserved, -bytes);
+                return;
             }
+
+            lock (budget._gate)
+            {
+                budget._reserved -= bytes;
+                budget._reservations--;
+                if (organization is not null)
+                {
+                    var current = budget._tenants[organization];
+                    var remaining = new TenantUsage(current.Bytes - bytes, current.Reservations - 1);
+                    if (remaining.Reservations == 0)
+                    {
+                        budget._tenants.Remove(organization);
+                    }
+                    else
+                    {
+                        budget._tenants[organization] = remaining;
+                    }
+                }
+            }
+        }
+    }
+
+    private readonly record struct TenantUsage(long Bytes, int Reservations);
+
+    private sealed class EmptyReservation : IMemoryReservation
+    {
+        public static EmptyReservation Instance { get; } = new();
+
+        public long Bytes => 0;
+
+        public void Dispose()
+        {
         }
     }
 }

@@ -344,6 +344,7 @@ public sealed class PressureTests
     public async Task Real_https_writes_and_reads_update_rates_listener_totals_storage_and_pressure_metrics()
     {
         await using var api = await DocumentApi.StartAsync();
+        await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "enterprise");
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var before = await ReadAsync(api.Server, deadline.Token);
         var clientBefore = Listener(before, "client").GetProperty("requests_total").GetInt64();

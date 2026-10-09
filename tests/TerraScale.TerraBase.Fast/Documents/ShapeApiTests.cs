@@ -8,9 +8,11 @@ using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Engine.Sqlite;
 using TerraBase.Fast.Management;
+using TerraBase.Fast.Storage;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Documents;
 using TerraBase.Hosting;
+using TerraBase.Tenancy;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Documents;
@@ -311,7 +313,8 @@ public sealed class ShapeApiTests
     public async Task Concurrent_live_pollers_share_one_storage_read()
     {
         const int Pollers = 25;
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartAsync(managementCredential: true);
+        await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "enterprise");
         using var shapes = await api.ClientWithScopesAsync("shapes:read");
         using var metrics = new ShapeMetrics(api.Server.Services);
         var (handle, head) = await SnapshotAsync(shapes, $"{api.Shape}?offset=-1");
@@ -343,7 +346,7 @@ public sealed class ShapeApiTests
     public async Task Live_cursors_advance_in_a_frozen_bucket_for_late_joining_shared_pollers()
     {
         var clock = new ShapeClock { UnixSeconds = 20001 };
-        await using var api = await DocumentApi.StartAsync(services: services => services.AddSingleton<TimeProvider>(clock));
+        await using var api = await DocumentApi.StartAsync(services: services => services.AddSingleton<TimeProvider>(clock), managementCredential: true);
         var server = api.Server;
         using var client = await api.ClientWithScopesAsync("documents:read", "documents:write", "shapes:read");
         using var metrics = new ShapeMetrics(server.Services);
@@ -381,7 +384,8 @@ public sealed class ShapeApiTests
     public async Task Shape_admission_rejects_new_flights_but_shares_existing_reads_and_releases_cancelled_slots()
     {
         var clock = new ShapeClock { UnixSeconds = 20001 };
-        await using var api = await DocumentApi.StartAsync(services: services => services.AddSingleton<TimeProvider>(clock));
+        await using var api = await DocumentApi.StartAsync(services: services => services.AddSingleton<TimeProvider>(clock), managementCredential: true);
+        await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "enterprise");
         var server = api.Server;
         using var client = await api.ClientWithScopesAsync("documents:read", "documents:write", "shapes:read");
         using var metrics = new ShapeMetrics(server.Services);
@@ -583,7 +587,7 @@ public sealed class ShapeApiTests
     public async Task A_controlled_live_deadline_returns_a_quiet_tail_and_refetches_after_database_replacement()
     {
         var clock = new ShapeClock { UnixSeconds = 20001 };
-        await using var api = await DocumentApi.StartAsync(services: services => services.AddSingleton<TimeProvider>(clock));
+        await using var api = await DocumentApi.StartAsync(services: services => services.AddSingleton<TimeProvider>(clock), managementCredential: true);
         var server = api.Server;
         using var client = await api.ClientWithScopesAsync("documents:read", "documents:write", "shapes:read");
         using var metrics = new ShapeMetrics(server.Services);
@@ -798,7 +802,8 @@ public sealed class ShapeApiTests
     [Test]
     public async Task A_log_chunk_stops_before_the_commit_that_would_pass_1_MiB_of_serialized_body()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartAsync(managementCredential: true);
+        await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "enterprise");
         using var shapes = await api.ClientWithScopesAsync("shapes:read");
         var (handle, head) = await SnapshotAsync(shapes, $"{api.Shape}?offset=-1");
         // Characters a serializer would escape six-fold, sent and stored literally.

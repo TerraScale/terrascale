@@ -239,6 +239,12 @@ internal sealed class StampingStorageEngine(IStorageEngine inner, ISystemReplica
         public ValueTask<StoredDocument?> GetAsync(string collection, string id, CancellationToken cancellationToken) =>
             RunAsync(() => inner.GetAsync(collection, id, cancellationToken), cancellationToken);
 
+        public ValueTask<long> GetDocumentBytesAsync(string collection, string id, CancellationToken cancellationToken) =>
+            RunAsync(() => inner.GetDocumentBytesAsync(collection, id, cancellationToken), cancellationToken);
+
+        public ValueTask<long> GetStoredDocumentBytesAsync(CancellationToken cancellationToken) =>
+            RunAsync(() => inner.GetStoredDocumentBytesAsync(cancellationToken), cancellationToken);
+
         public ValueTask<DocumentVersion?> GetVersionAsync(string collection, string id, CancellationToken cancellationToken) =>
             RunAsync(() => inner.GetVersionAsync(collection, id, cancellationToken), cancellationToken);
 

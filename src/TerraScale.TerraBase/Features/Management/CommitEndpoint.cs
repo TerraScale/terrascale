@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Http.HttpResults;
 using TerraBase.Configuration;
 using TerraBase.Errors;
 using TerraBase.Features.Documents;
+using TerraBase.Features.Qos;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
@@ -22,7 +23,7 @@ namespace TerraBase.Features.Management;
 public sealed record CommitRequest(string? Id, IReadOnlyList<ManagementOpRequest>? Ops);
 
 /// <summary><c>POST /v1/management/commits</c>: applies Management and dashboard document operations atomically.</summary>
-public sealed class CommitEndpoint(IManagementCommits commits, TimeProvider time) : EndpointWithoutRequest<IResult>
+public sealed class CommitEndpoint(IManagementCommits commits, TimeProvider time, IManagementService management, IQosAdmission qos, IDocumentCacheQuota cacheQuota) : EndpointWithoutRequest<IResult>
 {
     /// <summary>Set on a response answered from the record of an earlier, identical commit.</summary>
     public const string ReplayedHeader = "TerraBase-Commit-Replayed";
@@ -116,16 +117,54 @@ public sealed class CommitEndpoint(IManagementCommits commits, TimeProvider time
                 case CommitRejected rejected:
                     return ErrorResponse.From(rejected.Error, rejected.Op);
                 case ParsedCommit commit:
-                    var email = HttpContext.User.VerifiedEmail() is { } verified ? ManagementRoute.Email(verified) : null;
-                    return await commits.CommitAsync(userId, email, commit.Id, Convert.ToHexStringLower(SHA256.HashData(body)), commit.Operations, cancellationToken) switch
-                    {
-                        CommitOutcome outcome => Respond(outcome),
-                        CommitRejected rejected => ErrorResponse.From(rejected.Error, rejected.Op),
-                    };
+                    return await ApplyAsync(userId, commit, body, cancellationToken);
                 default:
                     throw new UnreachableException();
             }
         }
+    }
+
+    private async ValueTask<IResult> ApplyAsync(string userId, ParsedCommit commit, byte[] body, CancellationToken cancellationToken)
+    {
+        Tenancy.TenantContext? charged = null;
+        // Attribute every existing organization named by this multi-organization route after membership validation.
+        foreach (var id in commit.Operations.OfType<ManagementCommitOperation>().Select(op => op.Request.Organization)
+            .Where(id => id is not null).Distinct(StringComparer.Ordinal))
+        {
+            if (await management.GetOrganizationAsync(userId, id!, cancellationToken).ConfigureAwait(false) is not { } organization)
+            {
+                continue;
+            }
+
+            var tenant = new Tenancy.TenantContext(organization.Id, organization.Plan);
+            if (qos.TryEnter(tenant, out var retryAfter) is not { } lease)
+            {
+                HttpContext.Response.Headers.RetryAfter = retryAfter.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                return ErrorResponse.From(new QuotaExceeded("organization request budget exceeded", "tenant_busy"));
+            }
+
+            HttpContext.Response.RegisterForDispose(lease);
+            cacheQuota.Reconcile(tenant);
+            if (charged is null || tenant.Plan < charged.Plan)
+            {
+                charged = tenant;
+            }
+        }
+
+        using var scope = QosContext.Enter(charged);
+        if (charged is not null)
+        {
+            // The envelope was decoded under process admission; organization admission precedes applying its work.
+            QosContext.ReserveResult(body.LongLength * 3);
+        }
+
+        var email = HttpContext.User.VerifiedEmail() is { } verified ? ManagementRoute.Email(verified) : null;
+        return await commits.CommitAsync(userId, email, commit.Id, Convert.ToHexStringLower(SHA256.HashData(body)), commit.Operations, cancellationToken) switch
+        {
+            CommitOutcome outcome => Respond(outcome),
+            CommitRejected rejected => ErrorResponse.From(rejected.Error, rejected.Op),
+            _ => throw new UnreachableException(),
+        };
     }
 
     private FileContentHttpResult Respond(CommitOutcome outcome)
@@ -183,6 +222,8 @@ public sealed class CommitEndpoint(IManagementCommits commits, TimeProvider time
             {
                 // The dashboard document space is the dashboard's, not any signed-in user's.
                 DocumentCommitOperation when !service => new Forbidden("document operations need the management service credential"),
+                ManagementCommitOperation { Request.Op: "set_plan" } when !service =>
+                    new Forbidden("plan changes need the management service credential"),
                 ManagementCommitOperation { Request: { Op: "create_project", Id: not null } } when !service =>
                     new Forbidden("client-chosen project ids need the management service credential"),
                 DocumentCommitOperation { Operation: AssertCountOperation } when ++assertCounts > MaxAssertCounts =>

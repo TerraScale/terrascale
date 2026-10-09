@@ -22,6 +22,8 @@ public sealed class RestoreBackupEndpoint(IManagementService management, IManage
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
         Produces<ErrorBody>(StatusCodes.Status409Conflict);
         Produces<ErrorBody>(StatusCodes.Status403Forbidden);
+        Produces<ErrorBody>(StatusCodes.Status429TooManyRequests);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(ApiKeyScopes.DatabasesWrite);
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
     }
@@ -56,6 +58,8 @@ public sealed class RestoreBackupEndpoint(IManagementService management, IManage
                 Conflict error => ErrorResponse.From(error),
                 Forbidden error => ErrorResponse.From(error),
                 Validation error => ErrorResponse.From(error),
+                QuotaExceeded error => ErrorResponse.From(error),
+                Unavailable error => ErrorResponse.From(error),
             },
         };
     }
