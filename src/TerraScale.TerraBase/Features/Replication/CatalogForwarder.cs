@@ -34,7 +34,7 @@ public sealed class ServedByCatalogPrimary
     public static ServedByCatalogPrimary BeforeHandling { get; } = new();
 
     /// <summary>Whether a follower forwards every request to <paramref name="endpoint"/>: a Management API endpoint.</summary>
-    internal static bool Always(Endpoint? endpoint) => ReferenceEquals(endpoint?.Metadata.GetMetadata<ListenerMetadata>(), ListenerMetadata.Management)
+    public static bool Always(Endpoint? endpoint) => ReferenceEquals(endpoint?.Metadata.GetMetadata<ListenerMetadata>(), ListenerMetadata.Management)
         || ReferenceEquals(endpoint?.Metadata.GetMetadata<ServedByCatalogPrimary>(), BeforeHandling);
 
     /// <summary>Whether the catalog primary serves forwarded requests to <paramref name="endpoint"/>.</summary>

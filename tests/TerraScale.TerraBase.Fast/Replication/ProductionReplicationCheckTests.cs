@@ -536,7 +536,7 @@ public sealed class ProductionReplicationCheckTests
         private string Tools => Path.Combine(_directory, "bin");
 
         // The token is the test's deadline: it bounds provisioning and readiness (see TestDeadline for startup).
-        public async Task StartAsync(IReadOnlyList<string> scenarios, CancellationToken token)
+        public async Task StartAsync(string[] scenarios, CancellationToken token)
         {
             var primaryPort = TerraBaseTestServer.FreePort();
             var followerPort = TerraBaseTestServer.FreePort();
@@ -580,6 +580,10 @@ public sealed class ProductionReplicationCheckTests
             }
 
             var tenant = _tenant = await ReplicationTenant.CreateAsync(primary, [.. _databases.Values], token);
+            if (scenarios.Length > 1)
+            {
+                await primary.Services.GetRequiredService<IManagementService>().SetPlanAsync(tenant.UserId, tenant.OrganizationId, PlanTier.Enterprise, token);
+            }
             _secret = await tenant.KeyAsync(primary, ["documents:read", "documents:write"], token);
             using var reader = _tls.CreateClient(follower.ClientAddress!, _secret);
             // No fixture catalog copying or second key: the follower must serve the primary's catalog and key.

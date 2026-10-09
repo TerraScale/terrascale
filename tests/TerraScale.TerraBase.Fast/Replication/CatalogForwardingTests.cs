@@ -61,7 +61,7 @@ public sealed class CatalogForwardingTests
         using var jwt = tls.CreateClient(follower.ClientAddress!, Token(project, allScopes));
         using (var created = await jwt.PostAsJsonAsync(Relative(databases), new { name = "main" }))
         {
-            await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
+            await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created).Because(await created.Content.ReadAsStringAsync());
             await Assert.That(created.Headers.Location?.OriginalString).IsEqualTo(database);
             await Assert.That((await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("projectId").GetString()).IsEqualTo(project);
         }
@@ -634,7 +634,7 @@ public sealed class CatalogForwardingTests
         {
             content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
             using var large = await client.PatchAsync(Relative("/v1/management/organizations/large?expand=1"), content);
-            await Assert.That(large.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That(large.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(await large.Content.ReadAsStringAsync());
             await Assert.That(large.Headers.GetValues("X-Relayed").Single()).IsEqualTo("1");
             await Assert.That(large.Headers.ConnectionClose ?? false).IsFalse();
             await Assert.That((await large.Content.ReadAsByteArrayAsync()).SequenceEqual(body)).IsTrue();

@@ -613,6 +613,7 @@ public sealed class DocumentApiTests
     public async Task Invalid_names_ids_and_bodies_are_rejected()
     {
         await using var api = await DocumentApi.StartAsync();
+        await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "enterprise");
         var id = DocumentApi.NewId();
 
         var badName = await api.SendAsync(HttpMethod.Put, $"{api.Project}/databases/Not_Valid");

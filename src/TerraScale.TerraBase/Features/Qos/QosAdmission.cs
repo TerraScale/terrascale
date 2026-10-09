@@ -45,7 +45,7 @@ internal sealed class QosAdmission(TimeProvider time, IMeterFactory meters) : IQ
                 _lanes.Add(tenant.OrganizationId, lane);
             }
 
-            lane.Tokens = Math.Min(policy.Burst, lane.Tokens + time.GetElapsedTime(lane.LastSeen, now).TotalSeconds * policy.RequestsPerSecond);
+            lane.Tokens = Math.Min(policy.Burst, lane.Tokens + Math.Max(0, time.GetElapsedTime(lane.LastSeen, now).TotalSeconds) * policy.RequestsPerSecond);
             if (lane.Plan != tenant.Plan)
             {
                 // An unlimited plan has no token balance. Starting a finite bucket must not lock out its first request.
@@ -54,7 +54,7 @@ internal sealed class QosAdmission(TimeProvider time, IMeterFactory meters) : IQ
                 lane.Plan = tenant.Plan;
             }
 
-            lane.LastSeen = now;
+            lane.LastSeen = Math.Max(lane.LastSeen, now);
             if (policy.Concurrency > 0 && lane.Active >= policy.Concurrency)
             {
                 Reject(tenant, "concurrency");
@@ -93,7 +93,7 @@ internal sealed class QosAdmission(TimeProvider time, IMeterFactory meters) : IQ
     private void Reject(TenantContext tenant, string reason) => _rejected.Add(1,
         new("plan", tenant.Plan.ToString().ToLowerInvariant()), new("tenant_bucket", Bucket(tenant)), new("reason", reason));
 
-    private void Record(TenantContext tenant, long started) => _duration.Record(time.GetElapsedTime(started).TotalSeconds,
+    private void Record(TenantContext tenant, long started) => _duration.Record(Math.Max(0, time.GetElapsedTime(started).TotalSeconds),
         new("plan", tenant.Plan.ToString().ToLowerInvariant()), new("tenant_bucket", Bucket(tenant)));
 
     private sealed class Lane

@@ -594,8 +594,9 @@ public sealed class BackupApiTests
     public async Task Retention_applies_the_policy_as_saved_when_the_pass_runs()
     {
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 4, 10, 30, 0, TimeSpan.Zero));
-        await using var api = await ManagementApi.StartAsync(time: time);
+        await using var api = await ManagementApi.StartAsync(time: time, managementCredential: true);
         var database = await api.CreateManagedDatabaseAsync();
+        await api.SetPlanAsync(api.User, database.Organization, "enterprise");
         var backups = $"{database.Path}/backups";
         var policy = Uri($"{database.Path}/backup-policy");
         using var created = await api.Client.PostAsync(Uri(backups), content: null);
@@ -629,6 +630,7 @@ public sealed class BackupApiTests
         async Task<string> BackUpAsync()
         {
             using var created = await api.Client.PostAsync(Uri(backups), content: null);
+            await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created).Because(await created.Content.ReadAsStringAsync());
             return (await created.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!;
         }
 

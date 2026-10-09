@@ -127,6 +127,12 @@ internal sealed class ShapeService : IShapeService
         {
             return await flight.Result.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
         }
+        catch when (flight.Result.Task.IsFaulted)
+        {
+            // Error responses need the failed worker's partial result reservations released first.
+            await flight.Stopped.Task.ConfigureAwait(false);
+            throw;
+        }
         finally
         {
             Leave(key, flight);

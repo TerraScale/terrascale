@@ -1,10 +1,12 @@
 using System.Globalization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http.Features;
+using TerraBase.Configuration;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Management;
 using TerraBase.Features.Memory;
+using TerraBase.Features.Replication;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
@@ -62,43 +64,7 @@ public static class QosExtensions
 
     private static async Task AdmitAsync(HttpContext context, RequestDelegate next, IMemoryBudget budget)
     {
-        TenantContext? tenant = null;
-        if (context.Features.Get<ProjectAccess>() is { } access)
-        {
-            var plan = await context.RequestServices.GetRequiredService<ITenantDirectory>()
-                .PlanAsync(access.OrganizationId, context.RequestAborted).ConfigureAwait(false);
-            tenant = new TenantContext(access.OrganizationId, plan);
-        }
-        else if (context.Features.Get<ApiKey>() is { } key)
-        {
-            var plan = await context.RequestServices.GetRequiredService<ITenantDirectory>()
-                .PlanAsync(key.OrganizationId, context.RequestAborted).ConfigureAwait(false);
-            tenant = new TenantContext(key.OrganizationId, plan);
-        }
-        else if (context.User.Identity?.IsAuthenticated == true
-            && (context.Request.RouteValues["organization"] as string
-                ?? context.Features.Get<LegacyManagementRoute>()?.OrganizationId) is string organizationId)
-        {
-            var organization = await context.RequestServices.GetRequiredService<IManagementService>()
-                .GetOrganizationAsync(context.User.UserId(), organizationId, context.RequestAborted).ConfigureAwait(false);
-            if (organization is not null)
-            {
-                tenant = new TenantContext(organization.Id, organization.Plan);
-            }
-        }
-        else if (context.Features.Get<ProjectToken>()?.ProjectId is { } project
-            && context.Request.RouteValues["project"] as string == project)
-        {
-            // First-database creation resolves its project after binding; existing projects still share admission.
-            var organization = await context.RequestServices.GetRequiredService<IProjectCatalog>()
-                .ResolveProjectAsync(project, context.User.UserId(), create: false, context.RequestAborted).ConfigureAwait(false);
-            if (organization is not null)
-            {
-                var plan = await context.RequestServices.GetRequiredService<ITenantDirectory>()
-                    .PlanAsync(organization, context.RequestAborted).ConfigureAwait(false);
-                tenant = new TenantContext(organization, plan);
-            }
-        }
+        var tenant = await ResolveTenantAsync(context).ConfigureAwait(false);
 
         context.Features.Get<LookupMemory>()?.Reservation.Dispose();
 
@@ -157,6 +123,59 @@ public static class QosExtensions
         finally
         {
             context.Request.Body = originalBody;
+        }
+    }
+
+    private static async ValueTask<TenantContext?> ResolveTenantAsync(HttpContext context)
+    {
+        try
+        {
+            TenantContext? tenant = null;
+            if (context.Features.Get<ProjectAccess>() is { } access)
+            {
+                var plan = await context.RequestServices.GetRequiredService<ITenantDirectory>()
+                    .PlanAsync(access.OrganizationId, context.RequestAborted).ConfigureAwait(false);
+                tenant = new TenantContext(access.OrganizationId, plan);
+            }
+            else if (context.Features.Get<ApiKey>() is { } key)
+            {
+                var plan = await context.RequestServices.GetRequiredService<ITenantDirectory>()
+                    .PlanAsync(key.OrganizationId, context.RequestAborted).ConfigureAwait(false);
+                tenant = new TenantContext(key.OrganizationId, plan);
+            }
+            else if (context.User.Identity?.IsAuthenticated == true
+                && (context.Request.RouteValues["organization"] as string
+                    ?? context.Features.Get<LegacyManagementRoute>()?.OrganizationId) is string organizationId)
+            {
+                var organization = await context.RequestServices.GetRequiredService<IManagementService>()
+                    .GetOrganizationAsync(context.User.UserId(), organizationId, context.RequestAborted).ConfigureAwait(false);
+                if (organization is not null)
+                {
+                    tenant = new TenantContext(organization.Id, organization.Plan);
+                }
+            }
+            else if (context.Features.Get<ProjectToken>()?.ProjectId is { } project
+                && context.Request.RouteValues["project"] as string == project)
+            {
+                // First-database creation resolves its project after binding; existing projects still share admission.
+                var organization = await context.RequestServices.GetRequiredService<IProjectCatalog>()
+                    .ResolveProjectAsync(project, context.User.UserId(), create: false, context.RequestAborted).ConfigureAwait(false);
+                if (organization is not null)
+                {
+                    var plan = await context.RequestServices.GetRequiredService<ITenantDirectory>()
+                        .PlanAsync(organization, context.RequestAborted).ConfigureAwait(false);
+                    tenant = new TenantContext(organization, plan);
+                }
+            }
+
+            return tenant;
+        }
+        catch (BadHttpRequestException error) when (error.StatusCode == StatusCodes.Status503ServiceUnavailable
+            && context.RequestServices.GetRequiredService<TerraBaseOptions>().CatalogPrimary is not null
+            && ServedByCatalogPrimary.Always(context.GetEndpoint()))
+        {
+            // A forward-only route's primary validates catalog identity; this follower may not interpret its snapshot.
+            return null;
         }
     }
 
