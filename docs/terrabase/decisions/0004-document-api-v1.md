@@ -16,7 +16,7 @@ TS-754 carries caller-supplied keys in one UTF-8 query parameter for point opera
 or Unicode normalization. This replaces the path-key routes because Kestrel normalizes dot segments
 and aliases escaped slash spellings before route values are exposed. See [the ID contract](../id-contract.md).
 
-- **Fresh schema v9** (`PRAGMA user_version = 9`): new files bootstrap the complete schema in one transaction.
+- **Fresh schema v11** (`PRAGMA user_version = 11`): new files bootstrap the complete schema in one transaction.
   Older nonempty files and newer schemas are refused. There are no upgrades, backfills or legacy ID fallbacks.
   Collections have a persisted canonical ULID `entity_id`; database incarnations are canonical ULIDs.
   An incarnation persists across reopen; newly created and copied databases receive fresh incarnations.

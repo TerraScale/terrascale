@@ -32,7 +32,7 @@ internal sealed partial class SqliteDatabaseStore(
         : this(name, path, pool, io, pragmas, null, time, null, committed) { }
 
     /// <summary>On-disk schema version, stored in <c>PRAGMA user_version</c>.</summary>
-    private const int SchemaVersion = 10;
+    private const int SchemaVersion = 11;
 
     // Greenfield bootstrap only: an older on-disk shape must be discarded, never upgraded.
     private const string SchemaSql = $$"""
@@ -863,7 +863,7 @@ internal sealed partial class SqliteDatabaseStore(
         }
 
         cancellationToken.ThrowIfCancellationRequested();
-        Scalar(connection, transaction, SchemaSql + $"PRAGMA user_version = {SchemaVersion};");
+        Scalar(connection, transaction, SchemaSql + UniqueSchemaSql + $"PRAGMA user_version = {SchemaVersion};");
         RenewIncarnation(connection, transaction);
         cancellationToken.ThrowIfCancellationRequested();
         transaction.Commit();

@@ -65,7 +65,7 @@ internal sealed partial class SqliteStorageTransaction
 
                 // The ordered key query holds no bodies; fetch a live body only after byte admission.
                 ReadOnlyMemory<byte>? json = reader.GetBoolean(3) ? (ReadOnlyMemory<byte>?)null
-                    : ReadDocument(collection, id)?.Json ?? throw new InvalidDataException("a repair state lost its body");
+                    : ReadUniqueDocument(collection, id)?.Json ?? throw new InvalidDataException("a repair state lost its body");
                 var restoreBody = false;
                 if (retained is { } history)
                 {
@@ -138,15 +138,20 @@ internal sealed partial class SqliteStorageTransaction
 
     private (long Sequence, long Version, long Bytes)? RetainedBody(string collection, string id)
     {
-        if (!Shaped || collection is DocumentChange.Collections or DocumentChange.Indexes)
+        if (!Shaped || collection is DocumentChange.Collections or DocumentChange.Indexes or DocumentChange.Unique)
         {
             return null;
         }
 
         // Accepted winners append their history at commit, so retained evidence is stale for this key.
-        if (_appliedChanges.Exists(change => change.Collection == collection && change.Id == id))
+        if (_importHistory)
         {
-            return null;
+            var pending = Command("SELECT 1 FROM temp.imported_history WHERE collection = $collection AND id = $id LIMIT 1;", collection);
+            pending.Parameters.AddWithValue("$id", id);
+            if (pending.ExecuteScalar() is not null)
+            {
+                return null;
+            }
         }
 
         var command = Command(SqliteStatements.ReplicationRetainedBody, collection);

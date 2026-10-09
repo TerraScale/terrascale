@@ -53,6 +53,8 @@ internal sealed class SqliteSession(SqliteConnection connection) : IDisposable
         var mmapBytes = Math.Max(256L * 1024 * 1024, memoryBudget);
         return string.Create(System.Globalization.CultureInfo.InvariantCulture, $"""
             PRAGMA synchronous = NORMAL;
+            PRAGMA temp_store = FILE;
+            PRAGMA temp.cache_size = -1024;
             PRAGMA mmap_size = {mmapBytes};
             PRAGMA cache_size = -{cacheKib};
             {(walTaps ? "PRAGMA wal_autocheckpoint = 0;" : "")}

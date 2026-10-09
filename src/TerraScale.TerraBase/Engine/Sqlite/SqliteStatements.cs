@@ -212,7 +212,7 @@ internal static class SqliteStatements
         ORDER BY collection, id LIMIT $limit;
         """;
 
-    // Shared with the fresh partial-index bootstrap: SQLite needs matching predicates to use the index.
+    // Shared with fresh schema indexes: SQLite needs matching predicates to use the index.
     internal const string BoundedReplicationKeys = BoundedBaselineKeys + " AND collection != '' AND id != ''";
 
     // Seek the latest actual winner, including imported equal-version conflicts, in this generation.
@@ -229,6 +229,8 @@ internal static class SqliteStatements
         FROM latest JOIN documents d ON d.collection = $collection AND d.id = $id
             AND d.version = latest.document_version
         WHERE latest.bytes IS NOT NULL AND NOT EXISTS (
+            SELECT 1 FROM unique_conflicts WHERE collection = $collection AND id = $id
+        ) AND NOT EXISTS (
             SELECT 1 FROM changes INDEXED BY changes_deleted
             WHERE collection = $collection AND id = $id AND body IS NULL AND version >= d.version
         );
@@ -239,7 +241,8 @@ internal static class SqliteStatements
     // Only a writer that re-read matching retained winner evidence may bypass the body tie-break.
     public const string RestoreReplicationBody = """
         UPDATE documents SET body = $body WHERE collection = $collection AND id = $id
-            AND version = $version AND (body IS NULL OR CAST(body AS BLOB) != CAST($body AS BLOB));
+            AND version = $version AND (body IS NULL OR CAST(body AS BLOB) != CAST($body AS BLOB))
+            AND NOT EXISTS (SELECT 1 FROM unique_conflicts WHERE collection = $collection AND id = $id);
         """;
 
     // Seek past each distinct deletion key, skipping its repeated journal entries. Both key streams
@@ -271,10 +274,12 @@ internal static class SqliteStatements
             ORDER BY collection, id LIMIT $limit
         ), evidence AS MATERIALIZED (
             SELECT keys.collection, keys.id, documents.version AS current_version,
-                documents.body IS NULL AS current_deleted, coalesce(octet_length(documents.body), 0) AS body_bytes,
+                unique_conflicts.body IS NULL AND documents.body IS NULL AS current_deleted,
+                coalesce(octet_length(unique_conflicts.body), octet_length(documents.body), 0) AS body_bytes,
                 (SELECT max(version) FROM changes INDEXED BY changes_deleted
                     WHERE collection = keys.collection AND id = keys.id AND body IS NULL) AS deleted_version
             FROM keys LEFT JOIN documents ON documents.collection = keys.collection AND documents.id = keys.id
+                LEFT JOIN unique_conflicts ON unique_conflicts.collection = keys.collection AND unique_conflicts.id = keys.id
         ), canonical AS (
             SELECT *, deleted_version IS NOT NULL AND (current_version IS NULL OR deleted_version > current_version
                 OR (deleted_version = current_version AND NOT current_deleted)) AS deleted_wins

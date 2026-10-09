@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
+using TerraBase.Engine;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Backup;
 using TerraBase.Features.Documents;
@@ -38,6 +39,8 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(BackupSchedule))]
 [JsonSerializable(typeof(CollectionList))]
 [JsonSerializable(typeof(CollectionSchema))]
+[JsonSerializable(typeof(UniqueSchema))]
+[JsonSerializable(typeof(UniqueSchemaRequest))]
 [JsonSerializable(typeof(CreateApiKeyRequest))]
 [JsonSerializable(typeof(CreatedApiKeyBody))]
 [JsonSerializable(typeof(CreatedInvitation))]

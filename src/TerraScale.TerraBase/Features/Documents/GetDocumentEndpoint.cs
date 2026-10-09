@@ -17,10 +17,11 @@ public sealed class GetDocumentEndpoint(IDocumentService documents, ITenantDirec
         Get(DocumentRoute.Document);
         Name("getDocument");
         Summary("Reads a JSON document");
-        Description("Sends the document state as a strong ETag, including the database identity (the same on every member), merge version, JSON and deletion state. Equal-version replicated body changes get distinct validators. If-None-Match with the current version returns 304. A deleted document returns 404 not_found with its tombstone's ETag, so it can be recreated with If-Match.");
+        Description("Sends the document state as a strong ETag, including the database identity (the same on every member), merge version, JSON and deletion state. Equal-version replicated body changes get distinct validators. If-None-Match with the current version returns 304. A deleted document returns 404 not_found with its tombstone's ETag, so it can be recreated with If-Match. A retained loser of a replicated uniqueness conflict returns 409 unique_violation with its source state's ETag.");
         Tags("Documents");
         Produces<DocumentBody>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
+        Produces<ErrorBody>(StatusCodes.Status409Conflict);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
         RequireAuthorization(ApiKeyScopes.DocumentsRead);
         Metadata(ListenerMetadata.Client);
@@ -51,7 +52,14 @@ public sealed class GetDocumentEndpoint(IDocumentService documents, ITenantDirec
     private IResult Conditional(DocumentKey key, StoredDocument? document, CancellationToken cancellationToken)
     {
         var version = document is null ? null : ETags.Version(document.Scope, key.Collection, document.Id, document.Version, document.Json, document.Deleted);
-        return ETags.CheckNotModified(HttpContext, document is { Deleted: false }, version) switch
+        var condition = ETags.CheckNotModified(HttpContext, document is { Deleted: false }, version);
+        if (document is { UniqueConflict: true } && condition is not Validation)
+        {
+            ETags.Set(HttpContext, version!);
+            return ErrorResponse.From(new Conflict("the document lost a replicated uniqueness conflict", "unique_violation"));
+        }
+
+        return condition switch
         {
             Validation error => ErrorResponse.From(error),
             PreconditionFailed error => ErrorResponse.From(error),

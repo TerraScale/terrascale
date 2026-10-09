@@ -8,7 +8,9 @@ namespace TerraBase.Fast.Documents;
 public sealed class EntityIdStorageFormatTests
 {
     [Test]
-    public async Task A_previous_schema_nine_snapshot_is_refused_before_import_publication()
+    [Arguments(9)]
+    [Arguments(10)]
+    public async Task A_previous_snapshot_is_refused_before_import_publication(int schemaVersion)
     {
         await using var api = await DocumentApi.StartAsync();
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
@@ -27,15 +29,18 @@ public sealed class EntityIdStorageFormatTests
             {
                 await connection.OpenAsync(token);
                 await using var command = connection.CreateCommand();
-                // The previous GUID format has no collection entity_id and uses SQL version 9.
-                command.CommandText = """
+                // GUID schema 9 lacks entity_id; ULID schema 10 lacks uniqueness storage.
+                var identity = schemaVersion == 9 ? "00112233-4455-6677-8899-aabbccddeeff" : DocumentApi.NewId();
+                var identityColumn = schemaVersion == 9 ? "" : ", entity_id TEXT NOT NULL CHECK (length(entity_id) = 26)";
+                var collectionIdentity = schemaVersion == 9 ? "" : $", '{DocumentApi.NewId()}'";
+                command.CommandText = $$"""
                     CREATE TABLE documents (collection TEXT NOT NULL, id TEXT NOT NULL, version INTEGER NOT NULL, body TEXT,
                         PRIMARY KEY (collection, id)) WITHOUT ROWID;
-                    INSERT INTO documents VALUES ('items', '00112233-4455-6677-8899-aabbccddeeff', 1, '{"value":"preserved"}');
-                    CREATE TABLE collections (name TEXT PRIMARY KEY, created_at INTEGER NOT NULL, generation INTEGER NOT NULL) WITHOUT ROWID;
-                    INSERT INTO collections VALUES ('items', 0, 1);
+                    INSERT INTO documents VALUES ('items', '{{identity}}', 1, '{"value":"preserved"}');
+                    CREATE TABLE collections (name TEXT PRIMARY KEY, created_at INTEGER NOT NULL, generation INTEGER NOT NULL{{identityColumn}}) WITHOUT ROWID;
+                    INSERT INTO collections VALUES ('items', 0, 1{{collectionIdentity}});
                     CREATE TABLE commit_offset (id INTEGER PRIMARY KEY, value INTEGER NOT NULL, incarnation TEXT NOT NULL);
-                    INSERT INTO commit_offset VALUES (1, 0, '00112233-4455-6677-8899-aabbccddeeff');
+                    INSERT INTO commit_offset VALUES (1, 0, '{{identity}}');
                     CREATE TABLE changes (sequence INTEGER NOT NULL, ordinal INTEGER NOT NULL, collection TEXT NOT NULL,
                         id TEXT NOT NULL, version INTEGER NOT NULL, body TEXT, PRIMARY KEY (sequence, ordinal)) WITHOUT ROWID;
                     CREATE INDEX changes_deleted ON changes (collection, id, version) WHERE body IS NULL;
@@ -45,7 +50,7 @@ public sealed class EntityIdStorageFormatTests
                     INSERT INTO replication_state VALUES (1, 1);
                     CREATE TABLE journal_prefixes (sequence INTEGER PRIMARY KEY, digest BLOB NOT NULL) WITHOUT ROWID;
                     CREATE TABLE applied (origin BLOB PRIMARY KEY, sequence INTEGER NOT NULL, digest BLOB) WITHOUT ROWID;
-                    PRAGMA user_version = 9;
+                    PRAGMA user_version = {{schemaVersion}};
                     """;
                 await command.ExecuteNonQueryAsync(token);
             }
@@ -70,7 +75,7 @@ public sealed class EntityIdStorageFormatTests
             await current.OpenAsync(token);
             await using var version = current.CreateCommand();
             version.CommandText = "PRAGMA user_version;";
-            await Assert.That((long)(await version.ExecuteScalarAsync(token))!).IsGreaterThan(9);
+            await Assert.That((long)(await version.ExecuteScalarAsync(token))!).IsEqualTo(11);
         }
         finally
         {

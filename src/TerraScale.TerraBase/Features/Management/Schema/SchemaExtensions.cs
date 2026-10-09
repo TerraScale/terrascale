@@ -5,5 +5,6 @@ public static class SchemaExtensions
 {
     /// <summary>Registers <see cref="ISchemaService"/>.</summary>
     public static IServiceCollection AddTerraBaseSchema(this IServiceCollection services) =>
-        services.AddSingleton<ISchemaService, SchemaService>();
+        services.AddSingleton<ISchemaService, SchemaService>()
+            .AddSingleton<IUniqueSchemaService, UniqueSchemaService>();
 }

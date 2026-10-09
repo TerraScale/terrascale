@@ -52,8 +52,6 @@ internal sealed partial class SqliteStorageTransaction(
     // Body statements live only for this transaction: idle sessions must not retain bound JSON.
     private readonly Dictionary<string, SqliteCommand> _bodyCommands = [with(StringComparer.Ordinal)];
 
-    // Winning imports wait for commit so the whole group shares one local history offset.
-    private readonly List<DocumentChange> _appliedChanges = [];
     private long? _importedFromOffset;
     private bool _metadataChanged;
     private int _importedCount;
@@ -90,6 +88,13 @@ internal sealed partial class SqliteStorageTransaction(
     // Worker-only: query readers fetch bodies after their id/key page has admitted the row.
     private StoredDocument? ReadDocument(string collection, string id)
     {
+        var hidden = Command("SELECT 1 FROM unique_conflicts WHERE collection = $collection AND id = $id;", collection);
+        hidden.Parameters.AddWithValue("$id", id);
+        if (Shaped && hidden.ExecuteScalar() is not null && ReadUniqueDocument(collection, id) is { } conflict)
+        {
+            return conflict;
+        }
+
         var command = Command(SqliteStatements.Get, collection);
         command.Parameters.AddWithValue("$id", id);
         using var reader = command.ExecuteReader();
@@ -102,7 +107,7 @@ internal sealed partial class SqliteStorageTransaction(
     {
         return await RunAsync<DocumentVersion?>(() =>
         {
-            var command = Command(SqliteStatements.Version, collection);
+            var command = Command(UniqueVersion, collection);
             command.Parameters.AddWithValue("$id", id);
             using var reader = command.ExecuteReader();
             return reader.Read() ? new DocumentVersion(reader.GetInt64(0), reader.GetBoolean(1)) : null;
@@ -128,6 +133,8 @@ internal sealed partial class SqliteStorageTransaction(
             }
 
             Reserve(collection, id, json.Length);
+            var affected = ReplaceUniqueKeys(collection, id, body, cancellationToken);
+            ClearUniqueConflict(collection, id);
             return Write(offset =>
             {
                 if (_changes is not null)
@@ -139,6 +146,7 @@ internal sealed partial class SqliteStorageTransaction(
                 put.Parameters.AddWithValue("$version", offset);
                 put.Parameters.AddWithValue("$body", body);
                 put.ExecuteNonQuery();
+                ReconcileUnique(collection, affected, id, cancellationToken);
                 AppendChange(collection, id, offset, offset, body, cancellationToken);
             }, cancellationToken);
         }, cancellationToken, mutation: true).ConfigureAwait(false);
@@ -150,6 +158,8 @@ internal sealed partial class SqliteStorageTransaction(
         {
             ThrowIfReadOnly();
             DocumentMutation(replicated: false);
+            var affected = ReplaceUniqueKeys(collection, id, null, cancellationToken);
+            ClearUniqueConflict(collection, id);
             var command = Command(SqliteStatements.Delete, collection);
             command.Parameters.AddWithValue("$id", id);
             if (command.ExecuteNonQuery() == 0)
@@ -169,6 +179,7 @@ internal sealed partial class SqliteStorageTransaction(
                     }
 
                     AppendChange(collection, id, offset, offset, null, cancellationToken);
+                    ReconcileUnique(collection, affected, id, cancellationToken);
                 }, cancellationToken);
             }
 
@@ -183,7 +194,7 @@ internal sealed partial class SqliteStorageTransaction(
             ThrowIfReadOnly();
             DocumentMutation(replicated: false);
             // Check liveness from metadata without reading a body, within this serialized call.
-            var version = Command(SqliteStatements.Version, collection);
+            var version = Command(UniqueVersion, collection);
             version.Parameters.AddWithValue("$id", id);
             using (var reader = version.ExecuteReader())
             {
@@ -194,6 +205,8 @@ internal sealed partial class SqliteStorageTransaction(
             }
 
             Reserve(collection, id, 0);
+            var affected = ReplaceUniqueKeys(collection, id, null, cancellationToken);
+            ClearUniqueConflict(collection, id);
             // ponytail: keep tombstones until replication defines when they may be reaped.
             return Write(offset =>
             {
@@ -206,6 +219,7 @@ internal sealed partial class SqliteStorageTransaction(
                 command.Parameters.AddWithValue("$id", id);
                 command.Parameters.AddWithValue("$version", offset);
                 command.ExecuteNonQuery();
+                ReconcileUnique(collection, affected, id, cancellationToken);
                 AppendChange(collection, id, offset, offset, null, cancellationToken);
             }, cancellationToken);
         }, cancellationToken, mutation: true).ConfigureAwait(false);
@@ -892,6 +906,8 @@ internal sealed partial class SqliteStorageTransaction(
 
             _collectionsChanged = true;
 
+            DropUniqueCollection(name);
+
             Write(_ => { }, cancellationToken);
             WriteMetadata(DocumentChange.Collections, name, null);
             return true;
@@ -910,7 +926,7 @@ internal sealed partial class SqliteStorageTransaction(
 
             try
             {
-                if (_importedFromOffset is { } previous && (_appliedChanges.Count > 0 || _metadataChanged))
+                if (_importedFromOffset is { } previous && (_importHistory || _metadataChanged))
                 {
                     // One local history offset preserves the original versions of every winning import.
                     // Imported history may use the reserved tail beyond the local merge-version ceiling.
@@ -918,13 +934,10 @@ internal sealed partial class SqliteStorageTransaction(
                     var observed = Command(SqliteStatements.ObserveOffset);
                     observed.Parameters.AddWithValue("$version", _offset.Value);
                     observed.ExecuteNonQuery();
-                    foreach (var change in _appliedChanges)
-                    {
-                        AppendChange(change.Collection, change.Id, _offset.Value, change.Version,
-                            change.Json is { } json ? StrictUtf8.GetString(json.Span) : null, cancellationToken);
-                    }
+                    CommitImportHistory(_offset.Value);
                 }
 
+                DropUniqueAffected();
                 var offset = _offset ?? GetOffset();
                 if (_changes is { Count: > 0 })
                 {
@@ -1173,6 +1186,11 @@ internal sealed partial class SqliteStorageTransaction(
             return false;
         }
 
+        if (Shaped && change.Collection == DocumentChange.Unique)
+        {
+            return ApplyUniqueMetadata(change, admittedBody, cancellationToken);
+        }
+
         if (Shaped && change.Collection is DocumentChange.Collections or DocumentChange.Indexes)
         {
             return ApplyMetadata(change, admittedBody, cancellationToken);
@@ -1183,13 +1201,13 @@ internal sealed partial class SqliteStorageTransaction(
             return false;
         }
 
-        var changed = ApplyState(change, admittedBody);
+        var changed = Shaped ? ApplyUniqueState(change, admittedBody, cancellationToken) : ApplyState(change, admittedBody);
         if (changed && WinningStateImpliesCollection(change))
         {
             CreateCollection(new CollectionInfo(change.Collection, 0));
             if (Shaped)
             {
-                _appliedChanges.Add(change);
+                ImportHistory(UniqueVisibleChange(change));
             }
         }
 
@@ -1310,6 +1328,7 @@ internal sealed partial class SqliteStorageTransaction(
     // the collection once nothing live remains; a write another member made at or after the drop keeps it.
     private void DropReplicatedCollection(string name, long version, CancellationToken cancellationToken)
     {
+        DropUniqueStatesBefore(name, version, cancellationToken);
         var tombstones = Command(SqliteStatements.TombstoneCollection, name);
         tombstones.Parameters.AddWithValue("$version", version);
         using (var reader = tombstones.ExecuteReader())
@@ -1317,20 +1336,22 @@ internal sealed partial class SqliteStorageTransaction(
             while (reader.Read())
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                // ponytail: one entry per document the dropping member had not seen, bounded by replication lag, not a limit.
-                _appliedChanges.Add(new DocumentChange(name, reader.GetString(0), version, null));
+                ImportHistory(new DocumentChange(name, reader.GetString(0), version, null));
             }
         }
 
-        if (Command(SqliteStatements.LiveDocument, name).ExecuteScalar() is null)
+        // The collection drop also ends older declarations, even when its origin had never received them.
+        ApplyUniqueMetadata(new DocumentChange(DocumentChange.Unique, name, version, null), body: null, cancellationToken);
+        if (Command(UniqueLiveDocument, name).ExecuteScalar() is null)
         {
+            DropUniqueCollection(name);
             Command(SqliteStatements.DropHistory, name).ExecuteNonQuery();
             if (Command(SqliteStatements.DropCollection, name).ExecuteNonQuery() > 0)
             {
                 _metadataChanged = true;
                 _collectionsChanged = true;
             }
-            _appliedChanges.RemoveAll(applied => applied.Collection == name);
+            DropImportHistory(name);
         }
     }
 
@@ -1415,10 +1436,10 @@ internal sealed partial class SqliteStorageTransaction(
         var command = Command(
             (tombstones, after is null) switch
             {
-                (false, true) => SqliteStatements.BaselineDocumentsFirst,
-                (false, false) => SqliteStatements.BaselineDocumentsAfter,
-                (true, true) => SqliteStatements.BaselineTombstonesFirst,
-                (true, false) => SqliteStatements.BaselineTombstonesAfter,
+                (false, true) => UniqueBaselineLiveFirst,
+                (false, false) => UniqueBaselineLiveAfter,
+                (true, true) => UniqueBaselineDeletedFirst,
+                (true, false) => UniqueBaselineDeletedAfter,
             },
             after?.Collection);
         if (after is { } cursor)
@@ -1427,10 +1448,7 @@ internal sealed partial class SqliteStorageTransaction(
         }
 
         command.Parameters.AddWithValue("$limit", IStorageTransaction.MaxChangeGroupChanges);
-        if (!tombstones)
-        {
-            command.Parameters.AddWithValue("$maxBytes", DocumentJson.MaxBytes);
-        }
+        command.Parameters.AddWithValue("$maxBytes", DocumentJson.MaxBytes);
 
         var group = new List<DocumentChange>();
         (string Collection, string Id)? last = null;
@@ -1520,7 +1538,6 @@ internal sealed partial class SqliteStorageTransaction(
                         _changes?.Clear();
                         _changeIndex.Clear();
                         _replacedSinceSavepoint.Clear();
-                        _appliedChanges.Clear();
                     }
                     finally
                     {

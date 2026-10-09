@@ -130,7 +130,8 @@ internal sealed partial class SchemaService(IStorageEngine engine) : ISchemaServ
             collection,
             documents,
             sampled,
-            [.. fields.Select(field => new SchemaField(field.Key, field.Value.Present, field.Value.Types))]);
+            [.. fields.Select(field => new SchemaField(field.Key, field.Value.Present, field.Value.Types))],
+            await transaction.GetUniqueConstraintsAsync(collection, cancellationToken).ConfigureAwait(false));
         // Field/path limits also bound this serialization, including worst-case JSON escaping.
         if (JsonSerializer.SerializeToUtf8Bytes(schema, TerraBaseJsonContext.Default.CollectionSchema).LongLength > MaxResponseBytes)
         {
