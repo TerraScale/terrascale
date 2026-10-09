@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
-	"regexp"
 	"strconv"
 	"time"
 )
@@ -56,7 +55,7 @@ type ReplicationBandwidth struct {
 
 // ReplicationResponse is a page of database x region measurements for [From, To).
 type ReplicationResponse struct {
-	ProjectID     string               `json:"projectId"`
+	ProjectID     string               `json:"projectId" ulid:"required"`
 	From          time.Time            `json:"from"`
 	To            time.Time            `json:"to"`
 	BucketSeconds int64                `json:"bucketSeconds"`
@@ -67,7 +66,7 @@ type ReplicationResponse struct {
 // ReplicationMetrics includes period counters and the latest replica state.
 // Nil observations mean unavailable; measured zero remains distinct.
 type ReplicationMetrics struct {
-	DatabaseID        string                 `json:"databaseId"`
+	DatabaseID        string                 `json:"databaseId" ulid:"required"`
 	Region            string                 `json:"region"`
 	ReplicatedOps     int64                  `json:"replicatedOps"`
 	Bandwidth         []ReplicationBandwidth `json:"bandwidth"`
@@ -80,7 +79,7 @@ type ReplicationMetrics struct {
 
 // AnalyticsResponse is a page of server-bucketed project measurements.
 type AnalyticsResponse struct {
-	ProjectID     string           `json:"projectId"`
+	ProjectID     string           `json:"projectId" ulid:"required"`
 	From          time.Time        `json:"from"`
 	To            time.Time        `json:"to"`
 	BucketSeconds int64            `json:"bucketSeconds"`
@@ -93,7 +92,7 @@ type AnalyticsResponse struct {
 // means no samples. TerraBase owns the counters, percentiles and bucketing.
 type AnalyticsPoint struct {
 	Start                time.Time              `json:"start"`
-	DatabaseID           string                 `json:"databaseId"`
+	DatabaseID           string                 `json:"databaseId" ulid:"required"`
 	Region               string                 `json:"region"`
 	Requests             map[string]int64       `json:"requests"`
 	Ops                  map[string]int64       `json:"ops"`
@@ -128,9 +127,6 @@ func (u *ManagementUser) Replication(ctx context.Context, project string, opts M
 	return &out, nil
 }
 
-// ULIDs use ASCII base32; Unicode case-fold equivalents are invalid.
-var metricsIDPattern = regexp.MustCompile(`^[0-7][0-9A-HJKMNP-TV-Za-hjkmnp-tv-z]{25}$`)
-
 func (u *ManagementUser) metrics(ctx context.Context, project, endpoint string, opts MetricsOptions, out any) error {
 	if u.err != nil {
 		return u.err
@@ -138,8 +134,13 @@ func (u *ManagementUser) metrics(ctx context.Context, project, endpoint string, 
 	if u.token == "" {
 		return errors.New("terrabase: metrics require WithToken with a ts-auth project access token")
 	}
-	if !metricsIDPattern.MatchString(project) || (opts.DatabaseID != "" && !metricsIDPattern.MatchString(opts.DatabaseID)) {
-		return errors.New("terrabase: metrics project and database IDs must be plain ULIDs")
+	if err := ValidateID(project); err != nil {
+		return err
+	}
+	if opts.DatabaseID != "" {
+		if err := ValidateID(opts.DatabaseID); err != nil {
+			return err
+		}
 	}
 	switch opts.Range {
 	case "", Range1Hour, Range24Hours, Range7Days, Range30Days:

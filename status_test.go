@@ -119,7 +119,7 @@ func TestServiceBasePathPolicy(t *testing.T) {
 			t.Errorf("auth proxy prefix lost: %s", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		io.WriteString(w, `{"sub":"user-1"}`)
+		io.WriteString(w, `{"sub":"01ARZ3NDEKTSV4RRFFQ69G5FA1"}`)
 	}))
 	t.Cleanup(server.Close)
 	client, err := NewClient(Config{TSAuthBaseURL: " " + server.URL + "/proxy/ "})
