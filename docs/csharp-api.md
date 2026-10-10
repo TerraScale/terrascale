@@ -28,11 +28,13 @@ producer still authenticates data requests with legacy `tb_` keys. The real
 binary test uses that revision's loopback bootstrap API and legacy data
 credential; this is not evidence that its successor JWT-only API has shipped.
 
-`Client::builder(url, bearer).project(project)` or
-`Client::for_project(project, bearer).endpoint(url)` selects a static endpoint
-and bypasses Atlas. An optional `.region_pin("gru-1")` binds it to a node's
-region. HTTPS is required except for explicitly configured loopback HTTP;
-redirects are never followed and project traffic bypasses environment proxies.
+Normal first-party routing automatically discovers a verified eligible region;
+no serving-region activation or manual region pin is a setup step. Existing
+static endpoint/region-pin paths are confined to reviewed isolated tests and
+producer qualification and remain inventoried for implementation removal.
+Customer project scope and bearer authorization remain mandatory. HTTPS is
+required; any loopback HTTP exception belongs only to isolated tests.
+Redirects are never followed and project traffic bypasses environment proxies.
 
 Default routing consumes Atlas's merged discovery v1 contract, introduced in
 `ts-atlas` commit `59ee7cc`: anonymous `/v1/resolve?project=…&database=…` and

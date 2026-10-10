@@ -13,7 +13,9 @@ let document = items.get::<serde_json::Value>(uuid::Uuid::new_v4()).await?;
 # }
 ```
 
-Project requests use an already exchanged ts-auth bearer token and resolve through Atlas `/v1/resolve` without sending that token to Atlas. The client verifies the ES256 session pin, sends its raw region id to TerraBase, and refreshes routing on expiry, `421`, or redirect. Reads can retry once after a routing correction; mutations are never replayed for routing failures. An explicit `.endpoint(url)` bypasses Atlas. C# TerraBase currently rejects `Idempotency-Key`, which project clients reject locally.
+Project requests use an already exchanged ts-auth bearer token and resolve through Atlas `/v1/resolve` without sending that token to Atlas. The client verifies the ES256 session pin, sends its raw region id to TerraBase, and refreshes routing on expiry, `421`, or redirect. Reads can retry once after a routing correction; mutations are never replayed for routing failures. Direct endpoint/region overrides are restricted to reviewed isolated tests or
+producer qualification; they remain implementation inventory, not production
+onboarding. Normal first-party routing uses verified automatic discovery. C# TerraBase currently rejects `Idempotency-Key`, which project clients reject locally.
 
 `nice -n 19 python3 scripts/terrabase/run.py` runs the required integration journey against a SHA-256-pinned C# release binary in an isolated temporary database. CI runs this journey without `nice`. Its legacy bootstrap credentials qualify that pinned producer; they do not establish the successor JWT-only server contract.
 
@@ -43,14 +45,23 @@ let _fields = point.live_fields()?;
 
 `subscriptions().snapshot()` pages a native predicate view and yields a poll cursor. `subscriptions().poll()` returns complete ordered groups; a null effect removes a document from the view. `SubscriptionView` binds tenant/database/shard, collection and predicate, requires the actual request cursor to match its snapshot/poll phase, and validates a complete page before publishing groups and the next cursor. Cursors stay opaque and are bound by the producer to scope and predicate.
 
-Default native routing sends an authenticated scoped GET only to `https://atlas.terrascale.tech/api/v1/discovery`, using one canonical native `tbk1` credential. Atlas verifies signed current serving publications; the SDK validates the closed response and chooses the first receiver-ranked direct endpoint supporting the operation and residency. Optional `RegionRtt` hints provide measured ranking inputs without adding eligibility. Custom Atlas origins fail before native credentials are sent. An explicit reviewed direct origin remains available for producer qualification. There is no global API fallback.
+Default native routing sends an authenticated scoped GET only to `https://atlas.terrascale.tech/api/v1/discovery`, using one canonical native `tbk1` credential. Atlas verifies signed current serving publications; the SDK validates the closed response and chooses the first receiver-ranked direct endpoint supporting the operation and residency. Existing `RegionRtt` hints are measured ranking inputs, not region activation.
+Custom Atlas origins fail before native credentials are sent. Direct origin
+overrides are restricted to reviewed isolated tests and real producer qualification. There is no global API fallback.
 
 Discovery caches at most 128 scopes without evicting their authority/revision floors. Floors survive lease expiry within the client instance; deployment/cell moves and generation/revision regressions fail closed. A lease is at most ten seconds, clamped down by absolute expiry and transport time, and checked with wall and monotonic clocks. The client does not persist floors across process restart; the receiver owns durable floors. Clock failures/regressions fail closed. Runtime acceptance still requires independently measured healthy clock bounds and provenance. Safe native retries refresh expired routing; mutations are never automatically replayed.
 
 Point needs `client_v1 + read`, query additionally needs `query`, and snapshot/poll additionally need `subscriptions`. Transaction status needs `client_v1 + write`, including reconciliation after a capability downshift. Single unconditional commit needs `client_v1 + write`; conditional/multiple commits require additional capabilities which remain false in this v1 Atlas response. Direct admitted native fixture capabilities are unchanged. A caller-supplied single-writer identity is rejected until signed durable admission and commit fencing are qualified; leaderless writes do not establish security authority.
 
-Authentication remains a separate `auth_idp()` client using `auth_base_url` and `auth_api_key`. TerraBase credentials and routing selectors never reach ts-auth. Authentication mutations are never automatically replayed. The canonical issuer is unchanged by regional endpoint selection.
+Authentication remains a separate `auth_idp()` client. First-party issuer and
+service credential acquisition must be automatic under the
+[operating contract](AGENTS.md#zero-configuration-user-decision-2026-10-09-do-not-revert).
+The current auth client still requires origin/credential inputs; automatic
+acquisition remains a runtime implementation gap. Customer issuer trust and
+consumer authorization remain necessary. TerraBase credentials and routing selectors never reach ts-auth. Authentication mutations are never automatically replayed. The canonical issuer is unchanged by regional endpoint selection.
 
-The obsolete HTTP SQL, management, file, schema and reactive shim APIs have been removed. SQL is a required integration capability through TerraBase's actual PostgreSQL `sql_wire`; a PostgreSQL consumer implementation and packaged qualification remain open work. Native unique/schema extensions, actual Atlas/native packaged caller and clock qualification, durable security authority and real packaged producer evidence remain release blockers. Local codec tests are not deployment or serving evidence.
+The obsolete HTTP SQL, management, file, schema and reactive shim APIs have been removed. SQL is a required integration capability through TerraBase's actual PostgreSQL `sql_wire`; the PostgreSQL consumer exists in `src/postgres.rs`, currently behind a Cargo
+feature inventoried for removal. Actual admitted-listener and packaged
+qualification remain open; source presence does not prove that runtime works. Native unique/schema extensions, actual Atlas/native packaged caller and clock qualification, durable security authority and real packaged producer evidence remain release blockers. Local codec tests are not deployment or serving evidence.
 
 Run `cargo fmt --all --check`, `cargo clippy --locked --all-targets --all-features -- -D warnings`, and `cargo test --locked --all-features`. `scripts/check-native-contract.py` verifies the exact producer contract pin and `scripts/check-atlas-contract.py` separately verifies the frozen receiver contract and fixed-clock raw codec fixtures; `scripts/qualification/run.sh` exercises a separately unpacked `.crate` against a real native producer and fails when required fixture configuration is absent.

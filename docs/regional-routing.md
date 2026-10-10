@@ -12,13 +12,16 @@ Direct native endpoints use `https://<region>.api.terrascale.tech`, such as
 header. They do not admit a region or override the receiver's ordered response.
 There is no caller-selected region affinity or synthetic regional destination.
 `atlas_base_url` defaults to canonical Atlas; a custom discovery origin fails
-before native credentials are sent. An explicit reviewed direct `api_base_url`
-remains available for caller-provisioned native servers and producer qualification.
+before native credentials are sent. All valid discovered serving regions
+participate automatically, subject to tenant admission and residency. Existing
+direct `api_base_url` paths are restricted to reviewed isolated tests and real
+producer qualification, not first-party node startup or region activation.
 Inside the TerraScale zone it must be exactly `https://<region>.api.terrascale.tech`,
 with a valid single region label. Reserved service labels, the apex, nested labels,
 retired `<region>.terrascale.tech` origins, explicit ports and trailing dots are rejected before
 credentials can be dispatched. Independent HTTPS and explicit loopback/test
-origins remain caller-provisioned opt-outs from Atlas admission.
+origins are isolated qualification/test inputs requiring independent admission;
+failed production discovery must never fall back to them.
 
 Discovery transport failures, timeouts, malformed responses, denials, unavailable
 eligibility, expired publications, and clock or observation regressions return

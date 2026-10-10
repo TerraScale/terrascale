@@ -2,7 +2,11 @@
 
 Package the SDK with `cargo package --locked --allow-dirty`. Run `run.sh exercise` with `TERRASCALE_SDK_CRATE` pointing to the resulting regular `.crate` file and `TERRASCALE_SDK_CRATE_SHA256` set to its SHA-256. The runner verifies and safely unpacks that single artifact into an isolated temporary consumer before using Cargo with its own lockfile. No derive package, source tree replacement, mock producer or skipped-green path is used.
 
-The real producer fixture must supply these variables:
+The following are authorized isolated real-test allocation inputs, not
+first-party production node startup requirements or region enable switches.
+Automatic serving-region discovery and credential delivery remain the operating
+contract; the fixture still needs explicit scope, admitted origin and grant
+to prove the actual SDK boundary. The real producer fixture must supply:
 
 - `TS_NATIVE_ORIGIN`: reviewed direct regional or loopback native producer origin.
 - `TS_NATIVE_API_KEY` and `TS_NATIVE_DENY_API_KEY`: distinct native grant and denied credential; secrets are never printed.

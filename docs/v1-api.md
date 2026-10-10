@@ -7,7 +7,7 @@ Reference implementation: ts-go `feat/v1-client` (`v1/`).
 This page describes the original producer. For the C# producer's project
 paths, bearer credentials, collection API and Atlas session routing, see
 [csharp-api.md](csharp-api.md). Its real-binary suite is independent of the
-legacy fake-compatible live test below.
+legacy test suite below. Fake fixtures never qualify a live producer.
 
 The public API skeleton was introduced in commit
 `d26086340ea1c0a296e618e7898d8a1e4a2ea4ff` on branch `feat/v1-client`. Pin
@@ -161,11 +161,16 @@ Slow suite (`cargo test --test v1_live`): runs against a real server when
 `TB_V1_URL` and `TB_V1_CONTROL_KEY` (a token, or a file holding one) are set;
 `TB_V1_CA_FILE` optionally names a PEM root CA. Without them it is skipped.
 It provisions its own tenant, database, collection and key, then exercises
-documents, transactions, queries and revocation. For local development it
-also runs against ts-go's `tbv1-fake` (branch `feat/v1-fake`):
+documents, transactions, queries and revocation. Missing real-service inputs
+must be reported as skipped, not successful qualification. Fake producers
+belong only in test code/test binaries and cannot establish live compatibility.
+
+For current C# producer qualification, use the immutable SHA-256-pinned real
+release runner:
 
 ```sh
-tbv1-fake --listen 127.0.0.1:9465 --cert-dir .tbv1 --control-key-out .tbv1/control.key &
-TB_V1_URL=https://localhost:9465 TB_V1_CONTROL_KEY=.tbv1/control.key \
-TB_V1_CA_FILE=.tbv1/ca.pem cargo test --test v1_live
+nice -n 19 python3 scripts/terrabase/run.py
 ```
+
+See [csharp-api.md](csharp-api.md) for the producer revision and its remaining
+JWT-only contract gap. This runner does not qualify the retired producer.
