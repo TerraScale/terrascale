@@ -270,8 +270,8 @@ jobs:
           npm publish artifacts/release/*.tgz --access public --ignore-scripts --tag latest --registry https://registry.npmjs.org/
           name="$(node -p 'require("./package.json").name')"
           version="$(node -p 'require("./package.json").version')"
-          # A first publish can take a few seconds to appear in the registry.
-          for attempt in 1 2 3 4 5 6; do
+          # npm's registry can take minutes to show a new dist-tag.
+          for attempt in $(seq 1 30); do
             latest="$(npm view "${name}" dist-tags.latest --prefer-online --registry https://registry.npmjs.org/ || true)"
             if [ "${latest}" = "${version}" ]; then break; fi
             sleep 10

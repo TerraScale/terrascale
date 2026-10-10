@@ -116,7 +116,7 @@ esac
     assert.equal(result.status, scenario === "wrong-latest" ? 1 : 0, result.stderr);
     assert.match(result.stderr, scenario === "wrong-latest" ? /TS-528: expected npm latest 0\.0\.1, got 1\.0\.0\n$/u : scenario === "delayed" ? /^npm error code E404\n$/u : /^$/u);
     const view = "view @terrascale/sdk dist-tags.latest --prefer-online --registry https://registry.npmjs.org/";
-    const views = scenario === "published" ? 1 : scenario === "delayed" ? 2 : 6;
+    const views = scenario === "published" ? 1 : scenario === "delayed" ? 2 : 30;
     assert.equal(await readFile(path.join(directory, "calls"), "utf8"), [
       "whoami --registry https://registry.npmjs.org/",
       "pack --ignore-scripts --pack-destination artifacts/release",
