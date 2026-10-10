@@ -404,7 +404,7 @@ public sealed partial class CrossRegionPagingProgressTests
         public TimeSpan NextInterval { get; set; } = WanPuller.Interval;
 
         public async Task PausedAsync(CancellationToken token) =>
-            _ = await _pauses.Reader.ReadAsync(token).AsTask().WaitAsync(TimeSpan.FromSeconds(30), token);
+            _ = await _pauses.Reader.ReadAsync(token);
 
         public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
         {

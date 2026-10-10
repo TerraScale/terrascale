@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Configuration;
@@ -21,6 +22,78 @@ namespace TerraBase.Fast.Management;
 public sealed class DatabaseRecoveryTests
 {
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Canceled_disposal_or_startup_retains_recovery_files_until_native_cleanup_finishes(bool duringStartup)
+    {
+        var token = TestContext.Current!.Execution.CancellationToken;
+        using var execution = CancellationTokenSource.CreateLinkedTokenSource(token);
+        var state = new RecoveryData(execution.Token);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Task<ManagementApi>? startup = null;
+        ManagementApi? api = null;
+        IStorageTransaction? transaction = null;
+        try
+        {
+            if (duringStartup)
+            {
+                startup = state.StartAsync(services => services.AddSingleton<IHostedService>(_ => new HeldRecoveryStartup(entered, release, token)));
+                await entered.Task.WaitAsync(token);
+                await execution.CancelAsync();
+                await Assert.That(async () => await startup.WaitAsync(token)).ThrowsException();
+            }
+            else
+            {
+                api = await state.StartAsync();
+                using var health = await api.Server.Client.GetAsync(Uri("/healthz"), token);
+                await Assert.That(health.StatusCode).IsEqualTo(HttpStatusCode.OK);
+                var store = await api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(token);
+                transaction = await store.BeginTransactionAsync(write: false, token);
+                await execution.CancelAsync();
+                await Assert.That(async () => await api.DisposeAsync()).Throws<OperationCanceledException>();
+            }
+            await Assert.That(async () => await state.DisposeAsync()).Throws<OperationCanceledException>();
+            await Assert.That(System.IO.Directory.Exists(state.Directory)).IsTrue();
+            await Assert.That(TerraBaseTestServer.IsDataDirectoryOwned(state.Directory)).IsTrue();
+
+            release.TrySetResult();
+            if (transaction is not null)
+            {
+                await transaction.DisposeAsync();
+                transaction = null;
+            }
+            await state.CleanupCompletion.WaitAsync(token);
+            await Assert.That(System.IO.Directory.Exists(state.Directory)).IsFalse();
+        }
+        finally
+        {
+            await execution.CancelAsync();
+            release.TrySetResult();
+            if (transaction is not null)
+            {
+                await transaction.DisposeAsync();
+            }
+
+            if (startup is not null)
+            {
+                try
+                {
+                    var started = await startup;
+                    started.Client.Dispose();
+                }
+                catch (Exception) when (startup.IsFaulted || startup.IsCanceled)
+                {
+                    // Startup cancellation is asserted above; join it before enumerating its cleanup owner.
+                }
+            }
+
+            api?.Client.Dispose();
+            await state.CleanupCompletion.WaitAsync(token);
+        }
+    }
+
+    [Test]
     [Arguments("delete.intent")]
     [Arguments("delete.main_file")]
     [Arguments("cleanup.files")]
@@ -28,7 +101,7 @@ public sealed class DatabaseRecoveryTests
     [Arguments("delete.finalized")]
     public async Task Interrupted_deletion_is_completed_on_restart(string interruption)
     {
-        using var state = new RecoveryData();
+        await using var state = new RecoveryData();
         var armed = false;
         var reached = false;
         string target;
@@ -166,7 +239,7 @@ public sealed class DatabaseRecoveryTests
     [Arguments("data", "create.registered")]
     public async Task Interrupted_creation_preserves_only_a_committed_registration(string route, string interruption)
     {
-        using var state = new RecoveryData();
+        await using var state = new RecoveryData();
         var armed = false;
         var reached = false;
         string target;
@@ -264,7 +337,7 @@ public sealed class DatabaseRecoveryTests
     [Arguments("service")]
     public async Task A_failure_after_registration_commit_preserves_data_and_releases_the_creation_reservation(string route)
     {
-        using var state = new RecoveryData();
+        await using var state = new RecoveryData();
         var armed = false;
         TenantContext? captured = null;
         var injected = new InvalidOperationException("interrupted after registration commit");
@@ -362,7 +435,7 @@ public sealed class DatabaseRecoveryTests
     [Arguments("cancelled-create")]
     public async Task A_failure_after_cleanup_commit_releases_the_destination_and_preserves_the_original_exception(string route)
     {
-        using var state = new RecoveryData();
+        await using var state = new RecoveryData();
         using var cancellation = new CancellationTokenSource();
         var armed = false;
         TenantContext? captured = null;
@@ -472,7 +545,7 @@ public sealed class DatabaseRecoveryTests
     [Test]
     public async Task A_failed_startup_leaves_the_intent_for_the_next_restart()
     {
-        using var state = new RecoveryData();
+        await using var state = new RecoveryData();
         var armed = false;
         string target;
         await using (var api = await state.StartAsync(services => services.AddSingleton<DatabaseLifecycleCheckpoint>((step, _) =>
@@ -525,7 +598,7 @@ public sealed class DatabaseRecoveryTests
     [Test]
     public async Task Unknown_files_are_preserved_byte_for_byte_logged_and_counted()
     {
-        using var state = new RecoveryData();
+        await using var state = new RecoveryData();
         var unregistered = EntityIds.New().ToString();
         await using (var api = await state.StartAsync())
         {
@@ -578,7 +651,7 @@ public sealed class DatabaseRecoveryTests
         System.IO.Directory.CreateDirectory(ordinaryDirectory);
 
         // Keep a second live host with a different count: process-wide meter leakage must fail this test.
-        using var other = new RecoveryData();
+        await using var other = new RecoveryData();
         await using (var prepared = await other.StartAsync())
         {
             await other.SeedAsync(prepared);
@@ -622,7 +695,7 @@ public sealed class DatabaseRecoveryTests
     [Arguments("-journal")]
     public async Task Root_system_filename_directories_are_preserved_logged_and_counted_on_every_restart(string suffix)
     {
-        using var state = new RecoveryData();
+        await using var state = new RecoveryData();
         await TerraBaseTestServer.InitializeDataDirectoryAsync(state.Directory);
         var systemPath = System.IO.Path.Combine(state.Directory, "_system.db");
         await Assert.That(File.Exists(systemPath)).IsFalse();
@@ -704,13 +777,13 @@ public sealed class DatabaseRecoveryTests
     [Arguments("-journal")]
     public async Task Startup_rejects_system_database_links_without_touching_the_external_target(string suffix)
     {
-        using var state = new RecoveryData();
+        await using var state = new RecoveryData();
         await using (var api = await state.StartAsync())
         {
             await state.SeedAsync(api);
         }
 
-        using var external = new RecoveryData();
+        await using var external = new RecoveryData();
         var externalOptions = new TerraBaseOptions { AdminPort = 0, DataDirectory = external.Directory, MemoryBudget = 64 * 1024 * 1024, StorageThreads = 1, StorageQueue = 16 };
         var externalServices = new ServiceCollection();
         externalServices.AddSingleton(externalOptions);
@@ -808,13 +881,13 @@ public sealed class DatabaseRecoveryTests
     [Arguments("-journal", true)]
     public async Task Tenant_opening_rejects_linked_sidecars_without_touching_external_data(string suffix, bool dangling)
     {
-        using var state = new RecoveryData();
+        await using var state = new RecoveryData();
         await using (var api = await state.StartAsync())
         {
             await state.SeedAsync(api);
         }
 
-        using var external = new RecoveryData();
+        await using var external = new RecoveryData();
         var target = System.IO.Path.Combine(external.Directory, "operator-data");
         var bytes = state.Faker.Random.Bytes(73);
         if (!dangling)
@@ -893,7 +966,7 @@ public sealed class DatabaseRecoveryTests
     [Test]
     public async Task Inventory_cancellation_stops_traversal_when_only_excluded_directories_remain()
     {
-        using var state = new RecoveryData();
+        await using var state = new RecoveryData();
         await using var api = await state.StartAsync();
         await AssertReadyAsync(api);
         var note = System.IO.Path.Combine(state.Directory, "operator-notes.txt");
@@ -919,7 +992,7 @@ public sealed class DatabaseRecoveryTests
     [Arguments("database")]
     public async Task An_unsupported_catalog_version_preserves_files_without_deserializing_future_rows(string row)
     {
-        using var state = new RecoveryData();
+        await using var state = new RecoveryData();
         await using (var api = await state.StartAsync())
         {
             await state.SeedAsync(api);
@@ -1000,7 +1073,7 @@ public sealed class DatabaseRecoveryTests
     [Test]
     public async Task An_unsupported_catalog_preserves_an_interrupted_creation_and_refuses_new_creations()
     {
-        using var state = new RecoveryData();
+        await using var state = new RecoveryData();
         await using (var api = await state.StartAsync())
         {
             await state.SeedAsync(api);
@@ -1068,7 +1141,7 @@ public sealed class DatabaseRecoveryTests
     [Test]
     public async Task An_intent_conflicting_with_a_registered_database_refuses_startup_without_deleting_data()
     {
-        using var state = new RecoveryData();
+        await using var state = new RecoveryData();
         await using (var api = await state.StartAsync())
         {
             await state.SeedAsync(api);
@@ -1096,7 +1169,7 @@ public sealed class DatabaseRecoveryTests
     [Test]
     public async Task A_missing_branch_source_clears_the_unpublished_targets_intent()
     {
-        using var state = new RecoveryData();
+        await using var state = new RecoveryData();
         await using (var api = await state.StartAsync())
         {
             await state.SeedAsync(api);
@@ -1123,7 +1196,7 @@ public sealed class DatabaseRecoveryTests
     [Arguments("branch", "copy")]
     public async Task Creation_intent_holds_the_destination_until_storage_is_published(string route, string competingOperation)
     {
-        using var state = new RecoveryData();
+        await using var state = new RecoveryData();
         IStorageEngine? engine = null;
         var armed = false;
         var intent = new TaskCompletionSource<(TenantContext Storage, Task<bool> Competitor, bool Completed, bool Published)>(
@@ -1199,7 +1272,7 @@ public sealed class DatabaseRecoveryTests
     [Arguments("branch", "copy", true)]
     public async Task A_failed_creation_intent_rejects_queued_storage_until_cleanup(string route, string competingOperation, bool cancel)
     {
-        using var state = new RecoveryData();
+        await using var state = new RecoveryData();
         using var cancellation = new CancellationTokenSource();
         IStorageEngine? engine = null;
         var armed = false;
@@ -1308,7 +1381,7 @@ public sealed class DatabaseRecoveryTests
     [Test]
     public async Task Startup_checks_each_database_registration_once_and_reports_every_unknown_artifact()
     {
-        using var state = new RecoveryData();
+        await using var state = new RecoveryData();
         var target = EntityIds.New().ToString();
         TenantContext storage;
         await using (var api = await state.StartAsync())
@@ -1367,7 +1440,7 @@ public sealed class DatabaseRecoveryTests
     [Test]
     public async Task Engine_registration_without_management_can_create_storage_preserved_by_server_restart()
     {
-        using var state = new RecoveryData();
+        await using var state = new RecoveryData();
         await using (var api = await state.StartAsync())
         {
             await state.SeedAsync(api);
@@ -1413,7 +1486,7 @@ public sealed class DatabaseRecoveryTests
     [Arguments("temporary-uppercase-directory")]
     public async Task A_generated_id_collision_does_not_authorize_cleanup_of_unknown_files(string artifact)
     {
-        using var state = new RecoveryData();
+        await using var state = new RecoveryData();
         var isDirectory = artifact.EndsWith("-directory", StringComparison.Ordinal);
         var armed = false;
         var target = string.Empty;
@@ -1500,9 +1573,9 @@ public sealed class DatabaseRecoveryTests
     [Arguments("delete", "project")]
     public async Task A_parent_link_installed_during_a_lifecycle_callback_refuses_file_work_and_replay(string route, string parent)
     {
-        using var state = new RecoveryData();
-        using var external = new RecoveryData();
-        using var backup = new RecoveryData();
+        await using var state = new RecoveryData();
+        await using var external = new RecoveryData();
+        await using var backup = new RecoveryData();
         var original = System.IO.Path.Combine(backup.Directory, "original-parent");
         var link = string.Empty;
         var armed = false;
@@ -1676,7 +1749,7 @@ public sealed class DatabaseRecoveryTests
     [Arguments("delete", "project")]
     public async Task An_intent_with_an_absent_tenant_directory_is_finalized_on_restart(string operation, string parent)
     {
-        using var state = new RecoveryData();
+        await using var state = new RecoveryData();
         var armed = false;
         TenantContext? captured = null;
         var organization = string.Empty;
@@ -1790,7 +1863,7 @@ public sealed class DatabaseRecoveryTests
     [Test]
     public async Task Cancellation_before_delete_intent_commit_preserves_data_and_allows_immediate_retry()
     {
-        using var state = new RecoveryData();
+        await using var state = new RecoveryData();
         using var cancellation = new CancellationTokenSource();
         var armed = false;
         var reached = false;
@@ -1836,7 +1909,7 @@ public sealed class DatabaseRecoveryTests
     [Arguments("forget")]
     public async Task A_catalog_change_after_delete_resolution_is_unavailable_and_preserves_the_database(string route)
     {
-        using var state = new RecoveryData();
+        await using var state = new RecoveryData();
         var hook = new UsageCommitHook();
         var reached = new TaskCompletionSource<UsageCommitHook.Gate>(TaskCreationOptions.RunContinuationsAsynchronously);
         var armed = false;
@@ -1930,7 +2003,7 @@ public sealed class DatabaseRecoveryTests
     [Test]
     public async Task A_catalog_refusal_after_file_publication_preserves_creation_ownership_until_recovery()
     {
-        using var state = new RecoveryData();
+        await using var state = new RecoveryData();
         var hook = new UsageCommitHook();
         var reached = new TaskCompletionSource<(TenantContext Storage, UsageCommitHook.Gate Gate)>(TaskCreationOptions.RunContinuationsAsynchronously);
         var armed = false;
@@ -2020,7 +2093,7 @@ public sealed class DatabaseRecoveryTests
     [Arguments("commit")]
     public async Task A_catalog_refusal_before_creation_intent_leaves_no_owned_files_or_catalog_changes(string route)
     {
-        using var state = new RecoveryData();
+        await using var state = new RecoveryData();
         var hook = new UsageCommitHook();
         var reached = new TaskCompletionSource<(TenantContext Storage, UsageCommitHook.Gate Gate)>(TaskCreationOptions.RunContinuationsAsynchronously);
         var armed = false;
@@ -2096,7 +2169,7 @@ public sealed class DatabaseRecoveryTests
     [Test]
     public async Task A_catalog_refusal_while_clearing_deletion_retains_the_intent_until_supported_restart()
     {
-        using var state = new RecoveryData();
+        await using var state = new RecoveryData();
         var hook = new UsageCommitHook();
         var reached = new TaskCompletionSource<UsageCommitHook.Gate>(TaskCreationOptions.RunContinuationsAsynchronously);
         var armed = false;
@@ -2217,8 +2290,28 @@ public sealed class DatabaseRecoveryTests
         return document is null ? null : Encoding.UTF8.GetString(document.Json.Span);
     }
 
-    private sealed class RecoveryData : IDisposable
+    private sealed class HeldRecoveryStartup(TaskCompletionSource entered, TaskCompletionSource release, CancellationToken testToken) : IHostedLifecycleService
     {
+        public async Task StartingAsync(CancellationToken cancellationToken)
+        {
+            entered.TrySetResult();
+            await release.Task.WaitAsync(testToken);
+        }
+
+        public Task StartAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task StartedAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task StoppingAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task StoppedAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+    }
+
+    private sealed class RecoveryData : IAsyncDisposable
+    {
+        private readonly List<ManagementApi> _started = [];
+        private readonly List<Task> _failedStarts = [];
+        private readonly CancellationToken _cancellationToken;
+        private readonly Lazy<Task> _cleanup;
+
         public Faker Faker { get; } = new();
         public IReadOnlyList<string> Sidecars { get; } = ["-wal", "-shm", "-journal"];
         public string Directory { get; } = System.IO.Directory.CreateTempSubdirectory("terrabase-recovery-").FullName;
@@ -2233,8 +2326,10 @@ public sealed class DatabaseRecoveryTests
         private string DocumentId { get; }
         private string Person { get; }
 
-        public RecoveryData()
+        public RecoveryData(CancellationToken? cancellationToken = null)
         {
+            _cancellationToken = cancellationToken ?? TestContext.Current!.Execution.CancellationToken;
+            _cleanup = new(CleanupAsync);
             User = EntityIds.New().ToString();
             TargetName = "target_" + Faker.Random.AlphaNumeric(8).ToLowerInvariant();
             DocumentId = EntityIds.New().ToString();
@@ -2245,8 +2340,13 @@ public sealed class DatabaseRecoveryTests
 
         public string Path(string database) => System.IO.Path.Combine(Directory, Organization, Project, database + ".db");
 
-        public Task<ManagementApi> StartAsync(Action<IServiceCollection>? services = null) =>
-            ManagementApi.StartAsync(settings => settings["data-directory"] = Directory, services);
+        public async Task<ManagementApi> StartAsync(Action<IServiceCollection>? services = null)
+        {
+            var api = await ManagementApi.StartAsync(settings => settings["data-directory"] = Directory, services,
+                cancellationToken: _cancellationToken, failedStartCleanup: _failedStarts.Add);
+            _started.Add(api);
+            return api;
+        }
 
         public async Task SeedAsync(ManagementApi api)
         {
@@ -2333,7 +2433,23 @@ public sealed class DatabaseRecoveryTests
                 ? System.IO.Directory.GetFiles(directory, $".{database}.*.creating*") : []).IsEmpty();
         }
 
-        public void Dispose() => System.IO.Directory.Delete(Directory, recursive: true);
+        public Task CleanupCompletion => _cleanup.Value;
+
+        public ValueTask DisposeAsync() => new(TerraBaseTestServer.WaitForCleanupAsync(
+            CleanupCompletion, TerraBaseTestServer.ReportCleanupFailure, _cancellationToken));
+
+        private async Task CleanupAsync()
+        {
+            try
+            {
+                // A canceled disposal or startup wait does not end the host's ownership of this directory.
+                await Task.WhenAll(_started.Select(api => api.CleanupCompletion).Concat(_failedStarts));
+            }
+            finally
+            {
+                System.IO.Directory.Delete(Directory, recursive: true);
+            }
+        }
 
         private Uri Document(string database) => Uri($"/v1/projects/{Project}/databases/{database}/collections/people/documents/by-key?id={DocumentId}");
     }

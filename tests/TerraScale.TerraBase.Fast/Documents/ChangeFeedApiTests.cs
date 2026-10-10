@@ -550,9 +550,9 @@ public sealed class ChangeFeedApiTests
             await Assert.That(Token(page)).IsNotEmpty();
         }
 
-        // A client can finish receiving just before the server's finally returns its reservation.
-        await TerraBaseTestServer.EventuallyAsync(async token =>
-            await api.Server.MetricAsync("terrabase_change_feed_active", cancellationToken: token) == 0);
+        // Feed admission is returned before outer middleware releases its catalog-result reservations.
+        await delivery.Completed.Task.WaitAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
+        await Assert.That(await api.Server.MetricAsync("terrabase_change_feed_active")).IsEqualTo(0);
         await Assert.That(memory.FeedBytes).IsEqualTo(0);
         await Assert.That(await api.ReservedBytesAsync()).IsEqualTo(reserved);
         await Assert.That((await ReadAsync(api, feed)).Status).IsEqualTo(HttpStatusCode.OK);
@@ -654,15 +654,30 @@ public sealed class ChangeFeedApiTests
     private sealed class DeliveryGate(int responses) : IStartupFilter
     {
         private int _entered;
+        private int _completed;
 
         public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+        public TaskCompletionSource Completed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next) => app =>
         {
             app.Use(async (context, continuation) =>
             {
+                if (context.Request.Path.Value?.EndsWith("/changes", StringComparison.Ordinal) == true)
+                {
+                    context.Response.OnCompleted(() =>
+                    {
+                        // Include the capacity-refused request as well as the held successful responses.
+                        if (Interlocked.Increment(ref _completed) == responses + 1)
+                        {
+                            Completed.TrySetResult();
+                        }
+                        return Task.CompletedTask;
+                    });
+                }
                 if (context.Request.Headers.ContainsKey("X-Change-Feed-Test-Hold"))
                 {
                     context.Response.OnStarting(async () =>
