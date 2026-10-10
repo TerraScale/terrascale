@@ -21,7 +21,7 @@ public sealed class ExplainSqlEndpoint(ITenantDirectory tenants, IQueryService q
     /// <inheritdoc />
     public override void Configure()
     {
-        Post("/projects/{project}/databases/{database}/sql/explain");
+        Post(ProjectApiRoute.Sql + "/explain");
         Name("explainSql");
         Summary("Explains a read-only SQL statement on a database");
         Description(QueriesExtensions.SqlDescription + " Returns the engine plan and the names of the secondary indexes it actually reads, plus suggestions for unindexed fields. "
@@ -75,7 +75,7 @@ public sealed class ExplainSqlEndpoint(ITenantDirectory tenants, IQueryService q
             }
 
             var database = resolved.Database;
-            if (options.Wan is not null && !resolved.Placement.Includes(options.Region))
+            if (!resolved.Placement.Includes(options.Region))
             {
                 return DatabaseRegions.WrongRegion(resolved.Placement.Home, resolved.Placement.Regions);
             }
@@ -201,7 +201,7 @@ public sealed class ExplainSqlEndpoint(ITenantDirectory tenants, IQueryService q
             return ErrorResponse.From(new NotFound());
         }
 
-        return options.Wan is not null && !current.Placement.Includes(options.Region)
+        return !current.Placement.Includes(options.Region)
             ? DatabaseRegions.WrongRegion(current.Placement.Home, current.Placement.Regions)
             : null;
     }

@@ -10,7 +10,7 @@
 # in the private security channel, not in this public issue.
 #
 # Environment: FORGEJO_TOKEN (job token with issue write) and the GITHUB_*
-# variables every Actions job gets. REPORT_DRY_RUN=1 prints instead of filing.
+# variables every Actions job gets. Every invocation files the report.
 set -euo pipefail
 export LC_ALL=C
 
@@ -83,12 +83,6 @@ fi
   echo
   echo "_Filed by scripts/ci/report-slow-failure.sh. The slow suite never blocks merges or releases; close this issue once it is fixed._"
 } >"$work/body.md"
-
-if [[ ${REPORT_DRY_RUN:-} == 1 ]]; then
-  printf '# %s\n\n' "$title"
-  cat "$work/body.md"
-  exit 0
-fi
 
 : "${FORGEJO_TOKEN:?FORGEJO_TOKEN is required}"
 command -v fj >/dev/null || { echo "fj is not installed on this runner" >&2; exit 1; }

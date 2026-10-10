@@ -86,8 +86,21 @@ internal sealed class DataKeys(IObjectStore store, IMasterKey master, TimeProvid
                 var (generated, wrapped) = await master.GenerateDataKeyAsync(cancellationToken).ConfigureAwait(false);
                 key = generated;
                 id = EntityIds.New(time).ToString();
-                using var content = new MemoryStream(Encoding.ASCII.GetBytes(wrapped));
-                await store.PutAsync(BackupLayout.Key(scope, id), content, cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    if (wrapped.Length is 0 or > MaxWrappedKeyBytes)
+                    {
+                        throw new InvalidDataException("wrapped backup key exceeds its byte limit");
+                    }
+
+                    using var content = new MemoryStream(Encoding.ASCII.GetBytes(wrapped));
+                    await store.PutAsync(BackupLayout.Key(scope, id), content, cancellationToken).ConfigureAwait(false);
+                }
+                catch
+                {
+                    CryptographicOperations.ZeroMemory(key);
+                    throw;
+                }
             }
 
             // Never select a key until its wrapped copy is durable; old objects keep naming old keys.

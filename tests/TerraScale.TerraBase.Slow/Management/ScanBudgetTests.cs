@@ -40,8 +40,9 @@ public sealed class ScanBudgetTests
     public async Task Project_usage_refuses_more_databases_than_one_request_reads()
     {
         // Test the database-count boundary independently of the request's five-second execution budget.
-        await using var api = await ManagementApi.StartAsync(time: new FakeTimeProvider());
+        await using var api = await ManagementApi.StartAsync(time: new FakeTimeProvider(), managementCredential: true);
         var first = await api.CreateManagedDatabaseAsync("db-0");
+        await api.SetPlanAsync(api.User, first.Organization, "enterprise");
         for (var i = 1; i < 100; i++)
         {
             await api.CreateManagedDatabaseAsync(first.Organization, first.Project, $"db-{i}");

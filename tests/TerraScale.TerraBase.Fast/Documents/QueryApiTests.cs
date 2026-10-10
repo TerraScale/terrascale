@@ -17,7 +17,7 @@ public sealed class QueryApiTests
     [Test]
     public async Task Query_errors_answer_their_code_and_message()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await StartAsync();
         // Two documents sorted by a value past 64 KiB: the first page's cursor would have to carry it.
         var wide = new string('w', (64 * 1024) + 1);
         await api.PutAsync(Ids["A"], new { s = wide });
@@ -65,7 +65,7 @@ public sealed class QueryApiTests
     [Test]
     public async Task Encoded_cursor_size_is_bounded_with_distinct_sort_keys()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await StartAsync();
         var value = new string('\0', 40 * 1024);
         foreach (var id in new[] { Ids["A"], Ids["B"] })
         {
@@ -83,7 +83,7 @@ public sealed class QueryApiTests
     [Test]
     public async Task Repeated_large_string_sort_keys_cannot_emit_an_unusable_cursor()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await StartAsync();
         var sort = Enumerable.Range(0, 4).Select(_ => new { path = "/s" }).ToArray();
         foreach (var id in new[] { Ids["A"], Ids["B"] })
         {
@@ -93,12 +93,12 @@ public sealed class QueryApiTests
         // An irrelevant large field must not reject an index-backed $id continuation.
         var idSort = new[] { new { path = "$id" }, new { path = "/s" } };
         var idFirst = await api.QueryAsync(new { sort = idSort, limit = 1 });
-        await Assert.That(idFirst.Status).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(idFirst.Status).IsEqualTo(HttpStatusCode.OK).Because($"HTTP {(int)idFirst.Status}, error {idFirst.Code}: {idFirst.Message}");
         var idCursor = idFirst.Json.GetProperty("next_cursor").GetString();
         using var idPosition = JsonDocument.Parse(System.Buffers.Text.Base64Url.DecodeFromChars(idCursor!));
         await Assert.That(idPosition.RootElement.GetArrayLength()).IsEqualTo(4);
         var idNext = await api.QueryAsync(new { sort = idSort, limit = 1, cursor = idCursor });
-        await Assert.That(idNext.Status).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(idNext.Status).IsEqualTo(HttpStatusCode.OK).Because($"HTTP {(int)idNext.Status}, error {idNext.Code}: {idNext.Message}");
         await Assert.That(string.Join(",", idFirst.Ids.Concat(idNext.Ids))).IsEqualTo(Ids["A"] + "," + Ids["B"]);
 
         var rejected = await api.QueryAsync(new { sort, limit = 1 });
@@ -110,13 +110,13 @@ public sealed class QueryApiTests
         }
 
         var first = await api.QueryAsync(new { sort, limit = 1 });
+        await Assert.That(first.Status).IsEqualTo(HttpStatusCode.OK).Because($"HTTP {(int)first.Status}, error {first.Code}: {first.Message}");
         using var position = JsonDocument.Parse(System.Buffers.Text.Base64Url.DecodeFromChars(first.Json.GetProperty("next_cursor").GetString()!));
         await Assert.That(position.RootElement.GetArrayLength()).IsEqualTo(4);
         await Assert.That(first.Json.GetProperty("next_cursor").GetString()!.Length).IsLessThanOrEqualTo(1024 * 1024);
         await Assert.That(position.RootElement[3].GetString()!.Length).IsEqualTo(64 * 1024);
         var next = await api.QueryAsync(new { sort, limit = 1, cursor = first.Json.GetProperty("next_cursor").GetString() });
-        await Assert.That(first.Status).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(next.Status).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(next.Status).IsEqualTo(HttpStatusCode.OK).Because($"HTTP {(int)next.Status}, error {next.Code}: {next.Message}");
         await Assert.That(string.Join(",", first.Ids.Concat(next.Ids))).IsEqualTo(Ids["A"] + "," + Ids["B"]);
         await Assert.That(next.Json.GetProperty("next_cursor").ValueKind).IsEqualTo(JsonValueKind.Null);
         var filter = new
@@ -131,7 +131,7 @@ public sealed class QueryApiTests
     [Test]
     public async Task Sort_budget_limits_bytes_even_when_only_one_result_is_requested()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await StartAsync();
         var payload = new string('x', 1000000);
         for (var i = 0; i < 9; i++)
         {
@@ -256,7 +256,7 @@ public sealed class QueryApiTests
             var actual = result.Status == HttpStatusCode.OK ? Letters(result) : result.Status.ToString();
             if (actual != expected)
             {
-                mismatches.Add($"{filter} -> {actual}, expected {expected}");
+                mismatches.Add($"{filter} -> {actual}, expected {expected}; HTTP {(int)result.Status}, error {result.Code}: {result.Message}");
             }
         }
 
@@ -273,6 +273,11 @@ public sealed class QueryApiTests
         var twoKeys = await api.SendRawAsync(
             HttpMethod.Post, api.Query, """{"sort":[{"path":"/nested/k","order":"desc"},{"path":"/s"}]}""", "application/json");
         var byId = await api.SendRawAsync(HttpMethod.Post, api.Query, """{"sort":[{"path":"$id","order":"desc"}]}""", "application/json");
+
+        await Assert.That(ascending.Status).IsEqualTo(HttpStatusCode.OK).Because($"HTTP {(int)ascending.Status}, error {ascending.Code}: {ascending.Message}");
+        await Assert.That(descending.Status).IsEqualTo(HttpStatusCode.OK).Because($"HTTP {(int)descending.Status}, error {descending.Code}: {descending.Message}");
+        await Assert.That(twoKeys.Status).IsEqualTo(HttpStatusCode.OK).Because($"HTTP {(int)twoKeys.Status}, error {twoKeys.Code}: {twoKeys.Message}");
+        await Assert.That(byId.Status).IsEqualTo(HttpStatusCode.OK).Because($"HTTP {(int)byId.Status}, error {byId.Code}: {byId.Message}");
 
         // missing < numbers < strings
         await Assert.That(Letters(ascending)).IsEqualTo("EABDC");
@@ -299,7 +304,7 @@ public sealed class QueryApiTests
     [Test]
     public async Task Overlapping_projections_preserve_case_distinct_members_in_either_order()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await StartAsync();
         var id = DocumentApi.NewId();
         var created = await api.SendRawAsync(
             HttpMethod.Put, api.Document(id),
@@ -324,7 +329,7 @@ public sealed class QueryApiTests
     [Test]
     public async Task Projection_selects_case_distinct_members_separately()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await StartAsync();
         var id = DocumentApi.NewId();
         (await api.SendRawAsync(
             HttpMethod.Put, api.Document(id), """{"a":1,"A":2,"obj":{"a":3,"A":4}}""", "application/json"))
@@ -350,7 +355,7 @@ public sealed class QueryApiTests
     [Test]
     public async Task Repeated_large_projections_reduce_to_covering_decoded_paths()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await StartAsync();
         var value = new string('x', 900 * 1024);
         var ids = new[] { DocumentApi.NewId(), DocumentApi.NewId() };
         foreach (var id in ids)
@@ -485,7 +490,7 @@ public sealed class QueryApiTests
     [Test]
     public async Task Invalid_queries_are_rejected()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await StartAsync();
         var accepted = new List<string>();
         foreach (var query in InvalidQueries)
         {
@@ -502,7 +507,7 @@ public sealed class QueryApiTests
     [Test]
     public async Task Member_names_with_quotes_backslashes_and_nul_are_queryable()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await StartAsync();
         var id = DocumentApi.NewId();
         await api.SendRawAsync(
             HttpMethod.Put, api.Document(id), """{"a\"b":{"c\\d":1},"s":"a\u0000b","x.y":{"[0]":true},"n\u0000m":1,"t\tb":{"l\nf":"x"}}""", "application/json");
@@ -537,9 +542,7 @@ public sealed class QueryApiTests
     [Test]
     public async Task Large_membership_filters_stay_within_sqlite_parameter_limits()
     {
-        // The deadline clock stays still: this checks parameter limits, and only the deterministic step budget may end the
-        // query, not a busy runner's wall clock.
-        await using var api = await SeedAsync(services => services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, new FakeTimeProvider()));
+        await using var api = await SeedAsync();
         var values = string.Join(',', Enumerable.Range(0, 256));
         var group = "{\"and\":[" + string.Join(',', Enumerable.Repeat($$"""{"in":["/n",[{{values}}]]}""", 64)) + "]}";
         var filter = "{\"and\":[" + string.Join(',', Enumerable.Repeat(group, 3)) + "]}";
@@ -554,16 +557,20 @@ public sealed class QueryApiTests
     [Test]
     public async Task Queries_need_an_existing_collection()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await StartAsync();
 
         var result = await api.SendRawAsync(HttpMethod.Post, $"{api.Project}/databases/db/collections/nope/query", "{}", "application/json");
 
         await Assert.That((result.Status, result.Code)).IsEqualTo((HttpStatusCode.NotFound, "unknown_collection"));
     }
 
-    private static async Task<DocumentApi> SeedAsync(Action<IServiceCollection>? services = null)
+    // Runner pauses must not expire functional queries; QueryQosTests covers the plan's advancing deadline.
+    private static Task<DocumentApi> StartAsync() => DocumentApi.StartAsync(services: services =>
+        services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, new FakeTimeProvider()));
+
+    private static async Task<DocumentApi> SeedAsync()
     {
-        var api = await DocumentApi.StartAsync(services: services);
+        var api = await StartAsync();
         try
         {
             var ops = string.Join(',', Seed.Select(pair => $$"""{"op":"create","collection":"items","id":"{{Ids[pair.Key]}}","document":{{pair.Value}}}"""));

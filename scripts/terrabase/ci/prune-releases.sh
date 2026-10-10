@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Copy of ts-orchestrator scripts/ci/prune-releases.sh, which tests it
-# (scripts/ci/prune_releases_test.go); keep the rest identical.
+# Based on ts-orchestrator's retention rules; pruning always executes.
 # Delete old CI pre-releases of one repository through the Forgejo API (TS-608),
 # which also removes their attachments from the ts-forgejo bucket. Git tags
 # stay. CI pre-releases are the ci-<sha>-run-<id> and
@@ -16,7 +15,7 @@
 # the last TS_PRUNE_KEEP_DAYS (default 7) days, and any release whose tag
 # names a pinned revision or tag, or whose small manifests (*.json, *.sha256,
 # SHA256SUMS) name a pinned digest. A manifest that cannot be read keeps its
-# release. TS_PRUNE_DRY_RUN=true only logs. Environment: FORGEJO_SERVER_URL
+# release. Environment: FORGEJO_SERVER_URL
 # and FORGEJO_TOKEN, which may delete the repository's releases.
 set -euo pipefail
 
@@ -26,9 +25,9 @@ repository=$1 pins_file=$2
 [[ $repository =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || fail "invalid repository $repository"
 : "${FORGEJO_SERVER_URL:?Forgejo server URL is required}"
 : "${FORGEJO_TOKEN:?Forgejo token is required}"
-keep=${TS_PRUNE_KEEP:-20} keep_days=${TS_PRUNE_KEEP_DAYS:-7} dry_run=${TS_PRUNE_DRY_RUN:-false}
-[[ $keep =~ ^[0-9]+$ && $keep_days =~ ^[0-9]+$ && $dry_run =~ ^(true|false)$ ]] ||
-	fail 'TS_PRUNE_KEEP and TS_PRUNE_KEEP_DAYS must be numbers, TS_PRUNE_DRY_RUN true or false'
+keep=${TS_PRUNE_KEEP:-20} keep_days=${TS_PRUNE_KEEP_DAYS:-7}
+[[ $keep =~ ^[0-9]+$ && $keep_days =~ ^[0-9]+$ ]] ||
+	fail 'TS_PRUNE_KEEP and TS_PRUNE_KEEP_DAYS must be numbers'
 
 # A pin is any revision, digest or CI tag in the file: the same words whether
 # it is fleet-status JSON or a plain list.
@@ -94,11 +93,9 @@ while IFS= read -r release; do
 		continue
 	fi
 	bytes=$(jq -r .bytes <<< "$release")
-	if [[ $dry_run == false ]]; then
-		forgejo -X DELETE "$api/releases/$(jq -r .id <<< "$release")"
-	fi
-	echo "deleted $tag created=$(jq -r .created_at <<< "$release") bytes=$bytes dry_run=$dry_run"
+	forgejo -X DELETE "$api/releases/$(jq -r .id <<< "$release")"
+	echo "deleted $tag created=$(jq -r .created_at <<< "$release") bytes=$bytes"
 	deleted=$((deleted + 1)) freed=$((freed + bytes))
 done < "$work/candidates.json"
-printf 'TS_RELEASE_PRUNE_V1 repository=%s releases=%s deleted=%s kept_pinned=%s bytes=%s dry_run=%s\n' \
-	"$repository" "$(jq length "$work/releases.json")" "$deleted" "$kept" "$freed" "$dry_run"
+printf 'TS_RELEASE_PRUNE_V1 repository=%s releases=%s deleted=%s kept_pinned=%s bytes=%s\n' \
+	"$repository" "$(jq length "$work/releases.json")" "$deleted" "$kept" "$freed"

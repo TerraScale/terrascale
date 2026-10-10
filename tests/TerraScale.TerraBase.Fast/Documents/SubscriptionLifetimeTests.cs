@@ -109,5 +109,5 @@ public sealed class SubscriptionLifetimeTests
     }
 
     private static Uri Route(ManagedDatabaseRef database) =>
-        new($"/projects/{database.Project}/databases/{database.Name}/collections/items/subscribe", UriKind.Relative);
+        new($"/v1/projects/{database.Project}/databases/{database.Name}/collections/items/subscribe", UriKind.Relative);
 }

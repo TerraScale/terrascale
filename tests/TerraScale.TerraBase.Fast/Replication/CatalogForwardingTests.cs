@@ -234,7 +234,8 @@ public sealed class CatalogForwardingTests
             primary = await TerraBaseTestServer.StartAsync(settings =>
             {
                 Configure(settings);
-                settings["region"] = "primary-region";
+                // Catalog following is in-region; forwarded response metadata does not change database placement.
+                settings["region"] = "follower-region";
             }, issuer.Route);
             await using var follower = await TerraBaseTestServer.StartAsync(settings =>
             {
@@ -354,11 +355,13 @@ public sealed class CatalogForwardingTests
     {
         using var peers = new PeerTls();
         using var tls = new ClientTls();
+        using var issuer = new TestIssuer();
         await using var primary = await TerraBaseTestServer.StartAsync(settings =>
         {
             peers.Apply(settings);
             tls.Apply(settings);
-        });
+            TestIssuer.Configure(settings);
+        }, issuer.Route);
         var user = EntityIds.New().ToString();
         var management = primary.Services.GetRequiredService<IManagementService>();
         var organization = await management.CreateOrganizationAsync(user, "Forwarded", CancellationToken.None) switch
@@ -371,7 +374,7 @@ public sealed class CatalogForwardingTests
             Project value => value,
             _ => throw new InvalidOperationException("the catalog fixture was not created"),
         };
-        _ = await management.CreateDatabaseAsync(user, organization.Id, project.Id, "orders", CancellationToken.None) switch
+        var database = await management.CreateDatabaseAsync(user, organization.Id, project.Id, "orders", CancellationToken.None) switch
         {
             ManagedDatabase value => value,
             _ => throw new InvalidOperationException("the catalog fixture was not created"),
@@ -417,6 +420,17 @@ public sealed class CatalogForwardingTests
         var after = await primary.Services.GetRequiredService<ISystemReplication>().GetHeadAsync(CancellationToken.None);
         await Assert.That(after.Sequence).IsEqualTo(before.Sequence);
         await Assert.That(misdirected.Origin.Span.SequenceEqual(after.Origin.Span)).IsTrue();
+
+        // A forwarded read reports the answering region without changing the database's persisted home.
+        var read = WithHeader(Request("GET", $"/v1/management/organizations/{organization.Id}/projects/{project.Id}/databases/{database.Id}"),
+            "Authorization", "Bearer " + issuer.Mint(user));
+        read = WithHeader(read, "X-TerraScale-Region-Pin", "follower-region");
+        var (readHead, readBody) = await ForwardAsync(client, read);
+        await Assert.That(readHead.Status).IsEqualTo(200U);
+        await Assert.That(readHead.Headers.Single(header => header.Name == "X-TerraBase-Region").Value).IsEqualTo("follower-region");
+        using var saved = JsonDocument.Parse(readBody);
+        await Assert.That(saved.RootElement.GetProperty("region").GetString()).IsEqualTo("follower-region");
+        await Assert.That(saved.RootElement.GetProperty("homeRegion").GetString()).IsEqualTo("test-region");
 
         // Requests no HTTP server would have accepted, and tampered bodies, are refused before anything runs.
         var envelope = ApplicationEnvelope.Encode("{\"name\":\"x\"}"u8).ToArray();
@@ -796,7 +810,7 @@ public sealed class CatalogForwardingTests
         // whatever the follower metered before reading the primary's totals.
         await follower.Services.GetServices<IHostedService>().OfType<UsageFlushService>().Single().FlushAsync(CancellationToken.None);
         using var direct = tls.CreateClient(primary.ClientAddress!, token);
-        var analytics = await direct.GetFromJsonAsync<JsonElement>(Relative($"/projects/{project}/databases/main/analytics?range=1h&region=gru-1"));
+        var analytics = await direct.GetFromJsonAsync<JsonElement>(Relative($"/v1/projects/{project}/databases/main/analytics?range=1h&region=gru-1"));
         var gets = analytics.GetProperty("items")[0].GetProperty("series").EnumerateArray()
             .Sum(point => point.GetProperty("requests").TryGetProperty("get", out var count) ? count.GetInt64() : 0);
         await Assert.That(gets).IsEqualTo(reads);
@@ -859,7 +873,11 @@ public sealed class CatalogForwardingTests
         var meter = primary.Services.GetRequiredService<UsageMeter>();
         await meter.FlushAsync(CancellationToken.None);
         var (lifetime, _) = await meter.GetObservationsAsync(
-            new TenantContext(organization, PlanTier.Hobby, project, database), new UsageWindow(UsageWindow.Hour, hour, 1), CancellationToken.None);
+            new TenantContext(organization, PlanTier.Hobby, project, database), new UsageWindow(UsageWindow.Hour, hour, 1), CancellationToken.None) switch
+        {
+            UsageCounts counts => counts,
+            Unavailable error => throw new InvalidOperationException(error.Message),
+        };
         await Assert.That(lifetime.Reads).IsEqualTo(reads);
         await Assert.That(lifetime.Meters is null || lifetime.Meters.Keys.All(key => !meters.ContainsKey(key))).IsTrue();
     }
@@ -992,7 +1010,12 @@ public sealed class CatalogForwardingTests
 
             await primary.Services.GetRequiredService<UsageMeter>().FlushAsync(CancellationToken.None);
             var (merged, _) = await primary.Services.GetRequiredService<UsageMeter>().GetObservationsAsync(
-                new TenantContext(organization, PlanTier.Hobby, project, database), new UsageWindow(UsageWindow.Hour, hour, 1), CancellationToken.None);
+                new TenantContext(organization, PlanTier.Hobby, project, database), new UsageWindow(UsageWindow.Hour, hour, 1), CancellationToken.None) switch
+            {
+                UsageCounts counts => counts,
+                Unavailable error => throw new InvalidOperationException(error.Message),
+                null => throw new System.Diagnostics.UnreachableException(),
+            };
             await Assert.That(merged.Meters![sentBytes.Key].Count).IsEqualTo(long.MaxValue);
 
             // A clean shutdown sends every pending batch, not only the first 4,096 database hours: here 4,097, one of them this

@@ -23,7 +23,7 @@ public sealed class UniqueConstraintTests
         using var before = await data.GetAsync(collection);
         before.EnsureSuccessStatusCode();
         var identity = (await before.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString();
-        var schema = Uri($"/projects/{database.Project}/databases/{database.Name}/collections/people/schema");
+        var schema = Uri($"/v1/projects/{database.Project}/databases/{database.Name}/collections/people/schema");
         using var schemaBody = new StringContent("""{"type":"object","required":["email"],"properties":{"email":{"type":"string"}}}""", Encoding.UTF8, "application/json");
         using (var attached = await data.PutAsync(schema, schemaBody))
         {
@@ -181,8 +181,9 @@ public sealed class UniqueConstraintTests
     [Test]
     public async Task Parallel_writers_cannot_claim_the_same_value_in_a_group_commit()
     {
-        await using var api = await ManagementApi.StartAsync();
+        await using var api = await ManagementApi.StartAsync(managementCredential: true);
         var database = await api.CreateManagedDatabaseAsync();
+        await api.SetPlanAsync(api.User, database.Organization, "enterprise");
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
         await DeclareAsync(api, data, database, new { fields = new[] { new { name = "email", unique = true } } });
         var email = new Faker().Internet.Email();
@@ -204,8 +205,9 @@ public sealed class UniqueConstraintTests
     [Test]
     public async Task Failed_unique_admission_does_not_break_later_writes_in_the_same_group_commit()
     {
-        await using var api = await ManagementApi.StartAsync();
+        await using var api = await ManagementApi.StartAsync(managementCredential: true);
         var database = await api.CreateManagedDatabaseAsync();
+        await api.SetPlanAsync(api.User, database.Organization, "enterprise");
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
         await DeclareAsync(api, data, database, new { fields = new[] { new { name = "email", unique = true } } });
         var tenant = new TenantContext(database.Organization, PlanTier.Hobby, database.Project, database.Id);

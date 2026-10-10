@@ -5,6 +5,7 @@ using System.Text.Json;
 using Bogus;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Sqlite;
 using TerraBase.Fast.Management;
@@ -33,7 +34,8 @@ public sealed class ShapeApiTests
     [Arguments("log", "deep")]
     public async Task Stored_shape_bodies_are_checked_without_rewriting_legacy_JSON(string mode, string bodyKind)
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartAsync(services: services =>
+            services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, new FakeTimeProvider()));
         using var shapes = await api.ClientWithScopesAsync(ApiKeyScopes.ShapesRead);
         var id = DocumentApi.NewId();
         (await api.PutAsync(id, new { n = 1 })).Status.ShouldBe(HttpStatusCode.Created);
@@ -106,8 +108,9 @@ public sealed class ShapeApiTests
         // A bad read neither writes nor retains its flight/session; a new valid snapshot still works.
         (await api.PutAsync(id, new { repaired = true })).Status.ShouldBe(HttpStatusCode.OK);
         using var fresh = await GetAsync(shapes, $"{api.Shape}?offset=-1");
+        await AssertStatusAsync(fresh, HttpStatusCode.TemporaryRedirect);
         using var repaired = await GetAsync(shapes, fresh.Headers.Location!.OriginalString);
-        await Assert.That(repaired.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await AssertStatusAsync(repaired, HttpStatusCode.OK);
         var clean = await JsonAsync(repaired);
         await Assert.That(clean.GetProperty("changes").EnumerateArray()
             .SelectMany(change => change.GetProperty("ops").EnumerateArray()).Single().GetProperty("document").GetRawText())
@@ -311,7 +314,7 @@ public sealed class ShapeApiTests
     public async Task Concurrent_live_pollers_share_one_storage_read()
     {
         const int Pollers = 25;
-        await using var api = await DocumentApi.StartAsync(managementCredential: true);
+        await using var api = await DocumentApi.StartAsync();
         await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "enterprise");
         using var shapes = await api.ClientWithScopesAsync("shapes:read");
         using var metrics = new ShapeMetrics(api.Server.Services);
@@ -344,13 +347,18 @@ public sealed class ShapeApiTests
     public async Task Live_cursors_advance_in_a_frozen_bucket_for_late_joining_shared_pollers()
     {
         var clock = new ShapeClock { UnixSeconds = 20001 };
-        await using var api = await DocumentApi.StartAsync(services: services => services.AddSingleton<TimeProvider>(clock), managementCredential: true);
+        await using var api = await DocumentApi.StartAsync(services: services =>
+        {
+            services.AddSingleton<TimeProvider>(clock);
+            services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, new FakeTimeProvider());
+        });
         var server = api.Server;
         using var client = await api.ClientWithScopesAsync("documents:read", "documents:write", "shapes:read");
         using var metrics = new ShapeMetrics(server.Services);
         var (handle, head) = await SnapshotAsync(client, $"{api.Shape}?offset=-1");
         await DocumentApi.SendAsync(client, HttpMethod.Put, api.Document(DocumentApi.NewId()), JsonContent.Create(new { status = "first" }));
         using var first = await GetAsync(client, $"{api.Shape}?handle={handle}&offset={head}&live=true&cursor=1000");
+        await AssertStatusAsync(first, HttpStatusCode.OK);
         var cursor = Header(first, "TB-Shape-Cursor");
         var current = Header(first, "TB-Shape-Next-Offset");
         var before = metrics.Reads;
@@ -367,6 +375,9 @@ public sealed class ShapeApiTests
         using var earlyResponse = await early;
         using var lateResponse = await late;
         using var aheadResponse = await ahead;
+        await AssertStatusAsync(earlyResponse, HttpStatusCode.OK);
+        await AssertStatusAsync(lateResponse, HttpStatusCode.OK);
+        await AssertStatusAsync(aheadResponse, HttpStatusCode.OK);
         using var overflow = await GetAsync(client, $"{api.Shape}?handle={handle}&offset={current}&live=true&cursor={long.MaxValue}");
 
         await Assert.That(cursor).IsEqualTo("1001");
@@ -382,7 +393,7 @@ public sealed class ShapeApiTests
     public async Task Shape_admission_rejects_new_flights_but_shares_existing_reads_and_releases_cancelled_slots()
     {
         var clock = new ShapeClock { UnixSeconds = 20001 };
-        await using var api = await DocumentApi.StartAsync(services: services => services.AddSingleton<TimeProvider>(clock), managementCredential: true);
+        await using var api = await DocumentApi.StartAsync(services: services => services.AddSingleton<TimeProvider>(clock));
         await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "enterprise");
         var server = api.Server;
         using var client = await api.ClientWithScopesAsync("documents:read", "documents:write", "shapes:read");
@@ -585,7 +596,7 @@ public sealed class ShapeApiTests
     public async Task A_controlled_live_deadline_returns_a_quiet_tail_and_refetches_after_database_replacement()
     {
         var clock = new ShapeClock { UnixSeconds = 20001 };
-        await using var api = await DocumentApi.StartAsync(services: services => services.AddSingleton<TimeProvider>(clock), managementCredential: true);
+        await using var api = await DocumentApi.StartAsync(services: services => services.AddSingleton<TimeProvider>(clock));
         var server = api.Server;
         using var client = await api.ClientWithScopesAsync("documents:read", "documents:write", "shapes:read");
         using var metrics = new ShapeMetrics(server.Services);
@@ -804,7 +815,7 @@ public sealed class ShapeApiTests
     [Test]
     public async Task A_log_chunk_stops_before_the_commit_that_would_pass_1_MiB_of_serialized_body()
     {
-        await using var api = await DocumentApi.StartAsync(managementCredential: true);
+        await using var api = await DocumentApi.StartAsync();
         await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "enterprise");
         using var shapes = await api.ClientWithScopesAsync("shapes:read");
         var (handle, head) = await SnapshotAsync(shapes, $"{api.Shape}?offset=-1");
@@ -1313,11 +1324,13 @@ public sealed class ShapeApiTests
     private static async Task<(string Handle, string Head)> SnapshotAsync(HttpClient client, string start)
     {
         using var redirect = await GetAsync(client, start);
+        await AssertStatusAsync(redirect, HttpStatusCode.TemporaryRedirect);
         var handle = Header(redirect, "TB-Shape-Handle");
         var next = redirect.Headers.Location!.OriginalString;
         while (true)
         {
             using var page = await GetAsync(client, next);
+            await AssertStatusAsync(page, HttpStatusCode.OK);
             var offset = (await JsonAsync(page)).GetProperty("next_offset").GetString()!;
             if (!offset.StartsWith("snap.", StringComparison.Ordinal))
             {
@@ -1340,6 +1353,13 @@ public sealed class ShapeApiTests
         var response = await client.SendAsync(request, cancellationToken);
         await response.Content.LoadIntoBufferAsync(cancellationToken);
         return response;
+    }
+
+    private static async Task AssertStatusAsync(HttpResponseMessage response, HttpStatusCode expected)
+    {
+        var text = await response.Content.ReadAsStringAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
+        await Assert.That(response.StatusCode).IsEqualTo(expected)
+            .Because($"GET {response.RequestMessage?.RequestUri?.PathAndQuery}: HTTP {(int)response.StatusCode}: {text[..Math.Min(text.Length, 4096)]}");
     }
 
     private static async Task<JsonElement> JsonAsync(HttpResponseMessage response)

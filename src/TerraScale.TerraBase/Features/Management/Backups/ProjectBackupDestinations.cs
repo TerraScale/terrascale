@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 using Amazon.S3;
 using TerraBase.Configuration;
@@ -20,16 +21,25 @@ internal sealed class ProjectBackupDestinations(
     // At most four entries, one per organization; rejected callers never form a queue.
     private readonly HashSet<string> _saving = [with(StringComparer.Ordinal)];
 
-    public ValueTask<ProjectBackupDestinationRecord?> ReadAsync(string organizationId, string projectId, CancellationToken cancellationToken) =>
-        catalog.ReadAsync(transaction => GetAsync(transaction, Collection(projectId), Current, TerraBaseJsonContext.Default.ProjectBackupDestinationRecord, cancellationToken), cancellationToken);
+    public ValueTask<ReadBackupDestinationResult> ReadAsync(string organizationId, string projectId, CancellationToken cancellationToken) =>
+        catalog.ReadAsync<ReadBackupDestinationResult>(async transaction =>
+            await GetAsync(transaction, Collection(projectId), Current, TerraBaseJsonContext.Default.ProjectBackupDestinationRecord, cancellationToken).ConfigureAwait(false)
+                is { } record ? record : new NotFound(), static error => error, cancellationToken);
 
     public async Task<SaveBackupDestinationResult> SaveAsync(
         string userId, string organizationId, string projectId, ProjectBackupDestinationRequest request, CancellationToken cancellationToken)
     {
-        if (await catalog.ReadAsync(transaction => WritableAsync(transaction, userId, organizationId, projectId, cancellationToken), cancellationToken).ConfigureAwait(false) is var access
-            && access != ManagementError.None)
+        var access = await catalog.ReadAsync(transaction => WritableAsync(transaction, userId, organizationId, projectId, cancellationToken),
+            static error => (WritableProject)error, cancellationToken).ConfigureAwait(false);
+        if (access is not Project)
         {
-            return access == ManagementError.Forbidden ? ManagementErrors.RoleTooLow : new NotFound();
+            return access switch
+            {
+                NotFound error => error,
+                Forbidden error => error,
+                Unavailable error => error,
+                Project or null => throw new UnreachableException(),
+            };
         }
 
         if (options.Backup is null || secrets is null)
@@ -122,9 +132,15 @@ internal sealed class ProjectBackupDestinations(
         await catalog.WriteDurableAsync<(SaveBackupDestinationResult, BackupSecretWork?)>(async transaction =>
         {
             var access = await WritableAsync(transaction, userId, organizationId, projectId, cancellationToken).ConfigureAwait(false);
-            if (access != ManagementError.None)
+            if (access is not Project)
             {
-                return (access == ManagementError.Forbidden ? ManagementErrors.RoleTooLow : new NotFound(), null);
+                return (access switch
+                {
+                    NotFound error => (SaveBackupDestinationResult)error,
+                    Forbidden error => error,
+                    Unavailable error => error,
+                    Project or null => throw new UnreachableException(),
+                }, null);
             }
 
             var replaced = await GetAsync(transaction, Collection(projectId), Current, TerraBaseJsonContext.Default.ProjectBackupDestinationRecord, cancellationToken).ConfigureAwait(false);
@@ -143,16 +159,22 @@ internal sealed class ProjectBackupDestinations(
             await EngineManagementService.TouchOrganizationAsync(transaction, organizationId, cancellationToken).ConfigureAwait(false);
             await PutAsync(transaction, Collection(projectId), Current, record, TerraBaseJsonContext.Default.ProjectBackupDestinationRecord, cancellationToken).ConfigureAwait(false);
             return (record.Destination, retirement);
-        }, cancellationToken).ConfigureAwait(false);
+        }, static error => (error, null), cancellationToken).ConfigureAwait(false);
 
     public async Task<DeleteBackupDestinationResult> DeleteAsync(string userId, string organizationId, string projectId, CancellationToken cancellationToken)
     {
         var (result, retirement) = await catalog.WriteDurableAsync<(DeleteBackupDestinationResult, BackupSecretWork?)>(async transaction =>
         {
             var access = await WritableAsync(transaction, userId, organizationId, projectId, cancellationToken).ConfigureAwait(false);
-            if (access != ManagementError.None)
+            if (access is not Project)
             {
-                return (access == ManagementError.Forbidden ? ManagementErrors.RoleTooLow : new NotFound(), null);
+                return (access switch
+                {
+                    NotFound error => (DeleteBackupDestinationResult)error,
+                    Forbidden error => error,
+                    Unavailable error => error,
+                    Project or null => throw new UnreachableException(),
+                }, null);
             }
 
             var removed = await GetAsync(transaction, Collection(projectId), Current, TerraBaseJsonContext.Default.ProjectBackupDestinationRecord, cancellationToken).ConfigureAwait(false);
@@ -170,18 +192,28 @@ internal sealed class ProjectBackupDestinations(
             }
 
             return (new Done(), queued);
-        }, cancellationToken).ConfigureAwait(false);
+        }, static error => (error, null), cancellationToken).ConfigureAwait(false);
         await lifecycle.RetireCommittedAsync(retirement).ConfigureAwait(false);
 
         return result;
     }
 
     // Recheck both the project and membership in the transaction that changes its configuration.
-    private static async ValueTask<ManagementError> WritableAsync(
-        IStorageTransaction transaction, string userId, string organizationId, string projectId, CancellationToken cancellationToken) =>
-        await EngineManagementService.GetProjectAsync(transaction, userId, organizationId, projectId, cancellationToken).ConfigureAwait(false) is null
-            ? ManagementError.NotFound
-            : await EngineManagementService.WritableAsync(transaction, userId, organizationId, cancellationToken).ConfigureAwait(false);
+    private static async ValueTask<WritableProject> WritableAsync(
+        IStorageTransaction transaction, string userId, string organizationId, string projectId, CancellationToken cancellationToken)
+    {
+        if (await EngineManagementService.GetProjectAsync(transaction, userId, organizationId, projectId, cancellationToken).ConfigureAwait(false) is not { } project)
+        {
+            return new NotFound();
+        }
+
+        return await EngineManagementService.WritableAsync(transaction, userId, organizationId, cancellationToken).ConfigureAwait(false) switch
+        {
+            OrganizationMember => project,
+            Forbidden => ManagementErrors.RoleTooLow,
+            NotFound => new NotFound(),
+        };
+    }
 
     private async Task ProbeAsync(S3ObjectStore bucket, string organizationId, string projectId, CancellationToken cancellationToken)
     {

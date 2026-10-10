@@ -1,7 +1,6 @@
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text.Json;
-using Microsoft.AspNetCore.Http.HttpResults;
 using TerraBase.Configuration;
 using TerraBase.Errors;
 using TerraBase.Features.Documents;
@@ -139,7 +138,7 @@ public sealed class CommitEndpoint(IManagementCommits commits, TimeProvider time
             {
                 Organization value => value,
                 NotFound => null,
-                Unavailable => throw new System.Diagnostics.UnreachableException(),
+                Unavailable or null => throw new System.Diagnostics.UnreachableException(),
             };
             if (organization is null)
             {
@@ -173,6 +172,7 @@ public sealed class CommitEndpoint(IManagementCommits commits, TimeProvider time
             {
                 Validation error => ErrorResponse.From(error),
                 string email => await SubmitAsync(userId, email, body, commit, cancellationToken),
+                null => throw new System.Diagnostics.UnreachableException(),
             }
             : await SubmitAsync(userId, email: null, body, commit, cancellationToken);
     }
@@ -184,7 +184,7 @@ public sealed class CommitEndpoint(IManagementCommits commits, TimeProvider time
             CommitRejected rejected => ErrorResponse.From(rejected.Error, rejected.Op),
         };
 
-    private FileContentHttpResult Respond(CommitOutcome outcome)
+    private Microsoft.AspNetCore.Http.HttpResults.FileContentHttpResult Respond(CommitOutcome outcome)
     {
         if (outcome.Replayed)
         {

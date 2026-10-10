@@ -718,7 +718,7 @@ public sealed class BackupShutdownTests
     {
         using var restored = await api.Client.PostAsJsonAsync(ManagementApi.Uri(database.Path + "/point-in-time/restore"), new { pointInTime = at, name }, token);
         await Assert.That(restored.StatusCode).IsEqualTo(HttpStatusCode.Created);
-        using var read = await data.GetAsync(ManagementApi.Uri($"/v1/projects/{database.Project}/databases/{name}/collections/people/documents/{ManagementApi.DocumentId("final")}"), token);
+        using var read = await data.GetAsync(ManagementApi.Uri($"/v1/projects/{database.Project}/databases/{name}/collections/people/documents/by-key?id={ManagementApi.DocumentId("final")}"), token);
         read.EnsureSuccessStatusCode();
         var document = await read.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: token);
         await Assert.That(document.GetProperty("document").GetProperty("text").GetString()).IsEqualTo(expected);

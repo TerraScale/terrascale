@@ -3,6 +3,9 @@ using System.Net;
 using System.Text.Json;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
+using TerraBase.Engine;
+using TerraBase.Fast.Management;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Memory;
 using TerraBase.Hosting;
@@ -71,12 +74,12 @@ public sealed class SubscriptionMemoryIsolationTests
         await using var stream = await response.Content.ReadAsStreamAsync(deadline.Token);
         using var reader = new StreamReader(stream);
         var (snapshotKind, snapshotBody) = await EventAsync(reader, deadline.Token);
-        await Assert.That(snapshotKind).IsEqualTo("shape");
+        await ShapeEventAsync(snapshotKind, snapshotBody, "initial snapshot");
         await Assert.That(snapshotBody.GetProperty("changes").GetArrayLength()).IsEqualTo(1);
         while (!snapshotBody.GetProperty("up_to_date").GetBoolean())
         {
             (snapshotKind, snapshotBody) = await EventAsync(reader, deadline.Token);
-            await Assert.That(snapshotKind).IsEqualTo("shape");
+            await ShapeEventAsync(snapshotKind, snapshotBody, "snapshot continuation");
         }
         for (var i = 0; i <= Changes; i++)
         {
@@ -87,7 +90,7 @@ public sealed class SubscriptionMemoryIsolationTests
             {
                 var offset = await WriteAsync(data, database, padding, i + 1, deadline.Token);
                 var (changeKind, changeBody) = await EventAsync(reader, deadline.Token);
-                await Assert.That(changeKind).IsEqualTo("shape");
+                await ShapeEventAsync(changeKind, changeBody, $"change iteration {i + 1} of {Changes}");
                 await Assert.That(changeBody.GetProperty("next_offset").GetString()).IsEqualTo(offset);
                 await Assert.That(changeBody.GetProperty("changes")[0].GetProperty("ops")[0]
                     .GetProperty("document").GetProperty("iteration").GetInt32()).IsEqualTo(i + 1);
@@ -137,7 +140,8 @@ public sealed class SubscriptionMemoryIsolationTests
         using var admitted = await subscriber.GetAsync(Route(database), HttpCompletionOption.ResponseHeadersRead, deadline.Token);
         admitted.EnsureSuccessStatusCode();
         using var reader = new StreamReader(await admitted.Content.ReadAsStreamAsync(deadline.Token));
-        await Assert.That((await EventAsync(reader, deadline.Token)).Kind).IsEqualTo("shape");
+        var (admittedKind, admittedBody) = await EventAsync(reader, deadline.Token);
+        await ShapeEventAsync(admittedKind, admittedBody, $"admitted after {(tenantPressure ? "tenant" : "process")} pressure");
     }
 
     [Test]
@@ -148,8 +152,10 @@ public sealed class SubscriptionMemoryIsolationTests
         using var deadline = Deadline();
         ReadGate? gate = null;
         await using var api = await ManagementApi.StartAsync(settings => settings["memory-budget"] = "67108864", services =>
-            services.AddSingleton<IShapeService>(provider => gate = new ReadGate(ActivatorUtilities.CreateInstance<ShapeService>(provider))),
-            managementCredential: true);
+        {
+            services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, new FakeTimeProvider());
+            services.AddSingleton<IShapeService>(provider => gate = new ReadGate(ActivatorUtilities.CreateInstance<ShapeService>(provider)));
+        }, managementCredential: true);
         var database = await api.CreateManagedDatabaseAsync();
         // The authority verifier reserves 4 MiB; bootstrap the binding before testing Hobby's 4 MiB allowance.
         await api.SetPlanAsync(api.User, database.Organization, "enterprise", deadline.Token);
@@ -178,11 +184,11 @@ public sealed class SubscriptionMemoryIsolationTests
         response.EnsureSuccessStatusCode();
         using var reader = new StreamReader(await response.Content.ReadAsStreamAsync(deadline.Token));
         var (initialKind, initialBody) = await EventAsync(reader, deadline.Token);
-        await Assert.That(initialKind).IsEqualTo("shape");
+        await ShapeEventAsync(initialKind, initialBody, $"initial snapshot, deletions={deletions}");
         while (!initialBody.GetProperty("up_to_date").GetBoolean())
         {
             (initialKind, initialBody) = await EventAsync(reader, deadline.Token);
-            await Assert.That(initialKind).IsEqualTo("shape");
+            await ShapeEventAsync(initialKind, initialBody, $"snapshot continuation, deletions={deletions}");
         }
         await gate!.Entered.Task.WaitAsync(deadline.Token);
         try
@@ -224,7 +230,7 @@ public sealed class SubscriptionMemoryIsolationTests
             retry.EnsureSuccessStatusCode();
             using var retryReader = new StreamReader(await retry.Content.ReadAsStreamAsync(deadline.Token));
             var (retriedKind, retriedBody) = await EventAsync(retryReader, deadline.Token);
-            await Assert.That(retriedKind).IsEqualTo("shape");
+            await ShapeEventAsync(retriedKind, retriedBody, $"retry after result pressure, deletions={deletions}");
             if (deletions)
             {
                 await Assert.That(retriedBody.GetProperty("changes")[0].GetProperty("ops").GetArrayLength()).IsEqualTo(0);
@@ -236,13 +242,91 @@ public sealed class SubscriptionMemoryIsolationTests
         }
     }
 
-    private static Task<ManagementApi> StartAsync() =>
-        ManagementApi.StartAsync(settings => settings["memory-budget"] = "67108864", managementCredential: true);
+    [Test]
+    public async Task A_query_deadline_after_headers_sends_a_terminal_error_and_returns_credit()
+    {
+        using var deadline = Deadline();
+        var clock = new SteppingClock();
+        await using var api = await StartAsync(clock);
+        var database = await api.CreateManagedDatabaseAsync();
+        // The authority verifier reserves 4 MiB; bootstrap the binding before testing Hobby's 4 MiB allowance.
+        await api.SetPlanAsync(api.User, database.Organization, "enterprise", deadline.Token);
+        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
+        await api.SetPlanAsync(api.User, database.Organization, "hobby", deadline.Token);
+        using var data = await api.CreateClientAsync(database.Organization, "documents:write");
+        await ManagementApi.CreateCollectionAsync(data, database, "items");
+        var padding = new Faker().Random.String2(128 * 1024, "abcdef");
+        await WriteAsync(data, database, padding, 0, deadline.Token);
+        using var subscriber = Subscriber(api, database);
+        var waiting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var closed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var meter = api.Server.Services.GetRequiredService<IMeterFactory>().Create(Telemetry.MeterName);
+        using var listener = new MeterListener
+        {
+            InstrumentPublished = (instrument, observer) =>
+            {
+                if (ReferenceEquals(instrument.Meter, meter)
+                    && instrument.Name is "terrabase.shape.live.waits" or "terrabase.subscriptions.active")
+                {
+                    observer.EnableMeasurementEvents(instrument);
+                }
+            },
+        };
+        listener.SetMeasurementEventCallback<long>((instrument, value, _, _) =>
+        {
+            if (instrument.Name == "terrabase.shape.live.waits")
+            {
+                if (value == 1)
+                {
+                    waiting.TrySetResult();
+                }
+                else if (value == -1)
+                {
+                    // Arm as the live wait ends, after the wake-up write commits.
+                    clock.Armed = true;
+                }
+            }
+            else if (instrument.Name == "terrabase.subscriptions.active" && value == -1)
+            {
+                closed.TrySetResult();
+            }
+        });
+        listener.Start();
+        using var response = await subscriber.GetAsync(Route(database), HttpCompletionOption.ResponseHeadersRead, deadline.Token);
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(response.Content.Headers.ContentType?.MediaType).IsEqualTo("text/event-stream");
+        using var reader = new StreamReader(await response.Content.ReadAsStreamAsync(deadline.Token));
+        var (snapshotKind, snapshotBody) = await EventAsync(reader, deadline.Token);
+        await ShapeEventAsync(snapshotKind, snapshotBody, "deadline snapshot");
+        await Assert.That(snapshotBody.GetProperty("changes").GetArrayLength()).IsEqualTo(1);
+        while (!snapshotBody.GetProperty("up_to_date").GetBoolean())
+        {
+            (snapshotKind, snapshotBody) = await EventAsync(reader, deadline.Token);
+            await ShapeEventAsync(snapshotKind, snapshotBody, "deadline snapshot continuation");
+        }
+
+        await waiting.Task.WaitAsync(deadline.Token);
+        await WriteAsync(data, database, padding, 1, deadline.Token);
+        var (terminalKind, terminalBody) = await EventAsync(reader, deadline.Token);
+        await Assert.That(terminalKind).IsEqualTo("error");
+        await Assert.That(terminalBody.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("invalid_query");
+        await Assert.That(terminalBody.GetProperty("error").GetProperty("message").GetString()).IsEqualTo("query too expensive");
+        await Assert.That(await reader.ReadLineAsync(deadline.Token)).IsNull();
+        await closed.Task.WaitAsync(deadline.Token);
+        var budget = api.Server.Services.GetRequiredService<IMemoryBudget>();
+        await CreditAsync(budget, Context(database), HobbyBytes, deadline.Token);
+        using var processCredit = budget.TryReserve(MemoryLane.Foreground, 40 * 1024 * 1024, tenant: null);
+        await Assert.That(processCredit).IsNotNull();
+    }
+
+    private static Task<ManagementApi> StartAsync(TimeProvider? queryClock = null) =>
+        ManagementApi.StartAsync(settings => settings["memory-budget"] = "67108864", services: services =>
+            services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, queryClock ?? new FakeTimeProvider()), managementCredential: true);
 
     private static TenantContext Context(ManagedDatabaseRef database) => new(database.Organization, PlanTier.Hobby, database.Project, database.Id);
 
     private static Uri Route(ManagedDatabaseRef database) =>
-        new($"/projects/{database.Project}/databases/{database.Name}/collections/items/subscribe", UriKind.Relative);
+        new($"/v1/projects/{database.Project}/databases/{database.Name}/collections/items/subscribe", UriKind.Relative);
 
     private static HttpClient Subscriber(ManagementApi api, ManagedDatabaseRef database) => api.WithToken(api.Issuer.Mint(api.User, token =>
     {
@@ -304,6 +388,18 @@ public sealed class SubscriptionMemoryIsolationTests
         }
 
         throw new InvalidOperationException("the subscription closed before its next event");
+    }
+
+    private static async Task ShapeEventAsync(string kind, JsonElement body, string context)
+    {
+        var diagnostic = $"{context}: event {kind}";
+        if (kind != "shape")
+        {
+            var text = body.GetRawText();
+            diagnostic += $": {text[..Math.Min(text.Length, 4096)]}";
+        }
+
+        await Assert.That(kind).IsEqualTo("shape").Because(diagnostic);
     }
 
     private sealed class ReadGate(IShapeService inner) : IShapeService

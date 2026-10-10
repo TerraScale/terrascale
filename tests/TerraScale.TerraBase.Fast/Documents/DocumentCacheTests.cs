@@ -235,7 +235,8 @@ public sealed class DocumentCacheTests
     [Arguments(true)]
     public async Task Warm_cache_reads_observe_an_already_cancelled_token(bool list)
     {
-        await using var management = await ManagementApi.StartAsync(managementCredential: true);
+        await using var management = await ManagementApi.StartAsync(services: services =>
+            services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, new FakeTimeProvider()), managementCredential: true);
         var server = management.Server;
         using var tenant = await CreateTenantAsync(management, "cancelled");
         var client = tenant.Data;
@@ -421,7 +422,8 @@ public sealed class DocumentCacheTests
     public async Task Writes_that_bypass_the_document_api_invalidate_the_cache()
     {
         using var operationTimeout = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
-        await using var management = await ManagementApi.StartAsync(managementCredential: true);
+        await using var management = await ManagementApi.StartAsync(services: services =>
+            services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, new FakeTimeProvider()), managementCredential: true);
         var server = management.Server;
         using var tenant = await CreateTenantAsync(management, "shop", cancellationToken: operationTimeout.Token);
         var client = tenant.Data;
@@ -797,8 +799,12 @@ public sealed class DocumentCacheTests
         Tenant tenant, string database, string collection, CancellationToken cancellationToken = default)
     {
         var client = tenant.Data;
-        using var page = JsonDocument.Parse(await client.GetStringAsync(
-            new Uri($"/v1/projects/{tenant.ProjectId}/databases/{database}/collections/{collection}/documents", UriKind.Relative), cancellationToken));
+        using var response = await client.GetAsync(
+            new Uri($"/v1/projects/{tenant.ProjectId}/databases/{database}/collections/{collection}/documents", UriKind.Relative), cancellationToken);
+        var text = await response.Content.ReadAsStringAsync(cancellationToken);
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK)
+            .Because($"GET {response.RequestMessage?.RequestUri?.PathAndQuery}: HTTP {(int)response.StatusCode}: {text[..Math.Min(text.Length, 4096)]}");
+        using var page = JsonDocument.Parse(text);
         return [.. page.RootElement.GetProperty("items").EnumerateArray().Select(document =>
             $"{document.GetProperty("id").GetString()}:{document.GetProperty("document").GetProperty("name").GetString()}")];
     }

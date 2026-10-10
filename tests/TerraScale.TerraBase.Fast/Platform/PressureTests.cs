@@ -16,7 +16,7 @@ namespace TerraBase.Fast.Platform;
 
 public sealed class PressureTests
 {
-    private static readonly Uri Pressure = new("/admin/node/pressure", UriKind.Relative);
+    private static readonly Uri Pressure = new("/v1/admin/node/pressure", UriKind.Relative);
     private static readonly Uri Metrics = new("/metrics", UriKind.Relative);
 
     [Test]
@@ -36,7 +36,7 @@ public sealed class PressureTests
         }, TimeSpan.FromSeconds(25));
         using var readiness = await server.Client.GetAsync(new Uri("/readyz", UriKind.Relative), deadline.Token);
         await Assert.That(readiness.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(snapshot.GetProperty("schema").GetInt32()).IsEqualTo(2);
+        await Assert.That(snapshot.GetProperty("schema").GetInt32()).IsEqualTo(1);
         await Assert.That(snapshot.GetProperty("node").GetString()).IsEqualTo("gru-1-db-2");
         await Assert.That(snapshot.GetProperty("instance_id").GetString()).IsEqualTo("ocid1.instance.test");
         await Assert.That(snapshot.GetProperty("state").GetString()).IsEqualTo("unknown");
@@ -49,6 +49,8 @@ public sealed class PressureTests
         await Assert.That(snapshot.GetProperty("top_organizations").GetArrayLength()).IsEqualTo(0);
         using var evidence = await server.Client.GetAsync(Pressure, deadline.Token);
         await Assert.That(evidence.Headers.CacheControl!.NoStore).IsTrue();
+        using var oldRoute = await server.Client.GetAsync(new Uri("/admin/node/pressure", UriKind.Relative), deadline.Token);
+        await Assert.That(oldRoute.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
     }
 
     [Test]
@@ -343,8 +345,9 @@ public sealed class PressureTests
     [Test]
     public async Task Real_https_writes_and_reads_update_rates_listener_totals_storage_and_pressure_metrics()
     {
-        await using var api = await DocumentApi.StartAsync();
-        await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "enterprise");
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        await using var api = await DocumentApi.StartAsync(services: services => services.AddSingleton<TimeProvider>(clock));
+        await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "hobby");
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var before = await ReadAsync(api.Server, deadline.Token);
         var clientBefore = Listener(before, "client").GetProperty("requests_total").GetInt64();
@@ -362,6 +365,7 @@ public sealed class PressureTests
             read.EnsureSuccessStatusCode();
             var stored = await read.Content.ReadFromJsonAsync<JsonElement>(deadline.Token);
             await Assert.That(stored.GetProperty("document").GetProperty("n").GetInt32()).IsEqualTo(writes);
+            clock.Advance(TimeSpan.FromSeconds(1));
             snapshot = await ReadAsync(api.Server, deadline.Token);
             var top = snapshot.GetProperty("top_organizations").EnumerateArray().Any(tenant =>
                 tenant.GetProperty("org").GetString() == api.Tenant.OrganizationId && tenant.GetProperty("request_rate").GetDouble() > 0);
@@ -375,6 +379,8 @@ public sealed class PressureTests
                 && snapshot.GetProperty("request_rate").GetDouble() > 0
                 && snapshot.GetProperty("p95_latency_ms").GetDouble() > 0
                 && snapshot.GetProperty("load").GetProperty("write_qps").GetDouble() > 0
+                && snapshot.GetProperty("cpu_util").ValueKind == JsonValueKind.Number
+                && snapshot.GetProperty("cpu_util").GetDouble() > 0
                 && Listener(snapshot, "client").GetProperty("request_rate").GetDouble() > 0)
             {
                 metrics = await api.Server.Client.GetStringAsync(Metrics, deadline.Token);
@@ -389,7 +395,7 @@ public sealed class PressureTests
             await Task.Yield();
         }
 
-        await AssertSnapshotAsync(snapshot);
+        await AssertSnapshotAsync(snapshot, clock.GetUtcNow());
         await Assert.That(snapshot.GetProperty("cpu_util").GetDouble()).IsGreaterThan(0);
         await Assert.That(snapshot.GetProperty("memory_used_bytes").GetInt64()).IsGreaterThan(0);
         await Assert.That(Listener(snapshot, "client").GetProperty("requests_total").GetInt64()).IsGreaterThan(clientBefore);
@@ -608,9 +614,9 @@ public sealed class PressureTests
         public void SampleProcess() => _ = Volatile.Read(ref _processTimer)!.Change(TimeSpan.Zero, Timeout.InfiniteTimeSpan);
     }
 
-    private static async Task AssertSnapshotAsync(JsonElement snapshot)
+    private static async Task AssertSnapshotAsync(JsonElement snapshot, DateTimeOffset? now = null)
     {
-        await Assert.That(snapshot.GetProperty("schema").GetInt32()).IsEqualTo(2);
+        await Assert.That(snapshot.GetProperty("schema").GetInt32()).IsEqualTo(1);
         await Assert.That(snapshot.GetProperty("state").GetString()).IsEqualTo("unknown");
         await Assert.That(snapshot.GetProperty("node").GetString()).IsNotEmpty();
         await Assert.That(Incarnation(snapshot)).IsNotEqualTo(Ulid.Empty);
@@ -619,7 +625,7 @@ public sealed class PressureTests
         await Assert.That(snapshot.GetProperty("region").GetString()).IsNotEmpty();
         var sampledAt = snapshot.GetProperty("sampled_at").GetDateTimeOffset();
         await Assert.That(sampledAt.Offset).IsEqualTo(TimeSpan.Zero);
-        await Assert.That(sampledAt).IsLessThanOrEqualTo(DateTimeOffset.UtcNow);
+        await Assert.That(sampledAt).IsLessThanOrEqualTo(now ?? DateTimeOffset.UtcNow);
         await Assert.That(snapshot.GetProperty("sample_window_seconds").GetDouble()).IsGreaterThan(0);
         var used = snapshot.GetProperty("memory_used_bytes").GetInt64();
         var budget = snapshot.GetProperty("memory_budget_bytes").GetInt64();
@@ -698,7 +704,7 @@ public sealed class PressureTests
         if (storageTime.ValueKind != JsonValueKind.Null)
         {
             await Assert.That(storageTime.GetDateTimeOffset().Offset).IsEqualTo(TimeSpan.Zero);
-            await Assert.That(storageTime.GetDateTimeOffset()).IsLessThanOrEqualTo(DateTimeOffset.UtcNow);
+            await Assert.That(storageTime.GetDateTimeOffset()).IsLessThanOrEqualTo(now ?? DateTimeOffset.UtcNow);
         }
     }
 }

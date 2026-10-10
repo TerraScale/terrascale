@@ -431,7 +431,7 @@ tooling is open to every member whatever its role (see [Membership](#membership)
 D = `/v1/management/organizations/{organization}/projects/{project}/databases/{database}`,
 P = `/v1/management/organizations/{organization}/projects/{project}`. Every route returns `404` when the
 organization, project or database does not exist.
-A = `/projects/{project}/databases/{database}` is the unversioned prefix for new automatic-index policy routes.
+A = `/v1/projects/{project}/databases/{database}` is the prefix for automatic-index policy routes.
 
 | Method | Route | Result |
 | --- | --- | --- |
@@ -659,12 +659,13 @@ The schema is inferred and read-only: TerraBase has no declared schemas yet.
 
 ### SQL
 
-`POST /projects/{project}/databases/{database}/sql/explain`
+`POST /v1/projects/{project}/databases/{database}/sql/explain`
 accepts `{sql}` and returns `{ok, error, collection, hasLimit, plan, indexes, suggestions:[{field, reason}]}`.
-This unversioned EXPLAIN endpoint requires a ts-auth project access token whose `project_id` equals the
+This v1 EXPLAIN endpoint requires a ts-auth project access token whose `project_id` equals the
 route's project, whose `scope` grants `databases:read`, and whose optional `database` claim matches the
 database name. It is served only on the client TLS listener. `plan` contains SQLite's plan steps and `indexes` contains only the
 names of the secondary indexes selected by that plan, not every index defined on the collection.
+The former unversioned EXPLAIN path returns `404`; no alias is registered.
 It prepares the plan without executing the query, metering a document read or recording recommendation
 usage. Invalid SQL returns `400 invalid_request`; an exhausted engine work budget returns
 `400 invalid_query`. A database absent or outside the token's project or database restriction returns
@@ -750,9 +751,10 @@ queries beyond the first, so it can hold fewer than `limit`.
 
 ### Automatic index policy (TS-685, first slice)
 
-The automatic-index policy routes use `/projects/{project}/databases/{database}` (unversioned);
+The automatic-index policy routes use `/v1/projects/{project}/databases/{database}`;
 `{database}` is the database name. A ts-auth project token needs `databases:read` to read or
 `databases:write` to change the policy. Tokens narrowed to another project or database receive `404`.
+The former unversioned policy paths return `404`; no aliases are registered.
 `GET A/auto-index/{collection}` returns `{"collection":"people","enabled":true}` until explicitly opted out.
 `PUT` with `{"enabled":false}` reserves that collection's opt-out from automatic index creation and removal;
 `{"enabled":true}` removes the opt-out. The collection name follows the data API's name rules, and the collection

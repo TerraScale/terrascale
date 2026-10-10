@@ -1,6 +1,5 @@
 using System.Diagnostics.Metrics;
 using System.Globalization;
-using System.IO.Pipelines;
 using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
@@ -181,8 +180,8 @@ public sealed class ExplainSqlBoundaryTests
 
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
         deadline.CancelAfter(TimeSpan.FromSeconds(60));
-        var upload = new Pipe(new PipeOptions(pauseWriterThreshold: 64, resumeWriterThreshold: 32));
-        using var content = new StreamContent(upload.Reader.AsStream());
+        var uploadFinished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var content = new StalledContent(uploadFinished.Task);
         content.Headers.ContentType = new("application/json");
         using var request = new HttpRequestMessage(HttpMethod.Post, Path(database))
         {
@@ -192,7 +191,6 @@ public sealed class ExplainSqlBoundaryTests
         };
         try
         {
-            await upload.Writer.WriteAsync("{"u8.ToArray(), deadline.Token);
             var pending = client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadline.Token);
             if (catalogLookup > 0)
             {
@@ -236,7 +234,7 @@ public sealed class ExplainSqlBoundaryTests
         finally
         {
             // The upload stays unfinished through the response, memory checks, and recovery request.
-            await upload.Writer.CompleteAsync();
+            uploadFinished.TrySetResult();
             await deadline.CancelAsync();
         }
     }
@@ -380,19 +378,29 @@ public sealed class ExplainSqlBoundaryTests
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task Placement_is_checked_before_the_body_even_with_a_stale_file_or_only_a_catalog_record(bool catalogOnly)
+    [Arguments(false, true)]
+    [Arguments(true, true)]
+    [Arguments(false, false)]
+    [Arguments(true, false)]
+    public async Task Placement_is_checked_before_the_body_even_with_a_stale_file_or_only_a_catalog_record(bool catalogOnly, bool topologyDelivered)
     {
         var directory = Directory.CreateTempSubdirectory("terrabase-explain-wan-").FullName;
         try
         {
-            await using var api = await StartWanAsync(directory);
+            await using var api = await StartWanAsync(directory, topologyDelivered: topologyDelivered);
             var local = await CreateDatabaseAsync(api);
+            var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
+            var tenants = api.Server.Services.GetRequiredService<ITenantDirectory>();
+            var localIdentity = new TenantContext(local.Organization, PlanTier.Hobby, local.Project, local.Id);
+            await Assert.That(await tenants.RegisteredAsync(localIdentity, token) is true).IsTrue();
+            await Assert.That(await tenants.ReplicatesAsync(localIdentity, token) is true).IsTrue();
             // Seed real catalog state from another home, without replacing tenant or query services.
             // The existing local file represents a retained replica after its region leaves placement.
             var database = catalogOnly ? local with { Id = EntityIds.New().ToString(), Name = "remote" } : local;
-            await SeedRemotePlacementAsync(api, database, TUnit.Core.TestContext.Current!.Execution.CancellationToken);
+            await SeedRemotePlacementAsync(api, database, token);
+            var remoteIdentity = new TenantContext(database.Organization, PlanTier.Hobby, database.Project, database.Id);
+            await Assert.That(await tenants.RegisteredAsync(remoteIdentity, token) is false).IsTrue();
+            await Assert.That(await tenants.ReplicatesAsync(remoteIdentity, token) is false).IsTrue();
             var file = System.IO.Path.Combine(api.Server.DataDirectory, database.Organization, database.Project, database.Id + ".db");
             await Assert.That(File.Exists(file)).IsEqualTo(!catalogOnly);
             using var client = ProjectClient(api, database.Project);
@@ -629,7 +637,7 @@ public sealed class ExplainSqlBoundaryTests
         }
     }
 
-    private static async Task<ManagementApi> StartWanAsync(string directory, UsageCommitHook? hook = null)
+    private static async Task<ManagementApi> StartWanAsync(string directory, UsageCommitHook? hook = null, bool topologyDelivered = true)
     {
         var credentials = System.IO.Path.Combine(directory, "user.creds");
         await File.WriteAllTextAsync(credentials, "-----BEGIN NATS USER JWT-----\neyJ0.e30.x\n------END NATS USER JWT------\n-----BEGIN USER NKEY SEED-----\nSUAEXAMPLE\n------END USER NKEY SEED------\n");
@@ -638,9 +646,12 @@ public sealed class ExplainSqlBoundaryTests
         {
             settings["region"] = "gru-1";
             settings["node-name"] = "gru-member";
-            settings["wan-regions"] = "gru-1=gru,sfo-1=sfo";
-            settings["nats-url"] = "nats://127.0.0.1:4222";
-            settings["nats-credentials-file"] = credentials;
+            if (topologyDelivered)
+            {
+                settings["wan-regions"] = "gru-1=gru,sfo-1=sfo";
+                settings["nats-url"] = "nats://127.0.0.1:4222";
+                settings["nats-credentials-file"] = credentials;
+            }
         }, services =>
         {
             services.AddSingleton(network.Join("gru"));
@@ -663,7 +674,7 @@ public sealed class ExplainSqlBoundaryTests
     }
 
     private static Uri Path(ManagedDatabaseRef database) =>
-        ManagementApi.Uri($"/projects/{database.Project}/databases/{database.Name}/sql/explain");
+        ManagementApi.Uri($"/v1/projects/{database.Project}/databases/{database.Name}/sql/explain");
 
     private static HttpClient ProjectClient(ManagementApi api, string project, string scope = "databases:read", string? database = null) =>
         api.WithToken(api.Issuer.Mint(api.User, descriptor =>
@@ -685,6 +696,26 @@ public sealed class ExplainSqlBoundaryTests
 
     private static async Task AssertMemoryReleasedAsync(ManagementApi api, long baseline) =>
         await Assert.That(ReservedBytes(api)).IsEqualTo(baseline);
+
+    private sealed class StalledContent(Task finished) : HttpContent
+    {
+        protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context) =>
+            SerializeToStreamAsync(stream, context, CancellationToken.None);
+
+        protected override async Task SerializeToStreamAsync(Stream stream, TransportContext? context, CancellationToken cancellationToken)
+        {
+            await stream.WriteAsync("{"u8.ToArray(), cancellationToken);
+            // StreamContent leaves this tiny HTTP/2 upload buffered until another frame flushes the connection.
+            await stream.FlushAsync(cancellationToken);
+            await finished.WaitAsync(cancellationToken);
+        }
+
+        protected override bool TryComputeLength(out long length)
+        {
+            length = 0;
+            return false;
+        }
+    }
 
     private static void InstallMemoryProbe(IServiceCollection services)
     {

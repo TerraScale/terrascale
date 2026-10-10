@@ -25,6 +25,7 @@ public sealed class BackupEmptySegmentTests
         await using var api = await ManagementApi.StartAsync(oci.Configure, services =>
         {
             oci.Route(services);
+            ManualBackupHosting.Configure(services);
             services.AddSingleton<IStartupFilter>(requests);
         }, time);
         var database = await api.CreateManagedDatabaseAsync("main");

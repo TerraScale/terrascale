@@ -8,8 +8,9 @@ public sealed class SchemaSamplingTests
     [Test]
     public async Task Sampling_stops_after_the_first_1000_documents_in_id_order()
     {
-        await using var api = await ManagementApi.StartAsync();
+        await using var api = await ManagementApi.StartAsync(managementCredential: true);
         var database = await api.CreateManagedDatabaseAsync();
+        await api.SetPlanAsync(api.User, database.Organization, "enterprise");
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
         // Ids of zero-padded names sort d0000…d1000, so only the last document, which alone has late, falls outside the sample.
         await ManagementApi.CreateCollectionAsync(data, database, "many");

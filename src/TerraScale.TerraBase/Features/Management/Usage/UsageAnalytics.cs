@@ -1,8 +1,10 @@
+using System.Diagnostics;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Memory;
 using TerraBase.Features.UserAuth;
+using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Management.Usage;
 
@@ -23,19 +25,14 @@ internal sealed class UsageAnalytics(IManagementService management, UsageMeter m
         BoundedAsync(bounded => ReadReplicationAsync(access, window, database, region, retain, bounded), cancellationToken);
 
     // Runs a read within the usage deadline; the read's capacity and deadline failures become cases.
-    private static async ValueTask<AnalyticsRead<T>> BoundedAsync<T>(Func<CancellationToken, ValueTask<T?>> read, CancellationToken cancellationToken)
+    private static async ValueTask<AnalyticsRead<T>> BoundedAsync<T>(Func<CancellationToken, ValueTask<AnalyticsRead<T>>> read, CancellationToken cancellationToken)
         where T : class
     {
         using var deadline = new CancellationTokenSource(UsageService.Deadline);
         using var bounded = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
         try
         {
-            if (await read(bounded.Token).ConfigureAwait(false) is { } result)
-            {
-                return result;
-            }
-
-            return new NotFound();
+            return await read(bounded.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
@@ -47,14 +44,19 @@ internal sealed class UsageAnalytics(IManagementService management, UsageMeter m
         }
     }
 
-    private async ValueTask<ProjectAnalytics?> ReadAnalyticsAsync(
+    private async ValueTask<AnalyticsRead<ProjectAnalytics>> ReadAnalyticsAsync(
         ProjectAccess access, AnalyticsWindow window, string? database, string? region, Action<IDisposable> retain, CancellationToken cancellationToken)
     {
         var started = time.GetTimestamp();
-        var databases = await DatabasesAsync(access, database, started, cancellationToken).ConfigureAwait(false);
-        if (databases is null)
+        var listed = await DatabasesAsync(access, database, started, cancellationToken).ConfigureAwait(false);
+        if (listed is not List<ManagedDatabase> databases)
         {
-            return null;
+            return listed switch
+            {
+                NotFound error => error,
+                Unavailable error => error,
+                List<ManagedDatabase> or null => throw new UnreachableException(),
+            };
         }
 
         var (reservation, reserved) = Reserve(databases, window, region);
@@ -63,14 +65,27 @@ internal sealed class UsageAnalytics(IManagementService management, UsageMeter m
         foreach (var record in databases)
         {
             CheckDeadline(started);
-            if (await management.GetDatabaseTenantAsync(access.Actor, access.OrganizationId, access.ProjectId, record.Id, cancellationToken)
-                .ConfigureAwait(false) is not { } tenant)
+            var found = await management.GetDatabaseTenantAsync(access.Actor, access.OrganizationId, access.ProjectId, record.Id, cancellationToken).ConfigureAwait(false);
+            if (found is Unavailable refused)
+            {
+                return refused;
+            }
+            if (found is not TenantContext tenant)
             {
                 continue;
             }
 
-            var (lifetime, series) = await meter.GetObservationsAsync(tenant, window.Usage, cancellationToken, () => CheckDeadline(started), loaded.Filter(region))
+            var observed = await meter.GetObservationsAsync(tenant, window.Usage, cancellationToken, () => CheckDeadline(started), loaded.Filter(region))
                 .ConfigureAwait(false);
+            if (observed is not UsageCounts counts)
+            {
+                return observed switch
+                {
+                    Unavailable error => error,
+                    UsageCounts or null => throw new UnreachableException(),
+                };
+            }
+            var (lifetime, series) = counts;
             var buckets = ByRegion(series, started, cancellationToken);
             foreach (var observing in Regions(record, lifetime, region, window, loaded))
             {
@@ -86,14 +101,19 @@ internal sealed class UsageAnalytics(IManagementService management, UsageMeter m
         return loaded.HandOff(retain, new ProjectAnalytics(access.ProjectId, window.Range, window.Usage.From, window.Usage.To, window.Usage.Granularity.Minutes * 60, items));
     }
 
-    private async ValueTask<ProjectReplication?> ReadReplicationAsync(
+    private async ValueTask<AnalyticsRead<ProjectReplication>> ReadReplicationAsync(
         ProjectAccess access, AnalyticsWindow window, string? database, string? region, Action<IDisposable> retain, CancellationToken cancellationToken)
     {
         var started = time.GetTimestamp();
-        var databases = await DatabasesAsync(access, database, started, cancellationToken).ConfigureAwait(false);
-        if (databases is null)
+        var listed = await DatabasesAsync(access, database, started, cancellationToken).ConfigureAwait(false);
+        if (listed is not List<ManagedDatabase> databases)
         {
-            return null;
+            return listed switch
+            {
+                NotFound error => error,
+                Unavailable error => error,
+                List<ManagedDatabase> or null => throw new UnreachableException(),
+            };
         }
 
         var (reservation, reserved) = Reserve(databases, window, region);
@@ -102,14 +122,27 @@ internal sealed class UsageAnalytics(IManagementService management, UsageMeter m
         foreach (var record in databases)
         {
             CheckDeadline(started);
-            if (await management.GetDatabaseTenantAsync(access.Actor, access.OrganizationId, access.ProjectId, record.Id, cancellationToken)
-                .ConfigureAwait(false) is not { } tenant)
+            var found = await management.GetDatabaseTenantAsync(access.Actor, access.OrganizationId, access.ProjectId, record.Id, cancellationToken).ConfigureAwait(false);
+            if (found is Unavailable refused)
+            {
+                return refused;
+            }
+            if (found is not TenantContext tenant)
             {
                 continue;
             }
 
-            var (lifetime, series) = await meter.GetObservationsAsync(tenant, window.Usage, cancellationToken, () => CheckDeadline(started), loaded.Filter(region))
+            var observed = await meter.GetObservationsAsync(tenant, window.Usage, cancellationToken, () => CheckDeadline(started), loaded.Filter(region))
                 .ConfigureAwait(false);
+            if (observed is not UsageCounts counts)
+            {
+                return observed switch
+                {
+                    Unavailable error => error,
+                    UsageCounts or null => throw new UnreachableException(),
+                };
+            }
+            var (lifetime, series) = counts;
             var buckets = ByRegion(series, started, cancellationToken);
             foreach (var observing in Regions(record, lifetime, region, window, loaded))
             {
@@ -142,17 +175,23 @@ internal sealed class UsageAnalytics(IManagementService management, UsageMeter m
         return loaded.HandOff(retain, new ProjectReplication(access.ProjectId, window.Range, window.Usage.From, window.Usage.To, window.Usage.Granularity.Minutes * 60, items));
     }
 
-    private async ValueTask<List<ManagedDatabase>?> DatabasesAsync(ProjectAccess access, string? database, long started, CancellationToken cancellationToken)
+    private readonly union AnalyticsDatabases(List<ManagedDatabase>, NotFound, Unavailable);
+
+    private async ValueTask<AnalyticsDatabases> DatabasesAsync(ProjectAccess access, string? database, long started, CancellationToken cancellationToken)
     {
         if (database is not null)
         {
             if (access.DatabaseName is not null && database != access.DatabaseId)
             {
-                return null;
+                return new NotFound();
             }
 
-            return await management.GetDatabaseAsync(access.Actor, access.OrganizationId, access.ProjectId, database, cancellationToken).ConfigureAwait(false)
-                is { } found ? [found] : null;
+            return await management.GetDatabaseAsync(access.Actor, access.OrganizationId, access.ProjectId, database, cancellationToken).ConfigureAwait(false) switch
+            {
+                ManagedDatabase found => new List<ManagedDatabase> { found },
+                NotFound error => error,
+                Unavailable error => error,
+            };
         }
 
         List<ManagedDatabase> result = [];
@@ -160,10 +199,15 @@ internal sealed class UsageAnalytics(IManagementService management, UsageMeter m
         do
         {
             CheckDeadline(started);
-            var page = await management.ListDatabasesAsync(access.Actor, access.OrganizationId, access.ProjectId, after, 100, cancellationToken).ConfigureAwait(false);
-            if (page is null)
+            var listed = await management.ListDatabasesAsync(access.Actor, access.OrganizationId, access.ProjectId, after, 100, cancellationToken).ConfigureAwait(false);
+            if (listed is not ManagementPage<ManagedDatabase> page)
             {
-                return null;
+                return listed switch
+                {
+                    NotFound error => error,
+                    Unavailable error => error,
+                    ManagementPage<ManagedDatabase> or null => throw new UnreachableException(),
+                };
             }
 
             result.AddRange(page.Items);

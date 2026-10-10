@@ -1,13 +1,10 @@
 name: Slow integration
 
-# The Slow suite runs beside every main push (in parallel with fast.yml),
-# nightly and on demand. It is never a required check and never blocks merges,
+# The Slow suite runs nightly and on demand. It is never a required check and never blocks merges,
 # deployments or releases. A failure files the open "Slow test suite failed"
 # issue, or comments on it, with fj (scripts/ci/report-slow-failure.sh).
 
 on:
-  push:
-    branches: [main]
   schedule:
     - cron: '17 3 * * *'
   workflow_dispatch:
@@ -20,9 +17,6 @@ concurrency:
 
 env:
   CI: "true"
-  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
-  DOTNET_NOLOGO: "1"
-  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "1"
 
 jobs:
   slow:
@@ -42,13 +36,15 @@ jobs:
         run: bash scripts/ci/nuget-cache.sh
 
       # The reporter only runs after a failure, so prove now that it can: fj is
-      # installed, and a dry-run report renders, redacts and stays bounded.
+      # installed, and a report through the test's fake fj redacts and stays bounded.
       - name: Check the failure reporter
         run: |
           fj version
           bash scripts/ci/check-reporter.sh
 
       - name: Slow integration suite
+        env:
+          FORGEJO_TOKEN: ${{ forgejo.token }}
         run: |
           set -euo pipefail
           mkdir -p artifacts

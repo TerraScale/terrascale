@@ -33,6 +33,7 @@ public sealed class BackupKeyCacheTests
             {
                 database = await live.CreateManagedDatabaseAsync();
                 user = live.User;
+                await live.SetPlanAsync(user, database.Organization, "enterprise", cancellationToken);
                 using var data = await live.CreateClientAsync(database.Organization, "documents:read", "documents:write");
                 await ManagementApi.CreateCollectionAsync(data, database, "items");
                 using (var written = await data.PutAsJsonAsync(ManagementApi.Uri(ManagementApi.DocumentPath(database, "items", "before")), new { text }, cancellationToken))
@@ -157,7 +158,12 @@ public sealed class BackupKeyCacheTests
             {
                 oci.Configure(settings);
                 settings["data-directory"] = dataDirectory;
-            }, oci.Route, time, managementCredential: true);
+            }, services =>
+            {
+                oci.Route(services);
+                ManualBackupHosting.Configure(services);
+            }, time, managementCredential: true);
+            return api;
         }
     }
 
@@ -286,7 +292,12 @@ public sealed class BackupKeyCacheTests
             {
                 oci.Configure(settings);
                 settings["data-directory"] = dataDirectory;
-            }, oci.Route, time, managementCredential: true);
+            }, services =>
+            {
+                oci.Route(services);
+                ManualBackupHosting.Configure(services);
+            }, time, managementCredential: true);
+            return api;
         }
     }
 

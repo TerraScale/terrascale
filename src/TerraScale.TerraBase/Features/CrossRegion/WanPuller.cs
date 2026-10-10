@@ -88,27 +88,46 @@ internal sealed partial class WanPuller(
     {
         lock (_gate)
         {
-            if (store.Tenant is { } tenant)
+            // The engine releases its lifecycle lock before notifying; a replacement may already be cached.
+            if (store.Tenant is { } tenant
+                && (!_stores.TryGetValue(Name(tenant), out var cached) || cached.Incarnation == store.Incarnation))
             {
                 _ = _stores.Remove(Name(tenant));
-                foreach (var key in _origins.Keys.Where(key => key.Database == Name(tenant)).ToList())
-                {
-                    _retainedOrigins -= _origins[key].Count;
-                    _ = _origins.Remove(key);
-                }
+                DropOrigins(Name(tenant));
             }
 
-            foreach (var key in _applied.Keys.Where(key => ReferenceEquals(key.Store, store)).ToList())
+            // Events carry the inner store; cached stamped wrappers share its incarnation.
+            foreach (var key in _applied.Keys.Where(key => key.Store.Incarnation == store.Incarnation).ToList())
             {
                 _ = _applied.Remove(key);
             }
         }
     }
 
+    // Under _gate: retained prefixes and divergence belong to the copy that was deleted or replaced.
+    private void DropOrigins(string database)
+    {
+        foreach (var key in _origins.Keys.Where(key => key.Database == database).ToList())
+        {
+            usage.RecordReplicationState(_origins[key].Database, key.Region, 0, false);
+            _retainedOrigins -= _origins[key].Count;
+            _ = _origins.Remove(key);
+        }
+    }
+
+    // Under _gate: a retry may use only the local copy that accepted its advertisement.
+    private bool IsCurrent(TenantContext database, Ulid incarnation) =>
+        _stores.TryGetValue(Name(database), out var cached) && !cached.IsClosed && cached.Incarnation == incarnation;
+
     private (long Remaining, bool Diverged) Retained(string region, TenantContext database)
     {
         lock (_gate)
         {
+            if (!_stores.TryGetValue(Name(database), out var cached) || cached.IsClosed)
+            {
+                return (0, false);
+            }
+
             var (remaining, diverged) = (0L, false);
             foreach (var state in (IEnumerable<OriginState>?)_origins.GetValueOrDefault((region, Name(database)))?.Values ?? [])
             {
@@ -120,13 +139,20 @@ internal sealed partial class WanPuller(
         }
     }
 
-    // Records an origin's advertised target, verified applied prefix or divergence; false when the bound left no room for it.
+    // Records an origin's advertised target, verified applied prefix or divergence; false at capacity, null for a stale store.
     // Advertised marks a fresh discovery advertisement, the only evidence that keeps an origin through a complete sweep.
-    private bool Retain(
-        string region, TenantContext database, ReadOnlyMemory<byte> origin, long target = 0, long applied = 0, bool diverge = false, bool advertised = false)
+    private bool? Retain(
+        string region, TenantContext database, IDatabaseStore store, ReadOnlyMemory<byte> origin,
+        long target = 0, long applied = 0, bool diverge = false, bool advertised = false)
     {
         lock (_gate)
         {
+            // A late response has no state to retain after its store was deleted or replaced.
+            if (store.IsClosed || !IsCurrent(database, store.Incarnation))
+            {
+                return null;
+            }
+
             var origins = _origins.GetValueOrDefault((region, Name(database)));
             var key = Convert.ToHexString(origin.Span);
             var state = default(OriginState);
@@ -157,10 +183,15 @@ internal sealed partial class WanPuller(
 
     // A group from the origin verifiably extended the applied journal to applied: whatever it diverged on is resolved, and a
     // target advertised before the divergence belongs to a journal it no longer follows.
-    private void Converged(string region, TenantContext database, ReadOnlyMemory<byte> origin, long applied)
+    private void Converged(string region, TenantContext database, IDatabaseStore store, ReadOnlyMemory<byte> origin, long applied)
     {
         lock (_gate)
         {
+            if (store.IsClosed || !IsCurrent(database, store.Incarnation))
+            {
+                return;
+            }
+
             var key = Convert.ToHexString(origin.Span);
             if (_origins.GetValueOrDefault((region, Name(database))) is { } origins && origins.TryGetValue(key, out var state))
             {
@@ -343,29 +374,30 @@ internal sealed partial class WanPuller(
         // Only a head this round can replicate supersedes; a malformed one is skipped below and must not drop the retry.
         var fresh = new HashSet<string>(heads.Where(entry => Replicable(entry.Head)).Select(entry => RetryKey(entry.Member, entry.Head)), StringComparer.Ordinal);
         var retrying = discovery.Retry.Select(entry => RetryKey(entry.Member, entry.Head)).ToHashSet(StringComparer.Ordinal);
-        heads.AddRange(discovery.Retry.Where(entry => !fresh.Contains(RetryKey(entry.Member, entry.Head))));
-        var retry = new List<(string Member, Head Head)>();
+        var candidates = heads.Select(entry => (entry.Member, entry.Head, Incarnation: (Ulid?)null))
+            .Concat(discovery.Retry.Where(entry => !fresh.Contains(RetryKey(entry.Member, entry.Head)))).ToList();
+        var retry = new List<(string Member, Head Head, Ulid? Incarnation)>();
         long retryBytes = 0;
         long lag = 0;
         var progressed = false;
         var unregistered = new HashSet<string>(StringComparer.Ordinal);
         var clashes = new HashSet<string>(StringComparer.Ordinal);
-        var observations = new Dictionary<TenantContext, (long Remaining, bool Diverged, bool Untracked)>();
-        var behind = new HashSet<TenantContext>();
+        var observations = new Dictionary<TenantContext, (Ulid? Incarnation, long Remaining, bool Diverged, bool Untracked)>();
+        var behind = new HashSet<(TenantContext Database, Ulid Incarnation)>();
         // Prepare independent targets ahead, but consume heads and pull origins in their original order.
         // Cleanup and the next round wait for every preparation, including when an earlier head fails.
         var ahead = TargetsAhead;
         var prepared = new Queue<(string Member, Head Head, TenantContext Database, DatabasePlacement Placement, string Named,
-            Task<TargetResult> Target)>();
+            Ulid? Incarnation, Ulid? AttemptedIncarnation, Task<(TargetResult Result, Ulid? Incarnation)> Target)>();
         var preparing = new HashSet<string>(StringComparer.Ordinal);
         var next = 0;
         try
         {
             while (true)
             {
-                for (; next < heads.Count && prepared.Count <= ahead; next++)
+                for (; next < candidates.Count && prepared.Count <= ahead; next++)
                 {
-                    var (holder, candidate) = heads[next];
+                    var (holder, candidate, incarnation) = candidates[next];
                     if (!Replicable(candidate))
                     {
                         continue;
@@ -385,9 +417,16 @@ internal sealed partial class WanPuller(
                     var placed = new DatabasePlacement(candidate.HomeRegion.Length > 0 ? candidate.HomeRegion : region,
                         [.. candidate.ReplicaRegions], (long)candidate.PlacementVersion);
                     var candidateOrigin = candidate.Origin.Memory;
-                    prepared.Enqueue((holder, candidate, targetDatabase, placed, named, ahead == 0
-                        ? TargetAsync(region, targetDatabase, candidate.DatabaseName, placed, candidateOrigin, cancellationToken)
-                        : Task.Run(() => TargetAsync(region, targetDatabase, candidate.DatabaseName, placed, candidateOrigin, cancellationToken), cancellationToken)));
+                    Ulid? cachedIncarnation;
+                    lock (_gate)
+                    {
+                        // Catalog admission may fail before TargetAsync reaches the copy this puller already holds.
+                        cachedIncarnation = _stores.TryGetValue(Name(targetDatabase), out var cached) && !cached.IsClosed ? cached.Incarnation : null;
+                    }
+
+                    prepared.Enqueue((holder, candidate, targetDatabase, placed, named, incarnation, cachedIncarnation, ahead == 0
+                        ? TargetAsync(region, targetDatabase, candidate.DatabaseName, placed, candidateOrigin, incarnation, cancellationToken)
+                        : Task.Run(() => TargetAsync(region, targetDatabase, candidate.DatabaseName, placed, candidateOrigin, incarnation, cancellationToken), cancellationToken)));
                 }
 
                 if (!prepared.TryDequeue(out var current))
@@ -395,15 +434,17 @@ internal sealed partial class WanPuller(
                     break;
                 }
 
-                var (member, head, database, placement, preparedName, preparation) = current;
+                var (member, head, database, placement, preparedName, retryIncarnation, attemptedIncarnation, preparation) = current;
                 var origin = head.Origin.Memory;
-                var target = await preparation.ConfigureAwait(false);
-                if (target is TargetStore { Store.IsClosed: true })
+                var (target, targetIncarnation) = await preparation.ConfigureAwait(false);
+                if (target is TargetStore { Store.IsClosed: true } closed)
                 {
-                    target = await TargetAsync(region, database, head.DatabaseName, placement, origin, cancellationToken).ConfigureAwait(false);
+                    attemptedIncarnation = closed.Store.Incarnation;
+                    (target, targetIncarnation) = await TargetAsync(region, database, head.DatabaseName, placement, origin, retryIncarnation, cancellationToken).ConfigureAwait(false);
                 }
 
                 // Placement or catalog deletion may have committed while an earlier head was being pulled.
+                targetIncarnation ??= retryIncarnation ?? attemptedIncarnation;
                 if (target is TargetStore)
                 {
                     target = await tenants.RegisteredAsync(database, cancellationToken).ConfigureAwait(false) switch
@@ -423,12 +464,12 @@ internal sealed partial class WanPuller(
                         Conflict error when error.Code == "name_taken" => "clash",
                         Conflict or NotFound => "unregistered",
                         Unavailable => "unavailable",
-                        TargetStore => throw new UnreachableException(),
+                        TargetStore or null => throw new UnreachableException(),
                     };
                     if (category == "unavailable")
                     {
                         failures += UnavailableFailure();
-                        RetainRetry(member, head);
+                        RetainRetry(member, head, targetIncarnation);
                     }
                     else
                     {
@@ -441,17 +482,27 @@ internal sealed partial class WanPuller(
                 var store = opened.Store;
                 var applied = await AppliedAsync(store, origin, cancellationToken).ConfigureAwait(false);
                 var gone = false;
+                var advanced = false;
                 // Only the origin's explicit Ahead answer or a journal conflict is divergence; a head snapshot may be stale.
                 var untracked = false;
                 var failed = false;
                 Conflict? diverged = null;
                 // Bounded by this round's heads and retries, so every replicated database reports health each round.
-                _ = observations.TryAdd(database, (0, false, false));
-                // Any origin found behind starts the backlog, not only the first member's advertisement.
-                if ((long)head.Sequence > applied && behind.Add(database))
+                if (!observations.TryGetValue(database, out var previous) || previous.Incarnation != store.Incarnation)
                 {
-                    var (outstanding, divergent) = Retained(region, database);
-                    usage.RecordReplicationState(database, region, Math.Max((long)head.Sequence - applied, outstanding), divergent);
+                    observations[database] = (store.Incarnation, 0, false, false);
+                }
+                // Any origin found behind starts the backlog, not only the first member's advertisement.
+                if ((long)head.Sequence > applied && behind.Add((database, store.Incarnation)))
+                {
+                    lock (_gate)
+                    {
+                        if (IsCurrent(database, store.Incarnation))
+                        {
+                            var (outstanding, divergent) = Retained(region, database);
+                            usage.RecordReplicationState(database, region, Math.Max((long)head.Sequence - applied, outstanding), divergent);
+                        }
+                    }
                 }
                 if (applied < (long)head.Sequence)
                 {
@@ -463,7 +514,7 @@ internal sealed partial class WanPuller(
                         switch (await PullAsync(region, cell, member, database, store, origin, applied, (long)head.Sequence, traffic, cancellationToken).ConfigureAwait(false))
                         {
                             case Pulled pulled:
-                                progressed |= pulled.Applied > applied;
+                                advanced = pulled.Applied > applied;
                                 (applied, gone) = (pulled.Applied, pulled.Gone);
                                 break;
                             case Conflict conflict:
@@ -484,9 +535,15 @@ internal sealed partial class WanPuller(
 
                 if (diverged is not null)
                 {
+                    var retained = Retain(region, database, store, origin, diverge: true);
+                    if (retained is null)
+                    {
+                        continue;
+                    }
+
                     failed = true;
                     // A conflict past the bounded set is still reported for this round, and logged.
-                    if (!Retain(region, database, origin, diverge: true))
+                    if (retained == false)
                     {
                         untracked = true;
                         LogDivergenceUntracked(logger, region);
@@ -514,18 +571,23 @@ internal sealed partial class WanPuller(
 
                 var remaining = Math.Max(0, (long)head.Sequence - applied);
                 // Best effort past the bound: an untracked backlog only loses retention across rounds.
-                var tracked = Retain(region, database, origin, target: (long)head.Sequence, applied: applied, advertised: fresh.Contains(RetryKey(member, head)));
+                var tracked = Retain(region, database, store, origin, target: (long)head.Sequence, applied: applied, advertised: fresh.Contains(RetryKey(member, head)));
+                if (tracked is null)
+                {
+                    continue;
+                }
+
+                progressed |= advanced;
                 if (observations.TryGetValue(database, out var observed))
                 {
-                    observations[database] = (observed.Remaining + Math.Min(remaining, long.MaxValue - observed.Remaining), observed.Diverged || untracked,
-                        observed.Untracked || !tracked);
+                    observations[database] = (store.Incarnation, observed.Remaining + Math.Min(remaining, long.MaxValue - observed.Remaining), observed.Diverged || untracked,
+                        observed.Untracked || tracked == false);
                 }
-                lag += Math.Min(remaining, long.MaxValue - lag);
                 // Bounded like one heads reply; anything beyond waits for a fresh scan to advertise it again. A member that no longer
                 // holds the origin cannot serve a retry.
                 if (remaining > 0 && !gone)
                 {
-                    RetainRetry(member, head);
+                    RetainRetry(member, head, store.Incarnation);
                 }
             }
         }
@@ -536,36 +598,45 @@ internal sealed partial class WanPuller(
             _ = unreached.Exception;
         }
 
-        // Every retained origin of a database counts, also one this round did not reach: a partial sweep certifies nothing.
-        // Only a complete sweep certifies an origin gone; an incomplete one keeps every outstanding target, however long it runs.
-        if (complete)
+        // Deletion and publication share the gate: a processed head may have lost its copy while a later pull awaited a reply.
+        lock (_gate)
         {
-            foreach (var certified in ForgetUnswept(region, discovery.SweepStarted))
+            // Every retained origin counts; only a complete sweep certifies an origin gone.
+            if (complete)
             {
-                _ = observations.TryAdd(certified, (0, false, false));
+                foreach (var certified in ForgetUnswept(region, discovery.SweepStarted))
+                {
+                    _ = observations.TryAdd(certified, (null, 0, false, false));
+                }
             }
+
+            foreach (var (database, observed) in observations)
+            {
+                var current = observed.Incarnation is { } incarnation && IsCurrent(database, incarnation);
+                if (current)
+                {
+                    lag += Math.Min(observed.Remaining, long.MaxValue - lag);
+                }
+
+                // Per origin, its highest target less its latest verified prefix, once; past the bound, the round estimates it.
+                var (outstanding, divergent) = Retained(region, database);
+                usage.RecordReplicationState(database, region, current && observed.Untracked ? Math.Max(observed.Remaining, outstanding) : outstanding,
+                    current && observed.Diverged || divergent);
+            }
+
+            discovery.Retry.Clear();
+            discovery.Retry.AddRange(retry.Where(entry => entry.Incarnation is not { } incarnation
+                || IsCurrent(WanProtocol.Database(entry.Head.TenantId, entry.Head.ProjectId, entry.Head.DatabaseId)!, incarnation)));
+
+            // Earlier pages must also have reached their observed heads before a whole scan can reset staleness.
+            discovery.Lagging = unanswered || previouslyLagging || lag > 0 || failures > 0;
+            if (unanswered)
+            {
+                return (progressed && lag > 0, failures + 1, after);
+            }
+
+            metrics.Rounded(region, lag, members, unregistered.Count, clashes.Count, caughtUp: complete && !discovery.Lagging, time.GetTimestamp());
         }
-
-        foreach (var (database, observed) in observations)
-        {
-            // Per origin, its highest target less its latest verified prefix, once: members advertising the same origin, or
-            // one failing where another caught up, count nothing twice. Past the bound, this round's view is the estimate.
-            var (outstanding, divergent) = Retained(region, database);
-            usage.RecordReplicationState(database, region, observed.Untracked ? Math.Max(observed.Remaining, outstanding) : outstanding,
-                observed.Diverged || divergent);
-        }
-
-        discovery.Retry.Clear();
-        discovery.Retry.AddRange(retry);
-
-        // Earlier pages must also have reached their observed heads before a whole scan can reset staleness.
-        discovery.Lagging = unanswered || previouslyLagging || lag > 0 || failures > 0;
-        if (unanswered)
-        {
-            return (progressed && lag > 0, failures + 1, after);
-        }
-
-        metrics.Rounded(region, lag, members, unregistered.Count, clashes.Count, caughtUp: complete && !discovery.Lagging, time.GetTimestamp());
         if (sweepEnded)
         {
             discovery.SweepStarted = time.GetTimestamp();
@@ -586,11 +657,11 @@ internal sealed partial class WanPuller(
             return 1;
         }
 
-        void RetainRetry(string member, Head head)
+        void RetainRetry(string member, Head head, Ulid? incarnation)
         {
             if (retry.Count < WanProtocol.MaxHeadsPerReply && retryBytes + head.CalculateSize() <= WanProtocol.ReplyBudget)
             {
-                retry.Add((member, head));
+                retry.Add((member, head, incarnation));
                 retryBytes += head.CalculateSize();
             }
         }
@@ -1016,8 +1087,8 @@ internal sealed partial class WanPuller(
 
         public HashSet<string> Finished { get; } = [with(StringComparer.Ordinal)];
 
-        // Heads still behind after the last round's pulls, at most one heads reply's worth.
-        public List<(string Member, Head Head)> Retry { get; } = [];
+        // Heads still behind after the last round's pulls, at most one heads reply's worth. Null means no copy was admitted yet.
+        public List<(string Member, Head Head, Ulid? Incarnation)> Retry { get; } = [];
 
         public TenantDatabasePage? Records { get; set; }
 
@@ -1177,7 +1248,7 @@ internal sealed partial class WanPuller(
                 // journal compares a duplicate's digest only at its head): whatever this origin diverged on is resolved.
                 if (append is JournalApplied || append is JournalUnchanged duplicate && duplicate.Sequence == (long)batch.EventId.Sequence)
                 {
-                    Converged(region, database, origin, sequence);
+                    Converged(region, database, store, origin, sequence);
                 }
 
                 if (append is JournalApplied)
@@ -1200,15 +1271,27 @@ internal sealed partial class WanPuller(
     private readonly union TargetResult(TargetStore, NotFound, Conflict, Unavailable);
     private readonly union TargetRefusal(NotFound, Conflict, Unavailable);
 
-    private async Task<TargetResult> TargetAsync(
-        string region, TenantContext database, string name, DatabasePlacement remote, ReadOnlyMemory<byte> origin, CancellationToken cancellationToken)
+    private async Task<(TargetResult Result, Ulid? Incarnation)> TargetAsync(
+        string region, TenantContext database, string name, DatabasePlacement remote, ReadOnlyMemory<byte> origin, Ulid? retryIncarnation,
+        CancellationToken cancellationToken)
     {
         var key = Name(database);
+        var targetIncarnation = retryIncarnation;
         lock (_gate)
         {
+            if (_stores.TryGetValue(key, out var cached) && !cached.IsClosed)
+            {
+                targetIncarnation ??= cached.Incarnation;
+            }
+
+            if (retryIncarnation is { } incarnation && !IsCurrent(database, incarnation))
+            {
+                return (new NotFound(), targetIncarnation);
+            }
+
             if (_refused.TryGetValue(key, out var refusal) && time.GetElapsedTime(refusal.At) < RefusalTtl)
             {
-                return RefusalResult(refusal.Why);
+                return (RefusalResult(refusal.Why), targetIncarnation);
             }
         }
 
@@ -1231,6 +1314,11 @@ internal sealed partial class WanPuller(
                 NotFound => new Done(),
                 Unavailable or TenantDatabaseRecord => throw new UnreachableException(),
             };
+            if (retryIncarnation is not null)
+            {
+                return (new NotFound(), targetIncarnation);
+            }
+
             var adoption = primary && name.Length > 0
                 ? await tenants.AdoptDatabaseAsync(database, name, remote, cancellationToken).ConfigureAwait(false)
                 : (AdoptDatabaseResult)new NotFound();
@@ -1276,13 +1364,26 @@ internal sealed partial class WanPuller(
 
         lock (_gate)
         {
-            if (_stores.TryGetValue(key, out var cached) && !cached.IsClosed)
+            if (_stores.TryGetValue(key, out var cached) && !cached.IsClosed
+                && (retryIncarnation is null || cached.Incarnation == retryIncarnation))
             {
-                return new TargetStore(cached);
+                return (new TargetStore(cached), cached.Incarnation);
+            }
+
+            // A consumed retry cannot open a replacement if deletion happened during the catalog awaits.
+            if (retryIncarnation is not null)
+            {
+                return (new NotFound(), targetIncarnation);
             }
         }
 
-        var before = (await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false))?.Incarnation;
+        var existing = await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false);
+        var before = existing?.Incarnation;
+        if (existing is not null)
+        {
+            Remember(existing);
+        }
+
         var registration = await tenants.RegisteredAsync(database, cancellationToken).ConfigureAwait(false);
         if (registration is not bool registered)
         {
@@ -1299,6 +1400,17 @@ internal sealed partial class WanPuller(
         }
 
         var (store, _, applied, _) = await journal.OpenAsync(database, origin, cancellationToken).ConfigureAwait(false);
+        // A later catalog refusal still belongs to this copy; deleting it must invalidate its retry.
+        Remember(store);
+        lock (_gate)
+        {
+            if (IsCurrent(database, store.Incarnation))
+            {
+                // Open read this frontier already.
+                _ = _applied.TryAdd((store, Convert.ToHexString(origin.Span)), applied);
+            }
+        }
+
         var afterRegistration = await tenants.RegisteredAsync(database, cancellationToken).ConfigureAwait(false);
         if (afterRegistration is not bool stillRegistered)
         {
@@ -1319,20 +1431,27 @@ internal sealed partial class WanPuller(
             return Refuse(new NotFound());
         }
 
-        lock (_gate)
+        checkpoint("wan.targeted", database);
+        return (new TargetStore(store), targetIncarnation);
+
+        void Remember(IDatabaseStore opened)
         {
-            if (!store.IsClosed)
+            targetIncarnation = opened.Incarnation;
+            lock (_gate)
             {
-                _stores[key] = store;
-                // Open read this frontier already.
-                _ = _applied.TryAdd((store, Convert.ToHexString(origin.Span)), applied);
+                if (!opened.IsClosed)
+                {
+                    if (_stores.TryGetValue(key, out var cached) && cached.Incarnation != opened.Incarnation)
+                    {
+                        DropOrigins(key);
+                    }
+
+                    _stores[key] = opened;
+                }
             }
         }
 
-        checkpoint("wan.targeted", database);
-        return new TargetStore(store);
-
-        TargetResult Refuse(TargetRefusal why)
+        (TargetResult Result, Ulid? Incarnation) Refuse(TargetRefusal why)
         {
             lock (_gate)
             {
@@ -1343,7 +1462,7 @@ internal sealed partial class WanPuller(
                 }
             }
 
-            return RefusalResult(why);
+            return (RefusalResult(why), targetIncarnation);
         }
     }
 

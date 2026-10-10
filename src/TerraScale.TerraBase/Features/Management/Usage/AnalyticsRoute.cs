@@ -5,7 +5,7 @@ namespace TerraBase.Features.Management.Usage;
 
 internal static class AnalyticsRoute
 {
-    public const string Project = "/projects/{project}";
+    public const string Project = ProjectApiRoute.Project;
     public const string Database = Project + "/databases/{database}";
 
     public static async ValueTask<IResult> ReadAsync(

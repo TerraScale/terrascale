@@ -15,13 +15,15 @@ public sealed class CountBoundTests
     [Arguments(false)]
     public async Task Public_count_excludes_the_overflow_row_whether_or_not_it_matches(bool overflowMatches)
     {
-        await using var api = await ManagementApi.StartAsync();
+        await using var api = await ManagementApi.StartAsync(managementCredential: true);
         using var tenant = await api.CreateTenantAsync("documents:read", "documents:write");
+        await api.SetPlanAsync(tenant.User, tenant.OrganizationId, "enterprise");
         var client = tenant.Data;
         // Seed a current-format snapshot, then exercise bounded count through the real listener.
         using var registered = await client.PutAsync(tenant.Database("count"), null);
+        registered.EnsureSuccessStatusCode();
         var id = (await registered.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString()!;
-        var database = new TenantContext(tenant.OrganizationId, PlanTier.Hobby, tenant.ProjectId, id);
+        var database = new TenantContext(tenant.OrganizationId, PlanTier.Enterprise, tenant.ProjectId, id);
         await api.Server.Services.GetRequiredService<IStorageEngine>().DeleteDatabaseAsync(database, CancellationToken.None);
         var path = Path.Combine(api.Server.DataDirectory, tenant.OrganizationId, tenant.ProjectId, id + ".db");
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
@@ -51,8 +53,9 @@ public sealed class CountBoundTests
     [Test]
     public async Task Assert_count_examines_at_most_10000_rows_whatever_it_matches()
     {
-        await using var api = await ManagementApi.StartAsync();
+        await using var api = await ManagementApi.StartAsync(managementCredential: true);
         using var tenant = await api.CreateTenantAsync("documents:read", "documents:write");
+        await api.SetPlanAsync(tenant.User, tenant.OrganizationId, "pro");
         var client = tenant.Data;
         (await client.PutAsync(tenant.Database("db"), null)).EnsureSuccessStatusCode();
         (await client.PostAsJsonAsync(tenant.Database("db", "/collections"), new { name = "items" })).EnsureSuccessStatusCode();
@@ -79,6 +82,7 @@ public sealed class CountBoundTests
         using var pastBound = await client.PostAsJsonAsync(transactions, sparse);
         using var counted = await client.PostAsJsonAsync(
             tenant.Database("db", "/collections/items/query"), new { limit = 1, count = true });
+        counted.EnsureSuccessStatusCode();
         var error = (await pastBound.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error");
         var count = (await counted.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("count");
 
@@ -136,8 +140,9 @@ public sealed class CountBoundTests
     [Test]
     public async Task Query_count_is_exact_up_to_100000_documents_and_a_lower_bound_beyond()
     {
-        await using var api = await ManagementApi.StartAsync();
+        await using var api = await ManagementApi.StartAsync(managementCredential: true);
         using var tenant = await api.CreateTenantAsync("documents:read", "documents:write");
+        await api.SetPlanAsync(tenant.User, tenant.OrganizationId, "enterprise");
         var client = tenant.Data;
         (await client.PutAsync(tenant.Database("db"), null)).EnsureSuccessStatusCode();
         (await client.PostAsJsonAsync(tenant.Database("db", "/collections"), new { name = "items" })).EnsureSuccessStatusCode();
@@ -158,6 +163,7 @@ public sealed class CountBoundTests
         {
             using var response = await client.PostAsJsonAsync(
                 tenant.Database("db", "/collections/items/query"), new { filter, limit = 1, count = true });
+            response.EnsureSuccessStatusCode();
             var count = (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("count");
             return (long.Parse(count.GetProperty("value").GetString()!, System.Globalization.CultureInfo.InvariantCulture), count.GetProperty("exact").GetBoolean());
         }

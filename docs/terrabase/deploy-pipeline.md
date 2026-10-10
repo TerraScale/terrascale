@@ -12,7 +12,7 @@ that clock. Successful deployment requires fresh target replica proofs.
 job stages checked single-file amd64/arm64 executables in a draft. `publish`
 depends on both gates and publishes those exact bytes; it never rebuilds them.
 Slow runs separately and does not gate production delivery. A failed Fast run
-blocks publication and deployment; TS-760 owns the underlying main-suite fixes.
+blocks publication and deployment; TS-773 repairs the underlying main-suite failures.
 
 The main-only deploy job always runs after publication. Missing configuration
 fails the job instead of silently making deployment optional.
@@ -35,10 +35,12 @@ The initial serving fleet is GRU and SFO, both admitted as `canary` on ARM64.
 Signed specs must authorize
 `terrabase` and the release actor in each cell. The scoped service-release OCI
 user needs the current release-prefix grant on both head buckets.
-`TS_ORCH_RELEASE` and `TS_ORCH_SHA256` pin the helper and must change together.
+`TS_ORCH_RELEASE` and `TS_ORCH_SHA256` are pinned in `fast.yml` and must change together;
+deployment does not read repository variables for its helper version.
 Verified pair: `ci-1e57e6c1736238e1f1d5a910dfe45c0cbdc20151-run-16180`
 and `f29dc054716f2ed50ab97960c675753f33c8ac158d6a49f74cd5c190a93ec771`
 (successful orch CI 1839, retained amd64 bytes checked against its manifest).
+This helper release is retained as a non-prerelease so CI retention cannot remove it.
 The helper uses `releases/services`, the same current prefix as regional
 orchestrators. It requires fresh scope-producing controller reports; the
 initial activation of that schema belongs to the controller pipeline.

@@ -30,7 +30,7 @@ public sealed class AutoIndexPolicyReplicationTests
         });
 
         var path = ManagementApi.Uri(
-            $"/projects/{database.Project}/databases/{database.Name}/auto-index/{collection}");
+            $"/v1/projects/{database.Project}/databases/{database.Name}/auto-index/{collection}");
         using var policyClient = primary.WithToken(primary.Issuer.Mint(primary.User, token =>
         {
             token.Claims["project_id"] = database.Project;

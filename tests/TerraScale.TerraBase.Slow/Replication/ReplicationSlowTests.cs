@@ -10,6 +10,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
+using TerraBase.Features.Management;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
 using TerraBase.Tenancy;
@@ -47,6 +48,8 @@ public sealed class ReplicationSlowTests
             }))
             {
                 tenant = await ReplicationTenant.CreateAsync(seed, "broken", "healthy");
+                await Assert.That(await seed.Services.GetRequiredService<IManagementService>().SetPlanAsync(
+                    tenant.UserId, tenant.OrganizationId, PlanTier.Enterprise, deadline.Token) is Organization).IsTrue();
                 using var writer = clientTls.CreateClient(seed.ClientAddress!, await tenant.KeyAsync(seed, "documents:write"));
                 foreach (var name in new[] { "broken", "healthy" })
                 {
@@ -207,6 +210,11 @@ public sealed class ReplicationSlowTests
         await using var disposeB = b;
         var tenant = await ReplicationTenant.CreateAsync(a, "race");
         await tenant.BindAsync(b);
+        foreach (var node in new[] { a, b })
+        {
+            await Assert.That(await node.Services.GetRequiredService<IManagementService>().SetPlanAsync(
+                tenant.UserId, tenant.OrganizationId, PlanTier.Enterprise, CancellationToken.None) is Organization).IsTrue();
+        }
         using var clientA = clientTls.CreateClient(a.ClientAddress!, await tenant.KeyAsync(a, "documents:read", "documents:write"));
         using var clientB = clientTls.CreateClient(b.ClientAddress!, await tenant.KeyAsync(b, "documents:read", "documents:write"));
         var path = tenant.Path("race");
@@ -672,6 +680,11 @@ public sealed class ReplicationSlowTests
         busyId = Google.Protobuf.ByteString.CopyFrom(Ulid.Parse(tenant.Database("busy").DatabaseId!).ToByteArray());
         quietId = Google.Protobuf.ByteString.CopyFrom(Ulid.Parse(tenant.Database("quiet").DatabaseId!).ToByteArray());
         await tenant.BindAsync(receiver);
+        foreach (var node in new[] { sender, receiver })
+        {
+            await Assert.That(await node.Services.GetRequiredService<IManagementService>().SetPlanAsync(
+                tenant.UserId, tenant.OrganizationId, PlanTier.Enterprise, CancellationToken.None) is Organization).IsTrue();
+        }
         using var reader = clientTls.CreateClient(receiver.ClientAddress!, await tenant.KeyAsync(receiver, "documents:read"));
         var key = await tenant.KeyAsync(sender, "documents:write");
         using var writer = clientTls.CreateClient(sender.ClientAddress!, key);

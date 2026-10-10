@@ -143,7 +143,7 @@ Enterprise admission. Rate, concurrency and memory refusals include `Retry-After
 
 ## Node pressure
 
-`GET /admin/node/pressure` and pressure metrics are available only on the loopback
+`GET /v1/admin/node/pressure` and pressure metrics are available only on the loopback
 administrative listener. Instance identity, local readiness, actual storage admissions
 and outgoing durable ACK lag are sampled diagnostics. Certified membership, incoming
 catch-up and other unmeasured safety signals remain unknown, keeping autonomous scaling gated.

@@ -47,7 +47,7 @@ public sealed class FollowerQosAdmissionTests
             await catalog.Paused.Task.WaitAsync(deadline.Token);
             var created = await api.CreateManagedDatabaseAsync(database.Organization, database.Project, "late");
             var tenants = follower.Services.GetRequiredService<ITenantDirectory>();
-            await Assert.That(await tenants.FindDatabaseAsync(database.Organization, database.Project, "late", deadline.Token)).IsNull();
+            await Assert.That(await tenants.FindDatabaseAsync(database.Organization, database.Project, "late", deadline.Token) is TerraBase.Errors.NotFound).IsTrue();
             using var client = api.Tls.CreateClient(follower.ClientAddress!, api.Issuer.Mint(api.User, token =>
             {
                 token.Claims["project_id"] = database.Project;
@@ -68,7 +68,7 @@ public sealed class FollowerQosAdmissionTests
             {
                 // The primary receives the read while the follower still lacks the database record.
                 await read.Task.WaitAsync(deadline.Token);
-                await Assert.That(await tenants.FindDatabaseAsync(database.Organization, database.Project, "late", deadline.Token)).IsNull();
+                await Assert.That(await tenants.FindDatabaseAsync(database.Organization, database.Project, "late", deadline.Token) is TerraBase.Errors.NotFound).IsTrue();
                 catalog.Release.TrySetResult();
                 using var response = await pending;
                 response.EnsureSuccessStatusCode();
@@ -123,7 +123,7 @@ public sealed class FollowerQosAdmissionTests
             services.AddSingleton<IStartupFilter>(uploads);
         });
         await TerraBaseTestServer.EventuallyAsync(async token =>
-            await follower.Services.GetRequiredService<ITenantDirectory>().PlanAsync(paid.Organization, token) == PlanTier.Pro);
+            await follower.Services.GetRequiredService<ITenantDirectory>().PlanAsync(paid.Organization, token) is PlanTier.Pro);
         using var hobbyClient = Client(hobby.Project);
         using var paidClient = Client(paid.Project);
         var pending = Enumerable.Range(0, QosPolicy.For(PlanTier.Hobby).Concurrency)

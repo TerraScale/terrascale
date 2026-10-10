@@ -14,7 +14,7 @@ public sealed class StorageShutdownTests
     [Test]
     public async Task Stopping_under_load_closes_every_database_file()
     {
-        var api = await ManagementApi.StartAsync();
+        var api = await ManagementApi.StartAsync(managementCredential: true);
         var dataDirectory = api.Server.DataDirectory;
         Task? serverShutdown = null;
         Tenant? tenant = null;
@@ -26,6 +26,7 @@ public sealed class StorageShutdownTests
         try
         {
             tenant = await api.CreateTenantAsync("documents:read", "documents:write");
+            await api.SetPlanAsync(tenant.User, tenant.OrganizationId, "pro", testCancellation);
             var (http, project) = (tenant.Data, tenant.ProjectId);
 
             // Writers keep opening new databases, so first opens race the shutdown. Only writes that

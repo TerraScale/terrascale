@@ -6,6 +6,7 @@ using System.Text.Json;
 using Bogus;
 using Google.Protobuf;
 using Microsoft.Extensions.DependencyInjection;
+using TerraBase.Errors;
 using TerraBase.Features.CrossRegion;
 using TerraBase.Features.CrossRegion.V1;
 using TerraBase.Features.Management.Usage;
@@ -719,7 +720,11 @@ public sealed partial class CrossRegionPagingProgressTests
                 var tenant = new TenantContext(organization, PlanTier.Hobby, project, database.Id);
                 async Task<bool> DivergedAsync()
                 {
-                    var (lifetime, _) = await meter.GetObservationsAsync(tenant, new UsageWindow(UsageWindow.Hour, clock.GetUtcNow().ToUnixTimeSeconds() / 3600, 1), token);
+                    var (lifetime, _) = await meter.GetObservationsAsync(tenant, new UsageWindow(UsageWindow.Hour, clock.GetUtcNow().ToUnixTimeSeconds() / 3600, 1), token) switch
+                    {
+                        UsageCounts counts => counts,
+                        Unavailable error => throw new InvalidOperationException(error.Message),
+                    };
                     return lifetime.Meters!["replication_status|sfo-1|gru-1|inbound"].State!.Diverged;
                 }
 
@@ -830,7 +835,11 @@ public sealed partial class CrossRegionPagingProgressTests
                 var tenant = new TenantContext(organization, PlanTier.Hobby, project, database.Id);
                 async Task<long> RemainingAsync()
                 {
-                    var (lifetime, _) = await meter.GetObservationsAsync(tenant, new UsageWindow(UsageWindow.Hour, clock.GetUtcNow().ToUnixTimeSeconds() / 3600, 1), token);
+                    var (lifetime, _) = await meter.GetObservationsAsync(tenant, new UsageWindow(UsageWindow.Hour, clock.GetUtcNow().ToUnixTimeSeconds() / 3600, 1), token) switch
+                    {
+                        UsageCounts counts => counts,
+                        Unavailable error => throw new InvalidOperationException(error.Message),
+                    };
                     return lifetime.Meters!["replication_status|sfo-1|gru-1|inbound"].State!.Remaining;
                 }
 

@@ -5,8 +5,7 @@ namespace TerraBase.Features.Documents;
 
 internal static class CollectionSchemaRoute
 {
-    // New routes are unversioned by the owner's pre-release policy; see docs/collection-schemas.md.
-    public const string Route = "/projects/{project}/databases/{database}/collections/{collection}/schema";
+    public const string Route = "/v1/projects/{project}/databases/{database}/collections/{collection}/schema";
 
     public static async ValueTask<IResult> ExecuteAsync(
         HttpContext context, ITenantDirectory tenants, Func<TenantContext, string, ValueTask<IResult>> action, CancellationToken cancellationToken) =>

@@ -1,20 +1,16 @@
 # Optional collection validation
 
 Collections start schemaless. A caller with `documents:write` can attach, replace,
-or detach a declared JSON Schema on the client TLS listener. These new routes
-are unversioned:
+or detach a declared JSON Schema on the client TLS listener. These routes use v1:
 
 | Method | Route | Behavior |
 | --- | --- | --- |
-| PUT | `/projects/{project}/databases/{database}/collections/{collection}/schema` | Attach or replace; the body is the schema itself |
+| PUT | `/v1/projects/{project}/databases/{database}/collections/{collection}/schema` | Attach or replace; the body is the schema itself |
 | GET | Same route | Read the schema (`documents:read`) |
 | DELETE | Same route | Detach without removing documents |
 
-Route decision (owner instruction, 2026-10-09): new pre-release APIs must use
-unversioned paths without compatibility aliases. These endpoints intentionally
-do not derive their path from `DocumentRoute.Collections`, which retains the
-older document API prefix. The earlier document API route decisions do not
-govern new schema endpoints. Existing document route cleanup is a separate task.
+Route decision (owner instruction, 2026-10-09): public APIs use v1. Breaking
+changes edit v1 in place without compatibility aliases.
 Schema clients use the paths published in OpenAPI and shown above. Tenant
 resolution, project/database restrictions, authorization scopes, and listener
 checks are shared with document operations and do not depend on the prefix.

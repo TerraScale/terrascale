@@ -8,7 +8,7 @@ public sealed class PressureEndpoint(IPressureSignals pressure) : EndpointWithou
     /// <inheritdoc />
     public override void Configure()
     {
-        Get("/admin/node/pressure");
+        Get("/v1/admin/node/pressure");
         Name("nodePressure");
         Summary("Cached node pressure signals");
         Description("Unknown I/O and replication signals remain explicit null; membership state is unknown. Local readiness, storage admissions and outgoing durable ACK lag are independent diagnostics; autoscaling stays gated on unknown membership and safety evidence.");

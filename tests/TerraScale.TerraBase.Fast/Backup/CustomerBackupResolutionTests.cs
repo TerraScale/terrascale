@@ -50,7 +50,7 @@ public sealed class CustomerBackupResolutionTests
             await SystemCatalog.PutAsync(transaction, ProjectBackupDestinations.Collection(database.Project), "current", record,
                 TerraBaseJsonContext.Default.ProjectBackupDestinationRecord, cancellationToken);
             return true;
-        }, cancellationToken);
+        }, static error => throw new InvalidOperationException(error.Message), cancellationToken);
 
         foreach (var (client, path) in new[] { (api.Client, database.Path), (project, database.Data) })
         {
@@ -127,7 +127,7 @@ public sealed class CustomerBackupResolutionTests
         using var restored = await project.PostAsJsonAsync(Uri(database.Data + "/point-in-time/restore"),
             new { pointInTime = latest, name = "repaired-restore", destination = "customer" }, cancellationToken);
         await Assert.That(restored.StatusCode).IsEqualTo(HttpStatusCode.Created);
-        using var document = await project.GetAsync(Uri($"/v1/projects/{database.Project}/databases/repaired-restore/collections/people/documents/{DocumentId("kept")}"), cancellationToken);
+        using var document = await project.GetAsync(Uri($"/v1/projects/{database.Project}/databases/repaired-restore/collections/people/documents/by-key?id={DocumentId("kept")}"), cancellationToken);
         document.EnsureSuccessStatusCode();
         var body = await document.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cancellationToken);
         await Assert.That(body.GetProperty("document").GetProperty("text").GetString()).IsEqualTo(text);

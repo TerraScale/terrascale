@@ -11,8 +11,9 @@ public sealed class StorageConcurrencyTests
     [Test]
     public async Task Concurrent_creates_writes_and_deletes_in_one_project_keep_catalog_and_disk_in_step()
     {
-        await using var api = await ManagementApi.StartAsync();
+        await using var api = await ManagementApi.StartAsync(managementCredential: true);
         using var tenant = await api.CreateTenantAsync("documents:read", "documents:write");
+        await api.SetPlanAsync(tenant.User, tenant.OrganizationId, "enterprise");
         using var owner = api.As(tenant.User);
         var databases = $"/v1/management/organizations/{tenant.OrganizationId}/projects/{tenant.ProjectId}/databases";
         var unexpected = new ConcurrentBag<string>();

@@ -65,12 +65,52 @@ public sealed class QueryQosTests
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
         await ManagementApi.CreateCollectionAsync(data, database, "items");
         var queryPath = ManagementApi.Uri($"{database.Data}/collections/items/query");
+        var listPath = ManagementApi.Uri($"{database.Data}/collections/items/documents?limit=1");
         using var hobby = await data.PostAsJsonAsync(queryPath, new { limit = 1 });
         await ErrorAssert.ErrorAsync(Task.FromResult(hobby), HttpStatusCode.BadRequest, "invalid_query", "query too expensive");
+        using var hobbyList = await data.GetAsync(listPath);
+        await ErrorAssert.ErrorAsync(Task.FromResult(hobbyList), HttpStatusCode.BadRequest, "invalid_query", "query too expensive");
         using var upgraded = await plans.PutAsJsonAsync(ManagementApi.Uri($"/v1/management/organizations/{database.Organization}/plan"), new { plan = "pro" });
         upgraded.EnsureSuccessStatusCode();
         using var pro = await data.PostAsJsonAsync(queryPath, new { limit = 1 });
         await Assert.That(pro.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        using var proList = await data.GetAsync(listPath);
+        await Assert.That(proList.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        var page = await proList.Content.ReadFromJsonAsync<JsonElement>();
+        await Assert.That(page.GetProperty("items").GetArrayLength()).IsEqualTo(0);
+        await Assert.That(page.GetProperty("next_cursor").ValueKind).IsEqualTo(JsonValueKind.Null);
+    }
+
+    [Test]
+    public async Task A_cursor_remains_usable_after_the_plan_deadline_interrupts_its_continuation()
+    {
+        var clock = new QueryClock(step: 0);
+        await using var api = await ManagementApi.StartAsync(services: services =>
+            services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, clock), managementCredential: true);
+        var database = await api.CreateManagedDatabaseAsync();
+        using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
+        await ManagementApi.CreateCollectionAsync(data, database, "items");
+        await ManagementApi.ExecuteStoredAsync(api.Server.DataDirectory, database, """
+            INSERT INTO documents VALUES ('items', '0000000000E00800000000000A', 1, $body);
+            INSERT INTO documents VALUES ('items', '0000000000E00800000000000B', 1, $body);
+            """, ("$body", JsonSerializer.Serialize(new { s = new string('\0', 64 * 1024) })));
+        var path = ManagementApi.Uri($"{database.Data}/collections/items/query");
+        var sort = Enumerable.Range(0, 4).Select(_ => new { path = "/s" }).ToArray();
+        using var first = await data.PostAsJsonAsync(path, new { sort, limit = 1 });
+        first.EnsureSuccessStatusCode();
+        var cursor = (await first.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("next_cursor").GetString();
+        await Assert.That(cursor).IsNotNull();
+
+        clock.AdvanceReads();
+        using var expired = await data.PostAsJsonAsync(path, new { sort, limit = 1, cursor });
+        await ErrorAssert.ErrorAsync(Task.FromResult(expired), HttpStatusCode.BadRequest, "invalid_query", "query too expensive");
+
+        await api.SetPlanAsync(api.User, database.Organization, "pro");
+        using var resumed = await data.PostAsJsonAsync(path, new { sort, limit = 1, cursor });
+        resumed.EnsureSuccessStatusCode();
+        var result = await resumed.Content.ReadFromJsonAsync<JsonElement>();
+        await Assert.That(result.GetProperty("items")[0].GetProperty("id").GetString()).IsEqualTo("0000000000E00800000000000B");
+        await Assert.That(result.GetProperty("next_cursor").ValueKind).IsEqualTo(JsonValueKind.Null);
     }
 
     [Test]
@@ -116,14 +156,17 @@ public sealed class QueryQosTests
 
     // Read-pool checks advance 1.5 seconds: beyond Hobby's deadline, within Pro's.
     // Catalog audit writes use their write lane and must not expire while setting up a plan change.
-    private sealed class QueryClock : TimeProvider
+    private sealed class QueryClock(long step = 1500) : TimeProvider
     {
         private long _timestamp;
+        private long _step = step;
 
         public override long TimestampFrequency => 1000;
 
+        public void AdvanceReads() => Volatile.Write(ref _step, 1500);
+
         public override long GetTimestamp() => Thread.CurrentThread.Name == "terrabase-sqlite"
-            ? Interlocked.Add(ref _timestamp, 1500) : Volatile.Read(ref _timestamp);
+            ? Interlocked.Add(ref _timestamp, Volatile.Read(ref _step)) : Volatile.Read(ref _timestamp);
     }
 
 }

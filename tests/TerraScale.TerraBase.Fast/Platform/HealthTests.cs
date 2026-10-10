@@ -149,6 +149,7 @@ public sealed class HealthTests
         var pending = server.Client.GetAsync(new Uri("/readyz", UriKind.Relative), cancellation.Token);
         try
         {
+            await requests.Entered.Task.WaitAsync(TimeSpan.FromSeconds(30));
             await barrier.Entered.Task.WaitAsync(TimeSpan.FromSeconds(30));
             await clock.DeadlineCreated.Task.WaitAsync(TimeSpan.FromSeconds(30));
             var diskProbe = engine.ReadinessProbeTask;
@@ -346,6 +347,8 @@ public sealed class HealthTests
     // Set the hooks before the engine can be observed by the background pressure sampler or any HTTP request.
     private static void ConfigureReadiness(IServiceCollection services, ProbeClock clock, ProbeBarrier barrier)
     {
+        // Keep background pressure sampling independent of the manually advanced readiness clock.
+        services.AddSingleton<TimeProvider>(new FakeTimeProvider());
         var registration = services.Single(service => service.ServiceType == typeof(SqliteStorageEngine));
         services.Remove(registration);
         services.AddSingleton(provider =>
@@ -403,19 +406,26 @@ public sealed class HealthTests
     // Observe cancellation reaching the real server, rather than just HttpClient ceasing to wait.
     private sealed class ObserveCanceledRequest : IStartupFilter
     {
+        public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public TaskCompletionSource Finished { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next) => app =>
         {
             app.Use(async (context, continuation) =>
             {
+                if (context.Request.Path == "/readyz")
+                {
+                    Entered.TrySetResult();
+                }
+
                 try
                 {
                     await continuation(context);
                 }
                 finally
                 {
-                    if (context.RequestAborted.IsCancellationRequested)
+                    if (context.Request.Path == "/readyz" && context.RequestAborted.IsCancellationRequested)
                     {
                         Finished.TrySetResult();
                     }

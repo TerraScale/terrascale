@@ -419,7 +419,7 @@ internal sealed partial class SqliteStorageTransaction(
         }
     }
 
-    private static bool ScansLimited => QosContext.Current is { } current && QosPolicy.For(current.Plan).ScanRows != long.MaxValue;
+    private bool ScansLimited => !store.IsSystem && QosContext.Current is { } current && QosPolicy.For(current.Plan).ScanRows != long.MaxValue;
 
     private const int MaxSnapshotSteps = 10_000;
     private const int MaxSnapshotSkips = 50_000;
@@ -427,7 +427,8 @@ internal sealed partial class SqliteStorageTransaction(
     // The handler and its removal run only on workers while this transaction owns the connection.
     private QueryBudget StartQueryBudget(CancellationToken cancellationToken)
     {
-        var budget = new QueryBudget(store.Time, store.QueryBudget, QosContext.Current is { } tenant ? QosPolicy.For(tenant.Plan) : null);
+        var budget = new QueryBudget(store.Time, store.QueryBudget,
+            !store.IsSystem && QosContext.Current is { } tenant ? QosPolicy.For(tenant.Plan) : null);
         raw.sqlite3_progress_handler(session.Connection.Handle, 1000,
             _ => cancellationToken.IsCancellationRequested || budget.Progress() ? 1 : 0, null);
         if (budget.ScansLimited)

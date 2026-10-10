@@ -292,6 +292,7 @@ public sealed class CollectionSchemaAdmissionTests
     public async Task Root_only_schemas_leave_large_documents_writable_under_a_small_memory_budget(string schema)
     {
         await using var api = await DocumentApi.StartAsync(settings => settings["memory-budget"] = "16777216");
+        await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "enterprise");
         await AttachAsync(api, schema);
         var id = DocumentApi.NewId();
         var document = $$"""{"a":[{{string.Join(',', Enumerable.Repeat("0", 4000))}}]}""";
@@ -306,6 +307,7 @@ public sealed class CollectionSchemaAdmissionTests
     public async Task Schema_expansion_over_the_memory_budget_rejects_writes_until_the_schema_is_detached()
     {
         await using var api = await DocumentApi.StartAsync(settings => settings["memory-budget"] = "16777216");
+        await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "enterprise");
         // Root + array property + items schema + 120 allOf schemas = 123 admitted nodes.
         var emptySchemas = string.Join(',', Enumerable.Repeat("{}", 120));
         var schema = $$"""{"properties":{"a":{"items":{"allOf":[{{emptySchemas}}]} } } }""";
@@ -323,7 +325,7 @@ public sealed class CollectionSchemaAdmissionTests
         await Assert.That(stored.EnumerateArray().All(item => item.GetInt32() == 0)).IsTrue();
     }
 
-    private static string SchemaPath(DocumentApi api) => $"/projects/{api.Tenant.ProjectId}/databases/{DocumentApi.Database}/collections/{DocumentApi.Collection}/schema";
+    private static string SchemaPath(DocumentApi api) => $"/v1/projects/{api.Tenant.ProjectId}/databases/{DocumentApi.Database}/collections/{DocumentApi.Collection}/schema";
 
     private static async Task AttachAsync(DocumentApi api, string schema)
     {

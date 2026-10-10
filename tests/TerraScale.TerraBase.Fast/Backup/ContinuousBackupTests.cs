@@ -262,7 +262,7 @@ public sealed class ContinuousBackupTests
     {
         using var oci = new FakeOci();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
-        await using var api = await ManagementApi.StartAsync(oci.Configure, oci.Route, time, managementCredential: true);
+        await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time, managementCredential: true);
         var backup = api.Server.Services.GetRequiredService<IContinuousBackup>();
         var hobby = await api.CreateManagedDatabaseAsync("main");
         var pro = await api.CreateManagedDatabaseAsync("main");
@@ -310,7 +310,7 @@ public sealed class ContinuousBackupTests
     {
         using var oci = new FakeOci();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
-        await using var api = await ManagementApi.StartAsync(oci.Configure, oci.Route, time, managementCredential: true);
+        await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time, managementCredential: true);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var token = deadline.Token;
         var backup = api.Server.Services.GetRequiredService<IContinuousBackup>();

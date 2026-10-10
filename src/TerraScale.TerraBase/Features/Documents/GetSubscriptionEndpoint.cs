@@ -18,7 +18,7 @@ public sealed class GetSubscriptionEndpoint(ITenantDirectory tenants, IShapeSubs
     /// <inheritdoc />
     public override void Configure()
     {
-        Get("/projects/{project}/databases/{database}/collections/{collection}/subscribe");
+        Get(DocumentRoute.Collections + "/{collection}/subscribe");
         Name("subscribeCollection");
         Summary("Subscribes to a collection or document over SSE");
         Description("Requires a ts-auth JWT with project_id matching the project, optional database restriction and shapes:read scope. Sends shape events containing ShapeBody snapshots and filtered change pages. Optional id selects one document; where uses the shape filter grammar. offset defaults to -1; other offsets require handle. Resume using Last-Event-ID or explicit handle and offset, with the same id and where. Each event id is handle:next_offset. Deleted documents and documents leaving the filter emit delete operations. Terminal failures emit an error event and close; stale history requires a new snapshot. The stream ends at the signed token expiration without skew. Use fetch with an Authorization header; query-string tokens and cookie authentication are unsupported. Organization plans control request admission, query cost and actual result memory. Node subscription capacity returns 429 subscription_busy; tenant admission returns 429 tenant_busy or tenant_memory with Retry-After. After streaming starts, terminal failures emit an error event when memory permits, otherwise the connection closes.");

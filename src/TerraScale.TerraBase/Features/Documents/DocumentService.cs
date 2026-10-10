@@ -385,6 +385,7 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
                     Done => result,
                     QuotaExceeded error => new DocumentRejected(error, indexErrors ? growthOp : null),
                     Unavailable error => new DocumentRejected(error, indexErrors ? growthOp : null),
+                    null => throw new UnreachableException(),
                 };
             }, outcome => outcome is WriteResult, cancellationToken)
             .ConfigureAwait(false);

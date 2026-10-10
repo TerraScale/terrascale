@@ -577,7 +577,6 @@ public sealed class SenderLifecycleTests
     public async Task A_peer_waiting_on_Hello_or_an_ack_does_not_pin_the_SQLite_WAL(bool waitForAck)
     {
         using var peerTls = new PeerTls();
-        using var clientTls = new ClientTls();
         var waiting = new TaskCompletionSource<CancellationToken>(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = NewSignal();
         await using var peer = await FakePeer.StartAsync(peerTls, async (requests, responses, context) =>
@@ -602,16 +601,17 @@ public sealed class SenderLifecycleTests
                 await responses.WriteAsync(FakePeer.Ack(member, batch, batch.EventId.Sequence), context.CancellationToken);
             }
         });
-        await using var sender = await TerraBaseTestServer.StartAsync(settings =>
+        await using var api = await ManagementApi.StartAsync(settings =>
         {
             peerTls.Apply(settings);
-            clientTls.Apply(settings);
             settings["peer-addresses"] = peer.Address.ToString();
             // The backlog accumulates while the peer stalls; write-wait would hold each write on the stalled stream.
             settings["write-wait-ms"] = "0";
-        });
+        }, managementCredential: true);
+        var sender = api.Server;
         var tenant = await ReplicationTenant.CreateAsync(sender, "backlog");
-        using var writer = clientTls.CreateClient(sender.ClientAddress!, await tenant.KeyAsync(sender, "documents:write"));
+        await api.SetPlanAsync(tenant.UserId, tenant.OrganizationId, "enterprise");
+        using var writer = api.Tls.CreateClient(sender.ClientAddress!, await tenant.KeyAsync(sender, "documents:write"));
         await CreateAsync(tenant, writer);
         await PutAsync(tenant, writer, "first");
         var heldRpc = await waiting.Task.WaitAsync(TimeSpan.FromSeconds(30));

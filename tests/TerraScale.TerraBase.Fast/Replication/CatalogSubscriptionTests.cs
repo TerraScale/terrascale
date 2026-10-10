@@ -73,7 +73,7 @@ public sealed class CatalogSubscriptionTests
         var engine = follower.Services.GetRequiredService<IStorageEngine>();
         await Assert.That(await engine.OpenDatabaseAsync(database, deadline.Token)).IsNull();
 
-        var route = new Uri($"/projects/{project}/databases/orders/collections/items/subscribe", UriKind.Relative);
+        var route = new Uri($"/v1/projects/{project}/databases/orders/collections/items/subscribe", UriKind.Relative);
         foreach (var (grantProject, grantDatabase, scope, expired, status, code) in new[]
         {
             (project, "orders", "shapes:read", false, HttpStatusCode.MisdirectedRequest, "wrong_region"),
@@ -211,7 +211,7 @@ public sealed class CatalogSubscriptionTests
         listener.RecordObservableInstruments();
         var baseline = Volatile.Read(ref reserved);
         var releasedCeiling = baseline;
-        var route = new Uri($"/projects/{database.Project}/databases/{database.Name}/collections/items/subscribe", UriKind.Relative);
+        var route = new Uri($"/v1/projects/{database.Project}/databases/{database.Name}/collections/items/subscribe", UriKind.Relative);
         using var response = afterStart ? await client.GetAsync(route, HttpCompletionOption.ResponseHeadersRead, deadline.Token) : null;
         using var reader = response is null ? null : new StreamReader(await response.Content.ReadAsStreamAsync(deadline.Token));
         if (afterStart)

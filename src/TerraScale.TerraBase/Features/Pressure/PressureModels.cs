@@ -6,7 +6,7 @@ namespace TerraBase.Features.Pressure;
 public sealed record PressureBody
 {
     /// <summary>Wire schema version.</summary>
-    [JsonPropertyName("schema")] public int Schema => 2;
+    [JsonPropertyName("schema")] public int Schema => 1;
     /// <summary>Operator node identity.</summary>
     [JsonPropertyName("node")] public required string Node { get; init; }
     /// <summary>Cloud instance identity supplied by the operator; null when unconfigured.</summary>

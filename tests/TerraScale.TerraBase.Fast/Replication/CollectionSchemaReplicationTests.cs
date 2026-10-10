@@ -28,7 +28,7 @@ public sealed class CollectionSchemaReplicationTests
         using var clientA = tls.CreateClient(a.ClientAddress!, await tenant.KeyAsync(a, "documents:read", "documents:write"));
         using var clientB = tls.CreateClient(b.ClientAddress!, await tenant.KeyAsync(b, "documents:read", "documents:write"));
         var collection = $"{tenant.Path("shop")}/collections/items";
-        var schema = $"/projects/{tenant.ProjectId}/databases/shop/collections/items/schema";
+        var schema = $"/v1/projects/{tenant.ProjectId}/databases/shop/collections/items/schema";
         var document = $"{collection}/documents/by-key?id={DocumentApi.NewId()}";
         var body = new { count = new Faker().Random.Int(1, 100) };
         var created = await DocumentApi.SendAsync(clientA, HttpMethod.Post, $"{tenant.Path("shop")}/collections",
@@ -145,7 +145,7 @@ public sealed class CollectionSchemaReplicationTests
         await tenant.BindAsync(receiver);
         using var writer = tls.CreateClient(source.ClientAddress!, await tenant.KeyAsync(source, "documents:read", "documents:write"));
         using var reader = tls.CreateClient(receiver.ClientAddress!, await tenant.KeyAsync(receiver, "documents:read", "documents:write"));
-        var schema = $"/projects/{tenant.ProjectId}/databases/shop/collections/items/schema";
+        var schema = $"/v1/projects/{tenant.ProjectId}/databases/shop/collections/items/schema";
         var document = $"{tenant.Path("shop")}/collections/items/documents/by-key?id={DocumentApi.NewId()}";
         var created = await DocumentApi.SendAsync(writer, HttpMethod.Post, $"{tenant.Path("shop")}/collections",
             JsonContent.Create(new { name = "items" }), cancellationToken: token);

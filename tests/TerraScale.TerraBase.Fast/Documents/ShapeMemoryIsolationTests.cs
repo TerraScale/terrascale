@@ -1,12 +1,16 @@
+using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Globalization;
 using System.Net;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Memory;
+using TerraBase.Features.Qos;
+using TerraBase.Tenancy;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Documents;
@@ -24,6 +28,12 @@ public sealed class ShapeMemoryIsolationTests
         ResponseBarrier? barrier = null;
         await using var api = await DocumentApi.StartAsync(settings => settings["memory-budget"] = Budget.ToString(CultureInfo.InvariantCulture), services =>
         {
+            // Keep independent periodic usage sampling outside this response-ownership scenario.
+            services.AddSingleton<TimeProvider>(new FakeTimeProvider(DateTimeOffset.UtcNow));
+            var registration = services.Single(service => service.ServiceType == typeof(IMemoryBudget));
+            services.Remove(registration);
+            services.AddSingleton(provider => new ObservedMemoryBudget((IMemoryBudget)registration.ImplementationFactory!(provider)));
+            services.AddSingleton<IMemoryBudget>(provider => provider.GetRequiredService<ObservedMemoryBudget>());
             services.AddHttpContextAccessor();
             services.AddSingleton<IShapeService>(provider => barrier = new ResponseBarrier(
                 ActivatorUtilities.CreateInstance<ShapeService>(provider), provider.GetRequiredService<IHttpContextAccessor>()));
@@ -110,8 +120,11 @@ public sealed class ShapeMemoryIsolationTests
             api.Server.Services.GetRequiredService<DocumentCache>().Dispose();
             // Pending usage observations hold admission until the usage flush.
             await api.Server.Services.GetRequiredService<UsageMeter>().FlushAsync(deadline.Token);
+            // Response completion does not join the producer's final ResultMemory disposal.
+            var memory = api.Server.Services.GetRequiredService<ObservedMemoryBudget>();
+            await memory.WaitForReleaseAsync(deadline.Token);
             using var all = budget.TryReserve(MemoryLane.Foreground, Budget, null);
-            await Assert.That(all).IsNotNull();
+            await Assert.That(all).IsNotNull().Because(memory.DescribeOutstanding());
         }
         finally
         {
@@ -142,6 +155,110 @@ public sealed class ShapeMemoryIsolationTests
         catch (OperationCanceledException)
         {
             // Every pending listener request is joined before the test's server is disposed.
+        }
+    }
+
+    private sealed class ObservedMemoryBudget(IMemoryBudget inner) : IMemoryBudget
+    {
+        private readonly Lock _gate = new();
+        // The real budget's reservation table bounds this set; zero-byte leases retain no state.
+        private readonly HashSet<ObservedReservation> _outstanding = [];
+        private long _nextId;
+
+        public IMemoryReservation? TryReserve(MemoryLane lane, long bytes) => TryReserve(lane, bytes, QosContext.Current);
+
+        public IMemoryReservation? TryReserve(MemoryLane lane, long bytes, TenantContext? tenant)
+        {
+            lock (_gate)
+            {
+                var admitted = inner.TryReserve(lane, bytes, tenant);
+                if (admitted is null || admitted.Bytes == 0)
+                {
+                    return admitted;
+                }
+
+                var reservation = new ObservedReservation(this, admitted, ++_nextId, lane, Owner(tenant));
+                _outstanding.Add(reservation);
+                return reservation;
+            }
+        }
+
+        public async Task WaitForReleaseAsync(CancellationToken cancellationToken)
+        {
+            Task released;
+            lock (_gate)
+            {
+                released = Task.WhenAll(_outstanding.Select(reservation => reservation.Released.Task));
+            }
+
+            try
+            {
+                await released.WaitAsync(cancellationToken);
+            }
+            catch (OperationCanceledException error) when (cancellationToken.IsCancellationRequested)
+            {
+                throw new InvalidOperationException($"Memory release barrier did not complete: {DescribeOutstanding()}", error);
+            }
+        }
+
+        public string DescribeOutstanding()
+        {
+            lock (_gate)
+            {
+                var owners = _outstanding.OrderBy(reservation => reservation.Id).Take(8)
+                    .Select(reservation => $"#{reservation.Id}:{reservation.Lane}/{reservation.Owner}:{reservation.Bytes}B");
+                return $"Outstanding reservations: {_outstanding.Count}, bytes: {_outstanding.Sum(reservation => reservation.Bytes)}; {string.Join(", ", owners)}";
+            }
+        }
+
+        private static string Owner(TenantContext? tenant)
+        {
+            // Missing allocation frames fall back to charge scope rather than guessing an owner.
+            foreach (var frame in new StackTrace().GetFrames())
+            {
+                var type = frame.GetMethod()?.DeclaringType;
+                if (type == typeof(QosContext.ResultMemory))
+                {
+                    return "result-memory";
+                }
+
+                if (type == typeof(UsageMeter))
+                {
+                    return "usage-observation";
+                }
+
+                if (type == typeof(DocumentCache))
+                {
+                    return "document-cache";
+                }
+            }
+
+            return tenant is null ? "system" : "tenant";
+        }
+
+        private sealed class ObservedReservation(
+            ObservedMemoryBudget budget, IMemoryReservation inner, long id, MemoryLane lane, string owner) : IMemoryReservation
+        {
+            private int _disposed;
+
+            public long Id => id;
+            public MemoryLane Lane => lane;
+            public string Owner => owner;
+            public long Bytes => inner.Bytes;
+            public TaskCompletionSource Released { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            public void Dispose()
+            {
+                if (Interlocked.Exchange(ref _disposed, 1) == 0)
+                {
+                    lock (budget._gate)
+                    {
+                        inner.Dispose();
+                        budget._outstanding.Remove(this);
+                        Released.TrySetResult();
+                    }
+                }
+            }
         }
     }
 

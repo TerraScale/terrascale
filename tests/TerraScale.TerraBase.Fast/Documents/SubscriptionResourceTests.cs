@@ -239,7 +239,7 @@ public sealed class SubscriptionResourceTests
             await held.Entered.Task.WaitAsync(deadline.Token);
             await ordinaryWaiting.Task.WaitAsync(deadline.Token);
             var subscription = subscriber.GetAsync(ManagementApi.Uri(
-                $"/projects/{database.Project}/databases/{database.Name}/collections/items/subscribe"),
+                $"/v1/projects/{database.Project}/databases/{database.Name}/collections/items/subscribe"),
                 HttpCompletionOption.ResponseHeadersRead, deadline.Token);
             var (cancelled, completed) = await cancelledRead.Task.WaitAsync(deadline.Token);
             await Assert.That(cancelled).IsTrue();
@@ -302,7 +302,7 @@ public sealed class SubscriptionResourceTests
             ? beforeRead.WaitAsync(cancellationToken)
             : ValueTask.CompletedTask;
         var subscription = subscriber.GetAsync(ManagementApi.Uri(
-            $"/projects/{database.Project}/databases/{database.Name}/collections/items/subscribe"), deadline.Token);
+            $"/v1/projects/{database.Project}/databases/{database.Name}/collections/items/subscribe"), deadline.Token);
         try
         {
             await beforeRead.Entered.Task.WaitAsync(deadline.Token);
@@ -322,7 +322,7 @@ public sealed class SubscriptionResourceTests
         }
 
         using var admitted = await subscriber.GetAsync(ManagementApi.Uri(
-            $"/projects/{database.Project}/databases/{database.Name}/collections/items/subscribe"),
+            $"/v1/projects/{database.Project}/databases/{database.Name}/collections/items/subscribe"),
             HttpCompletionOption.ResponseHeadersRead, deadline.Token);
         await Assert.That(admitted.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(admitted.Content.Headers.ContentType!.MediaType).IsEqualTo("text/event-stream");
@@ -391,7 +391,7 @@ public sealed class SubscriptionResourceTests
             token.Expires = clock.GetUtcNow().AddMinutes(5).UtcDateTime;
         }));
         using var response = await client.GetAsync(ManagementApi.Uri(
-            $"/projects/{database.Project}/databases/{database.Name}/collections/items/subscribe"),
+            $"/v1/projects/{database.Project}/databases/{database.Name}/collections/items/subscribe"),
             HttpCompletionOption.ResponseHeadersRead, deadline.Token);
         response.EnsureSuccessStatusCode();
         await Assert.That(response.Content.Headers.ContentType!.MediaType).IsEqualTo("text/event-stream");

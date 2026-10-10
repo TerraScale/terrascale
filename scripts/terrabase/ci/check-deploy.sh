@@ -107,7 +107,7 @@ cp "$sandbox/serve/app-linux-arm64.sha256" "$sandbox/good.sha256"
 
 fail() { echo "check-deploy: $*" >&2; exit 1; }
 python3 - "$repo/.forgejo/workflows/fast.yml" "$repo/scripts/ci/deploy.sh" <<'PY'
-import pathlib, sys
+import pathlib, re, sys
 workflow, script = [pathlib.Path(path).read_text() for path in sys.argv[1:]]
 if "TS_AUTO_DEPLOY_" in workflow or "TS_AUTO_DEPLOY_" in script:
     sys.exit("check-deploy: an automatic deployment switch remains")
@@ -117,6 +117,12 @@ if condition != "if: ${{ forgejo.event_name == 'push' && forgejo.ref == 'refs/he
     sys.exit("check-deploy: deployment must run on every green main push")
 if "    needs: [publish]\n" not in deploy:
     sys.exit("check-deploy: deployment must wait for the published green build")
+for name, pattern in (("TS_ORCH_RELEASE", r"ci-[0-9a-f]{40}-run-[0-9]+"),
+                      ("TS_ORCH_SHA256", r"[0-9a-f]{64}")):
+    value = next(line.split(":", 1)[1].strip() for line in deploy.splitlines()
+                 if line.strip().startswith(name + ":"))
+    if not re.fullmatch(pattern, value):
+        sys.exit(f"check-deploy: {name} must be pinned in the workflow")
 PY
 # alive SESSION: the processes of SESSION that still run. A container whose
 # init never reaps orphans keeps finished ones as zombies, which do not.

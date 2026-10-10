@@ -8,6 +8,9 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.IdentityModel.Tokens;
 using TerraBase.Engine;
+using TerraBase.Features.Memory;
+using TerraBase.Features.Qos;
+using TerraBase.Tenancy;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Documents;
@@ -40,6 +43,7 @@ public sealed class ChangeFeedApiTests
         }
 
         var token = Token(start);
+        await Assert.That(token).StartsWith("v1.");
         long previousSequence = -1;
         for (var revision = 1; revision <= 4; revision++)
         {
@@ -267,6 +271,8 @@ public sealed class ChangeFeedApiTests
         var invalid = new[]
         {
             "not-a-token", "alpha", new string('x', 129), token + ".extra",
+            $"alpha.{parts[1]}.{parts[2]}.{parts[3]}",
+            $"v2.{parts[1]}.{parts[2]}.{parts[3]}",
             $"{parts[0]}.{parts[1]}.0{parts[2]}.{parts[3]}",
             $"{parts[0]}.{parts[1]}.{parts[2]}.0{parts[3]}",
             $"{parts[0]}.{parts[1]}.-1.{parts[3]}",
@@ -472,7 +478,7 @@ public sealed class ChangeFeedApiTests
         using var anonymous = api.WithToken(null);
         var document = await anonymous.GetFromJsonAsync<JsonElement>(ManagementApi.Uri("/openapi/v1.json"));
         var operation = document.GetProperty("paths")
-            .GetProperty("/projects/{project}/databases/{database}/collections/{collection}/changes").GetProperty("get");
+            .GetProperty("/v1/projects/{project}/databases/{database}/collections/{collection}/changes").GetProperty("get");
         await Assert.That(operation.GetProperty("operationId").GetString()).IsEqualTo("getCollectionChanges");
         await Assert.That(operation.GetProperty("security").EnumerateArray().Any(item => item.TryGetProperty("TsAuth", out _))).IsTrue();
     }
@@ -480,7 +486,7 @@ public sealed class ChangeFeedApiTests
     [Test]
     public async Task An_eight_MiB_memory_budget_refuses_feed_reads_without_leaking_admission()
     {
-        // Binding verification reserves 4 MiB; leave room for it while refusing the feed's 32 MiB reservation.
+        // Leave room for binding verification while refusing the feed's 32 MiB reservation.
         await using var api = await DocumentApi.StartAsync(settings => settings["memory-budget"] = "8388608");
         using var feed = await CreateFeedClientAsync(api);
         var reserved = await api.ReservedBytesAsync();
@@ -504,7 +510,16 @@ public sealed class ChangeFeedApiTests
         var delivery = new DeliveryGate(responses);
         await using var api = await DocumentApi.StartAsync(
             settings => settings["memory-budget"] = budget.ToString(CultureInfo.InvariantCulture),
-            services => services.AddSingleton<IStartupFilter>(delivery));
+            services =>
+            {
+                var registration = services.Single(service => service.ServiceType == typeof(IMemoryBudget));
+                services.Remove(registration);
+                services.AddSingleton(provider => new ObservedMemoryBudget((IMemoryBudget)registration.ImplementationFactory!(provider)));
+                services.AddSingleton<IMemoryBudget>(provider => provider.GetRequiredService<ObservedMemoryBudget>());
+                services.AddSingleton<IStartupFilter>(delivery);
+            });
+        await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "enterprise");
+        var memory = api.Server.Services.GetRequiredService<ObservedMemoryBudget>();
         using var feed = await CreateFeedClientAsync(api);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         deadline.CancelAfter(TimeSpan.FromSeconds(30));
@@ -515,8 +530,10 @@ public sealed class ChangeFeedApiTests
         {
             await delivery.Entered.Task.WaitAsync(deadline.Token);
             await Assert.That(await api.Server.MetricAsync("terrabase_change_feed_active", cancellationToken: deadline.Token)).IsEqualTo(responses);
+            await Assert.That(memory.FeedBytes).IsEqualTo(responses * 32L * 1024 * 1024);
+            // Request middleware and detached catalog results also retain their own admission through delivery.
             await Assert.That(await api.ReservedBytesAsync(deadline.Token))
-                .IsEqualTo(reserved + responses * 32L * 1024 * 1024);
+                .IsEqualTo(memory.ReservedBytes);
             var busy = await DocumentApi.SendAsync(feed, HttpMethod.Get, Route(api), cancellationToken: deadline.Token);
             await Assert.That((busy.Status, busy.Code)).IsEqualTo((HttpStatusCode.TooManyRequests, "change_feed_busy"));
         }
@@ -536,6 +553,7 @@ public sealed class ChangeFeedApiTests
         // A client can finish receiving just before the server's finally returns its reservation.
         await TerraBaseTestServer.EventuallyAsync(async token =>
             await api.Server.MetricAsync("terrabase_change_feed_active", cancellationToken: token) == 0);
+        await Assert.That(memory.FeedBytes).IsEqualTo(0);
         await Assert.That(await api.ReservedBytesAsync()).IsEqualTo(reserved);
         await Assert.That((await ReadAsync(api, feed)).Status).IsEqualTo(HttpStatusCode.OK);
     }
@@ -556,7 +574,7 @@ public sealed class ChangeFeedApiTests
         });
 
     private static string Route(DocumentApi api, string database = "db", string collection = "items") =>
-        $"/projects/{api.Tenant.ProjectId}/databases/{database}/collections/{collection}/changes";
+        $"/v1/projects/{api.Tenant.ProjectId}/databases/{database}/collections/{collection}/changes";
 
     private static async Task<ApiResponse> ReadAsync(DocumentApi api, HttpClient feed, string? token = null, int? limit = null)
     {
@@ -583,6 +601,53 @@ public sealed class ChangeFeedApiTests
 
     private static long Number(JsonElement value, string property) =>
         long.Parse(value.GetProperty(property).GetString()!, CultureInfo.InvariantCulture);
+
+    private sealed class ObservedMemoryBudget(IMemoryBudget inner) : IMemoryBudget
+    {
+        private long _reserved;
+        private long _feed;
+
+        public long ReservedBytes => Interlocked.Read(ref _reserved);
+        public long FeedBytes => Interlocked.Read(ref _feed);
+
+        public IMemoryReservation? TryReserve(MemoryLane lane, long bytes) => TryReserve(lane, bytes, QosContext.Current);
+
+        public IMemoryReservation? TryReserve(MemoryLane lane, long bytes, TenantContext? tenant)
+        {
+            if (inner.TryReserve(lane, bytes, tenant) is not { } admitted)
+            {
+                return null;
+            }
+
+            Interlocked.Add(ref _reserved, admitted.Bytes);
+            if (admitted.Bytes == 32L * 1024 * 1024)
+            {
+                Interlocked.Add(ref _feed, admitted.Bytes);
+            }
+
+            return new ObservedReservation(this, admitted);
+        }
+
+        private sealed class ObservedReservation(ObservedMemoryBudget budget, IMemoryReservation inner) : IMemoryReservation
+        {
+            private int _disposed;
+
+            public long Bytes => inner.Bytes;
+
+            public void Dispose()
+            {
+                if (Interlocked.Exchange(ref _disposed, 1) == 0)
+                {
+                    inner.Dispose();
+                    Interlocked.Add(ref budget._reserved, -Bytes);
+                    if (Bytes == 32L * 1024 * 1024)
+                    {
+                        Interlocked.Add(ref budget._feed, -Bytes);
+                    }
+                }
+            }
+        }
+    }
 
     // Hold real successful responses at the first transport write, after the page was prepared.
     // This changes delivery timing only; storage, authorization and memory admission stay real.

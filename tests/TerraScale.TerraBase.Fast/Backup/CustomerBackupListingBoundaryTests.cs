@@ -310,7 +310,7 @@ public sealed class CustomerBackupListingBoundaryTests
         }, cancellationToken);
         saved.EnsureSuccessStatusCode();
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
-        await ManagementApi.CreateCollectionAsync(data, database, "people");
+        await ManagementApi.CreateCollectionAsync(data, database, "people", cancellationToken);
         var text = new Faker().Lorem.Sentence(12);
         await PutAsync(data, database, "kept", text, cancellationToken);
         return (database, text);

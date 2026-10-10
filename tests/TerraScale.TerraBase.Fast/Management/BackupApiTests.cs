@@ -440,9 +440,7 @@ public sealed class BackupApiTests
         var backupFiles = SnapshotFiles(api, database).Count(file => file.EndsWith(".db", StringComparison.Ordinal));
 
         using var deleted = await api.Client.DeleteAsync(Uri(database.Path));
-        var databaseFiles = Directory.Exists(ProjectDirectory(api, database))
-            ? Directory.GetFiles(ProjectDirectory(api, database), $"{database.Id}*").Length
-            : 0;
+        var databaseFiles = RemainingFiles(ProjectDirectory(api, database), $"{database.Id}*").Length;
         await WaitAsync(time, async () =>
             SnapshotFiles(api, database).Length == 0
             && await CountAsync(api.Server.DataDirectory, "storage_sweep") == 0
@@ -863,7 +861,9 @@ public sealed class BackupApiTests
     public async Task A_database_whose_scheduled_backups_keep_failing_does_not_starve_the_others(bool copyThrows)
     {
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 4, 10, 30, 0, TimeSpan.Zero));
-        await using var api = await ManagementApi.StartAsync(time: time);
+        // Own each pass so polling cannot advance the clock during a copy or leave the scheduler busy at cleanup.
+        await using var api = await ManagementApi.StartAsync(time: time, services: services =>
+            services.Remove(services.Single(service => service.ServiceType == typeof(IHostedService) && service.ImplementationType?.Name == "BackupScheduler")));
         var organization = await api.CreateOrganizationAsync(Faker.Company.CompanyName());
         var project = await api.CreateProjectAsync(organization, Faker.Commerce.ProductName());
         var failed = new List<ManagedDatabaseRef>();
@@ -887,12 +887,29 @@ public sealed class BackupApiTests
             }
         }
 
-        // Ids are ULIDs: a later millisecond sorts the healthy database after every failing one. No scheduler tick yet.
+        // Database ids use the application clock: a later millisecond sorts the healthy one after every failing one.
         time.Advance(TimeSpan.FromMilliseconds(1));
         var healthy = await api.CreateManagedDatabaseAsync(organization, project, "healthy");
         (await api.Client.PutAsJsonAsync(Uri($"{healthy.Path}/backup-policy"), new { fullBackupCron = "* * * * *", retentionDays = 35 })).EnsureSuccessStatusCode();
+        await Assert.That(failed.All(database => string.CompareOrdinal(database.Id, healthy.Id) < 0)).IsTrue();
 
-        var backups = await WaitForBackupsAsync(api, time, $"{healthy.Path}/backups", items => items.Length > 0);
+        var scheduler = api.Server.Services.GetRequiredService<IManagedBackupService>();
+        var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
+        time.Advance(TimeSpan.FromMinutes(1));
+        await scheduler.RunScheduleAsync(cancellationToken);
+        foreach (var database in failed.Take(16))
+        {
+            var schedule = (await ReadScheduleAsync(api, database))!.Value;
+            await Assert.That(schedule.GetProperty("lastFailedAt").ValueKind).IsEqualTo(JsonValueKind.String);
+        }
+
+        await Assert.That(await ReadScheduleAsync(api, failed[^1])).IsNull();
+        await Assert.That((await ListBackupsAsync(api, $"{healthy.Path}/backups")).Length).IsEqualTo(0);
+
+        // The unattempted failing database and the healthy one precede retries on the second pass.
+        time.Advance(TimeSpan.FromMinutes(1));
+        await scheduler.RunScheduleAsync(cancellationToken);
+        var backups = await ListBackupsAsync(api, $"{healthy.Path}/backups");
 
         await Assert.That(backups.Single().GetProperty("trigger").GetString()).IsEqualTo("scheduled");
         foreach (var database in failed)
@@ -941,10 +958,21 @@ public sealed class BackupApiTests
     // The snapshot files (with sidecars and temporary files) next to a database: every file of its project directory but its own.
     private static string[] SnapshotFiles(ManagementApi api, ManagedDatabaseRef database)
     {
-        var directory = ProjectDirectory(api, database);
-        return Directory.Exists(directory)
-            ? [.. Directory.GetFiles(directory).Where(file => !Path.GetFileName(file).StartsWith(database.Id, StringComparison.Ordinal))]
-            : [];
+        return [.. RemainingFiles(ProjectDirectory(api, database))
+            .Where(file => !Path.GetFileName(file).StartsWith(database.Id, StringComparison.Ordinal))];
+    }
+
+    private static string[] RemainingFiles(string directory, string pattern = "*")
+    {
+        try
+        {
+            return Directory.GetFiles(directory, pattern);
+        }
+        catch (DirectoryNotFoundException)
+        {
+            // The engine removes the empty project directory as the sweep finishes.
+            return [];
+        }
     }
 
     // Steps the fake clock a minute at a time so the scheduler ticks, until the backups satisfy done (see WaitAsync).

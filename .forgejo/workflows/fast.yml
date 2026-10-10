@@ -30,9 +30,6 @@ concurrency:
 
 env:
   CI: "true"
-  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
-  DOTNET_NOLOGO: "1"
-  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "1"
 
 jobs:
   fast:
@@ -52,20 +49,9 @@ jobs:
       - name: Use the persistent NuGet cache
         run: bash scripts/ci/nuget-cache.sh
 
-      - name: Restore with locked dependencies
-        run: make restore
-
-      - name: Check formatting
-        run: make fmt-check
-
-      - name: Build Release with analyzers as errors
-        run: make build CONFIGURATION=Release
-
-      - name: TB0001 analyzer build check
-        run: make analyzer-check CONFIGURATION=Release
-
-      - name: Fast integration suite
-        run: make test-fast CONFIGURATION=Release
+      # One make invocation shares restore/build prerequisites across all gates.
+      - name: Formatting, Release build, analyzer check and Fast integration
+        run: make check CONFIGURATION=Release
 
   release:
     name: release
@@ -158,8 +144,9 @@ jobs:
         env:
           ORG_READ_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
           TS_RELEASE_OCI_KEY: ${{ secrets.TS_RELEASE_OCI_KEY }}
-          TS_ORCH_RELEASE: ${{ vars.TS_ORCH_RELEASE }}
-          TS_ORCH_SHA256: ${{ vars.TS_ORCH_SHA256 }}
+          # Qualified together: this helper discovers and rolls regions in parallel.
+          TS_ORCH_RELEASE: ci-1e57e6c1736238e1f1d5a910dfe45c0cbdc20151-run-16180
+          TS_ORCH_SHA256: f29dc054716f2ed50ab97960c675753f33c8ac158d6a49f74cd5c190a93ec771
           TS_OBJECT_NAMESPACE: ${{ vars.TS_OBJECT_NAMESPACE }}
           TS_RELEASE_VAULT_ID: ${{ vars.TS_RELEASE_VAULT_ID }}
           TS_RELEASE_KEY_SECRET: ${{ vars.TS_RELEASE_KEY_SECRET }}

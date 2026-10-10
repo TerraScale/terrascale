@@ -39,6 +39,7 @@ public sealed class SetBackupDestinationEndpoint(IManagementService management, 
         {
             NotFound error => ErrorResponse.From(error),
             Forbidden error => ErrorResponse.From(error),
+            Unavailable error => ErrorResponse.From(error),
             Project project => BackupDestinationRoute.Validate(request) is { } error ? ErrorResponse.From(error)
                 : await destinations.SaveAsync(ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), project.Id, request, cancellationToken) switch
                 {

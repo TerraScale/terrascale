@@ -1,5 +1,6 @@
 using TerraBase.Configuration;
 using TerraBase.Engine;
+using TerraBase.Errors;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Backup;
@@ -35,7 +36,12 @@ internal sealed class BackupTargets(
     public BackupTarget Platform { get; } = new(BackupDestinationNames.Platform, platform, platformKeys, platformReader, [platform], includesPlatform: true);
 
     public async ValueTask<ProjectBackupDestinationRecord?> ConfigurationAsync(TenantContext? database, CancellationToken cancellationToken) =>
-        database is null ? null : await destinations.ReadAsync(database.OrganizationId, database.ProjectId!, cancellationToken).ConfigureAwait(false);
+        database is null ? null : await destinations.ReadAsync(database.OrganizationId, database.ProjectId!, cancellationToken).ConfigureAwait(false) switch
+        {
+            ProjectBackupDestinationRecord record => record,
+            NotFound => null,
+            Unavailable error => throw new IOException(error.Message),
+        };
 
     public Task<BackupTarget> ShippingAsync(TenantContext? database, ProjectBackupDestinationRecord? record, CancellationToken cancellationToken) =>
         record is null ? Task.FromResult(Platform) : CustomerAsync(database!, record, mirror: record.Destination.Mode == "both", freshKey: true, cancellationToken);

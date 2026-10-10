@@ -1,10 +1,13 @@
 using System.Net;
+using System.Text.Json;
+using Bogus;
+using Microsoft.IdentityModel.JsonWebTokens;
 using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Slow.Management;
 
-/// <summary>ts-auth access tokens against a real clock and, once TS-491 lands, a real ts-auth.</summary>
+/// <summary>ts-auth access tokens against a real clock and the qualified ts-auth executable.</summary>
 public sealed class UserAuthTests
 {
     [Test]
@@ -50,10 +53,38 @@ public sealed class UserAuthTests
     }
 
     [Test]
-    [Skip("TS-491: ts-auth main (C#) has no OIDC provider yet, so no binary serves discovery, a JWKS or at+jwt access tokens. "
-        + "The removed Rust provider issued typ JWT access tokens without email, which docs/decisions/0007 does not accept. "
-        + "When TS-491 lands: start the ts-auth binary, register a client for TerraBase's audience, obtain an access token and call the Management API with it.")]
-    public Task Access_tokens_from_the_real_ts_auth_binary_authenticate() => Task.CompletedTask;
+    public async Task Access_tokens_from_the_real_ts_auth_binary_authenticate()
+    {
+        var token = TestContext.Current!.Execution.CancellationToken;
+        await using var auth = await RealAuthFixture.StartAsync(token);
+        var accessToken = await auth.AccessTokenAsync(token);
+        var jwt = new JsonWebToken(accessToken);
+        await Assert.That(jwt.Issuer).IsEqualTo(auth.Issuer);
+        await Assert.That(jwt.Audiences).Contains(RealAuthFixture.Audience);
+        await Assert.That(jwt.Alg).IsEqualTo("ES256");
+        await Assert.That(jwt.Typ).IsEqualTo("at+jwt");
+        await Assert.That(jwt.Subject).IsEqualTo(auth.Subject);
+
+        using var tls = new ClientTls();
+        await using var server = await TerraBaseTestServer.StartAsync(settings =>
+        {
+            tls.Apply(settings);
+            auth.Configure(settings);
+        }, auth.TrustIssuer);
+        using var client = tls.CreateClient(server.ClientAddress!, accessToken);
+        var organizations = new Uri("/v1/management/organizations", UriKind.Relative);
+        using var created = await client.PostAsJsonAsync(organizations, new { name = new Faker().Company.CompanyName() }, token);
+        await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
+        var organization = await created.Content.ReadFromJsonAsync<JsonElement>(token);
+        await Assert.That(organization.GetProperty("createdBy").GetString()).IsEqualTo(auth.Subject);
+        using var listed = await client.GetAsync(organizations, token);
+        await Assert.That(listed.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        var items = await listed.Content.ReadFromJsonAsync<JsonElement>(token);
+        await Assert.That(items.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("id").GetString()))
+            .IsEquivalentTo([organization.GetProperty("id").GetString()]);
+        using var anonymous = tls.CreateClient(server.ClientAddress!);
+        await Assert.That(await StatusAsync(anonymous, organizations.OriginalString, token)).IsEqualTo(HttpStatusCode.Unauthorized);
+    }
 
     private static async Task<HttpStatusCode> StatusAsync(HttpClient client, string path, CancellationToken cancellationToken = default)
     {

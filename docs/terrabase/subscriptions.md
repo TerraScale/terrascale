@@ -1,8 +1,9 @@
 # Realtime subscriptions (TS-690, first slice)
 
-`GET /projects/{project}/databases/{database}/collections/{collection}/subscribe`
+`GET /v1/projects/{project}/databases/{database}/collections/{collection}/subscribe`
 streams the existing shape snapshot and change feed as `text/event-stream`.
-The database path parameter is its name. This unversioned route is client TLS only.
+The database path parameter is its name. This v1 route is client TLS only.
+The former unversioned subscription path returns `404`; no alias is registered.
 
 Send `Authorization: Bearer <ts-auth access token>`. TerraBase uses its configured
 issuer and audience, cached JWKS, signature and access-token type validation.

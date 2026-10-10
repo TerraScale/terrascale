@@ -1,15 +1,15 @@
 # Project replication and analytics (TS-762)
 
 TerraBase owns these observations. ts-go reads the public project API with a
-ts-auth project JWT; ts-dashboard reads them through ts-go. The four routes have
-no version component:
+ts-auth project JWT; ts-dashboard reads them through ts-go. The four routes use
+the v1 API:
 
 | Method and path | operationId |
 | --- | --- |
-| `GET /projects/{project}/analytics` | `getProjectAnalytics` |
-| `GET /projects/{project}/databases/{database}/analytics` | `getDatabaseAnalytics` |
-| `GET /projects/{project}/replication` | `getProjectReplication` |
-| `GET /projects/{project}/databases/{database}/replication` | `getDatabaseReplication` |
+| `GET /v1/projects/{project}/analytics` | `getProjectAnalytics` |
+| `GET /v1/projects/{project}/databases/{database}/analytics` | `getDatabaseAnalytics` |
+| `GET /v1/projects/{project}/replication` | `getProjectReplication` |
+| `GET /v1/projects/{project}/databases/{database}/replication` | `getDatabaseReplication` |
 
 All require `databases:read`, the signed `project_id`, and an existing verified
 project binding. Database path selectors are names, as on the existing project

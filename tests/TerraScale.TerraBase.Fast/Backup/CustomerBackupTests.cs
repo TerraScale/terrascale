@@ -5,6 +5,8 @@ using System.Text.Json;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
+using TerraBase.Engine;
+using TerraBase.Fast.Management;
 using TerraBase.Features.Backup;
 using TerraBase.Testing;
 
@@ -399,7 +401,12 @@ public sealed class CustomerBackupTests
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         using var oci = new FakeOci();
         var time = Clock();
-        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, oci.Route, time);
+        var queryClock = new SteppingClock();
+        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services =>
+        {
+            oci.Route(services);
+            services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, queryClock);
+        }, time);
         var organization = await api.CreateOrganizationAsync(new Faker().Company.CompanyName());
         var project = await api.CreateProjectAsync(organization, "Empty project");
         var projectRoute = Uri($"/v1/management/organizations/{organization}/projects/{project}");
@@ -424,8 +431,11 @@ public sealed class CustomerBackupTests
         await Assert.That(unconfigured.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(oci.ScheduledSecrets).IsEquivalentTo([secretId]);
         await Assert.That(oci.SecretDeletionTimes[secretId]).IsGreaterThanOrEqualTo(time.GetUtcNow().AddDays(7));
+        // System catalog scans retain the engine safety budget, even inside a Hobby management commit.
+        queryClock.Armed = true;
         using var deleted = await DeleteProjectAsync();
-        await Assert.That(deleted.StatusCode).IsEqualTo(viaCommit ? HttpStatusCode.OK : HttpStatusCode.NoContent);
+        await Assert.That(deleted.StatusCode).IsEqualTo(viaCommit ? HttpStatusCode.OK : HttpStatusCode.NoContent)
+            .Because(await deleted.Content.ReadAsStringAsync(cancellationToken));
         using var gone = await api.Client.GetAsync(projectRoute, cancellationToken);
         await Assert.That(gone.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(oci.ScheduledSecrets).IsEquivalentTo([secretId]);
@@ -436,7 +446,7 @@ public sealed class CustomerBackupTests
             return viaCommit
                 ? api.Client.PostAsJsonAsync(Uri("/v1/management/commits"), new
                 {
-                    id = Guid.NewGuid().ToString(),
+                    id = Ulid.NewUlid().ToString(),
                     ops = new[] { new { op = "delete_project", organization, project } },
                 }, cancellationToken)
                 : api.Client.DeleteAsync(projectRoute, cancellationToken);
@@ -487,7 +497,7 @@ public sealed class CustomerBackupTests
             await Assert.That(after).IsNotEqualTo(before);
             using var rejected = await api.Client.PostAsJsonAsync(Uri("/v1/management/commits"), new
             {
-                id = Guid.CreateVersion7().ToString(),
+                id = Ulid.NewUlid().ToString(),
                 ops = new[] { new { op = "fence", organization, version = before } },
             }, cancellationToken);
             await Assert.That(rejected.StatusCode).IsEqualTo(HttpStatusCode.PreconditionFailed);
@@ -569,7 +579,7 @@ public sealed class CustomerBackupTests
         await SetAsync(api, database, "both");
         var viewerId = await api.AddMemberAsync(api.Client, database.Organization, "viewer");
         using var viewer = api.As(viewerId);
-        using var outsider = api.As(Guid.NewGuid().ToString());
+        using var outsider = api.As(Ulid.NewUlid().ToString());
         using var viewerPut = await viewer.PutAsJsonAsync(route, valid, cancellationToken);
         using var viewerDelete = await viewer.DeleteAsync(route, cancellationToken);
         using var viewerRestore = await viewer.PostAsJsonAsync(Uri(database.Path + "/point-in-time/restore"), new { pointInTime = time.GetUtcNow(), destination = "customer" }, cancellationToken);
@@ -1404,7 +1414,7 @@ public sealed class CustomerBackupTests
         var sibling = await api.CreateProjectAsync(databases[0].Organization, "Admission sibling");
         var viewerId = await api.AddMemberAsync(api.Client, databases[0].Organization, "viewer");
         using var viewer = api.As(viewerId);
-        using var outsider = api.As(Guid.NewGuid().ToString());
+        using var outsider = api.As(Ulid.NewUlid().ToString());
         var firstEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var fourEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

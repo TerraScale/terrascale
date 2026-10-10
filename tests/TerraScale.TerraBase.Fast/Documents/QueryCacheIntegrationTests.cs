@@ -3,6 +3,7 @@ using System.Net;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Fast.Storage;
@@ -43,7 +44,8 @@ public sealed class QueryCacheIntegrationTests
     [Arguments("system")]
     public async Task Caller_mutations_of_first_and_cached_json_do_not_change_later_reads(string kind)
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartAsync(services: services =>
+            services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, new FakeTimeProvider()));
         var id = DocumentApi.NewId();
         (await api.PutAsync(id, new { n = 1 })).Status.ShouldBe(HttpStatusCode.Created);
         var service = api.Server.Services.GetRequiredService<IDocumentService>();
@@ -78,11 +80,15 @@ public sealed class QueryCacheIntegrationTests
         await Assert.That(http.Status).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(http.Json.GetProperty("document").GetProperty("n").GetInt32()).IsEqualTo(1);
         var queried = await api.QueryAsync(new { count = true });
+        await Assert.That(queried.Status).IsEqualTo(HttpStatusCode.OK)
+            .Because($"count query: {queried.Code}: {queried.Message}");
         await Assert.That(queried.Ids).IsEquivalentTo([id]);
         await Assert.That(queried.Json.GetProperty("count").GetProperty("value").GetString()).IsEqualTo("1");
         using var listed = await api.Client.GetAsync(new Uri(api.Documents, UriKind.Relative));
-        await Assert.That(listed.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(await listed.Content.ReadAsStringAsync()).Contains("\"n\":1");
+        var listedBody = await listed.Content.ReadAsStringAsync();
+        await Assert.That(listed.StatusCode).IsEqualTo(HttpStatusCode.OK)
+            .Because($"uncached list: {listedBody[..Math.Min(listedBody.Length, 4096)]}");
+        await Assert.That(listedBody).Contains("\"n\":1");
 
         async Task<StoredDocument> ReadAsync()
         {
@@ -188,7 +194,8 @@ public sealed class QueryCacheIntegrationTests
     public async Task Equivalent_queries_share_raw_pages_and_preserve_count_sort_and_cursor_shapes()
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
-        var api = await DocumentApi.StartAsync(cancellationToken: deadline.Token);
+        var api = await DocumentApi.StartAsync(services: services =>
+            services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, new FakeTimeProvider()), cancellationToken: deadline.Token);
         await using var cleanup = api;
         var firstId = DocumentApi.NewId();
         var secondId = DocumentApi.NewId();
@@ -251,10 +258,16 @@ public sealed class QueryCacheIntegrationTests
             request.limit,
             cursor = warmed.Json.GetProperty("next_cursor").GetString(),
         }, cancellationToken: deadline.Token);
+        await Assert.That(next.Status).IsEqualTo(HttpStatusCode.OK)
+            .Because($"cursor continuation: {next.Code}: {next.Message}");
         await Assert.That(next.Ids).IsEquivalentTo([secondId]);
         var descending = await api.QueryAsync(new { request.filter, sort = new[] { new { path = "/n", order = "desc" } }, request.limit }, cancellationToken: deadline.Token);
+        await Assert.That(descending.Status).IsEqualTo(HttpStatusCode.OK)
+            .Because($"uncached descending query: {descending.Code}: {descending.Message}");
         await Assert.That(descending.Ids).IsEquivalentTo([secondId]);
         var projected = await api.QueryAsync(new { request.filter, request.sort, request.limit, request.count, project = Projection }, cancellationToken: deadline.Token);
+        await Assert.That(projected.Status).IsEqualTo(HttpStatusCode.OK)
+            .Because($"projected query: {projected.Code}: {projected.Message}");
         await Assert.That(projected.Json.GetProperty("items")[0].GetProperty("document").GetRawText()).IsEqualTo("{\"label\":\"first\"}");
 
         using var cancelled = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);

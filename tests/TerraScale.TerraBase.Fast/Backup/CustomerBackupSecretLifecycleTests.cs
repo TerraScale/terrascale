@@ -13,6 +13,7 @@ using TerraBase.Features.Backup;
 using TerraBase.Features.Management;
 using TerraBase.Features.Management.Backups;
 using TerraBase.Hosting;
+using TerraBase.Primitives;
 using TerraBase.Testing;
 using static TerraBase.Testing.ManagementApi;
 
@@ -45,23 +46,23 @@ public sealed class CustomerBackupSecretLifecycleTests
             }
 
             return true;
-        }, token);
+        }, static error => throw new InvalidOperationException(error.Message), token);
         using var service = api.Service(api.User);
         foreach (var work in new[] { present, active, known })
         {
-            using var refused = await service.PostAsJsonAsync(Uri("/backup-secret-lifecycle/" + work.Id + "/confirm-absent"),
+            using var refused = await service.PostAsJsonAsync(Uri("/v1/backup-secret-lifecycle/" + work.Id + "/confirm-absent"),
                 new { secretName = work.SecretName, confirmAbsent = true }, token);
             await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
         }
 
         oci.SecretResponseOverride = (method, path) => method == HttpMethod.Get && path == "/20180608/secrets"
             ? new(HttpStatusCode.ServiceUnavailable) : null;
-        using var unavailable = await service.PostAsJsonAsync(Uri("/backup-secret-lifecycle/" + unknown.Id + "/confirm-absent"),
+        using var unavailable = await service.PostAsJsonAsync(Uri("/v1/backup-secret-lifecycle/" + unknown.Id + "/confirm-absent"),
             new { secretName = unknown.SecretName, confirmAbsent = true }, token);
         await Assert.That(unavailable.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
         await Assert.That((await PendingAsync(api, token)).Count).IsEqualTo(4);
         oci.SecretResponseOverride = null;
-        using var released = await service.PostAsJsonAsync(Uri("/backup-secret-lifecycle/" + unknown.Id + "/confirm-absent"),
+        using var released = await service.PostAsJsonAsync(Uri("/v1/backup-secret-lifecycle/" + unknown.Id + "/confirm-absent"),
             new { secretName = unknown.SecretName, confirmAbsent = true }, token);
         await Assert.That(released.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
         await Assert.That((await PendingAsync(api, token)).Count).IsEqualTo(3);
@@ -98,7 +99,7 @@ public sealed class CustomerBackupSecretLifecycleTests
                 }
 
                 return true;
-            }, token);
+            }, static error => throw new InvalidOperationException(error.Message), token);
         }
 
         var rejections = 0;
@@ -142,13 +143,11 @@ public sealed class CustomerBackupSecretLifecycleTests
     public async Task Definitive_rejection_removes_its_intent_while_all_remote_cleanup_slots_are_stalled()
     {
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
-        deadline.CancelAfter(TimeSpan.FromSeconds(30));
-        token = deadline.Token;
         using var oci = new FakeOci();
         var time = Clock();
-        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services => Manual(oci, services), time);
+        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services => Manual(oci, services), time, managementCredential: true);
         var organization = await api.CreateOrganizationAsync(new Faker().Company.CompanyName());
+        await api.SetPlanAsync(api.User, organization, "enterprise", token);
         var routes = new List<Uri>(4);
         for (var index = 0; index < 4; index++)
         {
@@ -176,6 +175,9 @@ public sealed class CustomerBackupSecretLifecycleTests
                 await release.Task.WaitAsync(cancellationToken);
             }
         };
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
+        deadline.CancelAfter(TimeSpan.FromSeconds(30));
+        token = deadline.Token;
         using var deleting = CancellationTokenSource.CreateLinkedTokenSource(token);
         var deletions = routes.Select(route => api.Client.DeleteAsync(route, deleting.Token)).ToArray();
         try
@@ -685,7 +687,7 @@ public sealed class CustomerBackupSecretLifecycleTests
         {
             await transaction.DeleteAsync(BackupSecretLifecycle.Collection, released.Id, token);
             return await transaction.DeleteAsync(BackupSecretLifecycle.Collection, releasedCreate.Id, token);
-        }, token);
+        }, static error => throw new InvalidOperationException(error.Message), token);
         await SaveAsync(api, route, "both", token);
         pending = await PendingAsync(api, token);
         await Assert.That(pending.Count(work => work.SecretName is null)).IsEqualTo(BackupSecretLifecycle.MaxRetirements);
@@ -857,16 +859,21 @@ public sealed class CustomerBackupSecretLifecycleTests
         await AssertMetadataOnlyAsync(api, token);
 
         using var service = api.Service(api.User);
-        using var privateRoute = await api.Client.GetAsync(Uri("/backup-secret-lifecycle"), token);
+        using var privateRoute = await api.Client.GetAsync(Uri("/v1/backup-secret-lifecycle"), token);
         await Assert.That(privateRoute.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-        using var unauthorized = await api.Server.Client.GetAsync(Uri("/backup-secret-lifecycle"), token);
+        using var unauthorized = await api.Server.Client.GetAsync(Uri("/v1/backup-secret-lifecycle"), token);
         await Assert.That(unauthorized.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
-        var page = await service.GetFromJsonAsync<BackupSecretRecoveryPage>(Uri("/backup-secret-lifecycle"), token);
+        var page = await service.GetFromJsonAsync<BackupSecretRecoveryPage>(Uri("/v1/backup-secret-lifecycle"), token);
         await Assert.That(page!.Items.Count).IsEqualTo(8);
         await Assert.That(page.Next).IsNotNull();
         var recover = page.Items[0];
         await Assert.That(recover.Recoverable).IsTrue();
-        var recoveryRoute = Uri("/backup-secret-lifecycle/" + recover.Id + "/confirm-absent");
+        var recoveryRoute = Uri("/v1/backup-secret-lifecycle/" + recover.Id + "/confirm-absent");
+        using var oldList = await service.GetAsync(Uri("/backup-secret-lifecycle"), token);
+        using var oldRecover = await service.PostAsJsonAsync(Uri("/backup-secret-lifecycle/" + recover.Id + "/confirm-absent"),
+            new { confirmAbsent = true, secretName = recover.SecretName }, token);
+        await Assert.That(oldList.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        await Assert.That(oldRecover.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         using var refused = await service.PostAsJsonAsync(recoveryRoute, new { secretName = recover.SecretName, confirmAbsent = false }, token);
         await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
         using var released = await service.PostAsJsonAsync(recoveryRoute, new { secretName = recover.SecretName, confirmAbsent = true }, token);
@@ -921,7 +928,7 @@ public sealed class CustomerBackupSecretLifecycleTests
             await SystemCatalog.PutAsync(transaction, BackupSecretLifecycle.Collection, work.Id, work with { DueAt = time.GetUtcNow() },
                 TerraBaseJsonContext.Default.BackupSecretWork, token);
             return true;
-        }, token);
+        }, static error => throw new InvalidOperationException(error.Message), token);
         time.Advance(TimeSpan.FromMinutes(1));
         await EventuallyAsync(async () => (await PendingAsync(api, token)).Count == 0, token);
         await Assert.That(oci.SecretDeletionTimes[id]).IsEqualTo(deletion);
@@ -953,7 +960,7 @@ public sealed class CustomerBackupSecretLifecycleTests
             }
 
             return true;
-        }, token);
+        }, static error => throw new InvalidOperationException(error.Message), token);
         oci.SecretResponseOverride = (_, path) => path.EndsWith("/actions/scheduleDeletion", StringComparison.Ordinal)
             ? new(HttpStatusCode.ServiceUnavailable) : null;
         using var detached = await api.Client.DeleteAsync(route, token);
@@ -1170,7 +1177,7 @@ public sealed class CustomerBackupSecretLifecycleTests
                 }
 
                 return true;
-            }, token);
+            }, static error => throw new InvalidOperationException(error.Message), token);
         }
     }
 
@@ -1179,8 +1186,8 @@ public sealed class CustomerBackupSecretLifecycleTests
         {
             var page = await transaction.ListAsync(BackupSecretLifecycle.Collection, null, BackupSecretLifecycle.MaxPending,
                 BackupSecretLifecycle.MaxPending * BackupSecretLifecycle.MaxRecordBytes, token);
-            return (IReadOnlyList<BackupSecretWork>)[.. page.Documents.Select(document => JsonSerializer.Deserialize(document.Json.Span, TerraBaseJsonContext.Default.BackupSecretWork)!)];
-        }, token);
+            return (IReadOnlyList<BackupSecretWork>)[.. page.Documents.Select(document => EntityPayload.Read(document, TerraBaseJsonContext.Default.BackupSecretWork)!)];
+        }, static error => throw new InvalidOperationException(error.Message), token);
 
     private static async Task<IReadOnlyList<BackupSecretWork>> WaitForPendingAsync(
         ManagementApi api, Func<IReadOnlyList<BackupSecretWork>, bool> condition, CancellationToken token)

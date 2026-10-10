@@ -20,6 +20,7 @@ public sealed class DocumentCaptureTests
     {
         using var peerTls = new PeerTls();
         using var clientTls = new ClientTls();
+        var clock = new RepairClock(DateTimeOffset.UtcNow);
         await using var receiver = await TerraBaseTestServer.StartAsync(settings =>
         {
             peerTls.Apply(settings);
@@ -30,7 +31,9 @@ public sealed class DocumentCaptureTests
             peerTls.Apply(settings);
             clientTls.Apply(settings);
             settings["peer-addresses"] = receiver.PeerAddress!.ToString();
-        });
+        }, services => services.AddSingleton<TimeProvider>(clock));
+        // Park repair before provisioning so the receiver's drop-generated _unique tombstone cannot enter the copy.
+        await clock.PausedAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var tenant = await ReplicationTenant.CreateAsync(sender, "captured", "copied");
         await tenant.BindAsync(receiver);
         using var writer = clientTls.CreateClient(sender.ClientAddress!, await tenant.KeyAsync(sender, "documents:read", "documents:write"));

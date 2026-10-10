@@ -11,7 +11,7 @@ public sealed class RecoverBackupSecretEndpoint(IBackupSecretRecovery recovery) 
     /// <inheritdoc />
     public override void Configure()
     {
-        Post("/backup-secret-lifecycle/{intent}/confirm-absent");
+        Post("/v1/backup-secret-lifecycle/{intent}/confirm-absent");
         Name("confirmBackupSecretAbsent");
         Summary("Confirm an uncertain backup credential was never created");
         Description("Loopback management service credential only. Before calling, verify the exact secretName in the configured OCI vault/compartment and investigate outstanding create requests. confirmAbsent=true attests no secret or pending create exists. A fresh metadata lookup must also be empty. Only unknown, already-fenced intents may be removed; published or known-ID work is refused. Incorrect operator confirmation may leave a late remote secret untracked.");
@@ -42,9 +42,12 @@ public sealed class RecoverBackupSecretEndpoint(IBackupSecretRecovery recovery) 
 
         try
         {
-            return await recovery.ConfirmAbsentAsync(id!, request.SecretName, cancellationToken)
-                ? TypedResults.NoContent()
-                : ErrorResponse.From(new Conflict("the intent is not an absent, fenced uncertain create"));
+            return await recovery.ConfirmAbsentAsync(id!, request.SecretName, cancellationToken) switch
+            {
+                true => TypedResults.NoContent(),
+                false => ErrorResponse.From(new Conflict("the intent is not an absent, fenced uncertain create")),
+                Unavailable error => ErrorResponse.From(error),
+            };
         }
         catch (Exception error) when (!cancellationToken.IsCancellationRequested && error is HttpRequestException or IOException or InvalidDataException or OperationCanceledException)
         {

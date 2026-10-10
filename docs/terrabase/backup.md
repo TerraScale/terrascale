@@ -145,11 +145,11 @@ project deletion; no migration is required.
 Uncertain intents with no OCI match are never removed automatically. To release admission after a verified unsubmitted
 create, an operator with the management service credential can use the loopback-only recovery API:
 
-1. `GET /backup-secret-lifecycle` reads eight metadata-only intents; pass its `next` ULID as `?after=...` for another page.
+1. `GET /v1/backup-secret-lifecycle` reads eight metadata-only intents; pass its `next` ULID as `?after=...` for another page.
 2. Investigate the exact `secretName` in the configured OCI vault and compartment, including pending create requests.
    Confirm no credential exists or can still be accepted. Restore metadata permissions before investigating; an error
    or authorization-masked 404 is not evidence of absence. If a secret exists, let ordinary reconciliation retire it.
-3. For a `recoverable` intent, `POST /backup-secret-lifecycle/{id}/confirm-absent` with
+3. For a `recoverable` intent, `POST /v1/backup-secret-lifecycle/{id}/confirm-absent` with
    `{"secretName":"terrabase-backup-<id>","confirmAbsent":true}` releases its reserved slot in a FULL catalog transaction.
 
 Both routes require `management-credential-file`, Bearer service authentication and `X-TerraBase-User-Id`; the client

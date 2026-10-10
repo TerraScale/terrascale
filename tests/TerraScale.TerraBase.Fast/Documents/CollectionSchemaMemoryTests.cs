@@ -29,7 +29,8 @@ public sealed class CollectionSchemaMemoryTests
     public async Task Disabled_uniqueness_accepts_large_duplicate_values_under_a_small_memory_budget()
     {
         await using var api = await DocumentApi.StartAsync(settings => settings["memory-budget"] = "16777216");
-        var schemaPath = $"/projects/{api.Tenant.ProjectId}/databases/{DocumentApi.Database}/collections/{DocumentApi.Collection}/schema";
+        await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "enterprise");
+        var schemaPath = $"/v1/projects/{api.Tenant.ProjectId}/databases/{DocumentApi.Database}/collections/{DocumentApi.Collection}/schema";
         var schema = "{\"properties\":{\"v\":{\"type\":\"array\",\"allOf\":[" + string.Join(',', Enumerable.Repeat("{\"uniqueItems\":false}", 64)) + "]}}}";
         (await api.SendRawAsync(HttpMethod.Put, schemaPath, schema, "application/json")).Status.ShouldBe(HttpStatusCode.OK);
         var id = DocumentApi.NewId();
@@ -55,7 +56,8 @@ public sealed class CollectionSchemaMemoryTests
     public async Task Number_types_accept_long_numeric_lexical_forms_under_a_small_memory_budget(string type)
     {
         await using var api = await DocumentApi.StartAsync(settings => settings["memory-budget"] = "16777216");
-        var schemaPath = $"/projects/{api.Tenant.ProjectId}/databases/{DocumentApi.Database}/collections/{DocumentApi.Collection}/schema";
+        await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "enterprise");
+        var schemaPath = $"/v1/projects/{api.Tenant.ProjectId}/databases/{DocumentApi.Database}/collections/{DocumentApi.Collection}/schema";
         var schema = "{\"properties\":{\"n\":{\"allOf\":[" + string.Join(',', Enumerable.Repeat("{\"type\":" + type + "}", 64)) + "]}}}";
         (await api.SendRawAsync(HttpMethod.Put, schemaPath, schema, "application/json")).Status.ShouldBe(HttpStatusCode.OK);
         var id = DocumentApi.NewId();
@@ -77,7 +79,8 @@ public sealed class CollectionSchemaMemoryTests
     public async Task Nonnumeric_types_reject_long_numbers_with_validation_errors_under_a_small_memory_budget()
     {
         await using var api = await DocumentApi.StartAsync(settings => settings["memory-budget"] = "16777216");
-        var schemaPath = $"/projects/{api.Tenant.ProjectId}/databases/{DocumentApi.Database}/collections/{DocumentApi.Collection}/schema";
+        await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "enterprise");
+        var schemaPath = $"/v1/projects/{api.Tenant.ProjectId}/databases/{DocumentApi.Database}/collections/{DocumentApi.Collection}/schema";
         var schema = "{\"properties\":{\"n\":{\"allOf\":[" + string.Join(',', Enumerable.Repeat("{\"type\":\"string\"}", 64)) + "]}}}";
         (await api.SendRawAsync(HttpMethod.Put, schemaPath, schema, "application/json")).Status.ShouldBe(HttpStatusCode.OK);
         var id = DocumentApi.NewId();
@@ -101,7 +104,8 @@ public sealed class CollectionSchemaMemoryTests
     public async Task Numeric_error_text_is_admitted_before_evaluation_and_released_after_rejection(string constraint)
     {
         await using var api = await DocumentApi.StartAsync(settings => settings["memory-budget"] = "16777216");
-        var schemaPath = $"/projects/{api.Tenant.ProjectId}/databases/{DocumentApi.Database}/collections/{DocumentApi.Collection}/schema";
+        await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "enterprise");
+        var schemaPath = $"/v1/projects/{api.Tenant.ProjectId}/databases/{DocumentApi.Database}/collections/{DocumentApi.Collection}/schema";
         var schema = "{\"properties\":{\"n\":{\"allOf\":[" + string.Join(',', Enumerable.Repeat(constraint, 64)) + "]}}}";
         (await api.SendRawAsync(HttpMethod.Put, schemaPath, schema, "application/json")).Status.ShouldBe(HttpStatusCode.OK);
         var id = DocumentApi.NewId();
@@ -135,7 +139,8 @@ public sealed class CollectionSchemaMemoryTests
     private static async Task ValidateSelectiveAsync(string schema, string unrelated)
     {
         await using var api = await DocumentApi.StartAsync(settings => settings["memory-budget"] = "16777216");
-        var schemaPath = $"/projects/{api.Tenant.ProjectId}/databases/{DocumentApi.Database}/collections/{DocumentApi.Collection}/schema";
+        await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "enterprise");
+        var schemaPath = $"/v1/projects/{api.Tenant.ProjectId}/databases/{DocumentApi.Database}/collections/{DocumentApi.Collection}/schema";
         (await api.SendRawAsync(HttpMethod.Put, schemaPath, schema, "application/json")).Status.ShouldBe(HttpStatusCode.OK);
         var id = DocumentApi.NewId();
         var document = $$"""{"name":"small","unrelated":{{unrelated}}}""";

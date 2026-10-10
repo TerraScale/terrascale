@@ -13,8 +13,9 @@ public sealed class CacheEntryBoundTests
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         await using var management = await ManagementApi.StartAsync(settings =>
-            settings["memory-budget"] = (64L * 1024 * 1024).ToString(CultureInfo.InvariantCulture));
+            settings["memory-budget"] = (64L * 1024 * 1024).ToString(CultureInfo.InvariantCulture), managementCredential: true);
         using var tenant = await management.CreateTenantAsync("documents:read", "documents:write");
+        await management.SetPlanAsync(tenant.User, tenant.OrganizationId, "enterprise", deadline.Token);
         using (var database = await tenant.Data.PutAsync(tenant.Database("bounded"), null, deadline.Token))
         {
             database.EnsureSuccessStatusCode();

@@ -53,7 +53,7 @@ public sealed class UniqueQuotaTests
         await Assert.That((await api.PutAsync(DocumentApi.NewId(), new { n = 1 })).Code).IsEqualTo("storage_quota");
         using var owner = api.Management.As(api.Tenant.User);
         var managed = $"/v1/management/organizations/{tenant.OrganizationId}/projects/{tenant.ProjectId}/databases/{tenant.DatabaseId}";
-        using var branch = await owner.PostAsJsonAsync(ManagementApi.Uri(managed + "/branch"), new { name = "copy" });
+        using var branch = await owner.PostAsJsonAsync(ManagementApi.Uri(managed + "/branches"), new { name = "copy" });
         await Assert.That(branch.StatusCode).IsEqualTo(HttpStatusCode.TooManyRequests);
         if (operation == 0)
         {

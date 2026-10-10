@@ -262,7 +262,7 @@ public sealed class SubscriptionAdmissionTests
         HttpClient client, ManagedDatabaseRef database, bool block, CancellationToken cancellationToken)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, ManagementApi.Uri(
-            $"/projects/{database.Project}/databases/{database.Name}/collections/items/subscribe"))
+            $"/v1/projects/{database.Project}/databases/{database.Name}/collections/items/subscribe"))
         {
             Version = client.DefaultRequestVersion,
             VersionPolicy = client.DefaultVersionPolicy,

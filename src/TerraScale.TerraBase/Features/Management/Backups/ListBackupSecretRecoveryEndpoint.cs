@@ -11,7 +11,7 @@ public sealed class ListBackupSecretRecoveryEndpoint(IBackupSecretRecovery recov
     /// <inheritdoc />
     public override void Configure()
     {
-        Get("/backup-secret-lifecycle");
+        Get("/v1/backup-secret-lifecycle");
         Name("listBackupSecretRecovery");
         Summary("List uncertain backup credential creates");
         Description("Loopback management service credential only. Reads eight metadata-only intents; after is the previous page's next ULID. No credentials are returned.");
@@ -19,6 +19,7 @@ public sealed class ListBackupSecretRecoveryEndpoint(IBackupSecretRecovery recov
         Produces<BackupSecretRecoveryPage>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status403Forbidden);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(UserAuthExtensions.PolicyName);
         Metadata(ListenerMetadata.Admin);
     }
@@ -37,6 +38,10 @@ public sealed class ListBackupSecretRecoveryEndpoint(IBackupSecretRecovery recov
             return ErrorResponse.From(new Validation("after must be a ULID"));
         }
 
-        return TypedResults.Ok(await recovery.ListAsync(after.Length == 0 ? null : after, cancellationToken));
+        return await recovery.ListAsync(after.Length == 0 ? null : after, cancellationToken) switch
+        {
+            BackupSecretRecoveryPage page => TypedResults.Ok(page),
+            Unavailable error => ErrorResponse.From(error),
+        };
     }
 }

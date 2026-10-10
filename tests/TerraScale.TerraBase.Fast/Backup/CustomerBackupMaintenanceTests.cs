@@ -144,7 +144,8 @@ public sealed class CustomerBackupMaintenanceTests
 
     private static async Task<BackupStatusRecord> RecordAsync(ManagementApi api, ManagedDatabaseRef database, CancellationToken token) =>
         (await api.Server.Services.GetRequiredService<SystemCatalog>().ReadAsync(transaction => SystemCatalog.GetAsync(transaction,
-            "databases/" + database.Id + "/backup_status", "current", TerraBaseJsonContext.Default.BackupStatusRecord, token), token))!;
+            "databases/" + database.Id + "/backup_status", "current", TerraBaseJsonContext.Default.BackupStatusRecord, token),
+            static error => throw new InvalidOperationException(error.Message), token))!;
 
     private static async Task RestoreAsync(ManagementApi api, HttpClient data, ManagedDatabaseRef database, DateTimeOffset at, string text, CancellationToken token)
     {
@@ -157,7 +158,7 @@ public sealed class CustomerBackupMaintenanceTests
         await Assert.That(restored.StatusCode).IsEqualTo(HttpStatusCode.Created);
         foreach (var id in new[] { "before", "after" })
         {
-            using var read = await data.GetAsync(Uri($"/v1/projects/{database.Project}/databases/maintenance-recovered/collections/people/documents/{DocumentId(id)}"), token);
+            using var read = await data.GetAsync(Uri($"/v1/projects/{database.Project}/databases/maintenance-recovered/collections/people/documents/by-key?id={DocumentId(id)}"), token);
             read.EnsureSuccessStatusCode();
             var document = await read.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: token);
             await Assert.That(document.GetProperty("document").GetProperty("text").GetString()).IsEqualTo(text);

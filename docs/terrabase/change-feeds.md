@@ -1,8 +1,8 @@
 # Collection change feeds (TS-689)
 
-`GET /projects/{project}/databases/{database}/collections/{collection}/changes`
+`GET /v1/projects/{project}/databases/{database}/collections/{collection}/changes`
 requires the client TLS listener and a ts-auth JWT with `documents:read` reaching the project and database.
-The route is unversioned for the closed beta.
+The route and resume-token format use v1.
 
 This first slice exposes the existing SQLite history as a bounded polling feed. Both inserts
 and updates produce `upsert` with the stored document. Document deletion produces `delete`
@@ -14,7 +14,7 @@ separate events. Rolled-back writes and replicated states that lose the merge pr
   "changes": [
     {"operation":"upsert","id":"019...","offset":"12","sequence":"17","document":{"name":"Ada"}}
   ],
-  "resume_token": "alpha.<lineage>.<offset>.<sequence>",
+  "resume_token": "v1.<lineage>.<offset>.<sequence>",
   "has_more": false
 }
 ```

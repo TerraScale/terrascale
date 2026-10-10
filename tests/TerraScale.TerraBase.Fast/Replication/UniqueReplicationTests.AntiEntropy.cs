@@ -32,7 +32,7 @@ public sealed partial class UniqueReplicationTests
             jwt.Claims["project_id"] = tenant.ProjectId;
             jwt.Claims["scope"] = "documents:read";
         }));
-        var feedRoute = $"/projects/{tenant.ProjectId}/databases/db/collections/people/changes";
+        var feedRoute = $"/v1/projects/{tenant.ProjectId}/databases/db/collections/people/changes";
         var start = await DocumentApi.SendAsync(feed, HttpMethod.Get, feedRoute, cancellationToken: cancellationToken);
         start.Status.ShouldBe(HttpStatusCode.OK);
         await Assert.That(start.Json.GetProperty("changes").EnumerateArray().Single().GetProperty("id").GetString()).IsEqualTo(ids[1]);

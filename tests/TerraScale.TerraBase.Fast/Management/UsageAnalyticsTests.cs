@@ -1,3 +1,4 @@
+using System.Diagnostics.Metrics;
 using System.Globalization;
 using System.Net;
 using System.Text;
@@ -10,8 +11,10 @@ using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Management;
 using TerraBase.Features.Management.Usage;
+using TerraBase.Features.Memory;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
+using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -19,6 +22,228 @@ namespace TerraBase.Fast.Management;
 
 public sealed class UsageAnalyticsTests
 {
+    [Test]
+    [Arguments("analytics", nameof(IManagementService.ListDatabasesAsync))]
+    [Arguments("analytics", nameof(IManagementService.GetDatabaseAsync))]
+    [Arguments("analytics", nameof(IManagementService.GetDatabaseTenantAsync))]
+    [Arguments("replication", nameof(IManagementService.ListDatabasesAsync))]
+    [Arguments("replication", nameof(IManagementService.GetDatabaseAsync))]
+    [Arguments("replication", nameof(IManagementService.GetDatabaseTenantAsync))]
+    public async Task Catalog_refusals_reach_analytics_as_503_instead_of_empty_results(string feature, string failedRead)
+    {
+        var refuse = false;
+        var unavailable = new Unavailable("the management catalog cannot be read");
+        await using var api = await ManagementApi.StartAsync(services: services =>
+        {
+            var registration = services.Single(service => service.ServiceType == typeof(IManagementService));
+            services.Remove(registration);
+            services.AddSingleton(provider => UsageApiTests.SlowManagement.Wrap(
+                (IManagementService)registration.ImplementationFactory!(provider), _ => { }, method =>
+                    Volatile.Read(ref refuse) && method == failedRead ? method switch
+                    {
+                        nameof(IManagementService.ListDatabasesAsync) => new ValueTask<ListDatabasesResult>(unavailable),
+                        nameof(IManagementService.GetDatabaseAsync) => new ValueTask<GetDatabaseResult>(unavailable),
+                        nameof(IManagementService.GetDatabaseTenantAsync) => new ValueTask<DatabaseTenantResult>(unavailable),
+                        _ => null,
+                    } : null));
+        });
+        var database = await api.CreateManagedDatabaseAsync();
+        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
+        using var client = ProjectClient(api, database.Project);
+        var filter = failedRead == nameof(IManagementService.GetDatabaseAsync) ? $"?database={database.Id}" : "";
+        Volatile.Write(ref refuse, true);
+
+        await ErrorAssert.ErrorAsync(client.GetAsync(ManagementApi.Uri($"/v1/projects/{database.Project}/{feature}{filter}")),
+            HttpStatusCode.ServiceUnavailable, "unavailable", unavailable.Message);
+    }
+
+    [Test]
+    [Arguments("analytics")]
+    [Arguments("replication")]
+    public async Task A_second_database_meter_catalog_refusal_returns_503_releases_memory_and_recovers_all_observations(string feature)
+    {
+        const long Budget = 512L * 1024 * 1024;
+        var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
+        var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 8, 21, 30, 0, TimeSpan.Zero));
+        var hook = new UsageCommitHook();
+        using var tls = new PeerTls();
+        await using var api = await ManagementApi.StartAsync(settings =>
+        {
+            tls.Apply(settings);
+            settings["region"] = "gru-1";
+            settings["memory-budget"] = Budget.ToString(CultureInfo.InvariantCulture);
+        }, hook.Install, clock);
+        var createdFirst = await api.CreateManagedDatabaseAsync("first");
+        var createdSecond = await api.CreateManagedDatabaseAsync(createdFirst.Organization, createdFirst.Project, "second");
+        var databases = new[] { createdFirst, createdSecond }.OrderBy(database => database.Id, StringComparer.Ordinal).ToArray();
+        var first = databases[0];
+        var second = databases[1];
+        await api.VerifyProjectBindingAsync(first.Organization, first.Project);
+        using var client = ProjectClient(api, first.Project);
+        using var channel = tls.CreateChannel(api.Server.PeerAddress!);
+        var peer = new Features.Replication.V1.Replication.ReplicationClient(channel);
+        var batchBytes = new long[databases.Length];
+        for (var index = 0; index < databases.Length; index++)
+        {
+            var database = databases[index];
+            await ManagementApi.CreateCollectionAsync(client, database, "people", token);
+            for (var write = 0; write <= index; write++)
+            {
+                using var put = await client.PutAsJsonAsync(ManagementApi.Uri(ManagementApi.DocumentPath(database, "people", "local-" + write)),
+                    new { name = new Faker().Name.FullName() }, token);
+                put.EnsureSuccessStatusCode();
+            }
+
+            var tenant = new TenantContext(database.Organization, PlanTier.Hobby, database.Project, database.Id);
+            var origin = System.Security.Cryptography.RandomNumberGenerator.GetBytes(16);
+            var batch = new SyncRequest
+            {
+                TrafficKind = ReplicationTrafficKind.Handoff,
+                CommittedGroup = ReplicationProtocol.CreateBatch(tenant, origin, 1,
+                    [.. Enumerable.Range(0, index + 1).Select(write => new DocumentChange("people", ManagementApi.DocumentId("remote-" + write), 1,
+                        Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { name = new Faker().Name.FullName() }))))])
+            };
+            batchBytes[index] = batch.CalculateSize() + 5L;
+            using var stream = peer.Sync(cancellationToken: token);
+            await stream.RequestStream.WriteAsync(new SyncRequest { Hello = ReplicationProtocol.CreateHello(tenant, origin, "sfo-1") }, token);
+            await Assert.That(await stream.ResponseStream.MoveNext(token)).IsTrue();
+            await Assert.That(stream.ResponseStream.Current.Welcome.Frontiers[0].DurableSequence).IsEqualTo(0UL);
+            await stream.RequestStream.WriteAsync(batch, token);
+            await Assert.That(await stream.ResponseStream.MoveNext(token)).IsTrue();
+            await Assert.That(stream.ResponseStream.Current.Durable.DurablePrefix).IsEqualTo(1UL);
+            await Assert.That(await stream.ResponseStream.MoveNext(token)).IsTrue();
+            await stream.RequestStream.CompleteAsync();
+            await Assert.That(await stream.ResponseStream.MoveNext(token)).IsFalse();
+        }
+
+        var meter = api.Server.Services.GetRequiredService<UsageMeter>();
+        await meter.FlushAsync(token);
+        var route = ManagementApi.Uri($"/v1/projects/{first.Project}/{feature}?range=1h&region=gru-1");
+        var baseline = ReservedBytes(api);
+        var before = await ReadAsync(client, route);
+        await AssertMemoryReleasedAsync(api, baseline);
+        var firstCounts = await meter.GetObservationsAsync(new(first.Organization, PlanTier.Hobby, first.Project, first.Id),
+            new UsageWindow(UsageWindow.Minute, clock.GetUtcNow().ToUnixTimeSeconds() / 60 - 59, 60), token) switch
+        {
+            UsageCounts counts => counts,
+            Unavailable error => throw new InvalidOperationException(error.Message),
+            null => throw new InvalidOperationException("usage observations returned no result"),
+        };
+        var retainedReadings = (firstCounts.Lifetime.Meters?.Count ?? 0) + firstCounts.Series.Sum(point => point.Meters?.Count ?? 0);
+        await Assert.That(retainedReadings).IsGreaterThan(0);
+        var catalog = api.Server.Services.GetRequiredService<SystemCatalog>();
+        byte[]? supportedVersion = null;
+        var firstMeterReads = 0;
+        var firstSeriesReads = 0;
+        var secondMeterReads = 0;
+        var meterLookup = 0;
+        var refusedLookups = 0;
+        long heldBeforeRefusal = 0;
+        long catalogReadBytes = 0;
+        long catalogBytesBeforeRefusal = 0;
+        // Catalog result buffers stay admitted through delivery, alongside the analytics observations.
+        hook.AfterRead = document => Interlocked.Add(ref catalogReadBytes, document.Json.Length * 3L + 2048);
+        hook.BeforeList = collection =>
+        {
+            if (collection == SystemCatalog.DatabaseState(first.Id) + UsageWindow.Minute.Collection)
+            {
+                Interlocked.Increment(ref firstSeriesReads);
+            }
+        };
+        hook.AfterGet = async (collection, id, _) =>
+        {
+            if (collection == SystemCatalog.DatabaseState(first.Id) + "usage" && id == "ops")
+            {
+                Interlocked.Increment(ref firstMeterReads);
+            }
+            if (collection == SystemCatalog.DatabaseState(second.Id) + "usage" && id == "ops")
+            {
+                Interlocked.Increment(ref secondMeterReads);
+            }
+            if (collection == $"projects/{first.Project}/databases" && id == second.Id && Volatile.Read(ref firstSeriesReads) == 1 && supportedVersion is null)
+            {
+                // The second tenant keeps its accepted snapshot; only its following meter read sees the new version.
+                heldBeforeRefusal = ReservedBytes(api);
+                catalogBytesBeforeRefusal = Interlocked.Read(ref catalogReadBytes);
+                supportedVersion = await catalog.WriteUncheckedAsync(async transaction =>
+                {
+                    var previous = (await transaction.GetAsync("catalog", "version", token))!.Json.ToArray();
+                    await transaction.PutAsync("catalog", "version", Encoding.UTF8.GetBytes("\"99\""), token);
+                    return previous;
+                }, token);
+                Volatile.Write(ref meterLookup, 1);
+            }
+            if (collection == "catalog" && id == "version" && Interlocked.Exchange(ref meterLookup, 0) == 1)
+            {
+                Interlocked.Increment(ref refusedLookups);
+            }
+        };
+
+        try
+        {
+            using var response = await client.GetAsync(route, token);
+            await ErrorAssert.ErrorAsync(response, HttpStatusCode.ServiceUnavailable, "unavailable",
+                "the management catalog has an old or unsupported format; discard the affected data");
+            var refused = await response.Content.ReadFromJsonAsync<JsonElement>(token);
+            await Assert.That(refused.TryGetProperty("items", out _)).IsFalse();
+            await Assert.That(firstMeterReads).IsEqualTo(1);
+            await Assert.That(firstSeriesReads).IsEqualTo(1);
+            await Assert.That(secondMeterReads).IsEqualTo(0);
+            await Assert.That(refusedLookups).IsEqualTo(1);
+            await Assert.That(catalogBytesBeforeRefusal).IsGreaterThan(0);
+            await Assert.That(heldBeforeRefusal).IsEqualTo(baseline + 16 * 1024 + 16L * 1024 * 1024 + 2 * 60 * 2048L
+                + retainedReadings * 2048L + catalogBytesBeforeRefusal);
+            await AssertMemoryReleasedAsync(api, baseline);
+            using var available = api.Server.Services.GetRequiredService<IMemoryBudget>().TryReserve(MemoryLane.Foreground, Budget - baseline, tenant: null);
+            await Assert.That(available).IsNotNull();
+            await Assert.That(available!.Bytes).IsEqualTo(Budget - baseline);
+        }
+        finally
+        {
+            hook.BeforeList = null;
+            hook.AfterGet = null;
+            hook.AfterRead = null;
+            if (supportedVersion is not null)
+            {
+                await catalog.WriteUncheckedAsync(async transaction =>
+                {
+                    await transaction.PutAsync("catalog", "version", supportedVersion, token);
+                    return true;
+                }, token);
+            }
+        }
+
+        var recovered = await ReadAsync(client, route);
+        await Assert.That(recovered.GetRawText()).IsEqualTo(before.GetRawText());
+        var items = recovered.GetProperty("items");
+        await Assert.That(items.EnumerateArray().Select(item => item.GetProperty("databaseId").GetString()!)).IsEquivalentTo([first.Id, second.Id]);
+        for (var index = 0; index < databases.Length; index++)
+        {
+            var item = items.EnumerateArray().Single(item => item.GetProperty("databaseId").GetString() == databases[index].Id);
+            await Assert.That(item.GetProperty("region").GetString()).IsEqualTo("gru-1");
+            var series = item.GetProperty("series");
+            await Assert.That(series.GetArrayLength()).IsEqualTo(60);
+            if (feature == "analytics")
+            {
+                await Assert.That(series.EnumerateArray().Sum(point => point.GetProperty("operations").TryGetProperty("put", out var puts) ? puts.GetInt64() : 0))
+                    .IsEqualTo(index + 1L);
+                await Assert.That(series.EnumerateArray().Sum(point => point.GetProperty("requests").TryGetProperty("put", out var puts) ? puts.GetInt64() : 0))
+                    .IsEqualTo(index + 1L);
+            }
+            else
+            {
+                await Assert.That(item.GetProperty("replicatedOps").GetInt64()).IsEqualTo(index + 1L);
+                await Assert.That(series.EnumerateArray().Sum(point => point.GetProperty("replicatedOps").GetInt64())).IsEqualTo(index + 1L);
+                var traffic = item.GetProperty("bandwidth").EnumerateArray().Single(pair => pair.GetProperty("kind").GetString() == "handoff"
+                    && pair.GetProperty("sourceRegion").GetString() == "sfo-1" && pair.GetProperty("destinationRegion").GetString() == "gru-1");
+                await Assert.That(traffic.GetProperty("bytesReceived").GetInt64()).IsEqualTo(batchBytes[index]);
+                await Assert.That(traffic.GetProperty("bytesSent").GetInt64()).IsEqualTo(0);
+            }
+        }
+
+        await AssertMemoryReleasedAsync(api, baseline);
+    }
+
     [Test]
     [Arguments("1h", 60, 60)]
     [Arguments("24h", 24, 3600)]
@@ -44,7 +269,7 @@ public sealed class UsageAnalyticsTests
         using var delete = await client.DeleteAsync(document);
         delete.EnsureSuccessStatusCode();
 
-        var route = ManagementApi.Uri($"/projects/{database.Project}/analytics?range={range}&region=gru-1");
+        var route = ManagementApi.Uri($"/v1/projects/{database.Project}/analytics?range={range}&region=gru-1");
         var before = await ReadAsync(client, route);
         var series = before.GetProperty("items")[0].GetProperty("series");
         var point = series.EnumerateArray().Single(value => value.GetProperty("operations").TryGetProperty("put", out _));
@@ -87,7 +312,7 @@ public sealed class UsageAnalyticsTests
         await api.Server.Services.GetRequiredService<UsageMeter>().FlushAsync(CancellationToken.None);
         foreach (var feature in new[] { "analytics", "replication" })
         {
-            var result = await ReadAsync(client, ManagementApi.Uri($"/projects/{database.Project}/{feature}?range=7d"));
+            var result = await ReadAsync(client, ManagementApi.Uri($"/v1/projects/{database.Project}/{feature}?range=7d"));
             var series = result.GetProperty("items")[0].GetProperty("series");
             await Assert.That(series.GetArrayLength()).IsEqualTo(28);
             if (feature == "analytics")
@@ -108,22 +333,22 @@ public sealed class UsageAnalyticsTests
         var second = await api.CreateManagedDatabaseAsync(first.Organization, first.Project, "second");
         await api.VerifyProjectBindingAsync(first.Organization, first.Project);
         using var restricted = ProjectClient(api, first.Project, database: "first");
-        var visible = await ReadAsync(restricted, ManagementApi.Uri($"/projects/{first.Project}/{feature}"));
+        var visible = await ReadAsync(restricted, ManagementApi.Uri($"/v1/projects/{first.Project}/{feature}"));
         await Assert.That(visible.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("databaseId").GetString()!)).IsEquivalentTo([first.Id]);
-        using var another = await restricted.GetAsync(ManagementApi.Uri($"/projects/{first.Project}/{feature}?database={second.Id}"));
+        using var another = await restricted.GetAsync(ManagementApi.Uri($"/v1/projects/{first.Project}/{feature}?database={second.Id}"));
         await Assert.That(another.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-        using var route = await restricted.GetAsync(ManagementApi.Uri($"/projects/{first.Project}/databases/second/{feature}"));
+        using var route = await restricted.GetAsync(ManagementApi.Uri($"/v1/projects/{first.Project}/databases/second/{feature}"));
         await Assert.That(route.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         using var wrongProject = ProjectClient(api, second.Id);
-        using var crossed = await wrongProject.GetAsync(ManagementApi.Uri($"/projects/{first.Project}/{feature}"));
+        using var crossed = await wrongProject.GetAsync(ManagementApi.Uri($"/v1/projects/{first.Project}/{feature}"));
         await Assert.That(crossed.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         using var noScope = ProjectClient(api, first.Project, scope: "documents:read");
-        using var forbidden = await noScope.GetAsync(ManagementApi.Uri($"/projects/{first.Project}/{feature}"));
+        using var forbidden = await noScope.GetAsync(ManagementApi.Uri($"/v1/projects/{first.Project}/{feature}"));
         await Assert.That(forbidden.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
         using var key = await api.CreateClientAsync(first.Organization, "documents:read");
-        using var unauthorized = await key.GetAsync(ManagementApi.Uri($"/projects/{first.Project}/{feature}"));
+        using var unauthorized = await key.GetAsync(ManagementApi.Uri($"/v1/projects/{first.Project}/{feature}"));
         await Assert.That(unauthorized.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
-        using var admin = await api.Server.Client.GetAsync(ManagementApi.Uri($"/projects/{first.Project}/{feature}"));
+        using var admin = await api.Server.Client.GetAsync(ManagementApi.Uri($"/v1/projects/{first.Project}/{feature}"));
         await Assert.That(admin.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
     }
 
@@ -134,19 +359,23 @@ public sealed class UsageAnalyticsTests
         var database = await api.CreateManagedDatabaseAsync();
         await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var client = ProjectClient(api, database.Project);
-        var empty = await ReadAsync(client, ManagementApi.Uri($"/projects/{database.Project}/analytics?range=1h"));
+        var empty = await ReadAsync(client, ManagementApi.Uri($"/v1/projects/{database.Project}/analytics?range=1h"));
         await Assert.That(empty.GetProperty("items")[0].GetProperty("series").EnumerateArray()
             .All(point => point.GetProperty("latency").GetProperty("p50Ms").ValueKind == JsonValueKind.Null)).IsTrue();
-        using var invalid = await client.GetAsync(ManagementApi.Uri($"/projects/{database.Project}/analytics?range=2h"));
+        using var invalid = await client.GetAsync(ManagementApi.Uri($"/v1/projects/{database.Project}/analytics?range=2h"));
         await Assert.That(invalid.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
-        var status = await ReadAsync(client, ManagementApi.Uri($"/projects/{database.Project}/replication"));
+        var status = await ReadAsync(client, ManagementApi.Uri($"/v1/projects/{database.Project}/replication"));
         await Assert.That(status.GetProperty("items")[0].GetProperty("status").GetString()).IsEqualTo("stopped");
         await Assert.That(status.GetProperty("items")[0].GetProperty("lagMs").ValueKind).IsEqualTo(JsonValueKind.Null);
         var document = await ReadAsync(client, ManagementApi.Uri("/openapi/v1.json"));
         foreach (var feature in new[] { "analytics", "replication" })
         {
-            await Assert.That(document.GetProperty("paths").TryGetProperty($"/projects/{{project}}/{feature}", out _)).IsTrue();
-            await Assert.That(document.GetProperty("paths").TryGetProperty($"/projects/{{project}}/databases/{{database}}/{feature}", out _)).IsTrue();
+            await Assert.That(document.GetProperty("paths").TryGetProperty($"/v1/projects/{{project}}/{feature}", out _)).IsTrue();
+            await Assert.That(document.GetProperty("paths").TryGetProperty($"/v1/projects/{{project}}/databases/{{database}}/{feature}", out _)).IsTrue();
+            using var oldProject = await client.GetAsync(ManagementApi.Uri($"/projects/{database.Project}/{feature}"));
+            using var oldDatabase = await client.GetAsync(ManagementApi.Uri($"/projects/{database.Project}/databases/{database.Name}/{feature}"));
+            await Assert.That(oldProject.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+            await Assert.That(oldDatabase.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         }
     }
 
@@ -201,7 +430,7 @@ public sealed class UsageAnalyticsTests
         await retry.RequestStream.CompleteAsync();
         using var document = await client.GetAsync(ManagementApi.Uri(ManagementApi.DocumentPath(database, "people", "duplicate")));
         document.EnsureSuccessStatusCode();
-        var usage = await ReadAsync(client, ManagementApi.Uri($"/projects/{database.Project}/replication?range=1h&region=gru-1"));
+        var usage = await ReadAsync(client, ManagementApi.Uri($"/v1/projects/{database.Project}/replication?range=1h&region=gru-1"));
         var item = usage.GetProperty("items")[0];
         await Assert.That(item.GetProperty("replicatedOps").GetInt64()).IsEqualTo(1);
         var traffic = item.GetProperty("bandwidth").EnumerateArray().Single(pair =>
@@ -236,7 +465,7 @@ public sealed class UsageAnalyticsTests
                 using var written = await client.PutAsJsonAsync(ManagementApi.Uri(ManagementApi.DocumentPath(database, "people", "one")), new { name = new Faker().Name.FullName() });
                 written.EnsureSuccessStatusCode();
                 clock.Advance(TimeSpan.FromSeconds(10));
-                var route = ManagementApi.Uri($"/projects/{database.Project}/analytics?range=1h&region=gru-1");
+                var route = ManagementApi.Uri($"/v1/projects/{database.Project}/analytics?range=1h&region=gru-1");
                 await TerraBaseTestServer.EventuallyAsync(async token =>
                 {
                     var result = await client.GetFromJsonAsync<JsonElement>(route, token);
@@ -256,7 +485,7 @@ public sealed class UsageAnalyticsTests
                 token.Claims["project_id"] = database.Project;
                 token.Claims["scope"] = "databases:read";
             }));
-            var after = await ReadAsync(reader, ManagementApi.Uri($"/projects/{database.Project}/analytics?range=1h&region=gru-1"));
+            var after = await ReadAsync(reader, ManagementApi.Uri($"/v1/projects/{database.Project}/analytics?range=1h&region=gru-1"));
             await Assert.That(after.GetRawText()).IsEqualTo(before.GetRawText());
         }
         finally
@@ -280,7 +509,7 @@ public sealed class UsageAnalyticsTests
         var healthy = lagging with { Acknowledged = 3, DurableLag = 0, Diverged = false, CatchupSeconds = 0, ConvergenceSeconds = 1.5 };
         peers.State = new(true, true, 1, 0, [new(0, 2, [lagging], "sfo-1"), new(1, 0, [healthy], "sfo-1")]);
         clock.Advance(TimeSpan.FromSeconds(10));
-        var route = ManagementApi.Uri($"/projects/{database.Project}/replication?range=1h&region=gru-1");
+        var route = ManagementApi.Uri($"/v1/projects/{database.Project}/replication?range=1h&region=gru-1");
         await TerraBaseTestServer.EventuallyAsync(async token =>
         {
             var result = await client.GetFromJsonAsync<JsonElement>(route, token);
@@ -310,7 +539,7 @@ public sealed class UsageAnalyticsTests
         await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var client = ProjectClient(api, database.Project);
         var flush = api.Server.Services.GetServices<IHostedService>().OfType<UsageFlushService>().Single();
-        var route = ManagementApi.Uri($"/projects/{database.Project}/replication?range=1h&region=gru-1");
+        var route = ManagementApi.Uri($"/v1/projects/{database.Project}/replication?range=1h&region=gru-1");
         var synced = new ReplicationDatabaseStatus(0, database.Organization, database.Project, database.Id, Ulid.NewUlid(), 3, 3, 0, false, 0, null);
 
         peers.State = new(true, true, 1, 0, [new(0, 0, [synced], "sfo-1"), new(1, 0, [synced], "iad-1")]);
@@ -381,7 +610,7 @@ public sealed class UsageAnalyticsTests
         }));
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         using var subscription = await subscriber.GetAsync(
-            ManagementApi.Uri($"/projects/{database.Project}/databases/{database.Name}/collections/items/subscribe"), HttpCompletionOption.ResponseHeadersRead, deadline.Token);
+            ManagementApi.Uri($"/v1/projects/{database.Project}/databases/{database.Name}/collections/items/subscribe"), HttpCompletionOption.ResponseHeadersRead, deadline.Token);
         subscription.EnsureSuccessStatusCode();
         using var events = new StreamReader(await subscription.Content.ReadAsStreamAsync(deadline.Token));
         var (snapshotBytes, _) = await FrameAsync();
@@ -402,7 +631,7 @@ public sealed class UsageAnalyticsTests
         }
 
         await api.Server.Services.GetServices<IHostedService>().OfType<UsageFlushService>().Single().FlushAsync(deadline.Token);
-        var series = (await ReadAsync(data, ManagementApi.Uri($"/projects/{database.Project}/analytics?range=1h&region=gru-1")))
+        var series = (await ReadAsync(data, ManagementApi.Uri($"/v1/projects/{database.Project}/analytics?range=1h&region=gru-1")))
             .GetProperty("items")[0].GetProperty("series").EnumerateArray().ToArray();
         long Sent(DateTimeOffset minute)
         {
@@ -460,7 +689,7 @@ public sealed class UsageAnalyticsTests
             await transaction.CommitAsync(token);
         }
 
-        var items = (await ReadAsync(client, ManagementApi.Uri($"/projects/{database.Project}/analytics?range=1h&region=gru-1"))).GetProperty("items");
+        var items = (await ReadAsync(client, ManagementApi.Uri($"/v1/projects/{database.Project}/analytics?range=1h&region=gru-1"))).GetProperty("items");
         await Assert.That(items.GetArrayLength()).IsEqualTo(1);
         await Assert.That(items[0].GetProperty("region").GetString()).IsEqualTo("gru-1");
         await Assert.That(items[0].GetProperty("series").EnumerateArray()
@@ -472,11 +701,11 @@ public sealed class UsageAnalyticsTests
     {
         var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 8, 21, 30, 0, TimeSpan.Zero));
         var hook = new UsageCommitHook();
-        await using var api = await ManagementApi.StartAsync(settings => settings["region"] = "gru-1", hook.Install, clock);
+        await using var api = await ManagementApi.StartAsync(settings => settings["region"] = "gru-1", hook.Install, clock, managementCredential: true);
         // Registered databases: a flush keeps only the observations of databases the catalog names.
         var first = await api.CreateManagedDatabaseAsync("db0");
         // Hobby admission would throttle creating the databases below; the plan does not change sampling.
-        await api.Server.Services.GetRequiredService<IManagementService>().SetPlanAsync(api.User, first.Organization, PlanTier.Enterprise, CancellationToken.None);
+        await api.SetPlanAsync(api.User, first.Organization, "enterprise");
         var databases = new List<TenantContext> { new(first.Organization, PlanTier.Hobby, first.Project, first.Id) };
         for (var i = 1; i < 140; i++)
         {
@@ -499,7 +728,11 @@ public sealed class UsageAnalyticsTests
         var unsampled = 0;
         foreach (var database in databases)
         {
-            var (lifetime, _) = await meter.GetObservationsAsync(database, window, CancellationToken.None);
+            var (lifetime, _) = await meter.GetObservationsAsync(database, window, CancellationToken.None) switch
+            {
+                UsageCounts counts => counts,
+                Unavailable error => throw new InvalidOperationException(error.Message),
+            };
             unsampled += lifetime.Meters?.ContainsKey("storage_bytes|gru-1||sample") == true ? 0 : 1;
         }
 
@@ -536,7 +769,11 @@ public sealed class UsageAnalyticsTests
 
         // Its sample stays in that minute, so the next minute's pass samples the database again, once.
         var (_, series) = await api.Server.Services.GetRequiredService<UsageMeter>()
-            .GetObservationsAsync(database, new UsageWindow(UsageWindow.Minute, started, 2), CancellationToken.None);
+            .GetObservationsAsync(database, new UsageWindow(UsageWindow.Minute, started, 2), CancellationToken.None) switch
+        {
+            UsageCounts counts => counts,
+            Unavailable error => throw new InvalidOperationException(error.Message),
+        };
         await Assert.That(series.Select(point => point.Meters?.GetValueOrDefault("storage_bytes|gru-1||sample")?.Count ?? 0))
             .IsEquivalentTo([1L, 1L], TUnit.Assertions.Enums.CollectionOrdering.Matching);
     }
@@ -592,7 +829,7 @@ public sealed class UsageAnalyticsTests
         await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var client = ProjectClient(api, database.Project);
         await ManagementApi.CreateCollectionAsync(client, database, "people");
-        var analytics = ManagementApi.Uri($"/projects/{database.Project}/analytics?range=1h&region=gru-1");
+        var analytics = ManagementApi.Uri($"/v1/projects/{database.Project}/analytics?range=1h&region=gru-1");
         async Task<long> PostsAsync()
         {
             return (await ReadAsync(client, analytics)).GetProperty("items")[0].GetProperty("series").EnumerateArray()
@@ -602,7 +839,7 @@ public sealed class UsageAnalyticsTests
         // EXPLAIN resolves its database itself; it is still one metered request of that database.
         var before = await PostsAsync();
         using (var explained = await client.PostAsJsonAsync(
-            ManagementApi.Uri($"/projects/{database.Project}/databases/{database.Name}/sql/explain"), new { sql = "SELECT * FROM people LIMIT 1" }))
+            ManagementApi.Uri($"/v1/projects/{database.Project}/databases/{database.Name}/sql/explain"), new { sql = "SELECT * FROM people LIMIT 1" }))
         {
             explained.EnsureSuccessStatusCode();
         }
@@ -616,7 +853,7 @@ public sealed class UsageAnalyticsTests
         meter.RecordReplicationBytes(tenant, "sfo-1", "handoff", true, long.MaxValue);
         var series = (await ReadAsync(client, analytics)).GetProperty("items")[0].GetProperty("series").EnumerateArray().ToArray();
         await Assert.That(series.Max(point => point.GetProperty("replicationBandwidth").GetProperty("bytesSent").GetInt64())).IsEqualTo(long.MaxValue);
-        var replication = await ReadAsync(client, ManagementApi.Uri($"/projects/{database.Project}/replication?range=1h&region=gru-1"));
+        var replication = await ReadAsync(client, ManagementApi.Uri($"/v1/projects/{database.Project}/replication?range=1h&region=gru-1"));
         await Assert.That(replication.GetProperty("items")[0].GetProperty("bandwidth").EnumerateArray()
             .All(pair => pair.GetProperty("bytesSent").GetInt64() == long.MaxValue)).IsTrue();
 
@@ -654,9 +891,17 @@ public sealed class UsageAnalyticsTests
 
         var meter = api.Server.Services.GetRequiredService<UsageMeter>();
         var window = new UsageWindow(UsageWindow.Hour, DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 3600, 1);
-        var (unknown, _) = await meter.GetObservationsAsync(new(database.Organization, PlanTier.Hobby, database.Project, missing), window, CancellationToken.None);
+        var (unknown, _) = await meter.GetObservationsAsync(new(database.Organization, PlanTier.Hobby, database.Project, missing), window, CancellationToken.None) switch
+        {
+            UsageCounts counts => counts,
+            Unavailable error => throw new InvalidOperationException(error.Message),
+        };
         await Assert.That(unknown.Meters).IsNull();
-        var (known, _) = await meter.GetObservationsAsync(new(database.Organization, PlanTier.Hobby, database.Project, database.Id), window, CancellationToken.None);
+        var (known, _) = await meter.GetObservationsAsync(new(database.Organization, PlanTier.Hobby, database.Project, database.Id), window, CancellationToken.None) switch
+        {
+            UsageCounts counts => counts,
+            Unavailable error => throw new InvalidOperationException(error.Message),
+        };
         await Assert.That(known.Meters?.ContainsKey("requests|gru-1||get") ?? false).IsTrue();
     }
 
@@ -664,6 +909,37 @@ public sealed class UsageAnalyticsTests
     {
         public ReplicationStatus State { get; set; } = new(true, true, 0, 0, []);
         public ReplicationStatus Snapshot() => State;
+    }
+
+    private static async Task AssertMemoryReleasedAsync(ManagementApi api, long baseline)
+    {
+        await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(ReservedBytes(api) == baseline), TimeSpan.FromSeconds(10));
+        await Assert.That(ReservedBytes(api)).IsEqualTo(baseline);
+    }
+
+    private static long ReservedBytes(ManagementApi api)
+    {
+        var meter = api.Server.Services.GetRequiredService<IMeterFactory>().Create(Telemetry.MeterName);
+        long? reserved = null;
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, observer) =>
+        {
+            // Observe only this server's gauge while tests run in parallel.
+            if (instrument.Name == "terrabase.memory.reserved" && ReferenceEquals(instrument.Meter, meter))
+            {
+                observer.EnableMeasurementEvents(instrument);
+            }
+        };
+        listener.SetMeasurementEventCallback<long>((_, value, _, _) => reserved = value);
+        listener.Start();
+        var usage = api.Server.Services.GetRequiredService<UsageMeter>();
+        long result = 0;
+        usage.ObserveMemory(() =>
+        {
+            listener.RecordObservableInstruments();
+            result = (reserved ?? throw new InvalidOperationException("the server's memory budget gauge was not observed")) - usage.ReservedMeasurementBytes;
+        });
+        return result;
     }
 
     internal static HttpClient ProjectClient(ManagementApi api, string project, string? database = null, string scope = "databases:read documents:read documents:write") =>

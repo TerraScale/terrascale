@@ -2,6 +2,7 @@ using System.Diagnostics.Metrics;
 using System.Globalization;
 using System.Net;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Replication;
@@ -26,13 +27,17 @@ public sealed class ReplicationShapeTests
             peerTls.Apply(settings);
             clientTls.Apply(settings);
             TestIssuer.Configure(settings);
-        }, issuer.Route);
+        }, services =>
+        {
+            issuer.Route(services);
+            services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, new FakeTimeProvider());
+        });
         var tenant = await ReplicationTenant.CreateAsync(server, "db");
         using var client = clientTls.CreateClient(server.ClientAddress!, await tenant.KeyAsync(server, "documents:read", "documents:write", "shapes:read"));
         var collections = $"{tenant.Path("db")}/collections";
         var documents = $"{collections}/items/documents";
         var shape = $"{collections}/items/shape";
-        var feed = $"/projects/{tenant.Database("db").ProjectId}/databases/db/collections/items/changes";
+        var feed = $"/v1/projects/{tenant.Database("db").ProjectId}/databases/db/collections/items/changes";
         var ownerToken = issuer.Mint(tenant.UserId);
         issuer.GrantProject(ownerToken, tenant.OrganizationId, tenant.ProjectId);
         using (var owner = clientTls.CreateClient(server.ClientAddress!, ownerToken))
@@ -59,7 +64,7 @@ public sealed class ReplicationShapeTests
         }
 
         var feedStart = await DocumentApi.SendAsync(feedClient, HttpMethod.Get, feed);
-        feedStart.Status.ShouldBe(HttpStatusCode.OK);
+        await Assert.That(feedStart.Status).IsEqualTo(HttpStatusCode.OK).Because($"GET {feed}: {ResponseBody(feedStart)}");
         var feedToken = feedStart.Json.GetProperty("resume_token").GetString();
         var start = await DocumentApi.SendAsync(client, HttpMethod.Get, shape + "?offset=-1");
         start.Status.ShouldBe(HttpStatusCode.TemporaryRedirect);
@@ -122,7 +127,7 @@ public sealed class ReplicationShapeTests
         await Assert.That(op.GetProperty("op").GetString()).IsEqualTo("upsert");
         await Assert.That(op.GetProperty("document").GetRawText()).IsEqualTo("{\"state\":\"z-winner\"}");
         var feedPage = await DocumentApi.SendAsync(feedClient, HttpMethod.Get, $"{feed}?resume_token={feedToken}");
-        feedPage.Status.ShouldBe(HttpStatusCode.OK);
+        await Assert.That(feedPage.Status).IsEqualTo(HttpStatusCode.OK).Because($"GET {feed}: {ResponseBody(feedPage)}");
         var feedEvent = feedPage.Json.GetProperty("changes").EnumerateArray().Single();
         await Assert.That(feedEvent.GetProperty("id").GetString()).IsEqualTo(id);
         await Assert.That(feedEvent.GetProperty("document").GetRawText()).IsEqualTo("{\"state\":\"z-winner\"}");
@@ -186,7 +191,7 @@ public sealed class ReplicationShapeTests
         await ApplyAsync(2, new DocumentChange("items", id, mergeVersion, null));
         var deleted = await deletionPoll.WaitAsync(token);
         var feedDeletion = await DocumentApi.SendAsync(feedClient, HttpMethod.Get, $"{feed}?resume_token={feedToken}");
-        feedDeletion.Status.ShouldBe(HttpStatusCode.OK);
+        await Assert.That(feedDeletion.Status).IsEqualTo(HttpStatusCode.OK).Because($"GET {feed}: {ResponseBody(feedDeletion)}");
         var feedDelete = feedDeletion.Json.GetProperty("changes").EnumerateArray().Single();
         await Assert.That(feedDelete.GetProperty("operation").GetString()).IsEqualTo("delete");
         await Assert.That(feedDelete.GetProperty("id").GetString()).IsEqualTo(id);
@@ -253,5 +258,11 @@ public sealed class ReplicationShapeTests
             page.Status.ShouldBe(HttpStatusCode.OK);
             return page;
         }
+    }
+
+    private static string ResponseBody(ApiResponse response)
+    {
+        var text = response.Json.ToString();
+        return text[..Math.Min(text.Length, 4096)];
     }
 }

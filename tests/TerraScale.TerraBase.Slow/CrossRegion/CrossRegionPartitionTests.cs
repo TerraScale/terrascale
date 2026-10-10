@@ -66,6 +66,7 @@ public sealed class CrossRegionPartitionTests
                     new Uri("/v1/management/commits", UriKind.Relative),
                     new StringContent(Registration(organization, project, primary.Cell == "gru" ? database : null), Encoding.UTF8, "application/json"));
                 registered.EnsureSuccessStatusCode();
+                await primary.Api.SetPlanAsync(primary.Api.User, organization, "enterprise");
                 var key = await primary.Api.Server.IssueAsync(organization, Scopes);
                 foreach (var member in members.Where(member => member.Cell == primary.Cell))
                 {

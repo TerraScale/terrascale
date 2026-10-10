@@ -666,7 +666,7 @@ public sealed class CommitApiTests
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
         await api.VerifyProjectBindingAsync(database.Organization, database.Project);
-        var policy = Uri($"/projects/{database.Project}/databases/{database.Name}/auto-index/people");
+        var policy = Uri($"/v1/projects/{database.Project}/databases/{database.Name}/auto-index/people");
         using var policyClient = api.WithToken(api.Issuer.Mint(api.User, token =>
         {
             token.Claims["project_id"] = database.Project;

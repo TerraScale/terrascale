@@ -12,12 +12,6 @@ on:
   schedule:
     - cron: '47 4 * * *'
   workflow_dispatch:
-    inputs:
-      dry_run:
-        description: Only log what would be deleted
-        required: false
-        default: 'false'
-        type: string
 
 concurrency:
   group: terrabase-prune-releases
@@ -37,6 +31,9 @@ jobs:
           ref: ${{ forgejo.sha }}
           fetch-depth: 1
           persist-credentials: false
+
+      - name: Check retention against an isolated release API
+        run: bash scripts/ci/check-prune.sh
 
       # TS_PRUNE_ORCH_RELEASE and TS_PRUNE_ORCH_SHA256 name a ts-orch build
       # with fleet-status --role; without them the deployment's pinned build
@@ -70,6 +67,8 @@ jobs:
           OCI_CONFIG_FILE="${work}/oci-config" "${work}/ts-orch" release fleet-status --role terrabase \
             --namespace "${TS_OBJECT_NAMESPACE}" > "${RUNNER_TEMP}/pins"
           rm -rf -- "${work}"
+          # The real ts-auth Slow fixture uses its qualified storage dependency.
+          printf '%s\n' 'ci-ff256067015433c8c40b59879f1282d2a40480ce-run-13258' >> "${RUNNER_TEMP}/pins"
           printf '%s\n' "${TS_RELEASE_PINS}" >> "${RUNNER_TEMP}/pins"
           cat "${RUNNER_TEMP}/pins"
 
@@ -78,5 +77,4 @@ jobs:
         env:
           FORGEJO_TOKEN: ${{ forgejo.token }}
           FORGEJO_SERVER_URL: ${{ github.server_url }}
-          TS_PRUNE_DRY_RUN: ${{ inputs.dry_run || 'false' }}
         run: bash scripts/ci/prune-releases.sh "${GITHUB_REPOSITORY}" "${RUNNER_TEMP}/pins"

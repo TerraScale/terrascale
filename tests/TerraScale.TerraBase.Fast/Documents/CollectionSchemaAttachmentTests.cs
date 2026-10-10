@@ -38,7 +38,8 @@ public sealed class CollectionSchemaAttachmentTests
     public async Task Valid_referenced_annotation_schema_is_admitted_and_enforced()
     {
         await using var api = await DocumentApi.StartAsync(settings => settings["memory-budget"] = "16777216");
-        var path = $"/projects/{api.Tenant.ProjectId}/databases/{DocumentApi.Database}/collections/{DocumentApi.Collection}/schema";
+        await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "enterprise");
+        var path = $"/v1/projects/{api.Tenant.ProjectId}/databases/{DocumentApi.Database}/collections/{DocumentApi.Collection}/schema";
         const string Schema = """{"$ref":"#/examples/0","examples":[{"properties":{"name":{"type":"string"}}}]}""";
         (await api.SendRawAsync(HttpMethod.Put, path, Schema, "application/json")).Status.ShouldBe(HttpStatusCode.OK);
         var id = DocumentApi.NewId();
@@ -67,7 +68,7 @@ public sealed class CollectionSchemaAttachmentTests
             storage.Install(services);
             services.AddSingleton<IStartupFilter>(requests);
         });
-        var path = $"/projects/{api.Tenant.ProjectId}/databases/{DocumentApi.Database}/collections/{DocumentApi.Collection}/schema";
+        var path = $"/v1/projects/{api.Tenant.ProjectId}/databases/{DocumentApi.Database}/collections/{DocumentApi.Collection}/schema";
         const string OriginalSchema = """{"properties":{"name":{"type":"string"}}}""";
         (await api.SendRawAsync(HttpMethod.Put, path, OriginalSchema, "application/json")).Status.ShouldBe(HttpStatusCode.OK);
         var id = DocumentApi.NewId();
@@ -139,7 +140,8 @@ public sealed class CollectionSchemaAttachmentTests
     private static async Task RejectedBeforeEvaluationAsync(string candidate, HttpStatusCode status, string code)
     {
         await using var api = await DocumentApi.StartAsync(settings => settings["memory-budget"] = "16777216");
-        var path = $"/projects/{api.Tenant.ProjectId}/databases/{DocumentApi.Database}/collections/{DocumentApi.Collection}/schema";
+        await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "enterprise");
+        var path = $"/v1/projects/{api.Tenant.ProjectId}/databases/{DocumentApi.Database}/collections/{DocumentApi.Collection}/schema";
         const string OriginalSchema = """{"properties":{"name":{"type":"string"}}}""";
         (await api.SendRawAsync(HttpMethod.Put, path, OriginalSchema, "application/json")).Status.ShouldBe(HttpStatusCode.OK);
         var id = DocumentApi.NewId();

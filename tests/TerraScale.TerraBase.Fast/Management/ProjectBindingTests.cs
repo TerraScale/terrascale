@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using System.Text;
 using System.Text.Json;
@@ -85,7 +86,7 @@ public sealed class ProjectBindingTests
         using (var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken))
         {
             deadline.CancelAfter(TimeSpan.FromSeconds(30));
-            using var subscription = await jwt.GetAsync(Uri($"/projects/{project}/databases/main/collections/people/subscribe"),
+            using var subscription = await jwt.GetAsync(Uri($"/v1/projects/{project}/databases/main/collections/people/subscribe"),
                 HttpCompletionOption.ResponseHeadersRead, deadline.Token);
             await Assert.That(subscription.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
             await Assert.That(subscription.Headers.CacheControl?.NoStore).IsTrue();
@@ -100,10 +101,13 @@ public sealed class ProjectBindingTests
     }
 
     [Test]
-    public async Task Only_a_legacy_owner_with_live_ts_auth_admin_authority_verifies_existing_data_without_rewriting_it()
+    [Arguments(8 * 1024 * 1024)]
+    [Arguments(16 * 1024 * 1024)]
+    [Arguments(48 * 1024 * 1024)]
+    public async Task Only_a_legacy_owner_with_live_ts_auth_admin_authority_verifies_existing_data_without_rewriting_it(int memoryBudget)
     {
         var faker = new Faker();
-        await using var api = await ManagementApi.StartAsync();
+        await using var api = await ManagementApi.StartAsync(settings => settings["memory-budget"] = memoryBudget.ToString(CultureInfo.InvariantCulture));
         var database = await api.CreateManagedDatabaseAsync();
         using var legacy = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
         await ManagementApi.CreateCollectionAsync(legacy, database, "people");
@@ -165,6 +169,7 @@ public sealed class ProjectBindingTests
     [Arguments("missing", HttpStatusCode.NotFound)]
     [Arguments("server", HttpStatusCode.ServiceUnavailable)]
     [Arguments("unavailable", HttpStatusCode.ServiceUnavailable)]
+    [Arguments("oversized", HttpStatusCode.ServiceUnavailable)]
     public async Task Denied_mismatched_or_unavailable_ts_auth_authority_never_trusts_the_legacy_mapping(string response, HttpStatusCode expected)
     {
         var faker = new Faker();
@@ -182,6 +187,7 @@ public sealed class ProjectBindingTests
             "missing" => authority with { Status = HttpStatusCode.NotFound },
             "server" => authority with { Status = HttpStatusCode.ServiceUnavailable },
             "unavailable" => authority with { Available = false },
+            "oversized" => authority with { Role = new string('x', 64 * 1024) },
             _ => throw new ArgumentOutOfRangeException(nameof(response)),
         };
         var signIn = api.Issuer.Mint(api.User);

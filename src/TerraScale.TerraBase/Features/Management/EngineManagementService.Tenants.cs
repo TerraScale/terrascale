@@ -97,7 +97,7 @@ internal sealed partial class EngineManagementService
     // A catalog read of database's identity, reused while the catalog has not committed since the read began.
     private async ValueTask<T> ReadCachedAsync<T>(
         ConcurrentDictionary<(string, string, string), (long Sequence, T Value)> cache, TenantContext database,
-        Func<IStorageTransaction, ValueTask<T>> read, Func<Unavailable, T> unavailable, CancellationToken cancellationToken, Func<T, bool> admit)
+        Func<IStorageTransaction, ValueTask<T>> read, Func<Unavailable, T> unavailable, Func<T, bool> admit, CancellationToken cancellationToken)
     {
         RequireNoCommit();
         // Taken before the read: a commit racing it leaves the entry stale-tagged, never an older snapshot under a newer tag.
@@ -209,12 +209,12 @@ internal sealed partial class EngineManagementService
                         .ConfigureAwait(false) is { } record
                         ? new TenantDatabaseRecord(record.Name, record.Placement(options.Region))
                         : ManagementErrors.NotFound,
-                static error => error, cancellationToken, static value => value switch
+                static error => error, static value => value switch
                 {
                     TenantDatabaseRecord record => Admits((record.Name, record.Placement)),
                     NotFound => true,
                     Unavailable => false,
-                });
+                }, cancellationToken);
     }
 
     public ValueTask<ReadDatabaseRecordsResult> ReadDatabaseRecordsAsync(string homeRegion, TenantContext? after, CancellationToken cancellationToken) =>
@@ -538,10 +538,9 @@ internal sealed partial class EngineManagementService
                 !Interprets(await GetAsync(transaction, Catalog, CatalogVersionId, Id, cancellationToken).ConfigureAwait(false))
                     ? UnreadableCatalog
                     : await ScopeExistsUncheckedAsync(transaction, database.OrganizationId, database.ProjectId, database.DatabaseId, cancellationToken).ConfigureAwait(false)
-                        && (options.Wan is null
-                            || (await GetAsync(transaction, Databases(database.ProjectId), database.DatabaseId, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken)
-                                .ConfigureAwait(false))?.PlacedIn(options.Region) == true),
-                static error => error, cancellationToken, static value => value is bool);
+                        && (await GetAsync(transaction, Databases(database.ProjectId), database.DatabaseId, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken)
+                            .ConfigureAwait(false))?.PlacedIn(options.Region) == true,
+                static error => error, static value => value is bool, cancellationToken);
     }
 
     public ValueTask<ReplicatesDatabaseResult> ReplicatesAsync(TenantContext database, CancellationToken cancellationToken)
@@ -552,7 +551,9 @@ internal sealed partial class EngineManagementService
             : ReadAsync<ReplicatesDatabaseResult>(async transaction =>
                 !Interprets(await GetAsync(transaction, Catalog, CatalogVersionId, Id, cancellationToken).ConfigureAwait(false))
                     ? UnreadableCatalog
-                    : await ScopeExistsUncheckedAsync(transaction, database.OrganizationId, database.ProjectId, database.DatabaseId, cancellationToken).ConfigureAwait(false)
+                    : (await ScopeExistsUncheckedAsync(transaction, database.OrganizationId, database.ProjectId, database.DatabaseId, cancellationToken).ConfigureAwait(false)
+                        && (await GetAsync(transaction, Databases(database.ProjectId), database.DatabaseId, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken)
+                            .ConfigureAwait(false))?.PlacedIn(options.Region) == true)
                         || await GetAsync(transaction, PendingDatabaseCleanup, database.DatabaseId, TerraBaseJsonContext.Default.TenantContext, cancellationToken)
                             .ConfigureAwait(false) is not null,
                 static error => error, cancellationToken);

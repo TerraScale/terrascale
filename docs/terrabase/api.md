@@ -146,8 +146,12 @@ TS-588 adds `GET D/backups/{backup}/download` (`downloadBackup`, `databases:read
 | POST | `D/indexes` | `createIndex` | `databases:write` | `MD/indexes` |
 | GET | `D/indexes` | `listIndexes` | `databases:read` | `MD/indexes` |
 | DELETE | `D/indexes/{index}` | `dropIndex` | `databases:write` | `MD/indexes/{index}` |
+| GET | `D/auto-index/{collection}` | `getAutoIndexPolicy` | `databases:read` | — |
+| PUT | `D/auto-index/{collection}` | `setAutoIndexPolicy` | `databases:write` | — |
 | GET | `D/index-recommendations` | `listIndexRecommendations` | `databases:read` | `MD/index-recommendations` |
 | POST | `D/index-recommendations/{recommendation}/apply` | `applyIndexRecommendation` | `databases:write` | `MD/index-recommendations/{recommendation}/apply` |
+
+Automatic-index policy routes are v1-only; their former unversioned paths return `404`.
 
 ### Schema
 
@@ -170,8 +174,8 @@ routes (TS-581) go in this group and follow these conventions. Both routes take 
 `from` and `to`, and answer that period's reads and writes and one point per bucket (TS-581,
 [management API](management-api.md#usage)). There is no organization usage: ts-dashboard sums its projects.
 
-TS-762 adds versionless project and database `/analytics` and `/replication`
-routes with the same project JWT scope and database-name path selectors.
+Project and database `/analytics` and `/replication` routes use the `/v1/projects` prefix
+with the same project JWT scope and database-name path selectors.
 Ranges, regional ownership, response fields, wire-byte accounting and limits:
 [Project replication and analytics](analytics.md).
 
@@ -210,16 +214,16 @@ UTF-8 or percent escapes return `400 invalid_request`. See [the key contract](id
 | POST | `D/sql` | `runSql` | `databases:read` | `MD/sql` |
 | POST | `D/sql/check` | `checkSql` | `databases:read` | `MD/sql/check` |
 | GET | `D/query-shapes` | `listQueryShapes` | `databases:read` | `/management/organizations/{organization}/projects/{project}/databases/{database-id}/query-shapes` |
-| POST | `/projects/{project}/databases/{database}/sql/explain` | `explainSql` | `databases:read` | — |
+| POST | `D/sql/explain` | `explainSql` | `databases:read` | — |
 | POST | `P/saved-queries` | `createSavedQuery` | `databases:write` | `MP/saved-queries` |
 | GET | `P/saved-queries` | `listSavedQueries` | `databases:read` | `MP/saved-queries` |
 | GET | `P/saved-queries/{query}` | `getSavedQuery` | `databases:read` | `MP/saved-queries/{query}` |
 | PUT | `P/saved-queries/{query}` | `updateSavedQuery` | `databases:write` | `MP/saved-queries/{query}` |
 | DELETE | `P/saved-queries/{query}` | `deleteSavedQuery` | `databases:write` | `MP/saved-queries/{query}` |
 
-TS-722 adds the unversioned SQL EXPLAIN route above. It uses a database name and project JWT scopes,
+TS-722 adds the SQL EXPLAIN route above. It uses a database name and project JWT scopes,
 returns the existing SQL check body (plan steps, selected secondary index names and suggestions), and
-rejects invalid SQL with `400 invalid_request`. It does not execute or meter the query. The EXPLAIN route omits the legacy version prefix.
+rejects invalid SQL with `400 invalid_request`. It does not execute or meter the query. The former unversioned EXPLAIN path returns `404`; no alias is registered.
 
 ### Transactions
 
@@ -232,11 +236,12 @@ rejects invalid SQL with `400 invalid_request`. It does not execute or meter the
 | Method | Route | operationId | Scope |
 | --- | --- | --- | --- |
 | GET | `C/shape` | `getShape` | `shapes:read` |
-| GET | `/projects/{project}/databases/{database}/collections/{collection}/subscribe` | `subscribeCollection` | `shapes:read` |
+| GET | `C/subscribe` | `subscribeCollection` | `shapes:read` |
 
-TS-690 adds the unversioned SSE subscription route above. It authenticates project-scoped ts-auth JWTs
+TS-690 adds the SSE subscription route above. It authenticates project-scoped ts-auth JWTs
 and streams the existing shape contract; see [subscriptions](subscriptions.md) for selection, resume,
-expiry and resource bounds. WebSocket delivery and plan entitlements remain subsequent slices.
+expiry and resource bounds. The former unversioned subscription path returns `404`; no alias is registered.
+WebSocket delivery and plan entitlements remain subsequent slices.
 
 ## System
 
@@ -263,7 +268,7 @@ These are not operations in the document ([API reference](api-reference.md)). Un
 
 | Method | Route | Old route | Use |
 | --- | --- | --- | --- |
-| GET | `/admin/node/pressure` | — | Node pressure ([node pressure](node-pressure.md)) |
+| GET | `/v1/admin/node/pressure` | `/admin/node/pressure` (404) | Node pressure ([node pressure](node-pressure.md)) |
 | GET | `/metrics` | unchanged | Prometheus scrape |
 
 ## Hidden legacy identity and dashboard routes

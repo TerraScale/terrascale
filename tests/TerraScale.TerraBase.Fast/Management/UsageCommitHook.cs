@@ -39,6 +39,9 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
     // Runs after a catalog row is captured, so tests can change its mapping before the next lookup.
     public Func<string, string, CancellationToken, ValueTask>? AfterGet { get; set; }
 
+    // Observes detached catalog rows from real reads, including pages, before lookup hooks run.
+    public Action<StoredDocument>? AfterRead { get; set; }
+
     // Lists databases in reverse engine order while set, as an unordered listing may.
     public bool ReverseDatabases
     {
@@ -278,7 +281,8 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
             }
 
             var transaction = await inner.BeginTransactionAsync(write, cancellationToken);
-            return write || hook.BeforeList is not null || hook.AfterGet is not null || hook.BeforeGet is not null ? new Transaction(transaction, hook) : transaction;
+            return write || hook.BeforeList is not null || hook.AfterGet is not null || hook.BeforeGet is not null || hook.AfterRead is not null
+                ? new Transaction(transaction, hook) : transaction;
         }
     }
 
@@ -326,6 +330,10 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
         {
             hook.BeforeGet?.Invoke(collection);
             var document = await inner.GetAsync(collection, id, cancellationToken);
+            if (document is not null)
+            {
+                hook.AfterRead?.Invoke(document);
+            }
             if (hook.AfterGet is { } afterGet)
             {
                 await afterGet(collection, id, cancellationToken);
@@ -337,10 +345,15 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
         public ValueTask<DocumentVersion?> GetVersionAsync(string collection, string id, CancellationToken cancellationToken) => inner.GetVersionAsync(collection, id, cancellationToken);
         public ValueTask<bool> DeleteAsync(string collection, string id, CancellationToken cancellationToken) => inner.DeleteAsync(collection, id, cancellationToken);
         public ValueTask<long?> TombstoneAsync(string collection, string id, CancellationToken cancellationToken) => inner.TombstoneAsync(collection, id, cancellationToken);
-        public ValueTask<DocumentPage> ListAsync(string collection, string? afterId, int limit, long maxBytes, CancellationToken cancellationToken)
+        public async ValueTask<DocumentPage> ListAsync(string collection, string? afterId, int limit, long maxBytes, CancellationToken cancellationToken)
         {
             hook.BeforeList?.Invoke(collection);
-            return inner.ListAsync(collection, afterId, limit, maxBytes, cancellationToken);
+            var page = await inner.ListAsync(collection, afterId, limit, maxBytes, cancellationToken);
+            foreach (var document in page.Documents)
+            {
+                hook.AfterRead?.Invoke(document);
+            }
+            return page;
         }
 
         public ValueTask<QueryPage> QueryAsync(DocumentQuery query, CancellationToken cancellationToken, QueryObservation? observation = null) => inner.QueryAsync(query, cancellationToken, observation);

@@ -9,8 +9,9 @@ public sealed class SqlBudgetTests
     [Test]
     public async Task Statements_past_the_engine_work_budget_are_too_expensive_even_before_their_first_row()
     {
-        await using var api = await ManagementApi.StartAsync();
+        await using var api = await ManagementApi.StartAsync(managementCredential: true);
         var database = await api.CreateManagedDatabaseAsync();
+        await api.SetPlanAsync(api.User, database.Organization, "enterprise");
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
         // 10 000 documents under a 256-condition filter cost SQLite well over 5 million instructions, though no row matches.
         await ManagementApi.CreateCollectionAsync(data, database, "items");
@@ -23,6 +24,8 @@ public sealed class SqlBudgetTests
             }));
         }
 
+        // Pro retains the five-million-instruction budget after the unrestricted setup writes.
+        await api.SetPlanAsync(api.User, database.Organization, "pro");
         var nothing = Nothing(256);
         using var filtered = await RunAsync(api, database, $"SELECT _id FROM items WHERE {nothing} LIMIT 1");
         using var sorted = await RunAsync(api, database, $"SELECT _id FROM items WHERE {nothing} ORDER BY n LIMIT 1");

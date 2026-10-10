@@ -49,7 +49,10 @@ internal sealed class FakeRegionNetwork
         }
     }
 
-    /// <summary>Faults on every request between cells from now on, or none; the seed makes a run repeatable.</summary>
+    /// <summary>
+    /// Faults on every request between cells from now on, or none; the seed makes a run repeatable.
+    /// Each enabled drop or corruption occurs at least once on this network, then follows its probability.
+    /// </summary>
     public RegionFaults? Faults
     {
         get => Volatile.Read(ref _faults);
@@ -101,10 +104,14 @@ internal sealed class FakeRegionNetwork
         }
 
         await Task.Delay(faults.MaxDelay * delay, cancellationToken);
-        if (drop < faults.Drop)
+        // Finite random runs can miss a fault; consume its mandatory occurrence only when it actually happens.
+        lock (_gate)
         {
-            _ = Interlocked.Increment(ref _dropped);
-            return null;
+            if (drop < faults.Drop || (faults.Drop > 0 && _dropped == 0))
+            {
+                _ = Interlocked.Increment(ref _dropped);
+                return null;
+            }
         }
 
         var reply = await answer(request.ToArray(), cancellationToken);
@@ -114,11 +121,14 @@ internal sealed class FakeRegionNetwork
             reply = await answer(request.ToArray(), cancellationToken);
         }
 
-        if (corrupt < faults.Corrupt && reply.Length > 0)
+        lock (_gate)
         {
-            reply = [.. reply];
-            reply[(int)(position * reply.Length)] ^= 0x5a;
-            _ = Interlocked.Increment(ref _corrupted);
+            if (reply.Length > 0 && (corrupt < faults.Corrupt || (faults.Corrupt > 0 && _corrupted == 0)))
+            {
+                reply = [.. reply];
+                reply[(int)(position * reply.Length)] ^= 0x5a;
+                _ = Interlocked.Increment(ref _corrupted);
+            }
         }
 
         return reply;

@@ -7,6 +7,8 @@ using Bogus;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
+using TerraBase.Engine;
 using TerraBase.Hosting;
 using TerraBase.Testing;
 
@@ -132,7 +134,8 @@ public sealed class CollectionSchemaTests
     [Test]
     public async Task Post_put_and_both_patch_formats_validate_the_complete_document_without_failed_writes()
     {
-        await using var api = await DocumentApi.StartAsync();
+        await using var api = await DocumentApi.StartAsync(services: services =>
+            services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, new FakeTimeProvider()));
         await AttachedAsync(await api.SendRawAsync(HttpMethod.Put, SchemaPath(api), NameSchema, "application/json"), NameSchema);
         var name = new Faker().Commerce.ProductName();
         var created = await api.SendAsync(HttpMethod.Post, api.Documents, new { name, count = 1 });
@@ -175,7 +178,13 @@ public sealed class CollectionSchemaTests
         await Assert.That(unchanged.Version).IsEqualTo(before.Version);
         await Assert.That(JsonElement.DeepEquals(unchanged.Json.GetProperty("document"), before.Json.GetProperty("document"))).IsTrue();
         await Assert.That((await api.GetAsync(failedId)).Status).IsEqualTo(HttpStatusCode.NotFound);
-        await Assert.That((await api.SendAsync(HttpMethod.Get, api.Documents)).Ids).IsEquivalentTo([id, putId]);
+        using var listed = await api.Client.GetAsync(new Uri(api.Documents, UriKind.Relative));
+        var text = await listed.Content.ReadAsStringAsync();
+        await Assert.That(listed.StatusCode).IsEqualTo(HttpStatusCode.OK)
+            .Because($"GET {api.Documents}: HTTP {(int)listed.StatusCode}: {text[..Math.Min(text.Length, 4096)]}");
+        using var page = JsonDocument.Parse(text);
+        await Assert.That(page.RootElement.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("id").GetString()!))
+            .IsEquivalentTo([id, putId]);
     }
 
     [Test]
@@ -285,6 +294,7 @@ public sealed class CollectionSchemaTests
     public async Task Many_invalid_array_items_bound_failure_count_and_total_utf8_pointer_bytes()
     {
         await using var api = await DocumentApi.StartAsync(settings => settings["memory-budget"] = "16777216");
+        await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "enterprise");
         string[] propertyNames = ["a", new string('é', 600)];
         foreach (var propertyName in propertyNames)
         {
@@ -427,7 +437,7 @@ public sealed class CollectionSchemaTests
     }
 
     private static string SchemaPath(DocumentApi api) =>
-        $"/projects/{api.Tenant.ProjectId}/databases/{DocumentApi.Database}/collections/{DocumentApi.Collection}/schema";
+        $"/v1/projects/{api.Tenant.ProjectId}/databases/{DocumentApi.Database}/collections/{DocumentApi.Collection}/schema";
 
     private static async Task AttachedAsync(ApiResponse response, string schema)
     {

@@ -1,6 +1,6 @@
 # Node pressure (TS-478)
 
-`GET /admin/node/pressure` returns a cached JSON sample on the loopback administrative
+`GET /v1/admin/node/pressure` returns a cached JSON sample on the loopback administrative
 listener, alongside `/metrics`. Both return 404 on client and peer listeners.
 Responses have `Cache-Control: no-store`; fetching never refreshes measurements,
 scans documents/files, or changes `sampled_at`. Concurrent readers share an
@@ -9,10 +9,14 @@ forward; this change adds no public listener or network access.
 
 ## Instance-bound SDK evidence (TS-514)
 
-The single node-pressure endpoint serves schema 2, including measured node
+The single node-pressure endpoint serves schema 1, including measured node
 counters and organization diagnostics under `top_organizations` and
 `top_organizations_by_storage`. It omits project `top_tenants`: organization
 rankings are not project CPU attribution.
+The 2026-10-09 v1 rule edits this contract in place: the route is
+`/v1/admin/node/pressure` and `schema` is always `1`. The old unversioned route
+returns 404. Consumers requiring schema 2 or the old route must adopt this
+contract before consuming the release; there is no compatibility alias.
 `instance_id` comes only from `--instance-id` / `TERRABASE_INSTANCE_ID`; absent
 configuration is explicit null, never a machine-name substitute. Accepted IDs
 are 1..128 ASCII letters, digits, dots, underscores, colons, pluses and hyphens.
@@ -34,13 +38,13 @@ Certified member lifecycle, incoming replica catch-up, logical storage, device
 IOPS and mean device queue depth remain unavailable. Their existing unknown
 values stay explicit; neither the SDK nor orchestrator may substitute the
 local readiness flag or outgoing lag for that safety evidence. SDK consumers
-read schema 2 and must hold on incomplete evidence. This
+read schema 1 and must hold on incomplete evidence. This
 integration does not qualify autonomous live scaling.
 
 ## Autoscaling remains gated
 
-The current ts-orchestrator consumer accepts schema 2 at
-`/admin/node/pressure`, at most 64 KiB, UTC RFC3339 timestamps, rates per second,
+The consumer contract uses schema 1 at
+`/v1/admin/node/pressure`, at most 64 KiB, UTC RFC3339 timestamps, rates per second,
 utilizations in `[0,1]`, and p95 latency in milliseconds. It requires explicit
 cloud instance/process identities and all safety counters. Its freshness bounds
 are two minutes old and five seconds ahead of the consumer clock. A producer
@@ -63,7 +67,7 @@ TS-513 and is not implemented here.
 
 | Fields | Meaning |
 | --- | --- |
-| `schema`, `node`, `region`, `process_id`, `release` | Schema 2; operator node name (machine name by default); configured TS-499 region; plain ULID for each host/process incarnation; full assembly informational version including build revision. Node identity is descriptive, not membership evidence. |
+| `schema`, `node`, `region`, `process_id`, `release` | Schema 1; operator node name (machine name by default); configured TS-499 region; plain ULID for each host/process incarnation; full assembly informational version including build revision. Node identity is descriptive, not membership evidence. |
 | `sampled_at`, `sample_window_seconds` | UTC sample completion and elapsed monotonic seconds for its counters. CPU and HTTP counters are sampled every second; a delayed sampler reports its actual elapsed interval. |
 | `cpu_util` | Process CPU seconds divided by interval seconds and `Environment.ProcessorCount`, capped at one. Null without a baseline or when process measurement fails. The runtime's effective processor count may round fractional container quotas. |
 | `memory_used_bytes`, `memory_budget_bytes`, `mem_util` | Process resident working set; telemetry budget; used/budget capped at one. Used bytes remain uncapped and can exceed the budget. Process failures yield null used/utilization. This budget is a denominator, not a hard memory-admission guarantee. |

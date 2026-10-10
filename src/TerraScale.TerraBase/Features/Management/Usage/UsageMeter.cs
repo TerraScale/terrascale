@@ -384,7 +384,7 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
                 return read switch
                 {
                     Unavailable error => error,
-                    UsageCounts => throw new UnreachableException(),
+                    UsageCounts or null => throw new UnreachableException(),
                 };
             }
 

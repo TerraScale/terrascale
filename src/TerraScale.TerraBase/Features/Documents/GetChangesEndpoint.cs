@@ -13,7 +13,7 @@ public sealed class GetChangesEndpoint(IChangeFeedService changes, ITenantDirect
     /// <inheritdoc />
     public override void Configure()
     {
-        Get("/projects/{project}/databases/{database}/collections/{collection}/changes");
+        Get("/v1/projects/{project}/databases/{database}/collections/{collection}/changes");
         Name("getCollectionChanges");
         Summary("Polls committed collection changes in local order");
         Description("Requires a ts-auth project access token with documents:read. Query: limit (1 to 100, default 100), resume_token (opaque position from the previous page). Without a token, reads from the retained history floor. Inserts and updates are upserts. Pages stop at 100 events or 2 MiB of stored JSON and framing. Tokens are specific to this serving member and collection lineage. Stale tokens return 409 resume_expired; capacity returns 429 change_feed_busy. See docs/change-feeds.md.");

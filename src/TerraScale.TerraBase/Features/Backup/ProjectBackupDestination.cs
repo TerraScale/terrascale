@@ -40,6 +40,9 @@ public sealed record ProjectBackupDestinationRequest(string? Endpoint, string? R
 /// <param name="SecretId">OCI Vault reference; no credential material is persisted in TerraBase.</param>
 public sealed record ProjectBackupDestinationRecord(int Version, string Revision, ProjectBackupDestination Destination, string SecretId);
 
+/// <summary>A configured destination, or why its catalog record could not be read.</summary>
+public readonly union ReadBackupDestinationResult(ProjectBackupDestinationRecord, NotFound, Unavailable);
+
 /// <summary>A saved destination, or why it could not be saved.</summary>
 public readonly union SaveBackupDestinationResult(ProjectBackupDestination, NotFound, Forbidden, Unavailable);
 
@@ -50,7 +53,7 @@ public readonly union DeleteBackupDestinationResult(Done, NotFound, Forbidden, U
 public interface IProjectBackupDestinations
 {
     /// <summary>Reads the catalog record for a shipper or restore; credentials stay in OCI Vault.</summary>
-    ValueTask<ProjectBackupDestinationRecord?> ReadAsync(string organizationId, string projectId, CancellationToken cancellationToken);
+    ValueTask<ReadBackupDestinationResult> ReadAsync(string organizationId, string projectId, CancellationToken cancellationToken);
 
     /// <summary>Validates bucket access, creates a Vault secret, and saves the destination with a fresh authorization check.</summary>
     Task<SaveBackupDestinationResult> SaveAsync(string userId, string organizationId, string projectId, ProjectBackupDestinationRequest request, CancellationToken cancellationToken);

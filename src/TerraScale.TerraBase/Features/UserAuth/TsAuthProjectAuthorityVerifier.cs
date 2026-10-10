@@ -15,6 +15,7 @@ internal sealed record TsAuthProjectAuthority(
 internal sealed class TsAuthProjectAuthorityVerifier(TerraBaseOptions options, IHttpClientFactory http, IMemoryBudget budget) : IProjectAuthorityVerifier
 {
     private const int MaxInFlight = 16;
+    private const int MaxResponseBytes = 64 * 1024;
     private int _inFlight;
 
     public async ValueTask<ProjectAuthorityResult> IsProjectAdministratorAsync(string token, string organizationId, string projectId, CancellationToken cancellationToken)
@@ -38,13 +39,14 @@ internal sealed class TsAuthProjectAuthorityVerifier(TerraBaseOptions options, I
             }
 
             // Reserve the bounded response plus JSON decoding before the HTTP client buffers either.
-            using var reservation = budget.TryReserve(MemoryLane.Foreground, 4L * TsAuthKeys.MaxDocumentBytes);
+            using var reservation = budget.TryReserve(MemoryLane.Foreground, 4L * MaxResponseBytes);
             if (reservation is null)
             {
                 return Unavailable();
             }
 
             using var client = http.CreateClient(TsAuthKeys.HttpClientName);
+            client.MaxResponseContentBufferSize = MaxResponseBytes;
             using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
             if ((int)response.StatusCode >= 500 || response.StatusCode == HttpStatusCode.TooManyRequests)
             {

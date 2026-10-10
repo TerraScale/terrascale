@@ -49,7 +49,7 @@ public sealed class ManagementApiTests
     [Test]
     public async Task An_organization_plan_defaults_to_hobby_and_needs_the_service_credential_acting_as_owner()
     {
-        await using var api = await ManagementApi.StartAsync();
+        await using var api = await ManagementApi.StartAsync(managementCredential: true);
         using var other = api.As(EntityIds.New().ToString());
         var organization = await api.CreateOrganizationAsync("Acme");
         var plan = $"/v1/management/organizations/{organization}/plan";
@@ -202,7 +202,9 @@ public sealed class ManagementApiTests
         await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
         await Assert.That(main.GetProperty("name").GetString()).IsEqualTo("main");
         await Assert.That(main.GetProperty("projectId").GetString()).IsEqualTo(project);
+        await Assert.That(EntityIds.IsValid(mainId)).IsTrue();
         await Assert.That(branched.StatusCode).IsEqualTo(HttpStatusCode.Created);
+        await Assert.That(EntityIds.IsValid(branch.GetProperty("id").GetString())).IsTrue();
         await Assert.That(branch.GetProperty("branchedFrom").GetString()).IsEqualTo(mainId);
         await Assert.That(mainWithoutBranchWrite.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(list.RootElement.GetProperty("items").GetArrayLength()).IsEqualTo(2);

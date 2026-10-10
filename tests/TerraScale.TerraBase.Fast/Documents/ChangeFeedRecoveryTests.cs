@@ -28,7 +28,7 @@ public sealed class ChangeFeedRecoveryTests
         }));
         var id = DocumentApi.NewId();
         (await api.PutAsync(id, new { name = new Faker().Name.FirstName() })).Status.ShouldBe(HttpStatusCode.Created);
-        var route = $"/projects/{api.Tenant.ProjectId}/databases/db/collections/items/changes";
+        var route = $"/v1/projects/{api.Tenant.ProjectId}/databases/db/collections/items/changes";
         var reserved = await api.ReservedBytesAsync();
         var database = await api.TenantOfAsync();
         hook.BeforeBegin = (tenant, _) =>
@@ -67,7 +67,7 @@ public sealed class ChangeFeedRecoveryTests
             var name = new Faker().Name.FirstName();
             await using (var api = await DocumentApi.StartAsync(settings => settings["data-directory"] = directory))
             {
-                route = $"/projects/{api.Tenant.ProjectId}/databases/db/collections/items/changes";
+                route = $"/v1/projects/{api.Tenant.ProjectId}/databases/db/collections/items/changes";
                 project = api.Tenant.ProjectId;
                 user = api.Tenant.User;
                 using var owner = api.Management.As(user);

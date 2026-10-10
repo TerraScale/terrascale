@@ -36,6 +36,12 @@ public sealed class SubscriptionApiTests
 
         // The token's subject is not a member; there is no organization claim or API key on this client.
         using var client = api.WithToken(Token(api, database));
+        using (var former = await SubscribeAsync(client,
+            $"/projects/{database.Project}/databases/{database.Name}/collections/{Collection}/subscribe" + Filter(), deadline.Token))
+        {
+            await Assert.That(former.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        }
+
         using var response = await SubscribeAsync(client, Route(database) + Filter(), deadline.Token);
         await AssertStreamAsync(response);
         using var reader = new StreamReader(await response.Content.ReadAsStreamAsync(deadline.Token));
@@ -169,7 +175,7 @@ public sealed class SubscriptionApiTests
     public async Task Last_event_id_resumes_an_unfinished_snapshot_before_delivering_later_writes()
     {
         await using var api = await ManagementApi.StartAsync();
-        using var deadline = Deadline();
+        var setupToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         var database = await api.CreateManagedDatabaseAsync();
         await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var data = await api.CreateClientAsync(database.Organization, "documents:write");
@@ -181,11 +187,13 @@ public sealed class SubscriptionApiTests
             using var written = await data.PostAsJsonAsync(ManagementApi.Uri($"{database.Data}/transactions"), new
             {
                 ops = batch.Select(id => new { op = "put", collection = Collection, id, document = new { status = "open" } }).ToArray(),
-            }, deadline.Token);
+            }, setupToken);
             written.EnsureSuccessStatusCode();
-            head = (await written.Content.ReadFromJsonAsync<JsonElement>(deadline.Token)).GetProperty("offset").GetString()!;
+            head = (await written.Content.ReadFromJsonAsync<JsonElement>(setupToken)).GetProperty("offset").GetString()!;
         }
 
+        // The stream deadline measures subscription progress; setup retains the suite's execution deadline.
+        using var deadline = Deadline();
         using var client = api.WithToken(Token(api, database));
         var route = Route(database) + Filter();
         SseEvent first;
@@ -377,7 +385,7 @@ public sealed class SubscriptionApiTests
         });
 
     private static string Route(ManagedDatabaseRef database) =>
-        $"/projects/{database.Project}/databases/{database.Name}/collections/{Collection}/subscribe";
+        $"/v1/projects/{database.Project}/databases/{database.Name}/collections/{Collection}/subscribe";
 
     private static string Filter() => "?where=" + Uri.EscapeDataString(Open);
 

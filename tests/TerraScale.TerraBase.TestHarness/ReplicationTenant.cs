@@ -46,7 +46,8 @@ internal sealed class ReplicationTenant
     public static Task<ReplicationTenant> CreateAsync(TerraBaseTestServer seed, params string[] databaseNames) =>
         CreateAsync(seed, databaseNames, CancellationToken.None);
 
-    public static async Task<ReplicationTenant> CreateAsync(TerraBaseTestServer seed, string[] databaseNames, CancellationToken cancellationToken)
+    public static async Task<ReplicationTenant> CreateAsync(
+        TerraBaseTestServer seed, string[] databaseNames, CancellationToken cancellationToken, IReadOnlyList<string>? replicaRegions = null)
     {
         ArgumentNullException.ThrowIfNull(seed);
         ArgumentNullException.ThrowIfNull(databaseNames);
@@ -70,12 +71,18 @@ internal sealed class ReplicationTenant
         var databases = new Dictionary<string, TenantContext>(StringComparer.Ordinal);
         foreach (var name in databaseNames)
         {
-            var created = await directory.CreateDatabaseAsync(organization.Id, project.Id, name, token) switch
-            {
-                ProvisionedDatabase value => value,
-                _ => throw new InvalidOperationException("could not create the replication database"),
-            };
-            databases.Add(name, created.Database);
+            var database = replicaRegions is null
+                ? await directory.CreateDatabaseAsync(organization.Id, project.Id, name, token) switch
+                {
+                    ProvisionedDatabase value => value.Database,
+                    _ => null,
+                }
+                : await management.CreateDatabaseAsync(user, organization.Id, project.Id, name, token, replicaRegions) switch
+                {
+                    ManagedDatabase value => new TenantContext(organization.Id, organization.Plan, project.Id, value.Id),
+                    _ => null,
+                };
+            databases.Add(name, database ?? throw new InvalidOperationException("could not create the replication database"));
         }
 
         // Exact keys bound this capture to seven shared rows plus two per named database; API keys are never copied.

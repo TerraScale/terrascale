@@ -10,6 +10,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
+using TerraBase.Errors;
 using TerraBase.Fast.Documents;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.Alpha;
@@ -268,7 +269,7 @@ public sealed class AntiEntropyTests
             settings["peer-addresses"] = receiver.PeerAddress!.ToString();
         }, services => services.AddSingleton<TimeProvider>(clock));
         await clock.PausedAsync(token);
-        var tenant = await ReplicationTenant.CreateAsync(source, ["repair"], cancellationToken);
+        var tenant = await ReplicationTenant.CreateAsync(source, ["repair"], cancellationToken, replicaRegions: ["gru-1"]);
         await tenant.BindAsync(receiver);
         using var writer = clientTls.CreateClient(source.ClientAddress!, await tenant.KeyAsync(source, ["documents:write"], cancellationToken));
         var ids = await SeedAsync(writer, tenant, token);
@@ -278,7 +279,11 @@ public sealed class AntiEntropyTests
         {
             var window = new TerraBase.Features.Management.Usage.UsageWindow(
                 TerraBase.Features.Management.Usage.UsageWindow.Hour, DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 3600, 1);
-            var (lifetime, _) = await node.Services.GetRequiredService<TerraBase.Features.Management.Usage.UsageMeter>().GetObservationsAsync(database, window, token);
+            var (lifetime, _) = await node.Services.GetRequiredService<TerraBase.Features.Management.Usage.UsageMeter>().GetObservationsAsync(database, window, token) switch
+            {
+                TerraBase.Features.Management.Usage.UsageCounts counts => counts,
+                Unavailable error => throw new InvalidOperationException(error.Message),
+            };
             return lifetime.Meters?.GetValueOrDefault(key)?.Count ?? 0;
         }
 
@@ -336,7 +341,7 @@ public sealed class AntiEntropyTests
             settings["peer-addresses"] = receiver.PeerAddress!.ToString();
         }, services => services.AddSingleton<TimeProvider>(clock));
         await clock.PausedAsync(token);
-        var tenant = await ReplicationTenant.CreateAsync(source, ["repair"], cancellationToken);
+        var tenant = await ReplicationTenant.CreateAsync(source, ["repair"], cancellationToken, replicaRegions: ["gru-1"]);
         await tenant.BindAsync(receiver);
         using var writer = clientTls.CreateClient(source.ClientAddress!, await tenant.KeyAsync(source, ["documents:write"], cancellationToken));
         var ids = await SeedAsync(writer, tenant, token);
@@ -346,7 +351,11 @@ public sealed class AntiEntropyTests
         {
             var window = new TerraBase.Features.Management.Usage.UsageWindow(
                 TerraBase.Features.Management.Usage.UsageWindow.Hour, DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 3600, 1);
-            var (lifetime, _) = await node.Services.GetRequiredService<TerraBase.Features.Management.Usage.UsageMeter>().GetObservationsAsync(database, window, token);
+            var (lifetime, _) = await node.Services.GetRequiredService<TerraBase.Features.Management.Usage.UsageMeter>().GetObservationsAsync(database, window, token) switch
+            {
+                TerraBase.Features.Management.Usage.UsageCounts counts => counts,
+                Unavailable error => throw new InvalidOperationException(error.Message),
+            };
             return lifetime.Meters?.GetValueOrDefault(key)?.Count ?? 0;
         }
 
@@ -426,7 +435,11 @@ public sealed class AntiEntropyTests
         var window = new TerraBase.Features.Management.Usage.UsageWindow(
             TerraBase.Features.Management.Usage.UsageWindow.Hour, DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 3600, 1);
         var (lifetime, _) = await server.Services.GetRequiredService<TerraBase.Features.Management.Usage.UsageMeter>()
-            .GetObservationsAsync(database, window, cancellationToken);
+            .GetObservationsAsync(database, window, cancellationToken) switch
+        {
+            TerraBase.Features.Management.Usage.UsageCounts counts => counts,
+            Unavailable error => throw new InvalidOperationException(error.Message),
+        };
         await Assert.That(lifetime.Meters!["replication_bytes|gru-1|sfo-1|anti_entropy:received"].Count).IsEqualTo(digestBytes + merge.CalculateSize() + 5L);
     }
 

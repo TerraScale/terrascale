@@ -6,6 +6,7 @@ using System.Text;
 using System.Text.Json;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
 using TerraBase.Errors;
@@ -48,8 +49,8 @@ public sealed class CrossRegionTests
         _ = await Regions.EventuallyReadAsync(regions.Gru, regions.Document(ReplicationDocuments.Id("meter-sfo")), value);
         await regions.ConvergedAsync();
 
-        var gruRoute = ManagementApi.Uri($"/projects/{regions.Project}/replication?range=1h&region=gru-1");
-        var sfoRoute = ManagementApi.Uri($"/projects/{regions.Project}/replication?range=1h&region=sfo-1");
+        var gruRoute = ManagementApi.Uri($"/v1/projects/{regions.Project}/replication?range=1h&region=gru-1");
+        var sfoRoute = ManagementApi.Uri($"/v1/projects/{regions.Project}/replication?range=1h&region=sfo-1");
         var gruUsage = (await Management.UsageAnalyticsTests.ReadAsync(gru, gruRoute)).GetProperty("items")[0];
         var sfoUsage = (await Management.UsageAnalyticsTests.ReadAsync(sfo, sfoRoute)).GetProperty("items")[0];
         await Assert.That(gruUsage.GetProperty("replicatedOps").GetInt64()).IsGreaterThan(0);
@@ -62,12 +63,12 @@ public sealed class CrossRegionTests
         await Assert.That(received).IsEqualTo(sent);
         await Assert.That(Traffic(sfoUsage, "sfo-1", "gru-1", "bytesSent")).IsGreaterThan(0);
         await Assert.That(gruUsage.GetProperty("bandwidth").EnumerateArray().Any(pair => pair.GetProperty("kind").GetString() == "anti_entropy")).IsTrue();
-        var analytics = await Management.UsageAnalyticsTests.ReadAsync(gru, ManagementApi.Uri($"/projects/{regions.Project}/analytics?range=1h&region=gru-1"));
+        var analytics = await Management.UsageAnalyticsTests.ReadAsync(gru, ManagementApi.Uri($"/v1/projects/{regions.Project}/analytics?range=1h&region=gru-1"));
         var buckets = analytics.GetProperty("items")[0].GetProperty("series").EnumerateArray().ToArray();
         await Assert.That(buckets.Sum(point => point.GetProperty("replicationBandwidth").GetProperty("bytesSent").GetInt64())).IsGreaterThan(0);
         await Assert.That(buckets.Sum(point => point.GetProperty("clientBandwidth").GetProperty("bytesReceived").GetInt64())).IsGreaterThan(0);
 
-        var outside = await Management.UsageAnalyticsTests.ReadAsync(gru, ManagementApi.Uri($"/projects/{regions.Project}/analytics?range=1h&region=sfo-1"));
+        var outside = await Management.UsageAnalyticsTests.ReadAsync(gru, ManagementApi.Uri($"/v1/projects/{regions.Project}/analytics?range=1h&region=sfo-1"));
         await Assert.That(outside.GetProperty("items").GetArrayLength()).IsEqualTo(0);
 
         await regions.GruApi.Server.Services.GetRequiredService<TerraBase.Features.Management.Usage.UsageMeter>().FlushAsync(CancellationToken.None);
@@ -76,7 +77,7 @@ public sealed class CrossRegionTests
 
         // Replication into sfo is never client traffic there: with no sfo document requests while it arrives, client totals
         // stay put as replication grows. Project analytics routes resolve no database, so reading them is not metered.
-        var sfoAnalytics = ManagementApi.Uri($"/projects/{regions.Project}/analytics?range=1h&region=sfo-1");
+        var sfoAnalytics = ManagementApi.Uri($"/v1/projects/{regions.Project}/analytics?range=1h&region=sfo-1");
         regions.Network.Partition("gru", "sfo");
         using (var isolated = await regions.Gru.PutAsJsonAsync(regions.Document(ReplicationDocuments.Id("meter-isolated")), new { value }))
         {
@@ -322,7 +323,7 @@ public sealed class CrossRegionTests
         var record = await otherApi.Client.GetFromJsonAsync<JsonElement>(regions.Management($"databases/{id}"));
         await Assert.That(record.GetProperty("homeRegion").GetString()).IsEqualTo(home);
         await Regions.WrongRegionAsync(otherData.GetAsync(document), home, home);
-        var subscription = new Uri($"/projects/{regions.Project}/databases/orders/collections/items/subscribe", UriKind.Relative);
+        var subscription = new Uri($"/v1/projects/{regions.Project}/databases/orders/collections/items/subscribe", UriKind.Relative);
         foreach (var (scope, expired, expected) in new[]
         {
             ("shapes:read", false, HttpStatusCode.MisdirectedRequest),
@@ -374,7 +375,7 @@ public sealed class CrossRegionTests
             token.Claims["scope"] = "shapes:read";
         }));
         using var response = await subscriber.GetAsync(new Uri(
-            $"/projects/{regions.Project}/databases/canary/collections/items/subscribe", UriKind.Relative),
+            $"/v1/projects/{regions.Project}/databases/canary/collections/items/subscribe", UriKind.Relative),
             HttpCompletionOption.ResponseHeadersRead, deadline.Token);
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
         using var reader = new StreamReader(await response.Content.ReadAsStreamAsync(deadline.Token));
@@ -876,6 +877,7 @@ public sealed class CrossRegionTests
 
         public static void Join(IServiceCollection services, FakeRegionNetwork network, string cell, FakeMemberStore members, string? node = null)
         {
+            services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, new FakeTimeProvider());
             services.AddSingleton(network.Join(cell, node));
             services.AddSingleton<IMemberStore>(members);
         }
@@ -896,8 +898,14 @@ public sealed class CrossRegionTests
             string? cursor = null;
             do
             {
-                var page = await client.GetFromJsonAsync<JsonElement>(
-                    new Uri($"/v1/projects/{Project}/databases/canary/collections/items/documents?limit=100{(cursor is null ? "" : $"&cursor={Uri.EscapeDataString(cursor)}")}", UriKind.Relative), token);
+                var uri = new Uri($"/v1/projects/{Project}/databases/canary/collections/items/documents?limit=100{(cursor is null ? "" : $"&cursor={Uri.EscapeDataString(cursor)}")}", UriKind.Relative);
+                using var response = await client.GetAsync(uri, token);
+                var text = await response.Content.ReadAsStringAsync(token);
+                var region = ReferenceEquals(client, Gru) ? "gru-1" : "sfo-1";
+                await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK)
+                    .Because($"{region} GET {uri}: HTTP {(int)response.StatusCode}: {text[..Math.Min(text.Length, 4096)]}");
+                using var json = JsonDocument.Parse(text);
+                var page = json.RootElement;
                 foreach (var document in page.GetProperty("items").EnumerateArray())
                 {
                     _ = listed.Append(document.GetProperty("id").GetString()).Append(' ').Append(document.GetProperty("version").GetString())

@@ -288,6 +288,12 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
 
     public override Task StartAsync(CancellationToken cancellationToken)
     {
+        PrepareScratch();
+        return base.StartAsync(cancellationToken);
+    }
+
+    internal void PrepareScratch()
+    {
         // ExecuteAsync runs on a background thread in .NET 11. Prepare scratch before startup completes, so a caller's
         // first pass cannot race the cleanup or open a tap before the frames directory exists.
         if (Directory.Exists(_scratch))
@@ -296,7 +302,6 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         }
 
         Directory.CreateDirectory(_scratch);
-        return base.StartAsync(cancellationToken);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)

@@ -24,6 +24,13 @@ public sealed class AutoIndexPolicyTests
         await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         var collection = "c_" + new Faker().Random.String2(8, "abcdefghijklmnopqrstuvwxyz");
 
+        using var client = PolicyClient(api, database);
+        var former = Uri($"/projects/{database.Project}/databases/{database.Name}/auto-index/{collection}");
+        using var formerGet = await client.GetAsync(former);
+        using var formerPut = await client.PutAsJsonAsync(former, new { enabled = false });
+        await Assert.That(formerGet.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        await Assert.That(formerPut.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+
         await GetPolicyAsync(api, database, collection, true);
         await SetPolicyAsync(api, database, collection, false);
         await GetPolicyAsync(api, database, collection, false);
@@ -397,7 +404,7 @@ public sealed class AutoIndexPolicyTests
     }
 
     private static Uri PolicyUri(ManagedDatabaseRef database, string collection) =>
-        Uri($"/projects/{database.Project}/databases/{database.Name}/auto-index/{collection}");
+        Uri($"/v1/projects/{database.Project}/databases/{database.Name}/auto-index/{collection}");
 
     private static async Task<long> CountOptOutsAsync(ManagementApi api, ManagedDatabaseRef database)
     {

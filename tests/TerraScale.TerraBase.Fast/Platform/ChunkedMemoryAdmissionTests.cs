@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
+using TerraBase.Engine;
 using TerraBase.Fast.Storage;
 using TerraBase.Features.Memory;
 using TerraBase.Testing;
@@ -20,24 +21,35 @@ public sealed class ChunkedMemoryAdmissionTests
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         const long TenantBytes = 262_144;
         const int BodyBytes = 4096;
-        const long OperationBytes = 16 * 1024 + BodyBytes * 3;
+        const long BodyAdmissionBytes = 16 * 1024 + BodyBytes * 3;
         await using var api = await ManagementApi.StartAsync(settings => settings["memory-budget"] = "4194304");
         using var tenant = await api.CreateTenantAsync("documents:read", "documents:write");
         var database = await tenant.ContextAsync(api.Server, "app", deadline.Token);
         await StorageFixture.CreateCollectionAsync(tenant, "app", "items", deadline.Token);
+        var store = (await api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(database, deadline.Token))!;
+        long metadataAdmissionBytes;
+        await using (var transaction = await store.BeginTransactionAsync(write: false, deadline.Token))
+        {
+            var metadata = (await transaction.GetAsync(DocumentChange.Collections, "items", deadline.Token))!;
+            // The write parses collection metadata (8x) and retains its stored result (3x + 2048).
+            metadataAdmissionBytes = metadata.Json.Length * 11L + 2048;
+        }
+        // Extra EOF admission of one 4 KiB chunk must still exceed the available bytes.
+        await Assert.That(metadataAdmissionBytes).IsLessThan(BodyBytes * 3L);
+        var operationBytes = BodyAdmissionBytes + metadataAdmissionBytes;
         var uri = tenant.Database("app", $"/collections/items/documents/by-key?id={StorageFixture.Id("fragmented")}");
         var padding = new Faker().Random.String2(BodyBytes - "{\"padding\":\"\"}".Length, "abcdef");
         var json = Encoding.UTF8.GetBytes($"{{\"padding\":\"{padding}\"}}");
         await Assert.That(json.Length).IsEqualTo(BodyBytes);
         var budget = api.Server.Services.GetRequiredService<IMemoryBudget>();
-        using (var held = budget.TryReserve(MemoryLane.Bulk, TenantBytes - OperationBytes, database))
+        using (var held = budget.TryReserve(MemoryLane.Bulk, TenantBytes - operationBytes, database))
         {
             await Assert.That(held).IsNotNull();
             using var content = new FragmentedContent(json, fragmentBytes);
             using var written = await tenant.Data.PutAsync(uri, content, deadline.Token);
             written.EnsureSuccessStatusCode();
-            // Reuse exactly the bytes held by middleware and decoder; all body leases must have returned.
-            using var returned = budget.TryReserve(MemoryLane.Foreground, OperationBytes, database);
+            // Reuse the complete request and metadata allowance; every operation lease must have returned.
+            using var returned = budget.TryReserve(MemoryLane.Foreground, operationBytes, database);
             await Assert.That(returned).IsNotNull();
         }
         using var read = await tenant.Data.GetAsync(uri, deadline.Token);

@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using TerraBase.Errors;
 using TerraBase.Features.Management;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Replication;
@@ -70,7 +71,7 @@ public sealed class PeerRegionTests
             settings["region"] = "iad-1";
             settings["peer-addresses"] = receiver.PeerAddress!.ToString();
         }, services => services.AddSingleton<ILoggerProvider>(sending));
-        var tenant = await ReplicationTenant.CreateAsync(sender, "regions");
+        var tenant = await ReplicationTenant.CreateAsync(sender, ["regions"], CancellationToken.None, replicaRegions: ["gru-1"]);
         await tenant.BindAsync(receiver);
         using var writer = clientTls.CreateClient(sender.ClientAddress!, await tenant.KeyAsync(sender, "documents:write"));
         using var reader = clientTls.CreateClient(receiver.ClientAddress!, await tenant.KeyAsync(receiver, "documents:read"));
@@ -108,7 +109,7 @@ public sealed class PeerRegionTests
             ReplicationTenant tenant;
             await using (var alone = await TerraBaseTestServer.StartAsync(Sender))
             {
-                tenant = await ReplicationTenant.CreateAsync(alone, "turns");
+                tenant = await ReplicationTenant.CreateAsync(alone, ["turns"], CancellationToken.None, replicaRegions: ["gru-1"]);
                 // Hobby admission would throttle the burst of writes below; the plan does not change replication.
                 await alone.Services.GetRequiredService<IManagementService>().SetPlanAsync(tenant.UserId, tenant.OrganizationId, PlanTier.Enterprise, CancellationToken.None);
                 using var writer = clientTls.CreateClient(alone.ClientAddress!, await tenant.KeyAsync(alone, "documents:write"));
@@ -143,7 +144,12 @@ public sealed class PeerRegionTests
 
             var hour = DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 3600;
             var (lifetime, _) = await sender.Services.GetRequiredService<UsageMeter>()
-                .GetObservationsAsync(tenant.Database("turns"), new UsageWindow(UsageWindow.Hour, hour, 1), CancellationToken.None);
+                .GetObservationsAsync(tenant.Database("turns"), new UsageWindow(UsageWindow.Hour, hour, 1), CancellationToken.None) switch
+            {
+                UsageCounts counts => counts,
+                Unavailable error => throw new InvalidOperationException(error.Message),
+                null => throw new System.Diagnostics.UnreachableException(),
+            };
             var meters = lifetime.Meters ?? new Dictionary<string, UsageReading>();
             await Assert.That(meters.GetValueOrDefault("replication_bytes|iad-1|gru-1|handoff:sent")?.Count ?? 0).IsGreaterThan(0);
             await Assert.That(meters.ContainsKey("replication_bytes|iad-1|gru-1|delta:sent")).IsFalse();

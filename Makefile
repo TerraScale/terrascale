@@ -13,21 +13,22 @@ restore:
 	dotnet restore $(SOLUTION)
 	dotnet restore $(ANALYZER_CHECK_PROJECT)
 
-build:
-	dotnet build $(SOLUTION) --configuration $(CONFIGURATION) --nologo
+build: restore
+	dotnet build $(SOLUTION) --configuration $(CONFIGURATION) --no-restore
 
 fmt:
 	dotnet format $(SOLUTION)
 
-fmt-check:
-	dotnet format $(SOLUTION) --verify-no-changes
+fmt-check: restore
+	# Style and analyzer diagnostics are enforced by build; check whitespace once here.
+	dotnet format whitespace $(SOLUTION) --verify-no-changes --no-restore
 
 # Analyzers and code style run in the build with warnings as errors.
 lint: fmt-check build
 
-analyzer-check:
+analyzer-check: restore
 	@set -eu; log=$$(mktemp); trap 'rm -f "$$log"' EXIT; \
-	if dotnet build $(ANALYZER_CHECK_PROJECT) --configuration $(CONFIGURATION) --no-restore -p:TB0001BuildCheck=true --nologo >"$$log" 2>&1; then \
+	if dotnet build $(ANALYZER_CHECK_PROJECT) --configuration $(CONFIGURATION) --no-restore -p:TB0001BuildCheck=true >"$$log" 2>&1; then \
 		cat "$$log"; echo 'TB0001 build check unexpectedly succeeded' >&2; exit 1; \
 	fi; \
 	cat "$$log"; \
@@ -38,10 +39,11 @@ analyzer-check:
 	if grep -vE 'error (TB0001|RS0030)' "$$log" | grep -q ': error '; then echo 'unexpected compiler error in analyzer build check' >&2; exit 1; fi
 
 test-fast: build
-	dotnet run --project src/Tests/TerraBase.Fast --configuration $(CONFIGURATION) --no-build
+	# Forgejo lacks GitHub's artifact API; HTML and JSON reports are generated locally.
+	env -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_RESULTS_URL dotnet run --project src/Tests/TerraBase.Fast --configuration $(CONFIGURATION) --no-build
 
 test-slow: build
-	dotnet run --project src/Tests/TerraBase.Slow --configuration $(CONFIGURATION) --no-build
+	env -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_RESULTS_URL dotnet run --project src/Tests/TerraBase.Slow --configuration $(CONFIGURATION) --no-build
 
 # Everything required before a push.
 check: lint analyzer-check test-fast
@@ -51,8 +53,8 @@ run:
 
 # Self-contained single-file binary (JIT): $(PUBLISH_DIR)/terrabase
 publish:
-	dotnet publish src/TerraBase --configuration Release --runtime $(RUNTIME) --self-contained --output "$(PUBLISH_DIR)" --nologo
+	dotnet publish src/TerraBase --configuration Release --runtime $(RUNTIME) --self-contained --output "$(PUBLISH_DIR)"
 
 clean:
-	dotnet clean $(SOLUTION) --configuration $(CONFIGURATION) --nologo
+	dotnet clean $(SOLUTION) --configuration $(CONFIGURATION)
 	rm -rf artifacts

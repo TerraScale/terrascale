@@ -3,6 +3,7 @@ using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Features.Backup;
 using TerraBase.Hosting;
+using TerraBase.Primitives;
 using static TerraBase.Features.Management.SystemCatalog;
 
 namespace TerraBase.Features.Management.Backups;
@@ -40,18 +41,19 @@ internal sealed class BackupSecretLifecycle(
     private QueryPosition? _knownAfter;
     private QueryPosition? _unknownAfter;
 
-    public async ValueTask<BackupSecretRecoveryPage> ListAsync(string? after, CancellationToken cancellationToken)
-    {
-        var page = await catalog.ReadAsync(transaction => transaction.QueryAsync(new(Collection, UnknownIdFilter, [],
-            after is null ? null : new QueryPosition([], after), BatchSize, BatchSize * MaxRecordBytes), cancellationToken), cancellationToken).ConfigureAwait(false);
-        var items = page.Rows.Where(row => row.Document.Json.Length <= MaxRecordBytes)
-            .Select(row => JsonSerializer.Deserialize(row.Document.Json.Span, TerraBaseJsonContext.Default.BackupSecretWork))
-            .OfType<BackupSecretWork>().Where(work => work is { Version: 1, SecretName: not null })
-            .Select(work => new BackupSecretRecoveryIntent(work.Id, work.SecretName!, work.Retiring)).ToArray();
-        return new(items, page.HasMore ? page.Rows[^1].Document.Id : null);
-    }
+    public ValueTask<ListBackupSecretRecoveryResult> ListAsync(string? after, CancellationToken cancellationToken) =>
+        catalog.ReadAsync<ListBackupSecretRecoveryResult>(async transaction =>
+        {
+            var page = await transaction.QueryAsync(new(Collection, UnknownIdFilter, [],
+                after is null ? null : new QueryPosition([], after), BatchSize, BatchSize * MaxRecordBytes), cancellationToken).ConfigureAwait(false);
+            var items = page.Rows.Where(row => row.Document.Json.Length <= MaxRecordBytes)
+                .Select(row => EntityPayload.Read(row.Document, TerraBaseJsonContext.Default.BackupSecretWork))
+                .OfType<BackupSecretWork>().Where(work => work is { Version: 1, SecretName: not null })
+                .Select(work => new BackupSecretRecoveryIntent(work.Id, work.SecretName!, work.Retiring)).ToArray();
+            return new BackupSecretRecoveryPage(items, page.HasMore ? page.Rows[^1].Document.Id : null);
+        }, static error => error, cancellationToken);
 
-    public async Task<bool> ConfirmAbsentAsync(string id, string secretName, CancellationToken cancellationToken)
+    public async Task<ConfirmBackupSecretAbsentResult> ConfirmAbsentAsync(string id, string secretName, CancellationToken cancellationToken)
     {
         if (secrets is null || !TryEnter())
         {
@@ -61,11 +63,14 @@ internal sealed class BackupSecretLifecycle(
         try
         {
             using var timeout = OperationTimeout(cancellationToken);
-            var work = await catalog.ReadAsync(transaction =>
-                GetAsync(transaction, Collection, id, TerraBaseJsonContext.Default.BackupSecretWork, timeout.Token), timeout.Token).ConfigureAwait(false);
-            if (work is not { Version: 1, Retiring: true, SecretId: null } || work.SecretName != secretName)
+            var candidate = await catalog.ReadAsync<ConfirmBackupSecretAbsentResult>(async transaction =>
             {
-                return false;
+                var work = await GetAsync(transaction, Collection, id, TerraBaseJsonContext.Default.BackupSecretWork, timeout.Token).ConfigureAwait(false);
+                return work is { Version: 1, Retiring: true, SecretId: null } && work.SecretName == secretName;
+            }, static error => error, timeout.Token).ConfigureAwait(false);
+            if (candidate is not true)
+            {
+                return candidate;
             }
 
             // Empty metadata is insufficient for automatic deletion; this path additionally requires operator attestation.
@@ -74,12 +79,12 @@ internal sealed class BackupSecretLifecycle(
                 return false;
             }
 
-            return await catalog.WriteDurableAsync(async transaction =>
+            return await catalog.WriteDurableAsync<ConfirmBackupSecretAbsentResult>(async transaction =>
             {
                 var current = await GetAsync(transaction, Collection, id, TerraBaseJsonContext.Default.BackupSecretWork, timeout.Token).ConfigureAwait(false);
                 return current is { Version: 1, Retiring: true, SecretId: null } && current.SecretName == secretName
                     && await transaction.DeleteAsync(Collection, id, timeout.Token).ConfigureAwait(false);
-            }, timeout.Token).ConfigureAwait(false);
+            }, static error => error, timeout.Token).ConfigureAwait(false);
         }
         finally
         {
@@ -99,7 +104,7 @@ internal sealed class BackupSecretLifecycle(
             var work = new BackupSecretWork(1, id, "terrabase-backup-" + id, null, false, time.GetUtcNow().AddMinutes(2));
             await PutWorkAsync(transaction, work, cancellationToken).ConfigureAwait(false);
             return work;
-        }, cancellationToken);
+        }, static _ => null, cancellationToken);
 
     public async ValueTask<bool> CanPublishAsync(IStorageTransaction transaction, string intentId, CancellationToken cancellationToken) =>
         await GetAsync(transaction, Collection, intentId, TerraBaseJsonContext.Default.BackupSecretWork, cancellationToken).ConfigureAwait(false)
@@ -136,7 +141,7 @@ internal sealed class BackupSecretLifecycle(
             {
                 try
                 {
-                    work = await catalog.WriteDurableAsync(async transaction =>
+                    work = await catalog.WriteDurableAsync<BackupSecretWork?>(async transaction =>
                     {
                         var intent = await GetAsync(transaction, Collection, intentId, TerraBaseJsonContext.Default.BackupSecretWork, timeout.Token).ConfigureAwait(false);
                         if (intent is null)
@@ -155,7 +160,7 @@ internal sealed class BackupSecretLifecycle(
                         var abandoned = intent with { Retiring = true, SecretId = secretId ?? intent.SecretId, DueAt = time.GetUtcNow().Add(RetryInterval) };
                         await PutWorkAsync(transaction, abandoned, timeout.Token).ConfigureAwait(false);
                         return abandoned;
-                    }, timeout.Token).ConfigureAwait(false);
+                    }, static _ => null, timeout.Token).ConfigureAwait(false);
                     break;
                 }
                 catch (Exception error) when (confirmedNotCreated && IsAvailabilityFailure(error) && !timeout.IsCancellationRequested)
@@ -265,9 +270,13 @@ internal sealed class BackupSecretLifecycle(
 
     private async Task ProcessBatchAsync(bool known, CancellationToken cancellationToken)
     {
-        var page = await catalog.ReadAsync(transaction =>
-            transaction.QueryAsync(new(Collection, known ? KnownIdFilter : UnknownIdFilter, [], known ? _knownAfter : _unknownAfter,
-                BatchSize, BatchSize * MaxRecordBytes), cancellationToken), cancellationToken).ConfigureAwait(false);
+        var page = await catalog.ReadAsync<QueryPage?>(async transaction =>
+            await transaction.QueryAsync(new(Collection, known ? KnownIdFilter : UnknownIdFilter, [], known ? _knownAfter : _unknownAfter,
+                BatchSize, BatchSize * MaxRecordBytes), cancellationToken).ConfigureAwait(false), static _ => null, cancellationToken).ConfigureAwait(false);
+        if (page is null)
+        {
+            return;
+        }
         for (var index = 0; index < page.Rows.Count; index++)
         {
             var row = page.Rows[index];
@@ -288,7 +297,7 @@ internal sealed class BackupSecretLifecycle(
                 continue;
             }
 
-            var candidate = JsonSerializer.Deserialize(document.Json.Span, TerraBaseJsonContext.Default.BackupSecretWork);
+            var candidate = EntityPayload.Read(document, TerraBaseJsonContext.Default.BackupSecretWork);
             if (candidate is not { Version: 1 } || candidate.DueAt > time.GetUtcNow())
             {
                 continue;
@@ -297,7 +306,7 @@ internal sealed class BackupSecretLifecycle(
             try
             {
                 // Publication and claiming serialize in this transaction. Time only selects candidates.
-                var claimed = await catalog.WriteDurableAsync(async transaction =>
+                var claimed = await catalog.WriteDurableAsync<BackupSecretWork?>(async transaction =>
                 {
                     var current = await GetAsync(transaction, Collection, candidate.Id, TerraBaseJsonContext.Default.BackupSecretWork, cancellationToken).ConfigureAwait(false);
                     if (current is not { Version: 1 } || current.DueAt > time.GetUtcNow())
@@ -308,7 +317,7 @@ internal sealed class BackupSecretLifecycle(
                     var work = current with { Retiring = true, DueAt = time.GetUtcNow().Add(RetryInterval) };
                     await PutWorkAsync(transaction, work, cancellationToken).ConfigureAwait(false);
                     return work;
-                }, cancellationToken).ConfigureAwait(false);
+                }, static _ => null, cancellationToken).ConfigureAwait(false);
                 if (claimed is not null)
                 {
                     await ProcessAsync(claimed, cancellationToken).ConfigureAwait(false);
@@ -345,7 +354,7 @@ internal sealed class BackupSecretLifecycle(
 
         if (work.SecretId is null)
         {
-            await catalog.WriteDurableAsync(async transaction =>
+            if (!await catalog.WriteDurableAsync(async transaction =>
             {
                 var current = await GetAsync(transaction, Collection, work.Id, TerraBaseJsonContext.Default.BackupSecretWork, cancellationToken).ConfigureAwait(false);
                 if (current is { Retiring: true })
@@ -354,11 +363,14 @@ internal sealed class BackupSecretLifecycle(
                 }
 
                 return true;
-            }, cancellationToken).ConfigureAwait(false);
+            }, static _ => false, cancellationToken).ConfigureAwait(false))
+            {
+                return;
+            }
         }
 
         await secrets!.DeleteAsync(id, cancellationToken).ConfigureAwait(false);
-        await catalog.WriteDurableAsync(transaction => transaction.DeleteAsync(Collection, work.Id, cancellationToken), cancellationToken).ConfigureAwait(false);
+        _ = await catalog.WriteDurableAsync(transaction => transaction.DeleteAsync(Collection, work.Id, cancellationToken), static _ => false, cancellationToken).ConfigureAwait(false);
     }
 
     private static async ValueTask<bool> HasRoomAsync(IStorageTransaction transaction, bool creating, CancellationToken cancellationToken)

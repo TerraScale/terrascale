@@ -39,7 +39,7 @@ public sealed class GroupCommitTests
         CancellationTokenRegistration cancellationObserved = default;
         hook.BeforeDocumentQuota = (_, token) =>
         {
-            if (context.HttpContext!.Request.Path.Value!.EndsWith("/" + cancelledId, StringComparison.Ordinal))
+            if (context.HttpContext!.Request.Query["id"] == cancelledId)
             {
                 // Registered before the mutation's native cancellation callback: LIFO cancellation means
                 // the signal arrives only after that callback has finished calling sqlite3_interrupt.

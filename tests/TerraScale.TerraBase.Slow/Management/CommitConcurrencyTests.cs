@@ -53,8 +53,9 @@ public sealed class CommitConcurrencyTests
     public async Task Concurrent_invitations_never_exceed_the_member_limit()
     {
         const int limit = 3;
-        await using var api = await ManagementApi.StartAsync();
+        await using var api = await ManagementApi.StartAsync(managementCredential: true);
         var organization = await api.CreateOrganizationAsync(OrganizationName());
+        await api.SetPlanAsync(api.User, organization, "enterprise");
         var invitations = Enumerable.Range(0, Writers).Select(_ => (Email: Email(), Hash: Hash(Token()))).ToList();
 
         var replies = await Task.WhenAll(invitations.Select(invitation => CommitAsync(api.Client,
@@ -75,8 +76,9 @@ public sealed class CommitConcurrencyTests
     public async Task Concurrent_database_creations_never_exceed_the_database_limit()
     {
         const int limit = 3;
-        await using var api = await ManagementApi.StartAsync();
+        await using var api = await ManagementApi.StartAsync(managementCredential: true);
         var organization = await api.CreateOrganizationAsync(OrganizationName());
+        await api.SetPlanAsync(api.User, organization, "enterprise");
         var project = await api.CreateProjectAsync(organization, ProjectName());
         var names = Enumerable.Range(0, Writers).Select(index => "db_" + index.ToString(CultureInfo.InvariantCulture)).ToList();
 

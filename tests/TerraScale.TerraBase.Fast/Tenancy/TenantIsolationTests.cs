@@ -85,7 +85,7 @@ public sealed class TenantIsolationTests
         foreach (var (tenant, client) in new[] { (a, aProject), (b, bProject) })
         {
             using var response = await client.PostAsJsonAsync(
-                new Uri($"/projects/{tenant.ProjectId}/databases/secret/sql/explain", UriKind.Relative), new { sql = "SELECT * FROM people" });
+                new Uri($"/v1/projects/{tenant.ProjectId}/databases/secret/sql/explain", UriKind.Relative), new { sql = "SELECT * FROM people" });
             await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
             await Assert.That((await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("ok").GetBoolean()).IsTrue();
         }

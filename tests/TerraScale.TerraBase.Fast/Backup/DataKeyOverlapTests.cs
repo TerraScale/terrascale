@@ -29,8 +29,7 @@ public sealed class DataKeyOverlapTests
         var other = await api.CreateManagedDatabaseAsync("other");
         foreach (var database in new[] { source, other })
         {
-            using var plan = await api.Client.PutAsJsonAsync(ManagementApi.Uri($"/v1/management/organizations/{database.Organization}/plan"), new { plan = "pro" }, token);
-            plan.EnsureSuccessStatusCode();
+            await api.SetPlanAsync(api.User, database.Organization, "pro", token);
         }
 
         using var data = api.DataClient(await api.Server.IssueAsync(source.Organization, ["documents:read", "documents:write"], token));
@@ -209,7 +208,7 @@ public sealed class DataKeyOverlapTests
         {
             oci.Route(services);
             ManualBackupHosting.Configure(services);
-        }, time);
+        }, time, managementCredential: true);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
         return api;
     }

@@ -7,9 +7,11 @@ using System.Text;
 using System.Text.Json;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Configuration;
 using TerraBase.Features.Backup;
+using TerraBase.Features.Management.Backups;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Backup;
@@ -21,7 +23,6 @@ public sealed class BackupKeyRotationTests
     {
         var elapsed = Stopwatch.StartNew();
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
-        deadline.CancelAfter(TimeSpan.FromSeconds(30));
         var cancellationToken = deadline.Token;
         using var oci = new FakeOci();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
@@ -61,6 +62,7 @@ public sealed class BackupKeyRotationTests
 
             time.Advance(TimeSpan.FromHours(23));
             Mark(4);
+            deadline.CancelAfter(TimeSpan.FromSeconds(30));
             using var refreshed = await data.PutAsJsonAsync(ManagementApi.Uri(ManagementApi.DocumentPath(database, "people", "refresh")), new { text = before }, cancellationToken);
             refreshed.EnsureSuccessStatusCode();
             await backup.RunOnceAsync(cancellationToken);
@@ -514,7 +516,19 @@ public sealed class BackupKeyRotationTests
             oci.Configure(settings);
             settings["data-directory"] = directory;
             settings["backup-key-rotation-days"] = rotation;
-        }, oci.Route, time, managementCredential: true);
+        }, services =>
+        {
+            oci.Route(services);
+            ManualBackupHosting.Configure(services);
+            // Advancing key age must not concurrently copy cron backups into the files this fixture ships.
+            var scheduler = services.Single(service => service.ServiceType == typeof(IHostedService)
+                && service.ImplementationType == typeof(BackupScheduler));
+            services[services.IndexOf(scheduler)] = ServiceDescriptor.Singleton<IHostedService>(provider =>
+                ActivatorUtilities.CreateInstance<BackupScheduler>(provider, new FakeTimeProvider(time.GetUtcNow())));
+        }, time, managementCredential: true);
+
+        return api;
+    }
 
     private static async Task<(ManagedDatabaseRef Database, string User)> SeedAsync(
         FakeOci oci, FakeTimeProvider time, string directory, string text, string rotation = "1")

@@ -67,7 +67,7 @@ public sealed class CollectionSchemaUniquenessTests
         }
     }
 
-    private static string SchemaPath(DocumentApi api) => $"/projects/{api.Tenant.ProjectId}/databases/{DocumentApi.Database}/collections/{DocumentApi.Collection}/schema";
+    private static string SchemaPath(DocumentApi api) => $"/v1/projects/{api.Tenant.ProjectId}/databases/{DocumentApi.Database}/collections/{DocumentApi.Collection}/schema";
 
     private static async Task RejectedAsync(ApiResponse response)
     {

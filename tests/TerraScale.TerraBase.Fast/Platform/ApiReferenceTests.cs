@@ -13,46 +13,45 @@ public sealed class ApiReferenceTests
     // Every operation of the public document with its security scheme and required JWT scopes. Update it with every public endpoint;
     // an admin-listener operation appearing here is a leak.
     private const string Operations = """
-        DELETE /projects/{project}/databases/{database}/collections/{collection}/schema TsAuth(documents:write) deleteDeclaredCollectionSchema Collections
         DELETE /v1/projects/{project}/backup-destination TsAuth(databases:write) deleteBackupDestination Backups
         DELETE /v1/projects/{project}/databases/{database} TsAuth(databases:write) deleteDatabase Databases
         DELETE /v1/projects/{project}/databases/{database}/collections/{collection} TsAuth(documents:write) dropCollection Collections
         DELETE /v1/projects/{project}/databases/{database}/collections/{collection}/documents/by-key TsAuth(documents:write) deleteDocument Documents
+        DELETE /v1/projects/{project}/databases/{database}/collections/{collection}/schema TsAuth(documents:write) deleteDeclaredCollectionSchema Collections
         DELETE /v1/projects/{project}/databases/{database}/indexes/{index} TsAuth(databases:write) dropIndex Indexes
         DELETE /v1/projects/{project}/saved-queries/{query} TsAuth(databases:write) deleteSavedQuery Queries
         GET /healthz anonymous healthz Health
-        GET /projects/{project}/analytics TsAuth(databases:read) getProjectAnalytics Analytics
-        GET /projects/{project}/databases/{database}/analytics TsAuth(databases:read) getDatabaseAnalytics Analytics
-        GET /projects/{project}/databases/{database}/auto-index/{collection} TsAuth(databases:read) getAutoIndexPolicy Indexes
-        GET /projects/{project}/databases/{database}/collections/{collection}/changes TsAuth(documents:read) getCollectionChanges Documents
-        GET /projects/{project}/databases/{database}/collections/{collection}/schema TsAuth(documents:read) getDeclaredCollectionSchema Collections
-        GET /projects/{project}/databases/{database}/collections/{collection}/subscribe TsAuth(shapes:read) subscribeCollection Live
-        GET /projects/{project}/databases/{database}/replication TsAuth(databases:read) getDatabaseReplication Replication
-        GET /projects/{project}/replication TsAuth(databases:read) getProjectReplication Replication
         GET /readyz anonymous readyz Health
+        GET /v1/projects/{project}/analytics TsAuth(databases:read) getProjectAnalytics Analytics
         GET /v1/projects/{project}/backup-destination TsAuth(databases:read) getBackupDestination Backups
         GET /v1/projects/{project}/databases TsAuth(databases:read) listDatabases Databases
         GET /v1/projects/{project}/databases/{database} TsAuth(databases:read) getDatabase Databases
+        GET /v1/projects/{project}/databases/{database}/analytics TsAuth(databases:read) getDatabaseAnalytics Analytics
+        GET /v1/projects/{project}/databases/{database}/auto-index/{collection} TsAuth(databases:read) getAutoIndexPolicy Indexes
         GET /v1/projects/{project}/databases/{database}/backup-policy TsAuth(databases:read) getBackupPolicy Backups
         GET /v1/projects/{project}/databases/{database}/backups TsAuth(databases:read) listBackups Backups
         GET /v1/projects/{project}/databases/{database}/collections TsAuth(documents:read) listCollections Collections
         GET /v1/projects/{project}/databases/{database}/collections/{collection} TsAuth(documents:read) getCollection Collections
+        GET /v1/projects/{project}/databases/{database}/collections/{collection}/changes TsAuth(documents:read) getCollectionChanges Documents
         GET /v1/projects/{project}/databases/{database}/collections/{collection}/documents TsAuth(documents:read) listDocuments Documents
         GET /v1/projects/{project}/databases/{database}/collections/{collection}/documents/by-key TsAuth(documents:read) getDocument Documents
+        GET /v1/projects/{project}/databases/{database}/collections/{collection}/schema TsAuth(documents:read) getDeclaredCollectionSchema Collections
         GET /v1/projects/{project}/databases/{database}/collections/{collection}/shape TsAuth(shapes:read) getShape Live
+        GET /v1/projects/{project}/databases/{database}/collections/{collection}/subscribe TsAuth(shapes:read) subscribeCollection Live
         GET /v1/projects/{project}/databases/{database}/index-recommendations TsAuth(databases:read) listIndexRecommendations Indexes
         GET /v1/projects/{project}/databases/{database}/indexes TsAuth(databases:read) listIndexes Indexes
         GET /v1/projects/{project}/databases/{database}/point-in-time TsAuth(databases:read) getRestoreWindow Backups
         GET /v1/projects/{project}/databases/{database}/query-shapes TsAuth(databases:read) listQueryShapes Queries
+        GET /v1/projects/{project}/databases/{database}/replication TsAuth(databases:read) getDatabaseReplication Replication
         GET /v1/projects/{project}/databases/{database}/schema TsAuth(databases:read) getDatabaseSchema Schema
         GET /v1/projects/{project}/databases/{database}/schema/{collection} TsAuth(databases:read) getCollectionSchema Schema
         GET /v1/projects/{project}/databases/{database}/usage TsAuth(databases:read) getDatabaseUsage Usage
+        GET /v1/projects/{project}/replication TsAuth(databases:read) getProjectReplication Replication
         GET /v1/projects/{project}/saved-queries TsAuth(databases:read) listSavedQueries Queries
         GET /v1/projects/{project}/saved-queries/{query} TsAuth(databases:read) getSavedQuery Queries
         GET /v1/projects/{project}/usage TsAuth(databases:read) getProjectUsage Usage
         PATCH /v1/projects/{project}/databases/{database} TsAuth(databases:write) updateDatabase Databases
         PATCH /v1/projects/{project}/databases/{database}/collections/{collection}/documents/by-key TsAuth(documents:write) patchDocument Documents
-        POST /projects/{project}/databases/{database}/sql/explain TsAuth(databases:read) explainSql Queries
         POST /v1/projects/{project}/databases TsAuth(databases:write) createDatabase Databases
         POST /v1/projects/{project}/databases/{database}/backups TsAuth(databases:write) createBackup Backups
         POST /v1/projects/{project}/databases/{database}/backups/{backup}/restore TsAuth(databases:write) restoreBackup Backups
@@ -66,13 +65,14 @@ public sealed class ApiReferenceTests
         POST /v1/projects/{project}/databases/{database}/point-in-time/restore TsAuth(databases:write) restorePointInTime Backups
         POST /v1/projects/{project}/databases/{database}/sql TsAuth(databases:read) runSql Queries
         POST /v1/projects/{project}/databases/{database}/sql/check TsAuth(databases:read) checkSql Queries
+        POST /v1/projects/{project}/databases/{database}/sql/explain TsAuth(databases:read) explainSql Queries
         POST /v1/projects/{project}/databases/{database}/transactions TsAuth(documents:write) runTransaction Transactions
         POST /v1/projects/{project}/saved-queries TsAuth(databases:write) createSavedQuery Queries
-        PUT /projects/{project}/databases/{database}/auto-index/{collection} TsAuth(databases:write) setAutoIndexPolicy Indexes
-        PUT /projects/{project}/databases/{database}/collections/{collection}/schema TsAuth(documents:write) putDeclaredCollectionSchema Collections
         PUT /v1/projects/{project}/backup-destination TsAuth(databases:write) setBackupDestination Backups
+        PUT /v1/projects/{project}/databases/{database}/auto-index/{collection} TsAuth(databases:write) setAutoIndexPolicy Indexes
         PUT /v1/projects/{project}/databases/{database}/backup-policy TsAuth(databases:write) setBackupPolicy Backups
         PUT /v1/projects/{project}/databases/{database}/collections/{collection}/documents/by-key TsAuth(documents:write) putDocument Documents
+        PUT /v1/projects/{project}/databases/{database}/collections/{collection}/schema TsAuth(documents:write) putDeclaredCollectionSchema Collections
         PUT /v1/projects/{project}/databases/{database}/schema/{collection} TsAuth(databases:write) declareCollectionSchema Schema
         PUT /v1/projects/{project}/saved-queries/{query} TsAuth(databases:write) updateSavedQuery Queries
         """;
@@ -145,11 +145,11 @@ public sealed class ApiReferenceTests
         var paths = document.GetProperty("paths");
         foreach (var (path, method, statuses) in new[]
         {
-            (project + "/backup-destination", "get", "200,400,401,403,404,421"),
+            (project + "/backup-destination", "get", "200,400,401,403,404,421,503"),
             (project + "/backup-destination", "put", "200,400,401,403,404,421,503"),
             (project + "/backup-destination", "delete", "204,400,401,403,404,421,503"),
             (project + "/databases/{database}/point-in-time", "get", "200,400,401,403,404,421,503"),
-            (project + "/databases/{database}/point-in-time/restore", "post", "201,400,401,403,404,409,421,503"),
+            (project + "/databases/{database}/point-in-time/restore", "post", "201,400,401,403,404,409,421,429,503"),
         })
         {
             await Assert.That(string.Join(',', paths.GetProperty(path).GetProperty(method).GetProperty("responses")

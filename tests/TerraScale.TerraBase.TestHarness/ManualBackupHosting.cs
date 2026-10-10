@@ -18,7 +18,11 @@ internal static class ManualBackupHosting
 
     private sealed class ManualBackupHost(IContinuousBackup backup) : IHostedService
     {
-        public Task StartAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+        public Task StartAsync(CancellationToken cancellationToken)
+        {
+            ((ContinuousBackup)backup).PrepareScratch();
+            return Task.CompletedTask;
+        }
 
         public Task StopAsync(CancellationToken cancellationToken) => ((IHostedService)backup).StopAsync(cancellationToken);
     }

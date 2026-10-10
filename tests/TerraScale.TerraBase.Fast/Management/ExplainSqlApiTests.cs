@@ -10,7 +10,7 @@ namespace TerraBase.Fast.Management;
 
 public sealed class ExplainSqlApiTests
 {
-    private const string Route = "/projects/{project}/databases/{database}/sql/explain";
+    private const string Route = "/v1/projects/{project}/databases/{database}/sql/explain";
     private static readonly string[] EmailFields = ["email"];
     private static readonly string[] NameFields = ["name"];
 
@@ -98,6 +98,9 @@ public sealed class ExplainSqlApiTests
         var allowed = await ExplainAsync(viewer, database, Sql);
         await Assert.That(allowed.GetProperty("ok").GetBoolean()).IsTrue();
         await Assert.That(allowed.GetProperty("collection").GetString()).IsEqualTo("people");
+        using var former = await viewer.PostAsJsonAsync(
+            ManagementApi.Uri($"/projects/{database.Project}/databases/{database.Name}/sql/explain"), new { sql = Sql });
+        await Assert.That(former.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         using var noToken = await anonymous.PostAsJsonAsync(ExplainPath(database), new { sql = Sql });
         using var apiKey = await data.PostAsJsonAsync(ExplainPath(database), new { sql = Sql });
         using var adminRequest = new HttpRequestMessage(HttpMethod.Post, ExplainPath(database)) { Content = JsonContent.Create(new { sql = Sql }) };
@@ -288,7 +291,7 @@ public sealed class ExplainSqlApiTests
     }
 
     [Test]
-    public async Task Openapi_documents_the_unversioned_explain_path_with_JWT_security_and_errors()
+    public async Task Openapi_documents_the_v1_explain_path_with_JWT_security_and_errors()
     {
         await using var api = await ManagementApi.StartAsync();
         using var anonymous = api.WithToken(null);
@@ -360,7 +363,7 @@ public sealed class ExplainSqlApiTests
     }
 
     private static Uri ExplainPath(ManagedDatabaseRef database) =>
-        ManagementApi.Uri($"/projects/{database.Project}/databases/{database.Name}/sql/explain");
+        ManagementApi.Uri($"/v1/projects/{database.Project}/databases/{database.Name}/sql/explain");
 
     private static string Literal(string value) => value.Replace("'", "''", StringComparison.Ordinal);
 

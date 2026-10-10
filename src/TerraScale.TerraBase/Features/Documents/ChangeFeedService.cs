@@ -114,7 +114,7 @@ internal sealed class ChangeFeedService : IChangeFeedService
 
     private static string Identify(TenantContext database, string collection, string incarnation, long generation) =>
         Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(string.Join('\0',
-            "TB-CHANGE-FEED-ALPHA", database.OrganizationId, database.ProjectId, database.DatabaseId, collection,
+            "TB-CHANGE-FEED-V1", database.OrganizationId, database.ProjectId, database.DatabaseId, collection,
             incarnation, DocumentRoute.Decimal(generation)))));
 
     private static Position? Parse(string token)
@@ -125,7 +125,7 @@ internal sealed class ChangeFeedService : IChangeFeedService
         }
 
         var parts = token.Split('.');
-        return parts is ["alpha", var lineage, var offset, var sequence]
+        return parts is ["v1", var lineage, var offset, var sequence]
             && lineage.Length == 64 && lineage.All(c => c is >= '0' and <= '9' or >= 'a' and <= 'f')
             && Number(offset) is { } o && Number(sequence) is { } s ? new Position(lineage, o, s) : null;
     }
@@ -174,7 +174,7 @@ internal sealed class ChangeFeedService : IChangeFeedService
 
     private sealed record Position(string Lineage, long Offset, long Sequence)
     {
-        public override string ToString() => $"alpha.{Lineage}.{DocumentRoute.Decimal(Offset)}.{DocumentRoute.Decimal(Sequence)}";
+        public override string ToString() => $"v1.{Lineage}.{DocumentRoute.Decimal(Offset)}.{DocumentRoute.Decimal(Sequence)}";
     }
 
     private sealed class AdmittedPage(ChangeFeedService service, IMemoryReservation reservation, byte[] body) : IResult

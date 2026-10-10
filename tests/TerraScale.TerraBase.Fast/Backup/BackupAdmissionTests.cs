@@ -5,9 +5,11 @@ using System.Text;
 using System.Text.Json;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Fast.Management;
 using TerraBase.Features.Backup;
+using TerraBase.Features.Management.Backups;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Backup;
@@ -24,10 +26,7 @@ public sealed class BackupAdmissionTests
         await using var api = await StartAsync(oci, time);
         var backup = api.Server.Services.GetRequiredService<IContinuousBackup>();
         var platform = await api.CreateManagedDatabaseAsync("platform");
-        using (var plan = await api.Client.PutAsJsonAsync(ManagementApi.Uri($"/v1/management/organizations/{platform.Organization}/plan"), new { plan = "pro" }, token))
-        {
-            plan.EnsureSuccessStatusCode();
-        }
+        await api.SetPlanAsync(api.User, platform.Organization, "pro", token);
 
         using var data = api.DataClient(await api.Server.IssueAsync(platform.Organization, ["documents:read", "documents:write"], token));
         var before = new Faker().Lorem.Sentence(12);
@@ -67,6 +66,7 @@ public sealed class BackupAdmissionTests
         var platformReads = oci.ObserveKey(platformKey);
         // Expire both real platform caches while the pro plan still retains the snapshots.
         time.Advance(TimeSpan.FromHours(25));
+        await AssertNoBackupsAsync(api, [platform, .. customers], token);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var saturated = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var bodies = new ConcurrentBag<StalledKeyBody>();
@@ -144,6 +144,7 @@ public sealed class BackupAdmissionTests
             await Assert.That(bodies.Count).IsEqualTo(8);
             await Assert.That(bodies.All(body => body.Disposed)).IsTrue();
             await Assert.That(oci.BadSignatures).IsEqualTo(0);
+            await AssertNoBackupsAsync(api, [platform, .. customers], token);
         }
         finally
         {
@@ -265,8 +266,13 @@ public sealed class BackupAdmissionTests
         {
             oci.Route(services);
             ManualBackupHosting.Configure(services);
+            // Advancing key age must not concurrently copy cron backups into the files this fixture ships.
+            var scheduler = services.Single(service => service.ServiceType == typeof(IHostedService)
+                && service.ImplementationType == typeof(BackupScheduler));
+            services[services.IndexOf(scheduler)] = ServiceDescriptor.Singleton<IHostedService>(provider =>
+                ActivatorUtilities.CreateInstance<BackupScheduler>(provider, new FakeTimeProvider(time.GetUtcNow())));
             configure?.Invoke(services);
-        }, time);
+        }, time, managementCredential: true);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
         return api;
     }
@@ -296,6 +302,17 @@ public sealed class BackupAdmissionTests
         using var response = await api.Client.GetAsync(ManagementApi.Uri(database.Path + "/point-in-time?destination=" + destination), token);
         response.EnsureSuccessStatusCode();
         return (await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: token)).GetProperty("latest").GetDateTimeOffset();
+    }
+
+    private static async Task AssertNoBackupsAsync(ManagementApi api, ManagedDatabaseRef[] databases, CancellationToken token)
+    {
+        foreach (var database in databases)
+        {
+            using var response = await api.Client.GetAsync(ManagementApi.Uri(database.Path + "/backups"), token);
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            var page = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: token);
+            await Assert.That(page.GetProperty("items").GetArrayLength()).IsEqualTo(0);
+        }
     }
 
     private static Task<HttpResponseMessage> RestoreAsync(ManagementApi api, ManagedDatabaseRef database, DateTimeOffset at, string destination, string name, CancellationToken token) =>

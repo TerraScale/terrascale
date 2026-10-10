@@ -21,15 +21,23 @@ public sealed class GetBackupDestinationEndpoint(IManagementService management, 
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status403Forbidden);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(ApiKeyScopes.DatabasesRead);
         Metadata(new ProjectManagementRoute(), ListenerMetadata.Management);
     }
 
     /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
-        !BackupDestinationRoute.IsDatabaseScoped
-            && await ManagementRoute.ProjectAsync(HttpContext, management, cancellationToken) is { } project
-            && await destinations.ReadAsync(ManagementRoute.OrganizationId(HttpContext), project.Id, cancellationToken) is { } record
-                ? TypedResults.Ok(record.Destination)
-                : ErrorResponse.From(new NotFound());
+        BackupDestinationRoute.IsDatabaseScoped ? ErrorResponse.From(new NotFound())
+            : await ManagementRoute.ProjectAsync(HttpContext, management, cancellationToken) switch
+            {
+                NotFound error => ErrorResponse.From(error),
+                Unavailable error => ErrorResponse.From(error),
+                Project project => await destinations.ReadAsync(ManagementRoute.OrganizationId(HttpContext), project.Id, cancellationToken) switch
+                {
+                    ProjectBackupDestinationRecord record => TypedResults.Ok(record.Destination),
+                    NotFound error => ErrorResponse.From(error),
+                    Unavailable error => ErrorResponse.From(error),
+                },
+            };
 }
