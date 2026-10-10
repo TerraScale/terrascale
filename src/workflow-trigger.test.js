@@ -63,6 +63,7 @@ test("npm publication runs only after verification on pushes to main", async () 
   assert.doesNotMatch(workflow, /npm (?:unpublish|deprecate)|terrascale@/u);
   assert.doesNotMatch(stepDefinition(publish, "Provision the reviewed npm CLI"), /^        if:/mu);
   assert.match(publish, /npm view "\$\{name\}" dist-tags\.latest --prefer-online --registry https:\/\/registry\.npmjs\.org\//u);
+  assert.match(stepDefinition(publish, "Skip a version npm already has"), /npm view "\$\{spec\}" version --prefer-online --registry https:\/\/registry\.npmjs\.org\//u);
   assert.match(publish, /TS-528: expected npm latest \$\{version\}, got \$\{latest\}/u);
 });
 
