@@ -1,5 +1,11 @@
 # C# port capability tracker
 
+The [zero-configuration contract](zero-configuration.md) is the required
+production policy. Option names below inventory the current implementation;
+manual switches, pre-created secret dependencies and optional delivery paths
+remain gaps. They are not production setup instructions. Tenant authorization,
+customer enrollment and storage safety/consistency requirements remain binding.
+
 ts-auth now runs as the C# service (epic TS-424). The Rust workspace was
 removed in TS-442 (`8dd2874`). Its source and tests before that commit are the
 behavioural reference for each port stream, including the TS-428 store design.
@@ -237,4 +243,3 @@ demotions and a grant against a removal. A fast test also checks that every
 served platform operation matches the contract file. Invitations, ownership
 transfer, audit and API keys are later slices; until invitations land,
 members join only through the internal `AddMemberAsync` and `GrantAsync`.
-

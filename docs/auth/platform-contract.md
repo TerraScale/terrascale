@@ -1,5 +1,11 @@
 # Platform identity contract (TS-598)
 
+The [zero-configuration contract](zero-configuration.md) is the required
+production policy. Option names below inventory the current implementation;
+manual switches, pre-created secret dependencies and optional delivery paths
+remain gaps. They are not production setup instructions. Tenant authorization,
+customer enrollment and storage safety/consistency requirements remain binding.
+
 ts-auth is the single owner of identity and access for TerraScale (epic TS-597,
 umbrella `AGENTS.md`, "Service ownership"). This document is the contract that
 TerraBase (TS-589), the SDKs (ts-go TS-590, ts-dotnet TS-591, ts-js TS-592,

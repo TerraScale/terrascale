@@ -1,5 +1,9 @@
 # ts-auth
 
+Read the [required zero-configuration operating contract](docs/zero-configuration.md).
+Current configuration paths described below are implementation limitations, not
+production activation instructions.
+
 A hosted identity provider in the Clerk / Auth0 / WorkOS category, built on
 TerraBase. The service is written in C# on .NET 10: ASP.NET Core with every
 API declared through `TerraScale.Endpoints` (ts-libs), TerraBase Documents v1
@@ -153,73 +157,42 @@ one it cannot verify, which signs everyone out) and publishes a new key every
 30 days, two days before it signs. See
 [bootstrap and automatic rotation](docs/csharp-port.md#bootstrap-and-automatic-rotation-ts-703).
 
-The service needs an explicitly configured TerraBase HTTPS origin, an
-organization-bound Documents API key and an existing database. Resolve the
-`ts-auth` project UUID through Management before deployment; this example expects
-that UUID in `AUTH_PROJECT_ID` and uses synthetic credential placeholders:
+## Production operating contract and current gaps
 
-```sh
-TS_AUTH_PUBLIC_ORIGIN=https://auth.terrascale.tech \
-TS_AUTH_TERRASCALE_API_URL="${AUTH_STORAGE_ORIGIN:?set the resolved HTTPS authority}" \
-TS_AUTH_TERRASCALE_API_KEY=tb_... \
-TS_AUTH_DATABASE="${AUTH_PROJECT_ID:?set the ts-auth project UUID}/auth" \
-TS_AUTH_MASTER_KEY=$(head -c 32 /dev/urandom | base64) \
-TS_AUTH_AUDIT_SIGNING_KEY=$(head -c 32 /dev/urandom | base64) \
-TS_AUTH_OPERATOR_KEY=$(head -c 32 /dev/urandom | base64) \
-nice -n 19 dotnet run --project src/TerraScale.Auth
-```
+Identity, regional service discovery, database scope, signing-key storage, email
+and service credentials must be provisioned automatically under the
+[zero-configuration contract](docs/zero-configuration.md). OCI Vault creates
+first-party secrets and delivers vendor credentials stored once. Rate limits,
+rotation cadence and other production values have one correct setting in code.
 
-| Variable | Meaning |
-| --- | --- |
-| `TS_AUTH_PUBLIC_ORIGIN` | One global public origin shared by every replica (issuer URLs, email links, WebAuthn RP, OpenAPI server). Must be an origin without a path |
-| `TS_AUTH_TERRASCALE_API_URL` | Required HTTPS origin, no default; no credentials, path, query or fragment. Host must be `api.terrascale.tech` or under `.api.terrascale.tech`; loopback HTTPS is permitted only in Development. Explicit static endpoint override |
-| `TS_AUTH_TERRASCALE_API_ENDPOINTS` | Optional private TerraBase member origins, semicolon-separated, most preferred first: at most 8 distinct HTTPS origins without credentials, path, query or fragment, for example `https://10.251.0.21:9465;https://10.251.0.22:9465`. Storage then uses them instead of `TS_AUTH_TERRASCALE_API_URL`. One member pins storage to it: storage fails closed while it is down. Several members need `TS_AUTH_TERRASCALE_API_FAILOVER=true`; every replica then sends to the first ready member, so all replicas use the same one. Each member's `/readyz` is probed every 2 s (ready below HTTP 500); a request that cannot resolve, connect (connect timeout 2 s) or complete TLS marks its member down at once, and the next request goes to the next ready member. A failed request is never resent. Requires `TS_AUTH_TERRASCALE_API_CA` |
-| `TS_AUTH_TERRASCALE_API_CA` | The only roots trusted for `TS_AUTH_TERRASCALE_API_ENDPOINTS`: 1 to 4 PEM certificates and nothing else, for example the cell's TerraBase member CA. The member certificate must still name the endpoint's host (an IP SAN for an IP endpoint) and carry serverAuth; revocation is not checked. Requires `TS_AUTH_TERRASCALE_API_ENDPOINTS` |
-| `TS_AUTH_TERRASCALE_API_FAILOVER` | `false` (default) or `true`. **Documented security exception** to the single storage authority (see the [activation gate](docs/csharp-port.md#production-activation-gate)): `true` lets storage move to the next of several `TS_AUTH_TERRASCALE_API_ENDPOINTS` while the preferred member is down, and back once it is ready. The member that takes over may not have replicated the latest writes yet, so within the members' replication lag a read can miss them and a conditional write there can succeed against older state (a consumed challenge, a uniqueness claim or a refresh-token rotation). Set it only for members that replicate, accepting that window, instead of an outage while the preferred member is down |
-| `TS_AUTH_TERRASCALE_API_KEY` | Organization-bound `tb_…` credential with `documents:read` and `documents:write`, restricted to the ts-auth project/database where appropriate. A leading `Bearer` scheme is stripped; runtime uses no management credential |
-| `TS_AUTH_DATABASE` | Required `project-uuid/database`, e.g. `<ts-auth-project-uuid>/auth`; lowercase hyphenated UUID and lowercase database name (at most 63 characters). Project labels are not accepted |
-| `TS_AUTH_MASTER_KEY` | Base64, 32 bytes; encrypts recoverable secrets (signing keys included) with AES-256-GCM. There is no re-encryption yet: changing it makes every sealed secret unreadable |
-| `TS_AUTH_SIGNING_KEY_VAULT` / `TS_AUTH_SIGNING_KEY_SECRET` | The region-local OCI Vault OCID and the pre-created secret holding the signing key ring, e.g. `gru-ts-auth-signing-key-ring` (initial content `{}`). Every bootstrap and rotation writes a new secret version. Required outside Development, together with `TS_AUTH_OCI_*` |
-| `TS_AUTH_OCI_REGION` / `_TENANCY` / `_USER` / `_FINGERPRINT` / `_PRIVATE_KEY` | The OCI API key that reads and versions only that secret: region (must be the vault's), tenancy and user OCIDs, key fingerprint and the RSA private key PEM (a Vault-delivered secret). `TS_AUTH_OCI_ENDPOINT` overrides the API origin for local test doubles only |
-| `TS_AUTH_AUDIT_SIGNING_KEY` | Base64 32-byte HMAC key for audit-event seals (required outside Development) |
-| `TS_AUTH_AUDIT_VERIFY_KEYS` | Optional semicolon-separated previous audit keys (at most 5), kept during rotation |
-| `TS_AUTH_OPERATOR_KEY` | Bearer key that can create instances (`POST /v1/instances`) |
-| `TS_AUTH_LISTEN` | Plain-HTTP listen address with an explicit port (default `http://0.0.0.0:8080`) |
-| `TS_AUTH_ENVIRONMENT` | `Development` waives the audit-signing key requirement and permits a loopback HTTPS TerraBase API origin |
-| `TS_AUTH_RATE_LIMIT` | Management API requests per key and token requests per peer IP per minute, with separate budgets (default 1000) |
-| `TS_AUTH_TRUSTED_PROXIES` | Optional semicolon-separated list of at most eight exact numeric immediate proxy IPs. Only their rightmost `X-Forwarded-For` entry establishes a client address; requires the documented ingress verification before activation |
-| `TS_AUTH_SMTP_HOST` / `_PORT` / `_USERNAME` / `_PASSWORD` / `_FROM_ADDRESS` | SMTP delivery; host, username, password and from address are all or nothing, port defaults to 587 |
-| `TS_AUTH_SMTP_CHECK_REVOCATION` | `true` (default) or `false`: whether the relay certificate's revocation is checked online; see [Email delivery](#email-delivery-oci) |
-| `TS_AUTH_DASHBOARD_CLIENT_SECRET` | Optional secret of the confidential OIDC client `01M4EQ2FRJ8S8B29E8TQVWNW4J` (display name `ts-dashboard`), 32 to 512 characters without whitespace. Required together with the redirect URIs; only OpenIddict's PBKDF2 hash is stored |
-| `TS_AUTH_DASHBOARD_REDIRECT_URIS` | Semicolon-separated exact callback URIs for `ts-dashboard` (at most 10), e.g. `https://dash.terrascale.tech/auth/callback;http://localhost:5173/auth/callback`. HTTPS, or HTTP only for `localhost` or a loopback IP; no credentials or fragment |
-| `TS_AUTH_DASHBOARD_POST_LOGOUT_REDIRECT_URIS` | Optional semicolon-separated exact post-logout URIs for `ts-dashboard`, with the same rules |
-| `TS_AUTH_ACCESS_TOKEN_AUDIENCES` | Optional semicolon-separated `aud` values put in every access token, kept exactly as written (e.g. `https://gru.api.terrascale.tech`, TerraBase's `auth-audience`); at most 10 absolute HTTPS URIs without credentials, query or fragment |
-| `TS_AUTH_SERVICE_CLIENTS` | Optional semicolon-separated `id:secret` service clients allowed only the client-credentials grant; ids are canonical uppercase 26-character Crockford ULIDs, distinct from the dashboard client id; secrets 32 to 512 characters. Registered at startup like `ts-dashboard` |
-| `TS_AUTH_INVITATION_URL` | Optional ts-dashboard page that accepts platform invitations (TS-598), e.g. `https://dash.terrascale.tech/invitations/accept`; invitation emails link to it with `?token=`. HTTPS (HTTP only for loopback in Development), no credentials, query or fragment. Unset, no invitation email is sent and the caller delivers the token |
-| `TS_AUTH_SENTRY_DSN` | GlitchTip/Sentry DSN for error reporting; a deployment secret, never committed. Off when unset |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` (or the per-signal `OTEL_EXPORTER_OTLP_*_ENDPOINT`), `OTEL_SERVICE_NAME`, `OTEL_EXPORTER_OTLP_HEADERS` | Standard OpenTelemetry settings; traces, metrics and logs are pushed over OTLP only when an endpoint is set |
+The current runtime still consumes `TS_AUTH_*` options, explicit storage origins,
+pre-existing Vault secret references and optional email/telemetry inputs. It
+rotates a provisioned signing ring, but that is not evidence of automatic
+end-to-end secret creation and delivery. This docs change removes no runtime
+paths and does not establish automatic regional bootstrap.
 
-The intended production dataset is `ts-auth/auth` in organization
-`terrascale`: project label `ts-auth`, database name `auth`. Documents
-routes require the project's UUID, so runtime configuration must use
-`<ts-auth-project-uuid>/auth`. The credential selects the organization; separate
-project/tenant selector options have been removed. `App.Build` injects
-`ITerraBaseEndpointResolver` with a `TerraBaseStaticEndpointResolver` for the
-configured origin. No GRU endpoint is hardcoded in client routing. Atlas
-discovery in ts-dotnet is TS-507; its resolver can replace this static override.
+Security requirements remain mandatory:
 
-`GET /metrics` and `TS_AUTH_METRICS_KEY` from the Rust service are gone:
-metrics are pushed over OTLP. Telemetry never carries exception messages,
-request header values, query strings, bodies or credentials. See
-`docs/csharp-port.md` for the exact allowlists.
+- Use authenticated HTTPS storage with a narrowly scoped database credential.
+  A failed conditional write or uncertain result must not be retried as a new
+  security operation. Cross-member storage failover can observe stale challenges,
+  uniqueness claims or refresh-token state; automatic discovery must not grant
+  failover without proven storage safety.
+- Issuers, audiences and exact callback URIs remain trusted bindings. Never
+  derive them from request headers. Forwarded client IPs are accepted only from
+  verified immediate proxies; ingress verification is still required.
+- Missing master/audit/operator credentials must fail closed. Changing the
+  current master key without re-encryption makes sealed secrets unreadable.
+  Preserve previous audit verification keys during approved rotation.
+- SMTP requires STARTTLS and valid server certificate chain/hostname checks.
+  Existing revocation-check bypass and logging-sender paths are implementation
+  gaps, not instructions to weaken production security.
+- Startup retains secret-free diagnostics and the Argon2id reference check;
+  an unavailable crypto runtime must stop serving.
 
-Every setting can also be passed as `--name=value` (for example
-`--public-origin=https://…`). Configuration errors name the setting, never its
-value, and stop startup with exit code 2. Before serving, the process checks
-Argon2id against a reference vector; if the bundled libsodium cannot load,
-startup stops with exit code 3 (if it cannot even be extracted, see
-`DOTNET_BUNDLE_EXTRACT_BASE_DIR` below, the .NET host stops first). Outside
-Development, a missing `TS_AUTH_SMTP_*` configuration logs a startup warning.
+Metrics use OTLP; they never carry exception messages, headers, query strings,
+bodies or credentials. See [the current port inventory](docs/csharp-port.md)
+for implementation details and remaining gates.
 
 ### Self-service authentication setup
 
@@ -333,26 +306,15 @@ session usable again; deactivation does not itself revoke sessions.
 
 ### Email delivery (OCI)
 
-Without `TS_AUTH_SMTP_*` configuration ts-auth uses the logging sender: nothing
-is delivered, and each message logs a warning with its sizes only, never the
-recipient or the content (the dev/test default). With SMTP configured, STARTTLS
-and a valid server certificate (chain and host name) are mandatory; a relay that
-offers no TLS never receives the credentials or the message. The certificate's
-revocation is checked online by default. A deployment that cannot reach its
-CA's OCSP and CRL servers sets `TS_AUTH_SMTP_CHECK_REVOCATION=false` as a
-documented security exception: a revoked relay certificate that still chains
-to a trusted CA and matches the host is then accepted. TerraScale's gru-1 cell
-reaches OCI's relay through the OCI service gateway without internet egress
-and sets it (ts-orchestrator `deploy/oci-region/ts-auth-gru-1-profile.json`). Delivery failures are logged and never
-fail the request that sent the mail. For real delivery via OCI
-Email Delivery, set the five variables above; fetch the credentials from the
-ts-infra state:
+The required contract makes production email always available. OCI Vault must
+automatically provision and deliver SMTP credentials and approved sender bindings. The current
+runtime selects SMTP only when its inputs exist and otherwise logs message
+sizes without delivering mail; that fallback belongs in test binaries.
 
-```sh
-cd ts-infra && export TF_VAR_state_passphrase=...
-tofu output -raw smtp_username   # full string incl. the @oci suffix
-tofu output -raw smtp_password
-```
+SMTP requires STARTTLS and a valid server certificate chain and hostname. The
+current revocation-check exception remains a security limitation to resolve;
+there is no production instruction to disable validation. Delivery failures
+remain logged without exposing recipients or message content.
 
 Every email is a `multipart/alternative` message: a plain-text part and a
 responsive HTML part (`Features/Email/AuthEmails.cs` and
@@ -396,7 +358,7 @@ organizations (TS-437).
   change applies to the next email on every replica. If it cannot be read,
   the sign-in code still goes out with the defaults and a warning is logged.
 
-DNS prerequisites (terrascale.tech is hosted at Purelymail — not editable from
+Sender-domain SPF and DKIM authorization remain required (managed outside
 this repo):
 
 - SPF: the domain TXT record must include `include:rp.oracleemaildelivery.com`
@@ -406,10 +368,9 @@ this repo):
 
 ### Local development against a real TerraBase member
 
-Point `TS_AUTH_TERRASCALE_API_URL` at an already running compatible local
-member's HTTPS origin and set `TS_AUTH_ENVIRONMENT=Development`, a valid
-`tb_…` key and `TS_AUTH_DATABASE=<project-uuid>/<database-name>`. The application
-does not start or embed TerraBase; the integration-test fixture starts the
+Use the integration-test fixture for isolated local storage and credentials.
+Its fakes and environment overrides are test inputs, never production setup.
+The application does not start or embed TerraBase; the integration-test fixture starts the
 SDK-pinned binary. `/readyz` checks the existing `uniques`,
 `verification_tokens`, `storage_health`, `users`, `sessions`, `passcodes`,
 `signing_key_rings`, `oidc_applications`, `oidc_authorizations`,

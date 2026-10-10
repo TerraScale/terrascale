@@ -1,5 +1,11 @@
 # C# port (TS-424)
 
+The [zero-configuration contract](zero-configuration.md) is the required
+production policy. Option names below inventory the current implementation;
+manual switches, pre-created secret dependencies and optional delivery paths
+remain gaps. They are not production setup instructions. Tenant authorization,
+customer enrollment and storage safety/consistency requirements remain binding.
+
 ts-auth is a C# service on .NET 10. Epic TS-424 (ku.mariogk.com) tracks the
 port. The Rust workspace was removed in TS-442; its source in Git history
 before `8dd2874` is the behavioural reference for each port stream, including
@@ -843,7 +849,8 @@ The rest of the platform management API (contract section 7), in
 
 [`scripts/provision.sh`](../scripts/provision.sh) prints only a provisioning
 plan. It performs no live setup; live dataset provisioning belongs to TS-529
-in ts-orchestrator, with production activation still gated by TS-470.
+in ts-orchestrator. Automatic provisioning remains pending; qualification and
+storage-integrity requirements still gate safe serving.
 Every auth replica must use the same single configured storage authority,
 without automatic write retries or failover to another copy. Atlas endpoint
 discovery (TS-507) does not supply replication or failover guarantees. The one
@@ -932,7 +939,8 @@ Invalid public metadata at runtime fails closed without rewriting storage.
 
 The ring is one secret in the region's OCI Vault (`gru-ts-auth-signing-key-ring`
 in sa-saopaulo-1, `sfo-ts-auth-signing-key-ring` in us-sanjose-1), pre-created
-by the operator with `{}`; TerraBase holds no key material. `OciSigningKeyVault`
+by legacy provisioning with `{}`; automatic first-party secret creation is
+a remaining gap. TerraBase holds no key material. `OciSigningKeyVault`
 reads the current version through the Secrets API, looking the secret up by
 name on every read (`GetSecretBundleByName`, a POST with its parameters in the
 query), so a recreated secret is followed at once although OCI may keep its
