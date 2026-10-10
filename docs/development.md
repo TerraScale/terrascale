@@ -11,9 +11,10 @@ npm ci
 
 ## Local server
 
-`make dev PORT=5481` binds the dashboard to `0.0.0.0:5481`, enables the
-in-memory demo backend, builds the browser scripts once, and starts three
-development watchers. Air watches Go
+The current `make dev` launcher binds the dashboard to all interfaces, selects
+an in-memory demo backend, builds browser scripts and starts three watchers.
+This is legacy launcher inventory: production and shared previews must use
+real persistence/authentication, and fake backends must move to test binaries. Air watches Go
 and `.templ` source files. For each application build it runs the pinned
 templ generator against `internal/` with version and timestamp metadata
 disabled, then compiles the server. Generated `*_templ.go` files stay beside
@@ -60,20 +61,15 @@ Monaco chunk, worker, grammar, and font; release builds (`--release`, used by
 the Dockerfile) add brotli siblings the asset handler serves in their place. Starbase informs the dashboard's visual direction; it is
 a design reference, and no Starbase framework code is copied into the app.
 
-`DASHBOARD_DEMO_ADMIN_EMAIL` and `DASHBOARD_DEMO_ADMIN_PASSWORD` seed the local
-test administrator. The development script supplies test-only defaults; set
-both variables to replace them. Do not use those defaults for shared or
-production environments.
+Production CSRF and sign-in secrets must arrive automatically from OCI Vault;
+demos, seeded administrators and fake backends belong only in test binaries.
+The current development launcher still selects a demo runtime and accepts
+`DASHBOARD_*` overrides. That path is an implementation gap, not a production
+or shared-preview setup recommendation. Use the isolated test suites for fake
+accounts and stores.
 
-`TS_DASHBOARD_CSRF_SECRET` (at least 32 bytes) keys the CSRF tokens. Every
-machine serving one deployment must share it, so it is required outside the
-demo; on Fly.io set it as an app secret. When the demo runs without it, each
-process draws a random key.
-
-Use `make serve PORT=5481` for a plain HTTP server without Air or asset
-watching.
-Set `DASHBOARD_E2E_BASE_URL` when the browser tests should exercise an
-already-running server instead of starting the dashboard in-process.
+`DASHBOARD_E2E_BASE_URL` selects an already-running test target; it does not
+activate a product feature.
 
 ## Build and tests
 
@@ -173,24 +169,18 @@ The MCP endpoint and its tool conventions are described in [mcp.md](mcp.md).
 
 ## Fly runtime
 
-`fly.toml` configures the production app for one warm machine with TerraBase
-state selected by its `TERRABASE_*` secrets. `fly.preview.toml` configures one
-machine per preview with `TS_DASHBOARD_PRODUCTION_DEMO=1` and allows it to stop
-while idle, so its in-memory accounts are reset when it wakes. Both
-configurations probe `GET /health/ready`.
+Production must use persistent TerraBase state, native ts-auth sign-in and billing.
+All service endpoints and region identity must be discovered automatically;
+OCI Vault provisions and delivers service, CSRF and vendor Stripe credentials.
 
-### State backend
+**Current gaps:** runtime backend selection still depends on `TERRABASE_*`
+inputs and can fall back to memory. Preview configuration still selects a demo.
+These paths must be removed from production binaries/configuration; this docs
+change does not change them. Readiness must fail closed on unavailable storage.
 
-`TERRABASE_URL`, `TERRABASE_API_KEY`, `TERRABASE_PROJECT_ID` and
-`TERRABASE_DATABASE` (all four, or none) select the TerraBase Documents store;
-it then also needs a stable `TS_DASHBOARD_CSRF_SECRET` of at least 32 bytes.
-Unset, the dashboard keeps the in-memory store above. State collections and
-plans must already be provisioned; startup and readiness do not seed them.
-Platform admin sign-in automatically mirrors system database inventory through
-ts-go Management with the user's ts-auth token, using an existing dashboard
-account. `dashboard grant-platform-admin` remains available until ts-auth
-serves `platform_admin`. See [terrabase-cutover.md](terrabase-cutover.md) for
-the configuration and access boundaries.
+Platform admin sign-in mirrors authorized inventory through ts-go Management.
+The temporary platform-admin grant remains a restricted authorization action,
+not automatic privilege elevation. See [terrabase-cutover.md](terrabase-cutover.md).
 
 The health probes answer `{"status":"ok","version":"<commit>","backend":"memstore"}`
 (`terrabase` when configured; readiness then reads TerraBase and answers 503
@@ -205,9 +195,8 @@ maintenance in progress or starting within 24 hours, read from the status
 page's Statuspage-compatible summary
 (`https://status.terrascale.tech/api/v1/summary.json`). An incident quotes
 the first paragraph of its latest update, cut to about 200 characters and
-two lines; "View status" opens the full update. Set
-`DASHBOARD_STATUS_SUMMARY_URL` to read another summary, or to an empty value
-to disable the banner. The summary is fetched server-side with a two-second
+two lines; "View status" opens the full update. The status source has one correct setting;
+the current URL/empty-value override is a runtime gap, not a banner kill switch. The summary is fetched server-side with a two-second
 timeout and cached for 30 seconds; when it cannot be read, no banner is shown.
 
 ### Error tracking
@@ -288,44 +277,19 @@ on ts-auth's hosted page.
 
 ## Sign-in through ts-auth
 
-Set these to sign users in through ts-auth. The dashboard is a confidential
-client: its own pages check passwords and emailed codes through ts-auth's
-headless API (TS-582), and single sign-on uses OpenID Connect's authorization
-code flow with PKCE.
+The dashboard is a confidential client. Its native pages redeem passwords and
+emailed codes through ts-auth's headless API; SSO uses authorization code with
+PKCE. Service discovery and OCI Vault must automatically provide the trusted
+issuer, client credential and exact callback bindings.
 
-- `TS_AUTH_ISSUER`: the issuer exactly as ts-auth's discovery document names
-  it. It must use HTTPS. With `DASHBOARD_DEV=1`, HTTP is also allowed for
-  `localhost` or a loopback IP (`127.0.0.1`, `[::1]`). ts-auth's issuers are
-  regional (`https://<region>.auth.terrascale.tech/<instance>`, so
-  `https://gru.auth.terrascale.tech/<instance>` in production). Discovery
-  through the `auth.terrascale.tech` proxy names the regional issuer too, so
-  the proxy URL fails the issuer check.
-- `TS_AUTH_CLIENT_ID` and `TS_AUTH_CLIENT_SECRET`: the client registered at
-  ts-auth. The issuer, client ID and secret must all be set, or startup fails.
-- `TS_AUTH_REDIRECT_URL` (optional): defaults to `DASHBOARD_PUBLIC_URL` plus
-  `/login/callback`. Its path must be `/login/callback`.
+**Current gap:** the runtime still needs `TS_AUTH_*` inputs and development
+cookie/issuer overrides. Automatic provisioning is not established here.
+Production requires HTTPS and secure cookies. Discovery must identify the
+exact regional issuer, advertise S256 and match registered redirect/logout URIs.
+The global auth proxy is not itself a regional issuer. Never weaken issuer
+verification, CSRF or redirect allowlists to make a missing binding work.
 
-Outside `DASHBOARD_DEV=1` the cookies must be secure (an HTTPS
-`DASHBOARD_PUBLIC_URL`, Fly, or `DASHBOARD_SECURE_COOKIES=1`), or startup
-fails.
-
-The ts-go client requires HTTPS for container hostnames and private-network
-addresses, even in development. Earlier dashboard configuration accepted
-issuers such as `http://ts-auth:8080/instance`; those setups must migrate.
-Serve ts-auth through trusted HTTPS and update both its advertised issuer
-and `TS_AUTH_ISSUER` to that URL. Alternatively, expose ts-auth on a loopback
-address reachable from the dashboard and configure both issuer values to
-that address. Changing only `TS_AUTH_ISSUER` fails discovery and JWT issuer
-verification. Dashboard HTTP callback URLs remain supported in development.
-
-The Authentication console builds each project's instance URLs (issuer,
-hosted pages, callbacks, Management API) under `TS_AUTH_ISSUER`'s origin, or
-`https://gru.auth.terrascale.tech` when it is unset.
-
-Register the redirect URI and the post-logout redirect URI (the dashboard's
-origin plus `/login`) at ts-auth. Discovery must list `S256` in
-`code_challenge_methods_supported`. Native form rendering does not require
-discovery, so sign-in pages remain available while ts-auth is down.
+The existing authenticated flow:
 
 With the variables set:
 

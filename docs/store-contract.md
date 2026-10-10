@@ -1,8 +1,9 @@
 # Store contract
 
 The dashboard reads and writes its state through four small interfaces, each
-with an in-memory implementation that the `TS_DASHBOARD_PRODUCTION_DEMO=1`
-deployment and the test suites use:
+with in-memory implementations for isolated test code and test binaries.
+The current runtime also exposes demo selection; removing that production path
+is an implementation gap:
 
 | Interface | Memory implementation | State |
 |---|---|---|
@@ -113,7 +114,8 @@ and contents, tenant data and the corresponding management bindings and active
 backups. Old records are deleted together, never migrated, backfilled or read
 through a compatibility path. This PR performs no production deletion; exact
 fleet targets and binding recreation belong to the coordinated backend rollout.
-`TS_DASHBOARD_DEPLOY_PAUSED=1` keeps activation separate from source merge.
+CI has no deployment pause variable. A destructive reset still requires explicit
+approval of verified targets and evidence; source delivery does not authorize deletion.
 Startup creates the fresh selected database and collections, then atomically
 seeds the plan catalog. Later startups preserve that new catalog intentionally.
 Reset/restart also requires qualified consumers and approved, implemented and
@@ -439,8 +441,9 @@ workspace and commits its diff with root revision guards. `EnsureCollections`
 and `SeedPlans(ctx)` are explicit provisioning/test-fixture operations. Neither
 application startup nor readiness seeds state.
 
-`TERRABASE_URL`, `TERRABASE_API_KEY`, `TERRABASE_PROJECT_ID` and
-`TERRABASE_DATABASE` select this backend together; unset selects memstore.
+Storage scope and endpoints must be discovered automatically and credentials
+delivered through OCI Vault. The current grouped `TERRABASE_*` selectors and
+unset-to-memory fallback are implementation gaps, not deployment recipes.
 Readiness reads `users` with a one-row limit and reports the backend. See
 [terrabase-cutover.md](terrabase-cutover.md) for configuration and provisioning
 boundaries.

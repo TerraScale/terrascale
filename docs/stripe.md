@@ -49,45 +49,24 @@ unbound customer; its webhook returns `200` without contacting Stripe. State
 read/write errors, including missing collections or databases, return a retryable
 webhook failure instead of acknowledging an unsynced delivery.
 
-## Modes
+## Production billing contract and current gaps
 
-- **Demo** (local `TS_DASHBOARD_PRODUCTION_DEMO=1`, with no TerraBase connection): no Stripe
-  client is created and every `STRIPE_*` setting is ignored. Checkout, plan
-  changes, and the portal use the in-memory simulator.
-- **Provider billing** (TerraBase configured, demo flag unset): `payments.New`
-  loads and validates the settings below once at
-  startup and builds one shared stripe-go client. Any invalid setting stops
-  startup with a single error listing every problem.
+Billing is always available with persistent state. OCI Vault automatically
+provides service/database credentials and delivers vendor-issued Stripe keys
+stored once. The production account, webhook, catalog and limits have one
+correct setting; there is no demo or billing activation variable.
 
-The explicit demo flag always disables Stripe. With TerraBase configured, the
-application retains persistent stores and native sign-in; billing is unavailable
-and the simulator cannot grant simulated entitlements into persistent state.
-The memory simulator runs only without a configured backend.
+Current runtime selection still depends on demo, mode and `STRIPE_*` inputs;
+plan changes are also gated by test mode. This documentation does not remove
+those paths or qualify live billing. Fakes/simulators belong only in test
+binaries. Automatic secret delivery and runtime gate removal remain pending.
 
-In-place plan changes (upgrade, scheduled downgrade, Personal to Free) are
-enabled only when `STRIPE_MODE=test` until the staging gate in
-[`stripe-sandbox-dsh207.md`](stripe-sandbox-dsh207.md) passes.
-
-## Settings
-
-| Variable | Value |
-| --- | --- |
-| `STRIPE_MODE` | `test` or `live` |
-| `STRIPE_SECRET_KEY` | Restricted (`rk_<mode>_…`, preferred) or secret (`sk_<mode>_…`) key for that mode |
-| `STRIPE_WEBHOOK_SECRET` | Signing secret (`whsec_…`) of this app's webhook endpoint |
-| `DASHBOARD_PUBLIC_ORIGIN` | HTTPS origin Stripe redirects back to; plain HTTP only on loopback |
-| `STRIPE_PRICE_{STARTER,PRO,BUSINESS}_{MONTHLY,ANNUAL}` | Six distinct recurring USD Price IDs |
-| `TERRABASE_URL`, `TERRABASE_API_KEY`, `TERRABASE_PROJECT_ID`, `TERRABASE_DATABASE` | Existing dashboard TerraBase connection; billing uses the same ts-go database handle |
-
-The application supplies `TS_BILLING_TENANT_ID`, `TS_BILLING_PROJECT_ID` and
-`TS_BILLING_DATABASE_ID` internally from that provisioned scope. Stripe
-cutover does not create or select a separate billing database.
-
-Store the key, signing secret, and TerraBase token as Fly secrets, never in `fly.toml`:
-
-```sh
-fly secrets import --stage -a <app> < /private/path/stripe.env
-```
+Provider account and object identity are security/integrity boundaries: live
+keys, prices, products, customer bindings and webhook signing secrets must
+match the same account and endpoint. Test references must never enter production.
+The existing TerraBase scope is retained; billing does not create a separate
+database. Preserve the [live acceptance safeguards](stripe-live-cutover.md)
+and sandbox evidence before any real financial operation.
 
 A restricted key needs write access to Customers, Checkout Sessions, Customer
 portal, Subscriptions, and Subscription schedules, and read access to Invoices

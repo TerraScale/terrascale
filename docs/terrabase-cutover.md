@@ -4,8 +4,8 @@ The dashboard stores persistent state through the ts-go Documents v1 client
 against one dedicated database (TS-472). Users' databases live in
 TerraBase projects the dashboard makes as the signed-in user, through
 Management with their ts-auth access token
-([store-contract.md](store-contract.md#user-databases-ts-671)), so
-`TS_AUTH_ISSUER` must be set as well.
+([store-contract.md](store-contract.md#user-databases-ts-671)), with
+a trusted ts-auth issuer binding delivered automatically.
 
 Platform admin sign-in also reads
 system database inventory through ts-go Management, and system console pages
@@ -17,20 +17,16 @@ billing and spending caps. The existing dashboard identity records and admin
 inventory mirror are compatibility state pending the
 [TS-599 platform cutover](platform-cutover.md).
 
-## Runtime configuration
+## Required runtime contract
 
-`TERRABASE_URL`, `TERRABASE_API_KEY`, `TERRABASE_PROJECT_ID` and
-`TERRABASE_DATABASE` must be set together; partial configuration fails startup.
-The configured database also requires a stable `TS_DASHBOARD_CSRF_SECRET` of
-at least 32 bytes. Secrets belong in the deployment's secret store, never in
-git, logs or dashboard documents.
+Persistent state, real ts-auth authorization and billing are always available.
+Endpoints and database scope are discovered automatically; OCI Vault must provision
+and deliver database, client and stable CSRF secrets. There is no production
+demo mode, backend-selection step or Stripe activation variable.
 
-With no TerraBase configuration, the dashboard uses the in-memory demo store.
-Local development and tests use `TS_DASHBOARD_PRODUCTION_DEMO=1`; the four
-TerraBase variables take precedence over that flag. Production's `fly.toml`
-does not set the demo flag, and the deploy check refuses a production Machine
-that does. Billing stays disabled until the Stripe variables are set; Stripe
-bindings live in the same `dashboard` database.
+The current `TERRABASE_*`, `TS_AUTH_*` and demo paths remain implementation gaps.
+This docs change implements neither their removal nor automatic provisioning.
+Missing storage/credentials must fail closed, with no memory-store fallback.
 
 ## Provisioning boundary
 

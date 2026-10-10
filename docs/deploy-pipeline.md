@@ -13,9 +13,11 @@ production machine. CI verifies the required machine settings, no persistent
 volumes and the exact /health/ready revision. A healthy older machine fails.
 The existing native-login smoke and its protected rollback remain in place.
 
-FLY_API_TOKEN is the required repository deployment secret. The current
-production configuration requires TS_DASHBOARD_PRODUCTION_DEMO=1 and exactly
-one warm machine. The global Fly endpoint is reachable from GRU and SFO;
+OCI Vault must deliver the vendor-issued Fly deployment credential automatically.
+The existing repository-secret consumer and demo-dependent deployment validation
+are implementation gaps. Production requires persistent state and real ts-auth
+authorization; it must not use a demo binary. The current Fly contract uses one
+warm machine. The global Fly endpoint is reachable from GRU and SFO;
 those observations do not claim there are two regional Dashboard replicas.
 Regional scaling belongs to the service's separate architecture work.
 

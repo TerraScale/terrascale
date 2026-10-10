@@ -55,7 +55,7 @@ through ts-go, and headless ts-auth integration. Dashboard sign-in remains on
 its own password/email-code pages; only SSO redirects to hosted authorization.
 Production uses the existing `TERRABASE_*`, `TS_AUTH_*` and
 `TS_DASHBOARD_CSRF_SECRET` configuration. Billing uses that same database.
-Local demo runs remain `TS_DASHBOARD_PRODUCTION_DEMO=1` and do not satisfy the
+Local demo runs belong only in isolated test binaries and do not satisfy the
 Stripe staging gate.
 
 Verify the existing dev target and configure a dedicated test origin and

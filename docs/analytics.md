@@ -50,6 +50,7 @@ UUIDs, add versioned types/routes, use direct HTTP fallbacks, or read TerraBase'
 internal data. The SDK adapter and live verification are required before calling
 this slice complete.
 
-`TS_STATUS_URL` selects the public status origin and defaults to
-`https://status.terrascale.tech`; an empty value disables regional measurements.
+The public status source has one correct setting. The current `TS_STATUS_URL`
+override and empty-value measurement-disable path are runtime removal gaps;
+regional measurement is always available under the operating contract.
 The public status read never receives the signed-in user's token.

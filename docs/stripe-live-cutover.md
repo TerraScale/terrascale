@@ -1,13 +1,11 @@
 # Stripe live cutover — TS-709
 
-Preparation does not authorize activating live keys. Keep local development
-and tests in `TS_DASHBOARD_PRODUCTION_DEMO=1`. Production keeps its existing
-TerraBase persistence and native dashboard sign-in.
-
-`TS_DASHBOARD_PRODUCTION_DEMO=1` suppresses Stripe even when TerraBase is
-configured. Persistent apps retain their real stores, sessions and ts-auth;
-billing stays unavailable. The memory simulator runs only without a configured
-backend and cannot grant simulated entitlements to persistent accounts.
+The [zero-configuration contract](zero-configuration.md) requires billing to be
+always available, with vendor keys stored once in OCI Vault and delivered
+automatically. This document retains the authorization, data-integrity and
+financial acceptance boundaries; it does not introduce a billing enable switch.
+Automatic delivery and removal of current demo/mode gates are pending runtime
+work. Preparation alone does not authorize charges, refunds or destructive resets.
 
 ## Verify the serving target
 
@@ -40,61 +38,23 @@ re-bootstrap through the SDK in the existing provisioned database when needed;
 do not replace the serving app, cell or volume. Do not touch Forgejo, ts-ops or
 homelab hosts.
 
-## Prepare live configuration from OCI Vault
+## Vault delivery and provider verification
 
-The inspected production Vault is `gru-1-vault`, region `sa-saopaulo-1`, in
-compartment `gru-1-control`. On 2026-10-09, no Stripe/billing-named secret
-appeared in its 285-secret inventory or the 168-secret inventory of
-`sfo-1-vault` (`us-sanjose-1`). **Live credential and signing-secret
-OCIDs have not been identified; cutover is NEEDS-USER.** Credentials under
-other names or in other scopes remain unverified. Verify them before proceeding.
-The working CLI authentication uses `--config-file
-/home/mariogk/.oci/homelab-api.config --profile DEFAULT --auth api_key`; the
-browser session profile was expired.
+The vendor-issued Stripe account key and endpoint-specific signing secret are
+stored once in OCI Vault. Production automation must discover the correct
+versions and deliver them without operator extraction, dotenv assembly or Fly
+secret copying. This documentation does not implement that pipeline.
 
-1. Select the live Stripe account and verify its business activation. Store
-   the restricted live key and this endpoint's live signing secret in OCI
-   Vault. Use the permissions in [`stripe.md`](stripe.md); secret/restricted
-   keys must start with `sk_live_`/`rk_live_`.
-2. Create or identify six **live** recurring USD prices with the existing plan
-   amounts, intervals and active products. Configure the live customer portal
-   for payment updates, invoices and cancellation; disable portal plan changes.
-   Enable Checkout's one-subscription limit.
-3. Configure the live webhook at the exact production URL using the vendored
-   `stripe.APIVersion` and all `payments.WebhookEvents`. Its signing secret is
-   specific to that endpoint; the prefix alone cannot prove it matches.
-4. Assemble `KEY=VALUE` settings from the selected CURRENT Vault versions in a
-   private file: `STRIPE_MODE=live`, the two secrets, six price IDs, and
-   `DASHBOARD_PUBLIC_ORIGIN=https://dash.terrascale.tech`. Include only those
-   ten settings; align the separately managed `DASHBOARD_PUBLIC_URL` with the
-   same origin. Keep the existing
-   production TerraBase scope/credentials. Never source the file as shell code.
-5. Run the read-only audit below. It checks object mode, prices/products,
-   webhook configuration and portal features. It does not make charges,
-   activate keys, or prove that a webhook delivery succeeded.
+Verify account authorization, restricted-key permissions, six distinct recurring
+prices, matching live products, the production webhook URL/API version/events
+and portal settings. Endpoint signing-secret identity requires verification;
+a prefix alone cannot prove a match. Preserve the existing database scope,
+native login, CSRF and persistence. Record only object IDs and secret version
+identifiers in private operational evidence, never credential values.
 
-If those settings are held together in a Vault dotenv bundle, retrieve its
-CURRENT version without printing it. Run in Bash with tracing disabled:
-
-```sh
-set +x
-set -euo pipefail
-umask 077
-stripe_live_env=$(mktemp)
-trap 'rm -f -- "$stripe_live_env"' EXIT
-oci --config-file /home/mariogk/.oci/homelab-api.config --profile DEFAULT \
-  --auth api_key --region sa-saopaulo-1 secrets secret-bundle get \
-  --secret-id "$STRIPE_LIVE_CONFIG_SECRET_OCID" \
-  --stage CURRENT --query 'data."secret-bundle-content".content' --raw-output \
-  | base64 --decode > "$stripe_live_env"
-nice -n 19 python3 scripts/audit-stripe.py --mode live --online \
-  --env-file "$stripe_live_env"
-```
-
-For an audit without a plaintext file, pipe the same decoded bundle to
-`nice -n 19 python3 scripts/audit-stripe.py --mode live --online --env-file -`.
-An invalid or mixed-mode configuration fails before contacting Stripe.
-Never print the decoded bundle or put secret values in command arguments.
+The earlier inspection did not identify verified live credential references.
+That remains unresolved; do not treat automatic-delivery policy as evidence of
+credentials or live financial acceptance.
 
 ## Test-to-live gate
 
@@ -132,31 +92,23 @@ Verified Stripe sandbox deliveries remain required before live approval.
    `DocumentIDFor` and `unique_claim`; complete the separate TS-754/TS-755
    rollout before resetting and re-bootstrapping production data.
 4. Require the live audit to pass and verify credentials can read/write the
-   existing TerraBase billing collections. Keep in-place plan changes disabled
-   in live mode until their separate staging gate is satisfied.
+   existing TerraBase billing collections. Require their separate staging evidence before claiming in-place plan
+   changes are financially qualified; the runtime mode gate is a removal gap.
 5. Ask the user to confirm **activating live billing on `ts-dashboard`** with
    the verified target, configuration versions, runtime hardening, clean data
-   and test evidence. Stop before importing/staging any live Fly secrets: a later normal
-   deployment can activate staged secrets automatically.
+   and test evidence. Automatic delivery does not authorize charges, refunds or destructive data
+   operations; retain the verified-target and acceptance record.
 
-## Activate only after confirmation
+## Production acceptance
 
-Require `TS_DASHBOARD_PRODUCTION_DEMO` to be absent from production settings.
-If it is set as a Fly secret, stage its removal after confirmation with
-`fly secrets unset --stage -a ts-dashboard TS_DASHBOARD_PRODUCTION_DEMO`.
-Keep the flag absent from `fly.toml`; the deployment check enforces this.
+Deploy the reviewed runtime through its normal quality and integrity gates.
+OCI Vault must deliver the verified credentials automatically; manual secret
+import and demo-switch recipes are retired. Existing delivery and switch paths
+remain runtime gaps, so this document cannot certify a completed cutover.
 
-Import the audited Vault-derived configuration into the verified existing app
-as one staged set, then deploy the reviewed current image in place:
-
-```sh
-fly secrets import --stage -a ts-dashboard < "$stripe_live_env"
-fly deploy -c fly.toml --remote-only --strategy immediate --ha=false
-```
-
-Preserve production persistence, ts-auth, CSRF and all unrelated settings. Do not
-enable the demo simulator in production. Record the resulting release and
-Machine IDs and confirm readiness and native login again.
+Explicit authorization remains required for actual charges/refunds and approved
+obsolete-data resets. Record the resulting release identity and verify readiness,
+persistent backend, secure native login and matching provider bindings.
 
 ## Verify delivery and reconcile
 

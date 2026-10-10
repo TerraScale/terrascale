@@ -42,6 +42,7 @@ jobs:
           fi
           python3 .zero-config-policy/scripts/zero-config-check.py "$ZERO_CONFIG_BASE" "$ZERO_CONFIG_HEAD"
   check:
+    needs: [guard]
     runs-on: terrascale-builder
     timeout-minutes: 10
     steps:
@@ -57,6 +58,7 @@ jobs:
       - name: Check generated assets, lint, and browser shard coverage
         run: make lint check-css check-e2e-shards
   test:
+    needs: [guard]
     runs-on: terrascale-builder
     # Three SDK downloads can each take five minutes; retain ten for tests.
     timeout-minutes: 25
@@ -117,9 +119,7 @@ jobs:
 
   deploy:
     needs: [guard, check, test, e2e]
-    # Pause production during the coordinated storage/auth cutover; source CI still runs.
-    # remove after TS-677 cutover
-    if: forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main' && vars.TS_DASHBOARD_DEPLOY_PAUSED != '1'
+    if: forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main'
     runs-on: terrascale-builder
     timeout-minutes: 10
     steps:

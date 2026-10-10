@@ -22,7 +22,8 @@ builds do not use a sibling C# or SDK checkout. Multiple CSS source files under
 `web/assets` are bundled by Lightning CSS into
 `web/static/css/terrascale.css`.
 
-The supported account mode is `TS_DASHBOARD_PRODUCTION_DEMO=1`. It is required
+The historical runtime required a production demo input. That conflicts with
+the zero-configuration contract and is a removal gap; it was required
 by startup, uses process-memory accounts and sessions, and resets them when the
 process restarts. Production is configured to keep one Fly machine warm;
 preview machines may stop while idle and start with an empty store. A cutover
@@ -142,8 +143,9 @@ make test-slow
 make build
 ```
 
-`make dev` binds the server to `0.0.0.0:5481`, enables
-`TS_DASHBOARD_PRODUCTION_DEMO=1`, and runs the Go/template and CSS watchers.
+The current `make dev` launcher still selects a demo backend while running
+Go/template and CSS watchers. This is an implementation gap; fakes and demos
+belong only in isolated test binaries.
 `make test-slow` runs the Playwright suite and the local test-only SDK fixture.
 `make build` bundles the CSS and produces the optimized Go executable. These
 commands do not exercise live persistence, live Stripe, or a production ts-auth

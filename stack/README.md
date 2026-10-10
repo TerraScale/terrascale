@@ -1,5 +1,11 @@
 # Local platform stack
 
+This is an isolated test-stack reference, not a production or shared-preview
+setup contract. Fake servers, demo accounts, plaintext test SMTP and source/binary
+selectors are permitted only for test code/binaries. They do not qualify real
+production persistence or authentication. Production discovery and credential
+delivery must follow [zero configuration](../docs/zero-configuration.md).
+
 One command runs TerraBase, ts-auth, the dashboard (live mode) and Mailpit on
 this machine, over HTTPS with a stack-local CA:
 
