@@ -1050,20 +1050,20 @@ public sealed class PeerTransportTests
             var settings = new Dictionary<string, string>
             {
                 ["node-name"] = node,
-                ["peers"] = "gru-1-db-1=10.251.0.21:9443, gru-1-db-2=10.251.0.22:9443",
+                ["peers"] = "ts-gru-1=10.251.0.21:9443, ts-gru-2=10.251.0.22:9443",
                 ["catalog-primary"] = primary,
             };
             tls.Apply(settings);
             return settings;
         }
 
-        using (var primary = TerraBaseOptions.FromValues(Settings("gru-1-db-1", "gru-1-db-1")))
+        using (var primary = TerraBaseOptions.FromValues(Settings("ts-gru-1", "ts-gru-1")))
         {
             await Assert.That(primary.PeerAddresses.Select(address => address.ToString())).IsEquivalentTo(["https://10.251.0.22:9443/"]);
             await Assert.That(primary.CatalogPrimary).IsNull();
         }
 
-        using var follower = TerraBaseOptions.FromValues(Settings("gru-1-db-2", "gru-1-db-1"));
+        using var follower = TerraBaseOptions.FromValues(Settings("ts-gru-2", "ts-gru-1"));
         await Assert.That(follower.PeerAddresses.Select(address => address.ToString())).IsEquivalentTo(["https://10.251.0.21:9443/"]);
         await Assert.That(follower.CatalogPrimary!.ToString()).IsEqualTo("https://10.251.0.21:9443/");
 
@@ -1071,7 +1071,7 @@ public sealed class PeerTransportTests
         var withoutListener = await Assert.That(() => TerraBaseOptions.FromValues(new Dictionary<string, string> { ["peers"] = "a=localhost:7000", ["node-name"] = "a" }))
             .Throws<TerraBaseConfigurationException>();
         await Assert.That(withoutListener!.Message).Contains("peer-port");
-        var both = Settings("gru-1-db-1", "gru-1-db-1");
+        var both = Settings("ts-gru-1", "ts-gru-1");
         both["peer-addresses"] = "https://localhost:7001";
         var twice = await Assert.That(() => TerraBaseOptions.FromValues(both)).Throws<TerraBaseConfigurationException>();
         await Assert.That(twice!.Message).Contains("not both");

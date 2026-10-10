@@ -7,10 +7,10 @@
 
 ## Context
 
-Since TS-574, gru-1 serves db-1 and db-2 active-active behind one round-robin backend set. ts-auth's readiness probe
+Since TS-574, gru-1 serves two members active-active behind one round-robin backend set. ts-auth's readiness probe
 writes, reads and conditionally deletes one document back to back. When the read reaches the other member before
 replication has delivered the write, it answers 404 and ts-auth reports not ready. Between 13:20Z and 13:37Z that
-happened 4 times on ctl-2, and once it reached gru.auth's `/readyz`.
+happened 4 times on ts-gru-2, and once it reached gru.auth's `/readyz`.
 
 The options in TS-575:
 

@@ -178,11 +178,12 @@ TERRABASE_CATALOG_PRIMARY=https://a.internal:7443
 ```
 
 Or give every member the same settings, as the orchestrator does with one workload profile, and let each find itself
-by its `node-name` (the host name by default):
+by its `node-name` (the host name by default). Node names follow `ts-<region>-<n>` (TS-609), enforced by
+ts-orchestrator (TS-776):
 
 ```sh
-TERRABASE_PEERS=gru-1-db-1=10.251.0.21:9443,gru-1-db-2=10.251.0.22:9443
-TERRABASE_CATALOG_PRIMARY=gru-1-db-1
+TERRABASE_PEERS=ts-gru-1=10.251.0.21:9443,ts-gru-2=10.251.0.22:9443
+TERRABASE_CATALOG_PRIMARY=ts-gru-1
 ```
 
 `peers` lists every member, this one included; the others become `peer-addresses`, and the member named in

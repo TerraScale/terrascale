@@ -24,7 +24,7 @@ public sealed class PressureTests
     {
         await using var server = await TerraBaseTestServer.StartAsync(settings =>
         {
-            settings["node-name"] = "gru-1-db-2";
+            settings["node-name"] = "ts-gru-2";
             settings["instance-id"] = "ocid1.instance.test";
         });
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
@@ -37,7 +37,7 @@ public sealed class PressureTests
         using var readiness = await server.Client.GetAsync(new Uri("/readyz", UriKind.Relative), deadline.Token);
         await Assert.That(readiness.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(snapshot.GetProperty("schema").GetInt32()).IsEqualTo(1);
-        await Assert.That(snapshot.GetProperty("node").GetString()).IsEqualTo("gru-1-db-2");
+        await Assert.That(snapshot.GetProperty("node").GetString()).IsEqualTo("ts-gru-2");
         await Assert.That(snapshot.GetProperty("instance_id").GetString()).IsEqualTo("ocid1.instance.test");
         await Assert.That(snapshot.GetProperty("state").GetString()).IsEqualTo("unknown");
         await Assert.That(snapshot.GetProperty("sender_durable_lag_seq").GetInt64()).IsEqualTo(0);

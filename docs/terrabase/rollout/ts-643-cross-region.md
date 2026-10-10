@@ -54,7 +54,7 @@ sfo-1 ([placement](../cross-region.md#placement)).
    ```
 
 2. Register the organization and project in **both** regions under the **same** ids. On each region's catalog primary
-   (gru-1-ctl-1, ts-sfo-1), send to the loopback administrative listener; `X-TerraBase-User-Id` becomes the owner:
+   (ts-gru-1, ts-sfo-1), send to the loopback administrative listener; `X-TerraBase-User-Id` becomes the owner:
 
    ```sh
    cat > project.json <<JSON
@@ -69,7 +69,7 @@ sfo-1 ([placement](../cross-region.md#placement)).
    The credential is the file the member's `TERRABASE_MANAGEMENT_CREDENTIAL_FILE` names (read it from the process
    environment); both profiles set it.
 
-3. Create the canary on gru-1-ctl-1 only, with sfo-1 as its replica; sfo-1 records it from gru's heads within seconds:
+3. Create the canary on ts-gru-1 only, with sfo-1 as its replica; sfo-1 records it from gru's heads within seconds:
 
    ```sh
    curl -s http://127.0.0.1:9464/v1/management/commits -H 'Content-Type: application/json' \
