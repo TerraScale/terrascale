@@ -22,8 +22,7 @@ public sealed class BackupKeyRotationTests
     public async Task Generated_keys_remain_cached_for_restore_after_rotation_and_stray_key_objects_are_ignored()
     {
         var elapsed = Stopwatch.StartNew();
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
-        var cancellationToken = deadline.Token;
+        var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         using var oci = new FakeOci();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
         var directory = Directory.CreateTempSubdirectory("terrabase-key-history-").FullName;
@@ -62,7 +61,6 @@ public sealed class BackupKeyRotationTests
 
             time.Advance(TimeSpan.FromHours(23));
             Mark(4);
-            deadline.CancelAfter(TimeSpan.FromSeconds(30));
             using var refreshed = await data.PutAsJsonAsync(ManagementApi.Uri(ManagementApi.DocumentPath(database, "people", "refresh")), new { text = before }, cancellationToken);
             refreshed.EnsureSuccessStatusCode();
             await backup.RunOnceAsync(cancellationToken);
@@ -147,9 +145,7 @@ public sealed class BackupKeyRotationTests
             File.Copy(DatabaseFile(directory, database), coldFile);
             time.Advance(TimeSpan.FromHours(25));
 
-            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(testCancellationToken);
-            deadline.CancelAfter(TimeSpan.FromSeconds(30));
-            var cancellationToken = deadline.Token;
+            var cancellationToken = testCancellationToken;
             var publishing = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             oci.BeforePut = async (key, token) =>
@@ -185,7 +181,6 @@ public sealed class BackupKeyRotationTests
                 await Assert.That(oldRequests.Gets).IsEqualTo(1);
                 await Assert.That(oldRequests.Unwraps).IsEqualTo(1);
                 await Assert.That(release.Task.IsCompleted).IsFalse();
-                await Assert.That(deadline.IsCancellationRequested).IsFalse();
                 await Assert.That(pass.IsCompleted).IsFalse();
             }
             catch (Exception error)

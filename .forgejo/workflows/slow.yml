@@ -41,7 +41,7 @@ jobs:
 
       - name: Slow integration suite
         env:
-          FORGEJO_TOKEN: ${{ forgejo.token }}
+          FORGEJO_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
         run: |
           set -euo pipefail
           mkdir -p artifacts

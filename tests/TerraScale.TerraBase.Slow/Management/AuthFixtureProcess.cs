@@ -11,12 +11,13 @@ internal sealed class AuthFixtureProcess : IAsyncDisposable
     private readonly TaskCompletionSource<Uri> _http = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TaskCompletionSource<Uri> _https = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly TaskCompletionSource _signingRing = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly Queue<string> _stderrTail = new();
 
     private AuthFixtureProcess(Process process)
     {
         _process = process;
         _stdout = ReadAsync(process.StandardOutput);
-        _stderr = ReadAsync(process.StandardError);
+        _stderr = ReadAsync(process.StandardError, _stderrTail);
     }
 
     public static AuthFixtureProcess Start(string executable, string directory, IEnumerable<string> arguments, Dictionary<string, string>? environment = null)
@@ -66,7 +67,7 @@ internal sealed class AuthFixtureProcess : IAsyncDisposable
         await Task.WhenAll(_stdout, _stderr).WaitAsync(token);
         if (_process.ExitCode != 0)
         {
-            throw new InvalidOperationException($"{Path.GetFileName(_process.StartInfo.FileName)} exited with code {_process.ExitCode}");
+            throw new InvalidOperationException($"{Path.GetFileName(_process.StartInfo.FileName)} exited with code {_process.ExitCode}; stderr tail:{Environment.NewLine}{string.Join(Environment.NewLine, _stderrTail)}");
         }
     }
 
@@ -98,11 +99,21 @@ internal sealed class AuthFixtureProcess : IAsyncDisposable
         }
     }
 
-    private async Task ReadAsync(StreamReader output)
+    private async Task ReadAsync(StreamReader output, Queue<string>? tail = null)
     {
         // Retain only startup signals: process output can contain credentials or token material.
+        // Error output keeps its last lines for failure messages, so a failed step is visible in CI.
         while (await output.ReadLineAsync() is { } line)
         {
+            if (tail is not null)
+            {
+                tail.Enqueue(line);
+                if (tail.Count > 20)
+                {
+                    tail.Dequeue();
+                }
+            }
+
             const string listening = "Now listening on: ";
             var text = line.Trim();
             if (text.StartsWith(listening, StringComparison.Ordinal)
