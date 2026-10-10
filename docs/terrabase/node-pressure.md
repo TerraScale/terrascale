@@ -21,7 +21,7 @@ contract before consuming the release; there is no compatibility alias.
 configuration is explicit null, never a machine-name substitute. Accepted IDs
 are 1..128 ASCII letters, digits, dots, underscores, colons, pluses and hyphens.
 
-`local_ready` is sampled using exactly `/readyz`'s storage, issuer-key, catalog
+`local_ready` is sampled using exactly `/readyz`'s storage, catalog
 and shutdown checks; it is null before the first readiness sample. It does not
 prove certified member state or receipt of every peer's data. Consequently
 `state` stays `unknown`, even when local readiness is true.

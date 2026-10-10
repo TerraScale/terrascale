@@ -209,8 +209,9 @@ public sealed class UserAuthTests
         await using var server = await starting.WaitAsync(TimeSpan.FromSeconds(30));
         using var ready = await server.Client.GetAsync(Uri("/readyz"));
 
+        // Serving does not wait for ts-auth's keys: only user tokens do.
         await Assert.That(issuer.DiscoveryFetches).IsEqualTo(1);
-        await Assert.That(ready.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        await Assert.That(ready.StatusCode).IsEqualTo(HttpStatusCode.OK);
     }
 
     [Test]
@@ -231,11 +232,12 @@ public sealed class UserAuthTests
     }
 
     [Test]
-    public async Task Ts_auth_unreachable_at_startup_leaves_the_server_not_ready_and_tokens_rejected_without_fetching()
+    public async Task Ts_auth_unreachable_at_startup_leaves_the_server_ready_and_tokens_rejected_until_its_keys_load()
     {
+        var timers = new ManualTimers();
         using var tls = new ClientTls();
         using var issuer = new TestIssuer { Available = false };
-        // Timers never fire, so the background retry cannot add a fetch while requests arrive.
+        // Timers fire only when the test fires them, so the background retry cannot add a fetch while requests arrive.
         await using var server = await TerraBaseTestServer.StartAsync(
             settings =>
             {
@@ -245,21 +247,29 @@ public sealed class UserAuthTests
             services =>
             {
                 issuer.Route(services);
-                services.AddSingleton<TimeProvider>(new StoppedTimers());
+                services.AddSingleton<TimeProvider>(timers);
             });
         var attempts = issuer.DiscoveryFetches;
         issuer.Rotate();
         using var client = tls.CreateClient(server.ClientAddress!, issuer.Mint(EntityIds.New().ToString()));
 
         var statuses = await Task.WhenAll(Enumerable.Range(0, 10).Select(_ => StatusAsync(client)));
+        var fetchesWhileRejecting = issuer.DiscoveryFetches;
         using var adminReady = await server.Client.GetAsync(Uri("/readyz"));
         using var clientReady = await client.GetAsync(Uri("/readyz"));
 
+        // ts-auth answers; the background retry loads its keys and then schedules the regular refresh.
+        issuer.Available = true;
+        await timers.FireAsync(TsAuthKeys.StartupRetry);
+        await timers.ScheduledAsync(TsAuthKeys.RefreshInterval);
+        var accepted = await StatusAsync(client);
+
         await Assert.That(attempts).IsEqualTo(1);
         await Assert.That(statuses).All().Satisfy(status => status.IsEqualTo(HttpStatusCode.Unauthorized));
-        await Assert.That(issuer.DiscoveryFetches).IsEqualTo(attempts);
-        await Assert.That(adminReady.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
-        await Assert.That(clientReady.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        await Assert.That(fetchesWhileRejecting).IsEqualTo(attempts);
+        await Assert.That(adminReady.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(clientReady.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(accepted).IsEqualTo(HttpStatusCode.OK);
     }
 
     [Test]
@@ -288,7 +298,7 @@ public sealed class UserAuthTests
         await Assert.That(issuer.DiscoveryFetches).IsEqualTo(1);
         await Assert.That(issuer.JwksFetches).IsEqualTo(0);
         await Assert.That(status).IsEqualTo(HttpStatusCode.Unauthorized);
-        await Assert.That(ready.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        await Assert.That(ready.StatusCode).IsEqualTo(HttpStatusCode.OK);
     }
 
     [Test]
@@ -346,7 +356,7 @@ public sealed class UserAuthTests
         await Assert.That(issuer.JwksFetches).IsEqualTo(1);
         await Assert.That(issuer.MovedJwksFetches).IsEqualTo(0);
         await Assert.That(status).IsEqualTo(HttpStatusCode.Unauthorized);
-        await Assert.That(ready.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        await Assert.That(ready.StatusCode).IsEqualTo(HttpStatusCode.OK);
     }
 
     [Test]

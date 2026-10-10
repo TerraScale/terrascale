@@ -28,5 +28,6 @@ administrative and client listeners and on no other.
   stalled volume, and `/readyz` answers 503. Shutdown immediately answers 503 regardless of cached
   or in-flight results; engine closure bypasses the filesystem result cache on every request.
 - Any other endpoint on the client listener still requires a scoped API key, or a ts-auth access
-  token on the Management API. With `auth-issuer` set, `/readyz` also answers 503 until ts-auth's
-  signing keys have been fetched once ([0007](0007-ts-auth-user-tokens.md)).
+  token on the Management API. `/readyz` does not wait for ts-auth's signing keys (COS decision
+  2026-10-10, TS-677): ts-auth stores its data here, so the two would wait for each other after a
+  fresh start ([0007](0007-ts-auth-user-tokens.md)).

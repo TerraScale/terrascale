@@ -1,22 +1,24 @@
 using TerraBase.Engine;
 using TerraBase.Features.Replication;
-using TerraBase.Features.UserAuth;
 
 namespace TerraBase.Features.Health;
 
 /// <summary>Local serving readiness, not certified membership or replica catch-up evidence.</summary>
 public interface INodeReadiness
 {
-    /// <summary>Checks storage, issuer keys, catalog readiness and shutdown with the readiness probe's rules.</summary>
+    /// <summary>
+    /// Checks storage, catalog readiness and shutdown with the readiness probe's rules. Not ts-auth's signing keys: ts-auth
+    /// stores its data here, so it cannot become ready before this node does; user tokens answer 401 until the keys load.
+    /// </summary>
     ValueTask<bool> IsReadyAsync(CancellationToken cancellationToken);
 }
 
 internal sealed class NodeReadiness(
-    IStorageEngine engine, IIssuerKeys issuerKeys, ICatalogReadiness catalog, IHostApplicationLifetime lifetime) : INodeReadiness
+    IStorageEngine engine, ICatalogReadiness catalog, IHostApplicationLifetime lifetime) : INodeReadiness
 {
     public async ValueTask<bool> IsReadyAsync(CancellationToken cancellationToken)
     {
-        if (!issuerKeys.IsReady || !catalog.IsReady || lifetime.ApplicationStopping.IsCancellationRequested)
+        if (!catalog.IsReady || lifetime.ApplicationStopping.IsCancellationRequested)
         {
             return false;
         }

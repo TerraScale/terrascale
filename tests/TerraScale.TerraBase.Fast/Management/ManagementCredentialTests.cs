@@ -45,7 +45,8 @@ public sealed class ManagementCredentialTests
         await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
         await Assert.That(organization.GetProperty("createdBy").GetString()).IsEqualTo(user);
         await Assert.That(project.StatusCode).IsEqualTo(HttpStatusCode.Created);
-        await Assert.That(ready.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        // Ready without ts-auth's keys: ts-auth can only start once its project here serves.
+        await Assert.That(ready.StatusCode).IsEqualTo(HttpStatusCode.OK);
     }
 
     [Test]

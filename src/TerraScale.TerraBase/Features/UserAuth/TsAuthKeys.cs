@@ -57,9 +57,6 @@ internal sealed partial class TsAuthKeys : BackgroundService, IIssuerKeys
     }
 
     /// <inheritdoc />
-    public bool IsReady => _issuer is null || Keys is not null;
-
-    /// <inheritdoc />
     public IReadOnlyList<SecurityKey>? Keys => Volatile.Read(ref _keys);
 
     /// <inheritdoc />
@@ -94,7 +91,7 @@ internal sealed partial class TsAuthKeys : BackgroundService, IIssuerKeys
         await base.StartAsync(cancellationToken).ConfigureAwait(false);
         if (_firstFetch is not null)
         {
-            // Ready from the first request when ts-auth answers; a slow ts-auth delays startup by at most FetchTimeout.
+            // Tokens validate from the first request when ts-auth answers; a slow ts-auth delays startup by at most FetchTimeout.
             await _firstFetch.WaitAsync(cancellationToken).ConfigureAwait(false);
         }
     }

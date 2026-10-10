@@ -70,8 +70,10 @@ unchanged.
   together, and shutdown cancels a fetch in progress.
 - **Cache, refresh and readiness.** Keys are cached in memory.
   - Startup waits up to 10 seconds for the first fetch.
-  - Until a fetch succeeds, every token gets `401` and `/readyz` answers `503`. A background loop
-    retries every 2 seconds.
+  - Until a fetch succeeds, every token gets `401`. A background loop retries every 2 seconds.
+    `/readyz` does not wait for the keys (COS decision 2026-10-10, TS-677): a database is ready when it
+    can serve, and ts-auth, which stores its data here, could otherwise never become ready after a
+    fresh start.
   - After the first success, the loop refreshes every 10 minutes. A failed refresh keeps the cached
     keys, so ts-auth being down after startup does not stop validation.
   - Requests never fetch keys, except that a token whose `kid` is not cached triggers one refresh.
@@ -100,8 +102,10 @@ it must:
 - Renaming `dashboard-credential-file` to `management-credential-file`, admin listener only, is breaking for
   any deployment that sets the old name: it now stops the process with exit code `2`. No deployment set it.
 - The `accept` body loses `email`. Callers must send a token whose `email` is verified.
-- With `auth-issuer` set, a node whose first key fetch has not succeeded answers `503` on `/readyz`,
-  so a load balancer probing it sends no traffic until the node can authenticate users.
+- With `auth-issuer` set, a node whose first key fetch has not succeeded is still ready: a load
+  balancer sends it traffic, and its user tokens get `401` until the keys load. Until 2026-10-10 such a
+  node answered `503`. On fresh storage that never ended: the load balancer reaches ts-auth's keys only
+  while ts-auth is ready, and ts-auth is ready only once its own data in TerraBase works.
 - A key removed from ts-auth's JWKS stays trusted until the next successful refresh, at most about
   10 minutes later while ts-auth is reachable, and longer while it is not.
 - Tokens are not checked for revocation: one stays valid until its `exp`, so signing a user out of

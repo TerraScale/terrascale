@@ -104,7 +104,8 @@ remains available to ordinary members ([commit contract](management-commits.md#m
   is not used, and its `jwks_uri` is never requested. Only RSA and EC keys are kept; symmetric (`oct`) keys are ignored. A document over
   1 MiB fails. One 10-second deadline covers both requests of a fetch, and shutdown cancels it.
 - Keys are cached in memory. Startup waits up to 10 seconds for the first fetch. Until it succeeds,
-  every token gets `401`, `/readyz` answers `503`, and a background loop retries every 2 seconds.
+  every token gets `401` and a background loop retries every 2 seconds. `/readyz` does not wait for the
+  keys: ts-auth stores its data in TerraBase, so readiness must not depend on it.
   After that the loop refreshes every 10 minutes. A failed refresh keeps the cached keys, so ts-auth
   being down after startup does not stop validation.
 - Requests never fetch keys, with one exception: a token whose `kid` is not cached triggers one

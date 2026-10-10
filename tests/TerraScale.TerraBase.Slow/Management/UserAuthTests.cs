@@ -11,7 +11,7 @@ namespace TerraBase.Slow.Management;
 public sealed class UserAuthTests
 {
     [Test]
-    public async Task A_server_started_while_ts_auth_was_down_becomes_ready_once_it_answers()
+    public async Task A_server_started_while_ts_auth_was_down_is_ready_and_accepts_tokens_once_it_answers()
     {
         using var tls = new ClientTls();
         using var issuer = new TestIssuer { Available = false };
@@ -24,30 +24,27 @@ public sealed class UserAuthTests
             issuer.Route);
         using var client = tls.CreateClient(server.ClientAddress!, issuer.Mint(EntityIds.New().ToString()));
         var rejected = await StatusAsync(client, "/v1/management/organizations");
-        var notReady = await StatusAsync(server.Client, "/readyz");
+        var ready = await StatusAsync(server.Client, "/readyz");
 
         issuer.Available = true;
-        // The background fetch retries every 2 s: wait for it the way a load balancer does, by probing. The deadline bounds
-        // the delays and every probe, so nothing outlives it.
-        var ready = HttpStatusCode.ServiceUnavailable;
+        // The background fetch retries every 2 s: wait for it by retrying the request. The deadline bounds the delays and
+        // every request, so nothing outlives it.
+        var accepted = HttpStatusCode.Unauthorized;
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         try
         {
-            while (ready != HttpStatusCode.OK)
+            while (accepted != HttpStatusCode.OK)
             {
                 await Task.Delay(TimeSpan.FromMilliseconds(100), deadline.Token);
-                ready = await StatusAsync(server.Client, "/readyz", deadline.Token);
+                accepted = await StatusAsync(client, "/v1/management/organizations", deadline.Token);
             }
         }
         catch (OperationCanceledException) when (deadline.IsCancellationRequested)
         {
-            // Still not ready: the assertion below reports it.
+            // Still rejected: the assertion below reports it.
         }
 
-        var accepted = await StatusAsync(client, "/v1/management/organizations");
-
         await Assert.That(rejected).IsEqualTo(HttpStatusCode.Unauthorized);
-        await Assert.That(notReady).IsEqualTo(HttpStatusCode.ServiceUnavailable);
         await Assert.That(ready).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(accepted).IsEqualTo(HttpStatusCode.OK);
     }

@@ -9,12 +9,6 @@ public readonly union RefreshIssuerKeysResult(IReadOnlyList<SecurityKey>, Unavai
 /// <summary>The signing keys of the configured token issuer (ts-auth), cached in memory.</summary>
 public interface IIssuerKeys
 {
-    /// <summary>
-    /// Whether user tokens can be validated: no issuer is configured, or its keys were fetched at least once.
-    /// <c>/readyz</c> answers 503 until then.
-    /// </summary>
-    bool IsReady { get; }
-
     /// <summary>The cached keys; <see langword="null"/> until the first fetch succeeds.</summary>
     IReadOnlyList<SecurityKey>? Keys { get; }
 
