@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>TerraScale.Logging</RootNamespace>
+    <PackageId>TerraScale.Logging</PackageId>
+    <Description>Shared TerraScale console logging: one compact JSON record per line (record v1).</Description>
+    <!-- net10.0 so ts-auth (net10.0) and TerraBase (net11.0) can both consume it. -->
+    <TargetFramework>net10.0</TargetFramework>
+    <!-- Bump major.minor by hand; CI sets VersionPatch to the run number so
+         every main push publishes a new version. Local builds use patch 0. -->
+    <VersionMajorMinor>1.0</VersionMajorMinor>
+    <VersionPatch Condition="'$(VersionPatch)' == ''">0</VersionPatch>
+    <Version>$(VersionMajorMinor).$(VersionPatch)</Version>
+    <IsAotCompatible>true</IsAotCompatible>
+    <PackageProjectUrl>https://git.terrascale.tech/TerraScale/ts-libs</PackageProjectUrl>
+    <RepositoryUrl>https://git.terrascale.tech/TerraScale/ts-libs</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageTags>terrascale;logging;json;console</PackageTags>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>14.0</LangVersion>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+    <IsPackable>true</IsPackable>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="\" />
+    <None Include="../../LICENSE" Pack="true" PackagePath="\" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Console" />
+  </ItemGroup>
+</Project>
