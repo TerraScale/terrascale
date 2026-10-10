@@ -1,5 +1,7 @@
 # TerraBase state cutover
 
+The move to TerraBase v1 IDs and uniqueness is designed in [terrabase-v1.md](terrabase-v1.md).
+
 The dashboard stores persistent state through the ts-go Documents v1 client
 against one dedicated database (TS-472). Users' databases live in
 TerraBase projects the dashboard makes as the signed-in user, through
