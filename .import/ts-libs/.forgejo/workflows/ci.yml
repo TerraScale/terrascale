@@ -12,29 +12,27 @@ concurrency:
   cancel-in-progress: ${{ forgejo.ref != 'refs/heads/main' }}
 
 jobs:
-  zero-config:
-    name: Reject new configuration switches
+  # TS-795 switch guard: fails when the change adds an on/off setting.
+  # Same text in every repo; ts-builder's scripts/bump-ci-ref.sh moves the pinned ref.
+  guard:
     runs-on: terrascale-builder
     timeout-minutes: 10
     steps:
-      - name: Check out the exact change with its history
-        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           github-server-url: https://git.terrascale.tech
           ref: ${{ forgejo.event.pull_request.head.sha || forgejo.sha }}
           fetch-depth: 0
           persist-credentials: false
-      - name: Check out the shared TerraScale policy
-        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           github-server-url: https://git.terrascale.tech
           repository: TerraScale/ts-builder
-          ref: deb6b6011710d8d80f8482f636406ca1390983f0
+          ref: deb6b6011710d8d80f8482f636406ca1390983f0 # guard ref
           path: .zero-config-policy
           token: ${{ secrets.TERRASCALE_BOT_TOKEN }}
           persist-credentials: false
-      - name: Check the added lines
-        env:
+      - env:
           ZERO_CONFIG_BASE: ${{ forgejo.event.pull_request.base.sha || forgejo.event.before }}
           ZERO_CONFIG_HEAD: ${{ forgejo.event.pull_request.head.sha || forgejo.sha }}
         run: |
@@ -44,22 +42,17 @@ jobs:
           fi
           python3 .zero-config-policy/scripts/zero-config-check.py "$ZERO_CONFIG_BASE" "$ZERO_CONFIG_HEAD"
 
-  ci:
-    needs: [zero-config]
-    name: Run ts-libs checks and publish packages
+  build:
+    needs: [guard]
     runs-on: terrascale-builder
     timeout-minutes: 15
     steps:
-      - name: Check out the source revision
-        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           github-server-url: "https://git.terrascale.tech"
-          ref: ${{ forgejo.sha }}
-          fetch-depth: 1
           persist-credentials: false
 
       - name: Build ts-libs with strict diagnostics
-        shell: bash
         run: |
           set -euo pipefail
           dotnet build TerraScale.Libs.slnx \
@@ -71,16 +64,13 @@ jobs:
             -p:AnalysisLevel=latest-recommended \
             -p:VersionPatch=${{ forgejo.run_number }}
 
-      - name: Verify ts-libs formatting
-        shell: bash
-        run: |
+      - run: |
           set -euo pipefail
           dotnet format style TerraScale.Libs.slnx \
             --verify-no-changes \
             --no-restore
 
       - name: Run every test project under tests/
-        shell: bash
         run: |
           set -euo pipefail
           shopt -s globstar nullglob
@@ -100,9 +90,7 @@ jobs:
               --minimum-expected-tests 1
           done
 
-      - name: Pack every packable project in the solution
-        shell: bash
-        run: |
+      - run: |
           set -euo pipefail
           rm -rf -- artifacts/packages
           dotnet pack TerraScale.Libs.slnx \
@@ -119,7 +107,6 @@ jobs:
           fi
 
       - name: Verify the packed package in a standalone NativeAOT consumer
-        shell: bash
         run: |
           set -euo pipefail
           # Regression: the local feed path must survive XML attribute escaping.
@@ -130,7 +117,6 @@ jobs:
 
       - name: Publish packages to the Forgejo NuGet registry
         if: forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main'
-        shell: bash
         env:
           TERRASCALE_BOT_TOKEN: ${{ secrets.TERRASCALE_BOT_TOKEN }}
         run: |
@@ -144,7 +130,6 @@ jobs:
 
       - name: Verify the packages are in the Forgejo NuGet registry
         if: forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main'
-        shell: bash
         run: |
           set -euo pipefail
           # --skip-duplicate turns a version conflict into success, so confirm
