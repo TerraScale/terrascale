@@ -54,23 +54,30 @@ in that second; the latency guard checks each operation's p99 separately.
 
 ## Language CLI and resource lifecycle
 
-Each implementation lives under `clients/<lang>/` (`go`, `dotnet`, `rust`):
+Each implementation lives under `clients/<lang>/` (`go`, `dotnet`, `rust`).
 
-```sh
-bench-client run --workload <file> --region <gru|sfo> --out <results.jsonl>
-```
+The first-party operating contract requires automatic discovery of every
+eligible serving region and local region inference, with no activation or
+manual endpoint pinning. Current runner/preflight CLIs still require a closed
+region selector; this is an implementation removal gap, not a serving allowlist
+or the final setup contract. No automatic CLI/API is implemented by this docs
+change. Qualification remains bounded to its authorized test allocation.
 
-Resolve endpoints through the official SDK: Atlas discovery or its validated
-regional host resolver for `https://gru.api.terrascale.tech` /
-`https://sfo.api.terrascale.tech`. Authentication uses the SDK's ts-auth
-client-credentials flow (JWT), with `TS_BENCH_CLIENT_ID` and
-`TS_BENCH_CLIENT_SECRET` supplied from OCI Vault. Credentials must authorize a
-dedicated benchmark project and database/document read/write scopes. An unscoped
-service JWT is not tenant authority. No fake data key, header-swapping transport,
-internal calls, loopback admin key or legacy membership/key-management route.
+Resolve endpoints through the official SDK's authenticated discovery, retaining
+customer scope, placement/residency and TLS validation. Authentication uses
+the SDK's ts-auth client-credentials flow (JWT). First-party production
+credentials must be created/delivered automatically, while vendor-issued keys
+are stored once and picked up automatically. Delivery integration remains
+pending; no manual credential wiring belongs in first-party onboarding.
+Credentials must authorize a dedicated benchmark project and database/document
+read/write scopes. An unscoped service JWT is not tenant authority. No fake
+data key, header-swapping transport, internal calls, loopback admin key or
+legacy membership/key-management route.
 
 The SDK creates one disposable database named `bench-<run-id>`, homed in the
-requested region, then collections, seeds and an active index. Every entity ID
+discovered eligible region within the authorized test allocation, then
+collections, seeds and an active index. Customer placement is an authorization
+constraint, not a region activation step. Every entity ID
 is a plain canonical ULID: uppercase Crockford base32, 26 characters, first
 character 0–7, no prefix. The database **name** has the required `bench-` prefix;
 its database **ID** does not. Every run owns only its own disposable database.
@@ -179,8 +186,9 @@ across SDK languages while preserving the base summary contract.
 
 ## Runner, metrics, persistence and capacity verdict
 
-`bench-runner --client <executable> --workload <file> --region <gru|sfo>` invokes
-conforming clients, retains their output and validates it before aggregation.
+The runner invokes conforming clients, retains their output and validates it
+before aggregation. Its current closed region selector remains an implementation
+removal gap; the operating contract uses automatically discovered eligible regions.
 Repeat `--client` for up to three languages. The current local runner invokes
 them sequentially under one deadline; repeat `--input` to aggregate separately
 collected outputs. ts-orch load-generator jobs may supply the same output in a
@@ -205,14 +213,17 @@ An unacceptable interruption or missing passing observation in any client fails
 the aggregate.
 
 Attach cluster CPU and memory for the exact UTC measured window using the
-**actual ts-orchestrator slice 4 API** after it merges. Do not invent a route or
-collect shell metrics from hosts instead. Until then, store
+**actual ts-orchestrator metrics API** after its TS-796 owner admits it.
+That dependency belongs to TS-796; TS-795 must neither remove it nor invent
+a replacement. Do not invent a route or collect shell metrics from hosts instead. Until then, store
 `cluster_metrics:{status:"unavailable",reason:"...",start:"...",end:"..."}`.
 Never substitute zeros, estimate host utilization or claim saturation from
 missing metrics.
 
 Persist through public SDK calls in TerraBase database `benchmark`, in a
-regional benchmark project. The persistent database must be homed in that region.
+benchmark project in the discovered eligible region, subject to customer
+placement/residency authorization. Creating that tenant database does not
+activate a serving region.
 Collections: `runs` (workload, interval and lifecycle), `results` (per-second
 operation rows), `summaries` (each client summary with HDR), `cluster_metrics`
 (available samples or explicit unavailable record), `reports` (aggregate and
@@ -247,9 +258,10 @@ metrics unavailable the report explicitly lacks a CPU/memory saturation claim.
 ## Slice 1 implementation status
 
 Implemented: six workloads, validation, bounded open-loop measurement with HDR,
-JSONL validation/merging, local runner and Markdown reporting. The default store
-mode intentionally fails after local reporting until actual SDK persistence is
-implemented; `--store=false` explicitly permits local-only evidence.
+JSONL validation/merging, local runner and Markdown reporting. The normal persistence
+path fails after local reporting until actual SDK persistence is implemented.
+The existing evidence-only storage bypass is inventoried for removal, not an
+approved production mode or successful capacity qualification.
 
 Blocked: the Go SDK lacks public JWT project data-client integration, so no
 conforming Go client, TerraBase result persistence or gru/sfo capacity numbers

@@ -20,8 +20,6 @@ cd clients/dotnet
 bash prepare-sdk.sh
 nice -n 19 make check
 nice -n 19 make build
-nice -n 19 ./bench-client run \
-  --workload ../../workloads/point-reads.json --region gru --out /tmp/dotnet-results.jsonl
 ```
 
 The six shared `workloads/` files and Slice 1's runner are merged on main.
@@ -81,8 +79,8 @@ already defines these routes.
 
 | Contract requirement | Official SDK main | Required upstream change |
 | --- | --- | --- |
-| JWT client-credentials exchange | `TerraScaleAuthClient.Oidc.RequestClientCredentialsTokenAsync` exists | Provision dedicated project-scoped benchmark credentials in OCI Vault; verify actual grants |
-| Regional HTTPS endpoint | `TerraBaseStaticEndpointResolver` exists | None for explicitly selected gru/sfo |
+| JWT client-credentials exchange | `TerraScaleAuthClient.Oidc.RequestClientCredentialsTokenAsync` exists | Automatically create/deliver dedicated project-scoped credentials under the operating contract; verify actual grants (integration pending) |
+| Regional HTTPS endpoint | `TerraBaseStaticEndpointResolver` exists | Implement automatic discovery of every eligible serving region; retain tenant placement authorization |
 | Plain ULIDs | `TerraScaleIdGenerator` and `TerraScaleIds` exist | Verify producer acceptance for every persisted entity; never convert to UUIDs |
 | Create owned database | `TerraBaseDatabase.CreateAsync` sends hidden legacy `PUT`; management create is legacy organization-scoped | Expose public project-JWT `POST /v1/projects/{project}/databases` through SDK |
 | Delete owned database | Only legacy organization/user/database-ID management delete exists | Expose public project-JWT `DELETE /v1/projects/{project}/databases/{database-name}` through SDK |
@@ -103,14 +101,11 @@ No real benchmark was run and no performance number is claimed. The final
 protocol also requires per-window step/concurrency/elapsed fields, complete
 workload configuration and compatible dense HDR snapshots in summaries.
 
-The merged runner invokes this launcher through the shared CLI. From the repo
-root, after building both clients/dotnet and the runner:
-
-```sh
-nice -n 19 bin/bench-runner --client "$PWD/clients/dotnet/bench-client" \
-  --workload workloads/point-reads.json --region gru --store=false \
-  --out-dir /tmp/dotnet-runner-preflight
-```
+The runner retains a failed preflight receipt. Its current closed region
+selector and storage bypass remain implementation removal gaps, not approved
+production setup. Automatic eligible-region discovery/local region inference
+and credential delivery remain unimplemented requirements. No switch activation
+command is a replacement for the missing SDK/load lifecycle.
 
 The current preflight returns `SDK_BLOCKED`, so the runner retains a FAILED
 receipt with throughput and latency unavailable. It cannot produce a capacity

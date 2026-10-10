@@ -24,7 +24,7 @@ The benchmark must use those methods for temporary `bench-<ULID>` databases and
 for the persistent `benchmark` database. No header-rewriting transport, dummy
 `tb_` key, internal administrative listener or compatibility membership/key API.
 
-Once admitted, implement `bench-client run --workload <file> --region <gru|sfo>
---out <results.jsonl>` using [the protocol](../../docs/protocol.md) and
+Once admitted, implement the client using automatic eligible-region discovery
+and local region inference under [the protocol](../../docs/protocol.md), and
 `internal/benchmark.RunPhase`. Setup, warmup, measured phases and deletion must
 share the bounded run lifecycle; final summary is emitted after cleanup.

@@ -7,8 +7,6 @@ services, create a database, open the output file, or emit benchmark results.
 
 ```sh
 nice -n 19 cargo build --locked --manifest-path clients/rust/Cargo.toml
-nice -n 19 clients/rust/target/debug/bench-client run \
-  --workload workloads/point-reads.json --region gru --out /tmp/rust-results.jsonl
 ```
 
 The official `terrascale` crate is pinned to ts-rust `main` commit
@@ -17,8 +15,11 @@ version 0.1.0. It is a dev-dependency for SDK contract tests; the validation-onl
 production binary does not compile or call the SDK. Cargo dependency resolution
 can still require Forgejo SSH repository read access. A complete load client
 will need the SDK as a production dependency once its APIs support the contract.
-Credentials for a future live run must come from OCI Vault into
-`TS_BENCH_CLIENT_ID` / `TS_BENCH_CLIENT_SECRET`, never files or logs.
+The operating contract requires automatic first-party credential creation and
+delivery; no hand-copying step is approved. Delivery and the load client remain
+unimplemented here. Existing credential inputs are implementation inventory.
+The current preflight's closed region selector is also inventoried for removal;
+automatic eligible-region discovery/local inference is the target contract.
 
 ## SDK follow-ups
 
@@ -32,7 +33,8 @@ Available APIs are **not** follow-ups: `auth_idp(...).oidc().token_client_creden
 supports confidential Basic/form credentials with explicit resource and scope;
 `v1::Client::for_project` verifies Atlas session routing; public document
 get/put/patch/delete, filtered queries and `Database::commit(Tx)` exist. SDK
-`regional_host` exposes the public GRU/SFO regional hosts. These APIs have not
+`regional_host` exposes a closed public-region helper; it does not implement
+automatic discovery of every serving region. These APIs have not
 been live-qualified by this slice. Auth instance, resource, scopes and project
 binding must be supplied by the dedicated benchmark client provisioning.
 

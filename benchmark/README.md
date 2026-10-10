@@ -1,7 +1,9 @@
 # TerraScale capacity benchmark (TS-761)
 
 `ts-benchmark` defines the public-SDK end-to-end capacity benchmark for deployed
-TerraBase in **gru** and **sfo**. The shared contract is
+TerraBase across automatically discovered serving regions. **gru** and **sfo**
+are the current bounded benchmark qualification targets, not a serving allowlist.
+The shared contract is
 [docs/protocol.md](docs/protocol.md).
 
 **This slice is incomplete:** workloads, the bounded measurement engine, local
@@ -43,12 +45,12 @@ Setup, requests, drain and cleanup must fit within 15 minutes. Never run on
 
 ## Local runner
 
-Once a conforming language client is available:
-
-```sh
-nice -n 19 bin/bench-runner --client /path/to/bench-client \
-  --workload workloads/point-reads.json --region gru --store=false
-```
+No conforming load client is available yet. The operating contract requires
+automatic eligible-region discovery and local region inference, with no
+serving-region activation or persistence toggle. The current runner still
+requires a closed region selector and exposes a storage switch; those paths
+are inventoried for implementation removal, not approved production setup.
+Historical preflight receipts retain their original arguments as evidence.
 
 Repeat `--client` for different language binaries (up to three). Local clients
 run sequentially with a shared bound; combinations whose measurement plus
@@ -65,8 +67,8 @@ Evidence is append-only under `bench/<region>/<ULID>/`: `report.json`,
 retain distinct reports. Failed or malformed client output
 leaves a failure receipt and Markdown table with numbers marked unavailable.
 
-`--store=false` explicitly produces **unstored** evidence. The default
-`--store=true` currently returns an error after retaining local evidence:
+The current evidence-only storage bypass cannot qualify production capacity.
+The normal persistence path returns an error after retaining local evidence:
 TerraBase persistence awaits the same SDK prerequisite as the Go client.
 Cluster metrics are recorded as **unavailable** until slice 4's actual API
 merges; zeroes are never substituted.
@@ -74,7 +76,10 @@ merges; zeroes are never substituted.
 ## Credentials and admission
 
 The final SDK client consumes `TS_BENCH_CLIENT_ID` and
-`TS_BENCH_CLIENT_SECRET`, fetched in memory from OCI Vault (TS-745). The client
+`TS_BENCH_CLIENT_SECRET`. Under the operating contract, OCI Vault creates and
+delivers first-party credentials automatically, with vendor keys stored once.
+This client/delivery integration is still pending; no manual secret copying is
+an onboarding step and the preflights must not read credentials. The client
 must be a dedicated project-scoped OAuth credential with database read/write
 and document read/write grants. A service slug alone has no tenant authority.
 Plain ULIDs identify runs, databases and stored entities. Credentials, JWTs and
