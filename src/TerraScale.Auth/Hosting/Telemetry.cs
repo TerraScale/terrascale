@@ -5,6 +5,7 @@ using OpenTelemetry.Trace;
 using Sentry.Extensibility;
 using Sentry.Protocol;
 using TerraScale.Auth.Configuration;
+using TerraScale.Logging;
 
 namespace TerraScale.Auth.Hosting;
 
@@ -34,15 +35,13 @@ public static partial class Telemetry
         ArgumentNullException.ThrowIfNull(builder);
         ArgumentNullException.ThrowIfNull(options);
 
+        // First: it clears the default providers, so the providers added below are kept. Framework
+        // categories stay at Warning because their Information lines log query strings (codes, tokens,
+        // states). OpenIddict stays at Information: it writes raw tokens only at Trace and Debug.
+        builder.Logging.AddTerraScaleLogging("ts-auth", ("OpenIddict", LogLevel.Information));
+
         // Every provider sees exceptions only as type names and stack traces.
         builder.Services.AddSafeLogging();
-
-        // These framework categories log full request and outbound URLs, query strings
-        // included, at Information, and every routed request (health checks included) logs
-        // several Information lines. Query strings carry codes, tokens and states, so only
-        // their warnings are kept.
-        builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
-        builder.Logging.AddFilter("System.Net.Http.HttpClient", LogLevel.Warning);
 
         // Standard OTEL_* variables select the collector. Each signal exports only when the
         // shared endpoint or its own endpoint is set, so a traces-only collector never also

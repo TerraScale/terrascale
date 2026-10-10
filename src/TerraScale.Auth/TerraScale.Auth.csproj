@@ -30,6 +30,7 @@
     <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" />
     <PackageReference Include="OpenTelemetry.Instrumentation.Http" />
     <PackageReference Include="OpenTelemetry.Instrumentation.Runtime" />
+    <PackageReference Include="TerraScale.Logging" />
     <PackageReference Include="Sentry.AspNetCore" />
     <PackageReference Include="MailKit" />
     <!-- Only the server stack: the OpenIddict.AspNetCore metapackage also brings the unused client and

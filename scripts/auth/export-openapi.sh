@@ -11,7 +11,7 @@ output=$2
 log=$(mktemp)
 # Only the throwaway settings below apply: inherited TS_AUTH_*, OTEL_* and
 # SENTRY_* values could fail validation or send this run's telemetry somewhere,
-# inherited Logging__* filters could hide the startup line read below, and
+# inherited Logging__* settings could change the startup record read below, and
 # inherited Kestrel__*, ASPNETCORE_*, DOTNET_*__* (host configuration with its
 # prefix stripped), URLS or HTTP(S)_PORTS settings could add listeners beyond
 # the loopback one. .NET configuration keys are case-insensitive, so the match is too.
@@ -38,8 +38,6 @@ env "${inherited[@]}" \
   TS_AUTH_MASTER_KEY="$(head -c 32 /dev/urandom | base64)" \
   TS_AUTH_OPERATOR_KEY="openapi-export" \
   TS_AUTH_ENVIRONMENT="Development" \
-  "Logging__LogLevel__Microsoft.Hosting.Lifetime=Information" \
-  "Logging__Console__LogLevel__Microsoft.Hosting.Lifetime=Information" "Logging__Console__FormatterName=simple" \
   dotnet "$dll" >"$log" 2>&1 &
 pid=$!
 trap 'kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; rm -f "$log"' EXIT
@@ -47,7 +45,24 @@ trap 'kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; rm -f "$
 address=
 for _ in $(seq 1 150); do
   kill -0 "$pid" 2>/dev/null || { cat "$log" >&2; echo "ts-auth exited before serving OpenAPI" >&2; exit 1; }
-  address=$(sed -nE 's#.*Now listening on: (http://127\.0\.0\.1:[0-9]+).*#\1#p' "$log" | head -n 1)
+  # Log records are JSON lines, after an optional journald <N> prefix; the Kestrel
+  # "Now listening on" record carries the address as a value.
+  address=$(python3 -I -c '
+import json, re, sys
+for line in open(sys.argv[1]):
+    start = line.find("{")
+    if start < 0:
+        continue
+    try:
+        record = json.loads(line[start:])
+    except ValueError:
+        continue
+    if "Now listening on" in str(record.get("msg", "")):
+        match = re.search(r"http://127\.0\.0\.1:[0-9]+", json.dumps(record))
+        if match:
+            print(match.group(0))
+            break
+' "$log" | head -n 1)
   [[ -n $address ]] && break
   sleep 0.2
 done

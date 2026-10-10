@@ -3,6 +3,7 @@ using System.Net;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using TerraScale.Auth.Configuration;
 using TerraScale.Auth.Features.Oidc;
 using TerraScale.Auth.Features.RateLimiting;
@@ -527,6 +528,31 @@ public sealed class ConfigurationTests
 
         public HttpClient Client { get; }
 
+        // Log records are JSON lines, after an optional journald <N> prefix; the "Now listening on"
+        // record carries its address as a value.
+        private static string? ListeningAddress(string line)
+        {
+            var start = line.IndexOf('{', StringComparison.Ordinal);
+            if (start < 0)
+            {
+                return null;
+            }
+
+            try
+            {
+                using var record = JsonDocument.Parse(line[start..]);
+                return record.RootElement.TryGetProperty("msg", out var msg) && msg.GetString()?.Contains("Now listening on", StringComparison.Ordinal) == true
+                    && Regex.Match(line, "https?://[^\"]+") is { Success: true } address
+                    ? address.Value
+                    : null;
+            }
+            catch (JsonException)
+            {
+                // A partial line; the next complete record carries the address.
+                return null;
+            }
+        }
+
         public static Task<RunningBinary> StartAsync(Dictionary<string, string> settings, params string[] arguments) =>
             StartAsync(settings, [], arguments);
 
@@ -555,14 +581,13 @@ public sealed class ConfigurationTests
                 start.Environment[key] = value;
             }
 
-            start.Environment["Logging__LogLevel__Microsoft.Hosting.Lifetime"] = "Information";
             var listening = new TaskCompletionSource<Uri>(TaskCreationOptions.RunContinuationsAsynchronously);
             var process = Process.Start(start)!;
             process.OutputDataReceived += (_, line) =>
             {
-                if (line.Data?.IndexOf("Now listening on: ", StringComparison.Ordinal) is >= 0 and var at)
+                if (line.Data is { } data && ListeningAddress(data) is { } address)
                 {
-                    listening.TrySetResult(new Uri(line.Data[(at + "Now listening on: ".Length)..].Trim().Replace("[::]", "127.0.0.1", StringComparison.Ordinal)));
+                    listening.TrySetResult(new Uri(address.Replace("[::]", "127.0.0.1", StringComparison.Ordinal)));
                 }
             };
             process.ErrorDataReceived += (_, _) => { };

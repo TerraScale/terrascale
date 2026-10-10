@@ -116,6 +116,12 @@
           "Sentry.Extensions.Logging": "6.12.0"
         }
       },
+      "TerraScale.Logging": {
+        "type": "Direct",
+        "requested": "[1.0.54, )",
+        "resolved": "1.0.54",
+        "contentHash": "jsv6G6TFMrG8BqWK2B/LEJNH8yNmQJ3VIJqfvyDJReosySZs/k4mNT+pMCVdZPNlmIPK4TY6TmBtCDp3lPXE6g=="
+      },
       "BouncyCastle.Cryptography": {
         "type": "Transitive",
         "resolved": "2.7.0",

@@ -100,7 +100,8 @@ public sealed class HealthTests
         var logs = new ReadinessLogs();
         await using var server = await AuthTestServer.StartAsync(services: services =>
         {
-            services.Configure<LoggerFilterOptions>(options => options.MinLevel = LogLevel.Debug);
+            // The global Information rule outranks MinLevel, so this provider rule keeps Debug records.
+            services.PostConfigure<LoggerFilterOptions>(options => options.Rules.Add(new LoggerFilterRule(typeof(ReadinessLogs).FullName, null, LogLevel.Debug, null)));
             services.AddSingleton<ILoggerProvider>(logs);
             services.AddSingleton<IStorageHealth>(new FakeStorageHealth(healthy: true, delay: TimeSpan.FromSeconds(30)));
         });
@@ -121,7 +122,8 @@ public sealed class HealthTests
         var logs = new ReadinessLogs();
         await using var server = await AuthTestServer.StartAsync(services: services =>
         {
-            services.Configure<LoggerFilterOptions>(options => options.MinLevel = LogLevel.Debug);
+            // The global Information rule outranks MinLevel, so this provider rule keeps Debug records.
+            services.PostConfigure<LoggerFilterOptions>(options => options.Rules.Add(new LoggerFilterRule(typeof(ReadinessLogs).FullName, null, LogLevel.Debug, null)));
             services.AddSingleton<ILoggerProvider>(logs);
             services.AddSingleton<IStorageHealth>(health);
         });

@@ -64,8 +64,6 @@ public static class OidcIssuer
     public static IServiceCollection AddOidc(this IServiceCollection services, AuthOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
-        // OpenIddict writes raw tokens only at Trace and Debug; never let a verbose log level enable those.
-        services.Configure<LoggerFilterOptions>(filters => filters.AddFilter("OpenIddict", LogLevel.Information));
         services.AddHostedService<ClientRegistration>();
         services.AddOpenIddict()
             .AddCore(core =>
