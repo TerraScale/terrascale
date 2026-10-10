@@ -513,7 +513,7 @@ rotation.
 ## CI
 
 `.forgejo/workflows/ci.yml` runs two jobs in parallel.
-- **`fast`** is the required gate. It checks out the pinned ts-dotnet and
+- **`test`** is the required gate. It checks out the pinned ts-dotnet and
   ts-libs revisions into a job-owned directory, then runs a locked restore,
   `dotnet format --verify-no-changes`, a Release build with analyzers as
   errors, the NuGet vulnerability audit, the Redocly lint of the served OpenAPI
@@ -522,7 +522,7 @@ rotation.
   TerraBase binary. Missing binary/download prerequisites fail the suite.
   Fast cases share one TerraBase process and run at most two at a time;
   concurrency tests still create their own parallel requests.
-- **`release`** publishes a self-contained single-file linux-x64 executable
+- **`build`** publishes a self-contained single-file linux-x64 executable
   (`scripts/ci/stage-release.sh`), packages it into the chiseled
   `runtime-deps` image (`Containerfile`, pinned by digest), and smoke-checks
   `/healthz` (revision), `/openapi/v1.json`, fail-closed `/readyz` and the
@@ -534,14 +534,14 @@ rotation.
   this revision and a fail-closed `/readyz` (its startup Argon2id self-test
   proves the bundled libsodium loads on arm64).
 
-On pushes to `main`, `release` stages the smoke-checked image in
+On pushes to `main`, `build` stages the smoke-checked image in
 `git.terrascale.tech/<owner>/ts-auth-ci` and passes its registry manifest
-digest to `publish` (`scripts/ci/transfer-image.sh`). Once both jobs pass,
-`publish` tags that exact image as `git.terrascale.tech/<owner>/ts-auth:<commit>`.
+digest to `release` (`scripts/ci/transfer-image.sh`). Once both jobs pass,
+`release` tags that exact image as `git.terrascale.tech/<owner>/ts-auth:<commit>`.
 The daily `registry-retention.yml` workflow removes staging candidates older
 than 30 days.
 
-On pushes to `main`, once `fast` and `release` pass, `publish-binary`
+On pushes to `main`, once `test` and `build` pass, `publish`
 (`scripts/ci/publish-binary.sh`) attaches `ts-auth-linux-arm64` and
 `ts-auth-linux-arm64.sha256` to the Forgejo release `v<version>-dev.<commit>`,
 which ts-orchestrator downloads to run ts-auth natively. The exact bytes are
@@ -549,7 +549,7 @@ smoke-checked under emulation before any upload. New uploads succeed only
 once both downloads match the smoke-checked executable and its checksum byte for byte;
 a rerun leaves an existing internally verified release
 untouched and replaces both assets of one an interrupted run left incomplete
-(`scripts/check-binary-publish.sh` covers these paths in `fast`). Download
+(`scripts/check-binary-publish.sh` covers these paths in `test`). Download
 both assets into one directory and verify with
 `sha256sum -c ts-auth-linux-arm64.sha256`; the checksum detects a corrupt or
 mismatched download, it is not a signature.
@@ -567,7 +567,7 @@ back, which fails the job before later regions see it. The script logs total
 deployment time and preserves the orchestrator's failure status. TS-768 owns
 the follow-up shared region discovery and independent regional rollouts.
 See ts-orchestrator `docs/continuous-delivery.md`, "Automatic service
-releases". `scripts/ci/check-deploy.sh` (in `fast`) runs the script against a
+releases". `scripts/ci/check-deploy.sh` (in `test`) runs the script against a
 stub API and ts-orch.
 
 The executable extracts its bundled native library (libsodium, used for

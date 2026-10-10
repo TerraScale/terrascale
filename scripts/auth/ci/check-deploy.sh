@@ -13,7 +13,7 @@ python3 - "$repo/.forgejo/workflows/ci.yml" "$repo/scripts/ci/deploy.sh" <<'PY'
 import pathlib, sys
 workflow, script = (pathlib.Path(path).read_text() for path in sys.argv[1:])
 deploy = workflow.split("\n  deploy:\n", 1)[1]
-assert "    needs: [publish-binary]\n" in deploy
+assert "    needs: [publish]\n" in deploy
 conditions = [line.strip() for line in deploy.splitlines() if line.strip().startswith("if:")]
 assert conditions == ["if: forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main'"]
 assert "TS_AUTO_DEPLOY_" not in workflow + script

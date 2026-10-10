@@ -21,7 +21,6 @@ jobs:
         with:
           github-server-url: 'https://git.terrascale.tech'
           ref: main
-          fetch-depth: 1
           persist-credentials: false
       - name: Remove expired staging candidates
         env:

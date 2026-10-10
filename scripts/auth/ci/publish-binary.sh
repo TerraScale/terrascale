@@ -3,7 +3,7 @@
 # ts-auth-linux-arm64, with its ts-auth-linux-arm64.sha256 in sha256sum format,
 # as assets of the Forgejo release v<version>-dev.<commit>. ts-orchestrator
 # downloads them to run ts-auth natively on arm64 hosts. CI runs this only on
-# pushes to protected main, after fast and release passed.
+# pushes to protected main, after test and build passed.
 #
 # New uploads succeed only when both downloads equal the smoke-checked files. A
 # rerun leaves a release whose assets verify untouched; one an interrupted run

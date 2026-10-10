@@ -8,8 +8,8 @@ service status source_revision values. It opens an assigned alert when the
 oldest pending qualified build exceeds 30 minutes; newer builds cannot reset
 that clock. Successful deployment requires fresh target replica proofs.
 
-Every main push runs the required Fast gate and release build in parallel.
-`publish-binary` depends on both and publishes the exact single-file binary
+Every main push runs the required `test` gate and `build` in parallel.
+`publish` depends on them and publishes the exact single-file binary
 and SHA-256 sidecar. The separate Slow workflow does not block delivery.
 The main-only deployment job always runs after publication; missing deployment
 configuration fails visibly instead of skipping the job.

@@ -1,23 +1,23 @@
 name: ts-auth CI
 
-# fast and release run in parallel. fast is the required gate: locked restore,
+# test and build run in parallel. test is the required gate: locked restore,
 # formatting, a Release build with analyzers as errors, the NuGet audit, the
 # OpenAPI lint, the CI transfer- and publish-script guards and the fast
 # integration suite.
-# release publishes a self-contained executable into the chiseled runtime-deps
+# build publishes a self-contained executable into the chiseled runtime-deps
 # image, smoke-checks the container, builds the linux-arm64 single-file
 # executable and starts it under qemu-aarch64, and, on pushes to protected main, stages the image by registry
-# digest. publish tags that exact image only after every gate passed; on main,
-# publish-binary attaches ts-auth-linux-arm64 and its .sha256 to the Forgejo
+# digest. release tags that exact image only after every gate passed; on main,
+# publish attaches ts-auth-linux-arm64 and its .sha256 to the Forgejo
 # release v<version>-dev.<commit>, and deploy hands that release to
 # ts-orchestrator, which rolls it out to every region (TS-610). The slow suite
 # runs separately in slow.yml and never blocks.
 
 on:
   push:
-    branches: [main, refactor/csharp-port]
+    branches: [main]
   pull_request:
-    branches: [main, refactor/csharp-port]
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
@@ -39,29 +39,27 @@ env:
   TS_LIBS_REV: 55b260872f8d4fb1cfa0975576632b4e022e4c91
 
 jobs:
-  zero-config:
-    name: Reject new configuration switches
+  # TS-795 switch guard: fails when the change adds an on/off setting.
+  # Same text in every repo; ts-builder's scripts/bump-ci-ref.sh moves the pinned ref.
+  guard:
     runs-on: terrascale-builder
     timeout-minutes: 10
     steps:
-      - name: Check out the exact change with its history
-        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           github-server-url: https://git.terrascale.tech
           ref: ${{ forgejo.event.pull_request.head.sha || forgejo.sha }}
           fetch-depth: 0
           persist-credentials: false
-      - name: Check out the shared TerraScale policy
-        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           github-server-url: https://git.terrascale.tech
           repository: TerraScale/ts-builder
-          ref: deb6b6011710d8d80f8482f636406ca1390983f0
+          ref: 8dacab451c3c16924622ff512d7aa17501b70ecc # guard ref
           path: .zero-config-policy
           token: ${{ secrets.TERRASCALE_BOT_TOKEN }}
           persist-credentials: false
-      - name: Check the added lines
-        env:
+      - env:
           ZERO_CONFIG_BASE: ${{ forgejo.event.pull_request.base.sha || forgejo.event.before }}
           ZERO_CONFIG_HEAD: ${{ forgejo.event.pull_request.head.sha || forgejo.sha }}
         run: |
@@ -71,18 +69,13 @@ jobs:
           fi
           python3 .zero-config-policy/scripts/zero-config-check.py "$ZERO_CONFIG_BASE" "$ZERO_CONFIG_HEAD"
 
-  fast:
-    needs: [zero-config]
-    name: Build, lint and fast-test ts-auth
+  test:
     runs-on: terrascale-builder
     timeout-minutes: 45
     steps:
-      - name: Check out the event revision
-        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          github-server-url: "https://git.terrascale.tech"
-          ref: ${{ forgejo.sha }}
-          fetch-depth: 1
+          github-server-url: https://git.terrascale.tech
           persist-credentials: false
 
       - name: Check out the pinned ts-dotnet and ts-libs revisions
@@ -126,9 +119,8 @@ jobs:
           export TS_AUTH_CHROMIUM_PATH
           make test-fast CONFIGURATION=Release
 
-  release:
-    needs: [zero-config]
-    name: Build and inspect the release image
+  build:
+    needs: [guard]
     runs-on: terrascale-builder
     timeout-minutes: 60
     env:
@@ -137,12 +129,9 @@ jobs:
       image-manifest-digest: ${{ steps.hand-off.outputs.image-digest }}
       publish-enabled: ${{ steps.hand-off.outputs.publish-enabled }}
     steps:
-      - name: Check out the event revision
-        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          github-server-url: "https://git.terrascale.tech"
-          ref: ${{ forgejo.sha }}
-          fetch-depth: 1
+          github-server-url: https://git.terrascale.tech
           persist-credentials: false
 
       - name: Check out the pinned ts-dotnet and ts-libs revisions
@@ -157,7 +146,7 @@ jobs:
         run: bash scripts/ci/package-image.sh
 
       # After packaging, so the arm64 executable stays out of the image build
-      # context. publish-binary rebuilds and uploads it on protected main.
+      # context. publish rebuilds and uploads it on protected main.
       - name: Publish the self-contained linux-arm64 executable
         run: bash scripts/ci/stage-release.sh artifacts/ci/arm64 linux-arm64
 
@@ -174,43 +163,37 @@ jobs:
           REPOSITORY_OWNER: ${{ forgejo.repository_owner }}
         run: bash scripts/ci/transfer-image.sh stage
 
-  publish:
+  release:
     name: Publish the immutable container on protected main
-    needs: [fast, release]
-    if: needs.release.outputs.publish-enabled == 'true'
+    needs: [guard, test, build]
+    if: forgejo.ref == 'refs/heads/main' && needs.build.outputs.publish-enabled == 'true'
     runs-on: terrascale-builder
     timeout-minutes: 60
     steps:
-      - name: Check out the event revision
-        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          github-server-url: "https://git.terrascale.tech"
-          ref: ${{ forgejo.sha }}
-          fetch-depth: 1
+          github-server-url: https://git.terrascale.tech
           persist-credentials: false
 
       - name: Publish the digest-pinned release image
         env:
-          IMAGE_MANIFEST_DIGEST: ${{ needs.release.outputs.image-manifest-digest }}
+          IMAGE_MANIFEST_DIGEST: ${{ needs.build.outputs.image-manifest-digest }}
           REGISTRY_PUSH_TOKEN: ${{ secrets.REGISTRY_PUSH_TOKEN }}
           REPOSITORY_OWNER: ${{ forgejo.repository_owner }}
         run: bash scripts/ci/transfer-image.sh publish
 
-  publish-binary:
+  publish:
     name: Publish the linux-arm64 executable on protected main
-    needs: [fast, release]
+    needs: [guard, test, build]
     if: forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main'
     runs-on: terrascale-builder
     timeout-minutes: 45
     outputs:
       tag: ${{ steps.publish.outputs.tag }}
     steps:
-      - name: Check out the event revision
-        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          github-server-url: "https://git.terrascale.tech"
-          ref: ${{ forgejo.sha }}
-          fetch-depth: 1
+          github-server-url: https://git.terrascale.tech
           persist-credentials: false
 
       - name: Check out the pinned ts-dotnet and ts-libs revisions
@@ -244,24 +227,21 @@ jobs:
   # deploy.sh lists the inputs; deployment has no opt-in switch.
   deploy:
     name: Deploy the release to every region
-    needs: [publish-binary]
+    needs: [publish]
     if: forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main'
     runs-on: terrascale-builder
     # Two 30-minute regional waits, three downloads of up to 15 minutes each,
     # and 15 minutes for setup/cleanup with the current sequential helper.
     timeout-minutes: 120
     steps:
-      - name: Check out the event revision
-        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          github-server-url: "https://git.terrascale.tech"
-          ref: ${{ forgejo.sha }}
-          fetch-depth: 1
+          github-server-url: https://git.terrascale.tech
           persist-credentials: false
 
       - name: Roll the release out to every region
         env:
-          RELEASE_TAG: ${{ needs.publish-binary.outputs.tag }}
+          RELEASE_TAG: ${{ needs.publish.outputs.tag }}
           ORG_READ_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
           TS_RELEASE_OCI_KEY: ${{ secrets.TS_RELEASE_OCI_KEY }}
           TS_ORCH_RELEASE: ${{ vars.TS_ORCH_RELEASE }}
