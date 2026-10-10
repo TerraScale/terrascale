@@ -234,12 +234,13 @@ On the shipping member each SQLite connection runs with `wal_autocheckpoint = 0`
 1. Each second it reads the frames committed since its last read straight from `<file>-wal`. It validates salts and
    checksums as SQLite recovery does and stops at the last commit frame.
 2. Once the log holds 1000 frames (SQLite's default), it takes the database's in-process writer gate, reads the rest,
-   and runs `PRAGMA wal_checkpoint(PASSIVE)`. The log restarts (new salts, checkpoint sequence + 1) only after a
-   checkpoint copied every frame back, so no frame is overwritten before the tap reads it.
+   and runs `PRAGMA wal_checkpoint(PASSIVE)`. The log restarts (salt1 + 1, new salt2) only after a checkpoint copied
+   every frame back, so no frame is overwritten before the tap reads it. The header's checkpoint sequence is not a
+   restart counter: each connection keeps its own, so a restart by another connection repeats it.
 3. Anything else that moves the log is a **hole**: the file starts a new generation, and `terrabase_backup_holes_total`
    counts it. These are Litestream's "wal overwritten/truncated by another process" checks:
    - a restart not preceded by the tap's own complete checkpoint, with nothing read since (busy 0, every frame copied
-     back), or a restart that moves the sequence by more than one;
+     back), or a restart that moves salt1 by more than one;
    - a log that vanished or got shorter than what was read (a `TRUNCATE` checkpoint by another process);
    - a last read frame whose checksum changed under the same salts.
 4. The tap keeps a connection open, so SQLite never checkpoints and deletes the log when the last connection closes.

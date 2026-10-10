@@ -145,6 +145,47 @@ public sealed class ContinuousBackupTests
     }
 
     [Test]
+    public async Task Automatic_checkpoints_across_several_passes_keep_one_generation()
+    {
+        using var oci = new FakeOci();
+        var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
+        await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
+        Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
+        var backup = api.Server.Services.GetRequiredService<IContinuousBackup>();
+        var database = await api.CreateManagedDatabaseAsync("main");
+        using var first = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
+        using var second = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
+        var clients = new[] { first, second };
+        await ManagementApi.CreateCollectionAsync(first, database, "people");
+        time.Advance(TimeSpan.FromSeconds(10));
+        await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
+        var generation = Generation(backup, database);
+
+        // Each round pushes the log past a thousand pages. Reads between the writes return sessions to the pool, so
+        // the log restarts under different connections, and each pass then sees a restart after a complete checkpoint.
+        for (var round = 0; round < 10; round++)
+        {
+            // Faker.Random is shared and not thread-safe, so the text is drawn before the writers start.
+            var text = new string(Faker.Random.Chars('a', 'z', 100_000));
+            var writers = clients.Select(async (client, writer) =>
+            {
+                for (var i = 0; i < 8; i++)
+                {
+                    var path = ManagementApi.DocumentPath(database, "people", $"round-{round}-{writer}-{i}");
+                    (await client.PutAsJsonAsync(Uri(path), new { text })).EnsureSuccessStatusCode();
+                    (await client.GetAsync(Uri(path))).EnsureSuccessStatusCode();
+                }
+            });
+            await Task.WhenAll(writers);
+
+            // A minute refills the organization's request budget, which runs on this clock.
+            time.Advance(TimeSpan.FromMinutes(1));
+            await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
+            await Assert.That(Generation(backup, database)).IsEqualTo(generation);
+        }
+    }
+
+    [Test]
     public async Task A_log_checkpointed_by_another_process_ends_the_generation_and_loses_nothing()
     {
         using var oci = new FakeOci();

@@ -12,11 +12,11 @@ namespace TerraBase.Engine.Sqlite;
 /// <remarks>
 /// <para>
 /// While backup ships from this node, sessions run with <c>wal_autocheckpoint = 0</c> and only a tap checkpoints: it
-/// holds the store's writer gate, reads every committed frame, then runs a passive checkpoint. The log restarts (new
-/// salts, checkpoint sequence + 1) only after a checkpoint copied every frame back, so a restart that follows the tap's
-/// own complete checkpoint, with no frame appended since, loses nothing. Anything else means another connection or
-/// process checkpointed or rewrote the log, as Litestream checks ("wal overwritten/truncated by another process"): a
-/// restart without that checkpoint or by more than one sequence, a log that vanished or shrank below what was read, or a
+/// holds the store's writer gate, reads every committed frame, then runs a passive checkpoint. The log restarts (salt1
+/// + 1, new salt2) only after a checkpoint copied every frame back, so a restart that follows the tap's own complete
+/// checkpoint, with no frame appended since, loses nothing. Anything else means another connection or process
+/// checkpointed or rewrote the log, as Litestream checks ("wal overwritten/truncated by another process"): a restart
+/// without that checkpoint or by more than one salt1 step, a log that vanished or shrank below what was read, or a
 /// last read frame whose checksum changed. The read then reports a hole. <see cref="_keepAlive"/> keeps a connection
 /// open, so the last connection never closes and SQLite never checkpoints and deletes the log on its own.
 /// </para>
@@ -198,9 +198,10 @@ internal sealed class SqliteWalTap(SqliteDatabaseStore store, SqliteIoPool io, S
             {
                 Start(header);
             }
-            else if (header.Salt1 != current.Salt1 || header.Salt2 != current.Salt2 || header.Sequence != current.Sequence)
+            else if (header.Salt1 != current.Salt1 || header.Salt2 != current.Salt2)
             {
-                continuous = _checkpointed && header.Sequence == unchecked(current.Sequence + 1);
+                // Salt1 counts restarts; the header's checkpoint sequence is kept per connection, so another connection repeats it.
+                continuous = _checkpointed && header.Salt1 == unchecked(current.Salt1 + 1);
                 Start(header);
             }
             else if (_offset > HeaderBytes && !await LastFrameMatchesAsync(log, frameBytes, cancellationToken).ConfigureAwait(false))
@@ -381,7 +382,7 @@ internal sealed class SqliteWalTap(SqliteDatabaseStore store, SqliteIoPool io, S
         }
     }
 
-    private readonly record struct Header(bool BigEndian, int PageSize, uint Sequence, uint Salt1, uint Salt2, uint Sum1, uint Sum2)
+    private readonly record struct Header(bool BigEndian, int PageSize, uint Salt1, uint Salt2, uint Sum1, uint Sum2)
     {
         public static Header? Parse(ReadOnlySpan<byte> bytes)
         {
@@ -397,8 +398,8 @@ internal sealed class SqliteWalTap(SqliteDatabaseStore store, SqliteIoPool io, S
             uint s1 = 0, s2 = 0;
             Checksum(bytes[..24], bigEndian, ref s1, ref s2);
             return s1 == BinaryPrimitives.ReadUInt32BigEndian(bytes[24..]) && s2 == BinaryPrimitives.ReadUInt32BigEndian(bytes[28..])
-                ? new(bigEndian, (int)pageSize, BinaryPrimitives.ReadUInt32BigEndian(bytes[12..]),
-                    BinaryPrimitives.ReadUInt32BigEndian(bytes[16..]), BinaryPrimitives.ReadUInt32BigEndian(bytes[20..]), s1, s2)
+                ? new(bigEndian, (int)pageSize, BinaryPrimitives.ReadUInt32BigEndian(bytes[16..]),
+                    BinaryPrimitives.ReadUInt32BigEndian(bytes[20..]), s1, s2)
                 : null;
         }
     }
