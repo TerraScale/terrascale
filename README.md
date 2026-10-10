@@ -48,6 +48,19 @@ verified affected data and recreate bootstrap state on startup. There is no
 migration, backfill, compatibility shim or dual-read/write path. This SDK owns
 no persisted service data and performs no production reset.
 
+## Zero-configuration operating contract
+
+First-party services must discover eligible serving regions and receive
+production credentials automatically, with fixed settings and no region
+activation or manual endpoint/secret wiring. Customer tenant/project scope,
+authorized consumer tokens and exact registered callbacks remain required.
+This docs-only TS-795 change does not implement automatic discovery or secret
+delivery. Current TerraBase clients still require an endpoint/resolver pending
+TS-507; legacy direct-origin, proxy and tuning selectors remain inventoried for
+owning implementation changes. Examples below show current API boundaries,
+not a first-party production setup recipe. `discoveredOrigin` below is a trusted
+HTTPS `Uri` supplied by an authorized integration, not created by this SDK. See [AGENTS.md](AGENTS.md#zero-configuration-user-decision-2026-10-09-do-not-revert).
+
 ## TerraBase client
 
 Schema10 preparation adds `TerraBaseDatabase.DeclareSchemaAsync` and `GetSchemaAsync` with native single
@@ -70,7 +83,7 @@ using TerraScale.DotNet.TerraBase;
 using var httpClient = new HttpClient(TerraBaseHttp.CreateHandler());
 var documents = new TerraBaseDocumentsClient(httpClient, new TerraBaseDocumentsClientOptions
 {
-    BaseAddress = new Uri("https://terrabase.internal:8443"),
+    BaseAddress = discoveredOrigin,
     ApiKey = currentTerraBaseApiKey // tb_...
 });
 
@@ -95,7 +108,7 @@ atomically.
 ```csharp
 var management = new TerraBaseManagementClient(httpClient, new TerraBaseManagementClientOptions
 {
-    BaseAddress = new Uri("https://terrabase.internal:8443"),
+    BaseAddress = discoveredOrigin,
     ServiceCredential = dashboardServiceCredential
 });
 
@@ -112,6 +125,11 @@ the acting `userId` first and sends it as `X-TerraBase-User-Id`; organization
 routes also send `X-TerraBase-Organization-Id`. Take the user id from an
 authenticated session, never from browser input. Pages are
 `TerraBasePage<T>(Items, Next)`; pass `Next` as `after` with an optional `limit`.
+
+First-party service credentials must be created and delivered automatically
+under the operating contract. Static credential inputs in these examples
+represent the current API boundary; they do not instruct operators to copy
+production secrets. Customer credentials still authorize consumer access.
 
 Both clients also accept `AccessTokenProvider`
 (`Func<CancellationToken, ValueTask<string>>`) instead of their static `ApiKey`
@@ -234,11 +252,14 @@ NativeResult<NativePoint> point = await database.ReadAsync(
     collectionUuid, documentUuid, cancellationToken);
 ```
 
-A direct-origin constructor is available for an origin already admitted by the
-caller. It does not discover eligibility or establish a grant. Within the TerraScale zone, origins must use canonical single-level nonreserved
-regional HTTPS hosts with the default port. Independently provisioned HTTPS
-origins remain available; HTTP loopback requires explicit `development: true`.
-`NativeOrigin.Validate` exposes this validation without sending a request.
+Normal native routing discovers eligible serving regions through Atlas;
+region catalog entries never grant tenant access. Direct-origin and loopback
+constructor paths are limited to reviewed isolated qualification/tests and
+remain implementation inventory. They require independent admission and
+cannot establish a grant. TerraScale-zone origins require canonical
+single-level nonreserved regional HTTPS hosts with the default port.
+`NativeOrigin.Validate` exposes validation without sending a request; no
+insecure development activation belongs in production setup.
 
 Prepare a commit with `PrepareCommit` before its first transmission. The
 prepared body, original expiry, nonce, authority and canonical SHA-256 effect
@@ -286,9 +307,11 @@ var user = await auth.Users.CreateAsync(email: "user@example.com");
 ```
 
 The public auth origin uses Atlas' separate auth discovery contract and ranked
-regional `.auth` origins. `UseReverseProxy = true` explicitly selects the auth
-proxy; custom auth origins are used directly. This does not route database
-requests. `AddTerraScaleAuthClient` supplies dependency-injection registration
+regional `.auth` origins. Use normal healthy-region discovery without a proxy
+activation step. The current reverse-proxy/custom-origin selectors remain
+inventoried for owning implementation changes; reviewed isolated test overrides
+must preserve issuer trust and customer instance authorization. This does not
+route database requests. `AddTerraScaleAuthClient` supplies dependency-injection registration
 with redirects disabled. Only safe reads can retry; auth mutations are sent
 once. `TerraScaleAuthException` exposes typed status/retry metadata and only
 known fixed error codes. Messages are fixed safe diagnostics; arbitrary
@@ -303,7 +326,7 @@ dotnet build TerraScale.DotNet.slnx --configuration Release
 dotnet format style TerraScale.DotNet.slnx --verify-no-changes --no-restore
 dotnet run --project tests/TerraScale.DotNet.Tests/TerraScale.DotNet.Tests.csproj \
   --framework net10.0 --configuration Release --no-build --no-restore -- \
-  --minimum-expected-tests 424
+  --minimum-expected-tests 487
 ```
 
 Run the suite for `net11.0` with a .NET 11 toolchain too. Tests use TUnit and

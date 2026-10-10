@@ -22,11 +22,13 @@ transaction identity, effect hashing, errors, pagination and cancellation to
 that contract. No generic request or inferred proxy endpoint conceals a gap.
 
 Database traffic uses authenticated Atlas admission and eligible direct
-regional origins. Test API hosts are not production native origins. A direct
-constructor requires prior caller admission and does not infer eligibility.
-TerraScale-zone native origins require canonical single-level nonreserved
-regional hosts. Explicit independent HTTPS origins and explicit development
-loopback remain available. Atlas authority validation is separate.
+regional origins automatically; every admitted serving region participates
+without an activation step. Test API hosts are not production native origins.
+Existing direct/loopback paths are restricted to reviewed isolated qualification
+or tests and remain implementation inventory, not normal first-party setup.
+They require prior caller admission and never infer eligibility. TerraScale-zone
+native origins require canonical single-level nonreserved regional HTTPS hosts.
+Atlas authority validation, tenant scope and TLS checks remain separate.
 
 The existing ts-auth feature remains isolated in `AuthService`, including its
 own fixed safe diagnostic exception, owner-published regional token validation

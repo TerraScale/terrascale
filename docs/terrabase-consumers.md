@@ -89,6 +89,14 @@ available in `Data["TerraBaseCleanupException"]`.
 
 ## Store usage
 
+The [zero-configuration operating contract](../AGENTS.md#zero-configuration-user-decision-2026-10-09-do-not-revert)
+requires automatic first-party endpoint discovery and production credential
+creation/delivery. The SDK still needs a caller-supplied endpoint/resolver
+pending TS-507; the example shows that existing API boundary, not manual
+production onboarding or a shipped automatic acquisition API. The scoped
+consumer token and project selection remain authorization requirements.
+The ts-auth adoption and persistence gaps above remain blockers.
+
 Configure the supplied `HttpClient` with `AllowAutoRedirect = false` so a
 redirect cannot forward write bodies or management identity headers to another
 origin. The SDK does not reconfigure or dispose the supplied client.
