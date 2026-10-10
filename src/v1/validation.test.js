@@ -55,7 +55,7 @@ describe("C# v1 pure contract validation", () => {
       return "https://database.example/prefix/";
     } });
     const params = { database: "app", collection: "users", id };
-    const expected = `https://database.example/prefix/v1/projects/${project}/databases/app/collections/users/documents/${id}`;
+    const expected = `https://database.example/prefix/v1/projects/${project}/databases/app/collections/users/documents/by-key`;
     expect(await Promise.all([transport.url("getDocument", params), transport.url("getDocument", params)])).toEqual([expected, expected]);
     await transport.url("queryDocuments", { ...params, database: "other" });
     expect(contexts.map(context => [context.project, context.database])).toEqual([[project, "app"], [project, "other"]]);

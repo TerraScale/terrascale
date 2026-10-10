@@ -78,8 +78,8 @@ Client/resource management responses use exact snake_case records and safe numer
 
 ## Publishing
 
-The `release/npm` job in `.forgejo/workflows/ci.yml` publishes the `@terrascale/sdk`
-npm package on every push to `main`, after the static, Node and browser jobs
+The `release` job in `.forgejo/workflows/ci.yml` publishes the `@terrascale/sdk`
+npm package on every push to `main`, after the guard, check, test and e2e jobs
 pass. It skips immediately when npm already has the `package.json` version;
 otherwise it packs the tarball once, publishes those exact bytes with
 `--access public --tag latest`, and fails unless npm then reports that version

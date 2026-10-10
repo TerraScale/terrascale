@@ -34,8 +34,7 @@ internal sealed class ApiKeyAuthenticationHandler(
             return AuthenticateResult.NoResult();
         }
 
-        var key = await keys.FindAsync(secret, Context.RequestAborted).ConfigureAwait(false);
-        if (key is null)
+        if (await keys.FindAsync(secret, Context.RequestAborted).ConfigureAwait(false) is not ApiKey key)
         {
             // Never echo the presented secret.
             return AuthenticateResult.Fail("unknown API key");

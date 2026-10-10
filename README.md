@@ -161,11 +161,11 @@ Never commit keys, cookies, environment files or real tenant data.
 
 The immutable release pin is
 [`scripts/ci/terrabase-release.json`](scripts/ci/terrabase-release.json): C#
-TerraBase 0.1.0, release `ci-263598b47ffc79398db394550e3c074acf4fc57d-run-15005`,
+TerraBase 0.1.0, release `ci-6cb97456b9b52a92a61856601cc025c4f2833518-run-16729`,
 with binary SHA-256
-`ec076b9d53db71cb1c6e499a7d0380e9ab3de56ae86e1cbf338dd4cc4ea5b301`.
-This official prerelease contains the renamed `TerraBase` assembly and
-`src/TerraBase` sources. Its asset name remains `terrabase-linux-amd64`.
+`cc2db35b18c385c6d58036c6c94e59460b0e12b0d5616da2222713efbe666700`.
+This official prerelease contains the qualified TS-754 ULID producer, the renamed
+`TerraBase` assembly and `src/TerraBase` sources. Its asset name remains `terrabase-linux-amd64`.
 The SDK integration harness consumes its official asset read-only when the
 version, source revision, size and SHA-256 are verified.
 The acquisition script verifies the official release, revision, asset size and

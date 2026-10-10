@@ -1,3 +1,5 @@
+using TerraBase.Errors;
+using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
 namespace TerraBase.Features.ApiKeys;
@@ -39,6 +41,8 @@ public sealed class CreateApiKeyEndpoint(IApiKeyStore keys) : Endpoint<CreateApi
         Description("organizationId is required: the key reaches only that organization's databases. projectId narrows it to one of its projects, and databaseId (which requires projectId) to one database of that project.");
         Tags("Administration");
         Produces<CreatedApiKeyBody>(StatusCodes.Status201Created);
+        Produces<ErrorBody>(StatusCodes.Status400BadRequest);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         AllowAnonymous();
     }
 
@@ -48,24 +52,29 @@ public sealed class CreateApiKeyEndpoint(IApiKeyStore keys) : Endpoint<CreateApi
         ArgumentNullException.ThrowIfNull(request);
         if (string.IsNullOrWhiteSpace(request.Name) || request.Name.Length > MaxNameLength)
         {
-            return TypedResults.BadRequest("name must be 1 to 100 characters");
+            return ErrorResponse.From(new Validation("name must be 1 to 100 characters"));
         }
 
         if (request.Scopes is not { Count: > 0 } || request.Scopes.Except(ApiKeyScopes.All).Any())
         {
-            return TypedResults.BadRequest($"scopes must be a non-empty subset of: {string.Join(", ", ApiKeyScopes.All)}");
+            return ErrorResponse.From(new Validation($"scopes must be a non-empty subset of: {string.Join(", ", ApiKeyScopes.All)}"));
+        }
+
+        const string UnknownScope =
+            "organizationId must name an organization, projectId one of its projects and databaseId (only with projectId) one of that project's databases";
+        if (string.IsNullOrEmpty(request.OrganizationId) || (request.DatabaseId is not null && request.ProjectId is null))
+        {
+            return ErrorResponse.From(new Validation(UnknownScope));
         }
 
         // The store checks the scope in the issuing write.
-        if (string.IsNullOrEmpty(request.OrganizationId) || (request.DatabaseId is not null && request.ProjectId is null)
-            || await keys.CreateAsync(request.Name, [.. request.Scopes.Distinct()], request.OrganizationId, request.ProjectId, request.DatabaseId, cancellationToken)
-                is not var (key, secret))
+        return await keys.CreateAsync(request.Name, [.. request.Scopes.Distinct()], request.OrganizationId, request.ProjectId, request.DatabaseId, cancellationToken) switch
         {
-            return TypedResults.BadRequest(
-                "organizationId must name an organization, projectId one of its projects and databaseId (only with projectId) one of that project's databases");
-        }
-
-        return TypedResults.Created(
-            $"/admin/api-keys/{key.Id}", new CreatedApiKeyBody(key.Id, key.Name, key.Scopes, key.OrganizationId, key.ProjectId, key.DatabaseId, secret));
+            IssuedApiKey issued => TypedResults.Created(
+                $"/admin/api-keys/{issued.Key.Id}",
+                new CreatedApiKeyBody(issued.Key.Id, issued.Key.Name, issued.Key.Scopes, issued.Key.OrganizationId, issued.Key.ProjectId, issued.Key.DatabaseId, issued.Secret)),
+            NotFound => ErrorResponse.From(new Validation(UnknownScope)),
+            Unavailable error => ErrorResponse.From(error),
+        };
     }
 }

@@ -23,7 +23,7 @@ public sealed class QueryDocumentsEndpoint(IDocumentService documents, ITenantDi
         Description("""
             Filters ({"and"|"or":[F…]} with 1 to 64 children, {"not":F}, {"eq"|"ne"|"lt"|"lte"|"gt"|"gte":[P,V]}, {"in"|"nin":[P,[V…]]} with 1 to 256 values, {"exists":P}, {"prefix":[P,"str"]}, {"contains":[P,V]}; at most 8 levels and 256 nodes) run inside SQLite. P is a JSON Pointer of object members (nested paths allowed) or "$id"; V is a JSON scalar. Ordered comparisons only match values of V's type and reject null; ne and nin also match missing members. sort has at most 4 {path, order} keys, then id; repeated paths retain only their first occurrence, and keys after the unique $id are omitted; encoded cursors are at most 1 MiB and cursor-producing string values are at most 64 KiB UTF-8 each, and the compact query plus continuation must fit the 4 MiB request limit (400 sort_requires_index beyond); values order missing < null < false < true < numbers < strings < arrays/objects. project keeps at most 64 paths with their parents; duplicate decoded paths and descendants covered by selected ancestors are copied only once, with case-sensitive member names. limit is 1 to 1000 (default 50); a page also stops at 8 MiB of JSON. cursor is the previous page's next_cursor and only works with the same filter, sort and project (400 invalid_cursor). count counts matches among at most 100000 documents (exact is false beyond, and value is a lower bound), on requests without a cursor. Queries and counts are interrupted at SQLite progress callbacks after 5 million VM instructions or a 5-second deadline (400 invalid_query, query too expensive). Cancellation also interrupts SQLite. A field sort requires at most 10000 live candidate documents and at most 8 MiB of candidate JSON, otherwise 400 sort_requires_index. lower and explain are not supported yet.
             """);
-        Tags("Documents");
+        Tags("Queries");
         Metadata(new RequestBodyMetadata(typeof(QueryRequest), DocumentRoute.JsonMediaType));
         Produces<DocumentPageBody>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
@@ -39,6 +39,7 @@ public sealed class QueryDocumentsEndpoint(IDocumentService documents, ITenantDi
         {
             Validation error => ErrorResponse.From(error),
             NotFound error => ErrorResponse.From(error),
+            Unavailable error => ErrorResponse.From(error),
             TenantContext database => (DocumentRoute.CheckCollectionName(HttpContext), DocumentRoute.CheckParameters(HttpContext)) switch
             {
                 (Validation error, _) => ErrorResponse.From(error),

@@ -19,20 +19,47 @@ concurrency:
 # actual stable vendor Chrome and Edge binaries with pinned Nix definitions.
 # Verified ts-builder release: bcbc828a87cfe3e13b72a7fb62d9a0d16b9a76b9 (run 85).
 jobs:
-  static:
+  # TS-795 switch guard: fails when the change adds an on/off setting.
+  # Same text in every repo; ts-builder's scripts/bump-ci-ref.sh moves the pinned ref.
+  guard:
+    runs-on: terrascale-builder
+    timeout-minutes: 10
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          github-server-url: https://git.terrascale.tech
+          ref: ${{ forgejo.event.pull_request.head.sha || forgejo.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          github-server-url: https://git.terrascale.tech
+          repository: TerraScale/ts-builder
+          ref: 8dacab451c3c16924622ff512d7aa17501b70ecc # guard ref
+          path: .zero-config-policy
+          token: ${{ secrets.TERRASCALE_BOT_TOKEN }}
+          persist-credentials: false
+      - env:
+          ZERO_CONFIG_BASE: ${{ forgejo.event.pull_request.base.sha || forgejo.event.before }}
+          ZERO_CONFIG_HEAD: ${{ forgejo.event.pull_request.head.sha || forgejo.sha }}
+        run: |
+          set -eu
+          if [ -z "$ZERO_CONFIG_BASE" ]; then
+            ZERO_CONFIG_BASE=$(git rev-parse "$ZERO_CONFIG_HEAD^")
+          fi
+          python3 .zero-config-policy/scripts/zero-config-check.py "$ZERO_CONFIG_BASE" "$ZERO_CONFIG_HEAD"
+
+  check:
     name: verify/static-contracts
     runs-on: terrascale-builder
     container:
       image: git.terrascale.tech/terrascale/ts-builder@sha256:75a2b6350ac5194528dc672a3ac710f10c53d24203fbc9088657d1a84e61c62f
     timeout-minutes: 45
     steps:
-      - name: Check out the exact event revision
-        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           github-server-url: "https://git.terrascale.tech"
-          ref: ${{ forgejo.sha }}
           token: "${{ secrets.REGISTRY_TOKEN }}"
-          fetch-depth: 1
           persist-credentials: false
 
       - name: Confirm the repository Node.js version
@@ -66,7 +93,7 @@ jobs:
       - name: Fail closed on high or critical dependency vulnerabilities
         run: npm run check:vulnerabilities
 
-  node:
+  test:
     name: verify/node-${{ matrix.node }}
     strategy:
       fail-fast: false
@@ -81,13 +108,10 @@ jobs:
       image: git.terrascale.tech/terrascale/ts-builder@sha256:75a2b6350ac5194528dc672a3ac710f10c53d24203fbc9088657d1a84e61c62f
     timeout-minutes: 45
     steps:
-      - name: Check out the exact event revision
-        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           github-server-url: "https://git.terrascale.tech"
-          ref: ${{ forgejo.sha }}
           token: "${{ secrets.REGISTRY_TOKEN }}"
-          fetch-depth: 1
           persist-credentials: false
 
       - name: Install Node.js ${{ matrix.node }}
@@ -146,20 +170,17 @@ jobs:
       - name: Fail closed on high or critical dependency vulnerabilities
         run: npm run check:vulnerabilities
 
-  browser:
+  e2e:
     name: verify/browser-current-engines
     runs-on: terrascale-builder
     container:
       image: git.terrascale.tech/terrascale/ts-builder@sha256:75a2b6350ac5194528dc672a3ac710f10c53d24203fbc9088657d1a84e61c62f
     timeout-minutes: 60
     steps:
-      - name: Check out the exact event revision
-        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           github-server-url: "https://git.terrascale.tech"
-          ref: ${{ forgejo.sha }}
           token: "${{ secrets.REGISTRY_TOKEN }}"
-          fetch-depth: 1
           persist-credentials: false
 
       - name: Confirm the repository Node.js version
@@ -187,9 +208,9 @@ jobs:
 
   # Every push to main that passes verification publishes package.json's
   # version unless npm already has it; bump the version to release.
-  publish:
+  release:
     name: release/npm
-    needs: [static, node, browser]
+    needs: [guard, check, test, e2e]
     if: ${{ forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main' }}
     runs-on: terrascale-builder
     container:
@@ -199,13 +220,10 @@ jobs:
       group: ts-js-npm-publish
       cancel-in-progress: false
     steps:
-      - name: Check out the exact event revision
-        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           github-server-url: "https://git.terrascale.tech"
-          ref: ${{ forgejo.sha }}
           token: "${{ secrets.REGISTRY_TOKEN }}"
-          fetch-depth: 1
           persist-credentials: false
 
       - name: Provision the reviewed npm CLI

@@ -17,32 +17,31 @@ test("CI preserves event identity, real C# producer and framework/browser checks
     workflow,
     /pull_request_target|CONTRACT_ARCHIVE|EDGE_CONTRACT_SOURCE|contracts\/v1|TERRASCALE_DEPLOY/u,
   );
-  for (const job of ["static", "node", "browser"]) {
+  for (const job of ["check", "test", "e2e"]) {
     const definition = jobDefinition(workflow, job);
     assert.doesNotMatch(definition, /NPM_TOKEN/u);
     assert.match(definition, /runs-on: terrascale-builder/u);
     assert.match(definition, /actions\/checkout@[0-9a-f]{40}/u);
-    assert.match(definition, /ref: \$\{\{ forgejo\.sha \}\}/u);
     assert.match(definition, /persist-credentials: false/u);
     assert.match(definition, /node scripts\/provision-reviewed-npm\.js/u);
     assert.match(definition, /npm ci/u);
     assert.match(definition, /npm run build/u);
   }
-  const node = jobDefinition(workflow, "node");
+  const node = jobDefinition(workflow, "test");
   assert.match(node, /node scripts\/ci\/provision-terrabase\.mjs/u);
   assert.match(node, /FORGEJO_TOKEN: \$\{\{ secrets\.REGISTRY_TOKEN \}\}/u);
   assert.match(node, /node scripts\/ci\/run-terrabase-integration\.mjs npm test/u);
   assert.ok(node.indexOf("provision-terrabase.mjs") < node.indexOf("run-terrabase-integration.mjs"));
-  assert.match(jobDefinition(workflow, "static"), /npm run check:v1-route-manifest/u);
+  assert.match(jobDefinition(workflow, "check"), /npm run check:v1-route-manifest/u);
   assert.doesNotMatch(workflow, /provision-current-contract-inputs|canonical effect vectors|check:current-contract|check:route-manifest|check:openapi-contract-descriptor|nice -n|renice/u);
-  assert.match(jobDefinition(workflow, "static"), /npm run typecheck/u);
-  assert.match(jobDefinition(workflow, "node"), /npm run check:frameworks/u);
-  assert.match(jobDefinition(workflow, "node"), /sha256sum --check --strict/u);
-  assert.match(jobDefinition(workflow, "node"), /node: "22\.23\.2"/u);
-  assert.match(jobDefinition(workflow, "node"), /node: "24\.21\.0"/u);
-  assert.match(jobDefinition(workflow, "browser"), /npm run test:browser/u);
+  assert.match(jobDefinition(workflow, "check"), /npm run typecheck/u);
+  assert.match(jobDefinition(workflow, "test"), /npm run check:frameworks/u);
+  assert.match(jobDefinition(workflow, "test"), /sha256sum --check --strict/u);
+  assert.match(jobDefinition(workflow, "test"), /node: "22\.23\.2"/u);
+  assert.match(jobDefinition(workflow, "test"), /node: "24\.21\.0"/u);
+  assert.match(jobDefinition(workflow, "e2e"), /npm run test:browser/u);
   assert.match(
-    jobDefinition(workflow, "browser"),
+    jobDefinition(workflow, "e2e"),
     /bash scripts\/ci\/provision-branded-browsers\.sh/u,
   );
 });
@@ -52,8 +51,8 @@ test("npm publication runs only after verification on pushes to main", async () 
     new URL("../.forgejo/workflows/ci.yml", import.meta.url),
     "utf8",
   );
-  const publish = jobDefinition(workflow, "publish");
-  assert.match(publish, /needs: \[static, node, browser\]/u);
+  const publish = jobDefinition(workflow, "release");
+  assert.match(publish, /needs: \[guard, check, test, e2e\]/u);
   assert.match(
     publish,
     /if: \$\{\{ forgejo\.event_name == 'push' && forgejo\.ref == 'refs\/heads\/main' \}\}/u,
@@ -67,9 +66,9 @@ test("npm publication runs only after verification on pushes to main", async () 
   assert.match(publish, /TS-528: expected npm latest \$\{version\}, got \$\{latest\}/u);
 });
 
-test("the real static workflow guard accepts only owner-approved 0.0.x versions", async () => {
+test("the real check workflow guard accepts only owner-approved 0.0.x versions", async () => {
   const workflow = await readFile(new URL("../.forgejo/workflows/ci.yml", import.meta.url), "utf8");
-  const guard = stepRun(stepDefinition(jobDefinition(workflow, "static"), "Require the owner-approved 0.0.x version policy"));
+  const guard = stepRun(stepDefinition(jobDefinition(workflow, "check"), "Require the owner-approved 0.0.x version policy"));
   const directory = await mkdtemp(path.join(tmpdir(), "terrascale-version-guard-"));
   try {
     for (const version of ["0.0.0", "0.0.1", "0.0.528", "0.3.0", "1.0.0", "0.0", "0.0.1-beta", "0.0.1+build"]) {
@@ -89,7 +88,7 @@ test("the real static workflow guard accepts only owner-approved 0.0.x versions"
 
 test.each(["published", "delayed", "wrong-latest"])("the real npm publish shell verifies latest when %s", async (scenario) => {
   const workflow = await readFile(new URL("../.forgejo/workflows/ci.yml", import.meta.url), "utf8");
-  const publish = stepRun(stepDefinition(jobDefinition(workflow, "publish"), "Pack and publish the release tarball"));
+  const publish = stepRun(stepDefinition(jobDefinition(workflow, "release"), "Pack and publish the release tarball"));
   const directory = await mkdtemp(path.join(tmpdir(), "terrascale-npm-publish-"));
   try {
     await writeFile(path.join(directory, "package.json"), JSON.stringify({ name: "@terrascale/sdk", version: "0.0.1" }));

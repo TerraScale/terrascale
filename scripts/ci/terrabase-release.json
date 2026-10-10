@@ -2,106 +2,122 @@
   "registryOrigin": "https://git.terrascale.tech",
   "producer": "TerraScale/terrabase",
   "branch": "main",
-  "revision": "263598b47ffc79398db394550e3c074acf4fc57d",
+  "revision": "6cb97456b9b52a92a61856601cc025c4f2833518",
   "version": "0.1.0",
-  "release": "ci-263598b47ffc79398db394550e3c074acf4fc57d-run-15005",
+  "release": "ci-6cb97456b9b52a92a61856601cc025c4f2833518-run-16729",
   "asset": "terrabase-linux-amd64",
-  "sha256": "ec076b9d53db71cb1c6e499a7d0380e9ab3de56ae86e1cbf338dd4cc4ea5b301",
-  "openapiSha256": "65a2fb48fd90d2db836e45d6333ace3d87e5378aa91e8f5fb4546ec47a2d7c3e",
+  "sha256": "cc2db35b18c385c6d58036c6c94e59460b0e12b0d5616da2222713efbe666700",
+  "openapiSha256": "313c56c95826d99f6d4f55416276fd2d20bcdc273d949cf0f8da478adb2f39c3",
   "inputs": {
     "0004-document-api-v1.md": {
       "sourcePath": "docs/decisions/0004-document-api-v1.md",
-      "sha256": "f7dbd81a4a44a3aaf847caa2dec1e1b02c36edae86aed26f406fb865a239a659"
+      "sha256": "ef046f163e46811e27b355e9f201d42f45de5df10ca1a9a3bcfe7c993b2d3b99"
     },
     "0005-multi-tenancy.md": {
       "sourcePath": "docs/decisions/0005-multi-tenancy.md",
-      "sha256": "329e23ae15e44b5be74c69e7292d46b91f663a7e77743a65ff4da986bc75d50a"
+      "sha256": "7d1c1efeb985621cb750bf6ebf90cc45ade7e0c09f51f54d1a9af0cbed5e768d"
     },
     "shape-reads.md": {
       "sourcePath": "docs/shape-reads.md",
-      "sha256": "8c0ca9f1a2f2bf42f18a72d7dbbee52b6cb2e7bfd4bef1343d6ff67755bf1958"
+      "sha256": "fb49de900a71f1caded21d8660dd6b6b7b607aeff801488e6efd395f0d0724c1"
     },
     "DocumentRoute.cs": {
       "sourcePath": "src/TerraBase/Features/Documents/DocumentRoute.cs",
-      "sha256": "32896abd8517a9f45e6f4cffd17ed937e177099667bf440c6a508e38f9657371"
+      "sha256": "309b5c33e010d44fde9945db9977e6631901b5bd1bc2a429590ad94d27adc924"
     },
     "GetShapeEndpoint.cs": {
       "sourcePath": "src/TerraBase/Features/Documents/GetShapeEndpoint.cs",
-      "sha256": "2b21ed331763876d6ef6992dc907d6e7bea5f21f2c90f62b97859f568dcf0b0d"
+      "sha256": "a530ab36242a4ff1d873ae691778cd0e436e036c6780ecb3dbd1fa711524bcb5"
     },
     "IApiKeyStore.cs": {
       "sourcePath": "src/TerraBase/Features/ApiKeys/IApiKeyStore.cs",
-      "sha256": "657fd5cf55a2aafd29baaca5564ef31132193021bbf7f53dcf113fbd8d6bdb53"
+      "sha256": "423f8270b2e5d9dd5ad0d6192fe31f20cad2abeb9c10ee0cff90d2886110f01e"
     },
     "GetDocumentEndpoint.cs": {
       "sourcePath": "src/TerraBase/Features/Documents/GetDocumentEndpoint.cs",
-      "sha256": "f3ecca5547de6563a88c91b4b3a5c0926e6ef31fb27e05069147f7f106b05bc2"
+      "sha256": "f2c960cafe784acc67108de412df1134e8c89a2ceac71d1bed6c5654bd5884fa"
     },
     "PutDocumentEndpoint.cs": {
       "sourcePath": "src/TerraBase/Features/Documents/PutDocumentEndpoint.cs",
-      "sha256": "983f1e41af5011cd276d00f68c542e280eeb6b476b3c4b9e1c112900d1b4b913"
+      "sha256": "894fc735975b86c980a27a73df898fe454f920e7eca0e5c536b5af4cdae25134"
     },
     "CreateDocumentEndpoint.cs": {
       "sourcePath": "src/TerraBase/Features/Documents/CreateDocumentEndpoint.cs",
-      "sha256": "e5ea6fc803eec3a13e06aafc776ae2a1d07605c8099621c9c21c068e6e8f3af6"
+      "sha256": "25678dbe2d651d1291be796b1e9c75f93762e1e476648629427acce027d99fc5"
     },
     "PatchDocumentEndpoint.cs": {
       "sourcePath": "src/TerraBase/Features/Documents/PatchDocumentEndpoint.cs",
-      "sha256": "3ebb34edfe138a9f086e659ea6d0a4c6bc788114718d40e99e03499c18a2f83d"
+      "sha256": "c094d20414f2d36375c5f80210f53478b29059e03856f2b32301896746151f29"
     },
     "DeleteDocumentEndpoint.cs": {
       "sourcePath": "src/TerraBase/Features/Documents/DeleteDocumentEndpoint.cs",
-      "sha256": "862a556c61349c14caa1eedbbd1bad4c2444f3d6aa5bc4e7ed511acf91437b19"
+      "sha256": "c8062dde557574824d5278f77c736bbe62277d4f2b659c602b6fa4d3a44f9908"
     },
     "TransactionEndpoint.cs": {
       "sourcePath": "src/TerraBase/Features/Documents/TransactionEndpoint.cs",
-      "sha256": "bd48b6487c62b85937025c1ab12d18c359d93716994d251cc5b78aab7c5e402a"
+      "sha256": "b391c824604cbe40f9ac6646b67bd82ab667f093617d6cddffbe13fa24230999"
     },
     "QueryDocumentsEndpoint.cs": {
       "sourcePath": "src/TerraBase/Features/Documents/QueryDocumentsEndpoint.cs",
-      "sha256": "280783d3198f5a5494e69ce492138adddedf0a457d1b01f415cee817d83fa009"
+      "sha256": "9052c75d80ec46bbe113312f45b2cee4b198ae1730ffe90d3eb07f7507db2a93"
     },
     "CreateCollectionEndpoint.cs": {
       "sourcePath": "src/TerraBase/Features/Documents/CreateCollectionEndpoint.cs",
-      "sha256": "512419dcdb3cba0a134696d58c34d9bb4f5fc6f8777d3df9be4855d156e36c8c"
+      "sha256": "dfc7b259119127dd6bdafc34b97194659441500c47bdf7a3171e052c1547bc83"
     },
     "GetCollectionEndpoint.cs": {
       "sourcePath": "src/TerraBase/Features/Documents/GetCollectionEndpoint.cs",
-      "sha256": "01a4b17667e437823bacf8161facde662ab8bb9a1b2a788d649cfc0fcedb044b"
+      "sha256": "28af27dda8c6dceadebdc00562c33ef93b8f88f8f6b30e784edfa7dea4a18907"
     },
     "ListCollectionsEndpoint.cs": {
       "sourcePath": "src/TerraBase/Features/Documents/ListCollectionsEndpoint.cs",
-      "sha256": "05fd260b308a0ea5ba6a07b0ef2c87f4b3a989ea61553611c9723cc10766f60b"
+      "sha256": "e421d2627ae3eb110ec5ff03803938590114383cdc38dcf9d737879544b296d0"
     },
     "DropCollectionEndpoint.cs": {
       "sourcePath": "src/TerraBase/Features/Documents/DropCollectionEndpoint.cs",
-      "sha256": "6cdb5f9d3e54b25254e9911663c75185ae3c947bbc583826052dddf7f2d77e9b"
+      "sha256": "e1a91ca3a740218ea7c994af994ca54301308f92414759f044650d6717f4f2d9"
     },
     "api.md": {
       "sourcePath": "docs/api.md",
-      "sha256": "4403df13f0c472eb1542d04b8856e319a01332f71cc8e3a8c274d95a05e4d582"
+      "sha256": "9b092e897988abbdc0bc5f0a174be2644d08d8b091f831db3b28d5e736847daa"
     },
     "ApiReferenceExtensions.cs": {
       "sourcePath": "src/TerraBase/Features/ApiReference/ApiReferenceExtensions.cs",
-      "sha256": "19e47802cdb3f4bedaa957d98afce0a5afe5c28da9a7c4862ad977cd5affb04b"
+      "sha256": "afe89034e355a07c90f10104e6636d337874dc9d13f1cf1b028dba1931494ec4"
     },
     "ApiKeyAuthenticationHandler.cs": {
       "sourcePath": "src/TerraBase/Features/ApiKeys/ApiKeyAuthenticationHandler.cs",
-      "sha256": "ef703450ab1d6d98d02d0a37f4fbc0678b692e33bb93184eb2894015ce707c67"
+      "sha256": "ff55b316403eaad56ff2941b75d06ce2e561d01bb1ff0cda3fcb3eb49e17e494"
     },
     "EngineApiKeyStore.cs": {
       "sourcePath": "src/TerraBase/Features/ApiKeys/EngineApiKeyStore.cs",
-      "sha256": "ba8a7461a6d5c823d33b5be9b9d8661c28ee03f538dc0ceddfc9232bc43f9f04"
+      "sha256": "ff0fd02e9b9ce633789f6c2a1945ec9bf5b560051ee0a1d20f54b5b3fadc7b87"
     },
     "ManagementRoute.cs": {
       "sourcePath": "src/TerraBase/Features/Management/ManagementRoute.cs",
-      "sha256": "baff9dbc9eb6e4e5117e37fd0fee2f3622d311bb0f37de47f08fd26e13834549"
+      "sha256": "2e159ccdf3ebe08acb06614730c785f6a1f4d971067a4f8778148f1af48f4435"
     },
     "CreateApiKeyEndpoint.cs": {
       "sourcePath": "src/TerraBase/Features/ApiKeys/CreateApiKeyEndpoint.cs",
-      "sha256": "09bd789ae13dc359ab9ca7eb036d12536fcd06e320cd237934456050060a43a5"
+      "sha256": "9d080fab82ca9a49a5a2934a3b104b863c0832a4ca3a07bf65af4849fa3f661a"
+    },
+    "CreateOrganizationEndpoint.cs": {
+      "sourcePath": "src/TerraBase/Features/Management/CreateOrganizationEndpoint.cs",
+      "sha256": "d35af4644f1bf0dd5a4b2ff87a97a19162c52c8bb02e4b4569c1d925d13c8c11"
+    },
+    "CreateProjectEndpoint.cs": {
+      "sourcePath": "src/TerraBase/Features/Management/CreateProjectEndpoint.cs",
+      "sha256": "6e5636739f980d3978380c5fbcbcf0c56fad6d7294ed16250e635cbdb0cc50da"
+    },
+    "CreateDatabaseEndpoint.cs": {
+      "sourcePath": "src/TerraBase/Features/Documents/CreateDatabaseEndpoint.cs",
+      "sha256": "4c1e5a0c3b530f96b93d81af76254b16f2f2d55eeacf27bf6739a94b035394f4"
+    },
+    "SetOrganizationPlanEndpoint.cs": {
+      "sourcePath": "src/TerraBase/Features/Management/SetOrganizationPlanEndpoint.cs",
+      "sha256": "de56327ed14b7990544e3c505f1d7ada2a844536c56b4762936cf72f7621382c"
     }
   },
-  "openapiBytesSha256": "2a537e39c11b12c23cfea4d46c80a9189111acaba9b300fe722a8a2a45a8bab9",
+  "openapiBytesSha256": "af84145b3472baf04fe9d76bd553ddf8e0f5bd9a0d4c70a791d99e6dd177b6d6",
   "openapiNormalization": "JSON.parse, remove generated servers, JSON.stringify"
 }

@@ -15,9 +15,11 @@ public sealed class GetCollectionEndpoint(IDocumentService documents, ITenantDir
         Get(DocumentRoute.Collections + "/{collection}");
         Name("getCollection");
         Summary("Reads a collection");
+        Description("Reads the collection's name and creation time in the token's project. An unknown database or collection answers 404.");
         Tags("Collections");
         Produces<CollectionBody>();
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(ApiKeyScopes.DocumentsRead);
         Metadata(ListenerMetadata.Client);
     }
@@ -28,6 +30,7 @@ public sealed class GetCollectionEndpoint(IDocumentService documents, ITenantDir
         {
             Validation error => ErrorResponse.From(error),
             NotFound error => ErrorResponse.From(error),
+            Unavailable error => ErrorResponse.From(error),
             TenantContext database => (DocumentRoute.CheckCollectionName(HttpContext), DocumentRoute.CheckParameters(HttpContext)) switch
             {
                 (Validation error, _) => ErrorResponse.From(error),

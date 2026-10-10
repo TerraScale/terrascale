@@ -42,6 +42,9 @@ export async function provisionTerraBaseTenant() {
   const organizations = provisioningRoute(contract, "createOrganization");
   const organizationId = provisioningField(await request(admin, organizations.path, { name: "SDK integration" }, managementHeaders, organizations.method), "id", organizations.path);
   managementHeaders["X-TerraBase-Organization-Id"] = organizationId;
+  // Hobby's request budget is too small for the full suite; the service credential sets Pro as ts-go's integration suite does.
+  const plan = provisioningRoute(contract, "setOrganizationPlan", { organization: organizationId });
+  await request(admin, plan.path, { plan: "pro" }, managementHeaders, plan.method);
   const projects = provisioningRoute(contract, "createProject", { organization: organizationId });
   const projectId = provisioningField(await request(admin, projects.path, { name: "SDK integration" }, managementHeaders, projects.method), "id", projects.path);
   const apiKeys = provisioningRoute(contract, "createApiKey");

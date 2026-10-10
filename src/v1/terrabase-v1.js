@@ -268,11 +268,12 @@ export class V1Collection {
   }
 
   /**
+   * The by-key route takes the raw document ID in the query, not the path.
    * @param {string} id
-   * @returns {Readonly<Record<string, string>>}
+   * @returns {URLSearchParams}
    */
-  #document(id) {
-    return { ...this.#params, id: requireDocumentId(id) };
+  #documentKey(id) {
+    return new URLSearchParams({ id: requireDocumentId(id) });
   }
 
   /**
@@ -286,7 +287,7 @@ export class V1Collection {
     /** @type {Record<string, string>} */
     const headers = {};
     if (options.ifNoneMatch !== undefined) headers["if-none-match"] = `"${requireVersion(options.ifNoneMatch)}"`;
-    const response = await this.#transport.call("getDocument", this.#document(id), { headers, signal: options.signal });
+    const response = await this.#transport.call("getDocument", this.#params, { query: this.#documentKey(id), headers, signal: options.signal });
     return decodeDocument(response.value);
   }
 
@@ -298,10 +299,9 @@ export class V1Collection {
    * @returns {Promise<V1WriteResult>}
    */
   async put(id, document, options = {}) {
-    const params = this.#document(id);
     const headers = preconditionHeaders(options, true);
-    return decodeWrite(await this.#transport.call("putDocument", params, {
-      body: encodeDocument(document), headers, signal: options.signal,
+    return decodeWrite(await this.#transport.call("putDocument", this.#params, {
+      query: this.#documentKey(id), body: encodeDocument(document), headers, signal: options.signal,
     }));
   }
 
@@ -325,14 +325,13 @@ export class V1Collection {
    * @returns {Promise<V1WriteResult>}
    */
   async patch(id, patch, options = {}) {
-    const params = this.#document(id);
     const headers = preconditionHeaders(options, false);
     const normalized = normalizePatch(patch);
     const [contentType, body] = "merge" in normalized
       ? ["application/merge-patch+json", stringifyExactJson(normalized.merge, "merge patch")]
       : ["application/vnd.terrabase.ops+json", stringifyExactJson({ ops: normalized.ops }, "patch ops")];
-    return decodeWrite(await this.#transport.call("patchDocument", params, {
-      body, contentType, headers,
+    return decodeWrite(await this.#transport.call("patchDocument", this.#params, {
+      query: this.#documentKey(id), body, contentType, headers,
       signal: options.signal,
     }));
   }
@@ -344,10 +343,9 @@ export class V1Collection {
    * @returns {Promise<V1WriteResult>}
    */
   async delete(id, options = {}) {
-    const params = this.#document(id);
     const headers = preconditionHeaders(options, false);
-    return decodeWrite(await this.#transport.call("deleteDocument", params, {
-      headers, signal: options.signal,
+    return decodeWrite(await this.#transport.call("deleteDocument", this.#params, {
+      query: this.#documentKey(id), headers, signal: options.signal,
     }));
   }
 

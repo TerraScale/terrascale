@@ -16,11 +16,12 @@ public sealed class CreateCollectionEndpoint(IDocumentService documents, ITenant
         Post(DocumentRoute.Collections);
         Name("createCollection");
         Summary("Creates a collection");
-        Description("Body {\"name\":…}; names match ^[a-z][a-z0-9_-]{0,62}$. Collections are schemaless; schema, ttl_path, unique, indexes and advisor are not supported yet and fail as unknown members. An existing name fails with 409 name_taken.");
+        Description("Body {\"name\":…}; names match ^[a-z][a-z0-9_-]{0,62}$. Collections start schemaless; attach optional JSON Schema with the collection schema endpoint. This request accepts only name. An existing name fails with 409 name_taken.");
         Tags("Collections");
         Metadata(new RequestBodyMetadata(typeof(CreateCollectionRequest), DocumentRoute.JsonMediaType));
         Produces<CollectionBody>(StatusCodes.Status201Created);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         Produces<ErrorBody>(StatusCodes.Status409Conflict);
         RequireAuthorization(ApiKeyScopes.DocumentsWrite);
         Metadata(ListenerMetadata.Client);
@@ -32,6 +33,7 @@ public sealed class CreateCollectionEndpoint(IDocumentService documents, ITenant
         {
             Validation error => ErrorResponse.From(error),
             NotFound error => ErrorResponse.From(error),
+            Unavailable error => ErrorResponse.From(error),
             TenantContext database => (DocumentRoute.CheckParameters(HttpContext), DocumentRoute.CheckIdempotencyKey(HttpContext)) switch
             {
                 (Validation error, _) => ErrorResponse.From(error),
@@ -67,5 +69,5 @@ public sealed class CreateCollectionEndpoint(IDocumentService documents, ITenant
         Unavailable error => ErrorResponse.From(error),
     };
 
-    internal static CollectionBody Body(CollectionInfo collection) => new(collection.Name, DocumentRoute.Decimal(collection.CreatedAt));
+    internal static CollectionBody Body(CollectionInfo collection) => new(collection.Name, DocumentRoute.Decimal(collection.CreatedAt), collection.Id);
 }

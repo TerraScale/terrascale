@@ -1,4 +1,4 @@
-// Routes owned by the C# Documents API at 263598b (decision 0004 and shape-reads.md).
+// Routes owned by the C# Documents API at 6cb9745 (decision 0004 and shape-reads.md).
 /** @typedef {"getDocument" | "putDocument" | "createDocument" | "patchDocument" | "deleteDocument" | "commitTransaction" | "queryDocuments" | "createCollection" | "getCollection" | "listCollections" | "dropCollection" | "readShape"} V1Operation */
 /**
  * @typedef {object} V1Route
@@ -20,11 +20,11 @@ const collection = `${collections}/{collection}`;
 const documents = `${collection}/documents`;
 /** @type {readonly V1Route[]} */
 export const v1Routes = Object.freeze(/** @type {V1Route[]} */ ([
-  { operation: "getDocument", method: "GET", pathTemplate: `${documents}/{id}`, permission: "documents:read", requestMediaTypes: [], successStatuses: [200] },
-  { operation: "putDocument", method: "PUT", pathTemplate: `${documents}/{id}`, permission: "documents:write", requestMediaTypes: ["application/json"], successStatuses: [200, 201] },
+  { operation: "getDocument", method: "GET", pathTemplate: `${documents}/by-key`, permission: "documents:read", requestMediaTypes: [], successStatuses: [200] },
+  { operation: "putDocument", method: "PUT", pathTemplate: `${documents}/by-key`, permission: "documents:write", requestMediaTypes: ["application/json"], successStatuses: [200, 201] },
   { operation: "createDocument", method: "POST", pathTemplate: documents, permission: "documents:write", requestMediaTypes: ["application/json"], successStatuses: [201] },
-  { operation: "patchDocument", method: "PATCH", pathTemplate: `${documents}/{id}`, permission: "documents:write", requestMediaTypes: ["application/merge-patch+json", "application/vnd.terrabase.ops+json"], successStatuses: [200] },
-  { operation: "deleteDocument", method: "DELETE", pathTemplate: `${documents}/{id}`, permission: "documents:write", requestMediaTypes: [], successStatuses: [200] },
+  { operation: "patchDocument", method: "PATCH", pathTemplate: `${documents}/by-key`, permission: "documents:write", requestMediaTypes: ["application/merge-patch+json", "application/vnd.terrabase.ops+json"], successStatuses: [200] },
+  { operation: "deleteDocument", method: "DELETE", pathTemplate: `${documents}/by-key`, permission: "documents:write", requestMediaTypes: [], successStatuses: [200] },
   { operation: "commitTransaction", method: "POST", pathTemplate: `${database}/transactions`, permission: "documents:write", requestMediaTypes: ["application/json"], successStatuses: [200] },
   { operation: "queryDocuments", method: "POST", pathTemplate: `${collection}/query`, permission: "documents:read", requestMediaTypes: ["application/json"], successStatuses: [200] },
   { operation: "createCollection", method: "POST", pathTemplate: collections, permission: "documents:write", requestMediaTypes: ["application/json"], successStatuses: [201] },

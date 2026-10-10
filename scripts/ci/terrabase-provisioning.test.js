@@ -26,6 +26,7 @@ test("provisioning derives named setup paths and methods from the pinned produce
   const contract = await producerContract();
   expect(provisioningRoute(contract, "createOrganization")).toEqual({ method: "POST", path: "/v1/management/organizations" });
   expect(provisioningRoute(contract, "createProject", { organization: "org/id" })).toEqual({ method: "POST", path: "/v1/management/organizations/org%2Fid/projects" });
+  expect(provisioningRoute(contract, "setOrganizationPlan", { organization: "org/id" })).toEqual({ method: "PUT", path: "/v1/management/organizations/org%2Fid/plan" });
   expect(provisioningRoute(contract, "createApiKey")).toEqual({ method: "POST", path: "/admin/api-keys" });
   expect(provisioningRoute(contract, "createDatabase", { project: "project/id", database: "app" })).toEqual({ method: "PUT", path: "/v1/projects/project%2Fid/databases/app" });
   expect(() => provisioningRoute(contract, "createProject")).toThrow("missing path parameter organization");

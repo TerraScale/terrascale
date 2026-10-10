@@ -1,19 +1,27 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Text;
+using System.Web;
 using Microsoft.AspNetCore.Http.Features;
+using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Net.Http.Headers;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
+using TerraBase.Features.UserAuth;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Documents;
 
-/// <summary>The request's tenant, or why it has none: a malformed database name, or a database the key does not reach.</summary>
-internal readonly union TenantResult(TenantContext, Validation, NotFound);
+/// <summary>
+/// The request's tenant, or why it has none: a malformed database name, a database the key does not reach, or a catalog
+/// this build cannot use.
+/// </summary>
+internal readonly union TenantResult(TenantContext, Validation, NotFound, Unavailable);
 
 /// <summary>The addressed document, or why the address is refused.</summary>
-internal readonly union KeyResult(DocumentKey, Validation, NotFound);
+internal readonly union KeyResult(DocumentKey, Validation, NotFound, Unavailable);
 
 /// <summary>A request body, or why it is refused.</summary>
 internal readonly union BodyResult(byte[], Validation, PayloadTooLarge, UnsupportedMediaType);
@@ -29,6 +37,11 @@ internal static class DocumentRoute
 
     /// <summary>Base route of one collection's documents.</summary>
     public const string Collection = Collections + "/{collection}/documents";
+
+    /// <summary>Point operations carry the raw document key in one query parameter.</summary>
+    public const string Document = Collection + "/by-key";
+
+    private static readonly UTF8Encoding KeyEncoding = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
 
     /// <summary>Largest request body of any other route.</summary>
     public const int MaxRequestBytes = 4 * 1024 * 1024;
@@ -76,11 +89,42 @@ internal static class DocumentRoute
 
     private static async ValueTask<TenantResult> ResolveAsync(HttpContext context, ITenantDirectory tenants, DatabaseName name, CancellationToken cancellationToken)
     {
-        var key = ApiKey.Of(context);
-        if (await tenants.FindDatabaseAsync(key.OrganizationId, Project(context), name.Value, cancellationToken).ConfigureAwait(false) is not { } tenant
-            || !key.Reaches(tenant))
+        if (!EntityIds.IsValid(Project(context)))
         {
-            return UnknownDatabase;
+            return new Validation("project must be a canonical uppercase ULID");
+        }
+
+        if (context.Features.Get<ProjectAccess>() is { } access)
+        {
+            if (access.DatabaseName is not null && !string.Equals(access.DatabaseName, name.Value, StringComparison.Ordinal))
+            {
+                return UnknownDatabase;
+            }
+
+            var resolved = await tenants.FindDatabaseAsync(access.OrganizationId, access.ProjectId, name.Value, cancellationToken).ConfigureAwait(false);
+            if (resolved is not TenantContext database
+                || (access.DatabaseId is not null && !string.Equals(access.DatabaseId, database.DatabaseId, StringComparison.Ordinal)))
+            {
+                return resolved switch
+                {
+                    Unavailable error => error,
+                    TenantContext or NotFound => UnknownDatabase,
+                };
+            }
+
+            context.Features.Set(database);
+            return database;
+        }
+
+        var key = ApiKey.Of(context);
+        var found = await tenants.FindDatabaseAsync(key.OrganizationId, Project(context), name.Value, cancellationToken).ConfigureAwait(false);
+        if (found is not TenantContext tenant || !key.Reaches(tenant))
+        {
+            return found switch
+            {
+                Unavailable error => error,
+                TenantContext or NotFound => UnknownDatabase,
+            };
         }
 
         context.Features.Set(tenant);
@@ -98,7 +142,7 @@ internal static class DocumentRoute
 
     /// <summary>The route's document: malformed collection and id first (400), then the tenant (404).</summary>
     public static async ValueTask<KeyResult> CheckKeyAsync(HttpContext context, ITenantDirectory tenants, CancellationToken cancellationToken) =>
-        (CheckCollectionName(context), CheckDocumentId(context.Request.RouteValues["id"] as string)) switch
+        (CheckCollectionName(context), CheckDocumentParameter(context)) switch
         {
             (Validation error, _) => error,
             (_, Validation error) => error,
@@ -107,23 +151,75 @@ internal static class DocumentRoute
                 TenantContext tenant => new DocumentKey(tenant, collection, id),
                 Validation error => error,
                 NotFound error => error,
+                Unavailable error => error,
             },
         };
 
+    /// <summary>Decodes one UTF-8 query key exactly once, without path normalization or replacement characters.</summary>
+    public static Valid<string> CheckDocumentParameter(HttpContext context)
+    {
+        string? encoded = null;
+        foreach (var parameter in new QueryStringEnumerable(context.Request.QueryString.Value))
+        {
+            if (!parameter.EncodedName.Span.SequenceEqual("id"))
+            {
+                continue;
+            }
+
+            if (encoded is not null)
+            {
+                return new Validation("id is required exactly once");
+            }
+
+            // A UTF-16 character needs at most three UTF-8 bytes, each query-encoded as three ASCII characters.
+            if (parameter.EncodedValue.Length > 256 * 9)
+            {
+                return new Validation("id must be 1 to 256 characters without control characters");
+            }
+
+            encoded = parameter.EncodedValue.ToString();
+        }
+
+        if (string.IsNullOrEmpty(encoded))
+        {
+            return new Validation("id is required exactly once and must be non-empty");
+        }
+
+        for (var i = 0; i < encoded.Length; i++)
+        {
+            if (encoded[i] > 127 || (encoded[i] == '%' &&
+                (i + 2 >= encoded.Length || !Uri.IsHexDigit(encoded[i + 1]) || !Uri.IsHexDigit(encoded[i + 2]))))
+            {
+                return new Validation("id must use valid UTF-8 query encoding");
+            }
+
+            if (encoded[i] == '%')
+            {
+                i += 2;
+            }
+        }
+
+        try
+        {
+            return CheckDocumentId(KeyEncoding.GetString(HttpUtility.UrlDecodeToBytes(encoded)!));
+        }
+        catch (DecoderFallbackException)
+        {
+            return new Validation("id must use valid UTF-8 query encoding");
+        }
+    }
+
     /// <summary>
-    /// A document id, or the rule it breaks; the service permits a non-UUID only when that legacy id already exists.
+    /// A caller-supplied document key, or the length or character rule it breaks.
     /// </summary>
     public static Valid<string> CheckDocumentId(string? id) =>
         id is { Length: > 0 and <= 256 } && !id.Any(char.IsControl)
             ? id
             : new Validation("id must be 1 to 256 characters without control characters");
 
-    /// <summary>A document URI built from escaped route values, preserving legacy identities.</summary>
+    /// <summary>A document URI built from escaped route values, escaping caller-supplied keys.</summary>
     public static string Location(HttpContext context, DocumentKey key) =>
-        $"/v1/projects/{Uri.EscapeDataString(Project(context))}/databases/{Uri.EscapeDataString(Database(context).Value)}/collections/{Uri.EscapeDataString(key.Collection)}/documents/{Uri.EscapeDataString(key.Id)}";
-
-    public static bool IsUuid(string id) =>
-        Guid.TryParseExact(id, "D", out var guid) && string.Equals(guid.ToString("D"), id, StringComparison.Ordinal);
+        $"/v1/projects/{Uri.EscapeDataString(Project(context))}/databases/{Uri.EscapeDataString(Database(context).Value)}/collections/{Uri.EscapeDataString(key.Collection)}/documents/by-key?id={Uri.EscapeDataString(key.Id)}";
 
     /// <summary>Accepts only the listed query parameters, each at most once and non-empty.</summary>
     public static Valid<IQueryCollection> CheckParameters(HttpContext context, params string[] allowed)
@@ -225,7 +321,9 @@ internal static class DocumentRoute
         return RequestJson.IsText(json) ? json : new Validation(RequestJson.TextRule, code);
     }
 
-    private static PayloadTooLarge TooLarge(int maxBytes) => new($"the body is at most {maxBytes / 1024 / 1024} MiB");
+    private static PayloadTooLarge TooLarge(int maxBytes) => new(maxBytes >= 1024 * 1024
+        ? $"the body is at most {maxBytes / 1024 / 1024} MiB"
+        : $"the body is at most {maxBytes / 1024} KiB");
 
     /// <summary>Reads a document body: one JSON object within the document limits.</summary>
     public static ValueTask<BodyResult> CheckDocumentAsync(HttpContext context, CancellationToken cancellationToken) =>

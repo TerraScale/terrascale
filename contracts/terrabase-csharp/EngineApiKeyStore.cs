@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -6,6 +7,7 @@ using TerraBase.Errors;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Management;
 using TerraBase.Hosting;
+using TerraBase.Primitives;
 using static TerraBase.Features.Management.SystemCatalog;
 
 namespace TerraBase.Features.ApiKeys;
@@ -19,9 +21,9 @@ namespace TerraBase.Features.ApiKeys;
 internal sealed class EngineApiKeyStore(SystemCatalog catalog, TimeProvider time, ISystemDocumentReader documents) : IApiKeyStore
 {
     private const string Collection = "api_keys";
+    private const string Hashes = "api_key_hashes";
     private const string KeySequence = "api_key_sequence";
     private const long MaxPageBytes = 1024 * 1024;
-    private const int ListPage = 100;
 
     /// <summary>Every API key secret starts with this; other bearer tokens (ts-auth access tokens) are not API keys.</summary>
     internal const string SecretPrefix = "tb_";
@@ -31,31 +33,42 @@ internal sealed class EngineApiKeyStore(SystemCatalog catalog, TimeProvider time
 
     private static string ProjectKeyOrder(string projectId) => ProjectState(projectId) + "api_key_order";
 
-    public async ValueTask<(ApiKey Key, string Secret)?> CreateAsync(
+    public async ValueTask<CreateApiKeyResult> CreateAsync(
         string name, IReadOnlyList<string> scopes, string organizationId, string? projectId, string? databaseId, CancellationToken cancellationToken)
     {
         var secret = NewSecret();
         // Checked against the catalog version, like the existence check the endpoint made before: a key's scope and a
         // project key's list entries are management state.
-        var key = await catalog.WriteAsync(async transaction =>
+        return await catalog.WriteAsync<CreateApiKeyResult>(async transaction =>
             await EngineManagementService.ScopeExistsUncheckedAsync(transaction, organizationId, projectId, databaseId, cancellationToken).ConfigureAwait(false)
-                ? (await StoreAsync(transaction, secret, name, scopes, organizationId, projectId, databaseId, cancellationToken).ConfigureAwait(false)).Key
-                : null,
-            cancellationToken).ConfigureAwait(false);
-        return key is null ? null : (key, secret);
+                ? new IssuedApiKey((await StoreAsync(transaction, secret, name, scopes, organizationId, projectId, databaseId, cancellationToken).ConfigureAwait(false)).Key, secret)
+                : new NotFound(),
+            static error => error, cancellationToken).ConfigureAwait(false);
     }
 
-    public async ValueTask<ApiKey?> FindAsync(string secret, CancellationToken cancellationToken)
+    public async ValueTask<Found<ApiKey>> FindAsync(string secret, CancellationToken cancellationToken)
     {
         if (!secret.StartsWith(SecretPrefix, StringComparison.Ordinal))
         {
-            return null;
+            return new NotFound();
         }
 
-        var document = await documents.GetSystemAsync(Collection, Hash(secret), cancellationToken).ConfigureAwait(false);
-        // Keys predating tenancy authenticate nothing; catalog migration is independent of data-plane reads.
-        return document is null || JsonSerializer.Deserialize(document.Json.Span, TerraBaseJsonContext.Default.ApiKey) is not { OrganizationId: not null } key
-            ? null
+        var lookup = await documents.GetSystemAsync(Hashes, Hash(secret), cancellationToken).ConfigureAwait(false);
+        if (lookup is null)
+        {
+            return new NotFound();
+        }
+
+        var id = JsonSerializer.Deserialize(lookup.Json.Span, TerraBaseJsonContext.Default.String);
+        if (!EntityIds.IsValid(id))
+        {
+            throw new InvalidDataException("the API key lookup names an invalid id");
+        }
+
+        var document = await documents.GetSystemAsync(Collection, id, cancellationToken).ConfigureAwait(false);
+        // A key without a tenant scope authenticates nothing; data-plane reads never initialize the catalog.
+        return document is null || EntityPayload.Read(document, TerraBaseJsonContext.Default.ApiKey) is not { OrganizationId: not null } key
+            ? new NotFound()
             : key;
     }
 
@@ -74,25 +87,26 @@ internal sealed class EngineApiKeyStore(SystemCatalog catalog, TimeProvider time
             }
 
             // Keys are project state: a viewer cannot issue them, and issuing one changes the organization.
-            switch (await EngineManagementService.WritableAsync(transaction, userId, organizationId, cancellationToken).ConfigureAwait(false))
+            var access = await EngineManagementService.WritableAsync(transaction, userId, organizationId, cancellationToken).ConfigureAwait(false);
+            if (access is not OrganizationMember)
             {
-                case ManagementError.None:
-                    break;
-                case ManagementError.Forbidden:
-                    return ManagementErrors.RoleTooLow;
-                default:
-                    return new NotFound();
+                return access switch
+                {
+                    Forbidden => ManagementErrors.RoleTooLow,
+                    NotFound => new NotFound(),
+                    OrganizationMember => throw new UnreachableException(),
+                };
             }
 
             await EngineManagementService.TouchOrganizationAsync(transaction, organizationId, cancellationToken).ConfigureAwait(false);
             var (_, listed) = await StoreAsync(transaction, secret, name, scopes, organizationId, projectId, databaseId, cancellationToken).ConfigureAwait(false);
             return new CreatedProjectApiKey(listed!, secret);
-        }, cancellationToken).ConfigureAwait(false);
+        }, static error => error, cancellationToken).ConfigureAwait(false);
     }
 
-    public ValueTask<Found<ManagementPage<ProjectApiKey>>> ListProjectKeysAsync(
+    public ValueTask<ListProjectKeysResult> ListProjectKeysAsync(
         string userId, string organizationId, string projectId, string? after, int limit, CancellationToken cancellationToken) =>
-        catalog.ReadAsync<Found<ManagementPage<ProjectApiKey>>>(async transaction =>
+        catalog.ReadAsync<ListProjectKeysResult>(async transaction =>
         {
             if (await EngineManagementService.GetProjectAsync(transaction, userId, organizationId, projectId, cancellationToken).ConfigureAwait(false) is null)
             {
@@ -110,7 +124,7 @@ internal sealed class EngineApiKeyStore(SystemCatalog catalog, TimeProvider time
             }
 
             return new ManagementPage<ProjectApiKey>(keys, page.HasMore ? page.Documents[^1].Id : null);
-        }, cancellationToken);
+        }, static error => error, cancellationToken);
 
     public async ValueTask<RevokeProjectKeyResult> RevokeProjectKeyAsync(string userId, string organizationId, string projectId, string keyId, CancellationToken cancellationToken) =>
         await catalog.WriteAsync<RevokeProjectKeyResult>(async transaction =>
@@ -121,51 +135,24 @@ internal sealed class EngineApiKeyStore(SystemCatalog catalog, TimeProvider time
                 return new NotFound();
             }
 
-            switch (await EngineManagementService.WritableAsync(transaction, userId, organizationId, cancellationToken).ConfigureAwait(false))
+            var access = await EngineManagementService.WritableAsync(transaction, userId, organizationId, cancellationToken).ConfigureAwait(false);
+            if (access is not OrganizationMember)
             {
-                case ManagementError.None:
-                    break;
-                case ManagementError.Forbidden:
-                    return ManagementErrors.RoleTooLow;
-                default:
-                    return new NotFound();
+                return access switch
+                {
+                    Forbidden => ManagementErrors.RoleTooLow,
+                    NotFound => new NotFound(),
+                    OrganizationMember => throw new UnreachableException(),
+                };
             }
 
             await EngineManagementService.TouchOrganizationAsync(transaction, organizationId, cancellationToken).ConfigureAwait(false);
-            await transaction.DeleteAsync(Collection, entry.Hash, cancellationToken).ConfigureAwait(false);
+            await transaction.DeleteAsync(Collection, keyId, cancellationToken).ConfigureAwait(false);
+            await transaction.DeleteAsync(Hashes, entry.Hash, cancellationToken).ConfigureAwait(false);
             await transaction.DeleteAsync(ProjectKeys(projectId), keyId, cancellationToken).ConfigureAwait(false);
             await transaction.DeleteAsync(ProjectKeyOrder(projectId), entry.Order, cancellationToken).ConfigureAwait(false);
             return new Done();
-        }, cancellationToken).ConfigureAwait(false);
-
-    /// <summary>
-    /// Lists the project keys stored before every issuance listed them (operator keys narrowed to a project), so they can
-    /// be listed and revoked and keep their project from being deleted. Their secrets are not stored: the last four
-    /// characters are empty, and <paramref name="now"/> stands for their creation time. Run once per catalog.
-    /// </summary>
-    internal static async ValueTask ListUnlistedProjectKeysAsync(IStorageTransaction transaction, DateTimeOffset now, CancellationToken cancellationToken)
-    {
-        string? after = null;
-        DocumentPage page;
-        do
-        {
-            page = await transaction.ListAsync(Collection, after, ListPage, MaxPageBytes, cancellationToken).ConfigureAwait(false);
-            foreach (var document in page.Documents)
-            {
-                if (JsonSerializer.Deserialize(document.Json.Span, TerraBaseJsonContext.Default.ApiKey) is { OrganizationId: { } organizationId, ProjectId: { } projectId } key
-                    && await GetAsync(transaction, ProjectKeys(projectId), key.Id, TerraBaseJsonContext.Default.ProjectKeyEntry, cancellationToken).ConfigureAwait(false) is null
-                    // The project decides; a key whose database was deleted since is listed too, so it can still be revoked.
-                    && await EngineManagementService.ScopeExistsUncheckedAsync(transaction, organizationId, projectId, null, cancellationToken).ConfigureAwait(false))
-                {
-                    await ListProjectKeyAsync(transaction, organizationId, new ProjectApiKey(key.Id, projectId, key.Name, key.Scopes, key.DatabaseId, "", now), document.Id, cancellationToken)
-                        .ConfigureAwait(false);
-                }
-            }
-
-            after = page.Documents.Count > 0 ? page.Documents[^1].Id : after;
-        }
-        while (page.HasMore);
-    }
+        }, static error => error, cancellationToken).ConfigureAwait(false);
 
     // Stores a key's authentication document. A project key, whichever route issued it, is also listed: it can be listed
     // and revoked through its project, and keeps the project from being deleted.
@@ -174,9 +161,10 @@ internal sealed class EngineApiKeyStore(SystemCatalog catalog, TimeProvider time
         CancellationToken cancellationToken)
     {
         var now = time.GetUtcNow();
-        var key = new ApiKey(Guid.CreateVersion7(now).ToString(), name, scopes, organizationId, projectId, databaseId);
+        var key = new ApiKey(EntityIds.New(time).ToString(), name, scopes, organizationId, projectId, databaseId);
         var hash = Hash(secret);
-        await PutAsync(transaction, Collection, hash, key, TerraBaseJsonContext.Default.ApiKey, cancellationToken).ConfigureAwait(false);
+        await PutAsync(transaction, Collection, key.Id, key, TerraBaseJsonContext.Default.ApiKey, cancellationToken).ConfigureAwait(false);
+        await PutAsync(transaction, Hashes, hash, key.Id, TerraBaseJsonContext.Default.String, cancellationToken).ConfigureAwait(false);
         if (projectId is null)
         {
             return (key, null);
@@ -206,6 +194,6 @@ internal sealed class EngineApiKeyStore(SystemCatalog catalog, TimeProvider time
 
 /// <summary>A project key as listed, with the hash that names its authentication document.</summary>
 /// <param name="Key">The listed key.</param>
-/// <param name="Hash">SHA-256 of the secret: the id of its document in <c>api_keys</c>.</param>
+/// <param name="Hash">SHA-256 lookup key of the secret in <c>api_key_hashes</c>.</param>
 /// <param name="Order">Persisted per-organization sequence, allocated in the key's write transaction.</param>
 internal sealed record ProjectKeyEntry(ProjectApiKey Key, string Hash, string Order);

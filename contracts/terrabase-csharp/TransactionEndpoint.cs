@@ -5,13 +5,14 @@ using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Hosting;
+using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraScale.Endpoints;
 
 namespace TerraBase.Features.Documents;
 
 /// <summary><c>POST /v1/projects/{project}/databases/{database}/transactions</c>: applies up to 1024 operations atomically.</summary>
-public sealed class TransactionEndpoint(IDocumentService documents, IAuthorizationService authorization, ITenantDirectory tenants) : EndpointWithoutRequest<IResult>
+public sealed class TransactionEndpoint(IDocumentService documents, IAuthorizationService authorization, ITenantDirectory tenants, TimeProvider time) : EndpointWithoutRequest<IResult>
 {
     private const int MaxOps = 1024;
     private const int MaxAssertCounts = 16;
@@ -20,13 +21,13 @@ public sealed class TransactionEndpoint(IDocumentService documents, IAuthorizati
     public override void Configure()
     {
         Post(DocumentRoute.DatabaseRoute + "/transactions");
-        Name("transaction");
+        Name("runTransaction");
         Summary("Applies document operations atomically");
         Description("""
-            {"ops":[…]} with 1 to 1024 operations across the collections of one database: create (put with if_none_match "*"; id is generated as a UUIDv7 when omitted), put (document, optional if_match or if_none_match "*"), patch (exactly one of merge or ops, optional if_match), delete (optional if_match), assert (filter: the document exists and matches; or absent: true) and assert_count (filter, gte and/or lte; at most 16 per transaction, at most 10000 documents examined). Assertions see the state before this transaction's writes. Two operations may not target the same document. Every failure names the failing operation in error.op. Assertions also need the documents:read scope. Query assertions and counts are interrupted at SQLite progress callbacks after 5 million VM instructions or a 5-second deadline (400 invalid_query, query too expensive). Existing non-UUID legacy document ids remain addressable; new ids must be lowercase hyphenated UUIDs.
+            {"ops":[…]} with 1 to 1024 operations across the collections of one database: create (put with if_none_match "*"; id is generated as a ULID when omitted), put (document, optional if_match or if_none_match "*"), patch (exactly one of merge or ops, optional if_match), delete (optional if_match), assert (filter: the document exists and matches; or absent: true) and assert_count (filter, gte and/or lte; at most 16 per transaction, at most 10000 documents examined). Assertions see the state before this transaction's writes. Two operations may not target the same document. Every failure names the failing operation in error.op. Assertions also need the documents:read scope. Query assertions and counts are interrupted at SQLite progress callbacks after 5 million VM instructions or a 5-second deadline (400 invalid_query, query too expensive). Caller-supplied document keys may be 1 to 256 characters without control characters. Generated ids are canonical uppercase ULIDs.
             Captured changes contain at most 2 MiB of UTF-8 collection names, ids and JSON. Exceeding this limit returns 503 capacity with the failing error.op, rolling back the entire transaction; split the writes into smaller transactions.
             """);
-        Tags("Documents");
+        Tags("Transactions");
         Metadata(new RequestBodyMetadata(typeof(TransactionRequest), DocumentRoute.JsonMediaType));
         Produces<TransactionBody>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
@@ -44,6 +45,7 @@ public sealed class TransactionEndpoint(IDocumentService documents, IAuthorizati
         {
             Validation error => ErrorResponse.From(error),
             NotFound error => ErrorResponse.From(error),
+            Unavailable error => ErrorResponse.From(error),
             TenantContext database => (DocumentRoute.CheckParameters(HttpContext), DocumentRoute.CheckIdempotencyKey(HttpContext)) switch
             {
                 (Validation error, _) => ErrorResponse.From(error),
@@ -82,7 +84,7 @@ public sealed class TransactionEndpoint(IDocumentService documents, IAuthorizati
         var assertCounts = 0;
         for (var i = 0; i < ops.Count; i++)
         {
-            switch (CheckOperation(ops[i]))
+            switch (CheckOperation(ops[i], time))
             {
                 case Validation error:
                     return ErrorResponse.From(error, i);
@@ -129,7 +131,7 @@ public sealed class TransactionEndpoint(IDocumentService documents, IAuthorizati
     };
 
     /// <summary>Parses and validates one operation of a transaction (also of a Management commit), or answers the rule it breaks.</summary>
-    internal static Valid<DocumentOperation> CheckOperation(JsonElement json)
+    internal static Valid<DocumentOperation> CheckOperation(JsonElement json, TimeProvider time)
     {
         if (json.ValueKind != JsonValueKind.Object)
         {
@@ -148,12 +150,12 @@ public sealed class TransactionEndpoint(IDocumentService documents, IAuthorizati
             TransactionOpRequest op => DocumentRoute.CheckCollectionName(op.Collection) switch
             {
                 Validation error => error,
-                string collection => Operation(op, collection),
+                string collection => Operation(op, collection, time),
             },
         };
     }
 
-    private static Valid<DocumentOperation> Operation(TransactionOpRequest op, string collection)
+    private static Valid<DocumentOperation> Operation(TransactionOpRequest op, string collection, TimeProvider time)
     {
         var hasDocument = op.Document.ValueKind != JsonValueKind.Undefined;
         var hasMerge = op.Merge.ValueKind != JsonValueKind.Undefined;
@@ -168,7 +170,7 @@ public sealed class TransactionEndpoint(IDocumentService documents, IAuthorizati
         return op.Op switch
         {
             "create" when hasDocument && !hasPatch && !hasAssert && !hasPrecondition =>
-                (op.Id is null ? Guid.CreateVersion7().ToString("D") : DocumentRoute.CheckDocumentId(op.Id)) switch
+                (op.Id is null ? EntityIds.New(time).ToString() : DocumentRoute.CheckDocumentId(op.Id)) switch
                 {
                     Validation error => error,
                     string id => (DocumentOperation)new PutOperation(collection, id, Document(op.Document), Documents.Precondition.Absent),

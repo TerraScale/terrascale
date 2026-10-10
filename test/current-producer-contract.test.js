@@ -19,20 +19,20 @@ test("contract inputs come from one SHA-bound C# release on main", async () => {
   });
 });
 
-test("released data routes use tb_ keys while the published JWT-only route table remains a target", async () => {
+test("released data routes use tb_ keys while the published OpenAPI declares the JWT scheme", async () => {
   const spec = await producerContract();
   expect(spec).toMatchObject({ info: { version: releasePin.version } });
-  expect(spec.components).toMatchObject({ securitySchemes: { ApiKey: { type: "http", scheme: "bearer", bearerFormat: "tb_ API key" } } });
+  expect(spec.components).toMatchObject({ securitySchemes: { TsAuth: { type: "http", scheme: "bearer", bearerFormat: "JWT" } } });
   for (const route of v1Routes)
-    expect(spec.paths[route.pathTemplate]?.[route.method.toLowerCase()]).toHaveProperty("security", [{ ApiKey: [route.permission] }]);
-  expect(spec.paths["/v1/management/organizations/{organization}/projects/{project}/databases/{database}"]).toBeDefined();
-  expect(spec.paths["/v1/projects/{project}/databases"]).toBeUndefined();
+    expect(spec.paths[route.pathTemplate]?.[route.method.toLowerCase()]).toHaveProperty("security", [{ TsAuth: [] }]);
+  expect(spec.paths["/v1/management/organizations"]).toBeUndefined(); // Management-user routes are source-bound, not public.
+  expect(spec.paths["/v1/projects/{project}/databases"]?.post).toBeDefined();
   expect(spec.paths["/admin/api-keys"]).toBeUndefined(); // The public OpenAPI excludes admin-only routes.
   /** @param {string} name */
   const source = name => readFile(new URL(`../contracts/terrabase-csharp/${name}`, import.meta.url), "utf8");
   expect(await source("EngineApiKeyStore.cs")).toContain('SecretPrefix = "tb_"');
   expect(await source("ApiKeyAuthenticationHandler.cs")).toContain("secret.StartsWith(EngineApiKeyStore.SecretPrefix");
-  expect(await source("api.md")).toContain("this is the target");
+  expect(await source("api.md")).toContain("Hidden compatibility paths still accept existing `tb_`");
 });
 
 test("vendored contracts and security evidence stay bound to the repository-backed release pin", async () => {
