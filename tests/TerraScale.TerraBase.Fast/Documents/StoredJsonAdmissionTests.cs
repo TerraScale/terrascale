@@ -35,7 +35,7 @@ public sealed class StoredJsonAdmissionTests
         await Assert.That(call.ResponseStream.Current.Welcome).IsNotNull();
         await call.RequestStream.WriteAsync(new SyncRequest
         {
-            CommittedGroup = ReplicationProtocol.CreateBatch(tenant, origin, 1, [new DocumentChange("items", id, 1, Encoding.UTF8.GetBytes(json))]),
+            CommittedGroup = ReplicationProtocol.CreateBatch(tenant, origin, 1, Deltas.Group(Deltas.Write("items", id, json))),
         });
         await Assert.That(await call.ResponseStream.MoveNext(CancellationToken.None)).IsTrue();
         await Assert.That(call.ResponseStream.Current.Error.Code).IsEqualTo(StreamErrorCode.StreamErrorInvalidBatch);
@@ -79,7 +79,7 @@ public sealed class StoredJsonAdmissionTests
             {
                 if (imported)
                 {
-                    await write.ApplyAsync(new DocumentChange("items", id, 1, malformed), CancellationToken.None);
+                    await write.ApplyAsync(Deltas.Write("items", id, Encoding.UTF8.GetString(malformed)), CancellationToken.None);
                 }
                 else
                 {

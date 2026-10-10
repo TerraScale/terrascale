@@ -43,18 +43,22 @@ internal sealed partial class SqliteStorageTransaction(
     private Task? _disposal;
     private bool _streaming;
 
-    private readonly List<DocumentChange>? _changes = changesCommitted is null ? null : [];
+    // The system database's capture: every write, in order (docs/decisions/0009).
+    private readonly List<DocumentChange>? _changes = changesCommitted is not null && store.IsSystem ? [] : null;
 
-    // Where each captured document's latest state sits in _changes, so a capture finds its predecessor in O(1).
+    // A client database's capture: one delta per document, the join of this transaction's writes to it, in first-write
+    // order (docs/design/anna-core.md, Per-origin streams).
+    private readonly List<CapturedDelta>? _deltas = changesCommitted is not null && !store.IsSystem ? [] : null;
+
+    // Where each captured document's delta sits in _deltas, so a capture finds its predecessor in O(1).
     private readonly Dictionary<(string Collection, string Id), int> _changeIndex = [];
 
-    // Captured states a batched write replaced since its savepoint, to put back if it rolls back.
-    private readonly List<(int Index, DocumentChange Previous)> _replacedSinceSavepoint = [];
+    // Captured deltas a batched write replaced since its savepoint, to put back if it rolls back.
+    private readonly List<(int Index, CapturedDelta Previous)> _replacedSinceSavepoint = [];
 
     // Body statements live only for this transaction: idle sessions must not retain bound JSON.
     private readonly Dictionary<string, SqliteCommand> _bodyCommands = [with(StringComparer.Ordinal)];
 
-    private long? _importedFromOffset;
     private bool _metadataChanged;
     private int _importedCount;
     private long _importedBytes;
@@ -66,7 +70,7 @@ internal sealed partial class SqliteStorageTransaction(
     private int _writes;
     private long _writtenBytes;
 
-    // This transaction's local commit offset, separate from incoming document merge versions.
+    // This transaction's local commit offset, separate from document versions.
     private long? _offset;
 
     // Whether this transaction created or dropped a collection: the store forgets its collection names on commit.
@@ -177,22 +181,30 @@ internal sealed partial class SqliteStorageTransaction(
         }
 
         Reserve(collection, id, json.Length);
+        if (store.IsSystem)
+        {
+            return Write(offset =>
+            {
+                if (_changes is not null)
+                {
+                    CaptureSystem(new DocumentChange(collection, id, offset, json));
+                }
+
+                var put = BodyCommand(SqliteStatements.Put, collection, id);
+                put.Parameters.AddWithValue("$version", offset);
+                put.Parameters.AddWithValue("$body", body);
+                put.ExecuteNonQuery();
+            }, cancellationToken);
+        }
+
         var affected = ReplaceUniqueKeys(collection, id, body, cancellationToken);
         ClearUniqueConflict(collection, id);
-        return Write(offset =>
-        {
-            if (_changes is not null)
-            {
-                Capture(new DocumentChange(collection, id, offset, json));
-            }
-
-            var put = BodyCommand(SqliteStatements.Put, collection, id);
-            put.Parameters.AddWithValue("$version", offset);
-            put.Parameters.AddWithValue("$body", body);
-            put.ExecuteNonQuery();
-            ReconcileUnique(collection, affected, id, cancellationToken);
-            AppendChange(collection, id, offset, offset, body, cancellationToken);
-        }, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        var offset = Offset();
+        var version = WriteRegister(collection, id, json.Span, tombstone: false);
+        ReconcileUnique(collection, affected, id, cancellationToken);
+        AppendChange(collection, id, offset, version, body, cancellationToken);
+        return version;
     }
 
     public async ValueTask<bool> DeleteAsync(string collection, string id, CancellationToken cancellationToken)
@@ -201,8 +213,12 @@ internal sealed partial class SqliteStorageTransaction(
         {
             ThrowIfReadOnly();
             DocumentMutation(replicated: false);
-            var affected = ReplaceUniqueKeys(collection, id, null, cancellationToken);
-            ClearUniqueConflict(collection, id);
+            if (!store.IsSystem)
+            {
+                // A register removed without a trace would come back with the next late delta: deletions are tombstones.
+                throw new NotSupportedException("a client database deletes documents with tombstones");
+            }
+
             var command = Command(SqliteStatements.Delete, collection);
             command.Parameters.AddWithValue("$id", id);
             if (command.ExecuteNonQuery() == 0)
@@ -210,20 +226,10 @@ internal sealed partial class SqliteStorageTransaction(
                 return false;
             }
 
-            // Physical removal remains available internally; history and peers still need its deletion.
-            if (Shaped || _changes is not null)
+            // Catalog followers still need the deletion.
+            if (_changes is not null)
             {
-                Reserve(collection, id, 0);
-                Write(offset =>
-                {
-                    if (_changes is not null)
-                    {
-                        Capture(new DocumentChange(collection, id, offset, null));
-                    }
-
-                    AppendChange(collection, id, offset, offset, null, cancellationToken);
-                    ReconcileUnique(collection, affected, id, cancellationToken);
-                }, cancellationToken);
+                Write(offset => CaptureSystem(new DocumentChange(collection, id, offset, null)), cancellationToken);
             }
 
             return true;
@@ -248,22 +254,37 @@ internal sealed partial class SqliteStorageTransaction(
             }
 
             Reserve(collection, id, 0);
-            var affected = ReplaceUniqueKeys(collection, id, null, cancellationToken);
-            ClearUniqueConflict(collection, id);
-            // ponytail: keep tombstones until replication defines when they may be reaped.
+            // ponytail: tombstones stay until tombstone GC on applied vectors (TS-647 step 7).
+            if (!store.IsSystem)
+            {
+                var affected = ReplaceUniqueKeys(collection, id, null, cancellationToken);
+                ClearUniqueConflict(collection, id);
+                cancellationToken.ThrowIfCancellationRequested();
+                var offset = Offset();
+                var written = WriteRegister(collection, id, default, tombstone: true);
+                ReconcileUnique(collection, affected, id, cancellationToken);
+                AppendChange(collection, id, offset, written, null, cancellationToken);
+                if (Command(DroppedCollection, collection).ExecuteScalar() is not null)
+                {
+                    // A concurrent drop won the collection while a write it never saw kept it alive: deleting that last
+                    // document completes the drop here, as applying this tombstone does on every other member.
+                    DropReplicatedCollection(collection, cancellationToken);
+                }
+
+                return written;
+            }
+
             return Write(offset =>
             {
                 if (_changes is not null)
                 {
-                    Capture(new DocumentChange(collection, id, offset, null));
+                    CaptureSystem(new DocumentChange(collection, id, offset, null));
                 }
 
                 var command = Command(SqliteStatements.Tombstone, collection);
                 command.Parameters.AddWithValue("$id", id);
                 command.Parameters.AddWithValue("$version", offset);
                 command.ExecuteNonQuery();
-                ReconcileUnique(collection, affected, id, cancellationToken);
-                AppendChange(collection, id, offset, offset, null, cancellationToken);
             }, cancellationToken);
         }, cancellationToken, mutation: true).ConfigureAwait(false);
     }
@@ -319,7 +340,7 @@ internal sealed partial class SqliteStorageTransaction(
             return;
         }
 
-        if (_changes is not null && !DocumentChange.HasValidKey(collection, id))
+        if (_deltas is not null && !DocumentDelta.HasValidKey(collection, id))
         {
             throw new InvalidDataException("a captured change has an invalid collection or id");
         }
@@ -861,24 +882,17 @@ internal sealed partial class SqliteStorageTransaction(
     }
 
     // Client databases record their collections and indexes as documents of reserved collections, so creations and drops
-    // replicate with their transaction and merge like document states (TS-574). A replicated transaction's own metadata
-    // stays local: the imported states carry what it needs.
+    // replicate with their transaction and join like documents (TS-574). A replicated transaction's own metadata stays
+    // local: the applied registers carry what it needs.
     private void WriteMetadata(string collection, string name, string? body)
     {
-        if (!Shaped || _importedFromOffset is not null)
+        if (!Shaped || _imported)
         {
             return;
         }
 
-        var offset = Offset();
-        var put = BodyCommand(SqliteStatements.Put, collection, name);
-        put.Parameters.AddWithValue("$version", offset);
-        put.Parameters.AddWithValue("$body", (object?)body ?? DBNull.Value);
-        put.ExecuteNonQuery();
-        if (_changes is not null)
-        {
-            Capture(new DocumentChange(collection, name, offset, body is null ? null : (ReadOnlyMemory<byte>?)Encoding.UTF8.GetBytes(body)));
-        }
+        Offset();
+        WriteRegister(collection, name, body is null ? default : Encoding.UTF8.GetBytes(body), tombstone: body is null);
     }
 
     private bool CreateCollection(CollectionInfo collection)
@@ -899,14 +913,14 @@ internal sealed partial class SqliteStorageTransaction(
 
         _metadataChanged = true;
         _collectionsChanged = true;
-        // Local metadata allocates immediately, so a failed allocation faults this mutation too.
-        // Apply has already pinned its starting head and will allocate its shared history at commit.
-        if (_importedFromOffset is null)
+        // Local metadata allocates immediately, so a failed allocation faults this mutation too. Applied changes allocate
+        // their shared history offset at commit.
+        if (!_imported)
         {
             Offset();
         }
 
-        WriteMetadata(DocumentChange.Collections, collection.Name, string.Create(CultureInfo.InvariantCulture, $$"""{"created_at":{{collection.CreatedAt}},"entity_id":"{{collection.Id}}"}"""));
+        WriteMetadata(DocumentDelta.Collections, collection.Name, string.Create(CultureInfo.InvariantCulture, $$"""{"created_at":{{collection.CreatedAt}},"entity_id":"{{collection.Id}}"}"""));
         return true;
     }
 
@@ -924,7 +938,13 @@ internal sealed partial class SqliteStorageTransaction(
         {
             ArgumentException.ThrowIfNullOrEmpty(name);
             var through = prefix ? PrefixSuccessor(name) : name + '\0';
-            var command = session.Command(through is null ? SqliteStatements.HasCollectionStateFrom : SqliteStatements.HasCollectionState, transaction);
+            var command = session.Command((through is null, store.IsSystem) switch
+            {
+                (true, true) => SqliteStatements.HasCollectionStateFrom,
+                (false, true) => SqliteStatements.HasCollectionState,
+                (true, false) => SqliteStatements.ClientHasCollectionStateFrom,
+                (false, false) => SqliteStatements.ClientHasCollectionState,
+            }, transaction);
             command.Parameters.AddWithValue("$from", name);
             if (through is not null)
             {
@@ -994,47 +1014,67 @@ internal sealed partial class SqliteStorageTransaction(
         {
             ThrowIfReadOnly();
             DocumentMutation(replicated: false);
-            if (store.IsSystem && _changes is not null)
+            if (store.IsSystem)
             {
-                // A system group replays every mutation: each removed document, without the client bounds below.
-                CaptureSystemDeletions(name, name + '\0', cancellationToken);
-            }
-            else if (_changes is not null)
-            {
-                // Release every pending body in this collection before admitting uncaptured deletions.
-                // The final tombstone group must fit independently of the stored ids' enumeration order.
-                for (var index = 0; index < _changes.Count; index++)
+                if (_changes is not null)
                 {
-                    var pending = _changes[index];
-                    if (pending.Collection == name)
+                    // A system group replays every mutation: each removed document.
+                    CaptureSystemDeletions(name, name + '\0', cancellationToken);
+                }
+
+                Command(SqliteStatements.DropHistory, name).ExecuteNonQuery();
+                cancellationToken.ThrowIfCancellationRequested();
+                Command(SqliteStatements.DropDocuments, name).ExecuteNonQuery();
+            }
+            else if (Command(SqliteStatements.GetCollection, name).ExecuteScalar() is not null)
+            {
+                // A tombstone over every live document, which replicates with the drop; the registers stay, so a late
+                // delta of one of them joins its tombstone instead of bringing it back. Their history goes with the
+                // generation below.
+                // ponytail: one transaction drops the collection; one of more than 1024 live documents fails its group bounds.
+                var live = Command(SqliteStatements.LiveIds, name);
+                live.Parameters.AddWithValue("$limit", IStorageTransaction.MaxChangeGroupChanges + 1);
+                var ids = new List<string>();
+                using (var reader = live.ExecuteReader())
+                {
+                    while (reader.Read())
                     {
-                        _changeBytes -= pending.Json?.Length ?? 0;
-                        Replace(index, pending with { Version = Offset(), Json = null });
+                        cancellationToken.ThrowIfCancellationRequested();
+                        ids.Add(reader.GetString(0));
                     }
                 }
 
-                // Include tombstones, read only ids, and stop after the first row that cannot fit.
-                var ids = Command(SqliteStatements.CollectionDocumentIds, name);
-                ids.Parameters.AddWithValue("$limit", IStorageTransaction.MaxChangeGroupChanges + 1);
-                using var reader = ids.ExecuteReader();
-                while (reader.Read())
+                // A retained uniqueness loser is live in its register, though no reader sees it.
+                var hidden = Command(UniqueHiddenIds, name);
+                hidden.Parameters.AddWithValue("$limit", IStorageTransaction.MaxChangeGroupChanges + 1);
+                using (var reader = hidden.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        ids.Add(reader.GetString(0));
+                    }
+                }
+
+                if (ids.Count > IStorageTransaction.MaxChangeGroupChanges)
+                {
+                    LimitsReached = _deltas?.Count > 0;
+                    throw new ChangeGroupCapacityException(
+                        $"a replicated transaction holds at most {IStorageTransaction.MaxChangeGroupChanges} changes and {IStorageTransaction.MaxChangeGroupBytes} bytes");
+                }
+
+                // Documents this transaction already captured first: their tombstones replace their bodies, so the group
+                // has room for the others whatever order their ids sort in.
+                foreach (var id in ids.OrderBy(id => _changeIndex.ContainsKey((name, id)) ? 0 : 1))
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    // Inspect the stored size before materializing an id; replacement states are checked by Capture.
-                    if ((long)Encoding.UTF8.GetByteCount(name) + reader.GetInt64(1) > IStorageTransaction.MaxChangeGroupBytes)
-                    {
-                        throw new ChangeGroupCapacityException();
-                    }
-
-                    Capture(new DocumentChange(name, reader.GetString(0), Offset(), null));
+                    WriteRegister(name, id, default, tombstone: true);
                 }
+
+                // History after the tombstones, before the collection row it finds the dropped generation through.
+                Command(SqliteStatements.DropHistory, name).ExecuteNonQuery();
             }
 
-            // ponytail: one transaction deletes the collection; large captured drops fail their group bounds.
-            // History first: the dropped generation is found through the collection row.
-            Command(SqliteStatements.DropHistory, name).ExecuteNonQuery();
-            cancellationToken.ThrowIfCancellationRequested();
-            Command(SqliteStatements.DropDocuments, name).ExecuteNonQuery();
             cancellationToken.ThrowIfCancellationRequested();
             if (Command(SqliteStatements.DropCollection, name).ExecuteNonQuery() == 0)
             {
@@ -1046,7 +1086,7 @@ internal sealed partial class SqliteStorageTransaction(
             DropUniqueCollection(name);
 
             Write(_ => { }, cancellationToken);
-            WriteMetadata(DocumentChange.Collections, name, null);
+            WriteMetadata(DocumentDelta.Collections, name, null);
             return true;
         }, cancellationToken, mutation: true).ConfigureAwait(false);
     }
@@ -1063,15 +1103,10 @@ internal sealed partial class SqliteStorageTransaction(
 
             try
             {
-                if (_importedFromOffset is { } previous && (_importHistory || _metadataChanged))
+                if (_imported && (_importHistory || _metadataChanged))
                 {
-                    // One local history offset preserves the original versions of every winning import.
-                    // Imported history may use the reserved tail beyond the local merge-version ceiling.
-                    _offset = Math.Max(checked(previous + 1), GetOffset());
-                    var observed = Command(SqliteStatements.ObserveOffset);
-                    observed.Parameters.AddWithValue("$version", _offset.Value);
-                    observed.ExecuteNonQuery();
-                    CommitImportHistory(_offset.Value);
+                    // One local history offset for every applied write a reader can see; their versions stay theirs.
+                    CommitImportHistory(Offset());
                 }
 
                 DropUniqueAffected();
@@ -1079,6 +1114,10 @@ internal sealed partial class SqliteStorageTransaction(
                 if (_changes is { Count: > 0 })
                 {
                     sequence = AppendChanges(_changes, cancellationToken);
+                }
+                else if (_deltas is { Count: > 0 })
+                {
+                    sequence = AppendGroup(_deltas, cancellationToken);
                 }
 
                 cancellationToken.ThrowIfCancellationRequested();
@@ -1103,8 +1142,7 @@ internal sealed partial class SqliteStorageTransaction(
             }
         }, cancellationToken).ConfigureAwait(false);
 
-        // Imported clock progress wakes shape waiters even when every document state lost the merge.
-        if (_offset is not null || _replicaChanged || (_importedFromOffset is { } previousHead && offset > previousHead))
+        if (_offset is not null || _replicaChanged)
         {
             committed?.Invoke();
         }
@@ -1126,7 +1164,7 @@ internal sealed partial class SqliteStorageTransaction(
     internal void Savepoint()
     {
         ThrowIfReadOnly();
-        _savepoint = (_changes?.Count ?? 0, _changeBytes, _writes, _writtenBytes, _offset, _replicatedMutation, _collectionsChanged);
+        _savepoint = (_changes?.Count ?? _deltas?.Count ?? 0, _changeBytes, _writes, _writtenBytes, _offset, _replicatedMutation, _collectionsChanged);
         _replacedSinceSavepoint.Clear();
         _savepointPending = true;
         LimitsReached = false;
@@ -1173,20 +1211,21 @@ internal sealed partial class SqliteStorageTransaction(
     private void Restore(
         (int Changes, long ChangeBytes, int Writes, long WrittenBytes, long? Offset, bool? ReplicatedMutation, bool CollectionsChanged) saved)
     {
-        if (_changes is not null)
+        _changes?.RemoveRange(saved.Changes, _changes.Count - saved.Changes);
+        if (_deltas is not null)
         {
             for (var i = _replacedSinceSavepoint.Count - 1; i >= 0; i--)
             {
                 var (index, previous) = _replacedSinceSavepoint[i];
-                _changes[index] = previous;
+                _deltas[index] = previous;
             }
 
-            for (var index = saved.Changes; index < _changes.Count; index++)
+            for (var index = saved.Changes; index < _deltas.Count; index++)
             {
-                _changeIndex.Remove((_changes[index].Collection, _changes[index].Id));
+                _changeIndex.Remove((_deltas[index].Collection, _deltas[index].Id));
             }
 
-            _changes.RemoveRange(saved.Changes, _changes.Count - saved.Changes);
+            _deltas.RemoveRange(saved.Changes, _deltas.Count - saved.Changes);
         }
 
         _replacedSinceSavepoint.Clear();
@@ -1224,28 +1263,23 @@ internal sealed partial class SqliteStorageTransaction(
     public ValueTask<ReadOnlyMemory<byte>> GetOriginAsync(CancellationToken cancellationToken) =>
         RunAsync<ReadOnlyMemory<byte>>(() => GetOrigin(), cancellationToken, retry: true);
 
-    private byte[] GetOrigin() => Ulid.Parse((string)Command(SqliteStatements.Origin).ExecuteScalar()!).ToByteArray();
+    // The system database's origin is its incarnation; a client database's is its own stream's (ClientOrigin).
+    private byte[] GetOrigin() =>
+        store.IsSystem ? Ulid.Parse((string)Command(SqliteStatements.Origin).ExecuteScalar()!).ToByteArray() : ClientOrigin();
 
     public ValueTask<long> GetLastChangeSequenceAsync(CancellationToken cancellationToken) =>
         RunAsync(LastSequence, cancellationToken, retry: true);
 
     // The system journal may hold its head digest without the group (a truncated tail, a follower's snapshot).
-    private long LastSequence() => (long)Command(store.IsSystem ? SqliteStatements.SystemLastSequence : SqliteStatements.LastSequence).ExecuteScalar()!;
+    private long LastSequence() => (long)Command(store.IsSystem ? SqliteStatements.SystemLastSequence : SqliteStatements.LastGroup).ExecuteScalar()!;
 
-    public async ValueTask<IReadOnlyList<DocumentChange>?> ReadChangesAsync(long sequence, CancellationToken cancellationToken)
-    {
-        var changes = await RunAsync(() =>
-        {
-            var command = Command(SqliteStatements.ReadChanges);
-            command.Parameters.AddWithValue("$sequence", sequence);
-            command.Parameters.AddWithValue("$limit", IStorageTransaction.MaxChangeGroupChanges + 1);
-            command.Parameters.AddWithValue("$maxBytes", IStorageTransaction.MaxChangeGroupBytes);
-            return ReadChanges(command);
-        }, cancellationToken, retry: true).ConfigureAwait(false);
-        return changes.Count == 0 ? null : changes;
-    }
+    public ValueTask<CapturedGroup?> ReadChangesAsync(long sequence, CancellationToken cancellationToken) =>
+        store.IsSystem
+            ? throw new NotSupportedException("the system database's groups are read through its catalog replication")
+            : RunAsync(() => ReadGroup(sequence), cancellationToken, retry: true);
 
-    public ValueTask<ReadOnlyMemory<byte>?> GetChangeDigestAsync(long sequence, CancellationToken cancellationToken)
+    /// <summary>See <see cref="ISystemReplication.GetDigestAsync"/>.</summary>
+    internal ValueTask<ReadOnlyMemory<byte>?> GetChangeDigestAsync(long sequence, CancellationToken cancellationToken)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(sequence);
         return RunAsync(() => GetChangeDigest(sequence), cancellationToken, retry: true);
@@ -1265,165 +1299,13 @@ internal sealed partial class SqliteStorageTransaction(
             : null;
     }
 
-    public ValueTask<bool> ApplyAsync(DocumentChange change, CancellationToken cancellationToken) =>
-        RunAsync(() => Apply(change, cancellationToken), cancellationToken, mutation: true);
-
-    private bool Apply(DocumentChange change, CancellationToken cancellationToken)
-    {
-        ThrowIfReadOnly();
-        DocumentMutation(replicated: true);
-        ArgumentNullException.ThrowIfNull(change);
-        if (Shaped && !DocumentChange.HasValidKey(change.Collection, change.Id))
+    public ValueTask<bool> ApplyAsync(DocumentDelta change, CancellationToken cancellationToken) =>
+        RunAsync(() =>
         {
-            throw new InvalidDataException("a replicated change has an invalid collection or id");
-        }
-
-        _importedFromOffset ??= _offset is { } metadataOffset ? metadataOffset - 1 : GetOffset();
-        // Every direct Apply in this transaction uses the same starting clock, so several
-        // individually small advances cannot chain past the whole-group admission limit.
-        VersionClock.ValidateImport(change.Version, _importedFromOffset.Value);
-        var bytes = ContentBytes(change);
-        if (_importedCount == IStorageTransaction.MaxChangeGroupChanges
-            || bytes > IStorageTransaction.MaxChangeGroupBytes - _importedBytes)
-        {
-            throw new InvalidOperationException(
-                $"a replicated transaction holds at most {IStorageTransaction.MaxChangeGroupChanges} changes and {IStorageTransaction.MaxChangeGroupBytes} bytes");
-        }
-
-        var admittedBody = change.Json is { } incoming ? Admit(incoming) : null;
-        if (Shaped)
-        {
-            // Bound the complete imported commit, including shape framing.
-            var historyBytes = (change.Json?.Length ?? 0) + (long)JsonEncodedText.Encode(change.Id).EncodedUtf8Bytes.Length + OpFramingBytes;
-            if (_writtenBytes + historyBytes > MaxWrittenBytes)
-            {
-                throw new StorageWriteLimitException("a replicated transaction's shape history fits at most 7 MiB with framing");
-            }
-
-            _writtenBytes += historyBytes;
-            // Own the bytes so the stored state and its deferred history cannot diverge.
-            change = change with { Json = change.Json is { } body ? body.ToArray() : (ReadOnlyMemory<byte>?)null };
-        }
-
-        _importedCount++;
-        _importedBytes += bytes;
-        // Advance even for a losing state: a subsequent local transaction must supersede what was observed.
-        var offset = Command(SqliteStatements.ObserveOffset);
-        offset.Parameters.AddWithValue("$version", change.Version);
-        offset.ExecuteNonQuery();
-
-        var retained = Command(SqliteStatements.RetainedDeletion, change.Collection);
-        retained.Parameters.AddWithValue("$id", change.Id);
-        retained.Parameters.AddWithValue("$version", change.Version);
-        retained.Parameters.AddWithValue("$inclusive", change.Json is not null);
-        // Retained deletions fence older states and equal live values. An equal tombstone can
-        // restore a row lost after its ACK without replacing newer deletion evidence.
-        if (retained.ExecuteScalar() is not null)
-        {
-            return false;
-        }
-
-        if (Shaped && change.Collection == DocumentChange.Unique)
-        {
-            return ApplyUniqueMetadata(change, admittedBody, cancellationToken);
-        }
-
-        if (Shaped && change.Collection is DocumentChange.Collections or DocumentChange.Indexes)
-        {
-            return ApplyMetadata(change, admittedBody, cancellationToken);
-        }
-
-        if (Shaped && Dropped(change))
-        {
-            return false;
-        }
-
-        var changed = Shaped ? ApplyUniqueState(change, admittedBody, cancellationToken) : ApplyState(change, admittedBody);
-        if (changed && WinningStateImpliesCollection(change))
-        {
-            CreateCollection(new CollectionInfo(change.Collection, 0));
-            if (Shaped)
-            {
-                ImportHistory(UniqueVisibleChange(change));
-            }
-        }
-
-        return changed;
-    }
-
-    // A winning state implies its collection, whether or not its creation replicated; a losing one changes
-    // nothing. A dropped collection's tombstone restores only its state: appending shape history
-    // would create a new collection generation again at commit.
-    private bool WinningStateImpliesCollection(DocumentChange change) =>
-        !Shaped || change.Json is not null || !Dropped(change, inclusive: true)
-            || Command(SqliteStatements.GetCollection, change.Collection).ExecuteScalar() is not null;
-
-    private bool Dropped(DocumentChange change, bool inclusive = false)
-    {
-        var dropped = Command(SqliteStatements.DroppedCollection, change.Collection);
-        dropped.Parameters.AddWithValue("$version", change.Version);
-        dropped.Parameters.AddWithValue("$inclusive", inclusive);
-        return dropped.ExecuteScalar() is not null;
-    }
-
-    private bool ApplyState(DocumentChange change, string? admittedBody)
-    {
-        if (change.Json is not null)
-        {
-            var document = BodyCommand(SqliteStatements.ApplyDocument, change.Collection, change.Id);
-            document.Parameters.AddWithValue("$version", change.Version);
-            document.Parameters.AddWithValue("$body", admittedBody!);
-            return document.ExecuteNonQuery() > 0;
-        }
-
-        var deletion = Command(SqliteStatements.ApplyTombstone, change.Collection);
-        deletion.Parameters.AddWithValue("$id", change.Id);
-        deletion.Parameters.AddWithValue("$version", change.Version);
-        return deletion.ExecuteNonQuery() > 0;
-    }
-
-    // Metadata merges like a document: only a winning state creates or drops the collection or index it describes.
-    private bool ApplyMetadata(DocumentChange change, string? body, CancellationToken cancellationToken)
-    {
-        var collections = change.Collection == DocumentChange.Collections;
-        if (collections ? !DatabaseName.TryParse(change.Id, out _) : !IndexName().IsMatch(change.Id))
-        {
-            throw new InvalidDataException("replicated metadata names an invalid collection or index");
-        }
-
-        var created = body is null ? null : ReadMetadata(change.Id, body, collections, cancellationToken);
-        if (!ApplyState(change, body))
-        {
-            return false;
-        }
-
-        switch (created)
-        {
-            case CollectionInfo collection:
-                _metadataChanged = true;
-                _collectionsChanged = true;
-                CreateCollection(collection);
-                // Winning metadata also replaces an inferred or concurrently created collection's identity.
-                var identity = Command(SqliteStatements.AdoptCollectionIdentity, collection.Name);
-                identity.Parameters.AddWithValue("$entityId", collection.Id);
-                identity.Parameters.AddWithValue("$created", collection.CreatedAt);
-                identity.ExecuteNonQuery();
-                _collectionsChanged = true;
-                break;
-            case IndexDefinition index:
-                DropIndex(index.Name, cancellationToken);
-                CreateIndex(index, cancellationToken);
-                break;
-            case null when collections:
-                DropReplicatedCollection(change.Id, change.Version, cancellationToken);
-                break;
-            default:
-                DropIndex(change.Id, cancellationToken);
-                break;
-        }
-
-        return true;
-    }
+            ThrowIfReadOnly();
+            DocumentMutation(replicated: true);
+            return ApplyDelta(change, cancellationToken);
+        }, cancellationToken, mutation: true);
 
     // The documents WriteMetadata records; anything else fails the replicated group.
     private object ReadMetadata(string name, string body, bool collection, CancellationToken cancellationToken)
@@ -1461,37 +1343,6 @@ internal sealed partial class SqliteStorageTransaction(
         }
     }
 
-    // A replicated drop ends every live state of the collection older than itself, as the dropping member did, and removes
-    // the collection once nothing live remains; a write another member made at or after the drop keeps it.
-    private void DropReplicatedCollection(string name, long version, CancellationToken cancellationToken)
-    {
-        DropUniqueStatesBefore(name, version, cancellationToken);
-        var tombstones = Command(SqliteStatements.TombstoneCollection, name);
-        tombstones.Parameters.AddWithValue("$version", version);
-        using (var reader = tombstones.ExecuteReader())
-        {
-            while (reader.Read())
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                ImportHistory(new DocumentChange(name, reader.GetString(0), version, null));
-            }
-        }
-
-        // The collection drop also ends older declarations, even when its origin had never received them.
-        ApplyUniqueMetadata(new DocumentChange(DocumentChange.Unique, name, version, null), body: null, cancellationToken);
-        if (Command(UniqueLiveDocument, name).ExecuteScalar() is null)
-        {
-            DropUniqueCollection(name);
-            Command(SqliteStatements.DropHistory, name).ExecuteNonQuery();
-            if (Command(SqliteStatements.DropCollection, name).ExecuteNonQuery() > 0)
-            {
-                _metadataChanged = true;
-                _collectionsChanged = true;
-            }
-            DropImportHistory(name);
-        }
-    }
-
     public ValueTask<long> GetAppliedSequenceAsync(ReadOnlyMemory<byte> origin, CancellationToken cancellationToken) =>
         RunAsync(() =>
         {
@@ -1500,146 +1351,23 @@ internal sealed partial class SqliteStorageTransaction(
             return command.ExecuteScalar() as long? ?? 0;
         }, cancellationToken);
 
-    public ValueTask<(long Sequence, ReadOnlyMemory<byte> Digest)> GetAppliedFrontierAsync(
-        ReadOnlyMemory<byte> origin, CancellationToken cancellationToken) =>
-        RunAsync<(long, ReadOnlyMemory<byte>)>(() =>
-        {
-            var initial = JournalDigest.Initial(origin.Span);
-            var command = Command(SqliteStatements.GetAppliedFrontier);
-            command.Parameters.AddWithValue("$origin", origin.ToArray());
-            using var reader = command.ExecuteReader();
-            if (!reader.Read() || reader.IsDBNull(1))
-            {
-                return (0, initial);
-            }
-
-            var sequence = reader.GetInt64(0);
-            var digest = reader.GetFieldValue<byte[]>(1);
-            return sequence > 0 && digest.Length == JournalDigest.Length
-                ? (sequence, digest)
-                : throw new InvalidDataException("the stored applied frontier is invalid");
-        }, cancellationToken);
-
-    public ValueTask SetAppliedSequenceAsync(ReadOnlyMemory<byte> origin, long sequence, CancellationToken cancellationToken) =>
-        SetAppliedAsync(origin, sequence, digest: null, cancellationToken);
-
-    public ValueTask SetAppliedFrontierAsync(
-        ReadOnlyMemory<byte> origin, long sequence, ReadOnlyMemory<byte> digest, CancellationToken cancellationToken) =>
-        SetAppliedAsync(origin, sequence, digest, cancellationToken);
-
-    private async ValueTask SetAppliedAsync(
-        ReadOnlyMemory<byte> origin, long sequence, ReadOnlyMemory<byte>? digest, CancellationToken cancellationToken)
-    {
+    public async ValueTask SetAppliedSequenceAsync(ReadOnlyMemory<byte> origin, long sequence, CancellationToken cancellationToken) =>
         await RunAsync(() =>
         {
             ThrowIfReadOnly();
-            if (origin.Length != 16 || sequence <= 0 || (digest is { } proof && proof.Length != JournalDigest.Length))
+            if (store.IsSystem || origin.Length != OriginPositions.OriginBytes || sequence <= 0)
             {
-                throw new InvalidDataException("an applied frontier requires a valid origin, sequence and digest");
+                throw new InvalidDataException("an applied position needs a client database, a 16-byte origin and a sequence");
             }
 
             var command = Command(SqliteStatements.SetApplied);
             command.Parameters.AddWithValue("$origin", origin.ToArray());
             command.Parameters.AddWithValue("$sequence", sequence);
-            command.Parameters.AddWithValue("$digest", digest is { } bytes ? bytes.ToArray() : DBNull.Value);
-            return command.ExecuteNonQuery();
+            command.ExecuteNonQuery();
+            var superseded = Command(SqliteStatements.DropSupersededApplied);
+            superseded.Parameters.AddWithValue("$origin", origin.ToArray());
+            return superseded.ExecuteNonQuery();
         }, cancellationToken, mutation: true).ConfigureAwait(false);
-    }
-
-    /// <summary>Whether the change log covers every document and tombstone of this database.</summary>
-    internal async Task<bool> IsCompleteAsync(CancellationToken cancellationToken) =>
-        await RunAsync(() => (long)Command(SqliteStatements.Complete).ExecuteScalar()! != 0, cancellationToken).ConfigureAwait(false);
-
-    internal async Task MarkCompleteAsync(CancellationToken cancellationToken) =>
-        await RunAsync(() =>
-        {
-            ThrowIfReadOnly();
-            return Command(SqliteStatements.MarkComplete).ExecuteNonQuery();
-        }, cancellationToken, mutation: true).ConfigureAwait(false);
-
-    internal async Task<int> CountOversizedBaselineKeysAsync(CancellationToken cancellationToken) =>
-        await RunAsync(() => checked((int)(long)Command(SqliteStatements.CountOversizedBaselineKeys).ExecuteScalar()!), cancellationToken).ConfigureAwait(false);
-
-    /// <summary>Appends one bounded baseline chunk; inadmissible pre-existing states are skipped and counted.</summary>
-    internal async Task<BaselineChunk?> AppendBaselineAsync(bool tombstones, (string Collection, string Id)? after, CancellationToken cancellationToken) =>
-        await RunAsync(() =>
-        {
-            ThrowIfReadOnly();
-            return AppendBaselineChunk(tombstones, after, cancellationToken);
-        }, cancellationToken, mutation: true).ConfigureAwait(false);
-
-    private BaselineChunk? AppendBaselineChunk(bool tombstones, (string Collection, string Id)? after, CancellationToken cancellationToken)
-    {
-        var command = Command(
-            (tombstones, after is null) switch
-            {
-                (false, true) => UniqueBaselineLiveFirst,
-                (false, false) => UniqueBaselineLiveAfter,
-                (true, true) => UniqueBaselineDeletedFirst,
-                (true, false) => UniqueBaselineDeletedAfter,
-            },
-            after?.Collection);
-        if (after is { } cursor)
-        {
-            command.Parameters.AddWithValue("$id", cursor.Id);
-        }
-
-        command.Parameters.AddWithValue("$limit", IStorageTransaction.MaxChangeGroupChanges);
-        command.Parameters.AddWithValue("$maxBytes", DocumentJson.MaxBytes);
-
-        var group = new List<DocumentChange>();
-        (string Collection, string Id)? last = null;
-        var skipped = 0;
-        using (var reader = command.ExecuteReader())
-        {
-            while (reader.Read())
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                // Read the stored byte length before materializing the body; the query omits oversized bodies.
-                var rowKey = (Collection: reader.GetString(0), Id: reader.GetString(1));
-                var bodyBytes = reader.GetInt64(4);
-                var bytes = (long)Encoding.UTF8.GetByteCount(rowKey.Collection) + Encoding.UTF8.GetByteCount(rowKey.Id) + bodyBytes;
-                if (bodyBytes > DocumentJson.MaxBytes || !DocumentChange.HasValidKey(rowKey.Collection, rowKey.Id)
-                    || reader.GetInt64(2) is <= 0 or > VersionClock.MaxVersion || bytes > IStorageTransaction.MaxChangeGroupBytes)
-                {
-                    skipped++;
-                }
-                else if (_changeBytes + bytes > IStorageTransaction.MaxChangeGroupBytes)
-                {
-                    break;
-                }
-                else
-                {
-                    var change = Change(reader);
-                    try
-                    {
-                        if (change.Json is { } json)
-                        {
-                            // A legacy rejection skips this row without faulting the seeding transaction.
-                            _ = DocumentJson.Read(json, requireObject: true);
-                        }
-
-                        group.Add(change);
-                        _changeBytes += bytes;
-                    }
-                    catch (DocumentValidationException)
-                    {
-                        skipped++;
-                    }
-                }
-
-                last = rowKey;
-            }
-        }
-
-        if (last is not { } key)
-        {
-            return null;
-        }
-
-        var sequence = group.Count == 0 ? 0 : AppendChanges(group, cancellationToken);
-        return new BaselineChunk(key, sequence, skipped);
-    }
 
     public ValueTask DisposeAsync()
     {
@@ -1673,6 +1401,7 @@ internal sealed partial class SqliteStorageTransaction(
 
                         _bodyCommands.Clear();
                         _changes?.Clear();
+                        _deltas?.Clear();
                         _changeIndex.Clear();
                         _replacedSinceSavepoint.Clear();
                     }
@@ -1900,93 +1629,25 @@ internal sealed partial class SqliteStorageTransaction(
     private static long ContentBytes(DocumentChange change) =>
         (long)Encoding.UTF8.GetByteCount(change.Collection) + Encoding.UTF8.GetByteCount(change.Id) + (change.Json?.Length ?? 0);
 
-    // Worker-only: reads one stored change group within the journal limits.
-    internal static List<DocumentChange> ReadChanges(SqliteCommand command)
-    {
-        var changes = new List<DocumentChange>();
-        long bytes = 0;
-        using var reader = command.ExecuteReader();
-        while (reader.Read())
-        {
-            bytes += reader.GetInt64(4);
-            if (changes.Count >= IStorageTransaction.MaxChangeGroupChanges || bytes > IStorageTransaction.MaxChangeGroupBytes)
-            {
-                throw new InvalidDataException("the stored change group exceeds the journal limits");
-            }
-
-            changes.Add(Change(reader));
-        }
-
-        return changes;
-    }
-
-    // Capacity errors occur during the mutation, before copying JSON, as well as at commit.
-    // The mutation marks the transaction rollback-only even when its caller catches the error.
+    // Capacity errors occur during the mutation, as well as at commit. The mutation marks the transaction rollback-only
+    // even when its caller catches the error. A client group of one change may be larger (a baseline's register).
     private void CheckCaptureCapacity(long bytes, bool replacing = false)
     {
-        if ((!replacing && _changes!.Count >= IStorageTransaction.MaxChangeGroupChanges)
+        var count = _deltas!.Count;
+        if ((!replacing && count >= IStorageTransaction.MaxChangeGroupChanges)
             || bytes > IStorageTransaction.MaxChangeGroupBytes - _changeBytes)
         {
-            LimitsReached = _changes!.Count > 0;
+            LimitsReached = count > 0;
             throw new ChangeGroupCapacityException(
                 $"a replicated transaction holds at most {IStorageTransaction.MaxChangeGroupChanges} changes and {IStorageTransaction.MaxChangeGroupBytes} bytes");
         }
     }
 
-    // Replaces a captured state, remembering the old one while a batched write's savepoint may still roll it back.
-    private void Replace(int index, DocumentChange state)
-    {
-        if (_savepoint is { } saved && index < saved.Changes)
-        {
-            _replacedSinceSavepoint.Add((index, _changes![index]));
-        }
-
-        _changes![index] = state;
-    }
-
-    private void Capture(DocumentChange change)
-    {
-        if (store.IsSystem)
-        {
-            CaptureSystem(change);
-            return;
-        }
-
-        if (!DocumentChange.HasValidKey(change.Collection, change.Id))
-        {
-            throw new InvalidDataException("a captured change has an invalid collection or id");
-        }
-
-        var index = _changeIndex.GetValueOrDefault((change.Collection, change.Id), -1);
-        var bytes = ContentBytes(change) - (index >= 0 ? ContentBytes(_changes![index]) : 0);
-        CheckCaptureCapacity(bytes, replacing: index >= 0);
-        // Reserve only the final state, before copying it; shape history still counts every mutation.
-        var owned = change with { Json = change.Json is { } json ? json.ToArray() : (ReadOnlyMemory<byte>?)null };
-        if (index >= 0)
-        {
-            Replace(index, owned);
-        }
-        else
-        {
-            _changeIndex[(change.Collection, change.Id)] = _changes!.Count;
-            _changes.Add(owned);
-        }
-
-        _changeBytes += bytes;
-    }
-
-    // Appends one change group and returns its sequence. The next sequence is read inside this write
-    // transaction, which the database's writer gate serializes.
+    // Appends one system journal group and returns its sequence. The next sequence is read inside this write transaction,
+    // which the database's writer gate serializes.
     private long AppendChanges(List<DocumentChange> changes, CancellationToken cancellationToken)
     {
-        if (!store.IsSystem && (changes.Count > IStorageTransaction.MaxChangeGroupChanges || _changeBytes > IStorageTransaction.MaxChangeGroupBytes))
-        {
-            throw new ChangeGroupCapacityException(
-                $"a replicated transaction holds at most {IStorageTransaction.MaxChangeGroupChanges} changes and {IStorageTransaction.MaxChangeGroupBytes} bytes");
-        }
-
-        var sequence = store.IsSystem ? checked(LastSequence() + 1)
-            : Command(SqliteStatements.NextSequence).ExecuteScalar() is long next ? next : throw new OverflowException("the change sequence is exhausted");
+        var sequence = checked(LastSequence() + 1);
         var previous = GetChangeDigest(sequence - 1) ?? throw new InvalidDataException("the preceding journal digest is missing");
         byte[] digest;
         using (var group = new JournalDigest.Group(GetOrigin(), sequence, previous.Span, changes.Count))
@@ -2012,11 +1673,7 @@ internal sealed partial class SqliteStorageTransaction(
         prefix.Parameters.AddWithValue("$sequence", sequence);
         prefix.Parameters.AddWithValue("$digest", digest);
         prefix.ExecuteNonQuery();
-        if (store.IsSystem)
-        {
-            TruncateSystemJournal(sequence - ISystemReplication.RetainedGroups);
-        }
-
+        TruncateSystemJournal(sequence - ISystemReplication.RetainedGroups);
         return sequence;
     }
 
@@ -2030,5 +1687,3 @@ internal sealed partial class SqliteStorageTransaction(
 
 }
 
-/// <summary>Last baseline key, appended sequence (0 when all rows were skipped), and inadmissible rows skipped.</summary>
-internal readonly record struct BaselineChunk((string Collection, string Id) Last, long Sequence, int Skipped);

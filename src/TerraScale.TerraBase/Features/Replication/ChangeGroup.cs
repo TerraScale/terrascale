@@ -6,8 +6,9 @@ using TerraBase.Primitives;
 namespace TerraBase.Features.Replication;
 
 /// <summary>
-/// Version 1 binary form of one committed change group, the plaintext inside an
-/// <see cref="ApplicationEnvelope"/>. All integers are little-endian:
+/// Version 1 binary form of a page of one system database change group, the plaintext inside an
+/// <see cref="ApplicationEnvelope"/> of a catalog follower's stream (docs/decisions/0009; TS-647 step 5 replaces it). All
+/// integers are little-endian:
 /// <c>"TBDCG001" || count:u32 || change[count]</c>, where a change is
 /// <c>kind:u8 (0 put, 1 delete) || collection_len:u16 || collection || id_len:u16 || id || version:u64</c>
 /// followed, for a put, by <c>json_len:u32 || json</c>. Text is UTF-8; nothing may follow the last change.
@@ -46,15 +47,11 @@ public static class ChangeGroup
     }
 
     /// <summary>
-    /// Decodes and validates a change group: 1 to <paramref name="maxChanges"/> changes, at most
-    /// <paramref name="maxContentBytes"/> bytes of collections, ids and JSON (framing excluded, as when a
-    /// group is captured), valid collection names and document ids, positive versions and JSON objects. A
-    /// <paramref name="system"/> page (docs/decisions/0009) needs only non-empty keys and JSON values.
+    /// Decodes and validates a page: 1 to <paramref name="maxChanges"/> changes, at most <paramref name="maxContentBytes"/>
+    /// bytes of collections, ids and JSON (framing excluded), non-empty keys, positive versions and JSON values.
     /// </summary>
-    /// <exception cref="InvalidDataException">The bytes are not a valid change group.</exception>
-    public static List<DocumentChange> Decode(
-        ReadOnlySpan<byte> plain, int maxChanges = IStorageTransaction.MaxChangeGroupChanges, int maxContentBytes = IStorageTransaction.MaxChangeGroupBytes,
-        bool system = false)
+    /// <exception cref="InvalidDataException">The bytes are not a valid page.</exception>
+    public static List<DocumentChange> Decode(ReadOnlySpan<byte> plain, int maxChanges, int maxContentBytes)
     {
         if (plain.Length < Magic.Length + sizeof(uint) || !plain[..Magic.Length].SequenceEqual(Magic))
         {
@@ -85,7 +82,7 @@ public static class ChangeGroup
                     throw new InvalidDataException($"a change group holds at most {maxContentBytes} bytes of collections, ids and documents");
                 }
 
-                changes.Add(Validate(kind, Utf8.GetString(collection), Utf8.GetString(id), version, json, system));
+                changes.Add(Validate(kind, Utf8.GetString(collection), Utf8.GetString(id), version, json));
             }
         }
         catch (Exception error) when (error is DecoderFallbackException or OverflowException)
@@ -96,17 +93,9 @@ public static class ChangeGroup
         return rest.IsEmpty ? changes : throw new InvalidDataException("a change group has trailing bytes");
     }
 
-    /// <summary>The collection, id and JSON bytes of <paramref name="changes"/>, the size limited by <see cref="IStorageTransaction.MaxChangeGroupBytes"/>.</summary>
-    public static long ContentBytes(IReadOnlyList<DocumentChange> changes)
+    private static DocumentChange Validate(byte kind, string collection, string id, ulong version, ReadOnlySpan<byte> json)
     {
-        ArgumentNullException.ThrowIfNull(changes);
-        return changes.Sum(change => (long)Utf8.GetByteCount(change.Collection) + Utf8.GetByteCount(change.Id) + (change.Json?.Length ?? 0));
-    }
-
-    private static DocumentChange Validate(byte kind, string collection, string id, ulong version, ReadOnlySpan<byte> json, bool system)
-    {
-        if (kind > 1 || version is 0 or > (ulong)VersionClock.MaxVersion
-            || (system ? collection.Length == 0 || id.Length == 0 : !DocumentChange.HasValidKey(collection, id)))
+        if (kind > 1 || version is 0 or > (ulong)VersionClock.MaxVersion || collection.Length == 0 || id.Length == 0)
         {
             throw new InvalidDataException("a change has an invalid kind, collection, id or version");
         }
@@ -119,7 +108,7 @@ public static class ChangeGroup
         var body = json.ToArray();
         try
         {
-            _ = DocumentJson.Read(body, requireObject: !system);
+            _ = DocumentJson.Read(body, requireObject: false);
         }
         catch (DocumentValidationException error)
         {

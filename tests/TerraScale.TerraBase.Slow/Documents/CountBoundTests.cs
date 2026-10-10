@@ -27,16 +27,19 @@ public sealed class CountBoundTests
         await api.Server.Services.GetRequiredService<IStorageEngine>().DeleteDatabaseAsync(database, CancellationToken.None);
         var path = Path.Combine(api.Server.DataDirectory, tenant.OrganizationId, tenant.ProjectId, id + ".db");
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        // This build's schema with 100001 documents, written in one statement instead of 100001 requests.
         await DocumentFiles.WriteAsync(path);
         await using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Pooling = false }.ToString()))
         {
             await connection.OpenAsync();
+            StoredRegisters.Register(connection);
             await using var command = connection.CreateCommand();
-            command.CommandText = """
+            command.CommandText = $$"""
                 INSERT INTO collections VALUES ('items', 0, 1, $collectionId);
-                WITH RECURSIVE rows(n) AS (VALUES(1) UNION ALL SELECT n + 1 FROM rows WHERE n < 100001)
-                INSERT INTO documents SELECT 'items', printf('%026d', n), 1,
-                    CASE WHEN n = 100001 THEN $last ELSE '{"n":1}' END FROM rows;
+                WITH RECURSIVE rows(n) AS (VALUES(1) UNION ALL SELECT n + 1 FROM rows WHERE n < 100001),
+                    bodies(n, body) AS (SELECT n, CASE WHEN n = 100001 THEN $last ELSE '{"n":1}' END FROM rows)
+                INSERT INTO documents (collection, id, state, version, body)
+                    SELECT 'items', printf('%026d', n), tb_state(body), {{StoredRegisters.Version}}, body FROM bodies;
                 """;
             command.Parameters.AddWithValue("$collectionId", TerraBase.Primitives.EntityIds.New().ToString());
             command.Parameters.AddWithValue("$last", overflowMatches ? "{\"n\":1}" : "{\"n\":0}");

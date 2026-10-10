@@ -73,9 +73,14 @@ internal sealed partial class SqliteStorageTransaction
         {
             ThrowIfReadOnly();
             ArgumentException.ThrowIfNullOrEmpty(prefix);
+            if (!store.IsSystem)
+            {
+                throw new NotSupportedException("a client database drops collections one at a time, with tombstones");
+            }
+
             // The primary-key range covers every collection with this prefix.
             var to = prefix[..^1] + (char)(prefix[^1] + 1);
-            if (store.IsSystem && _changes is not null)
+            if (_changes is not null)
             {
                 CaptureSystemDeletions(prefix, to, cancellationToken);
             }
@@ -120,7 +125,7 @@ internal sealed partial class SqliteStorageTransaction
                 return false;
             }
 
-            WriteMetadata(DocumentChange.Indexes, index.Name, IndexMetadata(index));
+            WriteMetadata(DocumentDelta.Indexes, index.Name, IndexMetadata(index));
             return true;
         }, cancellationToken, mutation: true);
     }
@@ -191,7 +196,7 @@ internal sealed partial class SqliteStorageTransaction
                 return false;
             }
 
-            WriteMetadata(DocumentChange.Indexes, name, null);
+            WriteMetadata(DocumentDelta.Indexes, name, null);
             return true;
         }, cancellationToken, mutation: true);
     }

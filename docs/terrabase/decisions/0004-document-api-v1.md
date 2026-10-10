@@ -24,7 +24,7 @@ and aliases escaped slash spellings before route values are exposed. See [the ID
   The ID cutover uses data-directory layout 1 and catalog version 1; deployment discards affected old data.
   See [the ID contract](../id-contract.md).
 - **Versions** are `tbv1-` and the first 16 bytes of SHA-256 over the database scope, collection, id,
-  merge version, deletion state and raw UTF-8 document bytes. The scope of a client database derives from its
+  version (a client document's last-writer-wins stamp, a system document's commit offset), deletion state and raw UTF-8 document bytes. The scope of a client database derives from its
   organization, project and database ids, so every replica answers the same version for the same state (TS-574);
   recreating or copying a database creates new ids. `_system` keeps its incarnation, which catalog followers adopt.
   Including the state prevents equal-version replication winners from reusing a strong validator. A single writer

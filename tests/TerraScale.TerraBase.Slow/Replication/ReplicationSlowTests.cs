@@ -265,7 +265,6 @@ public sealed class ReplicationSlowTests
         var streams = 0;
         var delivered = 0;
         var applied = 0UL;
-        Google.Protobuf.ByteString? appliedDigest = null;
         var finished = new TaskCompletionSource<TimeSpan>(TaskCreationOptions.RunContinuationsAsynchronously);
         try
         {
@@ -291,7 +290,7 @@ public sealed class ReplicationSlowTests
                 var store = (await seed.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(tenant.Database("paced"), CancellationToken.None))!;
                 await using var read = await store.BeginTransactionAsync(write: false, CancellationToken.None);
                 applied = 1;
-                appliedDigest = Google.Protobuf.ByteString.CopyFrom((await read.GetChangeDigestAsync(1, CancellationToken.None))!.Value.Span);
+                await Assert.That(await read.GetLastChangeSequenceAsync(CancellationToken.None)).IsEqualTo(9);
             }
 
             await using var peer = await FakePeer.StartAsync(peerTls, async (requests, responses, context) =>
@@ -305,7 +304,6 @@ public sealed class ReplicationSlowTests
                         ? new OriginIdentity { ReplicaId = identity.MemberIncarnation, Incarnation = identity.MemberIncarnation }
                         : throw new InvalidDataException("Hello has no origin"),
                     DurableSequence = applied,
-                    JournalDigest = appliedDigest ?? Google.Protobuf.ByteString.CopyFrom(JournalDigest.Initial(hello.LocalIdentity.MemberIncarnation.Span)),
                 });
                 await responses.WriteAsync(welcome, context.CancellationToken);
                 var elapsed = Stopwatch.StartNew();
@@ -324,7 +322,6 @@ public sealed class ReplicationSlowTests
                     }
                     await Assert.That(batch.EncodedApplicationBytes).IsGreaterThan(500U * 1024);
                     applied = batch.EventId.Sequence;
-                    appliedDigest = batch.JournalDigest;
                     await responses.WriteAsync(FakePeer.Ack(member, batch, applied), context.CancellationToken);
                     if (Interlocked.Increment(ref delivered) == 8)
                     {

@@ -1,6 +1,5 @@
 using System.Text;
 using Google.Protobuf;
-using Grpc.Core;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
@@ -102,10 +101,6 @@ internal sealed partial class AntiEntropyWorker(
 
                         await RepairAsync(client, address, database, progress, deadline.Token).ConfigureAwait(false);
                     }
-                    catch (RpcException error) when (error.StatusCode == StatusCode.Aborted && !stoppingToken.IsCancellationRequested)
-                    {
-                        LogRepairDeferred(logger);
-                    }
                     catch (Exception error) when (!stoppingToken.IsCancellationRequested)
                     {
                         LogRepairFailed(logger, error);
@@ -133,13 +128,6 @@ internal sealed partial class AntiEntropyWorker(
         };
         progress.CancelAfter(ReplicationProtocol.ProgressTimeout);
         var store = await state.OpenAsync(identity, cancellationToken).ConfigureAwait(false);
-        progress.CancelAfter(ReplicationProtocol.ProgressTimeout);
-        var read = await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
-        await using (read.ConfigureAwait(false))
-        {
-            identity.Origin = ByteString.CopyFrom((await read.GetOriginAsync(cancellationToken).ConfigureAwait(false)).Span);
-        }
-
         progress.CancelAfter(AntiEntropyState.DigestTimeout);
         var local = await state.DigestAsync(store, cancellationToken).ConfigureAwait(false);
         progress.CancelAfter(AntiEntropyState.DigestTimeout);
@@ -161,9 +149,7 @@ internal sealed partial class AntiEntropyWorker(
         _regions[address] = peerRegion;
         Metered(database, peerRegion, identity, sent: true);
         Metered(database, peerRegion, remote, sent: false);
-        if (remote.Incarnation.Length != 16 || remote.Origin.Length != 16 || remote.Envelope.Length > 1024
-            || remote.AppliedSource is not { } applied || !applied.Origin.Equals(identity.Origin)
-            || applied.Sequence > long.MaxValue || applied.Digest.Length != JournalDigest.Length)
+        if (remote.Incarnation.Length != 16 || remote.Envelope.Length > 1024)
         {
             throw new InvalidDataException("invalid peer Merkle digest");
         }
@@ -175,25 +161,8 @@ internal sealed partial class AntiEntropyWorker(
         }
 
         identity.Incarnation = remote.Incarnation;
-        progress.CancelAfter(ReplicationProtocol.ProgressTimeout);
-        var proofRead = await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
-        await using (proofRead.ConfigureAwait(false))
-        {
-            var proof = await proofRead.GetChangeDigestAsync((long)applied.Sequence, cancellationToken).ConfigureAwait(false);
-            if (proof is null || !proof.Value.Span.SequenceEqual(applied.Digest.Span))
-            {
-                throw new InvalidDataException("the peer's repair frontier requires journal restore recovery");
-            }
-
-            identity.SourceProof = applied;
-            var (sequence, digest) = await proofRead.GetAppliedFrontierAsync(remote.Origin.Memory, cancellationToken).ConfigureAwait(false);
-            identity.TargetProof = new JournalProof { Origin = remote.Origin, Sequence = (ulong)sequence, Digest = ByteString.CopyFrom(digest.Span) };
-        }
-
         var receiving = identity.Clone();
         receiving.Incarnation = ByteString.CopyFrom(store.Incarnation.ToByteArray());
-        receiving.Origin = remote.Origin;
-        (receiving.SourceProof, receiving.TargetProof) = (identity.TargetProof, identity.SourceProof);
         var request = new RangeRequest { Identity = identity, Ranges = ranges };
         // Pull before pushing: only the winning joined states need to travel back.
         while (true)
@@ -208,7 +177,7 @@ internal sealed partial class AntiEntropyWorker(
             if (!page.Envelope.IsEmpty)
             {
                 progress.CancelAfter(ReplicationProtocol.ProgressTimeout);
-                _ = await state.MergeAsync(store, receiving, page.Envelope, cancellationToken).ConfigureAwait(false);
+                _ = await state.MergeAsync(store, page.Envelope, cancellationToken).ConfigureAwait(false);
             }
 
             if (!page.HasMore)
@@ -267,9 +236,6 @@ internal sealed partial class AntiEntropyWorker(
 
     [LoggerMessage(LogLevel.Warning, "Anti-entropy repair failed; retrying on the next reconciliation")]
     private static partial void LogRepairFailed(ILogger logger, Exception error);
-
-    [LoggerMessage(LogLevel.Debug, "Anti-entropy journal frontier advanced; retrying on the next reconciliation")]
-    private static partial void LogRepairDeferred(ILogger logger);
 
     [LoggerMessage(LogLevel.Warning, "Skipping an invalid anti-entropy member peer address")]
     private static partial void LogInvalidPeer(ILogger logger);

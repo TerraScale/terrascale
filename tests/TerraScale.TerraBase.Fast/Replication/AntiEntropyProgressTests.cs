@@ -77,8 +77,9 @@ public sealed class AntiEntropyProgressTests
                 // Leave the acknowledged journal intact: only maintenance can restore this stale row.
                 await using var connection = new SqliteConnection(DocumentApi.ConnectionString(file));
                 await connection.OpenAsync(token);
+                StoredRegisters.Register(connection);
                 using var corrupt = connection.CreateCommand();
-                corrupt.CommandText = "UPDATE documents SET version = 1, body = '{\"name\":\"stale\"}' WHERE collection = 'items';";
+                corrupt.CommandText = StaleRegisters;
                 await Assert.That(await corrupt.ExecuteNonQueryAsync(token)).IsEqualTo(1);
             }
 
@@ -216,8 +217,9 @@ public sealed class AntiEntropyProgressTests
             frontiers.Add(database, await FrontiersAsync(file, token));
             await using var connection = new SqliteConnection(DocumentApi.ConnectionString(file));
             await connection.OpenAsync(token);
+            StoredRegisters.Register(connection);
             using var corrupt = connection.CreateCommand();
-            corrupt.CommandText = "UPDATE documents SET version = 1, body = '{\"name\":\"stale\"}' WHERE collection = 'items';";
+            corrupt.CommandText = StaleRegisters;
             await Assert.That(await corrupt.ExecuteNonQueryAsync(token)).IsEqualTo(1);
         }
 
@@ -307,8 +309,9 @@ public sealed class AntiEntropyProgressTests
         await using (var connection = new SqliteConnection(DocumentApi.ConnectionString(receiverFile)))
         {
             await connection.OpenAsync(token);
+            StoredRegisters.Register(connection);
             using var corrupt = connection.CreateCommand();
-            corrupt.CommandText = "UPDATE documents SET version = 1, body = '{\"name\":\"stale\"}' WHERE collection = 'items';";
+            corrupt.CommandText = StaleRegisters;
             await Assert.That(await corrupt.ExecuteNonQueryAsync(token)).IsEqualTo(130);
         }
 
@@ -388,12 +391,17 @@ public sealed class AntiEntropyProgressTests
         }
     }
 
+    // Each document's register replaced by an older one of another replica: the real write is missing until repair joins it.
+    private const string StaleRegisters = """
+        UPDATE documents SET state = tb_state('{"name":"stale"}'), version = 65536, body = '{"name":"stale"}' WHERE collection = 'items';
+        """;
+
     private static Task<string[]> StatesAsync(string file, CancellationToken token) =>
         RowsAsync(file, "SELECT id || ':' || version || ':' || body FROM documents WHERE collection = 'items';", token);
 
     private static Task<string[]> FrontiersAsync(string file, CancellationToken token) => RowsAsync(file, """
-        SELECT 'journal:' || sequence || ':' || hex(digest) FROM journal_prefixes
-        UNION ALL SELECT 'applied:' || hex(origin) || ':' || sequence || ':' || hex(digest) FROM applied;
+        SELECT 'journal:' || sequence || ':' || hex(dependencies) FROM journal
+        UNION ALL SELECT 'applied:' || hex(origin) || ':' || sequence FROM applied;
         """, token);
 
     private static async Task<string[]> RowsAsync(string file, string sql, CancellationToken token)
@@ -543,11 +551,11 @@ public sealed class AntiEntropyProgressTests
             }
         }
 
-        public async Task<uint> MergeAsync(IDatabaseStore store, ShardIdentity identity, ByteString envelope, CancellationToken cancellationToken)
+        public async Task<uint> MergeAsync(IDatabaseStore store, ByteString envelope, CancellationToken cancellationToken)
         {
             try
             {
-                var repaired = await inner.MergeAsync(store, identity, envelope, cancellationToken);
+                var repaired = await inner.MergeAsync(store, envelope, cancellationToken);
                 var attempt = Interlocked.Increment(ref _merges);
                 if (slow && attempt <= 2)
                 {

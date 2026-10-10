@@ -4,6 +4,7 @@ using System.Net;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
+using TerraBase.Engine.Lattices;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
@@ -14,10 +15,12 @@ namespace TerraBase.Fast.Documents;
 
 public sealed class ReplicationShapeTests
 {
+    // A replicated write keeps the stamp it was written at as its version, below or above this member's clock, and takes a
+    // local history offset of its own. Concurrent with a local write, the later stamp wins.
     [Test]
     [Arguments(false)]
     [Arguments(true)]
-    public async Task Imported_winners_below_the_receiver_head_wake_shapes_without_rewriting_merge_versions(bool equalVersion)
+    public async Task Applied_writes_wake_shapes_and_keep_their_own_versions(bool concurrent)
     {
         using var issuer = new TestIssuer();
         using var peerTls = new PeerTls();
@@ -55,8 +58,7 @@ public sealed class ReplicationShapeTests
         var originalId = DocumentApi.NewId();
         var original = await DocumentApi.SendAsync(client, HttpMethod.Put, $"{documents}/by-key?id={originalId}", JsonContent.Create(new { state = "a-original" }));
         original.Status.ShouldBe(HttpStatusCode.Created);
-        var mergeVersion = equalVersion ? long.Parse(original.Json.GetProperty("offset").GetString()!, CultureInfo.InvariantCulture) : 1;
-        var id = equalVersion ? originalId : DocumentApi.NewId();
+        var id = concurrent ? originalId : DocumentApi.NewId();
         var clockId = DocumentApi.NewId();
         for (var index = 0; index < 3; index++)
         {
@@ -74,15 +76,20 @@ public sealed class ReplicationShapeTests
         var snapshotBody = snapshot.Json.GetRawText();
         var handle = snapshot.Json.GetProperty("handle").GetString();
         var head = long.Parse(snapshot.Json.GetProperty("next_offset").GetString()!, CultureInfo.InvariantCulture);
-        await Assert.That(head).IsGreaterThan(mergeVersion);
         var store = (await server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(tenant.Database("db"), CancellationToken.None))!;
         long journalHead;
         Guid etagScope;
+        long local;
         await using (var read = await store.BeginTransactionAsync(write: false, CancellationToken.None))
         {
             journalHead = await read.GetLastChangeSequenceAsync(CancellationToken.None);
             etagScope = read.Scope;
+            local = (await read.GetVersionAsync("items", originalId, CancellationToken.None))!.Value.Version;
         }
+
+        // Concurrent with the local write, a later stamp; otherwise one long before this member's clock.
+        var stamp = concurrent ? local + 1 : 1L << 16;
+        var remote = Deltas.NewReplica();
 
         // Observe this server's waiter registration before sending the peer change: no timing sleeps.
         var parked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -110,14 +117,14 @@ public sealed class ReplicationShapeTests
         using var channel = peerTls.CreateChannel(server.PeerAddress!);
         using var call = new Features.Replication.V1.Replication.ReplicationClient(channel).Sync(cancellationToken: token);
         var origin = EntityIds.New().ToByteArray();
-        ReadOnlyMemory<byte> proof = JournalDigest.Initial(origin);
         await call.RequestStream.WriteAsync(new SyncRequest { Hello = ReplicationProtocol.CreateHello(tenant.Database("db"), origin) }, token);
         await Assert.That(await call.ResponseStream.MoveNext(token)).IsTrue();
         await Assert.That(call.ResponseStream.Current.Welcome).IsNotNull();
         var poll = DocumentApi.SendAsync(client, HttpMethod.Get, $"{shape}?handle={handle}&offset={head}&live=true");
         await parked.Task.WaitAsync(token);
         await Assert.That(poll.IsCompleted).IsFalse();
-        await ApplyAsync(1, new DocumentChange("items", id, mergeVersion, "{\"state\":\"z-winner\"}"u8.ToArray()));
+        var winner = Deltas.Write("items", id, "{\"state\":\"z-winner\"}", remote, new Hlc((ulong)stamp));
+        await ApplyAsync(1, winner);
         var live = await poll.WaitAsync(token);
         live.Status.ShouldBe(HttpStatusCode.OK);
         var change = live.Json.GetProperty("changes").EnumerateArray().Single();
@@ -135,10 +142,10 @@ public sealed class ReplicationShapeTests
         feedToken = feedPage.Json.GetProperty("resume_token").GetString();
         var imported = await DocumentApi.SendAsync(client, HttpMethod.Get, $"{documents}/by-key?id={id}");
         imported.Status.ShouldBe(HttpStatusCode.OK);
-        await Assert.That(imported.ETag).IsEqualTo(ETags.Version(etagScope, "items", id, mergeVersion, "{\"state\":\"z-winner\"}"u8.ToArray()));
+        await Assert.That(imported.ETag).IsEqualTo(ETags.Version(etagScope, "items", id, stamp, "{\"state\":\"z-winner\"}"u8.ToArray()));
         await Assert.That(imported.Version).IsEqualTo(imported.ETag);
         await Assert.That(op.GetProperty("version").GetString()).IsEqualTo(imported.Version);
-        if (equalVersion)
+        if (concurrent)
         {
             await Assert.That(imported.Version).IsNotEqualTo(original.Version);
             var refreshed = await DocumentApi.SendAsync(client, HttpMethod.Get, $"{documents}/by-key?id={id}", configure: DocumentApi.IfNoneMatch(original.Version));
@@ -178,7 +185,7 @@ public sealed class ReplicationShapeTests
         await AssertOldSnapshotAsync();
         await using (var read = await store.BeginTransactionAsync(write: false, token))
         {
-            await Assert.That(await read.GetVersionAsync("items", id, token)).IsEqualTo(new DocumentVersion(mergeVersion, Deleted: false));
+            await Assert.That(await read.GetVersionAsync("items", id, token)).IsEqualTo(new DocumentVersion(stamp, Deleted: false));
             await Assert.That(await read.GetOffsetAsync(token)).IsEqualTo(head + 1);
             await Assert.That(await read.GetLastChangeSequenceAsync(token)).IsEqualTo(journalHead);
         }
@@ -187,8 +194,8 @@ public sealed class ReplicationShapeTests
         var deletionPoll = DocumentApi.SendAsync(client, HttpMethod.Get, $"{shape}?handle={handle}&offset={head + 1}&live=true");
         await parked.Task.WaitAsync(token);
         await Assert.That(deletionPoll.IsCompleted).IsFalse();
-        // An equal-version tombstone wins over the imported live body without changing the merge clock.
-        await ApplyAsync(2, new DocumentChange("items", id, mergeVersion, null));
+        // The same replica deletes what it wrote: a tombstone that also wins over the concurrent local write.
+        await ApplyAsync(2, Deltas.Write("items", id, null, remote, new Hlc((ulong)stamp + 1), over: winner.State));
         var deleted = await deletionPoll.WaitAsync(token);
         var feedDeletion = await DocumentApi.SendAsync(feedClient, HttpMethod.Get, $"{feed}?resume_token={feedToken}");
         await Assert.That(feedDeletion.Status).IsEqualTo(HttpStatusCode.OK).Because($"GET {feed}: {ResponseBody(feedDeletion)}");
@@ -206,7 +213,7 @@ public sealed class ReplicationShapeTests
         await Assert.That(deletionOp.GetProperty("id").GetString()).IsEqualTo(id);
         await Assert.That(deletionOp.TryGetProperty("version", out _)).IsFalse();
         await Assert.That(tombstone.ETag).IsNotEqualTo(imported.Version);
-        await Assert.That(tombstone.ETag).IsEqualTo(ETags.Version(etagScope, "items", id, mergeVersion, ReadOnlyMemory<byte>.Empty, deleted: true));
+        await Assert.That(tombstone.ETag).IsEqualTo(ETags.Version(etagScope, "items", id, stamp + 1, ReadOnlyMemory<byte>.Empty, deleted: true));
         var staleRecreation = await DocumentApi.SendAsync(client, HttpMethod.Put, $"{documents}/by-key?id={id}",
             JsonContent.Create(new { state = "stale-recreation" }), DocumentApi.IfMatch(imported.Version));
         staleRecreation.Status.ShouldBe(HttpStatusCode.PreconditionFailed);
@@ -216,7 +223,7 @@ public sealed class ReplicationShapeTests
         await AssertOldSnapshotAsync();
         await using (var read = await store.BeginTransactionAsync(write: false, token))
         {
-            await Assert.That(await read.GetVersionAsync("items", id, token)).IsEqualTo(new DocumentVersion(mergeVersion, Deleted: true));
+            await Assert.That(await read.GetVersionAsync("items", id, token)).IsEqualTo(new DocumentVersion(stamp + 1, Deleted: true));
             await Assert.That(await read.GetOffsetAsync(token)).IsEqualTo(head + 2);
             await Assert.That(await read.GetAppliedSequenceAsync(origin, token)).IsEqualTo(2);
             await Assert.That(await read.GetLastChangeSequenceAsync(token)).IsEqualTo(journalHead);
@@ -230,12 +237,11 @@ public sealed class ReplicationShapeTests
         await Assert.That(recreatedRead.Version).IsEqualTo(recreated.Version);
         await Assert.That(recreatedRead.Json.GetProperty("document").GetProperty("state").GetString()).IsEqualTo("recreated");
 
-        async Task ApplyAsync(long sequence, DocumentChange incoming)
+        async Task ApplyAsync(long sequence, DocumentDelta incoming)
         {
-            await call.RequestStream.WriteAsync(new SyncRequest { CommittedGroup = ReplicationProtocol.CreateBatch(tenant.Database("db"), origin, sequence, [incoming], proof) }, token);
+            await call.RequestStream.WriteAsync(new SyncRequest { CommittedGroup = ReplicationProtocol.CreateBatch(tenant.Database("db"), origin, sequence, Deltas.Group(incoming)) }, token);
             await Assert.That(await call.ResponseStream.MoveNext(token)).IsTrue();
             await Assert.That(call.ResponseStream.Current.Durable.DurablePrefix).IsEqualTo((ulong)sequence);
-            proof = call.ResponseStream.Current.Durable.JournalDigest.Memory;
             await Assert.That(await call.ResponseStream.MoveNext(token)).IsTrue();
             await Assert.That(call.ResponseStream.Current.Applied.AppliedPrefix).IsEqualTo((ulong)sequence);
         }

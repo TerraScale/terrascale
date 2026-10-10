@@ -20,25 +20,18 @@ message ShardIdentity {
   uint32 revision = 5;
   // Required after Digest; pins all pages and merges to that file's lifetime.
   bytes incarnation = 6;
-  // Initiating member's journal identity. Repair must preserve the journal's restore fence.
-  bytes origin = 7;
-  // Initiator's proof at the target's applied prefix, and vice versa.
-  JournalProof source_proof = 8;
-  JournalProof target_proof = 9;
+  // 7 to 9 held journal proofs of the digested journals that register deltas replaced (docs/design/anna-core.md, step
+  // 4c). Registers join idempotently and an origin never reuses a sequence, so repair needs no journal fence.
+  reserved 7, 8, 9;
   // The initiating member's region, for per-region-pair replication bandwidth.
   string region = 10;
-}
-message JournalProof {
-  bytes origin = 1;
-  uint64 sequence = 2;
-  bytes digest = 3;
 }
 message MerkleDigest {
   bytes incarnation = 1;
   // SHA-256 root followed by 16 ordered leaf digests (544 decoded bytes).
   bytes envelope = 2;
-  bytes origin = 3;
-  JournalProof applied_source = 4;
+  // 3 and 4 held a journal proof of the digested journals that register deltas replaced.
+  reserved 3, 4;
   // The answering member's region, for per-region-pair replication bandwidth.
   string region = 5;
 }
@@ -50,7 +43,7 @@ message RangeRequest {
   string after_id = 4;
 }
 message StatePage {
-  // Existing ChangeGroup bytes in an LZ4 envelope; empty for no selected rows.
+  // DeltaGroup bytes of the selected registers, without dependencies, in an LZ4 envelope; empty for no selected rows.
   bytes envelope = 1;
   bool has_more = 2;
   // Last examined key, including pages with no selected rows.
@@ -62,6 +55,6 @@ message StateRequest {
   bytes envelope = 2;
 }
 message MergeResult {
-  // Keys actually changed by the durable merge, excluding duplicates/losers.
+  // Keys whose stored register the durable join changed, excluding duplicates.
   uint32 repaired_keys = 1;
 }

@@ -51,11 +51,10 @@ Validation, all `400 invalid_request` unless noted:
 
 The shape history is an append-only `change_log`, separate from the current `documents` table.
 Shape offsets use the per-database SQLite commit clock, independently of peer journal positions.
-Replication applies winning document changes and advances shape history in the same transaction
-as its applied frontier. Imported changes retain their document merge versions; public ETags also
-identify the raw body and deletion state, so equal-version winners invalidate stale validators. Each
-receiving transaction gets one local history offset above its previous head and at least as high
-as the versions it observes. Equal-version winning changes therefore appear after the old shape
+Replication applies register deltas and advances shape history in the same transaction as its applied
+position, for every document whose last-writer-wins write changed. Applied writes keep their own stamps as
+document versions; public ETags also identify the raw body and deletion state. Each receiving transaction gets
+one local history offset above its previous head. Applied changes therefore appear after the old shape
 head. Imports are not captured again into the sending journal. Commits that advance the clock
 also wake live shape readers.
 
@@ -86,10 +85,9 @@ The current mapping is:
   `change_log_birth` adds both on the document's first `change_log` insert. Upgrading from v5
   backfills them from each id's earliest retained version. Offsets grow in commit order, so the
   generation's highest id at `S` is that of its latest `change_log_high` row at or before `S`.
-- Schema v7 preserves v5 history and adds `change_log.document_version`: the document version
-  used by ETags and shape upserts. `change_log.version` remains the local history offset used
-  for snapshots, log windows and commit grouping. Existing entries seed `document_version`
-  from their original offset; imports can carry an older merge version at a newer history offset.
+- `change_log.document_version` is the document version (the stamp of its last-writer-wins write) used by ETags
+  and shape upserts. `change_log.version` is the local history offset used for snapshots, log windows and commit
+  grouping; an applied write can carry an older stamp at a newer history offset.
 - Handles bind TS-459's persisted database incarnation (`IDatabaseStore.Incarnation`, drawn
   again on every create and copy) and the collection generation, so a recreated collection or
   database under the same name starts a new lineage.
@@ -173,9 +171,8 @@ them. Replication before-images could remove those redundant deletes later.
   `next_offset` is the head. Immutable snapshot pages and closed chunks never say it: a client is
   up to date only after a fresh read of the log.
 - `version` is `tbv1-` plus the first 16 bytes of SHA-256 over the database scope (derived from its ids, the same on every member),
-  collection, document id, merge version and deletion bit, separated by NUL bytes, followed by a NUL
-  and the raw UTF-8 document bytes (empty for a tombstone). An equal-version body winner or deletion
-  changes this validator. Existing cached tokens must be refreshed after this change. Recreating or copying a
+  collection, document id, document version and deletion bit, separated by NUL bytes, followed by a NUL
+  and the raw UTF-8 document bytes (empty for a tombstone). Recreating or copying a
   database changes its ids, so an old ETag cannot authorize a write or produce a false 304
   even when the new database reuses the same offset and id.
 - `shape_id`: 32 lowercase hex characters, the first 16 bytes of

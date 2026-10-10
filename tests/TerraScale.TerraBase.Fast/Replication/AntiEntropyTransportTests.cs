@@ -6,13 +6,11 @@ using Google.Protobuf;
 using Grpc.Core;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
-using TerraBase.Engine;
 using TerraBase.Fast.Documents;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.Alpha;
-using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -64,9 +62,6 @@ public sealed class AntiEntropyTransportTests
         {
             var digest = await digestCall.ResponseAsync;
             identity.Incarnation = digest.Incarnation;
-            identity.Origin = ByteString.CopyFrom(EntityIds.New().ToByteArray());
-            identity.SourceProof = new JournalProof { Origin = identity.Origin, Digest = ByteString.CopyFrom(JournalDigest.Initial(identity.Origin.Span)) };
-            identity.TargetProof = new JournalProof { Origin = digest.Origin, Digest = ByteString.CopyFrom(JournalDigest.Initial(digest.Origin.Span)) };
         }
 
         var ranges = new RangeRequest { Identity = identity, Ranges = ushort.MaxValue };

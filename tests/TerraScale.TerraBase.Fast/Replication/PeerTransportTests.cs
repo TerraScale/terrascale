@@ -510,9 +510,8 @@ public sealed class PeerTransportTests
                         continue;
                     }
 
-                    var changes = ReplicationProtocol.Read(requests.Current, database!, hello.LocalIdentity.MemberId.Memory, hello.Limits);
-                    if (changes.Any(change => change.Id == id && change.Json is { } json
-                        && Encoding.UTF8.GetString(json.Span).Contains(value, StringComparison.Ordinal)))
+                    var changes = ReplicationProtocol.Read(requests.Current, database!, hello.LocalIdentity.MemberId.Memory, hello.Limits).Changes;
+                    if (changes.Any(change => change.Id == id && Deltas.Json(change) is { } json && json.Contains(value, StringComparison.Ordinal)))
                     {
                         receivedDocument = true;
                         documentConnection.TrySetResult(connection);

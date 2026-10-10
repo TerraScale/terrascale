@@ -439,8 +439,8 @@ public sealed class DocumentCacheTests
         long committed;
         await using (transaction)
         {
-            await transaction.PutAsync("people", StorageFixture.Id("p1"), Encoding.UTF8.GetBytes("""{"name":"applied"}"""), operationTimeout.Token);
-            committed = await transaction.CommitAsync(operationTimeout.Token);
+            committed = await transaction.PutAsync("people", StorageFixture.Id("p1"), Encoding.UTF8.GetBytes("""{"name":"applied"}"""), operationTimeout.Token);
+            await transaction.CommitAsync(operationTimeout.Token);
         }
 
         var applied = await GetAsync(tenant, "shop", "people", "p1", operationTimeout.Token);
@@ -472,20 +472,20 @@ public sealed class DocumentCacheTests
         var store = (await server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(shop, operationTimeout.Token))!;
         var stamps = server.Services.GetRequiredService<IWriteStamps>();
         var transaction = await store.BeginTransactionAsync(write: true, operationTimeout.Token);
-        long committed;
+        long committed = 0;
         await using (transaction)
         {
             var json = Encoding.UTF8.GetBytes("""{"name":"applied"}""");
             for (var i = 0; i < Writes; i++)
             {
-                await transaction.PutAsync("items", StorageFixture.Id("hot"), json, operationTimeout.Token);
+                committed = await transaction.PutAsync("items", StorageFixture.Id("hot"), json, operationTimeout.Token);
             }
 
             // Cache the committed old value while the write is in flight.
             await Assert.That(await GetAsync(tenant, "shop", "items", "hot", operationTimeout.Token)).IsEqualTo((initial, "first"));
             await ListAsync(tenant, "shop", "items", operationTimeout.Token);
             var before = stamps.Collection(shop, "items");
-            committed = await transaction.CommitAsync(operationTimeout.Token);
+            await transaction.CommitAsync(operationTimeout.Token);
             // Tracking is by touched stripe, independent of repeated write count.
             await Assert.That(stamps.Collection(shop, "items") - before).IsEqualTo(1);
         }
@@ -680,14 +680,16 @@ public sealed class DocumentCacheTests
         var server = management.Server;
         using var tenant = await CreateTenantAsync(management, "race", enterprise: true, cancellationToken: deadline.Token);
         var client = tenant.Data;
-        await PutAsync(tenant, "race", "items", "hot", "1", deadline.Token);
+        // Each write's own token, by the name its body carries; every read pair is checked against them afterwards, because a
+        // read can observe a write before its PUT answers.
+        var written = new System.Collections.Concurrent.ConcurrentDictionary<string, string>(StringComparer.Ordinal);
+        written["1"] = await PutAsync(tenant, "race", "items", "hot", "1", deadline.Token);
         long acknowledged = 1;
         var database = await tenant.ContextAsync(management.Server, "race", deadline.Token);
         var store = (await server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(database, deadline.Token))!;
         var transaction = await store.BeginTransactionAsync(write: false, deadline.Token);
         await using var transactionCleanup = transaction;
-        var scope = transaction.Scope;
-        var initialOffset = (await transaction.GetAsync("items", StorageFixture.Id("hot"), deadline.Token))!.Version;
+        var observed = new System.Collections.Concurrent.ConcurrentQueue<(string Name, string Version)>();
         var done = false;
         var stale = 0;
         var reads = 0;
@@ -701,8 +703,7 @@ public sealed class DocumentCacheTests
                     ? await ListedDocumentAsync(tenant, cancellationToken)
                     : await GetAsync(tenant, "race", "items", "hot", cancellationToken);
                 var version = long.Parse(document.Name, System.Globalization.CultureInfo.InvariantCulture);
-                await Assert.That(document.Version).IsEqualTo(ETags.Version(scope, "items", StorageFixture.Id("hot"), initialOffset + version - 1,
-                    Encoding.UTF8.GetBytes($$"""{"name":"{{document.Name}}"}""")));
+                observed.Enqueue((document.Name, document.Version));
                 Interlocked.Increment(ref reads);
                 if (version < floor)
                 {
@@ -717,7 +718,8 @@ public sealed class DocumentCacheTests
         {
             for (var i = 1; i < Writes; i++)
             {
-                await PutAsync(tenant, "race", "items", "hot", (i + 1).ToString(System.Globalization.CultureInfo.InvariantCulture), deadline.Token);
+                var name = (i + 1).ToString(System.Globalization.CultureInfo.InvariantCulture);
+                written[name] = await PutAsync(tenant, "race", "items", "hot", name, deadline.Token);
                 Volatile.Write(ref acknowledged, i + 1);
             }
             Volatile.Write(ref done, true);
@@ -738,6 +740,8 @@ public sealed class DocumentCacheTests
         await Assert.That(acknowledged).IsEqualTo(Writes);
         await Assert.That(reads).IsGreaterThan(0);
         await Assert.That(stale).IsEqualTo(0);
+        // Every body read came with the token its write answered.
+        await Assert.That(observed.Where(read => written[read.Name] != read.Version).ToList()).IsEmpty();
     }
 
     private static async Task<(string Version, string Name)> ListedDocumentAsync(Tenant tenant, CancellationToken cancellationToken)

@@ -21,7 +21,7 @@ internal sealed partial class SqliteStorageTransaction
 
     private IMemoryReservation? ReserveCollectionMetadata(string name)
     {
-        var command = Command("SELECT length(CAST(body AS BLOB)) FROM documents WHERE collection = $collection AND id = $id;", DocumentChange.Collections);
+        var command = Command("SELECT length(CAST(body AS BLOB)) FROM documents WHERE collection = $collection AND id = $id;", DocumentDelta.Collections);
         command.Parameters.AddWithValue("$id", name);
         var bytes = command.ExecuteScalar();
         return bytes is long length ? ReserveSchemaMemory(8L * length, MemoryLane.Foreground) : null;
@@ -113,7 +113,7 @@ internal sealed partial class SqliteStorageTransaction
                 CountMember("schema_dialect", CollectionSchemaDialect.Length + 2);
             }
 
-            Reserve(DocumentChange.Collections, name, bytes);
+            Reserve(DocumentDelta.Collections, name, bytes);
             var buffer = new ArrayBufferWriter<byte>(bytes);
             using (var writer = new Utf8JsonWriter(buffer))
             {
@@ -150,7 +150,7 @@ internal sealed partial class SqliteStorageTransaction
             cancellationToken.ThrowIfCancellationRequested();
             // The complete envelope must be admissible on replication as well as locally.
             var body = DocumentJson.Read(buffer.WrittenMemory, requireObject: true);
-            WriteMetadata(DocumentChange.Collections, name, body);
+            WriteMetadata(DocumentDelta.Collections, name, body);
             _collectionsChanged = true;
             return true;
 
@@ -166,7 +166,7 @@ internal sealed partial class SqliteStorageTransaction
 
     private JsonDocument? ReadCollectionMetadata(string name)
     {
-        var stored = ReadDocument(DocumentChange.Collections, name);
+        var stored = ReadDocument(DocumentDelta.Collections, name);
         if (stored is null)
         {
             return null;

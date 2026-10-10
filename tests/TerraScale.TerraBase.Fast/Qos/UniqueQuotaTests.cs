@@ -36,9 +36,8 @@ public sealed class UniqueQuotaTests
         // Incoming uniqueness metadata projects the existing raw state into a hidden contender.
         await using (var transaction = await store.BeginTransactionAsync(write: true, CancellationToken.None))
         {
-            var version = await transaction.GetOffsetAsync(CancellationToken.None) + 1;
-            await transaction.ApplyAsync(new DocumentChange("_unique", "items", version,
-                "{\"constraints\":[{\"name\":\"email\",\"fields\":[\"email\"],\"normalization\":\"none\"}]}"u8.ToArray()), CancellationToken.None);
+            await transaction.ApplyAsync(Deltas.Write("_unique", "items",
+                "{\"constraints\":[{\"name\":\"email\",\"fields\":[\"email\"],\"normalization\":\"none\"}]}"), CancellationToken.None);
             await transaction.CommitAsync(CancellationToken.None);
         }
 

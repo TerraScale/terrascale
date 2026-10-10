@@ -3,6 +3,7 @@ using System.Text.Json;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
+using TerraBase.Engine.Lattices;
 using TerraBase.Features.Replication;
 using TerraBase.Primitives;
 using TerraBase.Testing;
@@ -62,7 +63,7 @@ public sealed class CaptureAdmissionTests
             {
                 if (imported)
                 {
-                    await Assert.That(async () => await write.ApplyAsync(new DocumentChange(collection, id, 1, "{}"u8.ToArray()), token))
+                    await Assert.That(async () => await write.ApplyAsync(Deltas.Write(collection, id, "{}"), token))
                         .Throws<InvalidDataException>();
                 }
                 else
@@ -101,15 +102,15 @@ public sealed class CaptureAdmissionTests
         for (var sequence = 2L; sequence <= 3; sequence++)
         {
             var group = (await local.ReadChangesAsync(sequence, token))!;
-            var decoded = ChangeGroup.Decode(ChangeGroup.Encode(group));
-            await Assert.That(decoded.Select(change => (change.Collection, change.Id, change.Version)))
-                .IsEquivalentTo(group.Select(change => (change.Collection, change.Id, change.Version)));
+            var decoded = DeltaGroup.Decode(DeltaGroup.Encode(group, out _)).Changes;
+            await Assert.That(decoded.Select(change => (change.Collection, change.Id, Convert.ToHexString(LatticeEncoding.Encode(change.State)))))
+                .IsEquivalentTo(group.Changes.Select(change => (change.Collection, change.Id, Convert.ToHexString(LatticeEncoding.Encode(change.State)))));
             foreach (var change in decoded)
             {
                 using var response = await reader.GetAsync(new Uri($"{tenant.Path("db")}/collections/items/documents/by-key?id={Uri.EscapeDataString(change.Id)}", UriKind.Relative), token);
                 response.EnsureSuccessStatusCode();
                 using var body = JsonDocument.Parse(await response.Content.ReadAsByteArrayAsync(token));
-                await Assert.That(body.RootElement.GetProperty("document").GetRawText()).IsEqualTo(Encoding.UTF8.GetString(change.Json!.Value.Span));
+                await Assert.That(body.RootElement.GetProperty("document").GetRawText()).IsEqualTo(Deltas.Json(change));
             }
         }
     }
@@ -151,34 +152,35 @@ public sealed class CaptureAdmissionTests
         var retained = EntityIds.New().ToString();
         using var seeded = await client.PutAsJsonAsync(new Uri($"{tenant.Path("db")}/collections/items/documents/by-key?id={existing}", UriKind.Relative), new { value = "old" }, token);
         seeded.EnsureSuccessStatusCode();
-        // Two names (5 bytes), ULIDs (26 bytes) and these bodies fill exactly the 2 MiB capture budget.
-        var json = Encoding.UTF8.GetBytes("{\"value\":\"" + new string('x', IStorageTransaction.MaxChangeGroupBytes / 2 - 31 - 12) + "\"}");
+        // Two names (5 bytes), ULIDs (26 bytes) and registers of one write each (48 bytes besides the body) fill exactly the
+        // 2 MiB capture budget.
+        var json = Encoding.UTF8.GetBytes("{\"value\":\"" + new string('x', IStorageTransaction.MaxChangeGroupBytes / 2 - 31 - 48 - 12) + "\"}");
         var source = (await sender.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(tenant.Database("db"), token))!;
-        long offset;
         await using (var write = await source.BeginTransactionAsync(write: true, token))
         {
             await write.PutAsync("other", retained, json, token);
             await write.PutAsync("items", captured, json, token);
             await Assert.That(await write.DropCollectionAsync("items", token)).IsTrue();
-            offset = await write.CommitAsync(token);
+            await write.CommitAsync(token);
         }
 
         await TerraBaseTestServer.ReplicatedAsync(sender);
         await using var local = await source.BeginTransactionAsync(write: false, token);
         // Groups 1 and 2 created the collections, 3 seeded; the drop's group also holds the collection's tombstone.
-        var group = (await local.ReadChangesAsync(4, token))!;
+        var group = (await local.ReadChangesAsync(4, token))!.Changes;
         await Assert.That(group.Count).IsEqualTo(4);
-        await Assert.That(group.Single(change => change.Id == retained).Json!.Value.Span.SequenceEqual(json)).IsTrue();
-        await Assert.That(group.Where(change => change.Collection == "items").All(change => change.Json is null && change.Version == offset)).IsTrue();
-        await Assert.That(group.Single(change => change.Collection == DocumentChange.Collections)).IsEqualTo(new DocumentChange(DocumentChange.Collections, "items", offset, null));
+        await Assert.That(Deltas.Json(group.Single(change => change.Id == retained))).IsEqualTo(Encoding.UTF8.GetString(json));
+        await Assert.That(group.Where(change => change.Collection == "items").All(change => Deltas.Json(change) is null)).IsTrue();
+        var drop = group.Single(change => change.Collection == DocumentDelta.Collections);
+        await Assert.That(drop.Id == "items" && Deltas.Json(drop) is null).IsTrue();
         var target = (await receiver.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(tenant.Database("db"), token))!;
         await using var remote = await target.BeginTransactionAsync(write: false, token);
         await Assert.That(await remote.GetAppliedSequenceAsync(await local.GetOriginAsync(token), token)).IsEqualTo(4);
         await Assert.That(await remote.GetCollectionAsync("items", token)).IsNull();
         var received = (await remote.GetAsync("other", retained, token))!;
         await Assert.That(received.Json.Span.SequenceEqual(json)).IsTrue();
-        await Assert.That(await remote.GetVersionAsync("items", existing, token)).IsEqualTo(new DocumentVersion(offset, Deleted: true));
-        await Assert.That(await remote.GetVersionAsync("items", captured, token)).IsEqualTo(new DocumentVersion(offset, Deleted: true));
+        await Assert.That((await remote.GetVersionAsync("items", existing, token))?.Deleted).IsTrue();
+        await Assert.That((await remote.GetVersionAsync("items", captured, token))?.Deleted).IsTrue();
     }
 
     [Test]
@@ -208,7 +210,6 @@ public sealed class CaptureAdmissionTests
         // The drop's group also holds the collection's own tombstone.
         var ids = Enumerable.Range(0, IStorageTransaction.MaxChangeGroupChanges - 1).Select(_ => EntityIds.New().ToString()).ToArray();
         var json = JsonSerializer.SerializeToUtf8Bytes(new { value = new Faker().Lorem.Word() });
-        long offset;
         await using (var write = await source.BeginTransactionAsync(write: true, token))
         {
             // Internal mutations may share a key; the public transaction API refuses duplicate targets.
@@ -218,23 +219,23 @@ public sealed class CaptureAdmissionTests
             }
 
             await Assert.That(await write.DropCollectionAsync("items", token)).IsTrue();
-            offset = await write.CommitAsync(token);
+            await write.CommitAsync(token);
         }
 
         await TerraBaseTestServer.ReplicatedAsync(sender);
         await using var local = await source.BeginTransactionAsync(write: false, token);
         await Assert.That(await local.GetCollectionAsync("items", token)).IsNull();
         // Group 1 created the collection.
-        var group = (await local.ReadChangesAsync(2, token))!;
+        var group = (await local.ReadChangesAsync(2, token))!.Changes;
         await Assert.That(group.Count).IsEqualTo(IStorageTransaction.MaxChangeGroupChanges);
         await Assert.That(group.Where(change => change.Collection == "items").Select(change => change.Id)).IsEquivalentTo(ids);
-        await Assert.That(group.All(change => change.Json is null && change.Version == offset)).IsTrue();
+        await Assert.That(group.All(change => Deltas.Json(change) is null)).IsTrue();
         var target = (await receiver.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(tenant.Database("db"), token))!;
         await using var remote = await target.BeginTransactionAsync(write: false, token);
         await Assert.That(await remote.GetAppliedSequenceAsync(await local.GetOriginAsync(token), token)).IsEqualTo(2);
         foreach (var id in ids)
         {
-            await Assert.That(await remote.GetVersionAsync("items", id, token)).IsEqualTo(new DocumentVersion(offset, Deleted: true));
+            await Assert.That((await remote.GetVersionAsync("items", id, token))?.Deleted).IsTrue();
         }
     }
 }

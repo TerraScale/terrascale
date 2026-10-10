@@ -129,7 +129,7 @@ public sealed class StorageMutationTests
 
     [Test]
     [Arguments("put")]
-    [Arguments("delete")]
+    [Arguments("tombstone")]
     [Arguments("create")]
     [Arguments("drop")]
     public async Task Read_transactions_refuse_every_mutation(string mutation)
@@ -163,7 +163,7 @@ public sealed class StorageMutationTests
     [Arguments("drop", "offset")]
     [Arguments("create", "collection")]
     [Arguments("drop", "collection")]
-    [Arguments("delete", "document")]
+    [Arguments("tombstone", "document")]
     public async Task A_failed_collection_or_offset_statement_prevents_committing_partial_changes(string mutation, string failure)
     {
         await using var api = await DocumentApi.StartAsync();
@@ -176,9 +176,9 @@ public sealed class StorageMutationTests
         var (_, snapshotUrl, snapshotText) = await SnapshotAsync(api, shapes);
         var trigger = failure == "offset"
             ? "CREATE TRIGGER reject_offset BEFORE UPDATE ON commit_offset BEGIN SELECT RAISE(FAIL, 'injected offset failure'); END;"
-            // The row is already deleted when an AFTER DELETE trigger fails: the transaction must still refuse to commit.
+            // The row is already a tombstone when an AFTER UPDATE trigger fails: the transaction must still refuse to commit.
             : failure == "document"
-                ? "CREATE TRIGGER reject_document AFTER DELETE ON documents BEGIN SELECT RAISE(FAIL, 'injected document failure'); END;"
+                ? "CREATE TRIGGER reject_document AFTER UPDATE ON documents BEGIN SELECT RAISE(FAIL, 'injected document failure'); END;"
             : mutation == "create"
                 ? "CREATE TRIGGER reject_collection AFTER INSERT ON collections BEGIN SELECT RAISE(FAIL, 'injected collection failure'); END;"
                 : "CREATE TRIGGER reject_collection BEFORE DELETE ON collections BEGIN SELECT RAISE(FAIL, 'injected collection failure'); END;";
@@ -287,8 +287,8 @@ public sealed class StorageMutationTests
             case "put":
                 await transaction.PutAsync(DocumentApi.Collection, id, Encoding.UTF8.GetBytes("{\"n\":2}"), CancellationToken.None);
                 break;
-            case "delete":
-                await transaction.DeleteAsync(DocumentApi.Collection, id, CancellationToken.None);
+            case "tombstone":
+                await transaction.TombstoneAsync(DocumentApi.Collection, id, CancellationToken.None);
                 break;
             case "create":
                 await transaction.CreateCollectionAsync(new CollectionInfo("extra", 0), CancellationToken.None);

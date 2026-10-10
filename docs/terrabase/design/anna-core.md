@@ -1,14 +1,14 @@
 # Anna core: coordination-free storage and replication (TS-634)
 
-- Status: design, revised 2026-10-07 for TS-647. **Stage 1 (TS-647) is being built now; stage 2 (TS-648, TS-649,
-  TS-643) comes later.** Nothing below is implemented unless the [plan](#15-plan) marks its step as merged.
-  Statements about the future system are targets, not guarantees; each guarantee is claimed only once its step ships
-  with integration evidence.
+- Status: design, revised 2026-10-07 for TS-647 and 2026-10-08 for the greenfield rule (decision 6). **Stage 1
+  (TS-647) is being built now; stage 2 (TS-648, TS-649, TS-643) comes later.** Nothing below is implemented unless
+  the [plan](#15-plan) marks its step as merged. Statements about the future system are targets, not guarantees; each
+  guarantee is claimed only once its step ships with integration evidence.
 - Tickets: TS-634 (umbrella), TS-647 (stage 1), TS-648 (per-core actors), TS-649 (memory tier, hot keys, policy
   engine, autoscaling), TS-643 (multi-region), TS-650 (SDKs accept `tbv2` tokens, no longer needed: decision 7), TS-677 (go-live).
 - User decisions: 2026-10-06 (scope), 2026-10-07 (replicate inside one region now; one engine, no core switch; the
   simpler route now and full Anna later; [§16](#16-decisions-and-open-questions)).
-- Related: TS-602 (greenfield wipe, no longer the cutover: decision 6), TS-606 (deployed benchmark), TS-633 (continuous backup),
+- Related: TS-602 (greenfield wipe: decision 6), TS-606 (deployed benchmark), TS-633 (continuous backup),
   TS-565 (node pools), TS-562 (NATS fabric between orchestrators), TS-581 (usage metering).
 
 Sources:
@@ -53,9 +53,9 @@ Anna has two halves:
 `// anna-full (TS-648|TS-649|TS-643): <what full Anna does here>` so stage 2 can find and remove them.
 
 The public HTTP API, collections, SDK calls and the dashboard keep working; the
-[compatibility matrix](#12-api-compatibility-matrix) lists what changes. Production keeps its data: a one-time
-in-place migration converts each database file when its member first runs the new format
-([§16](#16-decisions-and-open-questions), decision 6).
+[compatibility matrix](#12-api-compatibility-matrix) lists what changes. Stored data does not survive a format
+change: TerraBase is greenfield, so a step that changes a persisted format deletes the old format's code and data,
+and wipes and re-creates that storage, with no migration ([§16](#16-decisions-and-open-questions), decision 6).
 
 ### Non-goals
 
@@ -140,7 +140,7 @@ idempotent ([Anna] §III). Mutators are delta-mutators: they return the delta, a
 - **A dot carrying two values is refused**: `MvRegister.Join` throws instead of keeping one. Any remaining reuse bug
   then stops a stream loudly instead of losing data.
 - `Hlc`: 48-bit Unix milliseconds and a 16-bit logical counter. A received stamp ahead of the local clock by more
-  than `max-clock-skew` (default 1 s) is **accepted**, the local clock advances by at most `max-clock-skew`, and an
+  than the skew bound (1 s, a code constant) is **accepted**, the local clock advances by at most that bound, and an
   alert metric counts it; the stream never stalls on a fast clock.
 
 ### Documents
@@ -196,9 +196,10 @@ CPU and memory ([§17](#17-benchmark-targets)).
 
 ### 4.2 Stored state
 
-Each document row keeps the encoded register, the LWW-resolved JSON (what queries, indexes, shapes and SQL read), its
-version token and whether siblings exist. The database keeps its floor vector, its origin streams' positions and the
-applied vector. One file per database stays, so TS-633's WAL tap keeps working unchanged.
+Each document row keeps the encoded register, its LWW winner's JSON (what queries, indexes, shapes and SQL read; none
+when the winner is a tombstone) and the winner's stamp, from which its version token is derived. The database keeps
+its own stream (origin, groups of deltas with their dependency vectors), the applied prefix of every origin and, from
+step 7, its floor vector. One file per database stays, so TS-633's WAL tap keeps working unchanged.
 
 ## 5. Membership, ring and leases
 
@@ -259,8 +260,13 @@ applied vector. One file per database stays, so TS-633's WAL tap keeps working u
   applied when it committed. A receiver applies a group only once its applied vector covers the group's dependencies,
   so every replica sees writes in causal order without transitive re-sends (the dependency vector replaces the
   transitive mode of [δ-CRDT] Algorithm 2, with the same causal delivery guarantee).
+- A stream's **origin** is its database file's incarnation under the writing member's replica id. A new epoch (an
+  unclean start, [§3](#identities-and-dots)) or a copied file starts a new origin whose first groups are a snapshot of
+  every register, so a sequence never names two different groups and no prefix proof (today's journal digests) is
+  needed; joins make the repeated states harmless.
 - A replica that falls behind the retained stream, or a new or refilled replica, receives a snapshot of the encoded
   states and the applied vector, then the streams after it.
+- Members of another format never meet: the cutover stops every member before any starts the new format (decision 9).
 - Wire format: the existing versioned envelope with LZ4 over the existing mutual-TLS peer listener
   ([0007](../decisions/0007-lz4-application-envelope-replication.md)).
 
@@ -354,9 +360,10 @@ database name per project is an owner `If-None-Match: *`. Usage counts from ever
 | Member partitioned from peers | writes continue on both sides | streams resume; past the retained window, snapshots; write-wait times out and counts |
 | Member partitioned from NATS | its lease expires | owner operations answer `503`; after the partition it drops its replicas and refills |
 | NATS down | membership and ring frozen | data path continues; owner operations stop once leases expire |
-| Clock ahead by more than `max-clock-skew` | LWW favors the fast clock | the stamp is accepted, the local clock advances by at most `max-clock-skew`, an alert counts it |
+| Clock ahead by more than the 1 s skew bound | LWW favors the fast clock | the stamp is accepted, the local clock advances by at most that bound, an alert counts it |
 | Owner paused past its lease | two owners briefly | lease checks before and after commit; the documented claim ([§5.3](#53-leases)) |
 | A dot minted twice | two values under one dot | the join refuses it and the stream stops with an error |
+| A database file replaced by hand under the same member and epoch | its stream reuses sequences peers applied | detected only when a peer is ahead of the head (`peer_ahead`); restores go through import, which starts a new origin |
 
 ## 12. API compatibility matrix
 
@@ -399,43 +406,46 @@ Both suites stay parallel-safe: each test owns its servers, ports, directories a
    read does not block writes.
 3. **Membership and leases (Fast and Slow).** Static `peers` in Fast; a `nats-server` per test in Slow: joins, leaves,
    expiry with delete markers, refill after an expired lease, owner failover.
-4. **Partition suite (Slow; the gate for the format flip).** Three to five members whose peer links pass through a
-   fault proxy (drop, delay, duplicate, reorder, partition, heal). Checked histories: convergence after heal, no
-   acknowledged write lost, CAS linearizable while the lease is held, no fractured transaction reads.
+4. **Partition suite (Slow; a go-live gate for TS-677, since Slow never blocks a merge).** Three to five members
+   whose peer links pass through a fault proxy (drop, delay, duplicate, reorder, partition, heal). Checked histories:
+   convergence after heal, no acknowledged write lost, CAS linearizable while the lease is held, no fractured
+   transaction reads.
 5. **End to end (Fast).** Management commit fences and dashboard sign-in against TerraBase-backed stores (step 6).
 
 ## 14. Benchmark gate
 
-A TS-606 run on 1-OCPU A1 nodes beats today's engine on writes, with equal or lower CPU and memory, before the
-cutover ([§17](#17-benchmark-targets)).
+A TS-606 run on 1-OCPU A1 nodes beats the pre-Anna engine on writes, with equal or lower CPU and memory, before the
+go-live (TS-677, [§17](#17-benchmark-targets)).
 
 ## 15. Plan
 
-TS-647, one PR per step. `main` stays deployable on every merge before step 4, because production auto-deploys
-every push to `main`.
+TS-647, one PR per step. `main` stays deployable on every merge, because production auto-deploys every push to `main`
+(the `deploy` job on every green main push).
 
 | Step | Contents |
 | --- | --- |
 | 1 | Delete the slice-2 surface (`core`/`actors` settings, `StorageCore`, `AnnaDocumentService`, `AnnaShapeService`, `DocumentActors`, the Development guard). Fix dot minting: epoch in `ReplicaId`, floor-seeded keys, burned dots, the same-dot refusal, no allocations in `CausalContext.Max`/`Compact` on the common path. This document rewritten |
 | 2 | Group commit: per-database writer thread apart from the read pool, one `SAVEPOINT` per client write, collections in memory. Measured with TS-606 |
 | 3 | NATS membership, ring and leases (KV TTL with delete markers); static `peers` for tests; backup shipper by lease (with TS-633), deleting TS-633's interim leases. Then: membership replaces `peer-addresses`; refill after an expired lease; lease checks around owner commits; clock-skew capping |
-| 4 | Format flip: `MvRegister` state, HLC stamps, epoch replica ids, joins, per-origin streams with dependency vectors; delete `VersionClock`, `StampingStorageEngine`/`IWriteStamps`, `JournalDigest`, merge v1, baselines and legacy upgrades; a one-time in-place migration. Gate: the partition suite. In the sub-steps below |
-| 5 | `_system` as a lattice database on every member; delete the catalog primary; usage `GCounter`s |
+| 4 | Format flip of client databases: `MvRegister` state, HLC stamps, epoch replica ids, joins, per-origin streams with dependency vectors; delete merge v1, the journal digests of client streams, the old baselines and the client schema upgrades, then `StampingStorageEngine`/`IWriteStamps`. In the sub-steps below |
+| 5 | `_system` as a lattice database on every member; delete the catalog primary, `VersionClock`, `JournalDigest` and the system schema upgrades; usage `GCounter`s. A format change: every member's storage is wiped and the system database re-bootstraps |
 | 6 | Owner CAS and conditional transactions on the primary owner, reservations released by the flush callback; end-to-end tests of commit fences and dashboard sign-in |
 | 7 | Causal consistency per request; interval and tombstone GC on applied vectors |
 
-Step 4 runs as expand, switch, contract, because every merge rolls out to production member by member (the `deploy`
-job on every green main push) and peers refuse any other protocol or format version
-(`ReplicationProtocol.Accept`/`Accepts`): until the last sub-step, members of the old and the new build replicate with
-each other. Unknown protobuf fields are ignored by older members, so the new state travels beside today's group.
+A format flip is greenfield (decision 6): the new format replaces the old one directly, the old code and the old
+data go, and storage of the old format is wiped and re-created; nothing converts it. Format and protocol numbers stay 1
+(decision 9), so members of different formats cannot tell each other apart: a flip deploys at a cutover that stops
+every member, wipes its storage and only then starts the new build, and no member of the old format ever meets one of
+the new. Each flip's PR verifies its production target first and lists what the rollout deletes. Production data
+deletion for these flips is pre-approved.
 
-| Sub-step | Contents | Rolls out mixed |
+| Sub-step | Contents | Persisted format |
 | --- | --- | --- |
-| 4a | The register encoding (`LatticeEncoding`, `DocumentWrite`); no caller yet | Yes, nothing changes |
-| 4b | Replica identity: a member number and a replica epoch raised on every unclean start, in `.terrabase.replica` | Yes, a new file older builds ignore |
-| 4c | Expand: one HLC per member (observing every applied stamp, advancing at most `max-clock-skew`); each document row also keeps its encoded register, written by local writes and joined on apply; groups carry registers in a new field; a member converts its files in place on first open | Yes, merge v1 still decides |
-| 4d | Switch: the join decides, LWW reads take the register's winner, tokens hash it; dependency vectors gate apply | Only once every member runs 4c |
-| 4e | Contract: delete merge v1, `VersionClock`, `JournalDigest`, baselines, legacy upgrades and `StampingStorageEngine`; one protocol version | Under a deploy freeze, gated by the partition suite |
+| 4a | The register encoding (`LatticeEncoding`, `DocumentWrite`); no caller yet (merged, #111) | Unchanged |
+| 4b | Replica identity: a member number and a replica epoch raised on every unclean start, in `.terrabase.replica` | A new file |
+| 4c | The flip, for client databases: one HLC per member (observing every applied stamp, advancing at most the 1 s skew bound); documents stored as registers, written by local writes and joined on apply; LWW reads take the winner and tokens hash it; groups of deltas with dependency vectors, on streams per origin ([§6.1](#61-per-origin-streams)), in-region and WAN; delete merge v1, the import clock checks, the client journal digests, the old baselines and the client schema upgrades; the system database keeps its format until step 5 | Every member's storage is wiped at a cutover that stops every member first; a file of another schema version is refused |
+| 4d | Causal delivery: a group waits until the receiver's applied vector covers its dependencies | Unchanged |
+| 4e | Cache invalidation supplied by the engine itself (TS-649's semantics); delete `StampingStorageEngine`/`IWriteStamps` | Unchanged |
 
 Merged under TS-634: the design (#50), the lattice library (#51), and slice 2 (#53), whose surface step 1 deletes.
 
@@ -461,7 +471,7 @@ This needs no TS-647/648/649 changes. See
 Decided by the user:
 
 1. 2026-10-06: rebuild the core on Anna; keep the public API, collections, SDKs and dashboard; cut over at the TS-602
-   wipe without migration code (the migration part is replaced by decision 6).
+   wipe without migration code (decision 6 makes this the rule for every format change).
 2. 2026-10-07: replicate inside one region now, across regions later (TS-643).
 3. 2026-10-07: lattice-law property tests call the library directly, an exception for the lattice library only.
 4. 2026-10-07: membership through NATS (`NATS.Net`); owner operations answer `503` while NATS is unreachable. Static
@@ -469,14 +479,19 @@ Decided by the user:
 5. 2026-10-07 (TS-647): one engine with SQLite as its storage, no core switch, no Turso; the simpler route now and full
    Anna later; conditional transactions keep today's semantics on the primary owner (this replaces the read-atomic
    decision of the same morning).
-6. 2026-10-07 and 2026-10-08 (relayed by COS, TS-677 and TS-634): production keeps its data through a one-time
-   in-place migration instead of the TS-602 wipe. This replaces decision 1's "without migration code".
+6. 2026-10-08 (user rule, relayed by COS): greenfield, with no migrations and no workarounds. A persisted format
+   change replaces the old format directly: its old code paths and old persisted data are deleted, storage of the
+   changed format is wiped and re-created, and system databases re-bootstrap on startup. There are no compatibility
+   readers and no dual formats. Production data deletion for this is pre-approved; each change verifies its target
+   first and lists what it deleted. This replaces the one-time in-place migration decided on 2026-10-07.
 7. 2026-10-08 (COS, pre-1.0 rule): no new v1/v2 names. Version tokens keep their current shape instead of a `tbv2-`
    prefix.
 8. 2026-10-08 (TS-647 step 4b, under COS's delegation): a member number is a random non-zero 32-bit value drawn when a
    data directory is first used, instead of the membership KV revision of its first registration. It works the same
    with static `peers` and with NATS. Three members collide with odds of about 1 in 1.4 billion, and a collision stops
    a stream on the same-dot refusal instead of losing a write.
+9. 2026-10-09 (user rule, TS-677): every storage format, layout and protocol number is 1 and never increases. A format
+   change wipes storage at a cutover instead of raising a number.
 
 Open:
 

@@ -6,12 +6,15 @@ using TerraBase.Tenancy;
 namespace TerraBase.Features.CrossRegion;
 
 /// <summary>
-/// Version 3 of cross-region replication (<c>wan.proto</c>, <c>docs/cross-region.md</c>): subjects in the cross-link
+/// Version 1 of cross-region replication (<c>wan.proto</c>, <c>docs/cross-region.md</c>): subjects in the cross-link
 /// <c>query</c> family of ts-orchestrator's NATS fabric, and the identities on them.
 /// </summary>
 public static class WanProtocol
 {
-    /// <summary>Version of <see cref="WanRequest"/>.</summary>
+    /// <summary>
+    /// Version of <see cref="WanRequest"/>: change groups of register deltas, as <c>Replication.Sync</c> carries them; a
+    /// member answers a request of another version as invalid. It never increases (docs/design/anna-core.md, decision 9).
+    /// </summary>
     public const uint Version = 1;
 
     /// <summary>Largest request or reply: NATS's default <c>max_payload</c>, which leafnodes between regions keep.</summary>

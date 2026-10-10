@@ -4,7 +4,6 @@ using System.Text.Json;
 using System.Threading.Channels;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 using TerraBase.Engine;
 using TerraBase.Fast.Documents;
 using TerraBase.Features.Replication;
@@ -18,93 +17,6 @@ namespace TerraBase.Fast.Replication;
 public sealed class ReplicationTests
 {
     private static readonly Faker Faker = new();
-
-    [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task Baselines_skip_oversized_live_and_deleted_keys_without_losing_progress(bool allInvalid)
-    {
-        using var peerTls = new PeerTls();
-        using var clientTls = new ClientTls();
-        var data = Directory.CreateTempSubdirectory("terrabase-baseline-keys-").FullName;
-        var skipped = new BaselineAdmissionLogs();
-        // Three server starts and two replication rounds of 2 MiB keys: bound by the test's own timeout, not a shorter one.
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
-        try
-        {
-            ReplicationTenant tenant;
-            await using (var seed = await TerraBaseTestServer.StartAsync(settings =>
-            {
-                clientTls.Apply(settings);
-                settings["data-directory"] = data;
-            }))
-            {
-                tenant = await ReplicationTenant.CreateAsync(seed, "legacy");
-                using var writer = clientTls.CreateClient(seed.ClientAddress!, await tenant.KeyAsync(seed, "documents:write"));
-                using var collection = await writer.PostAsJsonAsync(new Uri($"{tenant.Path("legacy")}/collections", UriKind.Relative), new { name = "items" }, deadline.Token);
-                collection.EnsureSuccessStatusCode();
-            }
-
-            // Restore oversized keys directly into a current database. SQLite generates them;
-            // neither admission nor its continuation may materialize these 2 MiB keys in .NET.
-            await using (var connection = new Microsoft.Data.Sqlite.SqliteConnection(DocumentApi.ConnectionString(Path.Combine(data,
-                tenant.Database("legacy").OrganizationId, tenant.Database("legacy").ProjectId!, tenant.Database("legacy").DatabaseId + ".db"))))
-            {
-                await connection.OpenAsync(deadline.Token);
-                using var restore = connection.CreateCommand();
-                restore.CommandText = """
-                    INSERT INTO documents VALUES (replace(hex(zeroblob(1048576)), '00', 'z'), 'live', 1, '{}');
-                    INSERT INTO documents VALUES (replace(hex(zeroblob(1048576)), '00', 'z'), 'deleted', 1, NULL);
-                    INSERT INTO documents VALUES ('items', replace(hex(zeroblob(1048576)), '00', 'z'), 1, '{}');
-                    INSERT INTO documents VALUES ('items', replace(hex(zeroblob(1048576)), '00', 'z') || 'x', 1, NULL);
-                    INSERT INTO documents SELECT 'items', 'after', 1, '{}' WHERE NOT $allInvalid;
-                    UPDATE replication_state SET complete = 0 WHERE id = 1;
-                    """;
-                restore.Parameters.AddWithValue("$allInvalid", allInvalid);
-                await restore.ExecuteNonQueryAsync(deadline.Token);
-            }
-
-            await using var receiver = await TerraBaseTestServer.StartAsync(settings => { peerTls.Apply(settings); clientTls.Apply(settings); });
-            await tenant.BindAsync(receiver);
-            await using var source = await TerraBaseTestServer.StartAsync(settings =>
-            {
-                peerTls.Apply(settings);
-                clientTls.Apply(settings);
-                settings["data-directory"] = data;
-                settings["peer-addresses"] = receiver.PeerAddress!.ToString();
-            }, services => services.AddSingleton<ILoggerProvider>(skipped));
-            await TerraBaseTestServer.ReplicatedAsync(source);
-            await Assert.That(skipped.Skipped).IsEqualTo(4);
-            var store = (await source.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(tenant.Database("legacy"), deadline.Token))!;
-            await using (var read = await store.BeginTransactionAsync(write: false, deadline.Token))
-            {
-                // Group 1 created the collection; the baseline repeats its record beside the admissible documents.
-                await Assert.That(await read.GetLastChangeSequenceAsync(deadline.Token)).IsEqualTo(2);
-                var changes = ChangeGroup.Decode(ChangeGroup.Encode((await read.ReadChangesAsync(2, deadline.Token))!));
-                string[] admitted = allInvalid ? [] : ["after"];
-                await Assert.That(changes.Where(change => change.Collection == "items").Select(change => change.Id)).IsEquivalentTo(admitted);
-                await Assert.That(changes.Single(change => change.Collection == DocumentChange.Collections).Id).IsEqualTo("items");
-            }
-
-            using var client = clientTls.CreateClient(source.ClientAddress!, await tenant.KeyAsync(source, "documents:write"));
-            using var added = await client.PutAsJsonAsync(new Uri($"{tenant.Path("legacy")}/collections/items/documents/by-key?id={ReplicationDocuments.Id("following")}", UriKind.Relative), new { value = "following" }, deadline.Token);
-            added.EnsureSuccessStatusCode();
-            await TerraBaseTestServer.ReplicatedAsync(source);
-            var remote = (await receiver.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(tenant.Database("legacy"), deadline.Token))!;
-            await using var received = await remote.BeginTransactionAsync(write: false, deadline.Token);
-            await Assert.That(await received.GetAsync("items", ReplicationDocuments.Id("following"), deadline.Token)).IsNotNull();
-            await Assert.That((await received.GetAsync("items", "after", deadline.Token)) is not null).IsEqualTo(!allInvalid);
-            await using var retained = new Microsoft.Data.Sqlite.SqliteConnection(DocumentApi.ConnectionString(tenant.File(source, "legacy")));
-            await retained.OpenAsync(deadline.Token);
-            using var count = retained.CreateCommand();
-            count.CommandText = "SELECT count(*) FROM documents WHERE octet_length(collection) > 63 OR octet_length(id) > 1024;";
-            await Assert.That((long)(await count.ExecuteScalarAsync(deadline.Token))!).IsEqualTo(4);
-        }
-        finally
-        {
-            Directory.Delete(data, recursive: true);
-        }
-    }
 
     [Test]
     public async Task A_missing_metric_sample_is_not_a_zero_replication_lag()
@@ -408,6 +320,115 @@ public sealed class ReplicationTests
         }
     }
 
+    // An unclean start raises the member's epoch (docs/design/anna-core.md, Identities and dots): every database's stream
+    // starts again under a new origin with a baseline of every register, live or tombstone, so a peer that missed part of
+    // the old stream still gets everything, and no sequence of the old origin is reused.
+    [Test]
+    public async Task An_unclean_start_sends_every_register_again_on_a_new_origin()
+    {
+        using var peerTls = new PeerTls();
+        using var clientTls = new ClientTls();
+        var data = Directory.CreateTempSubdirectory("terrabase-unclean-").FullName;
+        try
+        {
+            await using var receiver = await TerraBaseTestServer.StartAsync(settings =>
+            {
+                peerTls.Apply(settings);
+                clientTls.Apply(settings);
+            });
+            using var reader = clientTls.CreateClient(receiver.ClientAddress!, apiKey: null);
+            ReplicationTenant tenant;
+            void Sender(Dictionary<string, string> settings)
+            {
+                peerTls.Apply(settings);
+                clientTls.Apply(settings);
+                settings["data-directory"] = data;
+                settings["peer-addresses"] = receiver.PeerAddress!.ToString();
+            }
+
+            ReadOnlyMemory<byte> before;
+            await using (var sender = await TerraBaseTestServer.StartAsync(Sender))
+            {
+                tenant = await ReplicationTenant.CreateAsync(sender, "orders");
+                await tenant.BindAsync(receiver);
+                reader.DefaultRequestHeaders.Authorization = new("Bearer", await tenant.KeyAsync(receiver, "documents:read"));
+                using var writer = clientTls.CreateClient(sender.ClientAddress!, await tenant.KeyAsync(sender, "documents:write"));
+                await CreateCollectionAsync(tenant, writer, "orders", "orders");
+                foreach (var id in new[] { "o1", "o2", "o3" })
+                {
+                    await PutOrderAsync(tenant, writer, id);
+                }
+
+                using (var deleted = await writer.DeleteAsync(new Uri($"{tenant.Path("orders")}/collections/orders/documents/by-key?id={ReplicationDocuments.Id("o3")}", UriKind.Relative)))
+                {
+                    deleted.EnsureSuccessStatusCode();
+                }
+
+                await TerraBaseTestServer.ReplicatedAsync(sender);
+                before = await OriginAsync(sender, tenant);
+            }
+
+            // The process did not stop cleanly: its identity file still says running.
+            var identity = Path.Combine(data, ".terrabase.replica");
+            var record = await File.ReadAllBytesAsync(identity);
+            record[7] = 0;
+            System.Security.Cryptography.SHA256.HashData(record.AsSpan(0, 8))[..4].CopyTo(record, 8);
+            await File.WriteAllBytesAsync(identity, record);
+
+            await using var restarted = await TerraBaseTestServer.StartAsync(Sender);
+            await TerraBaseTestServer.ReplicatedAsync(restarted);
+            var after = await OriginAsync(restarted, tenant);
+            var (previous, next) = (new Engine.Lattices.ReplicaId(BitConverter.ToUInt64(before.Span)), new Engine.Lattices.ReplicaId(BitConverter.ToUInt64(after.Span)));
+            await Assert.That((next.Member, next.Epoch)).IsEqualTo((previous.Member, (ushort)(previous.Epoch + 1)));
+            await Assert.That(after.Span[8..].SequenceEqual(before.Span[8..])).IsTrue();
+
+            // One baseline group: the collection's record and every order, the deleted one as a tombstone.
+            var store = (await restarted.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(tenant.Database("orders"), CancellationToken.None))!;
+            await using (var read = await store.BeginTransactionAsync(write: false, CancellationToken.None))
+            {
+                await Assert.That(await read.GetLastChangeSequenceAsync(CancellationToken.None)).IsEqualTo(1);
+                var baseline = (await read.ReadChangesAsync(1, CancellationToken.None))!.Changes;
+                await Assert.That(baseline.Select(change => change.Id)).IsEquivalentTo(
+                    ["orders", ReplicationDocuments.Id("o1"), ReplicationDocuments.Id("o2"), ReplicationDocuments.Id("o3")]);
+                await Assert.That(Deltas.Json(baseline.Single(change => change.Id == ReplicationDocuments.Id("o3")))).IsNull();
+            }
+
+            await Assert.That(await restarted.MetricAsync("terrabase_replication_sent_groups_total")).IsEqualTo(1);
+            var target = (await receiver.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(tenant.Database("orders"), CancellationToken.None))!;
+            await using (var remote = await target.BeginTransactionAsync(write: false, CancellationToken.None))
+            {
+                // The new epoch's baseline covers the old stream, so applying it retired the old origin's position.
+                await Assert.That(await remote.GetAppliedSequenceAsync(before, CancellationToken.None)).IsEqualTo(0);
+                await Assert.That(await remote.GetAppliedSequenceAsync(after, CancellationToken.None)).IsEqualTo(1);
+            }
+
+            using (var writer = clientTls.CreateClient(restarted.ClientAddress!, await tenant.KeyAsync(restarted, "documents:write")))
+            {
+                await PutOrderAsync(tenant, writer, "o4");
+            }
+
+            await TerraBaseTestServer.ReplicatedAsync(restarted);
+            await Assert.That((await ListAsync(tenant, reader, "orders")).Select(order => order.Id)).IsEquivalentTo(
+                [ReplicationDocuments.Id("o1"), ReplicationDocuments.Id("o2"), ReplicationDocuments.Id("o4")]);
+            foreach (var id in new[] { "o1", "o2", "o3", "o4" })
+            {
+                await Assert.That(await VersionAsync(tenant, receiver, "orders", "orders", ReplicationDocuments.Id(id)))
+                    .IsEqualTo(await VersionAsync(tenant, restarted, "orders", "orders", ReplicationDocuments.Id(id)));
+            }
+        }
+        finally
+        {
+            Directory.Delete(data, recursive: true);
+        }
+
+        static async Task<ReadOnlyMemory<byte>> OriginAsync(TerraBaseTestServer server, ReplicationTenant tenant)
+        {
+            var store = (await server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(tenant.Database("orders"), CancellationToken.None))!;
+            await using var read = await store.BeginTransactionAsync(write: false, CancellationToken.None);
+            return await read.GetOriginAsync(CancellationToken.None);
+        }
+    }
+
     [Test]
     public async Task A_database_the_peer_cannot_open_does_not_hold_back_the_others()
     {
@@ -599,7 +620,6 @@ public sealed class ReplicationTests
 
     [Test]
     [Arguments("prefix")]
-    [Arguments("digest")]
     [Arguments("peer")]
     [Arguments("epoch")]
     [Arguments("origin")]
@@ -637,9 +657,6 @@ public sealed class ReplicationTests
                         var ack = FakePeer.Ack(member, batch, batch.EventId.Sequence);
                         switch (mismatch)
                         {
-                            case "digest":
-                                ack.Durable.JournalDigest = Google.Protobuf.ByteString.CopyFrom(Faker.Random.Bytes(JournalDigest.Length));
-                                break;
                             case "prefix":
                                 ack.Durable.DurablePrefix = 1000;
                                 break;
@@ -742,7 +759,7 @@ public sealed class ReplicationTests
             switch (welcome)
             {
                 case "message":
-                    limits.MaxGrpcMessageBytes = 256;
+                    limits.MaxGrpcMessageBytes = 128;
                     break;
                 case "credit":
                     limits.ByteCredit = 64;
@@ -763,13 +780,13 @@ public sealed class ReplicationTests
             switch (welcome)
             {
                 case "format":
-                    answer.Welcome.EventFormatVersion = 2;
+                    answer.Welcome.EventFormatVersion = ReplicationProtocol.FormatVersion + 1;
                     break;
                 case "record":
-                    answer.Welcome.RecordFormatVersion = 2;
+                    answer.Welcome.RecordFormatVersion = ReplicationProtocol.FormatVersion + 1;
                     break;
                 case "merge":
-                    answer.Welcome.MergePolicyVersion = 2;
+                    answer.Welcome.MergePolicyVersion = ReplicationProtocol.FormatVersion + 1;
                     break;
                 case "tenant":
                     answer.Welcome.LocalIdentity.TenantId = Google.Protobuf.ByteString.CopyFrom(Faker.Random.Bytes(16));
@@ -886,7 +903,6 @@ public sealed class ReplicationTests
             }
 
             ulong applied = 0;
-            ReadOnlyMemory<byte> appliedProof = default;
             await using var peer = await FakePeer.StartAsync(peerTls, async (requests, responses, context) =>
             {
                 await Assert.That(await requests.MoveNext(context.CancellationToken)).IsTrue();
@@ -899,7 +915,6 @@ public sealed class ReplicationTests
                 {
                     Origin = new OriginIdentity { ReplicaId = hello.LocalIdentity.MemberIncarnation, Incarnation = hello.LocalIdentity.MemberIncarnation },
                     DurableSequence = applied,
-                    JournalDigest = Google.Protobuf.ByteString.CopyFrom(applied == 0 ? JournalDigest.Initial(hello.LocalIdentity.MemberIncarnation.Span) : appliedProof.Span),
                 });
                 await responses.WriteAsync(welcome, context.CancellationToken);
                 while (await requests.MoveNext(context.CancellationToken))
@@ -917,7 +932,6 @@ public sealed class ReplicationTests
                     }
 
                     applied = batch.EventId.Sequence;
-                    appliedProof = batch.JournalDigest.Memory;
                     await responses.WriteAsync(FakePeer.Ack(member, batch, applied), context.CancellationToken);
                 }
             });
@@ -1144,8 +1158,8 @@ public sealed class ReplicationTests
                 baselineHead = await local.GetLastChangeSequenceAsync(deadline.Token);
                 await Assert.That(baselineHead).IsEqualTo(1);
                 var baseline = (await local.ReadChangesAsync(baselineHead, deadline.Token))!;
-                var decoded = Features.Replication.ChangeGroup.Decode(Features.Replication.ChangeGroup.Encode(baseline));
-                await Assert.That(decoded.Select(change => change.Id)).IsEquivalentTo(["saved", "numeric", "deep", "wide"]);
+                var decoded = Features.Replication.DeltaGroup.Decode(Features.Replication.DeltaGroup.Encode(baseline, out _));
+                await Assert.That(decoded.Changes.Select(change => change.Id)).IsEquivalentTo(["saved", "numeric", "deep", "wide"]);
                 origin = await local.GetOriginAsync(deadline.Token);
                 await Assert.That(await remote.GetAppliedSequenceAsync(origin, deadline.Token)).IsEqualTo(baselineHead);
                 foreach (var documentId in new[] { "saved", "numeric", "deep", "wide" })
@@ -1193,7 +1207,9 @@ public sealed class ReplicationTests
             using var added = await writer.PutAsJsonAsync(new Uri($"{tenant.Path("snapshot")}/collections/people/documents/by-key?id={next}", UriKind.Relative), new { after = "snapshot" }, deadline.Token);
             added.EnsureSuccessStatusCode();
             await TerraBaseTestServer.ReplicatedAsync(sender);
-            await Assert.That(await VersionAsync(tenant, receiver, "snapshot", "people", next)).IsEqualTo(new DocumentVersion(2, Deleted: false));
+            // A replicated write keeps the stamp it was written at.
+            await Assert.That(await VersionAsync(tenant, receiver, "snapshot", "people", next))
+                .IsEqualTo(await VersionAsync(tenant, sender, "snapshot", "people", next));
             await using (var local = await source.BeginTransactionAsync(write: false, deadline.Token))
             await using (var remote = await target.BeginTransactionAsync(write: false, deadline.Token))
             {
@@ -1202,7 +1218,7 @@ public sealed class ReplicationTests
                 await Assert.That(await remote.GetAppliedSequenceAsync(origin, deadline.Token)).IsEqualTo(head);
                 await Assert.That((await remote.GetAsync("people", next, deadline.Token))!.Json.Span.SequenceEqual("{\"after\":\"snapshot\"}"u8)).IsTrue();
             }
-            await Assert.That(await VersionAsync(tenant, receiver, "snapshot", "people", "saved")).IsEqualTo(new DocumentVersion(1, Deleted: false));
+            await Assert.That(await VersionAsync(tenant, receiver, "snapshot", "people", "saved")).IsEqualTo(new DocumentVersion(StoredRegisters.Version, Deleted: false));
 
             // A shallow patch of the copied value follows normal client admission.
             using var patcher = clientTls.CreateClient(receiver.ClientAddress!, await tenant.KeyAsync(receiver, "documents:write"));
@@ -1227,33 +1243,6 @@ public sealed class ReplicationTests
         finally
         {
             Directory.Delete(data, recursive: true);
-        }
-    }
-
-    private sealed class BaselineAdmissionLogs : ILoggerProvider, ILogger
-    {
-        private int _skipped;
-
-        public int Skipped => Volatile.Read(ref _skipped);
-
-        public ILogger CreateLogger(string categoryName) => this;
-
-        public IDisposable? BeginScope<TState>(TState state)
-            where TState : notnull => null;
-
-        public bool IsEnabled(LogLevel logLevel) => logLevel == LogLevel.Warning;
-
-        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
-        {
-            if (state is IEnumerable<KeyValuePair<string, object?>> values
-                && values.SingleOrDefault(pair => pair.Key == "Skipped").Value is int count)
-            {
-                Interlocked.Add(ref _skipped, count);
-            }
-        }
-
-        public void Dispose()
-        {
         }
     }
 

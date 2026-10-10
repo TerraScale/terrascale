@@ -30,7 +30,7 @@ public sealed class ChunkedMemoryAdmissionTests
         long metadataAdmissionBytes;
         await using (var transaction = await store.BeginTransactionAsync(write: false, deadline.Token))
         {
-            var metadata = (await transaction.GetAsync(DocumentChange.Collections, "items", deadline.Token))!;
+            var metadata = (await transaction.GetAsync(DocumentDelta.Collections, "items", deadline.Token))!;
             // The write parses collection metadata (8x) and retains its stored result (3x + 2048).
             metadataAdmissionBytes = metadata.Json.Length * 11L + 2048;
         }

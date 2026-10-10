@@ -139,7 +139,7 @@ public sealed class StorageHistoryTests
         await Assert.That(await transaction.GetOffsetAsync(token)).IsEqualTo(offset);
         await transaction.DisposeAsync();
         await using var reused = await store.BeginTransactionAsync(write: false, token);
-        await Assert.That((await reused.GetAsync(DocumentApi.Collection, id, token))?.Version).IsEqualTo(offset);
+        await Assert.That(await reused.GetAsync(DocumentApi.Collection, id, token)).IsNotNull();
         (await api.GetAsync(id, cancellationToken: token)).Status.ShouldBe(HttpStatusCode.OK);
     }
 
@@ -436,7 +436,7 @@ public sealed class StorageHistoryTests
             for (var i = 0; i < 512; i++)
             {
                 await repeated.PutAsync(DocumentApi.Collection, id, small, CancellationToken.None);
-                await repeated.DeleteAsync(DocumentApi.Collection, id, CancellationToken.None);
+                await repeated.TombstoneAsync(DocumentApi.Collection, id, CancellationToken.None);
             }
 
             await Assert.ThrowsAsync<StorageWriteLimitException>(() => repeated.PutAsync(DocumentApi.Collection, id, small, CancellationToken.None).AsTask());

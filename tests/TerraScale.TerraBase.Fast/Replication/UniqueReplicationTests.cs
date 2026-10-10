@@ -15,7 +15,7 @@ public sealed partial class UniqueReplicationTests
     private static readonly string[] IncompatibleFields = ["email", "k1", "k2", "k3", "k4", "k5"];
 
     [Test]
-    public async Task A_delayed_schema_and_collection_drop_reconcile_more_than_a_source_groups_count_and_byte_limits()
+    public async Task A_delayed_schema_reconciles_more_than_a_source_groups_count_and_byte_limits_and_an_unaware_drop_keeps_it()
     {
         using var tls = new PeerTls();
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
@@ -149,19 +149,14 @@ public sealed partial class UniqueReplicationTests
             await Assert.That(changes).IsEquivalentTo([(ids[^1], true), (ids[^2], false), (ids[0], true), (ids[1], false)]);
         }
 
-        // An origin that has not received the schema may drop its empty collection while this receiver retains over 1024 states.
+        // An origin that never received the documents or the schema drops its own empty collection. A drop tombstones only
+        // the documents its member knew (docs/design/anna-core.md, step 4c): this receiver keeps its retained states, their
+        // collection and its declaration.
         using var dropping = dropOrigin.Tls.CreateClient(dropOrigin.Server.ClientAddress!,
             await tenant.KeyAsync(dropOrigin.Server, ["documents:read", "documents:write"], token));
         using (var created = await dropping.PostAsJsonAsync(new Uri(tenant.Path("db") + "/collections", UriKind.Relative), new { name = "people" }, token))
         {
             created.EnsureSuccessStatusCode();
-        }
-
-        var droppingStore = (await dropOrigin.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(tenant.Database("db"), token))!;
-        await using (var clock = await droppingStore.BeginTransactionAsync(write: true, token))
-        {
-            await clock.ApplyAsync(new DocumentChange("clock", Ulid.NewUlid().ToString(), previous + 100, null), token);
-            await clock.CommitAsync(token);
         }
 
         using (var dropped = await dropping.DeleteAsync(new Uri(tenant.Path("db") + "/collections/people", UriKind.Relative), token))
@@ -172,9 +167,10 @@ public sealed partial class UniqueReplicationTests
         await ReplayAsync(dropOrigin.Server, receiver.Server, tls, tenant.Database("db"), token);
         using var absent = await client.GetAsync(Document(tenant, ids[0]), token);
         await Assert.That(absent.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-        await using var empty = await receiving.BeginTransactionAsync(write: false, token);
-        await Assert.That(await empty.GetCollectionAsync("people", token)).IsNull();
-        await Assert.That(await empty.GetUniqueConstraintsAsync("people", token)).IsEmpty();
+        await VisibleAsync(client, tenant, ids[1], token);
+        await using var kept = await receiving.BeginTransactionAsync(write: false, token);
+        await Assert.That(await kept.GetCollectionAsync("people", token)).IsNotNull();
+        await Assert.That(await kept.GetUniqueConstraintsAsync("people", token)).IsNotEmpty();
     }
 
     [Test]
@@ -350,19 +346,17 @@ public sealed partial class UniqueReplicationTests
         await call.RequestStream.WriteAsync(new SyncRequest { Hello = ReplicationProtocol.CreateHello(database, origin) }, token);
         await Assert.That(await call.ResponseStream.MoveNext(token)).IsTrue();
         var frontier = call.ResponseStream.Current.Welcome.Frontiers.Single();
-        var digest = frontier.JournalDigest.Memory;
         for (var sequence = checked((long)frontier.AppliedSequence + 1); sequence <= head; sequence++)
         {
-            var changes = (await read.ReadChangesAsync(sequence, token))!;
+            var group = (await read.ReadChangesAsync(sequence, token))!;
             await call.RequestStream.WriteAsync(new SyncRequest
             {
-                CommittedGroup = ReplicationProtocol.CreateBatch(database, origin, sequence, changes, digest),
+                CommittedGroup = ReplicationProtocol.CreateBatch(database, origin, sequence, group),
             }, token);
             await Assert.That(await call.ResponseStream.MoveNext(token)).IsTrue();
             await Assert.That(call.ResponseStream.Current.Durable.DurablePrefix).IsEqualTo((ulong)sequence);
             await Assert.That(await call.ResponseStream.MoveNext(token)).IsTrue();
             await Assert.That(call.ResponseStream.Current.Applied.AppliedPrefix).IsEqualTo((ulong)sequence);
-            digest = call.ResponseStream.Current.Applied.JournalDigest.Memory;
         }
     }
 

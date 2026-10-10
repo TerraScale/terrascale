@@ -53,7 +53,7 @@ public sealed class ResponseLimitTests
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var token = deadline.Token;
         var origin = RandomNumberGenerator.GetBytes(16);
-        var batch = ReplicationProtocol.CreateBatch(tenant.Database("db"), origin, 1, [new DocumentChange("c", "a", 1, null)]);
+        var batch = ReplicationProtocol.CreateBatch(tenant.Database("db"), origin, 1, Deltas.Group(Deltas.Write("c", "a", null)));
         batch.EventId.Origin = OriginIdentity.Parser.ParseFrom(WithUnknownField(batch.EventId.Origin));
         batch.EventId = CommittedEventId.Parser.ParseFrom(WithUnknownField(batch.EventId));
         var request = new SyncRequest { CommittedGroup = batch };
@@ -72,7 +72,6 @@ public sealed class ResponseLimitTests
             {
                 Context = new AckContext { AcknowledgingPeer = welcome.LocalIdentity, EventId = batch.EventId },
                 DurablePrefix = 1,
-                JournalDigest = batch.JournalDigest,
             },
         };
         // This request fits, but echoing the nested unknown fields would overflow the ACK cap.
@@ -127,7 +126,6 @@ public sealed class ResponseLimitTests
         try
         {
             ReplicationTenant tenant;
-            ReadOnlyMemory<byte> proof;
             await using (var seed = await TerraBaseTestServer.StartAsync(settings =>
             {
                 clientTls.Apply(settings);
@@ -143,7 +141,7 @@ public sealed class ResponseLimitTests
                 var store = (await seed.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(tenant.Database("db"), CancellationToken.None))!;
                 await using var read = await store.BeginTransactionAsync(write: false, CancellationToken.None);
                 // Group 1 created the collection; group 2 is the head.
-                proof = (await read.GetChangeDigestAsync(2, CancellationToken.None))!.Value;
+                await Assert.That(await read.GetLastChangeSequenceAsync(CancellationToken.None)).IsEqualTo(2);
             }
 
             var retry = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -171,7 +169,6 @@ public sealed class ResponseLimitTests
                 {
                     Origin = new OriginIdentity { ReplicaId = hello.LocalIdentity.MemberIncarnation, Incarnation = hello.LocalIdentity.MemberIncarnation },
                     DurableSequence = 2,
-                    JournalDigest = ByteString.CopyFrom(proof.Span),
                 });
                 using var encoded = new MemoryStream();
                 using (var output = new CodedOutputStream(encoded, leaveOpen: true))
@@ -241,8 +238,7 @@ public sealed class ResponseLimitTests
         await ReadWithinCapAsync(SyncResponse.FrameOneofCase.Welcome);
         await call.RequestStream.WriteAsync(new SyncRequest
         {
-            CommittedGroup = ReplicationProtocol.CreateBatch(tenant.Database("db"), origin, 1,
-                [new DocumentChange("items", "a", 1, "{}"u8.ToArray())]),
+            CommittedGroup = ReplicationProtocol.CreateBatch(tenant.Database("db"), origin, 1, Deltas.Group(Deltas.Write("items", "a", "{}"))),
         }, token);
         await ReadWithinCapAsync(SyncResponse.FrameOneofCase.Durable);
         await ReadWithinCapAsync(SyncResponse.FrameOneofCase.Applied);

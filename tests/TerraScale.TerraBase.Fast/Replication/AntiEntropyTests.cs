@@ -15,12 +15,11 @@ using TerraBase.Fast.Documents;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.Alpha;
 using TerraBase.Hosting;
-using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Replication;
 
-/// <summary>Idle nodes repair divergent durable state over their real TLS listeners.</summary>
+/// <summary>Idle nodes repair divergent durable registers over their real TLS listeners.</summary>
 public sealed class AntiEntropyTests
 {
     [Test]
@@ -39,10 +38,10 @@ public sealed class AntiEntropyTests
             collection.EnsureSuccessStatusCode();
         }
 
-        var selected = (MerkleTree.Range(new DocumentChange(DocumentChange.Collections, "items", 1, null)) + 1) % MerkleTree.Leaves;
+        var selected = (MerkleTree.Range(DocumentDelta.Collections, "items") + 1) % MerkleTree.Leaves;
         static int Range(string id)
         {
-            return MerkleTree.Range(new DocumentChange("items", id, 1, null));
+            return MerkleTree.Range("items", id);
         }
         var small = Enumerable.Range(0, 10_000).Select(i => $"00000000000000{i:000000000000}")
             .Where(id => Range(id) != selected).Take(130).ToArray();
@@ -70,9 +69,6 @@ public sealed class AntiEntropyTests
         using var digestCall = client.DigestAsync(identity, cancellationToken: token);
         var digest = await digestCall.ResponseAsync;
         identity.Incarnation = digest.Incarnation;
-        identity.Origin = ByteString.CopyFrom(EntityIds.New().ToByteArray());
-        identity.SourceProof = new JournalProof { Origin = identity.Origin, Digest = ByteString.CopyFrom(JournalDigest.Initial(identity.Origin.Span)) };
-        identity.TargetProof = new JournalProof { Origin = digest.Origin, Digest = ByteString.CopyFrom(JournalDigest.Initial(digest.Origin.Span)) };
         foreach (var ranges in new[] { (uint)ushort.MaxValue, 1U << selected })
         {
             var request = new RangeRequest { Identity = identity, Ranges = ranges };
@@ -83,9 +79,9 @@ public sealed class AntiEntropyTests
             {
                 using var readCall = client.ReadRangeAsync(request, cancellationToken: token);
                 var page = await readCall.ResponseAsync;
-                var changes = page.Envelope.IsEmpty ? [] : ChangeGroup.Decode(ApplicationEnvelope.Decode(page.Envelope.Span, ReplicationProtocol.MaxApplicationBytes));
+                var changes = Decode(page);
                 await Assert.That(changes.Count <= 128).IsTrue();
-                await Assert.That(ChangeGroup.ContentBytes(changes) <= IStorageTransaction.MaxChangeGroupBytes).IsTrue();
+                await Assert.That(Deltas.ContentBytes(changes) <= IStorageTransaction.MaxChangeGroupBytes).IsTrue();
                 pages++;
                 keys += changes.Count;
                 if (page.Envelope.IsEmpty && page.HasMore)
@@ -110,7 +106,7 @@ public sealed class AntiEntropyTests
 
     [Test]
     [Timeout(60_000)]
-    public async Task A_tombstone_at_the_collection_drop_version_reaches_shapes_when_a_concurrent_live_row_keeps_the_collection(CancellationToken cancellationToken)
+    public async Task A_repaired_tombstone_reaches_shapes_while_a_concurrent_live_row_keeps_a_dropped_collection(CancellationToken cancellationToken)
     {
         using var peerTls = new PeerTls();
         using var clientTls = new ClientTls();
@@ -129,7 +125,6 @@ public sealed class AntiEntropyTests
         var original = await DocumentApi.SendAsync(client, HttpMethod.Put, Document(tenant, deletedId).OriginalString,
             JsonContent.Create(new { name = faker.Name.FullName() }), cancellationToken: cancellationToken);
         await Assert.That(original.Status).IsEqualTo(HttpStatusCode.Created);
-        var version = long.Parse(original.Json.GetProperty("offset").GetString()!, CultureInfo.InvariantCulture);
         var survivorName = faker.Name.FullName();
         var survivor = await DocumentApi.SendAsync(client, HttpMethod.Put, Document(tenant, survivorId).OriginalString,
             JsonContent.Create(new { name = survivorName }), cancellationToken: cancellationToken);
@@ -137,15 +132,11 @@ public sealed class AntiEntropyTests
 
         using var channel = peerTls.CreateChannel(server.PeerAddress!);
         var repair = new AntiEntropy.AntiEntropyClient(channel);
-        var identity = new ShardIdentity { Organization = tenant.OrganizationId, Project = tenant.ProjectId, Database = tenant.Database("repair").DatabaseId! };
-        using var digestCall = repair.DigestAsync(identity, cancellationToken: cancellationToken);
-        var digest = await digestCall.ResponseAsync;
-        identity.Incarnation = digest.Incarnation;
-        identity.Origin = ByteString.CopyFrom(EntityIds.New().ToByteArray());
-        identity.SourceProof = new JournalProof { Origin = identity.Origin, Digest = ByteString.CopyFrom(JournalDigest.Initial(identity.Origin.Span)) };
-        identity.TargetProof = new JournalProof { Origin = digest.Origin, Digest = ByteString.CopyFrom(JournalDigest.Initial(digest.Origin.Span)) };
-        // The drop cannot remove a tied live document or the newer concurrent row, so the generation remains.
-        await MergeAsync(new DocumentChange(DocumentChange.Collections, "items", version, null));
+        var identity = await IdentityAsync(server, tenant, cancellationToken);
+        var registers = await RegistersAsync(server, tenant, cancellationToken);
+        // A peer that knew only the collection and the first document drops the collection: the survivor, which it never
+        // saw, keeps the collection and its generation.
+        await MergeAsync(Deltas.Write(DocumentDelta.Collections, "items", null, over: registers[(DocumentDelta.Collections, "items")].State));
         var start = await DocumentApi.SendAsync(client, HttpMethod.Get, shape + "?offset=-1", cancellationToken: cancellationToken);
         await Assert.That(start.Status).IsEqualTo(HttpStatusCode.TemporaryRedirect);
         var snapshot = await DocumentApi.SendAsync(client, HttpMethod.Get, start.Location!.OriginalString, cancellationToken: cancellationToken);
@@ -155,7 +146,8 @@ public sealed class AntiEntropyTests
         var handle = snapshot.Json.GetProperty("handle").GetString();
         var head = long.Parse(snapshot.Json.GetProperty("next_offset").GetString()!, CultureInfo.InvariantCulture);
 
-        await MergeAsync(new DocumentChange("items", deletedId, version, null));
+        // Its tombstone of the document it knew reaches shapes at a local offset of its own.
+        await MergeAsync(Deltas.Write("items", deletedId, null, over: registers[("items", deletedId)].State));
         var log = await DocumentApi.SendAsync(client, HttpMethod.Get, $"{shape}?handle={handle}&offset={head}", cancellationToken: cancellationToken);
         await Assert.That(log.Status).IsEqualTo(HttpStatusCode.OK);
         var change = log.Json.GetProperty("changes").EnumerateArray().Single();
@@ -167,20 +159,24 @@ public sealed class AntiEntropyTests
         await Assert.That(retained.Status).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(retained.Json.GetProperty("document").GetProperty("name").GetString()).IsEqualTo(survivorName);
 
-        async Task MergeAsync(DocumentChange state)
+        // Deleting the survivor here completes the drop, as applying that tombstone does on every other member: no member
+        // keeps an empty collection that the others removed.
+        var deleted = await DocumentApi.SendAsync(client, HttpMethod.Delete, Document(tenant, survivorId).OriginalString, cancellationToken: cancellationToken);
+        await Assert.That(deleted.Status).IsEqualTo(HttpStatusCode.OK);
+        var listed = await DocumentApi.SendAsync(client, HttpMethod.Get, collections, cancellationToken: cancellationToken);
+        await Assert.That(listed.Status).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(listed.Json.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("name").GetString()!)).DoesNotContain("items");
+
+        async Task MergeAsync(DocumentDelta state)
         {
-            using var merge = repair.MergeAsync(new StateRequest
-            {
-                Identity = identity,
-                Envelope = ByteString.CopyFrom(ApplicationEnvelope.Encode(ChangeGroup.Encode([state])).Span),
-            }, cancellationToken: cancellationToken);
+            using var merge = repair.MergeAsync(new StateRequest { Identity = identity, Envelope = Envelope([state]) }, cancellationToken: cancellationToken);
             await Assert.That((await merge.ResponseAsync).RepairedKeys).IsEqualTo(1U);
         }
     }
 
     [Test]
     [Timeout(60_000)]
-    public async Task Repairing_only_a_collection_drop_invalidates_warmed_document_and_list_caches(CancellationToken cancellationToken)
+    public async Task Repairing_a_collection_drop_invalidates_warmed_document_and_list_caches(CancellationToken cancellationToken)
     {
         using var peerTls = new PeerTls();
         using var clientTls = new ClientTls();
@@ -188,32 +184,22 @@ public sealed class AntiEntropyTests
         await using var receiver = await TerraBaseTestServer.StartAsync(settings => { peerTls.Apply(settings); clientTls.Apply(settings); });
         var tenant = await ReplicationTenant.CreateAsync(source, ["repair"], cancellationToken);
         await tenant.BindAsync(receiver);
-        using var receiverWriter = clientTls.CreateClient(receiver.ClientAddress!, await tenant.KeyAsync(receiver, ["documents:write"], cancellationToken));
         using var receiverReader = clientTls.CreateClient(receiver.ClientAddress!, await tenant.KeyAsync(receiver, ["documents:read"], cancellationToken));
         using var sourceWriter = clientTls.CreateClient(source.ClientAddress!, await tenant.KeyAsync(source, ["documents:write"], cancellationToken));
         var collectionPath = new Uri($"{tenant.Path("repair")}/collections/items", UriKind.Relative);
-        foreach (var writer in new[] { receiverWriter, sourceWriter })
+        using (var created = await sourceWriter.PostAsJsonAsync(new Uri($"{tenant.Path("repair")}/collections", UriKind.Relative), new { name = "items" }, cancellationToken))
         {
-            using var created = await writer.PostAsJsonAsync(new Uri($"{tenant.Path("repair")}/collections", UriKind.Relative), new { name = "items" }, cancellationToken);
             created.EnsureSuccessStatusCode();
         }
 
         var documentPath = Document(tenant, DocumentApi.NewId());
-        using (var written = await receiverWriter.PutAsJsonAsync(documentPath, new { name = new Faker().Name.FullName() }, cancellationToken))
-        {
-            written.EnsureSuccessStatusCode();
-        }
-
         using (var written = await sourceWriter.PutAsJsonAsync(documentPath, new { name = new Faker().Name.FullName() }, cancellationToken))
         {
             written.EnsureSuccessStatusCode();
         }
 
-        using (var dropped = await sourceWriter.DeleteAsync(collectionPath, cancellationToken))
-        {
-            dropped.EnsureSuccessStatusCode();
-        }
-
+        // Repair alone brings the collection and its document to the receiver, whose reads then warm its caches.
+        await Assert.That(await MergeAllAsync(peerTls, source, receiver, tenant, cancellationToken)).IsEqualTo(2U);
         var paths = new[] { documentPath, new Uri($"{collectionPath}/documents", UriKind.Relative) };
         foreach (var path in paths)
         {
@@ -221,23 +207,13 @@ public sealed class AntiEntropyTests
             warm.EnsureSuccessStatusCode();
         }
 
-        var store = (await source.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(tenant.Database("repair"), cancellationToken))!;
-        DocumentChange drop;
-        await using (var read = await store.BeginTransactionAsync(write: false, cancellationToken))
+        using (var dropped = await sourceWriter.DeleteAsync(collectionPath, cancellationToken))
         {
-            var version = (await read.GetVersionAsync(DocumentChange.Collections, "items", cancellationToken))!.Value;
-            await Assert.That(version.Deleted).IsTrue();
-            drop = new DocumentChange(DocumentChange.Collections, "items", version.Version, null);
+            dropped.EnsureSuccessStatusCode();
         }
 
-        using var channel = peerTls.CreateChannel(receiver.PeerAddress!);
-        var client = new AntiEntropy.AntiEntropyClient(channel);
-        using var merge = client.MergeAsync(new StateRequest
-        {
-            Identity = await ProofIdentityAsync(source, receiver, tenant, cancellationToken),
-            Envelope = ByteString.CopyFrom(ApplicationEnvelope.Encode(ChangeGroup.Encode([drop])).Span),
-        }, cancellationToken: cancellationToken);
-        await Assert.That((await merge.ResponseAsync).RepairedKeys).IsEqualTo(1U);
+        // The drop's tombstones arrive in key order, the collection's own first: its drop completes with the document's.
+        await Assert.That(await MergeAllAsync(peerTls, source, receiver, tenant, cancellationToken)).IsEqualTo(2U);
         foreach (var path in paths)
         {
             using var repaired = await receiverReader.GetAsync(path, cancellationToken);
@@ -293,7 +269,7 @@ public sealed class AntiEntropyTests
         {
             await connection.OpenAsync(token);
             using var corrupt = connection.CreateCommand();
-            corrupt.CommandText = "UPDATE documents SET version = 1, body = '{\"name\":\"stale\"}' WHERE collection = 'items' AND id = $id;";
+            corrupt.CommandText = "DELETE FROM documents WHERE collection = 'items' AND id = $id;";
             corrupt.Parameters.AddWithValue("$id", ids[0]);
             await Assert.That(await corrupt.ExecuteNonQueryAsync(token)).IsEqualTo(1);
         }
@@ -371,7 +347,7 @@ public sealed class AntiEntropyTests
         {
             await connection.OpenAsync(token);
             using var corrupt = connection.CreateCommand();
-            corrupt.CommandText = "UPDATE documents SET body = '{\"payload\":\"' || replace(hex(zeroblob(1048577)), '00', 'x') || '\"}' WHERE collection = 'items' AND id = $id;";
+            corrupt.CommandText = "UPDATE documents SET state = zeroblob(3 * 1024 * 1024 + 1) WHERE collection = 'items' AND id = $id;";
             corrupt.Parameters.AddWithValue("$id", ids[0]);
             await Assert.That(await corrupt.ExecuteNonQueryAsync(token)).IsEqualTo(1);
         }
@@ -383,7 +359,7 @@ public sealed class AntiEntropyTests
             .IsEqualTo(await BytesAsync(receiver, "replication_bytes|gru-1|sfo-1|anti_entropy:received"));
     }
 
-    // Answers the first digest without its applied source, which the requester refuses after reading the region it names.
+    // Answers the first digest without its incarnation, which the requester refuses after reading the region it names.
     private sealed class InvalidFirstDigest : Interceptor
     {
         private int _digests;
@@ -394,7 +370,7 @@ public sealed class AntiEntropyTests
             var response = await continuation(request, context);
             if (response is MerkleDigest digest && Interlocked.Increment(ref _digests) == 1)
             {
-                digest.AppliedSource = null;
+                digest.Incarnation = ByteString.Empty;
             }
 
             return response;
@@ -424,8 +400,8 @@ public sealed class AntiEntropyTests
             identity.Incarnation = (await digestCall.ResponseAsync).Incarnation;
         }
 
-        // Valid enough to be served, then refused by the repair state: it still crossed the wire.
-        var merge = new StateRequest { Identity = identity, Envelope = ByteString.CopyFrom(ApplicationEnvelope.Encode(ChangeGroup.Encode([])).Span) };
+        // Valid enough to be served, then refused by the repair state (a group of no change): it still crossed the wire.
+        var merge = new StateRequest { Identity = identity, Envelope = Envelope([]) };
         using (var mergeCall = client.MergeAsync(merge, cancellationToken: cancellationToken))
         {
             var refused = await Assert.ThrowsAsync<RpcException>(async () => await mergeCall.ResponseAsync);
@@ -445,7 +421,7 @@ public sealed class AntiEntropyTests
 
     [Test]
     [Timeout(60_000)]
-    public async Task Dropped_collection_deletion_evidence_repairs_a_resurrected_row_without_recreating_the_collection(CancellationToken cancellationToken)
+    public async Task A_register_rolled_back_past_a_drop_rejoins_its_tombstone_without_recreating_the_collection(CancellationToken cancellationToken)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var token = deadline.Token;
@@ -467,27 +443,31 @@ public sealed class AntiEntropyTests
         await tenant.BindAsync(receiver);
         using var writer = clientTls.CreateClient(source.ClientAddress!, await tenant.KeyAsync(source, ["documents:write"], cancellationToken));
         var ids = await SeedAsync(writer, tenant, token);
+        await TerraBaseTestServer.ReplicatedAsync(source);
+        var sourceFile = tenant.File(source, "repair");
+        var receiverFile = tenant.File(receiver, "repair");
+        var live = await RowAsync(receiverFile, ids[0], token);
         using (var dropped = await writer.DeleteAsync(new Uri($"{tenant.Path("repair")}/collections/items", UriKind.Relative), token))
         {
             dropped.EnsureSuccessStatusCode();
         }
 
         await TerraBaseTestServer.ReplicatedAsync(source);
-        var sourceFile = tenant.File(source, "repair");
-        var receiverFile = tenant.File(receiver, "repair");
         var expected = (await StateAsync(receiverFile, ids[0], token))!.Value;
         await Assert.That(expected.Body).IsNull();
-        // Deletion can be represented by physical absence or its exact retained tombstone.
-        var initialSource = await StateAsync(sourceFile, ids[0], token);
-        await Assert.That(initialSource is null || initialSource == expected).IsTrue();
+        await Assert.That(await StateAsync(sourceFile, ids[0], token)).IsEqualTo(expected);
         var sourceFrontiers = await FrontiersAsync(sourceFile, token);
         var receiverFrontiers = await FrontiersAsync(receiverFile, token);
         using var repairs = new RepairCounter(receiver);
+        // The receiver's register goes back to the live write the drop's tombstone replaced.
         await using (var connection = new SqliteConnection(DocumentApi.ConnectionString(receiverFile)))
         {
             await connection.OpenAsync(token);
             using var corrupt = connection.CreateCommand();
-            corrupt.CommandText = "UPDATE documents SET version = 1, body = '{\"name\":\"resurrected\"}' WHERE collection = 'items' AND id = $id;";
+            corrupt.CommandText = "UPDATE documents SET state = $state, version = $version, body = $body WHERE collection = 'items' AND id = $id;";
+            corrupt.Parameters.AddWithValue("$state", live.State);
+            corrupt.Parameters.AddWithValue("$version", live.Version);
+            corrupt.Parameters.AddWithValue("$body", live.Body);
             corrupt.Parameters.AddWithValue("$id", ids[0]);
             await Assert.That(await corrupt.ExecuteNonQueryAsync(token)).IsEqualTo(1);
         }
@@ -498,7 +478,7 @@ public sealed class AntiEntropyTests
             await StateAsync(receiverFile, ids[0], checkToken) == expected && repairs.Keys >= 1);
         await clock.PausedAsync(token);
         await Assert.That(repairs.Keys).IsEqualTo(1);
-        // Both digest scans restore their own retained deletions before an identical replay begins.
+        // The rolled-back register is older than the source's: joining it there changed nothing.
         await Assert.That(await StateAsync(sourceFile, ids[0], token)).IsEqualTo(expected);
         await ReplayIdenticalAsync(peerTls, source, receiver, tenant, token);
         await ReplayIdenticalAsync(peerTls, receiver, source, tenant, token);
@@ -559,16 +539,19 @@ public sealed class AntiEntropyTests
         using var timeoutDiagnostics = token.Register(() => Console.WriteLine(
             $"Chaos ({resurrectDeleted}, {faultOnSource}): phase={Volatile.Read(ref phase)}; mismatched document={Volatile.Read(ref mismatchedDocument)}; stored state matches={Volatile.Read(ref storedStateMatches)}; repaired keys={repairs.Keys}"));
 
-        // Chaos bypass: leave the durable ACKs, journal and replication clock untouched.
+        // Chaos bypass: leave the durable ACKs, journal and replication clock untouched. A stale or resurrected row holds an
+        // older register of another replica instead of the real write.
         await using (var connection = new SqliteConnection(DocumentApi.ConnectionString(damagedFile)))
         {
             await connection.OpenAsync(token);
+            StoredRegisters.Register(connection);
             using var corrupt = connection.CreateCommand();
             corrupt.CommandText = """
                 DELETE FROM documents WHERE collection = 'items' AND id = $missing;
-                UPDATE documents SET version = 1, body = '{"name":"stale"}' WHERE collection = 'items' AND id = $stale;
+                UPDATE documents SET state = tb_state('{"name":"stale"}'), version = 65536, body = '{"name":"stale"}'
+                    WHERE collection = 'items' AND id = $stale;
                 DELETE FROM documents WHERE collection = 'items' AND id = $deleted AND NOT $resurrect;
-                UPDATE documents SET version = 1, body = '{"name":"resurrected"}'
+                UPDATE documents SET state = tb_state('{"name":"resurrected"}'), version = 65536, body = '{"name":"resurrected"}'
                     WHERE collection = 'items' AND id = $deleted AND $resurrect;
                 """;
             corrupt.Parameters.AddWithValue("$missing", ids[0]);
@@ -603,7 +586,6 @@ public sealed class AntiEntropyTests
         }
 
         await Assert.That(repairs.Keys).IsEqualTo(3);
-        // A reconnect temporarily discards unverified ACKs; wait for their journal proofs again.
         Volatile.Write(ref phase, "ordinary replication catch-up");
         await TerraBaseTestServer.ReplicatedAsync(source);
         Volatile.Write(ref phase, "frontier assertions");
@@ -611,245 +593,80 @@ public sealed class AntiEntropyTests
         await Assert.That(await FrontiersAsync(receiverFile, token)).IsEquivalentTo(receiverFrontiers);
     }
 
+    // Reads, queries and SQL use a row's version and body; digests hash its register. A row damaged beside its intact
+    // register, on either end of the exchange, is rewritten from the register by the next pass, with no write anywhere.
     [Test]
     [Timeout(60_000)]
-    [Arguments(false, false, false)]
-    [Arguments(false, true, false)]
-    [Arguments(true, false, false)]
-    [Arguments(true, true, false)]
-    [Arguments(true, false, true)]
-    [Arguments(true, true, true)]
-    [Arguments(false, null, false)]
-    [Arguments(true, null, false)]
-    [Arguments(true, null, true)]
-    public async Task Body_only_corruption_restores_retained_bytes_without_poisoning_an_unchanged_peer(
-        bool faultOnSource, bool? greaterBytes, bool faultOnBoth, CancellationToken cancellationToken)
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task A_row_damaged_beside_its_intact_register_reads_as_the_register_again(bool damageSource, CancellationToken cancellationToken)
     {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var token = deadline.Token;
         using var peerTls = new PeerTls();
         using var clientTls = new ClientTls();
         var started = DateTimeOffset.UtcNow;
         var clock = new RepairClock(started);
-        var receiverClock = new FakeTimeProvider(started);
         await using var receiver = await TerraBaseTestServer.StartAsync(settings => { peerTls.Apply(settings); clientTls.Apply(settings); },
-            services => services.AddSingleton<TimeProvider>(receiverClock));
+            services => services.AddSingleton<TimeProvider>(new FakeTimeProvider(started)));
         await using var source = await TerraBaseTestServer.StartAsync(settings =>
         {
             peerTls.Apply(settings);
             clientTls.Apply(settings);
             settings["peer-addresses"] = receiver.PeerAddress!.ToString();
         }, services => services.AddSingleton<TimeProvider>(clock));
-        await clock.PausedAsync(cancellationToken);
+        await clock.PausedAsync(token);
         var tenant = await ReplicationTenant.CreateAsync(source, ["repair"], cancellationToken);
         await tenant.BindAsync(receiver);
         using var writer = clientTls.CreateClient(source.ClientAddress!, await tenant.KeyAsync(source, ["documents:write"], cancellationToken));
-        var ids = await SeedAsync(writer, tenant, cancellationToken);
+        var damaged = damageSource ? source : receiver;
+        using var reader = clientTls.CreateClient(damaged.ClientAddress!, await tenant.KeyAsync(damaged, ["documents:read"], cancellationToken));
+        var ids = await SeedAsync(writer, tenant, token);
         await TerraBaseTestServer.ReplicatedAsync(source);
-        // Canonicalize SeedAsync's physical deletion before measuring the single damaged live key.
-        await ReplayIdenticalAsync(peerTls, source, receiver, tenant, cancellationToken);
-        var sourceFile = tenant.File(source, "repair");
-        var receiverFile = tenant.File(receiver, "repair");
-        var expected = (await StateAsync(sourceFile, ids[0], cancellationToken))!.Value;
-        await Assert.That(await StateAsync(receiverFile, ids[0], cancellationToken)).IsEqualTo(expected);
-        var corrupted = greaterBytes switch { true => "{\"z\":true}", false => "{\"a\":true}", null => null };
-        if (corrupted is not null)
+        var file = tenant.File(damaged, "repair");
+        var expected = new Dictionary<string, (long Version, string? Body)>(StringComparer.Ordinal);
+        foreach (var id in ids)
         {
-            var order = System.Text.Encoding.UTF8.GetBytes(corrupted).AsSpan()
-                .SequenceCompareTo(System.Text.Encoding.UTF8.GetBytes(expected.Body!));
-            await Assert.That(greaterBytes == true ? order > 0 : order < 0).IsTrue();
-        }
-        var sourceFrontiers = await FrontiersAsync(sourceFile, cancellationToken);
-        var receiverFrontiers = await FrontiersAsync(receiverFile, cancellationToken);
-        var sourceHistory = await RetainedHistoryAsync(sourceFile, ids[0], cancellationToken);
-        var receiverHistory = await RetainedHistoryAsync(receiverFile, ids[0], cancellationToken);
-        using var sourceRepairs = new RepairCounter(source);
-        using var receiverRepairs = new RepairCounter(receiver);
-        using var sourceReader = clientTls.CreateClient(source.ClientAddress!, await tenant.KeyAsync(source, ["documents:read"], cancellationToken));
-        using var receiverReader = clientTls.CreateClient(receiver.ClientAddress!, await tenant.KeyAsync(receiver, ["documents:read"], cancellationToken));
-        foreach (var node in new[] { source, receiver })
-        {
-            if (!faultOnBoth && ReferenceEquals(node, source) != faultOnSource)
-            {
-                continue;
-            }
-
-            await using var connection = new SqliteConnection(DocumentApi.ConnectionString(tenant.File(node, "repair")));
-            await connection.OpenAsync(cancellationToken);
-            using var corrupt = connection.CreateCommand();
-            corrupt.CommandText = "UPDATE documents SET body = $body WHERE collection = 'items' AND id = $id;";
-            corrupt.Parameters.AddWithValue("$body", (object?)corrupted ?? DBNull.Value);
-            corrupt.Parameters.AddWithValue("$id", ids[0]);
-            await Assert.That(await corrupt.ExecuteNonQueryAsync(cancellationToken)).IsEqualTo(1);
-            await Assert.That(await StateAsync(tenant.File(node, "repair"), ids[0], cancellationToken)).IsEqualTo((expected.Version, corrupted));
-            // A faulty live body is cached too; NULL corruption must appear as a false deletion.
-            await Assert.That(await MatchesAsync(ReferenceEquals(node, source) ? sourceReader : receiverReader,
-                Document(tenant, ids[0]), corrupted, cancellationToken)).IsTrue();
+            expected.Add(id, (await StateAsync(file, id, token))!.Value);
         }
 
-        clock.Advance(AntiEntropyWorker.ReconcileInterval);
-        await clock.PausedAsync(cancellationToken);
-        await Assert.That(await StateAsync(sourceFile, ids[0], cancellationToken)).IsEqualTo(expected);
-        await Assert.That(await StateAsync(receiverFile, ids[0], cancellationToken)).IsEqualTo(expected);
-        await Assert.That(await MatchesAsync(sourceReader, Document(tenant, ids[0]), expected.Body, cancellationToken)).IsTrue();
-        await Assert.That(await MatchesAsync(receiverReader, Document(tenant, ids[0]), expected.Body, cancellationToken)).IsTrue();
-        await Assert.That(sourceRepairs.Keys).IsEqualTo(faultOnBoth || faultOnSource ? 1L : 0L);
-        await Assert.That(receiverRepairs.Keys).IsEqualTo(faultOnBoth || !faultOnSource ? 1L : 0L);
-
-        await ReplayIdenticalAsync(peerTls, source, receiver, tenant, cancellationToken);
-        await ReplayIdenticalAsync(peerTls, receiver, source, tenant, cancellationToken);
-        await Assert.That(sourceRepairs.Keys).IsEqualTo(faultOnBoth || faultOnSource ? 1L : 0L);
-        await Assert.That(receiverRepairs.Keys).IsEqualTo(faultOnBoth || !faultOnSource ? 1L : 0L);
-        await Assert.That(await FrontiersAsync(sourceFile, cancellationToken)).IsEquivalentTo(sourceFrontiers);
-        await Assert.That(await FrontiersAsync(receiverFile, cancellationToken)).IsEquivalentTo(receiverFrontiers);
-        await Assert.That(await RetainedHistoryAsync(sourceFile, ids[0], cancellationToken)).IsEquivalentTo(sourceHistory);
-        await Assert.That(await RetainedHistoryAsync(receiverFile, ids[0], cancellationToken)).IsEquivalentTo(receiverHistory);
-    }
-
-    [Test]
-    [Timeout(60_000)]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task Repair_merge_restores_the_latest_imported_equal_version_winner_before_another_digest(
-        bool greaterFirst, CancellationToken cancellationToken)
-    {
-        using var peerTls = new PeerTls();
-        using var clientTls = new ClientTls();
-        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
-        await using var server = await TerraBaseTestServer.StartAsync(settings => { peerTls.Apply(settings); clientTls.Apply(settings); },
-            services => services.AddSingleton<TimeProvider>(clock));
-        var tenant = await ReplicationTenant.CreateAsync(server, ["repair"], cancellationToken);
-        using var writer = clientTls.CreateClient(server.ClientAddress!, await tenant.KeyAsync(server, ["documents:write"], cancellationToken));
-        using var reader = clientTls.CreateClient(server.ClientAddress!, await tenant.KeyAsync(server, ["documents:read"], cancellationToken));
-        var ids = await SeedAsync(writer, tenant, cancellationToken);
-        var file = tenant.File(server, "repair");
-        var original = (await StateAsync(file, ids[0], cancellationToken))!.Value;
-        using var channel = peerTls.CreateChannel(server.PeerAddress!);
-        var repair = new AntiEntropy.AntiEntropyClient(channel);
-        var identity = new ShardIdentity { Organization = tenant.OrganizationId, Project = tenant.ProjectId, Database = tenant.Database("repair").DatabaseId! };
-        using (var call = repair.DigestAsync(identity, cancellationToken: cancellationToken))
-        {
-            var digest = await call.ResponseAsync;
-            identity.Incarnation = digest.Incarnation;
-            identity.Origin = ByteString.CopyFrom(EntityIds.New().ToByteArray());
-            identity.SourceProof = new JournalProof { Origin = identity.Origin, Digest = ByteString.CopyFrom(JournalDigest.Initial(identity.Origin.Span)) };
-            identity.TargetProof = new JournalProof { Origin = digest.Origin, Digest = ByteString.CopyFrom(JournalDigest.Initial(digest.Origin.Span)) };
-        }
-
-        const string winner = "{\"z\":true}";
-        // Repeated keys must preserve a winner pending this commit, before retained history includes it.
-        await Assert.That(await MergeAsync(greaterFirst ? [winner, original.Body!] : [original.Body!, winner])).IsEqualTo(1U);
-        await Assert.That(await MergeAsync(original.Body!)).IsEqualTo(0U);
-        await Assert.That(await StateAsync(file, ids[0], cancellationToken)).IsEqualTo((original.Version, (string?)winner));
-        var frontiers = await FrontiersAsync(file, cancellationToken);
-        var history = await RetainedHistoryAsync(file, ids[0], cancellationToken);
-        using var repairs = new RepairCounter(server);
-        const string corrupted = "{\"zz\":true}";
+        var registers = await RegistersAsync(damaged, tenant, token);
+        var frontiers = await FrontiersAsync(file, token);
         await using (var connection = new SqliteConnection(DocumentApi.ConnectionString(file)))
         {
-            await connection.OpenAsync(cancellationToken);
-            using var corrupt = connection.CreateCommand();
-            corrupt.CommandText = "UPDATE documents SET body = $body WHERE collection = 'items' AND id = $id;";
-            corrupt.Parameters.AddWithValue("$body", corrupted);
-            corrupt.Parameters.AddWithValue("$id", ids[0]);
-            await Assert.That(await corrupt.ExecuteNonQueryAsync(cancellationToken)).IsEqualTo(1);
-        }
-
-        await Assert.That(await MatchesAsync(reader, Document(tenant, ids[0]), corrupted, cancellationToken)).IsTrue();
-        // Repair must use the latest accepted history, even though the damaged bytes sort above it.
-        await Assert.That(await MergeAsync(winner)).IsEqualTo(1U);
-        await Assert.That(await StateAsync(file, ids[0], cancellationToken)).IsEqualTo((original.Version, (string?)winner));
-        await Assert.That(await MatchesAsync(reader, Document(tenant, ids[0]), winner, cancellationToken)).IsTrue();
-        await Assert.That(await MergeAsync(winner)).IsEqualTo(0U);
-        await Assert.That(await MergeAsync(original.Body!)).IsEqualTo(0U);
-        using (var call = repair.DigestAsync(identity, cancellationToken: cancellationToken))
-        {
-            _ = await call.ResponseAsync;
-        }
-
-        await Assert.That(repairs.Keys).IsEqualTo(1L);
-        await Assert.That(await FrontiersAsync(file, cancellationToken)).IsEquivalentTo(frontiers);
-        await Assert.That(await RetainedHistoryAsync(file, ids[0], cancellationToken)).IsEquivalentTo(history);
-
-        async Task<uint> MergeAsync(params string[] bodies)
-        {
-            var changes = bodies.Select(body => new DocumentChange("items", ids[0], original.Version, System.Text.Encoding.UTF8.GetBytes(body))).ToArray();
-            using var call = repair.MergeAsync(new StateRequest
-            {
-                Identity = identity,
-                Envelope = ByteString.CopyFrom(ApplicationEnvelope.Encode(ChangeGroup.Encode(changes)).Span),
-            }, cancellationToken: cancellationToken);
-            return (await call.ResponseAsync).RepairedKeys;
-        }
-    }
-
-    [Test]
-    [Timeout(60_000)]
-    public async Task Retained_journal_deletion_fences_misleading_live_history_during_digest_and_merge(CancellationToken cancellationToken)
-    {
-        using var peerTls = new PeerTls();
-        using var clientTls = new ClientTls();
-        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
-        await using var server = await TerraBaseTestServer.StartAsync(settings => { peerTls.Apply(settings); clientTls.Apply(settings); },
-            services => services.AddSingleton<TimeProvider>(clock));
-        var tenant = await ReplicationTenant.CreateAsync(server, ["repair"], cancellationToken);
-        using var writer = clientTls.CreateClient(server.ClientAddress!, await tenant.KeyAsync(server, ["documents:write"], cancellationToken));
-        using var reader = clientTls.CreateClient(server.ClientAddress!, await tenant.KeyAsync(server, ["documents:read"], cancellationToken));
-        var ids = await SeedAsync(writer, tenant, cancellationToken);
-        var file = tenant.File(server, "repair");
-        var live = (await StateAsync(file, ids[0], cancellationToken))!.Value;
-        var version = await TransactAsync(writer, tenant, [new { op = "delete", collection = "items", id = ids[0] }], cancellationToken);
-        using var channel = peerTls.CreateChannel(server.PeerAddress!);
-        var repair = new AntiEntropy.AntiEntropyClient(channel);
-        var identity = await ProofIdentityAsync(server, server, tenant, cancellationToken);
-        ByteString expectedDigest;
-        using (var call = repair.DigestAsync(identity, cancellationToken: cancellationToken))
-        {
-            expectedDigest = (await call.ResponseAsync).Envelope;
-        }
-
-        var deleted = (version, (string?)null);
-        await Assert.That(await StateAsync(file, ids[0], cancellationToken)).IsEqualTo(deleted);
-        // Public transactions reject repeated keys. Make the earlier live history appear tied with
-        // the deletion, then lose only history tombstones while preserving the real journal proof.
-        await using (var connection = new SqliteConnection(DocumentApi.ConnectionString(file)))
-        {
-            await connection.OpenAsync(cancellationToken);
+            await connection.OpenAsync(token);
             using var corrupt = connection.CreateCommand();
             corrupt.CommandText = """
-                DELETE FROM change_log WHERE collection = 'items' AND id = $id AND body IS NULL;
-                UPDATE change_log SET document_version = $version WHERE collection = 'items' AND id = $id AND body IS NOT NULL;
+                UPDATE documents SET body = '{"name":"damaged"}' WHERE collection = 'items' AND id = $changed;
+                UPDATE documents SET body = NULL WHERE collection = 'items' AND id = $erased;
+                UPDATE documents SET version = version + 1 WHERE collection = 'items' AND id = $versioned;
                 """;
-            corrupt.Parameters.AddWithValue("$id", ids[0]);
-            corrupt.Parameters.AddWithValue("$version", version);
-            await Assert.That(await corrupt.ExecuteNonQueryAsync(cancellationToken)).IsGreaterThanOrEqualTo(2);
-            using var retained = connection.CreateCommand();
-            retained.CommandText = "SELECT max(version) FROM changes WHERE collection = 'items' AND id = $id AND body IS NULL;";
-            retained.Parameters.AddWithValue("$id", ids[0]);
-            await Assert.That(Convert.ToInt64(await retained.ExecuteScalarAsync(cancellationToken), CultureInfo.InvariantCulture)).IsEqualTo(version);
+            corrupt.Parameters.AddWithValue("$changed", ids[1]);
+            corrupt.Parameters.AddWithValue("$erased", ids[2]);
+            corrupt.Parameters.AddWithValue("$versioned", ids[3]);
+            await Assert.That(await corrupt.ExecuteNonQueryAsync(token)).IsEqualTo(3);
         }
 
-        var frontiers = await FrontiersAsync(file, cancellationToken);
-        var history = await RetainedHistoryAsync(file, ids[0], cancellationToken);
-        using var repairs = new RepairCounter(server);
-        using (var call = repair.DigestAsync(identity, cancellationToken: cancellationToken))
+        // Customers see the damage, a false deletion included, until the next pass.
+        await Assert.That(await MatchesAsync(reader, Document(tenant, ids[1]), "{\"name\":\"damaged\"}", token)).IsTrue();
+        await Assert.That(await MatchesAsync(reader, Document(tenant, ids[2]), null, token)).IsTrue();
+        // One pass digests both ends.
+        clock.Advance(AntiEntropyWorker.ReconcileInterval);
+        await clock.PausedAsync(token);
+        foreach (var (id, state) in expected)
         {
-            await Assert.That((await call.ResponseAsync).Envelope).IsEqualTo(expectedDigest);
+            await Assert.That(await StateAsync(file, id, token)).IsEqualTo(state);
+            await Assert.That(await MatchesAsync(reader, Document(tenant, id), state.Body, token)).IsTrue();
         }
 
-        var change = new DocumentChange("items", ids[0], version, System.Text.Encoding.UTF8.GetBytes(live.Body!));
-        using (var call = repair.MergeAsync(new StateRequest
+        var repaired = await RegistersAsync(damaged, tenant, token);
+        await Assert.That(repaired.Keys).IsEquivalentTo(registers.Keys);
+        foreach (var (key, register) in registers)
         {
-            Identity = identity,
-            Envelope = ByteString.CopyFrom(ApplicationEnvelope.Encode(ChangeGroup.Encode([change])).Span),
-        }, cancellationToken: cancellationToken))
-        {
-            await Assert.That((await call.ResponseAsync).RepairedKeys).IsEqualTo(0U);
+            await Assert.That(repaired[key]).IsEqualTo(register);
         }
 
-        await Assert.That(await MatchesAsync(reader, Document(tenant, ids[0]), null, cancellationToken)).IsTrue();
-        await Assert.That(await StateAsync(file, ids[0], cancellationToken)).IsEqualTo(deleted);
-        await Assert.That(repairs.Keys).IsEqualTo(0L);
-        await Assert.That(await FrontiersAsync(file, cancellationToken)).IsEquivalentTo(frontiers);
-        await Assert.That(await RetainedHistoryAsync(file, ids[0], cancellationToken)).IsEquivalentTo(history);
+        await Assert.That(await FrontiersAsync(file, token)).IsEquivalentTo(frontiers);
     }
 
     [Test]
@@ -909,128 +726,8 @@ public sealed class AntiEntropyTests
     }
 
     [Test]
-    [Timeout(60_000)]
-    public async Task Identical_resurrections_on_both_members_repair_locally_before_their_digests_match(CancellationToken cancellationToken)
-    {
-        using var peerTls = new PeerTls();
-        using var clientTls = new ClientTls();
-        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
-        await using var source = await TerraBaseTestServer.StartAsync(settings => { peerTls.Apply(settings); clientTls.Apply(settings); },
-            services => services.AddSingleton<TimeProvider>(clock));
-        await using var receiver = await TerraBaseTestServer.StartAsync(settings => { peerTls.Apply(settings); clientTls.Apply(settings); },
-            services => services.AddSingleton<TimeProvider>(clock));
-        var tenant = await ReplicationTenant.CreateAsync(source, ["repair"], cancellationToken);
-        await tenant.BindAsync(receiver);
-        var ids = Enumerable.Range(0, 3).Select(_ => DocumentApi.NewId()).ToArray();
-        var name = new Faker().Name.FullName();
-        using (var writer = clientTls.CreateClient(source.ClientAddress!, await tenant.KeyAsync(source, ["documents:write"], cancellationToken)))
-        using (var collection = await writer.PostAsJsonAsync(new Uri($"{tenant.Path("repair")}/collections", UriKind.Relative),
-            new { name = "items" }, cancellationToken))
-        {
-            collection.EnsureSuccessStatusCode();
-        }
-
-        using var sourceChannel = peerTls.CreateChannel(source.PeerAddress!);
-        using var receiverChannel = peerTls.CreateChannel(receiver.PeerAddress!);
-        var sourceRpc = new AntiEntropy.AntiEntropyClient(sourceChannel);
-        var receiverRpc = new AntiEntropy.AntiEntropyClient(receiverChannel);
-        // Share the generated collection identity before writing identical document histories.
-        using (var seed = sourceRpc.ReadRangeAsync(new RangeRequest
-        {
-            Identity = await ProofIdentityAsync(receiver, source, tenant, cancellationToken),
-            Ranges = ushort.MaxValue,
-        }, cancellationToken: cancellationToken))
-        using (var imported = receiverRpc.MergeAsync(new StateRequest
-        {
-            Identity = await ProofIdentityAsync(source, receiver, tenant, cancellationToken),
-            Envelope = (await seed.ResponseAsync).Envelope,
-        }, cancellationToken: cancellationToken))
-        {
-            await Assert.That((await imported.ResponseAsync).RepairedKeys).IsEqualTo(1U);
-        }
-
-        long deletionVersion = 0;
-        foreach (var node in new[] { source, receiver })
-        {
-            using var writer = clientTls.CreateClient(node.ClientAddress!, await tenant.KeyAsync(node, ["documents:write"], cancellationToken));
-            _ = await TransactAsync(writer, tenant, ids.Select(id => (object)new { op = "create", collection = "items", id, document = new { name } }), cancellationToken);
-            var version = await TransactAsync(writer, tenant, ids.Select(id => (object)new { op = "delete", collection = "items", id }), cancellationToken);
-            if (deletionVersion == 0)
-            {
-                deletionVersion = version;
-            }
-
-            await Assert.That(version).IsEqualTo(deletionVersion);
-            using var newer = await writer.PutAsJsonAsync(Document(tenant, ids[^1]), new { name }, cancellationToken);
-            newer.EnsureSuccessStatusCode();
-        }
-
-        // Equal clocks and shared metadata produce identical digests before injecting the fault.
-        var identity = new ShardIdentity { Organization = tenant.OrganizationId, Project = tenant.ProjectId, Database = tenant.Database("repair").DatabaseId! };
-        using (var sourceDigest = sourceRpc.DigestAsync(identity, cancellationToken: cancellationToken))
-        using (var receiverDigest = receiverRpc.DigestAsync(identity, cancellationToken: cancellationToken))
-        {
-            await Assert.That((await sourceDigest.ResponseAsync).Envelope).IsEqualTo((await receiverDigest.ResponseAsync).Envelope);
-        }
-
-        var sourceFile = tenant.File(source, "repair");
-        var receiverFile = tenant.File(receiver, "repair");
-        var sourceFrontiers = await FrontiersAsync(sourceFile, cancellationToken);
-        var receiverFrontiers = await FrontiersAsync(receiverFile, cancellationToken);
-        var newerState = (await StateAsync(sourceFile, ids[^1], cancellationToken))!.Value;
-        await Assert.That(newerState.Version).IsGreaterThan(deletionVersion);
-        await Assert.That(newerState.Body).IsNotNull();
-        await Assert.That(await StateAsync(receiverFile, ids[^1], cancellationToken)).IsEqualTo(newerState);
-        using var sourceRepairs = new RepairCounter(source);
-        using var receiverRepairs = new RepairCounter(receiver);
-        foreach (var file in new[] { sourceFile, receiverFile })
-        {
-            await using var connection = new SqliteConnection(DocumentApi.ConnectionString(file));
-            await connection.OpenAsync(cancellationToken);
-            using var corrupt = connection.CreateCommand();
-            corrupt.CommandText = """
-                UPDATE documents SET version = $version - 1, body = '{"name":"resurrected"}' WHERE collection = 'items' AND id = $older;
-                UPDATE documents SET version = $version, body = '{"name":"resurrected"}' WHERE collection = 'items' AND id = $equal;
-                """;
-            corrupt.Parameters.AddWithValue("$version", deletionVersion);
-            corrupt.Parameters.AddWithValue("$older", ids[0]);
-            corrupt.Parameters.AddWithValue("$equal", ids[1]);
-            await Assert.That(await corrupt.ExecuteNonQueryAsync(cancellationToken)).IsEqualTo(2);
-        }
-
-        // Matching corrupt replicas have no divergent range to exchange: each digest must commit its own deletion evidence.
-        using (var sourceDigest = sourceRpc.DigestAsync(identity, cancellationToken: cancellationToken))
-        using (var receiverDigest = receiverRpc.DigestAsync(identity, cancellationToken: cancellationToken))
-        {
-            await Assert.That((await sourceDigest.ResponseAsync).Envelope).IsEqualTo((await receiverDigest.ResponseAsync).Envelope);
-        }
-
-        foreach (var node in new[] { source, receiver })
-        {
-            var file = tenant.File(node, "repair");
-            using var reader = clientTls.CreateClient(node.ClientAddress!, await tenant.KeyAsync(node, ["documents:read"], cancellationToken));
-            foreach (var id in ids.Take(2))
-            {
-                await Assert.That(await StateAsync(file, id, cancellationToken)).IsEqualTo((deletionVersion, (string?)null));
-                await Assert.That(await MatchesAsync(reader, Document(tenant, id), null, cancellationToken)).IsTrue();
-            }
-
-            await Assert.That(await StateAsync(file, ids[^1], cancellationToken)).IsEqualTo(newerState);
-            await Assert.That(await MatchesAsync(reader, Document(tenant, ids[^1]), newerState.Body, cancellationToken)).IsTrue();
-        }
-
-        await Assert.That(sourceRepairs.Keys).IsEqualTo(2);
-        await Assert.That(receiverRepairs.Keys).IsEqualTo(2);
-        await ReplayIdenticalAsync(peerTls, source, receiver, tenant, cancellationToken);
-        await Assert.That(sourceRepairs.Keys).IsEqualTo(2);
-        await Assert.That(receiverRepairs.Keys).IsEqualTo(2);
-        await Assert.That(await FrontiersAsync(sourceFile, cancellationToken)).IsEquivalentTo(sourceFrontiers);
-        await Assert.That(await FrontiersAsync(receiverFile, cancellationToken)).IsEquivalentTo(receiverFrontiers);
-    }
-
-    [Test]
     [Timeout(120_000)]
-    public async Task Repeated_deletion_history_returns_each_key_once_across_bounded_range_pages(CancellationToken cancellationToken)
+    public async Task Repeated_deletions_return_each_register_once_across_bounded_range_pages(CancellationToken cancellationToken)
     {
         using var peerTls = new PeerTls();
         using var clientTls = new ClientTls();
@@ -1046,13 +743,12 @@ public sealed class AntiEntropyTests
         var ids = Enumerable.Range(0, 130).Select(_ => DocumentApi.NewId()).ToArray();
         var name = new Faker().Name.FullName();
         _ = await TransactAsync(writer, tenant, ids.Select(id => (object)new { op = "create", collection = "items", id, document = new { name } }), cancellationToken);
-        var firstDeletion = await TransactAsync(writer, tenant, ids.Select(id => (object)new { op = "delete", collection = "items", id }), cancellationToken);
-        var latestDeletion = firstDeletion;
+        _ = await TransactAsync(writer, tenant, ids.Select(id => (object)new { op = "delete", collection = "items", id }), cancellationToken);
         var repeated = ids.Take(3).ToArray();
         for (var i = 0; i < 16; i++)
         {
             _ = await TransactAsync(writer, tenant, repeated.Select(id => (object)new { op = "create", collection = "items", id, document = new { name } }), cancellationToken);
-            latestDeletion = await TransactAsync(writer, tenant, repeated.Select(id => (object)new { op = "delete", collection = "items", id }), cancellationToken);
+            _ = await TransactAsync(writer, tenant, repeated.Select(id => (object)new { op = "delete", collection = "items", id }), cancellationToken);
         }
 
         using (var newer = await writer.PutAsJsonAsync(Document(tenant, ids[2]), new { name }, cancellationToken))
@@ -1062,25 +758,11 @@ public sealed class AntiEntropyTests
 
         var file = tenant.File(server, "repair");
         var live = (await StateAsync(file, ids[2], cancellationToken))!.Value;
-        await Assert.That(live.Version).IsGreaterThan(latestDeletion);
-        await using (var connection = new SqliteConnection(DocumentApi.ConnectionString(file, readOnly: true)))
-        {
-            await connection.OpenAsync(cancellationToken);
-            using var count = connection.CreateCommand();
-            count.CommandText = "SELECT count(*) FROM changes WHERE collection = 'items' AND body IS NULL;";
-            await Assert.That(Convert.ToInt64(await count.ExecuteScalarAsync(cancellationToken), CultureInfo.InvariantCulture)).IsEqualTo(178);
-        }
-
+        await Assert.That(live.Body).IsNotNull();
         var frontiers = await FrontiersAsync(file, cancellationToken);
         using var channel = peerTls.CreateChannel(server.PeerAddress!);
         var client = new AntiEntropy.AntiEntropyClient(channel);
-        var identity = new ShardIdentity { Organization = tenant.OrganizationId, Project = tenant.ProjectId, Database = tenant.Database("repair").DatabaseId! };
-        using var digestCall = client.DigestAsync(identity, cancellationToken: cancellationToken);
-        var digest = await digestCall.ResponseAsync;
-        identity.Incarnation = digest.Incarnation;
-        identity.Origin = ByteString.CopyFrom(EntityIds.New().ToByteArray());
-        identity.SourceProof = new JournalProof { Origin = identity.Origin, Digest = ByteString.CopyFrom(JournalDigest.Initial(identity.Origin.Span)) };
-        identity.TargetProof = new JournalProof { Origin = digest.Origin, Digest = ByteString.CopyFrom(JournalDigest.Initial(digest.Origin.Span)) };
+        var identity = await IdentityAsync(server, tenant, cancellationToken);
         var request = new RangeRequest { Identity = identity, Ranges = ushort.MaxValue };
         var seen = new HashSet<string>(StringComparer.Ordinal);
         var pages = 0;
@@ -1089,16 +771,18 @@ public sealed class AntiEntropyTests
         {
             using var readCall = client.ReadRangeAsync(request, cancellationToken: cancellationToken);
             var page = await readCall.ResponseAsync;
-            var changes = ChangeGroup.Decode(ApplicationEnvelope.Decode(page.Envelope.Span, ReplicationProtocol.MaxApplicationBytes));
+            var changes = Decode(page);
             await Assert.That(changes.Count <= 128).IsTrue();
-            await Assert.That(ChangeGroup.ContentBytes(changes) <= IStorageTransaction.MaxChangeGroupBytes).IsTrue();
+            await Assert.That(Deltas.ContentBytes(changes) <= IStorageTransaction.MaxChangeGroupBytes).IsTrue();
             pages++;
             keys += changes.Count;
             foreach (var change in changes.Where(change => change.Collection == "items"))
             {
                 await Assert.That(seen.Add(change.Id)).IsTrue();
-                var expected = change.Id == ids[2] ? live : (repeated.Contains(change.Id, StringComparer.Ordinal) ? latestDeletion : firstDeletion, (string?)null);
-                await Assert.That((change.Version, change.Json is { } json ? System.Text.Encoding.UTF8.GetString(json.Span) : null)).IsEqualTo(expected);
+                // Each register reads as its row: the live write or the latest tombstone.
+                var winner = change.State.Values.MaxBy(value => (value.Value.Stamp.Value, value.Key.Replica.Value, value.Key.Counter)).Value;
+                await Assert.That(((long)winner.Stamp.Value, Deltas.Json(change))).IsEqualTo((await StateAsync(file, change.Id, cancellationToken))!.Value);
+                await Assert.That(Deltas.Json(change) is null).IsEqualTo(change.Id != ids[2]);
             }
 
             if (!page.HasMore)
@@ -1117,6 +801,12 @@ public sealed class AntiEntropyTests
         await Assert.That(await StateAsync(file, ids[2], cancellationToken)).IsEqualTo(live);
         await Assert.That(await FrontiersAsync(file, cancellationToken)).IsEquivalentTo(frontiers);
     }
+
+    private static List<DocumentDelta> Decode(StatePage page) => page.Envelope.IsEmpty ? []
+        : [.. DeltaGroup.Decode(ApplicationEnvelope.Decode(page.Envelope.Span, ReplicationProtocol.MaxApplicationBytes), maxChanges: 128).Changes];
+
+    private static ByteString Envelope(IReadOnlyList<DocumentDelta> states) =>
+        ByteString.CopyFrom(ApplicationEnvelope.Encode(DeltaGroup.Encode(new CapturedGroup([], states), out _)).Span);
 
     private static async Task<long> TransactAsync(HttpClient writer, ReplicationTenant tenant, IEnumerable<object> operations, CancellationToken token)
     {
@@ -1180,40 +870,28 @@ public sealed class AntiEntropyTests
         return await row.ReadAsync(token) ? (row.GetInt64(0), row.IsDBNull(1) ? null : row.GetString(1)) : null;
     }
 
-    private static async Task<string[]> RetainedHistoryAsync(string file, string id, CancellationToken token)
+    // A document row as stored: its register, and the version and body of the register's last-writer-wins write.
+    private static async Task<(byte[] State, long Version, string Body)> RowAsync(string file, string id, CancellationToken token)
     {
         await using var connection = new SqliteConnection(DocumentApi.ConnectionString(file, readOnly: true));
         await connection.OpenAsync(token);
         using var command = connection.CreateCommand();
-        command.CommandText = """
-            SELECT 'clock:' || value FROM commit_offset
-            UNION ALL
-            SELECT json_object('sequence', sequence, 'generation', generation, 'offset', version,
-                'version', document_version, 'body', body)
-            FROM change_log WHERE collection = 'items' AND id = $id
-            UNION ALL
-            SELECT json_object('journal', sequence, 'ordinal', ordinal, 'version', version, 'body', body)
-            FROM changes WHERE collection = 'items' AND id = $id;
-            """;
+        command.CommandText = "SELECT state, version, body FROM documents WHERE collection = 'items' AND id = $id;";
         command.Parameters.AddWithValue("$id", id);
-        await using var rows = await command.ExecuteReaderAsync(token);
-        var history = new List<string>();
-        while (await rows.ReadAsync(token))
-        {
-            history.Add(rows.GetString(0));
-        }
-
-        return [.. history];
+        await using var row = await command.ExecuteReaderAsync(token);
+        return await row.ReadAsync(token) ? (row.GetFieldValue<byte[]>(0), row.GetInt64(1), row.GetString(2))
+            : throw new InvalidOperationException("the document row is missing");
     }
 
+    // This database's own stream and the applied position of every other origin: repair never moves either.
     private static async Task<string[]> FrontiersAsync(string file, CancellationToken token)
     {
         await using var connection = new SqliteConnection(DocumentApi.ConnectionString(file, readOnly: true));
         await connection.OpenAsync(token);
         using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT 'journal:' || sequence || ':' || hex(digest) FROM journal_prefixes
-            UNION ALL SELECT 'applied:' || hex(origin) || ':' || sequence || ':' || hex(digest) FROM applied;
+            SELECT 'journal:' || sequence || ':' || hex(dependencies) FROM journal
+            UNION ALL SELECT 'applied:' || hex(origin) || ':' || sequence FROM applied;
             """;
         await using var rows = await command.ExecuteReaderAsync(token);
         var frontiers = new List<string>();
@@ -1223,6 +901,17 @@ public sealed class AntiEntropyTests
         }
 
         return [.. frontiers];
+    }
+
+    // Every register of the database by key, read through the engine.
+    private static async Task<Dictionary<(string Collection, string Id), DocumentDelta>> RegistersAsync(
+        TerraBaseTestServer server, ReplicationTenant tenant, CancellationToken token)
+    {
+        var store = (await server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(tenant.Database("repair"), token))!;
+        await using var read = await store.BeginTransactionAsync(write: false, token);
+        var page = await read.ReadReplicationStateAsync(null, null, token);
+        await Assert.That(page.HasMore).IsFalse();
+        return page.States.ToDictionary(state => (state.Collection, state.Id));
     }
 
     private static async Task ReplayIdenticalAsync(
@@ -1239,67 +928,59 @@ public sealed class AntiEntropyTests
         var fromDigest = await fromDigestCall.ResponseAsync;
         var toDigest = await toDigestCall.ResponseAsync;
         await Assert.That(fromDigest.Envelope).IsEqualTo(toDigest.Envelope);
-        var target = await ProofIdentityAsync(from, to, tenant, token);
-        identity = await ProofIdentityAsync(to, from, tenant, token);
-        var request = new RangeRequest { Identity = identity, Ranges = ushort.MaxValue };
+        var (repaired, replayed) = await CopyRangesAsync(fromClient, toClient, await IdentityAsync(from, tenant, token), await IdentityAsync(to, tenant, token), token);
+        await Assert.That(repaired).IsEqualTo(0U);
+        await Assert.That(replayed).IsTrue();
+    }
+
+    // Reads every range of from and merges each page into to: the keys whose register changed.
+    private static async Task<uint> MergeAllAsync(PeerTls tls, TerraBaseTestServer from, TerraBaseTestServer to, ReplicationTenant tenant, CancellationToken token)
+    {
+        using var fromChannel = tls.CreateChannel(from.PeerAddress!);
+        using var toChannel = tls.CreateChannel(to.PeerAddress!);
+        var (repaired, _) = await CopyRangesAsync(new AntiEntropy.AntiEntropyClient(fromChannel), new AntiEntropy.AntiEntropyClient(toChannel),
+            await IdentityAsync(from, tenant, token), await IdentityAsync(to, tenant, token), token);
+        return repaired;
+    }
+
+    private static async Task<(uint Repaired, bool Replayed)> CopyRangesAsync(
+        AntiEntropy.AntiEntropyClient fromClient, AntiEntropy.AntiEntropyClient toClient, ShardIdentity from, ShardIdentity to, CancellationToken token)
+    {
+        var request = new RangeRequest { Identity = from, Ranges = ushort.MaxValue };
+        uint repaired = 0;
         var replayed = false;
-        do
+        while (true)
         {
             using var readCall = fromClient.ReadRangeAsync(request, cancellationToken: token);
             var page = await readCall.ResponseAsync;
             if (!page.Envelope.IsEmpty)
             {
-                using var mergeCall = toClient.MergeAsync(new StateRequest { Identity = target, Envelope = page.Envelope }, cancellationToken: token);
-                var changed = (await mergeCall.ResponseAsync).RepairedKeys;
-                await Assert.That(changed).IsEqualTo(0U);
+                using var mergeCall = toClient.MergeAsync(new StateRequest { Identity = to, Envelope = page.Envelope }, cancellationToken: token);
+                repaired += (await mergeCall.ResponseAsync).RepairedKeys;
                 replayed = true;
             }
 
             if (!page.HasMore)
             {
-                break;
+                return (repaired, replayed);
             }
 
             request.AfterCollection = page.AfterCollection;
             request.AfterId = page.AfterId;
-        } while (true);
-
-        await Assert.That(replayed).IsTrue();
+        }
     }
 
-    private static async Task<ShardIdentity> ProofIdentityAsync(
-        TerraBaseTestServer initiator, TerraBaseTestServer target, ReplicationTenant tenant, CancellationToken token)
+    // A repair request pinned to target's database file.
+    private static async Task<ShardIdentity> IdentityAsync(TerraBaseTestServer target, ReplicationTenant tenant, CancellationToken token)
     {
         var database = tenant.Database("repair");
-        var sourceStore = (await initiator.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(database, token))!;
-        var targetStore = (await target.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(database, token))!;
-        await using var sourceRead = await sourceStore.BeginTransactionAsync(write: false, token);
-        await using var targetRead = await targetStore.BeginTransactionAsync(write: false, token);
-        var sourceOrigin = await sourceRead.GetOriginAsync(token);
-        var targetOrigin = await targetRead.GetOriginAsync(token);
-        var (sourceSequence, sourceDigest) = await targetRead.GetAppliedFrontierAsync(sourceOrigin, token);
-        var (targetSequence, targetDigest) = await sourceRead.GetAppliedFrontierAsync(targetOrigin, token);
-        var localDigest = await sourceRead.GetChangeDigestAsync(sourceSequence, token);
-        await Assert.That(localDigest is not null && localDigest.Value.Span.SequenceEqual(sourceDigest.Span)).IsTrue();
+        var store = (await target.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(database, token))!;
         return new ShardIdentity
         {
             Organization = tenant.OrganizationId,
             Project = tenant.ProjectId,
             Database = database.DatabaseId!,
-            Incarnation = ByteString.CopyFrom(targetStore.Incarnation.ToByteArray()),
-            Origin = ByteString.CopyFrom(sourceOrigin.Span),
-            SourceProof = new JournalProof
-            {
-                Origin = ByteString.CopyFrom(sourceOrigin.Span),
-                Sequence = checked((ulong)sourceSequence),
-                Digest = ByteString.CopyFrom(sourceDigest.Span),
-            },
-            TargetProof = new JournalProof
-            {
-                Origin = ByteString.CopyFrom(targetOrigin.Span),
-                Sequence = checked((ulong)targetSequence),
-                Digest = ByteString.CopyFrom(targetDigest.Span),
-            },
+            Incarnation = ByteString.CopyFrom(store.Incarnation.ToByteArray()),
         };
     }
 

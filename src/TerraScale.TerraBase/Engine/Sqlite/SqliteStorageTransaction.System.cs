@@ -42,7 +42,7 @@ internal sealed partial class SqliteStorageTransaction
         {
             cancellationToken.ThrowIfCancellationRequested();
             var (collection, id) = (reader.GetString(0), reader.GetString(1));
-            Write(offset => Capture(new DocumentChange(collection, id, offset, null)), cancellationToken);
+            Write(offset => CaptureSystem(new DocumentChange(collection, id, offset, null)), cancellationToken);
         }
     }
 

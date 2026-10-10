@@ -483,7 +483,7 @@ internal sealed partial class WanPuller(
                 var applied = await AppliedAsync(store, origin, cancellationToken).ConfigureAwait(false);
                 var gone = false;
                 var advanced = false;
-                // Only the origin's explicit Ahead answer or a journal conflict is divergence; a head snapshot may be stale.
+                // Only the origin's explicit Ahead answer is divergence; a head snapshot may be stale.
                 var untracked = false;
                 var failed = false;
                 Conflict? diverged = null;
@@ -1215,19 +1215,12 @@ internal sealed partial class WanPuller(
                     (parts, received) = (null, 0);
                 }
 
-                var changes = ReplicationProtocol.Read(new SyncRequest { CommittedGroup = batch }, database, origin, ReplicationProtocol.Limits);
-                var append = await journal.AppendAsync(
-                    store, origin, (long)batch.EventId.Sequence, changes, batch.PreviousJournalDigest.Memory, batch.JournalDigest.Memory, cancellationToken).ConfigureAwait(false);
-                if (append is Conflict conflict)
-                {
-                    return conflict;
-                }
-
+                var group = ReplicationProtocol.Read(new SyncRequest { CommittedGroup = batch }, database, origin, ReplicationProtocol.Limits);
+                var append = await journal.AppendAsync(store, origin, (long)batch.EventId.Sequence, group, cancellationToken).ConfigureAwait(false);
                 var sequence = append switch
                 {
-                    JournalApplied group => group.Sequence,
+                    JournalApplied committed => committed.Sequence,
                     JournalUnchanged unchanged => unchanged.Sequence,
-                    Conflict => applied,
                 };
                 lock (_gate)
                 {
@@ -1244,8 +1237,8 @@ internal sealed partial class WanPuller(
                 }
 
                 applied = sequence;
-                // Its journal proof extended the applied journal, or matched the head another stream extended it with first (the
-                // journal compares a duplicate's digest only at its head): whatever this origin diverged on is resolved.
+                // It extended the applied prefix, or matched the head another stream extended it with first (an origin never
+                // reuses a sequence): whatever this origin diverged on is resolved.
                 if (append is JournalApplied || append is JournalUnchanged duplicate && duplicate.Sequence == (long)batch.EventId.Sequence)
                 {
                     Converged(region, database, store, origin, sequence);
@@ -1253,7 +1246,7 @@ internal sealed partial class WanPuller(
 
                 if (append is JournalApplied)
                 {
-                    usage.RecordReplicatedOperations(database, region, changes.Count);
+                    usage.RecordReplicatedOperations(database, region, group.Changes.Count);
                 }
                 metrics.Pulled(region, batch.EncodedApplicationBytes);
             }
@@ -1399,7 +1392,7 @@ internal sealed partial class WanPuller(
             return Refuse(new NotFound());
         }
 
-        var (store, _, applied, _) = await journal.OpenAsync(database, origin, cancellationToken).ConfigureAwait(false);
+        var (store, _, applied) = await journal.OpenAsync(database, origin, cancellationToken).ConfigureAwait(false);
         // A later catalog refusal still belongs to this copy; deleting it must invalidate its retry.
         Remember(store);
         lock (_gate)
@@ -1488,7 +1481,7 @@ internal sealed partial class WanPuller(
         var read = await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
         await using (read.ConfigureAwait(false))
         {
-            applied = (await read.GetAppliedFrontierAsync(origin, cancellationToken).ConfigureAwait(false)).Sequence;
+            applied = await read.GetAppliedSequenceAsync(origin, cancellationToken).ConfigureAwait(false);
         }
 
         lock (_gate)

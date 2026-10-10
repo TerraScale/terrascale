@@ -18,8 +18,9 @@ required fields, TTL, or the SDK's other schema features.
 `fields[].unique` and `indexes[].unique` match ts-go's `Unique()` and `UniqueIndex()` declarations.
 The response contains the effective `constraints`; `GET …/schema/{collection}` includes them as
 `uniqueConstraints` alongside sampled field information. Repeating an unchanged declaration is idempotent.
-Changing a declaration requires a collection with no retained document states, including tombstones;
-otherwise the API answers `409 schema_requires_empty_collection`. Drop and recreate the collection to change it.
+Changing a declaration requires a collection without live documents, a hidden uniqueness loser included;
+otherwise the API answers `409 schema_requires_empty_collection`. Drop and recreate the collection to change it: a drop's
+tombstones stay as registers (TS-647 step 4c) and do not count.
 There is no upgrade, migration, or backfill of old files or consumer claim records.
 
 ## Values and limits
@@ -58,11 +59,11 @@ the same transaction. Uniqueness is scoped to one collection in one database.
 Leaderless, partitioned replicas can both accept an otherwise valid write for the same unique value. This API does
 not promise globally serialized admission or that every acknowledged write stays query-visible during a partition.
 
-Every document first merges by the existing document merge rule. The engine retains each resulting source state
+Every document's register first joins as replication defines; its last-writer-wins write is the document's source state. The engine retains each resulting source state
 and indexes its unique keys. For each key, the document with the smallest UTF-8 document id wins. A document is
 visible to lists, queries, SQL, counts and shapes only when it wins every key it claims. This is a deterministic
 projection of merged source states, independent of replication arrival order. Schema declarations replicate as
-reserved `_unique` documents with the same metadata merge rule as collections and indexes.
+reserved `_unique` registers that join like collections and indexes.
 
 Point GET of a retained loser answers `409 unique_violation` and carries the source state's ETag. It can be changed
 with PUT/PATCH or deleted, including with that ETag. Another document cannot acquire a locally contested value while
@@ -72,7 +73,7 @@ The collection change feed uses that history: hiding emits a deletion and promot
 retained JSON, at the triggering commit's offset. Identical repair emits no change-feed events.
 Baseline replication includes losing source states, so a new replica computes the same result and does not lose
 the information needed to release a key later.
-Merkle digests and repair ranges also use retained source bodies, including hidden contenders; a visibility
+Merkle digests and repair ranges use the registers, which hold hidden contenders' source states too; a visibility
 projection is never a source tombstone. Identical state repair preserves conflicts and performs no mutation.
 
 `unique_conflicts` stores the bodies excluded from the ordinary document view; `unique_keys` indexes every
@@ -82,8 +83,8 @@ that body as a conflict regardless of delivery order. Arrays, objects and over-l
 excluded from queries; point GET returns 409 with the source ETag. A valid local replacement or removing the
 constraint restores visibility. `unique_invalid` records these states separately from duplicate-key contenders.
 Local writes under the declared schema still reject incompatible values with 400. Baselines carry source bodies,
-so receivers recompute both kinds of conflict without losing data. Replicated collection drops end older retained
-states and declarations even when the dropping origin had never received them.
+so receivers recompute both kinds of conflict without losing data. A replicated collection drop tombstones the
+states its origin knew; a state or declaration its origin never received keeps the collection (TS-647 step 4c).
 
 ## Rollout and follow-up slices
 

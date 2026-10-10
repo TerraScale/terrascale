@@ -9,30 +9,35 @@ format and open questions: [0007](decisions/0007-lz4-application-envelope-replic
 - Document puts and deletes committed on client databases: one change group per write
   transaction, applied atomically on the receiver.
 - Full mesh: every node sends the groups it originated to every address in `peer-addresses`.
-- Concurrent writes converge by merge policy v1: the higher commit-offset version wins, then
-  a deletion over a live document, then the greater UTF-8 JSON bytes. Applying remote versions
-  advances the local commit offset so a later transaction supersedes the state it observed.
+- Every document is a register ([anna-core](design/anna-core.md), Documents): a local write mints a dot under the
+  member's replica id, stamps it with the member's hybrid clock and replaces every value the member knows. A receiver
+  joins each delta into the stored register, so delivery order, duplicates and retries cannot change the result. Reads
+  take the register's last-writer-wins write (the greatest stamp, then replica id), whose stamp is the document's
+  version; concurrent writes stay in the register as siblings until a write replaces them. A dot that arrives with a
+  second value (a replica that minted it twice) fails the group instead of losing either write.
 - Every write transaction on a client database is captured, whether or not `peer-addresses` is
   set, so the change log has no holes when peers are added, removed or the node restarts. Nothing
   truncates the log.
 - A database missing on the receiver is created under the exact organization, project and database ULIDs in the stream. Display names never address peer storage.
-- The persisted incarnation (`IDatabaseStore.Incarnation`) is the origin. Document ETags do not use it: they hash the
-  replicated state under the database's organization, project and database ids, so every member answers the same ETag
-  for the same state and a version read on one member satisfies `If-Match` on another (TS-574). Schema v8 retains
-  `changes`, `applied` and `replication_state` alongside the document API schema and adds chained journal-prefix proofs;
-  documents and tombstones stay in the existing `documents` table.
+- A stream's origin is the member's replica id (little-endian) and the last 8 bytes of the database file's incarnation
+  (`IDatabaseStore.Incarnation`, a ULID whose first bytes are its creation time), so an unclean start (a new epoch) or a
+  copy starts a new origin and a sequence never names two different groups. Document ETags do not use it: they hash the
+  last-writer-wins write under the database's organization, project and database ids, so every member answers the same
+  ETag for the same state and a version read on one member satisfies `If-Match` on another (TS-574). A client database
+  keeps each document's register in `documents`, its own stream in `changes` (deltas) and `journal` (dependency
+  vectors), and the applied position of every other origin in `applied`. Applying a group of a member's later epoch
+  removes the positions of its earlier epochs on the same file: the later stream starts with a baseline of everything
+  that member held, so `applied` keeps one row per member and file instead of one per unclean start.
 - Collections and secondary indexes replicate as documents of two reserved collections that no client can name:
   `_collections` (one document per collection, `{"created_at": …}`) and `_indexes` (one definition per index,
   `{"collection": …, "fields": […]}`). Creating writes the document and dropping writes its tombstone in the same
-  captured group, so they merge like documents: the greater version wins, a drop over a create at the same version. Only
-  a winning state creates or drops the collection or index on the receiver. Collections and indexes created before this
-  change have no such document; their next create or drop replicates.
-- A document state implies its collection, whether or not its creation replicated. Dropping a populated collection also
-  captures its document deletions within the same group bounds (so a drop holds at most 1023 documents). A replicated
-  drop ends the live states of the collection older than itself, as the dropping member did, removes the collection once
-  nothing live remains, and refuses older incoming states afterwards; a write another member made at or after the drop
-  keeps the collection. Retained journal deletions also prevent stale incoming states from reviving physically removed
-  documents.
+  captured group, so they join like documents: the last-writer-wins write creates or drops the collection or index on
+  the receiver.
+- A live document implies its collection, whether or not its creation replicated. Dropping a populated collection writes
+  a tombstone over each live document in the same group (so a drop holds at most 1023 documents). A replicated drop
+  removes the collection once nothing in it is live; a document another member wrote concurrently, at a later stamp,
+  keeps it. The registers stay with their tombstones, so a late delta joins them instead of bringing a document back.
+- A client database removes documents only with tombstones; `DeleteAsync` and prefix deletes are the system database's.
 
 Storage enforces one JSON admission contract for client Put/PATCH and replication Apply: a complete
 UTF-8 object without duplicate properties, at most 1 MiB, 16 container levels and 4096 values, with
@@ -48,51 +53,34 @@ Database-wide placement currently has one shard (zero).
 Invalid membership peer addresses are logged without their values and skipped; a failed peer does
 not stop reconciliation with the remaining members or configured peers.
 The closed-beta `terrabase.alpha.AntiEntropy` gRPC contract uses the existing mutual-TLS listener and
-LZ4 application envelopes; it adds no public HTTP API. The fresh schema includes two partial key indexes so
-excluded empty or oversized keys do not lengthen document or retained-deletion scans.
+LZ4 application envelopes; it adds no public HTTP API. The client schema includes a partial key index so excluded
+empty or oversized keys do not lengthen register scans.
 
 A transient Merkle tree has 16 leaves, selected by the high nibble of SHA-256 of each length-framed
-collection/id key. Each leaf hashes current states in key order, including versions, exact JSON bytes,
-tombstones and collection/index metadata. Each key resolves its stored row and latest retained journal
-deletion with the same version/tombstone ordering as the merge path; newer live resurrections survive.
-Before hashing, each bounded page durably restores retained tombstones over missing, older or tied
-live rows. This also repairs identical resurrected rows on both members, even when their roots match.
-Live bodies at an unchanged merge version use the latest immutable winner in the current collection
-generation's shape history, including winners imported from validated journal groups. Indexed history
-seeks read sizes before bodies. Digest and range pages use these retained bytes; a repair writer rechecks
-the latest winner before restoring a damaged row, then applies ordinary conflict ordering. A larger
-damaged body therefore cannot poison an unchanged peer or block a legitimate equal-version winner.
-Body restoration invalidates document caches and preserves existing history and the merge version.
-Restoration and incoming merge share one transaction operation; queued commit or disposal waits for both.
-The same live history evidence restores a row whose body alone became NULL; retained real tombstones
-remain deletions. Restoration skips keys with accepted changes awaiting commit in the same transaction.
-Equal or newer retained journal deletions always prevent live-body restoration.
-It does not infer a canonical body from an arbitrary peer or an older losing journal entry. Missing
-history, metadata bodies, changed merge versions, oversized damaged bodies, or damage to the retained
-history itself lack this same-version evidence and retain the ordinary merge behavior; history is not
-an independent cryptographic corruption proof. Each repair transaction bounds locally restored bodies to 2 MiB in addition to its
-bounded incoming state page; overflow rolls back and subsequent digest pages restore them separately.
-Materializing an intentional physical deletion and restoring a lost tombstone use the same path;
-both count only rows actually changed, without appending journal groups or advancing applied frontiers.
-Domain-separated binary parent hashes produce the root.
-The root and leaf digests use 544 decoded bytes per shard. Equal trees transfer no states; differing
-leaves select the ranges exchanged as bounded state pages. The initiating member pulls first, merges
-durably, and pushes its joined states back, so one configured peer link repairs both directions.
+collection/id key. Each leaf hashes the stored registers in key order: each key and its register's canonical encoding
+(every value with its dot and stamp, and the causal context), collection, index and uniqueness metadata included.
+Domain-separated binary parent hashes produce the root. The root and leaf digests use 544 decoded bytes per shard.
+Equal trees transfer no states; differing leaves select the ranges exchanged as bounded pages of registers
+(`DeltaGroup` without dependencies). The initiating member pulls first, joins durably, and pushes its joined registers
+back, so one configured peer link repairs both directions.
 
-Repair uses the engine's existing deterministic merge and JSON admission rules. Duplicate and losing
-states change nothing. It does not reset, advance or manufacture a journal frontier or acknowledge a
-transaction group. Database incarnations pin requests; an unregistered, deleted or replaced database
-cannot be recreated by repair. Concurrent writes can make a pass stale; subsequent passes retry.
-Before transferring states, each pair checks both origins against the other's applied journal prefix.
-Range reads and durable merges enforce those proofs in their storage transaction; a missing, reused
-or mismatched prefix fails closed, and a moving frontier retries. These pairwise proofs preserve the
-direct restore fence; states do not carry transitive origin provenance, so this is not a global
-quarantine mechanism for restored histories relayed through other members.
-`terrabase.replication.repaired.keys` counts keys actually changed after a durable repair commit, with
-no tenant, database or peer labels.
+Repair joins registers exactly as replication applies deltas, under the same JSON admission: a register already held
+changes nothing, a stale one cannot replace a newer write, and a dot that arrives with a second value fails the page.
+It does not reset, advance or manufacture a journal position or acknowledge a transaction group. Database
+incarnations pin requests; an unregistered, deleted or replaced database cannot be recreated by repair. Concurrent
+writes can make a pass stale; subsequent passes retry. No journal proof fences repair: joins are idempotent and an
+origin never reuses a sequence (a copied, imported or restored file starts a new origin), so a page of older registers
+changes nothing it would not change through replication. Digests hash registers, while reads, queries and SQL use each
+row's `version` and `body`: building a digest checks every row against its register's last-writer-wins write (the JSON
+kept aside for a hidden uniqueness loser) and rejoins the register of a damaged row in a durable transaction, which
+rewrites the row, its shape history and cached reads. A join that leaves the register unchanged also rewrites a row that
+no longer reads as it.
+`terrabase.replication.repaired.keys` counts keys whose register changed after a durable repair commit, with no tenant,
+database or peer labels.
 
 Maintenance runs one exchange at a time. Each scan page examines at most 128 bounded keys plus one
-lookahead and transfers at most 128 admissible states and 2 MiB of key/body bytes;
+lookahead and transfers at most 128 admissible registers: the first of at most 3 MiB and all of them of at most 2 MiB of
+keys and encoded states;
 each exchange or incoming call reserves 16 MiB until its buffers have been consumed. Incoming calls
 are limited to 16. Each range read or merge has a fresh 15-second progress budget; an exchange can
 continue beyond 15 seconds while its pages make progress. Local and remote digest construction each
@@ -106,15 +94,13 @@ Unary responses are explicitly flushed before application completion, keeping bl
 writes inside admission. Reservations remain held through application response completion
 or cancellation; this does not establish peer consumption or final network delivery. Reads return
 their SQLite sessions before network waits, except the local digest scan, which holds a consistent
-read snapshot without network I/O. Oversized keys excluded by baseline replication are also
-excluded from repair. Other inadmissible keys are skipped before body materialization, local
-repair or hashing. Scan cursors retain the last examined key, even for empty pages, and allow at
+read snapshot without network I/O. Empty and oversized keys stay out of the partial index and out of
+repair. Other inadmissible keys are skipped before their registers are decoded or hashed. Scan cursors retain the last examined key, even for empty pages, and allow at
 most 63 collection bytes and 1024 id bytes so scans advance past these keys. Transferred states
 retain the normal collection/id validation. The system catalog continues to use its existing primary/follower protocol.
 
-Deletion-key enumeration seeks past repeated versions using the existing journal index, and reads
-only the latest retained deletion for each key. Repeated delete/recreate cycles do not force a full
-history scan for that key. This first implementation rebuilds trees from bounded pages and scans the keyspace to select ranges:
+A deleted document is one register with its tombstone, so repeated delete/recreate cycles add no keys to scan. This
+first implementation rebuilds trees from bounded pages and scans the keyspace to select ranges:
 CPU work is O(keys) per pass even when trees match. A shard that cannot complete within the deadline
 needs incremental persisted tree maintenance; this implementation does not claim bounded convergence
 time under continuous writes, memory pressure or an oversized shard.
@@ -231,15 +217,17 @@ and remain `unknown`; it does not authorize placement or residency.
 One `Replication.Sync` stream carries one database from one origin to one peer.
 
 1. Sender → `Hello`: organization, project and database ULIDs (16 bytes each in network byte order), origin (as both member id and incarnation), protocol 1.0,
-   format 1, LZ4 codec, limits.
+   format 1 (register deltas, `DeltaGroup`), LZ4 codec, limits. These numbers stay 1 ([anna-core](design/anna-core.md),
+   decision 9): members of another format never meet, because a format change ships at a cutover that stops every
+   member before any starts the new build.
 2. Receiver → `Welcome` with its applied prefix of that origin and the negotiated limits: each the
    minimum of both sides. It refuses an incompatible `Hello` (a range without 1.0, no LZ4, a zero
    limit, an inconsistent identity) with a non-retryable `StreamError`, and a 17th open stream
    with retryable `STREAM_ERROR_RESOURCE_EXHAUSTED`.
 3. Sender → `CommittedGroupBatch` for prefix + 1, prefix + 2, …, within the negotiated window and
    byte credit. Sender and receiver run the same check on every batch against the negotiated
-   limits (gRPC message size, encoded and decoded bytes, changes, byte credit, and 2 MiB of
-   collection, id and JSON bytes per group): a group that does not fit fails the stream on the
+   limits (gRPC message size, encoded and decoded bytes, changes, byte credit, and 3 MiB of
+   collection, id and register bytes per group): a group that does not fit fails the stream on the
    sender before it is written, and is refused by the receiver before it is decoded.
 4. Receiver, per batch: validate, apply and record the sequence in one SQLite transaction synced to disk, then
    send `DurableAck` and `AppliedAck` with the new prefix. A duplicate is acknowledged without
@@ -270,9 +258,9 @@ database that fails backs off independently; new commits to healthy databases ca
 during that backoff. Failed databases are retried, retryable error or not, and the next stream resumes
 from the peer's `Welcome`. The sender keeps one response read active while filling the window, so
 validated advancing ACKs extend its progress deadline even during a blocked request write. HTTP/2 pings (every 10 s, 5 s timeout) close a
-silently dropped connection. If a peer reports a prefix beyond the database's own change log (the
-file went back in time, for example a restore from a snapshot), the sender sends nothing for that
-database and keeps logging the failure: new groups would reuse numbers the peer already applied.
+silently dropped connection. An origin never reuses a sequence, so a peer that reports a prefix beyond the origin's head
+holds groups it never committed (a database file replaced by hand under the same member and epoch): the sender sends
+nothing for that database, counts `peer_ahead` and keeps logging the failure.
 
 ### Handoff during a peer outage (TS-679)
 
@@ -288,30 +276,23 @@ bound the disk backlog. Recovery requires the originating member's journal to re
 
 ## Baselines
 
-A node sends the current state of a database as baseline change groups when its log does not cover
-that state: a copy (branch) and a populated database upgraded from an earlier schema without a journal. The baseline
-is appended when the node first opens the database, one bounded group per transaction, before the
-log is marked complete; a copy also gets a new incarnation. Applying is idempotent, so a baseline repeated after a crash costs only bytes.
-Pre-existing states that fail the shared JSON contract (including the 1 MiB document limit), key
-contract, or merge-version bound are left out of the baseline and counted in a warning naming the
-database. Their stored data remains readable locally; valid states and later writes still replicate.
-Initialization is coordinated per database, so its baseline scan does not block unrelated database
+A database's stream starts again, on a new origin, with a baseline when its journal does not cover the database for this
+member: a copy (branch or import, which also gets a new incarnation) or an unclean start of the member (a new epoch,
+[anna-core](design/anna-core.md), Identities and dots). The journal of the old origin is dropped, and every register,
+live or tombstone, is appended as change groups when the node first opens the database, one bounded group per
+transaction (a register larger than 2 MiB alone in its group), before the journal is marked complete. Joins are
+idempotent, so a baseline repeated after a crash costs only bytes. Initialization is coordinated per database, so its baseline scan does not block unrelated database
 creation, opening or deletion. The store is published only after seeding completes. Deletion of that
 database waits for initialization; shutdown cancels initializers and waits within its configured grace.
 Cleanup continues after grace expires, retaining directory ownership until initialization and all
 sessions have ended. A canceled initiating open or copy closes its unpublished store before returning;
-an already-published file can be seeded again on a later open or explicitly deleted.
-Copies materialize retained physical deletions as tombstones on the destination before clearing the copied journal,
-so the new baseline preserves deletion merge evidence. Local document mutations and replicated
-applies use separate transactions; mixing them faults the transaction even for a no-op call.
+an already-published file can be seeded again on a later open or explicitly deleted. Local document mutations and
+replicated applies use separate transactions; mixing them faults the transaction even for a no-op call.
 
-Replication calls the same storage admission path as local writes, including losing incoming
-states. Legacy rows or journal entries outside this contract are rejected on apply rather than
-silently normalized. Such files require operator repair/export into a fresh database before
-replication; this PR provides no automatic JSON conversion.
-Imported winners also append shape history atomically with the applied frontier, retain their
-original document versions, and wake live readers. Shape history offsets are local commit positions,
-independent of sender journal sequences (see `shape-reads.md`).
+Replication applies the storage admission of local writes to every write a delta holds, losing ones included.
+Applied writes that change what a reader sees append shape history atomically with the applied position, keep their
+own stamps as versions, and wake live readers. Shape history offsets are local commit positions, independent of sender
+journal sequences (see `shape-reads.md`).
 
 ## Limits and timeouts
 
@@ -319,9 +300,9 @@ independent of sender journal sequences (see `shape-reads.md`).
 | --- | --- |
 | gRPC message, either direction | 4 MiB + 64 KiB |
 | Envelope; decoded change group | 4 MiB each |
-| Captured write transaction | 1024 changes; 2 MiB of UTF-8 collection, id and JSON bytes |
+| Captured write transaction | 1024 changes; 2 MiB of UTF-8 collection, id and encoded register bytes |
 | In flight per stream | 8 batches; 16 MiB of envelopes (lowered to the peer's limits) |
-| Received change group | the negotiated limits; 2 MiB of collection, id and JSON bytes |
+| Received change group | the negotiated limits; 3 MiB of collection, id and register bytes, 2 MiB once it holds more than one change |
 | Open `Sync` streams per node | 16 |
 | Receiver idle timeout | 30 s waiting for a request, or for a response write the peer does not read |
 | Sender connect and progress timeout | 15 s to connect, to get `Welcome`, and between acknowledgments that advance the durable prefix |
@@ -376,10 +357,10 @@ New Prometheus instruments:
 
 | Prometheus name | Meaning |
 | --- | --- |
-| `terrabase_replication_divergence_detections_total{reason}` | Journal conflict detections across all databases, including omitted ones; reason is `peer_ahead`, `welcome_digest` or `ack_digest` |
+| `terrabase_replication_divergence_detections_total{reason}` | Journal conflict detections across all databases, including omitted ones; reason is `peer_ahead` |
 | `terrabase_replication_peer_lag{peer}` | Outstanding durable groups, including every database |
 | `terrabase_replication_database_lag{peer,database}` | Outstanding durable groups for a database slot |
-| `terrabase_replication_database_diverged{peer,database}` | 1 after detecting a conflicting journal digest or a peer prefix beyond the local head; clears only once a validated prefix reaches the latest head |
+| `terrabase_replication_database_diverged{peer,database}` | 1 after detecting a peer prefix beyond the local head; clears only once a validated prefix reaches the latest head |
 | `terrabase_replication_database_catchup_seconds{peer,database}` | Monotonic age since observing an unacknowledged backlog, including retry time; 0 when no catch-up is timed |
 | `terrabase_replication_convergence_seconds{peer,database}` | Histogram of completed catch-ups, ending when a valid Welcome or DurableAck covers the latest local head |
 | `terrabase_replication_observability_omitted` | Database incarnations excluded from bounded detail; aggregate and per-peer lag still include them |
@@ -444,8 +425,12 @@ persistence is introduced here.
   arrives.
 - A baseline is the whole current state, written into the change log in bounded chunks: it costs as much
   disk as the data it covers.
-- The member that accepted a write keeps decision 0003's `synchronous = NORMAL`: a power loss can roll its file back
-  behind what its peers applied, and that database then stops replicating from it until an operator recovers it.
+- The member that accepted a write keeps decision 0003's `synchronous = NORMAL`: a power loss can lose its last commits
+  locally. Its unclean start raises its epoch, so it never mints their dots again and its streams continue on new origins,
+  and the peers keep what they acknowledged; the member itself gets those writes back only when they are written again,
+  until refill after an expired lease ([anna-core](design/anna-core.md) §5.3) covers it.
+- A database file replaced by hand under the same member and epoch is detected only when a peer is ahead of its head;
+  restore through import, which starts a new origin.
 - No SQL write path exists yet; a future SQL write through `IStorageTransaction` is captured as
   one group.
 
@@ -453,7 +438,7 @@ persistence is introduced here.
 
 Every database file is schema version 1, and the number never increases (user rule, 2026-10-09). There are no
 upgrades: a file of any other version is refused. A data directory also records its layout and storage format in
-`.terrabase.lock`: the layout byte, then the SHA-256 of the bootstrap schema. A build refuses a directory that any other
+`.terrabase.lock`: the layout byte, then the SHA-256 of the bootstrap schemas. A build refuses a directory that any other
 format recorded before it opens a file and exits with code 2, so a rollback cannot rewrite newer data; builds from before
 the record accept only the layout byte, so they refuse a directory a newer build wrote.
 
@@ -462,3 +447,5 @@ protocol version 1 and cannot refuse each other, so the operator stops every mem
 targets, deletes them and lists the deleted database ids; each member then bootstraps fresh storage when it starts. A
 build that wiped on start would do it member by member during a rolling deploy, next to members still running the other
 format. Never change `user_version` or the lock file manually.
+Client and system databases bootstrap different tables under that one number: client documents are registers (TS-647
+step 4c), and the system database keeps its catalog journal until TS-647 step 5.

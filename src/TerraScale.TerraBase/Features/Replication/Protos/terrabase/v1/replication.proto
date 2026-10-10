@@ -76,8 +76,9 @@ message PeerFrontier {
   optional uint64 received_sequence = 2;
   optional uint64 durable_sequence = 3;
   optional uint64 applied_sequence = 4;
-  // SHA-256 identity of the durable contiguous journal prefix, including sequence zero.
-  bytes journal_digest = 5;
+  // 5 held the journal prefix digest that register deltas replaced: an origin never reuses a sequence (a new epoch
+  // starts a new origin).
+  reserved 5;
 }
 
 message Hello {
@@ -154,10 +155,8 @@ message CommittedGroupBatch {
   // distributed_metadata, u32 little-endian WAL frame length, and the complete
   // decoded WAL frame, in that order.
   bytes event_digest_sha256 = 19;
-  // Canonical chained journal identity; both digests are required and have 32 bytes.
-  bytes previous_journal_digest = 20;
-  bytes journal_digest = 21;
-  reserved 4, 10;
+  // 20 and 21 held the chained journal digests that register deltas replaced.
+  reserved 4, 10, 20, 21;
 }
 
 // All ACKs bind progress to the responding peer and the same certified epoch.
@@ -180,14 +179,14 @@ message ReceivedAck {
 message DurableAck {
   AckContext context = 1;
   uint64 durable_prefix = 2;
-  bytes journal_digest = 3;
+  reserved 3;
 }
 
 // This ACK may be emitted only after atomic transaction visibility is applied.
 message AppliedAck {
   AckContext context = 1;
   uint64 applied_prefix = 2;
-  bytes journal_digest = 3;
+  reserved 3;
 }
 
 // Explicit application-level byte credits, separate from HTTP/2 flow control.

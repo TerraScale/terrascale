@@ -121,7 +121,8 @@ internal sealed class DocumentApi : IAsyncDisposable
 
     /// <summary>
     /// Registers database <paramref name="name"/> in the tenant's project, then has the engine forget its store and
-    /// file and lets <paramref name="write"/> write a fixture at its path; the next request opens that file. Returns the path.
+    /// file and lets <paramref name="write"/> write a database file at its path directly (<see cref="DocumentFiles"/>);
+    /// the next request opens that file. Returns the path.
     /// </summary>
     public async Task<string> ReplaceFileAsync(string name, Func<string, Task> write)
     {

@@ -17,26 +17,11 @@ internal sealed class AntiEntropyService(
     {
         var store = await state.OpenAsync(request, token).ConfigureAwait(false);
         Received(request, request);
-        ByteString origin;
-        JournalProof? applied = null;
-        var read = await store.BeginTransactionAsync(write: false, token).ConfigureAwait(false);
-        await using (read.ConfigureAwait(false))
-        {
-            origin = ByteString.CopyFrom((await read.GetOriginAsync(token).ConfigureAwait(false)).Span);
-            if (!request.Origin.IsEmpty)
-            {
-                var (sequence, frontierDigest) = await read.GetAppliedFrontierAsync(request.Origin.Memory, token).ConfigureAwait(false);
-                applied = new JournalProof { Origin = request.Origin, Sequence = (ulong)sequence, Digest = ByteString.CopyFrom(frontierDigest.Span) };
-            }
-        }
-
         var digest = await state.DigestAsync(store, token).ConfigureAwait(false);
         return Sent(request, new MerkleDigest
         {
             Incarnation = ByteString.CopyFrom(store.Incarnation.ToByteArray()),
             Envelope = ByteString.CopyFrom(ApplicationEnvelope.Encode(digest).Span),
-            Origin = origin,
-            AppliedSource = applied,
             Region = options.Region,
         });
     }, context, AntiEntropyState.DigestTimeout);
@@ -55,7 +40,7 @@ internal sealed class AntiEntropyService(
         var store = await state.OpenAsync(request.Identity, token).ConfigureAwait(false);
         Received(request.Identity, request);
         return Sent(request.Identity,
-            new MergeResult { RepairedKeys = await state.MergeAsync(store, request.Identity, request.Envelope, token).ConfigureAwait(false) });
+            new MergeResult { RepairedKeys = await state.MergeAsync(store, request.Envelope, token).ConfigureAwait(false) });
     }, context);
 
     // Served traffic, charged to the initiating member's region: each message's encoded bytes plus the gRPC prefix. A request

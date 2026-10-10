@@ -492,29 +492,13 @@ internal sealed partial class ReplicationSender(
         }
 
         var acknowledged = (long)durableSequence;
-        // A peer ahead of this database's own log means the file went back in time (for example, a restore
-        // from a snapshot); new groups would reuse numbers the peer already applied, so send nothing.
+        // An origin never reuses a sequence: a new epoch or a copied file starts a new one. A peer ahead of this stream's
+        // head therefore holds groups of an origin this member never committed, a bug to stop on, not to send over.
         if (acknowledged > head)
         {
             metrics.DetectedDivergence("peer_ahead");
             peer.Diverged(identity);
             throw new InvalidDataException("the peer has applied change groups this database never committed");
-        }
-
-        ReadOnlyMemory<byte> acknowledgedProof;
-        await using (var proof = await store.BeginTransactionAsync(write: false, progress.Token).ConfigureAwait(false))
-        {
-            acknowledgedProof = await proof.GetChangeDigestAsync(acknowledged, progress.Token).ConfigureAwait(false)
-                ?? throw new InvalidDataException("the peer reports a prefix missing from this journal");
-        }
-
-        var offeredProof = frontier?.JournalDigest.Memory ?? JournalDigest.Initial(origin.Span);
-        if (!offeredProof.Span.SequenceEqual(acknowledgedProof.Span))
-        {
-            metrics.DetectedDivergence("welcome_digest");
-            peer.Diverged(identity);
-            metrics.PrefixMismatch();
-            throw new InvalidDataException("the peer's durable prefix belongs to a different journal; restore recovery is required");
         }
 
         peer.Welcomed(identity, receiverIncarnation, acknowledged);
@@ -524,7 +508,7 @@ internal sealed partial class ReplicationSender(
         var traffic = peer.Handoff(identity, peer.Retrying(identity) || acknowledged == 0 && head > 1 || head - acknowledged > MaxGroupsPerTurn)
             ? ReplicationTrafficKind.Handoff : ReplicationTrafficKind.Delta;
         var kind = traffic == ReplicationTrafficKind.Handoff ? "handoff" : "delta";
-        var inFlight = new Queue<(long Sequence, uint Bytes, ReadOnlyMemory<byte> Digest)>();
+        var inFlight = new Queue<(long Sequence, uint Bytes)>();
         ulong inFlightBytes = 0;
         var next = acknowledged;
         SyncRequest? pending = null;
@@ -544,23 +528,20 @@ internal sealed partial class ReplicationSender(
 
                 if (pending is null && budget > 0 && next < head)
                 {
-                    IReadOnlyList<DocumentChange> changes;
-                    ReadOnlyMemory<byte> preceding;
+                    CapturedGroup group;
                     // One group is bounded by the journal contract (count and content bytes). Materialize it,
                     // return the session, and only then compress or wait on the network.
                     var read = await store.BeginTransactionAsync(write: false, progress.Token).ConfigureAwait(false);
                     await using (read.ConfigureAwait(false))
                     {
-                        preceding = await read.GetChangeDigestAsync(next, progress.Token).ConfigureAwait(false)
-                            ?? throw new InvalidDataException("the local journal prefix proof is missing");
-                        changes = await read.ReadChangesAsync(next + 1, progress.Token).ConfigureAwait(false)
+                        group = await read.ReadChangesAsync(next + 1, progress.Token).ConfigureAwait(false)
                             ?? throw new InvalidDataException("the local journal has a gap before its committed head");
                     }
 
-                    pending = new SyncRequest { TrafficKind = traffic, CommittedGroup = ReplicationProtocol.CreateBatch(database, origin, next + 1, changes, preceding) };
+                    pending = new SyncRequest { TrafficKind = traffic, CommittedGroup = ReplicationProtocol.CreateBatch(database, origin, next + 1, group, out var contentBytes) };
                     budget--;
                     // The receiver runs the same check before it decodes the group.
-                    ReplicationProtocol.CheckLimits(pending, limits, ChangeGroup.ContentBytes(changes));
+                    ReplicationProtocol.CheckLimits(pending, limits, contentBytes);
                 }
 
                 if (pending is not { CommittedGroup: { } batch } request || inFlightBytes + batch.EncodedApplicationBytes > limits.ByteCredit)
@@ -569,7 +550,7 @@ internal sealed partial class ReplicationSender(
                 }
 
                 var writing = SendAsync(request);
-                inFlight.Enqueue((++next, batch.EncodedApplicationBytes, batch.JournalDigest.Memory));
+                inFlight.Enqueue((++next, batch.EncodedApplicationBytes));
                 inFlightBytes += batch.EncodedApplicationBytes;
                 try
                 {
@@ -656,18 +637,7 @@ internal sealed partial class ReplicationSender(
                     throw new InvalidDataException("the peer sent an acknowledgment for another peer, epoch, database or origin, or beyond what this stream sent");
                 }
 
-                var prefix = (long)durable.DurablePrefix;
-                var proof = prefix == acknowledged ? acknowledgedProof : inFlight.First(group => group.Sequence == prefix).Digest;
-                if (!durable.JournalDigest.Span.SequenceEqual(proof.Span))
-                {
-                    metrics.DetectedDivergence("ack_digest");
-                    peer.Diverged(identity);
-                    metrics.PrefixMismatch();
-                    throw new InvalidDataException("the peer acknowledged a different journal prefix");
-                }
-
-                acknowledged = prefix;
-                acknowledgedProof = proof;
+                acknowledged = (long)durable.DurablePrefix;
                 peer.Acknowledged(identity, receiverIncarnation, acknowledged);
                 Progressed();
                 var released = false;

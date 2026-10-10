@@ -20,6 +20,9 @@ internal sealed partial class SqliteStorageEngine : ISystemReplication
             return new JournalPosition(origin, sequence, digest);
         }, cancellationToken);
 
+    public ValueTask<ReadOnlyMemory<byte>?> GetDigestAsync(long sequence, CancellationToken cancellationToken) =>
+        ReadSystemAsync(transaction => transaction.GetChangeDigestAsync(sequence, cancellationToken), cancellationToken);
+
     public async ValueTask<ISystemReplicaTransaction> BeginReplicaAsync(ReadOnlyMemory<byte>? adopt, CancellationToken cancellationToken)
     {
         var store = (SqliteDatabaseStore)await OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false);

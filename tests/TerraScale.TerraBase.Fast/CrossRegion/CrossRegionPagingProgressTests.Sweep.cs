@@ -751,12 +751,11 @@ public sealed partial class CrossRegionPagingProgressTests
                 bus.BeforePullReply = async (pull, reply, cancellation) =>
                 {
                     var groups = PullReply.Parser.ParseFrom(reply.Span).Groups;
-                    var (store, _, _, _) = await journal.OpenAsync(tenant, pull.Origin.Memory, cancellation);
+                    var (store, _, _) = await journal.OpenAsync(tenant, pull.Origin.Memory, cancellation);
                     foreach (var group in groups)
                     {
                         var changes = ReplicationProtocol.Read(new SyncRequest { CommittedGroup = group }, tenant, pull.Origin.Memory, ReplicationProtocol.Limits);
-                        if (await journal.AppendAsync(store, pull.Origin.Memory, (long)group.EventId.Sequence, changes,
-                            group.PreviousJournalDigest.Memory, group.JournalDigest.Memory, cancellation) is JournalApplied)
+                        if (await journal.AppendAsync(store, pull.Origin.Memory, (long)group.EventId.Sequence, changes, cancellation) is JournalApplied)
                         {
                             _ = Interlocked.Increment(ref won);
                         }

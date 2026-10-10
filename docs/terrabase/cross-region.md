@@ -73,12 +73,12 @@ Every member of a region **pulls** each other region's change groups:
    Replies hold whole groups, LZ4-compressed in the same versioned envelope as in-region replication
    ([0007](decisions/0007-lz4-application-envelope-replication.md)), up to 960 KiB. A larger group crosses in parts
    of its envelope and is applied once complete.
-3. **Apply.** Each group goes through the in-region receiver's journal path (`IReplicationJournal`): in order, chained to
-   the applied prefix by its journal digest, idempotent, in one synced SQLite transaction with its applied prefix. A
-   duplicate changes nothing; a gap or a digest that does not chain is refused and pulled again next round.
-4. **Merge.** Groups merge exactly as in-region groups do: last writer wins by merge policy v1 (the higher version,
-   then a deletion over a live document, then the greater JSON bytes). Concurrent writes in two regions settle on the
-   same winner in both.
+3. **Apply.** Each group goes through the in-region receiver's journal path (`IReplicationJournal`): in order after the
+   applied prefix, idempotent, in one synced SQLite transaction with its applied prefix. A duplicate changes nothing; a
+   gap is refused and pulled again next round.
+4. **Join.** Groups join exactly as in-region groups do ([replication](replication.md#what-replicates)): each delta joins
+   the stored register, and reads take its last-writer-wins write (the greatest stamp, then replica id). Concurrent
+   writes in two regions settle on the same winner in both. `anna-full (TS-643)`: replica ids number regions too.
 
 A round that pulled something and is still behind starts the next one at once; otherwise the next one starts a
 second later. Each origin gets at most 16 pull requests per round, so a busy origin does not hold up the others.
@@ -89,7 +89,8 @@ each other; a version mismatch postpones replication and cannot authorize invent
 increases (user rule, 2026-10-09): a wire format change ships at a rollout that stops both regions' members before
 either starts the new build. The protobuf package and `ts.orch.v1` subjects remain unchanged: that subject version
 belongs to ts-orchestrator's fabric, separately from the WAN request version and application envelope major version 1.
-Pull replies retain their protobuf framing and existing change-group envelopes. Every request and encoded reply is at
+Pull replies carry the same groups of register deltas (`DeltaGroup`) as in-region replication, in their protobuf
+framing and versioned envelopes. Every request and encoded reply is at
 most 1 MiB, NATS's default `max_payload`, which the leafnode links between regions keep.
 
 ### Version tokens across regions
@@ -187,7 +188,7 @@ On the `TerraScale.TerraBase` meter, scraped at `/metrics`. `region` is a config
 | `terrabase_wan_pulled_groups_total{region}` | Groups pulled from that region and applied |
 | `terrabase_wan_pulled_encoded_bytes_total{region}` | Envelope bytes pulled from that region, after LZ4 |
 | `terrabase_wan_served_groups_total` | Groups this member served to other regions |
-| `terrabase_wan_failures_total{region,reason}` | `heads` (no member answered), `pull` (a request failed), `apply` (a group was refused), `ahead` (an origin went back in time) |
+| `terrabase_wan_failures_total{region,reason}` | `heads` (no member answered), `pull` (a request failed), `apply` (a group was refused), `ahead` (this member applied groups an origin never committed) |
 
 Alert on `terrabase_wan_staleness_seconds` above a minute, and on any `ahead` failure.
 
@@ -197,9 +198,9 @@ Alert on `terrabase_wan_staleness_seconds` above a minute, and on any `ahead` fa
 | --- | --- | --- |
 | Link between regions down | Each region serves its own reads and writes | Rounds fail (`heads`); staleness grows; after the link heals, pulls resume from each applied prefix. Journals are never truncated, so any partition length heals |
 | A member of the other region down | Its origins' groups wait | The other members' origins keep flowing; its origins resume when it is back |
-| A group refused (invalid, does not chain) | That origin stops | Counted as `apply` and pulled again every round; nothing of the group is applied |
-| An origin went back in time (restored from a snapshot) | That origin stops | Counted as `ahead`; restore recovery is required, as in-region |
-| Clock or version skew | None | Versions are commit offsets, not wall clocks; an import more than 2³² ahead is refused, as in-region |
+| A group refused (invalid, or a dot with a second value) | That origin stops | Counted as `apply` and pulled again every round; nothing of the group is applied |
+| An origin ahead of its member's head (a database file replaced by hand) | That origin stops | Counted as `ahead`; restore through import, as in-region |
+| Clock skew | Last-writer-wins favours the fast clock between concurrent writes | A stamp further ahead than 1 s is applied and counted, and moves the member's clock at most that far |
 
 ## Not yet (`anna-full (TS-643)`)
 

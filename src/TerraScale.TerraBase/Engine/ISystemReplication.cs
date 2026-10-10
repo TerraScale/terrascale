@@ -58,6 +58,12 @@ public interface ISystemReplication
     ValueTask<JournalPosition> GetHeadAsync(CancellationToken cancellationToken);
 
     /// <summary>
+    /// The SHA-256 identity of the system journal's prefix through <paramref name="sequence"/>, or <see langword="null"/>
+    /// for a group it no longer holds. Sequence 0 is <see cref="JournalDigest.Initial"/> of its origin.
+    /// </summary>
+    ValueTask<ReadOnlyMemory<byte>?> GetDigestAsync(long sequence, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Begins the follower's replication write transaction. With <paramref name="adopt"/>, it first removes every document
     /// and the follower's own journal and takes that primary origin as its own, for a snapshot. Readers see nothing of it
     /// until it commits.

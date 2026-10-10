@@ -28,14 +28,12 @@ public sealed class StorageTransactionTests
     [Test]
     [Arguments("put", false)]
     [Arguments("put", true)]
-    [Arguments("delete", false)]
     [Arguments("tombstone", false)]
     [Arguments("drop", false)]
-    [Arguments("missingDelete", false)]
     [Arguments("missingTombstone", false)]
     [Arguments("missingDrop", false)]
     [Arguments("emptyDrop", false)]
-    public async Task Mixing_local_document_mutations_and_replication_is_rollback_only_in_either_order(string operation, bool losingApply)
+    public async Task Mixing_local_document_mutations_and_replication_is_rollback_only_in_either_order(string operation, bool duplicateApply)
     {
         using var tls = new ClientTls();
         await using var server = await TerraBaseTestServer.StartAsync(tls.Apply);
@@ -52,15 +50,13 @@ public sealed class StorageTransactionTests
         var id = EntityIds.New().ToString();
         var json = "{\"n\":1}"u8.ToArray();
         var origin = EntityIds.New().ToByteArray();
-        foreach (var store in new[]
+        // The system database replicates from its catalog primary and applies no deltas.
+        foreach (var store in new[] { (await engine.OpenDatabaseAsync(tenant.Database("pool"), token))! })
         {
-            (await engine.OpenDatabaseAsync(tenant.Database("pool"), token))!,
-            await engine.OpenSystemDatabaseAsync(token),
-        })
-        {
-            // _system exercises the same rule with capture disabled.
             long version;
+            long offset;
             long sequence;
+            DocumentDelta captured;
             CollectionInfo? items;
             CollectionInfo? empty;
             await using (var initial = await store.BeginTransactionAsync(write: true, token))
@@ -70,12 +66,13 @@ public sealed class StorageTransactionTests
                 version = await initial.PutAsync("items", id, json, token);
                 items = await initial.GetCollectionAsync("items", token);
                 empty = await initial.GetCollectionAsync("empty", token);
-                await initial.CommitAsync(token);
+                offset = await initial.CommitAsync(token);
             }
 
             await using (var read = await store.BeginTransactionAsync(write: false, token))
             {
                 sequence = await read.GetLastChangeSequenceAsync(token);
+                captured = (await read.ReadChangesAsync(sequence, token))!.Changes.Single(change => change.Id == id);
             }
 
             foreach (var applyFirst in new[] { false, true })
@@ -84,11 +81,11 @@ public sealed class StorageTransactionTests
                 {
                     await transaction.CreateCollectionAsync(new CollectionInfo("rolled-back", 0), token);
                     await transaction.SetAppliedSequenceAsync(origin, 1, token);
-                    var change = new DocumentChange("items", id, losingApply ? version : version + 10,
-                        losingApply ? "{\"n\":0}"u8.ToArray() : "{}"u8.ToArray());
+                    // A delta the store already holds changes nothing; a concurrent one does.
+                    var change = duplicateApply ? captured : Deltas.Write("items", id, "{}");
                     if (applyFirst)
                     {
-                        await Assert.That(await transaction.ApplyAsync(change, token)).IsEqualTo(!losingApply);
+                        await Assert.That(await transaction.ApplyAsync(change, token)).IsEqualTo(!duplicateApply);
                     }
                     else
                     {
@@ -118,10 +115,6 @@ public sealed class StorageTransactionTests
                             case "put":
                                 await transaction.PutAsync("items", id, "{}"u8.ToArray(), token);
                                 break;
-                            case "delete":
-                            case "missingDelete":
-                                await transaction.DeleteAsync("items", operation == "delete" ? id : "missing", token);
-                                break;
                             case "tombstone":
                             case "missingTombstone":
                                 await transaction.TombstoneAsync("items", operation == "tombstone" ? id : "missing", token);
@@ -142,7 +135,7 @@ public sealed class StorageTransactionTests
                 await Assert.That(await read.GetCollectionAsync("rolled-back", token)).IsNull();
                 await Assert.That(await read.GetLastChangeSequenceAsync(token)).IsEqualTo(sequence);
                 await Assert.That(await read.GetAppliedSequenceAsync(origin, token)).IsEqualTo(0);
-                await Assert.That(await read.CommitAsync(token)).IsEqualTo(version);
+                await Assert.That(await read.CommitAsync(token)).IsEqualTo(offset);
             }
         }
 
@@ -200,9 +193,10 @@ public sealed class StorageTransactionTests
         var token = deadline.Token;
         var (engine, store) = await OpenAsync(server);
         var json = "{\"n\":1}"u8.ToArray();
+        long version;
         await using (var initial = await store.BeginTransactionAsync(write: true, token))
         {
-            await initial.PutAsync("items", "a", json, token);
+            version = await initial.PutAsync("items", "a", json, token);
             await initial.CommitAsync(token);
         }
 
@@ -230,10 +224,10 @@ public sealed class StorageTransactionTests
                         await reader.TombstoneAsync("items", "a", token);
                         break;
                     case "applyPut":
-                        await reader.ApplyAsync(new DocumentChange("items", "a", 2, "{}"u8.ToArray()), token);
+                        await reader.ApplyAsync(Deltas.Write("items", "a", "{}"), token);
                         break;
                     case "applyDelete":
-                        await reader.ApplyAsync(new DocumentChange("items", "a", 2, null), token);
+                        await reader.ApplyAsync(Deltas.Write("items", "a", null), token);
                         break;
                     case "createCollection":
                         await reader.CreateCollectionAsync(new CollectionInfo("new", 0), token);
@@ -258,7 +252,7 @@ public sealed class StorageTransactionTests
         await Assert.That(notifications).IsEqualTo(0);
         await using var check = await store.BeginTransactionAsync(write: false, token);
         var document = await check.GetAsync("items", "a", token);
-        await Assert.That(document!.Version).IsEqualTo(1);
+        await Assert.That(document!.Version).IsEqualTo(version);
         await Assert.That(document.Json.Span.SequenceEqual(json)).IsTrue();
         await Assert.That(await check.GetLastChangeSequenceAsync(token)).IsEqualTo(1);
         await Assert.That(await check.GetAppliedSequenceAsync(await check.GetOriginAsync(token), token)).IsEqualTo(0);
@@ -317,6 +311,7 @@ public sealed class StorageTransactionTests
         }));
         var directory = Directory.CreateDirectory(Path.Combine(server.DataDirectory, name.OrganizationId, name.ProjectId!)).FullName;
         var path = Path.Combine(directory, name.DatabaseId + ".db");
+        // Documents whose journal still needs its baseline, like a copy's.
         await DocumentFiles.WriteAsync(path, ("items", StorageFixture.Id("a"), "{}"), ("items", StorageFixture.Id("b"), "{}"));
 
         _ = server.Services.GetRequiredService<IStorageEngine>();
@@ -362,8 +357,7 @@ public sealed class StorageTransactionTests
         await writer.CreateCollectionAsync(new CollectionInfo("items", 0), CancellationToken.None);
         var version = await writer.PutAsync("items", "a", Encoding.UTF8.GetBytes("""{"n":1}"""), CancellationToken.None);
         await writer.CommitAsync(CancellationToken.None);
-        await Assert.That(version).IsEqualTo(1);
-        await Assert.That((await reader.GetAsync("items", "a", CancellationToken.None))?.Version).IsEqualTo(1);
+        await Assert.That((await reader.GetAsync("items", "a", CancellationToken.None))?.Version).IsEqualTo(version);
     }
 
     [Test]
@@ -476,23 +470,31 @@ public sealed class StorageTransactionTests
     {
         await using var server = await TerraBaseTestServer.StartAsync();
         var (_, store) = await OpenAsync(server);
-        // Model an exhausted legacy file; such versions must no longer enter through Apply.
+        long version;
+        await using (var seed = await store.BeginTransactionAsync(write: true, CancellationToken.None))
+        {
+            version = await seed.PutAsync("items", "max", Encoding.UTF8.GetBytes("""{"n":1}"""), CancellationToken.None);
+            if (tombstone)
+            {
+                version = (await seed.TombstoneAsync("items", "max", CancellationToken.None))!.Value;
+            }
+
+            await seed.CommitAsync(CancellationToken.None);
+        }
+
+        // Model an exhausted commit offset: the next local write cannot take one.
         var path = Path.Combine(server.DataDirectory, Database.OrganizationId, Database.ProjectId!, Database.DatabaseId + ".db");
         await using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Pooling = false }.ToString()))
         {
             await connection.OpenAsync(CancellationToken.None);
-            using var seed = connection.CreateCommand();
-            seed.CommandText = """
-                INSERT INTO documents (collection, id, version, body) VALUES ('items', 'max', 9223372036854775807, $body);
-                UPDATE commit_offset SET value = 9223372036854775807 WHERE id = 1;
-                """;
-            seed.Parameters.AddWithValue("$body", tombstone ? DBNull.Value : (object)"""{"n":1}""");
-            await seed.ExecuteNonQueryAsync(CancellationToken.None);
+            using var exhaust = connection.CreateCommand();
+            exhaust.CommandText = "UPDATE commit_offset SET value = 9223372036854775807 WHERE id = 1;";
+            await exhaust.ExecuteNonQueryAsync(CancellationToken.None);
         }
 
         var origin = EntityIds.New().ToByteArray();
 
-        // A caller that catches an exhausted-version write must not commit its partial state or other work.
+        // A caller that catches the failed write must not commit its partial state or other work.
         await using (var writer = await store.BeginTransactionAsync(write: true, CancellationToken.None))
         {
             await writer.SetAppliedSequenceAsync(origin, 1, CancellationToken.None);
@@ -510,19 +512,12 @@ public sealed class StorageTransactionTests
             await Assert.ThrowsAsync<InvalidOperationException>(() => writer.CommitAsync(CancellationToken.None).AsTask());
         }
 
-        await using var reader = await store.BeginTransactionAsync(write: true, CancellationToken.None);
+        await using var reader = await store.BeginTransactionAsync(write: false, CancellationToken.None);
         await Assert.That(await reader.GetAppliedSequenceAsync(origin, CancellationToken.None)).IsEqualTo(0);
-        var document = await reader.GetAsync("items", "max", CancellationToken.None);
-        if (tombstone)
+        await Assert.That(await reader.GetVersionAsync("items", "max", CancellationToken.None)).IsEqualTo(new DocumentVersion(version, tombstone));
+        if (!tombstone)
         {
-            await Assert.That(document).IsNull();
-            // A null read alone cannot prove the tombstone survived the failed resurrection.
-            await Assert.That(await reader.ApplyAsync(new DocumentChange("items", "max", VersionClock.MaxVersion,
-                Encoding.UTF8.GetBytes("{}")), CancellationToken.None)).IsFalse();
-        }
-        else
-        {
-            await Assert.That(document?.Version).IsEqualTo(long.MaxValue);
+            var document = await reader.GetAsync("items", "max", CancellationToken.None);
             await Assert.That(Encoding.UTF8.GetString(document!.Json.Span)).IsEqualTo("""{"n":1}""");
         }
     }
@@ -532,9 +527,10 @@ public sealed class StorageTransactionTests
     {
         await using var server = await TerraBaseTestServer.StartAsync();
         var (engine, store) = await OpenAsync(server);
+        long version;
         await using (var initial = await store.BeginTransactionAsync(write: true, CancellationToken.None))
         {
-            await initial.PutAsync("items", "a", Encoding.UTF8.GetBytes("""{"n":1}"""), CancellationToken.None);
+            version = await initial.PutAsync("items", "a", Encoding.UTF8.GetBytes("""{"n":1}"""), CancellationToken.None);
             await initial.CommitAsync(CancellationToken.None);
         }
 
@@ -568,7 +564,7 @@ public sealed class StorageTransactionTests
 
             await Assert.ThrowsAsync<OperationCanceledException>(() => writer.CommitAsync(cancelled.Token).AsTask());
             await Assert.That(appended).IsEqualTo(1);
-            await Assert.That((await writer.ReadChangesAsync(2, CancellationToken.None))?.Count).IsEqualTo(1);
+            await Assert.That((await writer.ReadChangesAsync(2, CancellationToken.None))?.Changes.Count).IsEqualTo(1);
             await Assert.ThrowsAsync<InvalidOperationException>(() => writer.CommitAsync(CancellationToken.None).AsTask());
         }
         finally
@@ -591,14 +587,14 @@ public sealed class StorageTransactionTests
 
         await using var reader = await store.BeginTransactionAsync(write: false, CancellationToken.None);
         var document = await reader.GetAsync("items", "a", CancellationToken.None);
-        await Assert.That(document?.Version).IsEqualTo(1);
+        await Assert.That(document?.Version).IsEqualTo(version);
         await Assert.That(Encoding.UTF8.GetString(document!.Json.Span)).IsEqualTo("""{"n":1}""");
         await Assert.That(await reader.GetAsync("items", "b", CancellationToken.None)).IsNull();
         var original = await reader.ReadChangesAsync(1, CancellationToken.None);
-        await Assert.That(original?.Count).IsEqualTo(2);
-        await Assert.That(Encoding.UTF8.GetString(original![0].Json!.Value.Span)).IsEqualTo("""{"n":1}""");
-        await Assert.That((original[1].Collection, original[1].Id)).IsEqualTo((DocumentChange.Collections, "items"));
-        using var metadata = JsonDocument.Parse(original[1].Json!.Value);
+        await Assert.That(original?.Changes.Count).IsEqualTo(2);
+        await Assert.That(Deltas.Json(original!.Changes[0])).IsEqualTo("""{"n":1}""");
+        await Assert.That((original.Changes[1].Collection, original.Changes[1].Id)).IsEqualTo((DocumentDelta.Collections, "items"));
+        using var metadata = JsonDocument.Parse(Deltas.Json(original.Changes[1])!);
         await Assert.That(metadata.RootElement.GetProperty("entity_id").GetString())
             .IsEqualTo((await reader.GetCollectionAsync("items", CancellationToken.None))!.Id);
         await Assert.That(await reader.ReadChangesAsync(2, CancellationToken.None)).IsNull();
@@ -697,6 +693,7 @@ public sealed class StorageTransactionTests
     {
         await using var server = await TerraBaseTestServer.StartAsync();
         var (engine, store) = await OpenAsync(server);
+        long version;
         static void Throw(object? sender, ChangeGroupCommitted committed)
         {
             throw new InvalidOperationException("subscriber failure");
@@ -713,7 +710,7 @@ public sealed class StorageTransactionTests
         try
         {
             await using var writer = await store.BeginTransactionAsync(write: true, CancellationToken.None);
-            await writer.PutAsync("items", "a", Encoding.UTF8.GetBytes("""{"n":1}"""), CancellationToken.None);
+            version = await writer.PutAsync("items", "a", Encoding.UTF8.GetBytes("""{"n":1}"""), CancellationToken.None);
 
             await writer.CommitAsync(CancellationToken.None);
         }
@@ -725,7 +722,7 @@ public sealed class StorageTransactionTests
 
         await Assert.That(notifications).IsEqualTo(1);
         await using var reader = await store.BeginTransactionAsync(write: false, CancellationToken.None);
-        await Assert.That((await reader.GetAsync("items", "a", CancellationToken.None))?.Version).IsEqualTo(1);
+        await Assert.That((await reader.GetAsync("items", "a", CancellationToken.None))?.Version).IsEqualTo(version);
     }
 
     [Test]
@@ -792,7 +789,7 @@ public sealed class StorageTransactionTests
             await Assert.That(scanned).IsGreaterThan(0);
             await Assert.That(scanned).IsLessThan(Rows);
             // The cancelled scan ended on its worker; the same connection can safely execute again.
-            await Assert.That((await transaction.GetAsync("items", StorageFixture.Id("d000"), deadline.Token))?.Version).IsEqualTo(2);
+            await Assert.That(await transaction.GetAsync("items", StorageFixture.Id("d000"), deadline.Token)).IsNotNull();
         }
 
         await Assert.That(engine.Io.Admitted).IsEqualTo(0);

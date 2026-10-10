@@ -376,7 +376,7 @@ public sealed class ProductionReplicationCheckTests
     private const string MetricsReader = """
         import json, os, re, sys, time, urllib.request
 
-        COUNTERS = ("terrabase_replication_received_groups_total", "terrabase_replication_sender_prefix_mismatches_total")
+        COUNTERS = ("terrabase_replication_received_groups_total", "terrabase_replication_divergence_detections_total")
 
 
         # True when the member's real gauges show no replication lag, as the checker's lag() defines it.
@@ -447,7 +447,7 @@ public sealed class ProductionReplicationCheckTests
         }.get(fault)
         invalid = {"malformed-metric": "broken", "negative-metric": "-1", "nan-metric": "NaN", "infinite-metric": "+Inf"}.get(fault)
         for line in metrics:
-            if not re.match(r"^terrabase_(replication_(sender_initialized|sender_durable_lag|received_groups_total|sender_prefix_mismatches_total)|catalog_follower_(connected|lag))[ {]", line):
+            if not re.match(r"^terrabase_(replication_(sender_initialized|sender_durable_lag|received_groups_total|divergence_detections_total)|catalog_follower_(connected|lag))[ {]", line):
                 continue
             name = re.split(r"[ {]", line, maxsplit=1)[0]
             if name == omitted or (fault.endswith("reported-faults") and name in COUNTERS):
@@ -461,7 +461,7 @@ public sealed class ProductionReplicationCheckTests
             print("metric " + line)
         if fault.endswith("reported-faults"):
             print('metric terrabase_replication_received_groups_total{otel_scope_name="TerraScale.TerraBase",result="rejected"} 1')
-            print('metric terrabase_replication_sender_prefix_mismatches_total{otel_scope_name="TerraScale.TerraBase"} 2')
+            print('metric terrabase_replication_divergence_detections_total{otel_scope_name="TerraScale.TerraBase",reason="peer_ahead"} 2')
         if fault != "missing-metrics-complete":
             print("complete metrics")
         print(logs, end="")
@@ -488,7 +488,7 @@ public sealed class ProductionReplicationCheckTests
             if fault == "shell-reported-faults":
                 lines = [line for line in lines if not line.startswith(COUNTERS)] + [
                     'terrabase_replication_received_groups_total{otel_scope_name="TerraScale.TerraBase",result="rejected"} 1',
-                    'terrabase_replication_sender_prefix_mismatches_total{otel_scope_name="TerraScale.TerraBase"} 2']
+                    'terrabase_replication_divergence_detections_total{otel_scope_name="TerraScale.TerraBase",reason="peer_ahead"} 2']
             print("\n".join(lines))
             if fault == "shell-scrape-exit":
                 sys.exit(22)
@@ -719,7 +719,7 @@ public sealed class ProductionReplicationCheckTests
                 string[] reported =
                 [
                     "terrabase_replication_received_groups_total{result=\"rejected\"} = 1 since the process started",
-                    "terrabase_replication_sender_prefix_mismatches_total = 2 since the process started",
+                    "terrabase_replication_divergence_detections_total{reason=\"peer_ahead\"} = 2 since the process started",
                     "log (1x in 20 min): warn: TerraBase.Engine.Sqlite.SqliteStorageEngine A journal group failed its check"
                         + " System.InvalidOperationException: a test fault",
                     "corruption sign in the log: SQLite Error 11: 'database disk image is malformed'.",

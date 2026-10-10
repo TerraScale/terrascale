@@ -1,8 +1,8 @@
 using System.Net;
-using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
+using TerraBase.Engine.Lattices;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
 
@@ -33,13 +33,21 @@ public sealed class UniqueConstraintReplayTests
         var low = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
         var middle = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
         var high = "01ARZ3NDEKTSV4RRFFQ69G5FAX";
-        DocumentChange[] changes =
+        var writer = Deltas.NewReplica();
+        static Hlc At(ulong milliseconds)
+        {
+            return new(milliseconds << 16);
+        }
+
+        var firstLow = Deltas.Write("people", low, "{\"a\":1,\"b\":1}", writer, At(10));
+        var firstMiddle = Deltas.Write("people", middle, "{\"a\":1,\"b\":2}", writer, At(20));
+        DocumentDelta[] changes =
         [
-            new("people", low, 10, Encoding.UTF8.GetBytes("{\"a\":1,\"b\":1}")),
-            new("people", middle, 20, Encoding.UTF8.GetBytes("{\"a\":1,\"b\":2}")),
-            new("people", high, 30, Encoding.UTF8.GetBytes("{\"a\":2,\"b\":2}")),
-            new("people", low, 40, null),
-            new("people", middle, 50, Encoding.UTF8.GetBytes("{\"a\":3,\"b\":3}")),
+            firstLow,
+            firstMiddle,
+            Deltas.Write("people", high, "{\"a\":2,\"b\":2}", writer, At(30)),
+            Deltas.Write("people", low, null, writer, At(40), over: firstLow.State),
+            Deltas.Write("people", middle, "{\"a\":3,\"b\":3}", writer, At(50), over: firstMiddle.State),
         ];
         var tenant = new TenantContext(database.Organization, PlanTier.Hobby, database.Project, database.Id);
         var store = (await api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(tenant, CancellationToken.None))!;

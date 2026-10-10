@@ -100,8 +100,8 @@ public sealed class UsageAnalyticsTests
             {
                 TrafficKind = ReplicationTrafficKind.Handoff,
                 CommittedGroup = ReplicationProtocol.CreateBatch(tenant, origin, 1,
-                    [.. Enumerable.Range(0, index + 1).Select(write => new DocumentChange("people", ManagementApi.DocumentId("remote-" + write), 1,
-                        Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { name = new Faker().Name.FullName() }))))])
+                    Deltas.Group([.. Enumerable.Range(0, index + 1).Select(write => Deltas.Write("people", ManagementApi.DocumentId("remote-" + write),
+                        JsonSerializer.Serialize(new { name = new Faker().Name.FullName() })))])),
             };
             batchBytes[index] = batch.CalculateSize() + 5L;
             using var stream = peer.Sync(cancellationToken: token);
@@ -399,7 +399,7 @@ public sealed class UsageAnalyticsTests
         {
             TrafficKind = ReplicationTrafficKind.Handoff,
             CommittedGroup = ReplicationProtocol.CreateBatch(tenant, origin, 1,
-            [new DocumentChange("people", id, 1, Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { name = new Faker().Name.FullName() })))])
+                Deltas.Group(Deltas.Write("people", id, JsonSerializer.Serialize(new { name = new Faker().Name.FullName() })))),
         };
         using var channel = tls.CreateChannel(api.Server.PeerAddress!);
         var peer = new Features.Replication.V1.Replication.ReplicationClient(channel);

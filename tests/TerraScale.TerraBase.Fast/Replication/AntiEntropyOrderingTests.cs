@@ -1,13 +1,14 @@
 using System.Globalization;
 using System.Net;
-using System.Text;
 using Bogus;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
+using TerraBase.Engine.Lattices;
 using TerraBase.Engine.Sqlite;
 using TerraBase.Fast.Documents;
 using TerraBase.Fast.Storage;
+using TerraBase.Testing;
 
 namespace TerraBase.Fast.Replication;
 
@@ -19,7 +20,7 @@ public sealed class AntiEntropyOrderingTests
     [Arguments(false, true)]
     [Arguments(true, false)]
     [Arguments(true, true)]
-    public async Task Submitted_repair_restores_and_merges_before_queued_commit_and_disposal(
+    public async Task Submitted_repair_joins_before_queued_commit_and_disposal(
         bool raw, bool disposeWhileQueued, CancellationToken cancellationToken)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -28,16 +29,12 @@ public sealed class AntiEntropyOrderingTests
         var id = DocumentApi.NewId();
         var created = await api.PutAsync(id, new { name = new Faker().Name.FullName() }, cancellationToken: token);
         await Assert.That(created.Status).IsEqualTo(HttpStatusCode.Created);
-        var version = long.Parse(created.Json.GetProperty("offset").GetString()!, CultureInfo.InvariantCulture);
+        var offset = long.Parse(created.Json.GetProperty("offset").GetString()!, CultureInfo.InvariantCulture);
         var file = await api.DatabaseFileAsync();
-        await using (var connection = new SqliteConnection(DocumentApi.ConnectionString(file)))
-        {
-            await connection.OpenAsync(token);
-            using var corrupt = connection.CreateCommand();
-            corrupt.CommandText = "UPDATE documents SET body = '{\"zzz\":true}' WHERE collection = 'items' AND id = $id;";
-            corrupt.Parameters.AddWithValue("$id", id);
-            await Assert.That(await corrupt.ExecuteNonQueryAsync(token)).IsEqualTo(1);
-        }
+        // A peer's concurrent write, a minute later: its stamp wins the join and stays its version.
+        var repaired = Deltas.Write("items", id, "{\"z\":true}",
+            stamp: new Hlc((ulong)DateTimeOffset.UtcNow.AddMinutes(1).ToUnixTimeMilliseconds() << 16));
+        var version = checked((long)repaired.State.Values.Single().Value.Stamp.Value);
 
         var database = await api.TenantOfAsync(cancellationToken: token);
         var native = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
@@ -64,8 +61,7 @@ public sealed class AntiEntropyOrderingTests
                 return 0;
             }, token));
             await entered.Task.WaitAsync(token);
-            var repair = transaction.RepairReplicationStateAsync(
-                new DocumentChange("items", id, version, Encoding.UTF8.GetBytes("{\"z\":true}")), token).AsTask();
+            var repair = transaction.ApplyAsync(repaired, token).AsTask();
             pending.Add(repair);
             var commit = transaction.CommitAsync(token).AsTask();
             pending.Add(commit);
@@ -81,7 +77,7 @@ public sealed class AntiEntropyOrderingTests
             release.Set();
             await Task.WhenAll(pending).WaitAsync(token);
             await Assert.That(await repair).IsTrue();
-            await Assert.That(await commit).IsGreaterThan(version);
+            await Assert.That(await commit).IsGreaterThan(offset);
             await transaction.DisposeAsync();
 
             var visible = await api.GetAsync(id, cancellationToken: token);

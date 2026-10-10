@@ -3,46 +3,39 @@
 Scope: `src/TerraBase/Engine/Sqlite`. Plans are from `EXPLAIN QUERY PLAN` on the
 SQLite that Microsoft.Data.Sqlite bundles (3.53.4). The Fast suite
 (`Documents/QueryPlanTests.cs`) asserts the "after" plans for every statement in
-`SqliteStatements.All`, so a statement that loses its index fails the build.
+`SqliteStatements.Shared`, `ClientOnly` and `SystemOnly`, so a statement that loses its index fails the build.
 
 ## Inventory
-
-Anti-entropy body restoration also uses these indexed statements:
-
-| Statement | Access and bound |
-| --- | --- |
-| `ReplicationRetainedBody` | Seek `change_log_by_document` for the latest entry in the current collection generation; join one current document by primary key and require the same merge version. Primary-key lookup excludes intentional `unique_conflicts`; a `changes_deleted` seek excludes equal/newer retained deletions. Read byte lengths before materializing either body. |
-| `ReplicationRetainedBodyBytes` | Fetch one already-admitted history body by integer primary key. |
-| `RestoreReplicationBody` | Update one current row by primary key only after the writer rechecks its retained winner; exclude intentional `unique_conflicts` by primary key and preserve its merge version and shape history. |
 
 Only the engine runs SQL. Catalog and indexing have no SQL yet (their slices are interfaces only);
 replication uses the engine journal statements below. API keys and the Management slice (organizations, projects, databases) are
 documents in `_system` and use the document statements: lookups by id or unique name use `Get`, creates
 and renames use `Put` and `Delete`, list endpoints and "has children" checks use `ListFirst` and `ListAfter`.
-The plan test runs every statement against both a client database and the `_system` database
-(plans depend on the schema, which is the same in both, not on the rows).
+The plan test runs the shared statements against both a client database and the `_system` database, and each
+kind's own statements against that kind (plans depend on the schema, not on the rows).
 
-Schema v8: `documents (collection, id, version, body)`, `PRIMARY KEY (collection, id)`,
-`WITHOUT ROWID`, where a NULL `body` is a tombstone and `version` is the commit offset of the last
-write; `collections (name PRIMARY KEY, created_at, generation)`, `WITHOUT ROWID`; and the one-row
-`commit_offset (id, value, incarnation)`; the ULID incarnation is persisted and renewed
-for newly created/copied databases. The primary keys are clustered B-trees, so every primary-key lookup is covering.
-The partial `documents_live (collection, id) WHERE body IS NOT NULL` index excludes tombstones
-from live listing and query scans. Point reads and tombstone metadata still use the primary key.
-Version 7 adds `changes (sequence, ordinal, collection, id, version, body)` with primary key
-`(sequence, ordinal)` and `applied (origin, sequence)` keyed by origin, both `WITHOUT ROWID`,
-plus the one-row `replication_state (id, complete)`. The existing incarnation is the wire origin.
-Schema v7 also separates the merge version (`change_log.document_version`) from the local
-shape history offset (`change_log.version`); fresh bootstrap creates the history tables.
+Schema version 1 bootstraps two shapes (`SqliteDatabaseStore`). A client database ([anna-core](design/anna-core.md)
+Stored state): `documents (collection, id, state, version, body)`, `PRIMARY KEY (collection, id)`, `WITHOUT ROWID`,
+where `state` is the document's encoded register, `version` the stamp of its last-writer-wins write and `body` that
+write's JSON (NULL for a tombstone or a hidden uniqueness loser); `collections (name PRIMARY KEY, created_at, generation,
+entity_id)`, `WITHOUT ROWID`; the one-row `commit_offset (id, value, incarnation)`, whose ULID incarnation is renewed for
+newly created and copied databases. The primary keys are clustered B-trees, so every primary-key lookup is covering. The
+partial `documents_live (collection, id) WHERE body IS NOT NULL` index excludes tombstones from live listing and query
+scans; the partial `documents_replication_keys (collection, id)` index holds only nonempty keys within the 63-byte
+collection and 1024-byte id cursor limits, for anti-entropy pages. Point reads and tombstone metadata still use the
+primary key. The database's own stream is `changes (sequence, ordinal, collection, id, state)` (`WITHOUT ROWID`, primary
+key `(sequence, ordinal)`) and `journal (sequence, dependencies)`; `applied (origin, sequence)` keys every other origin's
+applied position, and the one-row `replication_state (id, replica, complete)` names the replica id the journal belongs
+to. `shape_history (id, floor)` records the history baseline; `change_log` retains every write with collection
+generation, document id, local history offset (`version`), document version (`document_version`) and sequence. Its two
+indexes support the shape seeks described below.
 
-The partial `changes_deleted (collection, id, version) WHERE body IS NULL` index retains physical
-delete/drop merge evidence without changing public document/version reads. Incoming puts seek a deletion
-at or above their version; incoming tombstones seek a strictly newer deletion, so an equal tombstone
-can repair a missing row. Both probes stop at the first match before creating collection metadata; the
-shared clock still observes every incoming version. A newer state remains eligible for the document merge.
-`shape_history (id, floor)` records the history baseline; `change_log` retains client-database
-changes with collection generation, document id, commit version and sequence. Its two indexes
-support the shape seeks described below. `_system` has the same schema but retains no shape history.
+`_system` keeps its catalog journal until TS-647 step 5: `documents (collection, id, version, body)` with `version` the
+commit offset of the last write, the same `collections`, `commit_offset` and `documents_live`, its journal in
+`changes (sequence, ordinal, collection, id, version, body)` with the partial `changes_deleted (collection, id, version)
+WHERE body IS NULL` index and prefix digests in `journal_prefixes`, and `applied`, `replication_state` and the shape
+tables unused. It retains no shape history. Both shapes include the uniqueness tables `unique_keys`, `unique_invalid` and
+`unique_conflicts`.
 
 | Statement | Hot path | Plan before | Plan after |
 | --- | --- | --- | --- |
@@ -51,33 +44,30 @@ support the shape seeks described below. `_system` has the same schema but retai
 | `Version`: `SELECT version, typeof(body) = 'null' …` | write preconditions, delete, assert-absent | — | `SEARCH documents USING PRIMARY KEY (collection=? AND id=?)`; `typeof` reads the record header, not the body |
 | `DocumentBytes`: retained current JSON length | quota net-change accounting without JSON allocation | — | primary-key seeks of `documents` and `unique_conflicts`; `octet_length` reads visible or hidden current JSON length without materializing JSON |
 | `StoredDocumentBytes` | trusted storage-quota total, one scalar result | — | `SCAN collections`, then `CORRELATED SCALAR SUBQUERY 1` with `SEARCH d USING PRIMARY KEY (collection=?)` and a primary-key join of `unique_conflicts`; reads visible or hidden current sizes without JSON or collection-statistics allocation |
-| `Put`: `INSERT … ON CONFLICT (collection, id) DO UPDATE SET version = excluded.version, body = …` | every document write | no plan rows (conflict check is a primary-key probe) | unchanged |
-| `Tombstone`: `UPDATE … SET body = NULL …` | document delete (Documents API) | — | `SEARCH documents USING PRIMARY KEY (collection=? AND id=?)` |
+| `GetState`: `SELECT state … WHERE collection = ? AND id = ?` | every client document write and applied delta | — | `SEARCH documents USING PRIMARY KEY (collection=? AND id=?)` |
+| `PutState`: `INSERT … ON CONFLICT (collection, id) DO UPDATE SET state = …, version = …, body = …` | every client document write and applied delta | — | no plan rows (conflict check is a primary-key probe) |
+| `Materialized` | an applied delta that keeps its winner; every register a digest reads | — | `SEARCH d USING PRIMARY KEY (collection=? AND id=?)`; `SEARCH c USING PRIMARY KEY (collection=? AND id=?) LEFT-JOIN` |
+| `Put`: `INSERT … ON CONFLICT (collection, id) DO UPDATE SET version = excluded.version, body = …` | every `_system` write | no plan rows (conflict check is a primary-key probe) | unchanged |
+| `Tombstone`: `UPDATE … SET body = NULL …` | `_system` tombstone | — | `SEARCH documents USING PRIMARY KEY (collection=? AND id=?)` |
 | `NextOffset`, `CurrentOffset` on `commit_offset WHERE id = 1` | first write of a transaction, commit without writes | — | `SEARCH commit_offset USING INTEGER PRIMARY KEY (rowid=?)` |
 | `Incarnation`, `RenewIncarnation` on `commit_offset WHERE id = 1` | store open, new database/copy publication | — | `SEARCH commit_offset USING INTEGER PRIMARY KEY (rowid=?)` |
-| `HasCollectionState` | fresh management catalog initialization | — | four `EXISTS` range seeks: `SEARCH documents USING PRIMARY KEY (collection>? AND collection<?)`, `SEARCH collections USING PRIMARY KEY (name>? AND name<?)`, `SEARCH changes USING INDEX changes_deleted (collection>? AND collection<?)` and `SEARCH change_log USING COVERING INDEX change_log_by_offset (collection>? AND collection<?)`; includes tombstones, retained replication deletions and shape history without reading bodies |
+| `HasCollectionState` | fresh management catalog initialization (`_system`) | — | four `EXISTS` range seeks: `SEARCH documents USING PRIMARY KEY (collection>? AND collection<?)`, `SEARCH collections USING PRIMARY KEY (name>? AND name<?)`, `SEARCH changes USING INDEX changes_deleted (collection>? AND collection<?)` and `SEARCH change_log USING COVERING INDEX change_log_by_offset (collection>? AND collection<?)`; includes tombstones, retained replication deletions and shape history without reading bodies |
 | `HasCollectionStateFrom` | collection prefixes with no Unicode successor | — | the same four indexed `EXISTS` seeks using only `collection>?` or `name>?`; a prefix composed entirely of maximum Unicode scalars has no upper bound |
 | `CreateCollection`, `GetCollection`, `DropCollection` | collection routes, every document request (existence check) | — | insert: no plan rows; others `SEARCH collections USING PRIMARY KEY (name=?)` |
 | `ListCollectionsFirst`, `ListCollectionsAfter` | collection listing | — | `SCAN collections` (primary-key order, stops at the limit); `SEARCH collections USING PRIMARY KEY (name>?)` |
-| `DropDocuments`: `DELETE … WHERE collection = ?` | collection drop | — | `SEARCH documents USING PRIMARY KEY (collection=?)` |
-| `Delete`: `DELETE … WHERE collection = ? AND id = ?` | every document delete | `SEARCH documents USING PRIMARY KEY (collection=? AND id=?)` | unchanged |
+| `DropDocuments`: `DELETE … WHERE collection = ?` | `_system` collection drop | — | `SEARCH documents USING PRIMARY KEY (collection=?)` |
+| `Delete`: `DELETE … WHERE collection = ? AND id = ?` | every `_system` delete | `SEARCH documents USING PRIMARY KEY (collection=? AND id=?)` | unchanged |
 | List, first page: `… WHERE collection = ? ORDER BY id LIMIT ?` | list without cursor | `SEARCH documents USING PRIMARY KEY (collection=?)` | `SEARCH documents USING INDEX documents_live (collection=?)` (`ListFirst`), skipping tombstones |
 | List, next page: `… WHERE collection = ? AND id > ? ORDER BY id LIMIT ?` | list with cursor | `SEARCH documents USING PRIMARY KEY (collection=?)` — one statement used `($after IS NULL OR id > $after)`, which kept SQLite from seeking to the cursor: every page walked the collection from its first id | `SEARCH documents USING INDEX documents_live (collection=? AND id>?)` (`ListAfter`) |
-| `ObserveOffset`, `Origin` | imported clock, stream identity | — | integer-primary-key search on `commit_offset` |
-| `RetainedDeletion`: `… WHERE collection = ? AND id = ? AND version >= ? AND (version > ? OR $inclusive) AND body IS NULL LIMIT 1` | replicated merge, before applying document state | — | `SEARCH changes USING INDEX changes_deleted (collection=? AND id=? AND version>?)`; `$inclusive = true` fences equal live values, `false` allows equal tombstone repair; stops at the first match, reads no JSON |
-| `MaterializeRetainedDeletions` | copy preparation, before resetting its journal | — | `SCAN changes USING INDEX changes_deleted`; groups keys in index order without a sorter and upserts only deletions that beat the copied document state |
-| `ApplyDocument`, `ApplyTombstone` | replicated merge | — | insert/upsert, no plan rows; conflicts probe the document primary key |
-| `CollectionDocumentIds` | captured collection drop | — | document primary-key range under a count limit; no JSON loaded |
-| `DroppedCollection`: `… WHERE collection = '_collections' AND id = ? AND version >= ? AND (version > ? OR $inclusive) AND body IS NULL` | replicated merge and collection-recreation guard | — | `SEARCH documents USING PRIMARY KEY (collection=? AND id=?)`: one register lookup, no JSON; `$inclusive = false` matches strictly newer drops, `true` also matches ties when deciding whether a tombstone recreates collection metadata |
-| `TombstoneCollection`: `UPDATE … WHERE collection = ? AND version < ? AND body IS NOT NULL RETURNING id` | replicated collection drop | — | `SEARCH documents USING PRIMARY KEY (collection=?)`: the dropped collection's key range only |
-| `LiveDocument` | replicated collection drop | — | `SEARCH documents USING INDEX documents_live (collection=?)`; stops at the first live row |
-| `LastSequence`, `NextSequence`, `AppendChange`, `ReadChanges` | journal append/send | — | journal primary-key search; insert has no plan rows |
-| `GetApplied`, `SetApplied` | received origin frontier | — | applied primary-key lookup; upsert has no plan rows |
-| `Complete`, `MarkComplete` | baseline state | — | integer-primary-key lookup on `replication_state` |
-| `CountOversizedBaselineKeys` | baseline admission, once on copy/bootstrap | — | one metadata-only scan; key values never enter managed memory |
-| `Baseline…First`, `Baseline…After` | bounded baseline, once on copy/bootstrap | — | key-order scan under LIMIT, or primary-key continuation range; recorded by the Fast plan test |
-| `ReplicationStateFirst` | first canonical state page for anti-entropy Merkle rebuild/repair | — | `SCAN documents USING COVERING INDEX documents_replication_keys` in key order; seed `SCAN changes USING INDEX changes_replication_deleted`, then distinct retained-deletion key seeks `SEARCH changes USING INDEX changes_replication_deleted (collection=? AND id>?)` / `(collection>?)`; `MERGE (UNION)` consumes both key arms under the 129-key limit; `MATERIALIZE evidence` projects at most 129 metadata rows with `SEARCH documents USING PRIMARY KEY (collection=? AND id=?) LEFT-JOIN`, `SEARCH unique_conflicts USING PRIMARY KEY (collection=? AND id=?) LEFT-JOIN`, and indexed `(collection=? AND id=?)` deletion-version lookup; two `USE TEMP B-TREE FOR ORDER BY` steps |
-| `ReplicationStateAfter` | continuation canonical state page for anti-entropy Merkle rebuild/repair | — | `SEARCH documents USING COVERING INDEX documents_replication_keys ((collection,id)>(?,?))`; retained-deletion seed and recursive distinct-key seeks use `SEARCH changes USING INDEX changes_replication_deleted (collection=? AND id>?)` / `(collection>?)`; `MERGE (UNION)` consumes both key arms under the 129-key limit; `MATERIALIZE evidence` projects at most 129 metadata rows with `SEARCH documents USING PRIMARY KEY (collection=? AND id=?) LEFT-JOIN`, `SEARCH unique_conflicts USING PRIMARY KEY (collection=? AND id=?) LEFT-JOIN`, and indexed `(collection=? AND id=?)` deletion-version lookup; two `USE TEMP B-TREE FOR ORDER BY` steps |
+| `ObserveOffset`, `Origin` | a catalog follower's offset, the `_system` stream identity | — | integer-primary-key search on `commit_offset` |
+| `LiveIds` | client collection drop (a tombstone over each live document) | — | `SEARCH documents USING INDEX documents_live (collection=?)` under a count limit; no JSON loaded |
+| `ClientHasCollectionState`, `ClientHasCollectionStateFrom` | collection state checks on a client database | — | three `EXISTS` range seeks of `documents`, `collections` and `change_log_by_offset`: a client database keeps a drop's tombstones as registers, so it has no journal deletions to look at |
+| `LastGroup`, `AppendGroup`, `AppendGroupChange`, `GroupDependencies`, `GroupChanges` | client journal append and send | — | `SEARCH journal` (max rowid); `SEARCH journal USING INTEGER PRIMARY KEY (rowid=?)`; `SEARCH changes USING PRIMARY KEY (sequence=?)`; inserts have no plan rows |
+| `GetApplied`, `SetApplied`, `DropSupersededApplied`, `AppliedPositions` | received origin positions; a commit's dependency vector | — | applied primary-key lookup; upsert has no plan rows; `SCAN applied` (one row per member and file: a later epoch's position replaces the earlier ones) under a limit |
+| `JournalState`, `ClaimJournal`, `MarkComplete` | the journal's replica id and baseline state, at open | — | integer-primary-key lookup on `replication_state` |
+| `BaselineFirst`, `BaselineAfter` | bounded baseline, once on copy or unclean start | — | `SCAN documents` in key order under LIMIT, or `SEARCH documents USING PRIMARY KEY ((collection,id)>(?,?))` |
+| `ReplicationStateFirst`, `ReplicationStateAfter` | anti-entropy register pages for the Merkle rebuild and repair | — | `SCAN documents USING INDEX documents_replication_keys` in key order under LIMIT, or `SEARCH documents USING INDEX documents_replication_keys ((collection,id)>(?,?))`; sizes come from the record header before a register is read |
+| `LastSequence`, `AppendReplicationChange`, `GetChangeDigest`, `AppendChangeDigest` | `_system` journal append | — | journal primary-key search; inserts have no plan rows |
 | `PRAGMA user_version`, `PRAGMA journal_mode = WAL`, `CREATE TABLE` | once per database per process (bootstrap) | DDL, no plan | unchanged |
 | `VACUUM INTO $path` | database copy (Management API), rare | maintenance, `EXPLAIN QUERY PLAN` returns no rows | unchanged; runs on a pooled connection |
 | `CountDocuments`: `SELECT count(*) … WHERE collection = ? AND body IS NOT NULL` | schema inference, query-field records in `_system` (Management API) | — | `SEARCH documents USING PRIMARY KEY (collection=?)`; tests each record header's body type, never loads a body. `documents_live` would not cover the `body` test and would add a lookup per row |
@@ -90,27 +80,11 @@ support the shape seeks described below. `_system` has the same schema but retai
 | `ReplaceDocument` | every replicated catalog change on a follower | — | upsert, no plan rows |
 | `SystemLastSequence`, `TruncateChanges`, `TruncatePrefixes` | every `_system` commit (journal head and its 1024-group tail) | — | `SEARCH journal_prefixes USING PRIMARY KEY`; `SEARCH changes USING PRIMARY KEY (sequence<?)`; `SEARCH journal_prefixes USING PRIMARY KEY (sequence<?)` |
 
-`ReplicationStateFirst` and `ReplicationStateAfter` each have two temporary B-tree sorts: one orders
-the recursive distinct deletion keys for the union, and one orders the canonical metadata projection.
-The storage reader supplies `$limit = 129` (128 page entries plus one continuation probe). The recursive
-deletion arm is limited to 129 rows, both ordered key arms feed the union under that limit, and the
-materialized evidence contains at most 129 rows. Recursive index seeks advance past each distinct
-`(collection, id)` rather than walking every retained journal revision for that key. The fresh schema includes
-partial indexes containing only nonempty keys within the 63-byte collection and 1024-byte ID cursor
-limits. The key arms seek those indexes, so excluded keys do not consume scan work.
-Invalid key syntax within the byte limits is filtered by the storage paging reader. Fresh
-files create both indexes during bootstrap; later writes maintain them. The
-additional index storage and write work leave document, journal and frontier bytes unchanged.
-
-The sorters and materialized evidence contain bounded keys, versions, deletion flags and byte lengths,
-not JSON bodies. `octet_length` reads body size metadata; the reader fetches a live body separately only
-after page byte admission. These plan and cardinality properties do not establish measured latency or
-throughput. Other fixed statements have no temporary B-tree sort in the recorded plans. The first
-collections and baseline pages scan in key order up to their limits; copy preparation scans the
-retained deletion index once. On the destination only, it materializes the latest deletion per key
-as a tombstone before clearing the old journal and applied
-frontiers, in the same transaction that renews the incarnation. Its baseline then carries those deletions
-under its fresh origin; higher document versions, including resurrections, remain intact.
+No fixed statement sorts in a temporary B-tree. The first collections, baseline and anti-entropy pages scan in key order
+up to their limits; anti-entropy pages read the partial key index, so excluded empty or oversized keys consume no scan
+work, and the reader skips other inadmissible keys before decoding their registers. A copy clears its journal and applied
+positions in the same transaction that renews its incarnation; its baseline then carries every register, tombstones
+included, under its fresh origin.
 
 ### Shape history (TS-474 schemas v5/v6, replication integration v7)
 
@@ -230,4 +204,5 @@ indexes; neither is in `SqliteStatements.All`. Both read live documents only.
   or cancellation). The seconds are `query-budget-seconds` (default 5); the test harness raises them so that a loaded runner's
   descheduling or GC pauses do not fail tiny queries, and tests of the time budget pin the default.
 
-Schema 8 stores prefix SHA-256 values in `journal_prefixes` (sequence primary key) and `applied.digest`. `GetChangeDigest` seeks `journal_prefixes` by sequence; `GetAppliedFrontier` seeks `applied` by origin. Their inserts have no returned query plan.
+`_system` schema 8 stores its catalog journal's prefix SHA-256 values in `journal_prefixes` (sequence primary key);
+`GetChangeDigest` seeks it by sequence. Client databases keep no prefix digests: an origin never reuses a sequence.

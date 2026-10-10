@@ -14,9 +14,7 @@ namespace TerraBase.Slow.Replication;
 public sealed class ReplicationSlotPromotionTests
 {
     [Test]
-    [Arguments("welcome_digest")]
     [Arguments("peer_ahead")]
-    [Arguments("ack_digest")]
     public async Task Promoting_an_omitted_conflict_preserves_divergence_until_full_valid_catchup(string reason)
     {
         using var tls = new PeerTls();
@@ -29,9 +27,8 @@ public sealed class ReplicationSlotPromotionTests
         var releaseFinalAck = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var latestAckHeld = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseLatestAck = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var prefixes = new ConcurrentDictionary<ByteString, (ulong Sequence, ByteString Digest)>();
-        var invalidDigest = ByteString.CopyFrom(new byte[JournalDigest.Length]);
-        var recoveryPrefix = (Sequence: 0UL, Digest: ByteString.Empty);
+        var prefixes = new ConcurrentDictionary<ByteString, ulong>();
+        var recoveryPrefix = 0UL;
         ByteString? omittedId = null;
         var attempts = 0;
         await using var peer = await FakePeer.StartAsync(tls, async (requests, responses, context) =>
@@ -50,7 +47,7 @@ public sealed class ReplicationSlotPromotionTests
             }
 
             prefixes.TryGetValue(hello.LocalIdentity.DatabaseId, out var prefix);
-            if (attempt >= 2 || (attempt == 1 && reason == "ack_digest"))
+            if (attempt >= 2)
             {
                 prefix = recoveryPrefix;
             }
@@ -59,13 +56,10 @@ public sealed class ReplicationSlotPromotionTests
             welcome.Welcome.Frontiers.Add(new PeerFrontier
             {
                 Origin = new OriginIdentity { ReplicaId = origin, Incarnation = origin },
-                DurableSequence = attempt == 1 && reason == "peer_ahead" ? (ulong)long.MaxValue : prefix.Sequence,
-                JournalDigest = attempt == 1 && reason == "welcome_digest"
-                    ? invalidDigest
-                    : prefix.Digest ?? ByteString.CopyFrom(JournalDigest.Initial(origin.Span)),
+                DurableSequence = attempt == 1 ? (ulong)long.MaxValue : prefix,
             });
             await responses.WriteAsync(welcome, context.CancellationToken);
-            if (attempt == 1 && reason != "ack_digest")
+            if (attempt == 1)
             {
                 return;
             }
@@ -73,19 +67,6 @@ public sealed class ReplicationSlotPromotionTests
             while (await requests.MoveNext(context.CancellationToken))
             {
                 var batch = requests.Current.CommittedGroup;
-                if (attempt == 1)
-                {
-                    var invalid = FakePeer.Ack(member, batch, batch.EventId.Sequence);
-                    invalid.Durable.JournalDigest = invalidDigest;
-                    await responses.WriteAsync(invalid, context.CancellationToken);
-                    // Closing with unread batches can reset the stream before the sender validates this ACK.
-                    while (await requests.MoveNext(context.CancellationToken))
-                    {
-                    }
-
-                    return;
-                }
-
                 if (attempt >= 2 && batch.EventId.Sequence == 2)
                 {
                     partialWelcomeHeld.TrySetResult();
@@ -104,7 +85,7 @@ public sealed class ReplicationSlotPromotionTests
                     await releaseLatestAck.Task.WaitAsync(context.CancellationToken);
                 }
 
-                prefixes[hello.LocalIdentity.DatabaseId] = (batch.EventId.Sequence, batch.JournalDigest);
+                prefixes[hello.LocalIdentity.DatabaseId] = batch.EventId.Sequence;
                 await responses.WriteAsync(FakePeer.Ack(member, batch, batch.EventId.Sequence), context.CancellationToken);
             }
         });
@@ -144,7 +125,7 @@ public sealed class ReplicationSlotPromotionTests
             var omitted = databases.Single(entry => !observedIds.Contains(entry.Key));
             var databaseId = ByteString.CopyFrom(Ulid.Parse(omitted.Key).ToByteArray());
             recoveryPrefix = prefixes[databaseId];
-            await Assert.That(recoveryPrefix.Sequence).IsEqualTo(1UL);
+            await Assert.That(recoveryPrefix).IsEqualTo(1UL);
             using (var writer = clientTls.CreateClient(server.ClientAddress!, await omitted.Value.Tenant.KeyAsync(server, "documents:write")))
             {
                 for (var index = 0; index < 2; index++)
@@ -268,7 +249,7 @@ public sealed class ReplicationSlotPromotionTests
         var promotedHeld = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releasePromoted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var promotionReady = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var prefixes = new ConcurrentDictionary<ByteString, (ulong Sequence, ByteString Digest)>();
+        var prefixes = new ConcurrentDictionary<ByteString, ulong>();
         ByteString? heldId = null;
         ByteString? omittedId = null;
         await using var peer = await FakePeer.StartAsync(tls, async (requests, responses, context) =>
@@ -293,14 +274,13 @@ public sealed class ReplicationSlotPromotionTests
             welcome.Welcome.Frontiers.Add(new PeerFrontier
             {
                 Origin = new OriginIdentity { ReplicaId = origin, Incarnation = origin },
-                DurableSequence = prefix.Sequence,
-                JournalDigest = prefix.Digest ?? ByteString.CopyFrom(JournalDigest.Initial(origin.Span)),
+                DurableSequence = prefix,
             });
             await responses.WriteAsync(welcome, context.CancellationToken);
             while (await requests.MoveNext(context.CancellationToken))
             {
                 var batch = requests.Current.CommittedGroup;
-                prefixes[origin] = (batch.EventId.Sequence, batch.JournalDigest);
+                prefixes[origin] = batch.EventId.Sequence;
                 await responses.WriteAsync(FakePeer.Ack(member, batch, batch.EventId.Sequence), context.CancellationToken);
             }
         });

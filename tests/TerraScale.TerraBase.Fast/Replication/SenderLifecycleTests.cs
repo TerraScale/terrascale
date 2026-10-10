@@ -28,17 +28,15 @@ public sealed class SenderLifecycleTests
         var completed = NewSignal();
         IConnectionLifetimeFeature? connection = null;
         ulong applied = 0;
-        ByteString? digest = null;
         await using var peer = await FakePeer.StartAsync(tls, async (requests, responses, context) =>
         {
             await requests.MoveNext(context.CancellationToken);
             connection = context.GetHttpContext().Features.Get<IConnectionLifetimeFeature>();
-            await responses.WriteAsync(Welcome(requests.Current.Hello, applied, out var member, digest), context.CancellationToken);
+            await responses.WriteAsync(Welcome(requests.Current.Hello, applied, out var member), context.CancellationToken);
             while (await requests.MoveNext(context.CancellationToken))
             {
                 var batch = requests.Current.CommittedGroup;
                 applied = batch.EventId.Sequence;
-                digest = batch.JournalDigest;
                 await responses.WriteAsync(FakePeer.Ack(member, batch, applied), context.CancellationToken);
             }
 
@@ -93,7 +91,6 @@ public sealed class SenderLifecycleTests
     }
 
     [Test]
-    [Arguments("digest")]
     [Arguments("ahead")]
     [Arguments("prefix")]
     [Arguments("origin")]
@@ -105,21 +102,17 @@ public sealed class SenderLifecycleTests
         using var tls = new PeerTls();
         using var clientTls = new ClientTls();
         var applied = 0UL;
-        ByteString? digest = null;
         var reject = 0;
         var refused = NewSignal();
         await using var peer = await FakePeer.StartAsync(tls, async (requests, responses, context) =>
         {
             await requests.MoveNext(context.CancellationToken);
             var hello = requests.Current.Hello;
-            var welcome = Welcome(hello, applied, out var member, digest);
+            var welcome = Welcome(hello, applied, out var member);
             if (Volatile.Read(ref reject) != 0)
             {
                 switch (invalid)
                 {
-                    case "digest":
-                        welcome.Welcome.Frontiers[0].JournalDigest = ByteString.CopyFrom(new byte[JournalDigest.Length]);
-                        break;
                     case "ahead":
                         welcome.Welcome.Frontiers[0].DurableSequence = applied + 1;
                         break;
@@ -149,7 +142,6 @@ public sealed class SenderLifecycleTests
             {
                 var batch = requests.Current.CommittedGroup;
                 applied = batch.EventId.Sequence;
-                digest = batch.JournalDigest;
                 await responses.WriteAsync(FakePeer.Ack(member, batch, applied), context.CancellationToken);
             }
         });
@@ -169,12 +161,11 @@ public sealed class SenderLifecycleTests
         await refused.Task.WaitAsync(TimeSpan.FromSeconds(30));
         await TerraBaseTestServer.EventuallyAsync(async token =>
             await sender.MetricAsync("terrabase_replication_sender_durable_lag", "", token) == 2);
-        if (invalid is "digest" or "ahead")
+        if (invalid is "ahead")
         {
             await TerraBaseTestServer.EventuallyAsync(async token =>
                 await sender.MetricAsync("terrabase_replication_database_diverged", "peer=\"0\"", token) == 1);
-            var reason = invalid == "digest" ? "welcome_digest" : "peer_ahead";
-            await Assert.That(await sender.MetricAsync("terrabase_replication_divergence_detections_total", $"reason=\"{reason}\"")).IsGreaterThan(0);
+            await Assert.That(await sender.MetricAsync("terrabase_replication_divergence_detections_total", "reason=\"peer_ahead\"")).IsGreaterThan(0);
             using var status = await sender.Client.GetFromJsonAsync<JsonDocument>(new Uri("/replication", UriKind.Relative));
             await Assert.That(status!.RootElement.GetProperty("peers")[0].GetProperty("databases")[0].GetProperty("diverged").GetBoolean()).IsTrue();
         }
@@ -357,14 +348,13 @@ public sealed class SenderLifecycleTests
             var streams = 0;
             var groups = 0;
             ulong applied = 0;
-            ByteString? appliedProof = null;
             await using var peer = await FakePeer.StartAsync(peerTls, async (requests, responses, context) =>
             {
                 await requests.MoveNext(context.CancellationToken);
                 var turn = Interlocked.Increment(ref streams);
                 (turn == 1 ? firstHello : secondHello).TrySetResult();
                 await (turn == 1 ? allowFirst : allowSecond).Task.WaitAsync(context.CancellationToken);
-                await responses.WriteAsync(Welcome(requests.Current.Hello, applied, out var member, appliedProof), context.CancellationToken);
+                await responses.WriteAsync(Welcome(requests.Current.Hello, applied, out var member), context.CancellationToken);
                 if (turn > 1)
                 {
                     secondWelcome.TrySetResult();
@@ -375,7 +365,6 @@ public sealed class SenderLifecycleTests
                     var batch = requests.Current.CommittedGroup;
                     Interlocked.Increment(ref groups);
                     applied = batch.EventId.Sequence;
-                    appliedProof = batch.JournalDigest;
                     await responses.WriteAsync(FakePeer.Ack(member, batch, batch.EventId.Sequence), context.CancellationToken);
                 }
             });
@@ -430,7 +419,6 @@ public sealed class SenderLifecycleTests
         Exception? primaryFailure = null;
         ByteString? oldOrigin = null;
         var prefixes = new Dictionary<ByteString, ulong>();
-        var digests = new Dictionary<ByteString, ByteString>();
         await using var peer = await FakePeer.StartAsync(peerTls, (requests, responses, context) =>
         {
             lock (handlers)
@@ -451,7 +439,7 @@ public sealed class SenderLifecycleTests
                 {
                     await requests.MoveNext(context.CancellationToken);
                     var origin = requests.Current.Hello.LocalIdentity.MemberIncarnation;
-                    await responses.WriteAsync(Welcome(requests.Current.Hello, prefixes.GetValueOrDefault(origin), out var member, digests.GetValueOrDefault(origin)), context.CancellationToken);
+                    await responses.WriteAsync(Welcome(requests.Current.Hello, prefixes.GetValueOrDefault(origin), out var member), context.CancellationToken);
                     var wroteOldAck = false;
                     while (await requests.MoveNext(context.CancellationToken))
                     {
@@ -459,7 +447,6 @@ public sealed class SenderLifecycleTests
                         oldOrigin ??= batch.EventId.Origin.Incarnation;
                         // Apply the group before holding only its acknowledgment.
                         prefixes[origin] = batch.EventId.Sequence;
-                        digests[origin] = batch.JournalDigest;
                         if (!batch.EventId.Origin.Incarnation.Equals(oldOrigin))
                         {
                             heldNew.TrySetResult(batch);
@@ -676,14 +663,13 @@ public sealed class SenderLifecycleTests
         await TerraBaseTestServer.ReplicatedAsync(sender);
     }
 
-    private static SyncResponse Welcome(Hello hello, ulong applied, out PeerIdentity member, ByteString? digest = null)
+    private static SyncResponse Welcome(Hello hello, ulong applied, out PeerIdentity member)
     {
         var welcome = FakePeer.Welcome(hello, out member);
         welcome.Welcome.Frontiers.Add(new PeerFrontier
         {
             Origin = new OriginIdentity { ReplicaId = hello.LocalIdentity.MemberIncarnation, Incarnation = hello.LocalIdentity.MemberIncarnation },
             DurableSequence = applied,
-            JournalDigest = digest ?? ByteString.CopyFrom(JournalDigest.Initial(hello.LocalIdentity.MemberIncarnation.Span)),
         });
         return welcome;
     }

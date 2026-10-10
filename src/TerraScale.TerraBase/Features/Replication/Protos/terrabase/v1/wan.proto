@@ -6,17 +6,18 @@ import "terrabase/v1/replication.proto";
 
 option csharp_namespace = "TerraBase.Features.CrossRegion.V1";
 
-// Version 3 of cross-region (WAN) replication over NATS request/reply (docs/cross-region.md). A member of one
+// Version 1 of cross-region (WAN) replication over NATS request/reply (docs/cross-region.md). A member of one
 // region pulls the change groups of every origin of another region from the member that originated them, after
 // its own applied prefix. Every request and reply is at most 1 MiB, NATS's default max_payload.
 // The schema/package and ts.orch.v1 subjects remain unchanged; WanRequest.version selects the WAN wire version.
 // HeadsReply travels inside the versioned TBLZ4E01 application envelope, checked before parsing its protobuf.
-// Version 1 and 2 requests and raw protobuf heads replies are rejected; there is no wire fallback.
+// Requests of another version and raw protobuf heads replies are rejected; there is no wire fallback.
 
 // A request on ts.orch.v1.<cell>.query.terrabase-wan.heads, which every member of the cell answers with the first
 // page of its heads, or on ts.orch.v1.<cell>.query.terrabase-wan.member.<member>, which one member answers.
 message WanRequest {
-  // 3.
+  // 1: change groups of register deltas, as Replication.Sync carries them. It never increases (decision 9 of
+  // docs/design/anna-core.md): a wire change ships at a cutover that stops every member first.
   uint32 version = 1;
   oneof request {
     HeadsRequest heads = 2;
@@ -85,7 +86,7 @@ message PullReply {
     STATUS_OK = 0;
     // The answering member does not hold this origin (any more): ask the heads again.
     STATUS_UNKNOWN_ORIGIN = 1;
-    // The receiver applied groups the origin never committed (its file went back in time).
+    // The receiver applied groups the origin never committed: an origin never reuses a sequence, so this is a bug.
     STATUS_AHEAD = 2;
     // The request is invalid or of another version.
     STATUS_INVALID = 3;

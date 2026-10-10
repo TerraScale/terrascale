@@ -83,8 +83,9 @@ public sealed class ReplicationCapacityTests
         await Assert.That(await read.GetLastChangeSequenceAsync(deadline.Token)).IsEqualTo(sequence);
         if (sequence > 0)
         {
+            // One commit, one group: one delta per document it wrote.
             var group = (await read.ReadChangesAsync(sequence, deadline.Token))!;
-            await Assert.That(group.Select(change => change.Version).Distinct().Single()).IsEqualTo(await read.GetOffsetAsync(deadline.Token));
+            await Assert.That(group.Changes.Select(change => (change.Collection, change.Id)).Distinct().Count()).IsEqualTo(group.Changes.Count);
         }
     }
 }

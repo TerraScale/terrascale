@@ -1,7 +1,6 @@
 using System.Text.Json;
 using Bogus;
 using Google.Protobuf;
-using TerraBase.Engine;
 using TerraBase.Features.Replication.V1;
 using TerraBase.Testing;
 
@@ -17,7 +16,6 @@ public sealed class ReplicationObservabilityTests
         var held = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var applied = 0UL;
-        ByteString? digest = null;
         await using var peer = await FakePeer.StartAsync(tls, async (requests, responses, context) =>
         {
             await requests.MoveNext(context.CancellationToken);
@@ -33,14 +31,12 @@ public sealed class ReplicationObservabilityTests
             {
                 Origin = new OriginIdentity { ReplicaId = hello.LocalIdentity.MemberIncarnation, Incarnation = hello.LocalIdentity.MemberIncarnation },
                 DurableSequence = applied,
-                JournalDigest = digest ?? ByteString.CopyFrom(JournalDigest.Initial(hello.LocalIdentity.MemberIncarnation.Span)),
             });
             await responses.WriteAsync(welcome, context.CancellationToken);
             while (await requests.MoveNext(context.CancellationToken))
             {
                 var batch = requests.Current.CommittedGroup;
                 applied = batch.EventId.Sequence;
-                digest = batch.JournalDigest;
                 await responses.WriteAsync(FakePeer.Ack(member, batch, applied), context.CancellationToken);
             }
         });
@@ -93,7 +89,6 @@ public sealed class ReplicationObservabilityTests
                 {
                     Origin = new OriginIdentity { ReplicaId = hello.LocalIdentity.MemberIncarnation, Incarnation = hello.LocalIdentity.MemberIncarnation },
                     DurableSequence = 2,
-                    JournalDigest = ByteString.CopyFrom(JournalDigest.Initial(hello.LocalIdentity.MemberIncarnation.Span)),
                 });
             }
 

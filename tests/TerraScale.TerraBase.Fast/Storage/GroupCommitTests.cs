@@ -268,13 +268,13 @@ public sealed class GroupCommitTests
 
         // The change groups replicated to peers carry the first write's state, never the rolled-back one.
         await using var reader = await store.BeginTransactionAsync(write: false, CancellationToken.None);
-        var captured = new List<DocumentChange>();
+        var captured = new List<DocumentDelta>();
         for (var sequence = await reader.GetLastChangeSequenceAsync(CancellationToken.None); sequence > 0 && captured.Count < 3; sequence--)
         {
-            captured.AddRange(await reader.ReadChangesAsync(sequence, CancellationToken.None) ?? []);
+            captured.AddRange((await reader.ReadChangesAsync(sequence, CancellationToken.None))?.Changes ?? []);
         }
 
-        var states = captured.Where(change => change.Id == shared).Select(change => System.Text.Encoding.UTF8.GetString(change.Json!.Value.Span)).ToList();
+        var states = captured.Where(change => change.Id == shared).Select(change => Deltas.Json(change)!).ToList();
         await Assert.That(states).IsNotEmpty();
         await Assert.That(states.All(json => json.Contains("\"n\":1", StringComparison.Ordinal))).IsTrue();
         await Assert.That(captured.Any(change => change.Id == other)).IsTrue();

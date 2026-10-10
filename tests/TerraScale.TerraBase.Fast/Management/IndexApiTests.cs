@@ -313,7 +313,8 @@ public sealed class IndexApiTests
         // A thousand orders, stored without a request each.
         await ManagementApi.ExecuteStoredAsync(api.Server.DataDirectory, database, """
             WITH RECURSIVE rows(n) AS (VALUES(0) UNION ALL SELECT n + 1 FROM rows WHERE n < 999)
-            INSERT INTO documents SELECT 'orders', printf('00000000-0000-7000-8000-%012x', n), 1, json_object('sku', 'sku-' || n) FROM rows;
+            INSERT INTO documents SELECT 'orders', printf('00000000-0000-7000-8000-%012x', n), tb_state(json_object('sku', 'sku-' || n)), 65536,
+                json_object('sku', 'sku-' || n) FROM rows;
             """);
 
         (await api.Client.PostAsJsonAsync(Uri($"{database.Path}/indexes"), new { collection = "people", fields = Email })).EnsureSuccessStatusCode();

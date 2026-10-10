@@ -8,17 +8,23 @@ namespace TerraBase.Testing;
 /// <summary>Seeds and reads current-format database fixtures after real-server bootstrap.</summary>
 public static class DocumentFiles
 {
-    /// <summary>Seeds a current-format database file at <paramref name="path"/> holding exactly these documents.</summary>
+    /// <summary>
+    /// Seeds a current-format database file at <paramref name="path"/> holding exactly these documents. A client database
+    /// holds them as registers of one write each (<see cref="StoredRegisters"/>), in one commit at offset 1 with its shape
+    /// history, and its journal still needs its baseline, like a copy.
+    /// </summary>
     public static async Task WriteAsync(string path, params (string Collection, string Id, string Body)[] documents)
     {
         using var meter = new Meter("TerraBase.Testing.DocumentFiles");
         await using var io = new SqliteIoPool(1, 1, meter);
-        await SqliteDatabaseStore.InitializeAsync("fixture", path, io, string.Empty, afterBootstrap: null, CancellationToken.None);
+        var system = Path.GetFileName(path) == "_system.db";
+        // The name chooses the schema the file bootstraps: the system database keeps its own until TS-647 step 5.
+        await SqliteDatabaseStore.InitializeAsync(system ? "_system" : "fixture", path, io, string.Empty, afterBootstrap: null, CancellationToken.None);
         // Built, never interpolated: a path may contain ';' or quotes.
         await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Pooling = false }.ToString());
         await connection.OpenAsync();
-        var system = Path.GetFileName(path) == "_system.db";
-        await WriteDocumentsAsync(connection, documents, history: !system);
+        StoredRegisters.Register(connection);
+        await WriteDocumentsAsync(connection, documents, system);
         if (system)
         {
             return;
@@ -77,7 +83,7 @@ public static class DocumentFiles
         return documents;
     }
 
-    private static async Task WriteDocumentsAsync(SqliteConnection connection, (string Collection, string Id, string Body)[] documents, bool history)
+    private static async Task WriteDocumentsAsync(SqliteConnection connection, (string Collection, string Id, string Body)[] documents, bool system)
     {
         ArgumentNullException.ThrowIfNull(documents);
         foreach (var (collection, id, body) in documents)
@@ -88,20 +94,25 @@ public static class DocumentFiles
             metadata.Parameters.AddWithValue("$entityId", EntityIds.New().ToString());
             await metadata.ExecuteNonQueryAsync();
             await using var insert = connection.CreateCommand();
-            insert.CommandText = "INSERT INTO documents VALUES ($collection, $id, 1, $body) ON CONFLICT (collection, id) DO UPDATE SET body = excluded.body;";
+            insert.CommandText = system
+                ? "INSERT INTO documents VALUES ($collection, $id, 1, $body) ON CONFLICT (collection, id) DO UPDATE SET body = excluded.body;"
+                : $"""
+                    INSERT INTO documents (collection, id, state, version, body) VALUES ($collection, $id, tb_state($body), {StoredRegisters.Version}, $body)
+                    ON CONFLICT (collection, id) DO UPDATE SET state = excluded.state, body = excluded.body;
+                    """;
             insert.Parameters.AddWithValue("$collection", collection);
             insert.Parameters.AddWithValue("$id", id);
             insert.Parameters.AddWithValue("$body", body);
             await insert.ExecuteNonQueryAsync();
-            if (!history)
+            if (system)
             {
                 continue;
             }
 
             await using var change = connection.CreateCommand();
-            change.CommandText = """
+            change.CommandText = $"""
                 INSERT INTO change_log (collection, generation, id, version, body, document_version)
-                SELECT $collection, generation, $id, 1, $body, 1 FROM collections WHERE name = $collection;
+                SELECT $collection, generation, $id, 1, $body, {StoredRegisters.Version} FROM collections WHERE name = $collection;
                 """;
             change.Parameters.AddWithValue("$collection", collection);
             change.Parameters.AddWithValue("$id", id);

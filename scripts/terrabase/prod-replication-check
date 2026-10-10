@@ -8,7 +8,7 @@ Writes only to the canary database named in FILE: creates, replaces, patches and
 conditional writes answer 412. Then it reads every document directly from every member and compares status,
 JSON and version (ETag, tombstones included) with what the API answered, until they agree or S seconds pass.
 It also requires each member's admin /metrics (replication durable lag, catalog follower lag,
-rejected groups, prefix mismatches) and its last M minutes of logs (replication warnings, corruption).
+rejected groups, detected divergence) and its last M minutes of logs (replication warnings, corruption).
 The API and every member must be ready in FILE's region before writes; every client request is region-pinned
 and every response must identify that region, including errors; redirects are not followed.
 This is a sampled canary check, not proof of Anna-only service or a continuous production soak.
@@ -64,7 +64,7 @@ fi
 started=$(stat -c %Y "/proc/$pid")
 echo "start $started"
 curl --fail --silent --show-error --max-time 5 http://127.0.0.1:9464/metrics > "$metrics"
-awk '/^terrabase_(replication_(sender_durable_lag|sender_initialized|received_groups_total|sender_prefix_mismatches_total)|catalog_follower_(connected|lag))[ {]/ { print "metric " $0 }' "$metrics"
+awk '/^terrabase_(replication_(sender_durable_lag|sender_initialized|received_groups_total|divergence_detections_total)|catalog_follower_(connected|lag))[ {]/ { print "metric " $0 }' "$metrics"
 echo "complete metrics"
 sudo journalctl -u terrascale-orchestrator-host --since "-MINUTES min" -o cat --no-pager > "$logs"
 awk '/^(warn|fail|crit): TerraBase\.(Features\.(Replication|Catalog|CrossRegion)|Engine)/ { c = $0; getline m; getline e; print "log " c "\t" m "\t" e }' "$logs"
@@ -319,7 +319,8 @@ def signals(report, minutes):
     """Failure signals in one sample: rejection counters, persistent replication warnings and corruption signs."""
     found = []
     metrics = report["metrics"]
-    for name in ('terrabase_replication_received_groups_total{result="rejected"}', "terrabase_replication_sender_prefix_mismatches_total"):
+    divergence = sorted(name for name in metrics if name.startswith("terrabase_replication_divergence_detections_total"))
+    for name in ['terrabase_replication_received_groups_total{result="rejected"}', *divergence]:
         if metrics.get(name, 0) > 0:
             found.append(f"{name} = {metrics[name]:g} since the process started")
     # Retry delays and counts differ on every line: group by the text without its numbers.

@@ -1,4 +1,3 @@
-using System.Net;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
@@ -53,16 +52,25 @@ public sealed class StorageManagementMutationTests
         await Assert.That((await after.ListIndexesAsync(CancellationToken.None)).Select(item => item.Name)).IsEquivalentTo([index.Name]);
     }
 
+    // Prefix deletes remove system database collections without a trace (a client database refuses them: its deletions
+    // are tombstones).
     [Test]
     public async Task A_failed_prefix_delete_cannot_commit_the_documents_deleted_before_its_collection_failure()
     {
         await using var api = await DocumentApi.StartAsync();
-        var id = DocumentApi.NewId();
-        var original = await api.PutAsync(id, new { n = 1 });
-        await Assert.That(original.Status).IsEqualTo(HttpStatusCode.Created);
+        var engine = api.Server.Services.GetRequiredService<IStorageEngine>();
+        var store = await engine.OpenSystemDatabaseAsync(CancellationToken.None);
+        var collection = $"prefix_{Guid.NewGuid():N}";
+        await using (var writer = await store.BeginTransactionAsync(write: true, CancellationToken.None))
+        {
+            await writer.CreateCollectionAsync(new CollectionInfo(collection, 0), CancellationToken.None);
+            await writer.PutAsync(collection, "a", "{\"n\":1}"u8.ToArray(), CancellationToken.None);
+            await writer.CommitAsync(CancellationToken.None);
+        }
+
         await using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder
         {
-            DataSource = await api.DatabaseFileAsync(),
+            DataSource = Path.Combine(api.Server.DataDirectory, "_system.db"),
             Pooling = false,
         }.ToString()))
         {
@@ -73,18 +81,15 @@ public sealed class StorageManagementMutationTests
             await command.ExecuteNonQueryAsync();
         }
 
-        var engine = api.Server.Services.GetRequiredService<IStorageEngine>();
-        var store = (await engine.OpenDatabaseAsync(await api.TenantOfAsync(), CancellationToken.None))!;
         await using (var writer = await store.BeginTransactionAsync(write: true, CancellationToken.None))
         {
-            await Assert.ThrowsAsync<SqliteException>(() => writer.DeleteCollectionsAsync(DocumentApi.Collection, CancellationToken.None).AsTask());
-            await Assert.That(await writer.GetAsync(DocumentApi.Collection, id, CancellationToken.None)).IsNull();
+            await Assert.ThrowsAsync<SqliteException>(() => writer.DeleteCollectionsAsync(collection, CancellationToken.None).AsTask());
+            await Assert.That(await writer.GetAsync(collection, "a", CancellationToken.None)).IsNull();
             await Assert.ThrowsAsync<InvalidOperationException>(() => writer.CommitAsync(CancellationToken.None).AsTask());
         }
 
-        var read = await api.GetAsync(id);
-        await Assert.That(read.Status).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(read.Version).IsEqualTo(original.Version);
-        await Assert.That(read.Json.GetProperty("document").GetProperty("n").GetInt32()).IsEqualTo(1);
+        await using var read = await store.BeginTransactionAsync(write: false, CancellationToken.None);
+        var document = await read.GetAsync(collection, "a", CancellationToken.None);
+        await Assert.That(document is not null && document.Json.Span.SequenceEqual("{\"n\":1}"u8)).IsTrue();
     }
 }

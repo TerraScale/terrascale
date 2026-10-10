@@ -1,6 +1,5 @@
 using System.Text;
 using Bogus;
-using Google.Protobuf;
 using Grpc.Core;
 using Microsoft.Data.Sqlite;
 using TerraBase.Engine;
@@ -8,7 +7,6 @@ using TerraBase.Engine.Sqlite;
 using TerraBase.Fast.Documents;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.Alpha;
-using TerraBase.Primitives;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Replication;
@@ -30,7 +28,6 @@ public sealed class AntiEntropyBoundaryTests
         {
             var digest = await accepted.ResponseAsync;
             await Assert.That(digest.Incarnation.Length).IsEqualTo(16);
-            await Assert.That(digest.Origin.Length).IsEqualTo(16);
         }
 
         foreach (var id in new[] { "00000000-0000-7000-8000-000000000001", "01arz3ndektsv4rrffq69g5fa1", "81ARZ3NDEKTSV4RRFFQ69G5FA1" })
@@ -87,9 +84,10 @@ public sealed class AntiEntropyBoundaryTests
         var unicode = new string('\u754c', 256);
         await using var connection = new SqliteConnection(DocumentApi.ConnectionString(tenant.File(server, "repair")));
         await connection.OpenAsync(cancellationToken);
+        StoredRegisters.Register(connection);
         using (var malformed = connection.CreateCommand())
         {
-            malformed.CommandText = "INSERT INTO documents VALUES ('items', $id, 1, '{}');";
+            malformed.CommandText = "INSERT INTO documents VALUES ('items', $id, tb_state('{}'), 65536, '{}');";
             malformed.Parameters.AddWithValue("$id", unicode);
             await malformed.ExecuteNonQueryAsync(cancellationToken);
         }
@@ -99,26 +97,25 @@ public sealed class AntiEntropyBoundaryTests
         var (identity, before) = await IdentityAsync(client, tenant, cancellationToken);
         using (var malformed = connection.CreateCommand())
         {
-            // More than a metadata page of managed-invalid keys still exercises empty continuations.
-            // Sequence zero leaves the public journal's bilateral proofs unchanged.
+            // More than a metadata page of managed-invalid keys, live and deleted, still exercises empty continuations;
+            // empty and oversized keys stay out of the partial index altogether.
             malformed.CommandText = """
                 WITH RECURSIVE numbers(n) AS (SELECT 0 UNION ALL SELECT n + 1 FROM numbers WHERE n < 129)
-                INSERT INTO documents SELECT 'items', '!' || replace(hex(zeroblob(252)), '00', 'd') || printf('%04d', n), 1, '{}' FROM numbers;
+                INSERT INTO documents SELECT 'items', '!' || replace(hex(zeroblob(252)), '00', 'd') || printf('%04d', n), tb_state('{}'), 65536, '{}' FROM numbers;
                 WITH RECURSIVE numbers(n) AS (SELECT 0 UNION ALL SELECT n + 1 FROM numbers WHERE n < 129)
-                INSERT INTO changes SELECT 0, n, 'items', '!' || replace(hex(zeroblob(252)), '00', 't') || printf('%04d', n), 1, NULL FROM numbers;
-                INSERT INTO documents VALUES ('items', $short, 1, '{}'), ('items', $edge, 1, '{}'),
-                    ('items', $long, 1, '{}'), ($collection, 'live', 1, '{}');
-                INSERT INTO changes VALUES (0, 130, 'items', substr($short, 1, 256) || 'y', 1, NULL),
-                    (0, 131, 'items', substr($edge, 1, 1023) || 'y', 1, NULL), (0, 132, 'items', $long || 'y', 1, NULL),
-                    (0, 133, $collection, 'deleted', 1, NULL);
-                INSERT INTO documents VALUES ('items', '', 1, '{}'), ('', 'empty', 1, '{}');
-                INSERT INTO changes VALUES (0, 134, 'items', '', 1, NULL), (0, 135, '', 'empty', 1, NULL);
+                INSERT INTO documents SELECT 'items', '!' || replace(hex(zeroblob(252)), '00', 't') || printf('%04d', n), tb_state(NULL), 65536, NULL FROM numbers;
+                INSERT INTO documents VALUES ('items', $short, tb_state('{}'), 65536, '{}'), ('items', $edge, tb_state('{}'), 65536, '{}'),
+                    ('items', $long, tb_state('{}'), 65536, '{}'), ($collection, 'live', tb_state('{}'), 65536, '{}');
+                INSERT INTO documents VALUES ('items', substr($short, 1, 256) || 'y', tb_state(NULL), 65536, NULL),
+                    ('items', substr($edge, 1, 1023) || 'y', tb_state(NULL), 65536, NULL), ('items', $long || 'y', tb_state(NULL), 65536, NULL),
+                    ($collection, 'deleted', tb_state(NULL), 65536, NULL);
+                INSERT INTO documents VALUES ('items', '', tb_state('{}'), 65536, '{}'), ('', 'empty', tb_state('{}'), 65536, '{}');
                 WITH RECURSIVE numbers(n) AS (SELECT 0 UNION ALL SELECT n + 1 FROM numbers WHERE n < 4095)
-                INSERT INTO documents SELECT 'items', '!' || replace(hex(zeroblob(1020)), '00', 'a') || printf('%04d', n), 1, '{}' FROM numbers;
+                INSERT INTO documents SELECT 'items', '!' || replace(hex(zeroblob(1020)), '00', 'a') || printf('%04d', n), tb_state('{}'), 65536, '{}' FROM numbers;
                 WITH RECURSIVE numbers(n) AS (SELECT 0 UNION ALL SELECT n + 1 FROM numbers WHERE n < 4095)
-                INSERT INTO changes SELECT 0, 136 + n, 'items', '!' || replace(hex(zeroblob(1020)), '00', 'b') || printf('%04d', n), 1, NULL FROM numbers;
-                INSERT INTO documents VALUES ($prefixCollection, 'live', 1, '{}');
-                INSERT INTO changes VALUES (0, 4232, $prefixCollection, 'deleted', 1, NULL);
+                INSERT INTO documents SELECT 'items', '!' || replace(hex(zeroblob(1020)), '00', 'b') || printf('%04d', n), tb_state(NULL), 65536, NULL FROM numbers;
+                INSERT INTO documents VALUES ($prefixCollection, 'live', tb_state('{}'), 65536, '{}'),
+                    ($prefixCollection, 'deleted', tb_state(NULL), 65536, NULL);
                 """;
             malformed.Parameters.AddWithValue("$short", ids[126] + new string('x', 257 - ids[126].Length));
             malformed.Parameters.AddWithValue("$edge", ids[127] + new string('x', 1024 - ids[127].Length));
@@ -139,7 +136,6 @@ public sealed class AntiEntropyBoundaryTests
         {
             var plan = await QueryPlan.ExplainAsync(tenant.File(server, "repair"), sql);
             await Assert.That(plan).Contains("INDEX documents_replication_keys");
-            await Assert.That(plan).Contains("USING INDEX changes_replication_deleted");
             await Assert.That(plan.Contains("SCAN documents |", StringComparison.Ordinal)).IsFalse();
         }
 
@@ -161,21 +157,22 @@ public sealed class AntiEntropyBoundaryTests
             {
                 using var readCall = client.ReadRangeAsync(request, cancellationToken: cancellationToken);
                 var page = await readCall.ResponseAsync;
-                var changes = page.Envelope.IsEmpty ? [] : ChangeGroup.Decode(ApplicationEnvelope.Decode(page.Envelope.Span, ReplicationProtocol.MaxApplicationBytes));
+                var changes = page.Envelope.IsEmpty ? []
+                    : DeltaGroup.Decode(ApplicationEnvelope.Decode(page.Envelope.Span, ReplicationProtocol.MaxApplicationBytes), maxChanges: 128).Changes;
                 await Assert.That(changes.Count <= 128).IsTrue();
-                await Assert.That(ChangeGroup.ContentBytes(changes) <= IStorageTransaction.MaxChangeGroupBytes).IsTrue();
+                await Assert.That(Deltas.ContentBytes(changes) <= IStorageTransaction.MaxChangeGroupBytes).IsTrue();
                 await Assert.That(++pages <= 5).IsTrue();
                 if (page.Envelope.IsEmpty && page.HasMore)
                 {
                     emptyContinuations++;
-                    await Assert.That(DocumentChange.HasValidKey(page.AfterCollection, page.AfterId)).IsFalse();
+                    await Assert.That(DocumentDelta.HasValidKey(page.AfterCollection, page.AfterId)).IsFalse();
                 }
 
                 foreach (var change in changes)
                 {
-                    await Assert.That(DocumentChange.HasValidKey(change.Collection, change.Id)).IsTrue();
+                    await Assert.That(DocumentDelta.HasValidKey(change.Collection, change.Id)).IsTrue();
                     await Assert.That(seen.Add((change.Collection, change.Id))).IsTrue();
-                    if (change.Collection == "items" && change.Json is null)
+                    if (change.Collection == "items" && Deltas.Json(change) is null)
                     {
                         tombstones.Add(change.Id);
                     }
@@ -197,7 +194,7 @@ public sealed class AntiEntropyBoundaryTests
             await Assert.That(pages).IsGreaterThanOrEqualTo(2);
             await Assert.That(emptyContinuations).IsGreaterThanOrEqualTo(1);
             var expected = ids.Append(unicode).Select(id => ("items", id));
-            await Assert.That(seen).IsEquivalentTo(continuation ? expected : expected.Append((DocumentChange.Collections, "items")));
+            await Assert.That(seen).IsEquivalentTo(continuation ? expected : expected.Append((DocumentDelta.Collections, "items")));
             await Assert.That(tombstones).IsEquivalentTo(deleted);
         }
 
@@ -207,7 +204,7 @@ public sealed class AntiEntropyBoundaryTests
 
     [Test]
     [Timeout(60_000)]
-    public async Task Oversized_stored_bodies_and_half_empty_cursors_are_rejected_by_real_repair_Rpcs(CancellationToken cancellationToken)
+    public async Task Oversized_stored_registers_and_half_empty_cursors_are_rejected_by_real_repair_Rpcs(CancellationToken cancellationToken)
     {
         using var peerTls = new PeerTls();
         using var clientTls = new ClientTls();
@@ -247,7 +244,8 @@ public sealed class AntiEntropyBoundaryTests
         {
             await connection.OpenAsync(cancellationToken);
             using var corrupt = connection.CreateCommand();
-            corrupt.CommandText = "UPDATE documents SET body = '{\"payload\":\"' || replace(hex(zeroblob(1048577)), '00', 'x') || '\"}' WHERE collection = 'items' AND id = $id;";
+            // A register past the most one change may carry: no page can send it.
+            corrupt.CommandText = "UPDATE documents SET state = zeroblob(3 * 1024 * 1024 + 1) WHERE collection = 'items' AND id = $id;";
             corrupt.Parameters.AddWithValue("$id", id);
             await Assert.That(await corrupt.ExecuteNonQueryAsync(cancellationToken)).IsEqualTo(1);
         }
@@ -267,9 +265,6 @@ public sealed class AntiEntropyBoundaryTests
         using var call = client.DigestAsync(identity, cancellationToken: token);
         var digest = await call.ResponseAsync;
         identity.Incarnation = digest.Incarnation;
-        identity.Origin = ByteString.CopyFrom(EntityIds.New().ToByteArray());
-        identity.SourceProof = new JournalProof { Origin = identity.Origin, Digest = ByteString.CopyFrom(JournalDigest.Initial(identity.Origin.Span)) };
-        identity.TargetProof = new JournalProof { Origin = digest.Origin, Digest = ByteString.CopyFrom(JournalDigest.Initial(digest.Origin.Span)) };
         return (identity, digest);
     }
 }

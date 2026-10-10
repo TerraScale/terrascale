@@ -803,7 +803,7 @@ public sealed partial class CrossRegionPagingProgressTests
 
     private sealed class OpeningJournal(IReplicationJournal inner, Func<IDatabaseStore, CancellationToken, ValueTask> afterOpened) : IReplicationJournal
     {
-        public async ValueTask<(IDatabaseStore Store, ReadOnlyMemory<byte> Receiver, long Applied, ReadOnlyMemory<byte> Digest)> OpenAsync(
+        public async ValueTask<(IDatabaseStore Store, ReadOnlyMemory<byte> Receiver, long Applied)> OpenAsync(
             TenantContext database, ReadOnlyMemory<byte> origin, CancellationToken cancellationToken)
         {
             var opened = await inner.OpenAsync(database, origin, cancellationToken);
@@ -812,9 +812,8 @@ public sealed partial class CrossRegionPagingProgressTests
         }
 
         public ValueTask<JournalAppend> AppendAsync(
-            IDatabaseStore store, ReadOnlyMemory<byte> origin, long sequence, IReadOnlyList<DocumentChange> changes,
-            ReadOnlyMemory<byte> previousDigest, ReadOnlyMemory<byte> digest, CancellationToken cancellationToken) =>
-            inner.AppendAsync(store, origin, sequence, changes, previousDigest, digest, cancellationToken);
+            IDatabaseStore store, ReadOnlyMemory<byte> origin, long sequence, CapturedGroup group, CancellationToken cancellationToken) =>
+            inner.AppendAsync(store, origin, sequence, group, cancellationToken);
     }
 
     // The first round reads this region's catalog page before it asks for heads. With one storage slot, startup work can

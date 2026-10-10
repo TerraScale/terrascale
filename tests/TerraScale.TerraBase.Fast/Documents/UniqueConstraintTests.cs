@@ -383,6 +383,9 @@ public sealed class UniqueConstraintTests
 
         var tenant = new TenantContext(database.Organization, PlanTier.Hobby, database.Project, database.Id);
         var store = (await api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(tenant, CancellationToken.None))!;
+        // Another member declares, then replaces its declaration.
+        var declarer = Deltas.NewReplica();
+        DocumentDelta? declared = null;
         foreach (var hidden in new[] { true, false })
         {
             long previous;
@@ -393,7 +396,8 @@ public sealed class UniqueConstraintTests
                 var schema = hidden
                     ? "{\"constraints\":[{\"name\":\"email\",\"fields\":[\"email\"],\"normalization\":\"none\"}]}"
                     : "{\"constraints\":[]}";
-                await transaction.ApplyAsync(new DocumentChange("_unique", "people", previous + 1, Encoding.UTF8.GetBytes(schema)), CancellationToken.None);
+                declared = Deltas.Write("_unique", "people", schema, declarer, over: declared?.State);
+                await transaction.ApplyAsync(declared, CancellationToken.None);
                 current = await transaction.CommitAsync(CancellationToken.None);
             }
 

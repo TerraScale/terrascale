@@ -1,8 +1,6 @@
 using System.Globalization;
 using System.Net;
 using Bogus;
-using Google.Protobuf;
-using TerraBase.Engine;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
 using TerraBase.Primitives;
@@ -42,18 +40,16 @@ public sealed class ReplicationStatusTests
         var waiting = NewSignal();
         var release = NewSignal();
         var applied = 0UL;
-        ByteString? digest = null;
         await using var peer = await FakePeer.StartAsync(peerTls, async (requests, responses, context) =>
         {
             await requests.MoveNext(context.CancellationToken);
-            await responses.WriteAsync(Welcome(requests.Current.Hello, applied, digest, out var member), context.CancellationToken);
+            await responses.WriteAsync(Welcome(requests.Current.Hello, applied, out var member), context.CancellationToken);
             while (await requests.MoveNext(context.CancellationToken))
             {
                 waiting.TrySetResult();
                 await release.Task.WaitAsync(context.CancellationToken);
                 var batch = requests.Current.CommittedGroup;
                 applied = batch.EventId.Sequence;
-                digest = batch.JournalDigest;
                 await responses.WriteAsync(FakePeer.Ack(member, batch, applied), context.CancellationToken);
             }
         });
@@ -132,7 +128,7 @@ public sealed class ReplicationStatusTests
     }
 
     [Test]
-    public async Task A_conflicting_journal_ack_is_visible_until_valid_replication_recovers()
+    public async Task A_peer_ahead_of_the_stream_is_visible_until_valid_replication_recovers()
     {
         using var peerTls = new PeerTls();
         using var clientTls = new ClientTls();
@@ -141,7 +137,6 @@ public sealed class ReplicationStatusTests
         var recover = NewSignal();
         var corrupted = 0;
         var applied = 0UL;
-        ByteString? digest = null;
         await using var peer = await FakePeer.StartAsync(peerTls, async (requests, responses, context) =>
         {
             await requests.MoveNext(context.CancellationToken);
@@ -151,21 +146,21 @@ public sealed class ReplicationStatusTests
                 await recover.Task.WaitAsync(context.CancellationToken);
             }
 
-            await responses.WriteAsync(Welcome(requests.Current.Hello, applied, digest, out var member), context.CancellationToken);
+            var welcome = Welcome(requests.Current.Hello, applied, out var member);
+            if (Interlocked.Exchange(ref corrupted, 1) == 0)
+            {
+                // A peer that applied groups this origin never committed: a sender never sends over it.
+                welcome.Welcome.Frontiers[0].DurableSequence = applied + 100;
+                await responses.WriteAsync(welcome, context.CancellationToken);
+                return;
+            }
+
+            await responses.WriteAsync(welcome, context.CancellationToken);
             while (await requests.MoveNext(context.CancellationToken))
             {
                 var batch = requests.Current.CommittedGroup;
-                var ack = FakePeer.Ack(member, batch, batch.EventId.Sequence);
-                if (Interlocked.Exchange(ref corrupted, 1) == 0)
-                {
-                    ack.Durable.JournalDigest = ByteString.CopyFrom(new byte[JournalDigest.Length]);
-                    await responses.WriteAsync(ack, context.CancellationToken);
-                    return;
-                }
-
                 applied = batch.EventId.Sequence;
-                digest = batch.JournalDigest;
-                await responses.WriteAsync(ack, context.CancellationToken);
+                await responses.WriteAsync(FakePeer.Ack(member, batch, applied), context.CancellationToken);
             }
         });
         await using var sender = await TerraBaseTestServer.StartAsync(settings =>
@@ -208,7 +203,7 @@ public sealed class ReplicationStatusTests
 
     private static TaskCompletionSource NewSignal() => new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    private static SyncResponse Welcome(Hello hello, ulong applied, ByteString? digest, out PeerIdentity member)
+    private static SyncResponse Welcome(Hello hello, ulong applied, out PeerIdentity member)
     {
         var welcome = FakePeer.Welcome(hello, out member);
         var origin = hello.LocalIdentity.MemberIncarnation;
@@ -216,7 +211,6 @@ public sealed class ReplicationStatusTests
         {
             Origin = new OriginIdentity { ReplicaId = origin, Incarnation = origin },
             DurableSequence = applied,
-            JournalDigest = digest ?? ByteString.CopyFrom(JournalDigest.Initial(origin.Span)),
         });
         return welcome;
     }

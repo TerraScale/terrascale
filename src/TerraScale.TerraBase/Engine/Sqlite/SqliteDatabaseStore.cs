@@ -5,6 +5,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Data.Sqlite;
 using TerraBase.Configuration;
+using TerraBase.Engine.Lattices;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
 using TerraBase.Primitives;
@@ -34,18 +35,23 @@ internal sealed partial class SqliteDatabaseStore(
     internal SqliteDatabaseStore(string name, string path, SqliteSessionPool pool, SqliteIoPool io, string pragmas, TimeProvider? time = null, Action? committed = null)
         : this(name, path, pool, io, pragmas, null, time, null, committed) { }
 
-    /// <summary>On-disk schema version, stored in <c>PRAGMA user_version</c>.</summary>
+    /// <summary>
+    /// On-disk schema version of client and system databases alike, stored in <c>PRAGMA user_version</c>. It never
+    /// increases: a format change wipes storage at a cutover instead (docs/design/anna-core.md, decision 9).
+    /// </summary>
     private const int SchemaVersion = 1;
 
     /// <summary>
-    /// The storage format's identity: SHA-256 of the schema every database file is bootstrapped with. Version numbers never
-    /// increase (docs/design/anna-core.md decision 9), so this is what tells two formats apart; any change to the bootstrap
-    /// SQL is a format change.
+    /// The storage format's identity: SHA-256 of the schemas every database file is bootstrapped with. Version numbers
+    /// never increase (docs/design/anna-core.md decision 9), so this is what tells two formats apart; any change to the
+    /// bootstrap SQL is a format change.
     /// </summary>
-    internal static readonly byte[] FormatDigest = SHA256.HashData(Encoding.UTF8.GetBytes(SchemaSql + UniqueSchemaSql));
+    internal static readonly byte[] FormatDigest =
+        SHA256.HashData(Encoding.UTF8.GetBytes(SystemSchemaSql + ClientSchemaSql + UniqueSchemaSql));
 
-    // Greenfield bootstrap only: an older on-disk shape must be discarded, never upgraded.
-    private const string SchemaSql = $$"""
+    // Greenfield bootstrap only: an older on-disk shape must be discarded, never upgraded. The system database keeps its
+    // journal of whole writes with a SHA-256 prefix digest per group (docs/decisions/0009) until TS-647 step 5.
+    private const string SystemSchemaSql = """
         CREATE TABLE documents (
             collection TEXT NOT NULL, id TEXT NOT NULL, version INTEGER NOT NULL, body TEXT,
             PRIMARY KEY (collection, id)
@@ -100,10 +106,70 @@ internal sealed partial class SqliteDatabaseStore(
         CREATE TABLE journal_prefixes (
             sequence INTEGER PRIMARY KEY CHECK (sequence > 0), digest BLOB NOT NULL CHECK (length(digest) = 32)
         ) WITHOUT ROWID;
-        CREATE INDEX documents_replication_keys ON documents (collection, id)
-            WHERE {{SqliteStatements.BoundedReplicationKeys}};
-        CREATE INDEX changes_replication_deleted ON changes (collection, id, version)
-            WHERE body IS NULL AND {{SqliteStatements.BoundedReplicationKeys}};
+        """;
+
+    // A client database (docs/design/anna-core.md, Stored state). A document row keeps its encoded register (state), the
+    // stamp of its last-writer-wins write (version) and that write's JSON (body), NULL when the write is a tombstone or
+    // loses a uniqueness conflict, so reads, queries, indexes and shapes never decode a register. The journal holds this
+    // database's own stream: groups of deltas (changes) and their dependency vectors (journal), under the replica id they
+    // were captured by (replication_state.replica, 0 before the first open), and applied holds the applied position of
+    // every other origin. Shape history: every write is retained in change_log so shape snapshots at an offset and closed
+    // log chunks never change (docs/shape-reads.md); change_log_births holds each document's first write per collection
+    // generation, and change_log_high the generation's highest id over time, so a snapshot finds the ids that existed at
+    // its offset without reading later ones. Anti-entropy pages seek the partial key index, so empty or oversized keys,
+    // which no peer admits, do not lengthen its scans.
+    private const string ClientSchemaSql = $$"""
+        CREATE TABLE documents (
+            collection TEXT NOT NULL, id TEXT NOT NULL, state BLOB NOT NULL, version INTEGER NOT NULL, body TEXT,
+            PRIMARY KEY (collection, id)
+        ) WITHOUT ROWID;
+        CREATE INDEX documents_live ON documents (collection, id) WHERE body IS NOT NULL;
+        CREATE TABLE collections (
+            name TEXT PRIMARY KEY, created_at INTEGER NOT NULL, generation INTEGER NOT NULL,
+            entity_id TEXT NOT NULL CHECK (length(entity_id) = 26)
+        ) WITHOUT ROWID;
+        CREATE TABLE commit_offset (
+            id INTEGER PRIMARY KEY CHECK (id = 1), value INTEGER NOT NULL, incarnation TEXT NOT NULL
+        );
+        INSERT INTO commit_offset (id, value, incarnation) VALUES (1, 0, '');
+        CREATE TABLE shape_history (id INTEGER PRIMARY KEY CHECK (id = 1), floor INTEGER NOT NULL);
+        INSERT INTO shape_history (id, floor) VALUES (1, 0);
+        CREATE TABLE change_log (
+            sequence INTEGER PRIMARY KEY, collection TEXT NOT NULL, generation INTEGER NOT NULL,
+            id TEXT NOT NULL, version INTEGER NOT NULL, body TEXT, document_version INTEGER NOT NULL
+        );
+        CREATE INDEX change_log_by_offset ON change_log (collection, generation, version, sequence);
+        CREATE INDEX change_log_by_document ON change_log (collection, generation, id, version, sequence);
+        CREATE TABLE change_log_births (
+            collection TEXT NOT NULL, generation INTEGER NOT NULL, id TEXT NOT NULL, version INTEGER NOT NULL,
+            PRIMARY KEY (collection, generation, id, version)
+        ) WITHOUT ROWID;
+        CREATE TABLE change_log_high (
+            collection TEXT NOT NULL, generation INTEGER NOT NULL, version INTEGER NOT NULL, id TEXT NOT NULL,
+            PRIMARY KEY (collection, generation, version, id)
+        ) WITHOUT ROWID;
+        CREATE TRIGGER change_log_birth AFTER INSERT ON change_log
+        WHEN NOT EXISTS (
+            SELECT 1 FROM change_log_births b WHERE b.collection = NEW.collection AND b.generation = NEW.generation AND b.id = NEW.id)
+        BEGIN
+            INSERT INTO change_log_births (collection, generation, id, version) VALUES (NEW.collection, NEW.generation, NEW.id, NEW.version);
+            INSERT INTO change_log_high (collection, generation, version, id)
+                SELECT NEW.collection, NEW.generation, NEW.version, NEW.id
+                WHERE NEW.id > coalesce((
+                    SELECT h.id FROM change_log_high h WHERE h.collection = NEW.collection AND h.generation = NEW.generation
+                    ORDER BY h.version DESC, h.id DESC LIMIT 1), '');
+        END;
+        CREATE TABLE changes (
+            sequence INTEGER NOT NULL, ordinal INTEGER NOT NULL, collection TEXT NOT NULL, id TEXT NOT NULL,
+            state BLOB NOT NULL, PRIMARY KEY (sequence, ordinal)
+        ) WITHOUT ROWID;
+        CREATE TABLE journal (sequence INTEGER PRIMARY KEY CHECK (sequence > 0), dependencies BLOB NOT NULL);
+        CREATE TABLE replication_state (
+            id INTEGER PRIMARY KEY CHECK (id = 1), replica INTEGER NOT NULL, complete INTEGER NOT NULL
+        );
+        INSERT INTO replication_state (id, replica, complete) VALUES (1, 0, 1);
+        CREATE TABLE applied (origin BLOB PRIMARY KEY, sequence INTEGER NOT NULL) WITHOUT ROWID;
+        CREATE INDEX documents_replication_keys ON documents (collection, id) WHERE {{SqliteStatements.BoundedReplicationKeys}};
         """;
 
     private readonly string _connectionString = new SqliteConnectionStringBuilder
@@ -202,6 +268,16 @@ internal sealed partial class SqliteDatabaseStore(
 
     /// <summary>Idle sessions of this database, for tests.</summary>
     internal int IdleCount => pool.IdleCountOf(this);
+
+    /// <summary>What a client database's local writes mint with; the system database writes without it.</summary>
+    internal LocalReplica? Member { get; init; }
+
+    // Whether BootstrapAsync found the journal claimed by this member and complete, so SeedAsync has nothing to do.
+    private bool _claimed;
+
+    /// <summary>The statement that claims a new client database file's journal for <paramref name="replica"/>, at creation.</summary>
+    internal static string ClaimedBy(ReplicaId replica) =>
+        $"UPDATE replication_state SET replica = {unchecked((long)replica.Value)} WHERE id = 1;";
 
     /// <summary>
     /// Whether this is a catalog follower's system database: it refuses write transactions except
@@ -385,11 +461,14 @@ internal sealed partial class SqliteDatabaseStore(
         await InitializeAsync(name, path, io, pragmas, CopyReset, cancellationToken).ConfigureAwait(false);
     }
 
-    /// <summary>Makes a copy of a database a new one: its replication starts over from a baseline.</summary>
-    internal const string CopyReset = SqliteStatements.MaterializeRetainedDeletions + """
-        UPDATE replication_state SET complete = 0 WHERE id = 1;
+    /// <summary>
+    /// Makes a copy of a client database a new one: its stream starts over from a snapshot of its registers, under the
+    /// replica id of the member that opens it (docs/design/anna-core.md, Per-origin streams).
+    /// </summary>
+    internal const string CopyReset = """
+        UPDATE replication_state SET replica = 0, complete = 0 WHERE id = 1;
         DELETE FROM changes;
-        DELETE FROM journal_prefixes;
+        DELETE FROM journal;
         DELETE FROM applied;
         """;
 
@@ -692,54 +771,50 @@ internal sealed partial class SqliteDatabaseStore(
     internal Task ReturnSessionAsync(SqliteSession session) => ReturnAsync(session);
 
     /// <summary>
-    /// When the change log does not cover a copied database's state, appends the current state of every document and tombstone as baseline change groups, one
-    /// bounded group per transaction, then marks the log complete. Merging is idempotent, so a baseline
-    /// repeated after a crash only costs bytes. Returns the last appended sequence (0 when none) and the
-    /// pre-existing states skipped for failing replication admission.
+    /// Readies this client database's own stream for this member (docs/design/anna-core.md, Per-origin streams). A journal
+    /// captured under another replica id (an unclean start raised the epoch, or the file is a copy) is dropped, and the
+    /// stream starts again under the new origin with a baseline: the state of every register, live or tombstone, as
+    /// change groups, one bounded group per transaction, before the journal is marked complete. Joins are idempotent, so
+    /// a baseline repeated after a crash only costs bytes. Returns the last appended sequence, 0 when none.
     /// </summary>
-    internal async Task<(long Sequence, int Skipped)> SeedAsync(CancellationToken cancellationToken)
+    internal async Task<long> SeedAsync(CancellationToken cancellationToken)
     {
-        var (sequence, skipped) = (0L, 0);
-        foreach (var tombstones in new[] { false, true })
+        // Seen at bootstrap: the journal is already this member's and complete, as for every open after the first.
+        if (_claimed)
         {
-            (string Collection, string Id)? after = null;
-            while (true)
+            return 0;
+        }
+
+        var claim = (SqliteStorageTransaction)await BeginTransactionAsync(write: true, cancellationToken).ConfigureAwait(false);
+        await using (claim.ConfigureAwait(false))
+        {
+            var complete = await claim.ClaimJournalAsync(cancellationToken).ConfigureAwait(false);
+            await claim.CommitAsync(cancellationToken).ConfigureAwait(false);
+            if (complete)
             {
-                var transaction = (SqliteStorageTransaction)await BeginTransactionAsync(write: true, cancellationToken).ConfigureAwait(false);
-                await using (transaction.ConfigureAwait(false))
-                {
-                    if (sequence == 0 && after is null && !tombstones)
-                    {
-                        if (await transaction.IsCompleteAsync(cancellationToken).ConfigureAwait(false))
-                        {
-                            return (0, 0);
-                        }
-
-                        // SQL skips oversized keys without bringing them into managed memory or the resume cursor.
-                        skipped = await transaction.CountOversizedBaselineKeysAsync(cancellationToken).ConfigureAwait(false);
-                    }
-
-                    if (await transaction.AppendBaselineAsync(tombstones, after, cancellationToken).ConfigureAwait(false) is not { } chunk)
-                    {
-                        break;
-                    }
-
-                    await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-                    after = chunk.Last;
-                    sequence = Math.Max(sequence, chunk.Sequence);
-                    skipped += chunk.Skipped;
-                }
+                return 0;
             }
         }
 
-        var complete = (SqliteStorageTransaction)await BeginTransactionAsync(write: true, cancellationToken).ConfigureAwait(false);
-        await using (complete.ConfigureAwait(false))
+        var sequence = 0L;
+        (string Collection, string Id)? after = null;
+        while (true)
         {
-            await complete.MarkCompleteAsync(cancellationToken).ConfigureAwait(false);
-            await complete.CommitAsync(cancellationToken).ConfigureAwait(false);
-        }
+            var transaction = (SqliteStorageTransaction)await BeginTransactionAsync(write: true, cancellationToken).ConfigureAwait(false);
+            await using (transaction.ConfigureAwait(false))
+            {
+                if (await transaction.AppendBaselineAsync(after, cancellationToken).ConfigureAwait(false) is not { } chunk)
+                {
+                    await transaction.MarkCompleteAsync(cancellationToken).ConfigureAwait(false);
+                    await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+                    return sequence;
+                }
 
-        return (sequence, skipped);
+                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+                after = chunk.Last;
+                sequence = chunk.Sequence;
+            }
+        }
     }
 
     /// <summary>Takes back a session whose work has ended; the pool keeps it idle or closes it.</summary>
@@ -851,6 +926,14 @@ internal sealed partial class SqliteDatabaseStore(
                 _incarnation = new(Ulid.Parse(
                     (string)(Scalar(session.Connection, null, SqliteStatements.Incarnation)
                         ?? throw new InvalidOperationException("database incarnation is missing"))));
+                if (!IsSystem && Member is { } member)
+                {
+                    using var command = session.Connection.CreateCommand();
+                    command.CommandText = SqliteStatements.JournalState;
+                    using var reader = command.ExecuteReader();
+                    _claimed = reader.Read() && reader.GetInt64(0) == unchecked((long)member.Id.Value) && reader.GetInt64(1) != 0;
+                }
+
                 return true;
             }, cancellationToken).ConfigureAwait(false);
         }
@@ -886,7 +969,8 @@ internal sealed partial class SqliteDatabaseStore(
         }
 
         cancellationToken.ThrowIfCancellationRequested();
-        Scalar(connection, transaction, SchemaSql + UniqueSchemaSql + $"PRAGMA user_version = {SchemaVersion};");
+        var schema = name == SqliteStorageEngine.SystemName ? SystemSchemaSql : ClientSchemaSql;
+        Scalar(connection, transaction, schema + UniqueSchemaSql + $"PRAGMA user_version = {SchemaVersion};");
         RenewIncarnation(connection, transaction);
         cancellationToken.ThrowIfCancellationRequested();
         transaction.Commit();

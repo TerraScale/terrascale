@@ -11,16 +11,13 @@ public sealed class QueryPlanTests
 
     // The plans recorded in docs/sqlite-query-plans.md. Every statement seeks a primary key, except the
     // first page of collections and the collection counts and sizes, which walk the collections key in order, and
-    // the index catalog reads, which scan the small schema table. Repair sorts at most 129 key/metadata rows.
+    // the index catalog reads, which scan the small schema table.
     private static readonly Dictionary<string, string> Expected = new(StringComparer.Ordinal)
     {
         ["DocumentBytes"] = "SEARCH d USING PRIMARY KEY (collection=? AND id=?) | SEARCH c USING PRIMARY KEY (collection=? AND id=?) LEFT-JOIN",
         ["StoredDocumentBytes"] = "SCAN collections | CORRELATED SCALAR SUBQUERY 1 | SEARCH d USING PRIMARY KEY (collection=?) | SEARCH c USING PRIMARY KEY (collection=? AND id=?) LEFT-JOIN",
         ["Get"] = "SEARCH documents USING PRIMARY KEY (collection=? AND id=?)",
         ["UniqueRawDocument"] = "SEARCH d USING PRIMARY KEY (collection=? AND id=?) | SEARCH c USING PRIMARY KEY (collection=? AND id=?) LEFT-JOIN",
-        ["ReplicationRetainedBody"] = "CO-ROUTINE latest | SEARCH change_log USING INDEX change_log_by_document (collection=? AND generation=? AND id=?) | SCALAR SUBQUERY 1 | SEARCH collections USING PRIMARY KEY (name=?) | SCAN latest | SCALAR SUBQUERY 3 | SEARCH unique_conflicts USING PRIMARY KEY (collection=? AND id=?) | SEARCH d USING PRIMARY KEY (collection=? AND id=?) | CORRELATED SCALAR SUBQUERY 4 | SEARCH changes USING INDEX changes_deleted (collection=? AND id=? AND version>?)",
-        ["ReplicationRetainedBodyBytes"] = "SEARCH change_log USING INTEGER PRIMARY KEY (rowid=?)",
-        ["RestoreReplicationBody"] = "SEARCH documents USING PRIMARY KEY (collection=? AND id=?) | SCALAR SUBQUERY 1 | SEARCH unique_conflicts USING PRIMARY KEY (collection=? AND id=?)",
         ["Version"] = "SEARCH documents USING PRIMARY KEY (collection=? AND id=?)",
         // Inserts have no plan; the upsert's conflict check is a primary-key lookup.
         ["Put"] = "",
@@ -51,34 +48,35 @@ public sealed class QueryPlanTests
         ["ListIndexes"] = "SCAN sqlite_schema",
         ["IndexExists"] = "SCAN sqlite_schema",
         ["ObserveOffset"] = "SEARCH commit_offset USING INTEGER PRIMARY KEY (rowid=?)",
-        ["RetainedDeletion"] = "SEARCH changes USING INDEX changes_deleted (collection=? AND id=? AND version>?)",
-        ["MaterializeRetainedDeletions"] = "SCAN changes USING INDEX changes_deleted",
-        ["ApplyDocument"] = "",
-        ["ApplyTombstone"] = "",
-        // Replicated collection metadata (TS-574): the drop register is a document; a drop walks one collection's key range.
-        ["DroppedCollection"] = "SEARCH documents USING PRIMARY KEY (collection=? AND id=?)",
-        ["TombstoneCollection"] = "SEARCH documents USING PRIMARY KEY (collection=?)",
-        ["LiveDocument"] = "SEARCH documents USING INDEX documents_live (collection=?)",
-        ["CollectionDocumentIds"] = "SEARCH documents USING PRIMARY KEY (collection=?)",
+        // Client databases (docs/design/anna-core.md): registers by key, a drop's live ids from the index alone, the journal
+        // of the database's own stream and the applied positions of the others, baselines in key order.
+        ["GetState"] = "SEARCH documents USING PRIMARY KEY (collection=? AND id=?)",
+        ["ClientHasCollectionState"] = "SCAN CONSTANT ROW | SCALAR SUBQUERY 1 | SEARCH documents USING PRIMARY KEY (collection>? AND collection<?) | SCALAR SUBQUERY 2 | SEARCH collections USING PRIMARY KEY (name>? AND name<?) | SCALAR SUBQUERY 3 | SEARCH change_log USING COVERING INDEX change_log_by_offset (collection>? AND collection<?)",
+        ["ClientHasCollectionStateFrom"] = "SCAN CONSTANT ROW | SCALAR SUBQUERY 1 | SEARCH documents USING PRIMARY KEY (collection>?) | SCALAR SUBQUERY 2 | SEARCH collections USING PRIMARY KEY (name>?) | SCALAR SUBQUERY 3 | SEARCH change_log USING COVERING INDEX change_log_by_offset (collection>?)",
+        ["Materialized"] = "SEARCH d USING PRIMARY KEY (collection=? AND id=?) | SEARCH c USING PRIMARY KEY (collection=? AND id=?) LEFT-JOIN",
+        ["PutState"] = "",
+        ["LiveIds"] = "SEARCH documents USING INDEX documents_live (collection=?)",
+        ["JournalState"] = "SEARCH replication_state USING INTEGER PRIMARY KEY (rowid=?)",
+        ["ClaimJournal"] = "SEARCH replication_state USING INTEGER PRIMARY KEY (rowid=?)",
+        ["LastGroup"] = "SEARCH journal",
+        ["AppendGroup"] = "",
+        ["AppendGroupChange"] = "",
+        ["GroupDependencies"] = "SEARCH journal USING INTEGER PRIMARY KEY (rowid=?)",
+        ["GroupChanges"] = "SEARCH changes USING PRIMARY KEY (sequence=?)",
+        ["GetApplied"] = "SEARCH applied USING PRIMARY KEY (origin=?)",
+        ["AppliedPositions"] = "SCAN applied",
+        ["SetApplied"] = "",
+        ["DropSupersededApplied"] = "SCAN applied",
+        ["BaselineFirst"] = "SCAN documents",
+        ["BaselineAfter"] = "SEARCH documents USING PRIMARY KEY ((collection,id)>(?,?))",
+        ["ReplicationStateFirst"] = "SCAN documents USING INDEX documents_replication_keys",
+        ["ReplicationStateAfter"] = "SEARCH documents USING INDEX documents_replication_keys ((collection,id)>(?,?))",
         ["Origin"] = "SEARCH commit_offset USING INTEGER PRIMARY KEY (rowid=?)",
-        ["Complete"] = "SEARCH replication_state USING INTEGER PRIMARY KEY (rowid=?)",
         ["MarkComplete"] = "SEARCH replication_state USING INTEGER PRIMARY KEY (rowid=?)",
         ["LastSequence"] = "SEARCH changes USING PRIMARY KEY",
-        ["NextSequence"] = "SEARCH changes USING PRIMARY KEY",
         ["AppendReplicationChange"] = "",
-        ["ReadChanges"] = "SEARCH changes USING PRIMARY KEY (sequence=?)",
         ["GetChangeDigest"] = "SEARCH journal_prefixes USING PRIMARY KEY (sequence=?)",
         ["AppendChangeDigest"] = "",
-        ["GetAppliedFrontier"] = "SEARCH applied USING PRIMARY KEY (origin=?)",
-        ["GetApplied"] = "SEARCH applied USING PRIMARY KEY (origin=?)",
-        ["SetApplied"] = "",
-        ["CountOversizedBaselineKeys"] = "SCAN documents",
-        ["BaselineDocumentsFirst"] = "SCAN documents USING INDEX documents_live",
-        ["BaselineDocumentsAfter"] = "SEARCH documents USING INDEX documents_live ((collection,id)>(?,?))",
-        ["BaselineTombstonesFirst"] = "SCAN documents",
-        ["BaselineTombstonesAfter"] = "SEARCH documents USING PRIMARY KEY ((collection,id)>(?,?))",
-        ["ReplicationStateFirst"] = "MATERIALIZE evidence | CO-ROUTINE keys | MERGE (UNION) | LEFT | SCAN documents USING COVERING INDEX documents_replication_keys | RIGHT | CO-ROUTINE deleted_keys | SETUP | SCAN CONSTANT ROW | SCALAR SUBQUERY 1 | SCAN changes USING INDEX changes_replication_deleted | SCALAR SUBQUERY 2 | SCAN changes USING INDEX changes_replication_deleted | RECURSIVE STEP | SCAN deleted_keys | CORRELATED SCALAR SUBQUERY 4 | SEARCH changes USING INDEX changes_replication_deleted (collection=? AND id>?) | CORRELATED SCALAR SUBQUERY 5 | SEARCH changes USING INDEX changes_replication_deleted (collection>?) | CORRELATED SCALAR SUBQUERY 6 | SEARCH changes USING INDEX changes_replication_deleted (collection=? AND id>?) | CORRELATED SCALAR SUBQUERY 7 | SEARCH changes USING INDEX changes_replication_deleted (collection>?) | SCAN deleted_keys | USE TEMP B-TREE FOR ORDER BY | SCAN keys | SEARCH documents USING PRIMARY KEY (collection=? AND id=?) LEFT-JOIN | SEARCH unique_conflicts USING PRIMARY KEY (collection=? AND id=?) LEFT-JOIN | CORRELATED SCALAR SUBQUERY 11 | SEARCH changes USING INDEX changes_deleted (collection=? AND id=?) | SCAN evidence | USE TEMP B-TREE FOR ORDER BY",
-        ["ReplicationStateAfter"] = "MATERIALIZE evidence | CO-ROUTINE keys | MERGE (UNION) | LEFT | SEARCH documents USING COVERING INDEX documents_replication_keys ((collection,id)>(?,?)) | RIGHT | CO-ROUTINE deleted_keys | SETUP | SCAN CONSTANT ROW | SCALAR SUBQUERY 1 | SEARCH changes USING INDEX changes_replication_deleted (collection=? AND id>?) | SCALAR SUBQUERY 2 | SEARCH changes USING INDEX changes_replication_deleted (collection>?) | SCALAR SUBQUERY 3 | SEARCH changes USING INDEX changes_replication_deleted (collection=? AND id>?) | SCALAR SUBQUERY 4 | SEARCH changes USING INDEX changes_replication_deleted (collection>?) | RECURSIVE STEP | SCAN deleted_keys | CORRELATED SCALAR SUBQUERY 6 | SEARCH changes USING INDEX changes_replication_deleted (collection=? AND id>?) | CORRELATED SCALAR SUBQUERY 7 | SEARCH changes USING INDEX changes_replication_deleted (collection>?) | CORRELATED SCALAR SUBQUERY 8 | SEARCH changes USING INDEX changes_replication_deleted (collection=? AND id>?) | CORRELATED SCALAR SUBQUERY 9 | SEARCH changes USING INDEX changes_replication_deleted (collection>?) | SCAN deleted_keys | USE TEMP B-TREE FOR ORDER BY | SCAN keys | SEARCH documents USING PRIMARY KEY (collection=? AND id=?) LEFT-JOIN | SEARCH unique_conflicts USING PRIMARY KEY (collection=? AND id=?) LEFT-JOIN | CORRELATED SCALAR SUBQUERY 13 | SEARCH changes USING INDEX changes_deleted (collection=? AND id=?) | SCAN evidence | USE TEMP B-TREE FOR ORDER BY",
         // System database replication: snapshot pages, group pages, prefix drops, replica writes, journal tail.
         ["SystemDocumentsFirst"] = "SCAN documents USING INDEX documents_live",
         ["SystemDocumentsAfter"] = "SEARCH documents USING INDEX documents_live ((collection,id)>(?,?))",
@@ -104,16 +102,17 @@ public sealed class QueryPlanTests
             tenant.Database("plans", $"/collections/items/documents/by-key?id={EntityIds.New()}"),
             new { title = Faker.Commerce.ProductName() })).EnsureSuccessStatusCode();
         // Every statement the engine runs must have a recorded plan.
-        await Assert.That(SqliteStatements.All.Keys).IsEquivalentTo(Expected.Keys);
-        // _system (created by issuing the key) holds API keys and Management documents with the same
-        // statements. Plans depend on the schema, not on the rows, so an almost empty file is enough.
-        foreach (var (database, path) in new[]
+        await Assert.That(SqliteStatements.Shared.Keys.Concat(SqliteStatements.ClientOnly.Keys).Concat(SqliteStatements.SystemOnly.Keys))
+            .IsEquivalentTo(Expected.Keys);
+        // _system (created by issuing the key) holds API keys and Management documents with the shared statements and its
+        // own. Plans depend on the schema, not on the rows, so an almost empty file is enough.
+        foreach (var (database, path, statements) in new[]
         {
-            ("plans", Path.Combine(api.Server.DataDirectory, tenant.OrganizationId, tenant.ProjectId, plans + ".db")),
-            ("_system", Path.Combine(api.Server.DataDirectory, "_system.db")),
+            ("plans", Path.Combine(api.Server.DataDirectory, tenant.OrganizationId, tenant.ProjectId, plans + ".db"), SqliteStatements.ClientOnly),
+            ("_system", Path.Combine(api.Server.DataDirectory, "_system.db"), SqliteStatements.SystemOnly),
         })
         {
-            foreach (var (name, sql) in SqliteStatements.All)
+            foreach (var (name, sql) in SqliteStatements.Shared.Concat(statements))
             {
                 var plan = await QueryPlan.ExplainAsync(path, sql);
                 await Assert.That($"{database} {name}: {plan}").IsEqualTo($"{database} {name}: {Expected[name]}").Because(plan);

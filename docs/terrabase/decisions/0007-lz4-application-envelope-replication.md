@@ -1,6 +1,10 @@
 # 0007: Replication over the LZ4 application envelope
 
-- Status: proposed (2026-10-04); supersedes 0001; the merge policy below needs human approval
+- Status: proposed (2026-10-04); supersedes 0001. Register deltas (TS-647 step 4c, [anna-core](../design/anna-core.md);
+  the format number stays 1, decision 9) replace, for client databases, the `TBDCG001` change group, merge policy v1,
+  the import clock admission and the journal digests below with register deltas joined on apply (`DeltaGroup`); the
+  envelope, limits and handshake stay.
+  Catalog follower pages keep `TBDCG001` until step 5.
 - Scope: `Features/Replication`, `Engine`
 
 ## Context

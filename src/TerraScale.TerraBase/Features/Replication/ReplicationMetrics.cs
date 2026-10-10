@@ -11,7 +11,6 @@ internal sealed class ReplicationMetrics
     private readonly Counter<long> _sentEncodedBytes;
     private readonly Counter<long> _receivedGroups;
     private readonly Counter<long> _creditWaits;
-    private readonly Counter<long> _prefixMismatches;
     private readonly Counter<long> _divergenceDetections;
     private readonly Counter<long> _discoveryPasses;
     private readonly Counter<long> _repairedKeys;
@@ -27,7 +26,6 @@ internal sealed class ReplicationMetrics
         _sentEncodedBytes = meter.CreateCounter<long>("terrabase.replication.sent.encoded", "By", "Envelope bytes sent to peers, after LZ4.");
         _receivedGroups = meter.CreateCounter<long>(
             "terrabase.replication.received.groups", "{group}", "Change groups received from peers, by result: applied, duplicate or rejected.");
-        _prefixMismatches = meter.CreateCounter<long>("terrabase.replication.sender.prefix.mismatches", description: "Peer journal prefixes rejected because their content differs");
         _discoveryPasses = meter.CreateCounter<long>("terrabase.replication.sender.discovery.passes", description: "Completed journal discovery passes, including passes with failures.");
         _divergenceDetections = meter.CreateCounter<long>("terrabase.replication.divergence.detections", description: "Detected journal conflicts across every database, including those omitted from detail.");
         _repairedKeys = meter.CreateCounter<long>("terrabase.replication.repaired.keys", "{key}", "Keys changed by durable anti-entropy merges, excluding duplicates and losing states.");
@@ -77,8 +75,6 @@ internal sealed class ReplicationMetrics
     }
 
     public void Discovered() => _discoveryPasses.Add(1);
-
-    public void PrefixMismatch() => _prefixMismatches.Add(1);
 
     public void DetectedDivergence(string reason) => _divergenceDetections.Add(1, new KeyValuePair<string, object?>("reason", reason));
     public void Repaired(uint keys) => _repairedKeys.Add(keys);

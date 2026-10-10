@@ -126,9 +126,9 @@ public sealed class FakePeer : IAsyncDisposable
             {
                 LocalIdentity = member,
                 ProtocolVersion = new ProtocolVersion { Major = ReplicationProtocol.Major },
-                EventFormatVersion = 1,
-                RecordFormatVersion = 1,
-                MergePolicyVersion = 1,
+                EventFormatVersion = ReplicationProtocol.FormatVersion,
+                RecordFormatVersion = ReplicationProtocol.FormatVersion,
+                MergePolicyVersion = ReplicationProtocol.FormatVersion,
                 Codecs = { PayloadCodec.Lz4BlockV1 },
                 Limits = limits ?? hello.Limits,
             },
@@ -145,9 +145,6 @@ public sealed class FakePeer : IAsyncDisposable
             {
                 Context = new AckContext { AcknowledgingPeer = member, EventId = batch.EventId },
                 DurablePrefix = prefix,
-                JournalDigest = prefix == 0
-                    ? Google.Protobuf.ByteString.CopyFrom(Engine.JournalDigest.Initial(batch.EventId.Origin.Incarnation.Span))
-                    : prefix == batch.EventId.Sequence - 1 ? batch.PreviousJournalDigest : batch.JournalDigest,
             },
         };
     }

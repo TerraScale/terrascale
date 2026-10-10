@@ -112,6 +112,8 @@ internal sealed class StampingStorageEngine(IStorageEngine inner, ISystemReplica
 
     public ValueTask<JournalPosition> GetHeadAsync(CancellationToken cancellationToken) => system.GetHeadAsync(cancellationToken);
 
+    public ValueTask<ReadOnlyMemory<byte>?> GetDigestAsync(long sequence, CancellationToken cancellationToken) => system.GetDigestAsync(sequence, cancellationToken);
+
     public async ValueTask<ISystemReplicaTransaction> BeginReplicaAsync(ReadOnlyMemory<byte>? adopt, CancellationToken cancellationToken)
     {
         var reset = adopt is not null;
@@ -432,57 +434,31 @@ internal sealed class StampingStorageEngine(IStorageEngine inner, ISystemReplica
         public ValueTask<long> GetLastChangeSequenceAsync(CancellationToken cancellationToken) =>
             RunAsync(() => inner.GetLastChangeSequenceAsync(cancellationToken), cancellationToken);
 
-        public ValueTask<IReadOnlyList<DocumentChange>?> ReadChangesAsync(long sequence, CancellationToken cancellationToken) =>
+        public ValueTask<CapturedGroup?> ReadChangesAsync(long sequence, CancellationToken cancellationToken) =>
             RunAsync(() => inner.ReadChangesAsync(sequence, cancellationToken), cancellationToken);
 
         public ValueTask<ReplicationStatePage> ReadReplicationStateAsync(string? afterCollection, string? afterId, CancellationToken cancellationToken) =>
             RunAsync(() => inner.ReadReplicationStateAsync(afterCollection, afterId, cancellationToken), cancellationToken);
 
-        public ValueTask<ReadOnlyMemory<byte>?> GetChangeDigestAsync(long sequence, CancellationToken cancellationToken) =>
-            RunAsync(() => inner.GetChangeDigestAsync(sequence, cancellationToken), cancellationToken);
-
-        public ValueTask<bool> ApplyAsync(DocumentChange change, CancellationToken cancellationToken)
+        public ValueTask<bool> ApplyAsync(DocumentDelta change, CancellationToken cancellationToken)
         {
             ArgumentNullException.ThrowIfNull(change);
-            if (change.Collection is DocumentChange.Collections or DocumentChange.Indexes or DocumentChange.Unique)
+            if (change.Collection is DocumentDelta.Collections or DocumentDelta.Indexes or DocumentDelta.Unique)
             {
                 return WriteCollectionAsync(() => inner.ApplyAsync(change, cancellationToken), cancellationToken);
             }
 
-            // A replicated state may also create its collection; both stripes move like a local write.
+            // A replicated delta may also create its collection; both stripes move like a local write.
             return WriteAsync(change.Collection, change.Id, () => inner.ApplyAsync(change, cancellationToken), cancellationToken);
-        }
-
-        public ValueTask<bool> RepairReplicationStateAsync(DocumentChange change, CancellationToken cancellationToken)
-        {
-            ArgumentNullException.ThrowIfNull(change);
-            if (change.Collection is DocumentChange.Collections or DocumentChange.Indexes or DocumentChange.Unique)
-            {
-                return WriteCollectionAsync(() => inner.RepairReplicationStateAsync(change, cancellationToken), cancellationToken);
-            }
-
-            return WriteAsync(change.Collection, change.Id, () => inner.RepairReplicationStateAsync(change, cancellationToken), cancellationToken);
         }
 
         public ValueTask<long> GetAppliedSequenceAsync(ReadOnlyMemory<byte> origin, CancellationToken cancellationToken) =>
             RunAsync(() => inner.GetAppliedSequenceAsync(origin, cancellationToken), cancellationToken);
 
-        public ValueTask<(long Sequence, ReadOnlyMemory<byte> Digest)> GetAppliedFrontierAsync(
-            ReadOnlyMemory<byte> origin, CancellationToken cancellationToken) =>
-            RunAsync(() => inner.GetAppliedFrontierAsync(origin, cancellationToken), cancellationToken);
-
         public async ValueTask SetAppliedSequenceAsync(ReadOnlyMemory<byte> origin, long sequence, CancellationToken cancellationToken) =>
             await RunAsync(async () =>
             {
                 await inner.SetAppliedSequenceAsync(origin, sequence, cancellationToken).ConfigureAwait(false);
-                return true;
-            }, cancellationToken, mutation: true).ConfigureAwait(false);
-
-        public async ValueTask SetAppliedFrontierAsync(
-            ReadOnlyMemory<byte> origin, long sequence, ReadOnlyMemory<byte> digest, CancellationToken cancellationToken) =>
-            await RunAsync(async () =>
-            {
-                await inner.SetAppliedFrontierAsync(origin, sequence, digest, cancellationToken).ConfigureAwait(false);
                 return true;
             }, cancellationToken, mutation: true).ConfigureAwait(false);
 

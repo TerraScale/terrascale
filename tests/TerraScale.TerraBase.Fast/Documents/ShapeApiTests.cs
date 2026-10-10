@@ -992,7 +992,7 @@ public sealed class ShapeApiTests
         await using (var transaction = await store.BeginTransactionAsync(write: true, CancellationToken.None))
         {
             await transaction.PutAsync(DocumentApi.Collection, id, "{\"status\":\"first\"}"u8.ToArray(), CancellationToken.None);
-            await transaction.DeleteAsync(DocumentApi.Collection, id, CancellationToken.None);
+            await transaction.TombstoneAsync(DocumentApi.Collection, id, CancellationToken.None);
             await transaction.PutAsync(DocumentApi.Collection, id, "{\"status\":\"last\"}"u8.ToArray(), CancellationToken.None);
             await transaction.CommitAsync(CancellationToken.None);
         }
@@ -1006,8 +1006,8 @@ public sealed class ShapeApiTests
         using var snapshot = await GetAsync(shapes, start.Headers.Location!.OriginalString);
         var snapshotBody = await JsonAsync(snapshot);
 
-        // Every write of one commit shares the commit's version, so only the final state may carry it: an
-        // intermediate body under the same version would validate the final one (If-None-Match, If-Match).
+        // A log shows each document once per commit, in its final state: an intermediate body would read as a state the
+        // database never committed (If-None-Match, If-Match).
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(body.GetProperty("changes").GetArrayLength()).IsEqualTo(1);
         await Assert.That(string.Join(",", ops.EnumerateArray().Select(op => op.GetProperty("op").GetString()))).IsEqualTo("upsert");
@@ -1033,7 +1033,8 @@ public sealed class ShapeApiTests
         var id = DocumentApi.NewId();
         await using var writer = await store.BeginTransactionAsync(write: true, CancellationToken.None);
         // The writer has allocated offset head + 1 and holds it uncommitted.
-        var pending = await writer.PutAsync(DocumentApi.Collection, id, Encoding.UTF8.GetBytes("""{"status":"open"}"""), CancellationToken.None);
+        await writer.PutAsync(DocumentApi.Collection, id, Encoding.UTF8.GetBytes("""{"status":"open"}"""), CancellationToken.None);
+        var pending = long.Parse(head, System.Globalization.CultureInfo.InvariantCulture) + 1;
         using var meanwhile = await GetAsync(shapes, $"{api.Shape}?handle={handle}&offset={head}");
         var before = await JsonAsync(meanwhile);
         var poll = GetAsync(shapes, $"{api.Shape}?handle={handle}&offset={head}&live=true");
@@ -1044,7 +1045,6 @@ public sealed class ShapeApiTests
         using var woken = await poll.WaitAsync(TimeSpan.FromSeconds(10));
         var after = await JsonAsync(woken);
 
-        await Assert.That(pending).IsEqualTo(long.Parse(head, System.Globalization.CultureInfo.InvariantCulture) + 1);
         await Assert.That(before.GetProperty("next_offset").GetString()).IsEqualTo(head);
         await Assert.That(before.GetProperty("changes").GetArrayLength()).IsEqualTo(0);
         await Assert.That(after.GetProperty("next_offset").GetString()).IsEqualTo($"{pending}");
@@ -1145,9 +1145,14 @@ public sealed class ShapeApiTests
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         var engine = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
         var database = await api.TenantOfAsync();
-        // An uncaptured engine writer preserves the storage byte limit independently of the client's character bound.
+        // An uncaptured engine writer preserves the storage byte limit independently of the client's character bound. Its
+        // writes mint under a replica id of their own, as another member's would.
+        using var meter = new Meter("TerraBase.Fast.ShapeApiTests");
         using var store = new SqliteDatabaseStore(database.DatabaseId!, await api.DatabaseFileAsync(), engine.Pool, engine.Io,
-            "PRAGMA cache_size = -64; PRAGMA busy_timeout = 30000;", database, TimeProvider.System, changesCommitted: null, committed: null);
+            "PRAGMA cache_size = -64; PRAGMA busy_timeout = 30000;", database, TimeProvider.System, changesCommitted: null, committed: null)
+        {
+            Member = new LocalReplica(Deltas.NewReplica(), new MemberClock(TimeProvider.System, meter)),
+        };
         await using (var write = await store.BeginTransactionAsync(write: true, token))
         {
             var json = Encoding.UTF8.GetBytes($$"""{"padding":"{{padding}}"}""");
@@ -1294,6 +1299,7 @@ public sealed class ShapeApiTests
     {
         await using var connection = new SqliteConnection(DocumentApi.ConnectionString(await api.DatabaseFileAsync()));
         await connection.OpenAsync();
+        StoredRegisters.Register(connection);
         await using var transaction = await connection.BeginTransactionAsync();
         await using var write = connection.CreateCommand();
         write.CommandText = """
@@ -1301,9 +1307,9 @@ public sealed class ShapeApiTests
             INSERT INTO change_log (collection, generation, id, version, document_version, body)
                 SELECT c.name, c.generation, $id, o.value + 1 + i / 1000, o.value + 1 + i / 1000, json_object('n', i)
                 FROM n, collections c, commit_offset o WHERE c.name = $collection AND o.id = 1 ORDER BY i;
-            INSERT INTO documents (collection, id, version, body)
-                SELECT $collection, $id, value + 50, json_object('n', 49999) FROM commit_offset WHERE id = 1
-                ON CONFLICT (collection, id) DO UPDATE SET version = excluded.version, body = excluded.body;
+            INSERT INTO documents (collection, id, state, version, body)
+                SELECT $collection, $id, tb_state(json_object('n', 49999)), value + 50, json_object('n', 49999) FROM commit_offset WHERE id = 1
+                ON CONFLICT (collection, id) DO UPDATE SET state = excluded.state, version = excluded.version, body = excluded.body;
             UPDATE commit_offset SET value = value + 50 WHERE id = 1;
             """;
         write.Parameters.AddWithValue("$collection", DocumentApi.Collection);

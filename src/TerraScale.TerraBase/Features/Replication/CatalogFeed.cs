@@ -37,7 +37,7 @@ internal static class CatalogProtocol
         page.Codec == PayloadCodec.Lz4BlockV1
             ? ChangeGroup.Decode(
                 ApplicationEnvelope.Decode(page.Envelope.Span, ReplicationProtocol.MaxApplicationBytes),
-                MaxPageChanges, ReplicationProtocol.MaxApplicationBytes, system: true)
+                MaxPageChanges, ReplicationProtocol.MaxApplicationBytes)
             : throw new InvalidDataException("a catalog page must use the LZ4 envelope");
 }
 
@@ -100,7 +100,7 @@ internal sealed partial class CatalogFeed(
             },
         }, cancellationToken).ConfigureAwait(false);
 
-        var sent = await ResumesAsync(store, request, origin, head, cancellationToken).ConfigureAwait(false)
+        var sent = await ResumesAsync(request, origin, head, cancellationToken).ConfigureAwait(false)
             ? (long)request.Sequence
             : await SendSnapshotAsync(store, responses, cancellationToken).ConfigureAwait(false);
         while (true)
@@ -110,7 +110,7 @@ internal sealed partial class CatalogFeed(
             (_, head) = await HeadAsync(store, cancellationToken).ConfigureAwait(false);
             for (; sent < head; sent++)
             {
-                await SendGroupAsync(store, sent + 1, responses, cancellationToken).ConfigureAwait(false);
+                await SendGroupAsync(sent + 1, responses, cancellationToken).ConfigureAwait(false);
             }
 
             await responses.WriteAsync(new FollowResponse { Heartbeat = new CatalogHeartbeat { Head = (ulong)sent } }, cancellationToken)
@@ -132,8 +132,7 @@ internal sealed partial class CatalogFeed(
     // Whether the follower's frontier is a prefix of this journal (the same origin, and the same digest at its sequence)
     // that the retained groups continue. Sequence 0 proves nothing about the documents written before capture began (a
     // file restored under the same origin has the same empty prefix), so it always gets a snapshot.
-    private async ValueTask<bool> ResumesAsync(
-        IDatabaseStore store, FollowRequest request, ReadOnlyMemory<byte> origin, long head, CancellationToken cancellationToken)
+    private async ValueTask<bool> ResumesAsync(FollowRequest request, ReadOnlyMemory<byte> origin, long head, CancellationToken cancellationToken)
     {
         if (!request.Origin.Span.SequenceEqual(origin.Span) || request.Sequence is 0 || request.Sequence > (ulong)head
             || request.Digest.Length != JournalDigest.Length)
@@ -142,7 +141,7 @@ internal sealed partial class CatalogFeed(
         }
 
         var sequence = (long)request.Sequence;
-        return await DigestAsync(store, sequence, cancellationToken).ConfigureAwait(false) is { } digest
+        return await DigestAsync(sequence, cancellationToken).ConfigureAwait(false) is { } digest
             && digest.Span.SequenceEqual(request.Digest.Span)
             && (sequence == head || (await system.ReadGroupAsync(sequence + 1, 0, 1, 1, cancellationToken).ConfigureAwait(false)).Count > 0);
     }
@@ -157,7 +156,7 @@ internal sealed partial class CatalogFeed(
             SnapshotBegin = new SnapshotBegin
             {
                 Sequence = (ulong)start,
-                Digest = UnsafeByteOperations.UnsafeWrap(await RequireDigestAsync(store, start, cancellationToken).ConfigureAwait(false)),
+                Digest = UnsafeByteOperations.UnsafeWrap(await RequireDigestAsync(start, cancellationToken).ConfigureAwait(false)),
             },
         }, cancellationToken).ConfigureAwait(false);
 
@@ -178,10 +177,10 @@ internal sealed partial class CatalogFeed(
         var (_, end) = await HeadAsync(store, cancellationToken).ConfigureAwait(false);
         for (var sequence = start + 1; sequence <= end; sequence++)
         {
-            await SendGroupAsync(store, sequence, responses, cancellationToken).ConfigureAwait(false);
+            await SendGroupAsync(sequence, responses, cancellationToken).ConfigureAwait(false);
         }
 
-        var digest = await RequireDigestAsync(store, end, cancellationToken).ConfigureAwait(false);
+        var digest = await RequireDigestAsync(end, cancellationToken).ConfigureAwait(false);
         long offset;
         var read = await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
         await using (read.ConfigureAwait(false))
@@ -197,7 +196,7 @@ internal sealed partial class CatalogFeed(
         return end;
     }
 
-    private async Task SendGroupAsync(IDatabaseStore store, long sequence, IServerStreamWriter<FollowResponse> responses, CancellationToken cancellationToken)
+    private async Task SendGroupAsync(long sequence, IServerStreamWriter<FollowResponse> responses, CancellationToken cancellationToken)
     {
         var sent = 0;
         var page = await system.ReadGroupAsync(sequence, sent, CatalogProtocol.MaxPageChanges, CatalogProtocol.MaxPageBytes, cancellationToken)
@@ -229,7 +228,7 @@ internal sealed partial class CatalogFeed(
 
         await responses.WriteAsync(new FollowResponse
         {
-            GroupEnd = new GroupEnd { Digest = UnsafeByteOperations.UnsafeWrap(await RequireDigestAsync(store, sequence, cancellationToken).ConfigureAwait(false)) },
+            GroupEnd = new GroupEnd { Digest = UnsafeByteOperations.UnsafeWrap(await RequireDigestAsync(sequence, cancellationToken).ConfigureAwait(false)) },
         }, cancellationToken).ConfigureAwait(false);
     }
 
@@ -243,17 +242,11 @@ internal sealed partial class CatalogFeed(
         }
     }
 
-    private static async ValueTask<ReadOnlyMemory<byte>?> DigestAsync(IDatabaseStore store, long sequence, CancellationToken cancellationToken)
-    {
-        var transaction = await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
-        await using (transaction.ConfigureAwait(false))
-        {
-            return await transaction.GetChangeDigestAsync(sequence, cancellationToken).ConfigureAwait(false);
-        }
-    }
+    private ValueTask<ReadOnlyMemory<byte>?> DigestAsync(long sequence, CancellationToken cancellationToken) =>
+        system.GetDigestAsync(sequence, cancellationToken);
 
-    private static async ValueTask<ReadOnlyMemory<byte>> RequireDigestAsync(IDatabaseStore store, long sequence, CancellationToken cancellationToken) =>
-        await DigestAsync(store, sequence, cancellationToken).ConfigureAwait(false)
+    private async ValueTask<ReadOnlyMemory<byte>> RequireDigestAsync(long sequence, CancellationToken cancellationToken) =>
+        await DigestAsync(sequence, cancellationToken).ConfigureAwait(false)
         ?? throw new InvalidDataException("the system journal is missing a prefix digest below its head");
 
     [LoggerMessage(Level = LogLevel.Information, Message = "A catalog follower in region {Region} connected")]

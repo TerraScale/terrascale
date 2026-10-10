@@ -7,9 +7,9 @@ using TerraBase.Tenancy;
 namespace TerraBase.Features.Replication;
 
 /// <summary>
-/// Protocol 2.0 of the <c>Replication.Sync</c> stream between TerraBase nodes. One stream carries the
-/// change groups of one database from one origin: <c>Hello</c> names its organization, project and database
-/// by their 16 ULID bytes in network order, and the origin (its 16 bytes in <c>member_id</c> and <c>member_incarnation</c>);
+/// Protocol 1.0 of the <c>Replication.Sync</c> stream between TerraBase nodes, format 1. One stream carries the
+/// change groups (<see cref="DeltaGroup"/>) of one client database from one origin: <c>Hello</c> names its organization,
+/// project and database by their 16 ULID bytes in network order, and the origin (its 16 bytes in <c>member_id</c> and <c>member_incarnation</c>);
 /// <c>Welcome</c> reports the receiver's applied prefix of that origin, and the sender resumes after it.
 /// Every group travels in an LZ4 <see cref="ApplicationEnvelope"/>; gRPC transport compression stays off.
 /// </summary>
@@ -21,7 +21,11 @@ public static class ReplicationProtocol
     /// <summary>Largest envelope and largest decoded change group.</summary>
     public const int MaxApplicationBytes = 4 * 1024 * 1024;
 
-    /// <summary>Format version of change groups, events and the merge policy (<see cref="ChangeGroup"/>).</summary>
+    /// <summary>
+    /// Format version of change groups, events and the merge policy: register deltas joined on apply (<see cref="DeltaGroup"/>,
+    /// docs/design/anna-core.md). It never increases (decision 9): members of another format are kept apart by the cutover
+    /// that stops every member before any starts a new format.
+    /// </summary>
     public const uint FormatVersion = 1;
 
     /// <summary>Most batches a sender has sent but not seen durably acknowledged.</summary>
@@ -51,7 +55,9 @@ public static class ReplicationProtocol
     {
         MaxEncodedApplicationBytes = MaxApplicationBytes,
         MaxDecodedApplicationBytes = MaxApplicationBytes,
-        MaxTransactionGroupBytes = IStorageTransaction.MaxChangeGroupBytes,
+        // A group of one change may hold a register with concurrent values (IStorageTransaction.MaxSingleChangeBytes); the
+        // engine bounds groups of more at MaxChangeGroupBytes when it captures and applies them.
+        MaxTransactionGroupBytes = IStorageTransaction.MaxSingleChangeBytes,
         MaxChangesPerGroup = IStorageTransaction.MaxChangeGroupChanges,
         MaxGrpcMessageBytes = MaxMessageBytes,
         MaxInFlightBatches = MaxInFlightBatches,
@@ -78,21 +84,20 @@ public static class ReplicationProtocol
     }
 
     /// <summary>Wraps change group <paramref name="sequence"/> of <paramref name="origin"/> in an LZ4 envelope.</summary>
-    public static CommittedGroupBatch CreateBatch(TenantContext database, ReadOnlyMemory<byte> origin, long sequence, IReadOnlyList<DocumentChange> changes, ReadOnlyMemory<byte> previousDigest = default)
-    {
-        ArgumentNullException.ThrowIfNull(changes);
-        if (previousDigest.IsEmpty)
-        {
-            previousDigest = sequence == 1 ? JournalDigest.Initial(origin.Span)
-                : throw new ArgumentException("a later group requires its preceding journal digest", nameof(previousDigest));
-        }
+    public static CommittedGroupBatch CreateBatch(TenantContext database, ReadOnlyMemory<byte> origin, long sequence, CapturedGroup group) =>
+        CreateBatch(database, origin, sequence, group, out _);
 
-        var plain = ChangeGroup.Encode(changes);
+    /// <summary>
+    /// Wraps change group <paramref name="sequence"/> of <paramref name="origin"/> in an LZ4 envelope;
+    /// <paramref name="contentBytes"/> are its bytes of collections, ids and states.
+    /// </summary>
+    public static CommittedGroupBatch CreateBatch(TenantContext database, ReadOnlyMemory<byte> origin, long sequence, CapturedGroup group, out long contentBytes)
+    {
+        ArgumentNullException.ThrowIfNull(group);
+        var plain = DeltaGroup.Encode(group, out contentBytes);
         var envelope = ApplicationEnvelope.Encode(plain);
         return new CommittedGroupBatch
         {
-            PreviousJournalDigest = ByteString.CopyFrom(previousDigest.Span),
-            JournalDigest = ByteString.CopyFrom(Engine.JournalDigest.Compute(origin.Span, sequence, previousDigest.Span, changes)),
             ProtocolMajor = Major,
             EventFormatVersion = FormatVersion,
             RecordFormatVersion = FormatVersion,
@@ -108,7 +113,7 @@ public static class ReplicationProtocol
             },
             Codec = PayloadCodec.Lz4BlockV1,
             WalGroupBytes = (uint)plain.Length,
-            ChangeCount = (uint)changes.Count,
+            ChangeCount = (uint)group.Changes.Count,
             EncodedApplicationBytes = (uint)envelope.Length,
             DecodedApplicationBytes = (uint)plain.Length,
             ApplicationEnvelope = UnsafeByteOperations.UnsafeWrap(envelope),
@@ -142,7 +147,7 @@ public static class ReplicationProtocol
 
     /// <summary>
     /// The database, origin and negotiated limits a valid <paramref name="hello"/> opens, or a reason to refuse it.
-    /// Protocol 2.0 and format 1 must be in the offered ranges; the identity must be a <see cref="Member"/> in
+    /// Protocol 1.0 and format 1 must be in the offered ranges; the identity must be a <see cref="Member"/> in
     /// <see cref="MembershipEpoch"/>; every advertised limit is positive and the result is the minimum of both sides.
     /// </summary>
     internal static StreamErrorCode Accept(Hello hello, out TenantContext database, out ReadOnlyMemory<byte> origin, out TransferLimits limits)
@@ -226,7 +231,7 @@ public static class ReplicationProtocol
     /// </summary>
     /// <exception cref="NotSupportedException">The batch uses another protocol, format or codec.</exception>
     /// <exception cref="InvalidDataException">The batch or its envelope is invalid, oversized or corrupt.</exception>
-    internal static List<DocumentChange> Read(SyncRequest request, TenantContext database, ReadOnlyMemory<byte> origin, TransferLimits limits)
+    internal static CapturedGroup Read(SyncRequest request, TenantContext database, ReadOnlyMemory<byte> origin, TransferLimits limits)
     {
         var batch = request.CommittedGroup;
         if (batch.ProtocolMajor != Major || batch.EventFormatVersion != FormatVersion || batch.RecordFormatVersion != FormatVersion
@@ -242,17 +247,15 @@ public static class ReplicationProtocol
             || batch.EncodedApplicationBytes != batch.ApplicationEnvelope.Length
             || batch.WalGroupBytes != batch.DecodedApplicationBytes
             || batch.MembershipEpoch != MembershipEpoch || !batch.ConfigurationId.IsEmpty
-            || batch.EventMetadataBytes != 0 || !batch.DistributedMetadata.IsEmpty
-            || batch.PreviousJournalDigest.Length != Engine.JournalDigest.Length || batch.JournalDigest.Length != Engine.JournalDigest.Length)
+            || batch.EventMetadataBytes != 0 || !batch.DistributedMetadata.IsEmpty)
         {
             throw new InvalidDataException("the batch identity or declared sizes are invalid");
         }
 
         var plain = ApplicationEnvelope.Decode(batch.ApplicationEnvelope.Span, (int)batch.DecodedApplicationBytes);
-        var changes = ChangeGroup.Decode(plain, (int)limits.MaxChangesPerGroup, (int)limits.MaxTransactionGroupBytes);
-        return plain.Length == batch.DecodedApplicationBytes && changes.Count == batch.ChangeCount
-            && batch.JournalDigest.Span.SequenceEqual(Engine.JournalDigest.Compute(origin.Span, (long)id.Sequence, batch.PreviousJournalDigest.Span, changes))
-            ? changes
+        var group = DeltaGroup.Decode(plain, (int)limits.MaxChangesPerGroup, (int)limits.MaxTransactionGroupBytes);
+        return plain.Length == batch.DecodedApplicationBytes && group.Changes.Count == batch.ChangeCount
+            ? group
             : throw new InvalidDataException("the batch does not match its declared sizes");
     }
 

@@ -10,6 +10,7 @@ using Grpc.Core;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
+using TerraBase.Engine.Lattices;
 using TerraBase.Engine.Sqlite;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Replication;
@@ -51,17 +52,15 @@ public sealed class SyncProtocolTests
         var welcome = await HelloAsync(call, database, origin);
         var frontier = welcome.Frontiers.Single();
         await Assert.That(frontier.DurableSequence).IsEqualTo(2UL);
-        // Sequence 1 is older than the current prefix. Its digest is self-consistent, but its body is invalid.
-        await SendAsync(call, Batch(database, origin, 1, [new DocumentChange("items", "poison", 1, body)]));
+        // Sequence 1 is older than the current prefix, and its body is invalid.
+        await SendAsync(call, Batch(database, origin, 1, [Raw("items", "poison", 1, body)]));
         var error = (await NextAsync(call)).Error;
         await Assert.That(error.Code).IsEqualTo(StreamErrorCode.StreamErrorInvalidBatch);
         await Assert.That(error.Retryable).IsFalse();
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var store = (await node.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(database, deadline.Token))!;
         await using var read = await store.BeginTransactionAsync(write: false, deadline.Token);
-        var (sequence, digest) = await read.GetAppliedFrontierAsync(origin, deadline.Token);
-        await Assert.That(sequence).IsEqualTo(2);
-        await Assert.That(digest.Span.SequenceEqual(frontier.JournalDigest.Span)).IsTrue();
+        await Assert.That(await read.GetAppliedSequenceAsync(origin, deadline.Token)).IsEqualTo(2);
         await Assert.That(await read.GetAsync("items", "poison", deadline.Token)).IsNull();
         await Assert.That(await read.GetAsync("items", "first", deadline.Token)).IsNotNull();
         await Assert.That(await read.GetAsync("items", "second", deadline.Token)).IsNotNull();
@@ -162,7 +161,9 @@ public sealed class SyncProtocolTests
         var origin = RandomNumberGenerator.GetBytes(16);
         using var call = node.Sync();
         await HelloAsync(call, node.Tenant.Database("json"), origin);
-        await SendAsync(call, Batch(node.Tenant.Database("json"), origin, 1, [new DocumentChange("items", id, 2, bytes)]));
+        // Later than the local write of the valid boundary, so it wins.
+        var stamp = (long)((ulong)(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 500) << 16);
+        await SendAsync(call, Batch(node.Tenant.Database("json"), origin, 1, [Raw("items", id, stamp, bytes)]));
         var result = await NextAsync(call);
         var replicated = scenario == "validBoundary";
         if (replicated)
@@ -181,7 +182,7 @@ public sealed class SyncProtocolTests
         var document = await read.GetAsync("items", id, deadline.Token);
         if (replicated)
         {
-            await Assert.That(document!.Version).IsEqualTo(2);
+            await Assert.That(document!.Version).IsEqualTo(stamp);
             await Assert.That(document.Json.Span.SequenceEqual(bytes)).IsTrue();
         }
         else
@@ -263,7 +264,8 @@ public sealed class SyncProtocolTests
     {
         await using var node = await Node.StartAsync("ledger");
         var origin = RandomNumberGenerator.GetBytes(16);
-        var first = new[] { Put("people", "a", 1), Put("people", "b", 1), Put("people", "c", 1), Delete("people", "c", 2) };
+        // c is written and deleted in the same commit: one delta of both.
+        var first = new[] { Put("people", "a", 1), Put("people", "b", 1), Delete("people", "c", 2, Put("people", "c", 1)) };
 
         using (var call = node.Sync())
         {
@@ -287,7 +289,7 @@ public sealed class SyncProtocolTests
             await Assert.That(welcome.Frontiers[0].DurableSequence).IsEqualTo(1UL);
 
             // A gap is refused as retryable; the sender resumes after the prefix.
-            await SendAsync(call, Batch(node.Tenant.Database("ledger"), origin, 3, [Put("people", "d", 1)], welcome.Frontiers[0].JournalDigest.Memory));
+            await SendAsync(call, Batch(node.Tenant.Database("ledger"), origin, 3, [Put("people", "d", 1)]));
             var gap = (await NextAsync(call)).Error;
             await Assert.That(gap.Code).IsEqualTo(StreamErrorCode.StreamErrorInvalidBatch);
             await Assert.That(gap.Retryable).IsTrue();
@@ -325,12 +327,22 @@ public sealed class SyncProtocolTests
         var lz4Less = valid.Clone();
         lz4Less.Codec = PayloadCodec.Identity;
 
-        // Within the 4 MiB envelope limit, beyond the 2 MiB limit on one group's collections, ids and documents.
+        // Within the 4 MiB envelope limit, beyond the 3 MiB one change's collection, id and state may hold.
         var groupTooLarge = valid.Clone();
-        var oversizedPlain = ChangeGroup.Encode([Put("items", "x", 1, new string('a', 3 * 1024 * 1024))]);
+        var oversizedPlain = DeltaGroup.Encode(new CapturedGroup([], [Put("items", "x", 1, new string('a', 3 * 1024 * 1024))]), out _);
         groupTooLarge.ApplicationEnvelope = ByteString.CopyFrom(ApplicationEnvelope.Encode(oversizedPlain).Span);
         groupTooLarge.DecodedApplicationBytes = groupTooLarge.WalGroupBytes = (uint)oversizedPlain.Length;
         groupTooLarge.EncodedApplicationBytes = (uint)groupTooLarge.ApplicationEnvelope.Length;
+
+        // Under 3 MiB, but several changes hold at most 2 MiB together.
+        var groupsTooLarge = valid.Clone();
+        var third = new string('a', 900 * 1024);
+        var severalPlain = DeltaGroup.Encode(
+            new CapturedGroup([], [Put("items", "x", 1, third), Put("items", "y", 1, third), Put("items", "z", 1, third)]), out _);
+        groupsTooLarge.ApplicationEnvelope = ByteString.CopyFrom(ApplicationEnvelope.Encode(severalPlain).Span);
+        groupsTooLarge.DecodedApplicationBytes = groupsTooLarge.WalGroupBytes = (uint)severalPlain.Length;
+        groupsTooLarge.EncodedApplicationBytes = (uint)groupsTooLarge.ApplicationEnvelope.Length;
+        groupsTooLarge.ChangeCount = 3;
 
         var otherReplica = valid.Clone();
         otherReplica.EventId.Origin.ReplicaId = ByteString.CopyFrom(RandomNumberGenerator.GetBytes(16));
@@ -345,7 +357,10 @@ public sealed class SyncProtocolTests
         otherEpoch.MembershipEpoch = 7;
 
         // Well-formed JSON whose string holds a byte that is not UTF-8.
-        var notUtf8 = Batch(node.Tenant.Database("vault"), origin, 1, [new DocumentChange("items", "x", 1, new byte[] { (byte)'{', (byte)'"', (byte)'a', (byte)'"', (byte)':', (byte)'"', 0xFF, (byte)'"', (byte)'}' })]);
+        var notUtf8 = Batch(node.Tenant.Database("vault"), origin, 1, [Raw("items", "x", 1, [(byte)'{', (byte)'"', (byte)'a', (byte)'"', (byte)':', (byte)'"', 0xFF, (byte)'"', (byte)'}'])]);
+
+        // A stamp past 2^63 is a valid register, but no version can hold it.
+        var beyond = Batch(node.Tenant.Database("vault"), origin, 1, [Deltas.Write("items", "x", "{}", stamp: new Hlc(1UL << 63))]);
 
         foreach (var (batch, code) in new[]
         {
@@ -354,11 +369,13 @@ public sealed class SyncProtocolTests
             (oversized, StreamErrorCode.StreamErrorInvalidBatch),
             (lz4Less, StreamErrorCode.StreamErrorUnsupportedFormat),
             (groupTooLarge, StreamErrorCode.StreamErrorInvalidBatch),
+            (groupsTooLarge, StreamErrorCode.StreamErrorInvalidBatch),
             (otherReplica, StreamErrorCode.StreamErrorInvalidBatch),
             (otherEpoch, StreamErrorCode.StreamErrorInvalidBatch),
             (otherTenant, StreamErrorCode.StreamErrorInvalidBatch),
             (otherProject, StreamErrorCode.StreamErrorInvalidBatch),
             (notUtf8, StreamErrorCode.StreamErrorInvalidBatch),
+            (beyond, StreamErrorCode.StreamErrorInvalidBatch),
         })
         {
             using var call = node.Sync();
@@ -395,7 +412,7 @@ public sealed class SyncProtocolTests
         await Assert.That(await read.GetAsync("items", "x", deadline.Token)).IsNull();
         using var missing = await node.Http.GetAsync(new Uri($"{node.Tenant.Path("vault")}/collections/items/documents/by-key?id=x", UriKind.Relative));
         await Assert.That(missing.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-        await Assert.That(await node.Server.MetricAsync("terrabase_replication_received_groups_total", "result=\"rejected\"")).IsEqualTo(10);
+        await Assert.That(await node.Server.MetricAsync("terrabase_replication_received_groups_total", "result=\"rejected\"")).IsEqualTo(12);
     }
 
     [Test]
@@ -406,9 +423,11 @@ public sealed class SyncProtocolTests
         var right = RandomNumberGenerator.GetBytes(16);
         var a = Put("docs", "same", 2, Faker.Lorem.Sentence());
         var b = Put("docs", "same", 2, Faker.Lorem.Sentence());
-        var winner = string.CompareOrdinal(Encoding.UTF8.GetString(a.Json!.Value.Span), Encoding.UTF8.GetString(b.Json!.Value.Span)) > 0 ? a : b;
+        // Equal stamps: the greater replica id wins.
+        var winner = a.State.Values.Keys.Single().Replica.Value > b.State.Values.Keys.Single().Replica.Value ? a : b;
 
-        // Database "ab" sees a then b; database "ba" sees b then a. A tombstone at version 3 beats both.
+        // Database "ab" sees a then b; database "ba" sees b then a. a's writer then deletes at a later stamp, which beats
+        // b too, and a write at an older stamp that saw neither loses to that tombstone.
         foreach (var (database, firstChange, secondChange) in new[] { ("ab", a, b), ("ba", b, a) })
         {
             await ApplyAsync(node, database, left, 1, firstChange);
@@ -417,10 +436,10 @@ public sealed class SyncProtocolTests
 
         var ab = await node.ListAsync("ab", "docs");
         var ba = await node.ListAsync("ba", "docs");
-        await ApplyAsync(node, "ab", left, 2, Delete("docs", "same", 3));
+        await ApplyAsync(node, "ab", left, 2, Delete("docs", "same", 3, a));
         await ApplyAsync(node, "ab", right, 2, Put("docs", "same", 2, "{\"late\":true}"));
 
-        await Assert.That(ab.Single().Data.GetRawText()).IsEqualTo(Encoding.UTF8.GetString(winner.Json!.Value.Span));
+        await Assert.That(ab.Single().Data.GetRawText()).IsEqualTo(Deltas.Json(winner));
         await Assert.That(ba.Single().Data.GetRawText()).IsEqualTo(ab.Single().Data.GetRawText());
         await Assert.That(ab.Single().Version).IsEqualTo(2);
         await Assert.That(await node.ListAsync("ab", "docs")).IsEmpty();
@@ -476,7 +495,7 @@ public sealed class SyncProtocolTests
     }
 
     [Test]
-    public async Task A_document_at_the_last_version_refuses_writes_instead_of_losing_them()
+    public async Task A_database_at_the_last_commit_offset_refuses_writes_instead_of_losing_them()
     {
         await using var node = await Node.StartAsync("limits");
         var engine = node.Server.Services.GetRequiredService<SqliteStorageEngine>();
@@ -496,12 +515,11 @@ public sealed class SyncProtocolTests
         {
             await connection.OpenAsync(CancellationToken.None);
             using var seed = connection.CreateCommand();
-            seed.CommandText = """
-                UPDATE documents SET version = 9223372036854775807 WHERE collection = 'docs' AND id = 'max';
-                UPDATE commit_offset SET value = 9223372036854775807 WHERE id = 1;
-                """;
+            seed.CommandText = "UPDATE commit_offset SET value = 9223372036854775807 WHERE id = 1;";
             await seed.ExecuteNonQueryAsync(CancellationToken.None);
         }
+
+        var version = (await node.ListAsync("limits", "docs")).Single().Version;
         using var writer = await node.ClientAsync("documents:write");
         var document = new Uri($"{node.Tenant.Path("limits")}/collections/docs/documents/by-key?id=max", UriKind.Relative);
 
@@ -511,24 +529,31 @@ public sealed class SyncProtocolTests
 
         await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
         await Assert.That(replaced.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
-        await Assert.That(remaining.Single().Version).IsEqualTo(long.MaxValue);
+        await Assert.That(remaining.Single().Version).IsEqualTo(version);
     }
 
-    private static async Task ApplyAsync(Node node, string database, byte[] origin, long sequence, DocumentChange change)
+    private static async Task ApplyAsync(Node node, string database, byte[] origin, long sequence, DocumentDelta change)
     {
         using var call = node.Sync();
-        var welcome = await HelloAsync(call, node.Tenant.Database(database), origin);
-        await SendAsync(call, Batch(node.Tenant.Database(database), origin, sequence, [change], welcome.Frontiers[0].JournalDigest.Memory));
+        await HelloAsync(call, node.Tenant.Database(database), origin);
+        await SendAsync(call, Batch(node.Tenant.Database(database), origin, sequence, [change]));
         await Assert.That((await NextAsync(call)).Durable.DurablePrefix).IsEqualTo((ulong)sequence);
     }
 
-    private static DocumentChange Put(string collection, string id, long version, string? text = null) =>
-        new(collection, id, version, JsonSerializer.SerializeToUtf8Bytes(new { text = text ?? Faker.Lorem.Sentence() }));
+    // A new replica's write stamped version, so the stored version is version.
+    private static DocumentDelta Put(string collection, string id, long version, string? text = null) =>
+        Deltas.Write(collection, id, JsonSerializer.Serialize(new { text = text ?? Faker.Lorem.Sentence() }), stamp: new Hlc((ulong)version));
 
-    private static DocumentChange Delete(string collection, string id, long version) => new(collection, id, version, null);
+    // The writer of over deletes what it wrote, at version.
+    private static DocumentDelta Delete(string collection, string id, long version, DocumentDelta over) =>
+        Deltas.Write(collection, id, null, over.State.Values.Keys.Single().Replica, new Hlc((ulong)version), over.State);
 
-    private static CommittedGroupBatch Batch(TenantContext database, byte[] origin, long sequence, IReadOnlyList<DocumentChange> changes, ReadOnlyMemory<byte> previous = default) =>
-        ReplicationProtocol.CreateBatch(database, origin, sequence, changes, previous);
+    // A write of exactly these bytes, admissible or not.
+    private static DocumentDelta Raw(string collection, string id, long version, byte[] body) =>
+        new(collection, id, new MvRegister<DocumentWrite>().WriteDelta(Deltas.NewReplica(), DocumentWrite.Live(new Hlc((ulong)version), body)));
+
+    private static CommittedGroupBatch Batch(TenantContext database, byte[] origin, long sequence, IReadOnlyList<DocumentDelta> changes) =>
+        ReplicationProtocol.CreateBatch(database, origin, sequence, new CapturedGroup([], changes));
 
     private static async Task<Welcome> HelloAsync(AsyncDuplexStreamingCall<SyncRequest, SyncResponse> call, TenantContext database, byte[] origin)
     {

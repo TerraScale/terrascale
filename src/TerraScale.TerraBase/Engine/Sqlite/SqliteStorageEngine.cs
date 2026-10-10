@@ -79,6 +79,9 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
     private readonly Action<SqliteDatabaseStore>? _afterBootstrap;
     private readonly TimeProvider _backupTime;
 
+    // Set before any store opens: every client database's writes mint with it.
+    private readonly LocalReplica _member = null!;
+
     /// <summary>Runs every SQLite call of this engine.</summary>
     internal SqliteIoPool Io { get; }
 
@@ -364,6 +367,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
         try
         {
             ReplicaId = ReplicaIdentityFile.Start(dataDirectory);
+            _member = new LocalReplica(ReplicaId, new MemberClock(Time, meter));
             meter.CreateObservableGauge("terrabase.replica.member", () => (long)ReplicaId.Member, description: "This member's number in its replica id.");
             meter.CreateObservableGauge("terrabase.replica.epoch", () => (long)ReplicaId.Epoch, description: "Unclean starts of this member since its number was taken.");
 
@@ -1225,7 +1229,10 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
 
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         await InitializeHeapAsync(cancellationToken).ConfigureAwait(false);
-        await PublishAsync(name, path, temporary => SqliteDatabaseStore.InitializeAsync(name, temporary, Io, _pragmas, afterBootstrap: null, cancellationToken)).ConfigureAwait(false);
+        // A new client file's journal is this member's from the start: its first open needs no claim.
+        var claim = name == SystemName ? null : SqliteDatabaseStore.ClaimedBy(ReplicaId);
+        await PublishAsync(name, path, temporary => SqliteDatabaseStore.InitializeAsync(name, temporary, Io, _pragmas, claim, cancellationToken))
+            .ConfigureAwait(false);
         return true;
     }
 
@@ -1414,6 +1421,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
             sequence => Notify(ChangesCommitted, new ChangeGroupCommitted(store!, sequence), key.Database), RecordCommittedWrite, _logger, _schemaMemory, _schemaEvaluations)
         {
             QueryBudget = QueryBudget,
+            Member = _member,
         };
         var published = false;
         var admitted = false;
@@ -1427,11 +1435,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
             await InitializeHeapAsync(lifetime.Token).ConfigureAwait(false);
             await store.BootstrapAsync(lifetime.Token).ConfigureAwait(false);
             _afterBootstrap?.Invoke(store);
-            var (sequence, skipped) = await store.SeedAsync(lifetime.Token).ConfigureAwait(false);
-            if (skipped > 0)
-            {
-                LogBaselineSkipped(_logger, key.Database, skipped);
-            }
+            var sequence = await store.SeedAsync(lifetime.Token).ConfigureAwait(false);
 
             await _creation.WaitAsync(lifetime.Token).ConfigureAwait(false);
             try
@@ -1510,7 +1514,4 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
 
     [LoggerMessage(LogLevel.Error, "A change notification for database {Database} failed; the change itself is committed")]
     private static partial void LogNotificationFailed(ILogger logger, Exception error, string database);
-
-    [LoggerMessage(LogLevel.Warning, "Database {Database}: {Skipped} pre-existing states fail replication admission and are not replicated")]
-    private static partial void LogBaselineSkipped(ILogger logger, string database, int skipped);
 }

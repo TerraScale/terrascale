@@ -246,11 +246,9 @@ internal sealed partial class WanResponder(
             var size = 0;
             for (var next = after; next < head && reply.Groups.Count < MaxGroupsPerReply; next++)
             {
-                var preceding = await read.GetChangeDigestAsync(next, cancellationToken).ConfigureAwait(false)
-                    ?? throw new InvalidDataException("the local journal prefix proof is missing");
-                var changes = await read.ReadChangesAsync(next + 1, cancellationToken).ConfigureAwait(false)
+                var group = await read.ReadChangesAsync(next + 1, cancellationToken).ConfigureAwait(false)
                     ?? throw new InvalidDataException("the local journal has a gap before its committed head");
-                var batch = ReplicationProtocol.CreateBatch(database, origin, next + 1, changes, preceding);
+                var batch = ReplicationProtocol.CreateBatch(database, origin, next + 1, group);
                 var bytes = batch.CalculateSize();
                 if (reply.Groups.Count == 0 && (request.Offset > 0 || bytes > WanProtocol.ReplyBudget))
                 {

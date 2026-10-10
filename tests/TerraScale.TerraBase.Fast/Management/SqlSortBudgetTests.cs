@@ -44,7 +44,7 @@ public sealed class SqlSortBudgetTests
         await ManagementApi.CreateCollectionAsync(data, database, "items");
         await ManagementApi.ExecuteStoredAsync(api.Server.DataDirectory, database, """
             WITH RECURSIVE rows(n) AS (VALUES(1) UNION ALL SELECT n + 1 FROM rows WHERE n < 10001)
-            INSERT INTO documents SELECT 'items', printf('00000000-0000-7000-8000-%012x', n), 1, '{"n":1}' FROM rows;
+            INSERT INTO documents SELECT 'items', printf('00000000-0000-7000-8000-%012x', n), tb_state('{"n":1}'), 65536, '{"n":1}' FROM rows;
             """);
 
         using var sorted = await api.Client.PostAsJsonAsync(ManagementApi.Uri($"{database.Path}/sql"),

@@ -55,17 +55,18 @@ public sealed partial class UniqueReplicationTests
 
         var request = new RangeRequest
         {
-            Identity = await UniqueRepairIdentityAsync(source.Server, receiver.Server, tenant, cancellationToken),
+            Identity = await UniqueRepairIdentityAsync(receiver.Server, tenant, cancellationToken),
             Ranges = ushort.MaxValue,
         };
         using var readCall = receiverRpc.ReadRangeAsync(request, cancellationToken: cancellationToken);
         var page = await readCall.ResponseAsync;
         await Assert.That(page.HasMore).IsFalse();
-        var changes = ChangeGroup.Decode(ApplicationEnvelope.Decode(page.Envelope.Span, ReplicationProtocol.MaxApplicationBytes));
-        await Assert.That(changes.Single(change => change.Collection == "people" && change.Id == ids[1]).Json is not null).IsTrue();
+        var changes = DeltaGroup.Decode(ApplicationEnvelope.Decode(page.Envelope.Span, ReplicationProtocol.MaxApplicationBytes), maxChanges: 128).Changes;
+        // Retained source states, the hidden contender included, not the query projection.
+        await Assert.That(Deltas.Json(changes.Single(change => change.Collection == "people" && change.Id == ids[1])) is not null).IsTrue();
         using var mergeCall = sourceRpc.MergeAsync(new StateRequest
         {
-            Identity = await UniqueRepairIdentityAsync(receiver.Server, source.Server, tenant, cancellationToken),
+            Identity = await UniqueRepairIdentityAsync(source.Server, tenant, cancellationToken),
             Envelope = page.Envelope,
         }, cancellationToken: cancellationToken);
         await Assert.That((await mergeCall.ResponseAsync).RepairedKeys).IsEqualTo(0U);
@@ -124,27 +125,17 @@ public sealed partial class UniqueReplicationTests
         await Assert.That(page.Json.GetProperty("has_more").GetBoolean()).IsFalse();
     }
 
-    private static async Task<ShardIdentity> UniqueRepairIdentityAsync(
-        TerraBaseTestServer initiator, TerraBaseTestServer target, ReplicationTenant tenant, CancellationToken token)
+    // A repair request pinned to the target's database file.
+    private static async Task<ShardIdentity> UniqueRepairIdentityAsync(TerraBaseTestServer target, ReplicationTenant tenant, CancellationToken token)
     {
         var database = tenant.Database("db");
-        var sourceStore = (await initiator.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(database, token))!;
         var targetStore = (await target.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(database, token))!;
-        await using var sourceRead = await sourceStore.BeginTransactionAsync(write: false, token);
-        await using var targetRead = await targetStore.BeginTransactionAsync(write: false, token);
-        var sourceOrigin = await sourceRead.GetOriginAsync(token);
-        var targetOrigin = await targetRead.GetOriginAsync(token);
-        var (sourceSequence, sourceDigest) = await targetRead.GetAppliedFrontierAsync(sourceOrigin, token);
-        var (targetSequence, targetDigest) = await sourceRead.GetAppliedFrontierAsync(targetOrigin, token);
         return new ShardIdentity
         {
             Organization = tenant.OrganizationId,
             Project = tenant.ProjectId,
             Database = database.DatabaseId!,
             Incarnation = ByteString.CopyFrom(targetStore.Incarnation.ToByteArray()),
-            Origin = ByteString.CopyFrom(sourceOrigin.Span),
-            SourceProof = new JournalProof { Origin = ByteString.CopyFrom(sourceOrigin.Span), Sequence = checked((ulong)sourceSequence), Digest = ByteString.CopyFrom(sourceDigest.Span) },
-            TargetProof = new JournalProof { Origin = ByteString.CopyFrom(targetOrigin.Span), Sequence = checked((ulong)targetSequence), Digest = ByteString.CopyFrom(targetDigest.Span) },
         };
     }
 }

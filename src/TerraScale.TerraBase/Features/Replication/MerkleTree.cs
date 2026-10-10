@@ -11,12 +11,12 @@ internal static class MerkleTree
     public const int Leaves = 16;
     public const int DigestBytes = (Leaves + 1) * SHA256.HashSizeInBytes;
 
-    public static int Range(DocumentChange change) => SHA256.HashData(Key(change))[0] >> 4;
+    public static int Range(string collection, string id) => SHA256.HashData(Key(collection, id))[0] >> 4;
 
-    private static byte[] Key(DocumentChange change)
+    private static byte[] Key(string collectionName, string documentId)
     {
-        var collection = Encoding.UTF8.GetBytes(change.Collection);
-        var id = Encoding.UTF8.GetBytes(change.Id);
+        var collection = Encoding.UTF8.GetBytes(collectionName);
+        var id = Encoding.UTF8.GetBytes(documentId);
         var key = new byte[8 + collection.Length + id.Length];
         BinaryPrimitives.WriteInt32LittleEndian(key, collection.Length);
         collection.CopyTo(key, 4);
@@ -25,8 +25,7 @@ internal static class MerkleTree
         return key;
     }
 
-    public static async Task<byte[]> BuildAsync(IDatabaseStore store, Func<IReadOnlyList<DocumentChange>, CancellationToken, Task> repair,
-        TimeProvider time, CancellationToken cancellationToken)
+    public static async Task<byte[]> BuildAsync(IDatabaseStore store, TimeProvider time, CancellationToken cancellationToken)
     {
         using var progress = new CancellationTokenSource(ReplicationProtocol.ProgressTimeout, time);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, progress.Token);
@@ -48,17 +47,26 @@ internal static class MerkleTree
                 {
                     progress.CancelAfter(ReplicationProtocol.ProgressTimeout);
                     var page = await read.ReadReplicationStateAsync(collection, id, token).ConfigureAwait(false);
-                    if (page.LocalRepairs.Count != 0)
+                    if (page.Unmaterialized.Count > 0)
                     {
-                        progress.CancelAfter(ReplicationProtocol.ProgressTimeout);
-                        await repair(page.LocalRepairs, token).ConfigureAwait(false);
+                        // Reads and SQL use the rows, digests the registers: rejoining a register rewrites its damaged row.
+                        var repair = await store.BeginDurableTransactionAsync(token).ConfigureAwait(false);
+                        await using (repair.ConfigureAwait(false))
+                        {
+                            foreach (var state in page.Unmaterialized)
+                            {
+                                _ = await repair.ApplyAsync(state, token).ConfigureAwait(false);
+                            }
+
+                            _ = await repair.CommitAsync(token).ConfigureAwait(false);
+                        }
                     }
 
-                    foreach (var change in page.Changes)
+                    foreach (var state in page.States)
                     {
                         token.ThrowIfCancellationRequested();
-                        // Include key, version, tombstone marker and exact body bytes.
-                        hashes[Range(change)].AppendData(ChangeGroup.Encode([change]));
+                        // The key and the register's canonical encoding: every value, its stamp, and the causal context.
+                        hashes[Range(state.Collection, state.Id)].AppendData(DeltaGroup.Encode(new CapturedGroup([], [state]), out _));
                     }
 
                     if (!page.HasMore)

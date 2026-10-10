@@ -53,7 +53,7 @@ public sealed class CollectionIdentityTests
         await Assert.That(read.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That((await read.Content.ReadFromJsonAsync<JsonElement>(token)).GetProperty("document").GetProperty("value").GetInt32()).IsEqualTo(1);
         await using var metadata = await store.BeginTransactionAsync(write: false, token);
-        var record = (await metadata.GetAsync(DocumentChange.Collections, "implicit", token))!;
+        var record = (await metadata.GetAsync(DocumentDelta.Collections, "implicit", token))!;
         using var body = JsonDocument.Parse(record.Json);
         await Assert.That(body.RootElement.GetProperty("entity_id").GetString()).IsEqualTo(identity);
     }

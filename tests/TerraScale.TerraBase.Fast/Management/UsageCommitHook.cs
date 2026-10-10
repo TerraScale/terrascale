@@ -378,17 +378,13 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
         public ValueTask SetUniqueConstraintsAsync(string collection, IReadOnlyList<UniqueConstraint> constraints, CancellationToken cancellationToken) => inner.SetUniqueConstraintsAsync(collection, constraints, cancellationToken);
         public ValueTask<ReadOnlyMemory<byte>> GetOriginAsync(CancellationToken cancellationToken) => inner.GetOriginAsync(cancellationToken);
         public ValueTask<long> GetLastChangeSequenceAsync(CancellationToken cancellationToken) => inner.GetLastChangeSequenceAsync(cancellationToken);
-        public ValueTask<IReadOnlyList<DocumentChange>?> ReadChangesAsync(long sequence, CancellationToken cancellationToken) => inner.ReadChangesAsync(sequence, cancellationToken);
+        public ValueTask<CapturedGroup?> ReadChangesAsync(long sequence, CancellationToken cancellationToken) => inner.ReadChangesAsync(sequence, cancellationToken);
 
         public ValueTask<ReplicationStatePage> ReadReplicationStateAsync(string? afterCollection, string? afterId, CancellationToken cancellationToken) =>
             inner.ReadReplicationStateAsync(afterCollection, afterId, cancellationToken);
-        public ValueTask<ReadOnlyMemory<byte>?> GetChangeDigestAsync(long sequence, CancellationToken cancellationToken) => inner.GetChangeDigestAsync(sequence, cancellationToken);
-        public ValueTask<bool> ApplyAsync(DocumentChange change, CancellationToken cancellationToken) => inner.ApplyAsync(change, cancellationToken);
-        public ValueTask<bool> RepairReplicationStateAsync(DocumentChange change, CancellationToken cancellationToken) => inner.RepairReplicationStateAsync(change, cancellationToken);
+        public ValueTask<bool> ApplyAsync(DocumentDelta change, CancellationToken cancellationToken) => inner.ApplyAsync(change, cancellationToken);
         public ValueTask<long> GetAppliedSequenceAsync(ReadOnlyMemory<byte> origin, CancellationToken cancellationToken) => inner.GetAppliedSequenceAsync(origin, cancellationToken);
-        public ValueTask<(long Sequence, ReadOnlyMemory<byte> Digest)> GetAppliedFrontierAsync(ReadOnlyMemory<byte> origin, CancellationToken cancellationToken) => inner.GetAppliedFrontierAsync(origin, cancellationToken);
         public ValueTask SetAppliedSequenceAsync(ReadOnlyMemory<byte> origin, long sequence, CancellationToken cancellationToken) => inner.SetAppliedSequenceAsync(origin, sequence, cancellationToken);
-        public ValueTask SetAppliedFrontierAsync(ReadOnlyMemory<byte> origin, long sequence, ReadOnlyMemory<byte> digest, CancellationToken cancellationToken) => inner.SetAppliedFrontierAsync(origin, sequence, digest, cancellationToken);
         public ValueTask DisposeAsync() => inner.DisposeAsync();
 
         public ValueTask<long> PutAsync(string collection, string id, ReadOnlyMemory<byte> json, CancellationToken cancellationToken)

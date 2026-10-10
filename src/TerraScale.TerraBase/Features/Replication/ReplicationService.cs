@@ -1,4 +1,3 @@
-using Google.Protobuf;
 using Grpc.Core;
 using TerraBase.Configuration;
 using TerraBase.Engine;
@@ -72,8 +71,7 @@ internal sealed partial class ReplicationService(
 
         // Refuse limits that cannot carry the largest required Welcome or acknowledgment.
         var maximumMember = ReplicationProtocol.Member(database, origin, options.Region);
-        var initialProof = JournalDigest.Initial(origin.Span);
-        var maximumWelcome = Welcome(maximumMember, origin, long.MaxValue, initialProof, limits);
+        var maximumWelcome = Welcome(maximumMember, origin, long.MaxValue, limits);
         var maximumAck = new SyncResponse
         {
             Durable = new DurableAck
@@ -91,7 +89,6 @@ internal sealed partial class ReplicationService(
                     },
                 },
                 DurablePrefix = long.MaxValue,
-                JournalDigest = ByteString.CopyFrom(initialProof),
             },
         };
         if (Math.Max(maximumWelcome.CalculateSize(), maximumAck.CalculateSize()) > limits.MaxGrpcMessageBytes)
@@ -116,7 +113,7 @@ internal sealed partial class ReplicationService(
 
         checkpoint("replication.registered", database);
         // The receiving database's own origin identifies this node on the stream, in Welcome and in every acknowledgment.
-        var (store, receiver, applied, digest) = await journal.OpenAsync(database, origin, cancellationToken).ConfigureAwait(false);
+        var (store, receiver, applied) = await journal.OpenAsync(database, origin, cancellationToken).ConfigureAwait(false);
         var registration = await tenants.RegisteredAsync(database, cancellationToken).ConfigureAwait(false);
         var (accept, deleteIncarnation) = registration switch
         {
@@ -158,7 +155,7 @@ internal sealed partial class ReplicationService(
         try
         {
             ObjectDisposedException.ThrowIf(store.IsClosed, store);
-            await stream.SendAsync(Welcome(member, origin, applied, digest, limits)).ConfigureAwait(false);
+            await stream.SendAsync(Welcome(member, origin, applied, limits)).ConfigureAwait(false);
             LogPeerRegion(logger, options.Region, first.Hello.LocalIdentity.Region is "" ? "unknown" : first.Hello.LocalIdentity.Region);
             while (await stream.NextAsync().ConfigureAwait(false) is { } request)
             {
@@ -166,7 +163,7 @@ internal sealed partial class ReplicationService(
                 {
                     case SyncRequest.FrameOneofCase.CommittedGroup:
                         var batch = request.CommittedGroup;
-                        var (prefix, proof, invalid) = await ApplyAsync(request, store, origin, limits, applied, digest, stream.PeerRegion, lifetime.Token).ConfigureAwait(false);
+                        var (prefix, invalid) = await ApplyAsync(request, store, origin, limits, applied, stream.PeerRegion, lifetime.Token).ConfigureAwait(false);
                         if (invalid != StreamErrorCode.StreamErrorUnspecified)
                         {
                             await stream.SendAsync(Error(invalid, retryable: false)).ConfigureAwait(false);
@@ -174,7 +171,6 @@ internal sealed partial class ReplicationService(
                         }
 
                         applied = prefix;
-                        digest = proof;
                         if (applied < (long)batch.EventId.Sequence)
                         {
                             // A gap: the sender skipped a group. It resumes after the prefix on its next stream.
@@ -196,8 +192,8 @@ internal sealed partial class ReplicationService(
                             },
                         };
                         ObjectDisposedException.ThrowIf(store.IsClosed, store);
-                        await stream.SendAsync(new SyncResponse { Durable = new DurableAck { Context = context, DurablePrefix = (ulong)applied, JournalDigest = ByteString.CopyFrom(digest.Span) } }).ConfigureAwait(false);
-                        await stream.SendAsync(new SyncResponse { Applied = new AppliedAck { Context = context, AppliedPrefix = (ulong)applied, JournalDigest = ByteString.CopyFrom(digest.Span) } }).ConfigureAwait(false);
+                        await stream.SendAsync(new SyncResponse { Durable = new DurableAck { Context = context, DurablePrefix = (ulong)applied } }).ConfigureAwait(false);
+                        await stream.SendAsync(new SyncResponse { Applied = new AppliedAck { Context = context, AppliedPrefix = (ulong)applied } }).ConfigureAwait(false);
                         break;
                     case SyncRequest.FrameOneofCase.KeepAlive:
                         await stream.SendAsync(new SyncResponse { KeepAlive = request.KeepAlive }).ConfigureAwait(false);
@@ -220,19 +216,19 @@ internal sealed partial class ReplicationService(
     }
 
     // The applied prefix after the batch, or why the batch is refused.
-    private async Task<(long Prefix, ReadOnlyMemory<byte> Digest, StreamErrorCode Invalid)> ApplyAsync(
-        SyncRequest request, IDatabaseStore store, ReadOnlyMemory<byte> origin, TransferLimits limits, long applied, ReadOnlyMemory<byte> digest, string peerRegion, CancellationToken cancellationToken)
+    private async Task<(long Prefix, StreamErrorCode Invalid)> ApplyAsync(
+        SyncRequest request, IDatabaseStore store, ReadOnlyMemory<byte> origin, TransferLimits limits, long applied, string peerRegion, CancellationToken cancellationToken)
     {
         var batch = request.CommittedGroup;
-        List<DocumentChange> changes;
+        CapturedGroup group;
         try
         {
-            changes = ReplicationProtocol.Read(request, store.Tenant ?? throw new InvalidOperationException("system databases cannot replicate"), origin, limits);
+            group = ReplicationProtocol.Read(request, store.Tenant ?? throw new InvalidOperationException("system databases cannot replicate"), origin, limits);
         }
         catch (Exception error) when (error is InvalidDataException or NotSupportedException)
         {
             metrics.Received("rejected");
-            return (applied, digest, error is NotSupportedException ? StreamErrorCode.StreamErrorUnsupportedFormat : StreamErrorCode.StreamErrorInvalidBatch);
+            return (applied, error is NotSupportedException ? StreamErrorCode.StreamErrorUnsupportedFormat : StreamErrorCode.StreamErrorInvalidBatch);
         }
 
         var sequence = (long)batch.EventId.Sequence;
@@ -240,36 +236,34 @@ internal sealed partial class ReplicationService(
         JournalAppend prefix;
         try
         {
-            prefix = await journal.AppendAsync(store, origin, sequence, changes, batch.PreviousJournalDigest.Memory, batch.JournalDigest.Memory, cancellationToken).ConfigureAwait(false);
+            prefix = await journal.AppendAsync(store, origin, sequence, group, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception error) when (error is InvalidDataException or DocumentValidationException)
         {
             metrics.Received("rejected");
-            return (applied, digest, StreamErrorCode.StreamErrorInvalidBatch);
+            return (applied, StreamErrorCode.StreamErrorInvalidBatch);
         }
 
         if (prefix is JournalApplied)
         {
-            usage.RecordReplicatedOperations(store.Tenant!, peerRegion, changes.Count);
+            usage.RecordReplicatedOperations(store.Tenant!, peerRegion, group.Changes.Count);
         }
 
         metrics.Received(prefix switch
         {
             JournalApplied => "applied",
             JournalUnchanged unchanged => unchanged.Sequence >= sequence ? "duplicate" : "rejected",
-            Conflict => "rejected",
         });
         return prefix switch
         {
-            JournalApplied group => (group.Sequence, group.Digest, StreamErrorCode.StreamErrorUnspecified),
-            JournalUnchanged unchanged => (unchanged.Sequence, unchanged.Digest, StreamErrorCode.StreamErrorUnspecified),
-            Conflict => (applied, digest, StreamErrorCode.StreamErrorInvalidBatch),
+            JournalApplied committed => (committed.Sequence, StreamErrorCode.StreamErrorUnspecified),
+            JournalUnchanged unchanged => (unchanged.Sequence, StreamErrorCode.StreamErrorUnspecified),
         };
     }
 
-    private static SyncResponse Welcome(PeerIdentity member, ReadOnlyMemory<byte> origin, long applied, ReadOnlyMemory<byte> digest, TransferLimits limits)
+    private static SyncResponse Welcome(PeerIdentity member, ReadOnlyMemory<byte> origin, long applied, TransferLimits limits)
     {
-        var frontier = new PeerFrontier { Origin = ReplicationProtocol.Origin(origin), JournalDigest = ByteString.CopyFrom(digest.Span) };
+        var frontier = new PeerFrontier { Origin = ReplicationProtocol.Origin(origin) };
         if (applied > 0)
         {
             frontier.ReceivedSequence = frontier.DurableSequence = frontier.AppliedSequence = (ulong)applied;

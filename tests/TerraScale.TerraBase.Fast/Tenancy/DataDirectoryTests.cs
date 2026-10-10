@@ -120,7 +120,7 @@ public sealed class DataDirectoryTests
             await engine.CreateDatabaseAsync(database, CancellationToken.None);
             var store = (await engine.OpenDatabaseAsync(database, CancellationToken.None))!;
             await using var transaction = await store.BeginTransactionAsync(write: true, CancellationToken.None);
-            await transaction.PutAsync("items", "a", Encoding.UTF8.GetBytes("""{"n":1}"""), CancellationToken.None);
+            var version = await transaction.PutAsync("items", "a", Encoding.UTF8.GetBytes("""{"n":1}"""), CancellationToken.None);
 
             // The engine closes its stores while the transaction still holds its session. Checked in process, so the
             // check cannot race the shutdown's grace: the directory stays owned for as long as the session is out.
@@ -140,7 +140,7 @@ public sealed class DataDirectoryTests
             await using var restarted = await TerraBaseTestServer.StartAsync(settings => settings["data-directory"] = dataDirectory);
             var reopened = (await restarted.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(database, CancellationToken.None))!;
             await using var reader = await reopened.BeginTransactionAsync(write: false, CancellationToken.None);
-            await Assert.That((await reader.GetAsync("items", "a", CancellationToken.None))?.Version).IsEqualTo(1);
+            await Assert.That((await reader.GetAsync("items", "a", CancellationToken.None))?.Version).IsEqualTo(version);
         }
         finally
         {
