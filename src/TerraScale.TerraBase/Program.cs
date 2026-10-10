@@ -60,8 +60,11 @@ builder.WebHost.ConfigureKestrel(kestrel =>
     kestrel.Listen(IPAddress.Loopback, options.AdminPort, listen => listen.UseTerraBaseListener(TerraBaseListener.Admin));
     kestrel.AddTerraBaseClientListener(options);
 });
-// Per-request framework logs are metrics' job; keep the log stream for events.
+// Per-request framework logs are metrics' job; keep the log stream for events. An unauthenticated request is answered 401
+// on purpose, so its challenge is not an event either.
 builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
+builder.Logging.AddFilter("System.Net.Http.HttpClient", LogLevel.Warning);
+builder.Logging.AddFilter("TerraBase.Features.ApiKeys.ApiKeyAuthenticationHandler", LogLevel.Warning);
 
 var runCompletion = new ApplicationRunCompletion();
 builder.Services.AddSingleton(runCompletion);

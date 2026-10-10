@@ -288,7 +288,7 @@ internal sealed partial class ReplicationService(
     private static SyncResponse Error(StreamErrorCode code, bool retryable) =>
         new() { Error = new StreamError { Code = code, Retryable = retryable } };
 
-    [LoggerMessage(LogLevel.Information, "Replication receiving in region {LocalRegion} from peer region {PeerRegion}")]
+    [LoggerMessage(LogLevel.Debug, "Replication receiving in region {LocalRegion} from peer region {PeerRegion}")]
     private static partial void LogPeerRegion(ILogger logger, string localRegion, string peerRegion);
 
     // Reads requests and writes responses, ending the call when either waits longer than the idle timeout:

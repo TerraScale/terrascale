@@ -21,6 +21,9 @@ internal sealed partial class StoreMembership(IMemberStore store, TerraBaseOptio
     private long? _attempted;
     private bool _left;
 
+    // The exception type of the failing heartbeats, while they fail: a change of type is a new cause to report.
+    private Type? _failure;
+
     // The timestamp of the last successful renewal, or -1 before the first.
     private long _renewed = -1;
 
@@ -53,12 +56,26 @@ internal sealed partial class StoreMembership(IMemberStore store, TerraBaseOptio
                 // The lease runs from before the write, as the key may have been stored as soon as the write left, and
                 // only a renewal that also read the others counts: a member never acts on a view older than its fence.
                 Interlocked.Exchange(ref _renewed, started);
+                if (_failure is not null)
+                {
+                    _failure = null;
+                    LogRecovered(logger);
+                }
             }
             catch (Exception error) when (error is not OperationCanceledException)
             {
                 // The last view stays; the lease ends on its own once renewals keep failing. A failure that coincides with
                 // shutdown is only logged too, so the heartbeat never fails the host's stop.
-                LogFailed(logger, error);
+                if (_failure == error.GetType())
+                {
+                    LogRetryFailed(logger, error);
+                }
+                else
+                {
+                    LogFailed(logger, error);
+                }
+
+                _failure = error.GetType();
             }
 
             return _view;
@@ -92,6 +109,12 @@ internal sealed partial class StoreMembership(IMemberStore store, TerraBaseOptio
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "This member could not renew its membership or read the other members; it retries at the next heartbeat")]
     private static partial void LogFailed(ILogger logger, Exception error);
+
+    [LoggerMessage(Level = LogLevel.Debug, Message = "This member still could not renew its membership or read the other members; it retries at the next heartbeat")]
+    private static partial void LogRetryFailed(ILogger logger, Exception error);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "This member renews its membership and reads the other members again")]
+    private static partial void LogRecovered(ILogger logger);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "This member could not remove itself from the membership; the others take its work over once its key expires")]
     private static partial void LogLeaveFailed(ILogger logger, Exception error);

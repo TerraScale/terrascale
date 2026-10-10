@@ -669,6 +669,15 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
             Abandon(file);
         }
 
+        if (error is ObjectDisposedException)
+        {
+            // The store closed under this read: its database was deleted or the engine stops. The job ends the file, so the
+            // next discovery opens a new tap if the database exists again, rather than reading the closed store forever.
+            file.Removed = true;
+            LogClosed(_logger, file.Prefix);
+            return;
+        }
+
         _failures.Add(1);
         file.LastError = error.GetType().Name;
         file.Failures++;
@@ -866,6 +875,9 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "Continuous backup of {File} failed; the next pass retries")]
     private static partial void LogShipFailed(ILogger logger, string file, Exception error);
+
+    [LoggerMessage(Level = LogLevel.Debug, Message = "Continuous backup of {File} stopped: its database closed while it was read; the next discovery reopens it if it exists")]
+    private static partial void LogClosed(ILogger logger, string file);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "The log of {File} has a hole; its backup starts a new generation")]
     private static partial void LogHole(ILogger logger, string file);

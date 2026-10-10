@@ -282,12 +282,21 @@ internal sealed partial class WanPuller(
             try
             {
                 (again, var failures, after) = await RoundAsync(region, cell, after, discovery, quiet: failing, stoppingToken).ConfigureAwait(false);
+                if (failing && failures == 0)
+                {
+                    LogRecovered(logger, region);
+                }
+
                 failing = failures > 0;
             }
             catch (Exception error) when (!stoppingToken.IsCancellationRequested)
             {
                 metrics.Failed(region, "heads");
-                if (!failing)
+                if (failing)
+                {
+                    LogRetryRoundFailed(logger, error, region);
+                }
+                else
                 {
                     LogRoundFailed(logger, error, region);
                 }
@@ -343,7 +352,11 @@ internal sealed partial class WanPuller(
         {
             metrics.Unanswered(region);
             metrics.Failed(region, "heads");
-            if (!quiet)
+            if (quiet)
+            {
+                LogRetryUnanswered(logger, region);
+            }
+            else
             {
                 LogUnanswered(logger, region);
             }
@@ -526,9 +539,16 @@ internal sealed partial class WanPuller(
                     {
                         failed = true;
                         metrics.Failed(region, error is InvalidDataException or DocumentValidationException ? "apply" : "pull");
-                        if (failures++ == 0 && !quiet)
+                        if (failures++ == 0)
                         {
-                            LogPullFailed(logger, error, region);
+                            if (quiet)
+                            {
+                                LogRetryPullFailed(logger, error, region);
+                            }
+                            else
+                            {
+                                LogPullFailed(logger, error, region);
+                            }
                         }
                     }
                 }
@@ -1507,6 +1527,18 @@ internal sealed partial class WanPuller(
 
     [LoggerMessage(LogLevel.Warning, "Cross-region replication from region {Region} failed; retrying every round")]
     private static partial void LogRoundFailed(ILogger logger, Exception error, string region);
+
+    [LoggerMessage(LogLevel.Debug, "Cross-region replication from region {Region} still fails; retrying every round")]
+    private static partial void LogRetryRoundFailed(ILogger logger, Exception error, string region);
+
+    [LoggerMessage(LogLevel.Information, "Cross-region replication from region {Region} recovered")]
+    private static partial void LogRecovered(ILogger logger, string region);
+
+    [LoggerMessage(LogLevel.Debug, "No member of region {Region} answers yet; retrying every round")]
+    private static partial void LogRetryUnanswered(ILogger logger, string region);
+
+    [LoggerMessage(LogLevel.Debug, "Pulling an origin from region {Region} still fails; retrying next round")]
+    private static partial void LogRetryPullFailed(ILogger logger, Exception error, string region);
 
     [LoggerMessage(LogLevel.Warning, "A database of region {Region} has the name of another database of its project here, so it does not replicate; rename or delete one of them")]
     private static partial void LogNameTaken(ILogger logger, string region);

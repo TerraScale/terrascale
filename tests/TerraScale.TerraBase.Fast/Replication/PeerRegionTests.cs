@@ -63,14 +63,14 @@ public sealed class PeerRegionTests
             tls.Apply(settings);
             clientTls.Apply(settings);
             settings["region"] = "gru-1";
-        }, services => services.AddSingleton<ILoggerProvider>(receiving));
+        }, services => CaptureDebug(services, receiving));
         await using var sender = await TerraBaseTestServer.StartAsync(settings =>
         {
             tls.Apply(settings);
             clientTls.Apply(settings);
             settings["region"] = "iad-1";
             settings["peer-addresses"] = receiver.PeerAddress!.ToString();
-        }, services => services.AddSingleton<ILoggerProvider>(sending));
+        }, services => CaptureDebug(services, sending));
         var tenant = await ReplicationTenant.CreateAsync(sender, ["regions"], CancellationToken.None, replicaRegions: ["gru-1"]);
         await tenant.BindAsync(receiver);
         using var writer = clientTls.CreateClient(sender.ClientAddress!, await tenant.KeyAsync(sender, "documents:write"));
@@ -158,6 +158,13 @@ public sealed class PeerRegionTests
         {
             Directory.Delete(senderData, recursive: true);
         }
+    }
+
+    // The region lines are Debug; the default minimum level would drop them before the provider sees them.
+    private static void CaptureDebug(IServiceCollection services, ILoggerProvider logs)
+    {
+        services.Configure<LoggerFilterOptions>(filter => filter.MinLevel = LogLevel.Debug);
+        services.AddSingleton(logs);
     }
 
     private sealed class RegionLogs : ILoggerProvider, ILogger

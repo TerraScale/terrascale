@@ -716,7 +716,7 @@ internal sealed partial class ReplicationSender(
     [LoggerMessage(LogLevel.Warning, "Replication discovery failed; retrying on the next reconciliation")]
     private static partial void LogDiscoveryFailed(ILogger logger, Exception error);
 
-    [LoggerMessage(LogLevel.Information, "Replication sending from region {LocalRegion} to peer #{Peer} in region {PeerRegion}")]
+    [LoggerMessage(LogLevel.Debug, "Replication sending from region {LocalRegion} to peer #{Peer} in region {PeerRegion}")]
     private static partial void LogPeerRegion(ILogger logger, int peer, string localRegion, string peerRegion);
 
     private static DatabaseIncarnation Identity(IDatabaseStore store)
