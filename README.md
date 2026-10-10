@@ -10,13 +10,17 @@ TypeScript declarations in `types/`.
 npm install @terrascale/sdk
 ```
 
+The following shows the current API with a trusted `discoveredOrigin` supplied
+by your authorized integration. Built-in Atlas integration remains pending; see
+[endpoint selection](#atlas-and-endpoint-selection).
+
 ```js
 import { createTerraBaseV1Client, generateId, v1Filter } from "@terrascale/sdk";
 
 const client = createTerraBaseV1Client({
   project: process.env.TERRABASE_PROJECT,
   token: process.env.TERRABASE_ACCESS_TOKEN,
-  baseUrl: process.env.TERRABASE_BASE_URL,
+  baseUrl: discoveredOrigin,
 });
 const db = client.database("app");
 const todos = db.collection("todos");
@@ -44,13 +48,24 @@ is an alias of `createTerraBaseV1Client`; it no longer accepts tenant/shard opti
 
 ## Atlas and endpoint selection
 
-Supply exactly one of `baseUrl` or `endpointResolver`. A resolver receives
+The [zero-configuration operating contract](AGENTS.md#zero-configuration-user-decision-2026-10-09-do-not-revert)
+requires first-party services to discover every eligible serving region and
+receive production credentials automatically, without regional activation or
+manual endpoint/secret wiring. Customer project/database scope and authorized
+access tokens remain required. This release has not implemented automatic Atlas
+integration (TS-507); the endpoint examples show the current API boundary and
+are not a first-party production setup recipe. No new resolver API is implied.
+
+The current implementation requires exactly one of `baseUrl` or
+`endpointResolver`. In these examples, `discoveredOrigin` is a trusted HTTPS
+origin supplied by an authorized integration, not an SDK-created value.
+A resolver receives
 `{ project, database }` and returns the service URL, synchronously or asynchronously.
 The URL is resolved once per database session and reused by its operations.
 Shared resolution expires after 30 seconds and supplies a cancellation signal
 to the resolver; a later operation can retry an expired or failed resolution.
 Cancelling one operation leaves other callers' shared resolution running.
-HTTPS is required except for loopback HTTP in local development; no regional
+HTTPS is required except for loopback HTTP in isolated tests; no regional
 host is hardcoded and no implicit production endpoint is selected.
 
 ```js
@@ -59,12 +74,12 @@ import { createTerraBaseV1Client, staticBaseUrlResolver } from "@terrascale/sdk"
 const client = createTerraBaseV1Client({
   project: process.env.TERRABASE_PROJECT,
   token: process.env.TERRABASE_ACCESS_TOKEN,
-  endpointResolver: staticBaseUrlResolver(process.env.TERRABASE_BASE_URL),
+  endpointResolver: staticBaseUrlResolver(discoveredOrigin),
 });
 const db = client.database("app");
 ```
 
-Atlas (`ts-atlas`, a TypeScript Cloudflare Worker) discovers the closest eligible
+Atlas discovers the closest eligible
 region and the location of a project/database. The resolver seam allows that
 choice to stay pinned for the session. Atlas discovery integration is deferred
 to TS-507; this release requires an explicit URL or caller-supplied resolver.
@@ -212,13 +227,11 @@ selector; both references must be canonical ULIDs. Entity pages reject null and
 primitive records; recovery-code pages contain strings.
 
 `@terrascale/sdk/local` (including `terrascale-local`) and `@terrascale/sdk/postgres` are
-**deprecated legacy entrypoints**. SQLite stays opt-in for development only and
-refuses CI, production, staging, qualification and deployment environments.
-It is no longer the required Dashboard backend and does not qualify the C# API.
-Local SQLite uses fresh format 2. Older stores are refused before records are
-read: stop the runtime, delete the exact configured `databasePath` and its
-`-wal`/`-shm` files, then restart. Startup recreates bootstrap state; old auth
-records and references are discarded together. There is no migration.
+**deprecated legacy entrypoints**. The operating contract confines fake/local
+stores to test code and test binaries. Their current exported runtime paths
+remain inventoried for removal; this docs change does not remove them.
+Do not use them for application onboarding, production, staging or producer
+qualification. A local adapter test does not qualify the real C# API.
 The PostgreSQL listener and retired tenant/shard client are outside the default
 v1 API. Existing framework, schema and SQL entrypoints are separate legacy
 surfaces; the root entrypoint exposes the C# v1 client API.

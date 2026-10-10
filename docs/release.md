@@ -6,40 +6,36 @@ CI publishes automatically: see [Publishing](#publishing). Capabilities still
 pending C06/C07 management and credential admission or native single-writer
 security persistence fail at runtime with explicit capability errors.
 
-The native Forgejo workflow verifies the event revision on Node 22.23.2 and
-24.21.0 and current browser engines. All jobs pin the existing builder image to
-`sha256:265dd0079910888f668752f27341065df6228eaa2306fd467b424cd042fe1f60`,
-with the runner label selecting capacity. It provisions the reviewed npm 11.18.0
-CLI, uses the locked dependency tree, and runs source parity, typecheck, build,
-regression, actual framework lifecycle, SBOM, and vulnerability checks. Exact
-producer OpenAPI and canonical vector bytes are mandatory inputs checked against
-`sdk-current-contract.json`. CI verifies and extracts the immutable
-`scripts/ci/producer-contract-inputs.tar.gz` archive (SHA-256
-`8169fab845e3130b54378ff9a064ff212d1ff59fe15eb82c857718ad919db7e7`).
-Its `producer-inputs-v1.json` and original frozen manifests bind independently
-consumed actual producer files. They are an uncommitted overlay on producer base
-`470d1f898897d4a0cefc7d638ce8eb72f0ca73b8`; the base alone does not reproduce
-them. These inputs establish source parity, with producer runtime qualification
-still pending.
+The native Forgejo workflow verifies the exact event revision on Node 22.23.2
+and 24.21.0 and current browser engines. All jobs pin the builder image to
+`sha256:75a2b6350ac5194528dc672a3ac710f10c53d24203fbc9088657d1a84e61c62f`.
+It provisions npm 11.18.0 and uses the locked dependency tree. Static checks
+cover type declarations, the v1 route manifest, forbidden surfaces, SBOM and
+vulnerability checks. Node jobs acquire the SHA-bound official C# TerraBase
+release and run the SDK tests against that real binary, then framework
+regressions. Browser jobs run current engine compatibility checks. Frozen
+contract bytes or archived overlays are not runtime qualification evidence.
+
+Run the current local checks at low CPU priority:
 
 ```sh
-npm ci
-npm run check:current-contract-inputs
-npm run check:current-contract
-npm run typecheck
-npm run build
-npm test
-npm run check:frameworks
-npm run check:route-manifest
-npm run check:openapi-contract-descriptor
-npm run check:forbidden-surface
-npm run check:sbom
-npm run check:vulnerabilities
-npm run test:browser
-npm run qualify:current-producer
-npm run qualify:auth-authority
-npm run qualify:release-e2e
+nice -n 19 npm ci
+nice -n 19 npm run typecheck
+nice -n 19 npm run build
+nice -n 19 npm run check:v1-route-manifest
+nice -n 19 npm run check:forbidden-surface
+nice -n 19 npm run check:sbom
+nice -n 19 npm run check:vulnerabilities
+nice -n 19 npm run provision:terrabase
+nice -n 19 npm run test:integration
+nice -n 19 npm run check:frameworks
+nice -n 19 npm run test:browser
 ```
+
+The integration runner requires the pinned binary acquired by the provisioner;
+see [the README](../README.md#ouroboros-and-qualification). Missing real-service
+inputs block required qualification. A build or a compatibility suite does not
+establish deployed account flows or production security authority.
 
 The Linux browser matrix uses actual stable Chrome and Edge channels and
 Playwright Firefox and WebKit. CI provisions SHA-bound Nix vendor packages from
@@ -53,8 +49,9 @@ verified runner-provisioned binaries. Refresh these pins as stable releases move
 WebKit results are engine compatibility evidence; actual Safari qualification
 requires a macOS runner.
 
-Local SQLite tests run only in permitted development environments and must never
-clear deployment indicators. Maintained Better Auth suites verify local adapter
+Fake/local adapter fixtures are confined to test code and test binaries and
+must never clear deployment indicators or become shipped application modes.
+Maintained Better Auth suites verify local adapter
 semantics; their results do not discharge production security gates. Pure packed
 browser tests verify browser compatibility, while the separate real-allocation
 browser journey requires actual service credentials and does not use intercepted
@@ -84,6 +81,10 @@ pass. It skips immediately when npm already has the `package.json` version;
 otherwise it packs the tarball once, publishes those exact bytes with
 `--access public --tag latest`, and fails unless npm then reports that version
 as `dist-tags.latest`. Bump the
-version to release. The publish token is the Forgejo action secret `NPM_TOKEN`;
-its canonical copy is the operator-only OpenBao object
-`/infra/npm/terrascale-publish` (`NPM_TOKEN`, `NPM_USER`).
+version to release. The current workflow reads `NPM_TOKEN` as an Actions secret.
+The TS-795 operating contract requires vendor-issued publication credentials
+to be stored once in OCI Vault and delivered to the job automatically, with
+first-party secrets created/delivered automatically. No hand-copying step is
+part of onboarding. This docs change does not implement or verify that delivery
+integration; missing credentials must continue to fail closed. Never publish
+secret values or private storage paths.

@@ -50,6 +50,7 @@ jobs:
           python3 .zero-config-policy/scripts/zero-config-check.py "$ZERO_CONFIG_BASE" "$ZERO_CONFIG_HEAD"
 
   check:
+    needs: [guard]
     name: verify/static-contracts
     runs-on: terrascale-builder
     container:
@@ -94,6 +95,7 @@ jobs:
         run: npm run check:vulnerabilities
 
   test:
+    needs: [guard]
     name: verify/node-${{ matrix.node }}
     strategy:
       fail-fast: false
@@ -171,6 +173,7 @@ jobs:
         run: npm run check:vulnerabilities
 
   e2e:
+    needs: [guard]
     name: verify/browser-current-engines
     runs-on: terrascale-builder
     container:

@@ -7,10 +7,11 @@ AI IS NOT ALLOWED TO EDIT THIS FILE ONLY HUMANS CAN!
   `/v1/projects/{project}/databases/{db}` documents, query, transactions and collection
   shape routes with Bearer `tb_` keys and the producer's named scopes. The retired
   Rust tenant/shard routes, `tbk1` keys and frozen Rust contract inputs are legacy.
-- The root API is v1 only. Configure `project`, `token` and exactly one of `baseUrl`
-  or `endpointResolver`; resolve `{ project, database }` once per database session.
-  Atlas (`ts-atlas`) supplies region/project placement discovery in TS-507; retain
-  the static resolver override and never hardcode a regional host.
+- The root API is v1 only. Preserve explicit project scope and authorized tokens.
+  Automatic eligible-region discovery is the operating contract; the current
+  SDK still requires `baseUrl` or `endpointResolver` pending TS-507. Document
+  that gap without making manual region pinning a first-party setup step.
+  Static origins belong to reviewed isolated tests, never an admission bypass.
 - Ouroboros: TerraScale services use the same production TerraBase as customers.
   Boundary tests run a real immutable C# release binary pinned by version and
   SHA-256; fake servers and local SDK SQLite are not producer qualification.
@@ -18,10 +19,10 @@ AI IS NOT ALLOWED TO EDIT THIS FILE ONLY HUMANS CAN!
 ## Deprecated SDK SQLite
 
 The named `local` SQLite and `postgres` entrypoints are deprecated legacy support.
-SDK SQLite stays explicitly opt-in for local development; Dashboard is no longer
-required to use it. Never enable it in production, CI qualification, staging or
-other deployed environments, or present it as the public database contract.
-This restriction concerns the SDK runtime, not the C# producer's internal storage.
+Fake/local SDK stores belong only in test code and test binaries, not a shipped
+development or deployed runtime mode. The existing exported runtime remains
+inventoried for removal; do not document its activation or treat it as producer
+qualification. This rule does not change the real producer qualification gates.
 
 ## Local CPU Priority
 
@@ -64,7 +65,8 @@ ownership.
 - The `admin` entrypoint contains typed role-protected public administration.
 - A named server-only `better-auth` entrypoint contains the Better Auth
   database adapter and must be excluded from browser bundles.
-- Local development support stays explicitly opt-in under its named entrypoint.
+- Fake/local stores must be confined to test code and test binaries; the
+  currently exported legacy runtime remains an implementation removal gap.
 - Do not add Dashboard-named or generic request entrypoints.
 
 ## Better Auth adapter
@@ -152,10 +154,9 @@ hatches for TerraScale data.
   producer/TypeScript semantic corpus; frozen Rust inputs are legacy evidence.
 - Better Auth changes require exact-version adapter tests, Region concurrency,
   migration, retry, unique, one-time consume, revocation, and denial cases.
-- Dashboard integration evidence uses the fixed DevHost routes. Authentication
-  remains on `18445` and Dashboard on `18446`.
-- The new Database API route must be fixed in the workspace and DevHost
-  contracts before live tests depend on it.
+- Dashboard integration evidence must use authorized isolated real-service
+  allocations and published contracts before live tests depend on a route.
+  Never publish private topology or service connection details.
 
 When live configuration is unavailable, report the gate as skipped. Do not
 substitute a fake service or fabricated evidence.
@@ -165,3 +166,19 @@ substitute a fake service or fabricated evidence.
 - Never add AI attribution to commits, PR titles, or PR descriptions: no `Co-Authored-By:` trailers, no `🤖 Generated with [Claude Code]` or similar generated-by notices.
 - When the human asks for a commit, commit and push exactly as asked — do not
   run tests, checks, or builds first.
+
+## Zero configuration (user decision 2026-10-09, do not revert)
+
+- Every feature is always on. No feature flags, on/off variables, opt-in settings, boolean enabled configuration keys, deploy toggles or kill switches in code, config or CI. Delete switches and their guarded paths.
+- Every region always serves. NetBird network membership admits a node automatically; it discovers every region, infers its own region from where it runs and starts serving without a per-region enable step.
+- OCI Vault automatically creates, delivers and configures every first-party production secret. Vendor-issued keys (such as Stripe and Cloudflare) are stored once in Vault and picked up automatically; nobody copies secrets by hand.
+- Values have one correct setting in code. Expose no tuning knobs. Fakes, demo stores and skip-auth belong only in test code and test binaries.
+- CI rejects new switch-style configuration; ts-reviewer requests changes. Only unavoidable third-party names may have a narrow allowance with a one-line reason.
+
+The operating contract requires automatic public regional endpoint discovery. Customer credentials authorize access; service secrets belong in OCI Vault and must never ship in a client bundle.
+
+This section is the TS-795 operating contract, not evidence that every runtime
+flow has shipped. See [README.md](README.md) for current SDK/qualification gaps.
+Existing production switches are inventoried for their owning implementation
+threads; documentation changes must not invent APIs or bypass authorization,
+tenant scope, registered callbacks, payment consent, or safety guards.

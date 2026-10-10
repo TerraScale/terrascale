@@ -1,19 +1,17 @@
-# SQLite is local development only
+# Fake/local SDK stores are test-only
 
-Status: Accepted.
+Status: Operating contract updated by TS-795; runtime removal pending.
 
-Keep SQLite behind explicit `@terrascale/sdk/local` Node conditions and require
-`sqlite: { enabled: true, databasePath: "/absolute/path/local.sqlite" }`. Reject
-production, CI, qualification, staging and deployment indicators before opening
-storage. Test helpers preserve these indicators and skip prohibited local suites.
+The [zero-configuration policy](../../AGENTS.md#zero-configuration-user-decision-2026-10-09-do-not-revert)
+supersedes the earlier local-development opt-in decision. Fake/local SDK stores
+belong only in test code and test binaries, never an exported application mode
+or a customer emulator workflow. Existing `@terrascale/sdk/local` and listener
+paths remain inventoried for their owning removal thread; this ADR does not
+claim those paths have already been removed.
 
-The local runtime binds explicit native collection schemas, retains complete
-points, atomic transactions and durable local status, and uses frozen snapshot
-cursors and finite subscription poll groups. Its local state tokens and writer
-authority do not prove producer compatibility or regional durability.
-
-The listener defaults to loopback. Remote binding requires `allowRemote: true`,
-required authentication and an explicit bearer token of at least 32 characters.
-The CLI reads that token from `TERRASCALE_LOCAL_BEARER_TOKEN` without printing it.
-Local Better Auth uses actual SQLite transactions and official maintained tests;
-it cannot replace production security or deployed customer qualification.
+Isolated adapter tests may check transactions, rollback, uniqueness,
+conditional updates, bounded queries and pagination. Their state tokens and
+results do not prove producer compatibility, regional durability or security
+authority. Preserve credential validation and environment safeguards until
+runtime removal. Real producer qualification must use the immutable release
+binary and an authorized isolated allocation, with no fake substitute.
