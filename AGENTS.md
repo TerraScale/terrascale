@@ -1,4 +1,3 @@
-```markdown
 # Landing Page Agent Rules
 
 > [!IMPORTANT]
@@ -60,7 +59,9 @@ This repository contains the TerraScale public landing site.
 
 ## Cloudflare: use the `cf` CLI
 
-The Cloudflare CLI `cf` (npm package `cf`, v1.0.0-beta.10, installed through the mise Node toolchain) is installed and logged in on all 3 T3 hosts (delta, beta, mariogk-dev) as `mariogk01@gmail.com`, whose account owns the `terrascale.tech` zone.
+Use an authenticated `cf` CLI installation for the authorized Cloudflare
+account. Keep operator hostnames, account identities and private topology out
+of this public repository.
 
 - Use `cf` for Cloudflare work: DNS records, zones, origin CA / client certificates, SSL/TLS and cache settings, rules, analytics, API tokens. Workers deploys keep using `wrangler`.
 - Before you start, run `cf auth whoami`. It must show `"authenticated": true`.
@@ -193,4 +194,19 @@ Example:
 - Verify the target branch, issue-prefixed title, reviewers, attachments, and current checks.
 - Send the PR URL to the user.
 - State which checks passed and identify any unresolved blockers.
-```
+
+## Zero configuration (user decision 2026-10-09, do not revert)
+
+- Every feature is always on. No feature flags, on/off variables, opt-in settings, boolean enabled configuration keys, deploy toggles or kill switches in code, config or CI. Delete switches and their guarded paths.
+- Every region always serves. NetBird network membership admits a node automatically; it discovers every region, infers its own region from where it runs and starts serving without a per-region enable step.
+- OCI Vault automatically creates, delivers and configures every first-party production secret. Vendor-issued keys (such as Stripe and Cloudflare) are stored once in Vault and picked up automatically; nobody copies secrets by hand.
+- Values have one correct setting in code. Expose no tuning knobs. Fakes, demo stores and skip-auth belong only in test code and test binaries.
+- CI rejects new switch-style configuration; ts-reviewer requests changes. Only unavoidable third-party names may have a narrow allowance with a one-line reason.
+
+The operating contract requires automatic public endpoint discovery; OCI Vault delivers production publication and Cloudflare credentials.
+
+This section is the TS-795 operating contract, not evidence that every runtime
+flow has shipped. See [README.md](README.md) for current SDK/qualification gaps.
+Existing production switches are inventoried for their owning implementation
+threads; documentation changes must not invent APIs or bypass authorization,
+tenant scope, registered callbacks, payment consent, or safety guards.

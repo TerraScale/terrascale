@@ -49,14 +49,20 @@ smoke-checks the production URL after the upload. A missing credential fails
 the deploy step closed: a main push can never report green without
 publishing.
 
-The deploy step reads two repository Actions secrets:
+The current deploy step reads two repository Actions secrets:
 
 - `CLOUDFLARE_API_TOKEN` — Pages edit access on the account
 - `CLOUDFLARE_ACCOUNT_ID` — the account that owns the Pages project
 
-Create or rotate that token, and do any other Cloudflare account work (DNS,
-zone and cache settings), with the `cf` CLI rather than the dashboard; see
-"Cloudflare: use the `cf` CLI" in `AGENTS.md`.
+Under the TS-795 operating contract, the vendor-issued token is stored once
+in OCI Vault and publication credentials are delivered to the authorized job
+automatically. First-party secrets are created and delivered automatically;
+no manual Actions-secret copying belongs in setup. This documentation change
+does not implement or verify that delivery integration. The workflow must
+continue to fail closed when publication credentials are missing. Use the
+`cf` CLI for authorized Cloudflare account operations; see
+[AGENTS.md](AGENTS.md#cloudflare-use-the-cf-cli). Never put publication credentials
+in the static site output.
 
 The `wrangler.toml` in this working tree pins the Pages project name for
 the local preview and plays no part in the pipeline.
@@ -86,6 +92,26 @@ That builds the site and serves the generated `build/` output through
 ## Assets
 
 Static assets live in `static/` and are served from root-relative URLs such as `/logo-principal.svg` or `/icons/lucide/menu.svg`.
+
+## Public regions and SDK samples
+
+The [zero-configuration operating contract](AGENTS.md#zero-configuration-user-decision-2026-10-09-do-not-revert)
+requires every serving region to be discovered automatically, with no regional
+activation step. The checked-in `static/regions.json` is currently a marketing
+catalog, not live node admission or evidence of which regions serve. An
+upstream public discovery feed and its publication integration remain pending;
+until admitted, catalog drift checks validate the existing static artifact.
+Do not describe manually editing the catalog as enabling a region or invent a
+shipped automatic feed.
+
+Displayed SDK samples currently accept a caller-supplied resolver and authorized
+customer project/key. Automatic first-party endpoint and credential acquisition
+is the operating contract; these samples do not implement that flow. Preserve
+customer tenant scope, trusted HTTPS origins, redirect rejection and request
+cancellation. No service secret belongs in a browser bundle, and sample keys
+are not landing-site runtime configuration. Existing static-origin bypass and
+launch-copy selectors remain inventoried for owning implementation changes;
+this docs-only change does not remove them or prove a launch phase is deployed.
 
 ## Real sample contract tests
 
