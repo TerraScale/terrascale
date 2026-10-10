@@ -30,4 +30,4 @@ each line starts with its syslog priority: `<3>` error, `<4>` warning, `<5>` inf
 
 Default filters are set in code: Information overall, `Microsoft.AspNetCore` and
 `System.Net.Http.HttpClient` at Warning, `Microsoft.Hosting.Lifetime` at Information, then the service's own categories.
-There are no options to turn on or off, and configuration `Logging` sections are ignored.
+There are no options to turn on or off. Configuration `Logging` sections cannot change the console's levels, but rules other providers register stay in effect.

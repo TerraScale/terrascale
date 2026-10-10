@@ -17,6 +17,7 @@ public sealed class LoggingBuilderTests
         {
             ["Logging:LogLevel:Default"] = "Debug",
             ["Logging:LogLevel:Microsoft.AspNetCore"] = "Debug",
+            ["Logging:Console:LogLevel:Default"] = "Debug",
             ["Logging:Console:FormatterName"] = "simple",
         }).Build();
         using var provider = new ServiceCollection().AddLogging(builder =>
@@ -37,6 +38,20 @@ public sealed class LoggingBuilderTests
         await Assert.That(factory.CreateLogger("Acme.Widgets").IsEnabled(LogLevel.Debug)).IsFalse();
         await Assert.That(factory.CreateLogger("Microsoft.AspNetCore.Routing").IsEnabled(LogLevel.Information)).IsFalse();
         await Assert.That(provider.GetRequiredService<IOptions<ConsoleLoggerOptions>>().Value.FormatterName).IsEqualTo("terrascale");
+    }
+
+    [Test]
+    public async Task OtherProviderRulesSurvive()
+    {
+        const string sentry = "Sentry.Extensions.Logging.SentryLoggerProvider";
+        using var provider = new ServiceCollection().AddLogging(builder =>
+        {
+            builder.Services.Configure<LoggerFilterOptions>(options => options.Rules.Add(new LoggerFilterRule(sentry, "Acme.Widgets", LogLevel.Debug, filter: null)));
+            builder.AddTerraScaleLogging("terrabase");
+        }).BuildServiceProvider();
+        var rules = provider.GetRequiredService<IOptions<LoggerFilterOptions>>().Value.Rules;
+
+        await Assert.That(rules.Any(rule => rule.ProviderName == sentry && rule.CategoryName == "Acme.Widgets" && rule.LogLevel == LogLevel.Debug)).IsTrue();
     }
 
     [Test]

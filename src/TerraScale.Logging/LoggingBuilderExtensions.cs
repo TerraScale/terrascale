@@ -43,7 +43,11 @@ public static class LoggingBuilderExtensions
         builder.Services.PostConfigure<ConsoleLoggerOptions>(options => options.FormatterName = TerraScaleConsoleFormatter.FormatterName);
         builder.Services.PostConfigure<LoggerFilterOptions>(options =>
         {
-            options.Rules.Clear();
+            // Other providers register their own rules; only the rules that can reach the console are replaced.
+            foreach (var rule in options.Rules.Where(ReachesConsole).ToList())
+            {
+                options.Rules.Remove(rule);
+            }
             options.MinLevel = LogLevel.Information;
             options.Rules.Add(new LoggerFilterRule(providerName: null, categoryName: "Microsoft.AspNetCore", logLevel: LogLevel.Warning, filter: null));
             options.Rules.Add(new LoggerFilterRule(providerName: null, categoryName: "System.Net.Http.HttpClient", logLevel: LogLevel.Warning, filter: null));
@@ -55,4 +59,10 @@ public static class LoggingBuilderExtensions
         });
         return builder;
     }
+
+    private const string ConsoleAlias = "Console";
+    private const string ConsoleTypeName = "Microsoft.Extensions.Logging.Console.ConsoleLoggerProvider";
+
+    private static bool ReachesConsole(LoggerFilterRule rule) =>
+        string.IsNullOrEmpty(rule.ProviderName) || rule.ProviderName is ConsoleAlias or ConsoleTypeName;
 }
