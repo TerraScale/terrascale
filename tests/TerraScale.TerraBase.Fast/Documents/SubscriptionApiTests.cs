@@ -2,7 +2,10 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using Bogus;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Time.Testing;
 using Microsoft.IdentityModel.Tokens;
+using TerraBase.Engine;
 using TerraBase.Primitives;
 using TerraBase.Testing;
 
@@ -72,7 +75,9 @@ public sealed class SubscriptionApiTests
     [Test]
     public async Task Newline_heavy_JSON_has_bounded_SSE_framing_in_snapshots_and_changes()
     {
-        await using var api = await ManagementApi.StartAsync();
+        // This tests framing of large stored whitespace independently of elapsed SQLite query time.
+        await using var api = await ManagementApi.StartAsync(services: services =>
+            services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, new FakeTimeProvider()));
         using var deadline = Deadline();
         var database = await api.CreateManagedDatabaseAsync();
         await api.VerifyProjectBindingAsync(database.Organization, database.Project);
@@ -88,7 +93,7 @@ public sealed class SubscriptionApiTests
         using var reader = new StreamReader(await response.Content.ReadAsStreamAsync(deadline.Token));
         var snapshot = await ReadEventAsync(reader, deadline.Token);
         await Assert.That(snapshot).IsNotNull();
-        await Assert.That(snapshot!.Type).IsEqualTo("shape");
+        await Assert.That(snapshot!.Type).IsEqualTo("shape").Because(snapshot.Data[..Math.Min(snapshot.Data.Length, 4096)]);
         // Removing insignificant CR/LF leaves one data line instead of amplifying 900,000 lines of whitespace.
         await Assert.That(snapshot.Data.Length).IsLessThan(25_000);
         await Assert.That(snapshot.Data.Contains('\n', StringComparison.Ordinal)).IsFalse();
@@ -448,7 +453,7 @@ public sealed class SubscriptionApiTests
     private static async Task<JsonElement> ReadShapeAsync(StreamReader reader, CancellationToken cancellationToken)
     {
         var item = await ReadEventAsync(reader, cancellationToken) ?? throw new InvalidOperationException("the SSE stream closed before a shape event");
-        await Assert.That(item.Type).IsEqualTo("shape");
+        await Assert.That(item.Type).IsEqualTo("shape").Because(item.Data[..Math.Min(item.Data.Length, 4096)]);
         using var json = JsonDocument.Parse(item.Data);
         var page = json.RootElement.Clone();
         await Assert.That(item.Id).IsEqualTo(page.GetProperty("handle").GetString() + ":" + page.GetProperty("next_offset").GetString());

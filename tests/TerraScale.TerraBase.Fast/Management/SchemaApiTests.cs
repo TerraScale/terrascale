@@ -289,6 +289,8 @@ public sealed class SchemaApiTests
             api.Client.GetAsync(Uri(database.Path + "/collections")), HttpStatusCode.BadRequest, "invalid_query", "query too expensive");
         await ErrorAssert.ErrorAsync(
             api.Client.GetAsync(Uri(database.Path + "/collections/people/schema")), HttpStatusCode.BadRequest, "invalid_query", "schema too expensive");
+        await ErrorAssert.ErrorAsync(
+            api.Client.GetAsync(Uri(database.Path + "/usage")), HttpStatusCode.BadRequest, "invalid_query", "query too expensive");
     }
 
     [Test]

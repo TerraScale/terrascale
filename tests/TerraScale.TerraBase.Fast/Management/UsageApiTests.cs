@@ -7,6 +7,7 @@ using Bogus;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
+using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Management;
 using TerraBase.Features.Management.Queries;
@@ -147,7 +148,9 @@ public sealed class UsageApiTests
     [Test]
     public async Task Database_usage_counts_storage_documents_and_operations()
     {
-        await using var api = await ManagementApi.StartAsync();
+        // Count behavior uses controlled query time; plan deadlines have explicit advancing-clock coverage.
+        await using var api = await ManagementApi.StartAsync(services: services =>
+            services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, new FakeTimeProvider()));
         var database = await api.CreateManagedDatabaseAsync();
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
         using var fresh = JsonDocument.Parse(await api.Client.GetStringAsync(Uri(database.Path + "/usage")));
