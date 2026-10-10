@@ -38,9 +38,10 @@ public static partial class Telemetry
         builder.Services.AddSafeLogging();
 
         // These framework categories log full request and outbound URLs, query strings
-        // included, at Information. Query strings carry codes, tokens and states, so only
+        // included, at Information, and every routed request (health checks included) logs
+        // several Information lines. Query strings carry codes, tokens and states, so only
         // their warnings are kept.
-        builder.Logging.AddFilter("Microsoft.AspNetCore.Hosting.Diagnostics", LogLevel.Warning);
+        builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
         builder.Logging.AddFilter("System.Net.Http.HttpClient", LogLevel.Warning);
 
         // Standard OTEL_* variables select the collector. Each signal exports only when the

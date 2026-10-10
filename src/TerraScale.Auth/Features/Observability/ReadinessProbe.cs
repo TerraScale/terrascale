@@ -6,10 +6,16 @@ namespace TerraScale.Auth.Features.Observability;
 
 /// <summary>
 /// Checks storage access, this replica's signing-ring bootstrap and the serving issuer's public
-/// signing metadata. The check itself never writes identity state.
+/// signing metadata. The check itself never writes identity state. The public-metadata read is
+/// cached for five minutes after it succeeds; a failure is never cached.
 /// </summary>
-public sealed class SigningKeyReadiness(TerraBaseStorageHealth storage, KeyRing ring, SigningKeyRotation rotation) : IStorageHealth
+public sealed class SigningKeyReadiness(TerraBaseStorageHealth storage, KeyRing ring, SigningKeyRotation rotation, TimeProvider clock) : IStorageHealth
 {
+    private static readonly TimeSpan VaultCacheTtl = TimeSpan.FromMinutes(5);
+
+    // Only the readiness loop calls CheckAsync, so no lock guards this.
+    private long? vaultVerifiedAt;
+
     /// <inheritdoc />
     public async Task<StorageHealthResult> CheckAsync(CancellationToken cancellationToken)
     {
@@ -17,7 +23,11 @@ public sealed class SigningKeyReadiness(TerraBaseStorageHealth storage, KeyRing 
         if (result.Healthy)
         {
             await rotation.Bootstrapped.WaitAsync(cancellationToken).ConfigureAwait(false);
-            await ring.CheckPublicMetadataAsync(OidcIssuer.InstanceId, cancellationToken).ConfigureAwait(false);
+            if (this.vaultVerifiedAt is not { } verified || clock.GetElapsedTime(verified) >= VaultCacheTtl)
+            {
+                await ring.CheckPublicMetadataAsync(OidcIssuer.InstanceId, cancellationToken).ConfigureAwait(false);
+                this.vaultVerifiedAt = clock.GetTimestamp();
+            }
         }
 
         return result;
@@ -28,75 +38,84 @@ public sealed class SigningKeyReadiness(TerraBaseStorageHealth storage, KeyRing 
 public sealed record ReadinessObservation(bool Ready, string? Region);
 
 /// <summary>
-/// Coalesces concurrent <c>/readyz</c> probes into one storage round trip, caches the result
-/// for one second and bounds each wait to two seconds.
-/// The cache only shortens repeat probes; it never turns a failed check into success.
+/// Evaluates readiness on a background loop every five seconds, bounds each evaluation to two
+/// seconds and serves the latest result to <c>/readyz</c> without running checks. A result older
+/// than fifteen seconds means the loop is stuck, so readiness fails.
 /// </summary>
-public sealed partial class ReadinessProbe(IStorageHealth health, TimeProvider clock, ILogger<ReadinessProbe> logger)
+public sealed partial class ReadinessProbe(IStorageHealth health, TimeProvider clock, ILogger<ReadinessProbe> logger) : BackgroundService
 {
-    private static readonly TimeSpan CacheTtl = TimeSpan.FromSeconds(1);
+    private static readonly TimeSpan Interval = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan StaleAfter = TimeSpan.FromSeconds(15);
+    private const string TimedOut = "timed out";
+    private const string Stale = "readiness evaluation is stale";
 
     private readonly Lock gate = new();
     private ReadinessObservation? latest;
-    // Monotonic: a wall-clock step backwards must not extend the cache window.
+    // Monotonic: a wall-clock step backwards must not age the latest result.
     private long latestTimestamp;
-    private Task<ReadinessObservation>? inFlight;
     // The storage check itself, which can outlive a timed-out wait when it ignores cancellation.
     private Task? outstandingCheck;
+    // Why the latest observation failed; null while ready. Only the logging transitions read it.
+    private string? failure;
 
     /// <summary>
-    /// Returns a fresh-enough observation, joining any probe already running. Every caller
-    /// waits at most two seconds from entry, however late the shared probe gets scheduled.
+    /// Returns the latest evaluation. Not ready before the first evaluation completes, and not ready
+    /// once that evaluation is older than fifteen seconds.
     /// </summary>
-    public async Task<ReadinessObservation> ObserveAsync(CancellationToken cancellationToken)
+    public ReadinessObservation Latest()
     {
-        Task<ReadinessObservation> probe;
+        ReadinessObservation? observation;
+        bool stale;
         lock (this.gate)
         {
-            if (this.latest is { } cached && clock.GetElapsedTime(this.latestTimestamp) < CacheTtl)
-            {
-                return cached;
-            }
-
-            if (this.inFlight is null)
-            {
-                // The deadline starts now, not when the thread pool gets to the probe.
-                // Task.Run keeps the probe from completing inside this lock: a synchronously
-                // finished probe would otherwise clear inFlight before it is assigned and
-                // leave a completed task cached forever.
-                var deadline = new CancellationTokenSource(ProbeTimeout, clock);
-                this.inFlight = Task.Run(() => this.ProbeAsync(deadline), CancellationToken.None);
-            }
-
-            probe = this.inFlight;
+            observation = this.latest;
+            stale = observation is not null && clock.GetElapsedTime(this.latestTimestamp) > StaleAfter;
         }
 
-        try
-        {
-            // A caller that disconnects stops waiting; the shared probe still completes for others.
-            return await probe.WaitAsync(ProbeTimeout, clock, cancellationToken);
-        }
-        catch (TimeoutException)
+        if (observation is null)
         {
             return new ReadinessObservation(false, null);
         }
+
+        if (!stale)
+        {
+            return observation;
+        }
+
+        // Logged here because a stuck loop cannot log its own failure.
+        this.Record(Stale, null);
+        return new ReadinessObservation(false, null);
+    }
+
+    /// <inheritdoc />
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        using var timer = new PeriodicTimer(Interval, clock);
+        do
+        {
+            await this.ProbeAsync(new CancellationTokenSource(ProbeTimeout, clock));
+        }
+        while (await timer.WaitForNextTickAsync(stoppingToken));
     }
 
     private async Task<ReadinessObservation> ProbeAsync(CancellationTokenSource deadline)
     {
         using var timeout = deadline;
         ReadinessObservation observation;
+        string? cause = null;
+        Exception? fault = null;
         Task<StorageHealthResult>? check = null;
+        bool stacked;
         lock (this.gate)
         {
             // Never stack storage work: while an earlier check is still running, stay not ready.
-            if (this.outstandingCheck is { IsCompleted: false })
-            {
-                observation = new ReadinessObservation(false, null);
-                this.Publish(observation);
-                return observation;
-            }
+            stacked = this.outstandingCheck is { IsCompleted: false };
+        }
+
+        if (stacked)
+        {
+            return this.Settle(new ReadinessObservation(false, null), "an earlier check is still running", null);
         }
 
         // One deadline cancels both the storage call and the wait for it, so a timed-out
@@ -119,44 +138,87 @@ public sealed partial class ReadinessProbe(IStorageHealth health, TimeProvider c
 
             var result = await check.WaitAsync(timeout.Token);
             // A result that arrives after the deadline (a late-resumed worker, say) is stale:
-            // callers were already told not-ready, so it must not be cached as healthy.
-            observation = timeout.IsCancellationRequested
-                ? new ReadinessObservation(false, null)
-                : new ReadinessObservation(result.Healthy, result.Region);
+            // readiness was already decided not-ready for this pass, so it must not count as healthy.
+            if (timeout.IsCancellationRequested)
+            {
+                observation = new ReadinessObservation(false, null);
+                cause = TimedOut;
+            }
+            else
+            {
+                observation = new ReadinessObservation(result.Healthy, result.Region);
+                cause = result.Healthy ? null : "storage reported unhealthy";
+            }
         }
         catch (Exception exception) when (exception is not OutOfMemoryException)
         {
-            try
-            {
-                LogProbeFailed(logger, exception);
-            }
-            catch (Exception logFailure) when (logFailure is not OutOfMemoryException)
-            {
-                // Logging is best effort: a failing provider must not leave the shared probe
-                // faulted, which would turn every later /readyz into a 500.
-                _ = logFailure;
-            }
             observation = new ReadinessObservation(false, null);
+            // Our own deadline cancelling the wait is the expected not-ready answer, not a fault to trace.
+            var timedOut = exception is OperationCanceledException && timeout.IsCancellationRequested;
+            cause = timedOut ? TimedOut : exception.GetType().FullName;
+            fault = timedOut ? null : exception;
             // Observe a late failure so it is not reported as unobserved.
             _ = check?.ContinueWith(static task => task.Exception, TaskScheduler.Default);
         }
 
+        return this.Settle(observation, cause, fault);
+    }
+
+    // Publishes the observation, then logs the transition.
+    private ReadinessObservation Settle(ReadinessObservation observation, string? cause, Exception? fault)
+    {
         lock (this.gate)
         {
-            this.Publish(observation);
+            this.latest = observation;
+            this.latestTimestamp = clock.GetTimestamp();
         }
 
+        this.Record(cause, fault);
         return observation;
     }
 
-    // Caller holds the gate.
-    private void Publish(ReadinessObservation observation)
+    // Logs only transitions: the first failure or a new cause warns, repeats stay at Debug, and the
+    // first success after a failure is reported once.
+    private void Record(string? cause, Exception? fault)
     {
-        this.latest = observation;
-        this.latestTimestamp = clock.GetTimestamp();
-        this.inFlight = null;
+        string? previous;
+        lock (this.gate)
+        {
+            previous = this.failure;
+            this.failure = cause;
+        }
+
+        try
+        {
+            if (cause is null)
+            {
+                if (previous is not null)
+                {
+                    LogRecovered(logger);
+                }
+            }
+            else if (cause != previous)
+            {
+                LogFailed(logger, cause, fault);
+            }
+            else
+            {
+                LogStillFailing(logger, cause);
+            }
+        }
+        catch (Exception logFailure) when (logFailure is not OutOfMemoryException)
+        {
+            // Logging is best effort: a failing provider must not stop the readiness loop.
+            _ = logFailure;
+        }
     }
 
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Readiness check failed")]
-    private static partial void LogProbeFailed(ILogger logger, Exception exception);
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Readiness check failed: {Cause}")]
+    private static partial void LogFailed(ILogger logger, string cause, Exception? exception);
+
+    [LoggerMessage(Level = LogLevel.Debug, Message = "Readiness check still failing: {Cause}")]
+    private static partial void LogStillFailing(ILogger logger, string cause);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Readiness check recovered")]
+    private static partial void LogRecovered(ILogger logger);
 }

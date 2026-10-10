@@ -45,12 +45,15 @@ public sealed class StorageReadinessTests(TerraBaseFixture fixture)
         var (tenant, database) = await fixture.CreateDatabaseAsync();
         await using var auth = await StartAuthAsync(tenant);
         await auth.App.Services.GetRequiredService<SigningKeyRotation>().Bootstrapped.WaitAsync(TimeSpan.FromSeconds(30));
+        await Assert.That(await ReadyWithinAsync(auth, TimeSpan.FromSeconds(10))).IsTrue();
         using var ready = await auth.Client.GetAsync("/readyz");
         await Assert.That(ready.StatusCode).IsEqualTo(HttpStatusCode.OK);
         var body = await ready.Content.ReadFromJsonAsync<JsonElement>();
         await Assert.That(body.GetProperty("status").GetString()).IsEqualTo("ready");
 
         await using var missing = await StartAuthAsync(tenant, databaseName: "missing");
+        // Let one pass run against the missing database before asking.
+        await Task.Delay(ReadinessWait.NextPass);
         using var unavailable = await missing.Client.GetAsync("/readyz");
         await Assert.That(unavailable.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
         await Assert.That((await database.ListCollectionsAsync()).Items.Select(collection => collection.Name))
@@ -108,41 +111,24 @@ public sealed class StorageReadinessTests(TerraBaseFixture fixture)
         vault.Put(OidcIssuer.InstanceId, JsonDocument.Parse("{}").RootElement);
         var emptied = vault.Current(OidcIssuer.InstanceId).Version;
 
-        // Readiness is cached for one second.
-        await Task.Delay(TimeSpan.FromMilliseconds(1100));
-        using var unavailable = await auth.Client.GetAsync("/readyz");
-        await Assert.That(unavailable.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        // The verified vault read stays cached for five minutes, so the emptied ring is not re-read this soon.
+        await Task.Delay(ReadinessWait.NextPass);
         await Assert.That(vault.Current(OidcIssuer.InstanceId).Version).IsEqualTo(emptied);
     }
 
     [Test]
-    public async Task Readiness_checks_the_vault_ring_as_it_is_now_despite_the_production_refresh_interval()
+    public async Task Healthy_vault_metadata_is_read_once_across_passes_within_five_minutes()
     {
         var (tenant, _) = await fixture.CreateDatabaseAsync();
         var vault = FakeOciVault.For(tenant.Project.Id);
-        await using var auth = await StartAuthAsync(tenant, refresh: TimeSpan.FromMinutes(1));
+        await using var auth = await StartAuthAsync(tenant, refresh: KeyRingRefresh.Max);
         await Assert.That(await ReadyWithinAsync(auth, TimeSpan.FromSeconds(10))).IsTrue();
-        var ring = vault.Read(OidcIssuer.InstanceId)!.Value;
+        var reads = vault.CurrentReads(OidcIssuer.InstanceId);
 
-        // Each change shows once the one-second readiness observation expires, not after the ring cache's minute.
-        vault.Put(OidcIssuer.InstanceId, JsonDocument.Parse("{}").RootElement);
-        await Task.Delay(TimeSpan.FromMilliseconds(1100));
-        using (var emptied = await auth.Client.GetAsync("/readyz"))
-        {
-            await Assert.That(emptied.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
-        }
-
-        vault.Put(OidcIssuer.InstanceId, ring);
-        await Task.Delay(TimeSpan.FromMilliseconds(1100));
-        using (var restored = await auth.Client.GetAsync("/readyz"))
-        {
-            await Assert.That(restored.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        }
-
-        vault.Failing = "read";
-        await Task.Delay(TimeSpan.FromMilliseconds(1100));
-        using var outage = await auth.Client.GetAsync("/readyz");
-        await Assert.That(outage.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        // Two more passes run inside the cache window and must not read the vault.
+        await Task.Delay(TimeSpan.FromSeconds(11));
+        await Assert.That(vault.CurrentReads(OidcIssuer.InstanceId)).IsEqualTo(reads);
+        await Assert.That(await ReadyWithinAsync(auth, TimeSpan.FromSeconds(1))).IsTrue();
     }
 
     [Test]
@@ -159,8 +145,8 @@ public sealed class StorageReadinessTests(TerraBaseFixture fixture)
         vault.Put(id, JsonSerializer.SerializeToElement(ring));
         var before = vault.Current(id);
 
-        using var unavailable = await auth.Client.GetAsync("/readyz");
-        await Assert.That(unavailable.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        // A pass after the write: a cached verified read never sees this malformed ring.
+        await Task.Delay(ReadinessWait.NextPass);
         var after = vault.Current(id);
         await Assert.That(after.Version).IsEqualTo(before.Version);
         await Assert.That(after.Document.GetRawText()).IsEqualTo(before.Document.GetRawText());
@@ -235,23 +221,7 @@ public sealed class StorageReadinessTests(TerraBaseFixture fixture)
         await Assert.That((await database.ListDocumentsAsync("storage_health")).Items.Count).IsEqualTo(0);
     }
 
-    private static async Task<bool> ReadyWithinAsync(AuthTestServer auth, TimeSpan limit)
-    {
-        var deadline = DateTimeOffset.UtcNow + limit;
-        do
-        {
-            using var response = await auth.Client.GetAsync("/readyz");
-            if (response.StatusCode == HttpStatusCode.OK)
-            {
-                return true;
-            }
-
-            // Readiness is cached for one second.
-            await Task.Delay(TimeSpan.FromMilliseconds(1100));
-        }
-        while (DateTimeOffset.UtcNow < deadline);
-        return false;
-    }
+    private static Task<bool> ReadyWithinAsync(AuthTestServer auth, TimeSpan limit) => ReadinessWait.ReadyWithinAsync(auth.Client, limit);
 
     // Uses the product's own storage client: no test HttpClient replaces its trust.
     private static Task<AuthTestServer> StartMembersAsync(TerraBaseTestTenant tenant, string endpoints, string root, bool failover = false) =>

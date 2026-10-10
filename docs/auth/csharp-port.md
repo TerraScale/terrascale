@@ -156,8 +156,8 @@ expiry cannot grant authorization.
 synthetic create-only write, version/content-checked read and conditional
 delete in `storage_health`. `/readyz` returns 200 only on success and 503 on
 missing state, permission failure, outage or timeout. Concurrent observations
-coalesce; the latest completed result is cached for one second and the
-deadline is two seconds. `region` is omitted when unknown, as it is for this
+come from a background check run every five seconds; the latest result is
+served, and it is not ready once older than fifteen seconds. The deadline is two seconds. `region` is omitted when unknown, as it is for this
 probe.
 
 The application and probe never provision or repair state. An operator/test
@@ -1001,8 +1001,8 @@ validating and users sign in again; reference refresh tokens and sessions do
 not depend on the ring. Vault failures leave the secret unchanged and the
 bootstrap retries every five seconds; `/readyz` stays 503 until this replica's
 bootstrap has completed and while the secret holds no ring. Readiness checks
-the ring as the vault holds it now (one shared Secrets API read per readiness
-observation, which is cached for a second), not the one-minute lookup cache. The bootstrap only
+the ring's public metadata as the vault holds it (one Secrets API read, cached
+for five minutes after it succeeds; a failure is retried on the next pass), not the one-minute lookup cache. The bootstrap only
 runs at startup: a ring that becomes invalid while serving fails closed until a
 restart. The earlier
 TerraBase ring was not migrated (closed beta); its legacy `signing_key_rings`

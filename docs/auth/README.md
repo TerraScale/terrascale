@@ -379,8 +379,10 @@ SDK-pinned binary. `/readyz` checks the existing `uniques`,
 `invitations`, `audit_events` and `mfa_credentials` collections, then creates, reads
 and conditionally deletes a synthetic document in `storage_health`. It returns
 200 only on success, otherwise 503, without provisioning, repair or in-memory
-fallback. Observations coalesce and are cached for one second after
-completion, with a two-second deadline; unknown `region` is omitted.
+fallback. A background check runs every five seconds with a two-second
+deadline, and `/readyz` answers its latest result; a result older than fifteen
+seconds is not ready. The Vault metadata read is cached for five minutes after it
+succeeds. Unknown `region` is omitted.
 
 The broader `scripts/smoke-real-stack.sh` still targets Rust identity flows
 that later streams have not implemented; it is not evidence of TS-489 or
@@ -505,7 +507,7 @@ rotation.
   checks the configured database, required collections and synthetic
   create/read/conditional-delete access through Documents v1, this
   replica's startup signing-ring bootstrap and the ring's public metadata. Results are
-  coalesced and cached per process for one second after completion, with a
+  answered from a background check per process, run every five seconds with a
   two-second deadline. Both JSON bodies include the .NET service `version`;
   readiness omits `region` when unknown. Metrics are pushed over OTLP;
   `GET /metrics` is not served.
