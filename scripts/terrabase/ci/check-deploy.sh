@@ -148,7 +148,7 @@ deploy() {
 deploy "$pinned" || { cat "$sandbox/log" >&2; fail "automatic deployment failed"; }
 expected=(release service-deploy --role app --binary '*' --repository https://git.example/TerraScale/app
 	--commit "$head" --source-checkout . --actor ci-release --signing-key-secret secret
-	--vault-id vault --namespace ns --region-timeout 30m --poll 5s)
+	--vault-id vault --namespace ns --poll 5s)
 mapfile -t ran < "$sandbox/ran"
 ((${#ran[@]} == ${#expected[@]})) || fail "ts-orch ran with $(paste -sd' ' "$sandbox/ran")"
 for index in "${!expected[@]}"; do
