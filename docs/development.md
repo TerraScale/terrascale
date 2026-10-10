@@ -153,10 +153,10 @@ The vendored SDK includes the regional API hostname correction documented in
 `vendor/PROVENANCE.md`. Reapply it after vendoring the current pin; for upgrades,
 check whether the chosen upstream revision already contains the correction.
 `make check-modules` verifies
-public dependency resolution in its own CI job, alongside lint, unit tests,
+public dependency resolution in the `check` CI job, alongside lint; unit tests
 and browser shards. The workflow's consecutive shard matrix is the single
 source of truth for the total, read by `scripts/e2e-shard-count.sh` for both
-CI runs and local coverage checks. The lint job verifies that the actual shard patterns
+CI runs and local coverage checks. The check job verifies that the actual shard patterns
 cover every listed browser test exactly once, and that invalid shard inputs
 are rejected. Shard helpers respect `GO`, and browser jobs log their resolved
 test pattern. Public module verification needs no npm install or browser assets.
@@ -234,7 +234,7 @@ legacy `application/csp-report` body, not the Reporting API's.
 `fly.toml` and `fly.preview.toml` set both; previews report as the `preview`
 environment.
 
-The e2e workflow runs lint and the full Go browser and SDK suite on every pull
+The ci workflow runs lint and the full Go browser and SDK suite on every pull
 request and push to `main`. The production and preview workflows build the
 image on Fly's remote builder (`fly deploy --remote-only`), so they need no Go
 or Node.js toolchain on the runner; the Dockerfile keeps the Go build and npm

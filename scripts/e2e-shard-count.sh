@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The workflow matrix is the single source of truth for browser shard count.
 set -euo pipefail
-workflow=${1:-.forgejo/workflows/e2e.yml}
+workflow=${1:-.forgejo/workflows/ci.yml}
 matrix=$(sed -n 's/^[[:space:]]*shard: \[\([^]]*\)\][[:space:]]*$/\1/p' "$workflow")
 [[ $matrix =~ ^[0-9]+(,[[:space:]]*[0-9]+)*$ ]] || {
 	echo 'expected one explicit browser shard matrix' >&2; exit 2;

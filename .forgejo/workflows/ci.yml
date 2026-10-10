@@ -1,8 +1,9 @@
-name: e2e
+name: ts-dashboard CI
 on:
-  pull_request:
   push:
     branches: [main]
+  pull_request:
+  workflow_dispatch:
 # The browser suite shares a builder across refs; queue runs instead of overlapping.
 concurrency:
   group: dashboard-e2e
@@ -11,41 +12,58 @@ concurrency:
 # library-patched Chromium with fonts and a 1777 /tmp, and npm and Go caches on
 # the runner's persistent /cache, so each parallel job sets up in seconds.
 jobs:
-  modules:
+  # TS-795 switch guard: fails when the change adds an on/off setting.
+  # Same text in every repo; ts-builder's scripts/bump-ci-ref.sh moves the pinned ref.
+  guard:
     runs-on: terrascale-builder
     timeout-minutes: 10
     steps:
-      - name: Check out the event revision
-        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          github-server-url: "https://git.terrascale.tech"
-          ref: ${{ forgejo.sha }}
+          github-server-url: https://git.terrascale.tech
+          ref: ${{ forgejo.event.pull_request.head.sha || forgejo.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          github-server-url: https://git.terrascale.tech
+          repository: TerraScale/ts-builder
+          ref: 8dacab451c3c16924622ff512d7aa17501b70ecc # guard ref
+          path: .zero-config-policy
+          token: ${{ secrets.TERRASCALE_BOT_TOKEN }}
+          persist-credentials: false
+      - env:
+          ZERO_CONFIG_BASE: ${{ forgejo.event.pull_request.base.sha || forgejo.event.before }}
+          ZERO_CONFIG_HEAD: ${{ forgejo.event.pull_request.head.sha || forgejo.sha }}
+        run: |
+          set -eu
+          if [ -z "$ZERO_CONFIG_BASE" ]; then
+            ZERO_CONFIG_BASE=$(git rev-parse "$ZERO_CONFIG_HEAD^")
+          fi
+          python3 .zero-config-policy/scripts/zero-config-check.py "$ZERO_CONFIG_BASE" "$ZERO_CONFIG_HEAD"
+  check:
+    runs-on: terrascale-builder
+    timeout-minutes: 10
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          github-server-url: https://git.terrascale.tech
           persist-credentials: false
       # This checks downloads only and needs neither npm nor browser assets.
       - name: Verify public Go module resolution
         run: make check-modules
-  lint:
-    runs-on: terrascale-builder
-    timeout-minutes: 10
-    steps:
-      - name: Check out the event revision
-        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-        with:
-          github-server-url: "https://git.terrascale.tech"
-          persist-credentials: false
       - name: Install dashboard JS dependencies
         run: npm ci --no-audit --no-fund
       - name: Check generated assets, lint, and browser shard coverage
         run: make lint check-css check-e2e-shards
-  unit:
+  test:
     runs-on: terrascale-builder
     # Three SDK downloads can each take five minutes; retain ten for tests.
     timeout-minutes: 25
     steps:
-      - name: Check out the event revision
-        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          github-server-url: "https://git.terrascale.tech"
+          github-server-url: https://git.terrascale.tech
           persist-credentials: false
       - name: Install dashboard JS dependencies
         run: npm ci --no-audit --no-fund
@@ -71,9 +89,9 @@ jobs:
         run: make test-unit
   # One browser worker runs every test once. This Forgejo runner does not
   # enforce matrix max-parallel, so multiple shards can starve Chromium.
-  browser:
+  e2e:
     # Keep race builds and real-server unit tests out of Chromium's CPU budget.
-    needs: [lint, unit]
+    needs: [check, test]
     runs-on: terrascale-builder
     timeout-minutes: 20
     strategy:
@@ -81,10 +99,9 @@ jobs:
       matrix:
         shard: [1]
     steps:
-      - name: Check out the event revision
-        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          github-server-url: "https://git.terrascale.tech"
+          github-server-url: https://git.terrascale.tech
           persist-credentials: false
       - name: Install dashboard JS dependencies
         run: npm ci --no-audit --no-fund
@@ -99,17 +116,16 @@ jobs:
         run: make test-browser E2E_SHARD="${{ matrix.shard }}/$(scripts/e2e-shard-count.sh)"
 
   deploy:
-    needs: [modules, lint, unit, browser]
+    needs: [guard, check, test, e2e]
     # Pause production during the coordinated storage/auth cutover; source CI still runs.
+    # remove after TS-677 cutover
     if: forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main' && vars.TS_DASHBOARD_DEPLOY_PAUSED != '1'
     runs-on: terrascale-builder
     timeout-minutes: 10
     steps:
-      - name: Check out the event revision
-        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          github-server-url: "https://git.terrascale.tech"
-          ref: ${{ forgejo.sha }}
+          github-server-url: https://git.terrascale.tech
           persist-credentials: false
           # The rollback below checks the previous release's commit history.
           fetch-depth: 0
