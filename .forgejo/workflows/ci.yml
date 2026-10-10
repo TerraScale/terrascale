@@ -150,7 +150,8 @@ jobs:
           fly config validate --strict -c fly.toml
           # The image production runs now, which a failed smoke rolls back to.
           fly image show -a "$FLY_APP" --json > "${RUNNER_TEMP:-/tmp}/previous-image.json"
-          fly deploy -c fly.toml --remote-only --strategy immediate --ha=false \
+          # Blue-green: the new Machine must pass /health/ready against live TerraBase before it takes traffic.
+          fly deploy -c fly.toml --remote-only --strategy bluegreen --ha=false \
             --build-arg VERSION="$GITHUB_SHA"
           # One Machine serves production; its state lives in TerraBase.
           fly scale count 1 -a "$FLY_APP" -c fly.toml --yes
@@ -192,7 +193,7 @@ jobs:
             exit 1
           fi
           echo "::error::Production sign-in is broken by $GITHUB_SHA; rolling back to $sha ($image)." >&2
-          fly deploy -c fly.toml --image "$image" --strategy immediate --ha=false
+          fly deploy -c fly.toml --image "$image" --strategy bluegreen --ha=false
           fly scale count 1 -a "$FLY_APP" -c fly.toml --yes
           scripts/smoke-native-login.sh https://dash.terrascale.tech || echo "::error::The rollback to $sha fails the smoke too." >&2
           exit 1
