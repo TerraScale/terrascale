@@ -87,10 +87,10 @@ states and declarations even when the dropping origin had never received them.
 
 ## Rollout and follow-up slices
 
-The fresh SQL schema 11 includes uniqueness storage and rejects incompatible files, including GUID schema 9 and
-ULID schema 10 snapshots before import publication. Coordinate its deployment and
-exact storage reset with TS-754's layout-2 ULID cutover; verify and list the deleted targets in the PR. Bootstrap
-state recreates itself. No migration command is shipped.
+The fresh SQL schema (version 1) includes uniqueness storage and rejects files of any other schema version,
+including snapshots, before import publication. It deploys with the single TerraBase storage reset that TS-677 runs
+for the format change; verify and list the deleted targets in that PR. Bootstrap state recreates itself. No
+migration command is shipped.
 
 1. ts-go, ts-js and ts-dotnet: send single/compound uniqueness declarations and surface `unique_violation`.
 2. ts-dashboard: declare its native keys, remove claim writers and the record discriminator, and wipe the affected

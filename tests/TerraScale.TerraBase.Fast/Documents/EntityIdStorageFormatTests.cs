@@ -75,7 +75,7 @@ public sealed class EntityIdStorageFormatTests
             await current.OpenAsync(token);
             await using var version = current.CreateCommand();
             version.CommandText = "PRAGMA user_version;";
-            await Assert.That((long)(await version.ExecuteScalarAsync(token))!).IsEqualTo(11);
+            await Assert.That((long)(await version.ExecuteScalarAsync(token))!).IsEqualTo(1);
         }
         finally
         {

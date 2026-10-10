@@ -83,10 +83,11 @@ Every member of a region **pulls** each other region's change groups:
 A round that pulled something and is still behind starts the next one at once; otherwise the next one starts a
 second later. Each origin gets at most 16 pull requests per round, so a busy origin does not hold up the others.
 
-The messages use the protobuf schema `Features/Replication/Protos/terrabase/v1/wan.proto`, with WAN request version 3.
-This is a breaking wire change: version 1 and 2 requests and raw protobuf heads replies are rejected, with no fallback or
-migration. Regions must use version 3 to replicate with each other; a version mismatch postpones replication and cannot
-authorize inventory cleanup. The protobuf package and `ts.orch.v1` subjects remain unchanged: that subject version
+The messages use the protobuf schema `Features/Replication/Protos/terrabase/v1/wan.proto`, with WAN request version 1.
+Raw protobuf heads replies are rejected, with no fallback or migration. Regions must use version 1 to replicate with
+each other; a version mismatch postpones replication and cannot authorize inventory cleanup. The number never
+increases (user rule, 2026-10-09): a wire format change ships at a rollout that stops both regions' members before
+either starts the new build. The protobuf package and `ts.orch.v1` subjects remain unchanged: that subject version
 belongs to ts-orchestrator's fabric, separately from the WAN request version and application envelope major version 1.
 Pull replies retain their protobuf framing and existing change-group envelopes. Every request and encoded reply is at
 most 1 MiB, NATS's default `max_payload`, which the leafnode links between regions keep.

@@ -39,7 +39,7 @@ public static class ReplicationProtocol
     /// </summary>
     public const ulong MembershipEpoch = 0;
 
-    internal const uint Major = 2;
+    internal const uint Major = 1;
 
     /// <summary>A receiver ends a stream on which nothing arrives for this long.</summary>
     public static TimeSpan IdleTimeout { get; } = TimeSpan.FromSeconds(30);
@@ -257,7 +257,7 @@ public static class ReplicationProtocol
     }
 
     /// <summary>
-    /// Whether a <paramref name="welcome"/> answers <see cref="CreateHello"/> for <paramref name="database"/>: protocol 2.0,
+    /// Whether a <paramref name="welcome"/> answers <see cref="CreateHello"/> for <paramref name="database"/>: protocol 1.0,
     /// format and merge policy 1, LZ4, a <see cref="Member"/> identity in this epoch, and limits that are exactly the
     /// minimum of ours and its own (a peer cannot raise a limit we offered).
     /// </summary>

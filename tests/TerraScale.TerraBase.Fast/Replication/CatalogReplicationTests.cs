@@ -420,7 +420,7 @@ public sealed class CatalogReplicationTests
         var client = new CatalogReplication.CatalogReplicationClient(channel);
 
         var refused = await Assert.ThrowsAsync<RpcException>(async () =>
-            await FramesAsync(client, new FollowRequest { Protocol = 1, Codecs = { PayloadCodec.Lz4BlockV1 } }, 1));
+            await FramesAsync(client, new FollowRequest { Protocol = 2, Codecs = { PayloadCodec.Lz4BlockV1 } }, 1));
         await Assert.That(refused!.StatusCode).IsEqualTo(StatusCode.InvalidArgument);
 
         // A new follower gets a snapshot that ends at the primary's head.

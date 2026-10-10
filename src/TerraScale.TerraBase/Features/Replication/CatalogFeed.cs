@@ -9,7 +9,7 @@ namespace TerraBase.Features.Replication;
 /// <summary>Bounds and timing of <c>CatalogReplication.Follow</c> (docs/decisions/0009).</summary>
 internal static class CatalogProtocol
 {
-    public const uint Version = 2;
+    public const uint Version = 1;
 
     /// <summary>Changes per page; one page is one envelope.</summary>
     public const int MaxPageChanges = 4096;
@@ -64,7 +64,7 @@ internal sealed partial class CatalogFeed(
 
         if (request.Protocol != CatalogProtocol.Version || !request.Codecs.Contains(PayloadCodec.Lz4BlockV1))
         {
-            throw new RpcException(new Status(StatusCode.InvalidArgument, "the follower needs catalog protocol 2 with the LZ4 envelope"));
+            throw new RpcException(new Status(StatusCode.InvalidArgument, $"the follower needs catalog protocol {CatalogProtocol.Version} with the LZ4 envelope"));
         }
 
         try

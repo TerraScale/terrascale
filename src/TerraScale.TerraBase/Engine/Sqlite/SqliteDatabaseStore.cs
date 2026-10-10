@@ -33,7 +33,7 @@ internal sealed partial class SqliteDatabaseStore(
         : this(name, path, pool, io, pragmas, null, time, null, committed) { }
 
     /// <summary>On-disk schema version, stored in <c>PRAGMA user_version</c>.</summary>
-    private const int SchemaVersion = 11;
+    private const int SchemaVersion = 1;
 
     // Greenfield bootstrap only: an older on-disk shape must be discarded, never upgraded.
     private const string SchemaSql = $$"""
@@ -883,15 +883,18 @@ internal sealed partial class SqliteDatabaseStore(
         transaction.Commit();
     }
 
-    // Returns the schema version; throws for a newer, unsupported schema.
+    // Returns the schema version (0 for an empty file); throws for any other format. Versions never increase: a format
+    // change wipes storage instead, so another number is always a format this build does not read. The first build's own
+    // schema 1 predates the layout record: the engine refuses its flat data directories before opening any file.
     private static int Version(string name, SqliteConnection connection, SqliteTransaction? transaction)
     {
         var version = Convert.ToInt32(
             Scalar(connection, transaction, "PRAGMA user_version;"),
             System.Globalization.CultureInfo.InvariantCulture);
-        return version > SchemaVersion
-            ? throw new InvalidOperationException($"database '{name}' has schema version {version}; this build supports up to {SchemaVersion}")
-            : version;
+        return version is 0 or SchemaVersion
+            ? version
+            : throw new InvalidOperationException(
+                $"database '{name}' has schema version {version}, an old database format; discard the affected data before starting");
     }
 
     // Called only from the worker that owns this connection, including during bootstrap and copying.

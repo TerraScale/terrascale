@@ -137,7 +137,7 @@ public sealed class CatalogDeletionTests
                 await Assert.That(await followerTenants.DatabaseRecordAsync(invoices, token) is Unavailable).IsTrue();
                 await Assert.That(await followerTenants.PlanAsync(invoices.OrganizationId, token) is Unavailable).IsTrue();
                 await Assert.That(File.Exists(FileOf(invoices))).IsTrue();
-                await WriteVersionAsync(engine, "\"6\""u8.ToArray(), token);
+                await WriteVersionAsync(engine, "\"1\""u8.ToArray(), token);
                 await TerraBaseTestServer.EventuallyAsync(async probe => (await HelloAsync(client, invoices, probe)).Welcome is not null);
                 await Assert.That(await followerTenants.RegisteredAsync(invoices, token) is bool registered && registered).IsTrue();
                 await Assert.That(await followerTenants.ReplicatesAsync(invoices, token) is bool replicates && replicates).IsTrue();
@@ -415,7 +415,7 @@ public sealed class CatalogDeletionTests
     }
 
     // The catalog version document of this build's catalog.
-    private static DocumentChange Version { get; } = new("catalog", "version", 1, "\"6\""u8.ToArray());
+    private static DocumentChange Version { get; } = new("catalog", "version", 1, "\"1\""u8.ToArray());
 
     private static async Task ReadyAsync(TerraBaseTestServer server) =>
         await TerraBaseTestServer.EventuallyAsync(async token =>

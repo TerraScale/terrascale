@@ -7,12 +7,12 @@ public sealed class StorageFormatTests
 {
     [Test]
     [Arguments(0)]
-    [Arguments(1)]
     [Arguments(2)]
     [Arguments(3)]
     [Arguments(8)]
     [Arguments(9)]
     [Arguments(10)]
+    [Arguments(11)]
     public async Task Old_database_formats_are_refused_without_rewriting_data(int version)
     {
         await using var api = await DocumentApi.StartAsync();

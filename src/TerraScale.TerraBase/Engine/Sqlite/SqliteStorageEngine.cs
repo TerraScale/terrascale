@@ -30,7 +30,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
     private readonly TimeSpan _readinessCacheTtl;
     internal const string SystemName = "_system";
     // Recorded in the lock file: the layout of this build, one directory per tenant.
-    private const byte LayoutVersion = 2;
+    private const byte LayoutVersion = 1;
     private const string PreTenancyLayout = "data directory uses the pre-tenancy layout; start with an empty data directory (no automatic migration)";
 
     /// <summary>The file whose exclusive lock makes a process the only owner of a data directory.</summary>

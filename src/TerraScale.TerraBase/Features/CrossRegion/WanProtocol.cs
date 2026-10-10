@@ -12,7 +12,7 @@ namespace TerraBase.Features.CrossRegion;
 public static class WanProtocol
 {
     /// <summary>Version of <see cref="WanRequest"/>.</summary>
-    public const uint Version = 3;
+    public const uint Version = 1;
 
     /// <summary>Largest request or reply: NATS's default <c>max_payload</c>, which leafnodes between regions keep.</summary>
     public const int MaxMessageBytes = 1024 * 1024;

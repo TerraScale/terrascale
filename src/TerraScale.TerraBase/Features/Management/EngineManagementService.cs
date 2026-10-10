@@ -33,7 +33,7 @@ namespace TerraBase.Features.Management;
 /// goes through <see cref="GetOrganizationAsync(IStorageTransaction, string, string, CancellationToken)"/> or
 /// <c>AuthorizeAsync</c>, which answer non-members as if the organization did not exist.
 /// <para>
-/// The catalog is versioned by the <c>catalog/version</c> document. Empty catalogs bootstrap version 6. Older catalogs are refused; this closed-beta cutover discards old data.
+/// The catalog is versioned by the <c>catalog/version</c> document. Empty catalogs bootstrap version 1. Older catalogs are refused; this closed-beta cutover discards old data.
 /// </para>
 /// <para>
 /// Each organization is a tenant. Storage is addressed by a <see cref="TenantContext"/> resolved in the same transaction
@@ -50,7 +50,7 @@ internal sealed partial class EngineManagementService(
     private const string Catalog = "catalog";
     private const string CatalogVersionId = "version";
 
-    private const string CatalogVersion = "6";
+    private const string CatalogVersion = "1";
     private const string PendingDatabaseCleanup = "pending_database_cleanup";
 
     // Global: project id to its organization id, so a client-chosen project id is unique across organizations.

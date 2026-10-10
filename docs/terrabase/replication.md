@@ -48,7 +48,7 @@ Database-wide placement currently has one shard (zero).
 Invalid membership peer addresses are logged without their values and skipped; a failed peer does
 not stop reconciliation with the remaining members or configured peers.
 The closed-beta `terrabase.alpha.AntiEntropy` gRPC contract uses the existing mutual-TLS listener and
-LZ4 application envelopes; it adds no public HTTP API. Fresh schema 11 includes two partial key indexes so
+LZ4 application envelopes; it adds no public HTTP API. The fresh schema includes two partial key indexes so
 excluded empty or oversized keys do not lengthen document or retained-deletion scans.
 
 A transient Merkle tree has 16 leaves, selected by the high nibble of SHA-256 of each length-framed
@@ -270,7 +270,7 @@ A third node adds its address to both lists, for example
 
 One `Replication.Sync` stream carries one database from one origin to one peer.
 
-1. Sender → `Hello`: organization, project and database ULIDs (16 bytes each in network byte order), origin (as both member id and incarnation), protocol 2.0,
+1. Sender → `Hello`: organization, project and database ULIDs (16 bytes each in network byte order), origin (as both member id and incarnation), protocol 1.0,
    format 1, LZ4 codec, limits.
 2. Receiver → `Welcome` with its applied prefix of that origin and the negotiated limits: each the
    minimum of both sides. It refuses an incompatible `Hello` (a range without 1.0, no LZ4, a zero
@@ -288,7 +288,7 @@ One `Replication.Sync` stream carries one database from one origin to one peer.
    protocol, format or codec with a
    non-retryable `STREAM_ERROR_UNSUPPORTED_FORMAT`.
 5. Once every group it has is durably acknowledged, the sender completes the stream. It fails
-   closed on a `Welcome` that is not exactly an answer to its `Hello`: protocol 2.0, event and
+   closed on a `Welcome` that is not exactly an answer to its `Hello`: protocol 1.0, event and
    record format 1, merge policy 1, LZ4, this database in this epoch, and limits equal to the
    minimum of both sides (a peer may lower a limit, never raise one). Before releasing anything,
    an acknowledgment must name the peer from `Welcome`,
@@ -491,7 +491,6 @@ persistence is introduced here.
 
 ## Schema compatibility
 
-Main's schema v6 births/high indexes are preserved; replication capture and separate merge versions
-are v7, and journal-prefix proofs are v8. Released main schemas upgrade transactionally. Earlier
-unmerged PR revisions used conflicting v6/v7 numbers and are not a supported upgrade source;
-export their data and start with fresh files rather than changing `user_version` manually.
+Every database file is schema version 1, and the number never increases (user rule, 2026-10-09). There are no
+upgrades: a file of any other version is refused, and a format change wipes storage at a rollout that stops every
+member before any new build starts. Never change `user_version` manually.

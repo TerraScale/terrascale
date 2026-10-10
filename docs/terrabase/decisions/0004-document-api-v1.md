@@ -16,12 +16,12 @@ TS-754 carries caller-supplied keys in one UTF-8 query parameter for point opera
 or Unicode normalization. This replaces the path-key routes because Kestrel normalizes dot segments
 and aliases escaped slash spellings before route values are exposed. See [the ID contract](../id-contract.md).
 
-- **Fresh schema v11** (`PRAGMA user_version = 11`): new files bootstrap the complete schema in one transaction.
-  Older nonempty files and newer schemas are refused. There are no upgrades, backfills or legacy ID fallbacks.
+- **Fresh schema v1** (`PRAGMA user_version = 1`): new files bootstrap the complete schema in one transaction.
+  Nonempty files of any other version are refused. There are no upgrades, backfills or legacy ID fallbacks.
   Collections have a persisted canonical ULID `entity_id`; database incarnations are canonical ULIDs.
   An incarnation persists across reopen; newly created and copied databases receive fresh incarnations.
   `IDatabaseStore.Incarnation` exposes this value to database-scoped handle consumers and replication.
-  The ID cutover uses data-directory layout 2 and catalog version 6; deployment discards affected old data.
+  The ID cutover uses data-directory layout 1 and catalog version 1; deployment discards affected old data.
   See [the ID contract](../id-contract.md).
 - **Versions** are `tbv1-` and the first 16 bytes of SHA-256 over the database scope, collection, id,
   merge version, deletion state and raw UTF-8 document bytes. The scope of a client database derives from its

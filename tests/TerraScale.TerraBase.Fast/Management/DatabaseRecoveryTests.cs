@@ -1089,11 +1089,11 @@ public sealed class DatabaseRecoveryTests
             }
         })))
         {
-            await Assert.That(await CatalogAsync(api, "catalog", "version")).IsEqualTo("\"6\"");
+            await Assert.That(await CatalogAsync(api, "catalog", "version")).IsEqualTo("\"1\"");
             using var owner = api.As(state.User);
             using var created = await owner.PostAsJsonAsync(Uri(state.Databases), new { name = state.TargetName });
             await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.InternalServerError);
-            await Assert.That(await CatalogAsync(api, "catalog", "version")).IsEqualTo("\"6\"");
+            await Assert.That(await CatalogAsync(api, "catalog", "version")).IsEqualTo("\"1\"");
             var pending = await PendingAsync(api);
             await Assert.That(pending.Documents.Count).IsEqualTo(1);
             target = pending.Documents[0].Id;
@@ -1126,7 +1126,7 @@ public sealed class DatabaseRecoveryTests
             await Assert.That(File.Exists(state.Path(target))).IsFalse();
         }
 
-        await DocumentFiles.UpdateAsync(systemPath, ("catalog", "version", "\"6\""));
+        await DocumentFiles.UpdateAsync(systemPath, ("catalog", "version", "\"1\""));
         await using var recovered = await state.StartAsync();
         using var recoveredOwner = recovered.As(state.User);
         await Assert.That((await PendingAsync(recovered)).Documents).IsEmpty();
@@ -1135,7 +1135,7 @@ public sealed class DatabaseRecoveryTests
         await state.AssertUnregisteredAsync(recovered, recoveredOwner, target);
         await state.AssertPreservedAsync(recovered, recoveredOwner);
         await recovered.CreateDatabaseAsync(state.Organization, state.Project, state.TargetName, recoveredOwner);
-        await Assert.That(await CatalogAsync(recovered, "catalog", "version")).IsEqualTo("\"6\"");
+        await Assert.That(await CatalogAsync(recovered, "catalog", "version")).IsEqualTo("\"1\"");
     }
 
     [Test]

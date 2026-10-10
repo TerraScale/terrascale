@@ -17,7 +17,8 @@ Turso engine. TerraBase is a database-as-a-service: clients store JSON documents
   `IDatabaseStore` (transactions) and `IStorageTransaction` (document reads and writes).
   `Engine/Sqlite/` is the only code that references SQLite.
 - Schema v1 is one `documents (collection, id, version, body)` table, `WITHOUT ROWID`, with
-  `PRAGMA user_version = 1`. A file with a newer version is refused.
+  `PRAGMA user_version = 1`. A file with any other version is refused. Versions never increase: a format change
+  wipes storage instead (user rule, 2026-10-09).
 - TerraBase's own state (API key hashes) lives in the reserved `_system` database, which clients
   cannot name. It stays at `<data-directory>/_system.db` under 0005.
 

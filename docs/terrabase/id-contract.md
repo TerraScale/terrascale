@@ -28,12 +28,12 @@ Unicode are addressable as distinct keys. Query `+` denotes a space; a literal p
 Invalid percent escapes and invalid UTF-8 are rejected. The old `…/documents/{id}` point routes are removed.
 Listing and generated creation still use `GET/POST …/documents`; creation returns the `by-key` Location.
 
-Fresh storage uses data-directory layout 2, SQL schema 11 and catalog version 6. New files bootstrap the full
-schema atomically. Old nonempty files and unsupported schemas are refused. There are no migrations,
-backfills, dual reads/writes or legacy ID fallbacks. Previous GUID schema 9 and ULID schema 10 are refused on
-import as well as normal startup. TS-755 includes native uniqueness in fresh schema 11 before the combined
-production rollout. Peer protocol 2.0, catalog feed/forwarding version 2
-and WAN version 2 refuse old peers before interpreting their UUID wire bytes as ULIDs.
+Fresh storage uses data-directory layout 1, SQL schema 1 and catalog version 1. New files bootstrap the full
+schema atomically. Nonempty files of any other schema version are refused, on import as well as normal startup.
+There are no migrations, backfills, dual reads/writes or legacy ID fallbacks. TS-755's native uniqueness is
+part of this schema. Version numbers never increase (user rule, 2026-10-09): a format change wipes storage at a
+rollout that stops every member before any new build starts, so peers of an old build never meet this one, and
+peer protocol 1.0, catalog feed/forwarding 1 and WAN 1 need not tell them apart.
 
 Deployment resets the verified affected databases, system catalog, backup objects and external records.
 Existing sessions, tokens, keys, cursors and versions may be invalidated. Startup recreates system/bootstrap

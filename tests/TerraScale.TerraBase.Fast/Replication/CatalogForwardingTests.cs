@@ -438,7 +438,7 @@ public sealed class CatalogForwardingTests
         tampered[^1] ^= 1;
         var invalid = new (string Case, ForwardRequest Request)[]
         {
-            ("protocol", Request("GET", "/", protocol: 1)),
+            ("protocol", Request("GET", "/", protocol: 2)),
             ("region", Request("GET", "/", region: "Not A Region")),
             ("method", Request("GE T", "/")),
             ("path", Request("GET", "v1/management/organizations")),
