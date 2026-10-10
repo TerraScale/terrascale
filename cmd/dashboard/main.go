@@ -16,6 +16,7 @@ import (
 	"terrascale.tech/dashboard/internal/platform/buildinfo"
 	"terrascale.tech/dashboard/internal/platform/config"
 	"terrascale.tech/dashboard/internal/platform/errortracking"
+	"terrascale.tech/dashboard/internal/platform/logging"
 )
 
 // shutdownTimeout bounds how long in-flight requests may finish after a
@@ -23,6 +24,8 @@ import (
 const shutdownTimeout = 10 * time.Second
 
 func main() {
+	logger := slog.New(errortracking.LogHandler(logging.Handler(os.Stderr)))
+	slog.SetDefault(logger.With(logging.Fields(os.Getenv("FLY_REGION"), os.Getenv("FLY_MACHINE_ID"))...))
 	if len(os.Args) > 1 {
 		command, ok := map[string]func([]string) error{
 			"report-internal-billing":    reportInternalBilling,
@@ -60,12 +63,6 @@ func run(flush *func()) error {
 	})
 	if err != nil {
 		return err
-	}
-	if cfg.SentryDSN != "" {
-		// Wrap a new handler: slog's default one writes through the log
-		// package, which SetDefault points back at slog, so wrapping it
-		// would deadlock on the first record.
-		slog.SetDefault(slog.New(errortracking.LogHandler(slog.NewTextHandler(os.Stderr, nil))))
 	}
 	application, err := app.New(cfg)
 	if err != nil {

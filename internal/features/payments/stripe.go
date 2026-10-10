@@ -105,7 +105,7 @@ func (billing *Stripe) expireUnboundCheckout(ctx context.Context, sessionID stri
 	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
 	if err := billing.provider.ExpireCheckoutSession(cleanup, sessionID); err != nil {
-		slog.Warn("expire unbound Stripe checkout session", "session_id", sessionID, "error", err)
+		slog.WarnContext(ctx, "expire unbound Stripe checkout session", "session_id", sessionID, "error", err)
 	}
 }
 

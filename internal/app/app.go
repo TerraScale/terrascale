@@ -49,6 +49,7 @@ import (
 	"terrascale.tech/dashboard/internal/platform/session"
 	"terrascale.tech/dashboard/internal/platform/statuspage"
 	"terrascale.tech/dashboard/internal/platform/throttle"
+	"terrascale.tech/dashboard/internal/platform/tracing"
 	"terrascale.tech/sdk/v1"
 )
 
@@ -98,12 +99,12 @@ func NewWithMetrics(cfg config.Config, metrics core.MetricsReader, regionHealth 
 		if cfg.TerraBaseHTTPClient == nil {
 			cfg.TerraBaseHTTPClient = &http.Client{
 				Timeout: 15 * time.Second,
-				Transport: &http.Transport{
+				Transport: tracing.Transport(&http.Transport{
 					Proxy:             http.ProxyFromEnvironment,
 					TLSClientConfig:   &tls.Config{MinVersion: tls.VersionTLS13},
 					ForceAttemptHTTP2: true,
 					IdleConnTimeout:   90 * time.Second,
-				},
+				}),
 			}
 		}
 		client, err := v1.New(v1.Config{BaseURL: cfg.TerraBaseURL, Token: cfg.TerraBaseAPIKey, HTTPClient: cfg.TerraBaseHTTPClient})
@@ -265,7 +266,7 @@ func NewWithMetrics(cfg config.Config, metrics core.MetricsReader, regionHealth 
 	if cfg.SentryDSN != "" {
 		handler = errortracking.Middleware(handler)
 	}
-	return &Application{Handler: compress(handler)}, nil
+	return &Application{Handler: tracing.Middleware(compress(handler))}, nil
 }
 
 // withUserToken lets features read TerraBase as the signed-in user with the

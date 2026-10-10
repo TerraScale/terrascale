@@ -357,12 +357,12 @@ func (s Service) RemoveMember(ctx context.Context, p core.Principal, userID stri
 	target, err := s.store.FindByEmail(ctx, removed.Email)
 	if err != nil {
 		if !errors.Is(err, core.ErrNotFound) {
-			slog.Warn("find removed member for session revocation", "user_id", userID, "error", err)
+			slog.WarnContext(ctx, "find removed member for session revocation", "user_id", userID, "error", err)
 		}
 		return nil
 	}
 	if err := s.sessions.RevokeUser(ctx, target.ID, userID); err != nil {
-		slog.Warn("revoke removed member sessions", "user_id", userID, "error", err)
+		slog.WarnContext(ctx, "revoke removed member sessions", "user_id", userID, "error", err)
 	}
 	return nil
 }

@@ -78,13 +78,13 @@ func (l *Limiter) Allow(r *http.Request, account string) (time.Duration, bool) {
 	wait, ok, err := l.store.Reserve(r.Context(), l.now(), buckets)
 	if err != nil {
 		// Fail closed: an attempt the limiter cannot count is refused.
-		slog.Warn("throttle: reserve attempt", "error", err)
+		slog.WarnContext(r.Context(), "throttle: reserve attempt", "error", err)
 		return l.opts.Client.Interval, false
 	}
 	// No budget refills slower than its whole burst, so a longer wait is a
 	// store's error and must not lock anyone out.
 	if most := l.maxWait(); wait > most {
-		slog.Warn("throttle: store asked for a longer wait than any budget allows", "wait", wait)
+		slog.WarnContext(r.Context(), "throttle: store asked for a longer wait than any budget allows", "wait", wait)
 		wait = most
 	}
 	return wait, ok

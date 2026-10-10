@@ -143,7 +143,7 @@ func mountTools(tools *core.Tools, service Service) {
 		if err != nil {
 			// The organization is created; describe it without its plan
 			// name rather than report the creation as failed.
-			slog.Warn("describe created organization", "organization_id", org.ID, "error", err)
+			slog.WarnContext(ctx, "describe created organization", "organization_id", org.ID, "error", err)
 			summary = describeOrganization(org, p.UserID)
 		}
 		return summary, nil

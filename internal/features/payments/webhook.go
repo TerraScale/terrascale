@@ -78,13 +78,13 @@ func handleWebhook(flow BillingFlow, billing *Stripe) http.HandlerFunc {
 		switch {
 		case errors.Is(err, webhook.ErrNotSigned), errors.Is(err, webhook.ErrInvalidHeader),
 			errors.Is(err, webhook.ErrNoValidSignature), errors.Is(err, webhook.ErrTooOld):
-			slog.Warn("reject unsigned Stripe webhook", "error", err)
+			slog.WarnContext(r.Context(), "reject unsigned Stripe webhook", "error", err)
 			http.Error(w, "Invalid Stripe webhook signature.", http.StatusBadRequest)
 			return
 		case err != nil:
 			// A version mismatch means the endpoint must be recreated with
 			// stripe.APIVersion; returning an error keeps Stripe retrying.
-			slog.Error("reject unusable Stripe webhook", "error", err, "expected_api_version", stripe.APIVersion)
+			slog.ErrorContext(r.Context(), "reject unusable Stripe webhook", "error", err, "expected_api_version", stripe.APIVersion)
 			http.Error(w, "Unsupported Stripe webhook event.", http.StatusBadRequest)
 			return
 		}

@@ -205,7 +205,7 @@ func redirectPageError(w http.ResponseWriter, r *http.Request, err error, create
 	case errors.Is(err, core.ErrUnavailable):
 		message = "The credential service is unavailable right now. Try again in a moment."
 	default:
-		slog.Error("change credential", "path", r.URL.Path, "error", err)
+		slog.ErrorContext(r.Context(), "change credential", "path", r.URL.Path, "error", err)
 	}
 	query := readFilters(r.URL.Query()).query()
 	query.Set("error", message)

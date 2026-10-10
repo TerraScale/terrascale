@@ -148,7 +148,7 @@ func (s Service) StartCheckout(ctx context.Context, p core.Principal, planKey, i
 	}
 	customerID, err := s.billing.customerFor(ctx, account.User.Email, organization)
 	if err != nil {
-		slog.Error("bind Stripe customer", "organization_id", organization.ID, "error", err)
+		slog.ErrorContext(ctx, "bind Stripe customer", "organization_id", organization.ID, "error", err)
 		return "", providerError("Could not start checkout.")
 	}
 	recorded, err := s.flow.RecordCustomer(ctx, p, customerID)
@@ -156,7 +156,7 @@ func (s Service) StartCheckout(ctx context.Context, p core.Principal, planKey, i
 		return "", err
 	}
 	if recorded != customerID {
-		slog.Error("organization records a different Stripe customer than its binding", "organization_id", organization.ID)
+		slog.ErrorContext(ctx, "organization records a different Stripe customer than its binding", "organization_id", organization.ID)
 		return "", conflict("this organization's billing account needs attention")
 	}
 	trialDays := 0
@@ -173,7 +173,7 @@ func (s Service) StartCheckout(ctx context.Context, p core.Principal, planKey, i
 		IdempotencyKey: core.NewID(),
 	})
 	if err != nil {
-		slog.Error("create Stripe checkout session", "organization_id", organization.ID, "error", err)
+		slog.ErrorContext(ctx, "create Stripe checkout session", "organization_id", organization.ID, "error", err)
 		return "", providerError("Could not start checkout.")
 	}
 	if _, err := absoluteHTTPURL(created.URL); err != nil {
@@ -211,7 +211,7 @@ func (s Service) resumeCheckout(ctx context.Context, p core.Principal, organizat
 	}
 	remote, err := s.billing.provider.RetrieveCheckoutSession(ctx, pendingID)
 	if err != nil {
-		slog.Error("retrieve pending Stripe checkout", "session_id", pendingID, "error", err)
+		slog.ErrorContext(ctx, "retrieve pending Stripe checkout", "session_id", pendingID, "error", err)
 		return "", providerError("Could not verify the existing checkout.")
 	}
 	if remote.ID != pendingID || remote.CustomerID != organization.Billing.CustomerID || remote.ClientReferenceID != organization.ID {
@@ -250,7 +250,7 @@ func (s Service) CancelCheckout(ctx context.Context, p core.Principal) error {
 		return err
 	}
 	if err := s.billing.provider.ExpireCheckoutSession(ctx, sessionID); err != nil {
-		slog.Error("expire Stripe checkout session", "session_id", sessionID, "error", err)
+		slog.ErrorContext(ctx, "expire Stripe checkout session", "session_id", sessionID, "error", err)
 		return providerError("Could not cancel the checkout.")
 	}
 	return s.flow.ExpireExternalCheckout(context.WithoutCancel(ctx), p, sessionID)
@@ -284,7 +284,7 @@ func (s Service) ReturnFromCheckout(ctx context.Context, p core.Principal, sessi
 	// comes from the organization's own Stripe customer.
 	customerID, bound, err := s.billing.store.CustomerFor(ctx, p.OrganizationID)
 	if err != nil {
-		slog.Error("look up Stripe customer after checkout", "organization_id", p.OrganizationID, "error", err)
+		slog.ErrorContext(ctx, "look up Stripe customer after checkout", "organization_id", p.OrganizationID, "error", err)
 		return "", providerError("Could not verify checkout status.")
 	}
 	if !bound {
@@ -294,7 +294,7 @@ func (s Service) ReturnFromCheckout(ctx context.Context, p core.Principal, sessi
 		if errors.Is(err, core.ErrUnavailable) {
 			return "", err
 		}
-		slog.Error("sync Stripe customer after checkout", "organization_id", p.OrganizationID, "error", err)
+		slog.ErrorContext(ctx, "sync Stripe customer after checkout", "organization_id", p.OrganizationID, "error", err)
 		return "", providerError("Could not verify checkout status.")
 	}
 	returnPath, outcome, err := s.flow.CheckoutOutcome(ctx, p, sessionID)
@@ -324,7 +324,7 @@ func (s Service) PortalURL(ctx context.Context, p core.Principal) (string, error
 	}
 	portal, err := s.billing.provider.CreatePortalSession(ctx, organization.Billing.CustomerID, s.billing.config.PublicOrigin+"/organization?tab=billing", core.NewID())
 	if err != nil {
-		slog.Error("create Stripe billing portal", "organization_id", organization.ID, "error", err)
+		slog.ErrorContext(ctx, "create Stripe billing portal", "organization_id", organization.ID, "error", err)
 		return "", providerError("Could not open the billing portal.")
 	}
 	if _, err := absoluteHTTPURL(portal.URL); err != nil {
@@ -410,7 +410,7 @@ func (s Service) ChangePlan(ctx context.Context, p core.Principal, key, interval
 			return "", conflict("a subscription change is already pending")
 		}
 		if err := changer.SetCancelAtPeriodEnd(ctx, current.ID, true, idempotencyKey); err != nil {
-			slog.Error("schedule Personal Free", "organization_id", org.ID, "error", err)
+			slog.ErrorContext(ctx, "schedule Personal Free", "organization_id", org.ID, "error", err)
 			return "", providerError("Could not schedule Free.")
 		}
 		return OutcomeScheduled, s.syncAfterChange(ctx, org)
@@ -424,7 +424,7 @@ func (s Service) ChangePlan(ctx context.Context, p core.Principal, key, interval
 			return "", conflict("undo the scheduled change first")
 		}
 		if err := changer.ChangePlanNow(ctx, current, nextPriceID, idempotencyKey); err != nil {
-			slog.Error("change Stripe subscription", "organization_id", org.ID, "error", err)
+			slog.ErrorContext(ctx, "change Stripe subscription", "organization_id", org.ID, "error", err)
 			return "", providerError("Could not confirm the plan change.")
 		}
 		return OutcomePending, s.syncAfterChange(ctx, org)
@@ -433,7 +433,7 @@ func (s Service) ChangePlan(ctx context.Context, p core.Principal, key, interval
 		return "", conflict("undo the scheduled cancellation first")
 	}
 	if _, err := changer.SchedulePlanChange(ctx, current, nextPriceID, idempotencyKey); err != nil {
-		slog.Error("schedule Stripe plan change", "organization_id", org.ID, "error", err)
+		slog.ErrorContext(ctx, "schedule Stripe plan change", "organization_id", org.ID, "error", err)
 		return "", providerError("Could not schedule the plan change.")
 	}
 	return OutcomeScheduled, s.syncAfterChange(ctx, org)
@@ -480,7 +480,7 @@ func (s Service) UndoPlanChange(ctx context.Context, p core.Principal) (string, 
 		}
 	}
 	if err != nil {
-		slog.Error("undo Stripe plan change", "organization_id", org.ID, "error", err)
+		slog.ErrorContext(ctx, "undo Stripe plan change", "organization_id", org.ID, "error", err)
 		return "", providerError("Could not undo the scheduled change.")
 	}
 	return OutcomeUndone, s.syncAfterChange(ctx, org)
@@ -519,7 +519,7 @@ func (s Service) PreviewPlanChange(ctx context.Context, p core.Principal, key, i
 			return PlanChangePreview{}, errPlanChangesDisabled
 		}
 		if err != nil {
-			slog.Error("preview Stripe plan change", "organization_id", org.ID, "error", err)
+			slog.ErrorContext(ctx, "preview Stripe plan change", "organization_id", org.ID, "error", err)
 			return PlanChangePreview{}, providerError("Stripe could not calculate the estimated charge.")
 		}
 		preview.EffectiveAt, preview.AmountDueCents, preview.ProrationCents, preview.Currency = quote.EffectiveAt, quote.AmountDueCents, quote.ProrationCents, quote.Currency
@@ -536,7 +536,7 @@ func (s Service) currentSubscription(ctx context.Context, org core.Organization)
 	}
 	current, err := s.billing.provider.RetrieveSubscription(ctx, org.Billing.SubscriptionID)
 	if err != nil || current.ID != org.Billing.SubscriptionID || current.CustomerID != org.Billing.CustomerID {
-		slog.Error("verify subscription before plan change", "subscription_id", org.Billing.SubscriptionID, "organization_id", org.ID, "error", err)
+		slog.ErrorContext(ctx, "verify subscription before plan change", "subscription_id", org.Billing.SubscriptionID, "organization_id", org.ID, "error", err)
 		return SubscriptionSnapshot{}, providerError("Could not verify the current subscription.")
 	}
 	return current, nil
@@ -551,7 +551,7 @@ func (s Service) syncAfterChange(ctx context.Context, org core.Organization) err
 		if errors.Is(err, core.ErrUnavailable) {
 			return err
 		}
-		slog.Error("sync Stripe customer after plan change", "organization_id", org.ID, "error", err)
+		slog.ErrorContext(ctx, "sync Stripe customer after plan change", "organization_id", org.ID, "error", err)
 		return providerError("Stripe accepted the change, but the dashboard could not refresh it yet. Reload in a moment.")
 	}
 	return nil

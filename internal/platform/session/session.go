@@ -91,7 +91,7 @@ func (m *Manager) start(w http.ResponseWriter, r *http.Request, p core.Principal
 	// delete still expires.
 	if old, hasOld := m.Token(r); hasOld {
 		if err := m.sessions.Delete(ctx, sha256.Sum256([]byte(old))); err != nil {
-			slog.Warn("delete replaced session", "error", err)
+			slog.WarnContext(r.Context(), "delete replaced session", "error", err)
 		}
 	}
 	m.setCookie(w, token)
@@ -127,7 +127,7 @@ func (m *Manager) rotate(w http.ResponseWriter, r *http.Request, p core.Principa
 			return nil
 		}
 		if err := m.sessions.Delete(ctx, key); err != nil {
-			slog.Warn("delete unused session", "error", err)
+			slog.WarnContext(r.Context(), "delete unused session", "error", err)
 		}
 		if !errors.Is(err, ErrNotFound) {
 			return err
@@ -214,7 +214,7 @@ func (m *Manager) principalFor(ctx context.Context, token string) (core.Principa
 	key := sha256.Sum256([]byte(token))
 	p, valid, err := m.principalForHash(ctx, key)
 	if err != nil {
-		slog.Warn("resolve session", "error", err)
+		slog.WarnContext(ctx, "resolve session", "error", err)
 	}
 	return p, valid
 }
@@ -307,7 +307,7 @@ func (m *Manager) refresh(ctx context.Context, key [32]byte) (Record, error) {
 		case errors.Is(err, core.ErrUnauthorized):
 			updated = ended(current)
 		case err != nil:
-			slog.Warn("refresh session", "error", err)
+			slog.WarnContext(ctx, "refresh session", "error", err)
 			updated.RefreshAt = time.Now().Add(time.Minute)
 		default:
 			updated.Refresh, updated.RefreshAt = next, at
@@ -397,7 +397,7 @@ func (m *Manager) revoke(ctx context.Context, refresh string) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), refreshTimeout)
 	defer cancel()
 	if err := m.opts.Revoke(ctx, refresh); err != nil {
-		slog.Warn("revoke session", "error", err)
+		slog.WarnContext(ctx, "revoke session", "error", err)
 	}
 }
 
@@ -417,7 +417,7 @@ func (m *Manager) SessionsForUser(p core.Principal, r *http.Request) []core.Sess
 	if err != nil {
 		// The signature cannot report the failure; log it so an empty list
 		// from a failing store is not mistaken for no other sessions.
-		slog.Warn("list user sessions", "error", err)
+		slog.WarnContext(r.Context(), "list user sessions", "error", err)
 		return nil
 	}
 	var result []core.SessionInfo

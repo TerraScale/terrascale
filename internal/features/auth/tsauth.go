@@ -22,6 +22,7 @@ import (
 	"golang.org/x/oauth2"
 	"golang.org/x/sync/singleflight"
 	"terrascale.tech/dashboard/internal/core"
+	"terrascale.tech/dashboard/internal/platform/tracing"
 	"terrascale.tech/sdk/tsauth"
 )
 
@@ -123,9 +124,9 @@ func NewTSAuth(cfg TSAuthConfig) (*TSAuth, error) {
 	}
 	// Redirects are not followed: a redirected token request would resend
 	// a password or code, and the client's credentials, elsewhere.
-	client := &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	client := &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }, Transport: tracing.Transport(http.DefaultTransport)}
 	headlessHTTP := *client
-	headlessHTTP.Transport = headlessTransport{http.DefaultTransport}
+	headlessHTTP.Transport = headlessTransport{tracing.Transport(http.DefaultTransport)}
 	headlessClient, err := tsauth.NewHeadless(tsauth.HeadlessConfig{
 		Issuer: cfg.Issuer, ClientID: cfg.ClientID, ClientSecret: cfg.ClientSecret, HTTPClient: &headlessHTTP,
 	})
@@ -157,7 +158,7 @@ func (t *TSAuth) discover(ctx context.Context) (*tsAuthProvider, error) {
 	})
 	if err != nil {
 		if cached != nil {
-			slog.Warn("recheck ts-auth discovery", "error", err)
+			slog.WarnContext(ctx, "recheck ts-auth discovery", "error", err)
 			return cached, nil
 		}
 		return nil, err
@@ -307,7 +308,7 @@ func (t *TSAuth) startSession(w http.ResponseWriter, r *http.Request, deps core.
 	if account.User.PlatformAdmin && t.cfg.AdminSignIn != nil {
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), adminSignInTimeout)
 		if err := t.cfg.AdminSignIn(ctx, account, token.AccessToken); err != nil {
-			slog.Warn("platform admin sign-in hook", "error", err)
+			slog.WarnContext(r.Context(), "platform admin sign-in hook", "error", err)
 		}
 		cancel()
 	}

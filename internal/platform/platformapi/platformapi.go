@@ -81,7 +81,7 @@ func serve(route core.Route, authenticate Authenticate) http.HandlerFunc {
 			return
 		}
 		if err != nil {
-			slog.Warn("platform API authentication unavailable", "error", err)
+			slog.WarnContext(r.Context(), "platform API authentication unavailable", "error", err)
 			writeError(w, http.StatusServiceUnavailable, "temporarily_unavailable", "authentication is temporarily unavailable")
 			return
 		}
