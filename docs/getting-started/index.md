@@ -44,14 +44,14 @@ command below uses only the public database-scoped lifecycle:
 
 ```bash
 # TERRASCALE_API_KEY must be exported for the CLI; .env.local is read by Next.js only.
-terrascale dev <database> --watch=false --no-log-tail
+terrascale dev <database>
 ```
 
 The command talks to the cloud service. It never starts an engine on your
 machine. Data-file seeds (`--seed ./seed.jsonl --seed-collection posts`),
 branch diagnostic log tailing, and codegen watch
-(`--watch --language typescript --codegen-out <path>`) are optional; the command above disables watch and log tailing. The CLI does
-not execute TypeScript seed functions.
+use the installed CLI's documented workflow. The CLI does not execute
+TypeScript seed functions.
 
 The starter is a Next.js app wired to `@terrascale/sdk`. Click **Sign in with
 TerraScale** in each browser tab. It uses OAuth authorization-code PKCE and

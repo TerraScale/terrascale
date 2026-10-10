@@ -8,6 +8,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { canonicalEnvelope, runAll } from "./run-snippets.mjs";
+import { ZERO_CONFIGURATION_ROUTE } from "../docs/.vitepress/routes.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const read = (path) => readFileSync(join(root, path), "utf8");
@@ -120,7 +121,7 @@ assert.ok(!llms.includes("live subscriptions, and tenants run"), "llms does not 
 for (const route of [
   "/", "/getting-started", "/getting-started/", "/concepts",
   "/concepts/replication", "/concepts/sync", "/concepts/sql", "/concepts/pricing-philosophy",
-  "/guides/", "/getting-started/csharp", "/guides/atlas", "/guides/sdks",
+  "/guides/", "/getting-started/csharp", "/guides/atlas", "/guides/sdks", ZERO_CONFIGURATION_ROUTE,
   "/pricing", "/pricing/", "/limits", "/snippets",
   "/blog/reads-are-free", "/blog/benchmarks", "/blog/replication", "/blog/database-per-customer",
   "/changelog", "sync.api.terrascale.tech",

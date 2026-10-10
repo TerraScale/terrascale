@@ -20,6 +20,10 @@ published are retained as non-runnable references.
 
 ## Operations
 
+- [How TerraScale runs with zero configuration](/es/guides/zero-configuration) —
+  every region serves, nodes join automatically and production secrets arrive
+  through OCI Vault.
+
 - **Branches** — `branch-per-developer`, `branch-per-preview`; branches share
   their organization’s normal plan allowances and billing cycle, with no
   separate branch allowance. See [pricing](/es/pricing/).

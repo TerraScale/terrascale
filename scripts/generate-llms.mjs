@@ -4,6 +4,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { ZERO_CONFIGURATION_ROUTE } from "../docs/.vitepress/routes.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const outPath = join(root, "docs", "public", "llms.txt");
@@ -23,6 +24,7 @@ const routes = [
   ["/getting-started/", "Legacy Next.js live-query guide: @terrascale/sdk 0.3.0 is not published; stub success does not qualify the browser journey."],
   ["/getting-started/csharp", "C# candidate quickstart: project-scoped TerraBase Documents CRUD through an exact SDK package; isolated real-binary qualification is separate from production JWTs."],
   ["/guides/atlas", "Atlas candidate: /v1/discovery, project/database /v1/resolve, JWKS and 600-second ES256 routing pins; automatic SDK integration deferred."],
+  [ZERO_CONFIGURATION_ROUTE, "Zero-configuration operating contract: all regions serve, NetBird membership admits nodes, OCI Vault delivers production secrets; historical switch removal is tracked separately."],
   ["/guides/sdks", "SDK compatibility: project-scoped C#, JavaScript and Go candidates; public release, real-runtime and customer-journey gates are distinct."],
   ["/concepts", "Product concepts and legacy SQL/live-query design; candidate Documents query-v1 is a separate contract."],
   ["/concepts/replication", "Replication guarantees: causal sessions, conflict limits, RegionalDurable/GlobalDurable."],

@@ -22,6 +22,7 @@ Base URL: https://docs.terrascale.tech
 - Legacy Next.js live-query guide: @terrascale/sdk 0.3.0 is not published; stub success does not qualify the browser journey.: https://docs.terrascale.tech/getting-started/
 - C# candidate quickstart: project-scoped TerraBase Documents CRUD through an exact SDK package; isolated real-binary qualification is separate from production JWTs.: https://docs.terrascale.tech/getting-started/csharp
 - Atlas candidate: /v1/discovery, project/database /v1/resolve, JWKS and 600-second ES256 routing pins; automatic SDK integration deferred.: https://docs.terrascale.tech/guides/atlas
+- Zero-configuration operating contract: all regions serve, NetBird membership admits nodes, OCI Vault delivers production secrets; historical switch removal is tracked separately.: https://docs.terrascale.tech/guides/zero-configuration
 - SDK compatibility: project-scoped C#, JavaScript and Go candidates; public release, real-runtime and customer-journey gates are distinct.: https://docs.terrascale.tech/guides/sdks
 - Product concepts and legacy SQL/live-query design; candidate Documents query-v1 is a separate contract.: https://docs.terrascale.tech/concepts
 - Replication guarantees: causal sessions, conflict limits, RegionalDurable/GlobalDurable.: https://docs.terrascale.tech/concepts/replication

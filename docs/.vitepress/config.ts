@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { LOCALES } from './supportedLocales.mjs'
+import { ZERO_CONFIGURATION_ROUTE } from './routes.mjs'
 
 // TerraScale product docs — docs.terrascale.tech.
 // Static build (npm run build), default theme, dark default. No design-system
@@ -53,7 +54,7 @@ const TREES: Record<string, { groups: { header: string; items: string[] }[] }> =
       },
     ],
   },
-  '/guides/': { groups: [{ header: 'guides', items: ['/guides/', '/guides/atlas', '/guides/sdks'] }] },
+  '/guides/': { groups: [{ header: 'guides', items: ['/guides/', '/guides/atlas', '/guides/sdks', ZERO_CONFIGURATION_ROUTE] }] },
   '/blog/': {
     groups: [
       {
