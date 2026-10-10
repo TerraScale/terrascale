@@ -67,7 +67,9 @@ curl --fail --silent --show-error --max-time 5 http://127.0.0.1:9464/metrics > "
 awk '/^terrabase_(replication_(sender_durable_lag|sender_initialized|received_groups_total|divergence_detections_total)|catalog_follower_(connected|lag))[ {]/ { print "metric " $0 }' "$metrics"
 echo "complete metrics"
 sudo journalctl -u terrascale-orchestrator-host --since "-MINUTES min" -o cat --no-pager > "$logs"
-awk '/^(warn|fail|crit): TerraBase\.(Features\.(Replication|Catalog|CrossRegion)|Engine)/ { c = $0; getline m; getline e; print "log " c "\t" m "\t" e }' "$logs"
+awk 'function field(name,   s, i) { s = $0; i = index(s, "\"" name "\":\""); if (i == 0) return ""; s = substr(s, i + length(name) + 4); sub(/".*/, "", s); return s }
+    { level = field("level"); category = field("component") }
+    (level == "WARN" || level == "ERROR") && category ~ /^TerraBase\.(Features\.(Replication|Catalog|CrossRegion)|Engine)/ { print "log " tolower(level) ": " category "\t" field("msg") "\t" field("error") }' "$logs"
 awk 'tolower($0) ~ /corrupt|malformed|checksum mismatch|digest mismatch/ && count++ < 5 { print "bad " $0 }' "$logs"
 echo "complete logs"
 """

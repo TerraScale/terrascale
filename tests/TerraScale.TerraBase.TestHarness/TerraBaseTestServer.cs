@@ -437,6 +437,16 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
         .AddFilter("Microsoft.AspNetCore.Server.Kestrel.Https", LogLevel.Debug)
         .AddFilter("Microsoft.AspNetCore.Server.Kestrel.BadRequests", LogLevel.Debug));
 
+    /// <summary>
+    /// Delivers a test provider's Debug records. The production logging setup sets its default filters in PostConfigure,
+    /// which overrides a plain Configure, so the provider-scoped rule is added after it, matched by full type name.
+    /// </summary>
+    public static void CaptureDebugLogs(IServiceCollection services, ILoggerProvider logs)
+    {
+        services.AddSingleton(logs);
+        services.PostConfigure<LoggerFilterOptions>(filter => filter.Rules.Add(new LoggerFilterRule(logs.GetType().FullName, null, LogLevel.Debug, null)));
+    }
+
     internal static void ReportCleanupFailure(AggregateException error)
     {
         // Bypass per-test console capture: this test's report may already have been emitted.

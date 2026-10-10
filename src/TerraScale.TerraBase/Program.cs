@@ -19,6 +19,7 @@ using TerraBase.Features.Stats;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
+using TerraScale.Logging;
 
 // Match the slim host's environment precedence; WebApplicationFactory supplies an argument override.
 var environmentName = args.LastOrDefault(argument => argument.StartsWith("--environment=", StringComparison.Ordinal))?[14..]
@@ -63,9 +64,7 @@ builder.WebHost.ConfigureKestrel(kestrel =>
 });
 // Per-request framework logs are metrics' job; keep the log stream for events. An unauthenticated request is answered 401
 // on purpose, so its challenge is not an event either.
-builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
-builder.Logging.AddFilter("System.Net.Http.HttpClient", LogLevel.Warning);
-builder.Logging.AddFilter("TerraBase.Features.ApiKeys.ApiKeyAuthenticationHandler", LogLevel.Warning);
+builder.Logging.AddTerraScaleLogging("terrabase", ("TerraBase.Features.ApiKeys.ApiKeyAuthenticationHandler", LogLevel.Warning));
 
 var runCompletion = new ApplicationRunCompletion();
 builder.Services.AddSingleton(runCompletion);

@@ -1223,8 +1223,7 @@ public sealed class PeerTransportTests
             return Authentication;
         }
 
-        public void Register(IServiceCollection services) =>
-            services.AddLogging(logging => logging.AddProvider(this).AddFilter<TlsEvidence>(level => level == LogLevel.Debug));
+        public void Register(IServiceCollection services) => TerraBaseTestServer.CaptureDebugLogs(services, this);
 
         public ILogger CreateLogger(string categoryName) =>
             categoryName == "Microsoft.AspNetCore.Server.Kestrel.Https.Internal.HttpsConnectionMiddleware" ? this : NullLogger.Instance;

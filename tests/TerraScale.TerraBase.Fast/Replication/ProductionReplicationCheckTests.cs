@@ -496,15 +496,20 @@ public sealed class ProductionReplicationCheckTests
             assert sys.argv[1] == "journalctl"
             os.execvp("journalctl", sys.argv[1:])
         elif tool == "journalctl":
+            # Record v1 (TerraScale.Logging): one JSON object per journal line, as journalctl -o cat prints it.
+            def record(level, category, message, error=""):
+                entry = {"time": "2026-10-10T00:00:00.000000Z", "level": level, "msg": message, "service": "terrabase", "component": category}
+                if error:
+                    entry["error"] = error
+                print(json.dumps(entry, separators=(",", ":")))
             with open(host["logs"], encoding="utf-8") as file:
                 for line in file:
                     prefix, message, exception = line.rstrip("\n").split("\t", 2)
                     level, category = prefix.removeprefix("log ").split(": ", 1)
-                    level = {"Warning": "warn", "Error": "fail", "Critical": "crit"}[level]
-                    print(f"{level}: {category}\n{message}\n{exception}")
+                    record({"Warning": "WARN", "Error": "ERROR", "Critical": "ERROR"}[level], category, message, exception)
             if fault == "shell-reported-faults":
-                # The corruption line follows the warning's three lines, as a separate journal entry.
-                print("warn: TerraBase.Engine.Sqlite.SqliteStorageEngine\nA journal group failed its check\nSystem.InvalidOperationException: a test fault")
+                # The corruption line follows the warning's record, as a separate journal entry.
+                record("WARN", "TerraBase.Engine.Sqlite.SqliteStorageEngine", "A journal group failed its check", "System.InvalidOperationException: a test fault")
                 print("SQLite Error 11: 'database disk image is malformed'.")
             if fault == "shell-journal-exit":
                 sys.exit(23)

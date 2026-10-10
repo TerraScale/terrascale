@@ -23,8 +23,7 @@ public sealed class BackupClosedStoreTests
             oci.Route(services);
             ManualBackupHosting.Configure(services);
             services.AddSingleton<IWalBackup>(provider => new ClosingBackup(provider.GetRequiredService<SqliteStorageEngine>()));
-            services.AddSingleton<ILoggerProvider>(logs);
-            services.Configure<LoggerFilterOptions>(filter => filter.MinLevel = LogLevel.Debug);
+            TerraBaseTestServer.CaptureDebugLogs(services, logs);
         }, time);
         var engine = (ClosingBackup)api.Server.Services.GetRequiredService<IWalBackup>();
         var database = await api.CreateManagedDatabaseAsync("main");

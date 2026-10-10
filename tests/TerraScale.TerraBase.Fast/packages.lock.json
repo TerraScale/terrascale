@@ -662,6 +662,7 @@
           "Scalar.AspNetCore": "[2.17.13, )",
           "SqlParserCS": "[0.6.5, )",
           "TerraScale.Endpoints": "[3.0.23-rc.1, )",
+          "TerraScale.Logging": "[1.0.52, )",
           "Ulid": "[1.4.1, )"
         }
       },
@@ -929,6 +930,15 @@
         "dependencies": {
           "Microsoft.AspNetCore.OpenApi": "11.0.0-rc.1.26425.128",
           "Scalar.AspNetCore": "2.17.13"
+        }
+      },
+      "TerraScale.Logging": {
+        "type": "CentralTransitive",
+        "requested": "[1.0.52, )",
+        "resolved": "1.0.52",
+        "contentHash": "DRCIlMOixnGByCNkTQSQ20v5ot6MidwiOu0GSjtO+/kTKniaYY6A3OdjCv5xIvFj/UC6kg55AqBPNokGfeGMYA==",
+        "dependencies": {
+          "Microsoft.Extensions.Logging.Console": "10.0.5"
         }
       },
       "Ulid": {

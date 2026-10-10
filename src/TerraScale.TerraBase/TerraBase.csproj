@@ -38,6 +38,7 @@
     <PackageReference Include="Ulid" />
     <PackageReference Include="NUlid" />
     <PackageReference Include="SqlParserCS" />
+    <PackageReference Include="TerraScale.Logging" />
   </ItemGroup>
 
   <ItemGroup>

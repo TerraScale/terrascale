@@ -29,6 +29,10 @@
     <PackageVersion Include="Microsoft.Extensions.Logging" Version="11.0.0-rc.1.26425.128" />
     <PackageVersion Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="11.0.0-rc.1.26425.128" />
   </ItemGroup>
+  <!-- Record v1 console logs (Program.cs), published by TerraScale/ts-libs to the TerraScale Forgejo registry (NuGet.config). -->
+  <ItemGroup Label="Logging">
+    <PackageVersion Include="TerraScale.Logging" Version="1.0.52" />
+  </ItemGroup>
   <ItemGroup Label="API and hosting">
     <!-- Published by TerraScale/ts-libs to the TerraScale Forgejo registry (NuGet.config). -->
     <PackageVersion Include="TerraScale.Endpoints" Version="3.0.23-rc.1" />
