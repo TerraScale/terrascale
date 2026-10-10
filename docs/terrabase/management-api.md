@@ -1,5 +1,10 @@
 # Management API (`/v1/management`)
 
+The [zero-configuration contract](zero-configuration.md) supersedes production
+settings. Legacy `disabled`/`enabled`, schedule and retention fields below are
+current API inventory pending TS-773, not recommended feature switches or tuning.
+Authorization, project binding and destructive-operation safeguards still apply.
+
 This describes the legacy compatibility implementation retained after TS-589. The service ownership
 decision of 2026-10-06 supersedes its organization, project, invitation, credential and organization
 audit contracts: those belong to ts-auth. The public routes and JWT scopes are in
@@ -21,14 +26,13 @@ organization and membership operations below remain hidden legacy compatibility
 paths; ts-auth owns public identity and projects. COS approved verified migration
 bindings on 2026-10-07 ([decision 0011](decisions/0011-project-catalog-trust.md)).
 
-## Current state of the dashboard
+## Dashboard integration
 
-- ts-dashboard starts only with `TS_DASHBOARD_PRODUCTION_DEMO=1` (`internal/app/app.go:51`).
-  Organizations, projects, members, users and sessions live in an in-memory `core.Store`.
-- Outside demo mode it reaches TerraBase through the ts-go SDK (`internal/adapters/tsgo/factory.go:25`)
-  and Stripe through `stripe-go`. Nothing calls ts-auth yet.
-- The browser never calls these routes as JSON. The dashboard's Go server renders `.templ`
-  forms and handles the posts. The dashboard server is the client of this API, not the browser.
+The dashboard backend calls these APIs through ts-go; browsers use server-rendered
+forms. ts-auth owns identity and access. Production requires persistent state
+and real authorization, with fakes and demos confined to test binaries.
+Existing demo/runtime paths are implementation gaps; this API document does not
+establish completion of the cross-product cutover.
 
 ## Access and authorization
 
@@ -44,10 +48,10 @@ exists. TerraBase authorizes every request against the organizations the acting 
   and on the loopback **admin listener**, which accepts only the
   [management service credential](#management-service-credential). A token on the admin listener, or
   the credential on the client listener, gets `401`.
-- Configure `TERRABASE_AUTH_ISSUER` (or `--auth-issuer=`) and `TERRABASE_AUTH_AUDIENCE` (or
-  `--auth-audience=`), together; they require `client-port`. Without them the client listener answers
-  `401` to every Management call. `dashboard-credential-file` no longer exists: it is an unknown
-  setting (exit code `2`).
+- The trusted issuer, audiences and TLS listener must be discovered/provisioned
+  automatically. Their existing `TERRABASE_AUTH_*` inputs are a TS-773 gap.
+  Missing trust inputs still deny every Management call with `401`.
+
 - Each request presents `Authorization: Bearer <ts-auth access token>`. The token must:
   - be a JWT with header `typ` `at+jwt` or `application/at+jwt` (RFC 9068). ID tokens and other
     JWTs from the same issuer are refused;
@@ -119,10 +123,11 @@ remains available to ordinary members ([commit contract](management-commits.md#m
 Decided by COS on 2026-10-05: the TS-529 bootstrap creates the `terrascale` organization (projects
 `ts-auth`, `ts-dashboard`) before ts-auth exists, because ts-auth itself persists there.
 
-- Configure `TERRABASE_MANAGEMENT_CREDENTIAL_FILE` (or `--management-credential-file=`): a file holding a
-  secret of at least 32 characters; surrounding whitespace is ignored and only its SHA-256 is kept. It
-  needs no `client-port`. Unset, the credential authenticates no one. A missing, unreadable or short
-  secret stops the process with exit code `2`, naming the setting, never the path.
+- OCI Vault must provision and deliver the bootstrap management credential
+  automatically. The current file input remains a TS-773 gap. The secret must
+  contain at least 32 characters; only its SHA-256 is retained. Missing or
+  invalid credentials must fail closed with secret-free diagnostics.
+
 - Accepted **only on the loopback admin listener**, never on the public client listener.
 - Each request presents `Authorization: Bearer <secret>` and `X-TerraBase-User-Id: <user id>` (one value,
   1 to 256 characters, no control characters). TerraBase compares the two SHA-256 hashes with
@@ -133,7 +138,8 @@ Decided by COS on 2026-10-05: the TS-529 bootstrap creates the `terrascale` orga
 - Every use is logged: `Management service credential acted as user <id>: <method> <path>` at
   Information, and `Management service credential rejected: <method> <path>` at Warning. The secret is
   never logged.
-- Rotating the secret means restarting with a new file.
+- The current consumer reads the credential at startup; automatic delivery and
+  rotation reconciliation remain a TS-773 gap.
 
 ### Acting user and organization
 

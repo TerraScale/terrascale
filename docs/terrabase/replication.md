@@ -139,8 +139,9 @@ checks apply.
 
 ## Catalog
 
-One member is the catalog primary; every other member sets `catalog-primary` to the primary's peer listener and
-follows it. Design, limits and failover: [0009](decisions/0009-catalog-replication.md).
+The current runtime uses one catalog primary and followers identified by the
+legacy `catalog-primary` input. Automatic member and authority discovery is
+required by TS-773; there is no per-member production setup step. Design, limits and failover: [0009](decisions/0009-catalog-replication.md).
 
 - Only the primary writes the catalog. A follower forwards every authenticated Management API request on its client
   listener (reads too), and a data-plane creation of a database it does not have, to the primary over
@@ -171,23 +172,10 @@ follows it. Design, limits and failover: [0009](decisions/0009-catalog-replicati
 - A follower takes a snapshot only into an empty catalog or one of the primary's origin; it never replaces a
   catalog of another origin.
 
-Three nodes, `a` the primary: every node sets the [peer listener](#configuration), and `b` and `c` add
-
-```sh
-TERRABASE_CATALOG_PRIMARY=https://a.internal:7443
-```
-
-Or give every member the same settings, as the orchestrator does with one workload profile, and let each find itself
-by its `node-name` (the host name by default). Node names follow `ts-<region>-<n>` (TS-609), enforced by
-ts-orchestrator (TS-776):
-
-```sh
-TERRABASE_PEERS=ts-gru-1=10.251.0.21:9443,ts-gru-2=10.251.0.22:9443
-TERRABASE_CATALOG_PRIMARY=ts-gru-1
-```
-
-`peers` lists every member, this one included; the others become `peer-addresses`, and the member named in
-`catalog-primary` is the primary while every other follows it. A member whose `node-name` is not listed refuses to start.
+Membership and the catalog authority must be discovered automatically. The
+existing `peers`, `peer-addresses` and `catalog-primary` inputs are legacy
+implementation dependencies; their manual profile recipes are retired. A
+mismatched identity must still fail validation rather than adopt another catalog.
 
 Metrics on the follower:
 
@@ -199,48 +187,20 @@ Metrics on the follower:
 | `terrabase_catalog_follower_failures_total{reason}` | Streams that failed: `lineage` (a catalog of another origin, kept), `invalid` (a frame failed validation; nothing of it applied), `apply` (acting on applied changes, such as a database deletion, failed; retried before the next stream) or `stream` |
 | `terrabase_catalog_forwarded_total{result}` | Requests the follower forwarded to its primary: `answered`, `lagging` (answered before the follower applied what it wrote, after 5 seconds) or `unavailable` (503, or a reset once the response started) |
 
-## Configuration
+## Automatic replication contract
 
-| Setting | Meaning |
-| --- | --- |
-| `peer-port` | Inter-node gRPC listener (HTTP/2, mutual TLS); `0` picks a free port. Unset disables replication |
-| `peer-certificate` | PEM leaf certificate followed by its intermediates, served and presented to peers |
-| `peer-private-key` | PEM private key of `peer-certificate` |
-| `peer-client-ca` | PEM CA certificate that every peer certificate must chain to, in both directions |
-| `peer-addresses` | Comma-separated, distinct `https://host:port` peer listeners to send to; requires `peer-port` |
-| `peers` | Every member as `name=host:port`, this node included under its `node-name`; sets `peer-addresses` to the others. Requires `peer-port` |
-| `catalog-primary` | The catalog primary this node follows: a member name of `peers` (this node's own makes it the primary) or an `https://host:port` peer listener; unset makes it a primary. Requires `peer-port` |
-| `write-wait-ms` | Milliseconds a client write waits for its active peers' `DurableAck` before it answers anyway, `0` to `60000`; `0` does not wait. Default `2000` |
+Private NetBird membership admits nodes and discovers every serving region.
+OCI Vault provisions and delivers peer mutual-TLS credentials. Peer destinations,
+local region and catalog authority are derived automatically; write-wait and
+resource limits have one correct setting in code.
 
-`peer-port` and the three files are set together. The files are read at startup; an unreadable
-file or any other invalid setting stops the process with exit code `2`. A node with `peer-port`
-but no `peer-addresses` receives and applies groups, and captures its own writes without sending
-them until `peer-addresses` is set.
+**Current gap (TS-773):** the runtime still requires peer listener, certificate,
+address and catalog options. This documentation does not implement automatic
+replication. Preserve TLS chain/EKU checks, registered-database authorization,
+journal identity validation and secret-free startup errors during removal.
 
-Nodes exchange their configured `region` in Hello and Welcome and log both local and peer regions
-after validating the handshake. Region uses the same bounded syntax as `TERRABASE_REGION` and is
-descriptive node metadata; it does not authorize placement or residency. The additive Protobuf field
-is optional for older peers, whose region is logged as `unknown`. It does not change database/origin
-identity, journal digests or the on-disk schema.
-
-Two nodes, `a` and `b`:
-
-```sh
-# node a
-TERRABASE_REGION=gru-1
-TERRABASE_PEER_PORT=7443
-TERRABASE_PEER_CERTIFICATE=/etc/terrabase/peer/a.pem
-TERRABASE_PEER_PRIVATE_KEY=/etc/terrabase/peer/a.key
-TERRABASE_PEER_CLIENT_CA=/etc/terrabase/peer/ca.pem
-TERRABASE_PEER_ADDRESSES=https://b.internal:7443
-
-# node b: the same with b.pem and b.key, and
-TERRABASE_REGION=iad-1
-TERRABASE_PEER_ADDRESSES=https://a.internal:7443
-```
-
-A third node adds its address to both lists, for example
-`TERRABASE_PEER_ADDRESSES=https://b.internal:7443,https://c.internal:7443` on `a`.
+Hello/Welcome validates bounded region metadata. Older peers may omit the field
+and remain `unknown`; it does not authorize placement or residency.
 
 ## Certificates
 

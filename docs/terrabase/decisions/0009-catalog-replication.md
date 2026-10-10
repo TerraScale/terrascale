@@ -142,14 +142,17 @@ remove the member's `_system.db` files.
 
 ## Failover
 
-The primary is a single point for catalog writes, not for serving: followers keep authenticating keys and
-serving documents while it is down. To replace a lost primary, pick the follower with the highest
-`terrabase_catalog_applied_sequence`, remove `catalog-primary` from it and restart it, then point the other
-followers at it. It continues the same origin, so they resume or take a snapshot from it. Groups the old
-primary committed but no follower applied are lost, as with any asynchronous replica; a follower that had
-applied more than the new primary gets a snapshot that replaces its catalog. A demoted primary pointed at the new
-one does the same. Nothing detects two members running as primary of one origin yet: never start a former
-primary without `catalog-primary` while another one serves.
+Automatic authority selection is required by TS-773. The current primary/follower
+implementation is not an automatic failover guarantee. Before any approved
+recovery, stop old-primary writes, verify catalog lineage and the highest
+applied sequence, and preserve a single writer. Readiness alone does not prove
+all document replication is caught up. Manual configuration-switch recipes are
+retired; this documentation authorizes no failover or destructive operation.
+
+Unreplicated primary commits can be lost. A follower ahead of a replacement
+primary may have its catalog replaced by that primary's snapshot. The current
+runtime does not detect two primaries for one origin; automatic authority work
+must prevent that split before it can be qualified.
 
 ## Consequences
 

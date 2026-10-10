@@ -110,13 +110,12 @@ host; these values come from operator configuration or the running build.
 Sample timestamps let a consumer detect a stalled sampler. Prometheus exporter
 caching can add its own scrape delay.
 
-## Configuration
+## Automatic identity and fixed limits
 
-`--node-name=value` / `TERRABASE_NODE_NAME` accepts 1–128 ASCII letters, digits,
-dots, underscores, colons, pluses or hyphens. Set the actual node identity; the
-endpoint does not derive a cell ordinal from region or claim membership.
+Node and cloud instance identity must be inferred automatically from the running
+node. Memory limits have one correct setting in code.
 
-`--memory-budget=bytes` / `TERRABASE_MEMORY_BUDGET` accepts an integer of at least
-1 MiB. Default: one quarter of `GC.GetGCMemoryInfo().TotalAvailableMemoryBytes`,
-at least 1 MiB, matching #13's proposed default and byte unit. Arguments override
-environment variables; invalid values stop startup with exit code 2.
+The current `--node-name`, `--instance-id` and `--memory-budget` inputs remain a
+TS-773 gap. Today an absent instance ID is explicit null, not certified
+membership. Preserve that unknown value and all destructive autoscaling holds
+until the runtime supplies verified evidence.

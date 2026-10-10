@@ -81,8 +81,8 @@ The project MUST follow a **feature-sliced design** so related and dependent fil
 
 ### Configuration
 
-- Every setting is `TERRABASE_<NAME>` or the equivalent `--name=value` argument; an argument wins over the environment. Do not add configuration files.
-- Validate all options at startup. Unknown or invalid settings stop the process with exit code `2`.
+- Production values have one correct setting in code; derive identity and discovery automatically and obtain secrets through OCI Vault. Legacy option removal belongs to TS-773; do not add operator settings.
+- Validate derived inputs and credentials at startup; reject invalid inputs and fail closed.
 - Error messages name settings, never their values. Never log secrets, keys, tokens or credentials.
 
 ### Listeners
@@ -186,3 +186,13 @@ Maintain exactly two integration test suites:
 - Target **`main`** with the title format **`{ISSUE_ID}: {title}`**.
 - Include the Ku link, change summary, validation performed, and relevant compatibility, storage or security implications.
 - Never claim a check passed unless it actually ran successfully. Distinguish required checks from non-blocking Slow results.
+
+## Zero configuration (user decision 2026-10-09, do not revert)
+
+- Every feature is always on. No feature flags, on/off variables, opt-in settings, boolean enabled configuration keys, deploy toggles or kill switches in code, config or CI. Delete switches and their guarded paths.
+- Every region always serves. NetBird network membership admits a node automatically; it discovers every region, infers its own region from where it runs and starts serving without a per-region enable step.
+- OCI Vault automatically creates, delivers and configures every first-party production secret. Vendor-issued keys (such as Stripe and Cloudflare) are stored once in Vault and picked up automatically; nobody copies secrets by hand.
+- Values have one correct setting in code. Expose no tuning knobs. Fakes, demo stores and skip-auth belong only in test code and test binaries.
+- CI rejects new switch-style configuration; ts-reviewer requests changes. Only unavoidable third-party names may have a narrow allowance with a one-line reason.
+
+TerraBase discovers cluster membership and every serving region automatically; production authentication and persistence credentials arrive from OCI Vault.

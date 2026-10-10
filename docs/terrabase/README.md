@@ -1,5 +1,9 @@
 # TerraBase
 
+Read the [required zero-configuration operating contract](docs/zero-configuration.md).
+Current configuration paths described below are implementation limitations, not
+production activation instructions.
+
 TerraBase is a leaderless, multi-region document database focused on fast and
 efficient synchronization and replication. This repository is the C#/.NET 11
 implementation; product goals and contracts are in `../terrabase-rust`
@@ -46,41 +50,16 @@ pipeline.
 
 ## Configuration
 
-Every setting is `TERRABASE_<NAME>` (dashes become underscores) or the equivalent `--name=value`
-argument; an argument wins over the environment, and an empty value (`--name=`) clears a setting.
-An unknown or invalid setting stops the process with exit code `2`; the error names the setting,
-never its value. Port `0` picks a free port.
+Production identity, membership, region discovery, listeners and backup are
+automatic under the [operating contract](docs/zero-configuration.md). OCI Vault
+provisions and delivers authentication, TLS, persistence and backup credentials.
+Limits and timeouts have one correct setting in code.
 
-| Setting | Default | Meaning |
-| --- | --- | --- |
-| `--region` / `TERRABASE_REGION` | `development` in Development; required otherwise | Node region ID matching Atlas discovery. Lowercase ASCII letter followed by lowercase letters, digits or hyphens; at most 63 characters, no trailing hyphen |
-| `--admin-port` / `TERRABASE_ADMIN_PORT` | `9464` | Loopback administrative listener (`/healthz`, `/readyz`, `/metrics`, operator endpoints). 0 to 65535 |
-| `--instance-id` / `TERRABASE_INSTANCE_ID` | unset | Cloud instance identity for node pressure; absent remains unknown |
-| `--node-name` / `TERRABASE_NODE_NAME` | Machine name | Descriptive node identity in pressure telemetry |
-| `--memory-budget` / `TERRABASE_MEMORY_BUDGET` | One quarter of runtime-available memory, at least 1 MiB | Bytes planned for caches and admitted memory reservations; also the pressure denominator. See [`docs/memory.md`](docs/memory.md) for coverage |
-| `--data-directory` / `TERRABASE_DATA_DIRECTORY` | `data` (relative to the working directory) | Directory holding one SQLite file per database. Must be a valid path |
-| `--client-port` / `TERRABASE_CLIENT_PORT` | unset (listener off) | Client-facing HTTPS listener, 0 to 65535; also serves the [API reference](#api-reference). Requires `client-certificate` and `client-private-key` |
-| `--client-certificate` / `TERRABASE_CLIENT_CERTIFICATE` | unset | PEM certificate file of the client listener. Requires `client-port` and `client-private-key` |
-| `--client-private-key` / `TERRABASE_CLIENT_PRIVATE_KEY` | unset | PEM private key file of `client-certificate`. Requires `client-port` and `client-certificate` |
-| `--auth-issuer` / `TERRABASE_AUTH_ISSUER` | unset (authenticated APIs answer `401`) | Trusted platform issuer (`iss`) of ts-auth project access tokens for all public APIs and legacy Management user tokens, e.g. `https://auth.terrascale.tech/terrascale`. Absolute `https` URL without whitespace, user information, query or fragment; compared with `iss` exactly. Requires `auth-audience` and `client-port`. See `docs/management-api.md` |
-| `--auth-audience` / `TERRABASE_AUTH_AUDIENCE` | unset | Comma-separated accepted audiences (`aud`); a token must name at least one. Each is non-empty, without control characters. Requires `auth-issuer` |
-| `--management-credential-file` / `TERRABASE_MANAGEMENT_CREDENTIAL_FILE` | unset (credential off) | File holding the management service credential: at least 32 characters, surrounding whitespace ignored, only its SHA-256 is kept. Accepted on the loopback admin listener only, with `X-TerraBase-User-Id` naming the acting user, for bootstrap before ts-auth exists. See `docs/management-api.md` |
-| `--peer-port` / `TERRABASE_PEER_PORT` | unset (listener off) | Inter-node gRPC listener (mutual TLS), 0 to 65535. Requires `peer-certificate`, `peer-private-key` and `peer-client-ca` |
-| `--peer-certificate` / `TERRABASE_PEER_CERTIFICATE` | unset | PEM certificate file of the peer listener. Requires `peer-port` and the other peer TLS settings |
-| `--peer-private-key` / `TERRABASE_PEER_PRIVATE_KEY` | unset | PEM private key file of `peer-certificate`. Requires `peer-port` and the other peer TLS settings |
-| `--peer-client-ca` / `TERRABASE_PEER_CLIENT_CA` | unset | PEM CA bundle that every peer certificate must chain to, in both directions. Requires `peer-port` and the other peer TLS settings |
-| `--peer-addresses` / `TERRABASE_PEER_ADDRESSES` | unset | Comma-separated `https://host:port` peers to send changes to; requires `peer-port` |
-| `--peers` / `TERRABASE_PEERS` | unset | Every member as comma-separated `name=host:port` peer listeners, this node included under its `node-name`; the others become `peer-addresses` (set one or the other). Names are lowercase letters, digits and inner hyphens, at most 63 characters, distinct, as are the addresses. Requires `peer-port` |
-| `--catalog-primary` / `TERRABASE_CATALOG_PRIMARY` | unset (this node is a catalog primary) | The catalog primary this node replicates the management catalog and API keys from, as a member name of `peers` or an `https://host:port` peer listener; it then writes no catalog itself. Naming this node makes it the primary, so one value serves every member. Requires `peer-port`. See `docs/replication.md#catalog` |
-| `--write-wait-ms` / `TERRABASE_WRITE_WAIT_MS` | `2000` | Milliseconds a client write waits, after its commit, for every active peer to durably acknowledge it before it answers anyway (0 to 60000; 0 does not wait). See `docs/decisions/0010-write-wait-and-synced-durable-ack.md` |
-| `--shutdown-grace-seconds` / `TERRABASE_SHUTDOWN_GRACE_SECONDS` | `10` | Seconds shutdown waits for transactions to return their database connections (0 to 3600). It never closes them; the data directory stays owned until they do or the process exits |
-| `--query-budget-seconds` / `TERRABASE_QUERY_BUDGET_SECONDS` | `5` | Seconds of SQLite execution one query may spend before it answers `query too expensive` (1 to 600). It counts wall time while SQLite runs, excluding queueing and the time a consumer spends between rows; the 5 million VM instruction half of the budget is fixed |
-| `--readiness-cache-seconds` / `TERRABASE_READINESS_CACHE_SECONDS` | `1` | Seconds completed readiness filesystem results are cached (positive integer, 1 to 60). Zero is prohibited to bound disk work from anonymous traffic. Shutdown bypasses the cache |
-| `--backup-*` / `TERRABASE_BACKUP_*` | unset (backup off) | Continuous backup to an S3-compatible bucket (OCI Object Storage) with point-in-time restore: `backup-endpoint`, `backup-region`, `backup-bucket`, `backup-access-key-id`, `backup-secret-key-file`, `backup-kms-endpoint`, `backup-kms-key-id`, `backup-kms-api-key` and `backup-kms-private-key-file`, all or none; optional `backup-retention-days` (`hobby=1,pro=7,enterprise=30`) and `backup-key-rotation-days` (`90`). See [`docs/backup.md`](docs/backup.md) |
-| `--nats-*` / `TERRABASE_NATS_*` | unset | ts-orchestrator's NATS, which holds the backup leases (one shipper per file, with automatic takeover): `nats-url`, `nats-credentials-file` and, for mutual TLS, `nats-certificate`, `nats-private-key` and `nats-ca`. See [`docs/backup.md`](docs/backup.md#leases) |
-| `--wan-regions` / `TERRABASE_WAN_REGIONS` | unset (no cross-region replication) | Every region of the replication group as comma-separated `region=cell` entries, this node's `region` included, where `cell` is the region's token on ts-orchestrator's NATS fabric (`gru-1=gru,sfo-1=sfo`). Requires `nats-url` and a `node-name` of lowercase letters, digits and inner hyphens. See [`docs/cross-region.md`](docs/cross-region.md) |
-| `storage-threads` | processor count | Dedicated threads that run SQLite reads. Each database's writes run on its own write thread, started on demand and stopped after 10 idle seconds, and commit in batches (group commit) |
-| `storage-queue` | `1024` | Storage transactions admitted at once; more get `503` with `Retry-After` |
+**Current gap (TS-773):** the runtime still parses `TERRABASE_*`/`--name`
+options and guards listeners, authentication, backup and cross-region replication
+on their presence. The docs change does not remove those paths or establish
+an automatic production bootstrap. Preserve validation and secret-free errors
+while replacing them; missing authentication must never grant access.
 
 ### Health probes
 
@@ -94,7 +73,7 @@ when `client-port` is set, on the client TLS listener.
   reported (only when `catalog-primary` is set) and the server is not shutting down; otherwise
   `503 {"status":"unavailable","version":"<version>","region":"<region>"}`. Writable means it can create and remove an
   empty probe file there, so a disk with free inodes but no free blocks still reads as writable.
-  Completed filesystem results are cached for one second by default, configurable with `readiness-cache-seconds`,
+  Completed filesystem results are cached for one second in the current implementation,
   to bound disk work from anonymous traffic. Concurrent callers await the same check; they never receive a stale
   cached result while it runs. A running check becomes unavailable after two seconds. Shutdown immediately
   returns 503 regardless of cached or in-flight results; engine closure is checked on every request.

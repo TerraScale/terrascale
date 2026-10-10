@@ -1,21 +1,21 @@
 # Region identity (TS-499)
 
-## Node configuration
+## Node identity
 
-Set `TERRABASE_REGION` or `--region=<region-id>`; the argument wins. Use the
-region ID published by Atlas. A region is required outside the Development
-environment; missing or invalid configuration stops startup with exit code `2`.
-Development defaults to `development` when no region is configured.
-Use a lowercase ASCII letter followed by lowercase letters, digits or hyphens,
-at most 63 characters, without a trailing hyphen (for example, `gru-1`).
-Select Development with the standard `DOTNET_ENVIRONMENT=Development` host setting.
+The required contract infers the node's region from its execution location and
+matches that identity to discovered Atlas regions. Private NetBird membership
+admits the node; there is no manual region setting or enable step.
 
-Region identity describes the running node. It does not establish database
-placement, replication, residency, or regional availability.
+**Current gap (TS-773):** the runtime still reads `TERRABASE_REGION`/`--region`
+and requires a valid value outside Development. Its bounded syntax is a
+lowercase ASCII letter followed by letters, digits or hyphens, at most 63
+characters, without a trailing hyphen. Automatic inference is not implemented
+by this documentation change.
 
-Peer replication exchanges this region in Hello/Welcome and logs the local and
-validated peer regions. Older peers may omit it and are logged as `unknown`.
-The region remains descriptive; it is not part of database or journal identity.
+Region identity does not grant database placement, replication rights or a
+residency exemption. Peer Hello/Welcome still validates reported regions;
+older peers may omit them and are logged as `unknown`. Region is not part of
+database or journal identity.
 
 ## HTTP contract
 

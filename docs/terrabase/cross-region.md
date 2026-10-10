@@ -147,15 +147,20 @@ A database another region holds is not recorded here when:
 
 `terrabase_wan_unregistered` also counts databases recorded here whose placement does not name this region.
 
-API keys stay per region: issue one in each region (`POST /admin/api-keys` on the region's catalog primary).
+The current implementation uses per-region API keys. OCI Vault must provision
+and deliver these automatically; operators must not issue and copy one per region.
 
-## Configuration
+## Automatic region discovery
 
-| Setting | Meaning |
-| --- | --- |
-| `wan-regions` | Every region of the group as `region=cell`, this node's `region` included: `gru-1=gru,sfo-1=sfo`. The same value serves every member of every region. Requires `nats-url` and a `node-name` that is a NATS subject token (lowercase letters, digits and inner hyphens, at most 63 characters) |
+Every region serves and the replication group is discovered automatically.
+The node infers its own region from location; private NetBird membership admits
+it. OCI Vault provisions and delivers its transport and authentication secrets.
+Placement and residency restrictions still decide which data may replicate.
 
-Unset, the node does not replicate across regions.
+**Current gap (TS-773/TS-796):** TerraBase still gates this path on `wan-regions`
+and NATS inputs. The existing `region=cell` list is a legacy runtime dependency,
+not an operator-maintained production region list. This docs change does not
+implement automatic discovery or remove the runtime guard.
 
 ### What ts-orchestrator provides
 

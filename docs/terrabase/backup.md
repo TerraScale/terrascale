@@ -18,27 +18,17 @@ applied after the TS-647 cutover. Not done yet:
 - Backups of a deleted database stay in the bucket: retention runs on files a member still ships.
 - No segment compaction (see [Compared with Litestream](#compared-with-litestream)).
 
-## Settings
+## Production backup contract
 
-Backup is off unless all of these are set. Partial settings stop the process (exit code 2). Errors name settings, never
-values.
+Continuous backup is always available. OCI Vault must automatically provision
+and deliver the platform bucket's credentials, encryption keys and secret
+lifecycle access. Retention and rotation use the correct settings in code;
+there is no backup activation step or operator tuning table.
 
-| Setting | Meaning |
-| --- | --- |
-| `backup-endpoint` | S3-compatible endpoint, `https://<namespace>.compat.objectstorage.<region>.oraclecloud.com` |
-| `backup-region` | Its signing region, e.g. `sa-saopaulo-1` |
-| `backup-bucket` | Bucket, e.g. `gru-1-backup` |
-| `backup-access-key-id` | Access key of the S3 credential (an OCI customer secret key) |
-| `backup-secret-key-file` | File holding its secret |
-| `backup-kms-endpoint` | Cryptographic endpoint of the OCI Vault holding the master key |
-| `backup-kms-key-id` | OCID of the master encryption key |
-| `backup-kms-api-key` | OCI API signing key id, `<tenancy OCID>/<user OCID>/<fingerprint>` |
-| `backup-kms-private-key-file` | PEM private key of that API key |
-| `backup-retention-days` | Optional. Days each plan keeps backups, `hobby=1,pro=7,enterprise=30` by default; a plan not named keeps its default (1 to 3650 days) |
-| `backup-key-rotation-days` | Optional. Maximum data-key age, 90 days by default (1 to 3650 days); the next upload rotates an expired key |
-
-Give the backup identity only what it needs: object read, write and list in the backup bucket, and `use` of the one
-master key.
+**Current gap (TS-773):** backup still depends on complete `backup-*` runtime
+options. Partial inputs are rejected with secret-free errors; this change does
+not implement automatic provisioning. The backup identity remains scoped to
+object read/write/list in its bucket and use of the one master key.
 
 ### Customer buckets (TS-635)
 
@@ -72,7 +62,7 @@ and their `{database}` remains a catalog database ID. A project token cannot use
 
 `mode=both` ships the project's encrypted snapshots, WAL segments and wrapped data keys to both buckets.
 `mode=customer` ships that project's data only to the customer bucket. `_system.db` and other projects stay in the
-platform bucket. Continuous backup must already be enabled, including its platform bucket and OCI master key; customer
+platform bucket. The platform backup bucket and OCI master key must be automatically provisioned; customer
 backup uses that same master key. This is customer-only **project shipping**, not a standalone backup service.
 
 `GET` at the same path returns `endpoint`, `region`, `bucket`, `mode`, and `updatedAt`; it never returns credentials or
@@ -105,20 +95,17 @@ metadata scan limits.
 Customer credentials live encrypted in OCI Vault Secrets as a versioned JSON secret. TerraBase's version-1 catalog
 record under `projects/<project>/backup_destination` holds public settings and the secret OCID only. Credentials are
 write-only, and errors never include provider response bodies. The runtime identity needs secret creation, retrieval,
-metadata listing/inspection, scheduled deletion and secret encryption-key permissions in addition to the original backup permissions. Configure all four settings together:
+metadata listing/inspection, scheduled deletion and secret encryption-key permissions
+in addition to the original backup permissions. These grants and Vault endpoints
+must be provisioned automatically. The current `backup-vault-*` and
+`backup-secrets-endpoint` inputs are a TS-773 implementation gap, not a manual
+credential-installation recipe.
 
-| Setting | Meaning |
-| --- | --- |
-| `backup-vault-id` | Vault OCID for customer credential secrets |
-| `backup-vault-compartment-id` | Compartment OCID for those secrets |
-| `backup-vault-endpoint` | HTTPS Vault secrets management endpoint |
-| `backup-secrets-endpoint` | HTTPS Secret Retrieval endpoint |
-
-The existing `backup-kms-api-key`, `backup-kms-private-key-file` and `backup-kms-key-id` sign and encrypt the secret
-operations. Changing a destination creates a new secret. Replacement or detachment records the old secret's retirement
-in the same catalog transaction. An immediate attempt schedules deletion after OCI's minimum seven-day window;
-failed attempts remain in `backup_secret_lifecycle` for background retry. In-flight work keeps its acquired credentials,
-and customer objects are preserved.
+Changing a customer-authorized destination creates a new secret. Replacement or
+detachment records retirement in the same catalog transaction; deletion is
+scheduled after OCI's minimum seven-day window and failures retry in
+`backup_secret_lifecycle`. In-flight work retains acquired credentials and
+customer objects are preserved.
 
 Before creation, TerraBase records a unique `terrabase-backup-<ULID>` name in that collection. A successful create response
 is read under an independent bounded token so caller cancellation cannot discard a returned OCID. Uncertain responses
@@ -447,12 +434,13 @@ for the rule instead of failing (see [Retention](#retention)), so every backup s
 limited to the plan's window. A 5-byte probe object `probe/ts633` from the compatibility check stays until about
 2026-11-11.
 
-### Profile change
+### Automatic backup delivery gap
 
-Add [`rollout/gru-1-backup-profile.json`](rollout/gru-1-backup-profile.json) to the `terrabase` profile of the gru-1 cell
-spec (root-signed): its `env` keys and its `secrets`, whose `_FILE` keys ts-orchestrator turns into 0600 files (TS-651).
-The host sets the NATS identity (`TERRABASE_NATS_*`) itself; the bucket `terrabase_backup_leases` is created by
-ts-orchestrator. The members restart one at a time with the change (TS-610 fenced release).
+The current rollout profile still contains explicit backup/Vault references.
+TS-773/TS-796 must replace that setup dependency with automatic provisioning and
+credential delivery; operators do not add a profile to turn backup on.
+Preserve least-privilege grants, one shipper per file, fenced one-member-at-a-time
+rollout and actual post-rollout backup/restore verification.
 
 ### Verify and measure after the restart
 
