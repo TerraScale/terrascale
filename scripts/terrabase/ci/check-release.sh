@@ -20,6 +20,29 @@ trap cleanup EXIT
 fail() { echo "release check failed: $*" >&2; exit 1; }
 logged() { grep -qs -- "$1" "$work/log"; }
 
+# Check the real HTTP client's deadlines; inject transport cancellation without waiting five minutes.
+mkdir -p "$work/bin"
+python3 - "$work/bin/curl" "$(command -v curl)" "$work/timeout" <<'PY'
+import pathlib, sys
+path, client, timeout = sys.argv[1:]
+pathlib.Path(path).write_text(f'''#!/usr/bin/env python3
+import os, pathlib, sys, urllib.parse
+args = sys.argv[1:]
+url = urllib.parse.urlparse(args[-1])
+name = urllib.parse.parse_qs(url.query).get("name", [""])[0]
+binary = name in ["terrabase-linux-amd64", "terrabase-linux-arm64"]
+assert args[args.index("--connect-timeout") + 1] == "10"
+assert args[args.index("--max-time") + 1] == ("300" if binary else "30")
+marker = pathlib.Path({timeout!r})
+if marker.exists() and (marker.read_text().strip() == name or
+                       marker.read_text().strip() == "lookup" and "/releases/tags/" in url.path):
+    sys.exit(28)
+os.execv({client!r}, [{client!r}, *args])
+''')
+PY
+chmod +x "$work/bin/curl"
+export PATH="$work/bin:$PATH"
+
 # serve PRESET FAILING_ASSET: a fresh fake API on an ephemeral port that keeps
 # the releases it creates. PRESET is a release that already exists for any
 # other tag: "" (none), "foreign" (a draft prepared by hand) or "published".
@@ -173,6 +196,17 @@ for asset in "${executables[@]}" "${executables[@]/%/.sha256}"; do
   draft refs/heads/main >/dev/null || fail "the rerun did not replace the draft left by a failed upload of $asset"
   logged 'DELETE /api/v1/repos/TerraScale/terrabase/releases/7 204' || fail 'the leftover draft was not deleted'
   grep -qx 'release_id=7' "$work/out" || fail 'no release_id after replacing a leftover draft'
+done
+
+# Connection/transfer timeouts leave no qualified output; a subsequent attempt can replace the partial draft.
+for asset in lookup "${executables[@]}" "${executables[@]/%/.sha256}"; do
+  serve '' ''
+  printf '%s\n' "$asset" > "$work/timeout"
+  ! draft refs/heads/main 2>/dev/null || fail "a timed-out $asset request passed"
+  [[ ! -s $work/out ]] || fail "release_id emitted after $asset timed out"
+  rm -- "$work/timeout"
+  draft refs/heads/main >/dev/null || fail "recovery after a timed-out $asset request failed"
+  grep -qx 'release_id=7' "$work/out" || fail "no release_id after recovery from $asset timeout"
 done
 
 for preset in published foreign; do

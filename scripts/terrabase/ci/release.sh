@@ -26,15 +26,19 @@ trap 'rm -rf -- "$work"' EXIT
 # curl reads the token from a private config file, never from its arguments.
 printf 'header = "Authorization: token %s"\n' "$FORGEJO_TOKEN" > "$work/auth"
 unset FORGEJO_TOKEN
-# call CURL_ARGS...: print the response body; on an HTTP error print it to stderr and fail.
+# call DEADLINE_SECONDS CURL_ARGS...: print the response body; failures retain it on stderr.
 call() {
+  local max_time=$1
+  shift
   : > "$work/response"
-  if curl -sS --fail-with-body -K "$work/auth" -o "$work/response" "$@"; then cat "$work/response"
+  if curl -sS --connect-timeout 10 --max-time "$max_time" --fail-with-body \
+    -w '%{stderr}release HTTP %{http_code}: %{size_upload} upload bytes in %{time_total}s\n' \
+    -K "$work/auth" -o "$work/response" "$@"; then cat "$work/response"
   else cat "$work/response" >&2; echo >&2; return 1; fi
 }
 
 draft() {
-  local dist=$1 names=(terrabase-linux-amd64 terrabase-linux-arm64) name version tag prerelease notes previous code id file marker
+  local dist=$1 names=(terrabase-linux-amd64 terrabase-linux-arm64) name version tag prerelease notes previous code id file marker max_time size
   : "${GITHUB_SHA:?}" "${GITHUB_REF:?}" "${GITHUB_RUN_ID:?}" "${GITHUB_RUN_NUMBER:?}" "${GITHUB_OUTPUT:?}"
   for name in "${names[@]}"; do
     [[ -s $dist/$name ]] || fail "missing staged release executable: $dist/$name"
@@ -73,25 +77,31 @@ draft() {
   # A draft left by an earlier attempt of this run never passed every gate:
   # replace it. Any other release, published or a draft prepared by hand, is
   # never touched.
-  code=$(curl -sS -K "$work/auth" -o "$work/existing.json" -w '%{http_code}' "$api/releases/tags/$tag")
+  code=$(curl -sS --connect-timeout 10 --max-time 30 -K "$work/auth" \
+    -o "$work/existing.json" -w '%{http_code}' "$api/releases/tags/$tag")
   case $code in
     404) ;;
     200)
       jq -e --arg marker "$marker" '.draft and (.body // "" | contains($marker))' "$work/existing.json" >/dev/null ||
         fail "release $tag already exists and is not a draft of this run; refusing to replace it"
       echo "replacing the draft $tag left by an earlier attempt of this run"
-      call -X DELETE "$api/releases/$(jq -r .id "$work/existing.json")" >/dev/null
+      call 30 -X DELETE "$api/releases/$(jq -r .id "$work/existing.json")" >/dev/null
       ;;
     *) cat "$work/existing.json" >&2; fail "looking up release $tag answered HTTP $code" ;;
   esac
 
   jq -n --arg tag "$tag" --arg sha "$GITHUB_SHA" --arg body "$notes" --argjson prerelease "$prerelease" \
     '{tag_name: $tag, target_commitish: $sha, name: $tag, body: $body, draft: true, prerelease: $prerelease}' > "$work/release.json"
-  id=$(call -H 'Content-Type: application/json' --data @"$work/release.json" "$api/releases" | jq -er .id)
+  id=$(call 30 -H 'Content-Type: application/json' --data @"$work/release.json" "$api/releases" | jq -er .id)
   for name in "${names[@]}"; do
     for file in "$dist/$name" "$dist/$name.sha256"; do
-      call -F "attachment=@$file" "$api/releases/$id/assets?name=${file##*/}" > "$work/asset.json"
-      jq -e --argjson size "$(stat -c %s "$file")" '.size == $size' "$work/asset.json" >/dev/null ||
+      # Two five-minute binary transfers leave room for the build in the 20-minute job.
+      max_time=30
+      [[ $file != "$dist/$name" ]] || max_time=300
+      size=$(stat -c %s "$file")
+      echo "uploading ${file##*/} ($size bytes; ${max_time}s deadline)" >&2
+      call "$max_time" -F "attachment=@$file" "$api/releases/$id/assets?name=${file##*/}" > "$work/asset.json"
+      jq -e --argjson size "$size" '.size == $size' "$work/asset.json" >/dev/null ||
         fail "uploaded ${file##*/} does not have the staged size"
     done
   done
@@ -101,7 +111,7 @@ draft() {
 
 publish() {
   [[ $1 =~ ^[0-9]+$ ]] || fail "invalid release id '$1'"
-  call -X PATCH -H 'Content-Type: application/json' --data '{"draft": false}' "$api/releases/$1" > "$work/published.json"
+  call 30 -X PATCH -H 'Content-Type: application/json' --data '{"draft": false}' "$api/releases/$1" > "$work/published.json"
   jq -r '"published \(.tag_name): \(.html_url)"' "$work/published.json"
 }
 
