@@ -19,6 +19,19 @@ The SDK owns no persistent collections, databases or KV records; no stored
 data is deleted by this repository. Services must wipe affected data and
 recreate bootstrap state before serving the new contract.
 
+## Zero-configuration operating contract
+
+First-party services must discover eligible serving regions and receive
+production credentials automatically; no region activation, endpoint pinning
+or manual secret copying belongs in setup. Customer tenant/project scope and
+authorized access credentials remain required. This docs-only TS-795 change
+implements no automatic runtime flow. The current v1 SDK still requires an
+explicit endpoint/resolver pending TS-507, and current auth issuer/proxy and
+placement selectors remain inventoried for their owning implementation changes.
+The examples below describe existing SDK call boundaries, not production
+onboarding. `discoveredOrigin` below is a trusted HTTPS origin supplied by an
+authorized integration, not created by this SDK. See [AGENTS.md](AGENTS.md#zero-configuration-user-decision-2026-10-09-do-not-revert).
+
 ## TerraBase v1 client (`terrascale.tech/sdk/v1`)
 
 Package `v1` talks to the C# TerraBase server: the Documents API v1 and the
@@ -29,7 +42,7 @@ the API key's organization selects the tenant.
 ```go
 import tb "terrascale.tech/sdk/v1"
 
-c, err := tb.New(tb.Config{BaseURL: "https://gru.terrabase.example", Token: apiKey}) // tb_…
+c, err := tb.New(tb.Config{BaseURL: discoveredOrigin, Token: apiKey}) // tb_…
 db := c.Database(projectID, "main")
 _, err = db.Create(ctx)                     // PUT; Created reports a 201
 _, err = db.CreateCollection(ctx, "users") // 409 name_taken when it exists
@@ -78,8 +91,8 @@ queries. Mutations return uncertain outcomes without a replay: use
 `errors.Is(err, tb.ErrCommitUncertain)` and re-read the state before deciding
 what to do. A transport failure matches that code and retains its original
 cause; a server response retains its `*tb.APIError`. Other writes and
-`500 internal_error` are never retried. Set `Config.MaxRetries` to change the
-budget. Point document operations use `/documents/by-key?id=…`, with the canonical
+`500 internal_error` are never retried. First-party retry budgets must be fixed
+in code; existing tuning options remain implementation inventory. Point document operations use `/documents/by-key?id=…`, with the canonical
 ULID query-encoded once. IDs never enter path segments.
 Listing and generated creation use GET and POST `/documents`, respectively.
 The old `/documents/{id}` point routes are removed.
@@ -166,12 +179,16 @@ never changes), and deleting a replicated database fails with
 `ErrDatabaseReplicated`. A region outside the placement answers 421
 `ErrWrongRegion`, on Management and Documents routes alike, and the
 `*tb.APIError` carries `HomeRegion` and `Regions`. The client never retries
-it elsewhere: resolve the region through Atlas. Before placing a database in
-a replica region, call `PrepareProjectRegistration(ctx, org, project)` using
-that region's admin listener, management service credential and `As(userID)`,
-then `registration.Commit(ctx)`. Supplied IDs require the service credential.
-The handle captures one ULID
-and the missing organization/project operations under their home-region IDs.
+it elsewhere: the existing caller resolves the region through Atlas.
+Automatic eligible-region discovery is the operating contract; customer
+placement/residency does not enable or disable serving regions.
+The current legacy placement path still requires per-replica project
+registration: call `PrepareProjectRegistration(ctx, org, project)` using that
+region's admin listener, management service credential and `As(userID)`, then
+`registration.Commit(ctx)`. Supplied IDs require the service credential.
+That manual path is an inventoried implementation gap, not first-party startup
+guidance or proof of automatic node admission. Its handle captures one ULID and
+the missing organization/project operations under their home-region IDs.
 If Commit returns `ErrCommitUncertain`, retry the same handle with a fresh
 context; it resends the exact body without repeating existence checks or
 creating a new commit ID. Retain the handle until the outcome is resolved.
@@ -268,13 +285,16 @@ SHA-256 remain pinned by the helper, independently of the SDK module version.
 `client.TSAuth.Instance("slug").OIDC` is ts-auth's OpenID Connect provider
 for applications that sign users in with the redirect flow, as the dashboard
 does for single sign-on: the authorization code with PKCE, verified ID tokens,
-refresh, userinfo, RFC 7009 revocation and RP-initiated logout. It needs an
-explicit `TSAuthBaseURL`, or a suitable explicit `APIBaseURL`. ts-auth issues
+refresh, userinfo, RFC 7009 revocation and RP-initiated logout. Customer auth
+instance/issuer trust and exact registered callbacks remain explicit security
+boundaries. The current implementation needs `TSAuthBaseURL` or `APIBaseURL`;
+automatic first-party issuer discovery is still an implementation gap. ts-auth issues
 from its regional host, for example `https://gru.auth.terrascale.tech/<slug>`.
 A regional issuer (`https://<region>.auth.terrascale.tech`) is accepted only
 when `TSAuthBaseURL` is the Atlas proxy `https://auth.terrascale.tech`: the
-client then calls the issuer's region directly, or the proxy with
-`TSAuthUseReverseProxy`. Any other issuer must be the base origin itself.
+client then calls the issuer's region directly. The existing
+`TSAuthUseReverseProxy` selector is inventoried for removal; document proxy
+overrides only for reviewed isolated development/tests, not production startup. Any other issuer must be the base origin itself.
 The platform management API, API key tokens and headless sign-in are in
 `terrascale.tech/sdk/tsauth`.
 
@@ -294,7 +314,7 @@ restricting the available regions. Override the origin with `Config.StatusBaseUR
 need no credentials and do not use auth discovery.
 
 ```go
-client, err := sdk.NewClient(sdk.Config{MaxRetryAttempts: 2})
+client, err := sdk.NewClient(sdk.Config{})
 if err != nil {
     return err
 }
@@ -322,7 +342,7 @@ and `*sdk.APIError` responses. Retries default to zero; redirects are refused.
 The service briefly caches responses; the SDK adds no cache.
 [`status_example_test.go`](status_example_test.go) contains a compilable example.
 
-Unit tests use `httptest`. The live contract test is opt-in and skips HTTP 404
+Unit tests use `httptest`. The live contract test requires authorized test inputs and skips HTTP 404
 until the endpoint is deployed:
 
 ```sh
@@ -340,8 +360,11 @@ TERRASCALE_STATUS_REQUIRE_LATENCY=1 nice -n 19 go test . -run '^TestStatusLatenc
 
 `atlas.Publisher` posts signed documents to ts-atlas (`POST /v1/publish`,
 ts-atlas `docs/discovery-v1.md`): the whole topology of regions and services,
-and project placements. The key is the P-256 key whose public JWK is in
-Atlas' `PUBLISH_KEYS`; each publish is signed with ES256 over
+and project placements. Under the first-party operating contract, OCI Vault
+creates and delivers publisher signing material automatically; no manual key
+wiring is an onboarding step. This SDK exposes the signing boundary but does
+not implement or verify production delivery. Atlas must independently trust
+the corresponding public JWK; each publish is signed with ES256 over
 `atlas-publish-v1\n<timestamp>\n<body>`. Atlas keeps the newest `Updated`,
 so a retry (for example after `502 store_unavailable`) never rolls a document
 back.
@@ -421,11 +444,12 @@ endpoint; pass the `SignUp` token to preserve the pending sign-up, or `""`
 for a sign-in code. Invalid pending tokens succeed without sending an email
 to prevent account enumeration. Respect `APIError.RetryAfter` before retrying.
 
-Issuers require HTTPS, except for loopback HTTP. For development only, set
-`HeadlessConfig.AllowInsecureHTTP: true` to use an issuer such as
-`http://ts-auth:8080/terrascale`. The option defaults to false; keep it false
-in production because HTTP exposes credentials and tokens. Other issuer URL
-validation still applies, and other SDK clients retain their HTTPS requirement.
+Issuers require HTTPS. Any existing insecure HTTP issuer support is confined
+to reviewed isolated tests; it is not a first-party deployment mode or setup
+step and remains inventoried for removal. HTTP exposes credentials and tokens.
+Issuer URL validation and the other SDK clients' HTTPS requirement remain.
+First-party confidential client secrets must be created and delivered
+automatically; this SDK docs change does not implement that delivery.
 
 ```go
 h, err := tsauth.NewHeadless(tsauth.HeadlessConfig{ClientID: "ts-dashboard", ClientSecret: secret})
