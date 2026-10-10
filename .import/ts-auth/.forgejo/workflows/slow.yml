@@ -32,7 +32,40 @@ env:
   TS_LIBS_REV: 55b260872f8d4fb1cfa0975576632b4e022e4c91
 
 jobs:
+  zero-config:
+    name: Reject new configuration switches
+    runs-on: terrascale-builder
+    timeout-minutes: 10
+    steps:
+      - name: Check out the exact change with its history
+        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          github-server-url: https://git.terrascale.tech
+          ref: ${{ forgejo.event.pull_request.head.sha || forgejo.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check out the shared TerraScale policy
+        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          github-server-url: https://git.terrascale.tech
+          repository: TerraScale/ts-builder
+          ref: 4abae826a08090c4505d7c8f3d7adcd78be616ef
+          path: .zero-config-policy
+          token: ${{ secrets.TERRASCALE_BOT_TOKEN }}
+          persist-credentials: false
+      - name: Check the added lines
+        env:
+          ZERO_CONFIG_BASE: ${{ forgejo.event.pull_request.base.sha || forgejo.event.before }}
+          ZERO_CONFIG_HEAD: ${{ forgejo.event.pull_request.head.sha || forgejo.sha }}
+        run: |
+          set -eu
+          if [ -z "$ZERO_CONFIG_BASE" ]; then
+            ZERO_CONFIG_BASE=$(git rev-parse "$ZERO_CONFIG_HEAD^")
+          fi
+          python3 .zero-config-policy/scripts/zero-config-check.py "$ZERO_CONFIG_BASE" "$ZERO_CONFIG_HEAD"
+
   slow:
+    needs: [zero-config]
     name: Slow suite
     runs-on: terrascale-builder
     timeout-minutes: 60
@@ -42,7 +75,9 @@ jobs:
     steps:
       - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          github-server-url: https://git.terrascale.tech
+          github-server-url: "https://git.terrascale.tech"
+          ref: ${{ forgejo.event.pull_request.head.sha || forgejo.sha }}
+          fetch-depth: 1
           persist-credentials: false
 
       - name: Check out the pinned ts-dotnet and ts-libs revisions
