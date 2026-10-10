@@ -37,6 +37,9 @@ The initial serving fleet is GRU and SFO, both admitted as `canary` on ARM64.
 Signed specs must authorize
 `terrabase` and the release actor in each cell. The scoped service-release OCI
 user needs the current release-prefix grant on both head buckets.
+It also needs read access to each exact orchestrator inventory object; the
+[TS-773 regional access repair](ci-regional-access.md) records the verified OCI
+targets and the in-place policy update.
 `TS_ORCH_RELEASE` and `TS_ORCH_SHA256` are pinned in `fast.yml` and must change together;
 deployment does not read repository variables for its helper version.
 Verified pair: `ci-1e57e6c1736238e1f1d5a910dfe45c0cbdc20151-run-16180`
