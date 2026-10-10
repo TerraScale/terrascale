@@ -8,37 +8,70 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ts-go-${{ forgejo.workflow }}-${{ forgejo.ref }}
+  group: ${{ forgejo.workflow }}-${{ forgejo.ref }}
   cancel-in-progress: ${{ forgejo.ref != 'refs/heads/main' }}
 
 jobs:
-  ci:
-    name: Run ts-go checks
+  # TS-795 switch guard: fails when the change adds an on/off setting.
+  # Same text in every repo; ts-builder's scripts/bump-ci-ref.sh moves the pinned ref.
+  guard:
+    runs-on: terrascale-builder
+    timeout-minutes: 10
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          github-server-url: https://git.terrascale.tech
+          ref: ${{ forgejo.event.pull_request.head.sha || forgejo.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          github-server-url: https://git.terrascale.tech
+          repository: TerraScale/ts-builder
+          ref: deb6b6011710d8d80f8482f636406ca1390983f0 # guard ref
+          path: .zero-config-policy
+          token: ${{ secrets.TERRASCALE_BOT_TOKEN }}
+          persist-credentials: false
+      - env:
+          ZERO_CONFIG_BASE: ${{ forgejo.event.pull_request.base.sha || forgejo.event.before }}
+          ZERO_CONFIG_HEAD: ${{ forgejo.event.pull_request.head.sha || forgejo.sha }}
+        run: |
+          set -eu
+          if [ -z "$ZERO_CONFIG_BASE" ]; then
+            ZERO_CONFIG_BASE=$(git rev-parse "$ZERO_CONFIG_HEAD^")
+          fi
+          python3 .zero-config-policy/scripts/zero-config-check.py "$ZERO_CONFIG_BASE" "$ZERO_CONFIG_HEAD"
+
+  check:
+    runs-on: terrascale-builder
+    timeout-minutes: 30
+    # The builder supplies Go and govulncheck; GOTOOLCHAIN selects the patched release.
+    env:
+      GOTOOLCHAIN: go1.27.2
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          github-server-url: https://git.terrascale.tech
+          persist-credentials: false
+
+      - name: Verify Go formatting
+        run: test -z "$(gofmt -l .)"
+
+      - run: go vet ./...
+
+      - name: Run the pinned Go vulnerability scanner
+        run: govulncheck ./...
+
+  test:
     runs-on: terrascale-builder
     timeout-minutes: 30
     env:
       GOTOOLCHAIN: go1.27.2
     steps:
-      - name: Check out the source revision
-        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          github-server-url: "https://git.terrascale.tech"
-          ref: ${{ forgejo.sha }}
-          fetch-depth: 1
+          github-server-url: https://git.terrascale.tech
           persist-credentials: false
-
-      # The builder supplies Go and govulncheck; GOTOOLCHAIN selects the patched release.
-      - name: Verify Go formatting
-        run: test -z "$(gofmt -l .)"
-
-      - name: Run Go vet
-        run: go vet ./...
-
-      - name: Run the pinned Go vulnerability scanner
-        run: govulncheck ./...
-
-      - name: Build all Go packages
-        run: go build ./...
 
       # terrabasetest downloads the pinned TerraBase release with the
       # token; TERRABASE_REQUIRE fails its tests instead of skipping them.
@@ -47,3 +80,16 @@ jobs:
           TERRABASE_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
           TERRABASE_REQUIRE: "1"
         run: go test -race ./...
+
+  build:
+    runs-on: terrascale-builder
+    timeout-minutes: 30
+    env:
+      GOTOOLCHAIN: go1.27.2
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          github-server-url: https://git.terrascale.tech
+          persist-credentials: false
+
+      - run: go build ./...
