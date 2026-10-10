@@ -2,12 +2,16 @@ package v1
 
 import (
 	"bytes"
+	"cmp"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -138,6 +142,117 @@ type Collection struct {
 
 // Collection returns a handle to the named collection.
 func (d *Database) Collection(name string) *Collection { return &Collection{db: d, name: name} }
+
+// Normalization is how a unique key compares string values. The empty value
+// is NormalizationNone.
+type Normalization string
+
+// Normalizations.
+const (
+	NormalizationNone          Normalization = "none"
+	NormalizationLowercase     Normalization = "lowercase"
+	NormalizationTrimLowercase Normalization = "trim_lowercase"
+)
+
+// maxUniqueKeys is the most unique keys one collection declares.
+const maxUniqueKeys = 32
+
+// UniqueKey is a unique key over 1-4 distinct dotted member paths. A document
+// missing or null in any path claims no key. Name is the lowercase constraint
+// name; empty derives one from Paths and Normalization, so redeclaring the
+// same key keeps its name.
+type UniqueKey struct {
+	Name          string        `json:"name,omitempty"`
+	Paths         []string      `json:"fields"`
+	Normalization Normalization `json:"normalization,omitempty"`
+}
+
+func (k UniqueKey) check() error {
+	if len(k.Paths) < 1 || len(k.Paths) > 4 {
+		return fmt.Errorf("terrabase: unique key %q needs 1 to 4 paths, got %d", k.Name, len(k.Paths))
+	}
+	for i, path := range k.Paths {
+		if path == "" || slices.Contains(k.Paths[:i], path) {
+			return fmt.Errorf("terrabase: unique key %q paths must be non-empty and distinct", k.Name)
+		}
+	}
+	switch k.Normalization {
+	case "", NormalizationNone, NormalizationLowercase, NormalizationTrimLowercase:
+		return nil
+	}
+	return fmt.Errorf("terrabase: unique key %q has unknown normalization %q", k.Name, k.Normalization)
+}
+
+func (k UniqueKey) name() string {
+	if k.Name != "" {
+		return k.Name
+	}
+	// JSON keeps paths with separators unambiguous.
+	b, _ := json.Marshal([]any{k.Paths, cmp.Or(k.Normalization, NormalizationNone)})
+	sum := sha256.Sum256(b)
+	return "key_" + hex.EncodeToString(sum[:8])
+}
+
+// uniqueIndex is one compound key of a schema declaration.
+type uniqueIndex struct {
+	Name          string        `json:"name"`
+	Fields        []string      `json:"fields"`
+	Unique        bool          `json:"unique"`
+	Normalization Normalization `json:"normalization,omitempty"`
+}
+
+// DeclareUniqueKeys replaces a collection's unique keys and returns them as
+// TerraBase stored them. The collection must be empty, or the call fails with
+// ErrSchemaRequiresEmptyCollection; redeclaring the same keys is idempotent.
+// Duplicate writes then fail with ErrUniqueViolation. An empty keys list
+// removes the keys. Needs the databases:write scope.
+func (d *Database) DeclareUniqueKeys(ctx context.Context, collection string, keys []UniqueKey) ([]UniqueKey, error) {
+	if err := checkName("collection", collection); err != nil {
+		return nil, err
+	}
+	if len(keys) > maxUniqueKeys {
+		return nil, fmt.Errorf("terrabase: a collection has at most %d unique keys, got %d", maxUniqueKeys, len(keys))
+	}
+	body := struct {
+		Indexes []uniqueIndex `json:"indexes"`
+	}{Indexes: make([]uniqueIndex, 0, len(keys))}
+	for _, k := range keys {
+		if err := k.check(); err != nil {
+			return nil, err
+		}
+		body.Indexes = append(body.Indexes, uniqueIndex{Name: k.name(), Fields: k.Paths, Unique: true, Normalization: k.Normalization})
+	}
+	p, err := d.path("schema", collection)
+	if err != nil {
+		return nil, err
+	}
+	var out struct {
+		Constraints []UniqueKey `json:"constraints"`
+	}
+	if _, err := d.c.call(ctx, request{method: http.MethodPut, path: p, replaySafe: true}, body, &out); err != nil {
+		return nil, err
+	}
+	return out.Constraints, nil
+}
+
+// UniqueKeys reads a collection's declared unique keys. The schema's inferred
+// fields are not returned. Needs the databases:read scope.
+func (d *Database) UniqueKeys(ctx context.Context, collection string) ([]UniqueKey, error) {
+	if err := checkName("collection", collection); err != nil {
+		return nil, err
+	}
+	p, err := d.path("schema", collection)
+	if err != nil {
+		return nil, err
+	}
+	var out struct {
+		UniqueConstraints []UniqueKey `json:"uniqueConstraints"`
+	}
+	if _, err := d.c.call(ctx, request{method: http.MethodGet, path: p, replaySafe: true}, nil, &out); err != nil {
+		return nil, err
+	}
+	return out.UniqueConstraints, nil
+}
 
 // Name returns the collection name.
 func (col *Collection) Name() string { return col.name }

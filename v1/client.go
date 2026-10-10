@@ -60,8 +60,9 @@ type Config struct {
 	// BaseURL; BaseURL uses a StaticResolver. Resolver must be safe for
 	// concurrent use. Resolved URLs follow the same rules as BaseURL.
 	Resolver Resolver
-	// Token is the tb_ API key for Client. For Management it is empty, or
-	// the management service credential (admin listener only, see As).
+	// Token is the tb_ API key for Client, or a ts-auth project access token
+	// for the project-management routes (unique keys). For Management it is
+	// empty, or the management service credential (admin listener only, see As).
 	Token string
 	// HTTPClient is used for every request. Nil uses a client that requires
 	// TLS 1.3. The client is copied and its redirect policy replaced, so the
@@ -107,12 +108,16 @@ func (r StaticResolver) Resolve(ctx context.Context) (string, error) {
 	return string(r), ctx.Err()
 }
 
-var tokenPattern = regexp.MustCompile(`^tb_[A-Za-z0-9_-]{43}$`)
+var (
+	tokenPattern = regexp.MustCompile(`^tb_[A-Za-z0-9_-]{43}$`)
+	// jwtPattern is the shape of a ts-auth access token; TerraBase verifies its signature and claims.
+	jwtPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$`)
+)
 
 // New returns a data-plane client.
 func New(cfg Config) (*Client, error) {
-	if !tokenPattern.MatchString(cfg.Token) {
-		return nil, errors.New("terrabase: Token must be a tb_ API key")
+	if !tokenPattern.MatchString(cfg.Token) && !jwtPattern.MatchString(cfg.Token) {
+		return nil, errors.New("terrabase: Token must be a tb_ API key or a ts-auth project access token")
 	}
 	return newClient(cfg)
 }

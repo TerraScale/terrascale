@@ -70,6 +70,27 @@ sent, resolution errors stop the call, and retries keep the original endpoint.
 The same configuration applies to `NewManagement`. Atlas resolution follows
 in TS-507; no production endpoint is built into the SDK.
 
+### Unique keys
+
+Declare the key on an empty collection, then let TerraBase reject duplicates
+instead of checking first. A duplicate write, or any transaction containing
+one, fails as a whole:
+
+```go
+db := c.Database(projectID, "main")
+_, err = db.DeclareUniqueKeys(ctx, "users",
+    []tb.UniqueKey{{Paths: []string{"email"}, Normalization: tb.NormalizationTrimLowercase}})
+_, err = db.Collection("users").Create(ctx, map[string]any{"email": "ana@example.com"})
+if errors.Is(err, tb.ErrUniqueViolation) { /* taken; nothing was written */ }
+```
+
+Declaring fails with `tb.ErrSchemaRequiresEmptyCollection` once the collection
+holds documents. `db.UniqueKeys` reads the declared keys back.
+
+The schema routes take a ts-auth project access token, not a `tb_` API key:
+use it as `Config.Token` with `databases:read` (reads) or `databases:write`
+(declares) plus `documents:write` for the writes.
+
 Every write returns `WriteResult{ID, Version, Offset, Durability}` and the
 version is the `ETag`. Versions are opaque tokens (`tbv1-…`, `tbv2-…`):
 compare and pass them back, never parse them. Unknown `state` and

@@ -45,6 +45,10 @@ const (
 	ErrDependenciesUnavail  ErrorCode = "dependencies_unavailable"
 	ErrDatabaseReplicated   ErrorCode = "database_replicated" // 409: delete of a database with replica regions
 	ErrIndexExists          ErrorCode = "index_exists"        // 409: an index with the name, or on the same fields of the collection
+	ErrUniqueViolation      ErrorCode = "unique_violation"    // 409: a document write or transaction duplicates a unique key; the whole transaction rolls back
+	// ErrSchemaRequiresEmptyCollection is a 409: unique keys change only while
+	// the collection is empty.
+	ErrSchemaRequiresEmptyCollection ErrorCode = "schema_requires_empty_collection"
 	// ErrWrongRegion is a 421: the database is not placed in the called
 	// region. APIError.HomeRegion and Regions name where it is. The client
 	// never retries it elsewhere: resolve the region through Atlas.

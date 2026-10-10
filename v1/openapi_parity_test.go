@@ -73,14 +73,12 @@ var notInJourney = []string{
 	"GET /v1/projects/{project}/databases/{database}/query-shapes",
 	"GET /v1/projects/{project}/databases/{database}/replication",
 	"GET /v1/projects/{project}/databases/{database}/schema",
-	"GET /v1/projects/{project}/databases/{database}/schema/{collection}",
 	"GET /v1/projects/{project}/databases/{database}/usage",
 	"GET /v1/projects/{project}/replication",
 	"GET /v1/projects/{project}/saved-queries",
 	"GET /v1/projects/{project}/saved-queries/{query}",
 	"GET /v1/projects/{project}/usage",
 	"PATCH /v1/projects/{project}/databases/{database}",
-	"POST /v1/projects/{project}/databases",
 	"POST /v1/projects/{project}/databases/{database}/backups",
 	"POST /v1/projects/{project}/databases/{database}/backups/{backup}/restore",
 	"POST /v1/projects/{project}/databases/{database}/branches",
@@ -96,7 +94,6 @@ var notInJourney = []string{
 	"PUT /v1/projects/{project}/databases/{database}/auto-index/{collection}",
 	"PUT /v1/projects/{project}/databases/{database}/backup-policy",
 	"PUT /v1/projects/{project}/databases/{database}/collections/{collection}/schema",
-	"PUT /v1/projects/{project}/databases/{database}/schema/{collection}",
 	"PUT /v1/projects/{project}/saved-queries/{query}",
 }
 

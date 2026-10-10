@@ -43,6 +43,7 @@ func TestIntegration(t *testing.T) {
 	t.Run("Management", func(t *testing.T) { testManagement(t, tb, hc) })
 	t.Run("RegisterProject", func(t *testing.T) { testRegisterProject(t, tb, hc) })
 	t.Run("Documents", func(t *testing.T) { testDocuments(t, tb, hc) })
+	t.Run("UniqueKeys", func(t *testing.T) { testUniqueKeys(t, tb, hc) })
 	t.Run("Retries", func(t *testing.T) { testRetries(t, tb, hc, rec) })
 	t.Run("RouteCoverage", func(t *testing.T) {
 		rec.mu.Lock()
@@ -63,6 +64,75 @@ func TestIntegration(t *testing.T) {
 			}
 		}
 	})
+}
+
+// testUniqueKeys declares a unique key on an empty collection, then checks that
+// the server rejects duplicate writes and transactions and refuses to redeclare
+// the key on a non-empty collection.
+func testUniqueKeys(t *testing.T, tb *terrabasetest.Server, hc *http.Client) {
+	ctx := t.Context()
+	// CreateProject leaves the project unbound to ts-auth, and the project token's
+	// first database call then refuses it. A fresh id is bound by that call.
+	project := v1.NewID()
+	// Schema routes take a ts-auth project token; a tb_ key cannot reach them.
+	scopes := []string{"databases:read", "databases:write", "documents:read", "documents:write"}
+	token := tb.ProjectToken(t, project, scopes...)
+	c, err := v1.New(v1.Config{BaseURL: tb.URL, Token: token, HTTPClient: hc})
+	if err != nil {
+		t.Fatal(err)
+	}
+	createProjectDatabase(t, tb, hc, token, project, "main")
+	db := c.Database(project, "main")
+	must(db.CreateCollection(ctx, "accounts"))(t)
+	accounts := db.Collection("accounts")
+
+	keys := []v1.UniqueKey{{Name: "accounts_email", Paths: []string{"email"}, Normalization: v1.NormalizationTrimLowercase}}
+	declared := must(db.DeclareUniqueKeys(ctx, "accounts", keys))(t)
+	if len(declared) != 1 || declared[0].Name != "accounts_email" {
+		t.Fatalf("declare: %+v", declared)
+	}
+	if again := must(db.DeclareUniqueKeys(ctx, "accounts", keys))(t); len(again) != 1 {
+		t.Fatalf("redeclare: %+v", again)
+	}
+
+	must(accounts.Create(ctx, map[string]any{"email": "ana@example.com"}))(t)
+	_, err = accounts.Create(ctx, map[string]any{"email": " ANA@example.com "})
+	wantCode(t, err, v1.ErrUniqueViolation)
+	// The duplicate op fails the whole transaction, so bo@ is not written either.
+	_, err = db.Tx().Create("accounts", v1.NewID(), map[string]any{"email": "bo@example.com"}).Create("accounts", v1.NewID(), map[string]any{"email": "ana@example.com"}).Commit(ctx)
+	wantCode(t, err, v1.ErrUniqueViolation)
+	must(accounts.Create(ctx, map[string]any{"email": "bo@example.com"}))(t)
+
+	// A changed key set is a real change, so only the non-empty rule can refuse it.
+	changed := append(slices.Clone(keys), v1.UniqueKey{Paths: []string{"name"}})
+	_, err = db.DeclareUniqueKeys(ctx, "accounts", changed)
+	wantCode(t, err, v1.ErrSchemaRequiresEmptyCollection)
+	read := must(db.UniqueKeys(ctx, "accounts"))(t)
+	if len(read) != 1 || read[0].Name != "accounts_email" || !slices.Equal(read[0].Paths, []string{"email"}) || read[0].Normalization != v1.NormalizationTrimLowercase {
+		t.Fatalf("read back: %+v", read)
+	}
+}
+
+// createProjectDatabase makes the project's first database with its project
+// token, which is the only call that registers the project's storage. The SDK
+// has no such call, so it is posted directly.
+func createProjectDatabase(t *testing.T, tb *terrabasetest.Server, hc *http.Client, token, project, name string) {
+	t.Helper()
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, tb.URL+"/v1/projects/"+project+"/databases", strings.NewReader(`{"name":"`+name+`"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	res, err := hc.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(io.LimitReader(res.Body, 1024))
+		t.Fatalf("create project database: %d %s", res.StatusCode, body)
+	}
 }
 
 // recorder is the client's transport to the real server. It records each

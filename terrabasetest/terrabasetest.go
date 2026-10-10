@@ -293,6 +293,27 @@ func (s *Server) Token(t testing.TB, user, email string) string {
 	if email != "" {
 		c["email"], c["email_verified"] = email, true
 	}
+	return s.sign(t, c)
+}
+
+// ProjectToken mints a ts-auth project access token for project with the
+// space-separated scopes, valid for an hour. TerraBase accepts it as the Bearer
+// token of the client listener for that project's Documents and Management
+// routes, and v1.New takes it as Config.Token.
+func (s *Server) ProjectToken(t testing.TB, project string, scopes ...string) string {
+	t.Helper()
+	now := time.Now().Unix()
+	c := map[string]any{"iss": s.Issuer, "aud": Audience, "sub": projectSubject, "iat": now, "exp": now + 3600, "project_id": project, "scope": strings.Join(scopes, " ")}
+	return s.sign(t, c)
+}
+
+// projectSubject is a canonical ULID. TerraBase needs a sub but does not check
+// it against the project's members.
+const projectSubject = "01ARZ3NDEKTSV4RRFFQ69G5FA7"
+
+// sign signs claims as an at+jwt with the server's key, the way TerraBase verifies it.
+func (s *Server) sign(t testing.TB, c map[string]any) string {
+	t.Helper()
 	claims, err := json.Marshal(c)
 	if err != nil {
 		t.Fatal(err)
