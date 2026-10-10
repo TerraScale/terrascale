@@ -452,5 +452,13 @@ persistence is introduced here.
 ## Schema compatibility
 
 Every database file is schema version 1, and the number never increases (user rule, 2026-10-09). There are no
-upgrades: a file of any other version is refused, and a format change wipes storage at a rollout that stops every
-member before any new build starts. Never change `user_version` manually.
+upgrades: a file of any other version is refused. A data directory also records its layout and storage format in
+`.terrabase.lock`: the layout byte, then the SHA-256 of the bootstrap schema. A build refuses a directory that any other
+format recorded before it opens a file and exits with code 2, so a rollback cannot rewrite newer data; builds from before
+the record accept only the layout byte, so they refuse a directory a newer build wrote.
+
+A format change wipes storage at a cutover, never at startup (COS decision 2026-10-10). Builds of different formats share
+protocol version 1 and cannot refuse each other, so the operator stops every member in every region first, verifies the
+targets, deletes them and lists the deleted database ids; each member then bootstraps fresh storage when it starts. A
+build that wiped on start would do it member by member during a rolling deploy, next to members still running the other
+format. Never change `user_version` or the lock file manually.

@@ -1,6 +1,8 @@
 using System.Collections.Frozen;
 using System.Diagnostics.Metrics;
 using System.Runtime.CompilerServices;
+using System.Security.Cryptography;
+using System.Text;
 using Microsoft.Data.Sqlite;
 using TerraBase.Configuration;
 using TerraBase.Features.Memory;
@@ -34,6 +36,13 @@ internal sealed partial class SqliteDatabaseStore(
 
     /// <summary>On-disk schema version, stored in <c>PRAGMA user_version</c>.</summary>
     private const int SchemaVersion = 1;
+
+    /// <summary>
+    /// The storage format's identity: SHA-256 of the schema every database file is bootstrapped with. Version numbers never
+    /// increase (docs/design/anna-core.md decision 9), so this is what tells two formats apart; any change to the bootstrap
+    /// SQL is a format change.
+    /// </summary>
+    internal static readonly byte[] FormatDigest = SHA256.HashData(Encoding.UTF8.GetBytes(SchemaSql + UniqueSchemaSql));
 
     // Greenfield bootstrap only: an older on-disk shape must be discarded, never upgraded.
     private const string SchemaSql = $$"""

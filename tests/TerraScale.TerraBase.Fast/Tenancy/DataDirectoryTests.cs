@@ -25,6 +25,8 @@ public sealed class DataDirectoryTests
     private const string ReplicaFileName = ".terrabase.replica";
     private const string InUse = "data-directory is in use by another TerraBase process; stop it, then start again";
     private const string PreTenancyLayout = "data directory uses the pre-tenancy layout; start with an empty data directory (no automatic migration)";
+    private const string OtherFormat =
+        "data directory was written by another TerraBase layout or storage format; start with an empty data directory (no automatic migration)";
 
     [Test]
     public async Task A_held_directory_lock_stops_startup_before_any_store_opens_and_releasing_it_allows_startup()
@@ -340,13 +342,35 @@ public sealed class DataDirectoryTests
     }
 
     [Test]
+    public async Task A_started_directory_records_its_storage_format_so_builds_from_before_the_record_refuse_it()
+    {
+        var dataDirectory = Directory.CreateTempSubdirectory("terrabase-format-").FullName;
+        try
+        {
+            await TerraBaseTestServer.InitializeDataDirectoryAsync(dataDirectory);
+            var record = await File.ReadAllBytesAsync(Path.Combine(dataDirectory, LockFileName));
+
+            // The layout byte, then the 32-byte schema digest. Builds before the digest accept only the single layout byte
+            // and stop before opening a file, so a rollback to one cannot migrate this directory.
+            await Assert.That(record.Length).IsEqualTo(33);
+            await Assert.That(record[0]).IsEqualTo((byte)1);
+        }
+        finally
+        {
+            Directory.Delete(dataDirectory, recursive: true);
+        }
+    }
+
+    [Test]
     [Arguments("flat", PreTenancyLayout)]
     [Arguments("system-only", PreTenancyLayout)]
     [Arguments("stray-database", PreTenancyLayout)]
     [Arguments("system-prefixed", PreTenancyLayout)]
     [Arguments("unrecorded-identity", PreTenancyLayout)]
-    [Arguments("unknown-layout", "data directory has a layout this build does not support")]
-    public async Task A_data_directory_from_before_tenancy_is_refused_without_changing_a_byte(string layout, string message)
+    [Arguments("unknown-layout", OtherFormat)]
+    [Arguments("previous-format", OtherFormat)]
+    [Arguments("other-format", OtherFormat)]
+    public async Task A_data_directory_of_another_layout_or_format_is_refused_without_changing_a_byte(string layout, string message)
     {
         // ';' and a quote in the path: every connection string to these files is built, never interpolated.
         var dataDirectory = Directory.CreateTempSubdirectory("terrabase-layout;'-").FullName;
@@ -380,6 +404,18 @@ public sealed class DataDirectoryTests
                 case "unrecorded-identity":
                     // A replica identity copied into a directory no server recorded: refused, not adopted.
                     await WriteReplicaAsync(dataDirectory, 1, [7, 0, 0, 0], [0, 0], running: false);
+                    break;
+                case "previous-format":
+                    // What production ran before formats were recorded: the layout byte alone, beside a system database.
+                    await File.WriteAllBytesAsync(lockFile, [1]);
+                    await DocumentFiles.WriteAsync(Path.Combine(dataDirectory, "_system.db"), ("api_keys", "k", "{}"));
+                    break;
+                case "other-format":
+                    // This layout, written by another storage format (its schema digest differs).
+                    await TerraBaseTestServer.InitializeDataDirectoryAsync(dataDirectory);
+                    var record = await File.ReadAllBytesAsync(lockFile);
+                    record[^1] ^= 0xFF;
+                    await File.WriteAllBytesAsync(lockFile, record);
                     break;
                 default:
                     // A layout record this build does not know, from a newer build.

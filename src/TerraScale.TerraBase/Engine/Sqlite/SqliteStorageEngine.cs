@@ -31,6 +31,12 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
     internal const string SystemName = "_system";
     // Recorded in the lock file: the layout of this build, one directory per tenant.
     private const byte LayoutVersion = 1;
+
+    // The lock file's record: the layout, then the storage format that wrote the directory. Builds from before the format
+    // was recorded accept only the one layout byte, so they refuse a directory this build wrote instead of migrating it.
+    private static readonly byte[] LayoutRecord = [LayoutVersion, .. SqliteDatabaseStore.FormatDigest];
+    private const string OtherFormat =
+        "data directory was written by another TerraBase layout or storage format; start with an empty data directory (no automatic migration)";
     private const string PreTenancyLayout = "data directory uses the pre-tenancy layout; start with an empty data directory (no automatic migration)";
 
     /// <summary>The file whose exclusive lock makes a process the only owner of a data directory.</summary>
@@ -1039,17 +1045,21 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
         }
     }
 
-    // The lock file records the layout once a server of this build has started on an empty directory. Files without that
-    // record, or a database file directly in the directory other than the system database's, are from before tenancy:
-    // refused without opening, changing or moving anything. There is no automatic migration (docs/decisions/0005-multi-tenancy.md).
+    // The lock file records the layout and storage format once a server of this build has started on an empty directory.
+    // A record of any other layout or format, a directory with files but no record, or a database file directly in the
+    // directory other than the system database's is refused without opening, changing or moving anything. There is no
+    // automatic migration (docs/decisions/0005-multi-tenancy.md) and no automatic wipe: a format change wipes storage at a
+    // cutover that stops every member first, because builds of different formats share protocol version 1, and the
+    // operator verifies the targets and records what was deleted. A build that wiped on start would do it member by member
+    // during a rolling deploy, next to members still running the other format.
     private static void CheckLayout(string dataDirectory, FileStream ownership)
     {
-        if (ownership.Length > 0 && (ownership.Length != 1 || ownership.ReadByte() != LayoutVersion))
+        var recorded = ownership.Length > 0;
+        if (recorded && !RecordMatches(ownership))
         {
-            throw new TerraBaseConfigurationException("data directory has a layout this build does not support");
+            throw new TerraBaseConfigurationException(OtherFormat);
         }
 
-        var recorded = ownership.Length == 1;
         var entries = Directory.EnumerateFileSystemEntries(dataDirectory)
             .Select(entry => Path.GetFileName(entry))
             .Where(name => !string.Equals(name, LockFileName, StringComparison.Ordinal));
@@ -1060,9 +1070,22 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
 
         if (!recorded)
         {
-            ownership.WriteByte(LayoutVersion);
+            ownership.Write(LayoutRecord);
             ownership.Flush(flushToDisk: true);
         }
+    }
+
+    private static bool RecordMatches(FileStream ownership)
+    {
+        if (ownership.Length != LayoutRecord.Length)
+        {
+            return false;
+        }
+
+        Span<byte> record = stackalloc byte[LayoutRecord.Length];
+        ownership.Position = 0;
+        ownership.ReadExactly(record);
+        return record.SequenceEqual(LayoutRecord);
     }
 
     /// <summary>

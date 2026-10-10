@@ -28,8 +28,9 @@ Unicode are addressable as distinct keys. Query `+` denotes a space; a literal p
 Invalid percent escapes and invalid UTF-8 are rejected. The old `…/documents/{id}` point routes are removed.
 Listing and generated creation still use `GET/POST …/documents`; creation returns the `by-key` Location.
 
-Fresh storage uses data-directory layout 1, SQL schema 1 and catalog version 1. New files bootstrap the full
-schema atomically. Nonempty files of any other schema version are refused, on import as well as normal startup.
+Fresh storage uses data-directory layout 1, SQL schema 1 and catalog version 1, and records its storage format (the
+bootstrap schema's digest) in the lock file; a build refuses a directory of any other format
+([schema compatibility](replication.md#schema-compatibility)). New files bootstrap the full schema atomically. Nonempty files of any other schema version are refused, on import as well as normal startup.
 There are no migrations, backfills, dual reads/writes or legacy ID fallbacks. TS-755's native uniqueness is
 part of this schema. Version numbers never increase (user rule, 2026-10-09): a format change wipes storage at a
 rollout that stops every member before any new build starts, so peers of an old build never meet this one, and
