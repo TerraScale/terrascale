@@ -39,7 +39,7 @@ its `.sha256`). To cut a versioned release:
    git push origin v0.2.0
    ```
 
-3. `Fast integration` runs on the tag; once `fast` and `release` pass, `publish` creates the
+3. `Fast integration` runs on the tag; once `check` and `release` pass, `publish` creates the
    release `v0.2.0` with both binaries, their SHA-256 files and notes generated from the `main` history
    since the previous `v*` tag. A tag that does not match `<Version>` or is not on `main`
    fails the `release` job and publishes nothing.

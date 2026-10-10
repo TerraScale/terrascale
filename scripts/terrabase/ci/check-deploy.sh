@@ -106,7 +106,7 @@ pinned=$(sha256sum < "$sandbox/serve/ts-orch" | cut -d' ' -f1)
 cp "$sandbox/serve/app-linux-arm64.sha256" "$sandbox/good.sha256"
 
 fail() { echo "check-deploy: $*" >&2; exit 1; }
-python3 - "$repo/.forgejo/workflows/fast.yml" "$repo/scripts/ci/deploy.sh" <<'PY'
+python3 - "$repo/.forgejo/workflows/ci.yml" "$repo/scripts/ci/deploy.sh" <<'PY'
 import pathlib, re, sys
 workflow, script = [pathlib.Path(path).read_text() for path in sys.argv[1:]]
 if "TS_AUTO_DEPLOY_" in workflow or "TS_AUTO_DEPLOY_" in script:

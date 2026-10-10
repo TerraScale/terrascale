@@ -4,10 +4,10 @@ Forgejo Actions on the `terrascale-builder` runner (ts-builder image, .NET SDK 1
 
 | Workflow | When | Jobs | Blocks merges/releases |
 | --- | --- | --- | --- |
-| `fast.yml` | push to `main` or of a `v*` tag, pull requests, manual | `fast` and `release` in parallel, then `publish` (pushes only), then `deploy` (`main` only) | yes |
+| `ci.yml` | push to `main` or of a `v*` tag, pull requests, manual | `guard` and `check` (display name `fast`), then `release`, then `publish` (pushes only), then `deploy` (`main` only) | yes |
 | `slow.yml` | nightly 03:17 UTC, manual | `slow` | never |
 
-- **fast**: one `make check CONFIGURATION=Release` invocation shares locked restore
+- **check** (display name `fast`, the required status): one `make check CONFIGURATION=Release` invocation shares locked restore
   and build prerequisites across the formatting, build, analyzer regression and Fast gates.
   Formatting checks whitespace; the build enforces style and analyzers as errors.
 - **release**: `scripts/ci/stage-release.sh` runs `make publish` for `linux-x64` and
@@ -70,7 +70,7 @@ Branch protection on `main` should require `Fast integration / fast` and
 
 ## Speed
 
-- `fast` and `release` run in parallel; `publish` only publishes the draft and never rebuilds.
+- `guard` and `check` run first; `release` starts after both; `publish` only publishes the draft and never rebuilds.
 - `fast` restores once and builds once. `dotnet format whitespace` checks formatting
   without repeating the style/analyzer work performed by the warnings-as-errors build.
 - Test processes do not inherit the GitHub artifact-upload credentials. TUnit 1.19.57's

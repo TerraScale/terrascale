@@ -8,7 +8,7 @@ service status source_revision values. It opens an assigned alert when the
 oldest pending qualified build exceeds 30 minutes; newer builds cannot reset
 that clock. Successful deployment requires fresh target replica proofs.
 
-`fast.yml` runs the required Fast gate and release build in parallel. The release
+`ci.yml` runs the required Fast gate (job `check`), then the release build (job `release`). The release
 job stages checked single-file amd64/arm64 executables in a draft. `publish`
 depends on both gates and publishes those exact bytes; it never rebuilds them.
 Slow runs separately and does not gate production delivery. A failed Fast run
@@ -40,7 +40,7 @@ user needs the current release-prefix grant on both head buckets.
 It also needs read access to each exact orchestrator inventory object; the
 [TS-773 regional access repair](ci-regional-access.md) records the verified OCI
 targets and the in-place policy update.
-`TS_ORCH_RELEASE` and `TS_ORCH_SHA256` are pinned in `fast.yml` and must change together;
+`TS_ORCH_RELEASE` and `TS_ORCH_SHA256` are pinned in `ci.yml` and must change together;
 deployment does not read repository variables for its helper version.
 Verified pair: `ci-1e57e6c1736238e1f1d5a910dfe45c0cbdc20151-run-16180`
 and `f29dc054716f2ed50ab97960c675753f33c8ac158d6a49f74cd5c190a93ec771`

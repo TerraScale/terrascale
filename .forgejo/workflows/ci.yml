@@ -1,15 +1,17 @@
 name: Fast integration
 
-# fast and release run in parallel. Require "Fast integration / fast" and
-# "Fast integration / release" in Forgejo's branch protection for the merge gate.
+# guard and check run first; release waits for both. Require "Fast integration / fast"
+# and "Fast integration / release" in Forgejo's branch protection for the merge gate.
+# The job id is check, but its display name stays fast so that status context keeps its name.
 #
-# - fast: locked restore, formatting, Release build with analyzers as errors,
+# - guard: the TS-795 switch guard.
+# - check (name fast): locked restore, formatting, Release build with analyzers as errors,
 #   and the Fast integration suite (make targets).
 # - release: publishes the self-contained single-file linux-amd64 and linux-arm64
 #   executables, smoke-runs the exact staged amd64 bytes and checks the arm64 ELF
 #   header. On a push to main or of a v* tag it attaches them to a draft release
 #   (scripts/ci/release.sh draft).
-# - publish: once both pass, publishes that draft. Nothing is rebuilt.
+# - publish: once check and release pass, publishes that draft. Nothing is rebuilt.
 # - deploy: on main, hands the published release to ts-orchestrator, which
 #   rolls it out to every region (scripts/ci/deploy.sh, TS-610).
 #
@@ -32,29 +34,27 @@ env:
   CI: "true"
 
 jobs:
-  zero-config:
-    name: Reject new configuration switches
+  # TS-795 switch guard: fails when the change adds an on/off setting.
+  # Same text in every repo; ts-builder's scripts/bump-ci-ref.sh moves the pinned ref.
+  guard:
     runs-on: terrascale-builder
     timeout-minutes: 10
     steps:
-      - name: Check out the exact change with its history
-        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           github-server-url: https://git.terrascale.tech
           ref: ${{ forgejo.event.pull_request.head.sha || forgejo.sha }}
           fetch-depth: 0
           persist-credentials: false
-      - name: Check out the shared TerraScale policy
-        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           github-server-url: https://git.terrascale.tech
           repository: TerraScale/ts-builder
-          ref: 4abae826a08090c4505d7c8f3d7adcd78be616ef
+          ref: 8dacab451c3c16924622ff512d7aa17501b70ecc # guard ref
           path: .zero-config-policy
           token: ${{ secrets.TERRASCALE_BOT_TOKEN }}
           persist-credentials: false
-      - name: Check the added lines
-        env:
+      - env:
           ZERO_CONFIG_BASE: ${{ forgejo.event.pull_request.base.sha || forgejo.event.before }}
           ZERO_CONFIG_HEAD: ${{ forgejo.event.pull_request.head.sha || forgejo.sha }}
         run: |
@@ -64,8 +64,7 @@ jobs:
           fi
           python3 .zero-config-policy/scripts/zero-config-check.py "$ZERO_CONFIG_BASE" "$ZERO_CONFIG_HEAD"
 
-  fast:
-    needs: [zero-config]
+  check:
     name: fast
     runs-on: terrascale-builder
     # Fast takes a few minutes; fail a hung run before it holds the runner.
@@ -75,8 +74,6 @@ jobs:
         uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           github-server-url: "https://git.terrascale.tech"
-          ref: ${{ forgejo.sha }}
-          fetch-depth: 1
           persist-credentials: false
 
       - name: Use the persistent NuGet cache
@@ -87,8 +84,7 @@ jobs:
         run: make check CONFIGURATION=Release
 
   release:
-    needs: [zero-config]
-    name: release
+    needs: [guard]
     runs-on: terrascale-builder
     timeout-minutes: 20
     outputs:
@@ -98,7 +94,6 @@ jobs:
         uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           github-server-url: "https://git.terrascale.tech"
-          ref: ${{ forgejo.sha }}
           # Full history and tags: release notes and the tag-on-main check.
           fetch-depth: 0
           persist-credentials: false
@@ -124,8 +119,7 @@ jobs:
         run: bash scripts/ci/release.sh draft artifacts/dist
 
   publish:
-    name: publish
-    needs: [fast, release]
+    needs: [guard, check, release]
     if: ${{ needs.release.outputs.release_id != '' }}
     runs-on: terrascale-builder
     timeout-minutes: 10
@@ -134,8 +128,6 @@ jobs:
         uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           github-server-url: "https://git.terrascale.tech"
-          ref: ${{ forgejo.sha }}
-          fetch-depth: 1
           persist-credentials: false
 
       - name: Publish the tested release
@@ -156,9 +148,9 @@ jobs:
             -H "Authorization: token ${FORGEJO_TOKEN}" -H 'Content-Type: application/json' \
             --data '{"state":"success","context":"deployment/qualified","description":"Verified main build ready for automatic deployment"}' \
             "https://git.terrascale.tech/api/v1/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}"
+
   # Every green main push deploys to all discovered regions with health gates.
   deploy:
-    name: deploy
     needs: [publish]
     if: ${{ forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main' }}
     runs-on: terrascale-builder
@@ -170,8 +162,6 @@ jobs:
         uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           github-server-url: "https://git.terrascale.tech"
-          ref: ${{ forgejo.sha }}
-          fetch-depth: 1
           persist-credentials: false
 
       - name: Roll the release out to every region
