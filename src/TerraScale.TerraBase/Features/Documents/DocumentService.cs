@@ -9,6 +9,7 @@ using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
 using TerraBase.Features.Replication;
+using TerraBase.Features.Stats;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -20,7 +21,7 @@ namespace TerraBase.Features.Documents;
 /// writer lock must not wait on the network, and a peer applying this member's groups needs it.
 /// </remarks>
 internal sealed partial class DocumentService(IStorageEngine engine, TimeProvider time, DocumentCache cache, IUsageMeter usage, IReplicationWait replication,
-    IQueryShapeTracker shapes, IMemoryBudget memory, IMeterFactory meters, IStorageQuota quota)
+    IQueryShapeTracker shapes, IMemoryBudget memory, IMeterFactory meters, IStorageQuota quota, IDatabaseStats stats)
     : IDocumentService, ISystemDocumentReader
 {
     // assert_count examines at most this many documents.
@@ -152,6 +153,7 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
         if (document is not null)
         {
             usage.RecordRead(key.Database);
+            stats.CollectionRead(key.Database, key.Collection);
             return document;
         }
 
@@ -159,6 +161,7 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
         if (result is NeverWritten)
         {
             usage.RecordRead(key.Database);
+            stats.CollectionRead(key.Database, key.Collection);
         }
 
         return result;
@@ -253,6 +256,7 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
             }
 
             usage.RecordRead(database);
+            stats.CollectionRead(database, query.Collection);
             return new QueryOutcome(result.Page, result.Count);
         }
         finally
@@ -399,6 +403,14 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
         {
             admission.Committed(delta);
             usage.RecordWrites(database, writes);
+            foreach (var operation in operations)
+            {
+                if (operation is PutOperation or PatchOperation or DeleteOperation)
+                {
+                    stats.CollectionWrote(database, operation.Collection);
+                }
+            }
+
             foreach (var group in operations.OfType<DocumentOperation>().GroupBy(operation => operation switch
             {
                 PutOperation => "put",

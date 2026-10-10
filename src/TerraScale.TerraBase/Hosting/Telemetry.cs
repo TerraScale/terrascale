@@ -107,7 +107,7 @@ public static class Telemetry
                         or "terrabase_pressure_sampled_at_seconds" or "terrabase_pressure_storage_sampled_at_seconds"
                         or "terrabase_pressure_sample_window_seconds" or "terrabase_pressure_untracked_tenant_requests"
                         or "terrabase_pressure_info"
-                        or "terrabase.memory.reserved"
+                        or "terrabase.memory.reserved" or "terrabase.stats.databases"
                         or "terrabase.storage.admitted" or "terrabase.storage.running"
                         or "terrabase.storage.rejected" or "terrabase.storage.unknown_files"
                         or "terrabase.document_cache.bytes" or "terrabase.document_cache.entries"
@@ -126,14 +126,16 @@ public static class Telemetry
                         or "terrabase.replication.sender.durable_lag" or "terrabase.replication.sender.initialized"
                         or "terrabase.replication.observability.omitted" or "terrabase.wan.served.groups"
                         => new MetricStreamConfiguration { CardinalityLimit = 1 },
-                    "terrabase.auth.key_fetches" => new MetricStreamConfiguration { CardinalityLimit = 2 },
+                    "terrabase.auth.key_fetches" or "terrabase.stats.operations" => new MetricStreamConfiguration { CardinalityLimit = 2 },
                     "terrabase_pressure_listener_request_rate" or "terrabase_pressure_listener_p95_latency_ms"
-                        or "terrabase_pressure_listener_requests" or "terrabase.document_cache.evictions"
+                        or "terrabase_pressure_listener_requests" or "terrabase.document_cache.evictions" or "terrabase.stats.dropped"
                         => new MetricStreamConfiguration { CardinalityLimit = 3 },
                     "terrabase.document_cache.lookups" => new MetricStreamConfiguration { CardinalityLimit = 4 },
                     "terrabase.query_shapes.dropped" => new MetricStreamConfiguration { CardinalityLimit = 7 },
                     "terrabase_pressure_top_tenant_request_rate" or "terrabase_pressure_top_tenant_storage_bytes"
+                        or "terrabase.stats.top.replication" or "terrabase.stats.top.operations"
                         => new MetricStreamConfiguration { CardinalityLimit = 10 },
+                    "terrabase.stats.replication" => new MetricStreamConfiguration { CardinalityLimit = 129 },
                     "terrabase_pressure_available" => new MetricStreamConfiguration { CardinalityLimit = 13 },
                     _ => null,
                 };

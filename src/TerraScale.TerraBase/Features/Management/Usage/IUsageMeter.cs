@@ -2,7 +2,7 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Management.Usage;
 
-/// <summary>Counts document operations per database (by tenant) for usage reporting.</summary>
+/// <summary>Counts document operations per database (by tenant) for usage reporting. Each count also feeds live statistics.</summary>
 public interface IUsageMeter
 {
     /// <summary>Counts one document read (a get, or a list or query page).</summary>

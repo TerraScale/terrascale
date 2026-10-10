@@ -7,6 +7,7 @@ using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Replication;
+using TerraBase.Features.Stats;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -129,7 +130,8 @@ internal readonly union UsageCountsResult(UsageCounts, Unavailable);
 /// follower sends folded entries with their scope, so the primary never saves them in an hour.
 /// Entries are indexed by database; a flush or send drops the maps it emptied.
 /// </remarks>
-internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider time, TerraBaseOptions options, ILogger<UsageMeter> logger, IMemoryBudget memory, IMeterFactory meters)
+internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider time, TerraBaseOptions options, ILogger<UsageMeter> logger, IMemoryBudget memory, IMeterFactory meters,
+    IDatabaseStats stats)
     : IUsageMeter, IDisposable
 {
     // Senders are peer-authenticated members; a cell has a handful.
@@ -218,9 +220,14 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
     {
         Add(new(DatabaseOwner.Of(database), CurrentHour()), Read);
         RecordOperation(database, "read", 1);
+        stats.Read(database);
     }
 
-    public void RecordWrites(TenantContext database, int writes) => Add(new(DatabaseOwner.Of(database), CurrentHour()), new OpCounts(0, writes));
+    public void RecordWrites(TenantContext database, int writes)
+    {
+        Add(new(DatabaseOwner.Of(database), CurrentHour()), new OpCounts(0, writes));
+        stats.Wrote(database, writes);
+    }
 
     /// <summary>Databases with counts in memory.</summary>
     internal int PendingDatabases => _pending.Count;

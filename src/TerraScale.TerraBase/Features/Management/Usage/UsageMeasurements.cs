@@ -1,3 +1,5 @@
+using TerraBase.Features.Stats;
+
 namespace TerraBase.Features.Management.Usage;
 
 /// <summary>A usage meter's bounded dimensions. Region is the observing node; PeerRegion names the other end.</summary>
@@ -12,8 +14,7 @@ internal sealed record UsageReplicationState(DateTimeOffset ObservedAt, double L
 /// <summary>Additive meter values and mergeable request latency histogram; replication state keeps the newest observation.</summary>
 internal sealed record UsageReading(UsageDimension Dimension, long Count, long Value = 0, long[]? Latency = null, UsageReplicationState? State = null)
 {
-    // Upper bounds in milliseconds. The last bin includes longer requests.
-    public static IReadOnlyList<double> LatencyBounds { get; } = [0.25, 0.5, 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536];
+    public static IReadOnlyList<double> LatencyBounds => StatsLatency.BoundsMs;
 
     public bool IsZero => Count == 0 && Value == 0 && (Latency is null || Latency.All(count => count == 0));
 

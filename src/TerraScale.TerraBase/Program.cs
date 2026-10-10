@@ -15,6 +15,7 @@ using TerraBase.Features.Memory;
 using TerraBase.Features.Pressure;
 using TerraBase.Features.Qos;
 using TerraBase.Features.Replication;
+using TerraBase.Features.Stats;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
@@ -103,6 +104,7 @@ builder.Services.AddTerraBaseCluster(options);
 builder.Services.AddTerraBaseBackup(options);
 builder.Services.AddTerraBaseHealth();
 builder.Services.AddTerraBasePressure();
+builder.Services.AddTerraBaseStats();
 builder.AddTerraBaseReplication(options);
 builder.Services.AddTerraBaseCrossRegion(options);
 

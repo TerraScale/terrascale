@@ -65,6 +65,7 @@ internal sealed partial class UsageMeter
         latency[index] = 1;
         Record(database, new(new("requests", options.Region, "", kind), 1, status >= 400 ? 1 : 0, latency));
         RecordClientBytes(database, received, sent);
+        stats.Request(database, elapsed, status >= 400);
     }
 
     public void RecordClientBytes(TenantContext database, long received, long sent, DateTimeOffset? transferredAt = null)
@@ -112,6 +113,7 @@ internal sealed partial class UsageMeter
         var direction = sent ? "sent" : "received";
         _replicationBytes.Add(bytes, new KeyValuePair<string, object?>("kind", kind), new KeyValuePair<string, object?>("direction", direction));
         Record(database, new(new("replication_bytes", options.Region, peerRegion, kind + ":" + direction), bytes));
+        stats.ReplicationBytes(database, peerRegion, sent, bytes);
     }
 
     public void RecordReplicatedOperations(TenantContext database, string peerRegion, int operations)
@@ -171,6 +173,7 @@ internal sealed partial class UsageMeter
         }
 
         Record(database, new(new("replication_status", options.Region, peerRegion, "inbound"), 1, State: observation));
+        stats.ReplicationState(database, peerRegion, remaining, observation.LagMs, diverged);
     }
 
     internal void RecordPeerState(TenantContext database, string peerRegion, long remaining, double lagMs, bool diverged, double? convergenceMs)
@@ -179,11 +182,15 @@ internal sealed partial class UsageMeter
         {
             Record(database, new(new("replication_status", options.Region, peerRegion, "outbound"), 1,
                 State: new(time.GetUtcNow(), lagMs, diverged, convergenceMs, null, remaining)));
+            stats.ReplicationState(database, peerRegion, remaining, lagMs, diverged);
         }
     }
 
-    internal void RecordStorage(TenantContext database, long bytes, DateTimeOffset sampledAt) =>
+    internal void RecordStorage(TenantContext database, long bytes, DateTimeOffset sampledAt)
+    {
         Record(database, new(new("storage_bytes", options.Region, "", "sample"), 1, bytes), sampledAt);
+        stats.StorageSampled(database, bytes);
+    }
 
     internal static bool ValidRegion(string region) => region is not null && TerraBase.Configuration.TerraBaseOptions.IsRegion(region);
 
