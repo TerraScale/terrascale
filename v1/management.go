@@ -68,7 +68,7 @@ func (m *Management) As(userID string) *ManagementUser {
 }
 
 // ManagementUser is the Management API as seen by one user. Organizations the
-// user is not a member of answer 404 (ErrUnknownRoute), like unknown ids.
+// user is not a member of answer 404 (ErrNotFound), like unknown ids.
 type ManagementUser struct {
 	c      *Client
 	token  string      // WithToken
@@ -455,6 +455,7 @@ func (r *ProjectRegistration) Commit(ctx context.Context) error {
 // PrepareProjectRegistration captures the missing organization/project creation
 // operations under their IDs and names from another region (TS-643). It makes no
 // commit. Call Commit on the returned handle and reuse it for any retries.
+// Supplied IDs require the service credential with As on the admin listener.
 func (u *ManagementUser) PrepareProjectRegistration(ctx context.Context, org Organization, project Project) (*ProjectRegistration, error) {
 	type op struct {
 		Op           string `json:"op"`
@@ -471,7 +472,7 @@ func (u *ManagementUser) PrepareProjectRegistration(ctx context.Context, org Org
 		{func() error { _, err := u.Project(ctx, org.ID, project.ID); return err }, op{Op: "create_project", Organization: org.ID, ID: project.ID, Name: project.Name}},
 	} {
 		switch err := check.get(); {
-		case errors.Is(err, ErrUnknownRoute):
+		case errors.Is(err, ErrNotFound):
 			ops = append(ops, check.op)
 		case err != nil:
 			return nil, err

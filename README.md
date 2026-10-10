@@ -135,6 +135,8 @@ usage, err := u.Usage(ctx, org.ID, project.ID, "", tb.UsageOptions{Granularity: 
 `hour`/`day` buckets and optional inclusive `From`/exclusive `To`. `Period`
 is nil on servers without windowed metering; lifetime counters must not be
 used for a monthly bill. Organization usage is the sum of its ts-auth projects.
+The pinned server accepts at most seven fractional timestamp digits; truncate
+window boundaries to milliseconds before passing them to `Usage`.
 
 It also covers `Organizations`, `RenameOrganization`, `SetPlan`,
 `DeleteOrganization`, `CurrentOrganization`/`SetCurrentOrganization`, project
@@ -148,10 +150,12 @@ and `SQL` (rows of the dashboard SQL subset), secondary indexes
 (`CreateIndex`, `Indexes`, `DropIndex`; a duplicate is `ErrIndexExists`), and
 project data API keys:
 `CreateProjectAPIKey` (the `tb_…` secret is returned only once),
-`ProjectAPIKeys` and `RevokeProjectAPIKey`. A 404 (`ErrUnknownRoute`)
-means an unknown id or an organization the user is not a member of; bare
-message errors map to `ErrInvalidRequest` (400), `ErrForbidden` (403, role too
-low) and `ErrConflict` (409). A rejected token or credential is `ErrInvalidKey`.
+`ProjectAPIKeys` and `RevokeProjectAPIKey`. A 404 (`ErrNotFound`)
+means an unknown id or an organization the user is not a member of.
+Management errors carry structured codes, including `ErrNameTaken` for name
+collisions and `ErrForbidden` for insufficient permission. `SetPlan` requires
+the management service credential on the admin listener.
+A rejected token or credential is `ErrInvalidKey`.
 
 Databases are placed in Atlas region ids such as `gru-1` (not `RegionCode`):
 `ManagedDatabase` reports `Region` (the answering node), `HomeRegion` and
@@ -163,8 +167,10 @@ never changes), and deleting a replicated database fails with
 `ErrWrongRegion`, on Management and Documents routes alike, and the
 `*tb.APIError` carries `HomeRegion` and `Regions`. The client never retries
 it elsewhere: resolve the region through Atlas. Before placing a database in
-a replica region, call `PrepareProjectRegistration(ctx, org, project)` on that
-region's client, then `registration.Commit(ctx)`. The handle captures one ULID
+a replica region, call `PrepareProjectRegistration(ctx, org, project)` using
+that region's admin listener, management service credential and `As(userID)`,
+then `registration.Commit(ctx)`. Supplied IDs require the service credential.
+The handle captures one ULID
 and the missing organization/project operations under their home-region IDs.
 If Commit returns `ErrCommitUncertain`, retry the same handle with a fresh
 context; it resends the exact body without repeating existence checks or
@@ -225,11 +231,13 @@ TERRABASE_TOKEN=… TERRABASE_REQUIRE=1 nice -n 19 go test ./v1/ ./terrabasetest
 ```
 
 `v1/integration_test.go` exercises the pinned release's SDK calls. Its recording
-transport checks the real traffic: each request is a route of
+transport checks the real traffic: each request matches
 `v1/testdata/openapi.json` (the executable's own `/openapi/v1.json` on the
-client listener; `TERRABASE_REPIN=1` rewrites it) or an admin-listener route,
-each of those routes is called unless the test lists it as not in the client
-yet, no request carries `Idempotency-Key`, and no access token goes with
+client listener; `TERRABASE_REPIN=1` rewrites it) or an explicit management/admin
+route manifest. The producer omits management-user routes and database PUT
+from public OpenAPI. Each journey route is called unless explicitly excluded;
+project-token tooling and metrics routes are outside this journey.
+No request carries `Idempotency-Key`, and no access token goes with
 `X-TerraBase-User-Id`. Retry tests inject
 faults into that transport in front of the real server. Tests skip only on an
 unsupported platform or when neither a cached executable nor a token is

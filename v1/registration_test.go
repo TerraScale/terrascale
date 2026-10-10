@@ -23,7 +23,7 @@ func TestProjectRegistrationRetriesTheCapturedCommit(t *testing.T) {
 				if r.Method == http.MethodGet {
 					reads.Add(1)
 					w.WriteHeader(http.StatusNotFound)
-					io.WriteString(w, `{"error":{"code":"unknown_route"}}`)
+					io.WriteString(w, `{"error":{"code":"not_found"}}`)
 					return
 				}
 				if r.Method != http.MethodPost || r.URL.Path != "/v1/management/commits" {

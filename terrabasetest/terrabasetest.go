@@ -52,9 +52,9 @@ import (
 
 // The pinned TerraBase release.
 const (
-	Commit  = "103334e86d5956e0e7086c1aa3e96e291511d906"
-	Release = "ci-" + Commit + "-run-14116"
-	SHA256  = "f0b4d0676c70845ef6db74cdc2f2e69ec5495835c933cd2bf0c38218d6f9cd13"
+	Commit  = "6cb97456b9b52a92a61856601cc025c4f2833518"
+	Release = "ci-" + Commit + "-run-16729"
+	SHA256  = "cc2db35b18c385c6d58036c6c94e59460b0e12b0d5616da2222713efbe666700"
 )
 
 // Audience is the ts-auth audience TerraBase accepts in Server.Token's tokens.
