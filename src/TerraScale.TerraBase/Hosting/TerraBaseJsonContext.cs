@@ -15,6 +15,7 @@ using TerraBase.Features.Management.Schema;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Pressure;
 using TerraBase.Features.Replication;
+using TerraBase.Features.Stats;
 using TerraBase.Features.UserAuth;
 using TerraBase.Tenancy;
 
@@ -156,6 +157,13 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(SqlCheckBody))]
 [JsonSerializable(typeof(SqlRequest))]
 [JsonSerializable(typeof(SqlResultBody))]
+[JsonSerializable(typeof(StatsCollectionV1))]
+[JsonSerializable(typeof(StatsDetailRequestV1))]
+[JsonSerializable(typeof(StatsDetailV1))]
+[JsonSerializable(typeof(StatsEntryV1))]
+[JsonSerializable(typeof(StatsErrorV1))]
+[JsonSerializable(typeof(StatsPeerV1))]
+[JsonSerializable(typeof(StatsRollupV1))]
 [JsonSerializable(typeof(StatusBody))]
 [JsonSerializable(typeof(StoredInvitation))]
 [JsonSerializable(typeof(TenantContext))]

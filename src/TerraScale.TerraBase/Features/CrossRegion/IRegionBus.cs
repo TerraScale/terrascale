@@ -1,4 +1,6 @@
+using System.Buffers.Text;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using NATS.Client.Core;
 using TerraBase.Configuration;
 using TerraBase.Engine.Cluster;
@@ -19,6 +21,12 @@ public interface IRegionBus
 
     /// <summary>Answers every request on <paramref name="subject"/> with <paramref name="answer"/> until <paramref name="cancellationToken"/> ends.</summary>
     Task ServeAsync(string subject, Func<ReadOnlyMemory<byte>, CancellationToken, ValueTask<byte[]>> answer, CancellationToken cancellationToken);
+
+    /// <summary>The cell this member serves, from its NATS credentials; null when they name none.</summary>
+    string? Cell { get; }
+
+    /// <summary>Publishes <paramref name="data"/> on <paramref name="subject"/>, without a reply.</summary>
+    ValueTask PublishAsync(string subject, ReadOnlyMemory<byte> data, CancellationToken cancellationToken);
 }
 
 /// <summary>The region bus on ts-orchestrator's NATS (<c>nats-url</c>).</summary>
@@ -68,5 +76,38 @@ internal sealed class NatsRegionBus(NatsSettings settings, ILoggerFactory logger
         }
     }
 
+    public ValueTask PublishAsync(string subject, ReadOnlyMemory<byte> data, CancellationToken cancellationToken) =>
+        _connection.PublishAsync<ReadOnlyMemory<byte>>(subject, data, cancellationToken: cancellationToken);
+
+    // Read until found, then kept: the credentials file is re-read only while it names no cell.
+    public string? Cell
+    {
+        get => field ??= ReadCell();
+    }
+
     public ValueTask DisposeAsync() => _connection.DisposeAsync();
+
+    // The first cell: tag of the user JWT, which TS-803's role templates scope subjects with as {{tag(cell)}}.
+    private string? ReadCell()
+    {
+        try
+        {
+            var jwt = File.ReadLines(settings.CredentialsFile).SkipWhile(line => line != "-----BEGIN NATS USER JWT-----").Skip(1).FirstOrDefault();
+            var payload = jwt?.Split('.') is [_, { } segment, _] ? Base64Url.DecodeFromChars(segment) : null;
+            using var claims = payload is null ? null : JsonDocument.Parse(payload);
+            if (claims is null || !claims.RootElement.TryGetProperty("nats", out var nats) || !nats.TryGetProperty("tags", out var tags)
+                || tags.ValueKind != JsonValueKind.Array)
+            {
+                return null;
+            }
+
+            var cell = tags.EnumerateArray().Select(tag => tag.GetString()).FirstOrDefault(tag => tag?.StartsWith("cell:", StringComparison.Ordinal) == true);
+            return cell?[5..] is { } token && WanSettings.IsToken(token) ? token : null;
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or FormatException or JsonException)
+        {
+            // The file itself is never logged: it holds the user's seed.
+            return null;
+        }
+    }
 }

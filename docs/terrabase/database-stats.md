@@ -147,7 +147,9 @@ WAN.
 Without a cell:
 
 - The member does not publish and does not serve detail requests.
-- It counts `terrabase.stats.rollups{result=no_cell}` and logs one warning.
+- A member without NATS configured publishes and counts nothing.
+- `no_cell` is counted (`terrabase.stats.rollups{result=no_cell}`) only when NATS is configured and the credentials
+  carry no `cell:` tag. The member logs one warning then.
 - The warning never includes the credential contents.
 - Startup never fails.
 
@@ -188,8 +190,14 @@ Fields:
 - `Database`: `org`, `project`, `database` (catalog ids, no names), the `Counters` fields, and `peers` (only peers
   with a nonzero value).
 
+Publishing:
+
+- Each publish has a 2 second timeout. A timeout or error counts `terrabase.stats.rollups{result=failed}`.
+- `seq` still advances on a failed publish, so consumers see a gap.
+
 Top list (`top`):
 
+- It lists the databases of the last window that had activity or a storage sample.
 - It is the union of three lists: the top 20 by replication bytes (sent plus received), the top 20 by operations
   (reads plus writes), and the top 20 by storage.
 - It holds at most 60 entries.
@@ -229,18 +237,21 @@ Reply, one per member, over the last closed window:
 
 Rules:
 
-- Without `database`: every tracked database, sorted by database id (ordinal), after `after`. At most 500 per reply.
-  The reply's `next` value is the cursor for the next page.
-- `next` is the last returned database id when more remain, otherwise `null`.
+- Without `database`: the databases of the last window that had activity or a storage sample, sorted by database id
+  (ordinal), after `after`. At most 500 databases and at most 4,096 peer entries per reply, so one reply stays under
+  1 MiB.
+- `next` is always present: the last returned database id when more remain, `null` on the last page. It is the
+  cursor for the next page.
 - A member that does not track the requested database replies with an empty `databases` array; the requester merges the replies of every member.
 - With `database`: that database only, plus `collections`, an array of `{name, reads, writes, documents, complete}`.
   - At most 256 collections, from `IStorageTransaction.ListCollectionsAsync`.
   - `documents` comes from `CountAsync(collection, null, maxExamined)`.
   - All collections share one budget: 1,000,000 examined rows and 2 seconds.
   - `complete` is `false` once the budget is spent.
-- The store is opened with the entry's `TenantContext` through `IStorageEngine.OpenDatabaseAsync`, in a read
-  transaction, then disposed.
+- The counts run in one read transaction from `IStorageEngine.BeginTransactionAsync` with the entry's `TenantContext`,
+  disposed afterwards.
 - A malformed request, or `v` other than 1, gets `{"v":1,"error":"bad_request"}`.
+- A storage error while counting gets `{"v":1,"error":"unavailable"}`.
 
 ## Not in scope
 

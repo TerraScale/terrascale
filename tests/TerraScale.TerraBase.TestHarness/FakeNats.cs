@@ -9,8 +9,8 @@ namespace TerraBase.Testing;
 /// <summary>
 /// A NATS server holding one JetStream KV bucket, in process over plain TCP: enough of the protocol for TerraBase's member
 /// store. Like ts-orchestrator's broker for the terrabase role (<c>internal/roleidentity</c>), a client may publish only to
-/// the bucket's subjects, its stream info and its message gets; anything else (a consumer for a key watcher) gets a
-/// permissions violation and no answer, as there.
+/// the bucket's subjects, its stream info, its message gets and its cell's statistics rollups (<c>ts.orch.v1.*.obs.terrabase</c>);
+/// anything else (a consumer for a key watcher) gets a permissions violation and no answer, as there.
 /// </summary>
 public sealed class FakeNats : IAsyncDisposable
 {
@@ -22,6 +22,7 @@ public sealed class FakeNats : IAsyncDisposable
     private readonly CancellationTokenSource _stop = new();
     private readonly Lock _gate = new();
     private readonly Dictionary<string, (ulong Sequence, byte[] Headers, byte[] Data)> _last = [with(StringComparer.Ordinal)];
+    private readonly List<(string Subject, byte[] Data)> _observations = [];
     private readonly Task _serving;
     private Task? _cleanup;
     private ulong _sequence;
@@ -38,6 +39,18 @@ public sealed class FakeNats : IAsyncDisposable
 
     /// <summary>Publishes the server refused.</summary>
     public int Violations => Volatile.Read(ref _violations);
+
+    /// <summary>The observability publishes (live statistics rollups) accepted so far, in arrival order.</summary>
+    public IReadOnlyList<(string Subject, byte[] Data)> Observations
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return [.. _observations];
+            }
+        }
+    }
 
     /// <summary>Stores a message under <paramref name="key"/> as a client or the server itself would.</summary>
     public void Store(string key, string? headers, byte[] data)
@@ -221,6 +234,12 @@ public sealed class FakeNats : IAsyncDisposable
                 }
 
                 return new JsonObject { ["type"] = "io.nats.jetstream.api.v1.stream_msg_get_response", ["message"] = found };
+            }
+
+            if (subject.StartsWith("ts.orch.v1.", StringComparison.Ordinal) && subject.EndsWith(".obs.terrabase", StringComparison.Ordinal))
+            {
+                _observations.Add((subject, data));
+                return [];
             }
 
             return null;

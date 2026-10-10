@@ -129,6 +129,7 @@ public static class Telemetry
                     "terrabase.auth.key_fetches" or "terrabase.stats.operations" => new MetricStreamConfiguration { CardinalityLimit = 2 },
                     "terrabase_pressure_listener_request_rate" or "terrabase_pressure_listener_p95_latency_ms"
                         or "terrabase_pressure_listener_requests" or "terrabase.document_cache.evictions" or "terrabase.stats.dropped"
+                        or "terrabase.stats.rollups"
                         => new MetricStreamConfiguration { CardinalityLimit = 3 },
                     "terrabase.document_cache.lookups" => new MetricStreamConfiguration { CardinalityLimit = 4 },
                     "terrabase.query_shapes.dropped" => new MetricStreamConfiguration { CardinalityLimit = 7 },

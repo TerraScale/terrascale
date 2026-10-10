@@ -174,8 +174,8 @@ internal sealed class DatabaseStats(IMeterFactory meters) : IDatabaseStats
         }
     }
 
-    /// <summary>Closes the window that ends at <paramref name="now"/>. Only <see cref="StatsService"/> calls this, from one thread.</summary>
-    internal void Close(DateTimeOffset now)
+    /// <summary>Closes the window that ends at <paramref name="now"/> and returns it. Only <see cref="StatsService"/> calls this, from one thread.</summary>
+    internal StatsWindow Close(DateTimeOffset now)
     {
         var duration = _closedAt is { } previous ? now - previous : StatsService.Window;
         _closedAt = now;
@@ -250,8 +250,10 @@ internal sealed class DatabaseStats(IMeterFactory meters) : IDatabaseStats
 
         _readsSinceStart += totals.Reads;
         _writesSinceStart += totals.Writes;
-        Volatile.Write(ref _last, new StatsWindow(now, duration, _databaseCount, totals.ToCounters(), memberPeers, active, cumulative,
-            _readsSinceStart, _writesSinceStart));
+        var closed = new StatsWindow(now, duration, _databaseCount, totals.ToCounters(), memberPeers, active, cumulative,
+            _readsSinceStart, _writesSinceStart);
+        Volatile.Write(ref _last, closed);
+        return closed;
     }
 
     private static void AddBytes(ByteCounters counters, bool sent, long bytes) =>

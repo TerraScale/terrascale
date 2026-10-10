@@ -1079,5 +1079,10 @@ public sealed partial class CrossRegionPagingProgressTests
 
         public Task ServeAsync(string subject, Func<ReadOnlyMemory<byte>, CancellationToken, ValueTask<byte[]>> answer, CancellationToken cancellationToken) =>
             inner.ServeAsync(subject, answer, cancellationToken);
+
+        public string? Cell => inner.Cell;
+
+        public ValueTask PublishAsync(string subject, ReadOnlyMemory<byte> data, CancellationToken cancellationToken) =>
+            inner.PublishAsync(subject, data, cancellationToken);
     }
 }
