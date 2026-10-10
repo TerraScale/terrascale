@@ -42,6 +42,10 @@ deployment does not read repository variables for its helper version.
 Verified pair: `ci-1e57e6c1736238e1f1d5a910dfe45c0cbdc20151-run-16180`
 and `f29dc054716f2ed50ab97960c675753f33c8ac158d6a49f74cd5c190a93ec771`
 (successful orch CI 1839, retained amd64 bytes checked against its manifest).
+The [pinned source](https://git.terrascale.tech/TerraScale/ts-orchestrator/src/commit/1e57e6c1736238e1f1d5a910dfe45c0cbdc20151/internal/release/cli/service_deploy.go#L45)
+declares `--region-timeout` optional, with a `30*time.Minute` default. The
+hash-verified pinned binary passes argument admission when it is omitted;
+the caller supplies no rollout deadline override.
 This helper release is retained as a non-prerelease so CI retention cannot remove it.
 The helper uses `releases/services`, the same current prefix as regional
 orchestrators. It requires fresh scope-producing controller reports; the
