@@ -106,9 +106,9 @@ public static class NativeCodec
             writer.WriteStartObject();
             writer.WriteNumber("version", 1);
             writer.WritePropertyName("transaction_id");
-            JsonSerializer.Serialize(writer, WireTransaction(commit.TransactionId));
+            JsonSerializer.Serialize(writer, WireTransaction(commit.TransactionId), NativeJsonContext.Default.Object);
             writer.WritePropertyName("authority");
-            JsonSerializer.Serialize(writer, WireAuthority(commit.Authority));
+            JsonSerializer.Serialize(writer, WireAuthority(commit.Authority), NativeJsonContext.Default.Object);
             writer.WriteString("effect_digest", identity.EffectDigest);
             writer.WriteStartArray("writes");
             foreach (var write in commit.Writes)
@@ -119,7 +119,7 @@ public static class NativeCodec
                 writer.WriteString("schema_generation", Decimal(write.SchemaGeneration));
                 writer.WriteString("schema_digest", write.SchemaDigest);
                 writer.WritePropertyName("condition");
-                JsonSerializer.Serialize(writer, WireCondition(write.Condition));
+                JsonSerializer.Serialize(writer, WireCondition(write.Condition), NativeJsonContext.Default.Object);
                 writer.WriteStartArray("observed");
                 foreach (var entry in write.Observed)
                 {
@@ -289,7 +289,7 @@ public static class NativeCodec
         {
             writer.WriteStartObject();
             writer.WritePropertyName("event");
-            JsonSerializer.Serialize(writer, WireEvent(sibling.Event));
+            JsonSerializer.Serialize(writer, WireEvent(sibling.Event), NativeJsonContext.Default.Object);
             writer.WriteString("schema_generation", Decimal(sibling.SchemaGeneration));
             writer.WriteString("schema_digest", Hex(sibling.SchemaDigest, 32, "schema digest"));
             if (sibling.Value is NativeWriteValue.Live live)
@@ -324,7 +324,7 @@ public static class NativeCodec
             NativeQueryOperator.IsMissing => "is_missing",
             _ => throw Invalid("Unsupported query operator.")
         };
-        var wirePredicate = Object(("op", operation), ("path", predicate.Path));
+        var wirePredicate = Object(("op", operation), ("path", predicate.Path.ToArray()));
         if (predicate.Operator is NativeQueryOperator.IsNull or NativeQueryOperator.IsMissing)
         {
             if (predicate.Value is not null) throw Invalid("Presence predicates have no value.");
@@ -952,7 +952,7 @@ public static class NativeCodec
     private static string Json(object value)
     {
         using var stream = new BoundedJsonStream(MaximumBodyBytes);
-        JsonSerializer.Serialize(stream, value);
+        JsonSerializer.Serialize(stream, value, NativeJsonContext.Default.Object);
         return Utf8.GetString(stream.GetBuffer(), 0, checked((int)stream.Length));
     }
 
