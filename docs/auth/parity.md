@@ -188,7 +188,7 @@ Implemented: the authorization code flow with S256 PKCE required for every
 client, scopes `openid`, `email`, `profile` and `offline_access`, 1-minute
 codes, 1-hour ES256 access and identity tokens signed by the instance's key
 ring, opaque refresh tokens that rotate on every use with a fixed 14-day
-lifetime, discovery, a JWKS read from the OCI Vault ring (reused for at most a minute), userinfo,
+lifetime, discovery, a JWKS read from the `signing_keys` collection (reused for at most a minute), userinfo,
 RP-initiated logout and the hosted email-passcode sign-in. A code or refresh
 token is redeemed with a version-conditional write, so concurrent redemptions
 have exactly one winner; a losing or later redemption revokes the sign-in's
@@ -197,7 +197,7 @@ from `TS_AUTH_DASHBOARD_*` at startup.
 
 Stores live in `oidc_applications`, `oidc_authorizations` and `oidc_tokens`,
 with create-only or version-conditional writes. `AuthStore.ProvisionAsync` now
-also creates them and the TS-488 `signing_key_rings`; `/readyz` requires all
+also creates them and `signing_keys`; `/readyz` requires all
 of them.
 
 Client credentials are served for configured service clients only.

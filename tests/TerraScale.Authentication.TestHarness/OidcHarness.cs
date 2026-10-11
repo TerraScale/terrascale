@@ -137,9 +137,6 @@ public sealed class OidcHarness : IAsyncDisposable
 
     public TerraBaseDatabase Database { get; }
 
-    /// <summary>The OCI Vault holding every replica's signing key ring.</summary>
-    public FakeOciVault Vault => FakeOciVault.For(this.Tenant.Project.Id);
-
     public CapturingEmailSender Email { get; }
 
     public HttpClient Client => this.Server.Client;
@@ -170,19 +167,12 @@ public sealed class OidcHarness : IAsyncDisposable
     public static async Task<AuthTestServer> StartServerAsync(TerraBaseFixture fixture, TerraBaseTestTenant tenant, CapturingEmailSender email, Action<Dictionary<string, string>>? settings = null,
         CapturingLogs? logs = null, TimeProvider? clock = null, Action<IServiceCollection>? replace = null)
     {
-        if (clock is not null)
-        {
-            // As in production, the vault's clock agrees with the replica's (KeyRing.MaxClockSkew).
-            FakeOciVault.For(tenant.Project.Id).Clock = clock;
-        }
-
         var server = await AuthTestServer.StartAsync(values =>
         {
             values["database"] = $"{tenant.Project.Id}/auth";
             values["dashboard-client-secret"] = ClientSecret;
             values["dashboard-redirect-uris"] = $"{RedirectUri};{LoopbackRedirectUri}";
             values["dashboard-post-logout-redirect-uris"] = PostLogoutRedirectUri;
-            FakeOciVault.For(tenant.Project.Id).Bind(values);
             settings?.Invoke(values);
         }, services =>
         {

@@ -155,7 +155,7 @@ probe.
 The application and probe never provision or repair state. An operator/test
 can explicitly call `AuthStore.ProvisionAsync` to create those three
 infrastructure collections, plus `users`, `sessions` and `passcodes` (TS-490),
-`signing_key_rings` (TS-488), `oidc_applications`, `oidc_authorizations`
+`signing_keys`, `oidc_applications`, `oidc_authorizations`
 and `oidc_tokens` (TS-491), `rate_limits` (TS-488, required since TS-582) and
 `email_configs` and `email_config_versions` (TS-583), in an already existing
 database; repeated setup accepts an existing collection. Later feature streams
@@ -880,180 +880,66 @@ real SDK-pinned TerraBase; test-only wrappers inject failures and contention
 over that real store, and two servers bound to one database stand in for
 replicas.
 
-Their collections, `signing_key_rings` and `rate_limits`, are provisioned
+Their collections, `signing_keys` and `rate_limits`, are provisioned
 with the other collections (`scripts/auth/provision.sh`); while one is missing the
-feature answers 503. Since TS-491, `signing_key_rings` is also one of
-`AuthStore.RequiredCollections`, because OpenID Connect signs every token with
-the ring, so `/readyz` reports 503 while it is missing.
+feature answers 503. `signing_keys` is one of `AuthStore.RequiredCollections`,
+because OpenID Connect signs every token with an instance's keys, so `/readyz`
+reports 503 while it is missing.
 
-Signing keys live in one OCI Vault secret per instance (TS-703; see
-[bootstrap and automatic rotation](#bootstrap-and-automatic-rotation-ts-703)),
-so a rotation is one conditional new secret version. Each key's d ‖ X ‖ Y is sealed under `TS_AUTH_MASTER_KEY`
-with `signing-key:<kid>:<instance>` as associated data, so a key copied into
-another instance's ring fails to open. The ring also stores its `instanceId`
-and each key's canonical public P-256 `x` and `y` coordinates. Each record's
-`publicMetadataMac` authenticates the instance, key ID, algorithm, creation
-and activation timestamps and coordinates using HMAC-SHA256. Its key is derived from the
-deployment master key with HKDF-SHA256 and the domain
-`ts-auth signing public metadata v1`; the message is the JSON array of those
-seven strings, with the timestamps in invariant decimal form. The MAC is stored
-as lowercase hexadecimal and compared in constant time before importing keys.
-`v1` names this scheme and is bound into the ring's `masterKeyId` too, so a
-future change of scheme makes stored rings fail closed as sealed under another
-master key rather than be silently replaced. Each read is parsed, and its public
-metadata verified, once per replica; every lookup still imports its own keys.
-Replacing a stored public point, rebinding its tenant or changing its key ID
-cannot introduce a new authentication trust anchor without the master key.
+### Signing keys in TerraBase
 
-JWKS, OpenID Connect validation and platform authentication authenticate and
-import only public metadata; they never decrypt a private-key box. The private
-box is excluded from the MAC, so its failure does not invalidate authentic
-public metadata. The configured master key must remain available. Unavailable private
-material therefore stops issuance and rotation while existing tokens remain
-verifiable and JWKS stays available, provided the vault remains available.
-Public key objects cannot sign or export private material.
+ts-auth generates its ES256 signing keys and stores each one as its own
+document in `signing_keys`, addressed by instance and `kid` (a ULID). Each
+key's d ‖ X ‖ Y is sealed under `TS_AUTH_MASTER_KEY` (a fly secret) with
+`signing-key:<kid>:<instance>` as associated data, so a key copied to another
+instance or under another kid fails to open. The document also stores its
+`instanceId`, `masterKeyId` (an HKDF-derived identifier of the master key), the
+canonical public P-256 `x` and `y`, `createdAt`, `activatesAt` and
+`publicMetadataMac`: HMAC-SHA256 under a key derived from the master key with
+HKDF-SHA256 and the domain `ts-auth signing public metadata v1`, over the JSON
+array of instance, key ID, algorithm, creation and activation timestamps and
+coordinates (timestamps in invariant decimal form), stored as lowercase hex and
+compared in constant time. A replaced public point, a rebound tenant or a
+changed key ID therefore cannot introduce a trust anchor without the master
+key. Keys are only created (create-only writes, a fresh ULID each) and retired
+(version-conditional deletes); none is ever changed, so replicas that add keys
+at once keep all of them.
 
-Every key in the ring is published and validates; the newest key whose
-`activatesAt` has passed signs (if none has, the oldest). Both public and
-private loading validate the owner, key identities, count, valid Unix
-timestamps and strict oldest-first creation order. Private loading also checks
-that each decrypted key matches its published coordinates; rotation restores
-every original key before retirement, the capacity check or any write.
-Invalid public metadata at runtime fails closed without rewriting storage.
+JWKS, OpenID Connect validation and platform authentication verify and import
+only public metadata; they never decrypt a private-key box. Unavailable private
+material stops issuance and rotation while existing tokens stay verifiable and
+JWKS stays available. Public key objects cannot sign or export private
+material. A key sealed under another master key, an unauthentic MAC or an
+invalid identity fails closed (500) without rewriting storage; storage failures
+answer 503.
 
-### Bootstrap and automatic rotation (TS-703)
+Every key is published; the newest key whose `activatesAt` has passed signs
+(activation, then creation, then kid order, so replicas reading the same keys
+agree), and if none has, the oldest. JWKS and the signer come from the same
+read, so a key is in the JWKS before it signs. Each replica reuses its last
+read for one minute (`KeyRingRefresh`, monotonic, from when the read was sent);
+concurrent lookups share one read. A token naming a key the cached read lacks
+rereads first (at most every ten seconds, `UnknownKeyRefresh`), and after a
+failed read lookups answer 503 for five seconds (`FailedReadBackoff`).
 
-The ring is one secret in the region's OCI Vault (`gru-ts-auth-signing-key-ring`
-in sa-saopaulo-1, `sfo-ts-auth-signing-key-ring` in us-sanjose-1), pre-created
-by legacy provisioning with `{}`; automatic first-party secret creation is
-a remaining gap. TerraBase holds no key material. `OciSigningKeyVault`
-reads the current version through the Secrets API, looking the secret up by
-name on every read (`GetSecretBundleByName`, a POST with its parameters in the
-query), so a recreated secret is followed at once although OCI may keep its
-predecessor until the deletion date. It writes each new version, to the secret
-it read,
-through the Vault API's `UpdateSecret` with the secret's ETag as `If-Match`, so
-of replicas writing on one version exactly one succeeds (412 for the others;
-409 while a write is still being applied); a lost write backs off with jitter
-(0.05 s doubling to 2 s) over at most eight attempts. A version read while the
-secret is not `ACTIVE` is never written over. Requests are signed with a dedicated OCI API
-key (`TS_AUTH_OCI_*`) whose policy allows only reading and versioning that
-secret: the ts-auth process cannot use an instance principal, because the host
-blocks instance metadata for its user. The OCI .NET SDK is not used: its region
-table needs named cultures and ts-auth runs with invariant globalization; the
-REST calls follow OCI's documented request signing (RSA-SHA256). Every
-OCI failure answers 503. Each replica reuses its last read for one minute
-(`KeyRingRefresh`, measured on the monotonic clock from when the read was sent,
-so an answer that carried a superseded ring expires within a minute of that
-ring being replaced, however late it arrived), and concurrent lookups
-share one read of the current bundle (one Secrets API request), which ends when
-the vault answers rather than when a waiter gives up; a read never replaces a
-cached version of the same secret with a lower version number. A recreated
-secret's versions start again, so across secrets the read this replica started
-later wins: a delayed read of, or a write to, the replaced secret never
-displaces the replacement, and a lookup whose read lost answers with the ring
-that superseded it. After a failed read, lookups
-answer 503 for five seconds (`FailedReadBackoff`) without asking the vault. A
-token naming a key the cached ring lacks rereads the ring first (at most one
-attempt every ten seconds, `UnknownKeyRefresh`, successful or not), as TerraBase refetches its JWKS for an unknown `kid`, so
-a key another replica just added verifies even while OCI is still making its
-version current. Bootstrap and rotation
-always read the secret's ETag and the version it names. Each hourly tick first,
-and independently of rotation, schedules deletion of the secret's deprecated
-versions across every listing page (never the current or previous one; a
-version another replica scheduled first, 409, is skipped),
-because OCI allows 30 versions of a secret in active use; a bootstrap that
-fails also prunes before its next attempt, so a full secret can still receive a
-fresh ring. A scheduled version leaves active use at once but counts against
-OCI's separate quota of 30 versions pending deletion until it is deleted; while
-both quotas are full, the bootstrap keeps retrying and the replica stays not
-ready. `TS_AUTH_OCI_ENDPOINT` accepts only a
-loopback origin, for local stand-ins of the APIs. Endpoints are derived for the
-commercial realm only, so a vault outside `oc1` is refused at startup. Development without the vault
-settings answers 503 for every key operation.
-
-`SigningKeyRotation` runs on every replica. At startup it bootstraps the
-serving issuer's ring (`KeyRing.EnsureAsync`): when the secret holds `{}`, a
-ring that does not parse, or a ring of this master key that belongs to another
-instance or whose keys cannot all be authenticated and opened, it writes a
-fresh one-key ring as a new version. Each ring records `masterKeyId`, an
-HKDF-derived identifier of the master key that sealed it, read before anything
-else in the ring. A ring naming another master key is never replaced, even when
-its key records are damaged: a misconfigured replica (or a changed
-master key) keeps failing its bootstrap and stays not ready, and the healthy
-replicas keep serving. The explicit recovery is an operator writing `{}` as a
-new version of the secret; the next bootstrap attempt then writes a fresh ring. Every token signed by a replaced key stops
-validating and users sign in again; reference refresh tokens and sessions do
-not depend on the ring. Vault failures leave the secret unchanged and the
-bootstrap retries every five seconds; `/readyz` stays 503 until this replica's
-bootstrap has completed and while the secret holds no ring. Readiness checks
-the ring's public metadata as the vault holds it (one Secrets API read, cached
-for five minutes after it succeeds; a failure is retried on the next pass), not the one-minute lookup cache. The bootstrap only
-runs at startup: a ring that becomes invalid while serving fails closed until a
-restart. The earlier
-TerraBase ring was not migrated (closed beta); its legacy `signing_key_rings`
-document is removed once the Vault ring is verified live.
-
-After the bootstrap, and then hourly, each replica runs the scheduled
-rotation (`KeyRing.RotateIfDueAsync`). Once the newest key is 30 days old
-(`RotationAge`), it adds a key that is published at once but signs only after
-`Overlap` (two days), so verifiers that cache the JWKS (TerraBase refreshes
-every ten minutes) hold it before any token uses it. Every rotation also
-retires the oldest keys whose successor has been active for at least
-`Overlap`, which exceeds `Jwt.MaxLifetime` (24 hours), so a retired key has no
-live token. Scheduled rotation alone keeps one or two keys; an unscheduled
-`RotateAsync` within the overlap can add more. Its key is published at once
-but first scheduled like any other, to sign after the overlap. The rotation
-then reads the secret by name, as verifiers do, until the vault serves the key.
-It then moves the key's activation, with a second conditional write, to one
-refresh interval plus `ActivationMargin` (five seconds, because OCI's `Date`
-header has whole-second resolution and answers spend time in transit) after
-that answer. Every replica's cached ring read before publication has expired
-by then, however long the write or OCI's publication took. If publication is
-not seen within the attempts, or the secret was replaced, the key keeps its
-scheduled activation. Replicas without a refresh interval (every lookup
-rereads) sign with it at once. Activation is rounded up to the second. Concurrent replicas
-resolve through the conditional replace: the loser rereads, finds the new key
-and adds none. `RotateAsync` answers 409 `signing_key_limit` only if 16 keys are still
-within the overlap.
-
-Releases before this one ignore `activatesAt` and sign with the newest key, so
-rolling back after a scheduled rotation (day 30 or later) signs with the
-pre-published key at once; verifiers that cached the JWKS then refetch it for
-the unknown key.
-
-Nothing configures the refresh interval in production, so every replica uses
-the same minute; the test override is refused beyond `KeyRingRefresh.Max`, the
-overlap minus `Jwt.MaxLifetime`, `MaxClockSkew` and `ActivationMargin`, so a
-replica always learns of a scheduled key long before it signs.
-
-Activation, retirement and new keys' timestamps use the vault's clock, not the
-replica's: every vault answer carries OCI's `Date`, anchored when the answer
-arrives and extrapolated with the replica's monotonic clock (at most a minute,
-the refresh interval). A replica whose wall clock is days off, or is stepped
-after a read, therefore neither retires a key early nor starts signing with a
-pre-published one early. Tokens, however, carry the replica's wall-clock
-timestamps (OpenIddict's `TimeProvider`), so a replica signs only while its
-wall clock is within `KeyRing.MaxClockSkew` (five minutes, the usual leeway of
-JWT validators) of the vault's; beyond it, signing answers 503 and `/readyz`
-fails. A key's last token is signed before its successor activates and lives at
-most `Jwt.MaxLifetime` (24 hours) plus that bound, inside the two-day overlap
-after which the key retires. Each private key stays sealed under the
-master key inside the Vault secret, so the secret alone cannot sign. Fast regressions run the real
-OCI client against a local stand-in of the two APIs (`FakeOciVault`, which
-verifies each request signature, requires `If-Match` and applies writes
-asynchronously like OCI) and cover
-bootstrap of a legacy and an unauthenticated ring, a replica with another
-master key, an emptied ring, replica clocks days apart, a wall-clock step after
-a read, a stale read answered after a rotation, an unscheduled rotation across
-cached replicas, an unknown key while OCI delays the current version, a
-cancelled lookup sharing a read, unknown keys and lookups during a vault
-outage, a recreated secret, version pruning under the version limit, before a
-rotation on a full secret and during a bootstrap on a full secret, the per-replica
-refresh, vault outages, scheduled pre-publication, concurrent
-scheduled rotation, retirement after the overlap, capacity,
-malformed/oversized rings, timestamp limits, public verification during
-private-key failure and a corrupted oldest inactive key.
+`SigningKeyRotation` runs on every replica. At startup (`KeyRing.EnsureAsync`)
+it creates the serving issuer's first key when there is none and checks that
+every stored key verifies and opens; it never replaces keys it cannot use
+(another master key or tampering keeps the replica not ready until an operator
+removes them through `fly ssh`). `/readyz` stays 503 until this replica's
+bootstrap completed, and each readiness pass rechecks the public metadata.
+After the bootstrap, and then hourly, `KeyRing.RotateIfDueAsync` adds a key
+once the newest is 30 days old (`RotationAge`), published at once and signing
+only after `Overlap` (two days), so every replica and every verifier that
+caches the JWKS holds it before any token uses it. An unscheduled `RotateAsync`
+signs one refresh interval after it is stored, when every replica's cached
+JWKS holds it. Every rotation first retires the keys whose successor has been
+signing for at least `Overlap`, which exceeds `Jwt.MaxLifetime` (24 hours), so
+a retired key has no live token; it answers 409 `signing_key_limit` if 16 keys
+would remain. Two replicas rotating at once may each add a key; both are
+published and the next rotations retire the extra one. Timestamps use the
+replica's clock (NTP on Fly). Project tenants (any other instance) get their
+first key on first use.
 
 Attempt buckets are keyed by an HMAC of purpose and subject under a key
 derived from the master key, within the instance's address space, and one

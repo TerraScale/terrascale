@@ -38,7 +38,7 @@ The accepted rollout is a clean reset: fence old writers, verify the exact Auth
 database/collection targets, delete their old state, recreate bootstrap state,
 then qualify GRU/SFO sign-in and TerraBase JWT acceptance before reopening.
 Preserve master-key bytes and derivation with TS-703/TS-745. Signing keys use
-canonical ULID `kid` values, including the TS-703 Vault ring. Noncanonical key
+canonical ULID `kid` values, including the signing keys in `signing_keys`. Noncanonical key
 identities fail closed at runtime; the existing bootstrap replaces an invalid
 ring of the configured master key with a fresh ring, without relabelling keys.
 The sealing context, authenticated metadata and rotation policy are unchanged.

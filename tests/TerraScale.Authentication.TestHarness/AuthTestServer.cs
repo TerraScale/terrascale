@@ -59,7 +59,7 @@ public sealed class AuthTestServer : IAsyncDisposable
         settings?.Invoke(values);
         var app = TerraScale.Authentication.App.Build(AuthOptions.Load(values), builder =>
         {
-            // Tests change rings behind the server's back; every lookup reads the vault unless a test opts in.
+            // Tests change keys behind the server's back; every lookup reads TerraBase unless a test opts in.
             builder.Services.AddSingleton(new KeyRingRefresh(TimeSpan.Zero));
             services?.Invoke(builder.Services);
             configure?.Invoke(builder);
