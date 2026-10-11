@@ -34,8 +34,8 @@ internal interface IObjectStore
 }
 
 /// <summary>
-/// An S3-compatible bucket through the AWS SDK, configured for OCI Object Storage's compatibility API: path-style
-/// addressing, its own signing region, and checksums only where S3 requires them (OCI rejects the newer defaults).
+/// An S3-compatible bucket through the AWS SDK, configured for S3-compatible stores such as Tigris: path-style
+/// addressing, its own signing region, and checksums only where S3 requires them (not every store accepts the newer defaults).
 /// </summary>
 internal sealed class S3ObjectStore : IObjectStore, IDisposable
 {

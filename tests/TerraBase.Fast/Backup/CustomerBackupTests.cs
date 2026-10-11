@@ -67,7 +67,7 @@ public sealed class CustomerBackupTests
         await Assert.That(customerKeys.All(oci.Objects.ContainsKey)).IsTrue();
         await Assert.That(oci.Objects.Keys.Any(key => key.StartsWith("v1/_system/", StringComparison.Ordinal))).IsTrue();
         await Assert.That(customerKeys.Any(key => key.Contains("_system", StringComparison.Ordinal))).IsFalse();
-        await Assert.That(oci.CustomerObjects.Values.All(content => content.AsSpan().StartsWith("TBK1"u8) || content.AsSpan().StartsWith("wrapped:"u8))).IsTrue();
+        await Assert.That(oci.CustomerObjects.All(item => item.Value.AsSpan().StartsWith("TBK1"u8) || item.Key.StartsWith("v1/keys/", StringComparison.Ordinal))).IsTrue();
         await Assert.That(oci.CustomerObjects.Values.Any(content => content.AsSpan().IndexOf(Encoding.UTF8.GetBytes(after)) >= 0)).IsFalse();
         await Assert.That(oci.BadSignatures).IsEqualTo(0);
     }

@@ -55,7 +55,7 @@ public sealed class DataKeyOverlapTests
             var material = RandomNumberGenerator.GetBytes(32);
             try
             {
-                oci.StoreObject(key, Encoding.ASCII.GetBytes("wrapped:" + Convert.ToBase64String(material)));
+                oci.StoreObject(key, Encoding.ASCII.GetBytes(oci.Wrap(material)));
             }
             finally
             {

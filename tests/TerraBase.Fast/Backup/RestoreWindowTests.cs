@@ -27,7 +27,7 @@ public sealed class RestoreWindowTests
         time.Advance(TimeSpan.FromSeconds(10));
         await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var shipped = time.GetUtcNow();
-        // Keep the application running while OCI refuses additional uploads.
+        // Keep the application running while the bucket refuses additional uploads.
         oci.FailPut = _ => true;
 
         time.Advance(TimeSpan.FromSeconds(5));

@@ -79,7 +79,7 @@ public sealed class ConfigurationTests
             await Assert.That(badUrl.Message).DoesNotContain("secret-value");
             await Assert.That(partialTls!.Message).Contains("nats-certificate");
             await Assert.That(urlMissing!.Message).Contains("nats-url");
-            await Assert.That(partialBackup!.Message).Contains("backup-secret-key-file");
+            await Assert.That(partialBackup!.Message).Contains("master-key");
         }
         finally
         {
@@ -112,6 +112,21 @@ public sealed class ConfigurationTests
         await Assert.That(unknownPlan!.Message).Contains("backup-retention-days");
         await Assert.That(zero!.Message).Contains("backup-retention-days");
         await Assert.That(withoutBackup!.Message).Contains("backup-endpoint");
+    }
+
+    [Test]
+    [Arguments("c2hvcnQ=")]
+    [Arguments("not base64 at all")]
+    [Arguments("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")]
+    public async Task A_master_key_that_is_not_32_base64_bytes_is_rejected_without_echoing_it(string masterKey)
+    {
+        var values = new Dictionary<string, string>();
+        new FakeOci().Configure(values);
+        values["master-key"] = masterKey;
+
+        var error = await Assert.That(() => TerraBaseOptions.FromValues(values)).Throws<TerraBaseConfigurationException>();
+
+        await Assert.That(error!.Message).IsEqualTo("master-key must be 32 bytes, base64");
     }
 
     [Test]

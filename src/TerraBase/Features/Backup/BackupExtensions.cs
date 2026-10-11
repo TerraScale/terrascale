@@ -30,11 +30,10 @@ public static class BackupExtensions
                 provider.GetRequiredService<ICustomerBackupDns>(), provider.GetRequiredService<ICustomerBackupConnector>()))
             .AddHttpMessageHandler<CustomerBackupResponseLimits>();
         services.AddTransient<CustomerBackupResponseLimits>();
-        services.AddHttpClient(OciVaultMasterKey.HttpClientName, client => client.Timeout = TimeSpan.FromSeconds(30));
         return services
             .AddSingleton(settings)
             .AddSingleton<IObjectStore, S3ObjectStore>()
-            .AddSingleton<IMasterKey, OciVaultMasterKey>()
+            .AddSingleton<IMasterKey>(new MasterKey(settings.MasterKey))
             .AddSingleton<DataKeys>()
             .AddSingleton<BackupTargets>()
             .AddSingleton<ContinuousBackup>()

@@ -99,7 +99,7 @@ internal sealed class CustomerBackupNetworkFixture : ICustomerBackupDns, ICustom
 
     public void Configure(FakeOci oci, IServiceCollection services, bool enableProxy = false)
     {
-        oci.RoutePlatformAndVault(services);
+        oci.RoutePlatform(services);
         ManualBackupHosting.Configure(services);
         services.AddSingleton<ICustomerBackupDns>(this);
         services.AddSingleton<ICustomerBackupConnector>(this);

@@ -138,7 +138,6 @@ public sealed class CustomerBackupResolutionTests
         await Assert.That(body.RootElement.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("unavailable");
         await Assert.That(body.RootElement.GetProperty("error").GetProperty("message").GetString())
             .IsEqualTo("backup bucket could not be accessed");
-        await Assert.That(text.Contains("ocid1", StringComparison.Ordinal)).IsFalse();
         await Assert.That(text.Contains(FakeOci.CustomerEndpoint, StringComparison.Ordinal)).IsFalse();
         await Assert.That(text.Contains(FakeOci.CustomerAccessKey, StringComparison.Ordinal)).IsFalse();
         await Assert.That(text.Contains(FakeOci.CustomerSecretKey, StringComparison.Ordinal)).IsFalse();

@@ -49,10 +49,10 @@ public sealed class BackupKeyRotationTests
             oci.StoreObject(nestedKey, "unrelated"u8.ToArray());
             var nestedRequests = oci.ObserveKey(nestedKey);
             var futureKey = keys + Ulid.NewUlid(time.GetUtcNow().AddYears(10)).ToString();
-            oci.StoreObject(futureKey, Encoding.ASCII.GetBytes("wrapped:" + Convert.ToBase64String(RandomNumberGenerator.GetBytes(32))));
+            oci.StoreObject(futureKey, Encoding.ASCII.GetBytes(oci.Wrap(RandomNumberGenerator.GetBytes(32))));
             var futureRequests = oci.ObserveKey(futureKey);
             var outOfRangeKey = keys + "7" + new string('Z', 25);
-            oci.StoreObject(outOfRangeKey, Encoding.ASCII.GetBytes("wrapped:" + Convert.ToBase64String(RandomNumberGenerator.GetBytes(32))));
+            oci.StoreObject(outOfRangeKey, Encoding.ASCII.GetBytes(oci.Wrap(RandomNumberGenerator.GetBytes(32))));
             var outOfRangeRequests = oci.ObserveKey(outOfRangeKey);
             var generated = oci.GeneratedKeys;
             var backup = api.Server.Services.GetRequiredService<IContinuousBackup>();

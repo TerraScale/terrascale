@@ -108,7 +108,7 @@ public sealed class PointInTimePlanTests
         var source = await data.GetStringAsync(Uri(document));
         var writes = probe.Writes;
         var downloads = probe.Downloads;
-        var vault = probe.Vault;
+        var generated = oci.GeneratedKeys;
         using var window = JsonDocument.Parse(await api.Client.GetStringAsync(Uri(database.Path + "/point-in-time")));
 
         foreach (var (at, snapshotAt) in new[] { (first, first), (earlier, first), (second, second), (latest, second) })
@@ -130,7 +130,7 @@ public sealed class PointInTimePlanTests
 
         await Assert.That(probe.Writes).IsEqualTo(writes);
         await Assert.That(probe.Downloads).IsEqualTo(downloads);
-        await Assert.That(probe.Vault).IsEqualTo(vault);
+        await Assert.That(oci.GeneratedKeys).IsEqualTo(generated);
         await Assert.That(oci.Objects.ToDictionary(item => item.Key, item => Convert.ToHexString(SHA256.HashData(item.Value)), StringComparer.Ordinal)).IsEquivalentTo(objects);
         await Assert.That(Files(api)).IsEquivalentTo(files);
         await Assert.That(await api.Client.GetStringAsync(Uri(database.ProjectPath + "/databases"))).IsEqualTo(catalog);
@@ -441,8 +441,7 @@ public sealed class PointInTimePlanTests
     {
         oci.Route(services);
         ManualBackupHosting.Configure(services);
-        services.AddHttpClient("backup-s3").AddHttpMessageHandler(() => new ProbeHandler(probe, vault: false));
-        services.AddHttpClient("backup-kms").AddHttpMessageHandler(() => new ProbeHandler(probe, vault: true));
+        services.AddHttpClient("backup-s3").AddHttpMessageHandler(() => new ProbeHandler(probe));
     }
 
     private sealed class ManualTime : TimeProvider
@@ -465,7 +464,6 @@ public sealed class PointInTimePlanTests
     {
         public int Writes;
         public int Downloads;
-        public int Vault;
         public int SegmentListings;
         public Dictionary<string, string[]> Listings { get; } = [];
         public string? FailPrefix { get; set; }
@@ -476,16 +474,12 @@ public sealed class PointInTimePlanTests
         public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 
-    private sealed class ProbeHandler(StorageProbe probe, bool vault) : DelegatingHandler
+    private sealed class ProbeHandler(StorageProbe probe) : DelegatingHandler
     {
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var prefix = System.Web.HttpUtility.ParseQueryString(request.RequestUri!.Query)["prefix"];
-            if (vault)
-            {
-                Interlocked.Increment(ref probe.Vault);
-            }
-            else if (request.Method != HttpMethod.Get)
+            if (request.Method != HttpMethod.Get)
             {
                 Interlocked.Increment(ref probe.Writes);
             }

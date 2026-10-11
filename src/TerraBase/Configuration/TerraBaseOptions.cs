@@ -354,6 +354,14 @@ public sealed record TerraBaseOptions : IDisposable
             }
         }
 
+        foreach (var (variable, key) in BackupSettings.TigrisVariables)
+        {
+            if (Environment.GetEnvironmentVariable(variable) is { Length: > 0 } value)
+            {
+                values[key] = value;
+            }
+        }
+
         foreach (var arg in args)
         {
             var separator = arg.IndexOf('=', StringComparison.Ordinal);

@@ -4,16 +4,18 @@ using System.Globalization;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
-using System.Text.Json.Nodes;
 using System.Xml.Linq;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using TerraBase.Configuration;
+using TerraBase.Features.Backup;
 
 namespace TerraBase.Testing;
 
 /// <summary>
-/// OCI Object Storage (its S3-compatible API, path-style) and an OCI Vault master key, in memory, for continuous backup.
-/// <see cref="Route"/> serves both through message handlers that replace the server's transports (no socket). The vault
-/// checks every request's OCI HTTP signature against the API key it generated; wrapping a data key just tags it.
+/// The platform and customer S3-compatible buckets (path-style), in memory, for continuous backup. <see cref="Route"/>
+/// serves both through message handlers that replace the server's transports (no socket), and counts the master key's
+/// data key generations and unwraps.
 /// </summary>
 public sealed class FakeOci : IDisposable
 {
@@ -23,23 +25,19 @@ public sealed class FakeOci : IDisposable
     public const string CustomerAccessKey = "customer-access";
     public const string CustomerSecretKey = "customer-secret";
     private const string ObjectStorage = "https://objectstorage.test";
-    private const string Vault = "https://vault-crypto.test";
-    private const string KeyId = "ocid1.key.oc1.test.master";
-    private const string ApiKey = "ocid1.tenancy.oc1..test/ocid1.user.oc1..test/aa:bb:cc";
     private static readonly XNamespace S3 = "http://s3.amazonaws.com/doc/2006-03-01/";
     private static readonly IComparer<byte[]> S3KeyOrder = Comparer<byte[]>.Create((left, right) => left.AsSpan().SequenceCompareTo(right));
 
     private readonly ConcurrentDictionary<string, byte[]> _objects = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, KeyRequests> _keyRequests = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, byte[]> _customerObjects = new(StringComparer.Ordinal);
-    private readonly RSA _apiKey = RSA.Create(2048);
-    private readonly string _directory = Directory.CreateTempSubdirectory("terrabase-oci-").FullName;
+    private readonly byte[] _masterKey = RandomNumberGenerator.GetBytes(32);
     private int _badSignatures;
     private int _generatedKeys;
     private int _listRequests;
     private string? _lastListStartAfter;
 
-    /// <summary>Objects the bucket's retention rule protects from deletion, as OCI answers <c>RetentionRuleViolation</c>.</summary>
+    /// <summary>Objects the bucket's retention rule protects from deletion, answered <c>RetentionRuleViolation</c>.</summary>
     public Func<string, bool> Locked { get; set; } = _ => false;
 
     /// <summary>Object PUTs refused with <c>AccessDenied</c>, without storing their content.</summary>
@@ -108,11 +106,13 @@ public sealed class FakeOci : IDisposable
     /// <summary>Customer bucket objects, separate from the platform bucket.</summary>
     public IReadOnlyDictionary<string, byte[]> CustomerObjects => _customerObjects;
 
-    /// <summary>Vault requests whose signature did not verify; they were refused.</summary>
+    /// <summary>Customer requests whose SigV4 signature did not verify; they were refused.</summary>
     public int BadSignatures => Volatile.Read(ref _badSignatures);
 
-    /// <summary>Data keys the vault generated.</summary>
+    /// <summary>Data keys the master key generated.</summary>
     public int GeneratedKeys => Volatile.Read(ref _generatedKeys);
+
+    private void RecordGeneratedKey() => Interlocked.Increment(ref _generatedKeys);
 
     /// <summary>Observes GETs and unwraps of a persisted key, with at most 16 explicitly registered keys and no request log.</summary>
     public KeyRequests ObserveKey(string key)
@@ -157,43 +157,41 @@ public sealed class FakeOci : IDisposable
         (customer ? _customerObjects : _objects)[key] = [.. content];
     }
 
-    /// <summary>Sets every <c>backup-*</c> setting to this fake.</summary>
+    /// <summary>Sets every backup setting to this fake.</summary>
     public void Configure(Dictionary<string, string> settings)
     {
         ArgumentNullException.ThrowIfNull(settings);
-        var secret = Path.Combine(_directory, "secret");
-        var key = Path.Combine(_directory, "api-key.pem");
-        File.WriteAllText(secret, "test-secret-key\n");
-        File.WriteAllText(key, _apiKey.ExportPkcs8PrivateKeyPem());
         settings["backup-endpoint"] = ObjectStorage;
         settings["backup-region"] = "test-region-1";
         settings["backup-bucket"] = Bucket;
         settings["backup-access-key-id"] = "test-access-key";
-        settings["backup-secret-key-file"] = secret;
-        settings["backup-kms-endpoint"] = Vault;
-        settings["backup-kms-key-id"] = KeyId;
-        settings["backup-kms-api-key"] = ApiKey;
-        settings["backup-kms-private-key-file"] = key;
+        settings["backup-secret-key"] = "test-secret-key";
+        settings["master-key"] = Convert.ToBase64String(_masterKey);
     }
 
-    /// <summary>Routes the server's object storage and vault clients here.</summary>
+    /// <summary>Wraps <paramref name="key"/> with this fake's master key, as a persisted backup key holds it.</summary>
+    public string Wrap(byte[] key) => new MasterKey(_masterKey).Wrap(key);
+
+    /// <summary>Unwraps a persisted backup key wrapped by this fake's master key.</summary>
+    public byte[] Unwrap(string wrapped) => new MasterKey(_masterKey).Unwrap(wrapped);
+
+    /// <summary>Routes the server's object storage clients here and counts its master key's work.</summary>
     public void Route(IServiceCollection services)
     {
-        RoutePlatformAndVault(services);
+        RoutePlatform(services);
         services.AddHttpClient("backup-s3-customer").ConfigurePrimaryHttpMessageHandler(() => new Handler(this));
     }
 
-    /// <summary>Replaces only platform and Vault transports, leaving the real customer connection handler intact.</summary>
-    public void RoutePlatformAndVault(IServiceCollection services)
+    /// <summary>Replaces only the platform transport and the master key, leaving the real customer connection handler intact.</summary>
+    public void RoutePlatform(IServiceCollection services)
     {
         services.AddHttpClient("backup-s3").ConfigurePrimaryHttpMessageHandler(() => new Handler(this));
-        services.AddHttpClient("backup-kms").ConfigurePrimaryHttpMessageHandler(() => new Handler(this));
+        services.Replace(ServiceDescriptor.Singleton<IMasterKey>(provider => new CountingMasterKey(new MasterKey(provider.GetRequiredService<BackupSettings>().MasterKey), this)));
     }
 
+    // Nothing to release; the rename to FakeS3 drops IDisposable along with every using.
     public void Dispose()
     {
-        _apiKey.Dispose();
-        Directory.Delete(_directory, recursive: true);
     }
 
     private async Task<HttpResponseMessage> RespondAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -209,7 +207,6 @@ public sealed class FakeOci : IDisposable
 
         return uri.GetLeftPart(UriPartial.Authority) switch
         {
-            Vault => VaultResponse(request, body),
             ObjectStorage or CustomerEndpoint => await ObjectResponseAsync(request, body, cancellationToken),
             _ => new HttpResponseMessage(HttpStatusCode.NotFound),
         };
@@ -385,89 +382,6 @@ public sealed class FakeOci : IDisposable
         return S3Error(HttpStatusCode.MethodNotAllowed, "MethodNotAllowed");
     }
 
-    private HttpResponseMessage VaultResponse(HttpRequestMessage request, byte[] body)
-    {
-        if (!SignatureVerifies(request, body))
-        {
-            Interlocked.Increment(ref _badSignatures);
-            return new HttpResponseMessage(HttpStatusCode.Unauthorized);
-        }
-
-        var json = JsonNode.Parse(body)!;
-        if ((string?)json["keyId"] != KeyId)
-        {
-            return new HttpResponseMessage(HttpStatusCode.NotFound);
-        }
-
-        JsonObject response;
-        if (request.RequestUri!.AbsolutePath == "/20180608/generateDataEncryptionKey")
-        {
-            Interlocked.Increment(ref _generatedKeys);
-            var key = Convert.ToBase64String(RandomNumberGenerator.GetBytes((int)json["keyShape"]!["length"]!));
-            response = new JsonObject { ["plaintext"] = key, ["ciphertext"] = "wrapped:" + key };
-        }
-        else if (request.RequestUri.AbsolutePath == "/20180608/decrypt" && (string?)json["ciphertext"] is { } wrapped && wrapped.StartsWith("wrapped:", StringComparison.Ordinal))
-        {
-            var fingerprint = SHA256.HashData(Encoding.ASCII.GetBytes(wrapped));
-            foreach (var observed in _keyRequests.Values)
-            {
-                if (observed.Fingerprint.AsSpan().SequenceEqual(fingerprint))
-                {
-                    observed.RecordUnwrap();
-                }
-            }
-
-            response = new JsonObject { ["plaintext"] = wrapped["wrapped:".Length..] };
-        }
-        else
-        {
-            return new HttpResponseMessage(HttpStatusCode.BadRequest);
-        }
-
-        return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(response.ToJsonString(), Encoding.UTF8, "application/json") };
-    }
-
-    // Partial SigV4: checks customer credentials, payload hash and region, but not required SignedHeaders or
-    // scope-date freshness. Path/query canonicalization covers current AWS-URL-safe ULID/digit keys only;
-    // extend before testing keys or query values requiring percent encoding.
-    private bool SignatureVerifies(HttpRequestMessage request, byte[] body)
-    {
-        if (!request.Headers.TryGetValues("authorization", out var values)
-            || values.Single() is not { } authorization || !authorization.StartsWith("Signature ", StringComparison.Ordinal))
-        {
-            return false;
-        }
-
-        var fields = authorization["Signature ".Length..].Split(',')
-            .Select(field => field.Split('=', 2))
-            .ToDictionary(field => field[0].Trim(), field => field[1].Trim('"'), StringComparer.Ordinal);
-        if (fields.GetValueOrDefault("keyId") != ApiKey || fields.GetValueOrDefault("algorithm") != "rsa-sha256"
-            || fields.GetValueOrDefault("headers") is not { } headers || fields.GetValueOrDefault("signature") is not { } signature)
-        {
-            return false;
-        }
-
-        var names = headers.Split(' ');
-        var required = request.Content is null
-            ? new[] { "date", "(request-target)", "host" }
-            : ["date", "(request-target)", "host", "content-length", "content-type", "x-content-sha256"];
-        if (!required.All(name => names.Contains(name, StringComparer.Ordinal)) || Header(request, "date") is null
-            || request.Content is not null && Convert.ToBase64String(SHA256.HashData(body)) != Header(request, "x-content-sha256"))
-        {
-            return false;
-        }
-
-        var lines = names.Select(name => name switch
-        {
-            "(request-target)" => $"(request-target): {request.Method.Method.ToLowerInvariant()} {request.RequestUri!.PathAndQuery}",
-            "host" => $"host: {request.RequestUri!.Authority}",
-            "content-length" => $"content-length: {body.Length.ToString(CultureInfo.InvariantCulture)}",
-            _ => $"{name}: {Header(request, name)}",
-        });
-        return _apiKey.VerifyData(Encoding.ASCII.GetBytes(string.Join('\n', lines)), Convert.FromBase64String(signature),
-            HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
-    }
-
     // Partial SigV4: checks customer credentials, payload hash and region, but not required SignedHeaders or
     // scope-date freshness. Path/query canonicalization covers current AWS-URL-safe ULID/digit keys only;
     // extend before testing keys or query values requiring percent encoding.
@@ -520,7 +434,7 @@ public sealed class FakeOci : IDisposable
             ? string.Join(", ", values!)
             : null;
 
-    // Like OCI Object Storage, a UUID: not an MD5, so the SDK does not check downloads against it.
+    // Like some S3-compatible stores, a UUID: not an MD5, so the SDK does not check downloads against it.
     private static string ETag(byte[] content) => $"\"{new Guid(SHA256.HashData(content).AsSpan(0, 16))}\"";
 
     private static HttpResponseMessage S3Error(HttpStatusCode status, string code) =>
@@ -547,6 +461,30 @@ public sealed class FakeOci : IDisposable
 
         internal void RecordGet() => Interlocked.Increment(ref _gets);
         internal void RecordUnwrap() => Interlocked.Increment(ref _unwraps);
+    }
+
+    // The real master key; generations and unwraps are counted like the requests of a remote key service.
+    private sealed class CountingMasterKey(MasterKey inner, FakeOci oci) : IMasterKey
+    {
+        public Task<(byte[] Key, string Wrapped)> GenerateDataKeyAsync(CancellationToken cancellationToken)
+        {
+            oci.RecordGeneratedKey();
+            return inner.GenerateDataKeyAsync(cancellationToken);
+        }
+
+        public Task<byte[]> UnwrapAsync(string wrapped, CancellationToken cancellationToken)
+        {
+            var fingerprint = SHA256.HashData(Encoding.ASCII.GetBytes(wrapped));
+            foreach (var observed in oci._keyRequests.Values)
+            {
+                if (observed.Fingerprint.AsSpan().SequenceEqual(fingerprint))
+                {
+                    observed.RecordUnwrap();
+                }
+            }
+
+            return inner.UnwrapAsync(wrapped, cancellationToken);
+        }
     }
 
     private sealed class Handler(FakeOci oci) : HttpMessageHandler
