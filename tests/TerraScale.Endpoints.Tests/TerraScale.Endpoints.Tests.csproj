@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!-- Same targets as the library so both framework runtimes run the suite. -->
+    <TargetFramework />
+    <TargetFrameworks>net10.0;net11.0</TargetFrameworks>
+    <IsTestProject>true</IsTestProject>
+    <IsTestingPlatformApplication>true</IsTestingPlatformApplication>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>14.0</LangVersion>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <IsPackable>false</IsPackable>
+    <!-- ASP0029: the validation API used by AddValidation() is marked experimental in the net10.0 pack. -->
+    <NoWarn>$(NoWarn);ASP0029</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="TUnit" />
+    <ProjectReference Include="../../src/TerraScale.Endpoints/TerraScale.Endpoints.csproj" />
+    <!-- In-repo stand-in for the analyzer the NuGet package carries. -->
+    <ProjectReference Include="../../src/TerraScale.Endpoints.Generators/TerraScale.Endpoints.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+</Project>

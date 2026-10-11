@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <ServerGarbageCollection>true</ServerGarbageCollection>
+    <!-- The benchmarks call the plain MEL API on purpose: that is the cost being measured. -->
+    <NoWarn>$(NoWarn);CA1848;CA1873</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="BenchmarkDotNet" />
+    <!-- BenchmarkDotNet 0.16 (first with net11.0 support) needs a newer Roslyn than the central pin. -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" VersionOverride="5.6.0" />
+    <PackageReference Include="Microsoft.CodeAnalysis.Analyzers" VersionOverride="5.3.0" PrivateAssets="all" />
+    <ProjectReference Include="../../src/TerraScale.Logging/TerraScale.Logging.csproj" />
+  </ItemGroup>
+</Project>

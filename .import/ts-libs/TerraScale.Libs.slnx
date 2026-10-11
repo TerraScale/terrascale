@@ -1,0 +1,18 @@
+<Solution>
+  <Folder Name="/Core/">
+    <Project Path="src/TerraScale.Endpoints/TerraScale.Endpoints.csproj" />
+    <Project Path="src/TerraScale.Endpoints.Generators/TerraScale.Endpoints.Generators.csproj" />
+    <Project Path="src/TerraScale.Logging/TerraScale.Logging.csproj" />
+  </Folder>
+  <Folder Name="/Benchmarks/">
+    <Project Path="bench/TerraScale.Endpoints.Benchmarks/TerraScale.Endpoints.Benchmarks.csproj" />
+    <Project Path="bench/TerraScale.Logging.Benchmarks/TerraScale.Logging.Benchmarks.csproj" />
+  </Folder>
+  <Folder Name="/Examples/">
+    <Project Path="src/TerraScale.Endpoints.Example/TerraScale.Endpoints.Example.csproj" />
+  </Folder>
+  <Folder Name="/Tests/">
+    <Project Path="tests/TerraScale.Endpoints.Tests/TerraScale.Endpoints.Tests.csproj" />
+    <Project Path="tests/TerraScale.Logging.Tests/TerraScale.Logging.Tests.csproj" />
+  </Folder>
+</Solution>

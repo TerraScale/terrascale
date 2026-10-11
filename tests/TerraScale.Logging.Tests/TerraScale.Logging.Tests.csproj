@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsTestProject>true</IsTestProject>
+    <IsTestingPlatformApplication>true</IsTestingPlatformApplication>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>14.0</LangVersion>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <IsPackable>false</IsPackable>
+    <!-- The golden lines were captured under invariant culture; ToString() output (Infinity, dates) depends on it. -->
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- The tests call the plain MEL API on purpose (the golden lines compare it with ZLog), and the reserved keys are lowercase on purpose. -->
+    <NoWarn>$(NoWarn);CA1727;CA1848;CA1873</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="TUnit" />
+    <PackageReference Include="Microsoft.Extensions.Configuration" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Configuration" />
+    <ProjectReference Include="../../src/TerraScale.Logging/TerraScale.Logging.csproj" />
+  </ItemGroup>
+</Project>
