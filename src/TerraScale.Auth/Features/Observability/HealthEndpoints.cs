@@ -34,8 +34,8 @@ public sealed class HealthzEndpoint : EndpointWithoutRequest<StatusBody>
     }
 
     /// <inheritdoc />
-    public override Task<StatusBody> HandleAsync(CancellationToken cancellationToken) =>
-        Task.FromResult(new StatusBody("ok", ServiceVersion.Value));
+    public override ValueTask<StatusBody> HandleAsync(CancellationToken cancellationToken) =>
+        ValueTask.FromResult(new StatusBody("ok", ServiceVersion.Value));
 }
 
 /// <summary><c>GET /readyz</c>: storage, the signing-ring bootstrap and public signing metadata were usable at the latest background check.</summary>
@@ -55,10 +55,10 @@ public sealed class ReadyzEndpoint(ReadinessProbe probe) : EndpointWithoutReques
     }
 
     /// <inheritdoc />
-    public override Task<IResult> HandleAsync(CancellationToken cancellationToken)
+    public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         var observation = probe.Latest();
         var body = new ReadyBody(observation.Ready ? "ready" : "not_ready", ServiceVersion.Value, observation.Region);
-        return Task.FromResult<IResult>(TypedResults.Json(body, statusCode: observation.Ready ? StatusCodes.Status200OK : StatusCodes.Status503ServiceUnavailable));
+        return ValueTask.FromResult<IResult>(TypedResults.Json(body, statusCode: observation.Ready ? StatusCodes.Status200OK : StatusCodes.Status503ServiceUnavailable));
     }
 }

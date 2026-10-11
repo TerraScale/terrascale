@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Check out the ts-dotnet and ts-libs revisions pinned in TS_DOTNET_REV and
-# TS_LIBS_REV into a directory this job owns under RUNNER_TEMP, and point the
-# build at it through TerraScaleRoot (GITHUB_ENV). It must sit outside this
+# Check out the ts-dotnet revision pinned in TS_DOTNET_REV into a directory this
+# job owns under RUNNER_TEMP, and point the build at it through TerraScaleRoot
+# (GITHUB_ENV). It must sit outside this
 # repository: inside it, the SDKs would inherit ts-auth's Directory.Build.props
 # and central package versions. No shared sibling checkout is touched.
 set -euo pipefail
@@ -25,7 +25,7 @@ chmod 700 "$askpass"
 export GIT_ASKPASS="$askpass" GIT_TERMINAL_PROMPT=0
 
 deps="${RUNNER_TEMP:-$(mktemp -d)}/terrascale-deps-${GITHUB_RUN_ID:-local}-${GITHUB_JOB:-job}"
-for pair in "ts-dotnet:${TS_DOTNET_REV:-}" "ts-libs:${TS_LIBS_REV:-}"; do
+for pair in "ts-dotnet:${TS_DOTNET_REV:-}"; do
   name=${pair%%:*}
   rev=${pair#*:}
   [[ $rev =~ ^[0-9a-f]{40}$ ]] || { echo "the $name revision must be a full commit SHA" >&2; exit 2; }

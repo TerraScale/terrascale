@@ -7,6 +7,6 @@
     <ProjectReference Include="$(TsDotnetRoot)/src/TerraScale.DotNet/TerraScale.DotNet.csproj" SetTargetFramework="TargetFramework=net10.0" />
   </ItemGroup>
   <Target Name="EnsureTsDotnet" BeforeTargets="CollectPackageReferences;BeforeBuild" Condition="!Exists('$(TsDotnetRoot)/src/TerraScale.DotNet/TerraScale.DotNet.csproj')">
-    <Error Text="ts-dotnet not found at '$(TsDotnetRoot)'. Clone it next to ts-auth or pass -p:TerraScaleRoot=&lt;dir containing ts-dotnet and ts-libs&gt;." />
+    <Error Text="ts-dotnet not found at '$(TsDotnetRoot)'. Clone it next to ts-auth or pass -p:TerraScaleRoot=&lt;dir containing ts-dotnet&gt;." />
   </Target>
 </Project>

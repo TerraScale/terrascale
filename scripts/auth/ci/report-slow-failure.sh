@@ -20,7 +20,7 @@ export LC_ALL=C
 test "$#" -eq 1 || { echo "usage: $0 <slow-suite-log>" >&2; exit 2; }
 log=$1
 : "${GITHUB_SERVER_URL:?}" "${GITHUB_REPOSITORY:?}" "${GITHUB_RUN_ID:?}" "${GITHUB_SHA:?}"
-: "${TS_DOTNET_REV:=unknown}" "${TS_LIBS_REV:=unknown}"
+: "${TS_DOTNET_REV:=unknown}"
 title="Slow test suite failed"
 host=${GITHUB_SERVER_URL#https://}
 run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/${GITHUB_RUN_NUMBER:-$GITHUB_RUN_ID}"
@@ -48,8 +48,8 @@ failing_tests() {
   echo "### Reproduce"
   echo '```sh'
   echo "git checkout $GITHUB_SHA"
-  echo "# SDK revisions from .forgejo/workflows/slow.yml (TS_DOTNET_REV, TS_LIBS_REV), checked out side by side:"
-  echo "#   git -C <dir>/ts-dotnet checkout $TS_DOTNET_REV; git -C <dir>/ts-libs checkout $TS_LIBS_REV"
+  echo "# ts-dotnet revision from .forgejo/workflows/slow.yml (TS_DOTNET_REV), checked out under <dir>:"
+  echo "#   git -C <dir>/ts-dotnet checkout $TS_DOTNET_REV"
   echo "TerraScaleRoot=<dir> nice -n 19 make test-slow CONFIGURATION=Release"
   echo '```'
   echo

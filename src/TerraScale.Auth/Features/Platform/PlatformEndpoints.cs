@@ -445,7 +445,7 @@ public abstract class PlatformEndpoint(PlatformAuthentication authentication) : 
     private const int MaxBody = 16 * 1024;
 
     /// <inheritdoc />
-    public sealed override async Task<IResult> HandleAsync(CancellationToken cancellationToken)
+    public sealed override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         this.HttpContext.Response.Headers.CacheControl = "no-store";
         try

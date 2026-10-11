@@ -6,7 +6,7 @@ production activation instructions.
 
 A hosted identity provider in the Clerk / Auth0 / WorkOS category, built on
 TerraBase. The service is written in C# on .NET 10: ASP.NET Core with every
-API declared through `TerraScale.Endpoints` (ts-libs), TerraBase Documents v1
+API declared through `TerraScale.Endpoints` (NuGet), TerraBase Documents v1
 storage through `ts-dotnet`, RazorSlices and Datastar for hosted pages, and
 TUnit and Playwright integration tests.
 
@@ -132,8 +132,9 @@ its S3 API. Packaged fonts and static assets are embedded in the executable.
 ## Running
 
 The build needs the .NET 10 SDK (see `global.json`) and the sibling `ts-dotnet`
-and `ts-libs` checkouts at the revisions pinned in `.forgejo/workflows/ci.yml`.
-They are looked up at `../ts-dotnet` and `../ts-libs`, or under
+checkout at the revision pinned in `.forgejo/workflows/ci.yml`. TerraScale.Endpoints
+and TerraScale.Logging come from the Forgejo NuGet feed (see `nuget.config`).
+ts-dotnet is looked up at `../ts-dotnet`, or under
 `~/Projects/TerraScale/`; pass `-p:TerraScaleRoot=<dir>` or set the
 `TerraScaleRoot` environment variable to use another location. Both workflows
 pin ts-dotnet to SDK merge #28, `a4ff285c051e63e72cb01c4a94173c91da1dd69a`,
@@ -516,7 +517,7 @@ rotation.
 
 `.forgejo/workflows/ci.yml` runs two jobs in parallel.
 - **`test`** is the required gate. It checks out the pinned ts-dotnet and
-  ts-libs revisions into a job-owned directory, then runs a locked restore,
+  ts-dotnet revision into a job-owned directory, then runs a locked restore,
   `dotnet format --verify-no-changes`, a Release build with analyzers as
   errors, the NuGet vulnerability audit, the Redocly lint of the served OpenAPI
   document, the image-transfer, binary-publish and arm64-smoke guard tests and the fast integration suite,

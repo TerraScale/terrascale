@@ -180,7 +180,7 @@ public abstract class HeadlessEndpoint<TBody>(IOpenIddictApplicationManager appl
     private const int MaxBody = 8 * 1024;
 
     /// <inheritdoc />
-    public sealed override async Task<IResult> HandleAsync(CancellationToken cancellationToken)
+    public sealed override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         if (SignInFlow.WrongSlug(this.HttpContext))
         {

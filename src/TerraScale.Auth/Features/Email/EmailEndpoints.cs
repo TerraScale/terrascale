@@ -313,7 +313,7 @@ public sealed class GetEmailBrandingEndpoint(EmailSettings settings, AuthEmails 
     }
 
     /// <inheritdoc />
-    public override async Task<IResult> HandleAsync(CancellationToken cancellationToken) =>
+    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
         EmailApi.Refuse(this.HttpContext, options)
         ?? TypedResults.Json(EmailApi.Branding(await settings.GetAsync(OidcIssuer.InstanceId, cancellationToken), emails));
 }
@@ -341,7 +341,7 @@ public sealed class PutEmailBrandingEndpoint(EmailSettings settings, AuthEmails 
     }
 
     /// <inheritdoc />
-    public override async Task<IResult> HandleAsync(CancellationToken cancellationToken)
+    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         if (EmailApi.Refuse(this.HttpContext, options) is { } refused)
         {
@@ -375,7 +375,7 @@ public sealed class ListEmailTemplatesEndpoint(EmailSettings settings, AuthOptio
     }
 
     /// <inheritdoc />
-    public override async Task<IResult> HandleAsync(CancellationToken cancellationToken)
+    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         if (EmailApi.Refuse(this.HttpContext, options) is { } refused)
         {
@@ -410,7 +410,7 @@ public sealed class GetEmailTemplateEndpoint(EmailSettings settings, AuthOptions
     }
 
     /// <inheritdoc />
-    public override async Task<IResult> HandleAsync(CancellationToken cancellationToken)
+    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         if (EmailApi.Refuse(this.HttpContext, options) is { } refused)
         {
@@ -446,7 +446,7 @@ public sealed class PutEmailTemplateEndpoint(EmailSettings settings, AuthOptions
     }
 
     /// <inheritdoc />
-    public override async Task<IResult> HandleAsync(CancellationToken cancellationToken)
+    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         if (EmailApi.Refuse(this.HttpContext, options) is { } refused)
         {
@@ -487,7 +487,7 @@ public sealed class PreviewEmailEndpoint(EmailSettings settings, AuthEmails emai
     }
 
     /// <inheritdoc />
-    public override async Task<IResult> HandleAsync(CancellationToken cancellationToken)
+    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         if (EmailApi.Refuse(this.HttpContext, options) is { } refused)
         {
@@ -535,7 +535,7 @@ public sealed class TestEmailEndpoint(EmailSettings settings, AuthEmails emails,
     }
 
     /// <inheritdoc />
-    public override async Task<IResult> HandleAsync(CancellationToken cancellationToken)
+    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         if (EmailApi.Refuse(this.HttpContext, options) is { } refused)
         {
@@ -580,7 +580,7 @@ public sealed class ListEmailVersionsEndpoint(EmailSettings settings, AuthOption
     }
 
     /// <inheritdoc />
-    public override async Task<IResult> HandleAsync(CancellationToken cancellationToken)
+    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         if (EmailApi.Refuse(this.HttpContext, options) is { } refused)
         {
@@ -618,7 +618,7 @@ public sealed class GetEmailVersionEndpoint(EmailSettings settings, AuthOptions 
     }
 
     /// <inheritdoc />
-    public override async Task<IResult> HandleAsync(CancellationToken cancellationToken) =>
+    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
         EmailApi.Refuse(this.HttpContext, options)
         ?? TypedResults.Json(await Find(settings, this.HttpContext, cancellationToken));
 
@@ -652,7 +652,7 @@ public sealed class RestoreEmailVersionEndpoint(EmailSettings settings, AuthOpti
     }
 
     /// <inheritdoc />
-    public override async Task<IResult> HandleAsync(CancellationToken cancellationToken)
+    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         if (EmailApi.Refuse(this.HttpContext, options) is { } refused)
         {

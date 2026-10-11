@@ -1,4 +1,5 @@
 using System.Globalization;
+using Microsoft.AspNetCore.Http.Metadata;
 using TerraScale.Auth.Configuration;
 using TerraScale.Auth.Contracts;
 using TerraScale.Auth.Features.Email;
@@ -33,8 +34,8 @@ public sealed class SignInPageEndpoint : EndpointWithoutRequest<IResult>
     }
 
     /// <inheritdoc />
-    public override Task<IResult> HandleAsync(CancellationToken cancellationToken) =>
-        Task.FromResult(SignInFlow.WrongSlug(this.HttpContext)
+    public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) =>
+        ValueTask.FromResult(SignInFlow.WrongSlug(this.HttpContext)
             ? Results.NotFound()
             : SignInPageModel.Render(this.HttpContext, new SignInPageModel(SignInStep.Email, OidcIssuer.Slug, Next: SignInFlow.SafeNext(this.HttpContext.Request.Query["next"]))));
 }
@@ -53,7 +54,8 @@ public sealed class RequestPasscodeEndpoint(Passcodes passcodes, SignInMail mail
         Summary("Email a sign-in code");
         Description("Same-origin form post (the Origin header must be the public origin). The response never reveals whether the address has an account. Shared hosted/headless limits: 30 calls per IP per minute, 10 mail calls per IP per 15 minutes, and 5 mail calls per normalized email per hour, including unknown emails. IPv6 is grouped per /64 and additionally per /48 at four times the IP budget. Exhaustion answers 429 with Retry-After. A new code replaces the previous one.");
         Tags("Sign-in");
-        Accepts<SignInForm>("application/x-www-form-urlencoded");
+        // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
+        Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
         Produces<string>(StatusCodes.Status200OK, "text/html");
         Produces<string>(StatusCodes.Status403Forbidden, "text/html");
         Produces<string>(StatusCodes.Status429TooManyRequests, "text/html");
@@ -62,7 +64,7 @@ public sealed class RequestPasscodeEndpoint(Passcodes passcodes, SignInMail mail
     }
 
     /// <inheritdoc />
-    public override async Task<IResult> HandleAsync(CancellationToken cancellationToken)
+    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         if (await SignInFlow.ReadAsync(this.HttpContext, options, cancellationToken) is not { } form)
         {
@@ -105,7 +107,8 @@ public sealed class VerifyPasscodeEndpoint(Passcodes passcodes, Sessions session
         Description("Same-origin form post. A code works once, for 10 minutes, and dies after 5 wrong guesses. Hosted and headless sign-in share 30 calls per IP per minute and 5 attempts per normalized email per 15 minutes, including unknown emails and replaced codes; exhaustion answers 429 with Retry-After. An account-budget refusal temporarily blocks code redemption until the stored window ends and queues one best-effort lockout email notice per real account for that deadline, in the browser language; recovery remains separate. Success sets the tsauth_session cookie (Secure, HttpOnly, SameSite=Lax) and continues to next."
             + " Active MFA users receive the same generic credential refusal without a session cookie; corrupt or unavailable MFA state fails closed.");
         Tags("Sign-in");
-        Accepts<SignInForm>("application/x-www-form-urlencoded");
+        // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
+        Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
         Produces<string>(StatusCodes.Status200OK, "text/html");
         Produces<string>(StatusCodes.Status401Unauthorized, "text/html");
         Produces<string>(StatusCodes.Status403Forbidden, "text/html");
@@ -115,7 +118,7 @@ public sealed class VerifyPasscodeEndpoint(Passcodes passcodes, Sessions session
     }
 
     /// <inheritdoc />
-    public override async Task<IResult> HandleAsync(CancellationToken cancellationToken)
+    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         if (await SignInFlow.ReadAsync(this.HttpContext, options, cancellationToken) is not { } form)
         {
