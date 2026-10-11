@@ -1,3 +1,4 @@
+using System.Text.Json;
 using TerraBase.Errors;
 using TerraBase.Features.Replication;
 using TerraBase.Features.UserAuth;
@@ -31,22 +32,24 @@ public sealed class VerifyProjectBindingEndpoint(IProjectCatalog catalog) : Endp
     }
 
     /// <inheritdoc />
-    // The body's ts-auth organization must win over the legacy {organization} route value, which the binder prefers.
+    // Body only: the route and query share the JSON name `organization` with a different meaning.
     protected override async ValueTask<ProjectBindingRequest> BindAsync(CancellationToken cancellationToken)
     {
-        var routes = HttpContext.Request.RouteValues;
-        if (!routes.Remove("organization", out var legacy))
+        // ReadFromJsonAsync throws InvalidOperationException, not JsonException, for a non-JSON content type.
+        if (!HttpContext.Request.HasJsonContentType())
         {
-            return await base.BindAsync(cancellationToken);
+            return new ProjectBindingRequest(null);
         }
 
         try
         {
-            return await base.BindAsync(cancellationToken);
+            return await HttpContext.Request.ReadFromJsonAsync(TerraBaseJsonContext.Default.ProjectBindingRequest, cancellationToken)
+                ?? new ProjectBindingRequest(null);
         }
-        finally
+        catch (JsonException)
         {
-            routes["organization"] = legacy;
+            // No readable organization: HandleAsync answers with the same 400 as a body without one.
+            return new ProjectBindingRequest(null);
         }
     }
 

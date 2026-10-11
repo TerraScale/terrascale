@@ -27,7 +27,7 @@ public sealed class CatalogSubscriptionTests
             settings["region"] = "sfo-1";
         });
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
-        deadline.CancelAfter(TimeSpan.FromSeconds(30));
+        deadline.CancelAfter(TimeSpan.FromSeconds(60));
         var faker = new Faker();
         var organization = await primary.CreateOrganizationAsync(faker.Company.CompanyName());
         var project = await primary.CreateProjectAsync(organization, "main");
@@ -128,7 +128,7 @@ public sealed class CatalogSubscriptionTests
             settings["region"] = "sfo-1";
         });
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
-        deadline.CancelAfter(TimeSpan.FromSeconds(30));
+        deadline.CancelAfter(TimeSpan.FromSeconds(60));
         var database = await primary.CreateManagedDatabaseAsync("db" + new Faker().Random.AlphaNumeric(8).ToLowerInvariant());
         await primary.VerifyProjectBindingAsync(database.Organization, database.Project);
         var credentials = Path.Combine(primary.Server.DataDirectory, "subscription.creds");

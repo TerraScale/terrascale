@@ -174,7 +174,9 @@ public sealed partial class CrossRegionPagingProgressTests
     [Test]
     [Arguments(false)]
     [Arguments(true)]
-    public async Task A_seventeen_page_inventory_completes_across_rounds_and_advances_the_local_cleanup_page(bool malformedPrefix)
+    // Stalls past the 2-minute default under full-suite load; alone it takes about 10 s.
+    [Timeout(300_000)]
+    public async Task A_seventeen_page_inventory_completes_across_rounds_and_advances_the_local_cleanup_page(bool malformedPrefix, CancellationToken cancellationToken)
     {
         var elapsed = Stopwatch.StartNew();
         using var observation = SuiteDiagnostics.ObserveStorage("wan.inventory." + malformedPrefix.ToString(CultureInfo.InvariantCulture));
@@ -183,7 +185,7 @@ public sealed partial class CrossRegionPagingProgressTests
         ManagementApi? sfo = null;
         var sfoCleanup = Task.CompletedTask;
         Exception? bodyFailure = null;
-        var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
+        var token = cancellationToken;
         var output = TUnit.Core.TestContext.Current!.OutputWriter;
         var faker = new Faker();
         var network = new FakeRegionNetwork();

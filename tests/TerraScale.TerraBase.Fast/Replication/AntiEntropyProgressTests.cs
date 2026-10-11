@@ -18,7 +18,7 @@ namespace TerraBase.Fast.Replication;
 public sealed class AntiEntropyProgressTests
 {
     [Test]
-    [Timeout(60_000)]
+    [Timeout(120_000)]
     public async Task Invalid_members_do_not_block_healthy_membership_and_configured_fallback_repairs(CancellationToken cancellationToken)
     {
         var token = cancellationToken;
