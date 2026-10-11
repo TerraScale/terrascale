@@ -15,7 +15,7 @@ public sealed class CustomerBackupUnicodeTests
     public async Task Utf8_ordered_BMP_and_supplementary_junk_cross_customer_pages_without_breaking_drills_retention_or_restore()
     {
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
         await using var api = await ManagementApi.StartAsync(oci.Configure, services =>
         {
@@ -26,11 +26,11 @@ public sealed class CustomerBackupUnicodeTests
         var database = await api.CreateManagedDatabaseAsync();
         using var saved = await api.Client.PutAsJsonAsync(ManagementApi.Uri(database.ProjectPath + "/backup-destination"), new
         {
-            endpoint = FakeOci.CustomerEndpoint,
+            endpoint = FakeS3.CustomerEndpoint,
             region = "test-region-1",
-            bucket = FakeOci.CustomerBucket,
-            accessKeyId = FakeOci.CustomerAccessKey,
-            secretKey = FakeOci.CustomerSecretKey,
+            bucket = FakeS3.CustomerBucket,
+            accessKeyId = FakeS3.CustomerAccessKey,
+            secretKey = FakeS3.CustomerSecretKey,
             mode = "customer",
         }, cancellationToken);
         saved.EnsureSuccessStatusCode();

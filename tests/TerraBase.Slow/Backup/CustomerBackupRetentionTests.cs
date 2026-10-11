@@ -16,7 +16,7 @@ public sealed class CustomerBackupRetentionTests
     public async Task Retention_drains_more_than_ten_thousand_expired_snapshots_without_deleting_a_later_snapshots_wal()
     {
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = Clock();
         await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
@@ -76,7 +76,7 @@ public sealed class CustomerBackupRetentionTests
         await Assert.That(oci.BadSignatures).IsEqualTo(0);
     }
 
-    private static void ManualShipping(FakeOci oci, IServiceCollection services)
+    private static void ManualShipping(FakeS3 oci, IServiceCollection services)
     {
         oci.Route(services);
         ManualBackupHosting.Configure(services);
@@ -112,11 +112,11 @@ public sealed class CustomerBackupRetentionTests
 
     private static Dictionary<string, string> Destination(string mode) => new(StringComparer.Ordinal)
     {
-        ["endpoint"] = FakeOci.CustomerEndpoint,
+        ["endpoint"] = FakeS3.CustomerEndpoint,
         ["region"] = "test-region-1",
-        ["bucket"] = FakeOci.CustomerBucket,
-        ["accessKeyId"] = FakeOci.CustomerAccessKey,
-        ["secretKey"] = FakeOci.CustomerSecretKey,
+        ["bucket"] = FakeS3.CustomerBucket,
+        ["accessKeyId"] = FakeS3.CustomerAccessKey,
+        ["secretKey"] = FakeS3.CustomerSecretKey,
         ["mode"] = mode,
     };
 
@@ -138,9 +138,9 @@ public sealed class CustomerBackupRetentionTests
     {
         using var body = JsonDocument.Parse(json);
         await Assert.That(body.RootElement.EnumerateObject().Select(property => property.Name)).IsEquivalentTo(["endpoint", "region", "bucket", "mode", "updatedAt"]);
-        await Assert.That(body.RootElement.GetProperty("endpoint").GetString()!.TrimEnd('/')).IsEqualTo(FakeOci.CustomerEndpoint);
+        await Assert.That(body.RootElement.GetProperty("endpoint").GetString()!.TrimEnd('/')).IsEqualTo(FakeS3.CustomerEndpoint);
         await Assert.That(body.RootElement.GetProperty("region").GetString()).IsEqualTo("test-region-1");
-        await Assert.That(body.RootElement.GetProperty("bucket").GetString()).IsEqualTo(FakeOci.CustomerBucket);
+        await Assert.That(body.RootElement.GetProperty("bucket").GetString()).IsEqualTo(FakeS3.CustomerBucket);
         await Assert.That(body.RootElement.GetProperty("mode").GetString()).IsEqualTo(mode);
         await Assert.That(body.RootElement.GetProperty("updatedAt").GetDateTimeOffset()).IsGreaterThan(DateTimeOffset.MinValue);
         await AssertPublicAsync(json);
@@ -148,8 +148,8 @@ public sealed class CustomerBackupRetentionTests
 
     private static async Task AssertPublicAsync(string json)
     {
-        await Assert.That(json.Contains(FakeOci.CustomerAccessKey, StringComparison.Ordinal)).IsFalse();
-        await Assert.That(json.Contains(FakeOci.CustomerSecretKey, StringComparison.Ordinal)).IsFalse();
+        await Assert.That(json.Contains(FakeS3.CustomerAccessKey, StringComparison.Ordinal)).IsFalse();
+        await Assert.That(json.Contains(FakeS3.CustomerSecretKey, StringComparison.Ordinal)).IsFalse();
         await Assert.That(json.Contains("wrappedKey", StringComparison.Ordinal)).IsFalse();
     }
 

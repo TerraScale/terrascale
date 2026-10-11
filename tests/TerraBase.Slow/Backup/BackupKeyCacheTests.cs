@@ -17,7 +17,7 @@ public sealed class BackupKeyCacheTests
     {
         const int peerKeys = 1025;
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
         var directory = Directory.CreateTempSubdirectory("terrabase-many-keys-").FullName;
         var coldDirectory = Directory.CreateTempSubdirectory("terrabase-many-keys-cold-").FullName;
@@ -50,7 +50,7 @@ public sealed class BackupKeyCacheTests
                 snapshotKey = keys + KeyId(snapshot.Value);
                 var generated = oci.GeneratedKeys;
 
-                // Simulate legitimate peer publication using FakeOci's existing wrapped-key contract. Advancing only
+                // Simulate legitimate peer publication using FakeS3's existing wrapped-key contract. Advancing only
                 // 61 seconds per key refreshes the live selection. WAL restarts may create additional generations;
                 // retain each generation's last restore point so every published key is read by the cold node.
                 for (var index = 0; index < peerKeys; index++)
@@ -173,7 +173,7 @@ public sealed class BackupKeyCacheTests
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         deadline.CancelAfter(TimeSpan.FromSeconds(90));
         var cancellationToken = deadline.Token;
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
         var directory = Directory.CreateTempSubdirectory("terrabase-key-expiry-").FullName;
         var coldDirectory = Directory.CreateTempSubdirectory("terrabase-key-expiry-cold-").FullName;

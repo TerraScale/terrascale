@@ -23,7 +23,7 @@ public sealed class BackupKeySaturationTests
         const int cacheCapacity = 65536;
         const int primingKeys = cacheCapacity - 2;
         const int concurrentSegments = 8;
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
         var directory = Directory.CreateTempSubdirectory("terrabase-key-saturation-").FullName;
         var coldDirectory = Directory.CreateTempSubdirectory("terrabase-key-saturation-cold-").FullName;

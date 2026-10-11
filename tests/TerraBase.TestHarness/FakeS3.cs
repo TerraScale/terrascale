@@ -17,7 +17,7 @@ namespace TerraBase.Testing;
 /// serves both through message handlers that replace the server's transports (no socket), and counts the master key's
 /// data key generations and unwraps.
 /// </summary>
-public sealed class FakeOci : IDisposable
+public sealed class FakeS3
 {
     public const string Bucket = "backup-test";
     public const string CustomerBucket = "customer-backup";
@@ -187,11 +187,6 @@ public sealed class FakeOci : IDisposable
     {
         services.AddHttpClient("backup-s3").ConfigurePrimaryHttpMessageHandler(() => new Handler(this));
         services.Replace(ServiceDescriptor.Singleton<IMasterKey>(provider => new CountingMasterKey(new MasterKey(provider.GetRequiredService<BackupSettings>().MasterKey), this)));
-    }
-
-    // Nothing to release; the rename to FakeS3 drops IDisposable along with every using.
-    public void Dispose()
-    {
     }
 
     private async Task<HttpResponseMessage> RespondAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -464,7 +459,7 @@ public sealed class FakeOci : IDisposable
     }
 
     // The real master key; generations and unwraps are counted like the requests of a remote key service.
-    private sealed class CountingMasterKey(MasterKey inner, FakeOci oci) : IMasterKey
+    private sealed class CountingMasterKey(MasterKey inner, FakeS3 oci) : IMasterKey
     {
         public Task<(byte[] Key, string Wrapped)> GenerateDataKeyAsync(CancellationToken cancellationToken)
         {
@@ -487,7 +482,7 @@ public sealed class FakeOci : IDisposable
         }
     }
 
-    private sealed class Handler(FakeOci oci) : HttpMessageHandler
+    private sealed class Handler(FakeS3 oci) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
             oci.RespondAsync(request, cancellationToken);

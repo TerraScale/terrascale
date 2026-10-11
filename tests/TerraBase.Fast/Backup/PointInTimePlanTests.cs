@@ -18,7 +18,7 @@ public sealed class PointInTimePlanTests
     [Test]
     public async Task Project_tokens_preview_by_database_name_with_read_scope_and_tenant_isolation()
     {
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = Clock();
         var probe = new StorageProbe();
         await using var api = await ManagementApi.StartAsync(oci.Configure, services => Route(oci, probe, services), time, managementCredential: true);
@@ -74,7 +74,7 @@ public sealed class PointInTimePlanTests
     [Test]
     public async Task Earlier_and_latest_plans_select_the_restore_snapshots_and_segments_without_changing_any_data()
     {
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = Clock();
         var probe = new StorageProbe();
         await using var api = await ManagementApi.StartAsync(oci.Configure, services => Route(oci, probe, services), time, managementCredential: true);
@@ -149,7 +149,7 @@ public sealed class PointInTimePlanTests
     [Test]
     public async Task Validation_is_access_first_and_viewers_can_read_the_plan()
     {
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = Clock();
         await using var api = await ManagementApi.StartAsync(oci.Configure, services =>
         {
@@ -220,7 +220,7 @@ public sealed class PointInTimePlanTests
     [Arguments(true)]
     public async Task Backup_off_or_without_a_snapshot_returns_not_found(bool enabled)
     {
-        using var oci = new FakeOci { FailPut = _ => true };
+        var oci = new FakeS3 { FailPut = _ => true };
         var time = Clock();
         await using var api = await ManagementApi.StartAsync(enabled ? oci.Configure : null, enabled ? oci.Route : null, time);
         var database = await api.CreateManagedDatabaseAsync();
@@ -235,7 +235,7 @@ public sealed class PointInTimePlanTests
     [Arguments(9999)]
     public async Task Uncached_latest_generation_is_scanned_once_through_later_segments_and_the_budget_boundary(int segmentCount)
     {
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = Clock();
         var probe = new StorageProbe();
         await using var api = await ManagementApi.StartAsync(oci.Configure, services => Route(oci, probe, services), time, managementCredential: true);
@@ -293,7 +293,7 @@ public sealed class PointInTimePlanTests
     [Test]
     public async Task Uncached_earlier_generation_uses_its_segments_and_the_newest_generations_window()
     {
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = Clock();
         var probe = new StorageProbe();
         await using var api = await ManagementApi.StartAsync(oci.Configure, services => Route(oci, probe, services), time, managementCredential: true);
@@ -340,7 +340,7 @@ public sealed class PointInTimePlanTests
     [Arguments(true)]
     public async Task Object_store_listing_failures_return_a_sanitized_unavailable_response(bool network)
     {
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = Clock();
         var probe = new StorageProbe { NetworkFailure = network };
         await using var api = await ManagementApi.StartAsync(oci.Configure, services => Route(oci, probe, services), time, managementCredential: true);
@@ -370,7 +370,7 @@ public sealed class PointInTimePlanTests
     [Arguments(true)]
     public async Task Raw_snapshot_and_segment_metadata_share_the_scan_budget(bool segments)
     {
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = Clock();
         var probe = new StorageProbe();
         await using var api = await ManagementApi.StartAsync(oci.Configure, services => Route(oci, probe, services), time, managementCredential: true);
@@ -396,7 +396,7 @@ public sealed class PointInTimePlanTests
     [Test]
     public async Task Metadata_listing_times_out_on_the_injected_clock()
     {
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = Clock();
         var probe = new StorageProbe();
         await using var api = await ManagementApi.StartAsync(oci.Configure, services => Route(oci, probe, services), time, managementCredential: true);
@@ -423,12 +423,12 @@ public sealed class PointInTimePlanTests
 
     private static string File(ManagedDatabaseRef database) => $"v1/{database.Organization}/{database.Project}/{database.Id}";
 
-    private static string[] Snapshot(FakeOci oci, ManagedDatabaseRef database, DateTimeOffset at) =>
+    private static string[] Snapshot(FakeS3 oci, ManagedDatabaseRef database, DateTimeOffset at) =>
         oci.Objects.Keys.Where(key => key.StartsWith(File(database) + "/snapshots/", StringComparison.Ordinal))
             .Order(StringComparer.Ordinal).Select(key => key.Split('/')[^1].Split('-'))
             .Last(parts => long.Parse(parts[0], CultureInfo.InvariantCulture) <= at.ToUnixTimeMilliseconds());
 
-    private static List<DateTimeOffset> Segments(FakeOci oci, ManagedDatabaseRef database, string[] snapshot, DateTimeOffset at) =>
+    private static List<DateTimeOffset> Segments(FakeS3 oci, ManagedDatabaseRef database, string[] snapshot, DateTimeOffset at) =>
         [.. oci.Objects.Keys.Where(key => key.StartsWith(File(database) + "/wal/" + snapshot[1] + "/", StringComparison.Ordinal))
             .Select(key => key.Split('/')[^1].Split('-'))
             .Where(parts => long.Parse(parts[0], CultureInfo.InvariantCulture) >= long.Parse(snapshot[2], CultureInfo.InvariantCulture))
@@ -437,7 +437,7 @@ public sealed class PointInTimePlanTests
     private static string[] Files(ManagementApi api) =>
         [.. Directory.EnumerateFiles(api.Server.DataDirectory, "*", SearchOption.AllDirectories).Order(StringComparer.Ordinal)];
 
-    private static void Route(FakeOci oci, StorageProbe probe, IServiceCollection services)
+    private static void Route(FakeS3 oci, StorageProbe probe, IServiceCollection services)
     {
         oci.Route(services);
         ManualBackupHosting.Configure(services);

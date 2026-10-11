@@ -21,7 +21,7 @@ public sealed class CustomerBackupIsolationTests
     {
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         using var shipping = CancellationTokenSource.CreateLinkedTokenSource(token);
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
         await using var api = await ManagementApi.StartAsync(oci.Configure, services =>
         {
@@ -252,11 +252,11 @@ public sealed class CustomerBackupIsolationTests
     {
         var destination = new Dictionary<string, string>(StringComparer.Ordinal)
         {
-            ["endpoint"] = FakeOci.CustomerEndpoint,
+            ["endpoint"] = FakeS3.CustomerEndpoint,
             ["region"] = "test-region-1",
-            ["bucket"] = FakeOci.CustomerBucket,
-            ["accessKeyId"] = FakeOci.CustomerAccessKey,
-            ["secretKey"] = FakeOci.CustomerSecretKey,
+            ["bucket"] = FakeS3.CustomerBucket,
+            ["accessKeyId"] = FakeS3.CustomerAccessKey,
+            ["secretKey"] = FakeS3.CustomerSecretKey,
             ["mode"] = "customer",
         };
         using var response = await api.Client.PutAsJsonAsync(ManagementApi.Uri(database.ProjectPath + "/backup-destination"), destination, token);
@@ -304,8 +304,8 @@ public sealed class CustomerBackupIsolationTests
 
     private static async Task AssertPublicAsync(string json)
     {
-        await Assert.That(json.Contains(FakeOci.CustomerAccessKey, StringComparison.Ordinal)).IsFalse();
-        await Assert.That(json.Contains(FakeOci.CustomerSecretKey, StringComparison.Ordinal)).IsFalse();
+        await Assert.That(json.Contains(FakeS3.CustomerAccessKey, StringComparison.Ordinal)).IsFalse();
+        await Assert.That(json.Contains(FakeS3.CustomerSecretKey, StringComparison.Ordinal)).IsFalse();
         await Assert.That(json.Contains("wrappedKey", StringComparison.Ordinal)).IsFalse();
     }
 

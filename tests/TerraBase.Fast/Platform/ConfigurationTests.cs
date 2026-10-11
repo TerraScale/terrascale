@@ -90,7 +90,7 @@ public sealed class ConfigurationTests
     [Test]
     public async Task Backup_retention_defaults_to_one_seven_and_thirty_days_and_takes_plan_overrides()
     {
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var values = new Dictionary<string, string>();
         oci.Configure(values);
         var defaults = TerraBaseOptions.FromValues(values).Backup!.RetentionDays;
@@ -121,7 +121,7 @@ public sealed class ConfigurationTests
     public async Task A_master_key_that_is_not_32_base64_bytes_is_rejected_without_echoing_it(string masterKey)
     {
         var values = new Dictionary<string, string>();
-        new FakeOci().Configure(values);
+        new FakeS3().Configure(values);
         values["master-key"] = masterKey;
 
         var error = await Assert.That(() => TerraBaseOptions.FromValues(values)).Throws<TerraBaseConfigurationException>();

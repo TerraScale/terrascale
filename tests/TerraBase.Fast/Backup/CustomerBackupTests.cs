@@ -18,7 +18,7 @@ public sealed class CustomerBackupTests
     public async Task Both_destinations_ship_encrypted_snapshots_and_wal_and_restore_actual_documents()
     {
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = Clock();
         await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
@@ -78,7 +78,7 @@ public sealed class CustomerBackupTests
     public async Task Project_tokens_select_platform_or_customer_plans_and_restore_only_within_each_stored_window(string mode)
     {
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = Clock();
         await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
@@ -184,7 +184,7 @@ public sealed class CustomerBackupTests
     public async Task Unusable_customer_snapshot_and_segment_entries_consume_the_paginated_plan_budget(bool segments)
     {
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = Clock();
         await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
@@ -220,7 +220,7 @@ public sealed class CustomerBackupTests
     public async Task Project_destination_configuration_requires_scope_and_hides_other_projects_tenants_and_database_narrowed_tokens()
     {
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = Clock();
         await using var api = await ManagementApi.StartAsync(oci.Configure, oci.Route, time);
         var database = await api.CreateManagedDatabaseAsync();
@@ -296,7 +296,7 @@ public sealed class CustomerBackupTests
     public async Task Customer_only_shipping_is_isolated_to_its_project_and_keeps_system_backups_on_platform()
     {
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = Clock();
         await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
@@ -338,7 +338,7 @@ public sealed class CustomerBackupTests
     public async Task Credentials_are_sealed_in_the_catalog_and_delete_resumes_platform_without_removing_customer_objects()
     {
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = Clock();
         await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
@@ -351,8 +351,8 @@ public sealed class CustomerBackupTests
         get.EnsureSuccessStatusCode();
         await AssertDestinationAsync(await get.Content.ReadAsStringAsync(cancellationToken), "customer");
         var catalog = string.Join('\n', await DocumentFiles.ReadAsync(Path.Combine(api.Server.DataDirectory, "_system.db")));
-        await Assert.That(catalog.Contains(FakeOci.CustomerAccessKey, StringComparison.Ordinal)).IsFalse();
-        await Assert.That(catalog.Contains(FakeOci.CustomerSecretKey, StringComparison.Ordinal)).IsFalse();
+        await Assert.That(catalog.Contains(FakeS3.CustomerAccessKey, StringComparison.Ordinal)).IsFalse();
+        await Assert.That(catalog.Contains(FakeS3.CustomerSecretKey, StringComparison.Ordinal)).IsFalse();
         foreach (var path in new[] { database.ProjectPath, database.Path, database.ProjectPath + "/databases" })
         {
             var response = await api.Client.GetStringAsync(Uri(path), cancellationToken);
@@ -386,7 +386,7 @@ public sealed class CustomerBackupTests
     public async Task An_empty_project_with_a_customer_backup_destination_requires_detach_before_deletion(bool viaCommit)
     {
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = Clock();
         var queryClock = new SteppingClock();
         await using var api = await ManagementApi.StartAsync(oci.Configure, services =>
@@ -436,7 +436,7 @@ public sealed class CustomerBackupTests
     public async Task Creating_replacing_and_detaching_a_backup_destination_advances_the_organization_fence()
     {
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = Clock();
         await using var api = await ManagementApi.StartAsync(oci.Configure, oci.Route, time);
         var organization = await api.CreateOrganizationAsync(new Faker().Company.CompanyName());
@@ -489,7 +489,7 @@ public sealed class CustomerBackupTests
     public async Task Changing_a_destination_starts_a_new_generation_and_stops_platform_shipping_in_customer_mode()
     {
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = Clock();
         await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
@@ -530,7 +530,7 @@ public sealed class CustomerBackupTests
     public async Task Invalid_destinations_and_unauthorized_callers_cannot_change_or_restore_customer_backups()
     {
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = Clock();
         await using var api = await ManagementApi.StartAsync(oci.Configure, oci.Route, time);
         var database = await api.CreateManagedDatabaseAsync();
@@ -589,7 +589,7 @@ public sealed class CustomerBackupTests
     public async Task A_partial_mirror_upload_recovers_without_overlapping_segments_and_both_copies_restore()
     {
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = Clock();
         await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
@@ -649,7 +649,7 @@ public sealed class CustomerBackupTests
     public async Task Hostile_customer_listings_cannot_read_or_delete_foreign_project_objects()
     {
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = Clock();
         await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
@@ -768,7 +768,7 @@ public sealed class CustomerBackupTests
     [Test]
     public async Task Empty_truncated_customer_pages_cannot_stall_backup_passes_or_another_projects_shipping()
     {
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = Clock();
         await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
@@ -848,7 +848,7 @@ public sealed class CustomerBackupTests
     [Test]
     public async Task Stalled_customer_snapshot_body_is_cancelled_at_deadline_and_releases_shipping_for_the_next_pass()
     {
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = Clock();
         await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
@@ -919,7 +919,7 @@ public sealed class CustomerBackupTests
     [Test]
     public async Task Cancelled_mirror_wal_upload_abandons_the_generation_before_the_next_pass()
     {
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = Clock();
         await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
@@ -994,7 +994,7 @@ public sealed class CustomerBackupTests
     public async Task Customer_restore_accepts_exactly_sixteen_kibibytes_of_wrapped_key_and_rejects_larger_bodies()
     {
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = Clock();
         await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
@@ -1042,7 +1042,7 @@ public sealed class CustomerBackupTests
     [Test]
     public async Task Retention_trims_platform_snapshots_from_before_customer_attachment_and_retries_platform_locks_independently()
     {
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = Clock();
         await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
@@ -1086,7 +1086,7 @@ public sealed class CustomerBackupTests
     public async Task Customer_only_switch_refreshes_size_and_prunes_old_platform_history_while_expired_window_is_absent()
     {
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = Clock();
         await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
@@ -1136,7 +1136,7 @@ public sealed class CustomerBackupTests
     public async Task Own_prefix_junk_is_ignored_but_nonascending_customer_listings_still_fail()
     {
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = Clock();
         await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
@@ -1186,7 +1186,7 @@ public sealed class CustomerBackupTests
     public async Task Missing_customer_bucket_is_unavailable_while_a_missing_snapshot_is_an_incomplete_backup()
     {
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = Clock();
         await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
@@ -1221,7 +1221,7 @@ public sealed class CustomerBackupTests
     [Test]
     public async Task Destination_save_admission_authorizes_first_limits_each_organization_and_bounds_global_saves()
     {
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = Clock();
         await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
         var databases = new List<ManagedDatabaseRef>();
@@ -1357,7 +1357,7 @@ public sealed class CustomerBackupTests
         public void Release() => _body.TrySetResult(0);
     }
 
-    private static void ManualShipping(FakeOci oci, IServiceCollection services)
+    private static void ManualShipping(FakeS3 oci, IServiceCollection services)
     {
         oci.Route(services);
         ManualBackupHosting.Configure(services);
@@ -1367,11 +1367,11 @@ public sealed class CustomerBackupTests
 
     private static Dictionary<string, string> Destination(string mode) => new(StringComparer.Ordinal)
     {
-        ["endpoint"] = FakeOci.CustomerEndpoint,
+        ["endpoint"] = FakeS3.CustomerEndpoint,
         ["region"] = "test-region-1",
-        ["bucket"] = FakeOci.CustomerBucket,
-        ["accessKeyId"] = FakeOci.CustomerAccessKey,
-        ["secretKey"] = FakeOci.CustomerSecretKey,
+        ["bucket"] = FakeS3.CustomerBucket,
+        ["accessKeyId"] = FakeS3.CustomerAccessKey,
+        ["secretKey"] = FakeS3.CustomerSecretKey,
         ["mode"] = mode,
     };
 
@@ -1406,9 +1406,9 @@ public sealed class CustomerBackupTests
     {
         using var body = JsonDocument.Parse(json);
         await Assert.That(body.RootElement.EnumerateObject().Select(property => property.Name)).IsEquivalentTo(["endpoint", "region", "bucket", "mode", "updatedAt"]);
-        await Assert.That(body.RootElement.GetProperty("endpoint").GetString()!.TrimEnd('/')).IsEqualTo(FakeOci.CustomerEndpoint);
+        await Assert.That(body.RootElement.GetProperty("endpoint").GetString()!.TrimEnd('/')).IsEqualTo(FakeS3.CustomerEndpoint);
         await Assert.That(body.RootElement.GetProperty("region").GetString()).IsEqualTo("test-region-1");
-        await Assert.That(body.RootElement.GetProperty("bucket").GetString()).IsEqualTo(FakeOci.CustomerBucket);
+        await Assert.That(body.RootElement.GetProperty("bucket").GetString()).IsEqualTo(FakeS3.CustomerBucket);
         await Assert.That(body.RootElement.GetProperty("mode").GetString()).IsEqualTo(mode);
         await Assert.That(body.RootElement.GetProperty("updatedAt").GetDateTimeOffset()).IsGreaterThan(DateTimeOffset.MinValue);
         await AssertPublicAsync(json);
@@ -1416,8 +1416,8 @@ public sealed class CustomerBackupTests
 
     private static async Task AssertPublicAsync(string json)
     {
-        await Assert.That(json.Contains(FakeOci.CustomerAccessKey, StringComparison.Ordinal)).IsFalse();
-        await Assert.That(json.Contains(FakeOci.CustomerSecretKey, StringComparison.Ordinal)).IsFalse();
+        await Assert.That(json.Contains(FakeS3.CustomerAccessKey, StringComparison.Ordinal)).IsFalse();
+        await Assert.That(json.Contains(FakeS3.CustomerSecretKey, StringComparison.Ordinal)).IsFalse();
         await Assert.That(json.Contains("wrappedKey", StringComparison.Ordinal)).IsFalse();
     }
 

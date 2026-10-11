@@ -25,7 +25,7 @@ public sealed class BackupShutdownTests
     public async Task A_failed_customer_upload_then_detachment_flushes_a_final_platform_snapshot_without_waiting_for_backoff()
     {
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 9, 12, 0, 0, TimeSpan.Zero));
         await using var api = await ManagementApi.StartAsync(oci.Configure, services =>
         {
@@ -67,7 +67,7 @@ public sealed class BackupShutdownTests
     {
         const int customers = 3;
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         using var shutdown = CancellationTokenSource.CreateLinkedTokenSource(token);
         var directory = Directory.CreateTempSubdirectory("terrabase-final-configurations-").FullName;
         var hook = new UsageCommitHook();
@@ -208,7 +208,7 @@ public sealed class BackupShutdownTests
     public async Task Final_customer_io_waits_until_platform_wal_and_a_cached_detachment_are_restorable(bool detach)
     {
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         using var shutdown = CancellationTokenSource.CreateLinkedTokenSource(token);
         var directory = Directory.CreateTempSubdirectory("terrabase-final-customer-").FullName;
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -353,7 +353,7 @@ public sealed class BackupShutdownTests
     public async Task An_already_expired_stop_token_joins_active_customer_io_before_disposing_any_tap()
     {
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         using var shutdown = new CancellationTokenSource();
         var directory = Directory.CreateTempSubdirectory("terrabase-expired-customer-stop-").FullName;
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -449,7 +449,7 @@ public sealed class BackupShutdownTests
     [Test]
     public async Task Cancelling_the_final_upload_returns_every_tap_and_allows_the_data_directory_to_reopen()
     {
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         using var shutdown = new CancellationTokenSource();
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var directory = Directory.CreateTempSubdirectory("terrabase-backup-shutdown-").FullName;
@@ -563,7 +563,7 @@ public sealed class BackupShutdownTests
     [Test]
     public async Task A_failing_tap_disposal_still_returns_every_other_tap_and_lets_the_engine_close()
     {
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         var directory = Directory.CreateTempSubdirectory("terrabase-backup-tap-failure-").FullName;
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
@@ -698,11 +698,11 @@ public sealed class BackupShutdownTests
     {
         using var response = await api.Client.PutAsJsonAsync(ManagementApi.Uri(database.ProjectPath + "/backup-destination"), new
         {
-            endpoint = FakeOci.CustomerEndpoint,
+            endpoint = FakeS3.CustomerEndpoint,
             region = "test-region-1",
-            bucket = FakeOci.CustomerBucket,
-            accessKeyId = FakeOci.CustomerAccessKey,
-            secretKey = FakeOci.CustomerSecretKey,
+            bucket = FakeS3.CustomerBucket,
+            accessKeyId = FakeS3.CustomerAccessKey,
+            secretKey = FakeS3.CustomerSecretKey,
             mode = "customer",
         }, token);
         response.EnsureSuccessStatusCode();

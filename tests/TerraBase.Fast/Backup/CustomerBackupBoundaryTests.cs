@@ -21,7 +21,7 @@ public sealed class CustomerBackupBoundaryTests
     public async Task Generated_wrapped_key_boundary_rejects_before_publication_and_restores_on_a_cold_node(int wrappedBytes)
     {
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = Clock();
         var directory = Directory.CreateTempSubdirectory("terrabase-key-boundary-").FullName;
         var coldDirectory = Directory.CreateTempSubdirectory("terrabase-key-boundary-cold-").FullName;
@@ -121,7 +121,7 @@ public sealed class CustomerBackupBoundaryTests
     public async Task Long_xml_escaped_customer_keys_paginate_within_the_response_bound_and_restore_actual_documents()
     {
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = Clock();
         await using var api = await StartAsync(oci, time);
         var database = await api.CreateManagedDatabaseAsync();
@@ -165,7 +165,7 @@ public sealed class CustomerBackupBoundaryTests
         await Assert.That(oci.BadSignatures).IsEqualTo(0);
     }
 
-    private static async Task<ManagementApi> StartAsync(FakeOci oci, FakeTimeProvider time, string? directory = null, int? wrappedBytes = null)
+    private static async Task<ManagementApi> StartAsync(FakeS3 oci, FakeTimeProvider time, string? directory = null, int? wrappedBytes = null)
     {
         var api = await ManagementApi.StartAsync(settings =>
         {
@@ -195,11 +195,11 @@ public sealed class CustomerBackupBoundaryTests
     {
         using var response = await api.Client.PutAsJsonAsync(ManagementApi.Uri(database.ProjectPath + "/backup-destination"), new
         {
-            endpoint = FakeOci.CustomerEndpoint,
+            endpoint = FakeS3.CustomerEndpoint,
             region = "test-region-1",
-            bucket = FakeOci.CustomerBucket,
-            accessKeyId = FakeOci.CustomerAccessKey,
-            secretKey = FakeOci.CustomerSecretKey,
+            bucket = FakeS3.CustomerBucket,
+            accessKeyId = FakeS3.CustomerAccessKey,
+            secretKey = FakeS3.CustomerSecretKey,
             mode = "customer",
         }, cancellationToken);
         response.EnsureSuccessStatusCode();

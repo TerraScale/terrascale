@@ -16,7 +16,7 @@ public sealed class BackupPlatformProgressTests
     public async Task Acknowledged_platform_progress_previews_an_early_time_without_scanning_over_ten_thousand_later_segments(string mode)
     {
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
         await using var api = await StartAsync(oci, time);
         var database = await api.CreateManagedDatabaseAsync();
@@ -69,7 +69,7 @@ public sealed class BackupPlatformProgressTests
     public async Task Customer_only_or_a_different_mirrored_generation_cannot_supply_platform_progress(bool differentGeneration)
     {
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
         await using var api = await StartAsync(oci, time);
         var database = await api.CreateManagedDatabaseAsync();
@@ -92,7 +92,7 @@ public sealed class BackupPlatformProgressTests
         await Assert.That(oci.BadSignatures).IsEqualTo(0);
     }
 
-    private static async Task<ManagementApi> StartAsync(FakeOci oci, FakeTimeProvider time)
+    private static async Task<ManagementApi> StartAsync(FakeS3 oci, FakeTimeProvider time)
     {
         var api = await ManagementApi.StartAsync(oci.Configure, services =>
         {
@@ -107,17 +107,17 @@ public sealed class BackupPlatformProgressTests
     {
         using var response = await api.Client.PutAsJsonAsync(ManagementApi.Uri(database.ProjectPath + "/backup-destination"), new
         {
-            endpoint = FakeOci.CustomerEndpoint,
+            endpoint = FakeS3.CustomerEndpoint,
             region = "test-region-1",
-            bucket = FakeOci.CustomerBucket,
-            accessKeyId = FakeOci.CustomerAccessKey,
-            secretKey = FakeOci.CustomerSecretKey,
+            bucket = FakeS3.CustomerBucket,
+            accessKeyId = FakeS3.CustomerAccessKey,
+            secretKey = FakeS3.CustomerSecretKey,
             mode,
         }, token);
         response.EnsureSuccessStatusCode();
     }
 
-    private static void SeedLaterSegments(FakeOci oci, ManagedDatabaseRef database, Ulid generation, DateTimeOffset at, bool customer)
+    private static void SeedLaterSegments(FakeS3 oci, ManagedDatabaseRef database, Ulid generation, DateTimeOffset at, bool customer)
     {
         for (var index = 1; index <= 10_001; index++)
         {

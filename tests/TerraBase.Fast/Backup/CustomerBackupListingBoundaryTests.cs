@@ -21,7 +21,7 @@ public sealed class CustomerBackupListingBoundaryTests
     public async Task Multibyte_key_limit_controls_snapshot_and_segment_selection_restore_and_retention(string scalar, int keyBytes)
     {
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = Clock();
         await using var api = await StartAsync(oci, time);
         var (database, text) = await SeedAsync(api, cancellationToken);
@@ -133,7 +133,7 @@ public sealed class CustomerBackupListingBoundaryTests
     public async Task Malformed_snapshot_and_WAL_metadata_returns_fixed_503_on_canonical_and_alias_windows_and_recovers(string failure, bool segments)
     {
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = Clock();
         await using var api = await StartAsync(oci, time);
         var (database, text) = await SeedAsync(api, cancellationToken);
@@ -194,7 +194,7 @@ public sealed class CustomerBackupListingBoundaryTests
     public async Task Oversized_multibyte_entries_still_consume_raw_snapshot_and_WAL_plan_budgets(bool segments)
     {
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = Clock();
         await using var api = await StartAsync(oci, time);
         var (database, _) = await SeedAsync(api, cancellationToken);
@@ -230,7 +230,7 @@ public sealed class CustomerBackupListingBoundaryTests
     public async Task Window_listing_observes_caller_cancellation_on_canonical_and_alias_listeners_and_recovers(bool canonical)
     {
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = Clock();
         await using var api = await StartAsync(oci, time);
         var (database, _) = await SeedAsync(api, cancellationToken);
@@ -285,7 +285,7 @@ public sealed class CustomerBackupListingBoundaryTests
         await Assert.That(oci.BadSignatures).IsEqualTo(0);
     }
 
-    private static async Task<ManagementApi> StartAsync(FakeOci oci, FakeTimeProvider time)
+    private static async Task<ManagementApi> StartAsync(FakeS3 oci, FakeTimeProvider time)
     {
         var api = await ManagementApi.StartAsync(oci.Configure, services =>
         {
@@ -301,11 +301,11 @@ public sealed class CustomerBackupListingBoundaryTests
         var database = await api.CreateManagedDatabaseAsync();
         using var saved = await api.Client.PutAsJsonAsync(ManagementApi.Uri(database.ProjectPath + "/backup-destination"), new
         {
-            endpoint = FakeOci.CustomerEndpoint,
+            endpoint = FakeS3.CustomerEndpoint,
             region = "test-region-1",
-            bucket = FakeOci.CustomerBucket,
-            accessKeyId = FakeOci.CustomerAccessKey,
-            secretKey = FakeOci.CustomerSecretKey,
+            bucket = FakeS3.CustomerBucket,
+            accessKeyId = FakeS3.CustomerAccessKey,
+            secretKey = FakeS3.CustomerSecretKey,
             mode = "customer",
         }, cancellationToken);
         saved.EnsureSuccessStatusCode();
@@ -337,7 +337,7 @@ public sealed class CustomerBackupListingBoundaryTests
         return prefix + string.Concat(Enumerable.Repeat(scalar, remaining / scalarBytes)) + new string('x', remaining % scalarBytes) + "/" + filename;
     }
 
-    private static async Task ResealAsync(FakeOci oci, KeyValuePair<string, byte[]> original, string renamed, CancellationToken cancellationToken)
+    private static async Task ResealAsync(FakeS3 oci, KeyValuePair<string, byte[]> original, string renamed, CancellationToken cancellationToken)
     {
         var keyId = Encoding.ASCII.GetString(original.Value, 4, 26);
         var parts = original.Key.Split('/');

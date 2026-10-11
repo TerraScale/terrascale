@@ -21,7 +21,7 @@ public sealed class CustomerBackupCatalogRefusalTests
     public async Task A_destination_read_refuses_a_catalog_changed_after_authorization_without_platform_fallback()
     {
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = Clock();
         var hook = new UsageCommitHook();
         await using var api = await StartAsync(oci, time, hook);
@@ -65,7 +65,7 @@ public sealed class CustomerBackupCatalogRefusalTests
         await Assert.That(oci.BadSignatures).IsEqualTo(0);
     }
 
-    private static async Task<ManagementApi> StartAsync(FakeOci oci, FakeTimeProvider time, UsageCommitHook hook)
+    private static async Task<ManagementApi> StartAsync(FakeS3 oci, FakeTimeProvider time, UsageCommitHook hook)
     {
         var api = await ManagementApi.StartAsync(oci.Configure, services =>
         {
@@ -93,11 +93,11 @@ public sealed class CustomerBackupCatalogRefusalTests
 
     private static object Destination(string mode) => new
     {
-        endpoint = FakeOci.CustomerEndpoint,
+        endpoint = FakeS3.CustomerEndpoint,
         region = "test-region-1",
-        bucket = FakeOci.CustomerBucket,
-        accessKeyId = FakeOci.CustomerAccessKey,
-        secretKey = FakeOci.CustomerSecretKey,
+        bucket = FakeS3.CustomerBucket,
+        accessKeyId = FakeS3.CustomerAccessKey,
+        secretKey = FakeS3.CustomerSecretKey,
         mode,
     };
 

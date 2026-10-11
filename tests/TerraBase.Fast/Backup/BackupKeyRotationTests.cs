@@ -23,7 +23,7 @@ public sealed class BackupKeyRotationTests
     {
         var elapsed = Stopwatch.StartNew();
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
         var directory = Directory.CreateTempSubdirectory("terrabase-key-history-").FullName;
         var before = new Faker().Lorem.Sentence(12);
@@ -125,7 +125,7 @@ public sealed class BackupKeyRotationTests
     public async Task A_cold_node_restores_with_an_uncached_historical_key_while_current_key_publication_is_blocked()
     {
         var testCancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
         var directory = Directory.CreateTempSubdirectory("terrabase-key-publication-").FullName;
         var coldDirectory = Directory.CreateTempSubdirectory("terrabase-key-publication-cold-").FullName;
@@ -223,7 +223,7 @@ public sealed class BackupKeyRotationTests
     [Arguments(true)]
     public async Task Rotation_preserves_a_mixed_key_generation_and_recovers_failed_key_publication_on_a_cold_node(bool failPublication)
     {
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
         var directory = Directory.CreateTempSubdirectory("terrabase-key-rotation-").FullName;
         var coldDirectory = Directory.CreateTempSubdirectory("terrabase-key-restore-").FullName;
@@ -388,7 +388,7 @@ public sealed class BackupKeyRotationTests
     [Test]
     public async Task A_live_node_refreshes_its_unexpired_current_key_after_a_peer_rotates_it()
     {
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
         var directory = Directory.CreateTempSubdirectory("terrabase-key-current-").FullName;
         var peerDirectory = Directory.CreateTempSubdirectory("terrabase-key-peer-").FullName;
@@ -491,7 +491,7 @@ public sealed class BackupKeyRotationTests
     [Arguments("1.5")]
     public async Task Invalid_rotation_intervals_prevent_the_real_server_from_starting(string days)
     {
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         await Assert.That(async () =>
         {
             await using var server = await TerraBaseTestServer.StartAsync(settings =>
@@ -504,7 +504,7 @@ public sealed class BackupKeyRotationTests
         await Assert.That(oci.GeneratedKeys).IsEqualTo(0);
     }
 
-    private static async Task<ManagementApi> StartAsync(FakeOci oci, FakeTimeProvider time, string directory, string rotation = "1")
+    private static async Task<ManagementApi> StartAsync(FakeS3 oci, FakeTimeProvider time, string directory, string rotation = "1")
     {
         var api = await ManagementApi.StartAsync(settings =>
         {
@@ -526,7 +526,7 @@ public sealed class BackupKeyRotationTests
     }
 
     private static async Task<(ManagedDatabaseRef Database, string User)> SeedAsync(
-        FakeOci oci, FakeTimeProvider time, string directory, string text, string rotation = "1")
+        FakeS3 oci, FakeTimeProvider time, string directory, string text, string rotation = "1")
     {
         await using var api = await StartAsync(oci, time, directory, rotation);
         return await SeedAsync(api, time, text);
