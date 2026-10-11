@@ -6,17 +6,11 @@ using ZLogger;
 namespace TerraScale.Authentication.Features.Observability;
 
 /// <summary>
-/// Checks storage access, this replica's signing-ring bootstrap and the serving issuer's public
-/// signing metadata. The check itself never writes identity state. The public-metadata read is
-/// cached for five minutes after it succeeds; a failure is never cached.
+/// Checks storage access, this replica's signing-key bootstrap and the serving issuer's public signing metadata. The
+/// check itself never writes identity state.
 /// </summary>
-public sealed class SigningKeyReadiness(TerraBaseStorageHealth storage, KeyRing ring, SigningKeyRotation rotation, TimeProvider clock) : IStorageHealth
+public sealed class SigningKeyReadiness(TerraBaseStorageHealth storage, KeyRing ring, SigningKeyRotation rotation) : IStorageHealth
 {
-    private static readonly TimeSpan VaultCacheTtl = TimeSpan.FromMinutes(5);
-
-    // Only the readiness loop calls CheckAsync, so no lock guards this.
-    private long? vaultVerifiedAt;
-
     /// <inheritdoc />
     public async Task<StorageHealthResult> CheckAsync(CancellationToken cancellationToken)
     {
@@ -24,11 +18,7 @@ public sealed class SigningKeyReadiness(TerraBaseStorageHealth storage, KeyRing 
         if (result.Healthy)
         {
             await rotation.Bootstrapped.WaitAsync(cancellationToken).ConfigureAwait(false);
-            if (this.vaultVerifiedAt is not { } verified || clock.GetElapsedTime(verified) >= VaultCacheTtl)
-            {
-                await ring.CheckPublicMetadataAsync(OidcIssuer.InstanceId, cancellationToken).ConfigureAwait(false);
-                this.vaultVerifiedAt = clock.GetTimestamp();
-            }
+            await ring.CheckPublicMetadataAsync(OidcIssuer.InstanceId, cancellationToken).ConfigureAwait(false);
         }
 
         return result;

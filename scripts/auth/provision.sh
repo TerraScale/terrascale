@@ -10,7 +10,7 @@ Provisioning plan (no changes executed):
    there (PUT /v1/projects/<ts-auth-project-id>/databases/auth).
 3. With the pinned ts-dotnet Documents client, call AuthStore.ProvisionAsync on that existing database.
    It creates uniques, verification_tokens, storage_health, users, sessions, passcodes,
-   signing_key_rings (TS-488), oidc_applications, oidc_authorizations and
+   signing_keys, oidc_applications, oidc_authorizations and
    oidc_tokens (TS-491), rate_limits (TS-488, required since TS-582) and
    email_configs and email_config_versions (TS-583), and organizations,
    memberships, projects, project_members, api_keys, invitations and audit_events (TS-598),

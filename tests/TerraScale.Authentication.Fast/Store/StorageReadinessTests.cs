@@ -6,8 +6,10 @@ using System.Text.Json.Nodes;
 using Microsoft.Extensions.DependencyInjection;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.SigningKeys;
+using TerraScale.Authentication.Store;
 using TerraScale.Authentication.Tests;
 using TerraScale.DotNet.Testing;
+using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Authentication.Fast.Store;
 
@@ -56,28 +58,38 @@ public sealed class StorageReadinessTests(TerraBaseFixture fixture)
         using var unavailable = await missing.Client.GetAsync("/readyz");
         await Assert.That(unavailable.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
         await Assert.That((await database.ListCollectionsAsync()).Items.Select(collection => collection.Name))
-            .IsEquivalentTo(["api_keys", "audit_events", "email_config_versions", "email_configs", "invitations", "memberships", "mfa_credentials", "oidc_applications", "oidc_authorizations", "oidc_tokens", "organizations", "passcodes", "project_members", "projects", "rate_limits", "sessions", "signing_key_rings", "storage_health", "uniques", "users", "verification_tokens"]);
+            .IsEquivalentTo(["api_keys", "audit_events", "email_config_versions", "email_configs", "invitations", "memberships", "mfa_credentials", "oidc_applications", "oidc_authorizations", "oidc_tokens", "organizations", "passcodes", "project_members", "projects", "rate_limits", "sessions", "signing_keys", "storage_health", "uniques", "users", "verification_tokens"]);
     }
 
     [Test]
-    public async Task Malformed_public_signing_metadata_after_startup_reports_not_ready_without_repairing_the_ring()
+    public async Task Startup_stores_the_issuer_key_in_terrabase_before_reporting_ready()
     {
-        var (tenant, _) = await fixture.CreateDatabaseAsync();
-        var vault = FakeOciVault.For(tenant.Project.Id);
+        var (tenant, database) = await fixture.CreateDatabaseAsync();
         await using var auth = await StartAuthAsync(tenant);
-        await auth.App.Services.GetRequiredService<SigningKeyRotation>().Bootstrapped.WaitAsync(TimeSpan.FromSeconds(30));
-        var id = OidcIssuer.InstanceId;
-        var stored = vault.Current(id);
-        var ring = JsonNode.Parse(stored.Document.GetRawText())!;
-        ring["keys"]![0]!["x"] = "not-a-coordinate";
-        vault.Put(id, JsonSerializer.SerializeToElement(ring));
-        var before = vault.Current(id);
 
-        // A pass after the write: a cached verified read never sees this malformed ring.
+        await Assert.That(await ReadyWithinAsync(auth, TimeSpan.FromSeconds(10))).IsTrue();
+        var stored = (await database.ListDocumentsAsync(AuthStore.SigningKeyCollection)).Items.Single().Document;
+        var jwks = await auth.Client.GetFromJsonAsync<JsonElement>($"/{OidcIssuer.Slug}/.well-known/jwks.json");
+        await Assert.That(stored.GetProperty("instanceId").GetString()).IsEqualTo(OidcIssuer.InstanceId);
+        await Assert.That(jwks.GetProperty("keys").EnumerateArray().Single().GetProperty("kid").GetString()).IsEqualTo(stored.GetProperty("id").GetString());
+    }
+
+    [Test]
+    public async Task Malformed_public_signing_metadata_after_startup_reports_not_ready_without_repairing_the_key()
+    {
+        var (tenant, database) = await fixture.CreateDatabaseAsync();
+        await using var auth = await StartAuthAsync(tenant);
+        await Assert.That(await ReadyWithinAsync(auth, TimeSpan.FromSeconds(10))).IsTrue();
+        var stored = (await database.ListDocumentsAsync(AuthStore.SigningKeyCollection)).Items.Single();
+        var key = JsonNode.Parse(stored.Document.GetRawText())!;
+        key["x"] = "not-a-coordinate";
+        var written = await database.PutDocumentAsync(AuthStore.SigningKeyCollection, stored.Id, JsonSerializer.SerializeToElement(key), TerraBasePrecondition.Matches(stored.Version));
+
         await Task.Delay(ReadinessWait.NextPass);
-        var after = vault.Current(id);
-        await Assert.That(after.Version).IsEqualTo(before.Version);
-        await Assert.That(after.Document.GetRawText()).IsEqualTo(before.Document.GetRawText());
+        using var response = await auth.Client.GetAsync("/readyz");
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        var after = (await database.ListDocumentsAsync(AuthStore.SigningKeyCollection)).Items.Single();
+        await Assert.That(after.Version).IsEqualTo(written.Version);
     }
 
     [Test]
@@ -103,7 +115,7 @@ public sealed class StorageReadinessTests(TerraBaseFixture fixture)
     [Arguments("users")]
     [Arguments("sessions")]
     [Arguments("passcodes")]
-    [Arguments("signing_key_rings")]
+    [Arguments("signing_keys")]
     [Arguments("oidc_applications")]
     [Arguments("oidc_authorizations")]
     [Arguments("oidc_tokens")]
@@ -128,7 +140,6 @@ public sealed class StorageReadinessTests(TerraBaseFixture fixture)
         AuthTestServer.StartAsync(settings: values =>
         {
             values["database"] = $"{tenant.Project.Id}/{databaseName}";
-            FakeOciVault.For(tenant.Project.Id).Bind(values);
             if (masterKey is not null)
             {
                 values["master-key"] = masterKey;
