@@ -11,7 +11,7 @@ commits to it. Decisions live in `.cos/fly-migration-plan.md`; this file records
 - **Fly**: throwaway app `spike-turso`, gru, shared-cpu-2x, 512 MB + 4 GB swap, 1 GB volume, kernel
   `6.12.105-fly`. Destroyed afterwards.
 - **Repro**: `benchmark/dotnet/TursoSpike` (standalone, outside the solution):
-  `dotnet run -c Release -- features | cdc | bench <seconds> [engine-prefix] | stress <s> [mvcc|wal] [writers] | lattice | tc | wrap | uring`.
+  `dotnet run -c Release -- features | cdc | designc | bench <seconds> [engine-prefix|all] [upsert|designc|both] [1|2|both] | stress <s> [mvcc|wal] [writers] | lattice | tc | wrap | uring`.
 - **Engine swap branch**: `feat/turso-engine-swap` (draft PR), the real TerraBase on Turso.
 
 ## Verdict
@@ -26,15 +26,23 @@ Turso is usable for 3c, but only on a narrow path. Every item below is a hard ru
    features (`views`, `index_method`, `attach`), `io_uring` and the cipher. Connections opened afterwards
    share that `Database` through Turso's process-wide registry. Neither .NET API exposes these settings.
 4. **Use `Turso.TursoConnection`, not the `Turso.Data.Sqlite` facade.** The facade cannot open an encrypted
-   file, splits command text on every `;` (which breaks triggers), and its default open path made WAL+CDC 37%
-   slower. `TursoConnection` executes only the **first** statement of a multi-statement command, so send one
-   statement per command.
+   file, splits command text on every `;` (which breaks triggers), and decoded a 4097-row CDC page in 1100 ms
+   against 38 ms for `TursoConnection` (Fly). `TursoConnection` executes only the **first** statement of a
+   multi-statement command, so send one statement per command.
 5. **No cancellation exists.** `Cancel()`, `CommandTimeout` and cancellation tokens are ignored, and the C API
    has no interrupt or progress handler. Bound every query before it runs.
 
 **MVCC + CDC works in 0.8.2**, contrary to the plan's premise. On a database already in `mvcc` journal mode,
 `capture_data_changes_conn('full')` captures `BEGIN CONCURRENT` commits. Turso only refuses to *switch* journal
-mode while capture is on. It is still not the launch choice (see Throughput and Risks).
+mode while capture is on. Design C (`docs/terrabase/multi-region-replication.md`) still stays on WAL:
+`BEGIN CONCURRENT` breaks the commit order that the changes feed and GC rely on (CDC groups interleave in
+`change_id` order), and CDC takes away most of MVCC's speed anyway (see Throughput).
+
+> **Correction (2026-10-12).** The first version of this report said CDC costs about 2% on the
+> recommended open path. That was wrong: the probe enabled CDC only when the engine name *ended* in `cdc`, so the
+> `-cdc-uring` and `-cdc-aegis256` runs never captured anything. The rerun below verifies capture on every run
+> (`turso_cdc` rows per write). **CDC costs 37% of single-writer WAL throughput in mode `full` and 32% in mode
+> `after`, on every open path.**
 
 ## GO / NO-GO
 
@@ -70,8 +78,20 @@ mode while capture is on. It is still not the launch choice (see Throughput and 
 | Poll while writers run | **GO** | A reader tailing `change_id > last` saw 401/401 writes from 2 writer threads with no gaps. On Fly, 1 writer + 2 point readers + 1 poller ran 30 s × 3 with no crash. |
 | Truncating consumed rows | **WORKAROUND** | `DELETE FROM turso_cdc WHERE change_id <= ?` works from any connection and ids continue. `turso_cdc` is declared `AUTOINCREMENT`, but once it is **empty** a reopen restarts `change_id` at 1. Always keep the newest row. |
 | Schema drift | caveat | `table_columns_json_array()` returns the *current* columns, so old rows decode wrongly after `ALTER TABLE`. |
-| Overhead | see Throughput | WAL: 0–37% depending on the open path. MVCC: −69%. Full mode writes each updated row three times (row, before, after). |
+| Overhead | see Throughput | WAL, 1 writer, Fly: **−37% (`full`) / −32% (`after`)** for one captured row per transaction; −39% / −30% for design C's two rows. Identical on every open path. MVCC: −69% or more. `full` writes before + after images (6044 B vs 2015 B per 2 KB update). |
 | MVCC + CDC | **GO, caveats** | 2 threads × 2000 `BEGIN CONCURRENT` inserts: 4000 rows, 4000 insert records, no duplicate `change_id`. But 1520 transaction groups **interleave** in `change_id` order, and rolled-back conflicts leave id gaps (max id 9577 for 8002 rows). A `change_id > cursor` poller can skip rows that commit later with lower ids. The shared `turso_cdc` table also turns into a conflict hotspot (3213 retries for 4000 transactions). |
+
+### Design C dependencies (`docs/terrabase/multi-region-replication.md`)
+
+Probe `designc`, run locally and on Fly (identical results), through both `TursoConnection` and the facade.
+Tables are the design's own: `"<collection>"(id TEXT UNIQUE, doc TEXT)` and `_tb_state`.
+
+| Behaviour | Verdict | Evidence | Fallback |
+| --- | --- | --- | --- |
+| CDC mode `after` | **GO** | `PRAGMA capture_data_changes_conn('after')`: insert and update rows carry `after` only (`before` and `updates` NULL), each transaction ends with a COMMIT row. A **delete row carries only the rowid** (`after` NULL), so a deleted document's key comes from its paired `_tb_state` update (`live = 0`), as the design already does. | `full` (costs 5–9% more throughput and 3× the CDC bytes). |
+| Toggle capture per transaction | **GO** | `('off')` before `BEGIN IMMEDIATE` and `('after')` after `COMMIT`: nothing from that transaction is captured, not even a COMMIT row. Toggling **inside** an open `BEGIN IMMEDIATE` also works: only statements after `('after')` are captured. `DELETE FROM turso_cdc` with capture off keeps ids continuous. An off/on pair costs 0.12–0.23 ms, and works while a reader holds a read transaction. | Leave capture on and drop the tailer's own rows by table name. |
+| `bin_record_json_object` on real rows | **GO, with a query guard** | Exact round trip: a 300 KB `doc` with emoji, CJK, quotes, backslashes, `\n` and `\u0001`; a 4000-char base64url `state`; `stamp`, `h1`, `h2` at `long.MinValue`/`long.MaxValue`; REAL and NULL. **Two failures:** BLOB columns throw (`formatting of BLOB values … is not supported`), and decoding a page that includes COMMIT rows throws, because `table_columns_json_array(NULL)` is an error. Guarded, a 4097-row page decodes in 12 ms locally and 38 ms on Fly (`TursoConnection`). | Decode with `CASE WHEN change_type IN (0, 1) THEN bin_record_json_object(table_columns_json_array(table_name), after) END`. Keep captured tables free of BLOBs (the design already does). |
+| Planner uses expression indexes on per-collection tables | **GO, with rewrites** | 20 k docs, no partial index. Index used for `=` (literal and parameter), ranges, `ORDER BY expr LIMIT`, composite `(org, age)` with `org =` and `age >`, `count(*)`, and an extra unindexed filter. Same plans before and after `ANALYZE`. **Full scans** (10–16 ms vs 0.02 ms) for `IN (…)`, `IN (SELECT … json_each)`, `LIKE 'x%'`, the `doc ->> '$.f'` spelling, and the second column of a composite index alone. | The `SqlSubset` compiler emits `json_extract(doc, '$.f')` only, rewrites `IN` lists to `OR` (a `MULTI-INDEX OR` plan) or `UNION ALL`, and rewrites prefix `LIKE` to `>= p AND < p+1`. |
 
 ### Launch features
 
@@ -107,45 +127,74 @@ row, with stamps `a.name` and `a.doc` committed in the same transaction. Limits:
 
 ## Throughput
 
-TerraBase-style write: one upsert per transaction into `documents(collection, id, state BLOB(256), version,
-body TEXT(222))` with a partial live index; 50% inserts, 50% updates of existing ids; `synchronous=NORMAL`.
-Values are upserts/s per pass on Fly gru (shared-cpu-2x, **burst** CPU, 1 GB volume; 4 passes of 8–10 s).
+Two workloads, one write per transaction, 50% new ids and 50% updates, `synchronous=NORMAL`, 1 writer (design C's
+write lane):
+
+- **upsert**: one row in `documents(collection, id, state BLOB(256), version, body TEXT(222))` via
+  `ON CONFLICT DO UPDATE`, with a partial live index.
+- **designc**: the collection row (`id`, `doc` 222 B) plus the `_tb_state` row (base64url state 342 chars, ints),
+  plain `UPDATE` or `INSERT`, so 2 captured rows per transaction.
+
+### CDC cost, verified (Fly gru, shared-cpu-2x, 2026-10-12)
+
+Each `-cdc` run checks `turso_cdc` afterwards: 0.98–1.00 captured rows per upsert, exactly 2.00 per design-C
+write. Two passes, 8 s per engine; Microsoft.Data.Sqlite at the start and end of a pass showed no throttling
+(1397 → 1418/s; designc 1267 → 1160/s).
+
+| Open path | upsert, no CDC | `full` | `after` | designc, no CDC | `full` | `after` |
+| --- | --- | --- | --- | --- | --- | --- |
+| facade | 1228–1428 | 772–773 | 822–823 | 1028 | 629 | 708–722 |
+| `TursoConnection` | 1209–1211 | 772–773 | 825–826 | 1011–1040 | 629–632 | 699–721 |
+| native pre-open, `io_uring` | 1210–1214 | 767–768 | 821 | 1025–1027 | 628–629 | 711–716 |
+| `TursoConnection` + aegis256 | 1206–1209 | 769–771 | 823–825 | 1025–1034 | 622–629 | 705–728 |
+| Microsoft.Data.Sqlite WAL (reference) | 1397–1418 | | | 1160–1267 | | |
+| Turso MVCC `BEGIN CONCURRENT` (reference) | 5018 | 858 (`full`) | | 3592 | 711 (`full`) | |
+
+- **CDC `full` costs 37% (upsert) and 39% (designc); `after` costs 32% and 30%.** Open path, io_uring and
+  encryption change nothing.
+- **Encryption is free:** aegis256 matches unencrypted within 1% with or without CDC.
+- Tail latency is unchanged by CDC: p99.9 is 230–265 ms in every WAL row (checkpoint stalls, see below).
+- Local (load 14–25, pass 1 only; the second local pass was too noisy to use): upsert 11.4 k → 8.5 k (`full`,
+  −25%) / 8.9 k (`after`, −22%); designc 9.4 k → 6.7 k (`full`, −29%).
+
+### Engine comparison (Fly, 2026-10-11, upsert)
+
+Burst CPU, 4 passes of 8–10 s. In those runs, rows labelled "+ CDC" with `io_uring` or aegis256 did **not**
+capture (the bug in the correction above), so they appear here under their real configuration.
 
 | Engine | 1 writer | 2 writers |
 | --- | --- | --- |
 | Microsoft.Data.Sqlite WAL | 1369–1516 | 1449–1580 |
 | Turso WAL (facade) | 1202–1231 | 1572–1605 (crash-prone) |
-| Turso WAL + CDC (facade default open) | 765–772 | 880–928 |
-| Turso WAL + CDC, native pre-open (`io_uring`) | 1193–1207 | 1134–1190 (panicked in 2 of 4) |
-| Turso WAL + CDC + aegis256 (`TursoConnection`) | 1194–1206 | 1143–1382 |
+| Turso WAL + CDC `full` (facade) | 765–772 | 880–928 |
+| Turso WAL, native pre-open `io_uring`, no CDC | 1193–1207 | 1134–1190 (panicked in 2 of 4) |
+| Turso WAL, aegis256 `TursoConnection`, no CDC | 1194–1206 | 1143–1382 |
 | Turso MVCC `BEGIN CONCURRENT` | 5147–5626 | 5625–5847 |
-| Turso MVCC + CDC | 1577–1889 | 728–908 (14–26 k conflict retries) |
+| Turso MVCC + CDC `full` | 1577–1889 | 728–908 (14–26 k conflict retries) |
 
-Tail latency (Fly, 1 writer, last pass):
+Tail latency (Fly, 1 writer):
 
 | Engine | p50 ms | p99 ms | p99.9 ms | max ms |
 | --- | --- | --- | --- | --- |
 | Microsoft.Data.Sqlite WAL | 0.023 | 0.081 | 293.6 | 301 |
-| Turso WAL + CDC + aegis256 | 0.113 | 0.263 | 257.9 | 267 |
+| Turso WAL + CDC `full` (`TursoConnection` + aegis256, 2026-10-12) | 0.209 | 0.566 | 246.5 | 251 |
 | Turso MVCC | 0.127 | 0.233 | 0.5 | 691 |
 | Turso MVCC + CDC | 0.540 | 1.243 | 2.0 | 106 |
 
 What the numbers say:
 
-- **WAL is bound by checkpoints on Fly volumes, for both engines.** About 1 commit in 1000 stalls 260–300 ms.
+- **WAL is bound by checkpoints on Fly volumes, for both engines.** About 1 commit in 1000 stalls 230–300 ms.
   `strace` shows neither engine fsyncs per commit under `synchronous=NORMAL` (41 fsyncs in 6 s for Turso).
-- **With the recommended open path, CDC costs about 2%** in WAL (1215 → 1193–1206). The facade's default path
-  loses 37% (766); the cause was not isolated.
-- **Encryption costs nothing measurable** (aegis256: 1194–1206 vs 1202–1231 unencrypted).
-- **MVCC is 4.5× faster than WAL** and has no checkpoint stalls, but CDC takes away 69% of that. With 2 writers
-  the shared `turso_cdc` table conflicts constantly.
+- **CDC costs about a third of write throughput** (see the verified table). For design C on one shared-cpu-2x
+  machine that is about 630–720 writes/s per database file at burst, before any merge work in C#.
+- **MVCC is 4.5× faster than WAL** and has no checkpoint stalls, but CDC takes away most of that (5018 → 858),
+  and with 2 writers the shared `turso_cdc` table conflicts constantly.
 - **The WAL grows unbounded under 2 Turso writers:** 140–212 MB after 10 s (checkpoint starvation), against
   4–13 MB with 1 writer. On a 1 GB volume that is a disk-full risk.
-- **Peak RSS** (5 s, 1 file): Microsoft.Data.Sqlite 57 MB, Turso WAL+CDC+aegis256 76 MB, Turso MVCC+CDC
+- **Peak RSS** (5 s, 1 file): Microsoft.Data.Sqlite 57 MB, Turso WAL aegis256 76 MB, Turso MVCC+CDC
   **209 MB** (MVCC keeps versions in memory). The guest has 459 MB and TerraBase uses about 130 MB.
 - **Shared-CPU throttling is real:** identical 30 s stress runs fell from 13.4 k to 2.0 k writes once the burst
   balance ran out. Size capacity on the baseline, not these burst numbers.
-- Local runs (load 60–90) ranked the engines the same way, but their absolute values are noise.
 
 ## Fast suite on the swap branch
 
@@ -193,11 +242,12 @@ None of these needs Turso changes except item 4. Items 1–3 are design changes 
    or `updates` matters (use `UPDATE`, then `INSERT` when 0 rows changed). Do not create overlapping partial
    indexes, or emit `INDEXED BY` from the query compiler. One statement per command.
 5. **CDC:**
-   - enable `full` capture on the writer connection right after open, retrying until it gets the lock;
+   - enable `after` capture on the writer connection right after open, retrying until it gets the lock;
    - `GET /databases/{id}/changes` (SSE) and delta anti-entropy tail `turso_cdc` by `change_id` on a reader
      connection; with one WAL writer, id order is commit order;
-   - decode after-images with `bin_record_json_object` and a pinned column list (do not call
-     `table_columns_json_array` after a schema change);
+   - decode after-images with `bin_record_json_object` behind a `CASE WHEN change_type IN (0, 1)` guard (COMMIT
+     rows make `table_columns_json_array(NULL)` throw); never capture BLOB columns;
+   - turn capture off for the tailer's own transaction (`('off')` … `('after')`, works inside the transaction);
    - truncate on the writer actor: `DELETE FROM turso_cdc WHERE change_id < min(consumer watermarks)`, always
      keeping the newest row;
    - persist consumer watermarks in the same file.
@@ -207,11 +257,13 @@ None of these needs Turso changes except item 4. Items 1–3 are design changes 
 7. **No cancellation:** reject or rewrite queries without a bounded `LIMIT`, keep the existing `EXPLAIN` plan
    checks, and give reads a bounded worker pool, because a running statement cannot be stopped. File an
    upstream issue for `turso_connection_interrupt`.
-8. **Memory:** set `PRAGMA cache_size` per connection (there is no global heap limit). Keep WAL; revisit MVCC
-   only once Turso calls it production ready and CDC stops being a conflict hotspot.
-9. **Out of launch scope:** FTS (needs a custom native build with `fts`), a dense vector index, Postgres wire.
+8. **Memory:** set `PRAGMA cache_size` per connection (there is no global heap limit). Keep WAL: MVCC + CDC
+   works, but `BEGIN CONCURRENT` breaks the commit order the feed and GC rely on.
+9. **Query compiler:** emit `json_extract(doc, '$.f')` only, rewrite `IN` lists to `OR` and prefix `LIKE` to
+   ranges, so expression indexes are used.
+10. **Out of launch scope:** FTS (needs a custom native build with `fts`), a dense vector index, Postgres wire.
    Brute-force vector functions and materialized views can ship.
-10. **Crash safety net:** Fly restarts the machine on exit. Add a Slow test that drives the real write path
+11. **Crash safety net:** Fly restarts the machine on exit. Add a Slow test that drives the real write path
     with the single-writer rule and fails on process exit.
 
 ## Risks
@@ -226,4 +278,5 @@ None of these needs Turso changes except item 4. Items 1–3 are design changes 
 4. **Checkpoint stalls** of 260–300 ms on Fly volumes at p99.9 (this affects SQLite too).
 5. **The facade differs silently** from Microsoft.Data.Sqlite: error codes, splitting, encryption, speed. 3c
    should not rely on it.
-6. **Shared-CPU baseline.** Sustained throughput is a fraction of these burst numbers.
+6. **CDC costs a third of write throughput** (−37% `full`, −32% `after`), measured with capture verified.
+7. **Shared-CPU baseline.** Sustained throughput is a fraction of these burst numbers.

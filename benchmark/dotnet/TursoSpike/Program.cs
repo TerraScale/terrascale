@@ -13,6 +13,7 @@ try
         case "cdc": Cdc.Run(dir); break;
         case "bench": Bench.Run(dir, args.Skip(1).ToArray()); break;
         case "stress": Stress.Run(dir, args.Skip(1).ToArray()); break;
+        case "designc": DesignC.Run(dir); break;
         case "wrap":
         {
             var key = new string('a', 64);
@@ -602,48 +603,85 @@ static class Bench
         WHERE excluded.version > documents.version
         """;
 
+    // Design C shape (docs/terrabase/multi-region-replication.md section 5): per write, the collection row and the
+    // _tb_state row, plain INSERT/UPDATE (no ON CONFLICT), TEXT only (bin_record_json_object cannot format BLOBs).
+    const string DesignCSchema = """
+        CREATE TABLE IF NOT EXISTS users (id TEXT NOT NULL UNIQUE, doc TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS _tb_state (collection TEXT NOT NULL, id TEXT NOT NULL, bucket INTEGER NOT NULL, state TEXT NOT NULL,
+            stamp INTEGER NOT NULL, origin INTEGER NOT NULL, live INTEGER NOT NULL, h1 INTEGER NOT NULL, h2 INTEGER NOT NULL, UNIQUE (collection, id));
+        CREATE INDEX IF NOT EXISTS _tb_state_bucket ON _tb_state (bucket, collection, id)
+        """;
+
+    static readonly string[] Engines =
+    [
+        "ms-wal-normal",
+        "turso-wal", "turso-wal-cdc", "turso-wal-cdc-after",
+        "turso-wal-tc", "turso-wal-cdc-tc", "turso-wal-cdc-after-tc",
+        "turso-wal-uring", "turso-wal-cdc-uring", "turso-wal-cdc-after-uring",
+        "turso-wal-aegis256", "turso-wal-cdc-aegis256", "turso-wal-cdc-after-aegis256",
+        "turso-mvcc-concurrent", "turso-mvcc-concurrent-cdc",
+        "ms-wal-normal-again",
+    ];
+
+    // bench <seconds> [engine-prefix|all] [upsert|designc|both] [writers: 1|2|both]
     public static void Run(string dir, string[] a)
     {
         var seconds = a.Length > 0 ? int.Parse(a[0]) : 5;
-        var only = a.Length > 1 ? a[1] : null;
+        var only = a.Length > 1 && a[1] != "all" ? a[1] : null;
+        var workloads = a.Length > 2 && a[2] != "both" ? [a[2]] : new[] { "upsert", "designc" };
+        var writerCounts = a.Length > 3 && a[3] != "both" ? [int.Parse(a[3])] : new[] { 1, 2 };
         var body = "{\"name\":\"" + new string('x', 180) + "\",\"n\":12345,\"tags\":[\"a\",\"b\",\"c\"]}";
         var state = new byte[256];
         Random.Shared.NextBytes(state);
-        Console.WriteLine($"cpus={Environment.ProcessorCount} seconds={seconds} body={body.Length}B state={state.Length}B (one upsert per txn, 50% updates of existing ids)");
-        Console.WriteLine("| engine | writers | upserts/s | p50 ms | p99 ms | p99.9 ms | max ms | db+wal MB |");
-        Console.WriteLine("|---|---|---|---|---|---|---|---|");
-        foreach (var writers in new[] { 1, 2 })
-        foreach (var engine in new[] { "ms-wal-normal", "turso-wal", "turso-wal-cdc", "turso-wal-cdc-aegis256", "turso-wal-cdc-uring", "turso-mvcc-concurrent", "turso-mvcc-concurrent-cdc" })
+        Console.WriteLine($"cpus={Environment.ProcessorCount} seconds={seconds} body={body.Length}B state={state.Length}B; one write per txn, 50% new ids / 50% updates");
+        Console.WriteLine("upsert = 1 row per txn via ON CONFLICT DO UPDATE (BLOB state); designc = collection row + _tb_state row per txn, plain INSERT/UPDATE, TEXT state");
+        foreach (var workload in workloads)
         {
-            if (only is not null && !engine.StartsWith(only)) continue;
-            var path = Path.Combine(dir, $"{engine}-{writers}.db");
-            try { RunOne(engine, path, writers, seconds, body, state); }
-            catch (Exception e) { Console.WriteLine($"| {engine} | {writers} | FAIL {e.GetType().Name}: {e.Message.Split('\n')[0]} | | | |"); }
+            Console.WriteLine();
+            Console.WriteLine($"workload {workload}");
+            Console.WriteLine("| engine | writers | writes/s | p50 ms | p99 ms | p99.9 ms | max ms | db+wal MB | cdc data rows | cdc rows/write |");
+            Console.WriteLine("|---|---|---|---|---|---|---|---|---|---|");
+            foreach (var writers in writerCounts)
+            foreach (var engine in Engines)
+            {
+                if (only is not null && !engine.StartsWith(only)) continue;
+                var path = Path.Combine(dir, $"{workload}-{engine}-{writers}.db");
+                try { RunOne(engine, workload, path, writers, seconds, body, state); }
+                catch (Exception e) { Console.WriteLine($"| {engine} | {writers} | FAIL {e.GetType().Name}: {e.Message.Split('\n')[0]} | | | | | | | |"); }
+                foreach (var f in Directory.GetFiles(dir, Path.GetFileName(path) + "*")) File.Delete(f);
+            }
         }
         if (File.Exists("/proc/self/status")) Console.WriteLine(string.Join(" ", File.ReadAllLines("/proc/self/status").Where(l => l.StartsWith("VmRSS") || l.StartsWith("VmHWM")).Select(l => System.Text.RegularExpressions.Regex.Replace(l, @"\s+", " "))));
     }
 
-    static void RunOne(string engine, string path, int writers, int seconds, string body, byte[] state)
+    static void RunOne(string engine, string workload, string path, int writers, int seconds, string body, byte[] state)
     {
         var ms = engine.StartsWith("ms");
+        var mvcc = engine.Contains("mvcc");
+        var aegis = engine.Contains("aegis");
+        var uring = engine.Contains("uring");
+        // Capture is on for every engine whose name contains "-cdc"; "-cdc-after" selects mode after.
+        var cdc = engine.Contains("-cdc-after") ? "after" : engine.Contains("-cdc") ? "full" : null;
         var key = new string('7', 64);
         Func<System.Data.Common.DbConnection> open = ms
             ? () => { var c = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={path};Pooling=False"); c.Open(); return c; }
-            : engine.Contains("aegis")
+            : aegis
                 ? () => { var c = new Turso.TursoConnection($"Data Source={path};Encryption Cipher=aegis256;Encryption Key={key}"); c.Open(); return c; }
-                : () => { var c = new T.SqliteConnection($"Data Source={path}"); c.Open(); return c; };
-        if (engine.EndsWith("uring")) Native.Open(path, "", vfs: "io_uring");
+                : engine.EndsWith("-tc")
+                    ? () => { var c = new Turso.TursoConnection($"Data Source={path}"); c.Open(); return c; }
+                    : () => { var c = new T.SqliteConnection($"Data Source={path}"); c.Open(); return c; };
+        if (uring) Native.Open(path, "", vfs: "io_uring");
         using (var init = open())
         {
-            var mvcc = engine.Contains("mvcc");
             Exec(init, mvcc ? "PRAGMA journal_mode = mvcc" : "PRAGMA journal_mode = WAL");
             Exec(init, "PRAGMA synchronous = NORMAL");
-            if (engine.EndsWith("cdc")) Exec(init, "PRAGMA capture_data_changes_conn('full')");
-            foreach (var s in Schema.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)) Exec(init, s);
+            if (cdc is not null) Exec(init, $"PRAGMA capture_data_changes_conn('{cdc}')");
+            foreach (var s in (workload == "designc" ? DesignCSchema : Schema).Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)) Exec(init, s);
         }
         long total = 0, busy = 0;
         var lat = new List<double>[writers];
         using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(seconds));
+        var stateText = Convert.ToBase64String(state).TrimEnd('=').Replace('+', '-').Replace('/', '_');
         var threads = Enumerable.Range(0, writers).Select(t =>
         {
             lat[t] = new List<double>(1 << 20);
@@ -652,26 +690,48 @@ static class Bench
                 using var c = open();
                 Exec(c, "PRAGMA synchronous = NORMAL");
                 Exec(c, "PRAGMA busy_timeout = 10000");
-                if (engine.EndsWith("cdc")) for (;;) { try { Exec(c, "PRAGMA capture_data_changes_conn('full')"); break; } catch { Thread.Sleep(1); } }
-                using var cmd = c.CreateCommand();
-                cmd.CommandText = Upsert;
-                var pc = Param(cmd, "$c", "users"); var pid = Param(cmd, "$id", ""); var ps = Param(cmd, "$state", state);
-                var pv = Param(cmd, "$v", 0L); var pb = Param(cmd, "$body", body);
-                using var begin = c.CreateCommand(); begin.CommandText = engine.Contains("mvcc") ? "BEGIN CONCURRENT" : "BEGIN IMMEDIATE";
+                if (cdc is not null) for (;;) { try { Exec(c, $"PRAGMA capture_data_changes_conn('{cdc}')"); break; } catch { Thread.Sleep(1); } }
+                using var begin = c.CreateCommand(); begin.CommandText = mvcc ? "BEGIN CONCURRENT" : "BEGIN IMMEDIATE";
                 using var commit = c.CreateCommand(); commit.CommandText = "COMMIT";
+                Action<string, long, bool> write;
+                if (workload == "designc")
+                {
+                    var updDoc = c.CreateCommand(); updDoc.CommandText = "UPDATE users SET doc = $doc WHERE id = $id";
+                    var insDoc = c.CreateCommand(); insDoc.CommandText = "INSERT INTO users (id, doc) VALUES ($id, $doc)";
+                    var updState = c.CreateCommand(); updState.CommandText = "UPDATE _tb_state SET state = $s, stamp = $v, origin = 1, live = 1, h1 = $v, h2 = -$v WHERE collection = 'users' AND id = $id";
+                    var insState = c.CreateCommand(); insState.CommandText = "INSERT INTO _tb_state (collection, id, bucket, state, stamp, origin, live, h1, h2) VALUES ('users', $id, $b, $s, $v, 1, 1, $v, -$v)";
+                    write = (id, v, existing) =>
+                    {
+                        foreach (var cmd in existing ? new[] { updDoc, updState } : [insDoc, insState])
+                        {
+                            cmd.Parameters.Clear();
+                            Param(cmd, "$id", id);
+                            if (cmd == updDoc || cmd == insDoc) Param(cmd, "$doc", body);
+                            else { Param(cmd, "$s", stateText); Param(cmd, "$v", v); if (cmd == insState) Param(cmd, "$b", (long)(id.GetHashCode() & 4095)); }
+                            cmd.ExecuteNonQuery();
+                        }
+                    };
+                }
+                else
+                {
+                    var cmd = c.CreateCommand();
+                    cmd.CommandText = Upsert;
+                    Param(cmd, "$c", "users"); var pid = Param(cmd, "$id", ""); Param(cmd, "$state", state);
+                    var pv = Param(cmd, "$v", 0L); Param(cmd, "$body", body);
+                    write = (id, v, _) => { pid.Value = id; pv.Value = v; cmd.ExecuteNonQuery(); };
+                }
                 var rnd = new Random(t);
                 long i = 0;
                 var sw = new Stopwatch();
                 while (!stop.IsCancellationRequested)
                 {
                     // Half the writes update an existing id of this writer, half insert a new one.
-                    var n = i > 0 && rnd.Next(2) == 0 ? rnd.NextInt64(i) : i++;
-                    pid.Value = $"{t:D2}-{n:D12}";
-                    pv.Value = Environment.TickCount64 * 16 + t;
+                    var existing = i > 0 && rnd.Next(2) == 0;
+                    var n = existing ? rnd.NextInt64(i) : i++;
                     sw.Restart();
                     try
                     {
-                        begin.ExecuteNonQuery(); cmd.ExecuteNonQuery(); commit.ExecuteNonQuery();
+                        begin.ExecuteNonQuery(); write($"{t:D2}-{n:D12}", Environment.TickCount64 * 16 + t, existing); commit.ExecuteNonQuery();
                         lat[t].Add(sw.Elapsed.TotalMilliseconds);
                         Interlocked.Increment(ref total);
                     }
@@ -687,9 +747,26 @@ static class Bench
         }).ToArray();
         var clock = Stopwatch.StartNew();
         foreach (var th in threads) th.Join();
+        var elapsed = clock.Elapsed.TotalSeconds;
         var all = lat.SelectMany(l => l).OrderBy(x => x).ToArray();
         var size = Directory.GetFiles(Path.GetDirectoryName(path)!, Path.GetFileName(path) + "*").Sum(f => new FileInfo(f).Length) / 1048576.0;
-        Console.WriteLine($"| {engine} | {writers} | {total / clock.Elapsed.TotalSeconds:F0} | {Pct(all, 0.5):F3} | {Pct(all, 0.99):F3} | {Pct(all, 0.999):F1} | {(all.Length > 0 ? all[^1] : 0):F0} | {size:F1} |{(busy > 0 ? $" busy/conflict={busy}" : "")}");
+        // Proof that capture happened: data rows (types 1, 0, -1) in turso_cdc for the benchmark tables.
+        string cdcRows = "-", perWrite = "-";
+        if (!ms)
+        {
+            using var check = open();
+            using var q = check.CreateCommand();
+            q.CommandText = "SELECT count(*) FROM sqlite_schema WHERE name = 'turso_cdc'";
+            if (Convert.ToInt64(q.ExecuteScalar()) == 1)
+            {
+                q.CommandText = "SELECT count(*) FROM turso_cdc WHERE change_type IN (-1, 0, 1) AND table_name <> 'sqlite_schema'";
+                var n = Convert.ToInt64(q.ExecuteScalar());
+                cdcRows = n.ToString();
+                perWrite = total == 0 ? "-" : (n / (double)total).ToString("F2");
+            }
+            else cdcRows = "no table";
+        }
+        Console.WriteLine($"| {engine} | {writers} | {total / elapsed:F0} | {Pct(all, 0.5):F3} | {Pct(all, 0.99):F3} | {Pct(all, 0.999):F1} | {(all.Length > 0 ? all[^1] : 0):F0} | {size:F1} | {cdcRows} | {perWrite} |{(busy > 0 ? $" retries={busy}" : "")}");
     }
 
     static double Pct(double[] s, double p) => s.Length == 0 ? 0 : s[(int)Math.Min(s.Length - 1, s.Length * p)];
@@ -771,5 +848,254 @@ static class Stress
         });
         foreach (var t in tasks) t.Join();
         Console.WriteLine($"survived mvcc={mvcc} writers={writers}: written={written} reads={reads} cdc-seen={seen} errors={errors} wal-MB={(File.Exists(path + "-wal") ? new FileInfo(path + "-wal").Length / 1048576.0 : 0):F1}");
+    }
+}
+
+// The four Turso behaviours design C depends on (docs/terrabase/multi-region-replication.md), through both providers.
+static class DesignC
+{
+    const string Schema = """
+        CREATE TABLE users (id TEXT NOT NULL UNIQUE, doc TEXT NOT NULL);
+        CREATE TABLE _tb_state (collection TEXT NOT NULL, id TEXT NOT NULL, bucket INTEGER NOT NULL, state TEXT NOT NULL,
+            stamp INTEGER NOT NULL, origin INTEGER NOT NULL, live INTEGER NOT NULL, h1 INTEGER NOT NULL, h2 INTEGER NOT NULL, UNIQUE (collection, id));
+        CREATE INDEX _tb_state_bucket ON _tb_state (bucket, collection, id);
+        CREATE TABLE _tb_tail (id INTEGER PRIMARY KEY CHECK (id = 1), change_id INTEGER NOT NULL);
+        INSERT INTO _tb_tail VALUES (1, 0)
+        """;
+
+    sealed record Db(System.Data.Common.DbConnection C) : IDisposable
+    {
+        public void Dispose() => C.Dispose();
+        public int Exec(string sql, params (string, object?)[] ps)
+        {
+            using var cmd = C.CreateCommand(); cmd.CommandText = sql;
+            foreach (var (n, v) in ps) { var p = cmd.CreateParameter(); p.ParameterName = n; p.Value = v ?? DBNull.Value; cmd.Parameters.Add(p); }
+            return cmd.ExecuteNonQuery();
+        }
+        public object? Scalar(string sql) { using var cmd = C.CreateCommand(); cmd.CommandText = sql; return cmd.ExecuteScalar(); }
+        public List<object?[]> Rows(string sql)
+        {
+            using var cmd = C.CreateCommand(); cmd.CommandText = sql; using var r = cmd.ExecuteReader();
+            var rows = new List<object?[]>();
+            while (r.Read()) { var row = new object?[r.FieldCount]; for (var i = 0; i < r.FieldCount; i++) row[i] = r.IsDBNull(i) ? null : r.GetValue(i); rows.Add(row); }
+            return rows;
+        }
+        public long Max => Convert.ToInt64(Scalar("SELECT coalesce(max(change_id), 0) FROM turso_cdc"));
+        public string Since(long mark) => string.Join(" | ", Rows($"SELECT change_type, coalesce(table_name, '-'), before IS NOT NULL, after IS NOT NULL, updates IS NOT NULL FROM turso_cdc WHERE change_id > {mark} ORDER BY change_id")
+            .Select(r => r[0] is 2L ? "COMMIT" : $"{r[1]}:{r[0] switch { 1L => "ins", 0L => "upd", -1L => "del", _ => "?" }}(b={r[2]},a={r[3]},u={r[4]})"));
+    }
+
+    public static void Run(string dir)
+    {
+        foreach (var provider in new[] { "TursoConnection", "facade" })
+        {
+            Console.WriteLine($"== provider {provider}");
+            var path = Path.Combine(dir, $"designc-{provider}.db");
+            System.Data.Common.DbConnection Open() { System.Data.Common.DbConnection c = provider == "facade" ? new T.SqliteConnection($"Data Source={path}") : new Turso.TursoConnection($"Data Source={path}"); c.Open(); return c; }
+            using var w = new Db(Open());
+            w.Exec("PRAGMA journal_mode = WAL");
+            foreach (var stmt in Schema.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)) w.Exec(stmt);
+
+            // 1. Mode after.
+            X.Check("1 after: enable", () => w.Rows("PRAGMA capture_data_changes_conn('after')").FirstOrDefault()?.FirstOrDefault());
+            X.Check("1 after: insert / update / delete images", () =>
+            {
+                var m = w.Max;
+                w.Exec("INSERT INTO users VALUES ('a', '{\"n\":1}')");
+                w.Exec("UPDATE users SET doc = '{\"n\":2}' WHERE id = 'a'");
+                w.Exec("DELETE FROM users WHERE id = 'a'");
+                return w.Since(m);
+            });
+            X.Check("1 after: decoded update after-image", () => w.Rows("SELECT id, bin_record_json_object(table_columns_json_array('users'), after) FROM turso_cdc WHERE table_name = 'users' AND change_type = 0").Last()[1]);
+            X.Check("1 after: delete row carries only the rowid", () => string.Join(",", w.Rows("SELECT id, typeof(before), typeof(after) FROM turso_cdc WHERE table_name = 'users' AND change_type = -1").Last()));
+            X.Check("1 full vs after: bytes per update (doc 2 KB)", () =>
+            {
+                var big = "{\"x\":\"" + new string('y', 2000) + "\"}";
+                w.Exec("INSERT INTO users VALUES ('big', $d)", ("$d", big));
+                long Bytes(string mode)
+                {
+                    w.Exec($"PRAGMA capture_data_changes_conn('{mode}')");
+                    var m = w.Max;
+                    w.Exec("UPDATE users SET doc = $d WHERE id = 'big'", ("$d", big.Replace('y', mode[0])));
+                    return Convert.ToInt64(w.Scalar($"SELECT sum(coalesce(length(before),0) + coalesce(length(after),0) + coalesce(length(updates),0)) FROM turso_cdc WHERE change_id > {m}"));
+                }
+                var full = Bytes("full"); var after = Bytes("after");
+                return $"full={full} B, after={after} B";
+            });
+
+            // 2. Toggle per transaction.
+            X.Check("2 toggle: off before BEGIN, on after COMMIT", () =>
+            {
+                w.Exec("PRAGMA capture_data_changes_conn('after')");
+                var m = w.Max;
+                w.Exec("PRAGMA capture_data_changes_conn('off')");
+                w.Exec("BEGIN IMMEDIATE"); w.Exec("UPDATE _tb_tail SET change_id = change_id + 1"); w.Exec("INSERT INTO users VALUES ('off1', '{}')"); w.Exec("COMMIT");
+                w.Exec("PRAGMA capture_data_changes_conn('after')");
+                w.Exec("INSERT INTO users VALUES ('on1', '{}')");
+                return w.Since(m);
+            });
+            X.Check("2 toggle: inside BEGIN IMMEDIATE (off ... after ... COMMIT)", () =>
+            {
+                var m = w.Max;
+                w.Exec("BEGIN IMMEDIATE");
+                try
+                {
+                    w.Exec("PRAGMA capture_data_changes_conn('off')");
+                    w.Exec("INSERT INTO users VALUES ('off2', '{}')");
+                    w.Exec("PRAGMA capture_data_changes_conn('after')");
+                    w.Exec("INSERT INTO users VALUES ('on2', '{}')");
+                    w.Exec("COMMIT");
+                }
+                catch { try { w.Exec("ROLLBACK"); } catch { } throw; }
+                return w.Since(m);
+            });
+            X.Check("2 toggle: DELETE FROM turso_cdc while off, newest row kept", () =>
+            {
+                var max = w.Max;
+                w.Exec("PRAGMA capture_data_changes_conn('off')");
+                w.Exec("BEGIN IMMEDIATE");
+                var n = w.Exec($"DELETE FROM turso_cdc WHERE change_id < {max}");
+                w.Exec($"UPDATE _tb_tail SET change_id = {max}");
+                w.Exec("COMMIT");
+                w.Exec("PRAGMA capture_data_changes_conn('after')");
+                w.Exec("INSERT INTO users VALUES ('after-trunc', '{}')");
+                return $"deleted={n}, remaining ids={string.Join(",", w.Rows("SELECT change_id FROM turso_cdc ORDER BY change_id").Select(r => r[0]))}";
+            });
+            X.Check("2 toggle: cost of an off/on pair (1000 pairs)", () =>
+            {
+                var sw = Stopwatch.StartNew();
+                for (var i = 0; i < 1000; i++) { w.Exec("PRAGMA capture_data_changes_conn('off')"); w.Exec("PRAGMA capture_data_changes_conn('after')"); }
+                return $"{sw.Elapsed.TotalMilliseconds / 1000:F3} ms per pair";
+            });
+            X.Check("2 toggle: while a reader connection holds a read txn", () =>
+            {
+                using var r = new Db(Open());
+                r.Exec("BEGIN"); r.Scalar("SELECT count(*) FROM users");
+                try { w.Exec("PRAGMA capture_data_changes_conn('off')"); w.Exec("PRAGMA capture_data_changes_conn('after')"); return "ok"; }
+                finally { r.Exec("COMMIT"); }
+            });
+
+            // 3. bin_record_json_object on real design-C rows.
+            X.Check("3 decode: _tb_state + collection row round-trip exactly", () =>
+            {
+                w.Exec("PRAGMA capture_data_changes_conn('after')");
+                var bytes = new byte[3000]; Random.Shared.NextBytes(bytes); var state = Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+                var doc = System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, object?>
+                {
+                    ["name"] = "Zoë 😀 漢字 \"quoted\" back\\slash\nnew\u0001ctl", ["n"] = 9007199254740993L, ["f"] = 0.1, ["nested"] = new { a = new[] { 1, 2 } }, ["nil"] = null,
+                    ["big"] = new string('z', 300_000),
+                });
+                var cases = new (long stamp, long h1, long h2)[] { (long.MaxValue, long.MinValue, -1), (1, 0, long.MaxValue) };
+                var mismatches = new List<string>();
+                var k = 0;
+                foreach (var (stamp, h1, h2) in cases)
+                {
+                    var id = $"doc-{k++}";
+                    var m = w.Max;
+                    w.Exec("BEGIN IMMEDIATE");
+                    w.Exec("INSERT INTO users (id, doc) VALUES ($id, $doc)", ("$id", id), ("$doc", doc));
+                    w.Exec("INSERT INTO _tb_state VALUES ('users', $id, 4095, $s, $st, 7, 1, $h1, $h2)", ("$id", id), ("$s", state), ("$st", stamp), ("$h1", h1), ("$h2", h2));
+                    w.Exec("COMMIT");
+                    foreach (var row in w.Rows($"SELECT table_name, bin_record_json_object(table_columns_json_array(table_name), after) FROM turso_cdc WHERE change_id > {m} AND change_type = 1"))
+                    {
+                        using var j = System.Text.Json.JsonDocument.Parse((string)row[1]!);
+                        var e = j.RootElement;
+                        if ((string)row[0]! == "users")
+                        {
+                            if (e.GetProperty("id").GetString() != id) mismatches.Add("users.id");
+                            if (e.GetProperty("doc").GetString() != doc) mismatches.Add("users.doc");
+                        }
+                        else
+                        {
+                            if (e.GetProperty("state").GetString() != state) mismatches.Add("state");
+                            if (e.GetProperty("stamp").GetInt64() != stamp) mismatches.Add($"stamp {e.GetProperty("stamp").GetRawText()}");
+                            if (e.GetProperty("h1").GetInt64() != h1) mismatches.Add($"h1 {e.GetProperty("h1").GetRawText()}");
+                            if (e.GetProperty("h2").GetInt64() != h2) mismatches.Add($"h2 {e.GetProperty("h2").GetRawText()}");
+                            if (e.GetProperty("bucket").GetInt64() != 4095 || e.GetProperty("origin").GetInt64() != 7 || e.GetProperty("live").GetInt64() != 1) mismatches.Add("ints");
+                        }
+                    }
+                }
+                return mismatches.Count == 0 ? $"exact (doc {doc.Length} chars, state {state.Length} chars, int64 extremes)" : "MISMATCH " + string.Join(", ", mismatches);
+            });
+            X.Check("3 decode: REAL and NULL columns", () =>
+            {
+                w.Exec("CREATE TABLE IF NOT EXISTS misc (id INTEGER PRIMARY KEY, r REAL, t TEXT)");
+                var m = w.Max;
+                w.Exec("INSERT INTO misc (r, t) VALUES (0.1, NULL)");
+                return w.Scalar($"SELECT bin_record_json_object(table_columns_json_array('misc'), after) FROM turso_cdc WHERE change_id > {m} AND change_type = 1");
+            });
+            X.Check("3 decode: BLOB column", () =>
+            {
+                w.Exec("CREATE TABLE IF NOT EXISTS blobs (id INTEGER PRIMARY KEY, b BLOB)");
+                var m = w.Max;
+                w.Exec("INSERT INTO blobs (b) VALUES (x'00ff10')");
+                return w.Scalar($"SELECT bin_record_json_object(table_columns_json_array('blobs'), after) FROM turso_cdc WHERE change_id > {m} AND change_type = 1");
+            });
+            X.Check("3 decode: 4096-row page with one query", () =>
+            {
+                w.Exec("BEGIN IMMEDIATE");
+                for (var i = 0; i < 4096; i++) w.Exec("INSERT INTO users VALUES ($id, '{\"i\":1}')", ("$id", $"page-{i}"));
+                w.Exec("COMMIT");
+                var sw = Stopwatch.StartNew();
+                var rows = w.Rows($"SELECT change_id, change_txn_id, change_type, table_name, bin_record_json_object(table_columns_json_array(table_name), after) FROM turso_cdc WHERE change_id > {w.Max - 4097} ORDER BY change_id LIMIT 4097");
+                return $"{rows.Count} rows decoded in {sw.ElapsedMilliseconds} ms";
+            });
+            X.Check("3 decode: page with COMMIT rows via CASE guard", () =>
+            {
+                var sw = Stopwatch.StartNew();
+                var rows = w.Rows($"SELECT change_id, change_txn_id, change_type, table_name, CASE WHEN change_type IN (0, 1) THEN bin_record_json_object(table_columns_json_array(table_name), after) END FROM turso_cdc WHERE change_id > {w.Max - 4097} ORDER BY change_id LIMIT 4097");
+                return $"{rows.Count} rows ({rows.Count(r => r[4] is not null)} decoded, {rows.Count(r => r[2] is 2L)} commits) in {sw.ElapsedMilliseconds} ms";
+            });
+            X.Check("3 decode: bin_record_json_object(cols, NULL) on a delete row", () => w.Scalar("SELECT coalesce(bin_record_json_object(table_columns_json_array(table_name), after), 'NULL') FROM turso_cdc WHERE change_type = -1 AND table_name = 'users' LIMIT 1"));
+            w.Exec("PRAGMA capture_data_changes_conn('off')");
+        }
+
+        // 4. Planner and expression indexes on a per-collection table (no overlapping partial index).
+        Console.WriteLine("== planner: per-collection table, 20k docs");
+        var pp = Path.Combine(dir, "planner.db");
+        using var q = new Db(new Turso.TursoConnection($"Data Source={pp}"));
+        q.C.Open();
+        q.Exec("CREATE TABLE \"users\" (id TEXT NOT NULL UNIQUE, doc TEXT NOT NULL)");
+        q.Exec("BEGIN IMMEDIATE");
+        var rnd = new Random(1);
+        for (var i = 0; i < 20000; i++)
+            q.Exec("INSERT INTO users VALUES ($id, $doc)", ("$id", $"u{i:D6}"), ("$doc", $"{{\"email\":\"user{i}@x.io\",\"org\":\"org{i % 50}\",\"age\":{rnd.Next(18, 90)},\"name\":\"n{i}\"}}"));
+        q.Exec("COMMIT");
+        q.Exec("CREATE INDEX \"_tb_ix_email\" ON \"users\" (json_extract(doc, '$.email'))");
+        q.Exec("CREATE INDEX \"_tb_ix_org_age\" ON \"users\" (json_extract(doc, '$.org'), json_extract(doc, '$.age'))");
+        var queries = new (string name, string sql)[]
+        {
+            ("eq literal", "SELECT id FROM users WHERE json_extract(doc, '$.email') = 'user77@x.io'"),
+            ("eq parameter", "SELECT id FROM users WHERE json_extract(doc, '$.email') = ?1"),
+            ("IN list", "SELECT id FROM users WHERE json_extract(doc, '$.email') IN ('user1@x.io', 'user2@x.io')"),
+            ("range", "SELECT id FROM users WHERE json_extract(doc, '$.email') > 'user9'"),
+            ("prefix LIKE", "SELECT id FROM users WHERE json_extract(doc, '$.email') LIKE 'user9%'"),
+            ("ORDER BY expr LIMIT", "SELECT id FROM users ORDER BY json_extract(doc, '$.email') LIMIT 10"),
+            ("composite eq + range", "SELECT id FROM users WHERE json_extract(doc, '$.org') = 'org7' AND json_extract(doc, '$.age') > 60"),
+            ("composite leading column only", "SELECT id FROM users WHERE json_extract(doc, '$.org') = 'org7'"),
+            ("composite eq + ORDER BY second", "SELECT id FROM users WHERE json_extract(doc, '$.org') = 'org7' ORDER BY json_extract(doc, '$.age') LIMIT 5"),
+            ("composite second column only", "SELECT id FROM users WHERE json_extract(doc, '$.age') = 30"),
+            ("eq + unindexed filter", "SELECT id FROM users WHERE json_extract(doc, '$.email') = 'user77@x.io' AND json_extract(doc, '$.name') = 'n77'"),
+            ("->> spelling", "SELECT id FROM users WHERE doc ->> '$.email' = 'user77@x.io'"),
+            ("id lookup", "SELECT doc FROM users WHERE id = 'u000077'"),
+            ("OR of equalities", "SELECT id FROM users WHERE json_extract(doc, '$.email') = 'user1@x.io' OR json_extract(doc, '$.email') = 'user2@x.io'"),
+            ("UNION ALL of equalities", "SELECT id FROM users WHERE json_extract(doc, '$.email') = 'user1@x.io' UNION ALL SELECT id FROM users WHERE json_extract(doc, '$.email') = 'user2@x.io'"),
+            ("IN (json_each param)", "SELECT id FROM users WHERE json_extract(doc, '$.email') IN (SELECT value FROM json_each('[\"user1@x.io\",\"user2@x.io\"]'))"),
+            ("prefix as range", "SELECT id FROM users WHERE json_extract(doc, '$.email') >= 'user9' AND json_extract(doc, '$.email') < 'user:'"),
+            ("count(*) with expr eq", "SELECT count(*) FROM users WHERE json_extract(doc, '$.org') = 'org7'"),
+        };
+        foreach (var analyzed in new[] { false, true })
+        {
+            if (analyzed) q.Exec("ANALYZE");
+            Console.WriteLine($"-- {(analyzed ? "after ANALYZE" : "before ANALYZE")}");
+            foreach (var (name, sql) in queries)
+                X.Check($"4 plan {name}", () =>
+                {
+                    var plan = string.Join(" / ", q.Rows("EXPLAIN QUERY PLAN " + sql.Replace("?1", "'user77@x.io'")).Select(r => r[^1]));
+                    var sw = Stopwatch.StartNew();
+                    for (var i = 0; i < 20; i++) q.Rows(sql.Replace("?1", "'user77@x.io'"));
+                    return $"{plan}  [{sw.Elapsed.TotalMilliseconds / 20:F2} ms]";
+                });
+        }
     }
 }
