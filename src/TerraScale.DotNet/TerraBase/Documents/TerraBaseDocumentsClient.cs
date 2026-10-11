@@ -79,6 +79,13 @@ public sealed class TerraBaseDatabase
     public async Task<TerraBaseDatabaseInfo> CreateAsync(CancellationToken cancellationToken = default) =>
         (await connection.SendAsync(HttpMethod.Put, path, null, Json.TerraBaseDatabaseInfo, null, cancellationToken).ConfigureAwait(false)).Value;
 
+    /// <summary>
+    /// Deletes the database and its data (<c>DELETE</c>). Branches are independent and stay. While replica regions exist,
+    /// throws <see cref="TerraBaseConflictException"/> (<c>database_replicated</c>): remove them first.
+    /// </summary>
+    public Task DeleteAsync(CancellationToken cancellationToken = default) =>
+        connection.SendAsync(HttpMethod.Delete, path, null, null, cancellationToken);
+
     /// <summary>Lists collections in name order.</summary>
     /// <param name="limit">1 to 200; TerraBase's default is 50.</param>
     /// <param name="cursor">The previous page's <see cref="TerraBaseCollectionPage.NextCursor"/>.</param>

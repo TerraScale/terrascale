@@ -98,6 +98,8 @@ TerraBaseWriteResult created = await database.PutDocumentAsync(
 TerraBaseDocument? current = await database.GetDocumentAsync("users", userId, cancellationToken);
 ```
 
+`DeleteAsync` deletes the database and its data; it throws `TerraBaseConflictException` (`database_replicated`) while replica regions exist.
+
 `GetDocumentAsync` returns `null` for an absent document. `CreateDocumentAsync`
 posts a document and TerraBase generates a UUIDv7 id. Lists and queries return
 pages with `NextCursor`. Patches take an RFC 7396 merge patch `JsonElement` or a
