@@ -59,7 +59,7 @@ public sealed class FailureReporterTests
         {
             await File.WriteAllTextAsync(file, log + "\n");
             // setsid: the reporter leads its own process group, so cleanup reaches every child.
-            var start = new ProcessStartInfo("setsid", ["bash", Path.Combine(repo, "scripts", "ci", "report-slow-failure.sh"), file])
+            var start = new ProcessStartInfo("setsid", ["bash", Path.Combine(repo, "scripts", "ci", "report-slow-failure.sh"), "auth", file])
             {
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
