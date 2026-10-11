@@ -109,7 +109,7 @@ through S3.
 ## TS-490 users, sessions and email passcodes
 
 Users, server-side sessions and email passcodes are internal services in
-`src/TerraScale.Auth/Features/Identity/`, registered in DI on the TerraBase
+`src/TerraScale.Authentication/Features/Identity/`, registered in DI on the TerraBase
 store. The TS-491 hosted sign-in page is the only route that serves them, for
 the `terrascale` instance; there is no JSON route or management API. The fast
 suite drives sign-in, rotation and sign-out over real HTTP through test-only

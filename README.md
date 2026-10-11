@@ -8,7 +8,7 @@ Agent and contributor rules: [`AGENTS.md`](AGENTS.md).
 
 | Path | What |
 |---|---|
-| `src/` | Projects: libs (`TerraScale.Endpoints*`, `TerraScale.Logging`), auth (`TerraScale.Auth*`), terrabase (`TerraBase*`) |
+| `src/` | Projects: libs (`TerraScale.Endpoints*`, `TerraScale.Logging`), auth (`TerraScale.Authentication*`), terrabase (`TerraBase*`) |
 | `tests/` | Integration suites (`*.Fast`, `*.Slow`), TestHarness projects, and the libs test projects |
 | `benchmark/` | Go benchmark code and `benchmark/bench/` results; `benchmark/dotnet/` for .NET library benchmarks |
 | `docs/` | `docs/terrabase/` and `docs/auth/`, each with a `README.md` |

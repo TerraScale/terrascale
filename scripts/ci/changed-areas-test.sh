@@ -27,8 +27,8 @@ expect src/TerraScale.Endpoints.Generators/Generator.cs 'libs auth terrabase'
 expect tests/TerraScale.Endpoints.Tests/BindingTests.cs 'libs auth terrabase'
 expect benchmark/dotnet/TerraScale.Logging.Benchmarks/Program.cs 'libs auth terrabase'
 expect scripts/libs/package-version.sh 'libs auth terrabase'
-expect src/TerraScale.Auth.Store/AuthStore.cs auth
-expect tests/TerraScale.Auth.Slow/ReadinessConcurrencyTests.cs auth
+expect src/TerraScale.Authentication.Store/AuthStore.cs auth
+expect tests/TerraScale.Authentication.Slow/ReadinessConcurrencyTests.cs auth
 expect docs/auth/mfa.md auth
 expect scripts/auth/dev.sh auth
 expect .containerignore auth
@@ -44,13 +44,13 @@ expect README.md ''
 # Commits in a scratch repository: a base, an auth change, then a docs-only change.
 repo=$work/repo
 git init -q -b main "$repo"
-mkdir -p "$repo/src/TerraScale.Auth" "$repo/docs/terrabase"
-echo base > "$repo/src/TerraScale.Auth/Program.cs"
+mkdir -p "$repo/src/TerraScale.Authentication" "$repo/docs/terrabase"
+echo base > "$repo/src/TerraScale.Authentication/Program.cs"
 echo base > "$repo/AGENTS.md"
 git -C "$repo" add -A
 git -C "$repo" -c user.name=ci -c user.email=ci@localhost commit -qm base
 base=$(git -C "$repo" rev-parse HEAD)
-echo auth > "$repo/src/TerraScale.Auth/Program.cs"
+echo auth > "$repo/src/TerraScale.Authentication/Program.cs"
 git -C "$repo" -c user.name=ci -c user.email=ci@localhost commit -qam 'auth change'
 auth_head=$(git -C "$repo" rev-parse HEAD)
 echo docs > "$repo/AGENTS.md"

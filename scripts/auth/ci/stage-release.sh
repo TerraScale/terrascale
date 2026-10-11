@@ -29,7 +29,7 @@ revision=$(git rev-parse HEAD)
 
 out=$(mktemp -d)
 trap 'rm -rf "$out"' EXIT
-TS_AUTH_REVISION=${revision:0:12} dotnet publish src/TerraScale.Auth/TerraScale.Auth.csproj \
+TS_AUTH_REVISION=${revision:0:12} dotnet publish src/TerraScale.Authentication/TerraScale.Authentication.csproj \
   --configuration Release --runtime "$rid" --self-contained true --nologo \
   -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true \
   -p:DebugType=none --output "$out"

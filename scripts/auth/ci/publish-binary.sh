@@ -42,7 +42,7 @@ repo=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$repo"
 commit=$(git rev-parse HEAD)
 [[ $commit == "$sha" ]] || { echo "checkout $commit is not the event revision '$sha'" >&2; exit 1; }
-version=$(dotnet msbuild src/TerraScale.Auth/TerraScale.Auth.csproj -getProperty:Version -nologo)
+version=$(dotnet msbuild src/TerraScale.Authentication/TerraScale.Authentication.csproj -getProperty:Version -nologo)
 [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+[0-9A-Za-z.-]*$ ]] || { echo "invalid version '$version'" >&2; exit 1; }
 tag="v$version-dev.$commit"
 # The auth-release job runs this only after every auth gate passed.

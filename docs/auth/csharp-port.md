@@ -19,13 +19,13 @@ email-passcode sign-in page that serves those TS-490 services.
 
 | Path | Contents |
 |---|---|
-| `src/TerraScale.Auth/` | ASP.NET Core host. Features live in `Features/<Area>/`; each endpoint is one TerraScale.Endpoints class. |
-| `src/TerraScale.Auth.Contracts/` | Persisted models and the `{"error":{"code","message"}}` envelope (`ApiException`). |
-| `src/TerraScale.Auth.Security/` | Cryptographic primitives (port of `auth-security`): Argon2id, the secret box, ES256 keys and JWTs, tokens. |
-| `src/TerraScale.Auth.Store/` | Documents v1 persistence and storage readiness through ts-dotnet (TS-489, from the TS-428 design). |
-| `tests/TerraScale.Auth.Fast/` | Blocking integration suite (TUnit + Playwright). |
-| `tests/TerraScale.Auth.Slow/` | Non-blocking integration suite. |
-| `tests/TerraScale.Auth.TestHarness/` | Harness source linked into both suites: loopback Kestrel app, Chromium launcher, pinned real TerraBase fixture and observability test doubles. |
+| `src/TerraScale.Authentication/` | ASP.NET Core host. Features live in `Features/<Area>/`; each endpoint is one TerraScale.Endpoints class. |
+| `src/TerraScale.Authentication.Contracts/` | Persisted models and the `{"error":{"code","message"}}` envelope (`ApiException`). |
+| `src/TerraScale.Authentication.Security/` | Cryptographic primitives (port of `auth-security`): Argon2id, the secret box, ES256 keys and JWTs, tokens. |
+| `src/TerraScale.Authentication.Store/` | Documents v1 persistence and storage readiness through ts-dotnet (TS-489, from the TS-428 design). |
+| `tests/TerraScale.Authentication.Fast/` | Blocking integration suite (TUnit + Playwright). |
+| `tests/TerraScale.Authentication.Slow/` | Non-blocking integration suite. |
+| `tests/TerraScale.Authentication.TestHarness/` | Harness source linked into both suites: loopback Kestrel app, Chromium launcher, pinned real TerraBase fixture and observability test doubles. |
 
 There are no unit tests. HTTP tests start the real application with
 `AuthTestServer.StartAsync`. Storage tests use ts-dotnet against the real
@@ -175,13 +175,13 @@ migration of Rust documents.
 
 ## Users, sessions and passcodes (TS-490)
 
-`Users`, `Sessions` and `Passcodes` in `src/TerraScale.Auth/Features/Identity/`
+`Users`, `Sessions` and `Passcodes` in `src/TerraScale.Authentication/Features/Identity/`
 are singletons registered in `App.Build` over `AuthStore`. TS-491's hosted
 sign-in page is the only route that serves them, for the single instance
 `terrascale` (see below); there is no JSON route or management API for them.
 Callers authorize the instance before using them. The fast suite drives
 sign-in, rotation and sign-out over real HTTP through test-only routes
-(`tests/TerraScale.Auth.Fast/Identity/`).
+(`tests/TerraScale.Authentication.Fast/Identity/`).
 
 - **Users** (`users`): creating an account writes the email claim and the user
   document in one TerraBase transaction, both create-only, so a claim never
@@ -222,7 +222,7 @@ TS-432's later work.
 
 TS-491 is phase 1 of the OAuth/OIDC port: enough for ts-dashboard to sign
 users in. Device authorization, guest accounts, browser CORS and SAML are
-follow-up TS-495. The code is in `src/TerraScale.Auth/Features/Oidc/` and
+follow-up TS-495. The code is in `src/TerraScale.Authentication/Features/Oidc/` and
 `Features/SignIn/`.
 
 ### Design
@@ -407,7 +407,7 @@ TS-582 lets ts-dashboard sign users in on its own pages, the way apps use the
 WorkOS User Management API or the Clerk Backend API: the dashboard's Go backend
 collects the email, password or emailed code and calls ts-auth
 server-to-server. SSO and social sign-in keep the redirect flow. The code is
-in `src/TerraScale.Auth/Features/Headless/`.
+in `src/TerraScale.Authentication/Features/Headless/`.
 
 ### Contract
 
@@ -673,7 +673,7 @@ contract is [`platform-contract.md`](platform-contract.md) with
 [`platform-api.openapi.yaml`](platform-api.openapi.yaml); a fast test checks
 that every served `/v1/terrascale/…` operation appears there with the same
 path, method and operationId. The code is in
-`src/TerraScale.Auth/Features/Platform/`. This slice serves organizations,
+`src/TerraScale.Authentication/Features/Platform/`. This slice serves organizations,
 organization members, projects and explicit project roles; invitations,
 ownership transfer, audit and API keys follow.
 
@@ -755,7 +755,7 @@ The token grants of the [platform contract](platform-contract.md#6-tokens):
 an API key's `client_credentials`, and a signed-in user's sign-in access token
 exchanged (RFC 8693, `AllowTokenExchangeFlow`), each for a token that acts in
 one organization or project. Both are in
-`src/TerraScale.Auth/Features/Platform/` (`ApiKeys`, `PlatformGrants`).
+`src/TerraScale.Authentication/Features/Platform/` (`ApiKeys`, `PlatformGrants`).
 
 - **Keys** live in `api_keys`, addressed by id (`tsk_` and 20 base32
   characters). The key string adds `_` and 52 base32 characters (260 random
@@ -880,7 +880,7 @@ cannot establish those guarantees.
 ## Key ring and attempt limits (TS-488)
 
 The key ring and the attempt limiter store their state through
-`IDocumentStore` (`src/TerraScale.Auth.Store/DocumentStore.cs`), addressed by
+`IDocumentStore` (`src/TerraScale.Authentication.Store/DocumentStore.cs`), addressed by
 collection, instance and key: read with a version, create-only, and
 replace-if-version. Production uses `TerraBaseDocumentStore`, which maps
 these onto `AuthStore` natural-key addresses with `If-None-Match: *` and

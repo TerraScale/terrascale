@@ -116,13 +116,13 @@ Both are generated from the endpoints the running service actually maps.
 ## Layout
 
 ```text
-src/TerraScale.Auth/                # ASP.NET Core host; Features/<Area>/ endpoints, services and Razor slices; Assets/
-src/TerraScale.Auth.Contracts/      # persisted models and the {"error":{…}} envelope
-src/TerraScale.Auth.Security/       # Argon2id passwords, the master-key secret box, ES256 keys and JWTs, tokens and digests
-src/TerraScale.Auth.Store/          # Documents v1 persistence/readiness on ts-dotnet (TS-489)
-tests/TerraScale.Auth.Fast/         # blocking integration suite
-tests/TerraScale.Auth.Slow/         # non-blocking integration suite
-tests/TerraScale.Auth.TestHarness/  # harness source linked into both suites
+src/TerraScale.Authentication/                # ASP.NET Core host; Features/<Area>/ endpoints, services and Razor slices; Assets/
+src/TerraScale.Authentication.Contracts/      # persisted models and the {"error":{…}} envelope
+src/TerraScale.Authentication.Security/       # Argon2id passwords, the master-key secret box, ES256 keys and JWTs, tokens and digests
+src/TerraScale.Authentication.Store/          # Documents v1 persistence/readiness on ts-dotnet (TS-489)
+tests/TerraScale.Authentication.Fast/         # blocking integration suite
+tests/TerraScale.Authentication.Slow/         # non-blocking integration suite
+tests/TerraScale.Authentication.TestHarness/  # harness source linked into both suites
 scripts/auth/                       # dev loop, OpenAPI export, CI, provisioning and real-stack smoke checks
 ```
 
@@ -527,7 +527,7 @@ rotation.
   concurrency tests still create their own parallel requests.
 - **`build`** publishes a self-contained single-file linux-x64 executable
   (`scripts/auth/ci/stage-release.sh`), packages it into the chiseled
-  `runtime-deps` image (`src/TerraScale.Auth/Containerfile`, pinned by digest), and smoke-checks
+  `runtime-deps` image (`src/TerraScale.Authentication/Containerfile`, pinned by digest), and smoke-checks
   `/healthz` (revision), `/openapi/v1.json`, fail-closed `/readyz` and the
   absence of `/metrics` (`scripts/auth/ci/package-image.sh`). It also publishes
   the linux-arm64 single-file executable, so every pull request proves that

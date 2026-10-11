@@ -22,7 +22,7 @@ areas_for() {
     src/TerraScale.Endpoints*/* | src/TerraScale.Logging/* | tests/TerraScale.Endpoints.Tests/* | \
       tests/TerraScale.Logging.Tests/* | benchmark/dotnet/* | scripts/libs/*)
       printf '%s\n' libs auth terrabase ;;
-    src/TerraScale.Auth*/* | tests/TerraScale.Auth.*/* | docs/auth/* | scripts/auth/* | .containerignore)
+    src/TerraScale.Authentication*/* | tests/TerraScale.Authentication.*/* | docs/auth/* | scripts/auth/* | .containerignore)
       printf '%s\n' auth ;;
     src/TerraBase*/* | tests/TerraBase.*/* | scripts/terrabase/*)
       printf '%s\n' terrabase ;;

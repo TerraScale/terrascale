@@ -11,8 +11,8 @@ cleanup() {
 trap cleanup EXIT
 mkdir -p "$sandbox/repo/scripts/auth/ci" "$sandbox/bin" "$sandbox/state" "$sandbox/temp" "$sandbox/rootfs/lib"
 cp "$repo/scripts/auth/ci/smoke-arm64.sh" "$sandbox/repo/scripts/auth/ci/"
-mkdir -p "$sandbox/repo/src/TerraScale.Auth"
-cp "$repo/src/TerraScale.Auth/Containerfile" "$sandbox/repo/src/TerraScale.Auth/"
+mkdir -p "$sandbox/repo/src/TerraScale.Authentication"
+cp "$repo/src/TerraScale.Authentication/Containerfile" "$sandbox/repo/src/TerraScale.Authentication/"
 touch "$sandbox/rootfs/lib/ld-linux-aarch64.so.1" "$sandbox/ts-auth"
 chmod +x "$sandbox/ts-auth"
 cat > "$sandbox/bin/git" <<'STUB'

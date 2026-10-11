@@ -21,7 +21,7 @@ usage() { echo "usage: $0 auth|terrabase <slow-suite-log>" >&2; exit 2; }
 test "$#" -eq 2 || usage
 area=$1 log=$2
 case $area in
-  auth) label=auth; tests=tests/TerraScale.Auth.Slow ;;
+  auth) label=auth; tests=tests/TerraScale.Authentication.Slow ;;
   terrabase) label=terrabase; tests=tests/TerraBase.Slow ;;
   *) usage ;;
 esac

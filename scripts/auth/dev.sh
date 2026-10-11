@@ -138,7 +138,7 @@ trap 'exit 143' TERM
 # control gives it its own process group and keeps SIGINT enabled for it; a
 # non-interactive shell otherwise starts background jobs with SIGINT ignored.
 set -m
-dotnet watch --project src/TerraScale.Auth --non-interactive run &
+dotnet watch --project src/TerraScale.Authentication --non-interactive run &
 watch_pid=$!
 set +m
 

@@ -10,11 +10,11 @@ This repository (`TerraScale/terrascale`) holds four areas. The rules in this fi
 | Area | Paths | What it is |
 |---|---|---|
 | libs | `src/TerraScale.Endpoints*`, `src/TerraScale.Logging`, `tests/TerraScale.Endpoints.Tests`, `tests/TerraScale.Logging.Tests`, `benchmark/dotnet/` | Shared .NET libraries: the endpoint framework and logging. Services consume them through ProjectReference. |
-| auth | `src/TerraScale.Auth*`, `tests/TerraScale.Auth.{Fast,Slow,TestHarness}`, `docs/auth/`, `scripts/auth/` | ts-auth: the hosted identity provider. |
+| auth | `src/TerraScale.Authentication*`, `tests/TerraScale.Authentication.{Fast,Slow,TestHarness}`, `docs/auth/`, `scripts/auth/` | ts-auth: the hosted identity provider. |
 | terrabase | `src/TerraBase*`, `tests/TerraBase.{Fast,Slow,TestHarness}`, `docs/terrabase/`, `scripts/terrabase/` | TerraBase: the leaderless, multi-region document database. |
 | benchmark | `benchmark/` (Go), `benchmark/dotnet/` (.NET library benchmarks) | All benchmark code, datasets, reports and results. |
 
-Area notes: `src/TerraBase/AGENTS.md` (terrabase), `src/TerraScale.Auth/AGENTS.md` (auth).
+Area notes: `src/TerraBase/AGENTS.md` (terrabase), `src/TerraScale.Authentication/AGENTS.md` (auth).
 
 ### Where things go
 
@@ -168,17 +168,17 @@ Each product owns one area. Never duplicate another product's data; call its API
 
 Each service maintains exactly two integration suites:
 
-- **Fast** (`tests/TerraScale.Auth.Fast`, `tests/TerraBase.Fast`)
+- **Fast** (`tests/TerraScale.Authentication.Fast`, `tests/TerraBase.Fast`)
   - Covers critical paths and common user workflows, and stays fast enough to run routinely.
   - MUST run before every merge, deployment, release, and relevant CI action. Results MUST cover the current changes or the exact commit being advanced.
   - Any failure MUST block the operation.
-- **Slow** (`tests/TerraScale.Auth.Slow`, `tests/TerraBase.Slow`)
+- **Slow** (`tests/TerraScale.Authentication.Slow`, `tests/TerraBase.Slow`)
   - Provides comprehensive integration and end-to-end coverage.
   - MUST run independently from the release-critical pipeline and MUST NOT block merges, deployments, or releases.
   - Preserve visible failures: non-blocking does not mean passing.
   - Any failure MUST automatically create a Forgejo issue with `fj`, or update the existing open report for the same failure. The issue contains the failed tests, commit SHA, environment, reproduction steps, expected and actual behavior, redacted logs and the CI run URL. The reporting step runs even when the test step fails.
   - Keep sensitive vulnerability details in the approved private reporting channel, never in public issues.
-- Shared test utilities live in each service's TestHarness (`tests/TerraScale.Auth.TestHarness`, `tests/TerraBase.TestHarness`) and are linked as source. They MUST NOT become a third suite.
+- Shared test utilities live in each service's TestHarness (`tests/TerraScale.Authentication.TestHarness`, `tests/TerraBase.TestHarness`) and are linked as source. They MUST NOT become a third suite.
 - New functionality MUST be covered by the appropriate suite. Critical or commonly used functionality SHOULD be in Fast. Broader, expensive, edge-case, stress, or exhaustive scenarios SHOULD be in Slow.
 - Never skip, disable, or weaken tests to bypass a failure.
 

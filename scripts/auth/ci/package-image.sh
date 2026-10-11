@@ -14,7 +14,7 @@ cd "$repo"
 source_commit=$(git rev-parse HEAD)
 image="$(bash scripts/auth/ci/image-ref.sh)"
 test -s artifacts/ci/container-publish/ts-auth
-podman build --pull=missing --platform linux/amd64 --tag "$image" --file src/TerraScale.Auth/Containerfile .
+podman build --pull=missing --platform linux/amd64 --tag "$image" --file src/TerraScale.Authentication/Containerfile .
 test "$(podman image inspect "$image" --format '{{.Architecture}}')" = amd64
 test "$(podman image inspect "$image" --format '{{.Os}}')" = linux
 
