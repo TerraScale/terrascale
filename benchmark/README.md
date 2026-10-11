@@ -8,9 +8,11 @@ The shared contract is
 
 **This slice is incomplete:** workloads, the bounded measurement engine, local
 runner, HDR aggregation and Markdown reporting are implemented and tested.
-The Go SDK client, TerraBase persistence and first live reports are blocked on
-[the official SDK JWT data surface](clients/go/README.md). No compatibility
-API-key path or synthetic capacity result replaces those requirements.
+The TS-761 capacity Go client is not implemented yet, and TerraBase persistence
+and first live reports remain blocked. The TS-832 API benchmark
+([docs/api-bench.md](docs/api-bench.md)) has a Go client in
+[clients/go](clients/go/README.md). No compatibility API-key path or synthetic
+capacity result replaces those requirements.
 
 The merged [Rust client preflight](clients/rust/README.md) validates the CLI
 contract and records its official SDK lifecycle, ULID and index prerequisites.
@@ -101,3 +103,17 @@ metrics are retained as protocol requirements.
 
 [Prerequisite evidence](bench/2026-10-08-prerequisites.md) records why no live
 capacity number is claimed yet.
+
+## TS-832 API benchmark
+
+Measures the production API through ts-go, ts-dotnet (JIT and Native AOT) and
+raw-HTTP baselines. The contract is [docs/api-bench.md](docs/api-bench.md); the
+Go client is [clients/go](clients/go/README.md).
+
+Run it against production; the key is read from OCI Vault (see the credentials section of the contract):
+
+```sh
+nice -n 19 make api-bench CLUSTER_STATE=stable   # or CLUSTER_STATE=changing
+```
+
+Reports land in [bench/results/](bench/results/).

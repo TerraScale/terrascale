@@ -8,3 +8,5 @@ Every measured run has a Markdown table, raw client JSONL and aggregate JSON in
 | 2026-10-08 | [SDK and live-run prerequisites](2026-10-08-prerequisites.md) | Blocked; no capacity number claimed |
 
 Unit-test fixtures are temporary files and are never recorded as live runs.
+
+TS-832 API benchmark reports (not capacity evidence) land in [results/](results/).
