@@ -13,7 +13,7 @@ the original TS-428 storage design. TS-489 implements the Documents v1 storage
 boundary. TS-490 adds users, sessions and email passcodes on that store.
 TS-491 adds an OpenID Connect provider for ts-dashboard, with a hosted
 email-passcode sign-in page that serves those TS-490 services.
-`docs/parity.md` tracks what has landed.
+`docs/auth/parity.md` tracks what has landed.
 
 ## Layout
 
@@ -25,7 +25,7 @@ email-passcode sign-in page that serves those TS-490 services.
 | `src/TerraScale.Auth.Store/` | Documents v1 persistence and storage readiness through ts-dotnet (TS-489, from the TS-428 design). |
 | `tests/TerraScale.Auth.Fast/` | Blocking integration suite (TUnit + Playwright). |
 | `tests/TerraScale.Auth.Slow/` | Non-blocking integration suite. |
-| `tests/Shared/` | Harness source linked into both suites: loopback Kestrel app, Chromium launcher, pinned real TerraBase fixture and observability test doubles. |
+| `tests/TerraScale.Auth.TestHarness/` | Harness source linked into both suites: loopback Kestrel app, Chromium launcher, pinned real TerraBase fixture and observability test doubles. |
 
 There are no unit tests. HTTP tests start the real application with
 `AuthTestServer.StartAsync`. Storage tests use ts-dotnet against the real
@@ -847,7 +847,7 @@ The rest of the platform management API (contract section 7), in
 
 ## Production activation gate
 
-[`scripts/provision.sh`](../scripts/provision.sh) prints only a provisioning
+[`scripts/auth/provision.sh`](../../scripts/auth/provision.sh) prints only a provisioning
 plan. It performs no live setup; live dataset provisioning belongs to TS-529
 in ts-orchestrator. Automatic provisioning remains pending; qualification and
 storage-integrity requirements still gate safe serving.
@@ -895,7 +895,7 @@ over that real store, and two servers bound to one database stand in for
 replicas.
 
 Their collections, `signing_key_rings` and `rate_limits`, are provisioned
-with the other collections (`scripts/provision.sh`); while one is missing the
+with the other collections (`scripts/auth/provision.sh`); while one is missing the
 feature answers 503. Since TS-491, `signing_key_rings` is also one of
 `AuthStore.RequiredCollections`, because OpenID Connect signs every token with
 the ring, so `/readyz` reports 503 while it is missing.

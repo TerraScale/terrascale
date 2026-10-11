@@ -1,6 +1,6 @@
 # TerraScale capacity benchmark (TS-761)
 
-`ts-benchmark` defines the public-SDK end-to-end capacity benchmark for deployed
+`benchmark/` defines the public-SDK end-to-end capacity benchmark for deployed
 TerraBase across automatically discovered serving regions. **gru** and **sfo**
 are the current bounded benchmark qualification targets, not a serving allowlist.
 The shared contract is

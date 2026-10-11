@@ -1,7 +1,7 @@
 # 0003: SQLite `synchronous = NORMAL` in WAL mode
 
 - Status: accepted (human decision, 2026-10-04)
-- Scope: `src/TerraBase/Engine/Sqlite` (every connection: pooled sessions and the
+- Scope: `src/TerraScale.TerraBase/Engine/Sqlite` (every connection: pooled sessions and the
   connection that creates a database)
 
 ## Context
@@ -28,4 +28,4 @@ Every connection uses `PRAGMA synchronous = NORMAL`, for write throughput.
   completely.
 - TerraBase does not claim that an acknowledged write survives power loss on a single node. Any
   such guarantee has to come from replication or a later decision, with evidence.
-- Measured effect: see the benchmark in `docs/sqlite-query-plans.md`.
+- Measured effect: see the benchmark in `docs/terrabase/sqlite-query-plans.md`.

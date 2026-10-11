@@ -7,7 +7,7 @@ configuration, and does not change the storage format.
 
 ## What is counted
 
-The counters live in `IDatabaseStats` (`src/TerraBase/Features/Stats/`).
+The counters live in `IDatabaseStats` (`src/TerraScale.TerraBase/Features/Stats/`).
 
 Database level. Only `UsageMeter` feeds these, through its existing metering calls:
 
@@ -258,5 +258,5 @@ Rules:
 - Storage per collection.
 - Database names. Only catalog ids appear.
 - Persisted history. Stats are in memory, and counts restart with each process (`epoch` changes). For persisted
-  history, see [`docs/analytics.md`](analytics.md).
+  history, see [`docs/terrabase/analytics.md`](analytics.md).
 - Any storage-format change.

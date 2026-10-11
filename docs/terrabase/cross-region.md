@@ -256,7 +256,7 @@ Alert on `terrabase_wan_staleness_seconds` above a minute, and on any `ahead` fa
 
 ## Live check
 
-`scripts/cross-region-check.py` writes a unique value to a dedicated canary database through each region's public API
+`scripts/terrabase/cross-region-check.py` writes a unique value to a dedicated canary database through each region's public API
 and reads it back through the other, in both directions. It also writes one document in both regions at once, which
 must converge. It exits non-zero on a mismatch, or when a write takes longer than the lag threshold to show up. Setup
 and the exact command are in the [rollout](rollout/ts-643-cross-region.md).

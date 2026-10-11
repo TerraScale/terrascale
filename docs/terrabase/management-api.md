@@ -11,7 +11,7 @@ audit contracts: those belong to ts-auth. The public routes and JWT scopes are i
 [the HTTP API table](api.md). See [the TS-493 dashboard map](dashboard-endpoints.md) for the
 remaining work and its owners; do not extend legacy identity routes.
 
-The Management feature (`src/TerraBase/Features/Management`, OpenAPI tag
+The Management feature (`src/TerraScale.TerraBase/Features/Management`, OpenAPI tag
 `Management`) stores organizations, projects and the databases they own, so ts-dashboard
 has a server-side home for state it keeps in memory today. This document maps every
 ts-dashboard feature to the TerraBase endpoint that backs it, or to the service that owns it
@@ -618,7 +618,7 @@ The schema is inferred and read-only: TerraBase has no declared schemas yet.
   usage, not billing data. A branch or restored database starts at zero.
 - `documents` counts live documents; `collections` counts every collection, empty ones included.
 - Project usage sums every database of the project; `items` are in creation order. There is no organization usage:
-  TerraBase stores no organizations (`docs/api.md`), so ts-dashboard sums its projects. Every database is listed before
+  TerraBase stores no organizations (`docs/terrabase/api.md`), so ts-dashboard sums its projects. Every database is listed before
   any is counted, so past 100 nothing is counted; a request that has run 5 seconds starts no further catalog read or count, and one whose last listing or
   count ends past them answers `400` too.
 - Counts are kept in memory per database and UTC hour and saved to the catalog every 10 seconds: the lifetime totals

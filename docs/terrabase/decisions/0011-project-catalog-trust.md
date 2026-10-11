@@ -59,8 +59,8 @@ IDs. This restriction does not verify any historical mapping.
 ## Contract and storage implications
 
 This decision changes the previous automatic legacy-mapping reuse described in
-`docs/api.md`, and the public client-chosen project-ID contract in
-`docs/management-commits.md`. Existing non-project-JWT callers retain access
+`docs/terrabase/api.md`, and the public client-chosen project-ID contract in
+`docs/terrabase/management-commits.md`. Existing non-project-JWT callers retain access
 under their legacy memberships and keys. Binding preserves catalog IDs,
 database files, document versions, snapshots and replication identities; no
 production wipe, file move or re-foundation is authorized.

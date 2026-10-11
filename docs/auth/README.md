@@ -1,6 +1,6 @@
 # ts-auth
 
-Read the [required zero-configuration operating contract](docs/zero-configuration.md).
+Read the [required zero-configuration operating contract](zero-configuration.md).
 Current configuration paths described below are implementation limitations, not
 production activation instructions.
 
@@ -25,8 +25,8 @@ TUnit and Playwright integration tests.
 > for existing accounts. Device flow, guest accounts, CORS and SAML are
 > follow-up TS-495. The other identity features below are being ported stream
 > by stream. Until a stream lands, its routes are not served.
-> [`docs/parity.md`](docs/parity.md) tracks each capability, and
-> [`docs/csharp-port.md`](docs/csharp-port.md) describes the layout, commands
+> [`docs/auth/parity.md`](parity.md) tracks each capability, and
+> [`docs/auth/csharp-port.md`](csharp-port.md) describes the layout, commands
 > and intentional changes. The Rust implementation remains in Git history
 > (before TS-442 / `8dd2874`) as the behavioural reference, including the
 > original TS-428 storage design.
@@ -34,14 +34,14 @@ TUnit and Playwright integration tests.
 ts-auth owns identity and access for the whole platform (epic TS-597). The
 contract for organizations, projects, roles, invitations, API keys, the token
 claims and the tenant/issuer scheme is
-[`docs/platform-contract.md`](docs/platform-contract.md), with
-[`docs/platform-api.openapi.yaml`](docs/platform-api.openapi.yaml).
+[`docs/auth/platform-contract.md`](platform-contract.md), with
+[`docs/auth/platform-api.openapi.yaml`](platform-api.openapi.yaml).
 
 The consumer-app competitive review and remaining release gates are in
-[`docs/competitive-review.md`](docs/competitive-review.md). The consumer
+[`docs/auth/competitive-review.md`](competitive-review.md). The consumer
 integration contract (guest accounts, browser origins, device authorization,
 organization permission checks) is in
-[`docs/consumer-integration.md`](docs/consumer-integration.md).
+[`docs/auth/consumer-integration.md`](consumer-integration.md).
 
 ## Authentication rate limits (TS-704)
 
@@ -66,14 +66,14 @@ Other sign-in and recovery budgets remain separate. Notice claims live in
 TerraBase; delivery uses a separate bounded notice queue and worker, so notice
 floods cannot displace sign-in or recovery mail. Delivery remains best-effort,
 and notices whose lockout has expired before sending are suppressed.
-See [the budget table](docs/csharp-port.md#limits). Production forwarding remains
+See [the budget table](csharp-port.md#limits). Production forwarding remains
 disabled until its actual socket peers and rightmost client-IP header are
-verified; see [the ingress checklist](docs/csharp-port.md#trusted-proxy-ingress).
+verified; see [the ingress checklist](csharp-port.md#trusted-proxy-ingress).
 
 The internal TOTP and recovery-code credential layer, atomic authorization
 composition, and primary-only authentication guards (TS-707), deployment
 prerequisite, and remaining dashboard MFA slices are documented in
-[`docs/mfa.md`](docs/mfa.md). Active MFA accounts are refused by existing user
+[`docs/auth/mfa.md`](mfa.md). Active MFA accounts are refused by existing user
 sign-in and online authorization paths; public enrollment and MFA sign-in
 endpoints are not served yet.
 
@@ -92,7 +92,7 @@ endpoints are not served yet.
 | Social SSO | Upstream OIDC connections (Microsoft, Google, any issuer) with JWKS-verified ID tokens; GitHub OAuth with verified email lookup |
 | Enterprise SSO | SAML 2.0 connections (HTTP-Redirect AuthnRequest, XML-DSig-verified assertions) |
 | Directory sync | SCIM 2.0 `/scim/{dir}` — users, groups, deprovisioning |
-| Organizations and projects | The platform's organizations → projects, organization and project roles, invitations, ownership transfer, audit, and API keys exchanged for short-lived JWTs (TS-598, [`docs/platform-contract.md`](docs/platform-contract.md)); one issuer per customer project for its end users |
+| Organizations and projects | The platform's organizations → projects, organization and project roles, invitations, ownership transfer, audit, and API keys exchanged for short-lived JWTs (TS-598, [`docs/auth/platform-contract.md`](platform-contract.md)); one issuer per customer project for its end users |
 | Admin portal | Dashboard-styled hosted page for org admins to configure GitHub, Microsoft, Google, custom OIDC and SAML connections, and view directories |
 | Management API | Full developer REST API with `sk_...` keys, per-family key scopes, pagination, rate limiting |
 | JWT templates | Custom-claim tokens (`{{user.email}}` substitution) minted on demand |
@@ -116,14 +116,14 @@ Both are generated from the endpoints the running service actually maps.
 ## Layout
 
 ```text
-src/TerraScale.Auth/            # ASP.NET Core host; Features/<Area>/ endpoints, services and Razor slices; Assets/
-src/TerraScale.Auth.Contracts/  # persisted models and the {"error":{…}} envelope
-src/TerraScale.Auth.Security/   # Argon2id passwords, the master-key secret box, ES256 keys and JWTs, tokens and digests
-src/TerraScale.Auth.Store/      # Documents v1 persistence/readiness on ts-dotnet (TS-489)
-tests/TerraScale.Auth.Fast/     # blocking integration suite
-tests/TerraScale.Auth.Slow/     # non-blocking integration suite
-tests/Shared/                   # harness source linked into both suites
-scripts/                        # dev loop, OpenAPI export, CI, provisioning and real-stack smoke checks
+src/TerraScale.Auth/                # ASP.NET Core host; Features/<Area>/ endpoints, services and Razor slices; Assets/
+src/TerraScale.Auth.Contracts/      # persisted models and the {"error":{…}} envelope
+src/TerraScale.Auth.Security/       # Argon2id passwords, the master-key secret box, ES256 keys and JWTs, tokens and digests
+src/TerraScale.Auth.Store/          # Documents v1 persistence/readiness on ts-dotnet (TS-489)
+tests/TerraScale.Auth.Fast/         # blocking integration suite
+tests/TerraScale.Auth.Slow/         # non-blocking integration suite
+tests/TerraScale.Auth.TestHarness/  # harness source linked into both suites
+scripts/auth/                       # dev loop, OpenAPI export, CI, provisioning and real-stack smoke checks
 ```
 
 Persistent uploaded files, if a feature needs them, belong in RustFS through
@@ -143,7 +143,7 @@ wire cutover still requires a compatible TerraBase release; this helper pin
 does not change persisted IDs or reset data.
 Storage integration tests require the real SDK-pinned Linux x64 TerraBase
 binary locally and in CI; unavailable prerequisites fail instead of skipping.
-See [the port guide](docs/csharp-port.md) for the binary tag, SHA-256 and
+See [the port guide](csharp-port.md) for the binary tag, SHA-256 and
 download/cache settings. Run local commands at low CPU priority:
 
 ```sh
@@ -156,13 +156,13 @@ Signing keys live in one OCI Vault secret per region and rotate
 automatically: each replica bootstraps the serving ring at startup (replacing
 one it cannot verify, which signs everyone out) and publishes a new key every
 30 days, two days before it signs. See
-[bootstrap and automatic rotation](docs/csharp-port.md#bootstrap-and-automatic-rotation-ts-703).
+[bootstrap and automatic rotation](csharp-port.md#bootstrap-and-automatic-rotation-ts-703).
 
 ## Production operating contract and current gaps
 
 Identity, regional service discovery, database scope, signing-key storage, email
 and service credentials must be provisioned automatically under the
-[zero-configuration contract](docs/zero-configuration.md). OCI Vault creates
+[zero-configuration contract](zero-configuration.md). OCI Vault creates
 first-party secrets and delivers vendor credentials stored once. Rate limits,
 rotation cadence and other production values have one correct setting in code.
 
@@ -192,7 +192,7 @@ Security requirements remain mandatory:
   an unavailable crypto runtime must stop serving.
 
 Metrics use OTLP; they never carry exception messages, headers, query strings,
-bodies or credentials. See [the current port inventory](docs/csharp-port.md)
+bodies or credentials. See [the current port inventory](csharp-port.md)
 for implementation details and remaining gates.
 
 ### Self-service authentication setup
@@ -238,7 +238,7 @@ with `client_secret_basic` or `client_secret_post`, must use PKCE with S256
 (`plain` is disabled for every client), and gets implicit consent. It is also the
 only client allowed the TS-582 headless API: its own sign-up, password,
 email-code and password-reset pages call ts-auth server-to-server and receive
-the same tokens ([port guide](docs/csharp-port.md#headless-api-ts-582)). Service
+the same tokens ([port guide](csharp-port.md#headless-api-ts-582)). Service
 clients from `TS_AUTH_SERVICE_CLIENTS` may use only the client-credentials
 grant: their access token has `sub` = the client id, the same `typ` and `aud`,
 no scopes and no email, and they get no identity or refresh token. Authorization requests must exactly match a registered redirect URI;
@@ -268,7 +268,7 @@ are create-only or version-conditional and reject infrastructure collection
 names. Single-use challenges persist only hashes, check instance/purpose/
 subject/expiry, and retain their CAS-consumed record to reject replay and
 reissue. These primitives do not implement the identity flows above. See
-`docs/parity.md` for capability status.
+`docs/auth/parity.md` for capability status.
 
 An ambiguous TerraBase write can leave a uniqueness claim reserved. A timeout
 or failed immediate read does not prove that a delayed write did not commit.
@@ -385,14 +385,14 @@ deadline, and `/readyz` answers its latest result; a result older than fifteen
 seconds is not ready. The Vault metadata read is cached for five minutes after it
 succeeds. Unknown `region` is omitted.
 
-The broader `scripts/smoke-real-stack.sh` still targets Rust identity flows
+The broader `scripts/auth/smoke-real-stack.sh` still targets Rust identity flows
 that later streams have not implemented; it is not evidence of TS-489 or
 TS-491 acceptance.
 
 ## Provisioning the global auth dataset
 
 The application and readiness probe never provision or repair state, and
-there is no migration of Rust documents. `scripts/provision.sh` prints only
+there is no migration of Rust documents. `scripts/auth/provision.sh` prints only
 the provisioning plan; live production execution belongs to TS-470:
 
 1. Resolve organization `terrascale` and project label `ts-auth` to their
@@ -426,7 +426,7 @@ is an unsupported bootstrap stub, so no regional replication or failover is
 available. All replicas must use one authority, with no automatic retries or
 failover to another copy. Production activation requires an approved
 durability/recovery design and TS-470 verification; `/readyz` and local tests
-do not prove production durability. [The port guide](docs/csharp-port.md#production-activation-gate)
+do not prove production durability. [The port guide](csharp-port.md#production-activation-gate)
 links the exact pinned decisions. No live production validation is claimed.
 
 ## API surface
@@ -445,7 +445,7 @@ OpenID Connect routes for the slug `terrascale` (other slugs answer 404):
 - The TS-582 headless API for ts-dashboard: `POST
   /terrascale/headless/v1/email-code/start`, `/sign-up`,
   `/password-reset/start` and `/password-reset/complete`, plus the token
-  endpoint's headless grants (see [the port guide](docs/csharp-port.md#headless-api-ts-582))
+  endpoint's headless grants (see [the port guide](csharp-port.md#headless-api-ts-582))
 
 TS-631: send the original sign-up `pending_token` to `email-code/start` to
 resend its verification code without choosing another password or token. All
@@ -458,7 +458,7 @@ All of them appear in `/openapi/v1.json` under the `OAuth`, `Sign-in` and
 `Headless` tags. Introspection and device authorization are not served. The
 target surface below is the contract the
 port streams restore (from the Rust service); each stream keeps its paths,
-methods and operation ids. [The port guide](docs/csharp-port.md#openid-connect-ts-491)
+methods and operation ids. [The port guide](csharp-port.md#openid-connect-ts-491)
 describes the TS-491 behaviour and its limits.
 
 
@@ -479,7 +479,7 @@ describes the TS-491 behaviour and its limits.
   `/v1/S/authorization/check`, `/v1/S/instance`
 - Platform management (the platform's organizations, projects, roles,
   invitations and API keys, with the user's own sign-in token):
-  `/v1/terrascale/…`, specified in [`docs/platform-contract.md`](docs/platform-contract.md)
+  `/v1/terrascale/…`, specified in [`docs/auth/platform-contract.md`](platform-contract.md)
 
 Billing, plans and seat quotas are not ts-auth's: ts-dashboard owns them
 (TS-597).
@@ -526,38 +526,38 @@ rotation.
   Fast cases share one TerraBase process and run at most two at a time;
   concurrency tests still create their own parallel requests.
 - **`build`** publishes a self-contained single-file linux-x64 executable
-  (`scripts/ci/stage-release.sh`), packages it into the chiseled
-  `runtime-deps` image (`Containerfile`, pinned by digest), and smoke-checks
+  (`scripts/auth/ci/stage-release.sh`), packages it into the chiseled
+  `runtime-deps` image (`src/TerraScale.Auth/Containerfile`, pinned by digest), and smoke-checks
   `/healthz` (revision), `/openapi/v1.json`, fail-closed `/readyz` and the
-  absence of `/metrics` (`scripts/ci/package-image.sh`). It also publishes
+  absence of `/metrics` (`scripts/auth/ci/package-image.sh`). It also publishes
   the linux-arm64 single-file executable, so every pull request proves that
   build. `stage-release.sh` checks the ELF machine of each build, and
-  `scripts/ci/smoke-arm64.sh` starts the arm64 executable under qemu-aarch64 on
+  `scripts/auth/ci/smoke-arm64.sh` starts the arm64 executable under qemu-aarch64 on
   the arm64 variant of the pinned runtime-deps image, requiring `/healthz` with
   this revision and a fail-closed `/readyz` (its startup Argon2id self-test
   proves the bundled libsodium loads on arm64).
 
 On pushes to `main`, `build` stages the smoke-checked image in
 `git.terrascale.tech/<owner>/ts-auth-ci` and passes its registry manifest
-digest to `release` (`scripts/ci/transfer-image.sh`). Once both jobs pass,
+digest to `release` (`scripts/auth/ci/transfer-image.sh`). Once both jobs pass,
 `release` tags that exact image as `git.terrascale.tech/<owner>/ts-auth:<commit>`.
 The daily `registry-retention.yml` workflow removes staging candidates older
 than 30 days.
 
 On pushes to `main`, once `test` and `build` pass, `publish`
-(`scripts/ci/publish-binary.sh`) attaches `ts-auth-linux-arm64` and
+(`scripts/auth/ci/publish-binary.sh`) attaches `ts-auth-linux-arm64` and
 `ts-auth-linux-arm64.sha256` to the Forgejo release `v<version>-dev.<commit>`,
 which ts-orchestrator downloads to run ts-auth natively. The exact bytes are
 smoke-checked under emulation before any upload. New uploads succeed only
 once both downloads match the smoke-checked executable and its checksum byte for byte;
 a rerun leaves an existing internally verified release
 untouched and replaces both assets of one an interrupted run left incomplete
-(`scripts/check-binary-publish.sh` covers these paths in `test`). Download
+(`scripts/auth/check-binary-publish.sh` covers these paths in `test`). Download
 both assets into one directory and verify with
 `sha256sum -c ts-auth-linux-arm64.sha256`; the checksum detects a corrupt or
 mismatched download, it is not a signature.
 
-Then `deploy` (`scripts/ci/deploy.sh`) automatically hands every green main
+Then `deploy` (`scripts/auth/ci/deploy.sh`) automatically hands every green main
 release to ts-orchestrator for GRU and SFO. Deployment has no opt-in switch;
 the script targets both regions and the `canary` environment currently signed
 into their controller configuration. `ts-orch release service-deploy` (the
@@ -570,7 +570,7 @@ back, which fails the job before later regions see it. The script logs total
 deployment time and preserves the orchestrator's failure status. TS-768 owns
 the follow-up shared region discovery and independent regional rollouts.
 See ts-orchestrator `docs/continuous-delivery.md`, "Automatic service
-releases". `scripts/ci/check-deploy.sh` (in `test`) runs the script against a
+releases". `scripts/auth/ci/check-deploy.sh` (in `test`) runs the script against a
 stub API and ts-orch.
 
 The executable extracts its bundled native library (libsodium, used for

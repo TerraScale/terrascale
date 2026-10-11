@@ -16,7 +16,7 @@ blocks publication and deployment; TS-773 repairs the underlying main-suite fail
 
 The main-only deploy job always runs after publication. Missing configuration
 fails the job instead of silently making deployment optional.
-`scripts/ci/deploy.sh` verifies the ARM64 release binary's SHA-256 sidecar and
+`scripts/terrabase/ci/deploy.sh` verifies the ARM64 release binary's SHA-256 sidecar and
 the pinned amd64 `ts-orch` helper, then invokes `release service-deploy`.
 The qualified helper discovers every region from orch's signed-spec topology
 published at Atlas, including regions whose routing health is down or unknown.
@@ -69,4 +69,4 @@ For TS-768 live acceptance, merge a no-op source change. Record merge time,
 Fast and publication completion, regional claim publication, and every replica's
 first healthy target report. Report merge-to-last-replica and green-to-last-replica
 for GRU, SFO and the fleet, with CI links. These deployment observations belong
-with the ticket; database benchmark results remain in `ts-benchmark`.
+with the ticket; database benchmark results remain in `benchmark/`.

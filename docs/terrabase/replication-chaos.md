@@ -9,7 +9,7 @@ To replay only these scenarios:
 
 ```sh
 nice -n 19 make build
-nice -n 19 dotnet run --project src/Tests/TerraBase.Slow --no-build -- \
+nice -n 19 dotnet run --project tests/TerraScale.TerraBase.Slow --no-build -- \
   --treenode-filter '/TerraBase.Slow/TerraBase.Slow.Replication/ReplicationChaosTests/*' \
   --minimum-expected-tests 5
 ```

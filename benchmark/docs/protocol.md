@@ -1,6 +1,6 @@
 # TS-761 capacity benchmark protocol
 
-This is the shared contract for ts-benchmark, the Go/.NET/Rust SDK clients and
+This is the shared contract for benchmark/, the Go/.NET/Rust SDK clients and
 ts-orchestrator cluster metrics. It benchmarks the complete public TerraScale
 path: SDK authentication/routing → deployed regional API → TerraBase. It does
 not qualify an archived engine, a local process or an internal administrative
