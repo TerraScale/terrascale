@@ -30,7 +30,7 @@ public sealed class CrossRegionTests
     private static readonly string[] InSfo = ["sfo-1"];
     private static readonly string[] InGru = ["gru-1"];
     private static readonly string[] SfoTwice = ["sfo-1", "sfo-1"];
-    private static readonly string[] Unknown = ["iad-1"];
+    private static readonly string[] Malformed = ["IAD 1"];
 
     [Test]
     public async Task Both_regions_meter_encoded_replication_bytes_by_direction_without_charging_client_bandwidth()
@@ -107,6 +107,22 @@ public sealed class CrossRegionTests
                     && pair.GetProperty("destinationRegion").GetString() == destination)
                 .Sum(pair => pair.GetProperty(field).GetInt64());
         }
+    }
+
+    [Test]
+    public async Task Regions_listed_in_the_dns_pull_each_other_over_their_peer_listeners()
+    {
+        // The production path: both regions' machines in one directory, as Fly's DNS lists them, asked with Wan.Ask.
+        using var peerTls = new PeerTls();
+        await using var regions = await Regions.StartAsync(dns: (peerTls, new FakeMemberStore()));
+        var id = ReplicationDocuments.Id("dns");
+        var value = Faker.Lorem.Sentence();
+        using var written = await regions.Gru.PutAsJsonAsync(regions.Document(id), new { value });
+        await Assert.That(written.StatusCode).IsEqualTo(HttpStatusCode.Created);
+        _ = await Regions.EventuallyReadAsync(regions.Sfo, regions.Document(id), value);
+        var sfoValue = Faker.Lorem.Sentence();
+        (await regions.Sfo.PutAsJsonAsync(regions.Document(ReplicationDocuments.Id("dns-sfo")), new { value = sfoValue })).EnsureSuccessStatusCode();
+        _ = await Regions.EventuallyReadAsync(regions.Gru, regions.Document(ReplicationDocuments.Id("dns-sfo")), sfoValue);
     }
 
     [Test]
@@ -512,10 +528,10 @@ public sealed class CrossRegionTests
     public async Task A_placement_is_checked_where_it_is_created_and_through_commits()
     {
         await using var regions = await Regions.StartAsync();
-        // Created in its home region only; replicas are regions this deployment replicates with, once each, besides the home.
+        // Created in its home region only; replicas are regions, once each, besides the home.
         await Regions.WrongRegionAsync(regions.GruApi.Client.PostAsJsonAsync(regions.Management("databases"), new { name = "elsewhere", homeRegion = "sfo-1" }), "sfo-1", "sfo-1");
-        await ErrorAssert.ErrorAsync(regions.GruApi.Client.PostAsJsonAsync(regions.Management("databases"), new { name = "unknown", replicaRegions = Unknown }),
-            HttpStatusCode.BadRequest, "invalid_request", "replicaRegions must name regions this deployment replicates with");
+        await ErrorAssert.ErrorAsync(regions.GruApi.Client.PostAsJsonAsync(regions.Management("databases"), new { name = "malformed", replicaRegions = Malformed }),
+            HttpStatusCode.BadRequest, "invalid_request", "replicaRegions must name regions");
         await ErrorAssert.ErrorAsync(regions.GruApi.Client.PostAsJsonAsync(regions.Management("databases"), new { name = "home", replicaRegions = InGru }),
             HttpStatusCode.BadRequest, "invalid_request", "replicaRegions must not name the home region");
         await ErrorAssert.ErrorAsync(regions.GruApi.Client.PostAsJsonAsync(regions.Management("databases"), new { name = "twice", replicaRegions = SfoTwice }),
@@ -612,8 +628,6 @@ public sealed class CrossRegionTests
         using var peerTls = new PeerTls();
         var network = new FakeRegionNetwork();
         var directory = Directory.CreateTempSubdirectory("terrabase-wan-members-").FullName;
-        var credentials = Path.Combine(directory, "user.creds");
-        await File.WriteAllTextAsync(credentials, Regions.Credentials);
         var gruMembers = new FakeMemberStore();
         var (portA, portB) = (TerraBaseTestServer.FreePort(), TerraBaseTestServer.FreePort());
         Task<ManagementApi> StartGruAsync(string name, int port)
@@ -624,7 +638,7 @@ public sealed class CrossRegionTests
                 settings["peer-port"] = port.ToString(System.Globalization.CultureInfo.InvariantCulture);
                 settings["peers"] = $"gru-a=localhost:{portA},gru-b=localhost:{portB}";
                 settings["catalog-primary"] = "gru-a";
-                Regions.Configure(settings, credentials, "gru-1", name);
+                Regions.Configure(settings, "gru-1", name);
             }, services => Regions.Join(services, network, "gru", gruMembers, name), managementCredential: true);
         }
 
@@ -633,7 +647,7 @@ public sealed class CrossRegionTests
             await using var gruA = await StartGruAsync("gru-a", portA);
             await using var gruB = await StartGruAsync("gru-b", portB);
             await using var sfo = await ManagementApi.StartAsync(
-                settings => Regions.Configure(settings, credentials, "sfo-1", "sfo-a"),
+                settings => Regions.Configure(settings, "sfo-1", "sfo-a"),
                 services => Regions.Join(services, network, "sfo", new FakeMemberStore()), managementCredential: true);
             var (organization, project, database) = (EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString());
             foreach (var (api, commit) in new[] { (gruA, Regions.Registration(organization, project, database, "canary", "sfo-1")), (sfo, Regions.Registration(organization, project, null, "canary")) })
@@ -682,52 +696,14 @@ public sealed class CrossRegionTests
         }
     }
 
-    [Test]
-    [Arguments("gru-1=gru", true)]
-    [Arguments("gru-1=gru,sfo-1=gru", true)]
-    [Arguments("gru-1=GRU,sfo-1=sfo", true)]
-    [Arguments("gru-1=gru,sfo-1=sfo", false)]
-    public async Task A_node_with_invalid_wan_regions_or_no_nats_does_not_start(string regions, bool nats)
-    {
-        var directory = Directory.CreateTempSubdirectory("terrabase-wan-config-").FullName;
-        try
-        {
-            var credentials = Path.Combine(directory, "user.creds");
-            await File.WriteAllTextAsync(credentials, Regions.Credentials);
-            await Assert.That(async () =>
-            {
-                await using var started = await TerraBaseTestServer.StartAsync(settings =>
-                {
-                    settings["region"] = "gru-1";
-                    settings["node-name"] = "gru-member";
-                    settings["wan-regions"] = regions;
-                    if (nats)
-                    {
-                        settings["nats-url"] = "nats://127.0.0.1:4222";
-                        settings["nats-credentials-file"] = credentials;
-                    }
-                });
-            }).Throws<InvalidOperationException>();
-        }
-        finally
-        {
-            Directory.Delete(directory, recursive: true);
-        }
-    }
-
     // Both regions with one database, "canary", registered in each by a commit with the same organization, project and
     // database ids, a collection "items", and a data client per region.
     private sealed class Regions : IAsyncDisposable
     {
-        private readonly string _credentials;
-
-        private Regions(FakeRegionNetwork network, string credentials, ManagementApi gru, ManagementApi sfo)
+        private Regions(FakeRegionNetwork network, ManagementApi gru, ManagementApi sfo)
         {
-            (Network, _credentials, GruApi, SfoApi) = (network, credentials, gru, sfo);
+            (Network, GruApi, SfoApi) = (network, gru, sfo);
         }
-
-        // A NATS user credentials file in shape only: the region bus and member store of these servers are in memory.
-        public const string Credentials = "-----BEGIN NATS USER JWT-----\neyJ0.e30.x\n------END NATS USER JWT------\n-----BEGIN USER NKEY SEED-----\nSUAEXAMPLE\n------END USER NKEY SEED------\n";
 
         public FakeRegionNetwork Network { get; }
 
@@ -773,16 +749,15 @@ public sealed class CrossRegionTests
             await Assert.That(response.Headers.GetValues("X-TerraBase-Database-Regions").Single()).IsEqualTo(regions);
         }
 
-        public static async Task<Regions> StartAsync(Action<IServiceCollection>? sfoServices = null)
+        // With dns, the regions find each other in that directory and talk over their peer listeners instead of the network.
+        public static async Task<Regions> StartAsync(Action<IServiceCollection>? sfoServices = null, (PeerTls Tls, FakeMemberStore Members)? dns = null)
         {
             var network = new FakeRegionNetwork();
-            var credentials = Path.Combine(Directory.CreateTempSubdirectory("terrabase-wan-").FullName, "user.creds");
-            await File.WriteAllTextAsync(credentials, Credentials);
             ManagementApi? gru = null;
             try
             {
-                gru = await StartRegionAsync(network, credentials, "gru-1", "gru");
-                var regions = new Regions(network, credentials, gru, await StartRegionAsync(network, credentials, "sfo-1", "sfo", sfoServices));
+                gru = await StartRegionAsync(network, "gru-1", "gru", dns: dns);
+                var regions = new Regions(network, gru, await StartRegionAsync(network, "sfo-1", "sfo", sfoServices, dns));
                 await regions.RegisterAsync();
                 return regions;
             }
@@ -793,7 +768,6 @@ public sealed class CrossRegionTests
                     await gru.DisposeAsync();
                 }
 
-                Directory.Delete(Path.GetDirectoryName(credentials)!, recursive: true);
                 throw;
             }
         }
@@ -860,18 +834,15 @@ public sealed class CrossRegionTests
             finally
             {
                 await SfoApi.DisposeAsync();
-                Directory.Delete(Path.GetDirectoryName(_credentials)!, recursive: true);
             }
         }
 
         // A member of the group gru-1=gru, sfo-1=sfo, on the in-memory region bus and member store.
-        public static void Configure(Dictionary<string, string> settings, string credentials, string region, string node)
+        public static void Configure(Dictionary<string, string> settings, string region, string node)
         {
             settings["region"] = region;
             settings["node-name"] = node;
             settings["wan-regions"] = "gru-1=gru,sfo-1=sfo";
-            settings["nats-url"] = "nats://127.0.0.1:4222";
-            settings["nats-credentials-file"] = credentials;
         }
 
         public static void Join(IServiceCollection services, FakeRegionNetwork network, string cell, FakeMemberStore members, string? node = null)
@@ -881,12 +852,26 @@ public sealed class CrossRegionTests
             services.AddSingleton<IMemberDirectory>(members);
         }
 
-        private static Task<ManagementApi> StartRegionAsync(FakeRegionNetwork network, string credentials, string region, string cell, Action<IServiceCollection>? configureServices = null) =>
+        private static Task<ManagementApi> StartRegionAsync(
+            FakeRegionNetwork network, string region, string cell, Action<IServiceCollection>? configureServices = null, (PeerTls Tls, FakeMemberStore Members)? dns = null) =>
             ManagementApi.StartAsync(
-                settings => Configure(settings, credentials, region, $"{cell}-member"),
+                settings =>
+                {
+                    Configure(settings, region, $"{cell}-member");
+                    dns?.Tls.Apply(settings);
+                },
                 services =>
                 {
-                    Join(services, network, cell, new FakeMemberStore());
+                    if (dns is { } directory)
+                    {
+                        services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, new FakeTimeProvider());
+                        services.AddSingleton<IMemberDirectory>(directory.Members);
+                    }
+                    else
+                    {
+                        Join(services, network, cell, new FakeMemberStore());
+                    }
+
                     configureServices?.Invoke(services);
                 }, managementCredential: true);
 

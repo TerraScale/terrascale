@@ -18,7 +18,6 @@ namespace TerraBase.Fast.CrossRegion;
 
 public sealed class CrossRegionHeadsIntegrityTests
 {
-    private const string Credentials = "-----BEGIN NATS USER JWT-----\neyJ0.e30.x\n------END NATS USER JWT------\n-----BEGIN USER NKEY SEED-----\nSUAEXAMPLE\n------END USER NKEY SEED------\n";
     private const string GruLabel = "region=\"gru-1\"";
     private static readonly string[] InSfo = ["sfo-1"];
 
@@ -36,10 +35,8 @@ public sealed class CrossRegionHeadsIntegrityTests
         var directory = Directory.CreateTempSubdirectory("terrabase-wan-heads-integrity-").FullName;
         try
         {
-            var credentials = Path.Combine(directory, "user.creds");
-            await File.WriteAllTextAsync(credentials, Credentials, token);
-            await using var gru = await StartAsync(network, credentials, "gru-1", "gru", "gru-a");
-            await using var sfo = await StartAsync(network, credentials, "sfo-1", "sfo", "sfo-a", bus, clock);
+            await using var gru = await StartAsync(network, "gru-1", "gru", "gru-a");
+            await using var sfo = await StartAsync(network, "sfo-1", "sfo", "sfo-a", bus, clock);
             try
             {
                 var organization = EntityIds.New().ToString();
@@ -133,14 +130,12 @@ public sealed class CrossRegionHeadsIntegrityTests
     }
 
     private static Task<ManagementApi> StartAsync(
-        FakeRegionNetwork network, string credentials, string region, string cell, string node, IRegionBus? bus = null, RoundClock? clock = null) =>
+        FakeRegionNetwork network, string region, string cell, string node, IRegionBus? bus = null, RoundClock? clock = null) =>
         ManagementApi.StartAsync(settings =>
         {
             settings["region"] = region;
             settings["node-name"] = node;
             settings["wan-regions"] = "gru-1=gru,sfo-1=sfo";
-            settings["nats-url"] = "nats://127.0.0.1:4222";
-            settings["nats-credentials-file"] = credentials;
         }, services =>
         {
             services.AddSingleton(bus ?? network.Join(cell, node));
@@ -242,11 +237,6 @@ public sealed class CrossRegionHeadsIntegrityTests
 
         public Task ServeAsync(string subject, Func<ReadOnlyMemory<byte>, CancellationToken, ValueTask<byte[]>> answer, CancellationToken cancellationToken) =>
             inner.ServeAsync(subject, answer, cancellationToken);
-
-        public string? Cell => inner.Cell;
-
-        public ValueTask PublishAsync(string subject, ReadOnlyMemory<byte> data, CancellationToken cancellationToken) =>
-            inner.PublishAsync(subject, data, cancellationToken);
 
         private ReadOnlyMemory<byte> DamageReply(ReadOnlyMemory<byte> reply)
         {

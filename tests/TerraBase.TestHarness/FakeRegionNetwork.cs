@@ -1,18 +1,15 @@
 using System.Runtime.CompilerServices;
-using TerraBase.Features.CrossRegion;
 
 namespace TerraBase.Testing;
 
 /// <summary>
-/// Core NATS request/reply between regions, in memory, shared by the servers of a test, as ts-orchestrator's interregion
-/// link serves it: a request to another cell gets one reply (the link imports each cell's <c>query</c> subjects as a
-/// Singleton service), and a request to a subject nobody serves fails as NATS's no-responders does. Within a cell every
-/// responder answers a scattered request. <see cref="Partition"/> cuts two cells apart, as a dropped link would, until
+/// Request/reply between regions, in memory, shared by the servers of a test (<see cref="IRegionBus"/>): a request to
+/// another cell gets one reply, as a member that sees only part of the other region, and a request to a subject nobody
+/// serves fails. Within a cell every responder answers a scattered request. <see cref="Partition"/> cuts two cells apart, as a dropped link would, until
 /// <see cref="Heal"/>. <see cref="Faults"/> makes the link lossy.
 /// </summary>
 internal sealed class FakeRegionNetwork
 {
-    private const int MaxPublishedPerSubject = 64;
     private readonly Lock _gate = new();
     private Random _random = new(0);
     private RegionFaults? _faults;
@@ -27,7 +24,6 @@ internal sealed class FakeRegionNetwork
     private readonly List<(string Cell, string? Node, string Subject, Func<ReadOnlyMemory<byte>, CancellationToken, ValueTask<byte[]>> Answer)> _responders = [];
     private readonly HashSet<(string, string)> _cut = [];
     private readonly HashSet<string> _muted = [with(StringComparer.Ordinal)];
-    private readonly Dictionary<string, Queue<byte[]>> _published = [with(StringComparer.Ordinal)];
 
     /// <summary>The bus of a server in <paramref name="cell"/>, named <paramref name="node"/> for <see cref="Mute"/>.</summary>
     public IRegionBus Join(string cell, string? node = null) => new Bus(this, cell, node);
@@ -75,34 +71,6 @@ internal sealed class FakeRegionNetwork
         {
             _cut.Clear();
             _muted.Clear();
-        }
-    }
-
-    /// <summary>The last publishes on <paramref name="subject"/>, oldest first; the last 64 are kept.</summary>
-    public IReadOnlyList<byte[]> Published(string subject)
-    {
-        lock (_gate)
-        {
-            return _published.TryGetValue(subject, out var messages) ? [.. messages] : [];
-        }
-    }
-
-    private void Record(string subject, byte[] data)
-    {
-        lock (_gate)
-        {
-            if (!_published.TryGetValue(subject, out var messages))
-            {
-                messages = [];
-                _published[subject] = messages;
-            }
-
-            if (messages.Count == MaxPublishedPerSubject)
-            {
-                _ = messages.Dequeue();
-            }
-
-            messages.Enqueue(data);
         }
     }
 
@@ -166,14 +134,6 @@ internal sealed class FakeRegionNetwork
 
     private sealed class Bus(FakeRegionNetwork network, string cell, string? node) : IRegionBus
     {
-        public string? Cell => cell;
-
-        public ValueTask PublishAsync(string subject, ReadOnlyMemory<byte> data, CancellationToken cancellationToken)
-        {
-            network.Record(subject, data.ToArray());
-            return ValueTask.CompletedTask;
-        }
-
         public async IAsyncEnumerable<ReadOnlyMemory<byte>> RequestManyAsync(string subject, ReadOnlyMemory<byte> request, [EnumeratorCancellation] CancellationToken cancellationToken)
         {
             foreach (var answer in network.Responders(cell, subject))

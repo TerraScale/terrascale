@@ -52,12 +52,15 @@ internal sealed class DirectoryMembership(IMemberDirectory directory, TerraBaseO
             {
                 var started = time.GetTimestamp();
                 var machines = await directory.ListAsync(cancellationToken).ConfigureAwait(false);
-                ImmutableArray<ClusterMember> members = [.. machines.Where(member => member.Region == options.Region).OrderBy(member => member.Name, StringComparer.Ordinal)];
+                var ordered = machines.OrderBy(member => member.Name, StringComparer.Ordinal).ToList();
+                ImmutableArray<ClusterMember> members = [.. ordered.Where(member => member.Region == options.Region)];
+                ImmutableArray<ClusterMember> elsewhere = [.. ordered.Where(member => member.Region != options.Region)];
                 // The catalog primary is the first machine of the primary region; this member is it when it does not follow one.
                 var primary = options.CatalogFollower
                     ? machines.Where(member => member.Region == options.PrimaryRegion).MinBy(member => member.Name, StringComparer.Ordinal)
                     : null;
-                _view = members.SequenceEqual(_view.Members) && primary == _view.CatalogPrimary ? _view : new(_view.Revision + 1, members, primary);
+                _view = members.SequenceEqual(_view.Members) && primary == _view.CatalogPrimary ? _view with { Elsewhere = elsewhere }
+                    : new(_view.Revision + 1, members, primary, elsewhere);
                 // The lease runs from before the read, and only a read that listed this member counts.
                 Interlocked.Exchange(ref _renewed, _view.Contains(Self.Name) ? started : -1);
                 if (_failure is not null)

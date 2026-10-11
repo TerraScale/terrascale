@@ -13,7 +13,8 @@ internal sealed record ClusterMember(string Name, string PeerAddress, string Reg
 /// <param name="Revision">Grows with every membership change this member saw; constant for a static cell.</param>
 /// <param name="Members">The live members of this region, in name order.</param>
 /// <param name="CatalogPrimary">The catalog primary this member follows (docs/decisions/0009), in any region, or <see langword="null"/> while none is known.</param>
-internal sealed record ClusterView(ulong Revision, ImmutableArray<ClusterMember> Members, ClusterMember? CatalogPrimary = null)
+/// <param name="Elsewhere">The live members of the other regions, in name order.</param>
+internal sealed record ClusterView(ulong Revision, ImmutableArray<ClusterMember> Members, ClusterMember? CatalogPrimary = null, ImmutableArray<ClusterMember> Elsewhere = default)
 {
     /// <summary>Whether <paramref name="name"/> is a live member.</summary>
     public bool Contains(string name) => Members.Any(member => member.Name == name);

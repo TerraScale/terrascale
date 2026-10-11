@@ -11,7 +11,6 @@ namespace TerraBase.Fast.CrossRegion;
 
 public sealed class CrossRegionDeletionTests
 {
-    private const string Credentials = "-----BEGIN NATS USER JWT-----\neyJ0.e30.x\n------END NATS USER JWT------\n-----BEGIN USER NKEY SEED-----\nSUAEXAMPLE\n------END USER NKEY SEED------\n";
 
     [Test]
     [Arguments(true)]
@@ -24,13 +23,11 @@ public sealed class CrossRegionDeletionTests
         var directory = Directory.CreateTempSubdirectory("terrabase-wan-deletion-").FullName;
         try
         {
-            var credentials = Path.Combine(directory, "user.creds");
-            await File.WriteAllTextAsync(credentials, Credentials, token);
             var gruDirectory = Directory.CreateDirectory(Path.Combine(directory, "gru")).FullName;
             var sfoDirectory = Directory.CreateDirectory(Path.Combine(directory, "sfo")).FullName;
             var gruMembers = new FakeMemberStore();
             var sfoMembers = new FakeMemberStore();
-            await using var gru = await StartRegionAsync(network, credentials, "gru-1", "gru", gruDirectory, gruMembers);
+            await using var gru = await StartRegionAsync(network, "gru-1", "gru", gruDirectory, gruMembers);
             var organization = EntityIds.New().ToString();
             var project = EntityIds.New().ToString();
             var organizationName = faker.Company.CompanyName();
@@ -44,7 +41,7 @@ public sealed class CrossRegionDeletionTests
 
             await RegisterAsync(gru, organization, project, organizationName, projectName, token);
             using var gruData = await gru.CreateClientAsync(organization, "documents:read", "documents:write");
-            await using (var sfo = await StartRegionAsync(network, credentials, "sfo-1", "sfo", sfoDirectory, sfoMembers))
+            await using (var sfo = await StartRegionAsync(network, "sfo-1", "sfo", sfoDirectory, sfoMembers))
             {
                 sfoUser = sfo.User;
                 await RegisterAsync(sfo, organization, project, organizationName, projectName, token);
@@ -89,7 +86,7 @@ public sealed class CrossRegionDeletionTests
             await Assert.That(await StatusAsync(gru.Client, deleted.Path, token)).IsEqualTo(HttpStatusCode.NotFound);
             await Assert.That(File.Exists(DatabaseFile(gruDirectory, deleted))).IsFalse();
 
-            await using var restarted = await StartRegionAsync(network, credentials, "sfo-1", "sfo", sfoDirectory, sfoMembers, storageQueue: 1);
+            await using var restarted = await StartRegionAsync(network, "sfo-1", "sfo", sfoDirectory, sfoMembers, storageQueue: 1);
             using var owner = restarted.As(sfoUser);
             using var data = restarted.DataClient(sfoKey);
             await TerraBaseTestServer.EventuallyAsync(async cancellationToken =>
@@ -135,7 +132,7 @@ public sealed class CrossRegionDeletionTests
     }
 
     private static Task<ManagementApi> StartRegionAsync(
-        FakeRegionNetwork network, string credentials, string region, string cell, string dataDirectory, FakeMemberStore members, int storageQueue = 1024) =>
+        FakeRegionNetwork network, string region, string cell, string dataDirectory, FakeMemberStore members, int storageQueue = 1024) =>
         ManagementApi.StartAsync(settings =>
         {
             settings["region"] = region;
@@ -143,8 +140,6 @@ public sealed class CrossRegionDeletionTests
             settings["data-directory"] = dataDirectory;
             settings["storage-queue"] = storageQueue.ToString(System.Globalization.CultureInfo.InvariantCulture);
             settings["wan-regions"] = "gru-1=gru,sfo-1=sfo";
-            settings["nats-url"] = "nats://127.0.0.1:4222";
-            settings["nats-credentials-file"] = credentials;
         }, services =>
         {
             services.AddSingleton(network.Join(cell));

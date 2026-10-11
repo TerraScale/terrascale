@@ -2,6 +2,7 @@ using System.Diagnostics;
 using Google.Protobuf;
 using TerraBase.Configuration;
 using TerraBase.Engine;
+using TerraBase.Engine.Cluster;
 using TerraBase.Errors;
 using TerraBase.Features.CrossRegion.V1;
 using TerraBase.Features.Management.Usage;
@@ -28,7 +29,7 @@ namespace TerraBase.Features.CrossRegion;
 /// another region pulled it reaches that region only through a later write of the same document.
 /// </remarks>
 internal sealed class WanPuller(
-    IRegionBus bus, IStorageEngine engine, IReplicationJournal journal, ITenantDirectory tenants, TerraBaseOptions options, WanMetrics metrics,
+    IRegionPeers peers, IStorageEngine engine, IReplicationJournal journal, ITenantDirectory tenants, TerraBaseOptions options, WanMetrics metrics,
     TimeProvider time, ILogger<WanPuller> logger, IUsageMeter usage, DatabaseLifecycleCheckpoint checkpoint) : BackgroundService
 {
     /// <summary>Pause between rounds that found nothing more to pull.</summary>
@@ -49,7 +50,10 @@ internal sealed class WanPuller(
 
     // Admission rejects rather than waits: concurrent lookahead uses at most a sixteenth of the queue across remotes.
     // Small queues prepare inline, as before. The division order avoids overflowing with many remote regions.
-    internal int TargetsAhead => Math.Clamp(options.StorageQueue / options.Wan!.Remotes(options.Region).Count / 16 - 1, 0, MaxTargetsAhead);
+    internal int TargetsAhead => Math.Clamp(options.StorageQueue / Math.Max(1, Volatile.Read(ref _regions)) / 16 - 1, 0, MaxTargetsAhead);
+
+    // The other regions this puller pulls from.
+    private int _regions;
 
     // How long a database this region does not take is not asked about again.
     private static readonly TimeSpan RefusalTtl = TimeSpan.FromSeconds(10);
@@ -82,8 +86,43 @@ internal sealed class WanPuller(
         base.Dispose();
     }
 
-    protected override Task ExecuteAsync(CancellationToken stoppingToken) =>
-        Task.WhenAll(options.Wan!.Remotes(options.Region).Select(remote => Task.Run(() => RunAsync(remote.Key, remote.Value, stoppingToken), stoppingToken)));
+    // Pulls from every other region with started members, starting on each as it first appears.
+    // shortcut: a region whose members all left keeps its loop, failing every round, until this member restarts.
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        var running = new Dictionary<string, Task>(StringComparer.Ordinal);
+        try
+        {
+            while (!stoppingToken.IsCancellationRequested)
+            {
+                try
+                {
+                    foreach (var region in await peers.RegionsAsync(stoppingToken).ConfigureAwait(false))
+                    {
+                        if (!running.ContainsKey(region))
+                        {
+                            running[region] = Task.Run(() => RunAsync(region, stoppingToken), CancellationToken.None);
+                            Volatile.Write(ref _regions, running.Count);
+                        }
+                    }
+                }
+                catch (Exception error) when (!stoppingToken.IsCancellationRequested)
+                {
+                    logger.ZLogWarning(error, $"Finding the other regions failed; retrying");
+                }
+
+                // On the system clock: the rounds own the injected one.
+                await Task.Delay(DirectoryMembership.Heartbeat, TimeProvider.System, stoppingToken).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+        }
+        finally
+        {
+            await Task.WhenAll(running.Values).ConfigureAwait(false);
+        }
+    }
 
     private void OnDeleted(object? sender, IDatabaseStore store)
     {
@@ -270,7 +309,7 @@ internal sealed class WanPuller(
         }
     }
 
-    private async Task RunAsync(string region, string cell, CancellationToken stoppingToken)
+    private async Task RunAsync(string region, CancellationToken stoppingToken)
     {
         // Failures are logged when they start, not every round; the metric counts every one.
         var failing = false;
@@ -282,7 +321,7 @@ internal sealed class WanPuller(
             var again = false;
             try
             {
-                (again, var failures, after) = await RoundAsync(region, cell, after, discovery, quiet: failing, stoppingToken).ConfigureAwait(false);
+                (again, var failures, after) = await RoundAsync(region, after, discovery, quiet: failing, stoppingToken).ConfigureAwait(false);
                 if (failing && failures == 0)
                 {
                     logger.ZLogInformation($"Cross-region replication from region {region:@Region} recovered");
@@ -321,7 +360,7 @@ internal sealed class WanPuller(
 
     // Returns whether the round pulled groups and is still behind, and how many origins failed.
     private async Task<(bool Again, int Failures, TenantContext? Next)> RoundAsync(
-        string region, string cell, TenantContext? after, HeadsProgress discovery, bool quiet, CancellationToken cancellationToken)
+        string region, TenantContext? after, HeadsProgress discovery, bool quiet, CancellationToken cancellationToken)
     {
         // Candidates predate the remote heads; a newer registration waits for the next scan. No storage admission
         // remains held while the WAN answers or while cleanup takes its own writer.
@@ -345,7 +384,7 @@ internal sealed class WanPuller(
         var previouslyLagging = discovery.Lagging;
         // Heads can advance the saved sweep before pulling finishes. An interrupted round must not certify catch-up.
         discovery.Lagging = true;
-        var (members, sweepEnded, heads) = await HeadsAsync(region, cell, discovery, cancellationToken).ConfigureAwait(false);
+        var (members, sweepEnded, heads) = await HeadsAsync(region, discovery, cancellationToken).ConfigureAwait(false);
         // Unanswered discovery certifies nothing and measures no lag, but retained retries still pull from their members.
         var unanswered = heads.Count == 0 && members == 0;
         var complete = !unanswered && sweepEnded && !discovery.Invalid;
@@ -525,7 +564,7 @@ internal sealed class WanPuller(
                         var traffic = applied == 0 && head.Sequence > 1
                             || retrying.Contains(RetryKey(member, head))
                             ? ReplicationTrafficKind.Handoff : ReplicationTrafficKind.Delta;
-                        switch (await PullAsync(region, cell, member, database, store, origin, applied, (long)head.Sequence, traffic, cancellationToken).ConfigureAwait(false))
+                        switch (await PullAsync(region, member, database, store, origin, applied, (long)head.Sequence, traffic, cancellationToken).ConfigureAwait(false))
                         {
                             case Pulled pulled:
                                 advanced = pulled.Applied > applied;
@@ -730,7 +769,7 @@ internal sealed class WanPuller(
 
     // Every member's heads, all pages. Discover members from every reply, including direct replies and later pages:
     // different members may hold different views. Ask each discovered member at most once this round.
-    private async Task<(int Members, bool SweepEnded, List<(string Member, Head Head)> Heads)> HeadsAsync(string region, string cell, HeadsProgress progress, CancellationToken cancellationToken)
+    private async Task<(int Members, bool SweepEnded, List<(string Member, Head Head)> Heads)> HeadsAsync(string region, HeadsProgress progress, CancellationToken cancellationToken)
     {
         using var deadline = new CancellationTokenSource(HeadsDeadline, time);
         using var discovery = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
@@ -758,7 +797,7 @@ internal sealed class WanPuller(
         var scattered = false;
         try
         {
-            await foreach (var data in bus.RequestManyAsync(WanProtocol.HeadsSubject(cell), first, discovery.Token).ConfigureAwait(false))
+            await foreach (var data in peers.RequestManyAsync(region, first, discovery.Token).ConfigureAwait(false))
             {
                 if (Parse(data) is not { } reply)
                 {
@@ -963,7 +1002,7 @@ internal sealed class WanPuller(
             try
             {
                 _ = previousCursors.TryGetValue(member, out var after);
-                if (Parse(await bus.RequestAsync(WanProtocol.MemberSubject(cell, member), first, discovery.Token).ConfigureAwait(false)) is { } reply
+                if (Parse(await peers.RequestAsync(region, member, first, discovery.Token).ConfigureAwait(false)) is { } reply
                     && reply.Member == member)
                 {
                     return (member, budget.TryTake(reply)
@@ -1007,7 +1046,7 @@ internal sealed class WanPuller(
                 {
                     var next = new WanRequest { Version = WanProtocol.Version, Heads = new HeadsRequest { After = after!, Region = options.Region } };
                     var member = reply.Member;
-                    var following = Parse(await bus.RequestAsync(WanProtocol.MemberSubject(cell, member), next.ToByteArray(), discovery.Token).ConfigureAwait(false), next.CalculateSize()) is { } page && page.Member == member
+                    var following = Parse(await peers.RequestAsync(region, member, next.ToByteArray(), discovery.Token).ConfigureAwait(false), next.CalculateSize()) is { } page && page.Member == member
                         ? page
                         : throw new InvalidDataException("a member answered a heads page with an invalid reply");
                     if (following.Members.Distinct(StringComparer.Ordinal).Count(candidate => !members.Contains(candidate)) > MaxMembersPerRound - members.Count)
@@ -1168,10 +1207,9 @@ internal sealed class WanPuller(
     // Pulls an origin from the member that holds it, up to the head it reported or the round's budget; returns the applied
     // prefix and whether the member no longer holds that origin, or the conflict when the journals diverged.
     private async Task<PullOutcome> PullAsync(
-        string region, string cell, string member, TenantContext database, IDatabaseStore store, ReadOnlyMemory<byte> origin, long applied, long head,
+        string region, string member, TenantContext database, IDatabaseStore store, ReadOnlyMemory<byte> origin, long applied, long head,
         ReplicationTrafficKind traffic, CancellationToken cancellationToken)
     {
-        var subject = WanProtocol.MemberSubject(cell, member);
         byte[]? parts = null;
         var received = 0;
         for (var pulls = 0; applied < head && pulls < MaxPullsPerOrigin; pulls++)
@@ -1193,7 +1231,7 @@ internal sealed class WanPuller(
             };
             var payload = request.ToByteArray();
             usage.RecordReplicationBytes(database, region, WanUsage.Kind(traffic), true, payload.Length);
-            var data = await bus.RequestAsync(subject, payload, cancellationToken).ConfigureAwait(false);
+            var data = await peers.RequestAsync(region, member, payload, cancellationToken).ConfigureAwait(false);
             usage.RecordReplicationBytes(database, region, WanUsage.Kind(traffic), false, data.Length);
             var reply = data.Length <= WanProtocol.MaxMessageBytes ? PullReply.Parser.ParseFrom(data.Span) : throw new InvalidDataException("the pull reply is too large");
             switch (reply.Status)
