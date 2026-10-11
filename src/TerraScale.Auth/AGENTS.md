@@ -1,19 +1,21 @@
-# ts-auth Agent Rules
+# ts-auth Agent Notes
 
 > [!IMPORTANT]
 > **AI agents MUST NOT edit this file. Only humans may modify it.**
+
+Read [`AGENTS.md`](../../AGENTS.md) at the repository root first. Its rules apply here. This file adds the ts-auth-only notes.
 
 ## Project
 
 `ts-auth` is the hosted identity provider for the TerraScale platform, in the same product category as Clerk, Auth0, and WorkOS.
 
-It is built on **TerraBase through the `ts-rust` SDK**.
+It is built on **TerraBase through the ts-dotnet SDK** (`TerraScale.DotNet`, referenced from `src/TerraScale.Auth.Store`). The service was ported from Rust to C# (see the port status in `README.md`); the Rust code remains in Git history only.
 
 Prioritize security, tenant isolation, correctness, and interoperability over convenience or performance shortcuts.
 
 ## Service Ownership
 
-User decision 2026-10-06 (epic TS-597; umbrella `AGENTS.md`, "Service ownership"). The contract is `docs/platform-contract.md`.
+User decision 2026-10-06 (epic TS-597; workspace rules, "Service ownership"). The contract is `docs/auth/platform-contract.md`.
 
 ts-auth is the single owner of identity and access:
 
@@ -25,56 +27,44 @@ ts-auth is the single owner of identity and access:
 
 ts-auth does not own, and must not store copies of, other products' data. It reaches them only through the TerraScale SDKs:
 
-- **TerraBase** (through `ts-dotnet`): databases, collections, documents, backups, indexes, schema and usage metering. ts-auth persists its own state there with a TerraBase-issued bootstrap key, never with a token it signed itself.
+- **TerraBase** (through ts-dotnet): databases, collections, documents, backups, indexes, schema and usage metering. ts-auth persists its own state there with a TerraBase-issued bootstrap key, never with a token it signed itself.
 - **ts-dashboard**: the platform UI, platform API and MCP server, plans, subscriptions, Stripe billing and spending caps.
 - **ts-orchestrator**: regions, hosts, releases and placement. **ts-atlas**: region discovery and the global proxies.
 
 TerraBase and the other products authorize from ts-auth tokens offline. ts-auth exposes identity through its documented APIs and tokens and never reaches into another product's storage.
 
-## Local CPU Priority
+## Stack
 
-- When building or testing locally, run every build, test, lint, and benchmark
-  command at low CPU priority by prefixing it with `nice -n 19` (for example
-  `nice -n 19 make test-fast`). Local dev servers and watchers count too.
-- In CI (`CI=true`) use full CPU priority: do nothing. Never add `nice` or
-  `renice` to CI workflows, Makefiles, scripts, or Containerfiles; the low
-  priority is applied by whoever runs the command locally.
+The stack is C#. The rules below replace the earlier Rust-era wording with the stack the code actually uses.
 
-## Stack and Dependencies
-
-- **Rust** is required for application and backend code.
-- Use **Datastar** for server-driven UI and its **Rust SDK** for backend integration.
-- Use the repository’s Rust templating approach for HTML; keep business logic out of templates.
-- HTML, CSS, and minimal JavaScript are allowed where needed for browser behavior and tooling. Do not introduce another backend runtime or competing frontend framework.
-- All APIs MUST have **OpenAPI** documentation rendered through **Scalar**.
-- Use the latest stable, mutually compatible dependencies. Verify compatibility before upgrading.
-- Prefer mature, maintained, well-tested crates over custom implementations.
-- Keep dependency manifests and `Cargo.lock` synchronized; builds MUST remain reproducible.
-
-## General
-
-- Keep changes focused on the task and follow repository conventions.
-- Never add AI attribution, generated-by notices, or co-author trailers to commits, PR titles, or PR descriptions.
-- Never invent APIs, SDK capabilities, commands, or successful test results.
-- Preserve unrelated changes; never discard, overwrite, or commit another contributor’s work.
-- Do not claim feature completeness, protocol compliance, or security certification without supporting implementation and verification.
-- Do not introduce production authentication bypasses, hardcoded credentials, or silently enabled demo behavior.
+- **.NET:** the service is C# on ASP.NET Core. The target framework and SDK are set by the root .NET rules (`.NET 11`). The current pin is .NET 10 (`global.json`, `Directory.Build.props`); moving to .NET 11 is a separate change.
+- **Single-file release:** the service ships as a self-contained single-file executable (`linux-x64`, `linux-arm64`), per `Directory.Build.props`.
+- **TerraBase access:** all access MUST go through the ts-dotnet SDK (`TerraScale.DotNet`). Do not import or embed the TerraBase server project or bypass the SDK with direct storage access.
+- **Server-rendered HTML:** pages and fragments are Razor Slices (`RazorSlices`). Keep business logic out of templates.
+- **Datastar:** use Datastar for server-driven interactions and incremental updates. The browser script ships as an embedded asset (`src/TerraScale.Auth/Assets/admin/datastar.js`). Backend Datastar integration uses a Datastar SDK for .NET; none is referenced in `Directory.Packages.props` today.
+- HTML, CSS, and minimal JavaScript are allowed where needed for browser behavior and tooling. Do not introduce another backend runtime or a competing frontend framework.
+- **OpenAPI:** `Microsoft.AspNetCore.OpenApi` with `Scalar.AspNetCore`. `make openapi-check` lints the served document with Redocly.
+- **Cryptography:** Argon2id through Geralt (libsodium), JWTs through `Microsoft.IdentityModel`, and the OAuth/OIDC server through OpenIddict. Do not implement custom cryptography or token-signing algorithms.
+- **Build checks:** `make check` runs formatting, the build with analyzers as errors, the NuGet vulnerability audit, the OpenAPI lint and the Fast suite.
 
 ## Architecture
 
 ### Storage and State
 
-- All TerraBase access MUST go through `ts-rust`.
-- Do not import or embed the TerraBase server project or bypass the SDK with direct storage access.
+- All TerraBase access MUST go through the ts-dotnet SDK.
 - Persistent identity and authentication state MUST live in TerraBase.
-- Keep service instances stateless; do not require server affinity or process-local state for correctness.
+- Keep service instances stateless. Do not require server affinity or process-local state for correctness.
 - Caches MAY improve performance but MUST NOT override authorization, expiry, or revocation requirements.
-- Keep signing keys and encryption secrets in the approved secret-management system, separate from source code and public configuration.
+- Keep signing keys and encryption secrets in the approved secret-management system (OCI Vault in production), separate from source code and public configuration.
 - Never silently substitute in-memory persistence when the database is unavailable.
+
+### Zero configuration (ts-auth)
+
+- Discover regional service endpoints automatically. Signing, delivery and service credentials are created and configured through OCI Vault without an authentication bypass.
 
 ### Consistency
 
-- Verify the actual consistency, uniqueness, and atomic-operation guarantees available through `ts-rust`.
+- Verify the actual consistency, uniqueness, and atomic-operation guarantees available through ts-dotnet.
 - Single-use challenges, credential updates, refresh-token rotation, and identity uniqueness MUST remain correct under concurrent requests.
 - Do not implement security-critical operations as an unprotected read followed by a write.
 - Process-local locks MUST NOT be treated as coordination between service instances.
@@ -96,7 +86,7 @@ TerraBase and the other products authorize from ts-auth tokens offline. ts-auth 
 - Hash passwords with **Argon2id**, unique salts, and explicitly configured parameters appropriate for production resources.
 - Never store plaintext or reversibly encrypted passwords.
 - Generate tokens and challenges with a cryptographically secure random source.
-- Store hashes of opaque bearer secrets when only verification is required; encrypt secrets that must be recoverable.
+- Store hashes of opaque bearer secrets when only verification is required. Encrypt secrets that must be recoverable.
 - Verification, recovery, and authorization codes MUST expire and be single-use.
 - Require appropriate reauthentication before sensitive credential or account changes.
 
@@ -104,7 +94,7 @@ TerraBase and the other products authorize from ts-auth tokens offline. ts-auth 
 
 - Authenticate and authorize every protected operation on the server.
 - Deny access by default and grant only the permissions required.
-- Validate tenant, client, user, and resource relationships; never trust a submitted identifier as proof of access.
+- Validate tenant, client, user, and resource relationships. Never trust a submitted identifier as proof of access.
 - Keep tenants isolated across database queries, caches, tokens, UI responses, and background operations.
 - Rate-limit authentication, recovery, verification, and token endpoints.
 - Avoid account-enumeration leaks through response bodies, status codes, or obvious timing differences.
@@ -115,7 +105,7 @@ TerraBase and the other products authorize from ts-auth tokens offline. ts-auth 
 - Require HTTPS in production.
 - Use `Secure`, `HttpOnly` session cookies with an explicit `SameSite` policy appropriate for supported authentication flows.
 - Protect cookie-authenticated mutations against CSRF.
-- Use explicit origin and redirect allowlists; never allow arbitrary redirects.
+- Use explicit origin and redirect allowlists. Never allow arbitrary redirects.
 - Rotate session identifiers after authentication and privilege changes.
 - Enforce expiry and documented logout/revocation behavior server-side.
 - Do not persist bearer credentials in browser storage or expose server secrets in HTML, Datastar signals, or client bundles.
@@ -126,9 +116,9 @@ TerraBase and the other products authorize from ts-auth tokens offline. ts-auth 
 When implementing OAuth or OpenID Connect:
 
 - Follow the applicable specifications and current security guidance rather than inventing equivalent-looking protocols.
-- Use Authorization Code with PKCE for interactive client authorization; do not implement implicit or resource-owner-password grants.
+- Use Authorization Code with PKCE for interactive client authorization. Do not implement implicit or resource-owner-password grants.
 - Validate registered redirect URIs and enforce the required client, PKCE, state, and nonce bindings.
-- Explicitly configure trusted issuers; do not derive them from untrusted request headers.
+- Explicitly configure trusted issuers. Do not derive them from untrusted request headers.
 - Validate token signatures, allowed algorithms, issuer, audience, expiry, and intended token use.
 - Do not accept an ID token as an API access token.
 - Protect refresh tokens against replay and document rotation, expiry, and revocation behavior.
@@ -142,17 +132,16 @@ When implementing OAuth or OpenID Connect:
 - Maintain a canonical OpenAPI document covering every implemented API operation.
 - Document methods, paths, parameters, request bodies, responses, errors, authentication requirements, and permissions.
 - Use stable, unique operation IDs.
-- Prefer shared Rust types and generated schemas over separately maintained definitions.
+- Prefer shared C# types and generated schemas over separately maintained definitions.
 - Update implementation, OpenAPI, examples, and integration tests in the same change.
-- Preserve standards-required content types and error formats; do not force every endpoint into a custom JSON convention.
+- Preserve standards-required content types and error formats. Do not force every endpoint into a custom JSON convention.
 - OpenAPI security declarations MUST correspond to actual server-side enforcement.
-- Treat breaking API changes as explicit compatibility decisions, not incidental refactors.
 
 ### Documentation
 
 - Serve the OpenAPI document at `/openapi.json` and Scalar at `/docs`, unless the repository already establishes different paths.
 - Scalar MUST load the same contract validated by CI.
-- Keep examples realistic but synthetic; never include real credentials or customer data.
+- Keep examples realistic but synthetic. Never include real credentials or customer data.
 - Document internal and administrative APIs without exposing restricted documentation publicly.
 - Do not preload production credentials, persist authorization secrets, or route authenticated documentation requests through third-party proxies.
 - Self-host documentation assets where practical and resolve their versions reproducibly.
@@ -162,17 +151,17 @@ When implementing OAuth or OpenID Connect:
 - Validate OpenAPI structure and references in CI.
 - Check implemented routes and representative responses against the contract.
 - Test that Scalar loads the schema without browser errors.
-- Include API contract and documentation smoke checks in `fast`.
+- Include API contract and documentation smoke checks in Fast.
 
 ## Datastar UI
 
-- Render pages and HTML fragments on the Rust backend.
-- Use Datastar for interactions and incremental updates; use SSE only where appropriate.
+- Render pages and HTML fragments on the .NET backend.
+- Use Datastar for interactions and incremental updates. Use SSE only where appropriate.
 - Keep authoritative identity state and permission decisions on the server.
 - Treat browser signals as untrusted input. Send only the fields required for each action.
 - Escape rendered values and keep untrusted data out of executable Datastar expressions.
 - Never echo passwords or authentication secrets into rendered HTML or update streams.
-- Use the documented CSP-compatible configuration; do not weaken security headers merely to make an interaction work.
+- Use the documented CSP-compatible configuration. Do not weaken security headers merely to make an interaction work.
 - Provide accessible forms, keyboard navigation, visible focus states, and usable validation messages.
 - Preserve behavior after repeated updates, reconnects, and navigation.
 - Reuse committed brand assets rather than duplicating logo markup.
@@ -181,19 +170,19 @@ When implementing OAuth or OpenID Connect:
 
 ### Builds
 
-- Use existing repository scripts and Makefile targets when available.
-- Keep formatting, build, Clippy, and dependency-security checks passing.
+- Use the ts-auth Makefile targets (`auth-*` at the root) and `scripts/auth/dev.sh` for development servers.
+- Keep formatting, build, analyzers, and dependency-security checks passing.
 - Do not suppress warnings or security findings without a documented justification.
 - Keep development credentials, signing keys, and data separate from production.
 
 ### Previews
 
 - Development servers MUST be accessible through the intended Tailscale network.
-- Enable automatic rebuilds and browser reload; use HMR where supported.
+- Enable automatic rebuilds and browser reload. Use hot reload where supported.
 - Assign each active worktree its own available application and reload ports.
-- Never stop another worktree’s processes or reuse occupied ports.
+- Never stop another worktree's processes or reuse occupied ports.
 - Use HTTPS for previews that exercise secure cookies or authentication redirects.
-- Register exact development callback URLs; do not weaken production redirect validation for previews.
+- Register exact development callback URLs. Do not weaken production redirect validation for previews.
 
 When a preview is requested:
 
@@ -209,99 +198,48 @@ Never invent a hostname, send localhost as a remote preview, or present an unver
 
 ### Structure
 
-- Maintain exactly two integration-test projects: **`fast`** and **`slow`**.
-- Use integration and end-to-end tests only. **Do NOT create unit tests.**
-- All feature tests MUST belong to one of these projects; shared utilities MUST NOT become a third suite.
+- Suites: `tests/TerraScale.Auth.Fast` and `tests/TerraScale.Auth.Slow`. Shared utilities live in `tests/TerraScale.Auth.TestHarness`.
+- Integration and end-to-end tests only. Do not create unit tests.
 - New or changed behavior MUST have appropriate integration coverage.
-- Test real HTTP, authentication, and `ts-rust` persistence boundaries; do not mock the critical path.
+- Test real HTTP, authentication, and ts-dotnet persistence boundaries. Do not mock the critical path.
 - Use isolated synthetic accounts and clean up test data.
-- Use provider sandboxes or controlled test services for external delivery and federation; never send test traffic to real users.
+- Use provider sandboxes or controlled test services for external delivery and federation. Never send test traffic to real users.
+- Browser tests use Playwright (Chromium).
 
-### Fast — Required and Blocking
+### Fast: required and blocking
 
 - Cover critical paths, common user workflows, and essential security invariants.
-- Run as the first CI validation gate after the setup/build steps needed to execute tests.
-- MUST pass before every push, merge, deployment, release, and downstream delivery action.
-- Results MUST cover the current changes or exact commit being advanced.
-- Failures MUST block the associated operation.
-- Never skip, disable, or weaken tests to bypass a failure.
+- Run as the first CI validation gate after the setup and build steps needed to execute tests.
 
 Cover the implemented primary flows:
 
 - Account creation, verification where required, login, authenticated access, and logout.
-- Rejection of invalid credentials, expired/revoked sessions, and unauthorized cross-tenant access.
+- Rejection of invalid credentials, expired or revoked sessions, and unauthorized cross-tenant access.
 - Credential recovery and single-use challenge enforcement.
 - Token issuance, validation, refresh, and replay rejection where supported.
 - OpenAPI validity, Scalar loading, and critical Datastar interactions.
 
-### Slow — Independent and Non-Blocking
+### Slow: independent and non-blocking
 
 - Provide comprehensive coverage of concurrency, recovery, federation, key rotation, dependency failures, and expensive browser scenarios.
-- Run in a separate CI workflow/action, independently of the release-critical pipeline.
-- MUST NOT block pushes, merges, deployments, or releases.
-- MUST NOT be a required status check or a dependency of release jobs.
-- Preserve visible failures; non-blocking does not mean passing.
-- On failure, use `fj` to create a Forgejo issue or update an existing open report for the same failure.
-- Include failed tests, commit SHA, environment, reproduction steps, expected/actual behavior, redacted logs, and the CI run URL.
-- Ensure reporting runs even when the test step fails.
-- Keep sensitive vulnerability details in the approved private reporting channel, not public issues.
+- Run in a separate CI workflow, independently of the release-critical pipeline.
 
-Confirmed security defects MUST be surfaced immediately. Add a minimal regression to `fast` rather than leaving the defect covered only by a non-blocking test.
-
-## Git
-
-### Branches and Worktrees
-
-- **Prefer a dedicated Git worktree for each task.** Worktrees are the default, not mandatory.
-- Fetch the latest `origin/main` and create the task branch from it.
-- Use `feat/`, `fix/`, `hotfix/`, or `refactor/` with a descriptive name.
-- Use the existing checkout when explicitly requested or when a worktree is impractical.
-- Preserve unrelated changes and keep each task’s commits and PR isolated.
-- Never implement task changes directly on or push directly to `main`.
-- Remove worktrees only after confirming they contain no uncommitted changes, unpushed commits, or files that must be preserved.
-
-### Tooling
-
-- Use `git` for repository operations.
-- Use **`fj`** for Forgejo operations.
-- Check available CLI help when syntax is uncertain; do not invent commands.
+Confirmed security defects MUST be surfaced immediately. Add a minimal regression to Fast rather than leaving the defect covered only by a non-blocking test.
 
 ## Pull Requests
 
-### Required Checks
-
-- Formatting, build, Clippy, required security checks, OpenAPI validation, and `fast` MUST pass before pushing.
-- Do not wait for or require `slow`; it runs independently.
-- Update documentation and compatibility notes for API, storage, or authentication behavior changes.
-- Never claim a check passed unless it actually ran successfully.
-
-### Configuration
-
-- Target **`main`**.
-- Include a change summary, validation performed, and relevant security or migration implications.
-- Request reviews from **`mariogk`** and **`terrascale-bot`**, excluding the PR author.
-- Enable auto-merge once required checks pass; never bypass checks or required reviews.
-
-### Visual Changes
-
-- Attach useful before/after screenshots covering affected layouts and states.
+- Attach useful before/after screenshots covering affected layouts and states for visual changes.
 - Use synthetic data and redact sensitive information.
-- Upload screenshots as PR attachments; never commit them solely for PR documentation.
-
-### Completion
-
-- Verify the target branch, title, reviewers, attachments, and current CI status.
-- Distinguish required checks from non-blocking `slow` results.
-- Send the PR URL and identify unresolved blockers or linked failure reports.
+- Upload screenshots as PR attachments. Never commit them solely for PR documentation.
 
 ## Official References
 
 Consult the documentation matching the versions actually installed.
 
-- [Rust documentation](https://doc.rust-lang.org/)
-- [Cargo manifests and lockfiles](https://doc.rust-lang.org/cargo/guide/cargo-toml-vs-cargo-lock.html)
+- [.NET documentation](https://learn.microsoft.com/dotnet/)
+- [ASP.NET Core documentation](https://learn.microsoft.com/aspnet/core/)
+- [OpenIddict documentation](https://documentation.openiddict.com/)
 - [Datastar guide](https://data-star.dev/guide/getting_started)
-- [Datastar Rust SDK](https://github.com/starfederation/datastar-rust)
 - [Datastar security](https://data-star.dev/reference/security)
 - [OpenAPI specification](https://spec.openapis.org/oas/latest.html)
 - [Scalar API References](https://scalar.com/products/api-references/getting-started)
@@ -312,13 +250,3 @@ Consult the documentation matching the versions actually installed.
 - [OWASP authorization](https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Cheat_Sheet.html)
 - [OAuth security best practices](https://www.rfc-editor.org/rfc/rfc9700.html)
 - [OpenID Connect specification](https://openid.net/specs/openid-connect-core-1_0.html)
-
-## Zero configuration (user decision 2026-10-09, do not revert)
-
-- Every feature is always on. No feature flags, on/off variables, opt-in settings, boolean enabled configuration keys, deploy toggles or kill switches in code, config or CI. Delete switches and their guarded paths.
-- Every region always serves. NetBird network membership admits a node automatically; it discovers every region, infers its own region from where it runs and starts serving without a per-region enable step.
-- OCI Vault automatically creates, delivers and configures every first-party production secret. Vendor-issued keys (such as Stripe and Cloudflare) are stored once in Vault and picked up automatically; nobody copies secrets by hand.
-- Values have one correct setting in code. Expose no tuning knobs. Fakes, demo stores and skip-auth belong only in test code and test binaries.
-- CI rejects new switch-style configuration; ts-reviewer requests changes. Only unavoidable third-party names may have a narrow allowance with a one-line reason.
-
-Discover regional service endpoints automatically; signing, delivery and service credentials are created and configured through OCI Vault without an authentication bypass.
