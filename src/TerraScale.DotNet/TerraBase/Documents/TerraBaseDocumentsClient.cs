@@ -6,7 +6,11 @@ namespace TerraScale.DotNet.TerraBase;
 /// <summary>Configures a <see cref="TerraBaseDocumentsClient"/>.</summary>
 public sealed record TerraBaseDocumentsClientOptions
 {
-    /// <summary>HTTPS origin of the TerraBase client listener, for example <c>https://terrabase.internal:8443</c>.</summary>
+    /// <summary>
+    /// HTTPS origin of the TerraBase client listener, for example <c>https://api.terrascale.tech</c>, or the plain-HTTP
+    /// origin of its private listener on a <c>.internal</c> or loopback host, for example
+    /// <c>http://top1.nearest.of.ts-terrabase.internal:8081</c>.
+    /// </summary>
     public Uri? BaseAddress { get; init; }
 
     /// <summary>Resolves the HTTPS client origin per request. Set this or BaseAddress, exclusively.</summary>
@@ -14,7 +18,8 @@ public sealed record TerraBaseDocumentsClientOptions
 
     /// <summary>
     /// A TerraBase API key (<c>tb_…</c>) with <c>documents:read</c> and/or <c>documents:write</c>. Its organization
-    /// selects the tenant; a key narrowed to a project or database reaches only that one.
+    /// selects the tenant; a key narrowed to a project or database reaches only that one. Leave it and
+    /// <see cref="AccessTokenProvider"/> unset only for TerraBase's private listener, which needs no credential.
     /// </summary>
     public string? ApiKey { get; init; }
 
@@ -51,7 +56,7 @@ public sealed class TerraBaseDocumentsClient
     {
         ArgumentNullException.ThrowIfNull(options);
         connection = new TerraBaseConnection(httpClient, options.BaseAddress, options.EndpointResolver, options.ApiKey, nameof(options.ApiKey), options.RequestTimeout, options.MaxResponseBytes,
-            options.AccessTokenProvider);
+            options.AccessTokenProvider, anonymousAllowed: true);
     }
 
     /// <summary>Addresses one database: <paramref name="databaseName"/> in project <paramref name="projectId"/> of the key's organization.</summary>
