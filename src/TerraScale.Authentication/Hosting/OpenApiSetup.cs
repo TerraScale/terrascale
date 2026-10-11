@@ -69,6 +69,19 @@ public static partial class OpenApiSetup
                     operation.Security = [Requirement(declared.Scheme, context.Document)];
                 }
 
+                // OpenAPI 11 documents every reference-typed response body as oneOf [null, $ref]. No response body
+                // is null, so the plain $ref that the contract has always served is restored.
+                foreach (var response in operation.Responses?.Values ?? Enumerable.Empty<IOpenApiResponse>())
+                {
+                    foreach (var media in response.Content?.Values ?? Enumerable.Empty<IOpenApiMediaType>())
+                    {
+                        if (media is OpenApiMediaType { Schema.OneOf: [{ Type: JsonSchemaType.Null }, var reference] } concrete)
+                        {
+                            concrete.Schema = reference;
+                        }
+                    }
+                }
+
                 return Task.CompletedTask;
             });
             options.AddDocumentTransformer((document, context, _) =>
