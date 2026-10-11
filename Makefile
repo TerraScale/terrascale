@@ -42,7 +42,8 @@ AUTH_HOST_DLL := src/TerraScale.Authentication/bin/$(CONFIGURATION)/net11.0/ts-a
 TERRABASE_PROJECTS := src/TerraBase.Analyzers/TerraBase.Analyzers.csproj \
 	src/TerraBase/TerraBase.csproj \
 	tests/TerraBase.Fast/TerraBase.Fast.csproj \
-	tests/TerraBase.Slow/TerraBase.Slow.csproj
+	tests/TerraBase.Slow/TerraBase.Slow.csproj \
+	tests/TerraBase.E2E/TerraBase.E2E.csproj
 
 BENCHMARK_DOTNET_PROJECTS := benchmark/dotnet/TerraScale.Endpoints.Benchmarks/TerraScale.Endpoints.Benchmarks.csproj \
 	benchmark/dotnet/TerraScale.Logging.Benchmarks/TerraScale.Logging.Benchmarks.csproj
@@ -50,7 +51,7 @@ BENCHMARK_DOTNET_PROJECTS := benchmark/dotnet/TerraScale.Endpoints.Benchmarks/Te
 .PHONY: restore build fmt fmt-check lint test-fast test-slow test check docker-test clean \
 	libs-build libs-test libs-check libs-pack libs-nativeaot-check \
 	auth-build auth-audit auth-openapi-check auth-test-fast auth-test-slow auth-check auth-publish auth-dev \
-	terrabase-build terrabase-analyzer-check terrabase-test-fast terrabase-test-slow terrabase-check terrabase-run terrabase-publish \
+	terrabase-build terrabase-analyzer-check terrabase-test-fast terrabase-test-slow terrabase-e2e terrabase-e2e-fly-outage terrabase-check terrabase-run terrabase-publish \
 	benchmark-build benchmark-fmt-check benchmark-check benchmark-smoke
 
 # Global: the whole solution.
@@ -160,6 +161,16 @@ terrabase-test-fast: terrabase-build
 
 terrabase-test-slow: terrabase-build
 	dotnet run --project tests/TerraBase.Slow --configuration $(CONFIGURATION) --no-build $(TEST_ARGS)
+
+# End-to-end replication (tests/TerraBase.E2E): leaderless writes in both directions between gru and sjc. Local by default
+# (two in-process nodes). With TERRABASE_E2E_FLY_URL, TERRABASE_E2E_FLY_API_KEY, TERRABASE_E2E_FLY_PROJECT and
+# TERRABASE_E2E_FLY_DATABASE set, the same scenarios run against Fly. Not part of check: CI runs it after the gru and sjc deploys.
+terrabase-e2e: terrabase-build
+	env -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_RESULTS_URL dotnet run --project tests/TerraBase.E2E --configuration $(CONFIGURATION) --no-build $(TEST_ARGS)
+
+# Stops the sjc machine of the Fly app: run alone, never with terrabase-e2e and never on every deploy.
+terrabase-e2e-fly-outage: terrabase-build
+	env -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_RESULTS_URL TERRABASE_E2E_FLY_OUTAGE=1 dotnet run --project tests/TerraBase.E2E --configuration $(CONFIGURATION) --no-build --treenode-filter '/TerraBase.E2E/TerraBase.E2E/FlyOutageE2ETests/*' $(TEST_ARGS)
 
 terrabase-check: terrabase-build terrabase-analyzer-check
 

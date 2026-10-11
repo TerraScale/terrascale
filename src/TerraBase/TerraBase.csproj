@@ -52,6 +52,8 @@
          the shared test harness, linked into both suites, applies the engine's lock-conflict test. -->
     <InternalsVisibleTo Include="TerraBase.Fast" />
     <InternalsVisibleTo Include="TerraBase.Slow" />
+    <!-- The end-to-end suite links the same harness, which reaches the same internals. -->
+    <InternalsVisibleTo Include="TerraBase.E2E" />
   </ItemGroup>
 
   <ItemGroup>

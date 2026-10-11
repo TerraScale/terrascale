@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The end-to-end replication suite: leaderless writes between the gru and sjc regions over the public HTTP API.
+       Local by default (two in-process nodes); set TERRABASE_E2E_FLY_URL to run the same scenarios against Fly.
+       Test references and conventions come from Directory.Build.targets. -->
+  <PropertyGroup>
+    <RootNamespace>TerraBase.E2E</RootNamespace>
+    <OutputType>Exe</OutputType>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+</Project>
