@@ -38,9 +38,14 @@ public sealed class SigningKeyRotation(KeyRing ring, ILogger<SigningKeyRotation>
                     this.Log(target => target.ZLogInformation($"Scheduled rotation added a signing key"));
                 }
             }
-            catch (Exception error) when (error is not OutOfMemoryException && !stoppingToken.IsCancellationRequested)
+            // A failure while stopping is not reported: the timer wait below ends the loop. Rethrowing it would fault
+            // the host's StopAsync.
+            catch (Exception error) when (error is not OutOfMemoryException)
             {
-                this.Log(target => target.ZLogWarning(error, $"Scheduled signing key rotation failed; retrying at the next interval"));
+                if (!stoppingToken.IsCancellationRequested)
+                {
+                    this.Log(target => target.ZLogWarning(error, $"Scheduled signing key rotation failed; retrying at the next interval"));
+                }
             }
         }
         while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false));
@@ -57,9 +62,14 @@ public sealed class SigningKeyRotation(KeyRing ring, ILogger<SigningKeyRotation>
 
             return true;
         }
-        catch (Exception error) when (error is not OutOfMemoryException && !stoppingToken.IsCancellationRequested)
+        // As above: while stopping, the retry delay ends the loop.
+        catch (Exception error) when (error is not OutOfMemoryException)
         {
-            this.Log(target => target.ZLogWarning(error, $"Signing key bootstrap failed; retrying"));
+            if (!stoppingToken.IsCancellationRequested)
+            {
+                this.Log(target => target.ZLogWarning(error, $"Signing key bootstrap failed; retrying"));
+            }
+
             return false;
         }
     }
