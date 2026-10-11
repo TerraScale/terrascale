@@ -20,24 +20,24 @@ public sealed class CustomerBackupProbeTests
     public async Task Cancellation_after_upload_joins_independent_bounded_cleanup_before_save_recovery(bool saveTimeout, bool cleanupTimeout)
     {
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 9, 12, 0, 0, TimeSpan.Zero));
         var request = new ObserveRequest();
-        await using var api = await ManagementApi.StartAsync(oci.Configure, services =>
+        await using var api = await ManagementApi.StartAsync(s3.Configure, services =>
         {
-            Manual(oci, services);
+            Manual(s3, services);
             services.AddSingleton<IStartupFilter>(request);
         }, time);
         var database = await api.CreateManagedDatabaseAsync();
         var route = Uri(database.ProjectPath + "/backup-destination");
         using var body = new StalledProbeBody(Encoding.ASCII.GetBytes("TerraBase backup access check"));
-        oci.CustomerContentOverride = key => IsProbe(key) ? new StreamContent(body) : null;
+        s3.CustomerContentOverride = key => IsProbe(key) ? new StreamContent(body) : null;
         var deleting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseDelete = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var deleteExited = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         CancellationToken deleteToken = default;
         var deletes = 0;
-        oci.BeforeCustomerDelete = async (key, cancellationToken) =>
+        s3.BeforeCustomerDelete = async (key, cancellationToken) =>
         {
             if (!IsProbe(key))
             {
@@ -61,7 +61,7 @@ public sealed class CustomerBackupProbeTests
         try
         {
             await body.Entered.Task.WaitAsync(token);
-            await Assert.That(oci.CustomerObjects.Count).IsEqualTo(1);
+            await Assert.That(s3.CustomerObjects.Count).IsEqualTo(1);
             if (saveTimeout)
             {
                 time.Advance(TimeSpan.FromSeconds(30));
@@ -104,15 +104,15 @@ public sealed class CustomerBackupProbeTests
             }
 
             await Assert.That(Volatile.Read(ref deletes)).IsEqualTo(1);
-            await Assert.That(oci.CustomerObjects.Count).IsEqualTo(cleanupTimeout ? 1 : 0);
+            await Assert.That(s3.CustomerObjects.Count).IsEqualTo(cleanupTimeout ? 1 : 0);
             using var stillAbsent = await api.Client.GetAsync(route, token);
             await Assert.That(stillAbsent.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-            oci.CustomerContentOverride = null;
-            oci.BeforeCustomerDelete = null;
+            s3.CustomerContentOverride = null;
+            s3.BeforeCustomerDelete = null;
             using var recovered = await api.Client.PutAsJsonAsync(route, Destination(), token);
             await Assert.That(recovered.StatusCode).IsEqualTo(HttpStatusCode.OK);
-            await Assert.That(oci.CustomerObjects.Count).IsEqualTo(cleanupTimeout ? 1 : 0);
-            await Assert.That(oci.BadSignatures).IsEqualTo(0);
+            await Assert.That(s3.CustomerObjects.Count).IsEqualTo(cleanupTimeout ? 1 : 0);
+            await Assert.That(s3.BadSignatures).IsEqualTo(0);
         }
         finally
         {
@@ -135,14 +135,14 @@ public sealed class CustomerBackupProbeTests
     public async Task Cleanup_preserves_probe_errors_requires_delete_permission_and_allows_object_lock(string kind)
     {
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        var oci = new FakeS3();
-        await using var api = await ManagementApi.StartAsync(oci.Configure, services => Manual(oci, services));
+        var s3 = new FakeS3();
+        await using var api = await ManagementApi.StartAsync(s3.Configure, services => Manual(s3, services));
         var database = await api.CreateManagedDatabaseAsync();
         var route = Uri(database.ProjectPath + "/backup-destination");
         using var body = new ProbeBody(Encoding.ASCII.GetBytes("TerraBase backup access check"), chunked: true, failRead: kind == "probe-error");
-        oci.CustomerContentOverride = key => IsProbe(key) ? new StreamContent(body) : null;
-        oci.Locked = key => kind == "object-lock" && IsProbe(key);
-        oci.BeforeCustomerDelete = (_, _) => kind switch
+        s3.CustomerContentOverride = key => IsProbe(key) ? new StreamContent(body) : null;
+        s3.Locked = key => kind == "object-lock" && IsProbe(key);
+        s3.BeforeCustomerDelete = (_, _) => kind switch
         {
             "probe-error" => Task.FromException(new HttpRequestException("cleanup failed after invalid probe")),
             "delete-permission" => Task.FromException(new HttpRequestException("delete permission denied")),
@@ -164,14 +164,14 @@ public sealed class CustomerBackupProbeTests
         }
 
         await Assert.That(body.Disposed).IsTrue();
-        await Assert.That(oci.CustomerObjects.Count).IsEqualTo(1);
-        oci.CustomerContentOverride = null;
-        oci.BeforeCustomerDelete = null;
-        oci.Locked = _ => false;
+        await Assert.That(s3.CustomerObjects.Count).IsEqualTo(1);
+        s3.CustomerContentOverride = null;
+        s3.BeforeCustomerDelete = null;
+        s3.Locked = _ => false;
         using var recovered = await api.Client.PutAsJsonAsync(route, Destination(), token);
         await Assert.That(recovered.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(oci.CustomerObjects.Count).IsEqualTo(1);
-        await Assert.That(oci.BadSignatures).IsEqualTo(0);
+        await Assert.That(s3.CustomerObjects.Count).IsEqualTo(1);
+        await Assert.That(s3.BadSignatures).IsEqualTo(0);
     }
 
     [Test]
@@ -184,8 +184,8 @@ public sealed class CustomerBackupProbeTests
     public async Task Invalid_probe_bodies_are_bounded_rejected_and_cleaned_up(string kind, bool chunked)
     {
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        var oci = new FakeS3();
-        await using var api = await ManagementApi.StartAsync(oci.Configure, services => Manual(oci, services));
+        var s3 = new FakeS3();
+        await using var api = await ManagementApi.StartAsync(s3.Configure, services => Manual(s3, services));
         var database = await api.CreateManagedDatabaseAsync();
         var route = Uri(database.ProjectPath + "/backup-destination");
         var expected = Encoding.ASCII.GetBytes("TerraBase backup access check");
@@ -204,8 +204,8 @@ public sealed class CustomerBackupProbeTests
 
         using var body = new ProbeBody(payload, chunked);
         long? contentLength = null;
-        oci.CustomerContentOverride = key => IsProbe(key) ? new StreamContent(body) : null;
-        oci.CustomerGetResponseCreated = (key, response) =>
+        s3.CustomerContentOverride = key => IsProbe(key) ? new StreamContent(body) : null;
+        s3.CustomerGetResponseCreated = (key, response) =>
         {
             if (IsProbe(key))
             {
@@ -215,7 +215,7 @@ public sealed class CustomerBackupProbeTests
         };
         var deletes = 0;
         var lists = 0;
-        oci.ObjectRequested = (customer, method, key) =>
+        s3.ObjectRequested = (customer, method, key) =>
         {
             if (customer && method == HttpMethod.Delete && IsProbe(key))
             {
@@ -235,16 +235,16 @@ public sealed class CustomerBackupProbeTests
         await Assert.That(contentLength is null).IsEqualTo(chunked);
         await Assert.That(Volatile.Read(ref deletes)).IsEqualTo(1);
         await Assert.That(Volatile.Read(ref lists)).IsEqualTo(0);
-        await Assert.That(oci.CustomerObjects.Count).IsEqualTo(0);
+        await Assert.That(s3.CustomerObjects.Count).IsEqualTo(0);
         using var absent = await api.Client.GetAsync(route, token);
         await Assert.That(absent.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
 
-        oci.CustomerContentOverride = null;
-        oci.CustomerGetResponseCreated = null;
+        s3.CustomerContentOverride = null;
+        s3.CustomerGetResponseCreated = null;
         using var recovered = await api.Client.PutAsJsonAsync(route, Destination(), token);
         await Assert.That(recovered.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(oci.CustomerObjects.Count).IsEqualTo(0);
-        await Assert.That(oci.BadSignatures).IsEqualTo(0);
+        await Assert.That(s3.CustomerObjects.Count).IsEqualTo(0);
+        await Assert.That(s3.BadSignatures).IsEqualTo(0);
     }
 
     [Test]
@@ -253,13 +253,13 @@ public sealed class CustomerBackupProbeTests
     public async Task Exact_probe_bytes_succeed_across_fragmented_reads_and_cleanup(bool chunked)
     {
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        var oci = new FakeS3();
-        await using var api = await ManagementApi.StartAsync(oci.Configure, services => Manual(oci, services));
+        var s3 = new FakeS3();
+        await using var api = await ManagementApi.StartAsync(s3.Configure, services => Manual(s3, services));
         var database = await api.CreateManagedDatabaseAsync();
         var expected = Encoding.ASCII.GetBytes("TerraBase backup access check");
         using var body = new ProbeBody(expected, chunked);
-        oci.CustomerContentOverride = key => IsProbe(key) ? new StreamContent(body) : null;
-        oci.CustomerGetResponseCreated = (key, response) =>
+        s3.CustomerContentOverride = key => IsProbe(key) ? new StreamContent(body) : null;
+        s3.CustomerGetResponseCreated = (key, response) =>
         {
             if (IsProbe(key))
             {
@@ -273,8 +273,8 @@ public sealed class CustomerBackupProbeTests
         await Assert.That(body.LargestRequest).IsLessThanOrEqualTo(expected.Length + 1);
         await Assert.That(body.Reads).IsGreaterThan(1);
         await Assert.That(body.Disposed).IsTrue();
-        await Assert.That(oci.CustomerObjects.Count).IsEqualTo(0);
-        await Assert.That(oci.BadSignatures).IsEqualTo(0);
+        await Assert.That(s3.CustomerObjects.Count).IsEqualTo(0);
+        await Assert.That(s3.BadSignatures).IsEqualTo(0);
     }
 
     private static bool IsProbe(string key) => key.Contains("/.probe/", StringComparison.Ordinal);
@@ -289,9 +289,9 @@ public sealed class CustomerBackupProbeTests
         mode = "customer",
     };
 
-    private static void Manual(FakeS3 oci, IServiceCollection services)
+    private static void Manual(FakeS3 s3, IServiceCollection services)
     {
-        oci.Route(services);
+        s3.Route(services);
         ManualBackupHosting.Configure(services);
     }
 

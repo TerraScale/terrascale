@@ -18,10 +18,10 @@ public sealed class BackupConfigurationIsolationTests
     {
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         using var shipping = CancellationTokenSource.CreateLinkedTokenSource(token);
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         var hook = new UsageCommitHook();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 9, 12, 0, 0, TimeSpan.Zero));
-        await using var api = await StartAsync(oci, time, hook);
+        await using var api = await StartAsync(s3, time, hook);
         var customer = await api.CreateManagedDatabaseAsync("blocked");
         using var customerData = api.DataClient(await api.Server.IssueAsync(customer.Organization, ["documents:read", "documents:write"], token));
         var faker = new Faker();
@@ -60,9 +60,9 @@ public sealed class BackupConfigurationIsolationTests
             await Assert.That(first.Cancelled.Task.IsCompleted).IsTrue();
             await Assert.That(first.Active).IsEqualTo(0);
             await Assert.That(first.Released.Task.IsCompleted).IsFalse();
-            await Assert.That(oci.Objects.Keys.Any(key => key.StartsWith("v1/_system/snapshots/", StringComparison.Ordinal))).IsTrue();
-            await Assert.That(oci.Objects.Keys.Any(key => key.StartsWith(File(customer) + "/", StringComparison.Ordinal))).IsFalse();
-            await Assert.That(oci.CustomerObjects.Keys.Any(key => key.StartsWith(File(customer) + "/", StringComparison.Ordinal))).IsFalse();
+            await Assert.That(s3.Objects.Keys.Any(key => key.StartsWith("v1/_system/snapshots/", StringComparison.Ordinal))).IsTrue();
+            await Assert.That(s3.Objects.Keys.Any(key => key.StartsWith(File(customer) + "/", StringComparison.Ordinal))).IsFalse();
+            await Assert.That(s3.CustomerObjects.Keys.Any(key => key.StartsWith(File(customer) + "/", StringComparison.Ordinal))).IsFalse();
 
             // A new pass in the backoff interval must not start another catalog lookup.
             var backoffPass = backup.RunOnceAsync(shipping.Token);
@@ -80,7 +80,7 @@ public sealed class BackupConfigurationIsolationTests
             await Assert.That(retry.Cancelled.Task.IsCompleted).IsTrue();
             await Assert.That(retry.Active).IsEqualTo(0);
             await Assert.That(Volatile.Read(ref reads)).IsEqualTo(2);
-            await Assert.That(oci.Objects.Keys.Any(key => key.StartsWith(File(healthy) + "/snapshots/", StringComparison.Ordinal))).IsTrue();
+            await Assert.That(s3.Objects.Keys.Any(key => key.StartsWith(File(healthy) + "/snapshots/", StringComparison.Ordinal))).IsTrue();
 
             time.Advance(TimeSpan.FromSeconds(1));
             await PutAsync(data, healthy, "during", during, token);
@@ -90,13 +90,13 @@ public sealed class BackupConfigurationIsolationTests
             passes.Add(walPass);
             await walPass.WaitAsync(TimeSpan.FromSeconds(30), token);
             await Assert.That(Volatile.Read(ref reads)).IsEqualTo(2);
-            await Assert.That(oci.Objects.Keys.Any(key => key.StartsWith("v1/_system/wal/", StringComparison.Ordinal))).IsTrue();
-            await Assert.That(oci.Objects.Keys.Any(key => key.StartsWith(File(healthy) + "/wal/", StringComparison.Ordinal))).IsTrue();
+            await Assert.That(s3.Objects.Keys.Any(key => key.StartsWith("v1/_system/wal/", StringComparison.Ordinal))).IsTrue();
+            await Assert.That(s3.Objects.Keys.Any(key => key.StartsWith(File(healthy) + "/wal/", StringComparison.Ordinal))).IsTrue();
             await AssertRestoredAsync(api, data, healthy, "platform", "platform-live", [("before", before), ("during", during)], token);
             await Assert.That(first.Released.Task.IsCompleted || retry.Released.Task.IsCompleted).IsFalse();
             await Assert.That(first.Active + retry.Active).IsEqualTo(0);
-            await Assert.That(oci.Objects.Keys.Any(key => key.StartsWith(File(customer) + "/", StringComparison.Ordinal))).IsFalse();
-            await Assert.That(oci.CustomerObjects.Keys.Any(key => key.StartsWith(File(customer) + "/", StringComparison.Ordinal))).IsFalse();
+            await Assert.That(s3.Objects.Keys.Any(key => key.StartsWith(File(customer) + "/", StringComparison.Ordinal))).IsFalse();
+            await Assert.That(s3.CustomerObjects.Keys.Any(key => key.StartsWith(File(customer) + "/", StringComparison.Ordinal))).IsFalse();
 
             // Recovery rereads the real customer-only configuration before it can upload anything.
             hook.AfterGet = null;
@@ -105,8 +105,8 @@ public sealed class BackupConfigurationIsolationTests
             passes.Add(recoveryPass);
             await recoveryPass.WaitAsync(TimeSpan.FromSeconds(30), token);
             await AssertRestoredAsync(api, customerData, customer, "customer", "customer-recovered", [("before", before)], token);
-            await Assert.That(oci.Objects.Keys.Any(key => key.StartsWith(File(customer) + "/", StringComparison.Ordinal))).IsFalse();
-            await Assert.That(oci.BadSignatures).IsEqualTo(0);
+            await Assert.That(s3.Objects.Keys.Any(key => key.StartsWith(File(customer) + "/", StringComparison.Ordinal))).IsFalse();
+            await Assert.That(s3.BadSignatures).IsEqualTo(0);
         }
         finally
         {
@@ -126,10 +126,10 @@ public sealed class BackupConfigurationIsolationTests
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         using var shipping = CancellationTokenSource.CreateLinkedTokenSource(token);
         using var stop = new CancellationTokenSource();
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         var hook = new UsageCommitHook();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 9, 12, 0, 0, TimeSpan.Zero));
-        await using var api = await StartAsync(oci, time, hook);
+        await using var api = await StartAsync(s3, time, hook);
         var customer = await api.CreateManagedDatabaseAsync("blocked");
         using var data = api.DataClient(await api.Server.IssueAsync(customer.Organization, ["documents:read", "documents:write"], token));
         var text = new Faker().Lorem.Sentence(12);
@@ -193,8 +193,8 @@ public sealed class BackupConfigurationIsolationTests
                 await AssertRestoredAsync(api, data, customer, "customer", "cancel-recovered", [("before", text)], token);
             }
 
-            await Assert.That(oci.Objects.Keys.Any(key => key.StartsWith(File(customer) + "/", StringComparison.Ordinal))).IsFalse();
-            await Assert.That(oci.BadSignatures).IsEqualTo(0);
+            await Assert.That(s3.Objects.Keys.Any(key => key.StartsWith(File(customer) + "/", StringComparison.Ordinal))).IsFalse();
+            await Assert.That(s3.BadSignatures).IsEqualTo(0);
         }
         finally
         {
@@ -213,11 +213,11 @@ public sealed class BackupConfigurationIsolationTests
         }
     }
 
-    private static async Task<ManagementApi> StartAsync(FakeS3 oci, FakeTimeProvider time, UsageCommitHook hook)
+    private static async Task<ManagementApi> StartAsync(FakeS3 s3, FakeTimeProvider time, UsageCommitHook hook)
     {
-        var api = await ManagementApi.StartAsync(oci.Configure, services =>
+        var api = await ManagementApi.StartAsync(s3.Configure, services =>
         {
-            oci.Route(services);
+            s3.Route(services);
             ManualBackupHosting.Configure(services);
             hook.Install(services);
         }, time);

@@ -23,7 +23,7 @@ public sealed class BackupKeySaturationTests
         const int cacheCapacity = 65536;
         const int primingKeys = cacheCapacity - 2;
         const int concurrentSegments = 8;
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
         var directory = Directory.CreateTempSubdirectory("terrabase-key-saturation-").FullName;
         var coldDirectory = Directory.CreateTempSubdirectory("terrabase-key-saturation-cold-").FullName;
@@ -66,16 +66,16 @@ public sealed class BackupKeySaturationTests
 
             var filePrefix = $"v1/{database.Organization}/{database.Project}/{database.Id}";
             var keys = $"v1/keys/{database.Organization}/{database.Project}/";
-            var snapshot = oci.Objects.Single(item => item.Key.StartsWith(filePrefix + "/snapshots/", StringComparison.Ordinal));
+            var snapshot = s3.Objects.Single(item => item.Key.StartsWith(filePrefix + "/snapshots/", StringComparison.Ordinal));
             var snapshotName = snapshot.Key[(snapshot.Key.LastIndexOf('/') + 1)..].Split('-');
             await Assert.That(snapshotName[2]).IsEqualTo("0000000000000000");
             var snapshotAt = DateTimeOffset.FromUnixTimeMilliseconds(long.Parse(snapshotName[0], CultureInfo.InvariantCulture));
             var primingSegments = $"{filePrefix}/wal/{snapshotName[1]}/";
-            await Assert.That(oci.Objects.Keys.Any(key => key.StartsWith(primingSegments, StringComparison.Ordinal))).IsFalse();
+            await Assert.That(s3.Objects.Keys.Any(key => key.StartsWith(primingSegments, StringComparison.Ordinal))).IsFalse();
             var originalId = Encoding.ASCII.GetString(snapshot.Value, 4, 26);
             var originalWrappedKey = keys + originalId;
-            var wrapped = Encoding.ASCII.GetString(oci.Objects[originalWrappedKey]);
-            var originalDataKey = oci.Unwrap(wrapped);
+            var wrapped = Encoding.ASCII.GetString(s3.Objects[originalWrappedKey]);
+            var originalDataKey = s3.Unwrap(wrapped);
             var sourcePath = Path.Combine(directory, database.Organization, database.Project, database.Id + ".db");
             await Assert.That(new FileInfo(sourcePath).Length).IsLessThan(1L << 20);
             var snapshotBytes = await File.ReadAllBytesAsync(sourcePath, cancellationToken);
@@ -89,37 +89,37 @@ public sealed class BackupKeySaturationTests
                 var at = snapshotAt.AddMilliseconds(index + 1);
                 var id = Ulid.NewUlid(at).ToString();
                 var dataKey = RandomNumberGenerator.GetBytes(32);
-                oci.StoreObject(keys + id, Encoding.ASCII.GetBytes(oci.Wrap(dataKey)));
+                s3.StoreObject(keys + id, Encoding.ASCII.GetBytes(s3.Wrap(dataKey)));
                 var objectKey = string.Create(CultureInfo.InvariantCulture, $"{primingSegments}0000000000000000-{at.ToUnixTimeMilliseconds():D13}");
-                oci.StoreObject(objectKey, SealFixture(objectKey, id, dataKey, []));
+                s3.StoreObject(objectKey, SealFixture(objectKey, id, dataKey, []));
             }
 
             var primingAt = snapshotAt.AddMilliseconds(primingKeys);
             var nextSnapshotAt = primingAt.AddMilliseconds(1);
             var nextGeneration = Ulid.NewUlid(nextSnapshotAt).ToString();
             var nextSnapshot = string.Create(CultureInfo.InvariantCulture, $"{filePrefix}/snapshots/{nextSnapshotAt.ToUnixTimeMilliseconds():D13}-{nextGeneration}-0000000000000000");
-            oci.StoreObject(nextSnapshot, SealFixture(nextSnapshot, originalId, originalDataKey, snapshotBytes));
+            s3.StoreObject(nextSnapshot, SealFixture(nextSnapshot, originalId, originalDataKey, snapshotBytes));
             var targetSegments = $"{filePrefix}/wal/{nextGeneration}/";
             var targetId = Ulid.NewUlid(nextSnapshotAt).ToString();
             var targetDataKey = RandomNumberGenerator.GetBytes(32);
             var targetWrappedKey = keys + targetId;
-            oci.StoreObject(targetWrappedKey, Encoding.ASCII.GetBytes(oci.Wrap(targetDataKey)));
+            s3.StoreObject(targetWrappedKey, Encoding.ASCII.GetBytes(s3.Wrap(targetDataKey)));
             for (var index = 0; index < concurrentSegments; index++)
             {
                 var at = nextSnapshotAt.AddMilliseconds(index + 1);
                 var objectKey = string.Create(CultureInfo.InvariantCulture, $"{targetSegments}0000000000000000-{at.ToUnixTimeMilliseconds():D13}");
-                oci.StoreObject(objectKey, SealFixture(objectKey, targetId, targetDataKey, []));
+                s3.StoreObject(objectKey, SealFixture(objectKey, targetId, targetDataKey, []));
             }
 
             var targetAt = nextSnapshotAt.AddMilliseconds(concurrentSegments);
             // Seed everything and move time before cold startup. Frozen time prevents expiry, periodic discovery,
             // and shipping restored copies from selecting a current project key during the capacity regression.
             time.Advance(targetAt - time.GetUtcNow());
-            var systemWrappedKey = oci.Objects.Keys.Single(key => key.StartsWith("v1/keys/_system/", StringComparison.Ordinal));
-            var systemRequests = oci.ObserveKey(systemWrappedKey);
-            var snapshotRequests = oci.ObserveKey(originalWrappedKey);
-            var targetRequests = oci.ObserveKey(targetWrappedKey);
-            var generated = oci.GeneratedKeys;
+            var systemWrappedKey = s3.Objects.Keys.Single(key => key.StartsWith("v1/keys/_system/", StringComparison.Ordinal));
+            var systemRequests = s3.ObserveKey(systemWrappedKey);
+            var snapshotRequests = s3.ObserveKey(originalWrappedKey);
+            var targetRequests = s3.ObserveKey(targetWrappedKey);
+            var generated = s3.GeneratedKeys;
             var keyGets = 0;
             var primingObjectGets = 0;
             var targetObjectGets = 0;
@@ -128,7 +128,7 @@ public sealed class BackupKeySaturationTests
             observation = SuiteDiagnostics.ObserveStorage("backup.key-saturation", progress: () => string.Create(CultureInfo.InvariantCulture,
                 $"gets={Volatile.Read(ref keyGets)}/{Volatile.Read(ref primingObjectGets)}/{Volatile.Read(ref targetObjectGets)}/{targetRequests.Gets} idle_ms={(long)Stopwatch.GetElapsedTime(Volatile.Read(ref lastGetTicks)).TotalMilliseconds} {pipeline.Progress()}"));
             var allTargetObjectsStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            oci.BeforeGet = async (key, token) =>
+            s3.BeforeGet = async (key, token) =>
             {
                 Interlocked.Exchange(ref lastGetTicks, Stopwatch.GetTimestamp());
                 if (key.StartsWith(keys, StringComparison.Ordinal))
@@ -165,7 +165,7 @@ public sealed class BackupKeySaturationTests
             await Assert.That(systemStatus.Generation).IsNotNull();
             await Assert.That(systemStatus.Shipping).IsTrue();
             await Assert.That(coldBackup.Status.Files.Select(status => status.File)).IsEquivalentTo(["v1/_system"]);
-            await Assert.That(oci.Objects.Keys.Where(key => key.StartsWith("v1/keys/_system/", StringComparison.Ordinal))).IsEquivalentTo([systemWrappedKey]);
+            await Assert.That(s3.Objects.Keys.Where(key => key.StartsWith("v1/keys/_system/", StringComparison.Ordinal))).IsEquivalentTo([systemWrappedKey]);
             await Assert.That(systemRequests.Gets).IsEqualTo(1);
             await Assert.That(systemRequests.Unwraps).IsEqualTo(1);
             await Assert.That(Volatile.Read(ref keyGets)).IsEqualTo(0);
@@ -182,7 +182,7 @@ public sealed class BackupKeySaturationTests
             await Assert.That(snapshotRequests.Unwraps).IsEqualTo(1);
             await Assert.That(targetRequests.Gets).IsEqualTo(0);
             await Assert.That(targetRequests.Unwraps).IsEqualTo(0);
-            await Assert.That(oci.GeneratedKeys).IsEqualTo(generated);
+            await Assert.That(s3.GeneratedKeys).IsEqualTo(generated);
             for (var round = 0; round < 2; round++)
             {
                 // A newer generation's real-database fixture snapshot avoids replaying the priming chain.
@@ -192,10 +192,10 @@ public sealed class BackupKeySaturationTests
                 await Assert.That(Volatile.Read(ref primingObjectGets)).IsEqualTo(primingKeys);
                 await Assert.That(targetRequests.Gets).IsEqualTo(1);
                 await Assert.That(targetRequests.Unwraps).IsEqualTo(1);
-                await Assert.That(oci.GeneratedKeys).IsEqualTo(generated);
+                await Assert.That(s3.GeneratedKeys).IsEqualTo(generated);
             }
 
-            await Assert.That(oci.BadSignatures).IsEqualTo(0);
+            await Assert.That(s3.BadSignatures).IsEqualTo(0);
 
             async Task RestoreAsync(string name, DateTimeOffset pointInTime)
             {
@@ -249,11 +249,11 @@ public sealed class BackupKeySaturationTests
         {
             var api = await ManagementApi.StartAsync(settings =>
             {
-                oci.Configure(settings);
+                s3.Configure(settings);
                 settings["data-directory"] = dataDirectory;
             }, services =>
             {
-                oci.Route(services);
+                s3.Route(services);
                 ManualBackupHosting.Configure(services);
                 if (pipeline is not null)
                 {

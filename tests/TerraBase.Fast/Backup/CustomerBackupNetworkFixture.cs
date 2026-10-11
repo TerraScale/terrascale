@@ -97,9 +97,9 @@ internal sealed class CustomerBackupNetworkFixture : ICustomerBackupDns, ICustom
         }
     }
 
-    public void Configure(FakeS3 oci, IServiceCollection services, bool enableProxy = false)
+    public void Configure(FakeS3 s3, IServiceCollection services, bool enableProxy = false)
     {
-        oci.RoutePlatform(services);
+        s3.RoutePlatform(services);
         ManualBackupHosting.Configure(services);
         services.AddSingleton<ICustomerBackupDns>(this);
         services.AddSingleton<ICustomerBackupConnector>(this);

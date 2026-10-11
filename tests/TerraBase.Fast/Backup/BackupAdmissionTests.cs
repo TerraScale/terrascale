@@ -21,9 +21,9 @@ public sealed class BackupAdmissionTests
     {
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         using var requests = CancellationTokenSource.CreateLinkedTokenSource(token);
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
-        await using var api = await StartAsync(oci, time);
+        await using var api = await StartAsync(s3, time);
         var backup = api.Server.Services.GetRequiredService<IContinuousBackup>();
         var platform = await api.CreateManagedDatabaseAsync("platform");
         await api.SetPlanAsync(api.User, platform.Organization, "pro", token);
@@ -62,8 +62,8 @@ public sealed class BackupAdmissionTests
             customerPoints[index] = await LatestAsync(api, customers[index], "customer", token);
         }
 
-        var platformKey = oci.Objects.Keys.Single(key => key.StartsWith(Keys(platform), StringComparison.Ordinal));
-        var platformReads = oci.ObserveKey(platformKey);
+        var platformKey = s3.Objects.Keys.Single(key => key.StartsWith(Keys(platform), StringComparison.Ordinal));
+        var platformReads = s3.ObserveKey(platformKey);
         // Expire both real platform caches while the pro plan still retains the snapshots.
         time.Advance(TimeSpan.FromHours(25));
         await AssertNoBackupsAsync(api, [platform, .. customers], token);
@@ -72,14 +72,14 @@ public sealed class BackupAdmissionTests
         var bodies = new ConcurrentBag<StalledKeyBody>();
         var entered = 0;
         var restores = new List<Task<HttpResponseMessage>>(8);
-        oci.CustomerContentOverride = key =>
+        s3.CustomerContentOverride = key =>
         {
             if (!key.StartsWith("v1/keys/", StringComparison.Ordinal) || Volatile.Read(ref entered) >= 8)
             {
                 return null;
             }
 
-            var body = new StalledKeyBody(oci.CustomerObjects[key], release.Task, () =>
+            var body = new StalledKeyBody(s3.CustomerObjects[key], release.Task, () =>
             {
                 if (Interlocked.Increment(ref entered) == 8)
                 {
@@ -118,14 +118,14 @@ public sealed class BackupAdmissionTests
             await Assert.That(platformReads.Unwraps).IsEqualTo(1);
             var peerId = Ulid.NewUlid(time.GetUtcNow().AddSeconds(1)).ToString();
             var peerKey = Keys(platform) + peerId;
-            oci.StoreObject(peerKey, Encoding.ASCII.GetBytes(oci.Wrap(RandomNumberGenerator.GetBytes(32))));
-            var peerReads = oci.ObserveKey(peerKey);
+            s3.StoreObject(peerKey, Encoding.ASCII.GetBytes(s3.Wrap(RandomNumberGenerator.GetBytes(32))));
+            var peerReads = s3.ObserveKey(peerKey);
             time.Advance(TimeSpan.FromSeconds(61));
             await PutAsync(data, platform, "after", after, token);
             await backup.RunOnceAsync(token);
             await Assert.That(peerReads.Gets).IsEqualTo(1);
             await Assert.That(peerReads.Unwraps).IsEqualTo(1);
-            await Assert.That(oci.Objects.Any(item => item.Key.StartsWith(File(platform) + "/", StringComparison.Ordinal)
+            await Assert.That(s3.Objects.Any(item => item.Key.StartsWith(File(platform) + "/", StringComparison.Ordinal)
                 && Encoding.ASCII.GetString(item.Value, 4, 26) == peerId)).IsTrue();
             using (var restored = await RestoreAsync(api, platform, await LatestAsync(api, platform, "platform", token), "platform", "platform-refreshed", token))
             {
@@ -143,12 +143,12 @@ public sealed class BackupAdmissionTests
 
             await Assert.That(bodies.Count).IsEqualTo(8);
             await Assert.That(bodies.All(body => body.Disposed)).IsTrue();
-            await Assert.That(oci.BadSignatures).IsEqualTo(0);
+            await Assert.That(s3.BadSignatures).IsEqualTo(0);
             await AssertNoBackupsAsync(api, [platform, .. customers], token);
         }
         finally
         {
-            oci.CustomerContentOverride = null;
+            s3.CustomerContentOverride = null;
             release.TrySetResult();
             await requests.CancelAsync();
             // Join listener requests before disposing the host, including when an assertion fails at saturation.
@@ -174,10 +174,10 @@ public sealed class BackupAdmissionTests
         const int fleet = 12;
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         using var shipping = CancellationTokenSource.CreateLinkedTokenSource(token);
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         var hook = new UsageCommitHook();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
-        await using var api = await StartAsync(oci, time, hook.Install);
+        await using var api = await StartAsync(s3, time, hook.Install);
         var first = await api.CreateManagedDatabaseAsync("fleet-0");
         using var data = api.DataClient(await api.Server.IssueAsync(first.Organization, ["documents:read", "documents:write"], token));
         var text = new Faker().Lorem.Sentence(12);
@@ -204,7 +204,7 @@ public sealed class BackupAdmissionTests
                 await firstWork.Task.WaitAsync(cancellationToken);
             }
         };
-        oci.BeforePut = async (key, cancellationToken) =>
+        s3.BeforePut = async (key, cancellationToken) =>
         {
             if (!key.Contains("/snapshots/", StringComparison.Ordinal))
             {
@@ -244,12 +244,12 @@ public sealed class BackupAdmissionTests
             await pass.WaitAsync(token);
             using var restored = await RestoreAsync(api, first, await LatestAsync(api, first, "platform", token), "platform", "fleet-restored", token);
             await AssertRestoredAsync(restored, data, first, [("before", text)], token);
-            await Assert.That(oci.BadSignatures).IsEqualTo(0);
+            await Assert.That(s3.BadSignatures).IsEqualTo(0);
         }
         finally
         {
             hook.AfterGet = null;
-            oci.BeforePut = null;
+            s3.BeforePut = null;
             firstWork.TrySetResult();
             release.TrySetResult();
             await shipping.CancelAsync();
@@ -260,11 +260,11 @@ public sealed class BackupAdmissionTests
         }
     }
 
-    private static async Task<ManagementApi> StartAsync(FakeS3 oci, FakeTimeProvider time, Action<IServiceCollection>? configure = null)
+    private static async Task<ManagementApi> StartAsync(FakeS3 s3, FakeTimeProvider time, Action<IServiceCollection>? configure = null)
     {
-        var api = await ManagementApi.StartAsync(oci.Configure, services =>
+        var api = await ManagementApi.StartAsync(s3.Configure, services =>
         {
-            oci.Route(services);
+            s3.Route(services);
             ManualBackupHosting.Configure(services);
             // Advancing key age must not concurrently copy cron backups into the files this fixture ships.
             var scheduler = services.Single(service => service.ServiceType == typeof(IHostedService)

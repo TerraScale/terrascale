@@ -22,9 +22,9 @@ public sealed class DataKeyOverlapTests
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         using var requests = CancellationTokenSource.CreateLinkedTokenSource(token);
         using var overlapping = CancellationTokenSource.CreateLinkedTokenSource(requests.Token);
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 9, 12, 0, 0, TimeSpan.Zero));
-        await using var api = await StartAsync(oci, time);
+        await using var api = await StartAsync(s3, time);
         var source = await api.CreateManagedDatabaseAsync("source");
         var other = await api.CreateManagedDatabaseAsync("other");
         foreach (var database in new[] { source, other })
@@ -41,9 +41,9 @@ public sealed class DataKeyOverlapTests
         var backup = api.Server.Services.GetRequiredService<IContinuousBackup>();
         time.Advance(TimeSpan.FromSeconds(10));
         await backup.RunOnceAsync(token);
-        var otherSnapshot = oci.Objects.Keys.Single(key => key.StartsWith(File(other) + "/snapshots/", StringComparison.Ordinal));
-        var otherKey = Keys(other) + Encoding.ASCII.GetString(oci.Objects[otherSnapshot], 4, 26);
-        var otherReads = oci.ObserveKey(otherKey);
+        var otherSnapshot = s3.Objects.Keys.Single(key => key.StartsWith(File(other) + "/snapshots/", StringComparison.Ordinal));
+        var otherKey = Keys(other) + Encoding.ASCII.GetString(s3.Objects[otherSnapshot], 4, 26);
+        var otherReads = s3.ObserveKey(otherKey);
         var stripes = new HashSet<int> { Stripe(otherKey) };
         var segmentKeys = new HashSet<string>(StringComparer.Ordinal);
         var observed = new List<FakeS3.KeyRequests>(8);
@@ -55,7 +55,7 @@ public sealed class DataKeyOverlapTests
             var material = RandomNumberGenerator.GetBytes(32);
             try
             {
-                oci.StoreObject(key, Encoding.ASCII.GetBytes(oci.Wrap(material)));
+                s3.StoreObject(key, Encoding.ASCII.GetBytes(s3.Wrap(material)));
             }
             finally
             {
@@ -63,18 +63,18 @@ public sealed class DataKeyOverlapTests
             }
 
             segmentKeys.Add(key);
-            observed.Add(oci.ObserveKey(key));
+            observed.Add(s3.ObserveKey(key));
             var name = "segment-" + index;
             var text = new Faker().Lorem.Sentence(12);
             documents.Add((name, text));
             await PutAsync(data, source, name, text, token);
             await backup.RunOnceAsync(token);
-            var segment = oci.Objects.Single(item => item.Key.StartsWith(File(source) + "/wal/", StringComparison.Ordinal)
+            var segment = s3.Objects.Single(item => item.Key.StartsWith(File(source) + "/wal/", StringComparison.Ordinal)
                 && Encoding.ASCII.GetString(item.Value, 4, 26) == key[Keys(source).Length..]);
             await Assert.That(BackupLayout.ParseSegment(segment.Key)!.At).IsEqualTo(time.GetUtcNow());
         }
 
-        await Assert.That(oci.Objects.Keys.Count(key => key.StartsWith(File(source) + "/wal/", StringComparison.Ordinal))).IsEqualTo(8);
+        await Assert.That(s3.Objects.Keys.Count(key => key.StartsWith(File(source) + "/wal/", StringComparison.Ordinal))).IsEqualTo(8);
         var sourceAt = await LatestAsync(api, source, token);
         var otherAt = await LatestAsync(api, other, token);
         // Expire both shared platform caches without leaving either pro retention window.
@@ -83,9 +83,9 @@ public sealed class DataKeyOverlapTests
         var saturated = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var entered = 0;
         var bodies = new ConcurrentBag<StalledKeyBody>();
-        using var header = new SnapshotHeaderBody(oci.Objects[otherSnapshot]);
+        using var header = new SnapshotHeaderBody(s3.Objects[otherSnapshot]);
         var restores = new List<Task<HttpResponseMessage>>(4);
-        oci.PlatformContentOverride = key =>
+        s3.PlatformContentOverride = key =>
         {
             if (segmentKeys.Contains(key))
             {
@@ -128,7 +128,7 @@ public sealed class DataKeyOverlapTests
                 await AssertRestoredAsync(restored, data, source, [.. documents], token);
             }
 
-            oci.PlatformContentOverride = key => segmentKeys.Contains(key)
+            s3.PlatformContentOverride = key => segmentKeys.Contains(key)
                 ? Content(AddBody(key)) : null;
             if (cancel)
             {
@@ -166,11 +166,11 @@ public sealed class DataKeyOverlapTests
                 await Assert.That(reads.Unwraps).IsEqualTo(cancel ? 3 : 2);
             }
 
-            await Assert.That(oci.BadSignatures).IsEqualTo(0);
+            await Assert.That(s3.BadSignatures).IsEqualTo(0);
         }
         finally
         {
-            oci.PlatformContentOverride = null;
+            s3.PlatformContentOverride = null;
             release.TrySetResult();
             await requests.CancelAsync();
             await ((Task)Task.WhenAll(restores)).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
@@ -190,7 +190,7 @@ public sealed class DataKeyOverlapTests
 
         StalledKeyBody AddBody(string key)
         {
-            var body = new StalledKeyBody(oci.Objects[key], release.Task, () =>
+            var body = new StalledKeyBody(s3.Objects[key], release.Task, () =>
             {
                 if (Interlocked.Increment(ref entered) % 8 == 0)
                 {
@@ -202,11 +202,11 @@ public sealed class DataKeyOverlapTests
         }
     }
 
-    private static async Task<ManagementApi> StartAsync(FakeS3 oci, FakeTimeProvider time)
+    private static async Task<ManagementApi> StartAsync(FakeS3 s3, FakeTimeProvider time)
     {
-        var api = await ManagementApi.StartAsync(oci.Configure, services =>
+        var api = await ManagementApi.StartAsync(s3.Configure, services =>
         {
-            oci.Route(services);
+            s3.Route(services);
             ManualBackupHosting.Configure(services);
         }, time, managementCredential: true);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));

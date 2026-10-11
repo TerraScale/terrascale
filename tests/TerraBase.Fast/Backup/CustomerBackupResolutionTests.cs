@@ -20,11 +20,11 @@ public sealed class CustomerBackupResolutionTests
     public async Task Unresolvable_customer_destinations_return_fixed_503_on_window_and_restore_listeners(string failure)
     {
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         var time = Clock();
-        await using var api = await StartAsync(settings => oci.Configure(settings), services =>
+        await using var api = await StartAsync(settings => s3.Configure(settings), services =>
         {
-            oci.Route(services);
+            s3.Route(services);
             ManualBackupHosting.Configure(services);
         }, time);
         var database = await api.CreateManagedDatabaseAsync();
@@ -52,7 +52,7 @@ public sealed class CustomerBackupResolutionTests
             await Assert.That(absent.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         }
 
-        await Assert.That(oci.CustomerObjects.Count).IsEqualTo(0);
+        await Assert.That(s3.CustomerObjects.Count).IsEqualTo(0);
     }
 
     [Test]
@@ -61,11 +61,11 @@ public sealed class CustomerBackupResolutionTests
     public async Task Corrupt_customer_backup_material_remains_500_and_recovers_when_repaired(string material)
     {
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         var time = Clock();
-        await using var api = await StartAsync(oci.Configure, services =>
+        await using var api = await StartAsync(s3.Configure, services =>
         {
-            oci.Route(services);
+            s3.Route(services);
             ManualBackupHosting.Configure(services);
         }, time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
@@ -100,9 +100,9 @@ public sealed class CustomerBackupResolutionTests
         var prefix = material == "snapshot"
             ? $"v1/{database.Organization}/{database.Project}/{database.Id}/snapshots/"
             : $"v1/keys/{database.Organization}/{database.Project}/";
-        var key = oci.CustomerObjects.Keys.Single(value => value.StartsWith(prefix, StringComparison.Ordinal));
-        var original = oci.CustomerObjects[key];
-        oci.SeedObject(customer: true, key, material == "snapshot" ? [1, 2, 3] : Encoding.ASCII.GetBytes("wrapped:AQID"));
+        var key = s3.CustomerObjects.Keys.Single(value => value.StartsWith(prefix, StringComparison.Ordinal));
+        var original = s3.CustomerObjects[key];
+        s3.SeedObject(customer: true, key, material == "snapshot" ? [1, 2, 3] : Encoding.ASCII.GetBytes("wrapped:AQID"));
 
         using var failed = await project.PostAsJsonAsync(Uri(database.Data + "/point-in-time/restore"),
             new { pointInTime = latest, name = "corrupt-restore", destination = "customer" }, cancellationToken);
@@ -111,7 +111,7 @@ public sealed class CustomerBackupResolutionTests
             new { pointInTime = latest, name = "legacy-corrupt-restore", destination = "customer" }, cancellationToken);
         await Assert.That(legacyFailed.StatusCode).IsEqualTo(HttpStatusCode.InternalServerError);
 
-        oci.SeedObject(customer: true, key, original);
+        s3.SeedObject(customer: true, key, original);
         using var restored = await project.PostAsJsonAsync(Uri(database.Data + "/point-in-time/restore"),
             new { pointInTime = latest, name = "repaired-restore", destination = "customer" }, cancellationToken);
         await Assert.That(restored.StatusCode).IsEqualTo(HttpStatusCode.Created);

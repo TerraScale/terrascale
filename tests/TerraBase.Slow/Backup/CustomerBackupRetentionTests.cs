@@ -16,9 +16,9 @@ public sealed class CustomerBackupRetentionTests
     public async Task Retention_drains_more_than_ten_thousand_expired_snapshots_without_deleting_a_later_snapshots_wal()
     {
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         var time = Clock();
-        await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
+        await using var api = await ManagementApi.StartAsync(s3.Configure, services => ManualShipping(s3, services), time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
         var database = await CreateManagedDatabaseAsync(api, cancellationToken);
         using var data = api.DataClient(await api.Server.IssueAsync(database.Organization, ["documents:read", "documents:write"], cancellationToken));
@@ -29,11 +29,11 @@ public sealed class CustomerBackupRetentionTests
         var after = faker.Lorem.Sentence(12);
         await PutAsync(data, database, "before", before, cancellationToken);
         await ShipAsync(api, time, cancellationToken);
-        var currentSnapshot = oci.CustomerObjects.Keys.Single(key => key.StartsWith(File(database) + "/snapshots/", StringComparison.Ordinal));
+        var currentSnapshot = s3.CustomerObjects.Keys.Single(key => key.StartsWith(File(database) + "/snapshots/", StringComparison.Ordinal));
         var generation = currentSnapshot.Split('/')[^1].Split('-')[1];
         await PutAsync(data, database, "after", after, cancellationToken);
         await ShipAsync(api, time, cancellationToken);
-        var neededSegment = oci.CustomerObjects.Keys.Single(key => key.StartsWith(File(database) + "/wal/", StringComparison.Ordinal));
+        var neededSegment = s3.CustomerObjects.Keys.Single(key => key.StartsWith(File(database) + "/wal/", StringComparison.Ordinal));
         const int expiredCount = 10_002;
         var first = time.GetUtcNow().AddDays(-3).ToUnixTimeMilliseconds();
         for (var index = 0; index < expiredCount; index++)
@@ -42,11 +42,11 @@ public sealed class CustomerBackupRetentionTests
             // The retained real snapshot has position zero, below every candidate's position. Its WAL remains needed.
             var key = string.Create(CultureInfo.InvariantCulture,
                 $"{File(database)}/snapshots/{first + index:D13}-{generation}-0000000000009999");
-            oci.SeedObject(customer: true, key, []);
+            s3.SeedObject(customer: true, key, []);
         }
 
         var snapshotListings = 0;
-        oci.CustomerListingOverride = (prefix, keys) =>
+        s3.CustomerListingOverride = (prefix, keys) =>
         {
             if (prefix == File(database) + "/snapshots/")
             {
@@ -61,11 +61,11 @@ public sealed class CustomerBackupRetentionTests
             time.Advance(TimeSpan.FromHours(1));
             await ShipAsync(api, time, cancellationToken);
             await Assert.That(Volatile.Read(ref snapshotListings)).IsGreaterThan(10);
-            var remaining = oci.CustomerObjects.Keys.Count(key => key.StartsWith(File(database) + "/snapshots/", StringComparison.Ordinal));
+            var remaining = s3.CustomerObjects.Keys.Count(key => key.StartsWith(File(database) + "/snapshots/", StringComparison.Ordinal));
             await Assert.That(remaining).IsLessThan(previous);
             previous = remaining;
-            await Assert.That(oci.CustomerObjects.ContainsKey(currentSnapshot)).IsTrue();
-            await Assert.That(oci.CustomerObjects.ContainsKey(neededSegment)).IsTrue();
+            await Assert.That(s3.CustomerObjects.ContainsKey(currentSnapshot)).IsTrue();
+            await Assert.That(s3.CustomerObjects.ContainsKey(neededSegment)).IsTrue();
             var restored = await RestoreAsync(api, database, await LatestAsync(api.Client, database, "customer", cancellationToken), "backlog-" + pass, "customer", cancellationToken);
             await AssertDocumentAsync(data, restored, "before", before, cancellationToken);
             await AssertDocumentAsync(data, restored, "after", after, cancellationToken);
@@ -73,12 +73,12 @@ public sealed class CustomerBackupRetentionTests
 
         // One snapshot before the cutoff remains as the floor; all other expired snapshots have drained.
         await Assert.That(previous).IsEqualTo(2);
-        await Assert.That(oci.BadSignatures).IsEqualTo(0);
+        await Assert.That(s3.BadSignatures).IsEqualTo(0);
     }
 
-    private static void ManualShipping(FakeS3 oci, IServiceCollection services)
+    private static void ManualShipping(FakeS3 s3, IServiceCollection services)
     {
-        oci.Route(services);
+        s3.Route(services);
         ManualBackupHosting.Configure(services);
         // Bound captured output from the 10,002-snapshot customer workload; warnings and errors remain visible.
         services.AddLogging(logging => logging.AddFilter("System.Net.Http.HttpClient.backup-s3-customer.", LogLevel.Warning));

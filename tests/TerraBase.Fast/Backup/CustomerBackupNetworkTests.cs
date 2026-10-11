@@ -15,8 +15,8 @@ public sealed class CustomerBackupNetworkTests
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         await using var network = await CustomerBackupNetworkFixture.StartAsync(cancellationToken);
         network.Addresses([.. Enumerable.Repeat("93.184.216.34", count)]);
-        var oci = new FakeS3();
-        await using var api = await StartAsync(oci.Configure, services => network.Configure(oci, services));
+        var s3 = new FakeS3();
+        await using var api = await StartAsync(s3.Configure, services => network.Configure(s3, services));
         var database = await api.CreateManagedDatabaseAsync();
 
         using var response = await SaveAsync(api, database, network.Endpoint, cancellationToken);
@@ -57,8 +57,8 @@ public sealed class CustomerBackupNetworkTests
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         await using var network = await CustomerBackupNetworkFixture.StartAsync(cancellationToken);
         network.Addresses("93.184.216.34", forbidden);
-        var oci = new FakeS3();
-        await using var api = await StartAsync(oci.Configure, services => network.Configure(oci, services));
+        var s3 = new FakeS3();
+        await using var api = await StartAsync(s3.Configure, services => network.Configure(s3, services));
         var database = await api.CreateManagedDatabaseAsync();
 
         using var response = await SaveAsync(api, database, network.Endpoint, cancellationToken);
@@ -89,8 +89,8 @@ public sealed class CustomerBackupNetworkTests
     {
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         await using var network = await CustomerBackupNetworkFixture.StartAsync(cancellationToken);
-        var oci = new FakeS3();
-        await using var api = await StartAsync(oci.Configure, services => network.Configure(oci, services));
+        var s3 = new FakeS3();
+        await using var api = await StartAsync(s3.Configure, services => network.Configure(s3, services));
         var database = await api.CreateManagedDatabaseAsync();
 
         using var response = await SaveAsync(api, database, new Uri(endpoint), cancellationToken);
@@ -118,8 +118,8 @@ public sealed class CustomerBackupNetworkTests
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         await using var network = await CustomerBackupNetworkFixture.StartAsync(cancellationToken);
         network.Addresses(address, "93.184.216.35");
-        var oci = new FakeS3();
-        await using var api = await StartAsync(oci.Configure, services => network.Configure(oci, services));
+        var s3 = new FakeS3();
+        await using var api = await StartAsync(s3.Configure, services => network.Configure(s3, services));
         var database = await api.CreateManagedDatabaseAsync();
 
         using var response = await SaveAsync(api, database, network.Endpoint, cancellationToken);
@@ -146,8 +146,8 @@ public sealed class CustomerBackupNetworkTests
     {
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         await using var network = await CustomerBackupNetworkFixture.StartAsync(cancellationToken);
-        var oci = new FakeS3();
-        await using var api = await StartAsync(oci.Configure, services => network.Configure(oci, services));
+        var s3 = new FakeS3();
+        await using var api = await StartAsync(s3.Configure, services => network.Configure(s3, services));
         var database = await api.CreateManagedDatabaseAsync();
 
         // This DNS fixture accepts only its TLS listener's hostname, so a validated literal stops at resolution.
@@ -163,8 +163,8 @@ public sealed class CustomerBackupNetworkTests
     {
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         await using var network = await CustomerBackupNetworkFixture.StartAsync(cancellationToken);
-        var oci = new FakeS3();
-        await using var api = await StartAsync(oci.Configure, services => network.Configure(oci, services, enableProxy: true));
+        var s3 = new FakeS3();
+        await using var api = await StartAsync(s3.Configure, services => network.Configure(s3, services, enableProxy: true));
         var database = await api.CreateManagedDatabaseAsync();
 
         using var response = await SaveAsync(api, database, network.Endpoint, cancellationToken);
@@ -184,8 +184,8 @@ public sealed class CustomerBackupNetworkTests
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         await using var network = await CustomerBackupNetworkFixture.StartAsync(cancellationToken);
         network.HoldResolution = true;
-        var oci = new FakeS3();
-        await using var api = await StartAsync(oci.Configure, services => network.Configure(oci, services));
+        var s3 = new FakeS3();
+        await using var api = await StartAsync(s3.Configure, services => network.Configure(s3, services));
         var database = await api.CreateManagedDatabaseAsync();
         var pending = SaveAsync(api, database, network.Endpoint, cancellationToken);
         try
@@ -210,8 +210,8 @@ public sealed class CustomerBackupNetworkTests
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         await using var network = await CustomerBackupNetworkFixture.StartAsync(cancellationToken);
         network.Redirect = true;
-        var oci = new FakeS3();
-        await using var api = await StartAsync(oci.Configure, services => network.Configure(oci, services));
+        var s3 = new FakeS3();
+        await using var api = await StartAsync(s3.Configure, services => network.Configure(s3, services));
         var database = await api.CreateManagedDatabaseAsync();
 
         using var response = await SaveAsync(api, database, network.Endpoint, cancellationToken);
@@ -229,8 +229,8 @@ public sealed class CustomerBackupNetworkTests
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         await using var network = await CustomerBackupNetworkFixture.StartAsync(cancellationToken);
         network.HoldConnect = true;
-        var oci = new FakeS3();
-        await using var api = await StartAsync(oci.Configure, services => network.Configure(oci, services));
+        var s3 = new FakeS3();
+        await using var api = await StartAsync(s3.Configure, services => network.Configure(s3, services));
         var database = await api.CreateManagedDatabaseAsync();
         using var caller = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var pending = SaveAsync(api, database, network.Endpoint, caller.Token);

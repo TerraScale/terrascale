@@ -15,11 +15,11 @@ public sealed class CustomerBackupUnicodeTests
     public async Task Utf8_ordered_BMP_and_supplementary_junk_cross_customer_pages_without_breaking_drills_retention_or_restore()
     {
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
-        await using var api = await ManagementApi.StartAsync(oci.Configure, services =>
+        await using var api = await ManagementApi.StartAsync(s3.Configure, services =>
         {
-            oci.Route(services);
+            s3.Route(services);
             ManualBackupHosting.Configure(services);
         }, time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
@@ -48,12 +48,12 @@ public sealed class CustomerBackupUnicodeTests
         {
             for (var index = 0; index < count; index++)
             {
-                oci.SeedObject(customer: true, stem + index.ToString("D3", CultureInfo.InvariantCulture), []);
+                s3.SeedObject(customer: true, stem + index.ToString("D3", CultureInfo.InvariantCulture), []);
             }
         }
 
         var junkOperations = 0;
-        oci.ObjectRequested = (customer, method, key) =>
+        s3.ObjectRequested = (customer, method, key) =>
         {
             if (customer && (method == HttpMethod.Get || method == HttpMethod.Delete)
                 && (key.StartsWith(bmp, StringComparison.Ordinal) || key.StartsWith(supplementary, StringComparison.Ordinal)))
@@ -61,7 +61,7 @@ public sealed class CustomerBackupUnicodeTests
                 Interlocked.Increment(ref junkOperations);
             }
         };
-        oci.ObservedListPrefix = prefix;
+        s3.ObservedListPrefix = prefix;
         time.Advance(TimeSpan.FromSeconds(10));
         await api.Server.Services.GetRequiredService<IContinuousBackup>().RunOnceAsync(cancellationToken);
         time.Advance(TimeSpan.FromSeconds(1));
@@ -74,16 +74,16 @@ public sealed class CustomerBackupUnicodeTests
         await Assert.That(backedUp.GetProperty("lastDrill").GetProperty("passed").GetBoolean()).IsTrue();
         await Assert.That(backedUp.GetProperty("sizeBytes").GetInt64()).IsGreaterThan(0);
 
-        var listed = oci.ListRequests;
+        var listed = s3.ListRequests;
         using var window = await api.Client.GetAsync(ManagementApi.Uri(database.Path + "/point-in-time?destination=customer"), cancellationToken);
         window.EnsureSuccessStatusCode();
         var latest = (await window.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cancellationToken)).GetProperty("latest").GetDateTimeOffset();
-        await Assert.That(oci.ListRequests - listed).IsEqualTo(3);
-        listed = oci.ListRequests;
+        await Assert.That(s3.ListRequests - listed).IsEqualTo(3);
+        listed = s3.ListRequests;
         using var restoredResponse = await api.Client.PostAsJsonAsync(ManagementApi.Uri(database.Path + "/point-in-time/restore"),
             new { pointInTime = latest, name = "unicode-restored", destination = "customer" }, cancellationToken);
         await Assert.That(restoredResponse.StatusCode).IsEqualTo(HttpStatusCode.Created);
-        await Assert.That(oci.ListRequests - listed).IsEqualTo(3);
+        await Assert.That(s3.ListRequests - listed).IsEqualTo(3);
         var restored = await restoredResponse.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cancellationToken);
         var restoredDatabase = new ManagedDatabaseRef(database.Organization, database.Project,
             restored.GetProperty("id").GetString()!, restored.GetProperty("name").GetString()!);
@@ -92,13 +92,13 @@ public sealed class CustomerBackupUnicodeTests
         await Assert.That((await document.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cancellationToken))
             .GetProperty("document").GetProperty("text").GetString()).IsEqualTo(text);
         await Assert.That(junkOperations).IsEqualTo(0);
-        await Assert.That(oci.CustomerObjects.Keys.Count(key => key.StartsWith(bmp, StringComparison.Ordinal)
+        await Assert.That(s3.CustomerObjects.Keys.Count(key => key.StartsWith(bmp, StringComparison.Ordinal)
             || key.StartsWith(supplementary, StringComparison.Ordinal))).IsEqualTo(500);
 
         // UTF-16 ordering is decreasing on the S3 wire and must still be rejected.
-        oci.CustomerListingOverride = (requested, keys) => requested == prefix ? [supplementary + "000", bmp + "000"] : keys;
+        s3.CustomerListingOverride = (requested, keys) => requested == prefix ? [supplementary + "000", bmp + "000"] : keys;
         using var decreasing = await api.Client.GetAsync(ManagementApi.Uri(database.Path + "/point-in-time?destination=customer"), cancellationToken);
         await Assert.That(decreasing.IsSuccessStatusCode).IsFalse();
-        await Assert.That(oci.BadSignatures).IsEqualTo(0);
+        await Assert.That(s3.BadSignatures).IsEqualTo(0);
     }
 }

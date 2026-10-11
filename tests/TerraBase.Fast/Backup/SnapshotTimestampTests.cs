@@ -19,15 +19,15 @@ public sealed class SnapshotTimestampTests
     [Arguments(true)]
     public async Task Initial_and_daily_snapshots_keep_the_pin_time_while_copying_allows_later_writes(bool daily)
     {
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         var time = new ManualTime();
         var testCancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(testCancellationToken);
         var cancellationToken = deadline.Token;
         var pause = new SnapshotPause(time, cancellationToken);
-        await using var api = await ManagementApi.StartAsync(oci.Configure, services =>
+        await using var api = await ManagementApi.StartAsync(s3.Configure, services =>
         {
-            oci.Route(services);
+            s3.Route(services);
             ManualBackupHosting.Configure(services);
             services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock,
                 new FakeTimeProvider(new DateTimeOffset(2000, 1, 1, 0, 0, 0, TimeSpan.Zero)));
@@ -76,7 +76,7 @@ public sealed class SnapshotTimestampTests
             pause.Release.TrySetResult();
             await pass.WaitAsync(cancellationToken);
 
-            var snapshots = oci.Objects.Keys.Where(key => key.StartsWith(File(database) + "/snapshots/", StringComparison.Ordinal))
+            var snapshots = s3.Objects.Keys.Where(key => key.StartsWith(File(database) + "/snapshots/", StringComparison.Ordinal))
                 .Order(StringComparer.Ordinal).ToArray();
             await Assert.That(snapshots.Length).IsEqualTo(daily ? 2 : 1);
             var parts = snapshots[^1].Split('/')[^1].Split('-');

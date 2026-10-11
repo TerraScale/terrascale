@@ -21,13 +21,13 @@ public sealed class BackupDiscoveryShutdownTests
     {
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         using var shutdown = new CancellationTokenSource();
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         using var body = new StalledSnapshotBody();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
         TrackedBackup? taps = null;
-        await using var api = await ManagementApi.StartAsync(oci.Configure, services =>
+        await using var api = await ManagementApi.StartAsync(s3.Configure, services =>
         {
-            oci.Route(services);
+            s3.Route(services);
             services.AddSingleton<IWalBackup>(provider => taps = new TrackedBackup(provider.GetRequiredService<SqliteStorageEngine>()));
             // Observe shutdown's cancellation failures here, while allowing factory disposal to rejoin its cleanup.
             var host = services.Single(descriptor => descriptor.ServiceType == typeof(IHostedService)
@@ -59,7 +59,7 @@ public sealed class BackupDiscoveryShutdownTests
             }
 
             var customerSnapshots = File(customer) + "/snapshots/";
-            oci.CustomerContentOverride = key =>
+            s3.CustomerContentOverride = key =>
             {
                 if (!key.StartsWith(customerSnapshots, StringComparison.Ordinal) || body.Requested() != 1)
                 {
@@ -67,7 +67,7 @@ public sealed class BackupDiscoveryShutdownTests
                 }
 
                 var content = new StreamContent(body);
-                content.Headers.ContentLength = oci.CustomerObjects[key].LongLength;
+                content.Headers.ContentLength = s3.CustomerObjects[key].LongLength;
                 return content;
             };
             time.Advance(TimeSpan.FromSeconds(10));
@@ -77,7 +77,7 @@ public sealed class BackupDiscoveryShutdownTests
             }
 
             await body.Entered.Task.WaitAsync(token);
-            await Assert.That(oci.CustomerObjects.Keys.Any(key => key.StartsWith(customerSnapshots, StringComparison.Ordinal))).IsTrue();
+            await Assert.That(s3.CustomerObjects.Keys.Any(key => key.StartsWith(customerSnapshots, StringComparison.Ordinal))).IsTrue();
             await Assert.That(body.Cancelled.Task.IsCompleted).IsFalse();
 
             var unseen = await CreateAsync(api.Client, customer.ProjectPath + "/databases", "unseen", token);
@@ -139,14 +139,14 @@ public sealed class BackupDiscoveryShutdownTests
             await Assert.That(backup.Status.Files).IsEmpty();
             await Assert.That(Directory.EnumerateFiles(Path.Combine(api.Server.DataDirectory, ".backup"))).IsEmpty();
             await Assert.That(manualDiscovery || backup.ExecuteTask!.IsCompleted).IsTrue();
-            await Assert.That(oci.BadSignatures).IsEqualTo(0);
+            await Assert.That(s3.BadSignatures).IsEqualTo(0);
         }
         finally
         {
             // Release both fixture barriers on failure before joining service or host cleanup.
             tracked.Release.TrySetResult();
             body.Released.TrySetResult(0);
-            oci.CustomerContentOverride = null;
+            s3.CustomerContentOverride = null;
             await shutdown.CancelAsync();
             stopping ??= backup.StopAsync(shutdown.Token);
             await stopping.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);

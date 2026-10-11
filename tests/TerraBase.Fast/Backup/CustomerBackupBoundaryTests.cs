@@ -21,7 +21,7 @@ public sealed class CustomerBackupBoundaryTests
     public async Task Generated_wrapped_key_boundary_rejects_before_publication_and_restores_on_a_cold_node(int wrappedBytes)
     {
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         var time = Clock();
         var directory = Directory.CreateTempSubdirectory("terrabase-key-boundary-").FullName;
         var coldDirectory = Directory.CreateTempSubdirectory("terrabase-key-boundary-cold-").FullName;
@@ -32,7 +32,7 @@ public sealed class CustomerBackupBoundaryTests
             string user;
             string key;
             DateTimeOffset latest;
-            await using (var api = await StartAsync(oci, time, directory, wrappedBytes))
+            await using (var api = await StartAsync(s3, time, directory, wrappedBytes))
             {
                 database = await api.CreateManagedDatabaseAsync();
                 user = api.User;
@@ -42,7 +42,7 @@ public sealed class CustomerBackupBoundaryTests
                 await PutAsync(data, database, text, cancellationToken);
                 var keys = $"v1/keys/{database.Organization}/{database.Project}/";
                 var uploads = 0;
-                oci.ObjectRequested = (customer, method, requested) =>
+                s3.ObjectRequested = (customer, method, requested) =>
                 {
                     if (customer && method == HttpMethod.Put
                         && (requested.StartsWith(keys, StringComparison.Ordinal) || requested.StartsWith(FilePrefix(database) + "/", StringComparison.Ordinal)))
@@ -59,8 +59,8 @@ public sealed class CustomerBackupBoundaryTests
                     await Assert.That(rejectedKeys.Length).IsGreaterThan(0);
                     await Assert.That(rejectedKeys.All(generated => generated.All(value => value == 0))).IsTrue();
                     await Assert.That(uploads).IsEqualTo(0);
-                    await Assert.That(oci.CustomerObjects.Keys.Any(requested => requested.StartsWith(keys, StringComparison.Ordinal))).IsFalse();
-                    await Assert.That(oci.CustomerObjects.Keys.Any(requested => requested.StartsWith(FilePrefix(database) + "/", StringComparison.Ordinal))).IsFalse();
+                    await Assert.That(s3.CustomerObjects.Keys.Any(requested => requested.StartsWith(keys, StringComparison.Ordinal))).IsFalse();
+                    await Assert.That(s3.CustomerObjects.Keys.Any(requested => requested.StartsWith(FilePrefix(database) + "/", StringComparison.Ordinal))).IsFalse();
                     using var status = await api.Server.Client.GetAsync(ManagementApi.Uri("/v1/backup"), cancellationToken);
                     status.EnsureSuccessStatusCode();
                     var files = (await status.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cancellationToken)).GetProperty("files");
@@ -78,8 +78,8 @@ public sealed class CustomerBackupBoundaryTests
                 }
 
                 await Assert.That(uploads).IsGreaterThan(0);
-                key = oci.CustomerObjects.Keys.Single(requested => requested.StartsWith(keys, StringComparison.Ordinal));
-                await Assert.That(oci.CustomerObjects[key].Length).IsEqualTo(16 * 1024);
+                key = s3.CustomerObjects.Keys.Single(requested => requested.StartsWith(keys, StringComparison.Ordinal));
+                await Assert.That(s3.CustomerObjects[key].Length).IsEqualTo(16 * 1024);
                 latest = await LatestAsync(api.Client, database, cancellationToken);
             }
 
@@ -90,15 +90,15 @@ public sealed class CustomerBackupBoundaryTests
             }
 
             var keyReads = 0;
-            oci.ObjectRequested = (customer, method, requested) =>
+            s3.ObjectRequested = (customer, method, requested) =>
             {
                 if (customer && method == HttpMethod.Get && requested == key)
                 {
                     Interlocked.Increment(ref keyReads);
                 }
             };
-            var generatedBeforeRestore = oci.GeneratedKeys;
-            await using var cold = await StartAsync(oci, time, coldDirectory, 16 * 1024);
+            var generatedBeforeRestore = s3.GeneratedKeys;
+            await using var cold = await StartAsync(s3, time, coldDirectory, 16 * 1024);
             await Assert.That(File.Exists(Path.Combine(coldDirectory, database.Organization, database.Project, database.Id + ".db"))).IsFalse();
             using var owner = cold.As(user);
             var restored = await RestoreAsync(owner, database, latest, cancellationToken);
@@ -107,8 +107,8 @@ public sealed class CustomerBackupBoundaryTests
             await Assert.That(keyReads).IsEqualTo(1);
             // One unwrap of the restored data key and one of the sealed customer credentials.
             await Assert.That(((PaddedMasterKey)cold.Server.Services.GetRequiredService<IMasterKey>()).Unwraps).IsEqualTo(2);
-            await Assert.That(oci.GeneratedKeys).IsEqualTo(generatedBeforeRestore);
-            await Assert.That(oci.BadSignatures).IsEqualTo(0);
+            await Assert.That(s3.GeneratedKeys).IsEqualTo(generatedBeforeRestore);
+            await Assert.That(s3.BadSignatures).IsEqualTo(0);
         }
         finally
         {
@@ -121,9 +121,9 @@ public sealed class CustomerBackupBoundaryTests
     public async Task Long_xml_escaped_customer_keys_paginate_within_the_response_bound_and_restore_actual_documents()
     {
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         var time = Clock();
-        await using var api = await StartAsync(oci, time);
+        await using var api = await StartAsync(s3, time);
         var database = await api.CreateManagedDatabaseAsync();
         await SetCustomerAsync(api, database, cancellationToken);
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
@@ -136,14 +136,14 @@ public sealed class CustomerBackupBoundaryTests
         {
             // Ampersands sort before the real timestamped snapshot, putting it beyond four customer pages.
             var key = (prefix + "&" + index.ToString("D4", CultureInfo.InvariantCulture)).PadRight(1024, '&');
-            oci.SeedObject(customer: true, key, []);
+            s3.SeedObject(customer: true, key, []);
             escapedKeyBytes += Encoding.ASCII.GetByteCount(key.Replace("&", "&amp;", StringComparison.Ordinal));
         }
 
         // The old 1000-key page exceeds 2 MiB from escaped keys alone, before any XML metadata.
         await Assert.That(escapedKeyBytes).IsGreaterThan(2 * 1024 * 1024);
         var junkOperations = 0;
-        oci.ObjectRequested = (customer, method, key) =>
+        s3.ObjectRequested = (customer, method, key) =>
         {
             if (customer && (method == HttpMethod.Get || method == HttpMethod.Delete)
                 && key.StartsWith(prefix + "&", StringComparison.Ordinal))
@@ -151,25 +151,25 @@ public sealed class CustomerBackupBoundaryTests
                 Interlocked.Increment(ref junkOperations);
             }
         };
-        oci.ObservedListPrefix = prefix;
+        s3.ObservedListPrefix = prefix;
         await ShipAsync(api, time, cancellationToken);
-        var listed = oci.ListRequests;
+        var listed = s3.ListRequests;
         var latest = await LatestAsync(api.Client, database, cancellationToken);
-        await Assert.That(oci.ListRequests - listed).IsEqualTo(5);
-        listed = oci.ListRequests;
+        await Assert.That(s3.ListRequests - listed).IsEqualTo(5);
+        listed = s3.ListRequests;
         var restored = await RestoreAsync(api.Client, database, latest, cancellationToken);
-        await Assert.That(oci.ListRequests - listed).IsEqualTo(5);
+        await Assert.That(s3.ListRequests - listed).IsEqualTo(5);
         await AssertDocumentAsync(data, restored, text, cancellationToken);
         await Assert.That(junkOperations).IsEqualTo(0);
-        await Assert.That(oci.CustomerObjects.Keys.Count(key => key.StartsWith(prefix + "&", StringComparison.Ordinal))).IsEqualTo(1000);
-        await Assert.That(oci.BadSignatures).IsEqualTo(0);
+        await Assert.That(s3.CustomerObjects.Keys.Count(key => key.StartsWith(prefix + "&", StringComparison.Ordinal))).IsEqualTo(1000);
+        await Assert.That(s3.BadSignatures).IsEqualTo(0);
     }
 
-    private static async Task<ManagementApi> StartAsync(FakeS3 oci, FakeTimeProvider time, string? directory = null, int? wrappedBytes = null)
+    private static async Task<ManagementApi> StartAsync(FakeS3 s3, FakeTimeProvider time, string? directory = null, int? wrappedBytes = null)
     {
         var api = await ManagementApi.StartAsync(settings =>
         {
-            oci.Configure(settings);
+            s3.Configure(settings);
             if (directory is not null)
             {
                 settings["data-directory"] = directory;
@@ -177,7 +177,7 @@ public sealed class CustomerBackupBoundaryTests
         }, services =>
         {
             // Replace only transports; keep production response limits and AWS XML deserialization.
-            oci.Route(services);
+            s3.Route(services);
             ManualBackupHosting.Configure(services);
             if (wrappedBytes is { } size)
             {
