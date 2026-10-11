@@ -229,7 +229,7 @@ jobs:
         run: scripts/fly/deploy.sh ts-auth src/TerraScale.Authentication/fly.toml registry.fly.io/ts-auth:${{ github.sha }}
 
   e2e:
-    needs: deploy
+    needs: deploy-terrabase
     continue-on-error: true
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 30
