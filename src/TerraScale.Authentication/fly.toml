@@ -1,0 +1,30 @@
+# ts-auth on Fly. CI deploys the image built from the root Dockerfile
+# (`--target ts-auth`), gru first, then sjc: .github/workflows/ci.yml.
+app = "ts-auth"
+primary_region = "gru"
+# 512 MB RAM; the 4 GB swap only absorbs spikes (it pages at a few MB/s).
+swap_size_mb = 4096
+
+[[vm]]
+  size = "shared-cpu-2x"
+  memory = "512mb"
+
+# Public API.
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # "off" is what keeps one machine running in every region; min_machines_running only covers primary_region.
+  auto_stop_machines = "off"
+  auto_start_machines = true
+
+  [[http_service.checks]]
+    method = "GET"
+    path = "/healthz"
+    interval = "15s"
+    timeout = "2s"
+    grace_period = "30s"
+
+# Fly's scraper connects over the private IPv4, so /metrics listens on all interfaces (not public: no service).
+[[metrics]]
+  port = 9091
+  path = "/metrics"

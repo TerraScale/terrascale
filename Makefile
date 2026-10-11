@@ -49,7 +49,7 @@ BENCHMARK_DOTNET_PROJECTS := benchmark/dotnet/TerraScale.Endpoints.Benchmarks/Te
 
 .PHONY: restore build fmt fmt-check lint test-fast test-slow test check docker-test clean \
 	libs-build libs-test libs-check libs-pack libs-nativeaot-check \
-	auth-build auth-audit auth-openapi-check auth-test-fast auth-test-slow auth-check auth-dev \
+	auth-build auth-audit auth-openapi-check auth-test-fast auth-test-slow auth-check auth-publish auth-dev \
 	terrabase-build terrabase-analyzer-check terrabase-test-fast terrabase-test-slow terrabase-check terrabase-run terrabase-publish \
 	benchmark-build benchmark-fmt-check benchmark-check benchmark-smoke
 
@@ -131,6 +131,10 @@ auth-test-slow: auth-build
 	dotnet run --project tests/TerraScale.Authentication.Slow --configuration $(CONFIGURATION) --no-build $(TEST_ARGS)
 
 auth-check: auth-audit auth-openapi-check
+
+# Self-contained ts-auth (JIT): $(PUBLISH_DIR)/ts-auth
+auth-publish:
+	dotnet publish src/TerraScale.Authentication --configuration Release --runtime $(RUNTIME) --self-contained --output "$(PUBLISH_DIR)"
 
 auth-dev:
 	scripts/auth/dev.sh

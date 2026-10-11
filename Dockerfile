@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # CI runs the `test` stage on every pull request and push (.github/workflows/ci.yml); `make docker-test` runs the same
-# build locally. ts-auth builds ts-dotnet from source and its tests start the pinned TerraBase release binary that
+# build locally. The `terrabase` and `ts-auth` stages are the images CI deploys to Fly. ts-auth builds ts-dotnet from source and its tests start the pinned TerraBase release binary that
 # ts-dotnet's TerraBaseTestServer verifies, so the build takes two named contexts: `ts-dotnet` (a checkout) and
 # `terrabase-pinned` (a directory holding terrabase-linux-amd64).
 
@@ -34,3 +34,21 @@ RUN --mount=type=cache,target=/root/.nuget/packages \
 FROM build AS test-slow
 RUN --mount=type=cache,target=/root/.nuget/packages \
     make test-slow CONFIGURATION=Release
+
+# Release executables (JIT, self-contained). FROM test: an image exists only for a build whose Fast suites passed.
+FROM test AS publish
+# Shown by ts-auth's /healthz as <version>+<revision>.
+ARG TS_AUTH_REVISION
+RUN --mount=type=cache,target=/root/.nuget/packages \
+    make terrabase-publish PUBLISH_DIR=/out/terrabase \
+    && make auth-publish PUBLISH_DIR=/out/ts-auth
+
+# Runtime images. Fly mounts TerraBase's volume at /data; the shell stays for `fly ssh console`.
+FROM mcr.microsoft.com/dotnet/runtime-deps:11.0 AS terrabase
+COPY --from=publish /out/terrabase /app
+WORKDIR /data
+ENTRYPOINT ["/app/terrabase"]
+
+FROM mcr.microsoft.com/dotnet/runtime-deps:11.0 AS ts-auth
+COPY --from=publish /out/ts-auth /app
+ENTRYPOINT ["/app/ts-auth"]

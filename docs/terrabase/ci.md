@@ -4,4 +4,6 @@
 
 - Reproduce it locally with `make docker-test` (needs `../ts-dotnet` and the pinned TerraBase binary ts-auth's tests use, see the Makefile). Before pushing, `make check` runs the same gates plus the benchmark checks.
 - The slow suites run on pushes to main in the non-blocking `slow` job (`--target test-slow`); `make test-slow` runs them locally.
-- Releases and packages are not published automatically. Build an artifact you need with its `make` target, for example `make terrabase-publish`.
+- Deploys (push to main, job `deploy`): the Dockerfile's `terrabase` and `ts-auth` stages, built FROM `test` so an image exists only when the Fast suites passed, are pushed to `registry.fly.io/<app>:<sha>`. `scripts/fly/deploy.sh` rolls each app (`ts-terrabase`, then `ts-auth`; config in `src/TerraBase/fly.toml` and `src/TerraScale.Authentication/fly.toml`) to gru, checks `https://<app>.fly.dev/healthz` from gru, then sjc. A failed check stops the rollout. Secrets: one Fly deploy token per app (`FLY_TOKEN_TS_TERRABASE`, `FLY_TOKEN_TS_AUTH`).
+- PR previews (job `preview`): `scripts/fly/preview.sh` runs both images as one multi-container machine in app `ts-pr-<n>` (org `terrascale-previews`, token `FLY_TOKEN_PREVIEWS`) and comments `https://ts-pr-<n>.fly.dev` on the PR. `previews.yml` deletes it when the PR closes and reaps previews older than 24 hours every hour.
+- Packages are not published automatically. Build an artifact you need with its `make` target, for example `make terrabase-publish`.
