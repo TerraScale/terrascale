@@ -6,8 +6,8 @@
     <!-- NU5104: the Microsoft.Extensions dependencies come from the prerelease .NET 11 train (central versions); drop when that ships stable. -->
     <NoWarn>$(NoWarn);NU5104</NoWarn>
     <IsAotCompatible>true</IsAotCompatible>
-    <PackageProjectUrl>https://git.terrascale.tech/TerraScale/ts-libs</PackageProjectUrl>
-    <RepositoryUrl>https://git.terrascale.tech/TerraScale/ts-libs</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/TerraScale/terrascale</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/TerraScale/terrascale</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>

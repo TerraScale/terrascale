@@ -7,8 +7,8 @@
     <!-- ASP0029: the validation API used by AddValidation() is marked experimental in the net10.0 pack. -->
     <NoWarn>$(NoWarn);NU5104;ASP0029</NoWarn>
     <IsAotCompatible>true</IsAotCompatible>
-    <PackageProjectUrl>https://git.terrascale.tech/TerraScale/ts-libs</PackageProjectUrl>
-    <RepositoryUrl>https://git.terrascale.tech/TerraScale/ts-libs</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/TerraScale/terrascale</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/TerraScale/terrascale</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
