@@ -47,8 +47,8 @@ dotnet_separate_import_directive_groups = false
 csharp_using_directive_placement = outside_namespace:suggestion
 csharp_style_namespace_declarations = file_scoped:suggestion
 
-# ts-auth: SDK 11 turns these on by default. ts-auth built on SDK 10, where they were not enforced; they stay off here.
-[{src,tests}/TerraScale.Auth*/**.cs]
+# ts-auth (and its scripts): SDK 11 turns these on by default. ts-auth built on SDK 10, where they were not enforced; they stay off here.
+[{src/TerraScale.Auth*,tests/TerraScale.Auth*,scripts/auth}/**.cs]
 dotnet_diagnostic.CA2026.severity = silent
 dotnet_diagnostic.CA2027.severity = silent
 dotnet_diagnostic.IDE0005.severity = silent
@@ -59,6 +59,7 @@ dotnet_diagnostic.IDE0028.severity = silent
 dotnet_diagnostic.IDE0032.severity = silent
 dotnet_diagnostic.IDE0042.severity = silent
 dotnet_diagnostic.IDE0046.severity = silent
+dotnet_diagnostic.IDE0078.severity = silent
 dotnet_diagnostic.IDE0047.severity = silent
 dotnet_diagnostic.IDE0061.severity = silent
 dotnet_diagnostic.IDE0062.severity = silent
