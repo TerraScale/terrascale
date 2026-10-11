@@ -143,11 +143,11 @@ public sealed partial class OpenApiTests
     [Test]
     public async Task Served_platform_operations_match_the_published_contract()
     {
-        // docs/platform-api.openapi.yaml is the contract TerraBase, the SDKs and the dashboard build on (TS-598); every
+        // docs/auth/platform-api.openapi.yaml is the contract TerraBase, the SDKs and the dashboard build on (TS-598); every
         // platform operation the service maps must appear there with the same path, method, operationId and response codes,
         // and every platform operation published there must be served.
         var root = new DirectoryInfo(AppContext.BaseDirectory);
-        while (root is not null && !File.Exists(Path.Combine(root.FullName, "TerraScale.Authentication.slnx")))
+        while (root is not null && !File.Exists(Path.Combine(root.FullName, "TerraScale.slnx")))
         {
             root = root.Parent;
         }
@@ -160,7 +160,7 @@ public sealed partial class OpenApiTests
         var operationIds = 0;
         var planned = new HashSet<(string Path, string Method, string Id)>();
         (string Path, string Method, string Id)? current = null;
-        foreach (var line in await File.ReadAllLinesAsync(Path.Combine(root!.FullName, "docs", "platform-api.openapi.yaml")))
+        foreach (var line in await File.ReadAllLinesAsync(Path.Combine(root!.FullName, "docs", "auth", "platform-api.openapi.yaml")))
         {
             operationIds += line.TrimStart().StartsWith("operationId:", StringComparison.Ordinal) ? 1 : 0;
             if (ContractPath().Match(line) is { Success: true } pathMatch)

@@ -9,13 +9,13 @@ public sealed class ProvisioningPlanTests
     public async Task Provisioning_plan_names_the_production_dataset_without_executing_changes()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
-        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "TerraScale.Authentication.slnx")))
+        while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "TerraScale.slnx")))
         {
             directory = directory.Parent;
         }
 
         var repo = directory?.FullName ?? throw new InvalidOperationException("Run the fast suite from inside the ts-auth checkout.");
-        using var process = Process.Start(new ProcessStartInfo("bash", [Path.Combine(repo, "scripts", "provision.sh")])
+        using var process = Process.Start(new ProcessStartInfo("bash", [Path.Combine(repo, "scripts", "auth", "provision.sh")])
         {
             RedirectStandardOutput = true,
             RedirectStandardError = true,

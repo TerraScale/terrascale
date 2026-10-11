@@ -3,7 +3,7 @@ using System.Diagnostics;
 namespace TerraScale.Authentication.Slow;
 
 /// <summary>
-/// Runs the real NuGet vulnerability gate (scripts/check-nuget-vulnerabilities.cs) against
+/// Runs the real NuGet vulnerability gate (scripts/auth/check-nuget-vulnerabilities.cs) against
 /// throwaway projects, so its fail-closed behaviour is proven end to end, not only when the
 /// current dependency graph happens to be clean.
 /// </summary>
@@ -98,7 +98,7 @@ public sealed class DependencyAuditTests
             }
             return await RunAsync(
                 realDotnet,
-                ["run", Path.Combine(repo, "scripts", "check-nuget-vulnerabilities.cs"), project],
+                ["run", Path.Combine(repo, "scripts", "auth", "check-nuget-vulnerabilities.cs"), project],
                 repo,
                 new Dictionary<string, string> { ["PATH"] = $"{bin}:{Environment.GetEnvironmentVariable("PATH")}" });
         }
@@ -160,7 +160,7 @@ public sealed class DependencyAuditTests
             await RunAsync("dotnet", ["restore", directory.FullName], directory.FullName);
             return await RunAsync(
                 "dotnet",
-                ["run", Path.Combine(repo, "scripts", "check-nuget-vulnerabilities.cs"), Path.Combine(directory.FullName, "Probe.csproj")],
+                ["run", Path.Combine(repo, "scripts", "auth", "check-nuget-vulnerabilities.cs"), Path.Combine(directory.FullName, "Probe.csproj")],
                 repo);
         }
         finally
@@ -211,7 +211,7 @@ public sealed class DependencyAuditTests
     {
         for (var directory = new DirectoryInfo(AppContext.BaseDirectory); directory is not null; directory = directory.Parent)
         {
-            if (File.Exists(Path.Combine(directory.FullName, "TerraScale.Authentication.slnx")))
+            if (File.Exists(Path.Combine(directory.FullName, "TerraScale.slnx")))
             {
                 return directory.FullName;
             }
