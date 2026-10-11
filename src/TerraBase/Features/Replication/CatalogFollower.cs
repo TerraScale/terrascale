@@ -4,6 +4,7 @@ using Google.Protobuf;
 using Grpc.Core;
 using TerraBase.Configuration;
 using TerraBase.Engine;
+using TerraBase.Engine.Cluster;
 using TerraBase.Features.Replication.V1;
 using TerraBase.Hosting;
 using ZLogger;
@@ -48,7 +49,7 @@ internal sealed class CatalogPrimaryReadiness : ICatalogReadiness
 }
 
 /// <summary>
-/// Holds one <c>CatalogReplication.Follow</c> stream to <see cref="TerraBaseOptions.CatalogPrimary"/> and applies what it
+/// Holds one <c>CatalogReplication.Follow</c> stream to the catalog primary the membership names and applies what it
 /// sends into the system database: a snapshot in one transaction, then each group in one transaction, after checking its
 /// sequence and recomputing its chained digest. Any failure rolls back, ends the stream and reconnects with capped,
 /// jittered backoff; the stream resumes from the journal head committed with the last group. A snapshot adopts the primary's
@@ -62,6 +63,7 @@ internal sealed class CatalogFollower : BackgroundService, ICatalogReadiness
     private readonly ISystemReplication _system;
     private readonly PeerCredentials _credentials;
     private readonly TerraBaseOptions _options;
+    private readonly IMembership _membership;
     private readonly ILogger<CatalogFollower> _logger;
     private readonly TimeProvider _time;
 
@@ -81,19 +83,24 @@ internal sealed class CatalogFollower : BackgroundService, ICatalogReadiness
     private Progress _progress = new(Ulid.Empty, 0);
 
     public CatalogFollower(
-        ISystemReplication system, PeerCredentials credentials, TerraBaseOptions options, ILogger<CatalogFollower> logger, TimeProvider time, IMeterFactory meters,
+        ISystemReplication system, PeerCredentials credentials, TerraBaseOptions options, IMembership membership, ILogger<CatalogFollower> logger, TimeProvider time, IMeterFactory meters,
         IEnumerable<ICatalogApplyObserver> observers)
     {
         ArgumentNullException.ThrowIfNull(meters);
-        (_system, _credentials, _options, _logger, _time, _observers) = (system, credentials, options, logger, time, observers.ToArray());
+        (_system, _credentials, _options, _membership, _logger, _time, _observers) = (system, credentials, options, membership, logger, time, observers.ToArray());
         _observedCollections = new HashSet<string>(_observers.Select(observer => observer.Collection), StringComparer.Ordinal);
         var meter = meters.Create(Telemetry.MeterName);
-        meter.CreateObservableGauge("terrabase.catalog.follower.connected", () => Volatile.Read(ref _connected), "{state}",
-            "One while a catalog follower holds a stream to its primary.");
-        meter.CreateObservableGauge("terrabase.catalog.follower.lag", () => Math.Max(0, Interlocked.Read(ref _head) - Interlocked.Read(ref _applied)), "{group}",
-            "Catalog groups the primary last reported that this follower has not applied.");
-        meter.CreateObservableGauge("terrabase.catalog.applied_sequence", () => Interlocked.Read(ref _applied), "{group}",
-            "The last catalog primary group this follower applied.");
+        // A catalog primary registers the follower too, but follows no one: it reports none of a follower's gauges.
+        if (options.CatalogFollower)
+        {
+            meter.CreateObservableGauge("terrabase.catalog.follower.connected", () => Volatile.Read(ref _connected), "{state}",
+                "One while a catalog follower holds a stream to its primary.");
+            meter.CreateObservableGauge("terrabase.catalog.follower.lag", () => Math.Max(0, Interlocked.Read(ref _head) - Interlocked.Read(ref _applied)), "{group}",
+                "Catalog groups the primary last reported that this follower has not applied.");
+            meter.CreateObservableGauge("terrabase.catalog.applied_sequence", () => Interlocked.Read(ref _applied), "{group}",
+                "The last catalog primary group this follower applied.");
+        }
+
         _failures = meter.CreateCounter<long>("terrabase.catalog.follower.failures", "{stream}",
             "Catalog streams that ended in failure, by reason: lineage (a populated local catalog of another origin), invalid (a frame failed validation), apply (acting on applied changes failed; retried before the next stream) or stream.");
     }
@@ -124,6 +131,12 @@ internal sealed class CatalogFollower : BackgroundService, ICatalogReadiness
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // Every machine registers the follower; a catalog primary follows no one.
+        if (!_options.CatalogFollower)
+        {
+            return;
+        }
+
         try
         {
             await FollowUntilStoppedAsync(stoppingToken).ConfigureAwait(false);
@@ -147,8 +160,9 @@ internal sealed class CatalogFollower : BackgroundService, ICatalogReadiness
                     await ActAsync(() => observer.ResumeAsync(stoppingToken)).ConfigureAwait(false);
                 }
 
+                var primary = await _membership.CatalogPrimaryAsync(stoppingToken).ConfigureAwait(false) ?? throw new IOException("no catalog primary is known");
                 using var credentials = _credentials.Capture();
-                using var channel = PeerChannel.Create(_options.CatalogPrimary!, credentials);
+                using var channel = PeerChannel.Create(primary, credentials);
                 await FollowAsync(new CatalogReplication.CatalogReplicationClient(channel), stoppingToken).ConfigureAwait(false);
             }
             catch (Exception) when (stoppingToken.IsCancellationRequested)
@@ -163,7 +177,7 @@ internal sealed class CatalogFollower : BackgroundService, ICatalogReadiness
             catch (LineageException)
             {
                 _failures.Add(1, new KeyValuePair<string, object?>("reason", "lineage"));
-                _logger.ZLogError($"This member's catalog is not empty and belongs to another origin than its catalog primary's journal; it is kept and this member does not follow. Point catalog-primary at the primary of this catalog, or remove its _system.db files to follow this one");
+                _logger.ZLogError($"This member's catalog is not empty and belongs to another origin than its catalog primary's journal; it is kept and this member does not follow. Remove its _system.db files to follow the primary's catalog");
             }
             catch (InvalidDataException error)
             {

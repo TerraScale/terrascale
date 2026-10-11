@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Http.Features;
 using NativeCompressions;
 using TerraBase.Configuration;
 using TerraBase.Engine;
+using TerraBase.Engine.Cluster;
 using TerraBase.Features.Management;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
@@ -103,6 +104,7 @@ internal sealed class CatalogForwarder
     }
 
     private readonly TerraBaseOptions _options;
+    private readonly IMembership _membership;
     private readonly PeerCredentials _credentials;
     private readonly CatalogFollower _follower;
     private readonly IMemoryBudget _budget;
@@ -112,11 +114,11 @@ internal sealed class CatalogForwarder
     private int _inFlight;
 
     public CatalogForwarder(
-        TerraBaseOptions options, PeerCredentials credentials, CatalogFollower follower, IMemoryBudget budget, TimeProvider time,
+        TerraBaseOptions options, IMembership membership, PeerCredentials credentials, CatalogFollower follower, IMemoryBudget budget, TimeProvider time,
         ILogger<CatalogForwarder> logger, IMeterFactory meters)
     {
         ArgumentNullException.ThrowIfNull(meters);
-        (_options, _credentials, _follower, _budget, _time, _logger) = (options, credentials, follower, budget, time, logger);
+        (_options, _membership, _credentials, _follower, _budget, _time, _logger) = (options, membership, credentials, follower, budget, time, logger);
         _forwarded = meters.Create(Telemetry.MeterName).CreateCounter<long>("terrabase.catalog.forwarded", "{request}",
             "Requests a catalog follower forwarded to its primary, by result: answered, lagging (answered before this follower applied what it wrote) or unavailable (503, or a reset once the response started).");
     }
@@ -199,9 +201,15 @@ internal sealed class CatalogForwarder
                 return;
             }
 
+            if (await _membership.CatalogPrimaryAsync(bounded.Token).ConfigureAwait(false) is not { } primary)
+            {
+                await UnavailableAsync(context, "catalog_primary_unavailable", "no catalog primary is known").ConfigureAwait(false);
+                return;
+            }
+
             using var lease = _credentials.Capture();
             // ponytail: a channel (TLS handshake) per request; pool one per credential generation if forwarded traffic grows.
-            using var channel = PeerChannel.Create(_options.CatalogPrimary!, lease);
+            using var channel = PeerChannel.Create(primary, lease);
             using var call = new CatalogForwarding.CatalogForwardingClient(channel).Forward(request, deadline: deadline, cancellationToken: bounded.Token);
             ForwardHead head;
             try

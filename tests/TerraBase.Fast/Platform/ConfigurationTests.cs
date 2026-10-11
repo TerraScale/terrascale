@@ -7,6 +7,46 @@ namespace TerraBase.Fast.Platform;
 public sealed class ConfigurationTests
 {
     [Test]
+    public async Task A_machine_takes_its_identity_from_fly_and_a_process_elsewhere_is_local()
+    {
+        const string ChildFlag = "TERRABASE_TEST_FLY_IDENTITY_CHILD";
+        if (Environment.GetEnvironmentVariable(ChildFlag) != "1")
+        {
+            // The FLY_* variables are process-wide: only a process that runs this test alone may set them.
+            await IsolatedTestChild.RunAsync(typeof(ConfigurationTests), nameof(A_machine_takes_its_identity_from_fly_and_a_process_elsewhere_is_local), ChildFlag);
+            return;
+        }
+
+        using (var local = TerraBaseOptions.FromValues(new Dictionary<string, string>()))
+        {
+            await Assert.That((local.Region, local.MachineId, local.App, local.CatalogFollower)).IsEqualTo(("local", "local", (string?)null, false));
+        }
+
+        Environment.SetEnvironmentVariable("FLY_REGION", "sjc");
+        Environment.SetEnvironmentVariable("FLY_MACHINE_ID", "d894655b3ed118");
+        Environment.SetEnvironmentVariable("FLY_APP_NAME", "ts-terrabase");
+        using (var primary = TerraBaseOptions.FromValues(new Dictionary<string, string>()))
+        {
+            await Assert.That((primary.Region, primary.MachineId, primary.App, primary.PrimaryRegion, primary.CatalogFollower))
+                .IsEqualTo(("sjc", "d894655b3ed118", (string?)"ts-terrabase", "sjc", false));
+        }
+
+        Environment.SetEnvironmentVariable("PRIMARY_REGION", "gru");
+        using (var follower = TerraBaseOptions.FromValues(new Dictionary<string, string>()))
+        {
+            await Assert.That((follower.PrimaryRegion, follower.CatalogFollower)).IsEqualTo(("gru", true));
+        }
+
+        // Fly sets all three together; a partial or malformed identity never starts, and the error names no value.
+        Environment.SetEnvironmentVariable("FLY_MACHINE_ID", "Not A Machine");
+        var malformed = await Assert.That(() => TerraBaseOptions.FromValues(new Dictionary<string, string>())).Throws<TerraBaseConfigurationException>();
+        await Assert.That(malformed!.Message).Contains("FLY_MACHINE_ID");
+        await Assert.That(malformed.Message).DoesNotContain("Not A Machine");
+        Environment.SetEnvironmentVariable("FLY_MACHINE_ID", null);
+        await Assert.That(() => TerraBaseOptions.FromValues(new Dictionary<string, string>())).Throws<TerraBaseConfigurationException>();
+    }
+
+    [Test]
     public async Task Nats_needs_tls_or_nats_servers_and_user_credentials_and_never_echoes_them()
     {
         var directory = Directory.CreateTempSubdirectory("terrabase-nats-").FullName;
@@ -30,17 +70,6 @@ public sealed class ConfigurationTests
                 .Throws<TerraBaseConfigurationException>();
             var partialBackup = await Assert.That(() => TerraBaseOptions.FromValues(new Dictionary<string, string> { ["backup-bucket"] = "gru-1-backup" }))
                 .Throws<TerraBaseConfigurationException>();
-            using var oci = new FakeOci();
-            var cluster = new Dictionary<string, string>
-            {
-                ["peer-port"] = "0",
-                ["peer-certificate"] = other,
-                ["peer-private-key"] = other,
-                ["peer-client-ca"] = other,
-                ["peer-addresses"] = "https://peer.test:9443",
-            };
-            oci.Configure(cluster);
-            var clusterWithoutNats = await Assert.That(() => TerraBaseOptions.FromValues(cluster)).Throws<TerraBaseConfigurationException>();
 
             await Assert.That(settings.Nats!.Url).IsEqualTo("tls://10.0.0.1:4222,tls://10.0.0.2:4222");
             await Assert.That(settings.Nats.ToString()).DoesNotContain("creds");
@@ -51,7 +80,6 @@ public sealed class ConfigurationTests
             await Assert.That(partialTls!.Message).Contains("nats-certificate");
             await Assert.That(urlMissing!.Message).Contains("nats-url");
             await Assert.That(partialBackup!.Message).Contains("backup-secret-key-file");
-            await Assert.That(clusterWithoutNats!.Message).Contains("nats-url");
         }
         finally
         {

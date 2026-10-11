@@ -21,7 +21,7 @@ internal sealed partial class EngineManagementService
     {
         _recoveryMeter.CreateObservableGauge("terrabase.storage.unknown_files", () => _unknownDatabaseFiles,
             description: "Files found at startup without a registered database; preserved for operator recovery.");
-        if (options.CatalogPrimary is not null)
+        if (options.CatalogFollower)
         {
             // A follower's intents are the primary's: it acts on them as it applies them (AppliedAsync) and before each stream
             // (ResumeAsync). Its catalog may still be catching up, so it audits its files once it caught up (CaughtUpAsync).

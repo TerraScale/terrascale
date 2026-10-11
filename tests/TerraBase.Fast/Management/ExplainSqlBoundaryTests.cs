@@ -655,7 +655,7 @@ public sealed class ExplainSqlBoundaryTests
         }, services =>
         {
             services.AddSingleton(network.Join("gru"));
-            services.AddSingleton<IMemberStore>(new FakeMemberStore(TimeProvider.System));
+            services.AddSingleton<IMemberDirectory>(new FakeMemberStore());
             hook?.Install(services);
         }, managementCredential: true);
     }

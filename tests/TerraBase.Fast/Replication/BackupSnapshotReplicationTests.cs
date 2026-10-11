@@ -152,7 +152,7 @@ public sealed class BackupSnapshotReplicationTests
         await using (a)
         await using (b)
         {
-            var (primary, follower) = a.Services.GetRequiredService<TerraBaseOptions>().CatalogPrimary is null ? (a, b) : (b, a);
+            var (primary, follower) = !a.Services.GetRequiredService<TerraBaseOptions>().CatalogFollower ? (a, b) : (b, a);
             var user = EntityIds.New().ToString();
             var management = primary.Services.GetRequiredService<IManagementService>();
             var organization = await management.CreateOrganizationAsync(user, "backups", token) switch

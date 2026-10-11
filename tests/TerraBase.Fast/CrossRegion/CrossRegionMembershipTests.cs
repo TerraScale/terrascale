@@ -152,7 +152,7 @@ public sealed class CrossRegionMembershipTests
         }, services =>
         {
             services.AddSingleton(bus ?? network.Join(cell, node));
-            services.AddSingleton<IMemberStore>(new FakeMemberStore(TimeProvider.System));
+            services.AddSingleton<IMemberDirectory>(new FakeMemberStore());
         }, managementCredential: true);
 
     private static Task EventuallyReadAsync(HttpClient client, Uri document, string value, string version) =>

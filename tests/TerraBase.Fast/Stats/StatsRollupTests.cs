@@ -89,7 +89,7 @@ public sealed class StatsRollupTests
             {
                 services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, new FakeTimeProvider());
                 services.AddSingleton(network.Join(cell, $"{cell}-member"));
-                services.AddSingleton<IMemberStore>(new FakeMemberStore(TimeProvider.System));
+                services.AddSingleton<IMemberDirectory>(new FakeMemberStore());
             },
             managementCredential: true);
 

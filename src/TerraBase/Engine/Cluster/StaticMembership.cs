@@ -1,18 +1,19 @@
+using System.Collections.Immutable;
 using TerraBase.Configuration;
 
 namespace TerraBase.Engine.Cluster;
 
 /// <summary>
-/// The static <c>peers</c> list (tests and single-node runs): every listed member is live, this member always holds its
-/// lease, and the view never changes. Without <c>peers</c> the cell is this member alone.
+/// A cell that never changes: this member alone off Fly, or the members a test lists. Every member is live, this member
+/// always holds its lease, and the view never changes.
 /// </summary>
-internal sealed class StaticMembership(TerraBaseOptions options) : IMembership
+internal sealed class StaticMembership(TerraBaseOptions options, ImmutableArray<ClusterMember> others = default, ClusterMember? catalogPrimary = null) : IMembership
 {
-    private readonly ClusterView _view = new(1, [.. (options.Peers ?? new Dictionary<string, Uri> { [options.NodeName] = null! })
-        .Select(peer => new ClusterMember(peer.Key, peer.Value?.ToString() ?? string.Empty, options.Region, string.Empty))
-        .OrderBy(member => member.Name, StringComparer.Ordinal)]);
+    private readonly ClusterView _view = new(1, [.. (others.IsDefault ? [] : others)
+        .Append(new ClusterMember(options.MachineId, string.Empty, options.Region, string.Empty))
+        .OrderBy(member => member.Name, StringComparer.Ordinal)], catalogPrimary);
 
-    public ClusterMember Self => _view.Members.First(member => member.Name == options.NodeName);
+    public ClusterMember Self => _view.Members.First(member => member.Name == options.MachineId);
 
     public bool Dynamic => false;
 

@@ -7,21 +7,22 @@ namespace TerraBase.Engine.Cluster;
 public static class ClusterExtensions
 {
     /// <summary>
-    /// Registers <see cref="IShipperLeases"/> over the cell's membership: NATS KV when <c>nats-url</c> is set (or a test
-    /// registered its own member store), otherwise the static <c>peers</c> list.
+    /// Registers <see cref="IShipperLeases"/> over the cell's membership: Fly's internal DNS on Fly (or a directory a test
+    /// registered), otherwise this member alone.
     /// </summary>
     public static IServiceCollection AddTerraBaseCluster(this IServiceCollection services, TerraBaseOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
-        if (options.Nats is { } nats)
+        if (options.App is not null)
         {
-            services.TryAddSingleton<IMemberStore>(provider => new NatsMemberStore(nats, provider.GetRequiredService<ILoggerFactory>()));
+            services.TryAddSingleton<IMemberDirectory>(provider => new FlyMachines(provider.GetRequiredService<TerraBaseOptions>()));
         }
 
         return services
-            .AddSingleton<IMembership>(provider => provider.GetService<IMemberStore>() is { } store
-                ? new StoreMembership(store, options, provider.GetRequiredService<TimeProvider>(), provider.GetRequiredService<ILogger<StoreMembership>>())
-                : new StaticMembership(options))
+            .AddSingleton<IMembership>(provider => provider.GetService<IMemberDirectory>() is { } directory
+                ? new DirectoryMembership(directory, provider.GetRequiredService<TerraBaseOptions>(), provider.GetRequiredService<TimeProvider>(),
+                    provider.GetRequiredService<ILogger<DirectoryMembership>>())
+                : new StaticMembership(provider.GetRequiredService<TerraBaseOptions>()))
             .AddHostedService(provider => new MembershipHeartbeat(provider.GetRequiredService<IMembership>(), provider.GetRequiredService<TimeProvider>()))
             .AddSingleton<IShipperLeases, ClusterShipperLeases>();
     }

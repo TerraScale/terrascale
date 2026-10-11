@@ -42,7 +42,7 @@ public sealed class TenantLookupCacheTests
             }, services =>
             {
                 services.AddSingleton(new FakeRegionNetwork().Join("gru"));
-                services.AddSingleton<IMemberStore>(new FakeMemberStore(TimeProvider.System));
+                services.AddSingleton<IMemberDirectory>(new FakeMemberStore());
             });
             var tenants = gru.Server.Services.GetRequiredService<ITenantDirectory>();
             var organization = await gru.CreateOrganizationAsync(faker.Company.CompanyName());

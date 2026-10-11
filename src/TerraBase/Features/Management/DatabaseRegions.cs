@@ -29,7 +29,7 @@ public static class DatabaseRegions
     /// <summary>Why <paramref name="replicas"/> cannot be the replica regions of a database at home in this region, or the accepted regions.</summary>
     internal static Valid<IReadOnlyList<string>> Check(TerraBaseOptions options, string home, IReadOnlyList<string> replicas) =>
         replicas.Count > MaxReplicas ? new Validation("replicaRegions holds at most 8 regions")
-        : replicas.Any(region => region != options.Region && options.Wan?.Remotes.ContainsKey(region) != true)
+        : replicas.Any(region => region != options.Region && options.Wan?.Remotes(options.Region).ContainsKey(region) != true)
             ? new Validation("replicaRegions must name regions this deployment replicates with")
         : replicas.Distinct(StringComparer.Ordinal).Count() != replicas.Count ? new Validation("replicaRegions must not repeat a region")
         : replicas.Contains(home) ? new Validation("replicaRegions must not name the home region")

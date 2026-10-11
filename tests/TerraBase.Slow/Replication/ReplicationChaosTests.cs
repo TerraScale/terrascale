@@ -290,6 +290,8 @@ public sealed class ReplicationChaosTests
                 }
 
                 var childSettings = cluster.Settings(2, ports[2]);
+                // The child is a separate Fly machine whose DNS lists no peers: it only receives, and anti-entropy repairs from it.
+                _ = childSettings.Remove("peer-addresses");
                 childSettings["admin-port"] = TerraBaseTestServer.FreePort().ToString(CultureInfo.InvariantCulture);
                 childSettings["client-port"] = TerraBaseTestServer.FreePort().ToString(CultureInfo.InvariantCulture);
                 string key;

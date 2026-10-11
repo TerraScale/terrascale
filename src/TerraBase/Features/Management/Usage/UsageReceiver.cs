@@ -24,7 +24,7 @@ internal sealed class UsageReceiver(TerraBaseOptions options, UsageMeter meter, 
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(context);
-        if (options.CatalogPrimary is not null)
+        if (options.CatalogFollower)
         {
             throw new RpcException(new Status(StatusCode.FailedPrecondition, "this member is not a catalog primary"));
         }

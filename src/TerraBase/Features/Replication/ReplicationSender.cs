@@ -4,6 +4,7 @@ using Grpc.Core;
 using Grpc.Net.Client;
 using TerraBase.Configuration;
 using TerraBase.Engine;
+using TerraBase.Engine.Cluster;
 using TerraBase.Errors;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Replication.V1;
@@ -13,7 +14,7 @@ using ZLogger;
 namespace TerraBase.Features.Replication;
 
 /// <summary>
-/// Sends this node's captured change groups to every peer in <see cref="TerraBaseOptions.PeerAddresses"/>
+/// Sends this node's captured change groups to every other member of its region
 /// (full mesh: each node sends only the groups it originated). Per peer, a database with new commits gets
 /// one Sync stream that resumes after the peer's applied prefix from <c>Welcome</c>, sends groups in order
 /// within the in-flight window, and closes once every group is durably acknowledged. Failures retry with
@@ -25,7 +26,7 @@ namespace TerraBase.Features.Replication;
 /// ponytail: one database at a time per peer; run several streams per peer if many databases lag at once.
 /// </remarks>
 internal sealed class ReplicationSender(
-    IStorageEngine engine, ITenantDirectory tenants, PeerCredentials credentials, TerraBaseOptions options, ReplicationMetrics metrics, ILogger<ReplicationSender> logger,
+    IStorageEngine engine, ITenantDirectory tenants, PeerCredentials credentials, TerraBaseOptions options, IMembership membership, ReplicationMetrics metrics, ILogger<ReplicationSender> logger,
     TimeProvider time, IUsageMeter usage)
     : BackgroundService, IReplicationWait, IReplicationStatus, IReplicationPressure
 {
@@ -93,7 +94,7 @@ internal sealed class ReplicationSender(
         }
     }
 
-    public override Task StartAsync(CancellationToken cancellationToken)
+    public override async Task StartAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         metrics.ObserveStatus(
@@ -104,10 +105,16 @@ internal sealed class ReplicationSender(
         metrics.ObserveDurableLag(DurableLag, () => Volatile.Read(ref _initialized));
         // Here, not in ExecuteAsync (which runs later on the thread pool): hosted services start before the server listens,
         // so every client write commits after its peers exist and its head is tracked, and write-wait covers it.
+        // shortcut: the peers are the members of this region at startup; one that starts later only gets anti-entropy's repairs
+        // until this member restarts. anna-full (TS-647) replaces this sender with delta anti-entropy over the membership.
+        var view = await membership.RefreshAsync(cancellationToken).ConfigureAwait(false);
         var peers = new List<Peer>();
         try
         {
-            foreach (var (address, number) in options.PeerAddresses.Select((address, number) => (address, number)))
+            var addresses = view.Members.Where(member => member.Name != membership.Self.Name)
+                .Select(member => TerraBaseOptions.TryParsePeerAddress(member.PeerAddress, out var address) ? address : null)
+                .OfType<Uri>();
+            foreach (var (address, number) in addresses.Select((address, number) => (address, number)))
             {
                 peers.Add(CreatePeer(number, address));
             }
@@ -123,7 +130,7 @@ internal sealed class ReplicationSender(
         // Deletions are observed before commits, so a commit during subscription cannot leave retired state.
         engine.DatabaseDeleted += OnDeleted;
         engine.ChangesCommitted += OnCommitted;
-        return base.StartAsync(cancellationToken);
+        await base.StartAsync(cancellationToken).ConfigureAwait(false);
     }
 
     // The container disposes it once per registration (the sender, its interfaces and IHostedService).

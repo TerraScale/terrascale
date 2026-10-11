@@ -51,7 +51,7 @@ internal sealed partial class PressureSignals : BackgroundService, IPressureSign
         _logger = logger;
         _snapshot = new PressureBody
         {
-            Node = options.NodeName,
+            Node = options.MachineId,
             Region = options.Region,
             ProcessId = _processId,
             Release = _release,
@@ -211,8 +211,7 @@ internal sealed partial class PressureSignals : BackgroundService, IPressureSign
         var storage = Volatile.Read(ref _storage);
         Volatile.Write(ref _snapshot, new PressureBody
         {
-            Node = _options.NodeName,
-            InstanceId = _options.InstanceId,
+            Node = _options.MachineId,
             LocalReady = localReady,
             IoAdmittedCount = _engine.IoAdmittedCount,
             SenderDurableLagSeq = _replication.SenderDurableLagSeq,

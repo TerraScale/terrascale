@@ -1,22 +1,38 @@
+using System.Collections.Immutable;
 using TerraBase.Engine.Cluster;
 
 namespace TerraBase.Testing;
 
 /// <summary>
-/// The member store with NATS KV semantics, in memory, shared by the members of a test: a member's key expires
-/// <see cref="Ttl"/> after its last write by <see cref="TimeProvider"/>, and every write raises the revision.
-/// <see cref="Partition"/> cuts a member off, as a lost NATS connection would.
+/// Fly's internal DNS for the machines of a test, in memory: it lists every started machine of every region. A server that
+/// registers it as its <see cref="IMemberDirectory"/> is listed once it listens and dropped once it stops (the harness does
+/// both, as Fly does). <see cref="Partition"/> makes a member's own lookups fail, as a machine cut off from the DNS.
 /// </summary>
-internal sealed class FakeMemberStore(TimeProvider time) : IMemberStore
+internal sealed class FakeMemberStore : IMemberDirectory
 {
     private readonly Lock _gate = new();
-    private readonly Dictionary<string, (ClusterMember Member, ulong Revision, DateTimeOffset Written)> _members = [with(StringComparer.Ordinal)];
+    private readonly Dictionary<string, ClusterMember> _members = [with(StringComparer.Ordinal)];
     private readonly HashSet<string> _partitioned = [with(StringComparer.Ordinal)];
-    private ulong _revision;
 
-    public TimeSpan Ttl { get; } = TimeSpan.FromSeconds(15);
+    /// <summary>Lists <paramref name="member"/> from now on.</summary>
+    public void Join(ClusterMember member)
+    {
+        lock (_gate)
+        {
+            _members[member.Name] = member;
+        }
+    }
 
-    /// <summary>Every write of the member named <paramref name="node"/> fails from now on.</summary>
+    /// <summary>Stops listing the member named <paramref name="name"/>.</summary>
+    public void Leave(string name)
+    {
+        lock (_gate)
+        {
+            _ = _members.Remove(name);
+        }
+    }
+
+    /// <summary>Every lookup of the member named <paramref name="node"/> fails from now on.</summary>
     public void Partition(string node)
     {
         lock (_gate)
@@ -25,38 +41,30 @@ internal sealed class FakeMemberStore(TimeProvider time) : IMemberStore
         }
     }
 
-    public Task PutAsync(ClusterMember member, CancellationToken cancellationToken)
+    /// <summary>The directory as the member named <paramref name="node"/> reads it.</summary>
+    public IMemberDirectory For(string node) => new Reader(this, node);
+
+    public Task<ImmutableArray<ClusterMember>> ListAsync(CancellationToken cancellationToken)
     {
         lock (_gate)
         {
-            if (_partitioned.Contains(member.Name))
+            return Task.FromResult<ImmutableArray<ClusterMember>>([.. _members.Values]);
+        }
+    }
+
+    private sealed class Reader(FakeMemberStore store, string node) : IMemberDirectory
+    {
+        public Task<ImmutableArray<ClusterMember>> ListAsync(CancellationToken cancellationToken)
+        {
+            bool partitioned;
+            lock (store._gate)
             {
-                throw new IOException("the member is cut off from the store");
+                partitioned = store._partitioned.Contains(node);
             }
 
-            _members[member.Name] = (member, ++_revision, time.GetUtcNow());
-            return Task.CompletedTask;
-        }
-    }
-
-    public Task RemoveAsync(string name, CancellationToken cancellationToken)
-    {
-        lock (_gate)
-        {
-            _ = _members.Remove(name);
-            return Task.CompletedTask;
-        }
-    }
-
-    public Task<ClusterView> ListAsync(CancellationToken cancellationToken)
-    {
-        lock (_gate)
-        {
-            var now = time.GetUtcNow();
-            var live = _members.Values.Where(entry => now - entry.Written < Ttl).ToList();
-            return Task.FromResult(new ClusterView(
-                live.Count == 0 ? 0 : live.Max(entry => entry.Revision),
-                [.. live.Select(entry => entry.Member).OrderBy(member => member.Name, StringComparer.Ordinal)]));
+            return partitioned
+                ? Task.FromException<ImmutableArray<ClusterMember>>(new IOException("the member is cut off from the DNS"))
+                : store.ListAsync(cancellationToken);
         }
     }
 }

@@ -21,11 +21,16 @@ public sealed class ReplicationTests
     [Test]
     public async Task A_missing_metric_sample_is_not_a_zero_replication_lag()
     {
+        // A node without a peer listener runs no sender.
+        await using (var solo = await TerraBaseTestServer.StartAsync())
+        {
+            await Assert.That(() => solo.MetricAsync("terrabase_replication_sender_durable_lag")).Throws<InvalidOperationException>();
+            await Assert.That(() => TerraBaseTestServer.ReplicatedAsync(solo)).Throws<InvalidOperationException>();
+            await TerraBaseTestServer.EventuallyAsync(async token => await ReplicationPressure.ReadAsync(solo, token) == 0);
+        }
+
         using var peerTls = new PeerTls();
         await using var receiver = await TerraBaseTestServer.StartAsync(peerTls.Apply);
-        await Assert.That(() => receiver.MetricAsync("terrabase_replication_sender_durable_lag")).Throws<InvalidOperationException>();
-        await Assert.That(() => TerraBaseTestServer.ReplicatedAsync(receiver)).Throws<InvalidOperationException>();
-        await TerraBaseTestServer.EventuallyAsync(async token => await ReplicationPressure.ReadAsync(receiver, token) == 0);
 
         await using var sender = await TerraBaseTestServer.StartAsync(settings =>
         {

@@ -20,13 +20,9 @@ public sealed class PressureTests
     private static readonly Uri Metrics = new("/metrics", UriKind.Relative);
 
     [Test]
-    public async Task Instance_bound_pressure_keeps_local_readiness_separate_from_member_readiness()
+    public async Task Machine_pressure_keeps_local_readiness_separate_from_member_readiness()
     {
-        await using var server = await TerraBaseTestServer.StartAsync(settings =>
-        {
-            settings["node-name"] = "ts-gru-2";
-            settings["instance-id"] = "ocid1.instance.test";
-        });
+        await using var server = await TerraBaseTestServer.StartAsync(settings => settings["node-name"] = "d894655b3ed118");
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         JsonElement snapshot = default;
         await TerraBaseTestServer.EventuallyAsync(async token =>
@@ -37,8 +33,8 @@ public sealed class PressureTests
         using var readiness = await server.Client.GetAsync(new Uri("/readyz", UriKind.Relative), deadline.Token);
         await Assert.That(readiness.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(snapshot.GetProperty("schema").GetInt32()).IsEqualTo(1);
-        await Assert.That(snapshot.GetProperty("node").GetString()).IsEqualTo("ts-gru-2");
-        await Assert.That(snapshot.GetProperty("instance_id").GetString()).IsEqualTo("ocid1.instance.test");
+        await Assert.That(snapshot.GetProperty("node").GetString()).IsEqualTo("d894655b3ed118");
+        await Assert.That(snapshot.TryGetProperty("instance_id", out _)).IsFalse();
         await Assert.That(snapshot.GetProperty("state").GetString()).IsEqualTo("unknown");
         await Assert.That(snapshot.GetProperty("sender_durable_lag_seq").GetInt64()).IsEqualTo(0);
         await Assert.That(snapshot.GetProperty("load").GetProperty("replication_lag_seq").ValueKind).IsEqualTo(JsonValueKind.Null);
@@ -54,12 +50,11 @@ public sealed class PressureTests
     }
 
     [Test]
-    public async Task Unconfigured_instance_identity_is_unknown_and_closed_storage_is_not_locally_ready()
+    public async Task Closed_storage_is_not_locally_ready()
     {
         await using var server = await TerraBaseTestServer.StartAsync();
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var original = await ReadAsync(server, deadline.Token);
-        await Assert.That(original.GetProperty("instance_id").ValueKind).IsEqualTo(JsonValueKind.Null);
         await server.Services.GetRequiredService<IStorageEngine>().DisposeAsync();
         await TerraBaseTestServer.EventuallyAsync(async token =>
         {
@@ -171,10 +166,6 @@ public sealed class PressureTests
     [Arguments("memory-budget", "0")]
     [Arguments("memory-budget", "1048575")]
     [Arguments("memory-budget", "9223372036854775808")]
-    [Arguments("node-name", "bad/name")]
-    [Arguments("node-name", "node name")]
-    [Arguments("instance-id", "bad/id")]
-    [Arguments("instance-id", "instance name")]
     public async Task Invalid_pressure_settings_refuse_real_host_startup(string setting, string value)
     {
         await Assert.That(async () =>
@@ -247,7 +238,7 @@ public sealed class PressureTests
         await Assert.That(original.GetProperty("region").GetString()).IsEqualTo("gru-1");
         await Assert.That(other.GetProperty("region").GetString()).IsEqualTo("iad-1");
         await Assert.That(repeated.GetProperty("region").GetString()).IsEqualTo("gru-1");
-        await Assert.That(original.GetProperty("node").GetString()).IsEqualTo(Environment.MachineName);
+        await Assert.That(original.GetProperty("node").GetString()).IsEqualTo("local");
         await Assert.That(other.GetProperty("node").GetString()).IsEqualTo("pressure-test-node");
         var incarnation = Incarnation(original);
         await Assert.That(incarnation).IsNotEqualTo(Ulid.Empty);

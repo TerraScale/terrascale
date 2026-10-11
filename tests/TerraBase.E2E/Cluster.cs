@@ -203,7 +203,7 @@ public sealed class Cluster : IAsyncDisposable
         {
             services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, new FakeTimeProvider());
             services.AddSingleton(network.Join(region));
-            services.AddSingleton<IMemberStore>(new FakeMemberStore(TimeProvider.System));
+            services.AddSingleton<IMemberDirectory>(new FakeMemberStore());
         }, managementCredential: true);
 
     private static async Task CommitAsync(ManagementApi api, string commit)

@@ -614,7 +614,7 @@ public sealed class CrossRegionTests
         var directory = Directory.CreateTempSubdirectory("terrabase-wan-members-").FullName;
         var credentials = Path.Combine(directory, "user.creds");
         await File.WriteAllTextAsync(credentials, Regions.Credentials);
-        var gruMembers = new FakeMemberStore(TimeProvider.System);
+        var gruMembers = new FakeMemberStore();
         var (portA, portB) = (TerraBaseTestServer.FreePort(), TerraBaseTestServer.FreePort());
         Task<ManagementApi> StartGruAsync(string name, int port)
         {
@@ -634,7 +634,7 @@ public sealed class CrossRegionTests
             await using var gruB = await StartGruAsync("gru-b", portB);
             await using var sfo = await ManagementApi.StartAsync(
                 settings => Regions.Configure(settings, credentials, "sfo-1", "sfo-a"),
-                services => Regions.Join(services, network, "sfo", new FakeMemberStore(TimeProvider.System)), managementCredential: true);
+                services => Regions.Join(services, network, "sfo", new FakeMemberStore()), managementCredential: true);
             var (organization, project, database) = (EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString());
             foreach (var (api, commit) in new[] { (gruA, Regions.Registration(organization, project, database, "canary", "sfo-1")), (sfo, Regions.Registration(organization, project, null, "canary")) })
             {
@@ -684,7 +684,6 @@ public sealed class CrossRegionTests
 
     [Test]
     [Arguments("gru-1=gru", true)]
-    [Arguments("sfo-1=sfo,iad-1=iad", true)]
     [Arguments("gru-1=gru,sfo-1=gru", true)]
     [Arguments("gru-1=GRU,sfo-1=sfo", true)]
     [Arguments("gru-1=gru,sfo-1=sfo", false)]
@@ -879,7 +878,7 @@ public sealed class CrossRegionTests
         {
             services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, new FakeTimeProvider());
             services.AddSingleton(network.Join(cell, node));
-            services.AddSingleton<IMemberStore>(members);
+            services.AddSingleton<IMemberDirectory>(members);
         }
 
         private static Task<ManagementApi> StartRegionAsync(FakeRegionNetwork network, string credentials, string region, string cell, Action<IServiceCollection>? configureServices = null) =>
@@ -887,7 +886,7 @@ public sealed class CrossRegionTests
                 settings => Configure(settings, credentials, region, $"{cell}-member"),
                 services =>
                 {
-                    Join(services, network, cell, new FakeMemberStore(TimeProvider.System));
+                    Join(services, network, cell, new FakeMemberStore());
                     configureServices?.Invoke(services);
                 }, managementCredential: true);
 

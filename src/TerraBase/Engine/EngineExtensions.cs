@@ -39,7 +39,7 @@ public static class EngineExtensions
                 provider.GetRequiredService<ILogger<SqliteStorageEngine>>(), configured.ShutdownGrace, readinessCacheTtl: configured.ReadinessCacheTtl,
                 checkpoint: provider.GetRequiredService<DatabaseLifecycleCheckpoint>(),
                 time: provider.GetKeyedService<TimeProvider>(QueryDeadlineClock), queryBudget: configured.QueryBudget,
-                systemReplica: configured.CatalogPrimary is not null,
+                systemReplica: configured.CatalogFollower,
                 walTaps: configured.Backup is not null, backupTime: provider.GetService<TimeProvider>(),
                 schemaMemory: provider.GetRequiredService<IMemoryBudget>());
         });

@@ -28,8 +28,8 @@ public sealed class CrossRegionDeletionTests
             await File.WriteAllTextAsync(credentials, Credentials, token);
             var gruDirectory = Directory.CreateDirectory(Path.Combine(directory, "gru")).FullName;
             var sfoDirectory = Directory.CreateDirectory(Path.Combine(directory, "sfo")).FullName;
-            var gruMembers = new FakeMemberStore(TimeProvider.System);
-            var sfoMembers = new FakeMemberStore(TimeProvider.System);
+            var gruMembers = new FakeMemberStore();
+            var sfoMembers = new FakeMemberStore();
             await using var gru = await StartRegionAsync(network, credentials, "gru-1", "gru", gruDirectory, gruMembers);
             var organization = EntityIds.New().ToString();
             var project = EntityIds.New().ToString();
@@ -148,7 +148,7 @@ public sealed class CrossRegionDeletionTests
         }, services =>
         {
             services.AddSingleton(network.Join(cell));
-            services.AddSingleton<IMemberStore>(members);
+            services.AddSingleton<IMemberDirectory>(members);
         }, managementCredential: true);
 
     private static async Task RegisterAsync(

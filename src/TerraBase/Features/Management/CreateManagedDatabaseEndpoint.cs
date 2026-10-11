@@ -49,7 +49,7 @@ public sealed class CreateManagedDatabaseEndpoint(IManagementService management,
         var replicas = request.ReplicaRegions ?? [];
         if (home != options.Region)
         {
-            return options.Wan?.Remotes.ContainsKey(home) == true
+            return options.Wan?.Remotes(options.Region).ContainsKey(home) == true
                 ? DatabaseRegions.WrongRegion(home, [home, .. replicas])
                 : ErrorResponse.From(new Validation("homeRegion must name a region this deployment replicates with"));
         }

@@ -399,7 +399,7 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
             var (lifetime, series) = saved;
             // A follower's own counts reach these totals once the primary saved them and they replicated here; adding the
             // ones still pending could count a batch twice, the primary having saved it before its acknowledgement came.
-            foreach (var (key, entry) in options.CatalogPrimary is null && _pending.TryGetValue(owner, out var pending) ? pending : [])
+            foreach (var (key, entry) in !options.CatalogFollower && _pending.TryGetValue(owner, out var pending) ? pending : [])
             {
                 var counts = Shape(entry);
                 lifetime += counts;

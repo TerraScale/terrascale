@@ -37,7 +37,7 @@ internal sealed class ForwardedRequests(TerraBaseOptions options, IHttpContextFa
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(responseStream);
         ArgumentNullException.ThrowIfNull(context);
-        if (options.CatalogPrimary is not null || _pipeline is not { } pipeline)
+        if (options.CatalogFollower || _pipeline is not { } pipeline)
         {
             throw new RpcException(new Status(StatusCode.FailedPrecondition, "this member is not a catalog primary"));
         }
