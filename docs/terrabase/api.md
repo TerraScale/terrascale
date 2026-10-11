@@ -131,8 +131,8 @@ Destination configuration requires a project-wide token; a token narrowed to a d
 Window reads accept `?destination=platform|customer`; preview and restore bodies accept the same
 `destination` selector. Omission selects platform. Restore and preview times must lie within the
 selected source's earliest/latest window, inclusive. The hidden organization aliases retain their
-membership-based authorization. Credentials are write-only and stored encrypted in OCI Vault;
-public responses contain no credentials or Vault references.
+membership-based authorization. Credentials are write-only and stored sealed with the TerraBase master key in the catalog;
+public responses contain no credentials.
 Preview describes snapshot selection from backup metadata; it does not reserve objects or
 prove that their contents pass the integrity checks performed during restore. See
 [backup restore](backup.md#restore).

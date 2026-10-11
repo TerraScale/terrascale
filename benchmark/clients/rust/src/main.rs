@@ -1,7 +1,7 @@
 use serde::Deserialize;
 use std::{env, fs::File, io::Read, path::PathBuf, process::ExitCode};
 
-const HELP: &str = "bench-client run --workload <file> --region <gru|sfo> --out <results.jsonl>\n\nCredentials: TS_BENCH_CLIENT_ID / TS_BENCH_CLIENT_SECRET (OCI Vault).\nThis SDK revision cannot satisfy TS-761; run fails before authentication or output.";
+const HELP: &str = "bench-client run --workload <file> --region <gru|sfo> --out <results.jsonl>\n\nCredentials: TS_BENCH_CLIENT_ID / TS_BENCH_CLIENT_SECRET.\nThis SDK revision cannot satisfy TS-761; run fails before authentication or output.";
 const SDK_REV: &str = "ded5adb3b63ce4af0e3a26f95139968cdf539501";
 const MAX_WORKLOAD_BYTES: u64 = 1024 * 1024;
 
