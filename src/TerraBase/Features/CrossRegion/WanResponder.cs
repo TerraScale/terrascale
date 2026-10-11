@@ -18,37 +18,13 @@ namespace TerraBase.Features.CrossRegion;
 /// read; a request this member cannot answer gets an empty reply, which the asking member counts as a failure.
 /// </summary>
 internal sealed class WanResponder(
-    IRegionBus bus, IStorageEngine engine, IMembership membership, ITenantDirectory tenants, TerraBaseOptions options, WanMetrics metrics,
+    IStorageEngine engine, IMembership membership, ITenantDirectory tenants, TerraBaseOptions options, WanMetrics metrics,
     ILogger<WanResponder> logger, IUsageMeter usage)
-    : BackgroundService
 {
     private const int MaxGroupsPerReply = 1024;
 
-    protected override Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        var cell = options.Wan!.Cell(options.Region);
-        return Task.WhenAll(
-            ServeAsync(WanProtocol.HeadsSubject(cell), stoppingToken),
-            ServeAsync(WanProtocol.MemberSubject(cell, options.MachineId), stoppingToken));
-    }
-
-    private async Task ServeAsync(string subject, CancellationToken stoppingToken)
-    {
-        while (!stoppingToken.IsCancellationRequested)
-        {
-            try
-            {
-                await bus.ServeAsync(subject, AnswerAsync, stoppingToken).ConfigureAwait(false);
-            }
-            catch (Exception error) when (!stoppingToken.IsCancellationRequested)
-            {
-                logger.ZLogWarning(error, $"Serving cross-region replication requests failed; subscribing again");
-                await Task.Delay(TimeSpan.FromSeconds(1), stoppingToken).ConfigureAwait(false);
-            }
-        }
-    }
-
-    private async ValueTask<byte[]> AnswerAsync(ReadOnlyMemory<byte> data, CancellationToken cancellationToken)
+    /// <summary>The reply to one encoded <see cref="WanRequest"/>.</summary>
+    public async ValueTask<byte[]> AnswerAsync(ReadOnlyMemory<byte> data, CancellationToken cancellationToken)
     {
         try
         {

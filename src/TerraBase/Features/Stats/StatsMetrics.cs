@@ -11,7 +11,6 @@ internal sealed class StatsMetrics
     public StatsMetrics(IMeterFactory meters, DatabaseStats stats)
     {
         var meter = meters.Create(Telemetry.MeterName);
-        Rollups = meter.CreateCounter<long>("terrabase.stats.rollups", "{rollup}", "Live statistics rollups by result: published, failed or no_cell.");
         meter.CreateObservableGauge<long>("terrabase.stats.databases", () => stats.LastWindow?.Databases ?? 0,
             "{database}", "Databases tracked by live statistics.");
         meter.CreateObservableCounter<long>("terrabase.stats.operations", () =>
@@ -33,8 +32,6 @@ internal sealed class StatsMetrics
             "Document operations per second of the busiest databases in the last window.");
     }
 
-    /// <summary>Rollups of closed windows, by <c>result</c>.</summary>
-    public Counter<long> Rollups { get; }
 
     private static IEnumerable<Measurement<long>> Replication(StatsWindow? window)
     {

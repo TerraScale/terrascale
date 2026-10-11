@@ -6,26 +6,26 @@ now, with every simplification marked `anna-full (TS-643)` in the code.
 
 - Each region keeps its own members, ring, leases and catalog. Nothing in-region waits for another region: a client
   write answers after its region's write-wait only, and replication across regions is asynchronous.
-- Regions talk only over ts-orchestrator's NATS fabric (TS-562), through core NATS request/reply in the fabric's
-  cross-link `query` family. No region connects to another region's peer listener.
+- A member asks the other regions' members directly with gRPC `Wan.Ask` (one request, one reply) on their peer
+  listeners over Fly's private network. The regions and their members come from Fly's internal DNS ([fly.md](fly.md));
+  a region is pulled from as soon as one of its machines is listed.
 
 ## How it works
 
 Every member of a region **pulls** each other region's change groups:
 
-1. **Heads.** Once a second, a member asks `ts.orch.v1.<cell>.query.terrabase-wan.heads`. A member of that region answers
+1. **Heads.** Once a second, a member asks every member of the other region for its heads. Each answers
    with the head of each origin it holds: one origin per database that it wrote to, with the sequence of its last
    committed change group. More than 4096 heads, or a page reaching the 960 KiB protobuf reply budget, page through
-   the member's own subject. The whole `HeadsReply` travels in the existing versioned `TBLZ4E01` LZ4 application
+   that member. The whole `HeadsReply` travels in the existing versioned `TBLZ4E01` LZ4 application
    envelope ([0007](decisions/0007-lz4-application-envelope-replication.md)). Its header, encoded payload and decoded
    payload checksums are validated before parsing any heads, membership or EOF evidence. A reply that fails integrity
    validation cannot authorize adoption, placement changes, cursor progress or deletion, even when its ULIDs would still
    parse as valid protobuf. Encoded and decoded heads replies are each bounded to 1 MiB; the reply budget leaves room
    for the envelope header and LZ4 expansion.
 
-   The answer also lists every member the answering member sees in its cell. ts-orchestrator's interregion link
-   imports each cell's `query` subjects as a Singleton service, so a request gets one reply across the link. The asking
-   member therefore sends the heads request to each other listed member on that member's own subject.
+   The answer also lists every member the answering member sees in its region, so the asking member also asks the
+   members its own view of that region missed.
    It follows member lists from every reply and later page until each discovered member has been asked once that round,
    since members can hold different views during a membership change. At most eight members are asked concurrently and
    a round admits at most 1024 current identities and attempts at most 1024 direct jobs. Discovery has a ten-second deadline, including pagination; free request slots
@@ -68,8 +68,8 @@ Every member of a region **pulls** each other region's change groups:
    current targets and lookahead use at most a sixteenth of `storage-queue` across all remotes; smaller queues keep inline
    preparation. Every started preparation finishes before the next round, and registration is checked again before
    pulling a prepared target.
-   For each origin it is behind on, the member asks the member that holds it, on
-   `ts.orch.v1.<cell>.query.terrabase-wan.member.<node-name>`, for the change groups after its own applied prefix.
+   For each origin it is behind on, the member asks the member that holds it for the change groups after its own
+   applied prefix.
    Replies hold whole groups, LZ4-compressed in the same versioned envelope as in-region replication
    ([0007](decisions/0007-lz4-application-envelope-replication.md)), up to 960 KiB. A larger group crosses in parts
    of its envelope and is applied once complete.
@@ -87,11 +87,10 @@ The messages use the protobuf schema `Features/Replication/Protos/terrabase/v1/w
 Raw protobuf heads replies are rejected, with no fallback or migration. Regions must use version 1 to replicate with
 each other; a version mismatch postpones replication and cannot authorize inventory cleanup. The number never
 increases (user rule, 2026-10-09): a wire format change ships at a rollout that stops both regions' members before
-either starts the new build. The protobuf package and `ts.orch.v1` subjects remain unchanged: that subject version
-belongs to ts-orchestrator's fabric, separately from the WAN request version and application envelope major version 1.
+either starts the new build.
 Pull replies carry the same groups of register deltas (`DeltaGroup`) as in-region replication, in their protobuf
 framing and versioned envelopes. Every request and encoded reply is at
-most 1 MiB, NATS's default `max_payload`, which the leafnode links between regions keep.
+most 1 MiB.
 
 ### Version tokens across regions
 
@@ -153,26 +152,10 @@ and deliver these automatically; operators must not issue and copy one per regio
 
 ## Automatic region discovery
 
-Every region serves and the replication group is discovered automatically.
-The node infers its own region from location; private NetBird membership admits
-it. OCI Vault provisions and delivers its transport and authentication secrets.
-Placement and residency restrictions still decide which data may replicate.
-
-**Current gap (TS-773/TS-796):** TerraBase still gates this path on `wan-regions`
-and NATS inputs. The existing `region=cell` list is a legacy runtime dependency,
-not an operator-maintained production region list. This docs change does not
-implement automatic discovery or remove the runtime guard.
-
-### What ts-orchestrator provides
-
-TS-668 provides these before `wan-regions` works between two regions:
-
-1. The regions' NATS clusters are linked (`nats.embedded.interregion`, leafnodes rooted at gru). The interregion contract
-   already carries every cell's `ts.orch.v1.<cell>.query.>` as a service.
-2. The terrabase role may:
-   - subscribe to `ts.orch.v1.<own cell>.query.terrabase-wan.>`;
-   - publish to `ts.orch.v1.*.query.terrabase-wan.>`;
-   - answer the requests it receives (`allow_responses`).
+Every region serves and the replication group is discovered automatically from Fly's internal DNS: a machine infers
+its own region from `FLY_REGION`, and the other regions are the ones `vms.<app>.internal` lists. Placement and
+residency restrictions still decide which data may replicate. A replica region needs no machines when it is named;
+it pulls the database once its machines start.
 
 ## Metrics
 

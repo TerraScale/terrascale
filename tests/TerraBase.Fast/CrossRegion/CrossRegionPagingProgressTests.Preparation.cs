@@ -39,12 +39,10 @@ public sealed partial class CrossRegionPagingProgressTests
         try
         {
             using var steps = new LifecycleSteps();
-            var credentials = Path.Combine(directory, "user.creds");
-            await File.WriteAllTextAsync(credentials, Credentials, token);
             // The target answers no other region, so only its own puller and this test take its storage slots.
             network.Mute("sfo-a");
-            await using var gru = await StartAsync(network, credentials, "gru-1", "gru", "gru-a");
-            await using var sfo = await StartTargetAsync(credentials, storageQueue, recorder, clock, steps);
+            await using var gru = await StartAsync(network, "gru-1", "gru", "gru-a");
+            await using var sfo = await StartTargetAsync(storageQueue, recorder, clock, steps);
             try
             {
                 await HeadsAskedAsync(recorder, clock, token);
@@ -126,11 +124,9 @@ public sealed partial class CrossRegionPagingProgressTests
                 _ = deletionRelease.Wait(TimeSpan.FromSeconds(30));
             }
             : null;
-            var credentials = Path.Combine(directory, "user.creds");
-            await File.WriteAllTextAsync(credentials, Credentials, token);
             network.Mute("sfo-a");
-            await using var gru = await StartAsync(network, credentials, "gru-1", "gru", "gru-a");
-            await using var sfo = await StartTargetAsync(credentials, 1024, recorder, clock, steps, beforeDeleted);
+            await using var gru = await StartAsync(network, "gru-1", "gru", "gru-a");
+            await using var sfo = await StartTargetAsync(1024, recorder, clock, steps, beforeDeleted);
             try
             {
                 await HeadsAskedAsync(recorder, clock, token);
@@ -300,16 +296,14 @@ public sealed partial class CrossRegionPagingProgressTests
             var pendingPull = new TaskCompletionSource<PullRequest>(TaskCreationOptions.RunContinuationsAsynchronously);
             var pullRelease = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             Task<bool>? deletion = null;
-            var credentials = Path.Combine(directory, "user.creds");
-            await File.WriteAllTextAsync(credentials, Credentials, token);
             network.Mute("sfo-a");
-            await using var gru = await StartAsync(network, credentials, "gru-1", "gru", "gru-a");
+            await using var gru = await StartAsync(network, "gru-1", "gru", "gru-a");
             EventHandler<IDatabaseStore>? beforeDeleted = deleteWhilePullPending ? null : (_, _) =>
             {
                 deleting.TrySetResult();
                 _ = deletionRelease.Wait(TimeSpan.FromSeconds(30));
             };
-            await using var sfo = await StartTargetAsync(credentials, 1024, recorder, clock, steps, beforeDeleted);
+            await using var sfo = await StartTargetAsync(1024, recorder, clock, steps, beforeDeleted);
             try
             {
                 await HeadsAskedAsync(recorder, clock, token);
@@ -486,11 +480,9 @@ public sealed partial class CrossRegionPagingProgressTests
             using var steps = new LifecycleSteps();
             var pendingPull = new TaskCompletionSource<PullRequest>(TaskCreationOptions.RunContinuationsAsynchronously);
             var pullRelease = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            var credentials = Path.Combine(directory, "user.creds");
-            await File.WriteAllTextAsync(credentials, Credentials, token);
             network.Mute("sfo-a");
-            await using var gru = await StartAsync(network, credentials, "gru-1", "gru", "gru-a");
-            await using var sfo = await StartTargetAsync(credentials, 1024, recorder, clock, steps);
+            await using var gru = await StartAsync(network, "gru-1", "gru", "gru-a");
+            await using var sfo = await StartTargetAsync(1024, recorder, clock, steps);
             try
             {
                 await HeadsAskedAsync(recorder, clock, token);
@@ -621,11 +613,9 @@ public sealed partial class CrossRegionPagingProgressTests
         {
             using var steps = new LifecycleSteps();
             Func<IDatabaseStore, CancellationToken, ValueTask>? afterOpened = null;
-            var credentials = Path.Combine(directory, "user.creds");
-            await File.WriteAllTextAsync(credentials, Credentials, token);
             network.Mute("sfo-a");
-            await using var gru = await StartAsync(network, credentials, "gru-1", "gru", "gru-a");
-            await using var sfo = await StartTargetAsync(credentials, 1024, recorder, clock, steps,
+            await using var gru = await StartAsync(network, "gru-1", "gru", "gru-a");
+            await using var sfo = await StartTargetAsync(1024, recorder, clock, steps,
                 afterOpened: (store, cancellation) => afterOpened?.Invoke(store, cancellation) ?? ValueTask.CompletedTask);
             try
             {
@@ -763,7 +753,7 @@ public sealed partial class CrossRegionPagingProgressTests
     // The receiving member: sfo-a with its storage queue, the test's bus and clock, and its database lifecycle steps recorded.
     // Its other clocks stand still, so no periodic usage or pressure work competes for a small queue's slots.
     private static Task<ManagementApi> StartTargetAsync(
-        string credentials, int storageQueue, IRegionBus bus, ProgressClock clock, LifecycleSteps steps,
+        int storageQueue, IRegionBus bus, ProgressClock clock, LifecycleSteps steps,
         EventHandler<IDatabaseStore>? beforeDeleted = null, Func<IDatabaseStore, CancellationToken, ValueTask>? afterOpened = null)
     {
         var frozen = new FakeTimeProvider(clock.GetUtcNow());
@@ -773,8 +763,6 @@ public sealed partial class CrossRegionPagingProgressTests
             settings["node-name"] = "sfo-a";
             settings["storage-queue"] = storageQueue.ToString(CultureInfo.InvariantCulture);
             settings["wan-regions"] = "gru-1=gru,sfo-1=sfo";
-            settings["nats-url"] = "nats://127.0.0.1:4222";
-            settings["nats-credentials-file"] = credentials;
         }, services =>
         {
             services.AddSingleton(bus);
@@ -1079,10 +1067,5 @@ public sealed partial class CrossRegionPagingProgressTests
 
         public Task ServeAsync(string subject, Func<ReadOnlyMemory<byte>, CancellationToken, ValueTask<byte[]>> answer, CancellationToken cancellationToken) =>
             inner.ServeAsync(subject, answer, cancellationToken);
-
-        public string? Cell => inner.Cell;
-
-        public ValueTask PublishAsync(string subject, ReadOnlyMemory<byte> data, CancellationToken cancellationToken) =>
-            inner.PublishAsync(subject, data, cancellationToken);
     }
 }

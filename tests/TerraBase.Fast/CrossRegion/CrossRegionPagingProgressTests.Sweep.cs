@@ -33,10 +33,8 @@ public sealed partial class CrossRegionPagingProgressTests
         var directory = Directory.CreateTempSubdirectory("terrabase-wan-finished-").FullName;
         try
         {
-            var credentials = Path.Combine(directory, "user.creds");
-            await File.WriteAllTextAsync(credentials, Credentials, token);
-            await using var gru = await StartAsync(network, credentials, "gru-1", "gru", "gru-a");
-            await using var sfo = await StartAsync(network, credentials, "sfo-1", "sfo", "sfo-a", bus, clock);
+            await using var gru = await StartAsync(network, "gru-1", "gru", "gru-a");
+            await using var sfo = await StartAsync(network, "sfo-1", "sfo", "sfo-a", bus, clock);
             try
             {
                 var organization = EntityIds.New().ToString();
@@ -194,13 +192,11 @@ public sealed partial class CrossRegionPagingProgressTests
         var directory = Directory.CreateTempSubdirectory("terrabase-wan-sweep-").FullName;
         try
         {
-            var credentials = Path.Combine(directory, "user.creds");
-            await File.WriteAllTextAsync(credentials, Credentials, token);
             observation.Phase("gru.host.start");
-            gru = await StartAsync(network, credentials, "gru-1", "gru", "gru-a", failedStartCleanup: task => gruCleanup = task);
+            gru = await StartAsync(network, "gru-1", "gru", "gru-a", failedStartCleanup: task => gruCleanup = task);
             observation.ObserveServer("gru", gru.Server);
             observation.Phase("sfo.host.start");
-            sfo = await StartAsync(network, credentials, "sfo-1", "sfo", "sfo-a", bus, clock, task => sfoCleanup = task);
+            sfo = await StartAsync(network, "sfo-1", "sfo", "sfo-a", bus, clock, task => sfoCleanup = task);
             observation.ObserveServer("sfo", sfo.Server);
             try
             {
@@ -415,10 +411,8 @@ public sealed partial class CrossRegionPagingProgressTests
         var directory = Directory.CreateTempSubdirectory("terrabase-wan-head-").FullName;
         try
         {
-            var credentials = Path.Combine(directory, "user.creds");
-            await File.WriteAllTextAsync(credentials, Credentials, token);
-            await using var gru = await StartAsync(network, credentials, "gru-1", "gru", "gru-a");
-            await using var sfo = await StartAsync(network, credentials, "sfo-1", "sfo", "sfo-a", bus, clock);
+            await using var gru = await StartAsync(network, "gru-1", "gru", "gru-a");
+            await using var sfo = await StartAsync(network, "sfo-1", "sfo", "sfo-a", bus, clock);
             try
             {
                 var organization = EntityIds.New().ToString();
@@ -554,10 +548,8 @@ public sealed partial class CrossRegionPagingProgressTests
         var directory = Directory.CreateTempSubdirectory("terrabase-wan-retry-").FullName;
         try
         {
-            var credentials = Path.Combine(directory, "user.creds");
-            await File.WriteAllTextAsync(credentials, Credentials, token);
-            await using var gru = await StartAsync(network, credentials, "gru-1", "gru", "gru-a");
-            await using var sfo = await StartAsync(network, credentials, "sfo-1", "sfo", "sfo-a", bus, clock);
+            await using var gru = await StartAsync(network, "gru-1", "gru", "gru-a");
+            await using var sfo = await StartAsync(network, "sfo-1", "sfo", "sfo-a", bus, clock);
             try
             {
                 var organization = EntityIds.New().ToString();
@@ -679,10 +671,8 @@ public sealed partial class CrossRegionPagingProgressTests
         var directory = Directory.CreateTempSubdirectory("terrabase-wan-divergence-").FullName;
         try
         {
-            var credentials = Path.Combine(directory, "user.creds");
-            await File.WriteAllTextAsync(credentials, Credentials, token);
-            await using var gru = await StartAsync(network, credentials, "gru-1", "gru", "gru-a");
-            await using var sfo = await StartAsync(network, credentials, "sfo-1", "sfo", "sfo-a", bus, clock);
+            await using var gru = await StartAsync(network, "gru-1", "gru", "gru-a");
+            await using var sfo = await StartAsync(network, "sfo-1", "sfo", "sfo-a", bus, clock);
             try
             {
                 var organization = Ulid.NewUlid().ToString();
@@ -792,10 +782,8 @@ public sealed partial class CrossRegionPagingProgressTests
         var directory = Directory.CreateTempSubdirectory("terrabase-wan-stale-head-").FullName;
         try
         {
-            var credentials = Path.Combine(directory, "user.creds");
-            await File.WriteAllTextAsync(credentials, Credentials, token);
-            await using var gru = await StartAsync(network, credentials, "gru-1", "gru", "gru-a");
-            await using var sfo = await StartAsync(network, credentials, "sfo-1", "sfo", "sfo-a", bus, clock);
+            await using var gru = await StartAsync(network, "gru-1", "gru", "gru-a");
+            await using var sfo = await StartAsync(network, "sfo-1", "sfo", "sfo-a", bus, clock);
             try
             {
                 var organization = Ulid.NewUlid().ToString();
@@ -885,10 +873,8 @@ public sealed partial class CrossRegionPagingProgressTests
         var directory = Directory.CreateTempSubdirectory("terrabase-wan-retry-malformed-").FullName;
         try
         {
-            var credentials = Path.Combine(directory, "user.creds");
-            await File.WriteAllTextAsync(credentials, Credentials, token);
-            await using var gru = await StartAsync(network, credentials, "gru-1", "gru", "gru-a");
-            await using var sfo = await StartAsync(network, credentials, "sfo-1", "sfo", "sfo-a", bus, clock);
+            await using var gru = await StartAsync(network, "gru-1", "gru", "gru-a");
+            await using var sfo = await StartAsync(network, "sfo-1", "sfo", "sfo-a", bus, clock);
             try
             {
                 var organization = EntityIds.New().ToString();
@@ -970,10 +956,8 @@ public sealed partial class CrossRegionPagingProgressTests
         var directory = Directory.CreateTempSubdirectory("terrabase-wan-retry-origin-").FullName;
         try
         {
-            var credentials = Path.Combine(directory, "user.creds");
-            await File.WriteAllTextAsync(credentials, Credentials, token);
-            await using var gru = await StartAsync(network, credentials, "gru-1", "gru", "gru-a");
-            await using var sfo = await StartAsync(network, credentials, "sfo-1", "sfo", "sfo-a", bus, clock);
+            await using var gru = await StartAsync(network, "gru-1", "gru", "gru-a");
+            await using var sfo = await StartAsync(network, "sfo-1", "sfo", "sfo-a", bus, clock);
             try
             {
                 var organization = EntityIds.New().ToString();
@@ -1063,10 +1047,8 @@ public sealed partial class CrossRegionPagingProgressTests
         var directory = Directory.CreateTempSubdirectory("terrabase-wan-retry-deleted-").FullName;
         try
         {
-            var credentials = Path.Combine(directory, "user.creds");
-            await File.WriteAllTextAsync(credentials, Credentials, token);
-            await using var gru = await StartAsync(network, credentials, "gru-1", "gru", "gru-a");
-            await using var sfo = await StartAsync(network, credentials, "sfo-1", "sfo", "sfo-a", bus, clock);
+            await using var gru = await StartAsync(network, "gru-1", "gru", "gru-a");
+            await using var sfo = await StartAsync(network, "sfo-1", "sfo", "sfo-a", bus, clock);
             try
             {
                 var organization = EntityIds.New().ToString();
@@ -1159,10 +1141,8 @@ public sealed partial class CrossRegionPagingProgressTests
         var directory = Directory.CreateTempSubdirectory("terrabase-wan-round-budget-").FullName;
         try
         {
-            var credentials = Path.Combine(directory, "user.creds");
-            await File.WriteAllTextAsync(credentials, Credentials, token);
-            await using var gru = await StartAsync(network, credentials, "gru-1", "gru", "gru-a");
-            await using var sfo = await StartAsync(network, credentials, "sfo-1", "sfo", "sfo-a", bus, clock);
+            await using var gru = await StartAsync(network, "gru-1", "gru", "gru-a");
+            await using var sfo = await StartAsync(network, "sfo-1", "sfo", "sfo-a", bus, clock);
             try
             {
                 bus.Begin.TrySetResult();
@@ -1220,10 +1200,8 @@ public sealed partial class CrossRegionPagingProgressTests
         var directory = Directory.CreateTempSubdirectory("terrabase-wan-scatter-budget-").FullName;
         try
         {
-            var credentials = Path.Combine(directory, "user.creds");
-            await File.WriteAllTextAsync(credentials, Credentials, token);
-            await using var gru = await StartAsync(network, credentials, "gru-1", "gru", "gru-a");
-            await using var sfo = await StartAsync(network, credentials, "sfo-1", "sfo", "sfo-a", bus, clock);
+            await using var gru = await StartAsync(network, "gru-1", "gru", "gru-a");
+            await using var sfo = await StartAsync(network, "sfo-1", "sfo", "sfo-a", bus, clock);
             try
             {
                 bus.Begin.TrySetResult();
@@ -1279,10 +1257,8 @@ public sealed partial class CrossRegionPagingProgressTests
         var directory = Directory.CreateTempSubdirectory("terrabase-wan-order-").FullName;
         try
         {
-            var credentials = Path.Combine(directory, "user.creds");
-            await File.WriteAllTextAsync(credentials, Credentials, token);
-            await using var gru = await StartAsync(network, credentials, "gru-1", "gru", "gru-a");
-            await using var sfo = await StartAsync(network, credentials, "sfo-1", "sfo", "sfo-a", bus, clock);
+            await using var gru = await StartAsync(network, "gru-1", "gru", "gru-a");
+            await using var sfo = await StartAsync(network, "sfo-1", "sfo", "sfo-a", bus, clock);
             try
             {
                 var organization = EntityIds.New().ToString();
@@ -1375,11 +1351,9 @@ public sealed partial class CrossRegionPagingProgressTests
         var directory = Directory.CreateTempSubdirectory("terrabase-wan-empty-partial-").FullName;
         try
         {
-            var credentials = Path.Combine(directory, "user.creds");
-            await File.WriteAllTextAsync(credentials, Credentials, token);
-            await using var gru = await StartAsync(network, credentials, "gru-1", "gru", "gru-a");
-            await using var silent = await StartAsync(network, credentials, "gru-1", "gru", "gru-silent-0");
-            await using var sfo = await StartAsync(network, credentials, "sfo-1", "sfo", "sfo-a", bus, clock);
+            await using var gru = await StartAsync(network, "gru-1", "gru", "gru-a");
+            await using var silent = await StartAsync(network, "gru-1", "gru", "gru-silent-0");
+            await using var sfo = await StartAsync(network, "sfo-1", "sfo", "sfo-a", bus, clock);
             try
             {
                 var organization = EntityIds.New().ToString();
@@ -1566,10 +1540,8 @@ public sealed partial class CrossRegionPagingProgressTests
         var directory = Directory.CreateTempSubdirectory("terrabase-wan-lag-overflow-").FullName;
         try
         {
-            var credentials = Path.Combine(directory, "user.creds");
-            await File.WriteAllTextAsync(credentials, Credentials, token);
-            await using var gru = await StartAsync(network, credentials, "gru-1", "gru", "gru-a");
-            await using var sfo = await StartAsync(network, credentials, "sfo-1", "sfo", "sfo-a", bus, clock);
+            await using var gru = await StartAsync(network, "gru-1", "gru", "gru-a");
+            await using var sfo = await StartAsync(network, "sfo-1", "sfo", "sfo-a", bus, clock);
             try
             {
                 var organization = EntityIds.New().ToString();

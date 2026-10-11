@@ -19,7 +19,6 @@ namespace TerraBase.Fast.CrossRegion;
 
 public sealed partial class CrossRegionPagingProgressTests
 {
-    private const string Credentials = "-----BEGIN NATS USER JWT-----\neyJ0.e30.x\n------END NATS USER JWT------\n-----BEGIN USER NKEY SEED-----\nSUAEXAMPLE\n------END USER NKEY SEED------\n";
     private const string GruLabel = "region=\"gru-1\"";
     private static readonly string[] InSfo = ["sfo-1"];
 
@@ -36,11 +35,9 @@ public sealed partial class CrossRegionPagingProgressTests
         var directory = Directory.CreateTempSubdirectory("terrabase-wan-progress-").FullName;
         try
         {
-            var credentials = Path.Combine(directory, "user.creds");
-            await File.WriteAllTextAsync(credentials, Credentials, token);
-            await using var a = await StartAsync(network, credentials, "gru-1", "gru", "gru-a");
-            await using var newcomer = await StartAsync(network, credentials, "gru-1", "gru", "gru-new");
-            await using var sfo = await StartAsync(network, credentials, "sfo-1", "sfo", "sfo-a", bus, clock);
+            await using var a = await StartAsync(network, "gru-1", "gru", "gru-a");
+            await using var newcomer = await StartAsync(network, "gru-1", "gru", "gru-new");
+            await using var sfo = await StartAsync(network, "sfo-1", "sfo", "sfo-a", bus, clock);
             try
             {
                 var organization = EntityIds.New().ToString();
@@ -331,14 +328,12 @@ public sealed partial class CrossRegionPagingProgressTests
     }
 
     private static Task<ManagementApi> StartAsync(
-        FakeRegionNetwork network, string credentials, string region, string cell, string node, IRegionBus? bus = null, ProgressClock? clock = null, Action<Task>? failedStartCleanup = null) =>
+        FakeRegionNetwork network, string region, string cell, string node, IRegionBus? bus = null, ProgressClock? clock = null, Action<Task>? failedStartCleanup = null) =>
         ManagementApi.StartAsync(settings =>
         {
             settings["region"] = region;
             settings["node-name"] = node;
             settings["wan-regions"] = "gru-1=gru,sfo-1=sfo";
-            settings["nats-url"] = "nats://127.0.0.1:4222";
-            settings["nats-credentials-file"] = credentials;
         }, services =>
         {
             TerraBaseTestServer.EnableConnectionDiagnostics(services);
@@ -606,7 +601,7 @@ public sealed partial class CrossRegionPagingProgressTests
             }
 
             var member = AdvertiseNewcomer ? "gru-new" : "gru-a";
-            var reply = await HeadsAsync(WanProtocol.MemberSubject("gru", member), request, ByteString.Empty, cancellationToken);
+            var reply = await HeadsAsync(RegionSubjects.Member("gru", member), request, ByteString.Empty, cancellationToken);
             reply.Members.Clear();
             reply.Members.Add(member);
             if (Slow && !AdvertiseNewcomer)
@@ -793,11 +788,6 @@ public sealed partial class CrossRegionPagingProgressTests
 
         public Task ServeAsync(string subject, Func<ReadOnlyMemory<byte>, CancellationToken, ValueTask<byte[]>> answer, CancellationToken cancellationToken) =>
             inner.ServeAsync(subject, answer, cancellationToken);
-
-        public string? Cell => inner.Cell;
-
-        public ValueTask PublishAsync(string subject, ReadOnlyMemory<byte> data, CancellationToken cancellationToken) =>
-            inner.PublishAsync(subject, data, cancellationToken);
 
         private async Task<HeadsReply> HeadsAsync(string subject, ReadOnlyMemory<byte> request, ByteString after, CancellationToken cancellationToken)
         {

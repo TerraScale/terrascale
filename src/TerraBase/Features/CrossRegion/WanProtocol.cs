@@ -5,10 +5,7 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Features.CrossRegion;
 
-/// <summary>
-/// Version 1 of cross-region replication (<c>wan.proto</c>, <c>docs/cross-region.md</c>): subjects in the cross-link
-/// <c>query</c> family of ts-orchestrator's NATS fabric, and the identities on them.
-/// </summary>
+/// <summary>Version 1 of cross-region replication (<c>wan.proto</c>, <c>docs/cross-region.md</c>): its bounds and the identities in it.</summary>
 public static class WanProtocol
 {
     /// <summary>
@@ -17,7 +14,7 @@ public static class WanProtocol
     /// </summary>
     public const uint Version = 1;
 
-    /// <summary>Largest request or reply: NATS's default <c>max_payload</c>, which leafnodes between regions keep.</summary>
+    /// <summary>Largest request or reply.</summary>
     public const int MaxMessageBytes = 1024 * 1024;
 
     /// <summary>Most heads in one reply; the byte budget can end a page sooner.</summary>
@@ -58,13 +55,7 @@ public static class WanProtocol
         }
     }
 
-    /// <summary>The subject every member of <paramref name="cell"/> answers with the first page of its heads.</summary>
-    public static string HeadsSubject(string cell) => $"ts.orch.v1.{cell}.query.terrabase-wan.heads";
-
-    /// <summary>The subject of one member of <paramref name="cell"/>, by node name.</summary>
-    public static string MemberSubject(string cell, string member) => $"ts.orch.v1.{cell}.query.terrabase-wan.member.{member}";
-
-    /// <summary>Whether <paramref name="member"/> can name a subject: a node name of lowercase letters, digits and inner hyphens.</summary>
+    /// <summary>Whether <paramref name="member"/> is a machine ID: lowercase letters, digits and inner hyphens.</summary>
     public static bool IsMember(string member) =>
         member.Length is >= 1 and <= 63 && member[0] != '-' && member[^1] != '-' && member.All(c => c is (>= 'a' and <= 'z') or (>= '0' and <= '9') or '-');
 

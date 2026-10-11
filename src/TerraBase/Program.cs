@@ -95,7 +95,7 @@ builder.Services.AddTerraBaseHealth();
 builder.Services.AddTerraBasePressure();
 builder.Services.AddTerraBaseStats();
 builder.AddTerraBaseReplication(options);
-builder.Services.AddTerraBaseCrossRegion(options);
+builder.Services.AddTerraBaseCrossRegion();
 
 try
 {

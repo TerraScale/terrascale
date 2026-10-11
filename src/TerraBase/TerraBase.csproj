@@ -32,7 +32,6 @@
     <PackageReference Include="Microsoft.Data.Sqlite" />
     <PackageReference Include="JsonSchema.Net" />
     <PackageReference Include="Microsoft.IdentityModel.Protocols.OpenIdConnect" />
-    <PackageReference Include="NATS.Client.KeyValueStore" />
     <PackageReference Include="NativeCompressions" />
     <PackageReference Include="Ulid" />
     <PackageReference Include="NUlid" />

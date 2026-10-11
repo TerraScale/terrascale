@@ -27,10 +27,10 @@ public static class DatabaseRegions
     public sealed class PlacementAware;
 
     /// <summary>Why <paramref name="replicas"/> cannot be the replica regions of a database at home in this region, or the accepted regions.</summary>
-    internal static Valid<IReadOnlyList<string>> Check(TerraBaseOptions options, string home, IReadOnlyList<string> replicas) =>
+    // Regions come and go with their machines, so any well-formed region is accepted; one without members replicates nothing.
+    internal static Valid<IReadOnlyList<string>> Check(string home, IReadOnlyList<string> replicas) =>
         replicas.Count > MaxReplicas ? new Validation("replicaRegions holds at most 8 regions")
-        : replicas.Any(region => region != options.Region && options.Wan?.Remotes(options.Region).ContainsKey(region) != true)
-            ? new Validation("replicaRegions must name regions this deployment replicates with")
+        : !replicas.All(TerraBaseOptions.IsRegion) ? new Validation("replicaRegions must name regions")
         : replicas.Distinct(StringComparer.Ordinal).Count() != replicas.Count ? new Validation("replicaRegions must not repeat a region")
         : replicas.Contains(home) ? new Validation("replicaRegions must not name the home region")
         : replicas;
@@ -61,18 +61,12 @@ public static class DatabaseRegions
 
     /// <summary>
     /// Answers <c>421 wrong_region</c> for a database this region records but does not serve, on the client listener: data
-    /// routes (an API key's organization) and database-scoped Management routes (the user's membership). Only a node that
-    /// replicates across regions (<c>wan-regions</c>) refuses; members of one region serve its databases alike. Register it
-    /// after authorization.
+    /// routes (an API key's organization) and database-scoped Management routes (the user's membership); members of one
+    /// region serve its databases alike. Register it after authorization.
     /// </summary>
     public static WebApplication UseTerraBaseDatabasePlacement(this WebApplication app)
     {
         ArgumentNullException.ThrowIfNull(app);
-        if (app.Services.GetRequiredService<TerraBaseOptions>().Wan is null)
-        {
-            return app;
-        }
-
         app.Use(async (context, next) =>
         {
             if (Listeners.ArrivedOn(context) == TerraBaseListener.Client

@@ -50,8 +50,6 @@ public sealed class CatalogSubscriptionTests
             settings["node-name"] = "subscription-follower";
             settings["catalog-primary"] = primary.Server.PeerAddress!.ToString();
             settings["wan-regions"] = "gru-1=gru,sfo-1=sfo";
-            settings["nats-url"] = "nats://127.0.0.1:4222";
-            settings["nats-credentials-file"] = credentials;
         }, services =>
         {
             primary.Issuer.Route(services);
@@ -145,8 +143,6 @@ public sealed class CatalogSubscriptionTests
             settings["node-name"] = "subscription-follower";
             settings["catalog-primary"] = primary.Server.PeerAddress!.ToString();
             settings["wan-regions"] = "gru-1=gru,sfo-1=sfo";
-            settings["nats-url"] = "nats://127.0.0.1:4222";
-            settings["nats-credentials-file"] = credentials;
         }, services =>
         {
             primary.Issuer.Route(services);

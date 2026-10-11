@@ -49,12 +49,12 @@ public sealed class CreateManagedDatabaseEndpoint(IManagementService management,
         var replicas = request.ReplicaRegions ?? [];
         if (home != options.Region)
         {
-            return options.Wan?.Remotes(options.Region).ContainsKey(home) == true
+            return TerraBaseOptions.IsRegion(home)
                 ? DatabaseRegions.WrongRegion(home, [home, .. replicas])
-                : ErrorResponse.From(new Validation("homeRegion must name a region this deployment replicates with"));
+                : ErrorResponse.From(new Validation("homeRegion must name a region"));
         }
 
-        var checkedRegions = DatabaseRegions.Check(options, home, replicas);
+        var checkedRegions = DatabaseRegions.Check(home, replicas);
         if (checkedRegions is Validation invalid)
         {
             return ErrorResponse.From(invalid);

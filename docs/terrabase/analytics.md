@@ -96,7 +96,7 @@ the two observations describe the same directed transfer.
 
 The own usage meter is `replication_bytes`, separate from `client_bytes`.
 It counts the encoded protobuf messages after LZ4, plus the five-byte gRPC
-message prefix on peer streams; existing WAN messages count their encoded NATS
+message prefix on peer streams; existing WAN messages count their request and reply
 payloads. Protocol replies and ACKs count in their actual direction. This is
 message traffic metering, excluding HTTP/2, TLS, TCP and broker framing.
 Repeated transfers count bytes each time; replicated operations count only
