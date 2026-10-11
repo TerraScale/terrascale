@@ -94,7 +94,7 @@ public sealed class BackupPlatformProgressTests
 
     private static async Task<ManagementApi> StartAsync(FakeOci oci, FakeTimeProvider time)
     {
-        var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services =>
+        var api = await ManagementApi.StartAsync(oci.Configure, services =>
         {
             oci.Route(services);
             ManualBackupHosting.Configure(services);

@@ -25,7 +25,7 @@ public sealed class CustomerBackupTimerIsolationTests
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
         using var timer = new TimerTime(time);
         TrackedBackup? taps = null;
-        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services =>
+        await using var api = await ManagementApi.StartAsync(oci.Configure, services =>
         {
             oci.Route(services);
             services.AddSingleton<IWalBackup>(provider => taps = new TrackedBackup(provider.GetRequiredService<SqliteStorageEngine>()));

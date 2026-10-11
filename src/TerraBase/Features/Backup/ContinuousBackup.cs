@@ -553,7 +553,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
             }
 
             // Admission already classified the catalog record. Only this job may switch or dispose its fixed target;
-            // failed catalog or Vault reads fail closed: customer-only data never falls back to platform.
+            // failed catalog reads fail closed: customer-only data never falls back to platform.
             var due = _time.GetUtcNow() >= file.RetryAt;
             if (due)
             {

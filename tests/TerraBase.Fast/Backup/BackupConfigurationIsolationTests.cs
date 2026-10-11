@@ -215,7 +215,7 @@ public sealed class BackupConfigurationIsolationTests
 
     private static async Task<ManagementApi> StartAsync(FakeOci oci, FakeTimeProvider time, UsageCommitHook hook)
     {
-        var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services =>
+        var api = await ManagementApi.StartAsync(oci.Configure, services =>
         {
             oci.Route(services);
             ManualBackupHosting.Configure(services);

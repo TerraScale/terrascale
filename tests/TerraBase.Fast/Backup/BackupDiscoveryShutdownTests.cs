@@ -25,7 +25,7 @@ public sealed class BackupDiscoveryShutdownTests
         using var body = new StalledSnapshotBody();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
         TrackedBackup? taps = null;
-        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services =>
+        await using var api = await ManagementApi.StartAsync(oci.Configure, services =>
         {
             oci.Route(services);
             services.AddSingleton<IWalBackup>(provider => taps = new TrackedBackup(provider.GetRequiredService<SqliteStorageEngine>()));

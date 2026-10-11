@@ -7,7 +7,7 @@ namespace TerraBase.Features.Management.Backups;
 internal static class BackupDestinationRoute
 {
     public const string Path = ProjectApiRoute.Project + "/backup-destination";
-    public const string Description = "One customer S3-compatible bucket per project. Database-narrowed tokens cannot read or change this project-wide configuration and answer 404. mode=both mirrors encrypted backups to both buckets; mode=customer sends project backups only to the customer bucket. Credentials are write-only and stored encrypted in OCI Vault. Replacing or removing a destination schedules its old Vault secret for retirement. Removing the destination resumes platform shipping and preserves customer objects; removing an unset destination returns 204. " + ProjectApiRoute.IdentityDescription;
+    public const string Description = "One customer S3-compatible bucket per project. Database-narrowed tokens cannot read or change this project-wide configuration and answer 404. mode=both mirrors encrypted backups to both buckets; mode=customer sends project backups only to the customer bucket. Credentials are write-only and stored only sealed with the TerraBase master key. Replacing a destination starts a new generation. Removing the destination resumes platform shipping and preserves customer objects; removing an unset destination returns 204. " + ProjectApiRoute.IdentityDescription;
 
     public static bool IsDatabaseScoped => ProjectAccess.Current is { DatabaseName: not null };
 
@@ -50,5 +50,5 @@ internal static class BackupDestinationRoute
     public static bool IsUnavailable(Exception error, CancellationToken cancellationToken) =>
         !cancellationToken.IsCancellationRequested && error is HttpRequestException or IOException or OperationCanceledException;
 
-    public static Unavailable Unavailable() => new("backup bucket or OCI Vault could not be accessed");
+    public static Unavailable Unavailable() => new("backup bucket could not be accessed");
 }

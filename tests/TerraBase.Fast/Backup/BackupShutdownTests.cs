@@ -27,7 +27,7 @@ public sealed class BackupShutdownTests
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         using var oci = new FakeOci();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 9, 12, 0, 0, TimeSpan.Zero));
-        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services =>
+        await using var api = await ManagementApi.StartAsync(oci.Configure, services =>
         {
             oci.Route(services);
             ManualBackupHosting.Configure(services);
@@ -83,7 +83,7 @@ public sealed class BackupShutdownTests
         {
             api = await ManagementApi.StartAsync(settings =>
             {
-                oci.ConfigureCustomer(settings);
+                oci.Configure(settings);
                 settings["data-directory"] = directory;
             }, services =>
             {
@@ -225,7 +225,7 @@ public sealed class BackupShutdownTests
         {
             api = await ManagementApi.StartAsync(settings =>
             {
-                oci.ConfigureCustomer(settings);
+                oci.Configure(settings);
                 settings["data-directory"] = directory;
             }, services =>
             {
@@ -371,7 +371,7 @@ public sealed class BackupShutdownTests
         {
             api = await ManagementApi.StartAsync(settings =>
             {
-                oci.ConfigureCustomer(settings);
+                oci.Configure(settings);
                 settings["data-directory"] = directory;
             }, services =>
             {

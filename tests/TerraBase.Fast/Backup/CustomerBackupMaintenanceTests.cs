@@ -22,7 +22,7 @@ public sealed class CustomerBackupMaintenanceTests
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         using var oci = new FakeOci();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 9, 12, 0, 0, TimeSpan.Zero));
-        await using var api = await StartAsync(oci.ConfigureCustomer, services =>
+        await using var api = await StartAsync(oci.Configure, services =>
         {
             oci.Route(services);
             ManualBackupHosting.Configure(services);
@@ -87,7 +87,7 @@ public sealed class CustomerBackupMaintenanceTests
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         using var oci = new FakeOci();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 9, 12, 0, 0, TimeSpan.Zero));
-        await using var api = await StartAsync(oci.ConfigureCustomer, services =>
+        await using var api = await StartAsync(oci.Configure, services =>
         {
             oci.Route(services);
             ManualBackupHosting.Configure(services);

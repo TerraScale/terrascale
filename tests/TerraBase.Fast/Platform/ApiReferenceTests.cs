@@ -188,7 +188,7 @@ public sealed class ApiReferenceTests
         }
 
         var schemas = document.GetProperty("components").GetProperty("schemas");
-        // Credentials belong only to the request; responses also exclude the internal Vault secret reference.
+        // Credentials belong only to the request; responses also exclude the sealed credentials.
         await Assert.That(schemas.GetProperty("ProjectBackupDestinationRequest").GetProperty("properties")
             .EnumerateObject().Select(property => property.Name).ToList())
             .IsEquivalentTo(["endpoint", "region", "bucket", "accessKeyId", "secretKey", "mode"]);

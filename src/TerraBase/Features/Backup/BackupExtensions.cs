@@ -30,12 +30,6 @@ public static class BackupExtensions
                 provider.GetRequiredService<ICustomerBackupDns>(), provider.GetRequiredService<ICustomerBackupConnector>()))
             .AddHttpMessageHandler<CustomerBackupResponseLimits>();
         services.AddTransient<CustomerBackupResponseLimits>();
-        if (settings.VaultId is not null)
-        {
-            services.AddHttpClient(OciVaultSecrets.HttpClientName, client => client.Timeout = TimeSpan.FromSeconds(30))
-                .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
-            services.AddSingleton<IOciVaultSecrets, OciVaultSecrets>();
-        }
         services.AddHttpClient(OciVaultMasterKey.HttpClientName, client => client.Timeout = TimeSpan.FromSeconds(30));
         return services
             .AddSingleton(settings)

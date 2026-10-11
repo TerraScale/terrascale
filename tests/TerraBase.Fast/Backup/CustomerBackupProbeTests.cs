@@ -23,7 +23,7 @@ public sealed class CustomerBackupProbeTests
         using var oci = new FakeOci();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 9, 12, 0, 0, TimeSpan.Zero));
         var request = new ObserveRequest();
-        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services =>
+        await using var api = await ManagementApi.StartAsync(oci.Configure, services =>
         {
             Manual(oci, services);
             services.AddSingleton<IStartupFilter>(request);
@@ -94,7 +94,7 @@ public sealed class CustomerBackupProbeTests
             if (saveTimeout)
             {
                 await ErrorAssert.ErrorAsync(saving, HttpStatusCode.ServiceUnavailable,
-                    "unavailable", "customer backup bucket or OCI Vault could not be accessed");
+                    "unavailable", "customer backup bucket could not be accessed");
             }
             else
             {
@@ -136,7 +136,7 @@ public sealed class CustomerBackupProbeTests
     {
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         using var oci = new FakeOci();
-        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services => Manual(oci, services));
+        await using var api = await ManagementApi.StartAsync(oci.Configure, services => Manual(oci, services));
         var database = await api.CreateManagedDatabaseAsync();
         var route = Uri(database.ProjectPath + "/backup-destination");
         using var body = new ProbeBody(Encoding.ASCII.GetBytes("TerraBase backup access check"), chunked: true, failRead: kind == "probe-error");
@@ -158,7 +158,7 @@ public sealed class CustomerBackupProbeTests
             await ErrorAssert.ErrorAsync(api.Client.PutAsJsonAsync(route, Destination(), token),
                 kind == "probe-error" ? HttpStatusCode.InternalServerError : HttpStatusCode.ServiceUnavailable,
                 kind == "probe-error" ? "internal_error" : "unavailable",
-                kind == "probe-error" ? null : "customer backup bucket or OCI Vault could not be accessed");
+                kind == "probe-error" ? null : "customer backup bucket could not be accessed");
             using var absent = await api.Client.GetAsync(route, token);
             await Assert.That(absent.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         }
@@ -185,7 +185,7 @@ public sealed class CustomerBackupProbeTests
     {
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         using var oci = new FakeOci();
-        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services => Manual(oci, services));
+        await using var api = await ManagementApi.StartAsync(oci.Configure, services => Manual(oci, services));
         var database = await api.CreateManagedDatabaseAsync();
         var route = Uri(database.ProjectPath + "/backup-destination");
         var expected = Encoding.ASCII.GetBytes("TerraBase backup access check");
@@ -228,7 +228,7 @@ public sealed class CustomerBackupProbeTests
         };
 
         await ErrorAssert.ErrorAsync(api.Client.PutAsJsonAsync(route, Destination(), token), HttpStatusCode.ServiceUnavailable,
-            "unavailable", "customer backup bucket or OCI Vault could not be accessed");
+            "unavailable", "customer backup bucket could not be accessed");
         await Assert.That(body.BytesRead).IsEqualTo(Math.Min(payload.Length, expected.Length + 1));
         await Assert.That(body.LargestRequest).IsLessThanOrEqualTo(expected.Length + 1);
         await Assert.That(body.Disposed).IsTrue();
@@ -254,7 +254,7 @@ public sealed class CustomerBackupProbeTests
     {
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         using var oci = new FakeOci();
-        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services => Manual(oci, services));
+        await using var api = await ManagementApi.StartAsync(oci.Configure, services => Manual(oci, services));
         var database = await api.CreateManagedDatabaseAsync();
         var expected = Encoding.ASCII.GetBytes("TerraBase backup access check");
         using var body = new ProbeBody(expected, chunked);

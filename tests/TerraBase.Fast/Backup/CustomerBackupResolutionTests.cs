@@ -22,7 +22,7 @@ public sealed class CustomerBackupResolutionTests
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         using var oci = new FakeOci();
         var time = Clock();
-        await using var api = await StartAsync(settings => oci.ConfigureCustomer(settings), services =>
+        await using var api = await StartAsync(settings => oci.Configure(settings), services =>
         {
             oci.Route(services);
             ManualBackupHosting.Configure(services);
@@ -32,7 +32,7 @@ public sealed class CustomerBackupResolutionTests
         using var project = ProjectClient(api, database);
         var record = new ProjectBackupDestinationRecord(failure == "unsupported-version" ? 2 : 1, Ulid.NewUlid().ToString(),
             new(new Uri(FakeOci.CustomerEndpoint), "test-region-1", FakeOci.CustomerBucket, "customer", time.GetUtcNow()),
-            "ocid1.vaultsecret.oc1.test.unavailable");
+            new SealedCredentials("unwrappable-key", "unsealable-credentials"));
         // Seed persisted configuration that a previous deployment could write; exercise resolution through HTTP.
         await api.Server.Services.GetRequiredService<SystemCatalog>().WriteAsync(async transaction =>
         {
@@ -63,7 +63,7 @@ public sealed class CustomerBackupResolutionTests
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         using var oci = new FakeOci();
         var time = Clock();
-        await using var api = await StartAsync(oci.ConfigureCustomer, services =>
+        await using var api = await StartAsync(oci.Configure, services =>
         {
             oci.Route(services);
             ManualBackupHosting.Configure(services);
@@ -137,7 +137,7 @@ public sealed class CustomerBackupResolutionTests
         using var body = JsonDocument.Parse(text);
         await Assert.That(body.RootElement.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("unavailable");
         await Assert.That(body.RootElement.GetProperty("error").GetProperty("message").GetString())
-            .IsEqualTo("backup bucket or OCI Vault could not be accessed");
+            .IsEqualTo("backup bucket could not be accessed");
         await Assert.That(text.Contains("ocid1", StringComparison.Ordinal)).IsFalse();
         await Assert.That(text.Contains(FakeOci.CustomerEndpoint, StringComparison.Ordinal)).IsFalse();
         await Assert.That(text.Contains(FakeOci.CustomerAccessKey, StringComparison.Ordinal)).IsFalse();

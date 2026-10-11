@@ -16,7 +16,7 @@ public sealed class CustomerBackupNetworkTests
         await using var network = await CustomerBackupNetworkFixture.StartAsync(cancellationToken);
         network.Addresses([.. Enumerable.Repeat("93.184.216.34", count)]);
         using var oci = new FakeOci();
-        await using var api = await StartAsync(oci.ConfigureCustomer, services => network.Configure(oci, services));
+        await using var api = await StartAsync(oci.Configure, services => network.Configure(oci, services));
         var database = await api.CreateManagedDatabaseAsync();
 
         using var response = await SaveAsync(api, database, network.Endpoint, cancellationToken);
@@ -58,7 +58,7 @@ public sealed class CustomerBackupNetworkTests
         await using var network = await CustomerBackupNetworkFixture.StartAsync(cancellationToken);
         network.Addresses("93.184.216.34", forbidden);
         using var oci = new FakeOci();
-        await using var api = await StartAsync(oci.ConfigureCustomer, services => network.Configure(oci, services));
+        await using var api = await StartAsync(oci.Configure, services => network.Configure(oci, services));
         var database = await api.CreateManagedDatabaseAsync();
 
         using var response = await SaveAsync(api, database, network.Endpoint, cancellationToken);
@@ -90,7 +90,7 @@ public sealed class CustomerBackupNetworkTests
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         await using var network = await CustomerBackupNetworkFixture.StartAsync(cancellationToken);
         using var oci = new FakeOci();
-        await using var api = await StartAsync(oci.ConfigureCustomer, services => network.Configure(oci, services));
+        await using var api = await StartAsync(oci.Configure, services => network.Configure(oci, services));
         var database = await api.CreateManagedDatabaseAsync();
 
         using var response = await SaveAsync(api, database, new Uri(endpoint), cancellationToken);
@@ -119,7 +119,7 @@ public sealed class CustomerBackupNetworkTests
         await using var network = await CustomerBackupNetworkFixture.StartAsync(cancellationToken);
         network.Addresses(address, "93.184.216.35");
         using var oci = new FakeOci();
-        await using var api = await StartAsync(oci.ConfigureCustomer, services => network.Configure(oci, services));
+        await using var api = await StartAsync(oci.Configure, services => network.Configure(oci, services));
         var database = await api.CreateManagedDatabaseAsync();
 
         using var response = await SaveAsync(api, database, network.Endpoint, cancellationToken);
@@ -147,7 +147,7 @@ public sealed class CustomerBackupNetworkTests
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         await using var network = await CustomerBackupNetworkFixture.StartAsync(cancellationToken);
         using var oci = new FakeOci();
-        await using var api = await StartAsync(oci.ConfigureCustomer, services => network.Configure(oci, services));
+        await using var api = await StartAsync(oci.Configure, services => network.Configure(oci, services));
         var database = await api.CreateManagedDatabaseAsync();
 
         // This DNS fixture accepts only its TLS listener's hostname, so a validated literal stops at resolution.
@@ -164,7 +164,7 @@ public sealed class CustomerBackupNetworkTests
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         await using var network = await CustomerBackupNetworkFixture.StartAsync(cancellationToken);
         using var oci = new FakeOci();
-        await using var api = await StartAsync(oci.ConfigureCustomer, services => network.Configure(oci, services, enableProxy: true));
+        await using var api = await StartAsync(oci.Configure, services => network.Configure(oci, services, enableProxy: true));
         var database = await api.CreateManagedDatabaseAsync();
 
         using var response = await SaveAsync(api, database, network.Endpoint, cancellationToken);
@@ -185,7 +185,7 @@ public sealed class CustomerBackupNetworkTests
         await using var network = await CustomerBackupNetworkFixture.StartAsync(cancellationToken);
         network.HoldResolution = true;
         using var oci = new FakeOci();
-        await using var api = await StartAsync(oci.ConfigureCustomer, services => network.Configure(oci, services));
+        await using var api = await StartAsync(oci.Configure, services => network.Configure(oci, services));
         var database = await api.CreateManagedDatabaseAsync();
         var pending = SaveAsync(api, database, network.Endpoint, cancellationToken);
         try
@@ -211,7 +211,7 @@ public sealed class CustomerBackupNetworkTests
         await using var network = await CustomerBackupNetworkFixture.StartAsync(cancellationToken);
         network.Redirect = true;
         using var oci = new FakeOci();
-        await using var api = await StartAsync(oci.ConfigureCustomer, services => network.Configure(oci, services));
+        await using var api = await StartAsync(oci.Configure, services => network.Configure(oci, services));
         var database = await api.CreateManagedDatabaseAsync();
 
         using var response = await SaveAsync(api, database, network.Endpoint, cancellationToken);
@@ -230,7 +230,7 @@ public sealed class CustomerBackupNetworkTests
         await using var network = await CustomerBackupNetworkFixture.StartAsync(cancellationToken);
         network.HoldConnect = true;
         using var oci = new FakeOci();
-        await using var api = await StartAsync(oci.ConfigureCustomer, services => network.Configure(oci, services));
+        await using var api = await StartAsync(oci.Configure, services => network.Configure(oci, services));
         var database = await api.CreateManagedDatabaseAsync();
         using var caller = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var pending = SaveAsync(api, database, network.Endpoint, caller.Token);
@@ -281,6 +281,6 @@ public sealed class CustomerBackupNetworkTests
         var json = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cancellationToken);
         await Assert.That(json.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("unavailable");
         await Assert.That(json.GetProperty("error").GetProperty("message").GetString())
-            .IsEqualTo("customer backup bucket or OCI Vault could not be accessed");
+            .IsEqualTo("customer backup bucket could not be accessed");
     }
 }
