@@ -91,7 +91,7 @@ sign-in stays on native dashboard pages.
 
 `npm run qualify:dotnet` is the exact-package C# lane; its current evidence and
 commands are described in the [C# quickstart](/zh-cn/getting-started/csharp). The
-[sanitized receipt](https://git.terrascale.tech/TerraScale/ts-docs/src/branch/main/examples/terrabase-dotnet/qualification.json)
+[sanitized receipt](https://github.com/TerraScale/ts-docs/src/branch/main/examples/terrabase-dotnet/qualification.json)
 records `PASS_REAL_TERRABASE_STARTER` for SDK source revision
 `13f795b661654b0d50453acf71b70a681d0458c0` against producer revision
 `ff256067015433c8c40b59879f1282d2a40480ce`. It verifies CRUD, a matching query,

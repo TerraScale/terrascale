@@ -7,7 +7,7 @@ title: C# TerraBase quickstart
 
 # C# TerraBase quickstart
 
-Run the [C# console starter](https://git.terrascale.tech/TerraScale/ts-docs/src/branch/main/examples/terrabase-dotnet)
+Run the [C# console starter](https://github.com/TerraScale/ts-docs/src/branch/main/examples/terrabase-dotnet)
 to create, read, update, query and delete a JSON document through
 `TerraScale.DotNet.TerraBase.TerraBaseDocumentsClient`. Every database request
 uses the SDK; application data stays in TerraBase.
@@ -94,7 +94,7 @@ Disposing the caller-owned `HttpClient` closes its transport.
 ## 5. Qualify against the real binary
 
 From the docs checkout, run the package-only qualification lane described in
-the [starter README](https://git.terrascale.tech/TerraScale/ts-docs/src/branch/main/examples/terrabase-dotnet/README.md):
+the [starter README](https://github.com/TerraScale/ts-docs/src/branch/main/examples/terrabase-dotnet/README.md):
 
 ```bash
 nice -n 19 npm run qualify:dotnet -- \
