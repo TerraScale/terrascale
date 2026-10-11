@@ -159,9 +159,18 @@ public sealed class ApiReferenceTests
 
         var destination = paths.GetProperty(project + "/backup-destination");
         await Assert.That(destination.GetProperty("delete").GetProperty("responses").GetProperty("204").TryGetProperty("content", out _)).IsFalse();
-        await Assert.That(destination.GetProperty("put").GetProperty("requestBody").GetProperty("content")
-            .GetProperty("application/json").GetProperty("schema").GetProperty("$ref").GetString())
-            .IsEqualTo("#/components/schemas/ProjectBackupDestinationRequest");
+        // Route or query can supply members, so the binder may inline this body with relaxed `required`; accept either form.
+        var putSchema = destination.GetProperty("put").GetProperty("requestBody").GetProperty("content").GetProperty("application/json").GetProperty("schema");
+        if (putSchema.TryGetProperty("$ref", out var putReference))
+        {
+            await Assert.That(putReference.GetString()).IsEqualTo("#/components/schemas/ProjectBackupDestinationRequest");
+        }
+        else
+        {
+            await Assert.That(putSchema.GetProperty("properties").EnumerateObject().Select(property => property.Name).Order().ToList())
+                .IsEquivalentTo(document.GetProperty("components").GetProperty("schemas").GetProperty("ProjectBackupDestinationRequest")
+                    .GetProperty("properties").EnumerateObject().Select(property => property.Name).Order().ToList());
+        }
         foreach (var method in new[] { "get", "put" })
         {
             var success = destination.GetProperty(method).GetProperty("responses").GetProperty("200")
