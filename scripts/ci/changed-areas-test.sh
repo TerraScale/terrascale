@@ -32,8 +32,8 @@ expect tests/TerraScale.Auth.Slow/ReadinessConcurrencyTests.cs auth
 expect docs/auth/mfa.md auth
 expect scripts/auth/dev.sh auth
 expect .containerignore auth
-expect src/TerraScale.TerraBase/Program.cs terrabase
-expect tests/TerraScale.TerraBase.Slow/Platform/LifecycleTests.cs terrabase
+expect src/TerraBase/Program.cs terrabase
+expect tests/TerraBase.Slow/Platform/LifecycleTests.cs terrabase
 expect scripts/terrabase/ci/release.sh terrabase
 expect benchmark/internal/benchmark/engine.go benchmark
 expect benchmark/clients/dotnet/Makefile benchmark

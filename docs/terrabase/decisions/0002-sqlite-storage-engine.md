@@ -1,7 +1,7 @@
 # 0002: SQLite storage engine behind engine interfaces
 
 - Status: accepted (human decision, 2026-10-04)
-- Scope: `src/TerraScale.TerraBase/Engine`
+- Scope: `src/TerraBase/Engine`
 
 ## Context
 

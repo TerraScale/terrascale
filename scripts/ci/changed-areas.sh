@@ -24,7 +24,7 @@ areas_for() {
       printf '%s\n' libs auth terrabase ;;
     src/TerraScale.Auth*/* | tests/TerraScale.Auth.*/* | docs/auth/* | scripts/auth/* | .containerignore)
       printf '%s\n' auth ;;
-    src/TerraScale.TerraBase*/* | tests/TerraScale.TerraBase.*/* | scripts/terrabase/*)
+    src/TerraBase*/* | tests/TerraBase.*/* | scripts/terrabase/*)
       printf '%s\n' terrabase ;;
     benchmark/*) printf '%s\n' benchmark ;;
   esac

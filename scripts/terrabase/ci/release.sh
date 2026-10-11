@@ -44,7 +44,7 @@ draft() {
     [[ -s $dist/$name ]] || fail "missing staged release executable: $dist/$name"
   done
   [[ $(git rev-parse HEAD) == "$GITHUB_SHA" ]] || fail "checkout is not the event revision $GITHUB_SHA"
-  version=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' src/TerraScale.TerraBase/TerraScale.TerraBase.csproj)
+  version=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' src/TerraBase/TerraBase.csproj)
 
   [[ $GITHUB_REF == refs/heads/main ]] || fail "no release for $GITHUB_REF"
   tag="ci-$GITHUB_SHA-run-$GITHUB_RUN_ID"

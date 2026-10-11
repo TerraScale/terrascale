@@ -1,7 +1,7 @@
 # 0004: Document API v1 on SQLite
 
 - Status: proposed (needs human confirmation of the divergences below)
-- Scope: `src/TerraScale.TerraBase/Features/Documents`, `src/TerraScale.TerraBase/Engine`
+- Scope: `src/TerraBase/Features/Documents`, `src/TerraBase/Engine`
 - Contracts: `terrabase-rust/docs/api-v1.md`, `query-v1.md`, `control-plane-v1.md`
 
 ## Decision

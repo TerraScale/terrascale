@@ -22,7 +22,7 @@ test "$#" -eq 2 || usage
 area=$1 log=$2
 case $area in
   auth) label=auth; tests=tests/TerraScale.Auth.Slow ;;
-  terrabase) label=terrabase; tests=tests/TerraScale.TerraBase.Slow ;;
+  terrabase) label=terrabase; tests=tests/TerraBase.Slow ;;
   *) usage ;;
 esac
 : "${GITHUB_SERVER_URL:?}" "${GITHUB_REPOSITORY:?}" "${GITHUB_RUN_ID:?}" "${GITHUB_SHA:?}"

@@ -151,9 +151,9 @@ export FORGEJO_TOKEN=check-token GITHUB_REPOSITORY=TerraScale/terrascale GITHUB_
 # main with two commits; the project file carries the version the tag check used to read.
 repo=$work/repo
 git init -q -b main "$repo"
-mkdir -p "$repo/src/TerraScale.TerraBase" "$repo/dist"
+mkdir -p "$repo/src/TerraBase" "$repo/dist"
 echo '<Project><PropertyGroup><Version>1.2.3</Version></PropertyGroup></Project>' \
-  > "$repo/src/TerraScale.TerraBase/TerraScale.TerraBase.csproj"
+  > "$repo/src/TerraBase/TerraBase.csproj"
 echo dist/ > "$repo/.gitignore"
 commit() { git -C "$repo" add -A && git -C "$repo" commit -q --allow-empty -m "$1"; }
 commit 'Add A'

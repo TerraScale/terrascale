@@ -82,7 +82,7 @@ internal sealed class RealAuthFixture : IAsyncDisposable
         {
             acquisitionDeadline.CancelAfter(TimeSpan.FromMinutes(5));
             await using var acquisition = AuthFixtureProcess.Start("bash", _directory,
-                [Path.Combine(repository.FullName, "tests/TerraScale.TerraBase.Slow/Management/acquire-auth-fixture.sh"), artifacts],
+                [Path.Combine(repository.FullName, "tests/TerraBase.Slow/Management/acquire-auth-fixture.sh"), artifacts],
                 Environment.GetEnvironmentVariable("FORGEJO_TOKEN") is { } downloadToken
                     ? new Dictionary<string, string> { ["FORGEJO_TOKEN"] = downloadToken } : null);
             await acquisition.CompleteAsync(acquisitionDeadline.Token);

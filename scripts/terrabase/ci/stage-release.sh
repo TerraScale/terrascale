@@ -55,7 +55,7 @@ status=$?
 set -e
 [[ $status == 2 ]] || { echo "an unknown setting exited with $status, expected 2" >&2; exit 1; }
 
-expected_version=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' src/TerraScale.TerraBase/TerraScale.TerraBase.csproj)
+expected_version=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' src/TerraBase/TerraBase.csproj)
 port=$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
 mkdir -p "$work/data"
 "$staged" --region=ci --admin-port="$port" --data-directory="$work/data" >"$work/smoke.log" 2>&1 &
