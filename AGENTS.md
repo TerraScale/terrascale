@@ -20,10 +20,10 @@ This repository contains the TerraScale public landing site.
 
 ## General
 
-- Keep changes focused on the assigned issue; avoid unrelated rewrites.
+- Keep changes focused on the assigned task; avoid unrelated rewrites.
 - Follow repository conventions and reuse established components and dependencies.
 - Never add AI attribution, generated-by notices, or co-author trailers to commits, PR titles, or PR descriptions.
-- Never invent issue IDs, URLs, commands, test results, or product claims.
+- Never invent URLs, commands, test results, or product claims.
 - Preserve unrelated local changes. Never discard, overwrite, or commit another contributor’s work.
 
 ## Stack
@@ -72,7 +72,7 @@ of this public repository.
 - Keep routes, components, styles, and utilities organized by responsibility.
 - Prefer small, reusable Svelte components over duplicated markup or unnecessary abstractions.
 - Use the shared Tailwind theme instead of duplicating design tokens.
-- Preserve existing branding, typography, spacing, and interaction patterns unless the issue explicitly changes them.
+- Preserve existing branding, typography, spacing, and interaction patterns unless the task explicitly changes them.
 - Reuse committed brand assets; do not create inconsistent logo variants.
 - Support mobile and desktop layouts without unintended horizontal overflow.
 - Use semantic HTML, accessible controls, keyboard navigation, visible focus states, and appropriate image alternatives.
@@ -125,20 +125,7 @@ Before pushing, opening or updating a PR, or merging:
 - Check for broken links, missing assets, hydration errors, and browser console errors.
 - Validate the generated production site using the repository’s static-preview workflow; a working development server alone is insufficient.
 
-## Issues and Git
-
-### Issue Required
-
-- Track work in **Ku**, not Forgejo Issues.
-- A valid Ku issue URL is required at the start of a development task.
-- If none is supplied, ask for it before implementation.
-- Extract and normalize the issue ID from the supplied URL.
-
-Example:
-
-`https://ku.mariogk.com/terrascale/issue/DSH-96` → `DSH-96`
-
-Never invent an issue ID, push task changes, or open a PR without the corresponding issue.
+## Git
 
 ### Branches and Worktrees
 
@@ -163,7 +150,6 @@ Remove task worktrees only when no longer needed and after confirming they conta
 
 - Use `git` for repository operations, including fetching, branching, worktree management, committing, and pushing.
 - Use the **`fj` CLI** for Forgejo operations, including PR creation, reviewer requests, and status checks.
-- Use Ku tooling for issue lookup and management.
 - Inspect available CLI help when syntax is uncertain; do not invent commands.
 
 ## Pull Requests
@@ -171,15 +157,9 @@ Remove task worktrees only when no longer needed and after confirming they conta
 ### Requirements
 
 - Open a PR into **`main`** when the work is ready for review and all required local checks pass.
-- Use the title format **`{ISSUE_ID}: {title}`**.
-
-Example:
-
-`DSH-96: Improve landing page navigation`
-
-- Include the Ku issue link, a concise change summary, and the validation performed.
+- Include a concise change summary and the validation performed.
 - Request reviews from **`mariogk`** and **`terrascale-bot`**, excluding whichever account authored the PR.
-- Keep the PR focused on its issue.
+- Keep the PR focused on its task.
 - Do not merge while required checks are pending or failing.
 
 ### Visual Changes
