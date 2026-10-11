@@ -116,7 +116,6 @@ public sealed class EmailTests
         await using var server = await StartAsync(logs, smtpPort: null, settings: values =>
         {
             values.Remove("environment");
-            FakeOciVault.BindRefusing(values);
         });
 
         await Assert.That(logs.Text).Contains("TS_AUTH_SMTP_* is not configured: email is logged, not delivered");

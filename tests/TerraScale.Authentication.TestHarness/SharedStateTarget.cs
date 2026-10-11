@@ -9,7 +9,7 @@ namespace TerraScale.Authentication.Tests;
 
 /// <summary>
 /// A fresh tenant database on the real TerraBase fixture, provisioned with the infrastructure
-/// collections and the attempt-limit collection, and its OCI Vault. Several servers bound to one
+/// collections and the attempt-limit collection. Several servers bound to one
 /// target are replicas of one deployment.
 /// </summary>
 public sealed class SharedStateTarget
@@ -26,9 +26,6 @@ public sealed class SharedStateTarget
 
     /// <summary>The database every bound server stores in.</summary>
     public TerraBaseDatabase Database { get; }
-
-    /// <summary>The OCI Vault holding every bound server's signing key rings.</summary>
-    public FakeOciVault Vault => FakeOciVault.For(this.tenant.Project.Id);
 
     /// <summary>Creates and provisions a database for one test.</summary>
     public static async Task<SharedStateTarget> CreateAsync(TerraBaseFixture fixture)
@@ -49,7 +46,6 @@ public sealed class SharedStateTarget
     {
         ArgumentNullException.ThrowIfNull(values);
         values["database"] = $"{this.tenant.Project.Id}/auth";
-        this.Vault.Bind(values);
     }
 
     /// <summary>Points the server's storage at this database, through <paramref name="apiKey"/> instead of the tenant's own key when given.</summary>

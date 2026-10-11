@@ -5,11 +5,12 @@ claim that the current runtime or deployed fleet already implements it.
 
 - Every feature is always available and every region serves automatically.
   There are no feature flags, region activation steps, deploy toggles or kill switches.
-- Membership in the private NetBird network admits a node automatically. The
-  node discovers all regions and infers its own region from where it runs.
-- OCI Vault automatically provisions, delivers and configures every first-party
-  production secret. Vendor-issued credentials are stored once in Vault and
-  picked up automatically; operators do not copy production credentials.
+- A node joins Fly's private network automatically, discovers every region
+  through `.internal` DNS and infers its own region from `FLY_REGION`.
+- Fly secrets deliver every production secret (the master key included);
+  ts-auth generates its signing keys and stores them in TerraBase sealed under
+  that master key. Vendor-issued credentials are set once with
+  `fly secrets set`; operators do not copy production credentials.
 - Each value has one correct setting in code. Production exposes no tuning
   knobs. Fakes, demo stores and authentication bypasses belong only in test
   code and test binaries.

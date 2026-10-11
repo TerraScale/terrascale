@@ -78,7 +78,6 @@ public static class App
         builder.Services.AddSingleton<ReadinessProbe>();
         builder.Services.AddHostedService(services => services.GetRequiredService<ReadinessProbe>());
         builder.Services.AddSingleton<IDocumentStore, TerraBaseDocumentStore>();
-        builder.Services.AddSingleton<ISigningKeyVault>(_ => options.SigningKeyVault is { } vault ? new OciSigningKeyVault(vault) : new UnconfiguredSigningKeyVault());
         builder.Services.AddSingleton<KeyRing>();
         builder.Services.AddSingleton<SigningKeyRotation>();
         builder.Services.AddHostedService(provider => provider.GetRequiredService<SigningKeyRotation>());
