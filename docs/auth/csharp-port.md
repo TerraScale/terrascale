@@ -40,11 +40,8 @@ pinned in `.github/workflows/ci.yml` next to the repository and passes it to the
 Docker build as the `ts-dotnet` context. TerraScale.Endpoints and TerraScale.Logging are NuGet packages.
 
 `.github/workflows/ci.yml` pins ts-dotnet
-to `a4ff285c051e63e72cb01c4a94173c91da1dd69a` (SDK merge #28). This adds the
-TS-754 NUlid generator and canonical validator while preserving the Documents
-and Management APIs. It is the helper foundation: auth's persisted IDs and
-storage protocol have not changed. The ULID wire cutover awaits TerraBase's
-landed storage contract and compatible release. That revision's
+to `619fa979673635663cba98be5e25713806d11cd5` (main after #1: plain HTTP to
+TerraBase's internal listener). That revision's
 `src/TerraScale.DotNet.Testing/TerraBaseRelease.cs` pins the Linux x64 server:
 
 | Pin | Value |

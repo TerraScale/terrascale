@@ -137,10 +137,8 @@ and TerraScale.Logging come from the Forgejo NuGet feed (see `nuget.config`).
 ts-dotnet is looked up at `../ts-dotnet`, or under
 `~/Projects/TerraScale/`; pass `-p:TerraScaleRoot=<dir>` or set the
 `TerraScaleRoot` environment variable to use another location. CI pins
-ts-dotnet to SDK merge #28, `a4ff285c051e63e72cb01c4a94173c91da1dd69a`,
-which supplies the TS-754 ULID generator and canonical validator. The storage
-wire cutover still requires a compatible TerraBase release; this helper pin
-does not change persisted IDs or reset data.
+ts-dotnet to `619fa979673635663cba98be5e25713806d11cd5` (main after #1: plain
+HTTP to TerraBase's internal listener).
 Storage integration tests require the real SDK-pinned Linux x64 TerraBase
 binary locally and in CI; unavailable prerequisites fail instead of skipping.
 See [the port guide](csharp-port.md) for the binary tag, SHA-256 and
