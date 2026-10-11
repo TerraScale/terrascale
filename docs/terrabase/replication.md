@@ -8,15 +8,16 @@ format and open questions: [0007](decisions/0007-lz4-application-envelope-replic
 
 - Document puts and deletes committed on client databases: one change group per write
   transaction, applied atomically on the receiver.
-- Full mesh: every node sends the groups it originated to every address in `peer-addresses`.
+- Full mesh: every node sends the groups it originated to every other machine of its region that Fly's DNS listed when
+  it started ([fly.md](fly.md)).
 - Every document is a register ([anna-core](design/anna-core.md), Documents): a local write mints a dot under the
   member's replica id, stamps it with the member's hybrid clock and replaces every value the member knows. A receiver
   joins each delta into the stored register, so delivery order, duplicates and retries cannot change the result. Reads
   take the register's last-writer-wins write (the greatest stamp, then replica id), whose stamp is the document's
   version; concurrent writes stay in the register as siblings until a write replaces them. A dot that arrives with a
   second value (a replica that minted it twice) fails the group instead of losing either write.
-- Every write transaction on a client database is captured, whether or not `peer-addresses` is
-  set, so the change log has no holes when peers are added, removed or the node restarts. Nothing
+- Every write transaction on a client database is captured, whether or not the node has
+  peers, so the change log has no holes when peers are added, removed or the node restarts. Nothing
   truncates the log.
 - A database missing on the receiver is created under the exact organization, project and database ULIDs in the stream. Display names never address peer storage.
 - A stream's origin is the member's replica id (little-endian) and the last 8 bytes of the database file's incarnation
@@ -46,8 +47,8 @@ the operation index. Shapes embed admitted JSON without reparsing it.
 
 ## Merkle anti-entropy (TS-678)
 
-Every member with a peer listener reconciles registered client databases with the current cell members and
-explicit `peer-addresses`, waiting 5 seconds after each completed pass. A slow or failed pass still
+Every member with a peer listener reconciles registered client databases with the current cell members,
+waiting 5 seconds after each completed pass. A slow or failed pass still
 leaves this idle gap; unchanged journal heads cannot reveal physical state corruption.
 Database-wide placement currently has one shard (zero).
 Invalid membership peer addresses are logged without their values and skipped; a failed peer does
@@ -125,9 +126,8 @@ checks apply.
 
 ## Catalog
 
-The current runtime uses one catalog primary and followers identified by the
-legacy `catalog-primary` input. Automatic member and authority discovery is
-required by TS-773; there is no per-member production setup step. Design, limits and failover: [0009](decisions/0009-catalog-replication.md).
+Machines of the app's primary region are catalog primaries, and every other machine follows the first one Fly's DNS
+lists there ([fly.md](fly.md)); there is no per-member setup step. Design, limits and failover: [0009](decisions/0009-catalog-replication.md).
 
 - Only the primary writes the catalog. A follower forwards every authenticated Management API request on its client
   listener (reads too), and a data-plane creation of a database it does not have, to the primary over
@@ -158,10 +158,8 @@ required by TS-773; there is no per-member production setup step. Design, limits
 - A follower takes a snapshot only into an empty catalog or one of the primary's origin; it never replaces a
   catalog of another origin.
 
-Membership and the catalog authority must be discovered automatically. The
-existing `peers`, `peer-addresses` and `catalog-primary` inputs are legacy
-implementation dependencies; their manual profile recipes are retired. A
-mismatched identity must still fail validation rather than adopt another catalog.
+Membership and the catalog authority come from Fly's DNS. A mismatched identity must still fail validation rather
+than adopt another catalog.
 
 Metrics on the follower:
 
@@ -365,7 +363,7 @@ New Prometheus instruments:
 | `terrabase_replication_convergence_seconds{peer,database}` | Histogram of completed catch-ups, ending when a valid Welcome or DurableAck covers the latest local head |
 | `terrabase_replication_observability_omitted` | Database incarnations excluded from bounded detail; aggregate and per-peer lag still include them |
 
-`peer` is the zero-based position in configured `peer-addresses`. `database` is a
+`peer` is the zero-based position among the peers the sender found at startup. `database` is a
 reusable numeric slot from 0 through 127, assigned to the first 128 observed local
 database incarnations. The endpoint maps slots to organization, project, database
 and incarnation IDs. Tenant names, IDs, origins and peer URLs never become metric

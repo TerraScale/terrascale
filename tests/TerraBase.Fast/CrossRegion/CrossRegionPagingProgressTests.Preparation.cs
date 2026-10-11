@@ -778,7 +778,7 @@ public sealed partial class CrossRegionPagingProgressTests
         }, services =>
         {
             services.AddSingleton(bus);
-            services.AddSingleton<IMemberStore>(new FakeMemberStore(frozen));
+            services.AddSingleton<IMemberDirectory>(new FakeMemberStore());
             services.AddSingleton<DatabaseLifecycleCheckpoint>(steps.Record);
             if (afterOpened is not null)
             {

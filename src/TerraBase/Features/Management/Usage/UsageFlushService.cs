@@ -43,7 +43,7 @@ internal sealed class UsageFlushService(
     public override async Task StopAsync(CancellationToken cancellationToken)
     {
         await base.StopAsync(cancellationToken).ConfigureAwait(false);
-        if (options.CatalogPrimary is not null)
+        if (options.CatalogFollower)
         {
             // Each backlog gets the shutdown deadline even when the other takes all of it.
             await Task.WhenAll(ShutdownFlushAsync(DrainAsync, cancellationToken), ShutdownFlushAsync(DrainShapesAsync, cancellationToken))
@@ -141,7 +141,7 @@ internal sealed class UsageFlushService(
         }
     }
 
-    private Func<CancellationToken, ValueTask>[] Flushes => options.CatalogPrimary is null
+    private Func<CancellationToken, ValueTask>[] Flushes => !options.CatalogFollower
         ? [meter.FlushAsync, recorder.FlushAsync, shapes.FlushAsync]
         : [SendOnceAsync, SendShapesOnceAsync];
 
@@ -282,7 +282,7 @@ internal sealed class UsageFlushService(
         {
             Format = QueryShapeForwarding.Format,
             Epoch = _epoch,
-            Sender = options.NodeName,
+            Sender = options.MachineId,
             Sequence = (ulong)sequence,
             Envelope = ByteString.CopyFrom(envelope.Span),
         }, cancellationToken);
@@ -291,7 +291,7 @@ internal sealed class UsageFlushService(
     // Counts past MaxCount, which no real hour reaches, are not sent: the primary would refuse the whole batch for good.
     private Task<AddUsageResult> SendAsync(long sequence, KeyValuePair<UsageKey, OpCounts>[] batch, CancellationToken cancellationToken)
     {
-        var request = new UsageBatch { Protocol = UsageReceiver.Protocol, Epoch = _epoch, Sequence = (ulong)sequence, Sender = options.NodeName };
+        var request = new UsageBatch { Protocol = UsageReceiver.Protocol, Epoch = _epoch, Sequence = (ulong)sequence, Sender = options.MachineId };
         request.Counts.AddRange(batch.Select(entry => new UsageCount
         {
             OrganizationId = entry.Key.Database.OrganizationId,

@@ -54,7 +54,7 @@ internal sealed class StatsService(DatabaseStats stats, TimeProvider time, Stats
         }
 
         _serving ??= ServeAsync(bus, cell, stoppingToken);
-        var rollup = StatsRollup.Build(window, cell, options.Region, options.NodeName, _epoch, ++_seq);
+        var rollup = StatsRollup.Build(window, cell, options.Region, options.MachineId, _epoch, ++_seq);
         var result = "published";
         try
         {
@@ -101,7 +101,7 @@ internal sealed class StatsService(DatabaseStats stats, TimeProvider time, Stats
             var (databases, next) = request.Database is { } database
                 ? await StatsRollup.DatabaseAsync(engine, window, database, cancellationToken).ConfigureAwait(false)
                 : StatsRollup.Page(window, request.After);
-            var reply = new StatsDetailV1(1, cell, options.Region, options.NodeName, _epoch, window?.At ?? time.GetUtcNow(),
+            var reply = new StatsDetailV1(1, cell, options.Region, options.MachineId, _epoch, window?.At ?? time.GetUtcNow(),
                 StatsRollup.Milliseconds(window?.Duration ?? Window), databases, next);
             return JsonSerializer.SerializeToUtf8Bytes(reply, TerraBaseJsonContext.Default.StatsDetailV1);
         }

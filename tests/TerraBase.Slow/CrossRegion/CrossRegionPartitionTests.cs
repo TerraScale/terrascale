@@ -45,8 +45,8 @@ public sealed class CrossRegionPartitionTests
         };
         var stores = new Dictionary<string, FakeMemberStore>
         {
-            ["gru"] = new(TimeProvider.System),
-            ["sfo"] = new(TimeProvider.System),
+            ["gru"] = new(),
+            ["sfo"] = new(),
         };
         try
         {
@@ -294,7 +294,7 @@ public sealed class CrossRegionPartitionTests
             }, services =>
             {
                 services.AddSingleton(network.Join(Cell, Name));
-                services.AddSingleton<IMemberStore>(store);
+                services.AddSingleton<IMemberDirectory>(store);
             }, managementCredential: true);
         }
 

@@ -343,7 +343,7 @@ public sealed partial class CrossRegionPagingProgressTests
         {
             TerraBaseTestServer.EnableConnectionDiagnostics(services);
             services.AddSingleton(bus ?? network.Join(cell, node));
-            services.AddSingleton<IMemberStore>(new FakeMemberStore(TimeProvider.System));
+            services.AddSingleton<IMemberDirectory>(new FakeMemberStore());
             if (clock is not null)
             {
                 var registration = services.Single(service => service.ImplementationType == typeof(WanPuller));

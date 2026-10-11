@@ -684,7 +684,7 @@ public sealed class CrossRegionDiscoveryBudgetTests
         }, services =>
         {
             services.AddSingleton(bus ?? network.Join(cell, node));
-            services.AddSingleton<IMemberStore>(new FakeMemberStore(TimeProvider.System));
+            services.AddSingleton<IMemberDirectory>(new FakeMemberStore());
             if (clock is not null)
             {
                 // Keep every application clock real except the WAN puller's budget, interval, and staleness.

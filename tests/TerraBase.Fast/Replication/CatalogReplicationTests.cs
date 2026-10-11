@@ -112,10 +112,10 @@ public sealed class CatalogReplicationTests
         await using (primary)
         await using (follower)
         {
-            var (catalog, replica) = primary.Services.GetRequiredService<TerraBase.Configuration.TerraBaseOptions>().CatalogPrimary is null
+            var (catalog, replica) = !primary.Services.GetRequiredService<TerraBase.Configuration.TerraBaseOptions>().CatalogFollower
                 ? (primary, follower)
                 : (follower, primary);
-            await Assert.That(replica.Services.GetRequiredService<TerraBase.Configuration.TerraBaseOptions>().CatalogPrimary).IsNotNull();
+            await Assert.That(replica.Services.GetRequiredService<TerraBase.Configuration.TerraBaseOptions>().CatalogFollower).IsTrue();
             var tenant = await CatalogTenant.CreateAsync(catalog, "orders");
             await ReadyAsync(replica);
 

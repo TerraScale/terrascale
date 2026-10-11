@@ -151,7 +151,7 @@ internal sealed partial class QueryShapeRecorder(SystemCatalog catalog, TimeProv
                 }
 
                 var stats = saved.ToDictionary(stat => Key(stat.Collection, stat.Id), StringComparer.Ordinal);
-                foreach (var pending in options.CatalogPrimary is null ? Snapshot(owner) : [])
+                foreach (var pending in !options.CatalogFollower ? Snapshot(owner) : [])
                 {
                     var key = Key(pending.Collection, pending.Id);
                     if (stats.TryGetValue(key, out var previous))

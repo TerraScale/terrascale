@@ -226,11 +226,11 @@ public sealed class ContinuousBackupTests
     }
 
     [Test]
-    public async Task A_shipper_cut_off_from_nats_stops_before_its_lease_expires_and_another_member_takes_over()
+    public async Task A_shipper_cut_off_from_the_dns_stops_and_another_member_takes_over_once_fly_drops_it()
     {
         using var oci = new FakeOci();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
-        var store = new FakeMemberStore(time);
+        var store = new FakeMemberStore();
         var database = new TenantContext(EntityIds.New().ToString(), PlanTier.Hobby, EntityIds.New().ToString(), EntityIds.New().ToString());
         var file = $"v1/{database.OrganizationId}/{database.ProjectId}/{database.DatabaseId}";
         await using var a = await MemberAsync("member-a");
@@ -251,12 +251,14 @@ public sealed class ContinuousBackupTests
         var first = Status(members[holder], file);
         var otherFirst = Status(members[other], file);
 
-        // Cut the holder off: it stops shipping once its lease could be stale, before its key expires for the others.
+        // Cut the holder off the DNS: it stops shipping once its lease could be stale, while the other still lists it.
         store.Partition(holder);
         time.Advance(TimeSpan.FromSeconds(11));
         await PassAsync();
         var stopped = Status(members[holder], file);
         var waiting = Status(members[other], file);
+        // Fly stops the cut-off machine and drops it from the DNS: the other takes over at its next read.
+        store.Leave(holder);
         time.Advance(TimeSpan.FromSeconds(5));
         await PassAsync();
         var taken = Status(members[other], file);
@@ -283,7 +285,7 @@ public sealed class ContinuousBackupTests
             {
                 ManualShipping(oci, services);
                 services.AddSingleton<TimeProvider>(time);
-                services.AddSingleton<IMemberStore>(store);
+                services.AddSingleton<IMemberDirectory>(store);
             });
             Directory.CreateDirectory(Path.Combine(member.DataDirectory, ".backup"));
             return member;

@@ -17,9 +17,7 @@ The 2026-10-09 v1 rule edits this contract in place: the route is
 `/v1/admin/node/pressure` and `schema` is always `1`. The old unversioned route
 returns 404. Consumers requiring schema 2 or the old route must adopt this
 contract before consuming the release; there is no compatibility alias.
-`instance_id` comes only from `--instance-id` / `TERRABASE_INSTANCE_ID`; absent
-configuration is explicit null, never a machine-name substitute. Accepted IDs
-are 1..128 ASCII letters, digits, dots, underscores, colons, pluses and hyphens.
+`node` is the Fly machine ID (`FLY_MACHINE_ID`, see [fly.md](fly.md)).
 
 `local_ready` is sampled using exactly `/readyz`'s storage, catalog
 and shutdown checks; it is null before the first readiness sample. It does not
@@ -67,7 +65,7 @@ TS-513 and is not implemented here.
 
 | Fields | Meaning |
 | --- | --- |
-| `schema`, `node`, `region`, `process_id`, `release` | Schema 1; operator node name (machine name by default); configured TS-499 region; plain ULID for each host/process incarnation; full assembly informational version including build revision. Node identity is descriptive, not membership evidence. |
+| `schema`, `node`, `region`, `process_id`, `release` | Schema 1; Fly machine ID; Fly region; plain ULID for each host/process incarnation; full assembly informational version including build revision. Node identity is descriptive, not membership evidence. |
 | `sampled_at`, `sample_window_seconds` | UTC sample completion and elapsed monotonic seconds for its counters. CPU and HTTP counters are sampled every second; a delayed sampler reports its actual elapsed interval. |
 | `cpu_util` | Process CPU seconds divided by interval seconds and `Environment.ProcessorCount`, capped at one. Null without a baseline or when process measurement fails. The runtime's effective processor count may round fractional container quotas. |
 | `memory_used_bytes`, `memory_budget_bytes`, `mem_util` | Process resident working set; telemetry budget; used/budget capped at one. Used bytes remain uncapped and can exceed the budget. Process failures yield null used/utilization. This budget is a denominator, not a hard memory-admission guarantee. |
@@ -115,7 +113,4 @@ caching can add its own scrape delay.
 Node and cloud instance identity must be inferred automatically from the running
 node. Memory limits have one correct setting in code.
 
-The current `--node-name`, `--instance-id` and `--memory-budget` inputs remain a
-TS-773 gap. Today an absent instance ID is explicit null, not certified
-membership. Preserve that unknown value and all destructive autoscaling holds
-until the runtime supplies verified evidence.
+The node is the Fly machine ([fly.md](fly.md)). The `--memory-budget` input remains a TS-773 gap.

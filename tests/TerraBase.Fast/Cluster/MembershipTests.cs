@@ -8,8 +8,8 @@ using TerraBase.Testing;
 
 namespace TerraBase.Fast.Cluster;
 
-// TS-647 step 3: a database's primary on the ring of live members ships it while it holds its member lease, and a
-// handover never lets two members ship the same database at once.
+// TS-647 step 3: a database's primary on the ring of the machines Fly's DNS lists ships it while it holds its member lease,
+// and a handover never lets two members ship the same database at once.
 public sealed class MembershipTests
 {
     private const int Databases = 24;
@@ -18,7 +18,7 @@ public sealed class MembershipTests
     public async Task Every_database_has_at_most_one_shipper_through_a_join_a_cut_off_and_a_shutdown()
     {
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
-        var store = new FakeMemberStore(time);
+        var store = new FakeMemberStore();
         var databases = Enumerable.Range(0, Databases)
             .Select(_ => new TenantContext(EntityIds.New().ToString(), PlanTier.Hobby, EntityIds.New().ToString(), EntityIds.New().ToString())).ToArray();
         var members = new Dictionary<string, TerraBaseTestServer>(StringComparer.Ordinal);
@@ -37,14 +37,18 @@ public sealed class MembershipTests
             await Assert.That(joined.All(shippers => shippers.Count == 1)).IsTrue();
             await Assert.That(joined.Count(shippers => shippers.Contains("member-c"))).IsGreaterThan(0);
 
-            // member-b loses NATS: it stops before its key expires, and its databases move to the others.
+            // member-b cannot read the DNS: it stops shipping once its fence passes, while the others still list it.
             store.Partition("member-b");
             var cutOff = await StepsAsync(10);
-            await Assert.That(cutOff.All(shippers => shippers.Count == 1 && !shippers.Contains("member-b"))).IsTrue();
+            await Assert.That(cutOff.All(shippers => shippers.Count <= 1 && !shippers.Contains("member-b"))).IsTrue();
 
-            // member-c shuts down: it leaves the view, and member-a takes its databases over at the next heartbeat.
-            await members["member-c"].DisposeAsync();
-            _ = members.Remove("member-c");
+            // member-b and member-c stop: Fly drops them from the DNS, and member-a takes every database over at the next heartbeat.
+            foreach (var name in (string[])["member-b", "member-c"])
+            {
+                await members[name].DisposeAsync();
+                _ = members.Remove(name);
+            }
+
             var left = await StepsAsync(1);
             await Assert.That(left.All(shippers => shippers.SetEquals(["member-a"]))).IsTrue();
         }
@@ -62,7 +66,7 @@ public sealed class MembershipTests
             List<HashSet<string>> shippers = [];
             for (var step = 0; step < steps; step++)
             {
-                time.Advance(StoreMembership.Heartbeat);
+                time.Advance(DirectoryMembership.Heartbeat);
                 shippers = [.. databases.Select(_ => new HashSet<string>(StringComparer.Ordinal))];
                 foreach (var (name, member) in members)
                 {
@@ -87,7 +91,7 @@ public sealed class MembershipTests
             return TerraBaseTestServer.StartAsync(settings => settings["node-name"] = node, services =>
             {
                 services.AddSingleton<TimeProvider>(time);
-                services.AddSingleton<IMemberStore>(store);
+                services.AddSingleton<IMemberDirectory>(store);
             });
         }
     }

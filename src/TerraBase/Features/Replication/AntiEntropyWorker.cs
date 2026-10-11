@@ -52,7 +52,7 @@ internal sealed class AntiEntropyWorker(
     private async Task ReconcileAsync(CancellationToken stoppingToken)
     {
         var view = await membership.RefreshAsync(stoppingToken).ConfigureAwait(false);
-        var addresses = new HashSet<Uri>(options.PeerAddresses);
+        var addresses = new HashSet<Uri>();
         foreach (var member in view.Members)
         {
             if (member.Name == membership.Self.Name || string.IsNullOrEmpty(member.PeerAddress))

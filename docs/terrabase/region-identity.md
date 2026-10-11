@@ -2,15 +2,9 @@
 
 ## Node identity
 
-The required contract infers the node's region from its execution location and
-matches that identity to discovered Atlas regions. Private NetBird membership
-admits the node; there is no manual region setting or enable step.
-
-**Current gap (TS-773):** the runtime still reads `TERRABASE_REGION`/`--region`
-and requires a valid value outside Development. Its bounded syntax is a
-lowercase ASCII letter followed by letters, digits or hyphens, at most 63
-characters, without a trailing hyphen. Automatic inference is not implemented
-by this documentation change.
+The node's region is the Fly region it runs in (`FLY_REGION`, see [fly.md](fly.md)); there is no region setting or
+enable step. Its bounded syntax is a lowercase ASCII letter followed by letters, digits or hyphens, at most 63
+characters, without a trailing hyphen; a malformed value stops the process.
 
 Region identity does not grant database placement, replication rights or a
 residency exemption. Peer Hello/Welcome still validates reported regions;

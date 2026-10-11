@@ -69,7 +69,7 @@ public static class QosExtensions
 
         context.Features.Get<LookupMemory>()?.Reservation.Dispose();
         if (resolved is Unavailable error
-            && !(context.RequestServices.GetRequiredService<TerraBaseOptions>().CatalogPrimary is not null
+            && !(context.RequestServices.GetRequiredService<TerraBaseOptions>().CatalogFollower
                 && ServedByCatalogPrimary.Always(context.GetEndpoint())))
         {
             await ErrorResponse.From(error).ExecuteAsync(context).ConfigureAwait(false);

@@ -14,50 +14,32 @@ public sealed class RegionTests
     private const string Database = "/v1/projects/{project}/databases/{database}";
 
     [Test]
-    [Arguments("", "development", "Development")]
-    [Arguments("a", "a", "Development")]
-    [Arguments("gru-1", "gru-1", "Production")]
-    [Arguments("a--1", "a--1", "Development")]
-    [Arguments("abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijk", "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijk", "Production")]
-    public async Task Health_reports_the_configured_region_or_the_development_default(string configured, string expected, string environment)
+    [Arguments("a")]
+    [Arguments("gru")]
+    [Arguments("a--1")]
+    [Arguments("abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijk")]
+    public async Task Health_reports_the_machine_region(string region)
     {
-        await using var server = await TerraBaseTestServer.StartAsync(settings =>
-        {
-            if (configured.Length == 0)
-            {
-                settings.Remove("region");
-            }
-            else
-            {
-                settings["region"] = configured;
-            }
-        }, environmentName: environment);
+        await using var server = await TerraBaseTestServer.StartAsync(settings => settings["region"] = region, environmentName: "Production");
         using var response = await server.Client.GetAsync(new Uri("/healthz", UriKind.Relative));
         var body = await response.Content.ReadFromJsonAsync<JsonElement>();
 
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(body.GetProperty("region").GetString()).IsEqualTo(expected);
+        await Assert.That(body.GetProperty("region").GetString()).IsEqualTo(region);
         await Assert.That(response.Headers.Contains(RegionHeader)).IsFalse();
     }
 
     [Test]
-    [Arguments("Production")]
-    [Arguments("Staging")]
-    public async Task A_region_is_required_outside_development(string environment) =>
-        await AssertStartupRefusedAsync(environment, "", fromEnvironment: false);
-
-    [Test]
-    [Arguments("Gru-1", false)]
-    [Arguments("1gru", false)]
-    [Arguments("-gru", false)]
-    [Arguments("gru-", false)]
-    [Arguments("gru_1", false)]
-    [Arguments("grú", false)]
-    [Arguments("gru 1", false)]
-    [Arguments("abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijkl", false)]
-    [Arguments("Gru-1", true)]
-    public async Task Invalid_regions_stop_the_real_process_without_echoing_values(string region, bool fromEnvironment) =>
-        await AssertStartupRefusedAsync("Development", region, fromEnvironment);
+    [Arguments("Gru-1")]
+    [Arguments("1gru")]
+    [Arguments("-gru")]
+    [Arguments("gru-")]
+    [Arguments("gru_1")]
+    [Arguments("grú")]
+    [Arguments("gru 1")]
+    [Arguments("abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijkl")]
+    public async Task Invalid_fly_regions_stop_the_real_process_without_echoing_values(string region) =>
+        await AssertStartupRefusedAsync(region);
 
     [Test]
     public async Task Every_client_response_keeps_its_region_including_cleared_errors()
@@ -221,7 +203,7 @@ public sealed class RegionTests
         }
     }
 
-    private static async Task AssertStartupRefusedAsync(string environment, string region, bool fromEnvironment)
+    private static async Task AssertStartupRefusedAsync(string region)
     {
         var directory = Directory.CreateTempSubdirectory("terrabase-region-").FullName;
         try
@@ -233,24 +215,20 @@ public sealed class RegionTests
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
             };
-            start.Environment["DOTNET_ENVIRONMENT"] = environment;
-            start.Environment["ASPNETCORE_ENVIRONMENT"] = environment;
-            // Region validation must precede host construction, even with a malformed framework setting.
+            start.Environment["DOTNET_ENVIRONMENT"] = "Production";
+            start.Environment["ASPNETCORE_ENVIRONMENT"] = "Production";
+            // Identity validation must precede host construction, even with a malformed framework setting.
             start.Environment["DOTNET_HOSTBUILDER__RELOADCONFIGONCHANGE"] = "invalid-test-value";
-            start.Environment["TERRABASE_REGION"] = fromEnvironment ? region : "gru-1";
+            start.Environment["FLY_REGION"] = region;
+            start.Environment["FLY_MACHINE_ID"] = "d894655b3ed118";
+            start.Environment["FLY_APP_NAME"] = "ts-terrabase";
             start.ArgumentList.Add(Path.Combine(AppContext.BaseDirectory, typeof(Program).Assembly.GetName().Name + ".dll"));
             foreach (var name in TerraBaseOptions.SettingNames)
             {
-                if (name == "region" && fromEnvironment)
-                {
-                    continue;
-                }
-
                 var value = name switch
                 {
                     "admin-port" => "0",
                     "data-directory" => directory,
-                    "region" => region,
                     _ => string.Empty,
                 };
                 start.ArgumentList.Add($"--{name}={value}");
@@ -266,11 +244,8 @@ public sealed class RegionTests
 
                 await Assert.That(process.ExitCode).IsEqualTo(2);
                 await Assert.That(await output).IsEmpty();
-                await Assert.That(await error).Contains("region");
-                if (region.Length > 0)
-                {
-                    await Assert.That(await error).DoesNotContain(region);
-                }
+                await Assert.That(await error).Contains("FLY_REGION");
+                await Assert.That(await error).DoesNotContain(region);
 
                 await Assert.That(Directory.EnumerateFileSystemEntries(directory)).IsEmpty();
             }

@@ -48,7 +48,7 @@ internal sealed class QueryShapeReceiver(TerraBaseOptions options, QueryShapeRec
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(context);
-        if (options.CatalogPrimary is not null)
+        if (options.CatalogFollower)
         {
             throw new RpcException(new Status(StatusCode.FailedPrecondition, "this member is not a catalog primary"));
         }

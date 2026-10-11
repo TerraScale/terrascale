@@ -147,7 +147,7 @@ internal sealed partial class EngineManagementService
     {
         // A follower serves a registered database before its first documents arrive. Recheck a file created here
         // after initialization: a concurrent deletion may have applied before the file existed.
-        if (options.CatalogPrimary is not null && await engine.OpenDatabaseAsync(tenant, cancellationToken).ConfigureAwait(false) is null
+        if (options.CatalogFollower && await engine.OpenDatabaseAsync(tenant, cancellationToken).ConfigureAwait(false) is null
             && await engine.CreateDatabaseAsync(tenant, cancellationToken).ConfigureAwait(false))
         {
             var registration = await RegisteredAsync(tenant, cancellationToken).ConfigureAwait(false);
@@ -559,7 +559,7 @@ internal sealed partial class EngineManagementService
                 static error => error, cancellationToken);
     }
 
-    private Unavailable UnreadableCatalog => options.CatalogPrimary is null
+    private Unavailable UnreadableCatalog => !options.CatalogFollower
         ? ManagementErrors.CatalogUnsupported : ManagementErrors.ReplicatedCatalogUnsupported;
 
     private static readonly Conflict CatalogDatabaseDeleted = new("a database deleted here is not brought back", "database_deleted");

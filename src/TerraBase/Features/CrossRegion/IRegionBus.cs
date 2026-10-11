@@ -3,7 +3,8 @@ using System.Runtime.CompilerServices;
 using System.Text.Json;
 using NATS.Client.Core;
 using TerraBase.Configuration;
-using TerraBase.Engine.Cluster;
+using System.Net.Security;
+using System.Security.Cryptography.X509Certificates;
 
 namespace TerraBase.Features.CrossRegion;
 
@@ -44,7 +45,7 @@ internal sealed class NatsRegionBus(NatsSettings settings, ILoggerFactory logger
         AuthOpts = new NatsAuthOpts { AuthCredCallback = (_, _) => ValueTask.FromResult(NatsAuthCred.FromCreds(File.ReadAllText(settings.CredentialsFile))) },
         TlsOpts = settings.CertificateFile is null
             ? new NatsTlsOpts()
-            : new NatsTlsOpts { Mode = TlsMode.Implicit, ConfigureClientAuthentication = options => NatsMemberStore.ConfigureTls(settings, options) },
+            : new NatsTlsOpts { Mode = TlsMode.Implicit, ConfigureClientAuthentication = options => ConfigureTls(settings, options) },
         IgnoreAuthErrorAbort = true,
         LoggerFactory = loggers,
     });
@@ -86,6 +87,21 @@ internal sealed class NatsRegionBus(NatsSettings settings, ILoggerFactory logger
     }
 
     public ValueTask DisposeAsync() => _connection.DisposeAsync();
+
+    // The client certificate and the CA the servers chain to, as the files hold them now. The certificate file holds the
+    // leaf and its intermediates while the servers trust only the root, so the client presents the whole chain.
+    internal static ValueTask ConfigureTls(NatsSettings settings, SslClientAuthenticationOptions options)
+    {
+        var certificate = X509Certificate2.CreateFromPemFile(settings.CertificateFile!, settings.PrivateKeyFile);
+        var chain = new X509Certificate2Collection();
+        chain.ImportFromPemFile(settings.CertificateFile!);
+        var authorities = new X509Certificate2Collection();
+        authorities.ImportFromPemFile(settings.CaFile!);
+        options.ClientCertificateContext = SslStreamCertificateContext.Create(certificate, [.. chain.Skip(1), .. authorities], offline: true);
+        options.CertificateChainPolicy = new X509ChainPolicy { TrustMode = X509ChainTrustMode.CustomRootTrust, RevocationMode = X509RevocationMode.NoCheck };
+        options.CertificateChainPolicy.CustomTrustStore.AddRange(authorities);
+        return ValueTask.CompletedTask;
+    }
 
     // The first cell: tag of the user JWT, which TS-803's role templates scope subjects with as {{tag(cell)}}.
     private string? ReadCell()

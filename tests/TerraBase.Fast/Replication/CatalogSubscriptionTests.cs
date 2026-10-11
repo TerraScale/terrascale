@@ -56,7 +56,7 @@ public sealed class CatalogSubscriptionTests
         {
             primary.Issuer.Route(services);
             services.AddSingleton(network.Join("sfo"));
-            services.AddSingleton<IMemberStore>(new FakeMemberStore(TimeProvider.System));
+            services.AddSingleton<IMemberDirectory>(new FakeMemberStore());
             services.AddSingleton<DatabaseLifecycleCheckpoint>((step, tenant) =>
             {
                 if (step == "create.published" && tenant.DatabaseId == database.DatabaseId)
@@ -152,7 +152,7 @@ public sealed class CatalogSubscriptionTests
             primary.Issuer.Route(services);
             services.AddSingleton<TimeProvider>(clock);
             services.AddSingleton(network.Join("sfo"));
-            services.AddSingleton<IMemberStore>(new FakeMemberStore(clock));
+            services.AddSingleton<IMemberDirectory>(new FakeMemberStore());
         });
         await TerraBaseTestServer.EventuallyAsync(async token =>
         {

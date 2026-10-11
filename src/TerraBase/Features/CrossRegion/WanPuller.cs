@@ -49,7 +49,7 @@ internal sealed class WanPuller(
 
     // Admission rejects rather than waits: concurrent lookahead uses at most a sixteenth of the queue across remotes.
     // Small queues prepare inline, as before. The division order avoids overflowing with many remote regions.
-    internal int TargetsAhead => Math.Clamp(options.StorageQueue / options.Wan!.Remotes.Count / 16 - 1, 0, MaxTargetsAhead);
+    internal int TargetsAhead => Math.Clamp(options.StorageQueue / options.Wan!.Remotes(options.Region).Count / 16 - 1, 0, MaxTargetsAhead);
 
     // How long a database this region does not take is not asked about again.
     private static readonly TimeSpan RefusalTtl = TimeSpan.FromSeconds(10);
@@ -83,7 +83,7 @@ internal sealed class WanPuller(
     }
 
     protected override Task ExecuteAsync(CancellationToken stoppingToken) =>
-        Task.WhenAll(options.Wan!.Remotes.Select(remote => Task.Run(() => RunAsync(remote.Key, remote.Value, stoppingToken), stoppingToken)));
+        Task.WhenAll(options.Wan!.Remotes(options.Region).Select(remote => Task.Run(() => RunAsync(remote.Key, remote.Value, stoppingToken), stoppingToken)));
 
     private void OnDeleted(object? sender, IDatabaseStore store)
     {
@@ -325,7 +325,7 @@ internal sealed class WanPuller(
     {
         // Candidates predate the remote heads; a newer registration waits for the next scan. No storage admission
         // remains held while the WAN answers or while cleanup takes its own writer.
-        if (options.CatalogPrimary is null && discovery.Records is null)
+        if (!options.CatalogFollower && discovery.Records is null)
         {
             var read = await tenants.ReadDatabaseRecordsAsync(region, after, cancellationToken).ConfigureAwait(false);
             if (read is not TenantDatabasePage page)
@@ -1309,7 +1309,7 @@ internal sealed class WanPuller(
             }
         }
 
-        var primary = options.CatalogPrimary is null;
+        var primary = !options.CatalogFollower;
         var record = await tenants.DatabaseRecordAsync(database, cancellationToken).ConfigureAwait(false);
         if (record is Unavailable unavailable)
         {

@@ -19,13 +19,13 @@ public sealed class AntiEntropyProgressTests
 {
     [Test]
     [Timeout(120_000)]
-    public async Task Invalid_members_do_not_block_healthy_membership_and_configured_fallback_repairs(CancellationToken cancellationToken)
+    public async Task Invalid_members_do_not_block_healthy_members_repairs(CancellationToken cancellationToken)
     {
         var token = cancellationToken;
         using var peerTls = new PeerTls();
         using var clientTls = new ClientTls();
         var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
-        var members = new FakeMemberStore(clock);
+        var members = new FakeMemberStore();
         ProgressState? memberState = null;
         ProgressState? fallbackState = null;
         await using var member = await ReceiverAsync(state => memberState = state);
@@ -83,26 +83,25 @@ public sealed class AntiEntropyProgressTests
                 await Assert.That(await corrupt.ExecuteNonQueryAsync(token)).IsEqualTo(1);
             }
 
-            await members.PutAsync(new ClusterMember("a-malformed", "https://[invalid", "test-region", ""), token);
-            await members.PutAsync(new ClusterMember("b-relative", "/peer", "test-region", ""), token);
-            await members.PutAsync(new ClusterMember("c-non-https", "http://localhost:1", "test-region", ""), token);
-            await members.PutAsync(new ClusterMember("d-healthy", member.PeerAddress!.ToString(), "test-region", ""), token);
+            members.Join(new ClusterMember("a-malformed", "https://[invalid", "test-region", ""));
+            members.Join(new ClusterMember("b-relative", "/peer", "test-region", ""));
+            members.Join(new ClusterMember("c-non-https", "http://localhost:1", "test-region", ""));
+            members.Join(new ClusterMember("d-healthy", member.PeerAddress!.ToString(), "test-region", ""));
+            members.Join(new ClusterMember("e-healthy", fallback.PeerAddress!.ToString(), "test-region", ""));
             var incomingMember = memberState ?? throw new InvalidOperationException("the member repair state was not registered");
             var incomingFallback = fallbackState ?? throw new InvalidOperationException("the fallback repair state was not registered");
             incomingMember.Begin.TrySetResult();
             incomingFallback.Begin.TrySetResult();
-            // The member is deliberately absent from configured peers after the acknowledged seed is stopped.
             await using var source = await TerraBaseTestServer.StartAsync(settings =>
             {
                 peerTls.Apply(settings);
                 clientTls.Apply(settings);
                 settings["node-name"] = "repair-source";
                 settings["data-directory"] = directory;
-                settings["peer-addresses"] = fallback.PeerAddress!.ToString();
             }, services =>
             {
                 services.AddSingleton<TimeProvider>(clock);
-                services.AddSingleton<IMemberStore>(members);
+                services.AddSingleton<IMemberDirectory>(members);
             });
             Console.WriteLine("Membership repair: source started; waiting for both replicas to heal.");
             await Task.WhenAll(incomingMember.Repaired.Task, incomingFallback.Repaired.Task).WaitAsync(token);

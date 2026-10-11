@@ -28,7 +28,7 @@ internal sealed class CrashableTerraBase : IAsyncDisposable
         _settings = new Dictionary<string, string>(settings, StringComparer.Ordinal);
         foreach (var name in _settings.Keys)
         {
-            if (!TerraBaseOptions.SettingNames.Contains(name))
+            if (!TerraBaseOptions.SettingNames.Contains(name) && name is not ("region" or "node-name"))
             {
                 throw new ArgumentException($"unknown TerraBase setting: {name}", nameof(settings));
             }
@@ -98,6 +98,14 @@ internal sealed class CrashableTerraBase : IAsyncDisposable
         };
         start.Environment["DOTNET_ENVIRONMENT"] = "Development";
         start.Environment["ASPNETCORE_ENVIRONMENT"] = "Development";
+        // The child is a Fly machine of its own app when the test names its region; Fly's DNS never lists it.
+        if (_settings.TryGetValue("region", out var region))
+        {
+            start.Environment["FLY_REGION"] = region;
+            start.Environment["FLY_MACHINE_ID"] = _settings.GetValueOrDefault("node-name", "crashable");
+            start.Environment["FLY_APP_NAME"] = "terrabase-test";
+        }
+
         start.ArgumentList.Add(Path.Combine(AppContext.BaseDirectory, typeof(Program).Assembly.GetName().Name + ".dll"));
         foreach (var name in TerraBaseOptions.SettingNames)
         {

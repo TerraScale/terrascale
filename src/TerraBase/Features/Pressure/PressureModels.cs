@@ -7,10 +7,8 @@ public sealed record PressureBody
 {
     /// <summary>Wire schema version.</summary>
     [JsonPropertyName("schema")] public int Schema => 1;
-    /// <summary>Operator node identity.</summary>
+    /// <summary>The machine's ID.</summary>
     [JsonPropertyName("node")] public required string Node { get; init; }
-    /// <summary>Cloud instance identity supplied by the operator; null when unconfigured.</summary>
-    [JsonPropertyName("instance_id")] public string? InstanceId { get; init; }
     /// <summary>Local serving readiness using the same checks as /readyz, not member catch-up.</summary>
     [JsonPropertyName("local_ready")] public bool? LocalReady { get; init; }
     /// <summary>Outgoing local-origin groups not durably acknowledged by configured peers; not incoming lag.</summary>

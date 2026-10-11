@@ -1133,7 +1133,7 @@ internal sealed partial class EngineManagementService(
 
     public async ValueTask<CatalogCheck> CheckReadAsync(IStorageTransaction transaction, CancellationToken cancellationToken) =>
         await GetAsync(transaction, Catalog, CatalogVersionId, Id, cancellationToken).ConfigureAwait(false) != CatalogVersion
-            ? options.CatalogPrimary is null ? ManagementErrors.CatalogUnsupported : ManagementErrors.ReplicatedCatalogUnsupported
+            ? !options.CatalogFollower ? ManagementErrors.CatalogUnsupported : ManagementErrors.ReplicatedCatalogUnsupported
             : new Done();
 
     private async ValueTask<T> ReadCatalogAsync<T>(Func<IStorageTransaction, ValueTask<T>> read, CancellationToken cancellationToken)
@@ -1194,7 +1194,7 @@ internal sealed partial class EngineManagementService(
     // Initializes only fresh catalogs. Concurrent first calls serialize on the write transaction.
     public async ValueTask<CatalogCheck> EnsureCatalogAsync(CancellationToken cancellationToken)
     {
-        if (_catalogCurrent || options.CatalogPrimary is not null)
+        if (_catalogCurrent || options.CatalogFollower)
         {
             return new Done();
         }

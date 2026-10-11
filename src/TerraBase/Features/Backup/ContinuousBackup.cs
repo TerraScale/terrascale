@@ -97,7 +97,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(meters);
         (_engine, _storage, _targets, _time, _logger, _shippers) = (engine, storage, targets, time, logger, shippers);
-        (_tenants, _settings, _node) = (tenants, settings, options.NodeName);
+        (_tenants, _settings, _node) = (tenants, settings, options.MachineId);
         _scratch = Scratch(options);
         var meter = meters.Create(Telemetry.MeterName);
         _uploaded = meter.CreateCounter<long>("terrabase.backup.uploaded", "By", "Sealed backup bytes stored in the bucket, by kind (snapshot, segment).");

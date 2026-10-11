@@ -11,39 +11,32 @@ namespace TerraBase.Features.Replication;
 public static class ReplicationExtensions
 {
     /// <summary>
-    /// Adds the peer listener (HTTP/2 over mutual TLS with certificates read again when their files change)
-    /// and the <c>Replication</c> and <c>CatalogReplication</c> services, plus the sender when <c>peer-addresses</c> is
-    /// set and the catalog follower and <see cref="ICatalogPrimaryClient"/> when <c>catalog-primary</c> is. Registers <see cref="ICatalogReadiness"/> and
-    /// <see cref="IReplicationWait"/>; nothing else when the peer listener is disabled. Payloads are LZ4 application envelopes; gRPC transport compression is not used.
+    /// Adds the peer listener (HTTP/2 over mutual TLS with certificates read again when their files change), the
+    /// <c>Replication</c> and <c>CatalogReplication</c> services, the sender to the other members of this region, and the
+    /// catalog follower and <see cref="ICatalogPrimaryClient"/>, which only a machine that follows a catalog primary runs.
+    /// Registers <see cref="ICatalogReadiness"/> and <see cref="IReplicationWait"/>; nothing else when the peer listener is
+    /// disabled. Payloads are LZ4 application envelopes; gRPC transport compression is not used.
     /// </summary>
     public static WebApplicationBuilder AddTerraBaseReplication(this WebApplicationBuilder builder, TerraBaseOptions options)
     {
         ArgumentNullException.ThrowIfNull(builder);
         ArgumentNullException.ThrowIfNull(options);
-        if (options.CatalogPrimary is null)
-        {
-            builder.Services.AddSingleton<ICatalogReadiness, CatalogPrimaryReadiness>();
-        }
-        else
-        {
-            builder.Services.AddSingleton<CatalogFollower>();
-            builder.Services.AddSingleton<ICatalogReadiness>(provider => provider.GetRequiredService<CatalogFollower>());
-            builder.Services.AddHostedService(provider => provider.GetRequiredService<CatalogFollower>());
-            builder.Services.AddSingleton<CatalogForwarder>();
-            builder.Services.AddSingleton<ICatalogPrimaryClient, CatalogPrimaryClient>();
-        }
-
-        if (options.PeerAddresses.Count == 0)
+        // The role comes from the machine's identity, which the registered options carry.
+        builder.Services.AddSingleton<ICatalogReadiness>(provider => provider.GetRequiredService<TerraBaseOptions>().CatalogFollower
+            ? provider.GetRequiredService<CatalogFollower>()
+            : new CatalogPrimaryReadiness());
+        if (options.PeerPort is not { } port)
         {
             builder.Services.AddSingleton<IReplicationWait, NoReplicationWait>();
             builder.Services.AddSingleton<IReplicationStatus, NoReplicationStatus>();
             builder.Services.AddSingleton<IReplicationPressure, NoReplicationWait>();
-        }
-
-        if (options.PeerPort is not { } port)
-        {
             return builder;
         }
+
+        builder.Services.AddSingleton<CatalogFollower>();
+        builder.Services.AddHostedService(provider => provider.GetRequiredService<CatalogFollower>());
+        builder.Services.AddSingleton<CatalogForwarder>();
+        builder.Services.AddSingleton<ICatalogPrimaryClient, CatalogPrimaryClient>();
 
         builder.WebHost.ConfigureKestrel(kestrel => kestrel.ListenAnyIP(port, listen =>
         {
@@ -83,15 +76,11 @@ public static class ReplicationExtensions
             grpc.MaxReceiveMessageSize = ReplicationProtocol.MaxMessageBytes;
             grpc.MaxSendMessageSize = ReplicationProtocol.MaxMessageBytes;
         });
-        if (options.PeerAddresses.Count > 0)
-        {
-            builder.Services.AddSingleton<ReplicationSender>();
-            builder.Services.AddSingleton<IReplicationWait>(provider => provider.GetRequiredService<ReplicationSender>());
-            builder.Services.AddSingleton<IReplicationStatus>(provider => provider.GetRequiredService<ReplicationSender>());
-            builder.Services.AddSingleton<IReplicationPressure>(provider => provider.GetRequiredService<ReplicationSender>());
-            builder.Services.AddHostedService(provider => provider.GetRequiredService<ReplicationSender>());
-        }
-
+        builder.Services.AddSingleton<ReplicationSender>();
+        builder.Services.AddSingleton<IReplicationWait>(provider => provider.GetRequiredService<ReplicationSender>());
+        builder.Services.AddSingleton<IReplicationStatus>(provider => provider.GetRequiredService<ReplicationSender>());
+        builder.Services.AddSingleton<IReplicationPressure>(provider => provider.GetRequiredService<ReplicationSender>());
+        builder.Services.AddHostedService(provider => provider.GetRequiredService<ReplicationSender>());
         return builder;
     }
 
@@ -149,7 +138,7 @@ public static class ReplicationExtensions
     public static WebApplication UseTerraBaseCatalogForwarding(this WebApplication app)
     {
         ArgumentNullException.ThrowIfNull(app);
-        var forwarder = app.Services.GetService<CatalogForwarder>();
+        var forwarder = app.Services.GetRequiredService<TerraBaseOptions>().CatalogFollower ? app.Services.GetService<CatalogForwarder>() : null;
         app.Use((context, next) =>
         {
             var endpoint = context.GetEndpoint();

@@ -26,10 +26,10 @@ internal sealed class WanResponder(
 
     protected override Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        var cell = options.Wan!.Cell;
+        var cell = options.Wan!.Cell(options.Region);
         return Task.WhenAll(
             ServeAsync(WanProtocol.HeadsSubject(cell), stoppingToken),
-            ServeAsync(WanProtocol.MemberSubject(cell, options.NodeName), stoppingToken));
+            ServeAsync(WanProtocol.MemberSubject(cell, options.MachineId), stoppingToken));
     }
 
     private async Task ServeAsync(string subject, CancellationToken stoppingToken)
@@ -118,7 +118,7 @@ internal sealed class WanResponder(
         }
 
         databases.Sort((a, b) => a.Key.AsSpan().SequenceCompareTo(b.Key));
-        var reply = new HeadsReply { Member = options.NodeName };
+        var reply = new HeadsReply { Member = options.MachineId };
         reply.Members.AddRange((await membership.RefreshAsync(cancellationToken).ConfigureAwait(false)).Members.Select(member => member.Name));
         // Reserve More's tag and value; the existing 64 KiB framing allowance also covers LZ4 expansion and its header.
         var bytes = reply.CalculateSize() + 2;

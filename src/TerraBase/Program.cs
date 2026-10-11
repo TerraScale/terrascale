@@ -29,15 +29,6 @@ TerraBaseOptions? options = null;
 try
 {
     options = TerraBaseOptions.FromProcess(args);
-    if (options.Region.Length == 0)
-    {
-        options = options with
-        {
-            Region = string.Equals(environmentName, Environments.Development, StringComparison.OrdinalIgnoreCase)
-                ? "development"
-                : throw new TerraBaseConfigurationException("region is required outside Development (TERRABASE_REGION or --region=value)"),
-        };
-    }
 }
 catch (TerraBaseConfigurationException error)
 {

@@ -48,7 +48,7 @@ internal sealed partial class QueryShapeRecorder
         {
             lock (_gate)
             {
-                if (_disposed || options.CatalogPrimary is null)
+                if (_disposed || !options.CatalogFollower)
                 {
                     return false;
                 }

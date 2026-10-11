@@ -186,7 +186,7 @@ public sealed record TerraBaseOptions : IDisposable
 
     private static readonly FrozenSet<string> Keys = FrozenSet.Create(
         StringComparer.Ordinal,
-        ["admin-port", "data-directory", "region", "node-name", "instance-id", "memory-budget", "client-port", .. ClientTlsKeys, "auth-issuer", "auth-audience", "management-credential-file", "peer-port", .. PeerTlsKeys, "peer-addresses", "peers", "catalog-primary", "write-wait-ms", "shutdown-grace-seconds", "readiness-cache-seconds", "query-budget-seconds", "storage-threads", "storage-queue", .. BackupSettings.Keys, .. NatsSettings.Keys, .. WanSettings.Keys]);
+        ["admin-port", "data-directory", "memory-budget", "client-port", .. ClientTlsKeys, "auth-issuer", "auth-audience", "management-credential-file", "peer-port", .. PeerTlsKeys, "write-wait-ms", "shutdown-grace-seconds", "readiness-cache-seconds", "query-budget-seconds", "storage-threads", "storage-queue", .. BackupSettings.Keys, .. NatsSettings.Keys, .. WanSettings.Keys]);
 
     /// <summary>Every setting name, in <c>--name=value</c> form without the dashes.</summary>
     public static IReadOnlySet<string> SettingNames => Keys;
@@ -202,17 +202,34 @@ public sealed record TerraBaseOptions : IDisposable
     /// <summary>Directory holding one SQLite file per database.</summary>
     public required string DataDirectory { get; init; }
 
-    /// <summary>Node region. Startup requires it outside Development, where it defaults to <c>development</c>.</summary>
-    public string Region { get; init; } = string.Empty;
+    /// <summary>This machine's region: <c>FLY_REGION</c>, or <c>local</c> off Fly.</summary>
+    public string Region { get; init; } = LocalIdentity;
 
-    /// <summary>Operator node identity; defaults to the machine name. This is not membership evidence.</summary>
-    public string NodeName { get; init; } = Environment.MachineName;
+    /// <summary>This machine's ID: <c>FLY_MACHINE_ID</c>, or <c>local</c> off Fly. It names the member in the cell.</summary>
+    public string MachineId { get; init; } = LocalIdentity;
 
-    /// <summary>Operator-supplied cloud instance identity; absent identity remains unknown.</summary>
-    public string? InstanceId { get; init; }
+    /// <summary>The Fly app this machine belongs to (<c>FLY_APP_NAME</c>), whose internal DNS lists the cell; <see langword="null"/> off Fly.</summary>
+    public string? App { get; init; }
 
-    internal static bool IsRegion(string region) => region.Length is >= 1 and <= 63 && region[0] is >= 'a' and <= 'z'
+    /// <summary>The app's primary region (<c>PRIMARY_REGION</c>), home of the catalog primary; this machine's region when unset.</summary>
+    public string PrimaryRegion { get; init; } = LocalIdentity;
+
+    /// <summary>
+    /// Whether this machine follows a catalog primary: it replicates the system database from it and writes none of it
+    /// (docs/decisions/0009). Machines outside the primary region follow; the primary is found through the membership.
+    /// </summary>
+    // shortcut: every machine of the primary region is a catalog primary, so it holds one TerraBase machine until anna-full
+    // (TS-647) removes the catalog primary.
+    public bool CatalogFollower { get; init; }
+
+    private const string LocalIdentity = "local";
+
+    internal static bool IsRegion([NotNullWhen(true)] string? region) => region is { Length: >= 1 and <= 63 } && region[0] is >= 'a' and <= 'z'
         && region[^1] != '-' && region.All(character => character is >= 'a' and <= 'z' or >= '0' and <= '9' or '-');
+
+    /// <summary>A Fly machine ID (or a Fly app name): lowercase letters, digits and inner hyphens, at most 63 characters.</summary>
+    internal static bool IsMachineId([NotNullWhen(true)] string? id) => id is { Length: >= 1 and <= 63 } && id[0] != '-' && id[^1] != '-'
+        && id.All(character => character is >= 'a' and <= 'z' or >= '0' and <= '9' or '-');
 
     /// <summary>
     /// Port of the client-facing HTTPS listener; <c>0</c> picks a free port.
@@ -285,25 +302,7 @@ public sealed record TerraBaseOptions : IDisposable
     } = TimeSpan.FromSeconds(DefaultQueryBudgetSeconds);
 
     /// <summary>
-    /// Peer listeners (<c>https://host:port</c>) this node sends its committed changes to; empty
-    /// disables sending (changes are captured either way). Requires <see cref="PeerPort"/>, whose
-    /// certificate it presents. With <c>peers</c>, every member it lists but this one.
-    /// </summary>
-    public IReadOnlyList<Uri> PeerAddresses { get; init; } = [];
-
-    /// <summary>Every member of <c>peers</c> by name, this node included, or <see langword="null"/> when <c>peers</c> is not set.</summary>
-    public IReadOnlyDictionary<string, Uri>? Peers { get; init; }
-
-    /// <summary>
-    /// The peer listener (<c>https://host:port</c>) of the catalog primary this node follows: it replicates the system
-    /// database from there and writes none of it (docs/decisions/0009). <see langword="null"/> makes this node a catalog
-    /// primary. Requires <see cref="PeerPort"/>, whose certificate it presents. Set as an address, or as a member of
-    /// <c>peers</c>; naming this node makes it the primary.
-    /// </summary>
-    public Uri? CatalogPrimary { get; init; }
-
-    /// <summary>
-    /// How long a client write waits, after its commit, for every active peer in <see cref="PeerAddresses"/> to durably
+    /// How long a client write waits, after its commit, for every active peer of its region to durably
     /// acknowledge it before answering; on expiry it answers anyway (docs/decisions/0010). Zero answers right after the commit.
     /// </summary>
     public TimeSpan WriteWait { get; init; } = TimeSpan.FromMilliseconds(DefaultWriteWaitMilliseconds);
@@ -395,26 +394,8 @@ public sealed record TerraBaseOptions : IDisposable
             }
         }
 
-        var region = values.GetValueOrDefault("region", string.Empty);
-        if (values.ContainsKey("region") && !IsRegion(region))
-        {
-            throw new TerraBaseConfigurationException("region must be a lowercase letter followed by lowercase letters, digits or hyphens, at most 63 characters, without a trailing hyphen");
-        }
-
+        var (region, machineId, app, primaryRegion) = FlyIdentity();
         var dataDirectory = values.GetValueOrDefault("data-directory", DefaultDataDirectory);
-        var instanceId = values.GetValueOrDefault("instance-id");
-        if (instanceId is not null && (instanceId.Length is < 1 or > 128
-            || !instanceId.All(character => char.IsAsciiLetterOrDigit(character) || character is '.' or '_' or ':' or '+' or '-')))
-        {
-            throw new TerraBaseConfigurationException("instance-id must be 1 to 128 ASCII letters, digits, dots, underscores, colons, pluses or hyphens");
-        }
-
-        var nodeName = values.GetValueOrDefault("node-name", Environment.MachineName);
-        if (nodeName.Length is < 1 or > 128 || nodeName.Any(character => !char.IsAsciiLetterOrDigit(character) && character is not ('.' or '_' or ':' or '+' or '-')))
-        {
-            throw new TerraBaseConfigurationException("node-name must be 1 to 128 ASCII letters, digits, dots, underscores, colons, pluses or hyphens");
-        }
-
         if (string.IsNullOrWhiteSpace(dataDirectory))
         {
             throw new TerraBaseConfigurationException("data-directory must not be empty");
@@ -436,34 +417,6 @@ public sealed record TerraBaseOptions : IDisposable
         var peerPort = ParsePort(values, "peer-port");
         RequireGroup(values, "peer-port", peerPort, PeerTlsKeys);
         var peerTls = peerPort is null ? null : new PeerTlsFiles(values["peer-certificate"], values["peer-private-key"], values["peer-client-ca"]);
-        var peerAddresses = ParsePeerAddresses(values);
-        // peers (the orchestrator's TERRABASE_PEERS) lists every member, this one included; the others are the peer addresses.
-        var peers = ParsePeers(values, nodeName);
-        if (peers is not null)
-        {
-            peerAddresses = peerAddresses.Count == 0
-                ? [.. peers.Where(peer => peer.Key != nodeName).Select(peer => peer.Value)]
-                : throw new TerraBaseConfigurationException("set peers or peer-addresses, not both");
-        }
-
-        if ((peerAddresses.Count > 0 || peers is not null) && peerPort is null)
-        {
-            throw new TerraBaseConfigurationException("peer-addresses and peers require peer-port");
-        }
-
-        // A member name of peers (this node's own makes it the primary) or an https://host:port address.
-        Uri? catalogPrimary = null;
-        if (values.TryGetValue("catalog-primary", out var primary)
-            && ((peers?.TryGetValue(primary, out catalogPrimary) != true && !TryParsePeerAddress(primary, out catalogPrimary)) || peerPort is null))
-        {
-            throw new TerraBaseConfigurationException("catalog-primary must be a member of peers or one https://host:port address, and requires peer-port");
-        }
-
-        if (primary == nodeName && peers is not null)
-        {
-            catalogPrimary = null;
-        }
-
         // Validate the remaining settings before allocating certificates.
         var adminPort = ParsePort(values, "admin-port") ?? DefaultAdminPort;
         var shutdownGrace = TimeSpan.FromSeconds(ParseShutdownGraceSeconds(values));
@@ -472,12 +425,7 @@ public sealed record TerraBaseOptions : IDisposable
         var writeWait = TimeSpan.FromMilliseconds(ParseInteger(values, "write-wait-ms", 0, 60_000) ?? DefaultWriteWaitMilliseconds);
         var backup = BackupSettings.Parse(values);
         var nats = NatsSettings.Parse(values);
-        var wan = WanSettings.Parse(values, region, nodeName, nats);
-        if (backup is not null && nats is null && (peerAddresses.Count > 0 || catalogPrimary is not null))
-        {
-            // Without NATS leases every member would ship every file.
-            throw new TerraBaseConfigurationException("backup-* with peers, peer-addresses or catalog-primary requires nats-url: one member ships each file");
-        }
+        var wan = WanSettings.Parse(values, nats);
         X509Certificate2? clientCertificate = null;
         PeerCredentials.Snapshot? peerCredentialSnapshot = null;
         try
@@ -496,8 +444,10 @@ public sealed record TerraBaseOptions : IDisposable
                 AdminPort = adminPort,
                 DataDirectory = dataDirectory,
                 Region = region,
-                NodeName = nodeName,
-                InstanceId = instanceId,
+                MachineId = machineId,
+                App = app,
+                PrimaryRegion = primaryRegion,
+                CatalogFollower = primaryRegion != region,
                 MemoryBudget = ParseInteger(values, "memory-budget", MinMemoryBudget, long.MaxValue) ?? DefaultMemoryBudget(),
                 StorageThreads = (int)(ParseInteger(values, "storage-threads", 1, 1024) ?? Math.Clamp(Environment.ProcessorCount, 1, 1024)),
                 StorageQueue = (int)(ParseInteger(values, "storage-queue", 1, 1_000_000) ?? DefaultStorageQueue),
@@ -511,8 +461,6 @@ public sealed record TerraBaseOptions : IDisposable
                 PeerPort = peerPort,
                 PeerTls = peerTls,
                 PeerCredentialSnapshot = peerCredentialSnapshot,
-                PeerAddresses = peerAddresses,
-                CatalogPrimary = catalogPrimary,
                 WriteWait = writeWait,
                 ShutdownGrace = shutdownGrace,
                 ReadinessCacheTtl = readinessCacheTtl,
@@ -520,7 +468,6 @@ public sealed record TerraBaseOptions : IDisposable
                 Backup = backup,
                 Nats = nats,
                 Wan = wan,
-                Peers = peers,
             };
         }
         catch
@@ -661,54 +608,27 @@ public sealed record TerraBaseOptions : IDisposable
             : SHA256.HashData(Encoding.UTF8.GetBytes(secret));
     }
 
-    // A comma-separated list of distinct https://host:port origins.
-    private static List<Uri> ParsePeerAddresses(IReadOnlyDictionary<string, string> values)
+    // Fly sets these on every machine. A process elsewhere (development, tests) is a cell of its own, named local.
+    private static (string Region, string MachineId, string? App, string PrimaryRegion) FlyIdentity()
     {
-        if (!values.TryGetValue("peer-addresses", out var raw))
+        var region = Environment.GetEnvironmentVariable("FLY_REGION");
+        var machineId = Environment.GetEnvironmentVariable("FLY_MACHINE_ID");
+        var app = Environment.GetEnvironmentVariable("FLY_APP_NAME");
+        if (string.IsNullOrEmpty(region) && string.IsNullOrEmpty(machineId) && string.IsNullOrEmpty(app))
         {
-            return [];
+            return (LocalIdentity, LocalIdentity, null, LocalIdentity);
         }
 
-        var addresses = new List<Uri>();
-        foreach (var entry in raw.Split(',', StringSplitOptions.TrimEntries))
+        if (!IsRegion(region) || !IsMachineId(machineId) || !IsMachineId(app))
         {
-            if (!TryParsePeerAddress(entry, out var address) || addresses.Contains(address))
-            {
-                throw new TerraBaseConfigurationException("peer-addresses must be a comma-separated list of distinct https://host:port addresses");
-            }
-
-            addresses.Add(address);
+            throw new TerraBaseConfigurationException("FLY_REGION, FLY_MACHINE_ID and FLY_APP_NAME must name a region, a machine and an app together");
         }
 
-        return addresses;
+        var primaryRegion = Environment.GetEnvironmentVariable("PRIMARY_REGION");
+        return string.IsNullOrEmpty(primaryRegion) ? (region, machineId, app, region)
+            : IsRegion(primaryRegion) ? (region, machineId, app, primaryRegion)
+            : throw new TerraBaseConfigurationException("PRIMARY_REGION must name a region");
     }
-
-    // Comma-separated name=host:port entries with distinct names and addresses, one of them this node's (node-name). Names
-    // are lowercase letters, digits and inner hyphens, at most 63 characters: the host node names of the orchestrator.
-    private static Dictionary<string, Uri>? ParsePeers(IReadOnlyDictionary<string, string> values, string nodeName)
-    {
-        if (!values.TryGetValue("peers", out var raw))
-        {
-            return null;
-        }
-
-        var peers = new Dictionary<string, Uri>(StringComparer.Ordinal);
-        foreach (var entry in raw.Split(',', StringSplitOptions.TrimEntries))
-        {
-            var separator = entry.IndexOf('=', StringComparison.Ordinal);
-            var name = separator > 0 ? entry[..separator] : "";
-            if (!IsPeerName(name) || !TryParsePeerAddress("https://" + entry[(separator + 1)..], out var address)
-                || peers.ContainsValue(address) || !peers.TryAdd(name, address))
-            {
-                throw new TerraBaseConfigurationException("peers must be comma-separated name=host:port entries with distinct names and addresses");
-            }
-        }
-
-        return peers.ContainsKey(nodeName) ? peers : throw new TerraBaseConfigurationException("peers must list this node by its node-name");
-    }
-
-    private static bool IsPeerName(string name) =>
-        name.Length is >= 1 and <= 63 && name[0] != '-' && name[^1] != '-' && name.All(c => c is (>= 'a' and <= 'z') or (>= '0' and <= '9') or '-');
 
     // An https://host:port origin of a peer listener (the port defaults to 443).
     internal static bool TryParsePeerAddress(string value, [NotNullWhen(true)] out Uri? address) =>

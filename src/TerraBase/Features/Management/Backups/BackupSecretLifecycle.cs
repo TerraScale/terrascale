@@ -208,7 +208,7 @@ internal sealed class BackupSecretLifecycle(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        if (options.CatalogPrimary is not null || secrets is null)
+        if (options.CatalogFollower || secrets is null)
         {
             return;
         }

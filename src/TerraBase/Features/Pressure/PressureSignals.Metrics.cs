@@ -26,7 +26,7 @@ internal sealed partial class PressureSignals
         Gauge("sample_window_seconds", snapshot => snapshot.SampleWindowSeconds);
         Gauge("untracked_tenant_requests", snapshot => snapshot.UntrackedTenantRequests);
         meter.CreateObservableGauge("terrabase_pressure_info", () => new Measurement<int>(1,
-            new("node", _options.NodeName), new("region", _options.Region), new("process_id", _processId), new("release", _release), new("state", "unknown")));
+            new("node", _options.MachineId), new("region", _options.Region), new("process_id", _processId), new("release", _release), new("state", "unknown")));
         meter.CreateObservableGauge("terrabase_pressure_listener_request_rate", () => ListenerMeasurements(listener => listener.RequestRate));
         meter.CreateObservableGauge("terrabase_pressure_listener_p95_latency_ms", () => ListenerMeasurements(listener => listener.P95LatencyMs));
         meter.CreateObservableCounter("terrabase_pressure_listener_requests", () => ListenerMeasurements(listener => listener.RequestsTotal));

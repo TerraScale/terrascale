@@ -8,7 +8,7 @@ internal sealed class BackupScheduler(IManagedBackupService backups, TimeProvide
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        if (options.CatalogPrimary is not null)
+        if (options.CatalogFollower)
         {
             return;
         }

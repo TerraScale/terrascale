@@ -107,7 +107,8 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
     }
 
     /// <summary>
-    /// Starts a server. <paramref name="settings"/> edits the <c>--name=value</c> settings;
+    /// Starts a server. <paramref name="settings"/> edits the <c>--name=value</c> settings and the harness's
+    /// <see cref="TestTopology"/> keys (default region <c>test-region</c>);
     /// <paramref name="services"/> replaces services after the application registered its own
     /// (for example a <see cref="TimeProvider"/> that tests move forward).
     /// <paramref name="environmentName"/> selects the host environment without changing process-wide variables.
@@ -142,6 +143,7 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
                 ["query-budget-seconds"] = "120",
             };
             settings?.Invoke(values);
+            var topology = TestTopology.Take(values);
 
             // UseSetting values reach Program as --name=value entry-point arguments. Every other
             // setting is passed empty, which clears it, so ambient TERRABASE_* variables of the
@@ -152,7 +154,7 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
                 arguments[key] = value;
             }
 
-            factory = new Factory(arguments, services, environmentName, linkedCancellation, testCancellation);
+            factory = new Factory(arguments, topology, services, environmentName, linkedCancellation, testCancellation);
             factory.UseKestrel();
             IServerAddressesFeature addresses;
             try
@@ -175,7 +177,9 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
                 throw new InvalidOperationException("the server exited before it listened; see its error output");
             }
 
-            return new TerraBaseTestServer(factory, dataDirectory, [.. addresses.Addresses.Select(address => new Uri(address))], values);
+            var server = new TerraBaseTestServer(factory, dataDirectory, [.. addresses.Addresses.Select(address => new Uri(address))], values);
+            topology.Started(server.PeerAddress);
+            return server;
         }
         catch (Exception startupError)
         {
@@ -456,7 +460,7 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
     }
 
     private sealed class Factory(
-        IReadOnlyDictionary<string, string> settings, Action<IServiceCollection>? services, string environmentName,
+        IReadOnlyDictionary<string, string> settings, TestTopology topology, Action<IServiceCollection>? services, string environmentName,
         CancellationTokenSource? linkedCancellation, CancellationToken cancellationToken) : WebApplicationFactory<Program>
     {
         private ShutdownHost? _host;
@@ -498,6 +502,8 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
 
         private async Task CleanupCoreAsync(string directory)
         {
+            // A stopping machine leaves Fly's DNS.
+            topology.Stopping();
             using var cleanupLifetime = linkedCancellation;
             var errors = new List<Exception>();
             try
@@ -537,6 +543,11 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
                 return Task.CompletedTask;
             });
             _host?.Dispose();
+            await ObserveAsync(() =>
+            {
+                topology.Dispose();
+                return Task.CompletedTask;
+            });
 
             var failures = new AggregateException(errors).Flatten().InnerExceptions.Distinct<Exception>(ReferenceEqualityComparer.Instance).ToArray();
             if (failures.Length == 1)
@@ -583,7 +594,9 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
             {
                 // Completion barriers must observe commits after the previous scrape, not its cached zero.
                 values.Configure<PrometheusAspNetCoreOptions>(options => options.ScrapeResponseCacheDurationMilliseconds = 0);
+                topology.ApplyIdentity(values);
                 services?.Invoke(values);
+                topology.ApplyMembership(values);
                 // Fixture teardown, rather than expiry timers, owns every outgoing HTTP pipeline.
                 values.PostConfigureAll<HttpClientFactoryOptions>(options =>
                 {

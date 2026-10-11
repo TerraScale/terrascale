@@ -1,5 +1,5 @@
 using Grpc.Core;
-using TerraBase.Configuration;
+using TerraBase.Engine.Cluster;
 using TerraBase.Errors;
 using TerraBase.Features.Replication.V1;
 
@@ -25,16 +25,17 @@ public interface ICatalogPrimaryClient
 /// <summary>What a catalog primary did with a usage batch: added it, refused it for good, or lacked the capacity to take it.</summary>
 public readonly union AddUsageResult(Done, Validation, QuotaExceeded);
 
-internal sealed class CatalogPrimaryClient(TerraBaseOptions options, PeerCredentials credentials) : ICatalogPrimaryClient
+internal sealed class CatalogPrimaryClient(IMembership membership, PeerCredentials credentials) : ICatalogPrimaryClient
 {
     // Batches are bounded; query shapes are durably committed before acknowledgement.
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(10);
 
     public async Task<AddUsageResult> AddUsageAsync(UsageBatch batch, CancellationToken cancellationToken)
     {
+        var primary = await membership.CatalogPrimaryAsync(cancellationToken).ConfigureAwait(false) ?? throw new IOException("no catalog primary is known");
         using var lease = credentials.Capture();
         // ponytail: a channel (TLS handshake) per batch, one every 10 seconds; keep one per credential generation if that matters.
-        using var channel = PeerChannel.Create(options.CatalogPrimary!, lease);
+        using var channel = PeerChannel.Create(primary, lease);
         try
         {
             // gRPC measures deadlines on the system clock, whatever clock the counts are kept on.
@@ -62,8 +63,9 @@ internal sealed class CatalogPrimaryClient(TerraBaseOptions options, PeerCredent
 
     public async Task<bool> AddQueryShapesAsync(QueryShapesBatch batch, CancellationToken cancellationToken)
     {
+        var primary = await membership.CatalogPrimaryAsync(cancellationToken).ConfigureAwait(false) ?? throw new IOException("no catalog primary is known");
         using var lease = credentials.Capture();
-        using var channel = PeerChannel.Create(options.CatalogPrimary!, lease);
+        using var channel = PeerChannel.Create(primary, lease);
         try
         {
             await new CatalogQueryShapes.CatalogQueryShapesClient(channel)
