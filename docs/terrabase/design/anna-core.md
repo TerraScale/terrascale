@@ -1,5 +1,7 @@
 # Anna core: coordination-free storage and replication (TS-634)
 
+- Superseded in part (2026-10-11): [multi-region replication on Turso](../multi-region-replication.md) replaces
+  §3 to §9 (document model, storage, streams, catalog, queries) and decisions 0009 and 0010.
 - Status: design, revised 2026-10-07 for TS-647 and 2026-10-08 for the greenfield rule (decision 6). **Stage 1
   (TS-647) is being built now; stage 2 (TS-648, TS-649, TS-643) comes later.** Nothing below is implemented unless
   the [plan](#15-plan) marks its step as merged. Statements about the future system are targets, not guarantees; each
