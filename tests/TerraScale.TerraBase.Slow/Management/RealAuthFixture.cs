@@ -72,7 +72,7 @@ internal sealed class RealAuthFixture : IAsyncDisposable
     private async Task StartCoreAsync(CancellationToken token)
     {
         var repository = new DirectoryInfo(Directory.GetCurrentDirectory());
-        while (!File.Exists(Path.Combine(repository.FullName, "terrascale.slnx")))
+        while (!File.Exists(Path.Combine(repository.FullName, "TerraScale.slnx")))
         {
             repository = repository.Parent ?? throw new InvalidOperationException("run the Slow suite from the TerraBase checkout");
         }

@@ -1,7 +1,7 @@
 # TerraBase .NET targets. Locally, run them at low CPU priority, e.g.
 # `nice -n 19 make test-fast`; CI runs them at full priority. Nothing here
 # applies nice itself.
-SOLUTION := terrascale.slnx
+SOLUTION := TerraScale.slnx
 ANALYZER_CHECK_PROJECT := src/TerraScale.TerraBase.Analyzers.BuildCheck/TerraScale.TerraBase.Analyzers.BuildCheck.csproj
 CONFIGURATION ?= Debug
 RUNTIME ?= linux-x64

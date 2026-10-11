@@ -17,7 +17,7 @@ areas_for() {
   case $1 in
     .forgejo/*) printf '%s\n' libs auth terrabase benchmark ;;
     Directory.Build.props | Directory.Build.targets | Directory.Packages.props | global.json | NuGet.config | \
-      .editorconfig | BannedSymbols.txt | terrascale.slnx | Makefile | scripts/ci/*)
+      .editorconfig | BannedSymbols.txt | TerraScale.slnx | Makefile | scripts/ci/*)
       printf '%s\n' libs auth terrabase ;;
     src/TerraScale.Endpoints*/* | src/TerraScale.Logging/* | tests/TerraScale.Endpoints.Tests/* | \
       tests/TerraScale.Logging.Tests/* | benchmark/dotnet/* | scripts/libs/*)

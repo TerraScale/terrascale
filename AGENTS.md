@@ -19,7 +19,7 @@ Area notes: `src/TerraScale.TerraBase/AGENTS.md` (terrabase), `src/TerraScale.Au
 ### Where things go
 
 - Projects: `src/<Project>/`. Test projects: `tests/<Project>/`. Scripts: `scripts/<area>/`. Area docs and their `README.md`: `docs/<area>/`. Benchmarks: `benchmark/` only.
-- Shared files at the root: `terrascale.slnx`, `Directory.Build.props`, `Directory.Build.targets`, `Directory.Packages.props`, `global.json`, `NuGet.config`, `.editorconfig`, `BannedSymbols.txt`, `Makefile`, `.forgejo/workflows/`.
+- Shared files at the root: `TerraScale.slnx`, `Directory.Build.props`, `Directory.Build.targets`, `Directory.Packages.props`, `global.json`, `NuGet.config`, `.editorconfig`, `BannedSymbols.txt`, `Makefile`, `.forgejo/workflows/`.
 - Make: `make build`, `make test-fast`, `make test-slow` and `make check` are global. Per-area targets are `libs-*`, `auth-*`, `terrabase-*` and `benchmark-*`. Use the Makefile whenever an equivalent target exists.
 - Auth and terrabase use the libs through ProjectReference, never NuGet packages.
 - The ts-dotnet SDK stays a separate repository and is referenced from its sibling checkout (`TerraScaleRoot`, see `Directory.Build.props`).
