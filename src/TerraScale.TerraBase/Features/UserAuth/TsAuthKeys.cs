@@ -4,6 +4,7 @@ using Microsoft.IdentityModel.Tokens;
 using TerraBase.Configuration;
 using TerraBase.Errors;
 using TerraBase.Hosting;
+using ZLogger;
 
 namespace TerraBase.Features.UserAuth;
 
@@ -14,7 +15,7 @@ namespace TerraBase.Features.UserAuth;
 /// loop then retries every <see cref="StartupRetry"/> until one succeeds, and refreshes every <see cref="RefreshInterval"/>.
 /// A failed fetch keeps the cached keys. Requests never fetch, except through <see cref="RefreshAsync"/>.
 /// </summary>
-internal sealed partial class TsAuthKeys : BackgroundService, IIssuerKeys
+internal sealed class TsAuthKeys : BackgroundService, IIssuerKeys
 {
     /// <summary>Name of the <see cref="HttpClient"/> that reaches ts-auth.</summary>
     public const string HttpClientName = "ts-auth";
@@ -137,7 +138,7 @@ internal sealed partial class TsAuthKeys : BackgroundService, IIssuerKeys
             if (!string.Equals(configuration.Issuer, _issuer, StringComparison.Ordinal))
             {
                 // OIDC Discovery 1.0 §4.3: a document naming another issuer must not be used, so its jwks_uri is never fetched.
-                LogWrongIssuer(_logger);
+                _logger.ZLogError($"The ts-auth discovery document names an issuer other than auth-issuer; its keys were not used");
                 return Fail();
             }
 
@@ -146,7 +147,7 @@ internal sealed partial class TsAuthKeys : BackgroundService, IIssuerKeys
             SecurityKey[] keys = [.. keySet.GetSigningKeys().Where(key => key is AsymmetricSecurityKey or JsonWebKey { Kty: "RSA" or "EC" })];
             if (keys.Length == 0)
             {
-                LogNoKeys(_logger);
+                _logger.ZLogError($"The ts-auth key set has no RSA or EC signing key; it was not used");
                 return Fail();
             }
 
@@ -160,7 +161,7 @@ internal sealed partial class TsAuthKeys : BackgroundService, IIssuerKeys
             // The type only: messages can carry the issuer URL, and settings are never logged by value.
             if (!_stopping.IsCancellationRequested)
             {
-                LogFetchFailed(_logger, error.GetType().Name, Keys?.Count ?? 0);
+                _logger.ZLogWarning($"Could not fetch ts-auth signing keys from auth-issuer ({error.GetType().Name:@Error}); keeping {Keys?.Count ?? 0:@Count} cached keys");
             }
 
             return Fail();
@@ -185,13 +186,4 @@ internal sealed partial class TsAuthKeys : BackgroundService, IIssuerKeys
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
     }
-
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Could not fetch ts-auth signing keys from auth-issuer ({Error}); keeping {Count} cached keys")]
-    private static partial void LogFetchFailed(ILogger logger, string error, int count);
-
-    [LoggerMessage(Level = LogLevel.Error, Message = "The ts-auth discovery document names an issuer other than auth-issuer; its keys were not used")]
-    private static partial void LogWrongIssuer(ILogger logger);
-
-    [LoggerMessage(Level = LogLevel.Error, Message = "The ts-auth key set has no RSA or EC signing key; it was not used")]
-    private static partial void LogNoKeys(ILogger logger);
 }

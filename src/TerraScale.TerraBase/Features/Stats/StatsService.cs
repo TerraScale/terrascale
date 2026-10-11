@@ -3,6 +3,7 @@ using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Features.CrossRegion;
 using TerraBase.Hosting;
+using ZLogger;
 
 namespace TerraBase.Features.Stats;
 
@@ -10,7 +11,7 @@ namespace TerraBase.Features.Stats;
 /// Closes a statistics window every <see cref="Window"/>, publishes it as the cell's rollup and answers the cell's detail
 /// requests. Without a cell in the NATS credentials it publishes and answers nothing.
 /// </summary>
-internal sealed partial class StatsService(DatabaseStats stats, TimeProvider time, StatsMetrics metrics, IStorageEngine engine,
+internal sealed class StatsService(DatabaseStats stats, TimeProvider time, StatsMetrics metrics, IStorageEngine engine,
     TerraBaseOptions options, IRegionBus? bus, ILogger<StatsService> logger) : BackgroundService
 {
     internal static readonly TimeSpan Window = TimeSpan.FromSeconds(5);
@@ -46,7 +47,7 @@ internal sealed partial class StatsService(DatabaseStats stats, TimeProvider tim
             if (!_noCellLogged)
             {
                 _noCellLogged = true;
-                LogNoCell(logger);
+                logger.ZLogWarning($"No cell in the NATS credentials: live statistics are neither published nor answered");
             }
 
             return;
@@ -80,7 +81,7 @@ internal sealed partial class StatsService(DatabaseStats stats, TimeProvider tim
             }
             catch (Exception error) when (!stoppingToken.IsCancellationRequested)
             {
-                LogServeFailed(logger, error);
+                logger.ZLogWarning(error, $"Answering live statistics requests failed; subscribing again");
                 await Task.Delay(TimeSpan.FromSeconds(1), stoppingToken).ConfigureAwait(false);
             }
         }
@@ -109,10 +110,4 @@ internal sealed partial class StatsService(DatabaseStats stats, TimeProvider tim
             return JsonSerializer.SerializeToUtf8Bytes(new StatsErrorV1(1, "unavailable"), TerraBaseJsonContext.Default.StatsErrorV1);
         }
     }
-
-    [LoggerMessage(LogLevel.Warning, "No cell in the NATS credentials: live statistics are neither published nor answered")]
-    private static partial void LogNoCell(ILogger logger);
-
-    [LoggerMessage(LogLevel.Warning, "Answering live statistics requests failed; subscribing again")]
-    private static partial void LogServeFailed(ILogger logger, Exception error);
 }

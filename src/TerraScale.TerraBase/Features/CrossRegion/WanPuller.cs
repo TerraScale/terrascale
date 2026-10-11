@@ -10,6 +10,7 @@ using TerraBase.Features.Replication.V1;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
+using ZLogger;
 
 namespace TerraBase.Features.CrossRegion;
 
@@ -26,7 +27,7 @@ namespace TerraBase.Features.CrossRegion;
 /// full Anna pulls once per region and joins the deltas into the cell. A group whose origin member lost its disk before
 /// another region pulled it reaches that region only through a later write of the same document.
 /// </remarks>
-internal sealed partial class WanPuller(
+internal sealed class WanPuller(
     IRegionBus bus, IStorageEngine engine, IReplicationJournal journal, ITenantDirectory tenants, TerraBaseOptions options, WanMetrics metrics,
     TimeProvider time, ILogger<WanPuller> logger, IUsageMeter usage, DatabaseLifecycleCheckpoint checkpoint) : BackgroundService
 {
@@ -284,7 +285,7 @@ internal sealed partial class WanPuller(
                 (again, var failures, after) = await RoundAsync(region, cell, after, discovery, quiet: failing, stoppingToken).ConfigureAwait(false);
                 if (failing && failures == 0)
                 {
-                    LogRecovered(logger, region);
+                    logger.ZLogInformation($"Cross-region replication from region {region:@Region} recovered");
                 }
 
                 failing = failures > 0;
@@ -294,11 +295,11 @@ internal sealed partial class WanPuller(
                 metrics.Failed(region, "heads");
                 if (failing)
                 {
-                    LogRetryRoundFailed(logger, error, region);
+                    logger.ZLogDebug(error, $"Cross-region replication from region {region:@Region} still fails; retrying every round");
                 }
                 else
                 {
-                    LogRoundFailed(logger, error, region);
+                    logger.ZLogWarning(error, $"Cross-region replication from region {region:@Region} failed; retrying every round");
                 }
 
                 failing = true;
@@ -354,11 +355,11 @@ internal sealed partial class WanPuller(
             metrics.Failed(region, "heads");
             if (quiet)
             {
-                LogRetryUnanswered(logger, region);
+                logger.ZLogDebug($"No member of region {region:@Region} answers yet; retrying every round");
             }
             else
             {
-                LogUnanswered(logger, region);
+                logger.ZLogWarning($"No member of region {region:@Region} answered; retrying every round");
             }
 
             if (discovery.Retry.Count == 0)
@@ -543,11 +544,11 @@ internal sealed partial class WanPuller(
                         {
                             if (quiet)
                             {
-                                LogRetryPullFailed(logger, error, region);
+                                logger.ZLogDebug(error, $"Pulling an origin from region {region:@Region} still fails; retrying next round");
                             }
                             else
                             {
-                                LogPullFailed(logger, error, region);
+                                logger.ZLogWarning(error, $"Pulling an origin from region {region:@Region} failed; retrying next round");
                             }
                         }
                     }
@@ -566,13 +567,13 @@ internal sealed partial class WanPuller(
                     if (retained == false)
                     {
                         untracked = true;
-                        LogDivergenceUntracked(logger, region);
+                        logger.ZLogWarning($"A diverged origin from region {region:@Region} exceeds the tracked bound; it is reported diverged only while it fails");
                     }
 
                     metrics.Failed(region, diverged == OriginAhead ? "ahead" : "apply");
                     if (failures++ == 0 && !quiet)
                     {
-                        LogPullDiverged(logger, region, diverged.Message);
+                        logger.ZLogWarning($"An origin from region {region:@Region} diverged: {diverged.Message:@Reason}; retrying next round");
                     }
                 }
 
@@ -720,7 +721,7 @@ internal sealed partial class WanPuller(
 
             if (disposition.Forgotten)
             {
-                LogForgot(logger, region);
+                logger.ZLogInformation($"A database its home region {region:@Region} deleted was deleted here too");
             }
         }
 
@@ -1471,7 +1472,7 @@ internal sealed partial class WanPuller(
                 _refused[key] = (time.GetTimestamp(), why);
                 if (why is Conflict { Code: "name_taken" } && _clashes.Add(key))
                 {
-                    LogNameTaken(logger, region);
+                    logger.ZLogWarning($"A database of region {region:@Region} has the name of another database of its project here, so it does not replicate; rename or delete one of them");
                 }
             }
 
@@ -1524,37 +1525,4 @@ internal sealed partial class WanPuller(
     private readonly union PullOutcome(Pulled, Conflict);
 
     private static string Name(TenantContext database) => $"{database.OrganizationId}/{database.ProjectId}/{database.DatabaseId}";
-
-    [LoggerMessage(LogLevel.Warning, "Cross-region replication from region {Region} failed; retrying every round")]
-    private static partial void LogRoundFailed(ILogger logger, Exception error, string region);
-
-    [LoggerMessage(LogLevel.Debug, "Cross-region replication from region {Region} still fails; retrying every round")]
-    private static partial void LogRetryRoundFailed(ILogger logger, Exception error, string region);
-
-    [LoggerMessage(LogLevel.Information, "Cross-region replication from region {Region} recovered")]
-    private static partial void LogRecovered(ILogger logger, string region);
-
-    [LoggerMessage(LogLevel.Debug, "No member of region {Region} answers yet; retrying every round")]
-    private static partial void LogRetryUnanswered(ILogger logger, string region);
-
-    [LoggerMessage(LogLevel.Debug, "Pulling an origin from region {Region} still fails; retrying next round")]
-    private static partial void LogRetryPullFailed(ILogger logger, Exception error, string region);
-
-    [LoggerMessage(LogLevel.Warning, "A database of region {Region} has the name of another database of its project here, so it does not replicate; rename or delete one of them")]
-    private static partial void LogNameTaken(ILogger logger, string region);
-
-    [LoggerMessage(LogLevel.Information, "A database its home region {Region} deleted was deleted here too")]
-    private static partial void LogForgot(ILogger logger, string region);
-
-    [LoggerMessage(LogLevel.Warning, "No member of region {Region} answered; retrying every round")]
-    private static partial void LogUnanswered(ILogger logger, string region);
-
-    [LoggerMessage(LogLevel.Warning, "A diverged origin from region {Region} exceeds the tracked bound; it is reported diverged only while it fails")]
-    private static partial void LogDivergenceUntracked(ILogger logger, string region);
-
-    [LoggerMessage(LogLevel.Warning, "Pulling an origin from region {Region} failed; retrying next round")]
-    private static partial void LogPullFailed(ILogger logger, Exception error, string region);
-
-    [LoggerMessage(LogLevel.Warning, "An origin from region {Region} diverged: {Reason}; retrying next round")]
-    private static partial void LogPullDiverged(ILogger logger, string region, string reason);
 }

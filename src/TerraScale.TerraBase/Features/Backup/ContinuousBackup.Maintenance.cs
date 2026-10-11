@@ -4,6 +4,7 @@ using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
+using ZLogger;
 
 namespace TerraBase.Features.Backup;
 
@@ -89,7 +90,7 @@ internal sealed partial class ContinuousBackup
             catch (Exception error) when (!cancellationToken.IsCancellationRequested)
             {
                 complete = false;
-                LogRetentionFailed(_logger, file.Prefix, error);
+                _logger.ZLogWarning(error, $"Retention of {file.Prefix:@File} failed; it retries next hour");
             }
         }
 
@@ -254,7 +255,7 @@ internal sealed partial class ContinuousBackup
         _drills.Add(1, new KeyValuePair<string, object?>("result", drill.Passed ? "passed" : "failed"));
         if (!drill.Passed)
         {
-            LogDrillFailed(_logger, file.Prefix, error!);
+            _logger.ZLogError($"The restore drill of {file.Prefix:@File} failed: {error!:@Reason}");
         }
 
         await RecordAsync(file, cancellationToken).ConfigureAwait(false);
@@ -283,13 +284,7 @@ internal sealed partial class ContinuousBackup
         }
         catch (Exception error) when (!cancellationToken.IsCancellationRequested)
         {
-            LogRecordFailed(_logger, file.Prefix, error);
+            _logger.ZLogWarning(error, $"The backup record of {file.Prefix:@File} could not be written; the next pass retries");
         }
     }
-
-    [LoggerMessage(Level = LogLevel.Error, Message = "The restore drill of {File} failed: {Reason}")]
-    private static partial void LogDrillFailed(ILogger logger, string file, string reason);
-
-    [LoggerMessage(Level = LogLevel.Warning, Message = "The backup record of {File} could not be written; the next pass retries")]
-    private static partial void LogRecordFailed(ILogger logger, string file, Exception error);
 }

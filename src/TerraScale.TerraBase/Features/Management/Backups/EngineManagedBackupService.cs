@@ -10,6 +10,7 @@ using TerraBase.Features.Backup;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
+using ZLogger;
 using static TerraBase.Features.Management.SystemCatalog;
 
 namespace TerraBase.Features.Management.Backups;
@@ -26,7 +27,7 @@ namespace TerraBase.Features.Management.Backups;
 /// one page of the sweep, then retention and turn selection a page of databases at a time, then at most
 /// <see cref="MaxScheduledBackupsPerPass"/> scheduled backups in turn order.
 /// </remarks>
-internal sealed partial class EngineManagedBackupService(
+internal sealed class EngineManagedBackupService(
     IStorageEngine engine, SystemCatalog catalog, IManagementService management, IPointInTimeRestore pointInTime, TimeProvider time,
     ILogger<EngineManagedBackupService> logger)
     : IManagedBackupService
@@ -286,7 +287,7 @@ internal sealed partial class EngineManagedBackupService(
                 }
                 catch (Exception error) when (!cancellationToken.IsCancellationRequested)
                 {
-                    LogScheduleFailed(logger, owner.DatabaseId, error);
+                    logger.ZLogWarning(error, $"Scheduled backup work for database {owner.DatabaseId:@DatabaseId} failed");
                 }
             }
 
@@ -344,7 +345,7 @@ internal sealed partial class EngineManagedBackupService(
                 catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
                 {
                     // Already recorded as a failed attempt, or left to a later sweep; the next database still gets its turn.
-                    LogScheduleFailed(logger, record.DatabaseId, error);
+                    logger.ZLogWarning(error, $"Scheduled backup work for database {record.DatabaseId:@DatabaseId} failed");
                 }
             }
         }
@@ -507,7 +508,7 @@ internal sealed partial class EngineManagedBackupService(
         catch (Exception error)
         {
             // The record stays pending or snapshotting; once the attempt has ended, a later pass's sweep expires it.
-            LogSettleFailed(logger, record.Id, error);
+            logger.ZLogWarning(error, $"Recording the failure of backup {record.Id:@BackupId} failed; a later storage sweep settles it");
             return;
         }
 
@@ -627,7 +628,7 @@ internal sealed partial class EngineManagedBackupService(
             }
             catch (Exception error) when (!cancellationToken.IsCancellationRequested)
             {
-                LogSweepFailed(logger, entry.Kind, entry.Id, error);
+                logger.ZLogWarning(error, $"Storage sweep of {entry.Kind:@Kind} {entry.Id:@Id} failed; it is retried on a later pass");
             }
         }
 
@@ -821,15 +822,6 @@ internal sealed partial class EngineManagedBackupService(
     private static async ValueTask<BackupPolicy> GetPolicyAsync(IStorageTransaction transaction, string databaseId, CancellationToken cancellationToken) =>
         await GetAsync(transaction, BackupCatalog.Policy(databaseId), CurrentPolicy, TerraBaseJsonContext.Default.BackupPolicy, cancellationToken).ConfigureAwait(false)
         ?? DefaultPolicy;
-
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Scheduled backup work for database {DatabaseId} failed")]
-    private static partial void LogScheduleFailed(ILogger logger, string databaseId, Exception error);
-
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Recording the failure of backup {BackupId} failed; a later storage sweep settles it")]
-    private static partial void LogSettleFailed(ILogger logger, string backupId, Exception error);
-
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Storage sweep of {Kind} {Id} failed; it is retried on a later pass")]
-    private static partial void LogSweepFailed(ILogger logger, string kind, string id, Exception error);
 
     // A pending backup recorded, or why not.
     private readonly union RecordPendingResult(Done, NotFound, Unavailable);

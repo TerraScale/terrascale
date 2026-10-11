@@ -8,6 +8,7 @@ using TerraBase.Errors;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Replication.V1;
 using TerraBase.Tenancy;
+using ZLogger;
 
 namespace TerraBase.Features.Replication;
 
@@ -23,7 +24,7 @@ namespace TerraBase.Features.Replication;
 /// <remarks>
 /// ponytail: one database at a time per peer; run several streams per peer if many databases lag at once.
 /// </remarks>
-internal sealed partial class ReplicationSender(
+internal sealed class ReplicationSender(
     IStorageEngine engine, ITenantDirectory tenants, PeerCredentials credentials, TerraBaseOptions options, ReplicationMetrics metrics, ILogger<ReplicationSender> logger,
     TimeProvider time, IUsageMeter usage)
     : BackgroundService, IReplicationWait, IReplicationStatus, IReplicationPressure
@@ -300,14 +301,14 @@ internal sealed partial class ReplicationSender(
                 catch (Exception error) when (!stoppingToken.IsCancellationRequested)
                 {
                     complete = false;
-                    LogDiscoveryFailed(logger, error);
+                    logger.ZLogWarning(error, $"Replication discovery failed; retrying on the next reconciliation");
                 }
             }
         }
         catch (Exception error) when (!stoppingToken.IsCancellationRequested)
         {
             complete = false;
-            LogDiscoveryFailed(logger, error);
+            logger.ZLogWarning(error, $"Replication discovery failed; retrying on the next reconciliation");
         }
 
         // A failed database stays in durable discovery, without an unbounded in-memory retry queue.
@@ -384,7 +385,7 @@ internal sealed partial class ReplicationSender(
                     if (peer.Retry(database) is { } backoff)
                     {
                         Progressed();
-                        LogSyncFailed(logger, error, peer.Number, 1, backoff.TotalMilliseconds);
+                        logger.ZLogWarning(error, $"Replication of {1:@Databases} databases to peer #{peer.Number:@Peer} failed; retrying within {backoff.TotalMilliseconds:@BackoffMilliseconds} ms");
                     }
                 }
             }
@@ -503,7 +504,7 @@ internal sealed partial class ReplicationSender(
 
         peer.Welcomed(identity, receiverIncarnation, acknowledged);
         Progressed();
-        LogPeerRegion(logger, peer.Number, options.Region, peerMember.Region is "" ? "unknown" : peerMember.Region);
+        logger.ZLogDebug($"Replication sending from region {options.Region:@LocalRegion} to peer #{peer.Number:@Peer} in region {(peerMember.Region is "" ? "unknown" : peerMember.Region):@PeerRegion}");
         // Replay after a failure, an initial catch-up or a backlog longer than one turn stays handoff until a turn reaches the head.
         var traffic = peer.Handoff(identity, peer.Retrying(identity) || acknowledged == 0 && head > 1 || head - acknowledged > MaxGroupsPerTurn)
             ? ReplicationTrafficKind.Handoff : ReplicationTrafficKind.Delta;
@@ -710,15 +711,6 @@ internal sealed partial class ReplicationSender(
     }
 
     // Logs the peer's position in peer-addresses, never its address.
-    [LoggerMessage(LogLevel.Warning, "Replication of {Databases} databases to peer #{Peer} failed; retrying within {BackoffMilliseconds} ms")]
-    private static partial void LogSyncFailed(ILogger logger, Exception error, int peer, int databases, double backoffMilliseconds);
-
-    [LoggerMessage(LogLevel.Warning, "Replication discovery failed; retrying on the next reconciliation")]
-    private static partial void LogDiscoveryFailed(ILogger logger, Exception error);
-
-    [LoggerMessage(LogLevel.Debug, "Replication sending from region {LocalRegion} to peer #{Peer} in region {PeerRegion}")]
-    private static partial void LogPeerRegion(ILogger logger, int peer, string localRegion, string peerRegion);
-
     private static DatabaseIncarnation Identity(IDatabaseStore store)
     {
         var tenant = store.Tenant ?? throw new InvalidOperationException("system databases cannot replicate");

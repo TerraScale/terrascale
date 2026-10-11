@@ -8,6 +8,7 @@ using TerraBase.Features.Replication.V1;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
+using ZLogger;
 
 namespace TerraBase.Features.Management.Usage;
 
@@ -17,7 +18,7 @@ namespace TerraBase.Features.Management.Usage;
 /// primary does not acknowledge them. Query shapes are independently forwarded until durably acknowledged;
 /// query field counts stay in bounded memory and are lost on restart.
 /// </summary>
-internal sealed partial class UsageFlushService(
+internal sealed class UsageFlushService(
     UsageMeter meter, QueryFieldRecorder recorder, QueryShapeRecorder shapes, TimeProvider time, TerraBaseOptions options, ILogger<UsageFlushService> logger,
     IStorageEngine engine, IReplicationStatus replication, ICatalogPrimaryClient? primary = null) : BackgroundService
 {
@@ -64,7 +65,7 @@ internal sealed partial class UsageFlushService(
         }
         catch (Exception error)
         {
-            LogShutdownFlushFailed(logger, error);
+            logger.ZLogWarning(error, $"Flushing workload observations at shutdown failed; the unsaved counts are lost");
         }
     }
 
@@ -116,7 +117,7 @@ internal sealed partial class UsageFlushService(
         }
         catch (Exception error) when (!cancellationToken.IsCancellationRequested)
         {
-            LogFlushFailed(logger, error);
+            logger.ZLogWarning(error, $"Flushing workload observations failed; they stay pending");
         }
         finally
         {
@@ -135,7 +136,7 @@ internal sealed partial class UsageFlushService(
             }
             catch (Exception error) when (!cancellationToken.IsCancellationRequested)
             {
-                LogFlushFailed(logger, error);
+                logger.ZLogWarning(error, $"Flushing workload observations failed; they stay pending");
             }
         }
     }
@@ -306,10 +307,4 @@ internal sealed partial class UsageFlushService(
         }));
         return primary!.AddUsageAsync(request, cancellationToken);
     }
-
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Flushing workload observations failed; they stay pending")]
-    private static partial void LogFlushFailed(ILogger logger, Exception error);
-
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Flushing workload observations at shutdown failed; the unsaved counts are lost")]
-    private static partial void LogShutdownFlushFailed(ILogger logger, Exception error);
 }

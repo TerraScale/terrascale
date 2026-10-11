@@ -1,6 +1,7 @@
 using TerraBase.Engine;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
+using ZLogger;
 using static TerraBase.Features.Management.SystemCatalog;
 
 namespace TerraBase.Features.Management.Backups;
@@ -22,7 +23,7 @@ internal sealed record SweepEntry(string Kind, string OrganizationId, string Id)
 /// cleaned up through the engine's database cleanup intent. Every backup pass works through one page of the queue from a rotating cursor,
 /// so entries that keep failing cannot hide the rest. It is a work queue: nothing is addressed or authorized through it.
 /// </summary>
-internal static partial class StorageSweep
+internal static class StorageSweep
 {
     /// <summary>A backup record in <see cref="BackupState.Expiring"/>, or possibly abandoned, whose snapshot to delete.</summary>
     public const string Backup = "backup";
@@ -56,11 +57,8 @@ internal static partial class StorageSweep
         }
         catch (Exception error)
         {
-            LogDeleteFailed(logger, storage.DatabaseId, error);
+            logger.ZLogWarning(error, $"Deleting the files of {storage.DatabaseId:@Storage} failed; the storage sweep retries on its next pass");
             return false;
         }
     }
-
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Deleting the files of {Storage} failed; the storage sweep retries on its next pass")]
-    private static partial void LogDeleteFailed(ILogger logger, string? storage, Exception error);
 }

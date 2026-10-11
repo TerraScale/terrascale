@@ -5,6 +5,7 @@ using TerraBase.Engine;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
+using ZLogger;
 
 namespace TerraBase.Features.Backup;
 
@@ -318,7 +319,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
                 catch (Exception error) when (!stoppingToken.IsCancellationRequested && !_jobCancellation.IsCancellationRequested)
                 {
                     // A failed discovery must not stop the host; the next tick retries.
-                    LogPassFailed(_logger, error);
+                    _logger.ZLogWarning(error, $"Continuous backup pass failed");
                 }
             }
             while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false));
@@ -535,7 +536,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         catch (Exception error) when (!cancellationToken.IsCancellationRequested)
         {
             // A database deleted or failing to open now is retried by the next discovery.
-            LogOpenFailed(_logger, prefix, error);
+            _logger.ZLogWarning(error, $"Continuous backup cannot open {prefix:@File}; the next discovery retries");
         }
     }
 
@@ -636,7 +637,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
                 catch (Exception error) when (!cancellationToken.IsCancellationRequested)
                 {
                     // Retention retries next hour; shipping goes on.
-                    LogRetentionFailed(_logger, file.Prefix, error);
+                    _logger.ZLogWarning(error, $"Retention of {file.Prefix:@File} failed; it retries next hour");
                 }
             }
 
@@ -674,7 +675,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
             // The store closed under this read: its database was deleted or the engine stops. The job ends the file, so the
             // next discovery opens a new tap if the database exists again, rather than reading the closed store forever.
             file.Removed = true;
-            LogClosed(_logger, file.Prefix);
+            _logger.ZLogDebug($"Continuous backup of {file.Prefix:@File} stopped: its database closed while it was read; the next discovery reopens it if it exists");
             return;
         }
 
@@ -682,7 +683,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         file.LastError = error.GetType().Name;
         file.Failures++;
         file.RetryAt = _time.GetUtcNow() + Backoff(file.Failures);
-        LogShipFailed(_logger, file.Prefix, error);
+        _logger.ZLogWarning(error, $"Continuous backup of {file.Prefix:@File} failed; the next pass retries");
     }
 
     // Whether this member ships the file now. A new epoch means the file is shipped from another physical copy or history
@@ -704,7 +705,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         {
             (file.Shipping, file.Epoch, file.BehindSince) = (true, epoch, _time.GetUtcNow());
             Abandon(file);
-            LogShipping(_logger, file.Prefix);
+            _logger.ZLogInformation($"This member now ships {file.Prefix:@File}");
         }
 
         return true;
@@ -827,7 +828,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
     private void Hole(ShippedFile file)
     {
         _holes.Add(1);
-        LogHole(_logger, file.Prefix);
+        _logger.ZLogWarning($"The log of {file.Prefix:@File} has a hole; its backup starts a new generation");
         Abandon(file);
     }
 
@@ -866,27 +867,6 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         _pass.Dispose();
         base.Dispose();
     }
-
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Continuous backup pass failed")]
-    private static partial void LogPassFailed(ILogger logger, Exception error);
-
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Continuous backup cannot open {File}; the next discovery retries")]
-    private static partial void LogOpenFailed(ILogger logger, string file, Exception error);
-
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Continuous backup of {File} failed; the next pass retries")]
-    private static partial void LogShipFailed(ILogger logger, string file, Exception error);
-
-    [LoggerMessage(Level = LogLevel.Debug, Message = "Continuous backup of {File} stopped: its database closed while it was read; the next discovery reopens it if it exists")]
-    private static partial void LogClosed(ILogger logger, string file);
-
-    [LoggerMessage(Level = LogLevel.Warning, Message = "The log of {File} has a hole; its backup starts a new generation")]
-    private static partial void LogHole(ILogger logger, string file);
-
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Retention of {File} failed; it retries next hour")]
-    private static partial void LogRetentionFailed(ILogger logger, string file, Exception error);
-
-    [LoggerMessage(Level = LogLevel.Information, Message = "This member now ships {File}")]
-    private static partial void LogShipping(ILogger logger, string file);
 
     private sealed class ShippingJob(ShippedFile file, bool customer, CancellationTokenSource cancellation)
     {

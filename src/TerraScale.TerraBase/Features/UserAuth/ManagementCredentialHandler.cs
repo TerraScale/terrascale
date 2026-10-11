@@ -7,6 +7,7 @@ using Microsoft.Extensions.Options;
 using TerraBase.Configuration;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
+using ZLogger;
 
 namespace TerraBase.Features.UserAuth;
 
@@ -15,7 +16,7 @@ namespace TerraBase.Features.UserAuth;
 /// in <see cref="UserHeader"/>. It exists for bootstrap before ts-auth runs (TS-529), so it is accepted only on the
 /// loopback administrative listener, only when <c>management-credential-file</c> is set, and every use is logged.
 /// </summary>
-internal sealed partial class ManagementCredentialHandler(
+internal sealed class ManagementCredentialHandler(
     IOptionsMonitor<AuthenticationSchemeOptions> options,
     ILoggerFactory logger,
     UrlEncoder encoder,
@@ -41,7 +42,7 @@ internal sealed partial class ManagementCredentialHandler(
         var presented = SHA256.HashData(Encoding.UTF8.GetBytes(header["Bearer ".Length..].Trim()));
         if (!CryptographicOperations.FixedTimeEquals(presented, expected.Span))
         {
-            LogRejected(Logger, Request.Method, Request.Path.Value);
+            Logger.ZLogWarning($"Management service credential rejected: {Request.Method:@Method} {Request.Path.Value:@Path}");
             return Task.FromResult(AuthenticateResult.Fail("invalid management credential"));
         }
 
@@ -53,14 +54,8 @@ internal sealed partial class ManagementCredentialHandler(
         }
 
         // The audit trail of the credential: who it acted as and what it did, never the secret.
-        LogUsed(Logger, user, Request.Method, Request.Path.Value);
+        Logger.ZLogInformation($"Management service credential acted as user {user:@UserId}: {Request.Method:@Method} {Request.Path.Value:@Path}");
         var principal = new ClaimsPrincipal(new ClaimsIdentity([new Claim(ClaimTypes.NameIdentifier, user)], SchemeName));
         return Task.FromResult(AuthenticateResult.Success(new AuthenticationTicket(principal, SchemeName)));
     }
-
-    [LoggerMessage(Level = LogLevel.Information, Message = "Management service credential acted as user {UserId}: {Method} {Path}")]
-    private static partial void LogUsed(ILogger logger, string userId, string method, string? path);
-
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Management service credential rejected: {Method} {Path}")]
-    private static partial void LogRejected(ILogger logger, string method, string? path);
 }

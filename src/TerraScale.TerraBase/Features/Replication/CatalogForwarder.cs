@@ -12,6 +12,7 @@ using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
 using TerraBase.Features.Replication.V1;
 using TerraBase.Hosting;
+using ZLogger;
 
 namespace TerraBase.Features.Replication;
 
@@ -93,7 +94,7 @@ internal static class ForwardingProtocol
 /// primary's catalog head after it (within <see cref="ForwardingProtocol.ApplyTimeout"/>), so that a key or database the
 /// request created already serves here. A primary that cannot serve it answers 503 <c>catalog_primary_unavailable</c>.
 /// </summary>
-internal sealed partial class CatalogForwarder
+internal sealed class CatalogForwarder
 {
     /// <summary>Marks a request this follower relayed to the catalog primary.</summary>
     internal sealed class Relayed
@@ -220,7 +221,7 @@ internal sealed partial class CatalogForwarder
             }
             catch (Exception error) when (error is RpcException or InvalidDataException && !aborted.IsCancellationRequested)
             {
-                LogUnavailable(_logger, error);
+                _logger.ZLogWarning(error, $"The catalog primary could not serve a forwarded request; answered 503");
                 await UnavailableAsync(context, "catalog_primary_unavailable", "the catalog primary could not serve the request").ConfigureAwait(false);
                 return;
             }
@@ -338,7 +339,7 @@ internal sealed partial class CatalogForwarder
             }
         }
 
-        LogLagging(_logger, sequence);
+        _logger.ZLogWarning($"A forwarded request was answered before this follower applied catalog group {sequence:@Sequence}");
         return false;
     }
 
@@ -401,14 +402,14 @@ internal sealed partial class CatalogForwarder
             if (!response.HasStarted)
             {
                 response.Clear();
-                LogUnavailable(_logger, error);
+                _logger.ZLogWarning(error, $"The catalog primary could not serve a forwarded request; answered 503");
                 await UnavailableAsync(context, "catalog_primary_unavailable", "the catalog primary could not serve the request").ConfigureAwait(false);
                 return false;
             }
 
             // The status went out already: only a reset tells the client the response is incomplete.
             _forwarded.Add(1, new KeyValuePair<string, object?>("result", "unavailable"));
-            LogBroken(_logger, error);
+            _logger.ZLogWarning(error, $"The catalog primary's response to a forwarded request broke off; the client connection was reset");
             context.Abort();
             return false;
         }
@@ -428,13 +429,4 @@ internal sealed partial class CatalogForwarder
         return BadRequests.WriteAsync(
             context, StatusCodes.Status413PayloadTooLarge, "payload_too_large", "a request the catalog primary serves has a body of at most 4 MiB", op: null);
     }
-
-    [LoggerMessage(Level = LogLevel.Warning, Message = "The catalog primary could not serve a forwarded request; answered 503")]
-    private static partial void LogUnavailable(ILogger logger, Exception error);
-
-    [LoggerMessage(Level = LogLevel.Warning, Message = "A forwarded request was answered before this follower applied catalog group {Sequence}")]
-    private static partial void LogLagging(ILogger logger, long sequence);
-
-    [LoggerMessage(Level = LogLevel.Warning, Message = "The catalog primary's response to a forwarded request broke off; the client connection was reset")]
-    private static partial void LogBroken(ILogger logger, Exception error);
 }

@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Cysharp.Text;
 using Microsoft.Data.Sqlite;
 
 namespace TerraBase.Engine.Sqlite;
@@ -283,48 +284,58 @@ internal sealed partial class SqliteStorageTransaction
         var command = PlainCommand(string.Empty);
         // Tombstones are excluded with the same term the indexes' WHERE carries, so a partial index stays usable.
         // The visit runs before residual rejection, without wrapping predicates that SQLite can use as index constraints.
-        var sql = new StringBuilder(select).Append(CultureInfo.InvariantCulture,
-            $" WHERE collection = '{query.Collection}' AND {(observe ? "tb_query_scan() AND " : "")}body IS NOT NULL");
-        if (ScansLimited)
+        // A using variable cannot be passed by ref, so the builder is disposed in finally.
+        var sql = ZString.CreateStringBuilder();
+        try
         {
-            // Keep indexable predicates visible to the planner. Index seeks narrow the candidates;
-            // the scan guard precedes residual JSON predicates in SQLite's WHERE evaluation.
-            sql.Append(" AND tb_qos_scan(octet_length(body))");
-        }
+            sql.Append(select);
+            sql.AppendFormat(" WHERE collection = '{0}' AND {1}body IS NOT NULL", query.Collection, observe ? "tb_query_scan() AND " : "");
+            if (ScansLimited)
+            {
+                // Keep indexable predicates visible to the planner. Index seeks narrow the candidates;
+                // the scan guard precedes residual JSON predicates in SQLite's WHERE evaluation.
+                sql.Append(" AND tb_qos_scan(octet_length(body))");
+            }
 
-        if (query.Filter is not null)
+            if (query.Filter is not null)
+            {
+                sql.Append(" AND ");
+                AppendFilter(ref sql, command, query.Filter);
+            }
+
+            sql.Append(" ORDER BY ");
+            foreach (var order in query.Order)
+            {
+                sql.Append(Column(order.Field));
+                sql.Append(order.Descending ? " DESC, " : ", ");
+            }
+
+            // Ties break by id in the sort's direction, like the document query compiler, so an index on the sort fields read
+            // backwards also serves a descending order and its tie-break instead of a temporary sort.
+            sql.Append(query.Order is [{ Descending: true }, ..] ? "id DESC LIMIT $limit;" : "id LIMIT $limit;");
+            command.Parameters.AddWithValue("$limit", query.Limit);
+            command.CommandText = sql.ToString();
+        }
+        finally
         {
-            sql.Append(" AND ");
-            AppendFilter(sql, command, query.Filter);
+            sql.Dispose();
         }
-
-        sql.Append(" ORDER BY ");
-        foreach (var order in query.Order)
-        {
-            sql.Append(Column(order.Field)).Append(order.Descending ? " DESC, " : ", ");
-        }
-
-        // Ties break by id in the sort's direction, like the document query compiler, so an index on the sort fields read
-        // backwards also serves a descending order and its tie-break instead of a temporary sort.
-        sql.Append(query.Order is [{ Descending: true }, ..] ? "id DESC LIMIT $limit;" : "id LIMIT $limit;");
-        command.Parameters.AddWithValue("$limit", query.Limit);
-        command.CommandText = sql.ToString();
         return command;
     }
 
-    private static void AppendFilter(StringBuilder sql, SqliteCommand command, SqlFilter filter)
+    private static void AppendFilter(ref Utf16ValueStringBuilder sql, SqliteCommand command, SqlFilter filter)
     {
         switch (filter)
         {
             case SqlAndFilter and:
-                AppendGroup(sql, command, and.Filters, " AND ");
+                AppendGroup(ref sql, command, and.Filters, " AND ");
                 break;
             case SqlOrFilter or:
-                AppendGroup(sql, command, or.Filters, " OR ");
+                AppendGroup(ref sql, command, or.Filters, " OR ");
                 break;
             case SqlNotFilter not:
                 sql.Append("NOT (");
-                AppendFilter(sql, command, not.Filter);
+                AppendFilter(ref sql, command, not.Filter);
                 sql.Append(')');
                 break;
             case SqlCompareFilter compare:
@@ -338,7 +349,9 @@ internal sealed partial class SqliteStorageTransaction
                         sql.Append(" IS NOT NULL");
                         break;
                     case SqlOperator.In:
-                        sql.Append(" IN (").AppendJoin(", ", compare.Values.Select(value => Parameter(command, value))).Append(')');
+                        sql.Append(" IN (");
+                        sql.AppendJoin(", ", compare.Values.Select(value => Parameter(command, value)));
+                        sql.Append(')');
                         break;
                     default:
                         sql.Append(compare.Operator switch
@@ -350,7 +363,8 @@ internal sealed partial class SqliteStorageTransaction
                             SqlOperator.Greater => " > ",
                             SqlOperator.GreaterOrEqual => " >= ",
                             _ => throw new ArgumentOutOfRangeException(nameof(filter)),
-                        }).Append(Parameter(command, compare.Values[0]));
+                        });
+                        sql.Append(Parameter(command, compare.Values[0]));
                         break;
                 }
 
@@ -360,13 +374,13 @@ internal sealed partial class SqliteStorageTransaction
         }
     }
 
-    private static void AppendGroup(StringBuilder sql, SqliteCommand command, IReadOnlyList<SqlFilter> filters, string separator)
+    private static void AppendGroup(ref Utf16ValueStringBuilder sql, SqliteCommand command, IReadOnlyList<SqlFilter> filters, string separator)
     {
         sql.Append('(');
         for (var i = 0; i < filters.Count; i++)
         {
             sql.Append(i == 0 ? string.Empty : separator);
-            AppendFilter(sql, command, filters[i]);
+            AppendFilter(ref sql, command, filters[i]);
         }
 
         sql.Append(')');

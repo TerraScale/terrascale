@@ -11,6 +11,7 @@ using TerraBase.Features.Stats;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
+using ZLogger;
 using static TerraBase.Features.Management.SystemCatalog;
 
 namespace TerraBase.Features.Management.Usage;
@@ -467,7 +468,7 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
                     }
 
                     _unsent = null;
-                    LogGivenUp(logger, stale.Batch.Length);
+                    logger.ZLogWarning($"A usage batch of {stale.Batch.Length:@Entries} database hours went unacknowledged for a day; its counts are dropped");
                 }
 
                 Compact();
@@ -525,7 +526,7 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
 
             if (result is Validation)
             {
-                LogRefused(logger, batch.Length);
+                logger.ZLogWarning($"The catalog primary refused a usage batch of {batch.Length:@Entries} database hours; its counts are dropped");
             }
 
             return true;
@@ -606,7 +607,7 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
 
         if (dropped > 0)
         {
-            LogDropped(logger, dropped);
+            logger.ZLogDebug($"Dropped operation counts of {dropped:@Databases} deleted databases");
         }
     }
 
@@ -991,16 +992,4 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
             }
         }
     }
-
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Reporting a request's transferred bytes failed; its other requests and the flush go on")]
-    private static partial void LogReportFailed(ILogger logger, Exception error);
-
-    [LoggerMessage(Level = LogLevel.Debug, Message = "Dropped operation counts of {Databases} deleted databases")]
-    private static partial void LogDropped(ILogger logger, int databases);
-
-    [LoggerMessage(Level = LogLevel.Warning, Message = "A usage batch of {Entries} database hours went unacknowledged for a day; its counts are dropped")]
-    private static partial void LogGivenUp(ILogger logger, int entries);
-
-    [LoggerMessage(Level = LogLevel.Warning, Message = "The catalog primary refused a usage batch of {Entries} database hours; its counts are dropped")]
-    private static partial void LogRefused(ILogger logger, int entries);
 }

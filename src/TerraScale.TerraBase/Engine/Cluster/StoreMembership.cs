@@ -1,4 +1,5 @@
 using TerraBase.Configuration;
+using ZLogger;
 
 namespace TerraBase.Engine.Cluster;
 
@@ -10,7 +11,7 @@ namespace TerraBase.Engine.Cluster;
 /// that need a current view, at most once per heartbeat.
 /// </summary>
 // anna-full (TS-643): every region keeps its own members; regions find each other through Atlas, not this store.
-internal sealed partial class StoreMembership(IMemberStore store, TerraBaseOptions options, TimeProvider time, ILogger<StoreMembership> logger)
+internal sealed class StoreMembership(IMemberStore store, TerraBaseOptions options, TimeProvider time, ILogger<StoreMembership> logger)
     : IMembership, IDisposable
 {
     /// <summary>How often this member renews its key and reads the others.</summary>
@@ -59,7 +60,7 @@ internal sealed partial class StoreMembership(IMemberStore store, TerraBaseOptio
                 if (_failure is not null)
                 {
                     _failure = null;
-                    LogRecovered(logger);
+                    logger.ZLogInformation($"This member renews its membership and reads the other members again");
                 }
             }
             catch (Exception error) when (error is not OperationCanceledException)
@@ -68,11 +69,11 @@ internal sealed partial class StoreMembership(IMemberStore store, TerraBaseOptio
                 // shutdown is only logged too, so the heartbeat never fails the host's stop.
                 if (_failure == error.GetType())
                 {
-                    LogRetryFailed(logger, error);
+                    logger.ZLogDebug(error, $"This member still could not renew its membership or read the other members; it retries at the next heartbeat");
                 }
                 else
                 {
-                    LogFailed(logger, error);
+                    logger.ZLogWarning(error, $"This member could not renew its membership or read the other members; it retries at the next heartbeat");
                 }
 
                 _failure = error.GetType();
@@ -97,7 +98,7 @@ internal sealed partial class StoreMembership(IMemberStore store, TerraBaseOptio
         }
         catch (Exception error) when (!cancellationToken.IsCancellationRequested)
         {
-            LogLeaveFailed(logger, error);
+            logger.ZLogWarning(error, $"This member could not remove itself from the membership; the others take its work over once its key expires");
         }
         finally
         {
@@ -106,18 +107,6 @@ internal sealed partial class StoreMembership(IMemberStore store, TerraBaseOptio
     }
 
     public void Dispose() => _gate.Dispose();
-
-    [LoggerMessage(Level = LogLevel.Warning, Message = "This member could not renew its membership or read the other members; it retries at the next heartbeat")]
-    private static partial void LogFailed(ILogger logger, Exception error);
-
-    [LoggerMessage(Level = LogLevel.Debug, Message = "This member still could not renew its membership or read the other members; it retries at the next heartbeat")]
-    private static partial void LogRetryFailed(ILogger logger, Exception error);
-
-    [LoggerMessage(Level = LogLevel.Information, Message = "This member renews its membership and reads the other members again")]
-    private static partial void LogRecovered(ILogger logger);
-
-    [LoggerMessage(Level = LogLevel.Warning, Message = "This member could not remove itself from the membership; the others take its work over once its key expires")]
-    private static partial void LogLeaveFailed(ILogger logger, Exception error);
 }
 
 /// <summary>

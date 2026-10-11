@@ -16,6 +16,7 @@ using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
+using ZLogger;
 
 namespace TerraBase.Features.Management;
 
@@ -1208,7 +1209,7 @@ internal sealed partial class EngineManagementService(
 
             if (version is not null || await HasCatalogStateAsync(transaction, cancellationToken).ConfigureAwait(false))
             {
-                LogUnsupportedCatalog(logger);
+                logger.ZLogError($"The management catalog has a format this build does not support; discard the affected data");
                 return ManagementErrors.CatalogUnsupported;
             }
 
@@ -1264,9 +1265,6 @@ internal sealed partial class EngineManagementService(
 
         return items;
     }
-
-    [LoggerMessage(Level = LogLevel.Error, Message = "The management catalog has a format this build does not support; discard the affected data")]
-    private static partial void LogUnsupportedCatalog(ILogger logger);
 
     private string NewId() => EntityIds.New(time).ToString();
 

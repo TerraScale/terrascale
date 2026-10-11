@@ -9,6 +9,7 @@ using TerraBase.Features.Memory;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
+using ZLogger;
 
 namespace TerraBase.Engine.Sqlite;
 
@@ -878,7 +879,8 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
         }
         catch (TimeoutException)
         {
-            LogShutdownGraceExpired(_logger, (int)_shutdownGrace.TotalSeconds, Pool.OpenCount);
+            // Counts only: no database or tenant names in the log.
+            _logger.ZLogWarning($"Shutdown waited {(int)_shutdownGrace.TotalSeconds:@Seconds} s and stopped waiting with {Pool.OpenCount:@Count} database connections still open; the data directory stays owned until they close or the process exits");
         }
     }
 
@@ -888,7 +890,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
         var drained = Io.DrainAdmissionsAsync();
         if (!drained.IsCompleted)
         {
-            LogWaitingForDrain(_logger, Io.Admitted);
+            _logger.ZLogInformation($"Waiting for {Io.Admitted:@Count} admitted storage operations before shutdown");
         }
 
         var errors = new List<Exception>();
@@ -1004,13 +1006,6 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
             throw new AggregateException("storage shutdown failed", errors).Flatten();
         }
     }
-
-    [LoggerMessage(Level = LogLevel.Information, Message = "Waiting for {Count} admitted storage operations before shutdown")]
-    private static partial void LogWaitingForDrain(ILogger logger, int count);
-
-    // Counts only: no database or tenant names in the log.
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Shutdown waited {Seconds} s and stopped waiting with {Count} database connections still open; the data directory stays owned until they close or the process exits")]
-    private static partial void LogShutdownGraceExpired(ILogger logger, int seconds, int count);
 
     // Takes the data directory's lock for this process, then checks the layout under it: another process holding the
     // lock, or a directory from before tenancy, stops the start.
@@ -1507,11 +1502,8 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
             }
             catch (Exception error)
             {
-                LogNotificationFailed(_logger, error, name);
+                _logger.ZLogError(error, $"A change notification for database {name:@Database} failed; the change itself is committed");
             }
         }
     }
-
-    [LoggerMessage(LogLevel.Error, "A change notification for database {Database} failed; the change itself is committed")]
-    private static partial void LogNotificationFailed(ILogger logger, Exception error, string database);
 }

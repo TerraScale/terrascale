@@ -1,9 +1,10 @@
 using TerraBase.Configuration;
+using ZLogger;
 
 namespace TerraBase.Features.Management.Backups;
 
 /// <summary>Once a minute, takes the scheduled backups that are due and applies retention; on the catalog primary only.</summary>
-internal sealed partial class BackupScheduler(IManagedBackupService backups, TimeProvider time, TerraBaseOptions options, ILogger<BackupScheduler> logger) : BackgroundService
+internal sealed class BackupScheduler(IManagedBackupService backups, TimeProvider time, TerraBaseOptions options, ILogger<BackupScheduler> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -22,11 +23,8 @@ internal sealed partial class BackupScheduler(IManagedBackupService backups, Tim
             catch (Exception error) when (!stoppingToken.IsCancellationRequested)
             {
                 // A failed pass must not stop the host; the next tick retries.
-                LogPassFailed(logger, error);
+                logger.ZLogWarning(error, $"Backup scheduler pass failed");
             }
         }
     }
-
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Backup scheduler pass failed")]
-    private static partial void LogPassFailed(ILogger logger, Exception error);
 }

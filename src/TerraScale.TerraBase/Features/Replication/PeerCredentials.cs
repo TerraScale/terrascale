@@ -2,6 +2,7 @@ using System.Net.Security;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using TerraBase.Configuration;
+using ZLogger;
 
 namespace TerraBase.Features.Replication;
 
@@ -13,7 +14,7 @@ namespace TerraBase.Features.Replication;
 /// yet, or whose certificate does not chain to its authorities yet (files replaced one at a time), keeps
 /// the previous credentials and is retried on the next handshake.
 /// </summary>
-internal sealed partial class PeerCredentials : IDisposable
+internal sealed class PeerCredentials : IDisposable
 {
     private static readonly TimeSpan CheckInterval = TimeSpan.FromSeconds(1);
     private readonly PeerTlsFiles _files;
@@ -109,7 +110,7 @@ internal sealed partial class PeerCredentials : IDisposable
             loaded = LoadStable();
             if (loaded is null)
             {
-                LogReloadFailed(_logger);
+                _logger.ZLogWarning($"peer-certificate, peer-private-key or peer-client-ca changed but cannot be read or do not chain; keeping the previous certificates");
                 return;
             }
 
@@ -128,12 +129,12 @@ internal sealed partial class PeerCredentials : IDisposable
             {
                 // Release ownership; connection leases keep an old generation alive until they close.
                 replaced.Dispose();
-                LogReloaded(_logger);
+                _logger.ZLogInformation($"Reloaded peer-certificate, peer-private-key and peer-client-ca");
             }
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or CryptographicException or ArgumentException)
         {
-            LogReloadFailed(_logger);
+            _logger.ZLogWarning($"peer-certificate, peer-private-key or peer-client-ca changed but cannot be read or do not chain; keeping the previous certificates");
         }
         finally
         {
@@ -212,12 +213,6 @@ internal sealed partial class PeerCredentials : IDisposable
     }
 
     // Messages name the settings, never the paths.
-    [LoggerMessage(LogLevel.Information, "Reloaded peer-certificate, peer-private-key and peer-client-ca")]
-    private static partial void LogReloaded(ILogger logger);
-
-    [LoggerMessage(LogLevel.Warning, "peer-certificate, peer-private-key or peer-client-ca changed but cannot be read or do not chain; keeping the previous certificates")]
-    private static partial void LogReloadFailed(ILogger logger);
-
     internal sealed class Snapshot((string, string, string) fingerprints, X509Certificate2 certificate, X509Certificate2Collection authorities, X509Certificate2Collection intermediates) : IDisposable
     {
         private int _references = 1;

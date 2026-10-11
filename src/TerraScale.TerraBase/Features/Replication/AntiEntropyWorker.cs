@@ -7,11 +7,12 @@ using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Replication.Alpha;
 using TerraBase.Tenancy;
+using ZLogger;
 
 namespace TerraBase.Features.Replication;
 
 // One maintenance exchange at a time; it cannot consume normal replication's credits.
-internal sealed partial class AntiEntropyWorker(
+internal sealed class AntiEntropyWorker(
     IStorageEngine engine, ITenantDirectory tenants, IMembership membership, IAntiEntropyState state,
     PeerCredentials credentials, TerraBaseOptions options, ILogger<AntiEntropyWorker> logger, TimeProvider time, IMemoryBudget memory,
     IUsageMeter usage) : BackgroundService
@@ -35,7 +36,7 @@ internal sealed partial class AntiEntropyWorker(
                 }
                 catch (Exception error) when (!stoppingToken.IsCancellationRequested)
                 {
-                    LogRepairFailed(logger, error);
+                    logger.ZLogWarning(error, $"Anti-entropy repair failed; retrying on the next reconciliation");
                 }
 
                 // A slow pass must still leave an idle gap; unchanged journals cannot reveal physical divergence.
@@ -65,7 +66,7 @@ internal sealed partial class AntiEntropyWorker(
             }
             else
             {
-                LogInvalidPeer(logger);
+                logger.ZLogWarning($"Skipping an invalid anti-entropy member peer address");
             }
         }
 
@@ -103,13 +104,13 @@ internal sealed partial class AntiEntropyWorker(
                     }
                     catch (Exception error) when (!stoppingToken.IsCancellationRequested)
                     {
-                        LogRepairFailed(logger, error);
+                        logger.ZLogWarning(error, $"Anti-entropy repair failed; retrying on the next reconciliation");
                     }
                 }
             }
             catch (Exception error) when (!stoppingToken.IsCancellationRequested)
             {
-                LogRepairFailed(logger, error);
+                logger.ZLogWarning(error, $"Anti-entropy repair failed; retrying on the next reconciliation");
             }
         }
     }
@@ -233,10 +234,4 @@ internal sealed partial class AntiEntropyWorker(
             throw new InvalidDataException("invalid peer repair page or continuation");
         }
     }
-
-    [LoggerMessage(LogLevel.Warning, "Anti-entropy repair failed; retrying on the next reconciliation")]
-    private static partial void LogRepairFailed(ILogger logger, Exception error);
-
-    [LoggerMessage(LogLevel.Warning, "Skipping an invalid anti-entropy member peer address")]
-    private static partial void LogInvalidPeer(ILogger logger);
 }

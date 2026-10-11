@@ -8,6 +8,7 @@ using TerraBase.Features.CrossRegion.V1;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Replication;
 using TerraBase.Tenancy;
+using ZLogger;
 
 namespace TerraBase.Features.CrossRegion;
 
@@ -16,7 +17,7 @@ namespace TerraBase.Features.CrossRegion;
 /// and an origin's change groups after a prefix, read from its journal as the in-region sender reads them. Requests only
 /// read; a request this member cannot answer gets an empty reply, which the asking member counts as a failure.
 /// </summary>
-internal sealed partial class WanResponder(
+internal sealed class WanResponder(
     IRegionBus bus, IStorageEngine engine, IMembership membership, ITenantDirectory tenants, TerraBaseOptions options, WanMetrics metrics,
     ILogger<WanResponder> logger, IUsageMeter usage)
     : BackgroundService
@@ -41,7 +42,7 @@ internal sealed partial class WanResponder(
             }
             catch (Exception error) when (!stoppingToken.IsCancellationRequested)
             {
-                LogServeFailed(logger, error);
+                logger.ZLogWarning(error, $"Serving cross-region replication requests failed; subscribing again");
                 await Task.Delay(TimeSpan.FromSeconds(1), stoppingToken).ConfigureAwait(false);
             }
         }
@@ -85,7 +86,7 @@ internal sealed partial class WanResponder(
         }
         catch (Exception error) when (!cancellationToken.IsCancellationRequested)
         {
-            LogAnswerFailed(logger, error);
+            logger.ZLogWarning(error, $"A cross-region replication request failed");
             return [];
         }
     }
@@ -278,10 +279,4 @@ internal sealed partial class WanResponder(
         metrics.Served(reply.Groups.Count);
         return reply;
     }
-
-    [LoggerMessage(LogLevel.Warning, "Serving cross-region replication requests failed; subscribing again")]
-    private static partial void LogServeFailed(ILogger logger, Exception error);
-
-    [LoggerMessage(LogLevel.Warning, "A cross-region replication request failed")]
-    private static partial void LogAnswerFailed(ILogger logger, Exception error);
 }

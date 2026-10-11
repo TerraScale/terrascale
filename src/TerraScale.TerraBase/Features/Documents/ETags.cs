@@ -1,7 +1,6 @@
 using System.Buffers;
-using System.Globalization;
 using System.Security.Cryptography;
-using System.Text;
+using Cysharp.Text;
 using Microsoft.Extensions.Primitives;
 using Microsoft.Net.Http.Headers;
 using TerraBase.Errors;
@@ -30,7 +29,9 @@ internal static class ETags
     public static string Version(Guid scope, string collection, string id, long version, ReadOnlyMemory<byte> json, bool deleted = false)
     {
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-        hash.AppendData(Encoding.UTF8.GetBytes(string.Create(CultureInfo.InvariantCulture, $"{scope:N}\0{collection}\0{id}\0{version}\0{(deleted ? 1 : 0)}\0")));
+        using var input = ZString.CreateUtf8StringBuilder();
+        input.AppendFormat("{0:N}\0{1}\0{2}\0{3}\0{4}\0", scope, collection, id, version, deleted ? 1 : 0);
+        hash.AppendData(input.AsSpan());
         hash.AppendData(json.Span);
         Span<byte> digest = stackalloc byte[SHA256.HashSizeInBytes];
         hash.GetHashAndReset(digest);

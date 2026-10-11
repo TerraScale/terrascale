@@ -1,7 +1,7 @@
 using System.Buffers;
 using System.Diagnostics.Metrics;
-using System.Text;
 using System.Text.Json;
+using Cysharp.Text;
 using Microsoft.AspNetCore.Http.Features;
 using TerraBase.Engine;
 using TerraBase.Errors;
@@ -195,7 +195,22 @@ internal sealed class ShapeSubscriptionService(
         try
         {
             var stream = context.Response.Body;
-            await stream.WriteAsync(Encoding.UTF8.GetBytes($"event: {kind}\n{(id is null ? "" : $"id: {id}\n")}data: "), send.Token).ConfigureAwait(false);
+            {
+                using var frame = ZString.CreateUtf8StringBuilder();
+                frame.Append("event: ");
+                frame.Append(kind);
+                frame.Append('\n');
+                if (id is not null)
+                {
+                    frame.Append("id: ");
+                    frame.Append(id);
+                    frame.Append('\n');
+                }
+
+                frame.Append("data: ");
+                await frame.WriteToAsync(stream, send.Token).ConfigureAwait(false);
+            }
+
             var buffer = ArrayPool<byte>.Shared.Rent(SendBufferBytes);
             try
             {

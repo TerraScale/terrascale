@@ -9,6 +9,7 @@ using TerraBase.Features.Replication;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
+using ZLogger;
 
 namespace TerraBase.Features.Pressure;
 
@@ -188,7 +189,7 @@ internal sealed partial class PressureSignals : BackgroundService, IPressureSign
         catch (Exception error) when (error is Win32Exception or InvalidOperationException or NotSupportedException)
         {
             _lastCpu = null;
-            LogUnavailable(_logger, "process");
+            _logger.ZLogWarning(error, $"Pressure measurement {"process":@Signal} is unavailable");
         }
 
         long? diskTotal = null;
@@ -201,7 +202,7 @@ internal sealed partial class PressureSignals : BackgroundService, IPressureSign
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException)
         {
-            LogUnavailable(_logger, "disk");
+            _logger.ZLogWarning(error, $"Pressure measurement {"disk":@Signal} is unavailable");
         }
 
         var writes = _engine.CommittedWrites;
@@ -261,9 +262,6 @@ internal sealed partial class PressureSignals : BackgroundService, IPressureSign
 
         return 0;
     }
-
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Pressure measurement {Signal} is unavailable")]
-    private static partial void LogUnavailable(ILogger logger, string signal);
 
     private sealed record StorageSample(StoragePressure Pressure, DateTimeOffset? SampledAt);
 }

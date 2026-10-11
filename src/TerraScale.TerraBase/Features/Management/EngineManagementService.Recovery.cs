@@ -8,6 +8,7 @@ using TerraBase.Features.Management.Backups;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
+using ZLogger;
 
 namespace TerraBase.Features.Management;
 
@@ -100,7 +101,7 @@ internal sealed partial class EngineManagementService
             if (storage is null || document.Id != storage.DatabaseId || !IsId(storage.OrganizationId) || !IsId(storage.ProjectId) || !IsId(storage.DatabaseId))
             {
                 // Inconsistent metadata cannot authorize deletion of registered data, and no retry would make it valid.
-                LogInvalidReplicatedIntent(logger, null);
+                logger.ZLogError($"A replicated database cleanup intent is invalid; nothing was deleted for it");
             }
             else
             {
@@ -212,7 +213,7 @@ internal sealed partial class EngineManagementService
             if (!registered)
             {
                 _unknownDatabaseFiles++;
-                LogUnknownDatabaseFile(logger, file.Path);
+                logger.ZLogWarning($"Preserved database file without a catalog registration: {file.Path:@Path}");
             }
         }
     }
@@ -293,10 +294,4 @@ internal sealed partial class EngineManagementService
     // The engine's tenant ids: canonical uppercase ULIDs.
     private static bool IsId([NotNullWhen(true)] string? id) =>
         EntityIds.IsValid(id);
-
-    [LoggerMessage(Level = LogLevel.Error, Message = "A replicated database cleanup intent is invalid; nothing was deleted for it")]
-    private static partial void LogInvalidReplicatedIntent(ILogger logger, Exception? error);
-
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Preserved database file without a catalog registration: {Path}")]
-    private static partial void LogUnknownDatabaseFile(ILogger logger, string path);
 }

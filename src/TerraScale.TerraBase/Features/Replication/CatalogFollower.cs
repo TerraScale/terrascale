@@ -6,6 +6,7 @@ using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Features.Replication.V1;
 using TerraBase.Hosting;
+using ZLogger;
 
 namespace TerraBase.Features.Replication;
 
@@ -53,7 +54,7 @@ internal sealed class CatalogPrimaryReadiness : ICatalogReadiness
 /// jittered backoff; the stream resumes from the journal head committed with the last group. A snapshot adopts the primary's
 /// origin, so this catalog then follows only that primary's journal: a catalog of another origin is never replaced.
 /// </summary>
-internal sealed partial class CatalogFollower : BackgroundService, ICatalogReadiness
+internal sealed class CatalogFollower : BackgroundService, ICatalogReadiness
 {
     private static readonly TimeSpan InitialBackoff = TimeSpan.FromMilliseconds(100);
     private static readonly TimeSpan MaxBackoff = TimeSpan.FromSeconds(10);
@@ -157,22 +158,22 @@ internal sealed partial class CatalogFollower : BackgroundService, ICatalogReadi
             catch (ObserverException error)
             {
                 _failures.Add(1, new KeyValuePair<string, object?>("reason", "apply"));
-                LogObserverFailed(_logger, error.InnerException!);
+                _logger.ZLogError(error.InnerException!, $"Acting on an applied catalog change failed; the catalog itself was applied");
             }
             catch (LineageException)
             {
                 _failures.Add(1, new KeyValuePair<string, object?>("reason", "lineage"));
-                LogLineage(_logger);
+                _logger.ZLogError($"This member's catalog is not empty and belongs to another origin than its catalog primary's journal; it is kept and this member does not follow. Point catalog-primary at the primary of this catalog, or remove its _system.db files to follow this one");
             }
             catch (InvalidDataException error)
             {
                 _failures.Add(1, new KeyValuePair<string, object?>("reason", "invalid"));
-                LogInvalid(_logger, error);
+                _logger.ZLogError(error, $"The catalog primary sent a frame that failed validation; nothing of it was applied");
             }
             catch (Exception error)
             {
                 _failures.Add(1, new KeyValuePair<string, object?>("reason", "stream"));
-                LogStreamFailed(_logger, error);
+                _logger.ZLogWarning(error, $"The catalog stream from the primary failed; reconnecting");
             }
 
             // A stream the primary welcomed made progress: retry soon after it breaks.
@@ -253,7 +254,7 @@ internal sealed partial class CatalogFollower : BackgroundService, ICatalogReadi
                     if (position is not null && position.Sequence >= (long)frame.Heartbeat.Head && !_caughtUp)
                     {
                         _caughtUp = true;
-                        LogCaughtUp(_logger, position.Sequence);
+                        _logger.ZLogInformation($"The catalog caught up with its primary at group {position.Sequence:@Sequence}; this member is ready");
                         _caughtUpObservers = Task.Run(async () =>
                         {
                             foreach (var observer in _observers)
@@ -333,7 +334,7 @@ internal sealed partial class CatalogFollower : BackgroundService, ICatalogReadi
 
                         await replica.CommitAsync(position, (long)Math.Min(frame.SnapshotEnd.CommitOffset, (ulong)VersionClock.MaxVersion), cancellationToken)
                             .ConfigureAwait(false);
-                        LogSnapshot(_logger, position.Sequence);
+                        _logger.ZLogInformation($"Applied a catalog snapshot through primary group {position.Sequence:@Sequence}");
                         return position;
                     default:
                         throw new InvalidDataException("the catalog primary sent an unexpected frame in a snapshot");
@@ -428,7 +429,7 @@ internal sealed partial class CatalogFollower : BackgroundService, ICatalogReadi
         }
         catch (Exception error) when (!cancellationToken.IsCancellationRequested)
         {
-            LogObserverFailed(_logger, error);
+            _logger.ZLogError(error, $"Acting on an applied catalog change failed; the catalog itself was applied");
         }
         catch (OperationCanceledException)
         {
@@ -469,22 +470,4 @@ internal sealed partial class CatalogFollower : BackgroundService, ICatalogReadi
     private sealed class ObserverException(Exception inner) : Exception("acting on applied catalog changes failed", inner);
 
     private sealed class LineageException() : Exception("the local catalog belongs to another origin than the catalog primary's");
-
-    [LoggerMessage(Level = LogLevel.Warning, Message = "The catalog stream from the primary failed; reconnecting")]
-    private static partial void LogStreamFailed(ILogger logger, Exception error);
-
-    [LoggerMessage(Level = LogLevel.Error, Message = "The catalog primary sent a frame that failed validation; nothing of it was applied")]
-    private static partial void LogInvalid(ILogger logger, Exception error);
-
-    [LoggerMessage(Level = LogLevel.Error, Message = "This member's catalog is not empty and belongs to another origin than its catalog primary's journal; it is kept and this member does not follow. Point catalog-primary at the primary of this catalog, or remove its _system.db files to follow this one")]
-    private static partial void LogLineage(ILogger logger);
-
-    [LoggerMessage(Level = LogLevel.Error, Message = "Acting on an applied catalog change failed; the catalog itself was applied")]
-    private static partial void LogObserverFailed(ILogger logger, Exception error);
-
-    [LoggerMessage(Level = LogLevel.Information, Message = "Applied a catalog snapshot through primary group {Sequence}")]
-    private static partial void LogSnapshot(ILogger logger, long sequence);
-
-    [LoggerMessage(Level = LogLevel.Information, Message = "The catalog caught up with its primary at group {Sequence}; this member is ready")]
-    private static partial void LogCaughtUp(ILogger logger, long sequence);
 }

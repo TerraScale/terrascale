@@ -7,6 +7,7 @@ using TerraBase.Features.Replication.V1;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
+using ZLogger;
 
 namespace TerraBase.Features.Replication;
 
@@ -16,7 +17,7 @@ namespace TerraBase.Features.Replication;
 /// group is durable; each applied or duplicate group is answered with <c>DurableAck</c> and <c>AppliedAck</c>.
 /// An invalid, unsupported or out-of-order group ends the stream with a <c>StreamError</c> and applies nothing.
 /// </summary>
-internal sealed partial class ReplicationService(
+internal sealed class ReplicationService(
     IStorageEngine engine, IReplicationJournal journal, ITenantDirectory tenants, ReplicationMetrics metrics, TerraBaseOptions options, ILogger<ReplicationService> logger,
     DatabaseLifecycleCheckpoint checkpoint, IHostApplicationLifetime application, IUsageMeter usage, TimeProvider time)
     : V1.Replication.ReplicationBase
@@ -156,7 +157,7 @@ internal sealed partial class ReplicationService(
         {
             ObjectDisposedException.ThrowIf(store.IsClosed, store);
             await stream.SendAsync(Welcome(member, origin, applied, limits)).ConfigureAwait(false);
-            LogPeerRegion(logger, options.Region, first.Hello.LocalIdentity.Region is "" ? "unknown" : first.Hello.LocalIdentity.Region);
+            logger.ZLogDebug($"Replication receiving in region {options.Region:@LocalRegion} from peer region {(first.Hello.LocalIdentity.Region is "" ? "unknown" : first.Hello.LocalIdentity.Region):@PeerRegion}");
             while (await stream.NextAsync().ConfigureAwait(false) is { } request)
             {
                 switch (request.FrameCase)
@@ -287,9 +288,6 @@ internal sealed partial class ReplicationService(
 
     private static SyncResponse Error(StreamErrorCode code, bool retryable) =>
         new() { Error = new StreamError { Code = code, Retryable = retryable } };
-
-    [LoggerMessage(LogLevel.Debug, "Replication receiving in region {LocalRegion} from peer region {PeerRegion}")]
-    private static partial void LogPeerRegion(ILogger logger, string localRegion, string peerRegion);
 
     // Reads requests and writes responses, ending the call when either waits longer than the idle timeout:
     // a sender that stops sending, or stops reading so that a response cannot be written, holds no stream slot forever.

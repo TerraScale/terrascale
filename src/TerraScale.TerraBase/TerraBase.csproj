@@ -38,6 +38,8 @@
     <PackageReference Include="NUlid" />
     <PackageReference Include="SqlParserCS" />
     <PackageReference Include="TerraScale.Logging" />
+    <PackageReference Include="ZLogger" />
+    <PackageReference Include="ZString" />
   </ItemGroup>
 
   <ItemGroup>

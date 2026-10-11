@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
+using Cysharp.Text;
 using Microsoft.Data.Sqlite;
 
 namespace TerraBase.Engine.Sqlite;
@@ -33,41 +34,42 @@ internal sealed class SqliteQueryCompiler(SqliteParameterCollection parameters, 
     public string Compile(DocumentQuery query, bool observe = false)
     {
         var keys = new List<(string Expression, bool Descending)>();
-        var columns = new StringBuilder();
+        using var columns = ZString.CreateStringBuilder();
         foreach (var (key, index) in query.Sort.Select((key, index) => (key, index)))
         {
-            columns.Append(CultureInfo.InvariantCulture, $", {Rank(key.Path)} AS k{index}r, {Scalar(key.Path)} AS k{index}v");
-            keys.Add(($"k{index}r", key.Descending));
-            keys.Add(($"k{index}v", key.Descending));
+            var ordinal = index.ToString(CultureInfo.InvariantCulture);
+            columns.AppendFormat(", {0} AS k{1}r, {2} AS k{1}v", Rank(key.Path), ordinal, Scalar(key.Path));
+            keys.Add(($"k{ordinal}r", key.Descending));
+            keys.Add(($"k{ordinal}v", key.Descending));
         }
 
         var leadingId = query.Sort.Count > 0 && query.Sort[0].Path.IsId;
         var after = leadingId && query.After is { } position
             ? $"id {(query.Sort[0].Descending ? "<" : ">")} {Parameter(position.Id)}"
             : After(keys, query.After);
-        var sql = new StringBuilder();
+        using var sql = ZString.CreateStringBuilder();
         // Keep the non-deterministic visit before residual predicates; seek constraints still bound the scan.
-        sql.Append(CultureInfo.InvariantCulture, $"""
+        sql.AppendFormat("""
             SELECT * FROM (
-                SELECT id, version, octet_length(body) AS size{columns}
-                FROM documents INDEXED BY documents_live WHERE collection = $collection AND {(observe ? "tb_query_scan() AND " : "")}body IS NOT NULL AND {BudgetedFilter(query.Filter)}
-            ) WHERE {after}
+                SELECT id, version, octet_length(body) AS size{0}
+                FROM documents INDEXED BY documents_live WHERE collection = $collection AND {1}body IS NOT NULL AND {2}
+            ) WHERE {3}
             ORDER BY
-            """);
+            """, columns.ToString(), observe ? "tb_query_scan() AND " : "", BudgetedFilter(query.Filter), after);
         if (leadingId)
         {
             // Ids are unique within a collection: later sort keys cannot break a tie. Ordering by the
             // constant type rank would force a full sorter; ordering only by id uses the live index.
-            sql.Append(CultureInfo.InvariantCulture, $" id {(query.Sort[0].Descending ? "DESC" : "ASC")} LIMIT {Parameter((long)query.Limit + 1)};");
+            sql.AppendFormat(" id {0} LIMIT {1};", query.Sort[0].Descending ? "DESC" : "ASC", Parameter((long)query.Limit + 1));
             return sql.ToString();
         }
 
         foreach (var (expression, descending) in keys)
         {
-            sql.Append(CultureInfo.InvariantCulture, $" {expression} {(descending ? "DESC" : "ASC")},");
+            sql.AppendFormat(" {0} {1},", expression, descending ? "DESC" : "ASC");
         }
 
-        sql.Append(CultureInfo.InvariantCulture, $" id ASC LIMIT {Parameter((long)query.Limit + 1)};");
+        sql.AppendFormat(" id ASC LIMIT {0};", Parameter((long)query.Limit + 1));
         return sql.ToString();
     }
 
@@ -292,12 +294,15 @@ internal sealed class SqliteQueryCompiler(SqliteParameterCollection parameters, 
     // Each segment is a quoted object label, so a numeric segment is a member name, never an array index.
     private string Path(DocumentPath path)
     {
-        var text = new StringBuilder("$");
+        using var text = ZString.CreateStringBuilder();
+        text.Append('$');
         foreach (var segment in path.Segments!)
         {
             // A JSON string, control characters escaped too: SQLite decodes JSON escapes in quoted labels, while a
             // raw NUL would end the bound path text.
-            text.Append(".\"").Append(JsonEncodedText.Encode(segment, JavaScriptEncoder.UnsafeRelaxedJsonEscaping).Value).Append('"');
+            text.Append(".\"");
+            text.Append(JsonEncodedText.Encode(segment, JavaScriptEncoder.UnsafeRelaxedJsonEscaping).Value);
+            text.Append('"');
         }
 
         var key = text.ToString();

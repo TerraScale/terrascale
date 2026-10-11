@@ -3,6 +3,7 @@ using Grpc.Core;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Features.Replication.V1;
+using ZLogger;
 
 namespace TerraBase.Features.Replication;
 
@@ -45,7 +46,7 @@ internal static class CatalogProtocol
 /// The catalog primary's side of <c>CatalogReplication.Follow</c>: a snapshot when the follower's frontier is not a prefix
 /// of this journal, then every system database group, in pages, as it commits. No read transaction spans a network write.
 /// </summary>
-internal sealed partial class CatalogFeed(
+internal sealed class CatalogFeed(
     IStorageEngine engine, ISystemReplication system, TerraBaseOptions options, ILogger<CatalogFeed> logger, TimeProvider time,
     IHostApplicationLifetime lifetime)
     : CatalogReplication.CatalogReplicationBase
@@ -75,7 +76,7 @@ internal sealed partial class CatalogFeed(
             }
 
             var region = TerraBaseOptions.IsRegion(request.Region) ? request.Region : "unknown";
-            LogFollower(logger, region);
+            logger.ZLogInformation($"A catalog follower in region {region:@Region} connected");
             using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(context.CancellationToken, lifetime.ApplicationStopping);
             await ServeAsync(request, responseStream, cancellation.Token).ConfigureAwait(false);
         }
@@ -248,7 +249,4 @@ internal sealed partial class CatalogFeed(
     private async ValueTask<ReadOnlyMemory<byte>> RequireDigestAsync(long sequence, CancellationToken cancellationToken) =>
         await DigestAsync(sequence, cancellationToken).ConfigureAwait(false)
         ?? throw new InvalidDataException("the system journal is missing a prefix digest below its head");
-
-    [LoggerMessage(Level = LogLevel.Information, Message = "A catalog follower in region {Region} connected")]
-    private static partial void LogFollower(ILogger logger, string region);
 }

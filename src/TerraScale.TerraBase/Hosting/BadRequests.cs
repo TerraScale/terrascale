@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using TerraBase.Engine;
 using TerraBase.Errors;
+using ZLogger;
 
 namespace TerraBase.Hosting;
 
@@ -28,7 +29,7 @@ public sealed record ErrorDetail(
 /// answers it with <c>500 internal_error</c>, and gives every other error status without a body
 /// (authentication, authorization, unknown routes) an <see cref="ErrorBody"/> too.
 /// </summary>
-public static partial class BadRequests
+public static class BadRequests
 {
     /// <summary>Adds the middleware; register it before the endpoints.</summary>
     public static WebApplication UseTerraBaseBadRequests(this WebApplication app)
@@ -70,18 +71,13 @@ public static partial class BadRequests
             catch (Exception error) when (!context.Response.HasStarted && !context.RequestAborted.IsCancellationRequested)
             {
                 // A server fault: log it, and answer without its details.
-                LogUnhandled(
-                    context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger(typeof(BadRequests)),
-                    error, context.Request.Method, context.GetEndpoint()?.DisplayName);
+                context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger(typeof(BadRequests)).ZLogError(error, $"Unhandled error serving {context.Request.Method:@Method} {context.GetEndpoint()?.DisplayName:@Endpoint}");
                 Replace(context.Response);
                 await WriteAsync(context, StatusCodes.Status500InternalServerError, "internal_error", message: null, op: null).ConfigureAwait(false);
             }
         });
         return app;
     }
-
-    [LoggerMessage(Level = LogLevel.Error, Message = "Unhandled error serving {Method} {Endpoint}")]
-    private static partial void LogUnhandled(ILogger logger, Exception error, string method, string? endpoint);
 
     private static string CodeFor(int status) => status switch
     {

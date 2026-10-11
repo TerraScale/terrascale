@@ -10,6 +10,7 @@ using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
+using ZLogger;
 
 namespace TerraBase.Engine.Sqlite;
 
@@ -406,9 +407,8 @@ internal sealed partial class SqliteDatabaseStore(
             {
                 var holder = Volatile.Read(ref _writerHolder) ?? "nothing recorded";
                 var held = Time.GetElapsedTime(Volatile.Read(ref _writerTaken));
-                LogSlowWriterWait(
-                    logger, Math.Round(waited.TotalSeconds, 1), outcome, writer, holder, Math.Round(held.TotalSeconds, 1),
-                    WriteLane.Running ? "running a storage call" : "between storage calls");
+                // Counts and kinds only: no database or tenant names in the log.
+                logger.ZLogWarning($"Waited {Math.Round(waited.TotalSeconds, 1):@Waited} s for a database's writer {outcome:@Outcome}: {writer:@Writer} queued behind {holder:@Holder}, which had held it for {Math.Round(held.TotalSeconds, 1):@Held} s and was {(WriteLane.Running ? "running a storage call" : "between storage calls"):@State}");
             }
         }
 
@@ -416,11 +416,6 @@ internal sealed partial class SqliteDatabaseStore(
         Volatile.Write(ref _writerTaken, Time.GetTimestamp());
         Volatile.Write(ref _writerHolder, writer);
     }
-
-    // Counts and kinds only: no database or tenant names in the log.
-    [LoggerMessage(Level = LogLevel.Warning, Message =
-        "Waited {Waited} s for a database's writer {Outcome}: {Writer} queued behind {Holder}, which had held it for {Held} s and was {State}")]
-    private static partial void LogSlowWriterWait(ILogger logger, double waited, string outcome, string writer, string holder, double held, string state);
 
     /// <summary>Releases what <see cref="BeginTransactionAsync"/> took; called once per transaction.</summary>
     internal void End(bool write, bool ownsAdmission)

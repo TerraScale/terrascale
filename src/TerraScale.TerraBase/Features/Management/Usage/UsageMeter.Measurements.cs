@@ -3,6 +3,7 @@ using System.Diagnostics.Metrics;
 using TerraBase.Features.Memory;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
+using ZLogger;
 
 namespace TerraBase.Features.Management.Usage;
 
@@ -93,7 +94,7 @@ internal sealed partial class UsageMeter
             }
             catch (Exception error) when (error is not OperationCanceledException)
             {
-                LogReportFailed(logger, error);
+                logger.ZLogWarning(error, $"Reporting a request's transferred bytes failed; its other requests and the flush go on");
             }
         }
     }
