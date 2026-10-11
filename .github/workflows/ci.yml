@@ -2,11 +2,13 @@ name: CI
 
 # One required check: "test". It builds the Dockerfile's `test` stage on Blacksmith: format, Release build with
 # analyzers as errors, libs/auth/TerraBase checks and the Fast suites. `make docker-test` runs the same build locally.
-# Next to it, without waiting for it (the pull request's `test` gates the merge, so main ships at once):
+# Next to it, without waiting for it:
 # - preview (pull requests): TerraBase + ts-auth on one machine at https://ts-pr-<n>.fly.dev (scripts/fly/preview.sh);
 #   previews.yml deletes it when the PR closes or after 24 hours.
 # - deploy (main): the Dockerfile's chiseled images to Fly, TerraBase then ts-auth, each gru -> live check -> sjc
-#   (scripts/fly/deploy.sh); ts-auth's image builds while TerraBase rolls out.
+#   (scripts/fly/deploy.sh); ts-auth's image builds while TerraBase rolls out. Before the rollout,
+#   scripts/fly/fast-gate.sh requires a passed `test` for this exact tree: the merged pull request's head when the merge
+#   kept its tree (rebased before merging), else main's own `test`.
 # After it:
 # - slow (main): the slow suites; never blocks.
 # - e2e (main, after deploy): tests/TerraBase.E2E against the Fly app, gru and sjc pinned with fly-prefer-region; never
@@ -151,6 +153,10 @@ jobs:
     concurrency:
       group: deploy-terrabase
       cancel-in-progress: false
+    permissions:
+      contents: read
+      checks: read
+      pull-requests: read
     steps:
       - *checkout
       - *setup-flyctl
@@ -169,6 +175,11 @@ jobs:
           target: terrabase
           tags: registry.fly.io/ts-terrabase:${{ github.sha }}
           push: true
+      # Fast must cover the exact tree being deployed (AGENTS.md): instant for a rebased, squash-merged pull request.
+      - name: Wait for Fast on this tree
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: terrascale/scripts/fly/fast-gate.sh "$GITHUB_REPOSITORY" "$GITHUB_SHA"
       - name: Deploy TerraBase (gru, check, sjc)
         working-directory: terrascale
         env:
