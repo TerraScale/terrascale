@@ -29,7 +29,8 @@ ts-auth does not own, and must not store copies of, other products' data. It rea
 
 - **TerraBase** (through ts-dotnet): databases, collections, documents, backups, indexes, schema and usage metering. ts-auth persists its own state there with a TerraBase-issued bootstrap key, never with a token it signed itself.
 - **ts-dashboard**: the platform UI, platform API and MCP server, plans, subscriptions, Stripe billing and spending caps.
-- **ts-orchestrator**: regions, hosts, releases and placement. **ts-atlas**: region discovery and the global proxies.
+
+ts-auth runs on Fly.io, which owns regions, placement, scaling, edge, TLS and secrets.
 
 TerraBase and the other products authorize from ts-auth tokens offline. ts-auth exposes identity through its documented APIs and tokens and never reaches into another product's storage.
 
@@ -55,12 +56,12 @@ The stack is C#. The rules below replace the earlier Rust-era wording with the s
 - Persistent identity and authentication state MUST live in TerraBase.
 - Keep service instances stateless. Do not require server affinity or process-local state for correctness.
 - Caches MAY improve performance but MUST NOT override authorization, expiry, or revocation requirements.
-- Keep signing keys and encryption secrets in the approved secret-management system (OCI Vault in production), separate from source code and public configuration.
+- Keep signing keys and encryption secrets in the approved secret-management system (fly secrets in production), separate from source code and public configuration.
 - Never silently substitute in-memory persistence when the database is unavailable.
 
 ### Zero configuration (ts-auth)
 
-- Discover regional service endpoints automatically. Signing, delivery and service credentials are created and configured through OCI Vault without an authentication bypass.
+- Discover regional service endpoints automatically through Fly's `.internal` DNS. Delivery and service credentials arrive through fly secrets. ts-auth generates its signing keys and stores them encrypted in TerraBase under a fly-secret master key. No authentication bypass.
 
 ### Consistency
 
