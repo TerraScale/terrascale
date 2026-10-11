@@ -23,7 +23,7 @@ const routes = [
   ["/getting-started", "Legacy Next.js starter: unpublished SDK pin; sign-in and live-update journey unqualified."],
   ["/getting-started/", "Legacy Next.js live-query guide: @terrascale/sdk 0.3.0 is not published; stub success does not qualify the browser journey."],
   ["/getting-started/csharp", "C# candidate quickstart: project-scoped TerraBase Documents CRUD through an exact SDK package; isolated real-binary qualification is separate from production JWTs."],
-  [ZERO_CONFIGURATION_ROUTE, "Zero-configuration operating contract: all regions serve, NetBird membership admits nodes, the platform delivers production secrets; historical switch removal is tracked separately."],
+  [ZERO_CONFIGURATION_ROUTE, "Zero-configuration operating contract: all regions serve, nodes join automatically, the platform delivers production secrets; historical switch removal is tracked separately."],
   ["/guides/sdks", "SDK compatibility: project-scoped C#, JavaScript and Go candidates; public release, real-runtime and customer-journey gates are distinct."],
   ["/concepts", "Product concepts and legacy SQL/live-query design; candidate Documents query-v1 is a separate contract."],
   ["/concepts/replication", "Replication guarantees: causal sessions, conflict limits, RegionalDurable/GlobalDurable."],
