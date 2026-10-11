@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Package the binary staged by scripts/ci/stage-release.sh into the
+# Package the binary staged by scripts/auth/ci/stage-release.sh into the
 # chiseled Containerfile image localhost/terrascale/ts-auth:<commit>, then
 # exercise the packaged binary and composed router without a live TerraBase:
 # /healthz reports this revision, /openapi/v1.json serves the contract, and
@@ -8,13 +8,13 @@ set -euo pipefail
 
 test "$#" -eq 0 || { echo "usage: $0" >&2; exit 2; }
 
-repo=$(cd "$(dirname "$0")/../.." && pwd)
+repo=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$repo"
 
 source_commit=$(git rev-parse HEAD)
-image="$(bash scripts/ci/image-ref.sh)"
+image="$(bash scripts/auth/ci/image-ref.sh)"
 test -s artifacts/ci/container-publish/ts-auth
-podman build --pull=missing --platform linux/amd64 --tag "$image" --file Containerfile .
+podman build --pull=missing --platform linux/amd64 --tag "$image" --file src/TerraScale.Auth/Containerfile .
 test "$(podman image inspect "$image" --format '{{.Architecture}}')" = amd64
 test "$(podman image inspect "$image" --format '{{.Os}}')" = linux
 

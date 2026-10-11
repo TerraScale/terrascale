@@ -6,15 +6,15 @@ set -euo pipefail
 mode=${1:-}
 [[ $# -eq 1 && $mode =~ ^(stage|publish|prune)$ ]] || { echo "usage: $0 stage|publish|prune" >&2; exit 2; }
 
-repo=$(cd "$(dirname "$0")/../.." && pwd)
+repo=$(cd "$(dirname "$0")/../../.." && pwd)
 owner=${REPOSITORY_OWNER:?REPOSITORY_OWNER is required}
 owner=${owner,,}
 [[ $owner =~ ^[a-z0-9]+((\.|_{1,2}|-+)[a-z0-9]+)*$ ]] || { echo "invalid registry owner" >&2; exit 2; }
 staging="git.terrascale.tech/$owner/ts-auth-ci"
 : "${RUNNER_TEMP:?RUNNER_TEMP is required}"
-: "${REGISTRY_PUSH_TOKEN:?registry push token is required}"
+: "${REGISTRY_USER:?registry user is required}" "${REGISTRY_TOKEN:?registry token is required}"
 if [[ $mode == publish && ! ${IMAGE_MANIFEST_DIGEST:-} =~ ^sha256:[0-9a-f]{64}$ ]]; then
-  echo "IMAGE_MANIFEST_DIGEST must be the manifest digest the release job reported" >&2
+  echo "IMAGE_MANIFEST_DIGEST must be the manifest digest the auth-build job reported" >&2
   exit 2
 fi
 
@@ -27,9 +27,9 @@ trap 'exit 143' TERM
 chmod 600 "$REGISTRY_AUTH_FILE"
 # Podman requires an empty JSON object when an auth file already exists.
 printf '{}\n' > "$REGISTRY_AUTH_FILE"
-printf '%s\n' "$REGISTRY_PUSH_TOKEN" |
-  podman login git.terrascale.tech --username "$owner" --password-stdin >/dev/null
-unset REGISTRY_PUSH_TOKEN
+printf '%s\n' "$REGISTRY_TOKEN" |
+  podman login git.terrascale.tech --username "$REGISTRY_USER" --password-stdin >/dev/null
+unset REGISTRY_TOKEN
 
 case $mode in
   stage)
@@ -38,7 +38,7 @@ case $mode in
     attempt=${GITHUB_RUN_ATTEMPT:-1}
     [[ $run =~ ^[0-9]+$ && $attempt =~ ^[0-9]+$ ]] || { echo "invalid workflow run identity" >&2; exit 2; }
     source_commit=$(git -C "$repo" rev-parse HEAD)
-    image=$(bash "$repo/scripts/ci/image-ref.sh")
+    image=$(bash "$repo/scripts/auth/ci/image-ref.sh")
     candidate="$staging:$source_commit-$run-$attempt-$(date +%s)"
     digest_file=$(mktemp "$RUNNER_TEMP/ts-auth-manifest-digest.XXXXXXXX")
     trap 'rm -f -- "$REGISTRY_AUTH_FILE" "$digest_file"' EXIT

@@ -1,9 +1,17 @@
 #!/usr/bin/env bash
-# Run after packing; use `nice -n 19 bash scripts/check-nativeaot-package.sh` locally.
+# Packs TerraScale.Endpoints into FEED (default artifacts/nativeaot/packages) at
+# PACKAGE_VERSION (default: the calendar version of HEAD), then consumes it from a
+# standalone NativeAOT app. Endpoints is not published, so only this check packs it.
+# Run locally with `nice -n 19 bash scripts/libs/check-nativeaot-package.sh`.
 set -euo pipefail
 
-root="$(cd "$(dirname "$0")/.." && pwd)"
-feed="$(realpath "${1:-$root/artifacts/packages}")"
+root="$(cd "$(dirname "$0")/../.." && pwd)"
+feed="$(realpath -m "${1:-$root/artifacts/nativeaot/packages}")"
+version=${PACKAGE_VERSION:-$(bash "$root/scripts/libs/package-version.sh")}
+rm -rf -- "$feed"
+mkdir -p "$feed"
+dotnet pack "$root/src/TerraScale.Endpoints/TerraScale.Endpoints.csproj" \
+  --configuration Release --nologo -p:Version="$version" --output "$feed"
 shopt -s nullglob
 packages=("$feed"/TerraScale.Endpoints.*.nupkg)
 if [ "${#packages[@]}" -ne 1 ]; then
@@ -14,7 +22,7 @@ version=$(unzip -p "${packages[0]}" '*.nuspec' | sed -n 's:.*<version>\(.*\)</ve
 test -n "$version"
 
 # Outside the checkout: no inherited build props, central versions, or project references.
-consumer=$(mktemp -d /tmp/ts-libs-nativeaot.XXXXXX)
+consumer=$(mktemp -d /tmp/terrascale-nativeaot.XXXXXX)
 trap 'rm -rf -- "$consumer"' EXIT
 cp "$root/global.json" "$consumer/global.json"
 export NUGET_PACKAGES="$consumer/packages"

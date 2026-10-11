@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Exercise the CI transfer commands against private registry/tool fixtures.
 set -euo pipefail
-repo=$(cd "$(dirname "$0")/.." && pwd)
+repo=$(cd "$(dirname "$0")/../.." && pwd)
 sandbox=$(mktemp -d)
 trap 'rm -rf -- "$sandbox"' EXIT
-mkdir -p "$sandbox/repo/scripts/ci" "$sandbox/bin" "$sandbox/temp"
-cp "$repo/scripts/ci/transfer-image.sh" "$repo/scripts/ci/image-ref.sh" "$sandbox/repo/scripts/ci/"
+mkdir -p "$sandbox/repo/scripts/auth/ci" "$sandbox/bin" "$sandbox/temp"
+cp "$repo/scripts/auth/ci/transfer-image.sh" "$repo/scripts/auth/ci/image-ref.sh" "$sandbox/repo/scripts/auth/ci/"
 cat > "$sandbox/bin/git" <<'STUB'
 #!/usr/bin/env bash
 [[ ${FAIL_GIT:-} != 1 ]] || exit 1
@@ -48,12 +48,12 @@ esac
 STUB
 chmod +x "$sandbox/bin/"*
 export PATH="$sandbox/bin:$PATH" CALLS="$sandbox/calls" TAGS="$sandbox/tags"
-export RUNNER_TEMP="$sandbox/temp" REPOSITORY_OWNER=TerraScale REGISTRY_PUSH_TOKEN=fixture-token
+export RUNNER_TEMP="$sandbox/temp" REPOSITORY_OWNER=TerraScale REGISTRY_TOKEN=fixture-token REGISTRY_USER=fixture-bot
 export GITHUB_RUN_ID=42 GITHUB_RUN_ATTEMPT=1 GITHUB_OUTPUT="$sandbox/output"
 IMAGE_MANIFEST_DIGEST="sha256:$(printf '%064d' 3)"
 export IMAGE_MANIFEST_DIGEST
-transfer="$sandbox/repo/scripts/ci/transfer-image.sh"
-ref="$sandbox/repo/scripts/ci/image-ref.sh"
+transfer="$sandbox/repo/scripts/auth/ci/transfer-image.sh"
+ref="$sandbox/repo/scripts/auth/ci/image-ref.sh"
 reject() {
   if "$@" > "$sandbox/rejected" 2>&1; then echo "accepted invalid transfer input" >&2; exit 1; fi
 }
@@ -65,7 +65,8 @@ for owner in org- org_. org..name org___name; do
   reject env REPOSITORY_OWNER="$owner" bash "$transfer" stage
 done
 reject env IMAGE_MANIFEST_DIGEST=bad bash "$transfer" publish
-reject env -u REGISTRY_PUSH_TOKEN bash "$transfer" stage
+reject env -u REGISTRY_TOKEN bash "$transfer" stage
+reject env -u REGISTRY_USER bash "$transfer" stage
 reject env -u GITHUB_RUN_ID bash "$transfer" stage
 reject env -u GITHUB_OUTPUT bash "$transfer" stage
 reject env -u RUNNER_TEMP bash "$transfer" stage
@@ -93,7 +94,7 @@ for owner in org_name org__name; do
 done
 reject env INTERRUPT_STAGE=1 bash "$transfer" stage
 test -z "$(find "$RUNNER_TEMP" -type f -print -quit)"
-grep -F 'login git.terrascale.tech --username terrascale --password-stdin' "$CALLS" >/dev/null
+grep -F 'login git.terrascale.tech --username fixture-bot --password-stdin' "$CALLS" >/dev/null
 old=$(($(date +%s) - 31 * 86400))
 recent=$(date +%s)
 jq -n --arg expired "$commit-1-1-$old" --arg alias "$commit-2-1-$old" --arg recent "$commit-2-1-$recent" \

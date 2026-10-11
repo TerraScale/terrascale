@@ -12,9 +12,9 @@ binary=${1:-}
 qemu=$(command -v qemu-aarch64) || { echo "qemu-aarch64 is required" >&2; exit 1; }
 binary=$(cd "$(dirname "$binary")" && pwd)/$(basename "$binary")
 
-repo=$(cd "$(dirname "$0")/../.." && pwd)
+repo=$(cd "$(dirname "$0")/../../.." && pwd)
 revision=$(git -C "$repo" rev-parse HEAD)
-base=$(awk '$1 == "FROM" {print $2; exit}' "$repo/Containerfile")
+base=$(awk '$1 == "FROM" {print $2; exit}' "$repo/src/TerraScale.Auth/Containerfile")
 [[ $base == *@sha256:* ]] || { echo "the Containerfile base image is not pinned by digest" >&2; exit 1; }
 
 work=$(mktemp -d)

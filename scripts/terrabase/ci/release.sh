@@ -3,17 +3,17 @@
 # steps, so a release becomes visible only after every gate passed and always
 # carries the tested bytes (nothing is rebuilt or uploaded twice):
 #
-#   release.sh draft DIST_DIR   release job: attach DIST_DIR/terrabase-linux-amd64,
+#   release.sh draft DIST_DIR   terrabase job, after every gate passed: attach
+#                               DIST_DIR/terrabase-linux-amd64,
 #                               DIST_DIR/terrabase-linux-arm64 and their .sha256
 #                               files to a draft release and write release_id to
 #                               GITHUB_OUTPUT.
-#   release.sh publish ID       publish job, after fast and release passed:
+#   release.sh publish ID       terrabase-release job, after terrabase passed:
 #                               publish the draft.
 #
-# A push to main drafts the prerelease ci-<sha>-run-<run id>. A pushed tag
-# v<Version> drafts the release <tag>, with notes generated from the main
-# history since the previous v* tag. Drafts are visible only to repository
-# writers, and Forgejo creates a missing tag only when the draft is published.
+# A push to main drafts the prerelease ci-<sha>-run-<run id>. Drafts are visible
+# only to repository writers, and Forgejo creates a missing tag only when the
+# draft is published. Only main is released; the v* tag path is gone.
 #
 # Environment: FORGEJO_TOKEN (the job token) and the GITHUB_* variables of the job.
 set -euo pipefail
@@ -38,7 +38,7 @@ call() {
 }
 
 draft() {
-  local dist=$1 names=(terrabase-linux-amd64 terrabase-linux-arm64) name version tag prerelease notes previous code id file marker max_time size
+  local dist=$1 names=(terrabase-linux-amd64 terrabase-linux-arm64) name version tag notes code id file marker max_time size
   : "${GITHUB_SHA:?}" "${GITHUB_REF:?}" "${GITHUB_RUN_ID:?}" "${GITHUB_RUN_NUMBER:?}" "${GITHUB_OUTPUT:?}"
   for name in "${names[@]}"; do
     [[ -s $dist/$name ]] || fail "missing staged release executable: $dist/$name"
@@ -46,24 +46,9 @@ draft() {
   [[ $(git rev-parse HEAD) == "$GITHUB_SHA" ]] || fail "checkout is not the event revision $GITHUB_SHA"
   version=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' src/TerraScale.TerraBase/TerraScale.TerraBase.csproj)
 
-  case $GITHUB_REF in
-    refs/heads/main)
-      tag="ci-$GITHUB_SHA-run-$GITHUB_RUN_ID" prerelease=true
-      notes="Untagged build of \`main\` (terrabase $version). Use a \`v*\` release for anything that matters."
-      ;;
-    refs/tags/v*)
-      tag=${GITHUB_REF#refs/tags/}
-      [[ $tag == "v$version" ]] || fail "tag $tag does not match <Version>$version</Version>; bump the version on main first"
-      # Only main's own commits: a merged side-branch commit lacks main's integration changes.
-      # grep reads all input, so git never dies of SIGPIPE under pipefail.
-      git rev-list --first-parent origin/main | grep -x "$GITHUB_SHA" >/dev/null || fail "tag $tag does not point at a commit on main"
-      # Semantic-version prerelease tags (v1.2.0-rc.1) stay prereleases.
-      if [[ $tag == *-* ]]; then prerelease=true; else prerelease=false; fi
-      previous=$(git describe --first-parent --tags --abbrev=0 --match 'v*' HEAD^ 2>/dev/null || true)
-      notes="## Changes${previous:+ since $previous}"$'\n\n'$(git log --first-parent --format='- %s (%h)' "${previous:+$previous..}HEAD")
-      ;;
-    *) fail "no release for $GITHUB_REF" ;;
-  esac
+  [[ $GITHUB_REF == refs/heads/main ]] || fail "no release for $GITHUB_REF"
+  tag="ci-$GITHUB_SHA-run-$GITHUB_RUN_ID"
+  notes="Untagged build of \`main\` (terrabase $version)."
 
   notes+=$'\n\n'"Commit: $GITHUB_SHA"$'\n'"Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_NUMBER"
   for name in "${names[@]}"; do
@@ -90,8 +75,8 @@ draft() {
     *) cat "$work/existing.json" >&2; fail "looking up release $tag answered HTTP $code" ;;
   esac
 
-  jq -n --arg tag "$tag" --arg sha "$GITHUB_SHA" --arg body "$notes" --argjson prerelease "$prerelease" \
-    '{tag_name: $tag, target_commitish: $sha, name: $tag, body: $body, draft: true, prerelease: $prerelease}' > "$work/release.json"
+  jq -n --arg tag "$tag" --arg sha "$GITHUB_SHA" --arg body "$notes" \
+    '{tag_name: $tag, target_commitish: $sha, name: $tag, body: $body, draft: true, prerelease: true}' > "$work/release.json"
   id=$(call 30 -H 'Content-Type: application/json' --data @"$work/release.json" "$api/releases" | jq -er .id)
   for name in "${names[@]}"; do
     for file in "$dist/$name" "$dist/$name.sha256"; do

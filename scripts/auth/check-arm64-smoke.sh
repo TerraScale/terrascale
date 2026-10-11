@@ -2,16 +2,17 @@
 # Exercise the arm64 smoke script with a commandless image fixture and real
 # child processes, without running a container or an arm64 executable.
 set -euo pipefail
-repo=$(cd "$(dirname "$0")/.." && pwd)
+repo=$(cd "$(dirname "$0")/../.." && pwd)
 sandbox=$(mktemp -d)
 cleanup() {
   if [[ -f $sandbox/state/pid ]]; then kill -KILL "$(cat "$sandbox/state/pid")" 2>/dev/null || true; fi
   rm -rf -- "$sandbox"
 }
 trap cleanup EXIT
-mkdir -p "$sandbox/repo/scripts/ci" "$sandbox/bin" "$sandbox/state" "$sandbox/temp" "$sandbox/rootfs/lib"
-cp "$repo/scripts/ci/smoke-arm64.sh" "$sandbox/repo/scripts/ci/"
-cp "$repo/Containerfile" "$sandbox/repo/"
+mkdir -p "$sandbox/repo/scripts/auth/ci" "$sandbox/bin" "$sandbox/state" "$sandbox/temp" "$sandbox/rootfs/lib"
+cp "$repo/scripts/auth/ci/smoke-arm64.sh" "$sandbox/repo/scripts/auth/ci/"
+mkdir -p "$sandbox/repo/src/TerraScale.Auth"
+cp "$repo/src/TerraScale.Auth/Containerfile" "$sandbox/repo/src/TerraScale.Auth/"
 touch "$sandbox/rootfs/lib/ld-linux-aarch64.so.1" "$sandbox/ts-auth"
 chmod +x "$sandbox/ts-auth"
 cat > "$sandbox/bin/git" <<'STUB'
@@ -92,7 +93,7 @@ exec "$REAL_RM" "$@"
 STUB
 chmod +x "$sandbox/bin/"*
 export PATH="$sandbox/bin:$PATH" STATE="$sandbox/state" ROOTFS="$sandbox/rootfs" REAL_RM="$real_rm" TMPDIR="$sandbox/temp"
-smoke="$sandbox/repo/scripts/ci/smoke-arm64.sh"
+smoke="$sandbox/repo/scripts/auth/ci/smoke-arm64.sh"
 
 for mode in healthy stalled interrupted; do
   rm -f "$STATE/pid" "$STATE/term" "$STATE/removal" "$STATE/calls"

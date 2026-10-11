@@ -4,8 +4,7 @@
 # the tested bytes of both executables with their checksums, refuses a missing
 # executable, emits no release_id when an upload fails, replaces only the
 # draft an earlier attempt of the same run left, never touches a published
-# release or a draft prepared by hand, releases only tags on
-# main's first-parent history and takes the notes baseline from it, and
+# release or a draft prepared by hand, refuses any ref other than main, and
 # publishes a draft.
 set -euo pipefail
 
@@ -145,11 +144,11 @@ draft() {
   (cd "$work/repo" && GITHUB_REF=$1 GITHUB_SHA=$(git rev-parse HEAD) bash "$script" draft dist)
 }
 
-export FORGEJO_TOKEN=check-token GITHUB_REPOSITORY=TerraScale/terrabase GITHUB_RUN_ID=13105 \
+export FORGEJO_TOKEN=check-token GITHUB_REPOSITORY=TerraScale/terrascale GITHUB_RUN_ID=13105 \
   GITHUB_RUN_NUMBER=4 GITHUB_OUTPUT="$work/out" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
   GIT_AUTHOR_NAME=check GIT_AUTHOR_EMAIL=check@localhost GIT_COMMITTER_NAME=check GIT_COMMITTER_EMAIL=check@localhost
 
-# main: A (v1.2.1) - B - M (merges side: S1 - S2, tagged v1.2.2-side) - C (v1.2.3).
+# main with two commits; the project file carries the version the tag check used to read.
 repo=$work/repo
 git init -q -b main "$repo"
 mkdir -p "$repo/src/TerraScale.TerraBase" "$repo/dist"
@@ -157,14 +156,8 @@ echo '<Project><PropertyGroup><Version>1.2.3</Version></PropertyGroup></Project>
   > "$repo/src/TerraScale.TerraBase/TerraScale.TerraBase.csproj"
 echo dist/ > "$repo/.gitignore"
 commit() { git -C "$repo" add -A && git -C "$repo" commit -q --allow-empty -m "$1"; }
-commit 'Add A' && git -C "$repo" tag v1.2.1
-git -C "$repo" checkout -q -b side
-commit 'Add S1' && commit 'Add S2' && git -C "$repo" tag v1.2.2-side
-git -C "$repo" checkout -q main
-commit 'Add B'
-git -C "$repo" merge -q --no-ff -m 'Merge side' side
-commit 'Add C' && git -C "$repo" tag v1.2.3
-git -C "$repo" update-ref refs/remotes/origin/main HEAD
+commit 'Add A'
+commit 'Add C'
 executables=(terrabase-linux-amd64 terrabase-linux-arm64)
 head -c 65536 /dev/urandom > "$repo/dist/terrabase-linux-amd64"
 
@@ -185,7 +178,7 @@ for name in "${executables[@]}"; do
   grep -q "^SHA-256 $name: \`$(cut -d' ' -f1 "$work/asset-$name.sha256")\`" "$work/notes" || fail "the notes miss the SHA-256 of $name"
 done
 bash "$script" publish 7 >/dev/null || fail 'publishing failed'
-logged 'PATCH /api/v1/repos/TerraScale/terrabase/releases/7 200' || fail 'publish did not publish the draft'
+logged 'PATCH /api/v1/repos/TerraScale/terrascale/releases/7 200' || fail 'publish did not publish the draft'
 jq -e '.draft == false' "$work/patched.json" >/dev/null || fail 'publish did not set draft to false'
 
 # A failed upload leaves a draft and no release_id; rerunning the run replaces that draft.
@@ -194,7 +187,7 @@ for asset in "${executables[@]}" "${executables[@]/%/.sha256}"; do
   ! draft refs/heads/main 2>/dev/null || fail "a failed upload of $asset passed"
   [[ ! -s $work/out ]] || fail "release_id emitted after a failed upload of $asset"
   draft refs/heads/main >/dev/null || fail "the rerun did not replace the draft left by a failed upload of $asset"
-  logged 'DELETE /api/v1/repos/TerraScale/terrabase/releases/7 204' || fail 'the leftover draft was not deleted'
+  logged 'DELETE /api/v1/repos/TerraScale/terrascale/releases/7 204' || fail 'the leftover draft was not deleted'
   grep -qx 'release_id=7' "$work/out" || fail 'no release_id after replacing a leftover draft'
 done
 
@@ -210,29 +203,14 @@ for asset in lookup "${executables[@]}" "${executables[@]/%/.sha256}"; do
 done
 
 for preset in published foreign; do
-  for ref in refs/heads/main refs/tags/v1.2.3; do
-    serve "$preset" ''
-    ! draft "$ref" 2>/dev/null || fail "a $preset release for $ref was replaced"
-    ! logged '^DELETE\|^POST' || fail "a $preset release for $ref was modified"
-    [[ ! -s $work/out ]] || fail "release_id emitted over a $preset release for $ref"
-  done
+  serve "$preset" ''
+  ! draft refs/heads/main 2>/dev/null || fail "a $preset release was replaced"
+  ! logged '^DELETE\|^POST' || fail "a $preset release was modified"
+  [[ ! -s $work/out ]] || fail "release_id emitted over a $preset release"
 done
 
 serve '' ''
-draft refs/tags/v1.2.3 >/dev/null || fail 'the tag v1.2.3 was not drafted'
-jq -e '.draft and (.prerelease | not) and .tag_name == "v1.2.3" and .name == "v1.2.3"' "$work/created.json" >/dev/null ||
-  fail 'a version tag must draft a release named after the tag'
-jq -r .body "$work/created.json" > "$work/notes"
-grep -q '^## Changes since v1.2.1$' "$work/notes" || fail 'the notes baseline is not the previous tag on main'
-grep -q '^- Add C (' "$work/notes" || fail 'the notes miss the tagged commit'
-grep -q '^- Merge side (' "$work/notes" || fail 'the notes miss the merge on main'
-! grep -q 'Add S1' "$work/notes" || fail 'the notes list side-branch commits'
-
-serve '' ''
-git -C "$repo" checkout -q --detach v1.2.2-side
-! draft refs/tags/v1.2.3 2>/dev/null || fail 'a tag on a merged side-branch commit was drafted'
-git -C "$repo" checkout -q main
-git -C "$repo" tag v9.9.9
-! draft refs/tags/v9.9.9 2>/dev/null || fail 'a tag that differs from <Version> was drafted'
-! logged '^POST' || fail 'a mismatched tag reached the API'
+! draft refs/tags/v1.2.3 2>/dev/null || fail 'a tag was drafted; only main is released'
+! logged '^POST' || fail 'a tag reached the API'
+[[ ! -s $work/out ]] || fail 'release_id emitted for a tag'
 echo 'release checks passed'

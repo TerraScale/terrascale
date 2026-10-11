@@ -6,17 +6,17 @@
 # public HTTPS sink is configured.
 #
 # Usage:
-#   scripts/smoke-real-stack.sh            # member at https://127.0.0.1:8420, service on a free port
-#   MEMBER_URL=... SERVICE_LISTEN=http://127.0.0.1:9090 scripts/smoke-real-stack.sh
+#   scripts/auth/smoke-real-stack.sh            # member at https://127.0.0.1:8420, service on a free port
+#   MEMBER_URL=... SERVICE_LISTEN=http://127.0.0.1:9090 scripts/auth/smoke-real-stack.sh
 #   WEBHOOK_SINK_URL=https://your-public-sink.example/hook \
-#   WEBHOOK_SINK_CAPTURE_FILE=/path/to/sink-receipts.jsonl scripts/smoke-real-stack.sh
+#   WEBHOOK_SINK_CAPTURE_FILE=/path/to/sink-receipts.jsonl scripts/auth/smoke-real-stack.sh
 # The optional operator-owned sink writes JSON lines with path, headers, and
 # body fields. Without both sink settings, webhook delivery is skipped.
 set -uo pipefail
 
 MEMBER_URL=${MEMBER_URL:-https://127.0.0.1:8420}
 SERVICE_LISTEN=${SERVICE_LISTEN:-http://127.0.0.1:8480}
-REPO_ROOT=$(cd "$(dirname "$0")/.." && pwd)
+REPO_ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 # Override SERVICE_BINARY to smoke a built worktree/pinned checkout.
 SERVICE_BINARY=${SERVICE_BINARY:-$REPO_ROOT/artifacts/ci/container-publish/ts-auth}
 WEBHOOK_SINK_URL=${WEBHOOK_SINK_URL:-}
@@ -66,7 +66,7 @@ OP_KEY="smoke-operator-$(head -c 12 /dev/urandom | base64 -w0 | tr -d '=+/')"
 if [[ ! -x "$SERVICE_BINARY" ]]; then
     echo "ts-auth executable missing: $SERVICE_BINARY"
     echo "Build the self-contained executable from the repository root first:"
-    echo "  scripts/ci/stage-release.sh artifacts/ci/container-publish"
+    echo "  scripts/auth/ci/stage-release.sh artifacts/ci/container-publish"
     exit 2
 fi
 

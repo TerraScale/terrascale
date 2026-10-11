@@ -3,7 +3,7 @@
 # open issue with the same title. Run it as the last step of the slow job with
 # `if: failure()`, after the suite wrote its output to the log given below.
 #
-#   scripts/ci/report-slow-failure.sh <slow-suite-log>
+#   scripts/ci/report-slow-failure.sh auth|terrabase <slow-suite-log>
 #
 # The report carries the commit, run URL, environment, reproduction steps,
 # expected/actual behaviour and the names of the failing tests. It contains no
@@ -17,11 +17,16 @@
 set -euo pipefail
 export LC_ALL=C
 
-test "$#" -eq 1 || { echo "usage: $0 <slow-suite-log>" >&2; exit 2; }
-log=$1
+usage() { echo "usage: $0 auth|terrabase <slow-suite-log>" >&2; exit 2; }
+test "$#" -eq 2 || usage
+area=$1 log=$2
+case $area in
+  auth) label=auth; tests=tests/TerraScale.Auth.Slow ;;
+  terrabase) label=terrabase; tests=tests/TerraScale.TerraBase.Slow ;;
+  *) usage ;;
+esac
 : "${GITHUB_SERVER_URL:?}" "${GITHUB_REPOSITORY:?}" "${GITHUB_RUN_ID:?}" "${GITHUB_SHA:?}"
-: "${TS_DOTNET_REV:=unknown}"
-title="Slow test suite failed"
+title="Slow test suite failed: $label"
 host=${GITHUB_SERVER_URL#https://}
 run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/${GITHUB_RUN_NUMBER:-$GITHUB_RUN_ID}"
 work=$(mktemp -d)
@@ -32,7 +37,7 @@ trap 'rm -rf "$work"' EXIT
 # like "failed <identifier>" can never reach the issue.
 repo=$(cd "$(dirname "$0")/../.." && pwd)
 inventory="$work/test-inventory"
-grep -rhoE 'public async Task [A-Za-z_][A-Za-z0-9_]*\(' "$repo/tests/TerraScale.Auth.Slow" --include='*.cs' |
+grep -rhoE 'public async Task [A-Za-z_][A-Za-z0-9_]*\(' "$repo/$tests" --include='*.cs' |
   sed -E 's/public async Task ([A-Za-z0-9_]+)\(/\1/' | sort -u >"$inventory" || true
 failing_tests() {
   [[ -f $log && -s $inventory ]] || return 0
@@ -48,14 +53,15 @@ failing_tests() {
   echo "### Reproduce"
   echo '```sh'
   echo "git checkout $GITHUB_SHA"
-  echo "# ts-dotnet revision from .forgejo/workflows/slow.yml (TS_DOTNET_REV), checked out under <dir>:"
-  echo "#   git -C <dir>/ts-dotnet checkout $TS_DOTNET_REV"
-  echo "TerraScaleRoot=<dir> nice -n 19 make test-slow CONFIGURATION=Release"
+  if [[ $area == auth ]]; then
+    echo "# auth also needs the pinned ts-dotnet checkout: scripts/auth/ci/checkout-dotnet-deps.sh"
+  fi
+  echo "nice -n 19 make $area-test-slow CONFIGURATION=Release"
   echo '```'
   echo
   echo "### Failing tests"
-  tests=$(failing_tests)
-  if [[ -n $tests ]]; then printf '%s\n' "$tests"; else echo "- (none recognized; see the run)"; fi
+  failed=$(failing_tests)
+  if [[ -n $failed ]]; then printf '%s\n' "$failed"; else echo "- (none recognized; see the run)"; fi
   echo
   echo "Expected: every slow test passes. Actual: the tests above failed."
   echo

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Exercise scripts/ci/publish-binary.sh against stub git, dotnet and fj: the
+# Exercise scripts/auth/ci/publish-binary.sh against stub git, dotnet and fj: the
 # ref, revision, repository and token guards, token isolation from the build,
 # the fresh release, an untouched complete release, the repair of a partial or
 # misdirected one, a failed download or lookup that changes nothing, the
@@ -8,17 +8,17 @@ set -euo pipefail
 # The CI runner exports its own GITHUB_* and FORGEJO_* values (repository, ref, sha, token);
 # drop them so every case sees only the fixtures set below.
 unset "${!GITHUB_@}" "${!FORGEJO_@}"
-repo=$(cd "$(dirname "$0")/.." && pwd)
+repo=$(cd "$(dirname "$0")/../.." && pwd)
 sandbox=$(mktemp -d)
 trap 'rm -rf -- "$sandbox"' EXIT
-mkdir -p "$sandbox/repo/scripts/ci" "$sandbox/bin" "$sandbox/state/assets"
-cp "$repo/scripts/ci/publish-binary.sh" "$repo/scripts/ci/stage-release.sh" "$sandbox/repo/scripts/ci/"
+mkdir -p "$sandbox/repo/scripts/auth/ci" "$sandbox/bin" "$sandbox/state/assets"
+cp "$repo/scripts/auth/ci/publish-binary.sh" "$repo/scripts/auth/ci/stage-release.sh" "$sandbox/repo/scripts/auth/ci/"
 commit=$(printf '%040d' 1)
 token=fixture-job-token-6d1e
 read_token=fixture-org-read-token-91c2
 
 # The arm64 smoke check records which binary it was given; FAIL_SMOKE makes it fail.
-cat > "$sandbox/repo/scripts/ci/smoke-arm64.sh" <<'STUB'
+cat > "$sandbox/repo/scripts/auth/ci/smoke-arm64.sh" <<'STUB'
 #!/usr/bin/env bash
 printf 'smoke %s\n' "$1" >> "$CALLS"
 [[ ${FAIL_SMOKE:-} != 1 ]]
@@ -97,10 +97,10 @@ fi
 STUB
 chmod +x "$sandbox/bin/"*
 export PATH="$sandbox/bin:$PATH" CALLS="$sandbox/calls" STATE="$sandbox/state"
-export FORGEJO_REF=refs/heads/main FORGEJO_SHA=$commit FORGEJO_REPOSITORY=TerraScale/ts-auth FORGEJO_TOKEN=$token
+export FORGEJO_REF=refs/heads/main FORGEJO_SHA=$commit FORGEJO_REPOSITORY=TerraScale/terrascale FORGEJO_TOKEN=$token
 printf '%s' "$read_token" > "$sandbox/read-token"
 export ORG_READ_TOKEN=$read_token READ_TOKEN_FILE="$sandbox/read-token"
-publish="$sandbox/repo/scripts/ci/publish-binary.sh"
+publish="$sandbox/repo/scripts/auth/ci/publish-binary.sh"
 tag="v0.1.0-dev.$commit"
 
 reset() { rm -rf -- "$CALLS" "$STATE" && mkdir -p "$STATE/assets"; }

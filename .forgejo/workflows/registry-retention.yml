@@ -1,4 +1,4 @@
-name: ts-auth staging registry retention
+name: auth staging registry retention
 
 on:
   schedule:
@@ -6,8 +6,8 @@ on:
   workflow_dispatch:
 
 concurrency:
-  # Serialize with protected-main CI so no candidate is staged during pruning.
-  group: ts-auth-refs/heads/main
+  # Serialize with protected-main CI (ci.yml) so no candidate is staged during pruning.
+  group: terrascale-ci-refs/heads/main
   cancel-in-progress: false
 
 jobs:
@@ -62,6 +62,7 @@ jobs:
           persist-credentials: false
       - name: Remove expired staging candidates
         env:
-          REGISTRY_PUSH_TOKEN: ${{ secrets.REGISTRY_PUSH_TOKEN }}
+          REGISTRY_USER: ${{ secrets.REGISTRY_USER }}
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
           REPOSITORY_OWNER: ${{ forgejo.repository_owner }}
-        run: bash scripts/ci/transfer-image.sh prune
+        run: bash scripts/auth/ci/transfer-image.sh prune
