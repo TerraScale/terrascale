@@ -66,7 +66,7 @@ OP_KEY="smoke-operator-$(head -c 12 /dev/urandom | base64 -w0 | tr -d '=+/')"
 if [[ ! -x "$SERVICE_BINARY" ]]; then
     echo "ts-auth executable missing: $SERVICE_BINARY"
     echo "Build the self-contained executable from the repository root first:"
-    echo "  scripts/auth/ci/stage-release.sh artifacts/ci/container-publish"
+    echo "  dotnet publish src/TerraScale.Authentication/TerraScale.Authentication.csproj --configuration Release --runtime linux-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=none --output artifacts/ci/container-publish"
     exit 2
 fi
 
