@@ -29,7 +29,6 @@ env:
   # serializes extraction across jobs.
   NUGET_SCRATCH: /cache/nuget-scratch
   TS_DOTNET_REV: a4ff285c051e63e72cb01c4a94173c91da1dd69a
-  TS_LIBS_REV: 55b260872f8d4fb1cfa0975576632b4e022e4c91
 
 jobs:
   zero-config:
@@ -80,7 +79,7 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Check out the pinned ts-dotnet and ts-libs revisions
+      - name: Check out the pinned ts-dotnet revision
         env:
           ORG_READ_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
         run: bash scripts/ci/checkout-dotnet-deps.sh

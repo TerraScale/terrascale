@@ -36,7 +36,6 @@ env:
   NUGET_SCRATCH: /cache/nuget-scratch
   FORGEJO_SHA: ${{ forgejo.sha }}
   TS_DOTNET_REV: a4ff285c051e63e72cb01c4a94173c91da1dd69a
-  TS_LIBS_REV: 55b260872f8d4fb1cfa0975576632b4e022e4c91
 
 jobs:
   # TS-795 switch guard: fails when the change adds an on/off setting.
@@ -78,7 +77,18 @@ jobs:
           github-server-url: https://git.terrascale.tech
           persist-credentials: false
 
-      - name: Check out the pinned ts-dotnet and ts-libs revisions
+      - name: ts-libs packages are pinned to calendar versions
+        run: |
+          set -euo pipefail
+          # ts-libs publishes only YYYY.MMDD.HHmm[.ss]; any other pin is an old package.
+          for pkg in Logging Endpoints; do
+            grep -qE "Include=\"TerraScale\.$pkg\" Version=" Directory.Packages.props ||
+              { echo "Expected a TerraScale.$pkg pin in Directory.Packages.props" >&2; exit 1; }
+          done
+          bad=$(grep -oE 'Include="TerraScale\.(Logging|Endpoints)" Version="[^"]*"' Directory.Packages.props | grep -vE 'Version="[0-9]{4}\.[0-9]{3,4}\.[0-9]{1,4}(\.[0-9]{1,2})?"' || true)
+          if [[ -n $bad ]]; then echo "Non-calendar ts-libs pins: $bad" >&2; exit 1; fi
+
+      - name: Check out the pinned ts-dotnet revision
         env:
           ORG_READ_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
         run: bash scripts/ci/checkout-dotnet-deps.sh
@@ -134,7 +144,7 @@ jobs:
           github-server-url: https://git.terrascale.tech
           persist-credentials: false
 
-      - name: Check out the pinned ts-dotnet and ts-libs revisions
+      - name: Check out the pinned ts-dotnet revision
         env:
           ORG_READ_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
         run: bash scripts/ci/checkout-dotnet-deps.sh
@@ -196,7 +206,7 @@ jobs:
           github-server-url: https://git.terrascale.tech
           persist-credentials: false
 
-      - name: Check out the pinned ts-dotnet and ts-libs revisions
+      - name: Check out the pinned ts-dotnet revision
         env:
           ORG_READ_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
         run: bash scripts/ci/checkout-dotnet-deps.sh

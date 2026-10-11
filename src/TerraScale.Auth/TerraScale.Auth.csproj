@@ -17,11 +17,11 @@
     <ProjectReference Include="../TerraScale.Auth.Contracts/TerraScale.Auth.Contracts.csproj" />
     <ProjectReference Include="../TerraScale.Auth.Security/TerraScale.Auth.Security.csproj" />
     <ProjectReference Include="../TerraScale.Auth.Store/TerraScale.Auth.Store.csproj" />
-    <ProjectReference Include="$(TsLibsRoot)/src/TerraScale.Endpoints/TerraScale.Endpoints.csproj" />
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Direct references pin newer patches than ts-libs' own central versions. -->
+    <!-- Direct references pin newer patches than the TerraScale packages' own central versions. -->
+    <PackageReference Include="TerraScale.Endpoints" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
     <PackageReference Include="Scalar.AspNetCore" />
     <PackageReference Include="RazorSlices" />
@@ -52,8 +52,4 @@
     <EmbeddedResource Include="Assets/fonts/oxanium-latin-wght-normal.woff2" LogicalName="assets/fonts/oxanium-latin-wght-normal.woff2" />
     <EmbeddedResource Include="Assets/fonts/jetbrains-mono-latin-wght-normal.woff2" LogicalName="assets/fonts/jetbrains-mono-latin-wght-normal.woff2" />
   </ItemGroup>
-
-  <Target Name="EnsureTsLibs" BeforeTargets="CollectPackageReferences;BeforeBuild" Condition="!Exists('$(TsLibsRoot)/src/TerraScale.Endpoints/TerraScale.Endpoints.csproj')">
-    <Error Text="ts-libs not found at '$(TsLibsRoot)'. Clone it next to ts-auth or pass -p:TerraScaleRoot=&lt;dir containing ts-dotnet and ts-libs&gt;." />
-  </Target>
 </Project>

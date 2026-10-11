@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Http.Metadata;
 using Microsoft.IdentityModel.Tokens;
 using OpenIddict.Abstractions;
 using Microsoft.AspNetCore;
@@ -66,7 +67,7 @@ public sealed class DiscoveryEndpoint : EndpointWithoutRequest<IResult>
     }
 
     /// <inheritdoc />
-    public override Task<IResult> HandleAsync(CancellationToken cancellationToken) => Task.FromResult(Results.NotFound());
+    public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) => ValueTask.FromResult(Results.NotFound());
 }
 
 /// <summary><c>GET /{slug}/.well-known/jwks.json</c>: the public keys of the issuer's key ring, served by OpenIddict.</summary>
@@ -86,7 +87,7 @@ public sealed class JwksEndpoint : EndpointWithoutRequest<IResult>
     }
 
     /// <inheritdoc />
-    public override Task<IResult> HandleAsync(CancellationToken cancellationToken) => Task.FromResult(Results.NotFound());
+    public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) => ValueTask.FromResult(Results.NotFound());
 }
 
 /// <summary>
@@ -112,7 +113,7 @@ public sealed class AuthorizeEndpoint(Sessions sessions, TimeProvider clock, Aut
     }
 
     /// <inheritdoc />
-    public override async Task<IResult> HandleAsync(CancellationToken cancellationToken)
+    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         if (this.HttpContext.GetOpenIddictServerRequest() is not { } request)
         {
@@ -169,7 +170,8 @@ public sealed class TokenEndpoint(Users users, TotpCredentials mfa, HeadlessAuth
         Description("application/x-www-form-urlencoded grant_type=authorization_code (code, redirect_uri, code_verifier), grant_type=refresh_token (refresh_token) or, for service clients only, grant_type=client_credentials. Every POST to /terrascale/oauth/token, including invalid client credentials and malformed requests, charges the socket peer's shared minute budget before client authentication: TS_AUTH_RATE_LIMIT (or --rate-limit), default 1000, per IPv4 address or IPv6 /64, with an additional IPv6 /48 budget at four times that capacity. Forwarding is disabled by default. With TS_AUTH_TRUSTED_PROXIES (or --trusted-proxies) configured, exact trusted socket peers have four times the aggregate peer capacity in separate trusted-proxy buckets and also charge a separate resolved-client budget of TS_AUTH_RATE_LIMIT per IPv4 address or IPv6 /64, with an additional resolved-client IPv6 /48 budget at four times that capacity; both apply before authentication. ASP.NET processes only the rightmost X-Forwarded-For hop from these peers. Missing or malformed rightmost addresses retain the proxy address and share its client budget. Other forwarding headers and submitted client identifiers do not select a budget. Exhaustion answers 429 rate_limited with Retry-After in seconds; missing peer addresses or unavailable limiter storage answer 503 temporarily_unavailable. Both are OAuth JSON errors with Cache-Control: no-store. For ts-dashboard only, the headless extension grants (TS-582) sign a user in from credentials the client collected: grant_type=urn:terrascale:params:oauth:grant-type:password (email, password, ip_address) and grant_type=urn:terrascale:params:oauth:grant-type:email-code (email, code, ip_address; a sign-in code, or a sign-up code with the pending_token its sign-up answered, which creates the account). ip_address is the end user's IP address; each IP (IPv6 per /64, and 120 per /48) may make 30 headless calls a minute and each email 10 password attempts per 15 minutes, beyond which the answer is 429 rate_limited with Retry-After. Code redemption permits 5 attempts per normalized email per 15 minutes, shared with hosted sign-in and including unknown emails and replaced codes. A password or code account-budget refusal temporarily blocks that method until its stored window ends and queues one best-effort lockout email notice per real account and method for that deadline; recovery budgets remain separate. All email-code, sign-up and password-reset mail starts share 5 per normalized email per UTC clock hour. Every wrong email, password or code answers invalid_grant alike. Confidential clients authenticate with client_secret_basic or client_secret_post. Access tokens are ES256 JWTs with typ at+jwt whose aud holds TS_AUTH_ACCESS_TOKEN_AUDIENCES; a user's carry email and email_verified, a service client's have sub = client id and no scopes. Refresh tokens rotate on every use and expire 14 days after the authorization code is redeemed."
             + " All primary-only user grants, including authorization-code and refresh redemption, refuse active MFA users with invalid_grant. Pending and disabled factors permit primary authentication; corrupt or unavailable factor state answers 503 temporarily_unavailable. Machine client credentials and API keys are independent of user MFA. User sign-in access and identity tokens carry the server-issued numeric auth_time as Unix seconds; refresh and organization/project exchange preserve its original value. Submitted auth_time parameters are ignored. Exchange requires a nonnegative integer no more than 30 seconds ahead of the exchanging replica; missing, malformed, negative or further-ahead values answer invalid_grant. Machine tokens carry no auth_time. Authentication time alone does not establish MFA completion.");
         Tags("OAuth");
-        Accepts<Dictionary<string, string>>("application/x-www-form-urlencoded");
+        // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
+        Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
         Produces<TokenBody>();
         Produces<OAuthErrorBody>(StatusCodes.Status400BadRequest);
         Produces<OAuthErrorBody>(StatusCodes.Status401Unauthorized);
@@ -179,7 +181,7 @@ public sealed class TokenEndpoint(Users users, TotpCredentials mfa, HeadlessAuth
     }
 
     /// <inheritdoc />
-    public override async Task<IResult> HandleAsync(CancellationToken cancellationToken)
+    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         this.HttpContext.Response.Headers.CacheControl = "no-store";
         this.HttpContext.Response.Headers.Pragma = "no-cache";
@@ -271,7 +273,7 @@ public sealed class UserInfoEndpoint(Users users, TotpCredentials mfa) : Endpoin
     }
 
     /// <inheritdoc />
-    public override async Task<IResult> HandleAsync(CancellationToken cancellationToken)
+    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         try
         {
@@ -316,7 +318,8 @@ public sealed class RevocationEndpoint : EndpointWithoutRequest<IResult>
         Summary("Revocation endpoint");
         Description("RFC 7009, application/x-www-form-urlencoded token (and optionally token_type_hint); the client authenticates as at the token endpoint and may revoke only its own tokens. Revoking a refresh or access token ends its whole sign-in: every refresh token of it is refused and ts-auth stops accepting its access tokens, while access tokens validated offline (TerraBase) stay valid until they expire, at most 1 hour. An unknown, expired or already revoked token also answers 200.");
         Tags("OAuth");
-        Accepts<Dictionary<string, string>>("application/x-www-form-urlencoded");
+        // Accepts<T> documents a void body on this TerraScale.Endpoints version; EmptyRequest keeps the served schema unchanged.
+        Metadata(new AcceptsMetadata(["application/x-www-form-urlencoded"], typeof(EmptyRequest)));
         Produces<Dictionary<string, object>>();
         Produces<OAuthErrorBody>(StatusCodes.Status400BadRequest);
         Produces<OAuthErrorBody>(StatusCodes.Status401Unauthorized);
@@ -324,7 +327,7 @@ public sealed class RevocationEndpoint : EndpointWithoutRequest<IResult>
     }
 
     /// <inheritdoc />
-    public override Task<IResult> HandleAsync(CancellationToken cancellationToken) => Task.FromResult(Results.NotFound());
+    public override ValueTask<IResult> HandleAsync(CancellationToken cancellationToken) => ValueTask.FromResult(Results.NotFound());
 }
 
 /// <summary>
@@ -347,7 +350,7 @@ public sealed class LogoutEndpoint(Sessions sessions) : EndpointWithoutRequest<I
     }
 
     /// <inheritdoc />
-    public override async Task<IResult> HandleAsync(CancellationToken cancellationToken)
+    public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         if (this.HttpContext.GetOpenIddictServerRequest() is not { } request)
         {

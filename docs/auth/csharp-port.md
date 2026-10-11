@@ -33,11 +33,11 @@ TerraBase binary; `TerraBaseFixture` shares one process per suite and creates
 isolated synthetic tenants/databases. Observability doubles test scheduling
 and error reporting, not the persistence boundary.
 
-The sibling `ts-dotnet` and `ts-libs` checkouts are project references. Locally
-they are found at `../ts-dotnet` and `../ts-libs`, or under
-`~/Projects/TerraScale/`; pass `-p:TerraScaleRoot=<dir>` to use another
-location. CI checks out the revisions pinned in `.forgejo/workflows/ci.yml`
-into a job-owned directory outside the repository.
+The sibling `ts-dotnet` checkout is a project reference. Locally it is found at
+`../ts-dotnet`, or under `~/Projects/TerraScale/`; pass
+`-p:TerraScaleRoot=<dir>` to use another location. CI checks out the revision
+pinned in `.forgejo/workflows/ci.yml` into a job-owned directory outside the
+repository. TerraScale.Endpoints and TerraScale.Logging are NuGet packages.
 
 Both `.forgejo/workflows/ci.yml` and `.forgejo/workflows/slow.yml` pin ts-dotnet
 to `a4ff285c051e63e72cb01c4a94173c91da1dd69a` (SDK merge #28). This adds the

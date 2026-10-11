@@ -474,13 +474,6 @@
           "TerraScale.DotNet": "[0.1.0, )"
         }
       },
-      "terrascale.endpoints": {
-        "type": "Project",
-        "dependencies": {
-          "Microsoft.AspNetCore.OpenApi": "[10.0.12, )",
-          "Scalar.AspNetCore": "[2.17.3, )"
-        }
-      },
       "ts-auth": {
         "type": "Project",
         "dependencies": {
@@ -500,8 +493,8 @@
           "TerraScale.Auth.Contracts": "[1.0.0, )",
           "TerraScale.Auth.Security": "[1.0.0, )",
           "TerraScale.Auth.Store": "[1.0.0, )",
-          "TerraScale.Endpoints": "[1.1.0, )",
-          "TerraScale.Logging": "[2026.1011.1157, )",
+          "TerraScale.Endpoints": "[2026.1011.1224, )",
+          "TerraScale.Logging": "[2026.1011.1224, )",
           "ZLogger": "[2.5.10, )",
           "ZString": "[2.6.0, )"
         }
@@ -638,11 +631,21 @@
           "Sentry.Extensions.Logging": "6.12.0"
         }
       },
+      "TerraScale.Endpoints": {
+        "type": "CentralTransitive",
+        "requested": "[2026.1011.1224, )",
+        "resolved": "2026.1011.1224",
+        "contentHash": "IdA8L3w/Z36hsQlbIUzM2oNCJHClWXLwxCon9JeGMzxyNTSNExibQaWZEYlGX5QAdy1nB4DIP3wQpcBtex7lJg==",
+        "dependencies": {
+          "Microsoft.AspNetCore.OpenApi": "10.0.12",
+          "Scalar.AspNetCore": "2.17.13"
+        }
+      },
       "TerraScale.Logging": {
         "type": "CentralTransitive",
-        "requested": "[2026.1011.1157, )",
-        "resolved": "2026.1011.1157",
-        "contentHash": "ond5X5zmZ3U9e4MBn0vp4n52bdbCjSFEMURyHTRhp0/7ONeiGlRkhdnB5imSFyXZJVclnfmEn95f8X3sEDWz/w==",
+        "requested": "[2026.1011.1224, )",
+        "resolved": "2026.1011.1224",
+        "contentHash": "durQhPeXeyxHGX7dMlRMETppH99Yej8eGVqom0agzhdPOplUe//AB07ltIfg/UqgLXWaMyGdaLfUWSOiJMXo7Q==",
         "dependencies": {
           "ZLogger": "2.5.10",
           "ZString": "2.6.0"
