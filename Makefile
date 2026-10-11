@@ -7,6 +7,9 @@ RUNTIME ?= linux-x64
 PUBLISH_DIR ?= artifacts/publish
 # Extra arguments for every TUnit runner, e.g. TEST_ARGS="--treenode-filter /*/*/Name/*".
 TEST_ARGS ?=
+# Parallel cap of each Fast runner, overridable for a shared machine (for example AUTH_TEST_PARALLEL=16).
+AUTH_TEST_PARALLEL ?= 2
+TERRABASE_TEST_PARALLEL ?= 16
 # Build revision shown by ts-auth /healthz (CI passes the commit SHA).
 TS_AUTH_REVISION ?=
 export TS_AUTH_REVISION
@@ -115,7 +118,7 @@ auth-openapi-check: auth-build
 
 # Cases share one TerraBase process; individual concurrency tests still run their own request races.
 auth-test-fast: auth-build
-	dotnet run --project tests/TerraScale.Authentication.Fast --configuration $(CONFIGURATION) --no-build -- --maximum-parallel-tests 2 $(TEST_ARGS)
+	dotnet run --project tests/TerraScale.Authentication.Fast --configuration $(CONFIGURATION) --no-build -- --maximum-parallel-tests $(AUTH_TEST_PARALLEL) $(TEST_ARGS)
 
 auth-test-slow: auth-build
 	dotnet run --project tests/TerraScale.Authentication.Slow --configuration $(CONFIGURATION) --no-build $(TEST_ARGS)
@@ -143,7 +146,7 @@ terrabase-analyzer-check: restore
 
 # Forgejo lacks GitHub's artifact API; the environment is cleared so the runners write their reports locally.
 terrabase-test-fast: terrabase-build
-	env -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_RESULTS_URL dotnet run --project tests/TerraBase.Fast --configuration $(CONFIGURATION) --no-build -- --maximum-parallel-tests 16 $(TEST_ARGS)
+	env -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_RESULTS_URL dotnet run --project tests/TerraBase.Fast --configuration $(CONFIGURATION) --no-build -- --maximum-parallel-tests $(TERRABASE_TEST_PARALLEL) $(TEST_ARGS)
 
 terrabase-test-slow: terrabase-build
 	env -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_RESULTS_URL dotnet run --project tests/TerraBase.Slow --configuration $(CONFIGURATION) --no-build $(TEST_ARGS)
