@@ -164,7 +164,9 @@ terrabase-test-slow: terrabase-build
 
 # End-to-end replication (tests/TerraBase.E2E): leaderless writes in both directions between gru and sjc. Local by default
 # (two in-process nodes). With TERRABASE_E2E_FLY_URL, TERRABASE_E2E_FLY_API_KEY, TERRABASE_E2E_FLY_PROJECT and
-# TERRABASE_E2E_FLY_DATABASE set, the same scenarios run against Fly. Not part of check: CI runs it after the gru and sjc deploys.
+# TERRABASE_E2E_FLY_DATABASE set, the same scenarios run against Fly; the key is a ts-auth project token with databases:read,
+# databases:write, documents:read and documents:write (E12 and E13 create databases). Not part of check: CI's e2e job runs it
+# after the gru and sjc deploys.
 terrabase-e2e: terrabase-build
 	env -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_RESULTS_URL dotnet run --project tests/TerraBase.E2E --configuration $(CONFIGURATION) --no-build $(TEST_ARGS)
 

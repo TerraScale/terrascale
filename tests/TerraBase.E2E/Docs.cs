@@ -34,6 +34,20 @@ internal static class Docs
         await EnsureSuccessAsync(response);
     }
 
+    // Counter and set ops (application/vnd.terrabase.ops+json); answers the document after the ops.
+    public static async Task<JsonNode?> OpsAsync(HttpClient client, Uri uri, params JsonObject[] ops)
+    {
+        using var response = await AdmittedAsync(() => client.PatchAsync(uri, Json(new JsonObject { ["ops"] = new JsonArray(ops) }, "application/vnd.terrabase.ops+json")));
+        return await BodyAsync(response);
+    }
+
+    // A POST with a JSON body; answers the JSON body, or null when there is none.
+    public static async Task<JsonNode?> PostAsync(HttpClient client, Uri uri, JsonNode body, CancellationToken token = default)
+    {
+        using var response = await AdmittedAsync(() => client.PostAsync(uri, Json(body, "application/json"), token));
+        return await BodyAsync(response, token);
+    }
+
     public static async Task DeleteAsync(HttpClient client, Uri uri, CancellationToken token = default)
     {
         using var response = await AdmittedAsync(() => client.DeleteAsync(uri, token));
@@ -94,6 +108,13 @@ internal static class Docs
         }
 
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text.ToString())));
+    }
+
+    public static async Task<JsonNode?> BodyAsync(HttpResponseMessage response, CancellationToken token = default)
+    {
+        await EnsureSuccessAsync(response);
+        var text = await response.Content.ReadAsStringAsync(token);
+        return text.Length == 0 ? null : JsonNode.Parse(text);
     }
 
     // A failed call reports its method, address and answer, not only a status code.

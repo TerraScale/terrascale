@@ -13,7 +13,8 @@ namespace TerraBase.E2E;
 
 /// <summary>
 /// One database served by two regions, gru and sjc, with a client pinned to each. Without <c>TERRABASE_E2E_FLY_URL</c>
-/// the regions are two in-process nodes on the harness's region bus. With it they are the Fly app's machines, reached
+/// the regions are two in-process nodes on the harness's region bus, each with a Fly identity (region and machine ID) and
+/// one shared directory standing in for Fly's <c>vms.ts-terrabase.internal</c> record, which lists both machines. With it they are the Fly app's machines, reached
 /// through the public proxy and pinned by <see cref="RegionPin"/>. Each test owns one collection of the database.
 /// </summary>
 public sealed class Cluster : IAsyncDisposable
@@ -22,7 +23,8 @@ public sealed class Cluster : IAsyncDisposable
     public const string Sjc = "sjc";
     public const string FlyUrlVariable = "TERRABASE_E2E_FLY_URL";
 
-    private static readonly string[] Scopes = ["documents:read", "documents:write"];
+    // A ts-auth project token's scopes: an API key cannot hold databases:*, and E12 and E13 create databases.
+    private const string Scopes = "databases:read databases:write documents:read documents:write";
 
     // The fake NATS credentials of the cross-region suite: the region bus is the harness's in-memory fake.
     private const string NatsCredentials = "-----BEGIN NATS USER JWT-----\neyJ0.e30.x\n------END NATS USER JWT------\n-----BEGIN USER NKEY SEED-----\nSUAEXAMPLE\n------END USER NKEY SEED------\n";
@@ -31,14 +33,18 @@ public sealed class Cluster : IAsyncDisposable
     private readonly HttpClient _sjc;
     private readonly Func<Task> _release;
 
-    private Cluster(string databasePath, string collection, HttpClient gru, HttpClient sjc, Func<Task> release)
+    private Cluster(string projectPath, string databasePath, string collection, HttpClient gru, HttpClient sjc, Func<Task> release)
     {
+        ProjectPath = projectPath;
         DatabasePath = databasePath;
         Collection = collection;
         _gru = gru;
         _sjc = sjc;
         _release = release;
     }
+
+    /// <summary>The project's path, <c>/v1/projects/{project}</c>.</summary>
+    public string ProjectPath { get; }
 
     /// <summary>The database's path, <c>/v1/projects/{project}/databases/{database}</c>.</summary>
     public string DatabasePath { get; }
@@ -71,17 +77,18 @@ public sealed class Cluster : IAsyncDisposable
     private static async Task<Cluster> StartLocalAsync()
     {
         var network = new FakeRegionNetwork();
+        var machines = new FakeMemberStore();
         var directory = Directory.CreateTempSubdirectory("terrabase-e2e-").FullName;
         var credentials = Path.Combine(directory, "user.creds");
         ManagementApi? gruApi = null;
         ManagementApi? sjcApi = null;
-        HttpClient? gru = null;
-        HttpClient? sjc = null;
+        HttpClient? gruNode = null;
+        HttpClient? sjcNode = null;
         try
         {
             await File.WriteAllTextAsync(credentials, NatsCredentials);
-            gruApi = await StartNodeAsync(network, credentials, Gru);
-            sjcApi = await StartNodeAsync(network, credentials, Sjc);
+            gruApi = await StartNodeAsync(network, machines, credentials, Gru);
+            sjcApi = await StartNodeAsync(network, machines, credentials, Sjc);
             var organization = EntityIds.New().ToString();
             var project = EntityIds.New().ToString();
             var database = EntityIds.New().ToString();
@@ -91,15 +98,24 @@ public sealed class Cluster : IAsyncDisposable
             // The enterprise plan lifts the organization's request budget, as the cross-region suite does. Fly's plan is its own.
             await gruApi.SetPlanAsync(gruApi.User, organization, "enterprise");
             await sjcApi.SetPlanAsync(sjcApi.User, organization, "enterprise");
-            gru = await gruApi.CreateClientAsync(organization, Scopes);
-            sjc = await sjcApi.CreateClientAsync(organization, Scopes);
-            var path = $"/v1/projects/{project}/databases/canary";
+            // Project tokens act on the project only once ts-auth's binding of it to the organization is verified.
+            await gruApi.VerifyProjectBindingAsync(organization, project);
+            await sjcApi.VerifyProjectBindingAsync(organization, project);
+            gruNode = ProjectClient(gruApi, project);
+            sjcNode = ProjectClient(sjcApi, project);
+            var nodes = (gruNode, sjcNode);
+            var gru = LocalClient(Gru, nodes);
+            var sjc = LocalClient(Sjc, nodes);
+            var projectPath = $"/v1/projects/{project}";
+            var path = $"{projectPath}/databases/canary";
             var collection = NewCollection();
             await CreateCollectionAsync(gru, sjc, path, collection);
-            return new Cluster(path, collection, gru, sjc, async () =>
+            return new Cluster(projectPath, path, collection, gru, sjc, async () =>
             {
                 gru.Dispose();
                 sjc.Dispose();
+                gruNode.Dispose();
+                sjcNode.Dispose();
                 await gruApi.DisposeAsync();
                 await sjcApi.DisposeAsync();
                 Directory.Delete(directory, recursive: true);
@@ -107,8 +123,8 @@ public sealed class Cluster : IAsyncDisposable
         }
         catch
         {
-            gru?.Dispose();
-            sjc?.Dispose();
+            gruNode?.Dispose();
+            sjcNode?.Dispose();
             if (sjcApi is not null)
             {
                 await sjcApi.DisposeAsync();
@@ -129,7 +145,8 @@ public sealed class Cluster : IAsyncDisposable
     {
         var url = new Uri(Required(FlyUrlVariable), UriKind.Absolute);
         var key = Required("TERRABASE_E2E_FLY_API_KEY");
-        var path = $"/v1/projects/{Required("TERRABASE_E2E_FLY_PROJECT")}/databases/{Required("TERRABASE_E2E_FLY_DATABASE")}";
+        var projectPath = $"/v1/projects/{Required("TERRABASE_E2E_FLY_PROJECT")}";
+        var path = $"{projectPath}/databases/{Required("TERRABASE_E2E_FLY_DATABASE")}";
         var gru = FlyClient(url, key, Gru);
         var sjc = FlyClient(url, key, Sjc);
         var collection = NewCollection();
@@ -156,7 +173,7 @@ public sealed class Cluster : IAsyncDisposable
             throw;
         }
 
-        return new Cluster(path, collection, gru, sjc, async () =>
+        return new Cluster(projectPath, path, collection, gru, sjc, async () =>
         {
             try
             {
@@ -191,11 +208,12 @@ public sealed class Cluster : IAsyncDisposable
 
     private static string NewCollection() => $"e2e-{Guid.NewGuid():N}";
 
-    private static Task<ManagementApi> StartNodeAsync(FakeRegionNetwork network, string credentials, string region) =>
+    // FLY_REGION and FLY_MACHINE_ID come from the harness's region and node-name keys; the machine ID has Fly's shape.
+    private static Task<ManagementApi> StartNodeAsync(FakeRegionNetwork network, FakeMemberStore machines, string credentials, string region) =>
         ManagementApi.StartAsync(settings =>
         {
             settings["region"] = region;
-            settings["node-name"] = $"{region}-member";
+            settings["node-name"] = Convert.ToHexStringLower(Guid.NewGuid().ToByteArray())[..14];
             settings["wan-regions"] = "gru=gru,sjc=sjc";
             settings["nats-url"] = "nats://127.0.0.1:4222";
             settings["nats-credentials-file"] = credentials;
@@ -203,7 +221,7 @@ public sealed class Cluster : IAsyncDisposable
         {
             services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, new FakeTimeProvider());
             services.AddSingleton(network.Join(region));
-            services.AddSingleton<IMemberDirectory>(new FakeMemberStore());
+            services.AddSingleton<IMemberDirectory>(machines);
         }, managementCredential: true);
 
     private static async Task CommitAsync(ManagementApi api, string commit)
@@ -224,6 +242,17 @@ public sealed class Cluster : IAsyncDisposable
             database is null ? null : new { op = "create_database", organization, project, name, id = database, replica_regions = replicas },
         }.OfType<object>(),
     });
+
+    private static HttpClient ProjectClient(ManagementApi api, string project) =>
+        api.WithToken(api.Issuer.Mint(api.User, token =>
+        {
+            token.Claims["project_id"] = project;
+            token.Claims["scope"] = Scopes;
+        }));
+
+    // A region's client through the local stand-in for Fly's proxy; the nodes' clients carry the address and API key.
+    private static HttpClient LocalClient(string region, (HttpClient Gru, HttpClient Sjc) nodes) =>
+        new(new LocalFlyProxy(region, target => target == Gru ? nodes.Gru : nodes.Sjc)) { BaseAddress = nodes.Gru.BaseAddress, Timeout = Timeout.InfiniteTimeSpan };
 
     private static HttpClient FlyClient(Uri url, string key, string region)
     {
