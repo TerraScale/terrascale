@@ -1,7 +1,8 @@
+using System.Reflection;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Console;
+using ZLogger;
+using ZLogger.Providers;
 
 namespace TerraScale.Logging;
 
@@ -9,12 +10,22 @@ namespace TerraScale.Logging;
 public static class LoggingBuilderExtensions
 {
     /// <summary>
-    /// Replaces the logging providers with a console logger that writes TerraScale record v1 lines
+    /// Replaces the logging providers with a ZLogger processor that writes TerraScale record v1 lines to stdout
     /// and sets the TerraScale default filters in code. <paramref name="service"/> is used when <c>TS_SERVICE</c> is unset.
     /// <paramref name="levels"/> sets the minimum level for each category the service owns, such as a framework base class
     /// that logs under the service's own type.
     /// </summary>
-    public static ILoggingBuilder AddTerraScaleLogging(this ILoggingBuilder builder, string service, params (string Category, LogLevel Level)[] levels)
+    public static ILoggingBuilder AddTerraScaleLogging(this ILoggingBuilder builder, string service, params (string Category, LogLevel Level)[] levels) =>
+        builder.AddTerraScaleLogging(service, null, Environment.GetEnvironmentVariable, TimeProvider.System, levels);
+
+    // Tests and benchmarks pass their own writer, environment and clock through InternalsVisibleTo. Null means Console.Out.
+    internal static ILoggingBuilder AddTerraScaleLogging(
+        this ILoggingBuilder builder,
+        string service,
+        TextWriter? output,
+        Func<string, string?> environment,
+        TimeProvider timeProvider,
+        params (string Category, LogLevel Level)[] levels)
     {
         ArgumentNullException.ThrowIfNull(builder);
         ArgumentException.ThrowIfNullOrWhiteSpace(service);
@@ -31,20 +42,20 @@ public static class LoggingBuilderExtensions
         }
 
         builder.ClearProviders();
-        // Same registration AddConsoleFormatter performs, without its trim/AOT-annotated generic overload.
-        builder.Services.TryAddEnumerable(ServiceDescriptor.Singleton<ConsoleFormatter, TerraScaleConsoleFormatter>());
-        builder.Services.Configure<TerraScaleFormatterOptions>(options =>
+        var processor = new TerraScaleLogProcessor(new TerraScaleLogFormatter(service, environment), output);
+        builder.AddZLoggerLogProcessor(options =>
         {
-            options.Service = service;
             options.IncludeScopes = true;
+            options.TimeProvider = timeProvider;
+            // Keep standard log messages lazy: a throwing ToString() then becomes <unformattable> in the formatter.
+            options.IsFormatLogImmediatelyInStandardLog = false;
+            return processor;
         });
-        builder.AddConsole();
         // PostConfigure runs after every Configure, so a host's Logging section cannot override these values.
-        builder.Services.PostConfigure<ConsoleLoggerOptions>(options => options.FormatterName = TerraScaleConsoleFormatter.FormatterName);
         builder.Services.PostConfigure<LoggerFilterOptions>(options =>
         {
-            // Other providers register their own rules; only the rules that can reach the console are replaced.
-            foreach (var rule in options.Rules.Where(ReachesConsole).ToList())
+            // Other providers register their own rules; only the rules that can reach stdout are replaced.
+            foreach (var rule in options.Rules.Where(ReachesStdout).ToList())
             {
                 options.Rules.Remove(rule);
             }
@@ -60,9 +71,9 @@ public static class LoggingBuilderExtensions
         return builder;
     }
 
-    private const string ConsoleAlias = "Console";
-    private const string ConsoleTypeName = "Microsoft.Extensions.Logging.Console.ConsoleLoggerProvider";
+    private static readonly string ProcessorTypeName = typeof(ZLoggerLogProcessorLoggerProvider).FullName!;
+    private static readonly string? ProcessorAlias = typeof(ZLoggerLogProcessorLoggerProvider).GetCustomAttribute<ProviderAliasAttribute>()?.Alias;
 
-    private static bool ReachesConsole(LoggerFilterRule rule) =>
-        string.IsNullOrEmpty(rule.ProviderName) || rule.ProviderName is ConsoleAlias or ConsoleTypeName;
+    private static bool ReachesStdout(LoggerFilterRule rule) =>
+        string.IsNullOrEmpty(rule.ProviderName) || rule.ProviderName == ProcessorTypeName || rule.ProviderName == ProcessorAlias;
 }

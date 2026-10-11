@@ -12,6 +12,7 @@ __pycache__/
 /.terrascale/
 /bench/.member/
 /bench/.member-*/
+/bench/**/.bdn/
 
 # Fleet builder worktrees (never tracked).
 /.worktrees/

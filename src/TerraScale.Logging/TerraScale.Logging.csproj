@@ -2,7 +2,7 @@
   <PropertyGroup>
     <RootNamespace>TerraScale.Logging</RootNamespace>
     <PackageId>TerraScale.Logging</PackageId>
-    <Description>Shared TerraScale console logging: one compact JSON record per line (record v1).</Description>
+    <Description>Shared TerraScale logging on ZLogger: one compact JSON record per line (record v1).</Description>
     <!-- net10.0 so ts-auth (net10.0) and TerraBase (net11.0) can both consume it. -->
     <TargetFramework>net10.0</TargetFramework>
     <IsAotCompatible>true</IsAotCompatible>
@@ -11,7 +11,7 @@
     <RepositoryType>git</RepositoryType>
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <PackageTags>terrascale;logging;json;console</PackageTags>
+    <PackageTags>terrascale;logging;json;console;zlogger</PackageTags>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>14.0</LangVersion>
@@ -23,6 +23,9 @@
   <ItemGroup>
     <None Include="README.md" Pack="true" PackagePath="\" />
     <None Include="../../LICENSE" Pack="true" PackagePath="\" />
-    <PackageReference Include="Microsoft.Extensions.Logging.Console" />
+    <PackageReference Include="ZLogger" />
+    <PackageReference Include="ZString" />
+    <InternalsVisibleTo Include="TerraScale.Logging.Tests" />
+    <InternalsVisibleTo Include="TerraScale.Logging.Benchmarks" />
   </ItemGroup>
 </Project>

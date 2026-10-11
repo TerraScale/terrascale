@@ -6,6 +6,7 @@
   </Folder>
   <Folder Name="/Benchmarks/">
     <Project Path="bench/TerraScale.Endpoints.Benchmarks/TerraScale.Endpoints.Benchmarks.csproj" />
+    <Project Path="bench/TerraScale.Logging.Benchmarks/TerraScale.Logging.Benchmarks.csproj" />
   </Folder>
   <Folder Name="/Examples/">
     <Project Path="src/TerraScale.Endpoints.Example/TerraScale.Endpoints.Example.csproj" />

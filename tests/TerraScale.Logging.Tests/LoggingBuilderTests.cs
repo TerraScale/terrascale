@@ -1,8 +1,9 @@
+using System.Reflection;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Console;
 using Microsoft.Extensions.Options;
+using ZLogger.Providers;
 
 namespace TerraScale.Logging.Tests;
 
@@ -18,7 +19,6 @@ public sealed class LoggingBuilderTests
             ["Logging:LogLevel:Default"] = "Debug",
             ["Logging:LogLevel:Microsoft.AspNetCore"] = "Debug",
             ["Logging:Console:LogLevel:Default"] = "Debug",
-            ["Logging:Console:FormatterName"] = "simple",
         }).Build();
         using var provider = new ServiceCollection().AddLogging(builder =>
         {
@@ -37,7 +37,7 @@ public sealed class LoggingBuilderTests
 
         await Assert.That(factory.CreateLogger("Acme.Widgets").IsEnabled(LogLevel.Debug)).IsFalse();
         await Assert.That(factory.CreateLogger("Microsoft.AspNetCore.Routing").IsEnabled(LogLevel.Information)).IsFalse();
-        await Assert.That(provider.GetRequiredService<IOptions<ConsoleLoggerOptions>>().Value.FormatterName).IsEqualTo("terrascale");
+        await Assert.That(provider.GetServices<ILoggerProvider>().Single()).IsTypeOf<ZLoggerLogProcessorLoggerProvider>();
     }
 
     [Test]
@@ -52,6 +52,39 @@ public sealed class LoggingBuilderTests
         var rules = provider.GetRequiredService<IOptions<LoggerFilterOptions>>().Value.Rules;
 
         await Assert.That(rules.Any(rule => rule.ProviderName == sentry && rule.CategoryName == "Acme.Widgets" && rule.LogLevel == LogLevel.Debug)).IsTrue();
+    }
+
+    [Test]
+    public async Task ProviderSpecificRulesAreScrubbed()
+    {
+        using var factory = LoggerFactory.Create(builder =>
+        {
+            builder.AddFilter<ZLoggerLogProcessorLoggerProvider>(null, LogLevel.Debug);
+            builder.AddTerraScaleLogging("terrabase");
+        });
+
+        await Assert.That(factory.CreateLogger("Acme.Widgets").IsEnabled(LogLevel.Debug)).IsFalse();
+        await Assert.That(factory.CreateLogger("Acme.Widgets").IsEnabled(LogLevel.Information)).IsTrue();
+    }
+
+    [Test]
+    public async Task ProviderAliasRulesAreScrubbed()
+    {
+        var alias = typeof(ZLoggerLogProcessorLoggerProvider).GetCustomAttribute<ProviderAliasAttribute>()?.Alias;
+        await Assert.That(alias).IsNotNull();
+
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            [$"Logging:{alias}:LogLevel:Default"] = "Debug",
+        }).Build();
+        using var factory = LoggerFactory.Create(builder =>
+        {
+            builder.AddConfiguration(configuration.GetSection("Logging"));
+            builder.AddTerraScaleLogging("terrabase");
+        });
+
+        await Assert.That(factory.CreateLogger("Acme.Widgets").IsEnabled(LogLevel.Debug)).IsFalse();
+        await Assert.That(factory.CreateLogger("Acme.Widgets").IsEnabled(LogLevel.Information)).IsTrue();
     }
 
     [Test]

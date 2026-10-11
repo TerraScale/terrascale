@@ -1,11 +1,11 @@
 using System.Diagnostics;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Options;
+using ZLogger;
 
 namespace TerraScale.Logging.Tests;
 
+[NotInParallel("ActivityContext")]
 public sealed class RecordFormatTests
 {
     private const string FallbackService = "fallback";
@@ -19,7 +19,7 @@ public sealed class RecordFormatTests
     [Arguments(LogLevel.Critical, "ERROR")]
     public async Task LevelsMapToRecordLevels(LogLevel level, string expected)
     {
-        var line = Write(Formatter(), level, []);
+        var line = Write(logger => logger.Log(level, "Level check"));
         await Assert.That(Parse(line).GetProperty("level").GetString()).IsEqualTo(expected);
     }
 
@@ -27,16 +27,13 @@ public sealed class RecordFormatTests
     public async Task KeysAppearInContractOrder()
     {
         Activity.Current = null;
-        var scopes = new LoggerExternalScopeProvider();
-        using var scope = scopes.Push(new List<KeyValuePair<string, object?>> { new("request", "r1") });
         var line = Write(
-            Formatter(("TS_SERVICE", "orchestrator"), ("TS_REGION", "us-ashburn-1"), ("TS_NODE", "node-1")),
-            LogLevel.Warning,
-            [new("{OriginalFormat}", "Widget {Id} is slow"), new("Id", 7)],
-            "Widget 7 is slow",
-            new InvalidOperationException("boom"),
-            eventId: 42,
-            scopes: scopes);
+            logger =>
+            {
+                using var scope = logger.BeginScope(new Dictionary<string, object> { ["request"] = "r1" });
+                logger.LogWarning(new EventId(42), new InvalidOperationException("boom"), "Widget {Id} is slow", 7);
+            },
+            ("TS_SERVICE", "orchestrator"), ("TS_REGION", "us-ashburn-1"), ("TS_NODE", "node-1"));
 
         await Assert.That(string.Join(',', Keys(Parse(line))))
             .IsEqualTo("time,level,msg,service,region,node,component,event_id,Id,request,error,stack");
@@ -45,12 +42,10 @@ public sealed class RecordFormatTests
     [Test]
     public async Task TemplateIsMessageAndStateKeepsJsonTypes()
     {
-        var line = Write(Formatter(), LogLevel.Information,
-            [new("{OriginalFormat}", "Widget {Id} created by {Owner}"), new("Id", 7), new("Owner", new Owner("ops")), new("Ratio", 0.5), new("Ok", true), new("Missing", null)],
-            "Widget 7 created by ops");
+        var line = Write(logger => logger.LogInformation("Widget {Id} created by {Owner} {Ratio} {Ok} {Missing}", 7, new Owner("ops"), 0.5, true, null));
         var root = Parse(line);
 
-        await Assert.That(root.GetProperty("msg").GetString()).IsEqualTo("Widget {Id} created by {Owner}");
+        await Assert.That(root.GetProperty("msg").GetString()).IsEqualTo("Widget {Id} created by {Owner} {Ratio} {Ok} {Missing}");
         await Assert.That(root.GetProperty("Id").GetInt32()).IsEqualTo(7);
         await Assert.That(root.GetProperty("Owner").GetString()).IsEqualTo("ops");
         await Assert.That(root.GetProperty("Ratio").GetDouble()).IsEqualTo(0.5);
@@ -62,7 +57,7 @@ public sealed class RecordFormatTests
     [Test]
     public async Task FormattedMessageIsUsedWithoutTemplate()
     {
-        var root = Parse(Write(Formatter(), LogLevel.Information, [new("Id", 7)], "custom text"));
+        var root = Parse(Write(logger => logger.Log(LogLevel.Information, new EventId(0), "state", null, (state, _) => "custom text")));
 
         await Assert.That(root.GetProperty("msg").GetString()).IsEqualTo("custom text");
     }
@@ -70,7 +65,7 @@ public sealed class RecordFormatTests
     [Test]
     public async Task ServiceFallsBackAndEmptyEnvironmentFieldsAreOmitted()
     {
-        var root = Parse(Write(Formatter(("TS_REGION", "us-ashburn-1")), LogLevel.Information, []));
+        var root = Parse(Write(logger => logger.LogInformation("Hello"), ("TS_REGION", "us-ashburn-1")));
 
         await Assert.That(root.GetProperty("service").GetString()).IsEqualTo(FallbackService);
         await Assert.That(root.GetProperty("region").GetString()).IsEqualTo("us-ashburn-1");
@@ -80,7 +75,7 @@ public sealed class RecordFormatTests
     [Test]
     public async Task EnvironmentServiceOverridesFallback()
     {
-        var root = Parse(Write(Formatter(("TS_SERVICE", "orchestrator")), LogLevel.Information, []));
+        var root = Parse(Write(logger => logger.LogInformation("Hello"), ("TS_SERVICE", "orchestrator")));
 
         await Assert.That(root.GetProperty("service").GetString()).IsEqualTo("orchestrator");
     }
@@ -89,7 +84,18 @@ public sealed class RecordFormatTests
     public async Task ActivityTraceIdsComeFromActivityCurrent()
     {
         using var activity = new Activity("work").Start();
-        var root = Parse(Write(Formatter(), LogLevel.Information, []));
+        var root = Parse(Write(logger => logger.LogInformation("Hello")));
+
+        await Assert.That(root.GetProperty("trace_id").GetString()).IsEqualTo(activity.TraceId.ToHexString());
+        await Assert.That(root.GetProperty("span_id").GetString()).IsEqualTo(activity.SpanId.ToHexString());
+    }
+
+    // ZLogger formats on the calling thread, so the record reads the caller's Activity even though the output is a stream.
+    [Test]
+    public async Task ZLogCallInsideActivityRecordsItsTraceId()
+    {
+        using var activity = new Activity("work").Start();
+        var root = Parse(Write(logger => logger.ZLogInformation($"Hello")));
 
         await Assert.That(root.GetProperty("trace_id").GetString()).IsEqualTo(activity.TraceId.ToHexString());
         await Assert.That(root.GetProperty("span_id").GetString()).IsEqualTo(activity.SpanId.ToHexString());
@@ -99,7 +105,7 @@ public sealed class RecordFormatTests
     public async Task ExceptionBecomesErrorAndStack()
     {
         var exception = new InvalidOperationException("boom");
-        var root = Parse(Write(Formatter(), LogLevel.Error, [], exception: exception));
+        var root = Parse(Write(logger => logger.LogError(exception, "Failed")));
 
         await Assert.That(root.GetProperty("error").GetString()).IsEqualTo("System.InvalidOperationException: boom");
         await Assert.That(root.GetProperty("stack").GetString()).IsEqualTo(exception.ToString());
@@ -109,13 +115,13 @@ public sealed class RecordFormatTests
     public async Task CollidingKeysArePrefixedAndRepeatedKeysKeepTheFirstValue()
     {
         Activity.Current = null;
-        var scopes = new LoggerExternalScopeProvider();
-        using var scope = scopes.Push(new List<KeyValuePair<string, object?>> { new("id", 3), new("trace_id", "scope") });
         var line = Write(
-            Formatter(("TS_SERVICE", "orchestrator")),
-            LogLevel.Information,
-            [new("service", "state"), new("id", 1), new("id", 2)],
-            scopes: scopes);
+            logger =>
+            {
+                using var scope = logger.BeginScope(new Dictionary<string, object> { ["id"] = 3, ["trace_id"] = "scope" });
+                logger.LogInformation("{service} {id} {id}", "state", 1, 2);
+            },
+            ("TS_SERVICE", "orchestrator"));
         var root = Parse(line);
 
         await Assert.That(string.Join(',', Keys(root))).IsEqualTo("time,level,msg,service,component,attr.service,id,attr.trace_id");
@@ -126,7 +132,7 @@ public sealed class RecordFormatTests
     [Test]
     public async Task ThrowingToStringBecomesUnformattableMarker()
     {
-        var root = Parse(Write(Formatter(), LogLevel.Information, [new("Bad", new ThrowingText())]));
+        var root = Parse(Write(logger => logger.LogInformation("Bad {Bad}", new ThrowingText())));
 
         await Assert.That(root.GetProperty("Bad").GetString()).IsEqualTo("<unformattable>");
         await Assert.That(root.GetProperty("level").GetString()).IsEqualTo("INFO");
@@ -139,7 +145,7 @@ public sealed class RecordFormatTests
     [Arguments(LogLevel.Debug, "<7>")]
     public async Task JournalStreamPrefixesSyslogPriority(LogLevel level, string priority)
     {
-        var line = Write(Formatter(("JOURNAL_STREAM", "8:12345")), level, []);
+        var line = Write(logger => logger.Log(level, "Journal line"), ("JOURNAL_STREAM", "8:12345"));
 
         await Assert.That(line.StartsWith(priority, StringComparison.Ordinal)).IsTrue();
         await Assert.That(Parse(line[priority.Length..]).GetProperty("level").GetString()).IsNotNull();
@@ -148,7 +154,7 @@ public sealed class RecordFormatTests
     [Test]
     public async Task WithoutJournalStreamThereIsNoPrefix()
     {
-        var line = Write(Formatter(), LogLevel.Error, []);
+        var line = Write(logger => logger.LogError("No journal"));
 
         await Assert.That(line.StartsWith('{')).IsTrue();
     }
@@ -157,38 +163,68 @@ public sealed class RecordFormatTests
     public async Task EachRecordIsOneLineAndNewlinesRoundTripEscaped()
     {
         const string text = "first\nsecond\r\nthird\u2028";
-        var line = Write(Formatter(), LogLevel.Information, [new("Text", text)], "multi\nline");
-        var body = line.TrimEnd('\r', '\n');
+        var line = Write(logger => logger.LogInformation("multi\nline {Text}", text));
 
-        await Assert.That(body.Contains('\n')).IsFalse();
-        await Assert.That(body.Contains('\r')).IsFalse();
+        await Assert.That(line.Contains('\n')).IsFalse();
+        await Assert.That(line.Contains('\r')).IsFalse();
         await Assert.That(Parse(line).GetProperty("Text").GetString()).IsEqualTo(text);
     }
 
-    private static TerraScaleConsoleFormatter Formatter(params (string Key, string Value)[] environment)
+    [Test]
+    public async Task PlainStringScopeIsWrittenAsScope()
     {
-        var values = environment.ToDictionary(pair => pair.Key, pair => pair.Value);
-        return new TerraScaleConsoleFormatter(
-            Options.Create(new TerraScaleFormatterOptions { Service = FallbackService }),
-            key => values.GetValueOrDefault(key));
+        var root = Parse(Write(logger =>
+        {
+            using (logger.BeginScope("request-7"))
+            {
+                logger.LogInformation("in scope");
+            }
+        }));
+
+        await Assert.That(root.GetProperty("Scope").GetString()).IsEqualTo("request-7");
     }
 
-    private static string Write(
-        TerraScaleConsoleFormatter formatter,
-        LogLevel level,
-        IReadOnlyList<KeyValuePair<string, object?>> state,
-        string formatted = "formatted text",
-        Exception? exception = null,
-        int eventId = 0,
-        IExternalScopeProvider? scopes = null)
+    [Test]
+    public async Task BrokenStdoutDropsTheRecordAndLaterRecordsStillWrite()
     {
-        var writer = new StringWriter();
-        formatter.Write(
-            new LogEntry<IReadOnlyList<KeyValuePair<string, object?>>>(level, "Acme.Widgets", new EventId(eventId), state, exception, (_, _) => formatted),
-            scopes,
-            writer);
-        return writer.ToString();
+        using var output = new FailingOnceWriter();
+        using (var factory = LogHarness.CreateFactory(output))
+        {
+            var logger = factory.CreateLogger("Acme.Widgets");
+            logger.LogInformation("dropped {Id}", 1);
+            logger.LogInformation("kept {Id}", 2);
+        }
+
+        var root = Parse(output.ToString().TrimEnd('\n'));
+        await Assert.That(root.GetProperty("msg").GetString()).IsEqualTo("kept {Id}");
     }
+
+    // Consumers capture records with Console.SetOut, so the provider must read Console.Out at each write.
+#pragma warning disable TUnit0055 // The writer is restored in finally, before the test ends.
+    [Test]
+    [NotInParallel("Console")]
+    public async Task ConsoleOutIsReadAtEachWrite()
+    {
+        using var captured = new StringWriter();
+        var previous = Console.Out;
+        Console.SetOut(captured);
+        try
+        {
+            using var factory = LoggerFactory.Create(builder => builder.AddTerraScaleLogging("fallback", ("Acme.Widgets", LogLevel.Trace)));
+            factory.CreateLogger("Acme.Widgets").LogInformation("to console");
+        }
+        finally
+        {
+            Console.SetOut(previous);
+        }
+
+        await Assert.That(captured.ToString()).Contains("\"msg\":\"to console\"");
+    }
+#pragma warning restore TUnit0055
+
+    // The provider writes a newline after every record; the helper drops it so assertions see the JSON alone.
+    private static string Write(Action<ILogger> write, params (string Key, string Value)[] environment) =>
+        LogHarness.Capture(write, environment).TrimEnd('\n');
 
     private static JsonElement Parse(string line) => JsonElement.Parse(line);
 
@@ -197,6 +233,23 @@ public sealed class RecordFormatTests
     private sealed class Owner(string name)
     {
         public override string ToString() => name;
+    }
+
+    // Throws once, like a stdout pipe that broke, then accepts writes.
+    private sealed class FailingOnceWriter : StringWriter
+    {
+        private bool _failed;
+
+        public override void Write(ReadOnlySpan<char> buffer)
+        {
+            if (!_failed)
+            {
+                _failed = true;
+                throw new IOException("Broken pipe");
+            }
+
+            base.Write(buffer);
+        }
     }
 
     private sealed class ThrowingText

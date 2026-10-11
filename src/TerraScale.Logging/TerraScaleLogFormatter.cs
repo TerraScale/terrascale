@@ -1,13 +1,11 @@
 using System.Buffers;
 using System.Diagnostics;
 using System.Globalization;
-using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
+using Cysharp.Text;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Logging.Console;
-using Microsoft.Extensions.Options;
+using ZLogger;
 
 namespace TerraScale.Logging;
 
@@ -16,11 +14,8 @@ namespace TerraScale.Logging;
 /// Keys are written in a fixed order. State and scope properties that reuse a fixed key move to <c>attr.&lt;key&gt;</c>;
 /// any other repeated key keeps its first value. Formatting never throws: a failing <c>ToString()</c> becomes <c>&lt;unformattable&gt;</c>.
 /// </remarks>
-public sealed class TerraScaleConsoleFormatter : ConsoleFormatter
+public sealed class TerraScaleLogFormatter : IZLoggerFormatter
 {
-    /// <summary>Name the formatter is registered under.</summary>
-    public const string FormatterName = "terrascale";
-
     private const string OriginalFormat = "{OriginalFormat}";
     private const string Unformattable = "<unformattable>";
     private const string AttributePrefix = "attr.";
@@ -42,45 +37,44 @@ public sealed class TerraScaleConsoleFormatter : ConsoleFormatter
     private readonly bool _journal;
 
     /// <summary>Reads the TS_* and JOURNAL_STREAM variables once; <paramref name="environment"/> is replaced in tests.</summary>
-    public TerraScaleConsoleFormatter(IOptions<TerraScaleFormatterOptions> options, Func<string, string?>? environment = null)
-        : base(FormatterName)
+    public TerraScaleLogFormatter(string service, Func<string, string?>? environment = null)
     {
         environment ??= Environment.GetEnvironmentVariable;
-        _service = environment("TS_SERVICE") is { Length: > 0 } service ? service : options.Value.Service;
+        _service = environment("TS_SERVICE") is { Length: > 0 } name ? name : service;
         _region = environment("TS_REGION") ?? string.Empty;
         _node = environment("TS_NODE") ?? string.Empty;
         _journal = !string.IsNullOrEmpty(environment("JOURNAL_STREAM"));
     }
 
     /// <inheritdoc />
-    public override void Write<TState>(in LogEntry<TState> logEntry, IExternalScopeProvider? scopeProvider, TextWriter textWriter)
+    public bool WithLineBreak => true;
+
+    /// <inheritdoc />
+    public void FormatLogEntry(IBufferWriter<byte> writer, IZLoggerEntry entry)
     {
         var record = _spare ?? new Record();
         _spare = null;
         try
         {
-            record.Reset();
-            var message = MessageOf(in logEntry);
+            var level = entry.LogInfo.LogLevel;
+            var prefix = _journal ? JournalPriority(level) : ReadOnlySpan<byte>.Empty;
+            record.Reset(prefix);
             try
             {
-                WriteRecord(record, in logEntry, scopeProvider, message);
+                WriteRecord(record, entry);
             }
             catch (Exception)
             {
-                record.Reset();
+                record.Reset(prefix);
                 record.Json.WriteStartObject();
-                WriteHeader(record.Json, logEntry.LogLevel, Unformattable);
+                WriteHeader(record.Json, level, Unformattable, entry.LogInfo.Timestamp.Utc);
                 record.Json.WriteEndObject();
             }
 
-            record.Json.Flush();
-            if (_journal)
-            {
-                textWriter.Write(JournalPriority(logEntry.LogLevel));
-            }
-
-            textWriter.Write(Encoding.UTF8.GetString(record.Bytes.WrittenSpan));
-            textWriter.WriteLine();
+            record.Finish();
+            var bytes = record.Bytes.WrittenSpan;
+            bytes.CopyTo(writer.GetSpan(bytes.Length));
+            writer.Advance(bytes.Length);
         }
         finally
         {
@@ -88,11 +82,12 @@ public sealed class TerraScaleConsoleFormatter : ConsoleFormatter
         }
     }
 
-    private void WriteRecord<TState>(Record record, in LogEntry<TState> logEntry, IExternalScopeProvider? scopeProvider, string message)
+    private void WriteRecord(Record record, IZLoggerEntry entry)
     {
         var json = record.Json;
+        var info = entry.LogInfo;
         json.WriteStartObject();
-        WriteHeader(json, logEntry.LogLevel, message);
+        WriteHeader(json, info.LogLevel, MessageOf(entry), info.Timestamp.Utc);
         WriteIfPresent(json, "service", _service);
         WriteIfPresent(json, "region", _region);
         WriteIfPresent(json, "node", _node);
@@ -108,32 +103,31 @@ public sealed class TerraScaleConsoleFormatter : ConsoleFormatter
             json.WriteString("span_id", activity.SpanId.ToHexString());
         }
 
-        json.WriteString("component", logEntry.Category);
-        if (logEntry.EventId.Id != 0)
+        json.WriteString("component", info.Category.Name);
+        if (info.EventId.Id != 0)
         {
-            json.WriteNumber("event_id", logEntry.EventId.Id);
+            json.WriteNumber("event_id", info.EventId.Id);
         }
 
-        if (logEntry.State is IReadOnlyList<KeyValuePair<string, object?>> properties)
+        for (var index = 0; index < entry.ParameterCount; index++)
         {
-            foreach (var property in properties)
+            var key = entry.GetParameterKeyAsString(index);
+            if (key != OriginalFormat && record.ClaimKey(key) is { } name)
+            {
+                json.WritePropertyName(name);
+                WriteParameter(json, entry, index);
+            }
+        }
+
+        if (info.ScopeState is { } scope)
+        {
+            foreach (var property in scope.Properties)
             {
                 WriteProperty(record, property.Key, property.Value);
             }
         }
 
-        scopeProvider?.ForEachScope(static (scope, state) =>
-        {
-            if (scope is IEnumerable<KeyValuePair<string, object?>> properties)
-            {
-                foreach (var property in properties)
-                {
-                    WriteProperty(state, property.Key, property.Value);
-                }
-            }
-        }, record);
-
-        if (logEntry.Exception is { } exception)
+        if (info.Exception is { } exception)
         {
             json.WriteString("error", ExceptionSummary(exception));
             json.WriteString("stack", SafeToString(exception));
@@ -142,10 +136,10 @@ public sealed class TerraScaleConsoleFormatter : ConsoleFormatter
         json.WriteEndObject();
     }
 
-    private static void WriteHeader(Utf8JsonWriter json, LogLevel level, string message)
+    private static void WriteHeader(Utf8JsonWriter json, LogLevel level, string message, DateTimeOffset utc)
     {
         Span<char> stamp = stackalloc char[TimestampLength];
-        DateTimeOffset.UtcNow.TryFormat(stamp, out var length, "yyyy-MM-dd'T'HH:mm:ss.ffffff'Z'", CultureInfo.InvariantCulture);
+        utc.TryFormat(stamp, out var length, "yyyy-MM-dd'T'HH:mm:ss.ffffff'Z'", CultureInfo.InvariantCulture);
         json.WriteString("time", stamp[..length]);
         json.WriteString("level", LevelName(level));
         json.WriteString("msg", message);
@@ -161,13 +155,53 @@ public sealed class TerraScaleConsoleFormatter : ConsoleFormatter
 
     private static void WriteProperty(Record record, string key, object? value)
     {
-        if (key == OriginalFormat || record.ClaimKey(key) is not { } name)
+        if (key != OriginalFormat && record.ClaimKey(key) is { } name)
         {
-            return;
+            record.Json.WritePropertyName(name);
+            WriteValue(record.Json, value);
         }
+    }
 
-        record.Json.WritePropertyName(name);
-        WriteValue(record.Json, value);
+    // Typed reads for the common types avoid boxing the value; every other type takes the boxed path.
+    private static void WriteParameter(Utf8JsonWriter json, IZLoggerEntry entry, int index)
+    {
+        var type = entry.GetParameterType(index);
+        if (type == typeof(string))
+        {
+            json.WriteStringValue(entry.GetParameterValue<string?>(index));
+        }
+        else if (type == typeof(bool))
+        {
+            json.WriteBooleanValue(entry.GetParameterValue<bool>(index));
+        }
+        else if (type == typeof(int))
+        {
+            json.WriteNumberValue(entry.GetParameterValue<int>(index));
+        }
+        else if (type == typeof(long))
+        {
+            json.WriteNumberValue(entry.GetParameterValue<long>(index));
+        }
+        else if (type == typeof(decimal))
+        {
+            json.WriteNumberValue(entry.GetParameterValue<decimal>(index));
+        }
+        else if (type == typeof(double))
+        {
+            var number = entry.GetParameterValue<double>(index);
+            if (double.IsFinite(number))
+            {
+                json.WriteNumberValue(number);
+            }
+            else
+            {
+                json.WriteStringValue(SafeToString(number));
+            }
+        }
+        else
+        {
+            WriteValue(json, entry.GetParameterValue(index));
+        }
     }
 
     private static void WriteValue(Utf8JsonWriter json, object? value)
@@ -201,22 +235,12 @@ public sealed class TerraScaleConsoleFormatter : ConsoleFormatter
         }
     }
 
-    private static string MessageOf<TState>(in LogEntry<TState> logEntry)
+    private static string MessageOf(IZLoggerEntry entry)
     {
-        if (logEntry.State is IReadOnlyList<KeyValuePair<string, object?>> properties)
-        {
-            foreach (var property in properties)
-            {
-                if (property.Key == OriginalFormat && property.Value is string template)
-                {
-                    return template;
-                }
-            }
-        }
-
         try
         {
-            return logEntry.Formatter(logEntry.State, logEntry.Exception);
+            var template = entry.GetOriginalFormat();
+            return string.IsNullOrEmpty(template) ? entry.ToString() : template;
         }
         catch (Exception)
         {
@@ -228,7 +252,7 @@ public sealed class TerraScaleConsoleFormatter : ConsoleFormatter
     {
         try
         {
-            return $"{exception.GetType().FullName}: {exception.Message}";
+            return ZString.Concat(exception.GetType().FullName, ": ", exception.Message);
         }
         catch (Exception)
         {
@@ -258,12 +282,12 @@ public sealed class TerraScaleConsoleFormatter : ConsoleFormatter
 
     // Syslog priorities; journald strips the prefix and stores PRIORITY.
     // INFO records are state changes (notice); often-run units use LogLevelMax=notice to drop systemd's per-run lines.
-    private static string JournalPriority(LogLevel level) => level switch
+    private static ReadOnlySpan<byte> JournalPriority(LogLevel level) => level switch
     {
-        LogLevel.Trace or LogLevel.Debug => "<7>",
-        LogLevel.Warning => "<4>",
-        LogLevel.Error or LogLevel.Critical => "<3>",
-        _ => "<5>",
+        LogLevel.Trace or LogLevel.Debug => "<7>"u8,
+        LogLevel.Warning => "<4>"u8,
+        LogLevel.Error or LogLevel.Critical => "<3>"u8,
+        _ => "<5>"u8,
     };
 
     private sealed class Record
@@ -279,11 +303,22 @@ public sealed class TerraScaleConsoleFormatter : ConsoleFormatter
 
         public Utf8JsonWriter Json { get; }
 
-        public void Reset()
+        /// <summary>Starts an empty record, after the optional journald prefix.</summary>
+        public void Reset(ReadOnlySpan<byte> prefix)
         {
             Bytes.Clear();
             Json.Reset(Bytes);
             _claimed.Clear();
+            prefix.CopyTo(Bytes.GetSpan(prefix.Length));
+            Bytes.Advance(prefix.Length);
+        }
+
+        /// <summary>Flushes the JSON and ends the line.</summary>
+        public void Finish()
+        {
+            Json.Flush();
+            Bytes.GetSpan(1)[0] = (byte)'\n';
+            Bytes.Advance(1);
         }
 
         /// <summary>Returns the key to write, or null when an earlier property already used it.</summary>
