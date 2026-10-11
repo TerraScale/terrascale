@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 
 namespace TerraScale.DotNet;
@@ -86,4 +87,6 @@ namespace TerraScale.DotNet;
 [JsonSerializable(typeof(TerraScaleAuthTokenResponse))]
 [JsonSerializable(typeof(TerraScaleAuthIntrospection))]
 [JsonSerializable(typeof(TerraScaleAuthUserInfo))]
+[JsonSerializable(typeof(JsonNode))]
+[JsonSerializable(typeof(JsonObject))]
 internal partial class TerraScaleAuthJsonContext : JsonSerializerContext;

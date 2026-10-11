@@ -265,7 +265,7 @@ public sealed class TerraScaleAuthUserPatch
             throw new ArgumentException("The user patch is empty; configure at least one field.", nameof(body));
         }
 
-        return JsonSerializer.SerializeToUtf8Bytes(body);
+        return JsonSerializer.SerializeToUtf8Bytes(body, TerraScaleAuthJsonContext.Default.JsonObject);
     }
 
     private TerraScaleAuthUserPatch Set(string field, string? value)
@@ -291,7 +291,7 @@ public sealed class TerraScaleAuthUserPatch
         var node = new JsonObject();
         foreach (var (key, value) in metadata)
         {
-            node[key] = value.Deserialize<JsonNode>();
+            node[key] = value.Deserialize(TerraScaleAuthJsonContext.Default.JsonNode);
         }
 
         body[field] = node;
