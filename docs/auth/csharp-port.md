@@ -861,12 +861,12 @@ preferred member is down storage moves to the next one, which may not hold the
 latest writes within the members' replication lag. Without it a deployment
 lists one member and fails closed.
 
-The pinned server's [decision 0003](https://git.terrascale.tech/TerraScale/terrabase/src/commit/ff256067015433c8c40b59879f1282d2a40480ce/docs/decisions/0003-sqlite-synchronous-normal.md)
+The pinned server's [decision 0003](https://git.terrascale.tech/TerraScale-Old/terrabase/src/commit/ff256067015433c8c40b59879f1282d2a40480ce/docs/decisions/0003-sqlite-synchronous-normal.md)
 uses SQLite WAL with `synchronous=NORMAL`. A TerraBase process crash alone
 preserves committed writes, but an OS crash or power loss can roll back
 acknowledged PUT/DELETE transactions since the WAL was last synced. Thus
 uniqueness claims and consumed-challenge records can be rolled back.
-[Decision 0005](https://git.terrascale.tech/TerraScale/terrabase/src/commit/ff256067015433c8c40b59879f1282d2a40480ce/docs/decisions/0005-multi-tenancy.md)
+[Decision 0005](https://git.terrascale.tech/TerraScale-Old/terrabase/src/commit/ff256067015433c8c40b59879f1282d2a40480ce/docs/decisions/0005-multi-tenancy.md)
 states that replication `Sync` is rejected by a bootstrap stub and committed
 batches do not yet carry database identity. There is no supported replication
 or regional failover for this pin.
