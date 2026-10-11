@@ -1301,7 +1301,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
     {
         if (!Volatile.Read(ref _heapInitialized))
         {
-            await Io.RunAsync(() => SqliteSession.LimitHeap(_memoryBudget), cancellationToken).ConfigureAwait(false);
+            await Io.RunAsync(SqliteSession.LimitHeap, cancellationToken).ConfigureAwait(false);
             Volatile.Write(ref _heapInitialized, true);
         }
     }

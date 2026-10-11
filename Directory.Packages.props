@@ -67,7 +67,7 @@
   </ItemGroup>
   <!-- Storage engine (Engine/Sqlite): tracks the .NET 11 train like Microsoft.Extensions. -->
   <ItemGroup Label="Storage engine">
-    <PackageVersion Include="Microsoft.Data.Sqlite" Version="11.0.0-rc.1.26425.128" />
+    <PackageVersion Include="Turso.Data.Sqlite.Provider" Version="0.8.2" />
     <!-- Last MIT release: 9.x NuGet binaries introduce commercial maintenance terms. -->
     <PackageVersion Include="JsonSchema.Net" Version="8.0.5" />
   </ItemGroup>

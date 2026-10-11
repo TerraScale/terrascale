@@ -195,7 +195,7 @@ internal sealed partial class SqliteStorageTransaction
                     throw new InvalidDataException("this database has applied more origins than a dependency vector can name");
                 }
 
-                var origin = reader.GetFieldValue<byte[]>(0);
+                var origin = TursoShim.Bytes(reader, 0);
                 if (origin.Length != OriginPositions.OriginBytes)
                 {
                     throw new InvalidDataException("a stored applied origin is invalid");
@@ -264,7 +264,7 @@ internal sealed partial class SqliteStorageTransaction
                 throw new InvalidDataException("the stored change group exceeds the journal limits");
             }
 
-            changes.Add(new DocumentDelta(reader.GetString(0), reader.GetString(1), Decode(reader.GetFieldValue<byte[]>(2))));
+            changes.Add(new DocumentDelta(reader.GetString(0), reader.GetString(1), Decode(TursoShim.Bytes(reader, 2))));
         }
 
         return changes.Count == 0 ? throw new InvalidDataException("a stored change group holds no change") : new CapturedGroup(positions, changes);
@@ -528,7 +528,7 @@ internal sealed partial class SqliteStorageTransaction
                         throw new InvalidDataException("a document register is too large for a change group");
                     }
 
-                    var encoded = reader.GetFieldValue<byte[]>(2);
+                    var encoded = TursoShim.Bytes(reader, 2);
                     group.Add(new CapturedDelta(collection, id, null!, encoded));
                     bytes += size;
                 }

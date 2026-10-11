@@ -1,6 +1,6 @@
 using System.Buffers;
 using System.Buffers.Binary;
-using Microsoft.Data.Sqlite;
+using Turso.Data.Sqlite;
 using Microsoft.Win32.SafeHandles;
 
 namespace TerraBase.Engine.Sqlite;

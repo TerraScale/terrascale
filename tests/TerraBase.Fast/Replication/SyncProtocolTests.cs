@@ -507,7 +507,7 @@ public sealed class SyncProtocolTests
             await setup.CommitAsync(CancellationToken.None);
         }
 
-        await using (var connection = new Microsoft.Data.Sqlite.SqliteConnection(new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder
+        await using (var connection = new Turso.Data.Sqlite.SqliteConnection(new Turso.Data.Sqlite.SqliteConnectionStringBuilder
         {
             DataSource = node.Tenant.File(node.Server, "limits"),
             Pooling = false,

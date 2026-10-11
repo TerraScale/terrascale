@@ -3,8 +3,7 @@ using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
-using Microsoft.Data.Sqlite;
-using SQLitePCL;
+using Turso.Data.Sqlite;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
 using TerraBase.Primitives;
@@ -119,7 +118,7 @@ internal sealed partial class SqliteStorageTransaction(
         }
 
         ReserveJson(reader.GetInt64(2));
-        return new StoredDocument(id, reader.GetInt64(0), reader.GetFieldValue<byte[]>(1), Scope);
+        return new StoredDocument(id, reader.GetInt64(0), TursoShim.Bytes(reader, 1), Scope);
     }
 
     public async ValueTask<DocumentVersion?> GetVersionAsync(string collection, string id, CancellationToken cancellationToken)
@@ -392,7 +391,7 @@ internal sealed partial class SqliteStorageTransaction(
 
                 bytes += size;
                 ReserveJson(size);
-                documents.Add(new StoredDocument(reader.GetString(0), reader.GetInt64(1), reader.GetFieldValue<byte[]>(2), Scope));
+                documents.Add(new StoredDocument(reader.GetString(0), reader.GetInt64(1), TursoShim.Bytes(reader, 2), Scope));
             }
 
             return new DocumentPage(documents, HasMore: false);
@@ -417,7 +416,7 @@ internal sealed partial class SqliteStorageTransaction(
     private T WithQueryBudget<T>(Func<T> execute, CancellationToken cancellationToken, QueryObservation? observation = null)
     {
         session.ObserveQueries(observation);
-        var budget = StartQueryBudget(cancellationToken);
+        var budget = StartQueryBudget();
         try
         {
             var result = execute();
@@ -429,7 +428,7 @@ internal sealed partial class SqliteStorageTransaction(
 
             return result;
         }
-        catch (SqliteException error) when (error.SqliteErrorCode == raw.SQLITE_INTERRUPT)
+        catch (SqliteException error) when (error.SqliteErrorCode == TursoShim.SQLITE_INTERRUPT)
         {
             throw Exhausted(error, cancellationToken);
         }
@@ -446,12 +445,10 @@ internal sealed partial class SqliteStorageTransaction(
     private const int MaxSnapshotSkips = 50_000;
 
     // The handler and its removal run only on workers while this transaction owns the connection.
-    private QueryBudget StartQueryBudget(CancellationToken cancellationToken)
+    private QueryBudget StartQueryBudget()
     {
         var budget = new QueryBudget(store.Time, store.QueryBudget,
             !store.IsSystem && QosContext.Current is { } tenant ? QosPolicy.For(tenant.Plan) : null);
-        raw.sqlite3_progress_handler(session.Connection.Handle, 1000,
-            _ => cancellationToken.IsCancellationRequested || budget.Progress() ? 1 : 0, null);
         if (budget.ScansLimited)
         {
             // octet_length reads the stored byte size without decoding or copying the JSON body.
@@ -459,7 +456,6 @@ internal sealed partial class SqliteStorageTransaction(
             {
                 if (budget.Scan(size))
                 {
-                    raw.sqlite3_interrupt(session.Connection.Handle);
                     return 0;
                 }
 
@@ -472,8 +468,7 @@ internal sealed partial class SqliteStorageTransaction(
 
     private void StopQueryBudget()
     {
-        raw.sqlite3_progress_handler(session.Connection.Handle, 0, null, null);
-        session.Connection.CreateFunction<long, long>("tb_qos_scan", null);
+        TursoShim.Unregister(session.Connection, "tb_qos_scan");
     }
 
     private static QueryCapacityException Exhausted(SqliteException error, CancellationToken cancellationToken)
@@ -597,7 +592,7 @@ internal sealed partial class SqliteStorageTransaction(
                 // Read string key bytes with SQLite's length, preserving NULs in continuation keys.
                 keys[i] = reader.IsDBNull(3 + i) ? null
                     : i % 2 == 1 && reader.GetInt64(2 + i) == 5
-                        ? Encoding.UTF8.GetString(reader.GetFieldValue<byte[]>(3 + i))
+                        ? Encoding.UTF8.GetString(TursoShim.Bytes(reader, 3 + i))
                         : reader.GetValue(3 + i);
             }
 
@@ -646,7 +641,7 @@ internal sealed partial class SqliteStorageTransaction(
             long bytes = 0;
             // A row may run fewer instructions than the progress handler's interval, so the page also counts
             // its rows and checks the deadline between them.
-            var budget = StartQueryBudget(cancellationToken);
+            var budget = StartQueryBudget();
             try
             {
                 using var reader = command.ExecuteReader();
@@ -710,7 +705,7 @@ internal sealed partial class SqliteStorageTransaction(
                     }
                 }
             }
-            catch (SqliteException error) when (error.SqliteErrorCode == raw.SQLITE_INTERRUPT)
+            catch (SqliteException error) when (error.SqliteErrorCode == TursoShim.SQLITE_INTERRUPT)
             {
                 throw Exhausted(error, cancellationToken);
             }
@@ -751,8 +746,7 @@ internal sealed partial class SqliteStorageTransaction(
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 session.ObserveQueries(observation);
-                using var interrupt = cancellationToken.Register(() => raw.sqlite3_interrupt(session.Connection.Handle));
-                budget = StartQueryBudget(cancellationToken);
+                budget = StartQueryBudget();
                 command = createCommand();
                 try
                 {
@@ -764,7 +758,7 @@ internal sealed partial class SqliteStorageTransaction(
 
                     reader = command.ExecuteReader();
                 }
-                catch (SqliteException error) when (error.SqliteErrorCode == raw.SQLITE_INTERRUPT)
+                catch (SqliteException error) when (error.SqliteErrorCode == TursoShim.SQLITE_INTERRUPT)
                 {
                     throw Exhausted(error, cancellationToken);
                 }
@@ -783,7 +777,6 @@ internal sealed partial class SqliteStorageTransaction(
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     queryBudget.Resume();
-                    using var interrupt = cancellationToken.Register(() => raw.sqlite3_interrupt(session.Connection.Handle));
                     try
                     {
                         var read = changes.Read();
@@ -814,7 +807,7 @@ internal sealed partial class SqliteStorageTransaction(
 
                         return document;
                     }
-                    catch (SqliteException error) when (error.SqliteErrorCode == raw.SQLITE_INTERRUPT)
+                    catch (SqliteException error) when (error.SqliteErrorCode == TursoShim.SQLITE_INTERRUPT)
                     {
                         throw Exhausted(error, cancellationToken);
                     }
@@ -1414,7 +1407,7 @@ internal sealed partial class SqliteStorageTransaction(
                     {
                         // Failed read-only reset closes the session instead of reusing it.
                         using var writable = session.Connection.CreateCommand();
-                        writable.CommandText = "PRAGMA query_only = OFF;";
+                        writable.CommandText = "PRAGMA query_only = 0;";
                         writable.ExecuteNonQuery();
                     }
 
@@ -1547,7 +1540,6 @@ internal sealed partial class SqliteStorageTransaction(
                 RunPendingSavepoint();
                 // Interrupting a mutation rolls back SQLite's entire transaction, including other batch savepoints.
                 // Standalone transactions can interrupt native calls; grouped writes cancel between statements.
-                using var interrupt = write && !ownsAdmission ? default : cancellationToken.Register(() => raw.sqlite3_interrupt(session.Connection.Handle));
                 var result = call();
                 if (mutation)
                 {
@@ -1557,7 +1549,7 @@ internal sealed partial class SqliteStorageTransaction(
                 return result;
             }, cancellationToken).ConfigureAwait(false);
         }
-        catch (SqliteException error) when (error.SqliteErrorCode == raw.SQLITE_INTERRUPT && cancellationToken.IsCancellationRequested)
+        catch (SqliteException error) when (error.SqliteErrorCode == TursoShim.SQLITE_INTERRUPT && cancellationToken.IsCancellationRequested)
         {
             if (mutation)
             {
@@ -1614,7 +1606,7 @@ internal sealed partial class SqliteStorageTransaction(
     private byte[] ReadShapeJson(SqliteDataReader reader, int ordinal, long size)
     {
         ReserveJson(size);
-        var json = reader.GetFieldValue<byte[]>(ordinal);
+        var json = TursoShim.Bytes(reader, ordinal);
         DocumentJson.ValidateStored(json);
         return json;
     }
@@ -1624,7 +1616,7 @@ internal sealed partial class SqliteStorageTransaction(
         reader.GetString(1),
         reader.GetInt64(2),
         // Typed as the nullable memory itself: a null byte[] would convert to empty memory, not to a deletion.
-        reader.IsDBNull(3) ? null : (ReadOnlyMemory<byte>?)reader.GetFieldValue<byte[]>(3));
+        reader.IsDBNull(3) ? null : (ReadOnlyMemory<byte>?)TursoShim.Bytes(reader, 3));
 
     private static long ContentBytes(DocumentChange change) =>
         (long)Encoding.UTF8.GetByteCount(change.Collection) + Encoding.UTF8.GetByteCount(change.Id) + (change.Json?.Length ?? 0);

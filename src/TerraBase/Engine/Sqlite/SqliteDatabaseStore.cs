@@ -3,7 +3,7 @@ using System.Diagnostics.Metrics;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
-using Microsoft.Data.Sqlite;
+using Turso.Data.Sqlite;
 using TerraBase.Configuration;
 using TerraBase.Engine.Lattices;
 using TerraBase.Features.Memory;
@@ -48,7 +48,7 @@ internal sealed partial class SqliteDatabaseStore(
     /// bootstrap SQL is a format change.
     /// </summary>
     internal static readonly byte[] FormatDigest =
-        SHA256.HashData(Encoding.UTF8.GetBytes(SystemSchemaSql + ClientSchemaSql + UniqueSchemaSql));
+        SHA256.HashData(Encoding.UTF8.GetBytes(SystemSchemaSql + ClientSchemaSql + UniqueSchemaSql + ChangeLogTriggerSql));
 
     // Greenfield bootstrap only: an older on-disk shape must be discarded, never upgraded. The system database keeps its
     // journal of whole writes with a SHA-256 prefix digest per group (docs/decisions/0009) until TS-647 step 5.
@@ -56,12 +56,12 @@ internal sealed partial class SqliteDatabaseStore(
         CREATE TABLE documents (
             collection TEXT NOT NULL, id TEXT NOT NULL, version INTEGER NOT NULL, body TEXT,
             PRIMARY KEY (collection, id)
-        ) WITHOUT ROWID;
+        );
         CREATE INDEX documents_live ON documents (collection, id) WHERE body IS NOT NULL;
         CREATE TABLE collections (
             name TEXT PRIMARY KEY, created_at INTEGER NOT NULL, generation INTEGER NOT NULL,
             entity_id TEXT NOT NULL CHECK (length(entity_id) = 26)
-        ) WITHOUT ROWID;
+        );
         CREATE TABLE commit_offset (
             id INTEGER PRIMARY KEY CHECK (id = 1), value INTEGER NOT NULL, incarnation TEXT NOT NULL
         );
@@ -77,36 +77,25 @@ internal sealed partial class SqliteDatabaseStore(
         CREATE TABLE change_log_births (
             collection TEXT NOT NULL, generation INTEGER NOT NULL, id TEXT NOT NULL, version INTEGER NOT NULL,
             PRIMARY KEY (collection, generation, id, version)
-        ) WITHOUT ROWID;
+        );
         CREATE TABLE change_log_high (
             collection TEXT NOT NULL, generation INTEGER NOT NULL, version INTEGER NOT NULL, id TEXT NOT NULL,
             PRIMARY KEY (collection, generation, version, id)
-        ) WITHOUT ROWID;
-        CREATE TRIGGER change_log_birth AFTER INSERT ON change_log
-        WHEN NOT EXISTS (
-            SELECT 1 FROM change_log_births b WHERE b.collection = NEW.collection AND b.generation = NEW.generation AND b.id = NEW.id)
-        BEGIN
-            INSERT INTO change_log_births (collection, generation, id, version) VALUES (NEW.collection, NEW.generation, NEW.id, NEW.version);
-            INSERT INTO change_log_high (collection, generation, version, id)
-                SELECT NEW.collection, NEW.generation, NEW.version, NEW.id
-                WHERE NEW.id > coalesce((
-                    SELECT h.id FROM change_log_high h WHERE h.collection = NEW.collection AND h.generation = NEW.generation
-                    ORDER BY h.version DESC, h.id DESC LIMIT 1), '');
-        END;
+        );
         CREATE TABLE changes (
             sequence INTEGER NOT NULL, ordinal INTEGER NOT NULL, collection TEXT NOT NULL, id TEXT NOT NULL,
             version INTEGER NOT NULL, body TEXT, PRIMARY KEY (sequence, ordinal)
-        ) WITHOUT ROWID;
+        );
         CREATE INDEX changes_deleted ON changes (collection, id, version) WHERE body IS NULL;
         CREATE TABLE replication_state (id INTEGER PRIMARY KEY CHECK (id = 1), complete INTEGER NOT NULL);
         INSERT INTO replication_state (id, complete) VALUES (1, 1);
         CREATE TABLE applied (
             origin BLOB PRIMARY KEY, sequence INTEGER NOT NULL,
             digest BLOB CHECK (digest IS NULL OR length(digest) = 32)
-        ) WITHOUT ROWID;
+        );
         CREATE TABLE journal_prefixes (
             sequence INTEGER PRIMARY KEY CHECK (sequence > 0), digest BLOB NOT NULL CHECK (length(digest) = 32)
-        ) WITHOUT ROWID;
+        );
         """;
 
     // A client database (docs/design/anna-core.md, Stored state). A document row keeps its encoded register (state), the
@@ -119,16 +108,31 @@ internal sealed partial class SqliteDatabaseStore(
     // generation, and change_log_high the generation's highest id over time, so a snapshot finds the ids that existed at
     // its offset without reading later ones. Anti-entropy pages seek the partial key index, so empty or oversized keys,
     // which no peer admits, do not lengthen its scans.
+    // turso-spike: Turso.Data.Sqlite splits command text on every ';', so a trigger body runs through TursoConnection.
+    private const string ChangeLogTriggerSql = """
+        CREATE TRIGGER change_log_birth AFTER INSERT ON change_log
+        WHEN NOT EXISTS (
+            SELECT 1 FROM change_log_births b WHERE b.collection = NEW.collection AND b.generation = NEW.generation AND b.id = NEW.id)
+        BEGIN
+            INSERT INTO change_log_births (collection, generation, id, version) VALUES (NEW.collection, NEW.generation, NEW.id, NEW.version);
+            INSERT INTO change_log_high (collection, generation, version, id)
+                SELECT NEW.collection, NEW.generation, NEW.version, NEW.id
+                WHERE NEW.id > coalesce((
+                    SELECT h.id FROM change_log_high h WHERE h.collection = NEW.collection AND h.generation = NEW.generation
+                    ORDER BY h.version DESC, h.id DESC LIMIT 1), '');
+        END;
+        """;
+
     private const string ClientSchemaSql = $$"""
         CREATE TABLE documents (
             collection TEXT NOT NULL, id TEXT NOT NULL, state BLOB NOT NULL, version INTEGER NOT NULL, body TEXT,
             PRIMARY KEY (collection, id)
-        ) WITHOUT ROWID;
+        );
         CREATE INDEX documents_live ON documents (collection, id) WHERE body IS NOT NULL;
         CREATE TABLE collections (
             name TEXT PRIMARY KEY, created_at INTEGER NOT NULL, generation INTEGER NOT NULL,
             entity_id TEXT NOT NULL CHECK (length(entity_id) = 26)
-        ) WITHOUT ROWID;
+        );
         CREATE TABLE commit_offset (
             id INTEGER PRIMARY KEY CHECK (id = 1), value INTEGER NOT NULL, incarnation TEXT NOT NULL
         );
@@ -144,32 +148,21 @@ internal sealed partial class SqliteDatabaseStore(
         CREATE TABLE change_log_births (
             collection TEXT NOT NULL, generation INTEGER NOT NULL, id TEXT NOT NULL, version INTEGER NOT NULL,
             PRIMARY KEY (collection, generation, id, version)
-        ) WITHOUT ROWID;
+        );
         CREATE TABLE change_log_high (
             collection TEXT NOT NULL, generation INTEGER NOT NULL, version INTEGER NOT NULL, id TEXT NOT NULL,
             PRIMARY KEY (collection, generation, version, id)
-        ) WITHOUT ROWID;
-        CREATE TRIGGER change_log_birth AFTER INSERT ON change_log
-        WHEN NOT EXISTS (
-            SELECT 1 FROM change_log_births b WHERE b.collection = NEW.collection AND b.generation = NEW.generation AND b.id = NEW.id)
-        BEGIN
-            INSERT INTO change_log_births (collection, generation, id, version) VALUES (NEW.collection, NEW.generation, NEW.id, NEW.version);
-            INSERT INTO change_log_high (collection, generation, version, id)
-                SELECT NEW.collection, NEW.generation, NEW.version, NEW.id
-                WHERE NEW.id > coalesce((
-                    SELECT h.id FROM change_log_high h WHERE h.collection = NEW.collection AND h.generation = NEW.generation
-                    ORDER BY h.version DESC, h.id DESC LIMIT 1), '');
-        END;
+        );
         CREATE TABLE changes (
             sequence INTEGER NOT NULL, ordinal INTEGER NOT NULL, collection TEXT NOT NULL, id TEXT NOT NULL,
             state BLOB NOT NULL, PRIMARY KEY (sequence, ordinal)
-        ) WITHOUT ROWID;
+        );
         CREATE TABLE journal (sequence INTEGER PRIMARY KEY CHECK (sequence > 0), dependencies BLOB NOT NULL);
         CREATE TABLE replication_state (
             id INTEGER PRIMARY KEY CHECK (id = 1), replica INTEGER NOT NULL, complete INTEGER NOT NULL
         );
         INSERT INTO replication_state (id, replica, complete) VALUES (1, 0, 1);
-        CREATE TABLE applied (origin BLOB PRIMARY KEY, sequence INTEGER NOT NULL) WITHOUT ROWID;
+        CREATE TABLE applied (origin BLOB PRIMARY KEY, sequence INTEGER NOT NULL);
         CREATE INDEX documents_replication_keys ON documents (collection, id) WHERE {{SqliteStatements.BoundedReplicationKeys}};
         """;
 
@@ -329,7 +322,7 @@ internal sealed partial class SqliteDatabaseStore(
                 if (!write)
                 {
                     using var readOnly = connection.CreateCommand();
-                    readOnly.CommandText = "PRAGMA query_only = ON;";
+                    readOnly.CommandText = "PRAGMA query_only = 1;";
                     readOnly.ExecuteNonQuery();
                 }
 
@@ -969,6 +962,9 @@ internal sealed partial class SqliteDatabaseStore(
         RenewIncarnation(connection, transaction);
         cancellationToken.ThrowIfCancellationRequested();
         transaction.Commit();
+        using var trigger = new Turso.TursoConnection(new Turso.TursoConnectionStringBuilder { DataSource = connection.DataSource }.ConnectionString);
+        trigger.Open();
+        trigger.ExecuteNonQuery(ChangeLogTriggerSql);
     }
 
     // Returns the schema version (0 for an empty file); throws for any other format. Versions never increase: a format

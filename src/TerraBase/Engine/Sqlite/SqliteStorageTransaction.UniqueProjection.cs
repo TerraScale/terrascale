@@ -69,7 +69,7 @@ internal sealed partial class SqliteStorageTransaction
     private void BeginUniqueAffected()
     {
         // A group-commit savepoint can roll back table creation; do not cache its existence in managed state.
-        Command("CREATE TEMP TABLE IF NOT EXISTS unique_affected (id TEXT PRIMARY KEY) WITHOUT ROWID;").ExecuteNonQuery();
+        Command("CREATE TEMP TABLE IF NOT EXISTS unique_affected (id TEXT PRIMARY KEY);").ExecuteNonQuery();
         _uniqueAffected = true;
     }
 

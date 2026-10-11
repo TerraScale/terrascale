@@ -1,6 +1,6 @@
 using System.Text.Json;
 using Bogus;
-using Microsoft.Data.Sqlite;
+using Turso.Data.Sqlite;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Replication;

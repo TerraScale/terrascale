@@ -64,7 +64,7 @@ internal sealed partial class SqliteStorageTransaction
                 // A key no peer admits is examined and skipped: the cursor still moves past it.
                 if (DocumentDelta.HasValidKey(collection, id))
                 {
-                    var state = new DocumentDelta(collection, id, Decode(reader.GetFieldValue<byte[]>(2)));
+                    var state = new DocumentDelta(collection, id, Decode(TursoShim.Bytes(reader, 2)));
                     states.Add(state);
                     bytes += size;
                     if (!Materialized(collection, id, state.State))

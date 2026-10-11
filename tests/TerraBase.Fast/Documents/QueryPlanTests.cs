@@ -137,7 +137,7 @@ public sealed class QueryPlanTests
         await Assert.That(queried.Ids).IsEquivalentTo([live]);
 
         var databaseFile = await api.DatabaseFileAsync();
-        using var command = new Microsoft.Data.Sqlite.SqliteCommand();
+        using var command = new Turso.Data.Sqlite.SqliteCommand();
         var sql = new SqliteQueryCompiler(command.Parameters).Compile(new TerraBase.Engine.DocumentQuery(
             "items", null, [], null, 1, 1024));
         var plan = await QueryPlan.ExplainAsync(databaseFile, sql);
@@ -151,7 +151,7 @@ public sealed class QueryPlanTests
                 TerraBase.Engine.SortKey[] keys = duplicate ? [idSort, idSort] : [idSort];
                 foreach (var cursor in new[] { false, true })
                 {
-                    using var idCommand = new Microsoft.Data.Sqlite.SqliteCommand();
+                    using var idCommand = new Turso.Data.Sqlite.SqliteCommand();
                     var position = cursor ? new TerraBase.Engine.QueryPosition(duplicate ? [5L, live, 5L, live] : [5L, live], live) : null;
                     var idSql = new SqliteQueryCompiler(idCommand.Parameters).Compile(new TerraBase.Engine.DocumentQuery(
                         "items", null, keys, position, 1, 1024));
@@ -177,7 +177,7 @@ public sealed class QueryPlanTests
         var filter = new TerraBase.Engine.CompareFilter(
             new TerraBase.Engine.DocumentPath(["status"]), TerraBase.Engine.Comparison.Equal,
             new TerraBase.Engine.ScalarValue(TerraBase.Engine.ScalarKind.Text, "open"));
-        using (var command = new Microsoft.Data.Sqlite.SqliteCommand())
+        using (var command = new Turso.Data.Sqlite.SqliteCommand())
         {
             var sql = new SqliteQueryCompiler(command.Parameters).CompileSnapshot(filter, 1, 10);
             var plan = await QueryPlan.ExplainAsync(path, sql);
@@ -193,7 +193,7 @@ public sealed class QueryPlanTests
             await Assert.That(plan.Contains("SCAN", StringComparison.Ordinal) || plan.Contains("TEMP B-TREE", StringComparison.Ordinal)).IsFalse();
         }
 
-        using var changes = new Microsoft.Data.Sqlite.SqliteCommand();
+        using var changes = new Turso.Data.Sqlite.SqliteCommand();
         var changeSql = new SqliteQueryCompiler(changes.Parameters).CompileChanges(filter, 1, 4097);
         var changePlan = await QueryPlan.ExplainAsync(path, changeSql);
         Console.WriteLine($"changes: {changePlan}");

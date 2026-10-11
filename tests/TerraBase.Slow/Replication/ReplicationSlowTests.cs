@@ -4,7 +4,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using Bogus;
 using Grpc.Core;
-using Microsoft.Data.Sqlite;
+using Turso.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
