@@ -77,20 +77,6 @@ paths are implementation gaps, not deployment requirements.
 
 ## Git
 
-### Issue (required before any PR)
-- Issues are tracked in ku.mariogk.com and not the forgejo issues
-- Every PR title is `{ISSUE_ID}: {title}`, e.g. `DSH-167: Revamp usage page`.
-- The user may give the issue in any of these forms; all resolve to an ID:
-  - a ku link: `https://ku.mariogk.com/terrascale/issue/DSH-167` → `DSH-167`
-  - the ID alone: `DSH-167` or `dsh-167` → `DSH-167`
-  - the issue title, e.g. "Usage revamp": search ku (MCP `list_issues`
-    with `search`) and use the match. If there are several matches, ask
-    the user which one.
-- If you have no issue at the start of a task, ask for one right away.
-  Never push or open a PR without it, and never make up an ID.
-- When the AI creates the issue, it must assign it to the user who is
-  running the AI and move it to In Progress right away.
-
 ### Branches
 - Branch from `origin/main` in a new worktree:
   `feat/…`, `fix/…`, `hotfix/…`, `refactor/…`.
