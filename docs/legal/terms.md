@@ -14,9 +14,8 @@ govern your use of TerraScale.
 ::: danger
 DRAFT — not legal advice, not published. Blocked on owner action O-5 (legal entity name + jurisdiction).
 
-[PLACEHOLDER — O-4 written confirmations for OCI data processing and
-residency, Cloudflare CDN/cache terms, and Stripe Tax account/configuration
-are not on file. Do not publish until confirmed and reviewed by the owner.]
+[PLACEHOLDER — O-4 written confirmation of Stripe Tax account/configuration
+is not on file. Do not publish until confirmed and reviewed by the owner.]
 :::
 
 These Terms of Service ("Terms") govern your use of TerraScale, provided by
@@ -34,8 +33,7 @@ durability apply from the first day of service.
 
 TerraScale is a multi-region document database: writes replicate across the
 Regions you select, reads are served near your users, and reactive queries
-stream live results over a CDN. Launch Regions are GRU (São Paulo) and SJC (San Jose);
-you may select up to three Regions per database.
+stream live results. You may select up to three Regions per database.
 
 ## Accounts and organizations
 
@@ -109,17 +107,6 @@ records follow their applicable lifecycle.
 
  [PLACEHOLDER — exact retained-copy completion behavior and backup-retention
 window are pending written provider confirmation (O-4) and owner legal review.]
-
-## Sub-processors
-
-We process customer data through the listed hosting, delivery, identity, and
-billing providers. [PLACEHOLDER — applicable provider roles, locations, and
-processing terms, including CDN and tax terms, pending O-4.] Billing and tax processing is
-handled by Stripe (Stripe Tax is intended from day one). [PLACEHOLDER —
-provider roles, applicable terms, and written confirmations are pending O-4;
-see the marked draft tables in Privacy and the DPA.] See [Privacy
-Policy](./privacy.md) and [DPA](./dpa.md) for the full sub-processor list
-and security measures.
 
 ## Hobby-plan reaper
 
