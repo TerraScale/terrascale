@@ -1,0 +1,19 @@
+{
+  "name": "txn",
+  "duration_s": 60,
+  "warmup_s": 5,
+  "concurrency": 8,
+  "dataset": {
+    "documents": 128,
+    "doc_size_bytes": 1024
+  },
+  "mix": [
+    {
+      "op": "txn.multi",
+      "weight": 100
+    }
+  ],
+  "targets": {
+    "p99_ms": 200
+  }
+}

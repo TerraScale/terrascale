@@ -1,0 +1,12 @@
+[package]
+name = "bench-client"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+terrascale = { git = "ssh://git@git.terrascale.tech/TerraScale/ts-rust.git", rev = "ded5adb3b63ce4af0e3a26f95139968cdf539501" }

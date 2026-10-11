@@ -1,0 +1,23 @@
+{
+  "name": "mixed-70-30",
+  "duration_s": 60,
+  "warmup_s": 5,
+  "concurrency": 8,
+  "dataset": {
+    "documents": 128,
+    "doc_size_bytes": 1024
+  },
+  "mix": [
+    {
+      "op": "doc.get",
+      "weight": 70
+    },
+    {
+      "op": "doc.update",
+      "weight": 30
+    }
+  ],
+  "targets": {
+    "p99_ms": 200
+  }
+}

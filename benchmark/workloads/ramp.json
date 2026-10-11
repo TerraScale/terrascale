@@ -1,0 +1,35 @@
+{
+  "name": "ramp",
+  "duration_s": 105,
+  "warmup_s": 5,
+  "concurrency": 1,
+  "dataset": {
+    "documents": 128,
+    "doc_size_bytes": 1024
+  },
+  "mix": [
+    {
+      "op": "doc.get",
+      "weight": 70
+    },
+    {
+      "op": "doc.update",
+      "weight": 30
+    }
+  ],
+  "targets": {
+    "p99_ms": 200
+  },
+  "ramp": {
+    "step_s": 15,
+    "concurrency": [
+      1,
+      2,
+      4,
+      8,
+      16,
+      32,
+      64
+    ]
+  }
+}

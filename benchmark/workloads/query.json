@@ -1,0 +1,23 @@
+{
+  "name": "query",
+  "duration_s": 60,
+  "warmup_s": 5,
+  "concurrency": 8,
+  "dataset": {
+    "documents": 128,
+    "doc_size_bytes": 1024
+  },
+  "mix": [
+    {
+      "op": "query.simple",
+      "weight": 50
+    },
+    {
+      "op": "query.indexed",
+      "weight": 50
+    }
+  ],
+  "targets": {
+    "p99_ms": 200
+  }
+}
