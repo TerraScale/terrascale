@@ -24,7 +24,6 @@ public sealed class CustomerBackupNetworkTests
         await UnavailableAsync(response, cancellationToken);
         await Assert.That(network.Resolutions).IsGreaterThan(0);
         await Assert.That(network.Connections).IsEqualTo(0);
-        await Assert.That(oci.Secrets.Count).IsEqualTo(0);
     }
 
     [Test]
@@ -68,7 +67,6 @@ public sealed class CustomerBackupNetworkTests
         await Assert.That(network.Resolutions).IsGreaterThan(0);
         await Assert.That(network.Connections).IsEqualTo(0);
         await Assert.That(network.Puts).IsEqualTo(0);
-        await Assert.That(oci.Secrets.Count).IsEqualTo(0);
     }
 
     [Test]
@@ -134,7 +132,6 @@ public sealed class CustomerBackupNetworkTests
         await Assert.That(network.Gets).IsEqualTo(1);
         await Assert.That(network.Lists).IsEqualTo(1);
         await Assert.That(network.Deletes).IsEqualTo(1);
-        await Assert.That(oci.Secrets.Count).IsEqualTo(1);
     }
 
     [Test]
@@ -159,7 +156,6 @@ public sealed class CustomerBackupNetworkTests
         await UnavailableAsync(response, cancellationToken);
         await Assert.That(network.Resolutions).IsGreaterThan(0);
         await Assert.That(network.Connections).IsEqualTo(0);
-        await Assert.That(oci.Secrets.Count).IsEqualTo(0);
     }
 
     [Test]
@@ -178,7 +174,6 @@ public sealed class CustomerBackupNetworkTests
         await Assert.That(network.Resolutions).IsGreaterThan(0);
         await Assert.That(network.Connections).IsEqualTo(0);
         await Assert.That(network.Puts).IsEqualTo(0);
-        await Assert.That(oci.Secrets.Count).IsEqualTo(0);
         using var configuration = await api.Client.GetAsync(Uri(DestinationPath(database)), cancellationToken);
         await Assert.That(configuration.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
     }
@@ -207,7 +202,6 @@ public sealed class CustomerBackupNetworkTests
         using var response = await pending;
         await UnavailableAsync(response, cancellationToken);
         await Assert.That(network.Connections).IsEqualTo(0);
-        await Assert.That(oci.Secrets.Count).IsEqualTo(0);
     }
 
     [Test]
@@ -227,7 +221,6 @@ public sealed class CustomerBackupNetworkTests
         await Assert.That(network.RedirectsFollowed).IsEqualTo(0);
         await Assert.That(network.ProductionUsesProxy).IsFalse();
         await Assert.That(network.ProxyRoutingLookups).IsEqualTo(0);
-        await Assert.That(oci.Secrets.Count).IsEqualTo(0);
     }
 
     [Test]
@@ -258,7 +251,6 @@ public sealed class CustomerBackupNetworkTests
             await Assert.That(canceled).IsTrue();
             await network.ConnectCanceled.Task.WaitAsync(cancellationToken);
             await Assert.That(network.Puts).IsEqualTo(0);
-            await Assert.That(oci.Secrets.Count).IsEqualTo(0);
             using var configuration = await api.Client.GetAsync(Uri(DestinationPath(database)), cancellationToken);
             await Assert.That(configuration.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         }

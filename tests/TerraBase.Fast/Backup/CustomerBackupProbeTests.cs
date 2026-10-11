@@ -77,7 +77,6 @@ public sealed class CustomerBackupProbeTests
             await Assert.That(body.Disposed).IsTrue();
             await Assert.That(deleteToken.IsCancellationRequested).IsFalse();
             await Assert.That(request.Completed.Task.IsCompleted).IsFalse();
-            await Assert.That(oci.Secrets.Count).IsEqualTo(0);
             using var absent = await api.Client.GetAsync(route, token);
             await Assert.That(absent.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
             if (cleanupTimeout)
@@ -106,7 +105,6 @@ public sealed class CustomerBackupProbeTests
 
             await Assert.That(Volatile.Read(ref deletes)).IsEqualTo(1);
             await Assert.That(oci.CustomerObjects.Count).IsEqualTo(cleanupTimeout ? 1 : 0);
-            await Assert.That(oci.Secrets.Count).IsEqualTo(0);
             using var stillAbsent = await api.Client.GetAsync(route, token);
             await Assert.That(stillAbsent.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
             oci.CustomerContentOverride = null;
@@ -114,7 +112,6 @@ public sealed class CustomerBackupProbeTests
             using var recovered = await api.Client.PutAsJsonAsync(route, Destination(), token);
             await Assert.That(recovered.StatusCode).IsEqualTo(HttpStatusCode.OK);
             await Assert.That(oci.CustomerObjects.Count).IsEqualTo(cleanupTimeout ? 1 : 0);
-            await Assert.That(oci.Secrets.Count).IsEqualTo(1);
             await Assert.That(oci.BadSignatures).IsEqualTo(0);
         }
         finally
@@ -167,7 +164,6 @@ public sealed class CustomerBackupProbeTests
         }
 
         await Assert.That(body.Disposed).IsTrue();
-        await Assert.That(oci.Secrets.Count).IsEqualTo(kind == "object-lock" ? 1 : 0);
         await Assert.That(oci.CustomerObjects.Count).IsEqualTo(1);
         oci.CustomerContentOverride = null;
         oci.BeforeCustomerDelete = null;
@@ -240,7 +236,6 @@ public sealed class CustomerBackupProbeTests
         await Assert.That(Volatile.Read(ref deletes)).IsEqualTo(1);
         await Assert.That(Volatile.Read(ref lists)).IsEqualTo(0);
         await Assert.That(oci.CustomerObjects.Count).IsEqualTo(0);
-        await Assert.That(oci.Secrets.Count).IsEqualTo(0);
         using var absent = await api.Client.GetAsync(route, token);
         await Assert.That(absent.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
 
@@ -249,7 +244,6 @@ public sealed class CustomerBackupProbeTests
         using var recovered = await api.Client.PutAsJsonAsync(route, Destination(), token);
         await Assert.That(recovered.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(oci.CustomerObjects.Count).IsEqualTo(0);
-        await Assert.That(oci.Secrets.Count).IsEqualTo(1);
         await Assert.That(oci.BadSignatures).IsEqualTo(0);
     }
 
@@ -280,7 +274,6 @@ public sealed class CustomerBackupProbeTests
         await Assert.That(body.Reads).IsGreaterThan(1);
         await Assert.That(body.Disposed).IsTrue();
         await Assert.That(oci.CustomerObjects.Count).IsEqualTo(0);
-        await Assert.That(oci.Secrets.Count).IsEqualTo(1);
         await Assert.That(oci.BadSignatures).IsEqualTo(0);
     }
 

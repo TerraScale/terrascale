@@ -17,23 +17,12 @@ public sealed class CustomerBackupResolutionTests
 {
     [Test]
     [Arguments("unsupported-version")]
-    [Arguments("vault-unconfigured")]
     public async Task Unresolvable_customer_destinations_return_fixed_503_on_window_and_restore_listeners(string failure)
     {
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         using var oci = new FakeOci();
         var time = Clock();
-        await using var api = await StartAsync(settings =>
-        {
-            if (failure == "vault-unconfigured")
-            {
-                oci.Configure(settings);
-            }
-            else
-            {
-                oci.ConfigureCustomer(settings);
-            }
-        }, services =>
+        await using var api = await StartAsync(settings => oci.ConfigureCustomer(settings), services =>
         {
             oci.Route(services);
             ManualBackupHosting.Configure(services);
@@ -63,7 +52,6 @@ public sealed class CustomerBackupResolutionTests
             await Assert.That(absent.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         }
 
-        await Assert.That(oci.Secrets.Count).IsEqualTo(0);
         await Assert.That(oci.CustomerObjects.Count).IsEqualTo(0);
     }
 
