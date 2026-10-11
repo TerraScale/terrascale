@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using TerraScale.Auth.Configuration;
 using TerraScale.DotNet.TerraBase;
+using ZLogger;
 
 namespace TerraScale.Auth.Hosting;
 
@@ -16,7 +17,7 @@ namespace TerraScale.Auth.Hosting;
 /// marks its member down at once, as does a failed name lookup or TLS handshake. A failed request is never resent: TerraBase documents no retryable
 /// failure. When no member is ready, storage tries the first one.
 /// </summary>
-public sealed partial class TerraBaseMembers : BackgroundService, ITerraBaseEndpointResolver
+public sealed class TerraBaseMembers : BackgroundService, ITerraBaseEndpointResolver
 {
     private static readonly TimeSpan ProbeInterval = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan ProbeTimeout = TimeSpan.FromMilliseconds(1500);
@@ -135,11 +136,11 @@ public sealed partial class TerraBaseMembers : BackgroundService, ITerraBaseEndp
         {
             if (isReady)
             {
-                LogReady(this.logger, this.authorities[index]);
+                this.logger.ZLogInformation($"TerraBase member {this.authorities[index]:@Member} is ready");
             }
             else
             {
-                LogUnavailable(this.logger, this.authorities[index]);
+                this.logger.ZLogWarning($"TerraBase member {this.authorities[index]:@Member} is unavailable; storage uses the next ready member");
             }
         }
     }
@@ -161,12 +162,6 @@ public sealed partial class TerraBaseMembers : BackgroundService, ITerraBaseEndp
         handler.SslOptions.CertificateChainPolicy = policy;
         return handler;
     }
-
-    [LoggerMessage(Level = LogLevel.Information, Message = "TerraBase member {Member} is ready")]
-    private static partial void LogReady(ILogger logger, string member);
-
-    [LoggerMessage(Level = LogLevel.Warning, Message = "TerraBase member {Member} is unavailable; storage uses the next ready member")]
-    private static partial void LogUnavailable(ILogger logger, string member);
 
     private sealed class Tracker(TerraBaseMembers members, HttpMessageHandler inner) : DelegatingHandler(inner)
     {

@@ -1,6 +1,7 @@
 using TerraScale.Auth.Features.Oidc;
 using TerraScale.Auth.Features.SigningKeys;
 using TerraScale.Auth.Store;
+using ZLogger;
 
 namespace TerraScale.Auth.Features.Observability;
 
@@ -42,7 +43,7 @@ public sealed record ReadinessObservation(bool Ready, string? Region);
 /// seconds and serves the latest result to <c>/readyz</c> without running checks. A result older
 /// than fifteen seconds means the loop is stuck, so readiness fails.
 /// </summary>
-public sealed partial class ReadinessProbe(IStorageHealth health, TimeProvider clock, ILogger<ReadinessProbe> logger) : BackgroundService
+public sealed class ReadinessProbe(IStorageHealth health, TimeProvider clock, ILogger<ReadinessProbe> logger) : BackgroundService
 {
     private static readonly TimeSpan Interval = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(2);
@@ -194,16 +195,16 @@ public sealed partial class ReadinessProbe(IStorageHealth health, TimeProvider c
             {
                 if (previous is not null)
                 {
-                    LogRecovered(logger);
+                    logger.ZLogInformation($"Readiness check recovered");
                 }
             }
             else if (cause != previous)
             {
-                LogFailed(logger, cause, fault);
+                logger.ZLogWarning(fault, $"Readiness check failed: {cause:@Cause}");
             }
             else
             {
-                LogStillFailing(logger, cause);
+                logger.ZLogDebug($"Readiness check still failing: {cause:@Cause}");
             }
         }
         catch (Exception logFailure) when (logFailure is not OutOfMemoryException)
@@ -212,13 +213,4 @@ public sealed partial class ReadinessProbe(IStorageHealth health, TimeProvider c
             _ = logFailure;
         }
     }
-
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Readiness check failed: {Cause}")]
-    private static partial void LogFailed(ILogger logger, string cause, Exception? exception);
-
-    [LoggerMessage(Level = LogLevel.Debug, Message = "Readiness check still failing: {Cause}")]
-    private static partial void LogStillFailing(ILogger logger, string cause);
-
-    [LoggerMessage(Level = LogLevel.Information, Message = "Readiness check recovered")]
-    private static partial void LogRecovered(ILogger logger);
 }

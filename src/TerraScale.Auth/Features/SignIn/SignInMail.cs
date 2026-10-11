@@ -2,6 +2,7 @@ using System.Threading.Channels;
 using TerraScale.Auth.Features.Email;
 using TerraScale.Auth.Features.Identity;
 using TerraScale.Auth.Features.Oidc;
+using ZLogger;
 
 namespace TerraScale.Auth.Features.SignIn;
 
@@ -12,7 +13,7 @@ namespace TerraScale.Auth.Features.SignIn;
 /// when the host stops are still sent within its shutdown timeout. A full queue drops the code and logs it; the user
 /// can ask for another.
 /// </summary>
-public sealed partial class SignInMail(IEmailSender email, AuthEmails emails, EmailSettings settings, TimeProvider clock, ILogger<SignInMail> logger) : BackgroundService
+public sealed class SignInMail(IEmailSender email, AuthEmails emails, EmailSettings settings, TimeProvider clock, ILogger<SignInMail> logger) : BackgroundService
 {
     /// <summary>Codes waiting for delivery before new ones are dropped.</summary>
     public const int Capacity = 256;
@@ -112,7 +113,7 @@ public sealed partial class SignInMail(IEmailSender email, AuthEmails emails, Em
             catch (Exception failure) when (failure is not OutOfMemoryException)
             {
                 // Senders log and swallow their own failures; anything else must not stop delivery of the rest.
-                LogFailed(logger, failure);
+                logger.ZLogError(failure, $"Authentication email delivery failed");
             }
         }
     }
@@ -138,7 +139,7 @@ public sealed partial class SignInMail(IEmailSender email, AuthEmails emails, Em
         catch (Exception failure) when (failure is not OutOfMemoryException)
         {
             Volatile.Write(ref this.configRetryAt, (clock.GetUtcNow() + ConfigBackoff).UtcTicks);
-            LogConfigUnavailable(logger, failure);
+            logger.ZLogWarning(failure, $"Email configuration unavailable; sending the sign-in code with the defaults");
             return null;
         }
     }
@@ -147,18 +148,9 @@ public sealed partial class SignInMail(IEmailSender email, AuthEmails emails, Em
     {
         if (!(notice ? this.notices : this.queue).Writer.TryWrite((prepare, locale)))
         {
-            LogDropped(logger);
+            logger.ZLogWarning($"Authentication email dropped: the delivery queue is full");
         }
     }
-
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Email configuration unavailable; sending the sign-in code with the defaults")]
-    private static partial void LogConfigUnavailable(ILogger logger, Exception exception);
-
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Authentication email dropped: the delivery queue is full")]
-    private static partial void LogDropped(ILogger logger);
-
-    [LoggerMessage(Level = LogLevel.Error, Message = "Authentication email delivery failed")]
-    private static partial void LogFailed(ILogger logger, Exception exception);
 
     // One email to render and send; Values never formats its code or link.
     private sealed record Outgoing(string To, AuthEmailKind Kind, AuthEmailValues Values);

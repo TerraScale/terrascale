@@ -1,5 +1,7 @@
 using System.Text;
+using Cysharp.Text;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using ZLogger;
 
 namespace TerraScale.Auth.Hosting;
 
@@ -88,16 +90,24 @@ public sealed class ScrubbedException : Exception
 
     private static string Render(Exception root, int depth)
     {
-        var builder = new StringBuilder();
-        var seen = new HashSet<Exception>(ReferenceEqualityComparer.Instance);
-        var visits = 0;
-        Append(builder, root, depth, seen, ref visits);
-        return builder.ToString().TrimEnd();
+        // A using declaration cannot be passed by ref, so the builder is disposed explicitly.
+        var builder = ZString.CreateStringBuilder();
+        try
+        {
+            var seen = new HashSet<Exception>(ReferenceEqualityComparer.Instance);
+            var visits = 0;
+            Append(ref builder, root, depth, seen, ref visits);
+            return builder.ToString().TrimEnd();
+        }
+        finally
+        {
+            builder.Dispose();
+        }
     }
 
     // Every visit counts against the budget, including repeated and depth-limited ones, so
     // neither a wide aggregate of one shared child nor a deep fan-out can grow the output.
-    private static void Append(StringBuilder builder, Exception exception, int depth, HashSet<Exception> seen, ref int visits)
+    private static void Append(ref Utf16ValueStringBuilder builder, Exception exception, int depth, HashSet<Exception> seen, ref int visits)
     {
         if (++visits > MaxRendered || depth > MaxDepth)
         {
@@ -131,7 +141,7 @@ public sealed class ScrubbedException : Exception
             }
 
             builder.Append(" ---> ");
-            Append(builder, cause, depth + 1, seen, ref visits);
+            Append(ref builder, cause, depth + 1, seen, ref visits);
         }
     }
 }
@@ -212,6 +222,7 @@ public sealed partial class SafeLoggerFactory(ILoggerFactory inner) : ILoggerFac
                 {
                     null => [],
                     Exception exception => [new("Exception", exception)],
+                    IZLoggerEntryCreatable zlogger => ZLoggerPairs(zlogger),
                     IReadOnlyList<KeyValuePair<string, object?>> list => [.. list.Take(MaxElements)],
                     System.Collections.ICollection and IEnumerable<KeyValuePair<string, object?>> items => [.. items.Take(MaxElements)],
                     _ => [new("State", $"[{state.GetType().Name} log state withheld]")],
@@ -224,8 +235,10 @@ public sealed partial class SafeLoggerFactory(ILoggerFactory inner) : ILoggerFac
             }
 
             var budget = new Budget();
+            // ZLogger reads parameters only when the message template is the last pair, so it stays last.
             var cleaned = pairs
                 .Select(pair => new KeyValuePair<string, object?>(pair.Key ?? string.Empty, Normalize(pair.Value, 0, budget)))
+                .OrderBy(pair => pair.Key == "{OriginalFormat}")
                 .ToList();
             var template = cleaned.FirstOrDefault(pair => pair.Key == "{OriginalFormat}").Value as string;
             var message = template is null
@@ -234,13 +247,38 @@ public sealed partial class SafeLoggerFactory(ILoggerFactory inner) : ILoggerFac
             return new SafeState(cleaned, message);
         }
 
+        // No metadata is read, so one shared empty LogInfo decodes every state.
+        private static readonly LogInfo DecodingInfo = new(new LogCategory(string.Empty), default, LogLevel.None, default, null, null, default, null, string.Empty, string.Empty, 0);
+
+        // ZLogger's pooled state is valid only until its entry is returned, so the template and
+        // parameters are copied here, inside Log. Only those are read, so the entry's metadata stays empty.
+        private static List<KeyValuePair<string, object?>> ZLoggerPairs(IZLoggerEntryCreatable zlogger)
+        {
+            var entry = zlogger.CreateEntry(in DecodingInfo);
+            try
+            {
+                var pairs = new List<KeyValuePair<string, object?>>(entry.ParameterCount + 1);
+                for (var position = 0; position < entry.ParameterCount; position++)
+                {
+                    pairs.Add(new(entry.GetParameterKeyAsString(position), entry.GetParameterValue(position)));
+                }
+
+                pairs.Add(new("{OriginalFormat}", entry.GetOriginalFormat()));
+                return pairs;
+            }
+            finally
+            {
+                entry.Return();
+            }
+        }
+
         // Message-template rendering with the standard semantics ({{ and }} escapes, alignment,
         // format specifiers, "(null)") over the normalized values, positionally like
         // Microsoft.Extensions.Logging. The original formatter is never called.
         private static string Format(string template, List<KeyValuePair<string, object?>> values)
         {
             var arguments = values.Where(pair => pair.Key != "{OriginalFormat}").Select(pair => pair.Value ?? "(null)").ToArray();
-            var builder = new StringBuilder();
+            using var builder = ZString.CreateStringBuilder();
             var index = 0;
             for (var position = 0; position < template.Length; position++)
             {
@@ -256,7 +294,22 @@ public sealed partial class SafeLoggerFactory(ILoggerFactory inner) : ILoggerFac
                 {
                     var hole = template[(position + 1)..end];
                     var suffix = hole.IndexOfAny([',', ':']) is var split and >= 0 ? hole[split..] : string.Empty;
-                    builder.Append('{').Append(index++.ToString(System.Globalization.CultureInfo.InvariantCulture)).Append(suffix).Append('}');
+                    // ZLogger writes its format after a comma ("{Count,0.00}"); after a comma only an integer alignment is valid.
+                    if (suffix.StartsWith(','))
+                    {
+                        var rest = suffix[1..];
+                        var cut = rest.IndexOfAny([',', ':']);
+                        var head = cut >= 0 ? rest[..cut] : rest;
+                        if (!int.TryParse(head, System.Globalization.NumberStyles.AllowLeadingSign, System.Globalization.CultureInfo.InvariantCulture, out _))
+                        {
+                            suffix = ':' + rest;
+                        }
+                    }
+
+                    builder.Append('{');
+                    builder.Append(index++.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                    builder.Append(suffix);
+                    builder.Append('}');
                     position = end;
                     continue;
                 }
@@ -366,7 +419,6 @@ public sealed partial class SafeLoggerFactory(ILoggerFactory inner) : ILoggerFac
             public bool Take() => ++this.used <= MaxNodes;
         }
     }
-
 
 }
 

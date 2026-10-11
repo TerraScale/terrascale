@@ -3,7 +3,9 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using TerraScale.Auth.Hosting;
+using TerraScale.Auth.Tests;
 using TerraScale.Logging;
+using ZLogger;
 
 namespace TerraScale.Auth.Fast.Platform;
 
@@ -28,10 +30,12 @@ public sealed class LoggingTests
             builder.Services.AddSafeLogging();
             using (var host = builder.Build())
             {
-#pragma warning disable CA1848, CA2254 // The point is to log the way arbitrary library code does.
-                host.Services.GetRequiredService<ILoggerFactory>().CreateLogger("TerraScale.Auth.Tests")
-                    .LogError(new InvalidOperationException(ExceptionSecret), "Token exchange failed for {ClientId}", "client-1");
-#pragma warning restore CA1848, CA2254
+                var logger = host.Services.GetRequiredService<ILoggerFactory>().CreateLogger("TerraScale.Auth.Tests");
+                var clientId = "client-1";
+                var user = "alice";
+                logger.ZLogError(new InvalidOperationException(ExceptionSecret), $"Token exchange failed for {clientId:@ClientId}");
+                logger.ZLogError(new InvalidOperationException($"password={LogSecrets.FakeSecret}"), $"Sign-in failed for {user:@User}");
+                logger.ZLogInformation($"Upstream said {new LogSecrets.UpstreamReply(LogSecrets.FakeSecret):@Reply}");
             }
         }
         finally
@@ -43,14 +47,17 @@ public sealed class LoggingTests
 
         var output = console.ToString();
         await Assert.That(output).DoesNotContain(ExceptionSecret);
+        await Assert.That(output).DoesNotContain(LogSecrets.FakeSecret);
         await Assert.That(output).Contains("InvalidOperationException");
+        await Assert.That(output).Contains("\"Reply\":\"[UpstreamReply withheld]\"");
 
         // Records may carry a journald <N> prefix, and other tests may write to the same console
         // while this one runs; only lines holding a JSON object are read.
         var record = output.Split('\n', StringSplitOptions.RemoveEmptyEntries)
             .Where(line => line.Contains('{', StringComparison.Ordinal))
             .Select(line => JsonDocument.Parse(line[line.IndexOf('{', StringComparison.Ordinal)..]).RootElement)
-            .Single(json => json.GetProperty("msg").GetString()?.Contains("Token exchange failed", StringComparison.Ordinal) == true);
+            .Single(json => json.GetProperty("msg").GetString()?.Contains("Sign-in failed for {User}", StringComparison.Ordinal) == true);
         await Assert.That(record.TryGetProperty("level", out _)).IsTrue();
+        await Assert.That(record.GetProperty("User").GetString()).IsEqualTo("alice");
     }
 }

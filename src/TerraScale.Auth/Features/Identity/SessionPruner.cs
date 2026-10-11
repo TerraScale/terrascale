@@ -1,10 +1,12 @@
+using ZLogger;
+
 namespace TerraScale.Auth.Features.Identity;
 
 /// <summary>
 /// Deletes dead sessions and spent code records every ten minutes on every replica. Deletes are version-conditional,
 /// so concurrent passes are safe; a failed pass is retried at the next tick, and dead records grant nothing while they wait.
 /// </summary>
-public sealed partial class SessionPruner(Sessions sessions, Passcodes passcodes, ILogger<SessionPruner> logger) : BackgroundService
+public sealed class SessionPruner(Sessions sessions, Passcodes passcodes, ILogger<SessionPruner> logger) : BackgroundService
 {
     private const int BatchSize = 500;
 
@@ -23,11 +25,8 @@ public sealed partial class SessionPruner(Sessions sessions, Passcodes passcodes
             }
             catch (Exception error) when (!stoppingToken.IsCancellationRequested)
             {
-                LogPruneFailed(logger, error);
+                logger.ZLogWarning(error, $"Session or code pruning failed; retrying at the next interval");
             }
         }
     }
-
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Session or code pruning failed; retrying at the next interval")]
-    private static partial void LogPruneFailed(ILogger logger, Exception exception);
 }

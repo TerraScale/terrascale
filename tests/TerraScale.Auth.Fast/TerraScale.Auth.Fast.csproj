@@ -19,6 +19,7 @@
     <PackageReference Include="TUnit" />
     <PackageReference Include="Microsoft.Playwright" />
     <PackageReference Include="Bogus" />
+    <PackageReference Include="ZLogger" />
   </ItemGroup>
   <ItemGroup>
     <!-- Shared harness source; deliberately not a third test project. -->

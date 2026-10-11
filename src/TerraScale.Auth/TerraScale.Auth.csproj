@@ -31,11 +31,13 @@
     <PackageReference Include="OpenTelemetry.Instrumentation.Http" />
     <PackageReference Include="OpenTelemetry.Instrumentation.Runtime" />
     <PackageReference Include="TerraScale.Logging" />
+    <PackageReference Include="ZLogger" />
+    <PackageReference Include="ZString" />
     <PackageReference Include="Sentry.AspNetCore" />
     <PackageReference Include="MailKit" />
     <!-- Only the server stack: the OpenIddict.AspNetCore metapackage also brings the unused client and
-         validation HTTP stacks, whose Microsoft.Extensions.Telemetry dependency replaces the [LoggerMessage]
-         generator and reorders log state, which SafeLogging renders positionally. -->
+         validation HTTP stacks, whose Microsoft.Extensions.Telemetry dependency reorders log state, which
+         SafeLogging renders positionally. -->
     <PackageReference Include="OpenIddict.Core" />
     <PackageReference Include="OpenIddict.Server.AspNetCore" />
     <PackageReference Include="Otp.NET" />

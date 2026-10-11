@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Globalization;
 using System.IO.Compression;
 using System.Net;
 using System.Text;
@@ -9,7 +10,9 @@ using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using TerraScale.Auth.Hosting;
 using TerraScale.Auth.Tests;
+using ZLogger;
 
 namespace TerraScale.Auth.Fast.Security;
 
@@ -135,12 +138,15 @@ public sealed class ErrorReportingTests
                 using (logger.BeginScope("Scope {Failure}", failure))
                 using (logger.BeginScope(new Dictionary<string, object?> { ["Failure"] = failure }))
                 {
-                    logger.LogError("Failure: {Error}", failure);
-                    logger.LogError("Failures: {Errors}", (object)new Exception[] { failure, aggregate });
-                    logger.LogError(aggregate, "Aggregate failure");
+                    logger.ZLogError($"Failure: {failure:@Error}");
+                    var errors = new Exception[] { failure, aggregate };
+                    logger.ZLogError($"Failures: {errors:@Errors}");
+                    logger.ZLogError(aggregate, $"Aggregate failure");
                     logger.Log(LogLevel.Error, default, new Dictionary<string, object?> { ["Error"] = failure }, null, (state, _) => string.Join(",", state.Values));
-                    logger.LogError("Nested: {Context}", new Dictionary<string, object?> { ["inner"] = new List<object?> { failure } });
-                    logger.LogError("Lazy: {Errors}", new[] { failure }.Where(_ => true));
+                    var nested = new Dictionary<string, object?> { ["inner"] = new List<object?> { failure } };
+                    logger.ZLogError($"Nested: {nested:@Context}");
+                    var lazy = new[] { failure }.Where(_ => true);
+                    logger.ZLogError($"Lazy: {lazy:@Errors}");
                     logger.Log(LogLevel.Error, default, new { Failure = failure }, null, (state, _) => state.ToString()!);
                     logger.BeginScope(new { Failure = failure })?.Dispose();
                     var loop = new AggregateException(failure, failure);
@@ -149,14 +155,19 @@ public sealed class ErrorReportingTests
                         loop = new AggregateException(loop, loop);
                     }
 
-                    logger.LogError(loop, "Self-similar aggregate");
-                    logger.LogError("Wrapped: {Context}", new { Failure = failure });
-                    logger.LogError("Wrapped in list: {Items}", new List<object> { new { Failure = failure } });
-                    logger.LogError("Exception keys: {Map}", new Dictionary<Exception, string> { [failure] = "value" });
-                    logger.LogError(new AggregateException(Enumerable.Range(0, 50_000).Select(i => new IOException($"wide {secret} {i}"))), "Wide aggregate");
-                    logger.LogError(new AggregateException(Enumerable.Repeat<Exception>(failure, 200_000)), "Repeated child");
-                    logger.LogError("Rendering collection: {Items}", new SecretRenderingList(secret) { "harmless" });
-                    logger.LogError("Endpoint subclass: {Peer}", new SecretEndPoint(secret));
+                    logger.ZLogError(loop, $"Self-similar aggregate");
+                    var wrapped = new { Failure = failure };
+                    logger.ZLogError($"Wrapped: {wrapped:@Context}");
+                    var items = new List<object> { new { Failure = failure } };
+                    logger.ZLogError($"Wrapped in list: {items:@Items}");
+                    var map = new Dictionary<Exception, string> { [failure] = "value" };
+                    logger.ZLogError($"Exception keys: {map:@Map}");
+                    var wide = new AggregateException(Enumerable.Range(0, 50_000).Select(i => new IOException($"wide {secret} {i}")));
+                    logger.ZLogError(wide, $"Wide aggregate");
+                    logger.ZLogError(new AggregateException(Enumerable.Repeat<Exception>(failure, 200_000)), $"Repeated child");
+                    var rendering = new SecretRenderingList(secret) { "harmless" };
+                    logger.ZLogError($"Rendering collection: {rendering:@Items}");
+                    logger.ZLogError($"Endpoint subclass: {new SecretEndPoint(secret):@Peer}");
                     logger.Log(LogLevel.Error, default, new SecretRenderingState(secret), null, (state, _) => state.ToString());
                     logger.BeginScope(new SecretRenderingState(secret))?.Dispose();
                     var level = new List<object?> { "leaf" };
@@ -165,11 +176,12 @@ public sealed class ErrorReportingTests
                         level = [.. Enumerable.Repeat<object?>(level, 100)];
                     }
 
-                    logger.LogError("Fan-out: {Tree}", level);
-                    logger.LogError("Throwing collection: {Items}", new ThrowingCollection());
+                    logger.ZLogError($"Fan-out: {level:@Tree}");
+                    logger.ZLogError($"Throwing collection: {new ThrowingCollection():@Items}");
                     logger.BeginScope(new ThrowingCollection())?.Dispose();
+                    // Kept on the legacy MEL path: framework code still logs these templates through SafeLogging.
                     logger.LogError("Formatted {Elapsed:F2} ms, {{literal}}, {Missing}", 1.23456, null);
-                    logger.LogError(new LyingStackTraceException(secret), "Lying stack trace");
+                    logger.ZLogError(new LyingStackTraceException(secret), $"Lying stack trace");
                 }
 #pragma warning restore CA1848, CA2254
                 return Results.Ok();
@@ -191,6 +203,53 @@ public sealed class ErrorReportingTests
         await Assert.That(text).Contains("withheld]");
         // Standard template semantics survive normalization.
         await Assert.That(text).Contains("Formatted 1.23 ms, {literal}, (null)");
+    }
+
+    [Test]
+    public async Task ZLogger_entries_keep_values_and_exception_messages_out_of_every_provider()
+    {
+        const string secret = LogSecrets.FakeSecret;
+        var logs = new FieldLogs();
+        using var services = new ServiceCollection().AddLogging(builder => builder.AddProvider(logs)).AddSafeLogging().BuildServiceProvider();
+        var logger = services.GetRequiredService<ILoggerFactory>().CreateLogger("ZLoggerTest");
+        var user = "alice";
+
+        logger.ZLogError(new InvalidOperationException($"password={secret}"), $"Sign-in failed for {user:@User}");
+        logger.ZLogInformation($"Upstream said {new LogSecrets.UpstreamReply(secret):@Reply}");
+        logger.ZLogInformation($"Took {1.5:@Elapsed:0.00} s");
+
+        var text = logs.Text;
+        await Assert.That(text).DoesNotContain(secret);
+        await Assert.That(text).Contains("Sign-in failed for alice");
+        await Assert.That(text).Contains("Took 1.50 s");
+        await Assert.That(text).Contains("{OriginalFormat}=Sign-in failed for {User}");
+        await Assert.That(text).Contains("User=alice");
+        await Assert.That(text).Contains("System.InvalidOperationException (message withheld)");
+        await Assert.That(text).Contains("Upstream said [UpstreamReply withheld]");
+    }
+
+    [Test]
+    public async Task Templates_pad_and_format_like_string_Format()
+    {
+        var logs = new FieldLogs();
+        using var services = new ServiceCollection().AddLogging(builder => builder.AddProvider(logs)).AddSafeLogging().BuildServiceProvider();
+        var logger = services.GetRequiredService<ILoggerFactory>().CreateLogger("FormatTest");
+
+        // LogValuesFormatter rejects ZLogger's comma formats, so the state carries the template the way ZLogger writes it.
+        var state = new List<KeyValuePair<string, object?>>
+        {
+            new("Name", "ab"),
+            new("Count", 1.5),
+            new("Length", 42),
+            new("Name", "cd"),
+            new("{OriginalFormat}", "Padded [{Name,-10:0.00}] {Count,0.00} {Length,5} {Name,5}"),
+        };
+#pragma warning disable CA1848 // The point is to log the way arbitrary library code does.
+        logger.Log(LogLevel.Information, default, state, null, (value, _) => value.ToString()!);
+#pragma warning restore CA1848
+
+        var text = logs.Text;
+        await Assert.That(text).Contains(string.Format(CultureInfo.InvariantCulture, "Padded [{0,-10:0.00}] {1:0.00} {2,5} {3,5}", "ab", 1.5, 42, "cd"));
     }
 
     [Test]
@@ -341,6 +400,36 @@ public sealed class ErrorReportingTests
                 {
                     throw new InvalidOperationException("log provider failure");
                 }
+            }
+        }
+    }
+
+    /// <summary>Records each provider's view of an entry: the formatted line, the exception rendering and the structured fields.</summary>
+    private sealed class FieldLogs : ILoggerProvider
+    {
+        private readonly ConcurrentQueue<string> lines = new();
+
+        public string Text => string.Join('\n', this.lines);
+
+        public ILogger CreateLogger(string categoryName) => new Logger(this.lines);
+
+        public void Dispose()
+        {
+        }
+
+        private sealed class Logger(ConcurrentQueue<string> lines) : ILogger
+        {
+            public IDisposable? BeginScope<TState>(TState state)
+                where TState : notnull => null;
+
+            public bool IsEnabled(LogLevel logLevel) => true;
+
+            public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+            {
+                var fields = state is IEnumerable<KeyValuePair<string, object?>> pairs
+                    ? string.Join(", ", pairs.Select(pair => $"{pair.Key}={pair.Value}"))
+                    : state?.GetType().FullName;
+                lines.Enqueue($"{formatter(state, exception)} {exception} [{fields}]");
             }
         }
     }

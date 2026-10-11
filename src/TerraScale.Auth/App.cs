@@ -14,11 +14,12 @@ using TerraScale.Auth.Hosting;
 using TerraScale.Auth.Store;
 using TerraScale.DotNet.TerraBase;
 using TerraScale.Endpoints;
+using ZLogger;
 
 namespace TerraScale.Auth;
 
 /// <summary>Composes services, middleware and endpoints.</summary>
-public static partial class App
+public static class App
 {
     /// <summary>OpenAPI document title; clients key on it.</summary>
     public const string ApiTitle = "TerraScale Auth API";
@@ -126,7 +127,7 @@ public static partial class App
         app.Services.GetRequiredService<PasswordHasher>();
         if (options.SmtpHost is null && !options.Development)
         {
-            LogEmailNotConfigured(app.Logger);
+            app.Logger.ZLogWarning($"TS_AUTH_SMTP_* is not configured: email is logged, not delivered");
         }
 
         app.UseMiddleware<ErrorEnvelopeMiddleware>();
@@ -154,7 +155,4 @@ public static partial class App
         app.MapTerraScaleOpenApi();
         return app;
     }
-
-    [LoggerMessage(Level = LogLevel.Warning, Message = "TS_AUTH_SMTP_* is not configured: email is logged, not delivered")]
-    private static partial void LogEmailNotConfigured(ILogger logger);
 }

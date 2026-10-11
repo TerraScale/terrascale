@@ -1,4 +1,5 @@
 using TerraScale.Auth.Contracts;
+using ZLogger;
 
 namespace TerraScale.Auth.Hosting;
 
@@ -6,7 +7,7 @@ namespace TerraScale.Auth.Hosting;
 /// Turns <see cref="ApiException"/> into its JSON envelope and any other unhandled exception into
 /// the generic 500 envelope, so internal details never reach the client.
 /// </summary>
-public sealed partial class ErrorEnvelopeMiddleware(RequestDelegate next, ILogger<ErrorEnvelopeMiddleware> logger)
+public sealed class ErrorEnvelopeMiddleware(RequestDelegate next, ILogger<ErrorEnvelopeMiddleware> logger)
 {
     /// <summary>Runs the rest of the pipeline.</summary>
     public async Task InvokeAsync(HttpContext context)
@@ -26,12 +27,12 @@ public sealed partial class ErrorEnvelopeMiddleware(RequestDelegate next, ILogge
         }
         catch (ApiException error) when (!context.Response.HasStarted)
         {
-            Diagnose(context, error, () => LogServerError(logger, error.Code, error));
+            Diagnose(context, error, () => logger.ZLogError(error, $"Request failed with {error.Code:@Code}"));
             await WriteAsync(context, error);
         }
         catch (Exception exception) when (!context.Response.HasStarted)
         {
-            Diagnose(context, exception, () => LogUnhandled(logger, exception));
+            Diagnose(context, exception, () => logger.ZLogError(exception, $"Unhandled request exception"));
             await WriteAsync(context, ApiException.Internal());
         }
         catch (Exception exception)
@@ -41,7 +42,7 @@ public sealed partial class ErrorEnvelopeMiddleware(RequestDelegate next, ILogge
             // never mistakes a truncated body for a complete one.
             try
             {
-                Diagnose(context, exception, () => LogAfterResponseStarted(logger, exception));
+                Diagnose(context, exception, () => logger.ZLogError(exception, $"Request failed after the response started; connection aborted"));
             }
             finally
             {
@@ -93,13 +94,4 @@ public sealed partial class ErrorEnvelopeMiddleware(RequestDelegate next, ILogge
             context.Abort();
         }
     }
-
-    [LoggerMessage(Level = LogLevel.Error, Message = "Request failed with {Code}")]
-    private static partial void LogServerError(ILogger logger, string code, Exception exception);
-
-    [LoggerMessage(Level = LogLevel.Error, Message = "Request failed after the response started; connection aborted")]
-    private static partial void LogAfterResponseStarted(ILogger logger, Exception exception);
-
-    [LoggerMessage(Level = LogLevel.Error, Message = "Unhandled request exception")]
-    private static partial void LogUnhandled(ILogger logger, Exception exception);
 }

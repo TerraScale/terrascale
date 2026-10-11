@@ -37,6 +37,17 @@
           "TUnit.Engine": "1.72.16"
         }
       },
+      "ZLogger": {
+        "type": "Direct",
+        "requested": "[2.5.10, )",
+        "resolved": "2.5.10",
+        "contentHash": "KjQaJ1M3b7cuouXwxhX1CEyCqQ1mOlFslGe5lSELmDYIo5kemzi2Y23jeESqtXrNw+iLLN2+89qpm9Il/cG0bg==",
+        "dependencies": {
+          "Microsoft.Extensions.Logging": "8.0.0",
+          "System.IO.Hashing": "8.0.0",
+          "Utf8StringInterpolation": "1.3.1"
+        }
+      },
       "BouncyCastle.Cryptography": {
         "type": "Transitive",
         "resolved": "2.7.0",
@@ -212,29 +223,17 @@
       },
       "Microsoft.Extensions.Logging.Configuration": {
         "type": "Transitive",
-        "resolved": "10.0.5",
-        "contentHash": "cSgxsDgfP0+gmVRPVoNHI/KIDavIZxh+CxE6tSLPlYTogqccDnjBFI9CgEsiNuMP6+fiuXUwhhlTz36uUEpwbQ==",
+        "resolved": "10.0.0",
+        "contentHash": "j8zcwhS6bYB6FEfaY3nYSgHdpiL2T+/V3xjpHtslVAegyI1JUbB9yAt/BFdvZdsNbY0Udm4xFtvfT/hUwcOOOg==",
         "dependencies": {
-          "Microsoft.Extensions.Configuration": "10.0.5",
-          "Microsoft.Extensions.Configuration.Abstractions": "10.0.5",
-          "Microsoft.Extensions.Configuration.Binder": "10.0.5",
-          "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.5",
-          "Microsoft.Extensions.Logging": "10.0.5",
-          "Microsoft.Extensions.Logging.Abstractions": "10.0.5",
-          "Microsoft.Extensions.Options": "10.0.5",
-          "Microsoft.Extensions.Options.ConfigurationExtensions": "10.0.5"
-        }
-      },
-      "Microsoft.Extensions.Logging.Console": {
-        "type": "Transitive",
-        "resolved": "10.0.5",
-        "contentHash": "PMs2gha2v24hvH5o5KQem5aNK4mN0BhhCWlMqsg9tzifWKzjeQi2tyPOP/RaWMVvalOhVLcrmoMYPqbnia/epg==",
-        "dependencies": {
-          "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.5",
-          "Microsoft.Extensions.Logging": "10.0.5",
-          "Microsoft.Extensions.Logging.Abstractions": "10.0.5",
-          "Microsoft.Extensions.Logging.Configuration": "10.0.5",
-          "Microsoft.Extensions.Options": "10.0.5"
+          "Microsoft.Extensions.Configuration": "10.0.0",
+          "Microsoft.Extensions.Configuration.Abstractions": "10.0.0",
+          "Microsoft.Extensions.Configuration.Binder": "10.0.0",
+          "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.0",
+          "Microsoft.Extensions.Logging": "10.0.0",
+          "Microsoft.Extensions.Logging.Abstractions": "10.0.0",
+          "Microsoft.Extensions.Options": "10.0.0",
+          "Microsoft.Extensions.Options.ConfigurationExtensions": "10.0.0"
         }
       },
       "Microsoft.Extensions.Options": {
@@ -420,6 +419,11 @@
         "resolved": "5.0.0",
         "contentHash": "dMkqfy2el8A8/I76n2Hi1oBFEbG1SfxD2l5nhwXV3XjlnOmwxJlQbYpJH4W51odnU9sARCSAgv7S3CyAFMkpYg=="
       },
+      "System.IO.Hashing": {
+        "type": "Transitive",
+        "resolved": "8.0.0",
+        "contentHash": "ne1843evDugl0md7Fjzy6QjJrzsjh46ZKbhf8GwBXb5f/gw97J4bxMs0NQKifDuThh/f0bZ0e62NPl1jzTuRqA=="
+      },
       "System.Security.Cryptography.Pkcs": {
         "type": "Transitive",
         "resolved": "10.0.0",
@@ -445,6 +449,11 @@
           "Microsoft.Testing.Platform.MSBuild": "2.4.1",
           "TUnit.Core": "1.72.16"
         }
+      },
+      "Utf8StringInterpolation": {
+        "type": "Transitive",
+        "resolved": "1.3.1",
+        "contentHash": "VIo1LtpoFvp5LlCDkTiQsKrjX+GMA7N37OEJoqHMhCOdIeNoi8uFocnwi8h3TklSySB3U4Y1+gThB00fJTnfGA=="
       },
       "terrascale.auth.contracts": {
         "type": "Project"
@@ -503,7 +512,9 @@
           "TerraScale.Auth.Security": "[1.0.0, )",
           "TerraScale.Auth.Store": "[1.0.0, )",
           "TerraScale.Endpoints": "[1.1.0, )",
-          "TerraScale.Logging": "[1.0.54, )"
+          "TerraScale.Logging": "[2026.1011.1157, )",
+          "ZLogger": "[2.5.10, )",
+          "ZString": "[2.6.0, )"
         }
       },
       "Geralt": {
@@ -640,12 +651,19 @@
       },
       "TerraScale.Logging": {
         "type": "CentralTransitive",
-        "requested": "[1.0.54, )",
-        "resolved": "1.0.54",
-        "contentHash": "jsv6G6TFMrG8BqWK2B/LEJNH8yNmQJ3VIJqfvyDJReosySZs/k4mNT+pMCVdZPNlmIPK4TY6TmBtCDp3lPXE6g==",
+        "requested": "[2026.1011.1157, )",
+        "resolved": "2026.1011.1157",
+        "contentHash": "ond5X5zmZ3U9e4MBn0vp4n52bdbCjSFEMURyHTRhp0/7ONeiGlRkhdnB5imSFyXZJVclnfmEn95f8X3sEDWz/w==",
         "dependencies": {
-          "Microsoft.Extensions.Logging.Console": "10.0.5"
+          "ZLogger": "2.5.10",
+          "ZString": "2.6.0"
         }
+      },
+      "ZString": {
+        "type": "CentralTransitive",
+        "requested": "[2.6.0, )",
+        "resolved": "2.6.0",
+        "contentHash": "XE8a+11nZg0LRaf+RGABEWaHIf8yGd5w8v/Ra1iWxMBmAVzwuKbW7G21mS0U7w7sh1lYcgckInWGgnz4qyET8A=="
       }
     },
     "net10.0/linux-arm64": {

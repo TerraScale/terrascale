@@ -11,6 +11,7 @@ using TerraScale.Auth.Features.Oidc;
 using TerraScale.Auth.Features.RateLimiting;
 using TerraScale.Auth.Features.SignIn;
 using TerraScale.Auth.Security;
+using ZLogger;
 using static OpenIddict.Abstractions.OpenIddictConstants;
 
 namespace TerraScale.Auth.Features.Headless;
@@ -35,7 +36,7 @@ public static class HeadlessGrants
 /// budget), and calls that send mail have a tighter per-IP budget; password attempts are also limited per email. Limits are shared by every replica and apply alike to addresses with and without an account,
 /// and every failure answers the same whatever the account state, so nothing tells an account from a stranger.
 /// </summary>
-public sealed partial class HeadlessAuth(Users users, Passcodes passcodes, TotpCredentials mfa, PasswordHasher passwords, AttemptLimiter limiter, SignInMail mail,
+public sealed class HeadlessAuth(Users users, Passcodes passcodes, TotpCredentials mfa, PasswordHasher passwords, AttemptLimiter limiter, SignInMail mail,
     TimeProvider clock, AuthOptions options, ILogger<HeadlessAuth> logger)
 {
     /// <summary>Calls per end-user IP per minute.</summary>
@@ -122,18 +123,18 @@ public sealed partial class HeadlessAuth(Users users, Passcodes passcodes, TotpC
             if (user is null && (string?)request["pending_token"] is { } pending
                 && await passcodes.RedeemSignUpAsync(OidcIssuer.InstanceId, email, secret, pending, cancellationToken) is { } created)
             {
-                LogSignedUp(logger, created.Id);
+                logger.ZLogInformation($"Audit: headless sign-up created user {created.Id:@UserId}");
                 user = created;
             }
         }
 
         if (user is null || !await mfa.AllowsPrimaryAuthenticationAsync(user, cancellationToken))
         {
-            LogRefused(logger, method);
+            logger.ZLogInformation($"Audit: headless {method:@Method} refused");
             return OidcResults.Forbid(Errors.InvalidGrant, "The email, password or code is wrong, or the code has expired.");
         }
 
-        LogSignedIn(logger, method, user.Id);
+        logger.ZLogInformation($"Audit: headless {method:@Method} sign-in succeeded for user {user.Id:@UserId}");
         return OidcResults.SignIn(user, clock.GetUtcNow(), request.GetScopes(), OidcIssuer.SignInAudiences(options));
     }
 
@@ -189,6 +190,7 @@ public sealed partial class HeadlessAuth(Users users, Passcodes passcodes, TotpC
     /// </summary>
     public async Task<(bool Reset, TimeSpan? Wait)> CompletePasswordResetAsync(string email, string code, string password, string ip, CancellationToken cancellationToken)
     {
+        const string method = "password-reset";
         if ((await this.LimitIpAsync(ip, mails: false, cancellationToken)
             ?? await this.LimitCodeAsync(email, PasscodePurpose.PasswordReset, issuing: false, cancellationToken)) is { } wait)
         {
@@ -197,7 +199,7 @@ public sealed partial class HeadlessAuth(Users users, Passcodes passcodes, TotpC
 
         if (!Passcodes.WellFormed(code))
         {
-            LogRefused(logger, "password-reset");
+            logger.ZLogInformation($"Audit: headless {method:@Method} refused");
             return (false, null);
         }
 
@@ -206,11 +208,11 @@ public sealed partial class HeadlessAuth(Users users, Passcodes passcodes, TotpC
         if (await passcodes.RedeemAsync(OidcIssuer.InstanceId, email, code, PasscodePurpose.PasswordReset, cancellationToken) is not { } user
             || !await users.SetPasswordAsync(OidcIssuer.InstanceId, user.Id, user.AuthEpoch, hash, cancellationToken))
         {
-            LogRefused(logger, "password-reset");
+            logger.ZLogInformation($"Audit: headless {method:@Method} refused");
             return (false, null);
         }
 
-        LogPasswordReset(logger, user.Id);
+        logger.ZLogInformation($"Audit: headless password reset for user {user.Id:@UserId}; every session and refresh token is refused");
         return (true, null);
     }
 
@@ -266,7 +268,7 @@ public sealed partial class HeadlessAuth(Users users, Passcodes passcodes, TotpC
         if (Users.NormalizeEmail(email) is { } normalized
             && await limiter.AcquireCooldownAsync(OidcIssuer.InstanceId, "headless-mail-email", limiter.Fold(normalized), MailCooldown, cancellationToken) is { } cooldownWait)
         {
-            LogLimited(logger, "headless-mail-email");
+            logger.ZLogWarning($"Audit: headless request rate-limited by the {"headless-mail-email":@Purpose} budget");
             return cooldownWait;
         }
 
@@ -299,7 +301,7 @@ public sealed partial class HeadlessAuth(Users users, Passcodes passcodes, TotpC
         {
             if (await limiter.AcquireAsync(OidcIssuer.InstanceId, purpose, limiter.Fold(subject), maximum, window, cancellationToken) is { } wait)
             {
-                LogLimited(logger, purpose);
+                logger.ZLogWarning($"Audit: headless request rate-limited by the {purpose:@Purpose} budget");
                 return wait;
             }
         }
@@ -328,7 +330,7 @@ public sealed partial class HeadlessAuth(Users users, Passcodes passcodes, TotpC
             return null;
         }
 
-        LogLimited(logger, purpose);
+        logger.ZLogWarning($"Audit: headless request rate-limited by the {purpose:@Purpose} budget");
         if (notify)
         {
             // Both known and unknown addresses enqueue the same work; only the worker looks up the account.
@@ -340,21 +342,6 @@ public sealed partial class HeadlessAuth(Users users, Passcodes passcodes, TotpC
 
         return rejection.RetryAfter;
     }
-
-    [LoggerMessage(Level = LogLevel.Information, Message = "Audit: headless {Method} sign-in succeeded for user {UserId}")]
-    private static partial void LogSignedIn(ILogger logger, string method, string userId);
-
-    [LoggerMessage(Level = LogLevel.Information, Message = "Audit: headless sign-up created user {UserId}")]
-    private static partial void LogSignedUp(ILogger logger, string userId);
-
-    [LoggerMessage(Level = LogLevel.Information, Message = "Audit: headless password reset for user {UserId}; every session and refresh token is refused")]
-    private static partial void LogPasswordReset(ILogger logger, string userId);
-
-    [LoggerMessage(Level = LogLevel.Information, Message = "Audit: headless {Method} refused")]
-    private static partial void LogRefused(ILogger logger, string method);
-
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Audit: headless request rate-limited by the {Purpose} budget")]
-    private static partial void LogLimited(ILogger logger, string purpose);
 
     // Adds Retry-After (whole seconds) to another result.
     private sealed class RetryAfterResult(TimeSpan wait, IResult inner) : IResult

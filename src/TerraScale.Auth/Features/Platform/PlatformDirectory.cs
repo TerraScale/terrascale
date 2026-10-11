@@ -9,6 +9,7 @@ using TerraScale.Auth.Features.Oidc;
 using TerraScale.Auth.Store;
 using TerraScale.DotNet;
 using TerraScale.DotNet.TerraBase;
+using ZLogger;
 
 namespace TerraScale.Auth.Features.Platform;
 
@@ -86,7 +87,7 @@ public sealed record Page<T>(IReadOnlyList<T> Items, string? Next);
 /// and every write that gives or takes a project role rewrites or deletes it, so a removal and a grant never both
 /// succeed on stale reads. A lost race is read and checked again, at most four times.
 /// </remarks>
-public sealed partial class PlatformDirectory(AuthStore store, Users users, TimeProvider clock, ILogger<PlatformDirectory> logger)
+public sealed class PlatformDirectory(AuthStore store, Users users, TimeProvider clock, ILogger<PlatformDirectory> logger)
 {
     /// <summary>The platform tenant; organizations exist only there.</summary>
     public const string Instance = OidcIssuer.InstanceId;
@@ -439,7 +440,7 @@ public sealed partial class PlatformDirectory(AuthStore store, Users users, Time
         }
         catch (Exception error) when (error is HttpRequestException or TimeoutException or ApiException)
         {
-            LogCleanUpFailed(logger, AuthStore.ProjectMemberCollection, error.GetType().Name);
+            logger.ZLogWarning($"Cleaning up {AuthStore.ProjectMemberCollection:@Collection} after a deletion failed ({error.GetType().Name:@Error}); what is left grants nothing");
         }
 
         await this.CleanUpAsync(AuthStore.ApiKeyCollection, [("/projectId", projectId)], PlatformJson.Default.ApiKeyRecord, key => key.Id, cancellationToken).ConfigureAwait(false);
@@ -959,7 +960,7 @@ public sealed partial class PlatformDirectory(AuthStore store, Users users, Time
         }
         catch (Exception error) when (error is HttpRequestException or TimeoutException or ApiException)
         {
-            LogCleanUpFailed(logger, AuthStore.InvitationCollection, error.GetType().Name);
+            logger.ZLogWarning($"Cleaning up {AuthStore.InvitationCollection:@Collection} after a deletion failed ({error.GetType().Name:@Error}); what is left grants nothing");
         }
     }
 
@@ -975,7 +976,7 @@ public sealed partial class PlatformDirectory(AuthStore store, Users users, Time
         }
         catch (Exception error) when (error is HttpRequestException or TimeoutException)
         {
-            LogCleanUpFailed(logger, collection, error.GetType().Name);
+            logger.ZLogWarning($"Cleaning up {collection:@Collection} after a deletion failed ({error.GetType().Name:@Error}); what is left grants nothing");
         }
     }
 
@@ -1010,9 +1011,6 @@ public sealed partial class PlatformDirectory(AuthStore store, Users users, Time
     private Task<Versioned<ProjectMemberRecord>?> ProjectMemberAsync(string projectId, string userId, CancellationToken cancellationToken) =>
         this.GetAsync(AuthStore.ProjectMemberCollection, ProjectMemberKey(projectId, userId), PlatformJson.Default.ProjectMemberRecord,
             grant => grant.InstanceId == Instance && grant.ProjectId == projectId && grant.UserId == userId, cancellationToken);
-
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Cleaning up {Collection} after a deletion failed ({Error}); what is left grants nothing")]
-    private static partial void LogCleanUpFailed(ILogger logger, string collection, string error);
 
     /// <summary>
     /// The operations of one change and what it answers. A failed <paramref name="Claim"/> answers

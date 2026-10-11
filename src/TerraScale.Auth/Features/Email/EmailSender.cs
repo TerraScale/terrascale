@@ -2,6 +2,7 @@ using MailKit.Net.Smtp;
 using MailKit.Security;
 using MimeKit;
 using TerraScale.Auth.Configuration;
+using ZLogger;
 
 namespace TerraScale.Auth.Features.Email;
 
@@ -35,7 +36,7 @@ public interface IEmailSender
 /// Used when no SMTP relay is configured: nothing is delivered, and the warning records only
 /// message sizes, never the recipient or the content (which carries links and codes).
 /// </summary>
-public sealed partial class LoggingEmailSender(ILogger<LoggingEmailSender> logger) : IEmailSender
+public sealed class LoggingEmailSender(ILogger<LoggingEmailSender> logger) : IEmailSender
 {
     /// <inheritdoc />
     public Task SendAsync(string recipient, EmailMessage message, CancellationToken cancellationToken)
@@ -50,7 +51,7 @@ public sealed partial class LoggingEmailSender(ILogger<LoggingEmailSender> logge
         // Best effort, like the SMTP sender's failure log: a failing provider must not fail the flow.
         try
         {
-            LogNotDelivered(logger, recipient.Length, message.Subject.Length, message.Text.Length, message.Html?.Length ?? 0);
+            logger.ZLogWarning($"Email not delivered: no SMTP relay is configured (recipient {recipient.Length:@RecipientLength}, subject {message.Subject.Length:@SubjectLength}, text {message.Text.Length:@TextLength}, HTML {(message.Html?.Length ?? 0):@HtmlLength} characters)");
         }
         catch (Exception logFailure) when (logFailure is not OutOfMemoryException)
         {
@@ -59,9 +60,6 @@ public sealed partial class LoggingEmailSender(ILogger<LoggingEmailSender> logge
 
         return Task.CompletedTask;
     }
-
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Email not delivered: no SMTP relay is configured (recipient {RecipientLength}, subject {SubjectLength}, text {TextLength}, HTML {HtmlLength} characters)")]
-    private static partial void LogNotDelivered(ILogger logger, int recipientLength, int subjectLength, int textLength, int htmlLength);
 }
 
 /// <summary>
@@ -72,7 +70,7 @@ public sealed partial class LoggingEmailSender(ILogger<LoggingEmailSender> logge
 /// <paramref name="createClient"/> exists for the test suites, which register a client that
 /// trusts only their relay's certificate, as they register TerraBase's <see cref="HttpClient"/>.
 /// </summary>
-public sealed partial class SmtpEmailSender(AuthOptions options, ILogger<SmtpEmailSender> logger, Func<SmtpClient>? createClient = null) : IEmailSender
+public sealed class SmtpEmailSender(AuthOptions options, ILogger<SmtpEmailSender> logger, Func<SmtpClient>? createClient = null) : IEmailSender
 {
     private const int TimeoutMilliseconds = 30_000;
 
@@ -113,7 +111,7 @@ public sealed partial class SmtpEmailSender(AuthOptions options, ILogger<SmtpEma
             // must not turn a swallowed delivery failure into a failed request.
             try
             {
-                LogDeliveryFailed(logger, exception);
+                logger.ZLogError(exception, $"SMTP delivery failed");
             }
             catch (Exception logFailure) when (logFailure is not OutOfMemoryException)
             {
@@ -121,7 +119,4 @@ public sealed partial class SmtpEmailSender(AuthOptions options, ILogger<SmtpEma
             }
         }
     }
-
-    [LoggerMessage(Level = LogLevel.Error, Message = "SMTP delivery failed")]
-    private static partial void LogDeliveryFailed(ILogger logger, Exception exception);
 }

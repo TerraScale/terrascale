@@ -1,4 +1,5 @@
 using TerraScale.Auth.Features.Oidc;
+using ZLogger;
 
 namespace TerraScale.Auth.Features.SigningKeys;
 
@@ -9,7 +10,7 @@ namespace TerraScale.Auth.Features.SigningKeys;
 /// hourly, it runs the scheduled rotation and schedules deletion of the ring secret's deprecated
 /// versions. Every write is version-conditional, so replicas agree.
 /// </summary>
-public sealed partial class SigningKeyRotation(KeyRing ring, ISigningKeyVault vault, ILogger<SigningKeyRotation> logger) : BackgroundService
+public sealed class SigningKeyRotation(KeyRing ring, ISigningKeyVault vault, ILogger<SigningKeyRotation> logger) : BackgroundService
 {
     private static readonly TimeSpan Interval = TimeSpan.FromHours(1);
     private static readonly TimeSpan BootstrapRetry = TimeSpan.FromSeconds(5);
@@ -40,12 +41,12 @@ public sealed partial class SigningKeyRotation(KeyRing ring, ISigningKeyVault va
             {
                 if (await ring.RotateIfDueAsync(OidcIssuer.InstanceId, stoppingToken).ConfigureAwait(false))
                 {
-                    this.Log(LogRotated);
+                    this.Log(target => target.ZLogInformation($"Scheduled rotation added a signing key"));
                 }
             }
             catch (Exception error) when (error is not OutOfMemoryException && !stoppingToken.IsCancellationRequested)
             {
-                this.Log(target => LogRotationFailed(target, error));
+                this.Log(target => target.ZLogWarning(error, $"Scheduled signing key rotation failed; retrying at the next interval"));
             }
         }
         while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false));
@@ -59,7 +60,7 @@ public sealed partial class SigningKeyRotation(KeyRing ring, ISigningKeyVault va
         }
         catch (Exception error) when (error is not OutOfMemoryException && !stoppingToken.IsCancellationRequested)
         {
-            this.Log(target => LogPruneFailed(target, error));
+            this.Log(target => target.ZLogWarning(error, $"Pruning the signing key secret's deprecated versions failed; retrying at the next interval"));
         }
     }
 
@@ -69,14 +70,14 @@ public sealed partial class SigningKeyRotation(KeyRing ring, ISigningKeyVault va
         {
             if (await ring.EnsureAsync(OidcIssuer.InstanceId, stoppingToken).ConfigureAwait(false))
             {
-                this.Log(LogFreshRing);
+                this.Log(target => target.ZLogWarning($"Wrote a fresh signing key ring; tokens signed by any replaced key no longer validate"));
             }
 
             return true;
         }
         catch (Exception error) when (error is not OutOfMemoryException && !stoppingToken.IsCancellationRequested)
         {
-            this.Log(target => LogBootstrapFailed(target, error));
+            this.Log(target => target.ZLogWarning(error, $"Signing key bootstrap failed; retrying"));
             return false;
         }
     }
@@ -93,19 +94,4 @@ public sealed partial class SigningKeyRotation(KeyRing ring, ISigningKeyVault va
             _ = failure;
         }
     }
-
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Wrote a fresh signing key ring; tokens signed by any replaced key no longer validate")]
-    private static partial void LogFreshRing(ILogger logger);
-
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Signing key bootstrap failed; retrying")]
-    private static partial void LogBootstrapFailed(ILogger logger, Exception exception);
-
-    [LoggerMessage(Level = LogLevel.Information, Message = "Scheduled rotation added a signing key")]
-    private static partial void LogRotated(ILogger logger);
-
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Pruning the signing key secret's deprecated versions failed; retrying at the next interval")]
-    private static partial void LogPruneFailed(ILogger logger, Exception exception);
-
-    [LoggerMessage(Level = LogLevel.Warning, Message = "Scheduled signing key rotation failed; retrying at the next interval")]
-    private static partial void LogRotationFailed(ILogger logger, Exception exception);
 }
