@@ -181,9 +181,9 @@ Security requirements remain mandatory:
 - Missing master/audit/operator credentials must fail closed. Changing the
   current master key without re-encryption makes sealed secrets unreadable.
   Preserve previous audit verification keys during approved rotation.
-- SMTP requires STARTTLS and valid server certificate chain/hostname checks.
-  Existing revocation-check bypass and logging-sender paths are implementation
-  gaps, not instructions to weaken production security.
+- Email goes to Cloudflare Email Sending over HTTPS, verified by the platform's
+  trust store. The logging-sender path is a gap to close, not an instruction to
+  weaken production security.
 - Startup retains secret-free diagnostics and the Argon2id reference check;
   an unavailable crypto runtime must stop serving.
 
@@ -301,17 +301,18 @@ Organization-scoped directories affect membership only, and an admin ban
 remains an independent denial. Reactivation can make an existing, unexpired
 session usable again; deactivation does not itself revoke sessions.
 
-### Email delivery (OCI)
+### Email delivery (Cloudflare Email Sending)
 
-The required contract makes production email always available. OCI Vault must
-automatically provision and deliver SMTP credentials and approved sender bindings. The current
-runtime selects SMTP only when its inputs exist and otherwise logs message
-sizes without delivering mail; that fallback belongs in test binaries.
+Production sends through `POST /client/v4/accounts/{account}/email/sending/send`
+with the account's Email Sending token, from the fixed sender
+`no-reply@terrascale.tech`. The fly secrets `CLOUDFLARE_ACCOUNT_ID` and
+`CLOUDFLARE_EMAIL_TOKEN` must be set together; without them the runtime logs
+message sizes without delivering mail, and that fallback belongs in test
+binaries. The token travels only in the `Authorization` header over HTTPS.
 
-SMTP requires STARTTLS and a valid server certificate chain and hostname. The
-current revocation-check exception remains a security limitation to resolve;
-there is no production instruction to disable validation. Delivery failures
-remain logged without exposing recipients or message content.
+A non-2xx answer is logged with its HTTP status only, and transport failures are
+logged by exception type. Neither the response body nor the message is logged,
+so recipients and content stay out of logs.
 
 Every email is a `multipart/alternative` message: a plain-text part and a
 responsive HTML part (`Features/Email/AuthEmails.cs` and
@@ -338,7 +339,7 @@ organizations (TS-437).
 - Branding: name, logo (light and dark, with its size for Outlook) or icon,
   primary and accent colours, theme (`auto`, `light`, `dark`), button style,
   footer text, support address or page, website, sender display name and
-  Reply-To. The From address stays `TS_AUTH_SMTP_FROM_ADDRESS`. Button text
+  Reply-To. The From address stays `no-reply@terrascale.tech`. Button text
   and link colours are chosen to keep 4.5:1 contrast.
 - Copy: subject, preview line, heading, body, button and footnote per kind and
   locale. Fields are plain text with the kind's `{{ name }}` placeholders and

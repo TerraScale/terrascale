@@ -28,12 +28,6 @@ public sealed partial record AuthOptions
         "audit-verify-keys",
         "rate-limit",
         "trusted-proxies",
-        "smtp-host",
-        "smtp-port",
-        "smtp-username",
-        "smtp-password",
-        "smtp-from-address",
-        "smtp-check-revocation",
         "sentry-dsn",
         "dashboard-client-secret",
         "dashboard-redirect-uris",
@@ -82,27 +76,8 @@ public sealed partial record AuthOptions
     /// <summary>Exact socket peers allowed to supply one rightmost X-Forwarded-For hop. Empty disables forwarding.</summary>
     public IReadOnlyList<IPAddress> TrustedProxies { get; init; } = [];
 
-    /// <summary>SMTP relay host; all four SMTP credentials are set together or not at all.</summary>
-    public string? SmtpHost { get; init; }
-
-    /// <summary>SMTP relay port.</summary>
-    public int SmtpPort { get; init; } = 587;
-
-    /// <summary>SMTP user name.</summary>
-    public string? SmtpUsername { get; init; }
-
-    /// <summary>SMTP password.</summary>
-    public string? SmtpPassword { get; init; }
-
-    /// <summary>Sender address for outgoing mail.</summary>
-    public string? SmtpFromAddress { get; init; }
-
-    /// <summary>
-    /// Whether the relay certificate's revocation is checked online. A deployment without a route to its CA's OCSP and
-    /// CRL servers sets <c>TS_AUTH_SMTP_CHECK_REVOCATION=false</c> as a documented exception; chain and host name are
-    /// still validated.
-    /// </summary>
-    public bool SmtpCheckRevocation { get; init; } = true;
+    /// <summary>Cloudflare Email Sending account and token; without them email is logged, not delivered.</summary>
+    public CloudflareEmailOptions? CloudflareEmail { get; init; }
 
     /// <summary>GlitchTip/Sentry DSN. Error reporting is off when unset.</summary>
     public string? SentryDsn { get; init; }
@@ -131,7 +106,7 @@ public sealed partial record AuthOptions
     /// </summary>
     public override string ToString() =>
         $"AuthOptions {{ Listen = {this.Listen}, MetricsListen = {this.MetricsListen}, PublicOrigin = {this.PublicOrigin}, "
-        + $"Database = {this.Database}, Development = {this.Development}, Smtp = {(this.SmtpHost is null ? "off" : "on")}, "
+        + $"Database = {this.Database}, Development = {this.Development}, Email = {(this.CloudflareEmail is null ? "off" : "on")}, "
         + $"ErrorReporting = {(this.SentryDsn is null ? "off" : "on")}, DashboardClient = {(this.DashboardClient is null ? "off" : "on")}, "
         + $"AccessTokenAudiences = {this.AccessTokenAudiences.Count}, ServiceClients = {this.ServiceClients.Count} }}";
 
@@ -145,6 +120,17 @@ public sealed partial record AuthOptions
             {
                 values[key["TS_AUTH_".Length..].ToLowerInvariant().Replace('_', '-')] = value;
             }
+        }
+
+        // Cloudflare's own names: these are the fly secrets, not TS_AUTH_* settings.
+        if (Environment.GetEnvironmentVariable("CLOUDFLARE_ACCOUNT_ID") is { } accountId)
+        {
+            values["cloudflare-account-id"] = accountId;
+        }
+
+        if (Environment.GetEnvironmentVariable("CLOUDFLARE_EMAIL_TOKEN") is { } emailToken)
+        {
+            values["cloudflare-email-token"] = emailToken;
         }
 
         foreach (var arg in args)
@@ -201,25 +187,12 @@ public sealed partial record AuthOptions
             throw Invalid("TS_AUTH_AUDIT_VERIFY_KEYS may contain at most 5 previous keys");
         }
 
-        string?[] smtp = [Optional("smtp-host"), Optional("smtp-username"), Optional("smtp-password"), Optional("smtp-from-address")];
-        if (smtp.Any(part => part is not null) && smtp.Any(part => part is null))
+        var cloudflareAccountId = Optional("cloudflare-account-id");
+        var cloudflareEmailToken = Optional("cloudflare-email-token");
+        if ((cloudflareAccountId is null) != (cloudflareEmailToken is null))
         {
-            throw Invalid("TS_AUTH_SMTP_* is partially configured");
+            throw Invalid("CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_EMAIL_TOKEN must be set together");
         }
-
-        var smtpPort = 587;
-        if (Optional("smtp-port") is { } rawPort
-            && (!int.TryParse(rawPort, NumberStyles.None, CultureInfo.InvariantCulture, out smtpPort) || smtpPort is < 1 or > 65535))
-        {
-            throw Invalid("TS_AUTH_SMTP_PORT must be between 1 and 65535");
-        }
-
-        var smtpCheckRevocation = Optional("smtp-check-revocation") switch
-        {
-            null or "true" => true,
-            "false" => false,
-            _ => throw Invalid("TS_AUTH_SMTP_CHECK_REVOCATION must be true or false"),
-        };
 
         var rateLimit = 1000;
         if (Optional("rate-limit") is { } rawLimit
@@ -239,12 +212,7 @@ public sealed partial record AuthOptions
             AuditVerificationKeys = [.. verifyValues.Select(raw => DecodeKey("audit-verify-keys", raw))],
             RateLimitPerWindow = rateLimit,
             TrustedProxies = ParseTrustedProxies(Optional("trusted-proxies")),
-            SmtpHost = smtp[0],
-            SmtpPort = smtpPort,
-            SmtpCheckRevocation = smtpCheckRevocation,
-            SmtpUsername = smtp[1],
-            SmtpPassword = smtp[2],
-            SmtpFromAddress = smtp[3],
+            CloudflareEmail = cloudflareAccountId is null || cloudflareEmailToken is null ? null : new CloudflareEmailOptions(cloudflareAccountId, cloudflareEmailToken),
             SentryDsn = Optional("sentry-dsn") is { } dsn ? ValidateDsn(dsn) : null,
             DashboardClient = ParseDashboardClient(Optional("dashboard-client-secret"), Optional("dashboard-redirect-uris"), Optional("dashboard-post-logout-redirect-uris")),
             AccessTokenAudiences = ParseAudiences(Optional("access-token-audiences")),
@@ -511,3 +479,13 @@ public sealed record ServiceClientOptions(string ClientId, string Secret)
     /// <summary>Omits the secret, so formatting or logging the record never discloses it.</summary>
     public override string ToString() => $"{nameof(ServiceClientOptions)} {{ ClientId = {this.ClientId} }}";
 }
+
+/// <summary>The Cloudflare account and token that send email through Cloudflare Email Sending.</summary>
+/// <param name="AccountId">The Cloudflare account that owns the Email Sending domain.</param>
+/// <param name="ApiToken">A token with the account's Email Sending permission.</param>
+public sealed record CloudflareEmailOptions(string AccountId, string ApiToken)
+{
+    /// <summary>Omits the token, so formatting or logging the record never discloses it.</summary>
+    public override string ToString() => nameof(CloudflareEmailOptions);
+}
+

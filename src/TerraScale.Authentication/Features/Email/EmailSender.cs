@@ -1,6 +1,6 @@
-using MailKit.Net.Smtp;
-using MailKit.Security;
-using MimeKit;
+using System.Net.Http.Headers;
+using System.Net.Http.Json;
+using System.Text.Json.Serialization;
 using TerraScale.Authentication.Configuration;
 using ZLogger;
 
@@ -33,7 +33,7 @@ public interface IEmailSender
 }
 
 /// <summary>
-/// Used when no SMTP relay is configured: nothing is delivered, and the warning records only
+/// Used when Cloudflare Email Sending is not configured: nothing is delivered, and the warning records only
 /// message sizes, never the recipient or the content (which carries links and codes).
 /// </summary>
 public sealed class LoggingEmailSender(ILogger<LoggingEmailSender> logger) : IEmailSender
@@ -48,10 +48,10 @@ public sealed class LoggingEmailSender(ILogger<LoggingEmailSender> logger) : IEm
             return Task.FromCanceled(cancellationToken);
         }
 
-        // Best effort, like the SMTP sender's failure log: a failing provider must not fail the flow.
+        // Best effort, like the Cloudflare sender's failure log: a failing provider must not fail the flow.
         try
         {
-            logger.ZLogWarning($"Email not delivered: no SMTP relay is configured (recipient {recipient.Length:@RecipientLength}, subject {message.Subject.Length:@SubjectLength}, text {message.Text.Length:@TextLength}, HTML {(message.Html?.Length ?? 0):@HtmlLength} characters)");
+            logger.ZLogWarning($"Email not delivered: Cloudflare Email Sending is not configured (recipient {recipient.Length:@RecipientLength}, subject {message.Subject.Length:@SubjectLength}, text {message.Text.Length:@TextLength}, HTML {(message.Html?.Length ?? 0):@HtmlLength} characters)");
         }
         catch (Exception logFailure) when (logFailure is not OutOfMemoryException)
         {
@@ -63,42 +63,32 @@ public sealed class LoggingEmailSender(ILogger<LoggingEmailSender> logger) : IEm
 }
 
 /// <summary>
-/// Authenticated SMTP (<c>TS_AUTH_SMTP_*</c>) with mandatory STARTTLS and certificate validation:
-/// a relay that does not offer TLS never receives the credentials or the message. Revocation is
-/// checked online unless <see cref="AuthOptions.SmtpCheckRevocation"/> is off. Registered
-/// only when every SMTP setting is present (<see cref="AuthOptions"/> rejects partial settings).
-/// <paramref name="createClient"/> exists for the test suites, which register a client that
-/// trusts only their relay's certificate, as they register TerraBase's <see cref="HttpClient"/>.
+/// Sends through Cloudflare Email Sending (<c>POST /accounts/{id}/email/sending/send</c>) over HTTPS with the
+/// account's token. Registered only when <see cref="AuthOptions.CloudflareEmail"/> is set. The From address is
+/// fixed: it is the domain the account sends for.
 /// </summary>
-public sealed class SmtpEmailSender(AuthOptions options, ILogger<SmtpEmailSender> logger, Func<SmtpClient>? createClient = null) : IEmailSender
+public sealed class CloudflareEmailSender(HttpClient http, CloudflareEmailOptions email, ILogger<CloudflareEmailSender> logger) : IEmailSender
 {
-    private const int TimeoutMilliseconds = 30_000;
+    private const string SenderAddress = "no-reply@terrascale.tech";
 
     /// <inheritdoc />
     public async Task SendAsync(string recipient, EmailMessage message, CancellationToken cancellationToken)
     {
         try
         {
-            using var mime = new MimeMessage();
-            // Bare addresses only: Parse would turn "Name <other@example>" into a different recipient.
-            mime.From.Add(new MailboxAddress(message.FromName ?? string.Empty, options.SmtpFromAddress!));
-            mime.To.Add(new MailboxAddress(string.Empty, recipient));
-            if (message.ReplyTo is { } replyTo)
+            using var request = new HttpRequestMessage(HttpMethod.Post, $"https://api.cloudflare.com/client/v4/accounts/{email.AccountId}/email/sending/send")
             {
-                mime.ReplyTo.Add(new MailboxAddress(string.Empty, replyTo));
+                Content = JsonContent.Create(
+                    new CloudflareSendRequest(new CloudflareSender(SenderAddress, message.FromName), recipient, message.Subject, message.Text, message.Html, message.ReplyTo),
+                    CloudflareEmailJson.Default.CloudflareSendRequest),
+            };
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", email.ApiToken);
+            using var response = await http.SendAsync(request, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                // The response body can quote the recipient, so only the status is logged.
+                logger.ZLogError($"Email delivery failed: Cloudflare answered {(int)response.StatusCode:@Status}");
             }
-
-            mime.Subject = message.Subject;
-            // multipart/alternative with the text part first, when there is HTML.
-            mime.Body = new BodyBuilder { TextBody = message.Text, HtmlBody = message.Html }.ToMessageBody();
-
-            using var client = createClient?.Invoke() ?? new SmtpClient();
-            client.Timeout = TimeoutMilliseconds;
-            client.CheckCertificateRevocation = options.SmtpCheckRevocation;
-            await client.ConnectAsync(options.SmtpHost!, options.SmtpPort, SecureSocketOptions.StartTls, cancellationToken);
-            await client.AuthenticateAsync(options.SmtpUsername!, options.SmtpPassword!, cancellationToken);
-            await client.SendAsync(mime, cancellationToken);
-            await client.DisconnectAsync(quit: true, cancellationToken);
         }
         catch (Exception exception) when (exception is not OutOfMemoryException)
         {
@@ -106,12 +96,11 @@ public sealed class SmtpEmailSender(AuthOptions options, ILogger<SmtpEmailSender
             // is a swallowed delivery failure.
             cancellationToken.ThrowIfCancellationRequested();
 
-            // The safe logger keeps only the exception type and frames: MailKit messages can
-            // quote server replies and addresses. Logging is best effort: a failing provider
-            // must not turn a swallowed delivery failure into a failed request.
+            // The safe logger keeps only the exception type and frames. Logging is best effort: a failing
+            // provider must not turn a swallowed delivery failure into a failed request.
             try
             {
-                logger.ZLogError(exception, $"SMTP delivery failed");
+                logger.ZLogError(exception, $"Email delivery failed");
             }
             catch (Exception logFailure) when (logFailure is not OutOfMemoryException)
             {
@@ -120,3 +109,19 @@ public sealed class SmtpEmailSender(AuthOptions options, ILogger<SmtpEmailSender
         }
     }
 }
+
+/// <summary>The body of Cloudflare's send request. Unset optional fields are omitted, since <c>html</c> must be a string.</summary>
+internal sealed record CloudflareSendRequest(
+    [property: JsonPropertyName("from")] CloudflareSender From,
+    [property: JsonPropertyName("to")] string To,
+    [property: JsonPropertyName("subject")] string Subject,
+    [property: JsonPropertyName("text")] string Text,
+    [property: JsonPropertyName("html")] string? Html,
+    [property: JsonPropertyName("reply_to")] string? ReplyTo);
+
+/// <summary>A sender as Cloudflare's address object; a null name sends the address alone.</summary>
+internal sealed record CloudflareSender([property: JsonPropertyName("address")] string Address, [property: JsonPropertyName("name")] string? Name);
+
+[JsonSourceGenerationOptions(DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
+[JsonSerializable(typeof(CloudflareSendRequest))]
+internal sealed partial class CloudflareEmailJson : JsonSerializerContext;

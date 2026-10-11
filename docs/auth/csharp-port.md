@@ -288,11 +288,11 @@ accounts are created by the [headless sign-up](#headless-api-ts-582). The page i
 the email is sent after the response, so its timing does not reveal it either.
 `SignInMail`, a hosted service, queues at most 256 codes and sends them one at
 a time. Lockout notices use a separate bounded queue and worker, so a slow
-relay holds at most two SMTP connections and notices cannot displace codes. Codes still queued
+relay holds at most two HTTP requests to Cloudflare, and notices cannot displace codes. Codes still queued
 when the host stops are sent within its shutdown timeout; a full queue drops
 a code and logs that (the user can request another). The code email is
 rendered by `AuthEmails` (TS-583) as HTML with a plain-text alternative, in
-English or, when `Accept-Language` prefers Portuguese, Brazilian Portuguese. Delivery uses `SmtpEmailSender` when `TS_AUTH_SMTP_*` is set; otherwise
+English or, when `Accept-Language` prefers Portuguese, Brazilian Portuguese. Delivery uses `CloudflareEmailSender` when `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_EMAIL_TOKEN` are set; otherwise
 `LoggingEmailSender` delivers nothing and logs only message sizes. Both are
 copied from TS-488.
 
@@ -561,8 +561,8 @@ is awaited. A separate 256-entry notice queue and worker keeps refusals from
 filling the sign-in and recovery queue or holding up its sender. A full notice
 queue drops work before a claim is made;
 later refused attempts can retry. The claim prevents duplicate send attempts,
-but the existing worker and SMTP sender remain best-effort: process failure
-after the claim or SMTP failure can lose a notice. There is no durable delivery
+but the existing worker and Cloudflare sender remain best-effort: process failure
+after the claim or a failed API request can lose a notice. There is no durable delivery
 outbox or promise of eventual delivery. These failures never admit a blocked
 authentication attempt or change its public response.
 

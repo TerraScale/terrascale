@@ -9,7 +9,7 @@ namespace TerraScale.Authentication.Features.SignIn;
 /// <summary>
 /// Delivers emailed codes (sign-in, password reset, sign-up), invitations (TS-598) and lockout notices after the response, so request timing never tells an account from a stranger. Codes and invitations
 /// use one worker; notices use another bounded queue and worker, so refused attempts cannot crowd out recovery mail.
-/// A slow relay holds at most two SMTP connections however many requests arrive. Codes queued
+/// A slow provider holds at most two requests in flight however many requests arrive. Codes queued
 /// when the host stops are still sent within its shutdown timeout. A full queue drops the code and logs it; the user
 /// can ask for another.
 /// </summary>

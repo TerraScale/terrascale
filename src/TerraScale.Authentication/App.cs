@@ -86,13 +86,14 @@ public static class App
         builder.Services.AddSingleton<SigningKeyRotation>();
         builder.Services.AddHostedService(provider => provider.GetRequiredService<SigningKeyRotation>());
         builder.Services.AddSingleton<AttemptLimiter>();
-        if (options.SmtpHost is null)
+        if (options.CloudflareEmail is { } cloudflareEmail)
         {
-            builder.Services.AddSingleton<IEmailSender, LoggingEmailSender>();
+            builder.Services.AddSingleton(cloudflareEmail);
+            builder.Services.AddHttpClient<IEmailSender, CloudflareEmailSender>(client => client.Timeout = TimeSpan.FromSeconds(30));
         }
         else
         {
-            builder.Services.AddSingleton<IEmailSender, SmtpEmailSender>();
+            builder.Services.AddSingleton<IEmailSender, LoggingEmailSender>();
         }
 
         builder.Services.AddSingleton<AuthEmails>();
@@ -117,9 +118,9 @@ public static class App
         var app = builder.Build();
         // Hashes its timing equalizer now, so the first password check of an unknown account costs no more than any other.
         app.Services.GetRequiredService<PasswordHasher>();
-        if (options.SmtpHost is null && !options.Development)
+        if (options.CloudflareEmail is null && !options.Development)
         {
-            app.Logger.ZLogWarning($"TS_AUTH_SMTP_* is not configured: email is logged, not delivered");
+            app.Logger.ZLogWarning($"CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_EMAIL_TOKEN are not configured: email is logged, not delivered");
         }
 
         app.UseAuthMetrics();
