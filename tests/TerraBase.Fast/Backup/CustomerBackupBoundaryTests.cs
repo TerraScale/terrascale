@@ -7,6 +7,7 @@ using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Time.Testing;
+using TerraBase.Configuration;
 using TerraBase.Features.Backup;
 using TerraBase.Testing;
 
@@ -180,9 +181,8 @@ public sealed class CustomerBackupBoundaryTests
             ManualBackupHosting.Configure(services);
             if (wrappedBytes is { } size)
             {
-                services.AddSingleton<OciVaultMasterKey>();
                 services.Replace(ServiceDescriptor.Singleton<IMasterKey>(provider =>
-                    new PaddedMasterKey(provider.GetRequiredService<OciVaultMasterKey>(), size)));
+                    new PaddedMasterKey(new MasterKey(provider.GetRequiredService<BackupSettings>().MasterKey), size)));
             }
         }, time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
@@ -243,7 +243,7 @@ public sealed class CustomerBackupBoundaryTests
 
     private static string FilePrefix(ManagedDatabaseRef database) => $"v1/{database.Organization}/{database.Project}/{database.Id}";
 
-    private sealed class PaddedMasterKey(OciVaultMasterKey inner, int wrappedBytes) : IMasterKey
+    private sealed class PaddedMasterKey(MasterKey inner, int wrappedBytes) : IMasterKey
     {
         private readonly List<byte[]> _generated = [with(capacity: 8)];
         private int _unwraps;
@@ -277,7 +277,7 @@ public sealed class CustomerBackupBoundaryTests
                 _generated.Add(key);
             }
 
-            // Whitespace pads the wrapped representation without changing the real Vault key or unwrap path.
+            // Whitespace pads the wrapped representation without changing the real master key or unwrap path.
             return (key, wrapped.PadRight(WrappedBytes));
         }
 

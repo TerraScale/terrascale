@@ -58,7 +58,7 @@ public sealed class BackupKeyCacheTests
                     cancellationToken.ThrowIfCancellationRequested();
                     var next = time.GetUtcNow() + TimeSpan.FromSeconds(61);
                     var id = peerKeyIds[index] = Ulid.NewUlid(next).ToString();
-                    oci.StoreObject(keys + id, Encoding.ASCII.GetBytes("wrapped:" + Convert.ToBase64String(RandomNumberGenerator.GetBytes(32))));
+                    oci.StoreObject(keys + id, Encoding.ASCII.GetBytes(oci.Wrap(RandomNumberGenerator.GetBytes(32))));
                     time.Advance(TimeSpan.FromSeconds(61));
                     using var written = await data.PutAsJsonAsync(ManagementApi.Uri(ManagementApi.DocumentPath(database, "items", "state")), new { index, text }, cancellationToken);
                     written.EnsureSuccessStatusCode();

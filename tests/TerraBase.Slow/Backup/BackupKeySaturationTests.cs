@@ -75,8 +75,7 @@ public sealed class BackupKeySaturationTests
             var originalId = Encoding.ASCII.GetString(snapshot.Value, 4, 26);
             var originalWrappedKey = keys + originalId;
             var wrapped = Encoding.ASCII.GetString(oci.Objects[originalWrappedKey]);
-            await Assert.That(wrapped.StartsWith("wrapped:", StringComparison.Ordinal)).IsTrue();
-            var originalDataKey = Convert.FromBase64String(wrapped["wrapped:".Length..]);
+            var originalDataKey = oci.Unwrap(wrapped);
             var sourcePath = Path.Combine(directory, database.Organization, database.Project, database.Id + ".db");
             await Assert.That(new FileInfo(sourcePath).Length).IsLessThan(1L << 20);
             var snapshotBytes = await File.ReadAllBytesAsync(sourcePath, cancellationToken);
@@ -90,7 +89,7 @@ public sealed class BackupKeySaturationTests
                 var at = snapshotAt.AddMilliseconds(index + 1);
                 var id = Ulid.NewUlid(at).ToString();
                 var dataKey = RandomNumberGenerator.GetBytes(32);
-                oci.StoreObject(keys + id, Encoding.ASCII.GetBytes("wrapped:" + Convert.ToBase64String(dataKey)));
+                oci.StoreObject(keys + id, Encoding.ASCII.GetBytes(oci.Wrap(dataKey)));
                 var objectKey = string.Create(CultureInfo.InvariantCulture, $"{primingSegments}0000000000000000-{at.ToUnixTimeMilliseconds():D13}");
                 oci.StoreObject(objectKey, SealFixture(objectKey, id, dataKey, []));
             }
@@ -104,7 +103,7 @@ public sealed class BackupKeySaturationTests
             var targetId = Ulid.NewUlid(nextSnapshotAt).ToString();
             var targetDataKey = RandomNumberGenerator.GetBytes(32);
             var targetWrappedKey = keys + targetId;
-            oci.StoreObject(targetWrappedKey, Encoding.ASCII.GetBytes("wrapped:" + Convert.ToBase64String(targetDataKey)));
+            oci.StoreObject(targetWrappedKey, Encoding.ASCII.GetBytes(oci.Wrap(targetDataKey)));
             for (var index = 0; index < concurrentSegments; index++)
             {
                 var at = nextSnapshotAt.AddMilliseconds(index + 1);

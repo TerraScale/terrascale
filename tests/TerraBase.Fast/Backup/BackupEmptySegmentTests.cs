@@ -48,8 +48,7 @@ public sealed class BackupEmptySegmentTests
         var segment = string.Create(CultureInfo.InvariantCulture, $"{segments}0000000000000000-{at.ToUnixTimeMilliseconds():D13}");
         var keyId = Encoding.ASCII.GetString(snapshot.Value, 4, 26);
         var wrapped = Encoding.ASCII.GetString(oci.Objects[$"v1/keys/{database.Organization}/{database.Project}/{keyId}"]);
-        await Assert.That(wrapped.StartsWith("wrapped:", StringComparison.Ordinal)).IsTrue();
-        var sealedEmpty = SealEmpty(segment, keyId, Convert.FromBase64String(wrapped["wrapped:".Length..]));
+        var sealedEmpty = SealEmpty(segment, keyId, oci.Unwrap(wrapped));
         oci.StoreObject(segment, sealedEmpty);
 
         var requested = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

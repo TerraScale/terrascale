@@ -342,7 +342,7 @@ public sealed class CustomerBackupListingBoundaryTests
         var keyId = Encoding.ASCII.GetString(original.Value, 4, 26);
         var parts = original.Key.Split('/');
         var wrapped = Encoding.ASCII.GetString(oci.CustomerObjects[BackupLayout.Key(parts[1] + "/" + parts[2], keyId)]);
-        var key = Convert.FromBase64String(wrapped["wrapped:".Length..]);
+        var key = oci.Unwrap(wrapped);
         try
         {
             using var encrypted = new MemoryStream(original.Value);
