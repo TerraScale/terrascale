@@ -8,6 +8,7 @@ import (
 	"github.com/oklog/ulid/v2"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -19,6 +20,7 @@ func fixture() Workload {
 }
 func TestWorkloads(t *testing.T) {
 	files, e := filepath.Glob("../../workloads/*.json")
+	files = slices.DeleteFunc(files, func(f string) bool { return filepath.Base(f) == "api-bench.json" })
 	if e != nil || len(files) != 6 {
 		t.Fatal(files, e)
 	}

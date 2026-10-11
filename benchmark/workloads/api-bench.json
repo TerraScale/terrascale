@@ -1,0 +1,23 @@
+{
+  "name": "api-bench",
+  "endpoint": "https://gru.api.terrascale.tech",
+  "auth_issuer": "https://gru.auth.terrascale.tech/terrascale",
+  "step_s": 10,
+  "warmup_s": 2,
+  "seed_documents": 256,
+  "payload_bytes": [256, 4096, 65536],
+  "concurrency": [1, 8, 32, 128, 512],
+  "safety": {"max_error_rate": 0.01, "max_p99_ratio": 10},
+  "scenarios": [
+    {"name": "auth.token", "payload_bytes": [0], "concurrency": [1, 8]},
+    {"name": "doc.get"},
+    {"name": "doc.insert"},
+    {"name": "doc.update"},
+    {"name": "doc.delete"},
+    {"name": "query.small", "payload_bytes": [256]},
+    {"name": "txn.batch"},
+    {"name": "mixed.80-20"}
+  ],
+  "open_loop": {"scenarios": ["doc.get", "mixed.80-20"], "fractions": [0.5, 0.9]},
+  "raw_baseline": {"scenarios": ["doc.get", "doc.insert"], "payload_bytes": [4096], "transports": ["raw-h2", "raw-h1"]}
+}
