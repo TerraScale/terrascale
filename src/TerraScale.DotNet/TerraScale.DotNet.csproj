@@ -9,8 +9,8 @@
     <PackageId>TerraScale.DotNet</PackageId>
     <Version>0.1.0</Version>
     <Description>Official .NET SDK for TerraBase, TerraScale native database and auth APIs.</Description>
-    <PackageProjectUrl>https://git.terrascale.tech/TerraScale/ts-dotnet</PackageProjectUrl>
-    <RepositoryUrl>https://git.terrascale.tech/TerraScale/ts-dotnet</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/TerraScale/ts-dotnet</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/TerraScale/ts-dotnet</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>

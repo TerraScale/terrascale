@@ -49,7 +49,7 @@ def inspect_package(package: Path, revision: str, version: str) -> dict:
         if fields.get("id") != "TerraScale.DotNet" or fields.get("version") != version:
             raise ValueError("The package ID or version differs.")
         if repository is None or repository.get("commit") != revision or repository.get("type") != "git" or \
-                repository.get("url") != "https://git.terrascale.tech/TerraScale/ts-dotnet":
+                repository.get("url") != "https://github.com/TerraScale/ts-dotnet":
             raise ValueError("The package does not bind the expected official Git source revision.")
         expected_contracts = {"contracts/native/" + name for name in EXPECTED_ARTIFACTS}
         expected_contracts.update("contracts/auth/" + name for name in EXPECTED_AUTH_ARTIFACTS)

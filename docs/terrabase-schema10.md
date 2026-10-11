@@ -87,7 +87,7 @@ Caller-supplied document keys retain the producer's bounded-key exception; entit
 `TerraScaleIds.Validate` and `TerraScaleIdGenerator.NewId`. Do not encode hashes as pseudo-ULIDs.
 
 The producer has selected `GET/PUT/PATCH/DELETE …/documents/by-key?id=<encoded raw key>` to replace
-point routes that put keys in a path segment ([owner contract comment](https://git.terrascale.tech/TerraScale/ts-dotnet/pulls/29#issuecomment-22961)).
+point routes that put keys in a path segment ([owner contract comment](https://github.com/TerraScale/ts-dotnet/pulls/29#issuecomment-22961)).
 At the inspected heads, #117 `770e95008b718ff5ad249c20e90a774b01094c1b` and #118 `1c2a7e082829bcebf816691537001f6aba168d9a`
 still contain the old point route. The SDK wire cutover requires its exact committed owner revision
 and a verified combined release. Current tests do not qualify arbitrary slash/dot-segment keys.

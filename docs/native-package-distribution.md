@@ -1,7 +1,7 @@
 # Native package distribution
 
 The official source repository is
-`https://git.terrascale.tech/TerraScale/ts-dotnet`. CI builds and tests both
+`https://github.com/TerraScale/ts-dotnet`. CI builds and tests both
 frameworks, packs once and qualifies package-only consumers from those exact
 bytes. The candidate version is `0.1.0-native.g<FULL_SOURCE_SHA>`; it is a CI
 candidate identity, not a published NuGet version.
