@@ -21,13 +21,13 @@ public sealed class CustomerBackupTimerIsolationTests
     public async Task The_hosted_timer_ships_a_platform_siblings_snapshot_and_WAL_while_both_customer_slots_are_stalled()
     {
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
         using var timer = new TimerTime(time);
         TrackedBackup? taps = null;
-        await using var api = await ManagementApi.StartAsync(oci.Configure, services =>
+        await using var api = await ManagementApi.StartAsync(s3.Configure, services =>
         {
-            oci.Route(services);
+            s3.Route(services);
             services.AddSingleton<IWalBackup>(provider => taps = new TrackedBackup(provider.GetRequiredService<SqliteStorageEngine>()));
             // Keep the real hosted service; only its timer gets individually acknowledged fake-clock ticks.
             services.AddSingleton<ContinuousBackup>(provider => ActivatorUtilities.CreateInstance<ContinuousBackup>(provider, timer));
@@ -69,7 +69,7 @@ public sealed class CustomerBackupTimerIsolationTests
             }
 
             await Assert.That(customers[0].Organization).IsNotEqualTo(customers[1].Organization);
-            oci.CustomerContentOverride = key =>
+            s3.CustomerContentOverride = key =>
             {
                 var body = bodies.FirstOrDefault(pair => key.StartsWith(pair.Key, StringComparison.Ordinal)).Value;
                 if (body is null || body.Requested() != 1)
@@ -78,7 +78,7 @@ public sealed class CustomerBackupTimerIsolationTests
                 }
 
                 var content = new StreamContent(body);
-                content.Headers.ContentLength = oci.CustomerObjects[key].LongLength;
+                content.Headers.ContentLength = s3.CustomerObjects[key].LongLength;
                 return content;
             };
             taps.ReleaseStartup.TrySetResult();
@@ -90,7 +90,7 @@ public sealed class CustomerBackupTimerIsolationTests
             var healthy = await CreateDatabaseAsync(api, customers[0].Organization, token);
             var healthyData = clients[0];
             await SeedAsync(healthyData, healthy, before, token);
-            oci.BeforeGet = async (key, cancellationToken) =>
+            s3.BeforeGet = async (key, cancellationToken) =>
             {
                 if (key.StartsWith(File(healthy) + "/snapshots/", StringComparison.Ordinal))
                 {
@@ -98,7 +98,7 @@ public sealed class CustomerBackupTimerIsolationTests
                     await releaseSnapshot.Task.WaitAsync(cancellationToken);
                 }
             };
-            oci.BeforePut = async (key, cancellationToken) =>
+            s3.BeforePut = async (key, cancellationToken) =>
             {
                 if (key.StartsWith(File(healthy) + "/wal/", StringComparison.Ordinal))
                 {
@@ -112,7 +112,7 @@ public sealed class CustomerBackupTimerIsolationTests
             var snapshotJob = await CaptureJobAsync(backup, File(healthy), token);
             releaseSnapshot.TrySetResult();
             await snapshotJob.WaitAsync(token);
-            await Assert.That(oci.Objects.Keys.Count(key => key.StartsWith(File(healthy) + "/snapshots/", StringComparison.Ordinal))).IsEqualTo(1);
+            await Assert.That(s3.Objects.Keys.Count(key => key.StartsWith(File(healthy) + "/snapshots/", StringComparison.Ordinal))).IsEqualTo(1);
             var snapshot = await StatusAsync(api, healthy, token);
             await Assert.That(snapshot.LastDrill!.Passed).IsTrue();
 
@@ -128,7 +128,7 @@ public sealed class CustomerBackupTimerIsolationTests
             }
             while (shipped.LastShippedAt is null || shipped.LastShippedAt <= snapshot.LastShippedAt);
 
-            await Assert.That(oci.Objects.ContainsKey(walKey)).IsTrue();
+            await Assert.That(s3.Objects.ContainsKey(walKey)).IsTrue();
             await Assert.That(shipped.Generation).IsEqualTo(snapshot.Generation);
             await RestoreAsync(api, healthyData, healthy, snapshot.LastShippedAt!.Value, before, during, token);
 
@@ -146,11 +146,11 @@ public sealed class CustomerBackupTimerIsolationTests
                 await Assert.That(tap.Returned).IsFalse();
                 await Assert.That(body.Requests).IsEqualTo(1);
                 await Assert.That(body.Cancelled.Task.IsCompleted || body.Disposed.Task.IsCompleted).IsFalse();
-                await Assert.That(oci.Objects.Keys.Any(key => key.StartsWith(File(customer) + "/", StringComparison.Ordinal))).IsFalse();
+                await Assert.That(s3.Objects.Keys.Any(key => key.StartsWith(File(customer) + "/", StringComparison.Ordinal))).IsFalse();
             }
 
             // Leave the current bodies blocked; shutdown must cancel and join them before returning their taps.
-            oci.CustomerContentOverride = null;
+            s3.CustomerContentOverride = null;
             stopping = backup.StopAsync(token);
             await Task.WhenAll(bodies.Values.Select(body => body.Cancelled.Task)).WaitAsync(token);
             await stopping.WaitAsync(token);
@@ -159,13 +159,13 @@ public sealed class CustomerBackupTimerIsolationTests
             await Assert.That(taps.Taps.Values.All(tap => tap.Returned)).IsTrue();
             var stopped = await api.Server.Client.GetFromJsonAsync(ManagementApi.Uri("/v1/backup"), TerraBaseJsonContext.Default.BackupStatus, token);
             await Assert.That(stopped!.Files).IsEmpty();
-            await Assert.That(oci.BadSignatures).IsEqualTo(0);
+            await Assert.That(s3.BadSignatures).IsEqualTo(0);
         }
         finally
         {
-            oci.CustomerContentOverride = null;
-            oci.BeforeGet = null;
-            oci.BeforePut = null;
+            s3.CustomerContentOverride = null;
+            s3.BeforeGet = null;
+            s3.BeforePut = null;
             taps!.ReleaseStartup.TrySetResult();
             releaseSnapshot.TrySetResult();
             releaseWal.TrySetResult();

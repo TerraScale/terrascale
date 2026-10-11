@@ -23,7 +23,7 @@ public sealed class BackupKeyRotationTests
     {
         var elapsed = Stopwatch.StartNew();
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
         var directory = Directory.CreateTempSubdirectory("terrabase-key-history-").FullName;
         var before = new Faker().Lorem.Sentence(12);
@@ -36,25 +36,25 @@ public sealed class BackupKeyRotationTests
         Mark(0);
         try
         {
-            await using var api = await StartAsync(oci, time, directory);
+            await using var api = await StartAsync(s3, time, directory);
             Mark(1);
             var (database, _) = await SeedAsync(api, time, before);
             Mark(2);
             var keys = Keys(database);
-            var oldKey = oci.Objects.Keys.Single(key => key.StartsWith(keys, StringComparison.Ordinal));
-            var oldRequests = oci.ObserveKey(oldKey);
-            oci.StoreObject(keys + "zz-unrelated", "unrelated"u8.ToArray());
-            oci.StoreObject(keys + "zz-directory/" + oldKey[keys.Length..], "unrelated"u8.ToArray());
+            var oldKey = s3.Objects.Keys.Single(key => key.StartsWith(keys, StringComparison.Ordinal));
+            var oldRequests = s3.ObserveKey(oldKey);
+            s3.StoreObject(keys + "zz-unrelated", "unrelated"u8.ToArray());
+            s3.StoreObject(keys + "zz-directory/" + oldKey[keys.Length..], "unrelated"u8.ToArray());
             var nestedKey = keys + Ulid.NewUlid(time.GetUtcNow().AddSeconds(1)).ToString()[..10] + "Z/" + new string('Z', 14);
-            oci.StoreObject(nestedKey, "unrelated"u8.ToArray());
-            var nestedRequests = oci.ObserveKey(nestedKey);
+            s3.StoreObject(nestedKey, "unrelated"u8.ToArray());
+            var nestedRequests = s3.ObserveKey(nestedKey);
             var futureKey = keys + Ulid.NewUlid(time.GetUtcNow().AddYears(10)).ToString();
-            oci.StoreObject(futureKey, Encoding.ASCII.GetBytes(oci.Wrap(RandomNumberGenerator.GetBytes(32))));
-            var futureRequests = oci.ObserveKey(futureKey);
+            s3.StoreObject(futureKey, Encoding.ASCII.GetBytes(s3.Wrap(RandomNumberGenerator.GetBytes(32))));
+            var futureRequests = s3.ObserveKey(futureKey);
             var outOfRangeKey = keys + "7" + new string('Z', 25);
-            oci.StoreObject(outOfRangeKey, Encoding.ASCII.GetBytes(oci.Wrap(RandomNumberGenerator.GetBytes(32))));
-            var outOfRangeRequests = oci.ObserveKey(outOfRangeKey);
-            var generated = oci.GeneratedKeys;
+            s3.StoreObject(outOfRangeKey, Encoding.ASCII.GetBytes(s3.Wrap(RandomNumberGenerator.GetBytes(32))));
+            var outOfRangeRequests = s3.ObserveKey(outOfRangeKey);
+            var generated = s3.GeneratedKeys;
             var backup = api.Server.Services.GetRequiredService<IContinuousBackup>();
             using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
             Mark(3);
@@ -64,8 +64,8 @@ public sealed class BackupKeyRotationTests
             using var refreshed = await data.PutAsJsonAsync(ManagementApi.Uri(ManagementApi.DocumentPath(database, "people", "refresh")), new { text = before }, cancellationToken);
             refreshed.EnsureSuccessStatusCode();
             await backup.RunOnceAsync(cancellationToken);
-            await Assert.That(oci.GeneratedKeys).IsEqualTo(generated);
-            await Assert.That(oci.Objects.Where(item => item.Key.StartsWith(FilePrefix(database) + "/", StringComparison.Ordinal))
+            await Assert.That(s3.GeneratedKeys).IsEqualTo(generated);
+            await Assert.That(s3.Objects.Where(item => item.Key.StartsWith(FilePrefix(database) + "/", StringComparison.Ordinal))
                 .All(item => KeyId(item.Value) == oldKey[keys.Length..])).IsTrue();
             await Assert.That(futureRequests.Gets).IsEqualTo(0);
             await Assert.That(futureRequests.Unwraps).IsEqualTo(0);
@@ -80,7 +80,7 @@ public sealed class BackupKeyRotationTests
             using var written = await data.PutAsJsonAsync(ManagementApi.Uri(ManagementApi.DocumentPath(database, "people", "after")), new { text = after }, cancellationToken);
             written.EnsureSuccessStatusCode();
             await backup.RunOnceAsync(cancellationToken);
-            await Assert.That(oci.GeneratedKeys).IsEqualTo(generated + 2); // Project and system keys rotate independently.
+            await Assert.That(s3.GeneratedKeys).IsEqualTo(generated + 2); // Project and system keys rotate independently.
             time.Advance(TimeSpan.FromSeconds(1));
 
             using var restored = await api.Client.PostAsJsonAsync(ManagementApi.Uri(database.Path + "/point-in-time/restore"), new { pointInTime, name = "restored" }, cancellationToken);
@@ -125,7 +125,7 @@ public sealed class BackupKeyRotationTests
     public async Task A_cold_node_restores_with_an_uncached_historical_key_while_current_key_publication_is_blocked()
     {
         var testCancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
         var directory = Directory.CreateTempSubdirectory("terrabase-key-publication-").FullName;
         var coldDirectory = Directory.CreateTempSubdirectory("terrabase-key-publication-cold-").FullName;
@@ -133,12 +133,12 @@ public sealed class BackupKeyRotationTests
         try
         {
             // SeedAsync stops the source with a pro plan, keeping this point inside its seven-day restore window.
-            var (database, user) = await SeedAsync(oci, time, directory, text);
+            var (database, user) = await SeedAsync(s3, time, directory, text);
             var pointInTime = time.GetUtcNow();
             var keys = Keys(database);
-            var oldKey = oci.Objects.Keys.Single(key => key.StartsWith(keys, StringComparison.Ordinal));
-            var oldRequests = oci.ObserveKey(oldKey);
-            var generated = oci.GeneratedKeys;
+            var oldKey = s3.Objects.Keys.Single(key => key.StartsWith(keys, StringComparison.Ordinal));
+            var oldRequests = s3.ObserveKey(oldKey);
+            var generated = s3.GeneratedKeys;
             CopyCatalog(directory, coldDirectory);
             var coldFile = DatabaseFile(coldDirectory, database);
             Directory.CreateDirectory(Path.GetDirectoryName(coldFile)!);
@@ -148,7 +148,7 @@ public sealed class BackupKeyRotationTests
             var cancellationToken = testCancellationToken;
             var publishing = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            oci.BeforePut = async (key, token) =>
+            s3.BeforePut = async (key, token) =>
             {
                 if (key.StartsWith(keys, StringComparison.Ordinal))
                 {
@@ -158,7 +158,7 @@ public sealed class BackupKeyRotationTests
                 }
             };
 
-            await using var cold = await StartAsync(oci, time, coldDirectory);
+            await using var cold = await StartAsync(s3, time, coldDirectory);
             var backup = cold.Server.Services.GetRequiredService<IContinuousBackup>();
             // Manual hosting makes this pass own the blocked PUT and its completion.
             var pass = backup.RunOnceAsync(cancellationToken);
@@ -169,7 +169,7 @@ public sealed class BackupKeyRotationTests
                 await Assert.That(pass.IsCompleted).IsFalse();
                 await Assert.That(oldRequests.Gets).IsEqualTo(0);
                 await Assert.That(oldRequests.Unwraps).IsEqualTo(0);
-                await Assert.That(oci.Objects.Keys.Count(key => key.StartsWith(keys, StringComparison.Ordinal))).IsEqualTo(1);
+                await Assert.That(s3.Objects.Keys.Count(key => key.StartsWith(keys, StringComparison.Ordinal))).IsEqualTo(1);
 
                 using var owner = cold.As(user);
                 using var restored = await owner.PostAsJsonAsync(ManagementApi.Uri(database.Path + "/point-in-time/restore"), new { pointInTime, name = "restored" }, cancellationToken);
@@ -202,14 +202,14 @@ public sealed class BackupKeyRotationTests
                 }
             }
 
-            var newKey = oci.Objects.Keys.Single(key => key.StartsWith(keys, StringComparison.Ordinal) && key != oldKey);
-            await Assert.That(oci.Objects.Any(item => item.Key.StartsWith(FilePrefix(database) + "/snapshots/", StringComparison.Ordinal)
+            var newKey = s3.Objects.Keys.Single(key => key.StartsWith(keys, StringComparison.Ordinal) && key != oldKey);
+            await Assert.That(s3.Objects.Any(item => item.Key.StartsWith(FilePrefix(database) + "/snapshots/", StringComparison.Ordinal)
                 && KeyId(item.Value) == newKey[keys.Length..])).IsTrue();
             await Assert.That((await StatusAsync(cold, database, cancellationToken)).GetProperty("lastError").ValueKind).IsEqualTo(JsonValueKind.Null);
-            await Assert.That(oci.GeneratedKeys).IsEqualTo(generated + 2);
+            await Assert.That(s3.GeneratedKeys).IsEqualTo(generated + 2);
             await Assert.That(oldRequests.Gets).IsEqualTo(1);
             await Assert.That(oldRequests.Unwraps).IsEqualTo(1);
-            await Assert.That(oci.BadSignatures).IsEqualTo(0);
+            await Assert.That(s3.BadSignatures).IsEqualTo(0);
         }
         finally
         {
@@ -223,7 +223,7 @@ public sealed class BackupKeyRotationTests
     [Arguments(true)]
     public async Task Rotation_preserves_a_mixed_key_generation_and_recovers_failed_key_publication_on_a_cold_node(bool failPublication)
     {
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
         var directory = Directory.CreateTempSubdirectory("terrabase-key-rotation-").FullName;
         var coldDirectory = Directory.CreateTempSubdirectory("terrabase-key-restore-").FullName;
@@ -233,10 +233,10 @@ public sealed class BackupKeyRotationTests
         var extraDocuments = Enumerable.Range(0, 7).Select(index => (Name: $"after-{index}", Text: faker.Lorem.Sentence(12))).ToArray();
         try
         {
-            var (database, user) = await SeedAsync(oci, time, directory, before);
+            var (database, user) = await SeedAsync(s3, time, directory, before);
             var keys = Keys(database);
-            var oldKey = oci.Objects.Keys.Single(key => key.StartsWith(keys, StringComparison.Ordinal));
-            var oldSystemKey = oci.Objects.Keys.Single(key => key.StartsWith("v1/keys/_system/", StringComparison.Ordinal));
+            var oldKey = s3.Objects.Keys.Single(key => key.StartsWith(keys, StringComparison.Ordinal));
+            var oldSystemKey = s3.Objects.Keys.Single(key => key.StartsWith("v1/keys/_system/", StringComparison.Ordinal));
             string newKey;
             string walPrefix;
             DateTimeOffset pointInTime;
@@ -244,11 +244,11 @@ public sealed class BackupKeyRotationTests
             // The persisted ULID is already 23 hours old. This restart takes a snapshot near key expiry, so the
             // rotation happens less than a day after the snapshot and cannot be hidden by a daily replacement.
             time.Advance(TimeSpan.FromHours(23));
-            await using (var api = await StartAsync(oci, time, directory))
+            await using (var api = await StartAsync(s3, time, directory))
             {
                 var backup = api.Server.Services.GetRequiredService<IContinuousBackup>();
                 await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
-                var snapshot = oci.Objects.Where(item => item.Key.StartsWith(FilePrefix(database) + "/snapshots/", StringComparison.Ordinal))
+                var snapshot = s3.Objects.Where(item => item.Key.StartsWith(FilePrefix(database) + "/snapshots/", StringComparison.Ordinal))
                     .OrderBy(item => item.Key, StringComparer.Ordinal).Last();
                 var generation = snapshot.Key.Split('/')[^1].Split('-')[1];
                 walPrefix = FilePrefix(database) + "/wal/" + generation + "/";
@@ -257,7 +257,7 @@ public sealed class BackupKeyRotationTests
                 var rejected = new ConcurrentDictionary<string, byte>(StringComparer.Ordinal);
                 if (failPublication)
                 {
-                    oci.FailPut = key =>
+                    s3.FailPut = key =>
                     {
                         if (!key.StartsWith(keys, StringComparison.Ordinal))
                         {
@@ -283,10 +283,10 @@ public sealed class BackupKeyRotationTests
                     await Assert.That(rejected.Count).IsGreaterThan(0);
                     await Assert.That(failed.GetProperty("lastError").ValueKind).IsEqualTo(JsonValueKind.String);
                     await Assert.That(failed.GetProperty("pendingBytes").GetInt64()).IsGreaterThan(0);
-                    await Assert.That(oci.Objects.Keys.Count(key => key.StartsWith(keys, StringComparison.Ordinal))).IsEqualTo(1);
-                    await Assert.That(oci.Objects.Keys.Any(key => key.StartsWith(FilePrefix(database) + "/wal/" + generation + "/", StringComparison.Ordinal))).IsFalse();
+                    await Assert.That(s3.Objects.Keys.Count(key => key.StartsWith(keys, StringComparison.Ordinal))).IsEqualTo(1);
+                    await Assert.That(s3.Objects.Keys.Any(key => key.StartsWith(FilePrefix(database) + "/wal/" + generation + "/", StringComparison.Ordinal))).IsFalse();
 
-                    oci.FailPut = _ => false;
+                    s3.FailPut = _ => false;
                     // Exceed the shipper's maximum backoff without approaching the next daily snapshot.
                     time.Advance(TimeSpan.FromMinutes(6));
                     await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
@@ -301,8 +301,8 @@ public sealed class BackupKeyRotationTests
                     await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
                 }
 
-                newKey = oci.Objects.Keys.Single(key => key.StartsWith(keys, StringComparison.Ordinal) && key != oldKey);
-                var segments = oci.Objects.Where(item => item.Key.StartsWith(walPrefix, StringComparison.Ordinal)).ToArray();
+                newKey = s3.Objects.Keys.Single(key => key.StartsWith(keys, StringComparison.Ordinal) && key != oldKey);
+                var segments = s3.Objects.Where(item => item.Key.StartsWith(walPrefix, StringComparison.Ordinal)).ToArray();
                 var status = await StatusAsync(api, database);
                 pointInTime = time.GetUtcNow();
                 await Assert.That(segments.Length).IsGreaterThanOrEqualTo(8);
@@ -310,26 +310,26 @@ public sealed class BackupKeyRotationTests
                 await Assert.That(status.GetProperty("generation").GetString()).IsEqualTo(generation);
                 await Assert.That(status.GetProperty("lastError").ValueKind).IsEqualTo(JsonValueKind.Null);
                 await Assert.That(status.GetProperty("pendingBytes").GetInt64()).IsEqualTo(0);
-                await Assert.That(oci.Objects.Keys.Count(key => key.StartsWith(FilePrefix(database) + "/snapshots/", StringComparison.Ordinal)
+                await Assert.That(s3.Objects.Keys.Count(key => key.StartsWith(FilePrefix(database) + "/snapshots/", StringComparison.Ordinal)
                     && key.Split('/')[^1].Split('-')[1] == generation)).IsEqualTo(1);
-                await Assert.That(oci.Objects.ContainsKey(oldKey)).IsTrue();
-                await Assert.That(oci.Objects.ContainsKey(oldSystemKey)).IsTrue();
-                var newSystemKey = oci.Objects.Keys.Single(key => key.StartsWith("v1/keys/_system/", StringComparison.Ordinal) && key != oldSystemKey);
-                await Assert.That(oci.Objects.Any(item => item.Key.StartsWith("v1/_system/", StringComparison.Ordinal)
+                await Assert.That(s3.Objects.ContainsKey(oldKey)).IsTrue();
+                await Assert.That(s3.Objects.ContainsKey(oldSystemKey)).IsTrue();
+                var newSystemKey = s3.Objects.Keys.Single(key => key.StartsWith("v1/keys/_system/", StringComparison.Ordinal) && key != oldSystemKey);
+                await Assert.That(s3.Objects.Any(item => item.Key.StartsWith("v1/_system/", StringComparison.Ordinal)
                     && KeyId(item.Value) == newSystemKey["v1/keys/_system/".Length..])).IsTrue();
-                await Assert.That(oci.Objects.Where(item => item.Key.StartsWith(FilePrefix(database) + "/", StringComparison.Ordinal))
-                    .All(item => oci.Objects.ContainsKey(keys + KeyId(item.Value)) && !rejected.ContainsKey(keys + KeyId(item.Value)))).IsTrue();
+                await Assert.That(s3.Objects.Where(item => item.Key.StartsWith(FilePrefix(database) + "/", StringComparison.Ordinal))
+                    .All(item => s3.Objects.ContainsKey(keys + KeyId(item.Value)) && !rejected.ContainsKey(keys + KeyId(item.Value)))).IsTrue();
             }
 
             // Copy only the stopped node's catalog and layout marker: no source documents or key cache reach this node.
             CopyCatalog(directory, coldDirectory);
             time.Advance(TimeSpan.FromSeconds(1));
-            var generated = oci.GeneratedKeys;
-            var oldRequests = oci.ObserveKey(oldKey);
-            var newRequests = oci.ObserveKey(newKey);
+            var generated = s3.GeneratedKeys;
+            var oldRequests = s3.ObserveKey(oldKey);
+            var newRequests = s3.ObserveKey(newKey);
             var prefetched = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var downloads = 0;
-            oci.BeforeGet = async (key, cancellationToken) =>
+            s3.BeforeGet = async (key, cancellationToken) =>
             {
                 if (key.StartsWith(walPrefix, StringComparison.Ordinal) && Interlocked.Increment(ref downloads) >= 8)
                 {
@@ -342,7 +342,7 @@ public sealed class BackupKeyRotationTests
                     await prefetched.Task.WaitAsync(TimeSpan.FromSeconds(30), cancellationToken);
                 }
             };
-            await using var cold = await StartAsync(oci, time, coldDirectory);
+            await using var cold = await StartAsync(s3, time, coldDirectory);
             await Assert.That(File.Exists(DatabaseFile(coldDirectory, database))).IsFalse();
             using var owner = cold.As(user);
             using var restored = await owner.PostAsJsonAsync(ManagementApi.Uri(database.Path + "/point-in-time/restore"), new { pointInTime, name = "restored" });
@@ -367,16 +367,16 @@ public sealed class BackupKeyRotationTests
             time.Advance(TimeSpan.FromSeconds(10));
             await cold.Server.Services.GetRequiredService<IContinuousBackup>().RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
             var restoredPrefix = $"v1/{database.Organization}/{database.Project}/{restoredDatabase.GetProperty("id").GetString()}/snapshots/";
-            await Assert.That(oci.Objects.Where(item => item.Key.StartsWith(restoredPrefix, StringComparison.Ordinal))
+            await Assert.That(s3.Objects.Where(item => item.Key.StartsWith(restoredPrefix, StringComparison.Ordinal))
                 .Select(item => KeyId(item.Value))).IsEquivalentTo([newKey[keys.Length..]]);
-            await Assert.That(oci.GeneratedKeys).IsEqualTo(generated);
+            await Assert.That(s3.GeneratedKeys).IsEqualTo(generated);
             foreach (var requests in new[] { oldRequests, newRequests })
             {
                 await Assert.That(requests.Gets).IsEqualTo(1);
                 await Assert.That(requests.Unwraps).IsEqualTo(1);
             }
 
-            await Assert.That(oci.BadSignatures).IsEqualTo(0);
+            await Assert.That(s3.BadSignatures).IsEqualTo(0);
         }
         finally
         {
@@ -388,28 +388,28 @@ public sealed class BackupKeyRotationTests
     [Test]
     public async Task A_live_node_refreshes_its_unexpired_current_key_after_a_peer_rotates_it()
     {
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
         var directory = Directory.CreateTempSubdirectory("terrabase-key-current-").FullName;
         var peerDirectory = Directory.CreateTempSubdirectory("terrabase-key-peer-").FullName;
         try
         {
-            var (database, _) = await SeedAsync(oci, time, directory, new Faker().Lorem.Sentence(8), rotation: "");
+            var (database, _) = await SeedAsync(s3, time, directory, new Faker().Lorem.Sentence(8), rotation: "");
             CopyCatalog(directory, peerDirectory);
             var peerFile = DatabaseFile(peerDirectory, database);
             Directory.CreateDirectory(Path.GetDirectoryName(peerFile)!);
             File.Copy(DatabaseFile(directory, database), peerFile);
             var keys = Keys(database);
-            var oldKey = oci.Objects.Keys.Single(key => key.StartsWith(keys, StringComparison.Ordinal));
-            var oldRequests = oci.ObserveKey(oldKey);
-            oci.ObservedListPrefix = keys;
-            await using var live = await StartAsync(oci, time, directory, rotation: "");
+            var oldKey = s3.Objects.Keys.Single(key => key.StartsWith(keys, StringComparison.Ordinal));
+            var oldRequests = s3.ObserveKey(oldKey);
+            s3.ObservedListPrefix = keys;
+            await using var live = await StartAsync(s3, time, directory, rotation: "");
             await Assert.That(live.Server.Services.GetRequiredService<TerraBaseOptions>().Backup!.KeyRotationDays).IsEqualTo(90);
             var backup = live.Server.Services.GetRequiredService<IContinuousBackup>();
             await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
-            var lists = oci.ListRequests;
+            var lists = s3.ListRequests;
             await Assert.That(lists).IsGreaterThan(0);
-            await Assert.That(oci.LastListStartAfter).IsEqualTo("");
+            await Assert.That(s3.LastListStartAfter).IsEqualTo("");
             await Assert.That(oldRequests.Gets).IsEqualTo(1);
             await Assert.That(oldRequests.Unwraps).IsEqualTo(1);
 
@@ -419,31 +419,31 @@ public sealed class BackupKeyRotationTests
             using var warm = await data.PutAsJsonAsync(ManagementApi.Uri(ManagementApi.DocumentPath(database, "people", "keep-warm")), new { text = new Faker().Lorem.Sentence(8) });
             warm.EnsureSuccessStatusCode();
             await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
-            await Assert.That(oci.ListRequests).IsEqualTo(lists + 1);
-            await Assert.That(oci.LastListStartAfter).IsEqualTo(oldKey);
+            await Assert.That(s3.ListRequests).IsEqualTo(lists + 1);
+            await Assert.That(s3.LastListStartAfter).IsEqualTo(oldKey);
             await Assert.That(oldRequests.Gets).IsEqualTo(1);
             await Assert.That(oldRequests.Unwraps).IsEqualTo(1);
-            lists = oci.ListRequests;
+            lists = s3.ListRequests;
 
             // The default 90-day key stays valid locally. The daily snapshot refreshes the warm selection before
             // the peer, configured for one day, publishes a newer key from its independent physical copy.
             time.Advance(TimeSpan.FromHours(1) + TimeSpan.FromSeconds(1));
             await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
-            await Assert.That(oci.Objects.Keys.Count(key => key.StartsWith(keys, StringComparison.Ordinal))).IsEqualTo(1);
-            await Assert.That(oci.ListRequests).IsEqualTo(lists + 1);
-            await Assert.That(oci.LastListStartAfter).IsEqualTo(oldKey);
+            await Assert.That(s3.Objects.Keys.Count(key => key.StartsWith(keys, StringComparison.Ordinal))).IsEqualTo(1);
+            await Assert.That(s3.ListRequests).IsEqualTo(lists + 1);
+            await Assert.That(s3.LastListStartAfter).IsEqualTo(oldKey);
             await Assert.That(oldRequests.Gets).IsEqualTo(1);
             await Assert.That(oldRequests.Unwraps).IsEqualTo(1);
-            var priorSegments = oci.Objects.Keys.Where(key => key.StartsWith(FilePrefix(database) + "/wal/", StringComparison.Ordinal)).ToHashSet(StringComparer.Ordinal);
-            await Assert.That(priorSegments.All(key => KeyId(oci.Objects[key]) == oldKey[keys.Length..])).IsTrue();
+            var priorSegments = s3.Objects.Keys.Where(key => key.StartsWith(FilePrefix(database) + "/wal/", StringComparison.Ordinal)).ToHashSet(StringComparer.Ordinal);
+            await Assert.That(priorSegments.All(key => KeyId(s3.Objects[key]) == oldKey[keys.Length..])).IsTrue();
             // Advance only the live node during refresh assertions; an unrelated peer pass must not enter its LIST totals.
             var peerTime = new FakeTimeProvider(time.GetUtcNow());
-            await using var peer = await StartAsync(oci, peerTime, peerDirectory);
+            await using var peer = await StartAsync(s3, peerTime, peerDirectory);
             await peer.Server.Services.GetRequiredService<IContinuousBackup>().RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
-            var newest = oci.Objects.Keys.Single(key => key.StartsWith(keys, StringComparison.Ordinal) && key != oldKey);
-            var newRequests = oci.ObserveKey(newest);
-            var generated = oci.GeneratedKeys;
-            lists = oci.ListRequests;
+            var newest = s3.Objects.Keys.Single(key => key.StartsWith(keys, StringComparison.Ordinal) && key != oldKey);
+            var newRequests = s3.ObserveKey(newest);
+            var generated = s3.GeneratedKeys;
+            lists = s3.ListRequests;
 
             time.Advance(TimeSpan.FromSeconds(61));
             using var written = await data.PutAsJsonAsync(ManagementApi.Uri(ManagementApi.DocumentPath(database, "people", "after-peer")), new { text = new Faker().Lorem.Sentence(8) });
@@ -451,31 +451,31 @@ public sealed class BackupKeyRotationTests
             await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
             var status = await StatusAsync(live, database);
             var walPrefix = FilePrefix(database) + "/wal/" + status.GetProperty("generation").GetString() + "/";
-            var segments = oci.Objects.Where(item => item.Key.StartsWith(walPrefix, StringComparison.Ordinal) && !priorSegments.Contains(item.Key)).ToArray();
+            var segments = s3.Objects.Where(item => item.Key.StartsWith(walPrefix, StringComparison.Ordinal) && !priorSegments.Contains(item.Key)).ToArray();
             await Assert.That(segments.Length).IsGreaterThan(0);
             await Assert.That(segments.All(item => KeyId(item.Value) == newest[keys.Length..])).IsTrue();
-            await Assert.That(oci.ListRequests).IsEqualTo(lists + 1);
-            await Assert.That(oci.LastListStartAfter).IsEqualTo(oldKey);
+            await Assert.That(s3.ListRequests).IsEqualTo(lists + 1);
+            await Assert.That(s3.LastListStartAfter).IsEqualTo(oldKey);
             await Assert.That(newRequests.Gets).IsEqualTo(1);
             await Assert.That(newRequests.Unwraps).IsEqualTo(1);
 
             // A later warm refresh starts after the adopted peer key and keeps using its already unwrapped bytes.
-            lists = oci.ListRequests;
+            lists = s3.ListRequests;
             time.Advance(TimeSpan.FromSeconds(61));
             using var unchanged = await data.PutAsJsonAsync(ManagementApi.Uri(ManagementApi.DocumentPath(database, "people", "after-refresh")), new { text = new Faker().Lorem.Sentence(8) });
             unchanged.EnsureSuccessStatusCode();
             await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
-            var refreshed = oci.Objects.Where(item => item.Key.StartsWith(walPrefix, StringComparison.Ordinal) && !priorSegments.Contains(item.Key)).ToArray();
+            var refreshed = s3.Objects.Where(item => item.Key.StartsWith(walPrefix, StringComparison.Ordinal) && !priorSegments.Contains(item.Key)).ToArray();
             await Assert.That(refreshed.Length).IsGreaterThan(segments.Length);
             await Assert.That(refreshed.All(item => KeyId(item.Value) == newest[keys.Length..])).IsTrue();
-            await Assert.That(oci.ListRequests).IsEqualTo(lists + 1);
-            await Assert.That(oci.LastListStartAfter).IsEqualTo(newest);
+            await Assert.That(s3.ListRequests).IsEqualTo(lists + 1);
+            await Assert.That(s3.LastListStartAfter).IsEqualTo(newest);
             await Assert.That(newRequests.Gets).IsEqualTo(1);
             await Assert.That(newRequests.Unwraps).IsEqualTo(1);
             await Assert.That(oldRequests.Gets).IsEqualTo(1);
             await Assert.That(oldRequests.Unwraps).IsEqualTo(1);
-            await Assert.That(oci.GeneratedKeys).IsEqualTo(generated);
-            await Assert.That(oci.BadSignatures).IsEqualTo(0);
+            await Assert.That(s3.GeneratedKeys).IsEqualTo(generated);
+            await Assert.That(s3.BadSignatures).IsEqualTo(0);
         }
         finally
         {
@@ -491,29 +491,29 @@ public sealed class BackupKeyRotationTests
     [Arguments("1.5")]
     public async Task Invalid_rotation_intervals_prevent_the_real_server_from_starting(string days)
     {
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         await Assert.That(async () =>
         {
             await using var server = await TerraBaseTestServer.StartAsync(settings =>
             {
-                oci.Configure(settings);
+                s3.Configure(settings);
                 settings["backup-key-rotation-days"] = days;
-            }, oci.Route);
+            }, s3.Route);
         }).Throws<InvalidOperationException>();
-        await Assert.That(oci.Objects.Count).IsEqualTo(0);
-        await Assert.That(oci.GeneratedKeys).IsEqualTo(0);
+        await Assert.That(s3.Objects.Count).IsEqualTo(0);
+        await Assert.That(s3.GeneratedKeys).IsEqualTo(0);
     }
 
-    private static async Task<ManagementApi> StartAsync(FakeS3 oci, FakeTimeProvider time, string directory, string rotation = "1")
+    private static async Task<ManagementApi> StartAsync(FakeS3 s3, FakeTimeProvider time, string directory, string rotation = "1")
     {
         var api = await ManagementApi.StartAsync(settings =>
         {
-            oci.Configure(settings);
+            s3.Configure(settings);
             settings["data-directory"] = directory;
             settings["backup-key-rotation-days"] = rotation;
         }, services =>
         {
-            oci.Route(services);
+            s3.Route(services);
             ManualBackupHosting.Configure(services);
             // Advancing key age must not concurrently copy cron backups into the files this fixture ships.
             var scheduler = services.Single(service => service.ServiceType == typeof(IHostedService)
@@ -526,9 +526,9 @@ public sealed class BackupKeyRotationTests
     }
 
     private static async Task<(ManagedDatabaseRef Database, string User)> SeedAsync(
-        FakeS3 oci, FakeTimeProvider time, string directory, string text, string rotation = "1")
+        FakeS3 s3, FakeTimeProvider time, string directory, string text, string rotation = "1")
     {
-        await using var api = await StartAsync(oci, time, directory, rotation);
+        await using var api = await StartAsync(s3, time, directory, rotation);
         return await SeedAsync(api, time, text);
     }
 

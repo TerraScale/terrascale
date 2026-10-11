@@ -19,12 +19,12 @@ public sealed class BackupEmptySegmentTests
     [Test]
     public async Task Empty_wal_segments_authenticate_and_a_cancelled_restore_does_not_block_the_next_restore(CancellationToken cancellationToken)
     {
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
         var requests = new ObserveCancelledRestore();
-        await using var api = await ManagementApi.StartAsync(oci.Configure, services =>
+        await using var api = await ManagementApi.StartAsync(s3.Configure, services =>
         {
-            oci.Route(services);
+            s3.Route(services);
             ManualBackupHosting.Configure(services);
             services.AddSingleton<IStartupFilter>(requests);
         }, time);
@@ -39,21 +39,21 @@ public sealed class BackupEmptySegmentTests
         await api.Server.Services.GetRequiredService<IContinuousBackup>().RunOnceAsync(cancellationToken);
 
         var file = $"v1/{database.Organization}/{database.Project}/{database.Id}";
-        var snapshot = oci.Objects.Single(item => item.Key.StartsWith(file + "/snapshots/", StringComparison.Ordinal));
+        var snapshot = s3.Objects.Single(item => item.Key.StartsWith(file + "/snapshots/", StringComparison.Ordinal));
         var parts = snapshot.Key[(snapshot.Key.LastIndexOf('/') + 1)..].Split('-');
         await Assert.That(parts[2]).IsEqualTo("0000000000000000");
         var at = DateTimeOffset.FromUnixTimeMilliseconds(long.Parse(parts[0], CultureInfo.InvariantCulture));
         var segments = $"{file}/wal/{parts[1]}/";
-        await Assert.That(oci.Objects.Keys.Any(key => key.StartsWith(segments, StringComparison.Ordinal))).IsFalse();
+        await Assert.That(s3.Objects.Keys.Any(key => key.StartsWith(segments, StringComparison.Ordinal))).IsFalse();
         var segment = string.Create(CultureInfo.InvariantCulture, $"{segments}0000000000000000-{at.ToUnixTimeMilliseconds():D13}");
         var keyId = Encoding.ASCII.GetString(snapshot.Value, 4, 26);
-        var wrapped = Encoding.ASCII.GetString(oci.Objects[$"v1/keys/{database.Organization}/{database.Project}/{keyId}"]);
-        var sealedEmpty = SealEmpty(segment, keyId, oci.Unwrap(wrapped));
-        oci.StoreObject(segment, sealedEmpty);
+        var wrapped = Encoding.ASCII.GetString(s3.Objects[$"v1/keys/{database.Organization}/{database.Project}/{keyId}"]);
+        var sealedEmpty = SealEmpty(segment, keyId, s3.Unwrap(wrapped));
+        s3.StoreObject(segment, sealedEmpty);
 
         var requested = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        oci.BeforeGet = async (key, token) =>
+        s3.BeforeGet = async (key, token) =>
         {
             if (key == segment)
             {
@@ -80,7 +80,7 @@ public sealed class BackupEmptySegmentTests
         finally
         {
             release.TrySetResult();
-            oci.BeforeGet = null;
+            s3.BeforeGet = null;
         }
 
         using var cancelled = await data.GetAsync(ManagementApi.Uri($"/v1/projects/{database.Project}/databases/cancelled/collections/items/documents/by-key?id={ManagementApi.DocumentId("before")}"), cancellationToken);
@@ -96,7 +96,7 @@ public sealed class BackupEmptySegmentTests
         await Assert.That(rejected.StatusCode).IsEqualTo(HttpStatusCode.InternalServerError);
         using var absent = await data.GetAsync(ManagementApi.Uri($"/v1/projects/{database.Project}/databases/bad-tag/collections/items/documents/by-key?id={ManagementApi.DocumentId("before")}"), cancellationToken);
         await Assert.That(absent.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-        await Assert.That(oci.BadSignatures).IsEqualTo(0);
+        await Assert.That(s3.BadSignatures).IsEqualTo(0);
     }
 
     // Independent format 1 fixture: authenticate the header, zero chunk index and one empty last chunk.

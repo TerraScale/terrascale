@@ -21,26 +21,26 @@ public sealed class CustomerBackupListingBoundaryTests
     public async Task Multibyte_key_limit_controls_snapshot_and_segment_selection_restore_and_retention(string scalar, int keyBytes)
     {
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         var time = Clock();
-        await using var api = await StartAsync(oci, time);
+        await using var api = await StartAsync(s3, time);
         var (database, text) = await SeedAsync(api, cancellationToken);
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
         await ShipAsync(api, time, cancellationToken);
         var file = FilePrefix(database);
         var snapshots = file + "/snapshots/";
-        var snapshot = oci.CustomerObjects.Single(item => item.Key.StartsWith(snapshots, StringComparison.Ordinal));
+        var snapshot = s3.CustomerObjects.Single(item => item.Key.StartsWith(snapshots, StringComparison.Ordinal));
         var parts = snapshot.Key.Split('/')[^1].Split('-');
         var snapshotAt = time.GetUtcNow();
         var boundarySnapshotAt = snapshotAt.AddSeconds(1);
         var boundarySnapshot = MultibyteKey(snapshots, SnapshotName(boundarySnapshotAt, parts[1], parts[2]), scalar, keyBytes);
-        await ResealAsync(oci, snapshot, boundarySnapshot, cancellationToken);
+        await ResealAsync(s3, snapshot, boundarySnapshot, cancellationToken);
         await PutAsync(data, database, "after", text, cancellationToken);
         await ShipAsync(api, time, cancellationToken);
         var segments = file + "/wal/" + parts[1] + "/";
-        var segment = oci.CustomerObjects.Single(item => item.Key.StartsWith(segments, StringComparison.Ordinal));
+        var segment = s3.CustomerObjects.Single(item => item.Key.StartsWith(segments, StringComparison.Ordinal));
         var boundarySegment = MultibyteKey(segments, segment.Key.Split('/')[^1], scalar, keyBytes);
-        await ResealAsync(oci, segment, boundarySegment, cancellationToken);
+        await ResealAsync(s3, segment, boundarySegment, cancellationToken);
         foreach (var key in new[] { boundarySnapshot, boundarySegment })
         {
             await Assert.That(Encoding.UTF8.GetByteCount(key)).IsEqualTo(keyBytes);
@@ -49,7 +49,7 @@ public sealed class CustomerBackupListingBoundaryTests
 
         var snapshotReads = 0;
         var segmentReads = 0;
-        oci.ObjectRequested = (customer, method, key) =>
+        s3.ObjectRequested = (customer, method, key) =>
         {
             if (customer && method == HttpMethod.Get)
             {
@@ -67,7 +67,7 @@ public sealed class CustomerBackupListingBoundaryTests
         if (keyBytes == 1024)
         {
             // The inclusive boundary supplies the real WAL through its nested key, without a duplicate segment.
-            oci.CustomerListingOverride = (prefix, keys) => prefix == segments ? [.. keys.Where(key => key != segment.Key)] : keys;
+            s3.CustomerListingOverride = (prefix, keys) => prefix == segments ? [.. keys.Where(key => key != segment.Key)] : keys;
         }
 
         var latest = await LatestAsync(api.Client, database.Path, cancellationToken);
@@ -85,7 +85,7 @@ public sealed class CustomerBackupListingBoundaryTests
         await AssertDocumentAsync(data, restored, "after", text, cancellationToken);
         await Assert.That(snapshotReads).IsEqualTo(keyBytes == 1024 ? 1 : 0);
         await Assert.That(segmentReads).IsEqualTo(keyBytes == 1024 ? 1 : 0);
-        oci.CustomerListingOverride = null;
+        s3.CustomerListingOverride = null;
 
         // A valid predecessor protects the live generation while retention deletes the older test generation.
         var expiredGeneration = Ulid.NewUlid().ToString();
@@ -97,13 +97,13 @@ public sealed class CustomerBackupListingBoundaryTests
         var expiredSegment = MultibyteKey(expiredSegments, expiredSegmentName, scalar, keyBytes);
         var controlSnapshot = snapshots + expiredName;
         var controlSegment = expiredSegments + expiredSegmentName;
-        oci.SeedObject(customer: true, expiredSnapshot, []);
-        oci.SeedObject(customer: true, expiredSegment, []);
-        oci.SeedObject(customer: true, controlSnapshot, []);
-        oci.SeedObject(customer: true, controlSegment, []);
-        oci.SeedObject(customer: true, snapshots + SnapshotName(expiredAt.AddDays(1), parts[1], parts[2]), snapshot.Value);
+        s3.SeedObject(customer: true, expiredSnapshot, []);
+        s3.SeedObject(customer: true, expiredSegment, []);
+        s3.SeedObject(customer: true, controlSnapshot, []);
+        s3.SeedObject(customer: true, controlSegment, []);
+        s3.SeedObject(customer: true, snapshots + SnapshotName(expiredAt.AddDays(1), parts[1], parts[2]), snapshot.Value);
         var expiredOperations = 0;
-        oci.ObjectRequested = (customer, method, key) =>
+        s3.ObjectRequested = (customer, method, key) =>
         {
             if (customer && (method == HttpMethod.Get || method == HttpMethod.Delete)
                 && (key == expiredSnapshot || key == expiredSegment))
@@ -113,14 +113,14 @@ public sealed class CustomerBackupListingBoundaryTests
         };
         time.Advance(TimeSpan.FromHours(2));
         await ShipAsync(api, time, cancellationToken);
-        await Assert.That(oci.CustomerObjects.ContainsKey(controlSnapshot)).IsFalse();
-        await Assert.That(oci.CustomerObjects.ContainsKey(controlSegment)).IsFalse();
-        await Assert.That(oci.CustomerObjects.ContainsKey(expiredSnapshot)).IsEqualTo(keyBytes > 1024);
-        await Assert.That(oci.CustomerObjects.ContainsKey(expiredSegment)).IsEqualTo(keyBytes > 1024);
+        await Assert.That(s3.CustomerObjects.ContainsKey(controlSnapshot)).IsFalse();
+        await Assert.That(s3.CustomerObjects.ContainsKey(controlSegment)).IsFalse();
+        await Assert.That(s3.CustomerObjects.ContainsKey(expiredSnapshot)).IsEqualTo(keyBytes > 1024);
+        await Assert.That(s3.CustomerObjects.ContainsKey(expiredSegment)).IsEqualTo(keyBytes > 1024);
         await Assert.That(expiredOperations).IsEqualTo(keyBytes == 1024 ? 2 : 0);
-        await Assert.That(oci.CustomerObjects.ContainsKey(boundarySnapshot)).IsTrue();
-        await Assert.That(oci.CustomerObjects.ContainsKey(boundarySegment)).IsTrue();
-        await Assert.That(oci.BadSignatures).IsEqualTo(0);
+        await Assert.That(s3.CustomerObjects.ContainsKey(boundarySnapshot)).IsTrue();
+        await Assert.That(s3.CustomerObjects.ContainsKey(boundarySegment)).IsTrue();
+        await Assert.That(s3.BadSignatures).IsEqualTo(0);
     }
 
     [Test]
@@ -133,9 +133,9 @@ public sealed class CustomerBackupListingBoundaryTests
     public async Task Malformed_snapshot_and_WAL_metadata_returns_fixed_503_on_canonical_and_alias_windows_and_recovers(string failure, bool segments)
     {
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         var time = Clock();
-        await using var api = await StartAsync(oci, time);
+        await using var api = await StartAsync(s3, time);
         var (database, text) = await SeedAsync(api, cancellationToken);
         await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var project = ProjectClient(api, database);
@@ -143,40 +143,40 @@ public sealed class CustomerBackupListingBoundaryTests
         await PutAsync(project, database, "after", text, cancellationToken);
         await ShipAsync(api, time, cancellationToken);
         var snapshots = FilePrefix(database) + "/snapshots/";
-        var snapshot = oci.CustomerObjects.Keys.Single(key => key.StartsWith(snapshots, StringComparison.Ordinal));
+        var snapshot = s3.CustomerObjects.Keys.Single(key => key.StartsWith(snapshots, StringComparison.Ordinal));
         var prefix = segments ? FilePrefix(database) + "/wal/" + snapshot.Split('/')[^1].Split('-')[1] + "/" : snapshots;
-        var entry = oci.CustomerObjects.Keys.Single(key => key.StartsWith(prefix, StringComparison.Ordinal));
+        var entry = s3.CustomerObjects.Keys.Single(key => key.StartsWith(prefix, StringComparison.Ordinal));
         var latest = await LatestAsync(project, database.Data, cancellationToken);
         if (failure == "nonadvancing")
         {
             for (var index = 0; index < 500; index++)
             {
-                oci.SeedObject(customer: true, prefix + "z-junk-" + index.ToString("D3", CultureInfo.InvariantCulture), []);
+                s3.SeedObject(customer: true, prefix + "z-junk-" + index.ToString("D3", CultureInfo.InvariantCulture), []);
             }
         }
         else
         {
-            oci.CustomerListingOverride = (requested, keys) => requested != prefix ? keys
+            s3.CustomerListingOverride = (requested, keys) => requested != prefix ? keys
                 : failure == "duplicate" ? [entry, entry] : [prefix + "z-marker", entry];
         }
 
-        oci.ObservedListPrefix = prefix;
+        s3.ObservedListPrefix = prefix;
         foreach (var (client, path) in new[] { (project, database.Data), (api.Client, database.Path) })
         {
             string? firstToken = null;
             if (failure == "nonadvancing")
             {
-                oci.CustomerContinuationTokenOverride = (requested, next) => requested == prefix ? firstToken ??= next : next;
+                s3.CustomerContinuationTokenOverride = (requested, next) => requested == prefix ? firstToken ??= next : next;
             }
 
-            var listed = oci.ListRequests;
+            var listed = s3.ListRequests;
             using var response = await client.GetAsync(ManagementApi.Uri(path + "/point-in-time?destination=customer"), cancellationToken);
             await UnavailableAsync(response, cancellationToken);
-            await Assert.That(oci.ListRequests - listed).IsEqualTo(failure == "nonadvancing" ? 2 : 1);
+            await Assert.That(s3.ListRequests - listed).IsEqualTo(failure == "nonadvancing" ? 2 : 1);
         }
 
-        oci.CustomerListingOverride = null;
-        oci.CustomerContinuationTokenOverride = null;
+        s3.CustomerListingOverride = null;
+        s3.CustomerContinuationTokenOverride = null;
         foreach (var (client, path, name) in new[] { (project, database.Data, "canonical-recovered"), (api.Client, database.Path, "alias-recovered") })
         {
             await Assert.That(await LatestAsync(client, path, cancellationToken)).IsEqualTo(latest);
@@ -185,7 +185,7 @@ public sealed class CustomerBackupListingBoundaryTests
             await AssertDocumentAsync(project, restored, "after", text, cancellationToken);
         }
 
-        await Assert.That(oci.BadSignatures).IsEqualTo(0);
+        await Assert.That(s3.BadSignatures).IsEqualTo(0);
     }
 
     [Test]
@@ -194,13 +194,13 @@ public sealed class CustomerBackupListingBoundaryTests
     public async Task Oversized_multibyte_entries_still_consume_raw_snapshot_and_WAL_plan_budgets(bool segments)
     {
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         var time = Clock();
-        await using var api = await StartAsync(oci, time);
+        await using var api = await StartAsync(s3, time);
         var (database, _) = await SeedAsync(api, cancellationToken);
         await ShipAsync(api, time, cancellationToken);
         var snapshots = FilePrefix(database) + "/snapshots/";
-        var snapshot = oci.CustomerObjects.Keys.Single(key => key.StartsWith(snapshots, StringComparison.Ordinal));
+        var snapshot = s3.CustomerObjects.Keys.Single(key => key.StartsWith(snapshots, StringComparison.Ordinal));
         var prefix = segments ? FilePrefix(database) + "/wal/" + snapshot.Split('/')[^1].Split('-')[1] + "/" : snapshots;
         var filename = segments ? string.Create(CultureInfo.InvariantCulture, $"0000000000000000-{time.GetUtcNow().ToUnixTimeMilliseconds():D13}")
             : snapshot.Split('/')[^1];
@@ -208,20 +208,20 @@ public sealed class CustomerBackupListingBoundaryTests
         {
             var key = MultibyteKey(prefix + "z-" + index.ToString("D5", CultureInfo.InvariantCulture), filename,
                 index % 2 == 0 ? "\u4E2D" : "\U00010000", 1025);
-            oci.SeedObject(customer: true, key, []);
+            s3.SeedObject(customer: true, key, []);
         }
 
         await ErrorAssert.ErrorAsync(api.Client.PostAsJsonAsync(ManagementApi.Uri(database.Path + "/point-in-time/plan"),
             new { pointInTime = time.GetUtcNow(), destination = "customer" }, cancellationToken),
             HttpStatusCode.ServiceUnavailable, "pitr_plan_limit", "the point-in-time plan metadata scan exceeds 10000 objects");
-        oci.CustomerListingOverride = (requested, keys) => requested == prefix
+        s3.CustomerListingOverride = (requested, keys) => requested == prefix
             ? [.. keys.Where(key => !key.StartsWith(prefix + "z-", StringComparison.Ordinal))] : keys;
         using var recovered = await api.Client.PostAsJsonAsync(ManagementApi.Uri(database.Path + "/point-in-time/plan"),
             new { pointInTime = time.GetUtcNow(), destination = "customer" }, cancellationToken);
         recovered.EnsureSuccessStatusCode();
         await Assert.That((await recovered.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cancellationToken))
             .GetProperty("snapshotAt").GetDateTimeOffset()).IsEqualTo(time.GetUtcNow());
-        await Assert.That(oci.BadSignatures).IsEqualTo(0);
+        await Assert.That(s3.BadSignatures).IsEqualTo(0);
     }
 
     [Test]
@@ -230,9 +230,9 @@ public sealed class CustomerBackupListingBoundaryTests
     public async Task Window_listing_observes_caller_cancellation_on_canonical_and_alias_listeners_and_recovers(bool canonical)
     {
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         var time = Clock();
-        await using var api = await StartAsync(oci, time);
+        await using var api = await StartAsync(s3, time);
         var (database, _) = await SeedAsync(api, cancellationToken);
         await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var project = ProjectClient(api, database);
@@ -243,7 +243,7 @@ public sealed class CustomerBackupListingBoundaryTests
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var cancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        oci.BeforeList = async (prefix, token) =>
+        s3.BeforeList = async (prefix, token) =>
         {
             if (prefix == FilePrefix(database) + "/snapshots/")
             {
@@ -278,18 +278,18 @@ public sealed class CustomerBackupListingBoundaryTests
                 using var response = await pending;
             }
 
-            oci.BeforeList = null;
+            s3.BeforeList = null;
         }
 
         await Assert.That(await LatestAsync(client, path, cancellationToken)).IsEqualTo(latest);
-        await Assert.That(oci.BadSignatures).IsEqualTo(0);
+        await Assert.That(s3.BadSignatures).IsEqualTo(0);
     }
 
-    private static async Task<ManagementApi> StartAsync(FakeS3 oci, FakeTimeProvider time)
+    private static async Task<ManagementApi> StartAsync(FakeS3 s3, FakeTimeProvider time)
     {
-        var api = await ManagementApi.StartAsync(oci.Configure, services =>
+        var api = await ManagementApi.StartAsync(s3.Configure, services =>
         {
-            oci.Route(services);
+            s3.Route(services);
             ManualBackupHosting.Configure(services);
         }, time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
@@ -337,12 +337,12 @@ public sealed class CustomerBackupListingBoundaryTests
         return prefix + string.Concat(Enumerable.Repeat(scalar, remaining / scalarBytes)) + new string('x', remaining % scalarBytes) + "/" + filename;
     }
 
-    private static async Task ResealAsync(FakeS3 oci, KeyValuePair<string, byte[]> original, string renamed, CancellationToken cancellationToken)
+    private static async Task ResealAsync(FakeS3 s3, KeyValuePair<string, byte[]> original, string renamed, CancellationToken cancellationToken)
     {
         var keyId = Encoding.ASCII.GetString(original.Value, 4, 26);
         var parts = original.Key.Split('/');
-        var wrapped = Encoding.ASCII.GetString(oci.CustomerObjects[BackupLayout.Key(parts[1] + "/" + parts[2], keyId)]);
-        var key = oci.Unwrap(wrapped);
+        var wrapped = Encoding.ASCII.GetString(s3.CustomerObjects[BackupLayout.Key(parts[1] + "/" + parts[2], keyId)]);
+        var key = s3.Unwrap(wrapped);
         try
         {
             using var encrypted = new MemoryStream(original.Value);
@@ -351,7 +351,7 @@ public sealed class CustomerBackupListingBoundaryTests
             plain.Position = 0;
             using var output = new MemoryStream();
             await BackupObject.WriteAsync(plain, output, renamed, keyId, key, cancellationToken);
-            oci.SeedObject(customer: true, renamed, output.ToArray());
+            s3.SeedObject(customer: true, renamed, output.ToArray());
         }
         finally
         {

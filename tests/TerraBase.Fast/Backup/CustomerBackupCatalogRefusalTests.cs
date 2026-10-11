@@ -21,10 +21,10 @@ public sealed class CustomerBackupCatalogRefusalTests
     public async Task A_destination_read_refuses_a_catalog_changed_after_authorization_without_platform_fallback()
     {
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         var time = Clock();
         var hook = new UsageCommitHook();
-        await using var api = await StartAsync(oci, time, hook);
+        await using var api = await StartAsync(s3, time, hook);
         var database = await api.CreateManagedDatabaseAsync();
         var route = Uri(database.ProjectPath + "/backup-destination");
         using var saved = await api.Client.PutAsJsonAsync(route, Destination("customer"), token);
@@ -50,8 +50,8 @@ public sealed class CustomerBackupCatalogRefusalTests
         var prefix = $"v1/{database.Organization}/{database.Project}/{database.Id}/";
         var status = await api.Server.Client.GetFromJsonAsync(Uri("/v1/backup"), TerraBaseJsonContext.Default.BackupStatus, token);
         await Assert.That(status!.Files.Single(file => file.File == prefix[..^1]).LastError).IsEqualTo(nameof(IOException));
-        await Assert.That(oci.Objects.Keys.Any(key => key.StartsWith(prefix, StringComparison.Ordinal))).IsFalse();
-        await Assert.That(oci.CustomerObjects.Keys.Any(key => key.StartsWith(prefix, StringComparison.Ordinal))).IsFalse();
+        await Assert.That(s3.Objects.Keys.Any(key => key.StartsWith(prefix, StringComparison.Ordinal))).IsFalse();
+        await Assert.That(s3.CustomerObjects.Keys.Any(key => key.StartsWith(prefix, StringComparison.Ordinal))).IsFalse();
         await Assert.That(await ReadJsonAsync(store, collection, "current", token)).IsEqualTo(record);
 
         await WriteVersionAsync(store, version!, token);
@@ -60,16 +60,16 @@ public sealed class CustomerBackupCatalogRefusalTests
         await Assert.That((await recovered.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: token)).GetProperty("mode").GetString()).IsEqualTo("customer");
         time.Advance(TimeSpan.FromSeconds(10));
         await backup.RunOnceAsync(token);
-        await Assert.That(oci.CustomerObjects.Keys.Any(key => key.StartsWith(prefix + "snapshots/", StringComparison.Ordinal))).IsTrue();
-        await Assert.That(oci.Objects.Keys.Any(key => key.StartsWith(prefix, StringComparison.Ordinal))).IsFalse();
-        await Assert.That(oci.BadSignatures).IsEqualTo(0);
+        await Assert.That(s3.CustomerObjects.Keys.Any(key => key.StartsWith(prefix + "snapshots/", StringComparison.Ordinal))).IsTrue();
+        await Assert.That(s3.Objects.Keys.Any(key => key.StartsWith(prefix, StringComparison.Ordinal))).IsFalse();
+        await Assert.That(s3.BadSignatures).IsEqualTo(0);
     }
 
-    private static async Task<ManagementApi> StartAsync(FakeS3 oci, FakeTimeProvider time, UsageCommitHook hook)
+    private static async Task<ManagementApi> StartAsync(FakeS3 s3, FakeTimeProvider time, UsageCommitHook hook)
     {
-        var api = await ManagementApi.StartAsync(oci.Configure, services =>
+        var api = await ManagementApi.StartAsync(s3.Configure, services =>
         {
-            oci.Route(services);
+            s3.Route(services);
             ManualBackupHosting.Configure(services);
             hook.Install(services);
         }, time, managementCredential: true);

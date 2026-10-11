@@ -21,11 +21,11 @@ public sealed class CustomerBackupIsolationTests
     {
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         using var shipping = CancellationTokenSource.CreateLinkedTokenSource(token);
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
-        await using var api = await ManagementApi.StartAsync(oci.Configure, services =>
+        await using var api = await ManagementApi.StartAsync(s3.Configure, services =>
         {
-            oci.Route(services);
+            s3.Route(services);
             ManualBackupHosting.Configure(services);
         }, time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
@@ -57,9 +57,9 @@ public sealed class CustomerBackupIsolationTests
             var prefixes = customers.SelectMany(database => new[] { File(database) + "/", $"v1/keys/{database.Organization}/{database.Project}/" }).ToArray();
             var foreignKey = $"v1/{Guid.NewGuid():D}/{Guid.NewGuid():D}/{Guid.NewGuid():D}/snapshots/unrelated";
             byte[] foreignContent = [1, 2, 3];
-            oci.SeedObject(customer: true, foreignKey, foreignContent);
+            s3.SeedObject(customer: true, foreignKey, foreignContent);
             var foreignRequests = 0;
-            oci.ObjectRequested = (customer, method, key) =>
+            s3.ObjectRequested = (customer, method, key) =>
             {
                 if (customer && key.Length > 0 && (method == HttpMethod.Get || method == HttpMethod.Delete)
                     && !prefixes.Any(prefix => key.StartsWith(prefix, StringComparison.Ordinal)))
@@ -67,7 +67,7 @@ public sealed class CustomerBackupIsolationTests
                     Interlocked.Increment(ref foreignRequests);
                 }
             };
-            oci.CustomerContentOverride = key =>
+            s3.CustomerContentOverride = key =>
             {
                 var body = bodies.FirstOrDefault(pair => key.StartsWith(pair.Key, StringComparison.Ordinal)).Value;
                 if (body is null || body.Requested() != 1)
@@ -76,7 +76,7 @@ public sealed class CustomerBackupIsolationTests
                 }
 
                 var content = new StreamContent(body);
-                content.Headers.ContentLength = oci.CustomerObjects[key].LongLength;
+                content.Headers.ContentLength = s3.CustomerObjects[key].LongLength;
                 return content;
             };
 
@@ -93,7 +93,7 @@ public sealed class CustomerBackupIsolationTests
             await CreateCollectionAsync(healthyData, healthy, token);
             await PutAsync(healthyData, healthy, "before", before, token);
             var platformSnapshot = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            oci.BeforeGet = (key, cancellationToken) =>
+            s3.BeforeGet = (key, cancellationToken) =>
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 if (key.StartsWith(File(healthy) + "/snapshots/", StringComparison.Ordinal))
@@ -109,7 +109,7 @@ public sealed class CustomerBackupIsolationTests
             passes.Add(snapshotPass);
             await platformSnapshot.Task.WaitAsync(token);
             await snapshotPass.WaitAsync(token);
-            await Assert.That(oci.Objects.Keys.Any(key => key.StartsWith(File(healthy) + "/snapshots/", StringComparison.Ordinal))).IsTrue();
+            await Assert.That(s3.Objects.Keys.Any(key => key.StartsWith(File(healthy) + "/snapshots/", StringComparison.Ordinal))).IsTrue();
 
             time.Advance(TimeSpan.FromSeconds(1));
             await PutAsync(healthyData, healthy, "during", during, token);
@@ -117,7 +117,7 @@ public sealed class CustomerBackupIsolationTests
             var walPass = backup.RunOnceAsync(shipping.Token);
             passes.Add(walPass);
             await walPass.WaitAsync(token);
-            await Assert.That(oci.Objects.Keys.Any(key => key.StartsWith(File(healthy) + "/wal/", StringComparison.Ordinal))).IsTrue();
+            await Assert.That(s3.Objects.Keys.Any(key => key.StartsWith(File(healthy) + "/wal/", StringComparison.Ordinal))).IsTrue();
             await AssertRestoredAsync(api, healthyData, healthy, "platform", "platform-live", [("before", before), ("during", during)], token);
 
             // Prove progress while bodies are still blocked, rather than recovery after their fifteen-minute deadlines.
@@ -130,17 +130,17 @@ public sealed class CustomerBackupIsolationTests
                 await Assert.That(body.Disposed.Task.IsCompleted).IsFalse();
             }
 
-            await Assert.That(oci.Objects.Keys.Any(key => customers.Any(database => key.StartsWith(File(database) + "/", StringComparison.Ordinal)))).IsFalse();
-            await Assert.That(oci.CustomerObjects.Keys.All(key => key == foreignKey || prefixes.Any(prefix => key.StartsWith(prefix, StringComparison.Ordinal)))).IsTrue();
+            await Assert.That(s3.Objects.Keys.Any(key => customers.Any(database => key.StartsWith(File(database) + "/", StringComparison.Ordinal)))).IsFalse();
+            await Assert.That(s3.CustomerObjects.Keys.All(key => key == foreignKey || prefixes.Any(prefix => key.StartsWith(prefix, StringComparison.Ordinal)))).IsTrue();
             await Assert.That(Volatile.Read(ref foreignRequests)).IsEqualTo(0);
-            await Assert.That(oci.CustomerObjects[foreignKey].SequenceEqual(foreignContent)).IsTrue();
+            await Assert.That(s3.CustomerObjects[foreignKey].SequenceEqual(foreignContent)).IsTrue();
             foreach (var text in new[] { before, during })
             {
                 var plain = Encoding.UTF8.GetBytes(text);
-                await Assert.That(oci.Objects.Values.Concat(oci.CustomerObjects.Values).Any(content => content.AsSpan().IndexOf(plain) >= 0)).IsFalse();
+                await Assert.That(s3.Objects.Values.Concat(s3.CustomerObjects.Values).Any(content => content.AsSpan().IndexOf(plain) >= 0)).IsFalse();
             }
 
-            oci.CustomerContentOverride = null;
+            s3.CustomerContentOverride = null;
             if (completion == "shutdown")
             {
                 // Keep the blocked bodies in place: StopAsync must cancel and join jobs before releasing their files.
@@ -188,14 +188,14 @@ public sealed class CustomerBackupIsolationTests
             await Task.WhenAll(bodies.Values.Select(body => body.Disposed.Task)).WaitAsync(token);
             await Assert.That(shipping.IsCancellationRequested).IsEqualTo(completion == "cancellation");
             await Assert.That(Volatile.Read(ref foreignRequests)).IsEqualTo(0);
-            await Assert.That(oci.CustomerObjects[foreignKey].SequenceEqual(foreignContent)).IsTrue();
-            await Assert.That(oci.BadSignatures).IsEqualTo(0);
+            await Assert.That(s3.CustomerObjects[foreignKey].SequenceEqual(foreignContent)).IsTrue();
+            await Assert.That(s3.BadSignatures).IsEqualTo(0);
         }
         finally
         {
-            oci.CustomerContentOverride = null;
-            oci.BeforeGet = null;
-            oci.ObjectRequested = null;
+            s3.CustomerContentOverride = null;
+            s3.BeforeGet = null;
+            s3.ObjectRequested = null;
             // Release before joining even when the test token has cancelled; host disposal must never inherit the stall.
             foreach (var body in bodies.Values)
             {

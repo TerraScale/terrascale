@@ -18,10 +18,10 @@ public sealed class PointInTimePlanTests
     [Test]
     public async Task Project_tokens_preview_by_database_name_with_read_scope_and_tenant_isolation()
     {
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         var time = Clock();
         var probe = new StorageProbe();
-        await using var api = await ManagementApi.StartAsync(oci.Configure, services => Route(oci, probe, services), time, managementCredential: true);
+        await using var api = await ManagementApi.StartAsync(s3.Configure, services => Route(s3, probe, services), time, managementCredential: true);
         await api.Server.Services.GetRequiredService<IContinuousBackup>().RunOnceAsync(CancellationToken.None);
         var database = await api.CreateManagedDatabaseAsync();
         await api.VerifyProjectBindingAsync(database.Organization, database.Project);
@@ -74,10 +74,10 @@ public sealed class PointInTimePlanTests
     [Test]
     public async Task Earlier_and_latest_plans_select_the_restore_snapshots_and_segments_without_changing_any_data()
     {
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         var time = Clock();
         var probe = new StorageProbe();
-        await using var api = await ManagementApi.StartAsync(oci.Configure, services => Route(oci, probe, services), time, managementCredential: true);
+        await using var api = await ManagementApi.StartAsync(s3.Configure, services => Route(s3, probe, services), time, managementCredential: true);
         var database = await api.CreateManagedDatabaseAsync();
         await api.SetPlanAsync(api.User, database.Organization, "pro");
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
@@ -102,13 +102,13 @@ public sealed class PointInTimePlanTests
         // Only explicit passes ship: periodic timers stay dormant while the preview timeout still advances.
         await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var latest = time.GetUtcNow();
-        var objects = oci.Objects.ToDictionary(item => item.Key, item => Convert.ToHexString(SHA256.HashData(item.Value)), StringComparer.Ordinal);
+        var objects = s3.Objects.ToDictionary(item => item.Key, item => Convert.ToHexString(SHA256.HashData(item.Value)), StringComparer.Ordinal);
         var files = Files(api);
         var catalog = await api.Client.GetStringAsync(Uri(database.ProjectPath + "/databases"));
         var source = await data.GetStringAsync(Uri(document));
         var writes = probe.Writes;
         var downloads = probe.Downloads;
-        var generated = oci.GeneratedKeys;
+        var generated = s3.GeneratedKeys;
         using var window = JsonDocument.Parse(await api.Client.GetStringAsync(Uri(database.Path + "/point-in-time")));
 
         foreach (var (at, snapshotAt) in new[] { (first, first), (earlier, first), (second, second), (latest, second) })
@@ -116,8 +116,8 @@ public sealed class PointInTimePlanTests
             using var response = await api.Client.PostAsJsonAsync(Uri(database.Path + "/point-in-time/plan"), new { pointInTime = at });
             response.EnsureSuccessStatusCode();
             var plan = await response.Content.ReadFromJsonAsync<JsonElement>();
-            var snapshot = Snapshot(oci, database, at);
-            var segments = Segments(oci, database, snapshot, at);
+            var snapshot = Snapshot(s3, database, at);
+            var segments = Segments(s3, database, snapshot, at);
             await Assert.That(plan.GetProperty("pointInTime").GetDateTimeOffset()).IsEqualTo(at);
             await Assert.That(plan.GetProperty("snapshotAt").GetDateTimeOffset()).IsEqualTo(snapshotAt);
             await Assert.That(plan.GetProperty("segmentCount").GetInt32()).IsEqualTo(segments.Count);
@@ -130,8 +130,8 @@ public sealed class PointInTimePlanTests
 
         await Assert.That(probe.Writes).IsEqualTo(writes);
         await Assert.That(probe.Downloads).IsEqualTo(downloads);
-        await Assert.That(oci.GeneratedKeys).IsEqualTo(generated);
-        await Assert.That(oci.Objects.ToDictionary(item => item.Key, item => Convert.ToHexString(SHA256.HashData(item.Value)), StringComparer.Ordinal)).IsEquivalentTo(objects);
+        await Assert.That(s3.GeneratedKeys).IsEqualTo(generated);
+        await Assert.That(s3.Objects.ToDictionary(item => item.Key, item => Convert.ToHexString(SHA256.HashData(item.Value)), StringComparer.Ordinal)).IsEquivalentTo(objects);
         await Assert.That(Files(api)).IsEquivalentTo(files);
         await Assert.That(await api.Client.GetStringAsync(Uri(database.ProjectPath + "/databases"))).IsEqualTo(catalog);
         await Assert.That(await data.GetStringAsync(Uri(document))).IsEqualTo(source);
@@ -149,11 +149,11 @@ public sealed class PointInTimePlanTests
     [Test]
     public async Task Validation_is_access_first_and_viewers_can_read_the_plan()
     {
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         var time = Clock();
-        await using var api = await ManagementApi.StartAsync(oci.Configure, services =>
+        await using var api = await ManagementApi.StartAsync(s3.Configure, services =>
         {
-            oci.Route(services);
+            s3.Route(services);
             ManualBackupHosting.Configure(services);
         }, time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
@@ -167,14 +167,14 @@ public sealed class PointInTimePlanTests
         time.Advance(TimeSpan.FromSeconds(1));
         await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
-        oci.FailPut = _ => true;
+        s3.FailPut = _ => true;
         time.Advance(TimeSpan.FromSeconds(1));
         using var window = JsonDocument.Parse(await api.Client.GetStringAsync(Uri(database.Path + "/point-in-time")));
         var earliest = window.RootElement.GetProperty("earliest").GetDateTimeOffset();
         var latest = window.RootElement.GetProperty("latest").GetDateTimeOffset();
         await Assert.That(earliest).IsEqualTo(snapshot);
         await Assert.That(latest.AddTicks(1)).IsLessThan(time.GetUtcNow());
-        var retained = oci.Objects.Keys.Where(key => key.StartsWith(File(database) + "/", StringComparison.Ordinal)).ToArray();
+        var retained = s3.Objects.Keys.Where(key => key.StartsWith(File(database) + "/", StringComparison.Ordinal)).ToArray();
         await Assert.That(retained.Length).IsGreaterThan(0);
         var route = Uri(database.Path + "/point-in-time/plan");
         await ErrorAssert.ErrorAsync(api.Client.PostAsJsonAsync(route, new { }), HttpStatusCode.BadRequest, "invalid_request", "pointInTime is required");
@@ -212,7 +212,7 @@ public sealed class PointInTimePlanTests
             await ErrorAssert.ErrorAsync(viewer.PostAsJsonAsync(route, new { pointInTime = at }), HttpStatusCode.NotFound, "not_found",
                 "continuous backup holds nothing of this database within its plan's retention window");
         }
-        await Assert.That(oci.Objects.Keys.Where(key => key.StartsWith(File(database) + "/", StringComparison.Ordinal))).IsEquivalentTo(retained);
+        await Assert.That(s3.Objects.Keys.Where(key => key.StartsWith(File(database) + "/", StringComparison.Ordinal))).IsEquivalentTo(retained);
     }
 
     [Test]
@@ -220,9 +220,9 @@ public sealed class PointInTimePlanTests
     [Arguments(true)]
     public async Task Backup_off_or_without_a_snapshot_returns_not_found(bool enabled)
     {
-        var oci = new FakeS3 { FailPut = _ => true };
+        var s3 = new FakeS3 { FailPut = _ => true };
         var time = Clock();
-        await using var api = await ManagementApi.StartAsync(enabled ? oci.Configure : null, enabled ? oci.Route : null, time);
+        await using var api = await ManagementApi.StartAsync(enabled ? s3.Configure : null, enabled ? s3.Route : null, time);
         var database = await api.CreateManagedDatabaseAsync();
         await ErrorAssert.ErrorAsync(api.Client.PostAsJsonAsync(Uri(database.Path + "/point-in-time/plan"), new { pointInTime = time.GetUtcNow() }),
             HttpStatusCode.NotFound, "not_found", "continuous backup holds nothing of this database");
@@ -235,10 +235,10 @@ public sealed class PointInTimePlanTests
     [Arguments(9999)]
     public async Task Uncached_latest_generation_is_scanned_once_through_later_segments_and_the_budget_boundary(int segmentCount)
     {
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         var time = Clock();
         var probe = new StorageProbe();
-        await using var api = await ManagementApi.StartAsync(oci.Configure, services => Route(oci, probe, services), time, managementCredential: true);
+        await using var api = await ManagementApi.StartAsync(s3.Configure, services => Route(s3, probe, services), time, managementCredential: true);
         // Finish startup discovery before creating the database; its LastShipped stays null without another pass.
         await api.Server.Services.GetRequiredService<IContinuousBackup>().RunOnceAsync(CancellationToken.None);
         var database = await api.CreateManagedDatabaseAsync();
@@ -293,10 +293,10 @@ public sealed class PointInTimePlanTests
     [Test]
     public async Task Uncached_earlier_generation_uses_its_segments_and_the_newest_generations_window()
     {
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         var time = Clock();
         var probe = new StorageProbe();
-        await using var api = await ManagementApi.StartAsync(oci.Configure, services => Route(oci, probe, services), time, managementCredential: true);
+        await using var api = await ManagementApi.StartAsync(s3.Configure, services => Route(s3, probe, services), time, managementCredential: true);
         await api.Server.Services.GetRequiredService<IContinuousBackup>().RunOnceAsync(CancellationToken.None);
         var database = await api.CreateManagedDatabaseAsync();
         var first = time.GetUtcNow().AddSeconds(-4);
@@ -340,10 +340,10 @@ public sealed class PointInTimePlanTests
     [Arguments(true)]
     public async Task Object_store_listing_failures_return_a_sanitized_unavailable_response(bool network)
     {
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         var time = Clock();
         var probe = new StorageProbe { NetworkFailure = network };
-        await using var api = await ManagementApi.StartAsync(oci.Configure, services => Route(oci, probe, services), time, managementCredential: true);
+        await using var api = await ManagementApi.StartAsync(s3.Configure, services => Route(s3, probe, services), time, managementCredential: true);
         await api.Server.Services.GetRequiredService<IContinuousBackup>().RunOnceAsync(CancellationToken.None);
         var database = await api.CreateManagedDatabaseAsync();
         var at = time.GetUtcNow();
@@ -370,10 +370,10 @@ public sealed class PointInTimePlanTests
     [Arguments(true)]
     public async Task Raw_snapshot_and_segment_metadata_share_the_scan_budget(bool segments)
     {
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         var time = Clock();
         var probe = new StorageProbe();
-        await using var api = await ManagementApi.StartAsync(oci.Configure, services => Route(oci, probe, services), time, managementCredential: true);
+        await using var api = await ManagementApi.StartAsync(s3.Configure, services => Route(s3, probe, services), time, managementCredential: true);
         var database = await api.CreateManagedDatabaseAsync();
         var backup = api.Server.Services.GetRequiredService<IContinuousBackup>();
         time.Advance(TimeSpan.FromSeconds(10));
@@ -396,10 +396,10 @@ public sealed class PointInTimePlanTests
     [Test]
     public async Task Metadata_listing_times_out_on_the_injected_clock()
     {
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         var time = Clock();
         var probe = new StorageProbe();
-        await using var api = await ManagementApi.StartAsync(oci.Configure, services => Route(oci, probe, services), time, managementCredential: true);
+        await using var api = await ManagementApi.StartAsync(s3.Configure, services => Route(s3, probe, services), time, managementCredential: true);
         var database = await api.CreateManagedDatabaseAsync();
         await api.Server.Services.GetRequiredService<IContinuousBackup>().RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         probe.BlockPrefix = File(database) + "/snapshots/";
@@ -423,13 +423,13 @@ public sealed class PointInTimePlanTests
 
     private static string File(ManagedDatabaseRef database) => $"v1/{database.Organization}/{database.Project}/{database.Id}";
 
-    private static string[] Snapshot(FakeS3 oci, ManagedDatabaseRef database, DateTimeOffset at) =>
-        oci.Objects.Keys.Where(key => key.StartsWith(File(database) + "/snapshots/", StringComparison.Ordinal))
+    private static string[] Snapshot(FakeS3 s3, ManagedDatabaseRef database, DateTimeOffset at) =>
+        s3.Objects.Keys.Where(key => key.StartsWith(File(database) + "/snapshots/", StringComparison.Ordinal))
             .Order(StringComparer.Ordinal).Select(key => key.Split('/')[^1].Split('-'))
             .Last(parts => long.Parse(parts[0], CultureInfo.InvariantCulture) <= at.ToUnixTimeMilliseconds());
 
-    private static List<DateTimeOffset> Segments(FakeS3 oci, ManagedDatabaseRef database, string[] snapshot, DateTimeOffset at) =>
-        [.. oci.Objects.Keys.Where(key => key.StartsWith(File(database) + "/wal/" + snapshot[1] + "/", StringComparison.Ordinal))
+    private static List<DateTimeOffset> Segments(FakeS3 s3, ManagedDatabaseRef database, string[] snapshot, DateTimeOffset at) =>
+        [.. s3.Objects.Keys.Where(key => key.StartsWith(File(database) + "/wal/" + snapshot[1] + "/", StringComparison.Ordinal))
             .Select(key => key.Split('/')[^1].Split('-'))
             .Where(parts => long.Parse(parts[0], CultureInfo.InvariantCulture) >= long.Parse(snapshot[2], CultureInfo.InvariantCulture))
             .Select(parts => DateTimeOffset.FromUnixTimeMilliseconds(long.Parse(parts[1], CultureInfo.InvariantCulture))).Where(segment => segment <= at)];
@@ -437,9 +437,9 @@ public sealed class PointInTimePlanTests
     private static string[] Files(ManagementApi api) =>
         [.. Directory.EnumerateFiles(api.Server.DataDirectory, "*", SearchOption.AllDirectories).Order(StringComparer.Ordinal)];
 
-    private static void Route(FakeS3 oci, StorageProbe probe, IServiceCollection services)
+    private static void Route(FakeS3 s3, StorageProbe probe, IServiceCollection services)
     {
-        oci.Route(services);
+        s3.Route(services);
         ManualBackupHosting.Configure(services);
         services.AddHttpClient("backup-s3").AddHttpMessageHandler(() => new ProbeHandler(probe));
     }

@@ -20,11 +20,11 @@ public sealed class CustomerBackupMaintenanceTests
     public async Task Failed_destination_maintenance_preserves_measurements_and_refreshes_acknowledged_status(bool platform, bool deletion)
     {
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 9, 12, 0, 0, TimeSpan.Zero));
-        await using var api = await StartAsync(oci.Configure, services =>
+        await using var api = await StartAsync(s3.Configure, services =>
         {
-            oci.Route(services);
+            s3.Route(services);
             ManualBackupHosting.Configure(services);
         }, time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
@@ -46,11 +46,11 @@ public sealed class CustomerBackupMaintenanceTests
         var floor = BackupLayout.Snapshot(file, time.GetUtcNow().AddDays(-3), Ulid.NewUlid(), 0);
         foreach (var customer in new[] { false, true })
         {
-            oci.SeedObject(customer, oldest, [1]);
-            oci.SeedObject(customer, floor, [2]);
+            s3.SeedObject(customer, oldest, [1]);
+            s3.SeedObject(customer, floor, [2]);
         }
 
-        oci.ObjectRequested = (customer, method, key) =>
+        s3.ObjectRequested = (customer, method, key) =>
         {
             if (customer == !platform && (deletion ? method == HttpMethod.Delete && key == oldest : method == HttpMethod.Get && key.Length == 0))
             {
@@ -65,31 +65,31 @@ public sealed class CustomerBackupMaintenanceTests
         await Assert.That(updated.LastShippedAt!.Value).IsGreaterThan(initial.LastShippedAt!.Value);
         await Assert.That(updated.SizeBytes).IsEqualTo(initial.SizeBytes);
         await Assert.That(updated.SizedAt).IsEqualTo(initial.SizedAt);
-        await Assert.That((platform ? oci.Objects : oci.CustomerObjects).ContainsKey(oldest)).IsTrue();
-        await Assert.That((platform ? oci.CustomerObjects : oci.Objects).ContainsKey(oldest)).IsFalse();
+        await Assert.That((platform ? s3.Objects : s3.CustomerObjects).ContainsKey(oldest)).IsTrue();
+        await Assert.That((platform ? s3.CustomerObjects : s3.Objects).ContainsKey(oldest)).IsFalse();
         time.Advance(TimeSpan.FromDays(1));
         await backup.RunOnceAsync(token);
         var partialInventory = await RecordAsync(api, database, token);
         await Assert.That(partialInventory.SizeBytes).IsEqualTo(initial.SizeBytes);
         await Assert.That(partialInventory.SizedAt).IsEqualTo(initial.SizedAt);
-        oci.ObjectRequested = null;
+        s3.ObjectRequested = null;
         time.Advance(TimeSpan.FromHours(1));
         await backup.RunOnceAsync(token);
-        await Assert.That(oci.Objects.ContainsKey(oldest)).IsFalse();
-        await Assert.That(oci.CustomerObjects.ContainsKey(oldest)).IsFalse();
+        await Assert.That(s3.Objects.ContainsKey(oldest)).IsFalse();
+        await Assert.That(s3.CustomerObjects.ContainsKey(oldest)).IsFalse();
         await RestoreAsync(api, data, database, partialInventory.LastShippedAt!.Value, text, token);
-        await Assert.That(oci.BadSignatures).IsEqualTo(0);
+        await Assert.That(s3.BadSignatures).IsEqualTo(0);
     }
 
     [Test]
     public async Task Customer_body_transport_errors_are_sanitized_in_persisted_drill_diagnostics_and_restore_recovers()
     {
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 9, 12, 0, 0, TimeSpan.Zero));
-        await using var api = await StartAsync(oci.Configure, services =>
+        await using var api = await StartAsync(s3.Configure, services =>
         {
-            oci.Route(services);
+            s3.Route(services);
             ManualBackupHosting.Configure(services);
         }, time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
@@ -101,7 +101,7 @@ public sealed class CustomerBackupMaintenanceTests
         await PutAsync(data, database, "before", text, token);
         await PutAsync(data, database, "after", text, token);
         var marker = Ulid.NewUlid().ToString();
-        oci.CustomerContentOverride = key => key.StartsWith(File(database) + "/snapshots/", StringComparison.Ordinal)
+        s3.CustomerContentOverride = key => key.StartsWith(File(database) + "/snapshots/", StringComparison.Ordinal)
             ? new StreamContent(new BrokenBody(marker + FakeS3.CustomerAccessKey + FakeS3.CustomerSecretKey)) : null;
         var backup = api.Server.Services.GetRequiredService<IContinuousBackup>();
         time.Advance(TimeSpan.FromSeconds(10));
@@ -115,9 +115,9 @@ public sealed class CustomerBackupMaintenanceTests
             await Assert.That(diagnostic.Contains(secret, StringComparison.Ordinal)).IsFalse();
         }
 
-        oci.CustomerContentOverride = null;
+        s3.CustomerContentOverride = null;
         await RestoreAsync(api, data, database, record.LastShippedAt!.Value, text, token);
-        await Assert.That(oci.BadSignatures).IsEqualTo(0);
+        await Assert.That(s3.BadSignatures).IsEqualTo(0);
     }
 
     private static string File(ManagedDatabaseRef database) => $"v1/{database.Organization}/{database.Project}/{database.Id}";

@@ -25,11 +25,11 @@ public sealed class BackupShutdownTests
     public async Task A_failed_customer_upload_then_detachment_flushes_a_final_platform_snapshot_without_waiting_for_backoff()
     {
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 9, 12, 0, 0, TimeSpan.Zero));
-        await using var api = await ManagementApi.StartAsync(oci.Configure, services =>
+        await using var api = await ManagementApi.StartAsync(s3.Configure, services =>
         {
-            oci.Route(services);
+            s3.Route(services);
             ManualBackupHosting.Configure(services);
         }, time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
@@ -43,23 +43,23 @@ public sealed class BackupShutdownTests
         time.Advance(TimeSpan.FromSeconds(10));
         await backup.RunOnceAsync(token);
         await PutAsync(data, database, "final", text, token);
-        oci.RejectCustomerWrites = key => key.StartsWith(File(database) + "/wal/", StringComparison.Ordinal);
+        s3.RejectCustomerWrites = key => key.StartsWith(File(database) + "/wal/", StringComparison.Ordinal);
         time.Advance(TimeSpan.FromSeconds(10));
         await backup.RunOnceAsync(token);
         var failed = backup.Status.Files.Single(file => file.File == File(database));
         await Assert.That(failed.LastError).IsNotNull();
         await Assert.That(failed.Generation).IsNull();
-        await Assert.That(oci.Objects.Keys.Any(key => key.StartsWith(File(database) + "/snapshots/", StringComparison.Ordinal))).IsFalse();
+        await Assert.That(s3.Objects.Keys.Any(key => key.StartsWith(File(database) + "/snapshots/", StringComparison.Ordinal))).IsFalse();
         using var detached = await api.Client.DeleteAsync(ManagementApi.Uri(database.ProjectPath + "/backup-destination"), token);
         await Assert.That(detached.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
         var at = time.GetUtcNow();
         await backup.StopAsync(token);
         await Assert.That(time.GetUtcNow()).IsEqualTo(at);
-        await Assert.That(oci.Objects.Keys.Count(key => key.StartsWith(File(database) + "/snapshots/", StringComparison.Ordinal))).IsEqualTo(1);
+        await Assert.That(s3.Objects.Keys.Count(key => key.StartsWith(File(database) + "/snapshots/", StringComparison.Ordinal))).IsEqualTo(1);
         await AssertRestoredAsync(api, data, database, at, "failed-detached", text, token);
         await Assert.That(backup.Status.Files).IsEmpty();
         await Assert.That(Directory.EnumerateFiles(Path.Combine(api.Server.DataDirectory, ".backup"))).IsEmpty();
-        await Assert.That(oci.BadSignatures).IsEqualTo(0);
+        await Assert.That(s3.BadSignatures).IsEqualTo(0);
     }
 
     [Test]
@@ -67,7 +67,7 @@ public sealed class BackupShutdownTests
     {
         const int customers = 3;
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         using var shutdown = CancellationTokenSource.CreateLinkedTokenSource(token);
         var directory = Directory.CreateTempSubdirectory("terrabase-final-configurations-").FullName;
         var hook = new UsageCommitHook();
@@ -83,11 +83,11 @@ public sealed class BackupShutdownTests
         {
             api = await ManagementApi.StartAsync(settings =>
             {
-                oci.Configure(settings);
+                s3.Configure(settings);
                 settings["data-directory"] = directory;
             }, services =>
             {
-                oci.Route(services);
+                s3.Route(services);
                 hook.Install(services);
                 services.AddSingleton<IWalBackup>(provider => taps = new TrackedBackup(provider.GetRequiredService<SqliteStorageEngine>()));
                 var registration = services.Single(descriptor => descriptor.ServiceType == typeof(IHostedService)
@@ -124,8 +124,8 @@ public sealed class BackupShutdownTests
             await Assert.That(backup.Status.Files.Count).IsEqualTo(customers + 2);
             await Assert.That(backup.Status.Files.All(file => file.Generation is not null && file.LastDrill is not null)).IsTrue();
             var snapshot = backup.Status.Files.Single(file => file.File == File(healthy));
-            await Assert.That(oci.Objects.Keys.Any(key => key.StartsWith(File(healthy) + "/wal/", StringComparison.Ordinal))).IsFalse();
-            var customerObjects = oci.CustomerObjects.Count;
+            await Assert.That(s3.Objects.Keys.Any(key => key.StartsWith(File(healthy) + "/wal/", StringComparison.Ordinal))).IsFalse();
+            var customerObjects = s3.CustomerObjects.Count;
 
             time.Advance(TimeSpan.FromSeconds(1));
             var committed = new Faker().Lorem.Sentence();
@@ -163,10 +163,10 @@ public sealed class BackupShutdownTests
             stop = backup.StopAsync(shutdown.Token);
             await entered[0].Task.WaitAsync(shutdown.Token);
             await Assert.That(Volatile.Read(ref healthyReads)).IsEqualTo(1);
-            var finalWal = oci.Objects.Keys.Single(key => key.StartsWith(File(healthy) + "/wal/", StringComparison.Ordinal));
+            var finalWal = s3.Objects.Keys.Single(key => key.StartsWith(File(healthy) + "/wal/", StringComparison.Ordinal));
             var finalAt = BackupLayout.ParseSegment(finalWal)!.At;
             await Assert.That(finalAt).IsGreaterThan(snapshot.LastShippedAt!.Value);
-            await Assert.That(oci.Objects.Keys.Count(key => key.StartsWith(File(healthy) + "/snapshots/", StringComparison.Ordinal))).IsEqualTo(1);
+            await Assert.That(s3.Objects.Keys.Count(key => key.StartsWith(File(healthy) + "/snapshots/", StringComparison.Ordinal))).IsEqualTo(1);
             await AssertRestoredAsync(api, healthyData, healthy, finalAt, "final-config-wal", committed, shutdown.Token);
             await Assert.That(shutdown.IsCancellationRequested).IsFalse();
             await Assert.That(elapsed.Elapsed).IsLessThan(budget);
@@ -186,11 +186,11 @@ public sealed class BackupShutdownTests
             await Assert.That(Volatile.Read(ref reads)).IsEqualTo(customers);
             await Assert.That(Volatile.Read(ref healthyReads)).IsEqualTo(1);
             await Assert.That(release.Task.IsCompleted).IsFalse();
-            await Assert.That(oci.CustomerObjects.Count).IsEqualTo(customerObjects);
+            await Assert.That(s3.CustomerObjects.Count).IsEqualTo(customerObjects);
             await Assert.That(taps!.Taps.All(tap => tap.Returned)).IsTrue();
             await Assert.That(backup.Status.Files).IsEmpty();
             await Assert.That(Directory.EnumerateFiles(Path.Combine(directory, ".backup"))).IsEmpty();
-            await Assert.That(oci.BadSignatures).IsEqualTo(0);
+            await Assert.That(s3.BadSignatures).IsEqualTo(0);
         }
         finally
         {
@@ -208,7 +208,7 @@ public sealed class BackupShutdownTests
     public async Task Final_customer_io_waits_until_platform_wal_and_a_cached_detachment_are_restorable(bool detach)
     {
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         using var shutdown = CancellationTokenSource.CreateLinkedTokenSource(token);
         var directory = Directory.CreateTempSubdirectory("terrabase-final-customer-").FullName;
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -225,11 +225,11 @@ public sealed class BackupShutdownTests
         {
             api = await ManagementApi.StartAsync(settings =>
             {
-                oci.Configure(settings);
+                s3.Configure(settings);
                 settings["data-directory"] = directory;
             }, services =>
             {
-                oci.Route(services);
+                s3.Route(services);
                 services.AddSingleton<IWalBackup>(provider => taps = new TrackedBackup(provider.GetRequiredService<SqliteStorageEngine>()));
                 var registration = services.Single(descriptor => descriptor.ServiceType == typeof(IHostedService)
                     && descriptor.ImplementationFactory?.Method.ReturnType == typeof(ContinuousBackup));
@@ -262,8 +262,8 @@ public sealed class BackupShutdownTests
             await initial;
             var snapshot = backup.Status.Files.Single(file => file.File == File(healthy));
             await Assert.That(snapshot.Generation).IsNotNull();
-            await Assert.That(oci.Objects.Keys.Any(key => key.StartsWith(File(healthy) + "/wal/", StringComparison.Ordinal))).IsFalse();
-            var customerObjects = oci.CustomerObjects.Count;
+            await Assert.That(s3.Objects.Keys.Any(key => key.StartsWith(File(healthy) + "/wal/", StringComparison.Ordinal))).IsFalse();
+            var customerObjects = s3.CustomerObjects.Count;
             if (detach)
             {
                 // Keep the ten-second shipping cache fresh: final refresh must still notice this committed detachment.
@@ -280,7 +280,7 @@ public sealed class BackupShutdownTests
                 await PutAsync(stalledData!, stalled, "final", committed, token);
             }
 
-            oci.BeforeCustomerWrite = async (key, cancellationToken) =>
+            s3.BeforeCustomerWrite = async (key, cancellationToken) =>
             {
                 if (!key.Contains("/wal/", StringComparison.Ordinal) && !key.Contains("/snapshots/", StringComparison.Ordinal))
                 {
@@ -309,17 +309,17 @@ public sealed class BackupShutdownTests
             var elapsed = Stopwatch.StartNew();
             stop = backup.StopAsync(shutdown.Token);
             await entered.Task.WaitAsync(shutdown.Token);
-            var finalWal = oci.Objects.Keys.Single(key => key.StartsWith(File(healthy) + "/wal/", StringComparison.Ordinal));
+            var finalWal = s3.Objects.Keys.Single(key => key.StartsWith(File(healthy) + "/wal/", StringComparison.Ordinal));
             var finalAt = BackupLayout.ParseSegment(finalWal)!.At;
             await Assert.That(finalAt).IsGreaterThan(snapshot.LastShippedAt!.Value);
-            await Assert.That(oci.Objects.Keys.Count(key => key.StartsWith(File(healthy) + "/snapshots/", StringComparison.Ordinal))).IsEqualTo(1);
+            await Assert.That(s3.Objects.Keys.Count(key => key.StartsWith(File(healthy) + "/snapshots/", StringComparison.Ordinal))).IsEqualTo(1);
             await AssertRestoredAsync(api, healthyData, healthy, finalAt, "final-wal", committed, shutdown.Token);
             if (detach)
             {
                 var detachedAt = backup.Status.Files.Single(file => file.File == File(customer)).LastShippedAt!.Value;
                 using var detachedData = await api.CreateClientAsync(customer.Organization, "documents:read");
                 await AssertRestoredAsync(api, detachedData, customer, detachedAt, "detached", committed, shutdown.Token);
-                await Assert.That(oci.CustomerObjects.Count).IsEqualTo(customerObjects);
+                await Assert.That(s3.CustomerObjects.Count).IsEqualTo(customerObjects);
             }
 
             await Assert.That(shutdown.IsCancellationRequested).IsFalse();
@@ -336,14 +336,14 @@ public sealed class BackupShutdownTests
             await Assert.That(taps.Taps.All(tap => tap.Returned)).IsTrue();
             await Assert.That(backup.Status.Files).IsEmpty();
             await Assert.That(Directory.EnumerateFiles(Path.Combine(directory, ".backup"))).IsEmpty();
-            await Assert.That(oci.BadSignatures).IsEqualTo(0);
+            await Assert.That(s3.BadSignatures).IsEqualTo(0);
         }
         finally
         {
             release.TrySetResult();
             joinRelease.TrySetResult();
             await shutdown.CancelAsync();
-            oci.BeforeCustomerWrite = null;
+            s3.BeforeCustomerWrite = null;
             stop ??= backup?.StopAsync(shutdown.Token);
             await CleanupAsync(stop, taps, api, directory);
         }
@@ -353,7 +353,7 @@ public sealed class BackupShutdownTests
     public async Task An_already_expired_stop_token_joins_active_customer_io_before_disposing_any_tap()
     {
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         using var shutdown = new CancellationTokenSource();
         var directory = Directory.CreateTempSubdirectory("terrabase-expired-customer-stop-").FullName;
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -371,11 +371,11 @@ public sealed class BackupShutdownTests
         {
             api = await ManagementApi.StartAsync(settings =>
             {
-                oci.Configure(settings);
+                s3.Configure(settings);
                 settings["data-directory"] = directory;
             }, services =>
             {
-                oci.Route(services);
+                s3.Route(services);
                 services.AddSingleton<IWalBackup>(provider => taps = new TrackedBackup(provider.GetRequiredService<SqliteStorageEngine>()));
                 var registration = services.Single(descriptor => descriptor.ServiceType == typeof(IHostedService)
                     && descriptor.ImplementationFactory?.Method.ReturnType == typeof(ContinuousBackup));
@@ -386,7 +386,7 @@ public sealed class BackupShutdownTests
             backup = api.Server.Services.GetRequiredService<ContinuousBackup>();
             var customer = await api.CreateManagedDatabaseAsync("customer");
             await SetCustomerAsync(api, customer, token);
-            oci.BeforeCustomerWrite = async (key, cancellationToken) =>
+            s3.BeforeCustomerWrite = async (key, cancellationToken) =>
             {
                 if (!key.StartsWith(File(customer) + "/snapshots/", StringComparison.Ordinal))
                 {
@@ -426,16 +426,16 @@ public sealed class BackupShutdownTests
             await Assert.That(taps.Taps.All(tap => tap.Returned)).IsTrue();
             await Assert.That(backup.Status.Files).IsEmpty();
             await Assert.That(Directory.EnumerateFiles(Path.Combine(directory, ".backup"))).IsEmpty();
-            await Assert.That(oci.Objects.Keys.Any(key => key.StartsWith(File(customer) + "/", StringComparison.Ordinal))).IsFalse();
-            await Assert.That(oci.CustomerObjects.Keys.Any(key => key.StartsWith(File(customer) + "/", StringComparison.Ordinal))).IsFalse();
-            await Assert.That(oci.BadSignatures).IsEqualTo(0);
+            await Assert.That(s3.Objects.Keys.Any(key => key.StartsWith(File(customer) + "/", StringComparison.Ordinal))).IsFalse();
+            await Assert.That(s3.CustomerObjects.Keys.Any(key => key.StartsWith(File(customer) + "/", StringComparison.Ordinal))).IsFalse();
+            await Assert.That(s3.BadSignatures).IsEqualTo(0);
         }
         finally
         {
             release.TrySetResult();
             joinRelease.TrySetResult();
             await shutdown.CancelAsync();
-            oci.BeforeCustomerWrite = null;
+            s3.BeforeCustomerWrite = null;
             stop ??= backup?.StopAsync(shutdown.Token);
             if (pass is not null)
             {
@@ -449,7 +449,7 @@ public sealed class BackupShutdownTests
     [Test]
     public async Task Cancelling_the_final_upload_returns_every_tap_and_allows_the_data_directory_to_reopen()
     {
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         using var shutdown = new CancellationTokenSource();
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var directory = Directory.CreateTempSubdirectory("terrabase-backup-shutdown-").FullName;
@@ -464,11 +464,11 @@ public sealed class BackupShutdownTests
         {
             api = await ManagementApi.StartAsync(settings =>
             {
-                oci.Configure(settings);
+                s3.Configure(settings);
                 settings["data-directory"] = directory;
             }, services =>
             {
-                oci.Route(services);
+                s3.Route(services);
                 services.AddSingleton<IWalBackup>(provider => taps = new TrackedBackup(provider.GetRequiredService<SqliteStorageEngine>()));
                 // Factory disposal rejoins StopAsync. The test observes its failure directly; the host must still dispose.
                 var registration = services.Single(descriptor => descriptor.ServiceType == typeof(IHostedService)
@@ -490,7 +490,7 @@ public sealed class BackupShutdownTests
                 ["v1/_system", File(database), File(other)]);
             await Assert.That(backup.Status.Files.All(file => file.Generation is not null)).IsTrue();
 
-            oci.BeforePut = async (key, token) =>
+            s3.BeforePut = async (key, token) =>
             {
                 if (key.Contains("/wal/", StringComparison.Ordinal) || key.Contains("/snapshots/", StringComparison.Ordinal))
                 {
@@ -514,7 +514,7 @@ public sealed class BackupShutdownTests
 
             stop = backup.StopAsync(shutdown.Token);
             var key = await blocked.Task.WaitAsync(deadline.Token);
-            await Assert.That(oci.Objects.ContainsKey(key)).IsFalse();
+            await Assert.That(s3.Objects.ContainsKey(key)).IsFalse();
             await shutdown.CancelAsync();
             Exception? failure = null;
             try
@@ -554,7 +554,7 @@ public sealed class BackupShutdownTests
         {
             await shutdown.CancelAsync();
             release.TrySetResult();
-            oci.BeforePut = null;
+            s3.BeforePut = null;
             stop ??= backup?.StopAsync(shutdown.Token);
             await CleanupAsync(stop, taps, api, directory);
         }
@@ -563,7 +563,7 @@ public sealed class BackupShutdownTests
     [Test]
     public async Task A_failing_tap_disposal_still_returns_every_other_tap_and_lets_the_engine_close()
     {
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         var directory = Directory.CreateTempSubdirectory("terrabase-backup-tap-failure-").FullName;
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
@@ -574,11 +574,11 @@ public sealed class BackupShutdownTests
         {
             api = await ManagementApi.StartAsync(settings =>
             {
-                oci.Configure(settings);
+                s3.Configure(settings);
                 settings["data-directory"] = directory;
             }, services =>
             {
-                oci.Route(services);
+                s3.Route(services);
                 // The first tap shutdown disposes returns its session and then throws.
                 services.AddSingleton<IWalBackup>(provider =>
                     taps = new TrackedBackup(provider.GetRequiredService<SqliteStorageEngine>(), failFirstDisposal: true));

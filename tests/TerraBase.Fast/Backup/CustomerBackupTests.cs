@@ -18,9 +18,9 @@ public sealed class CustomerBackupTests
     public async Task Both_destinations_ship_encrypted_snapshots_and_wal_and_restore_actual_documents()
     {
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         var time = Clock();
-        await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
+        await using var api = await ManagementApi.StartAsync(s3.Configure, services => ManualShipping(s3, services), time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
         var database = await api.CreateManagedDatabaseAsync();
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
@@ -61,15 +61,15 @@ public sealed class CustomerBackupTests
                 "default-" + (destination is null ? "omitted" : destination.Length == 0 ? "empty" : destination), destination);
             await AssertDocumentAsync(data, defaultRestore, "after", after);
         }
-        var customerKeys = oci.CustomerObjects.Keys.ToArray();
+        var customerKeys = s3.CustomerObjects.Keys.ToArray();
         await Assert.That(customerKeys.Any(key => key.StartsWith(File(database) + "/snapshots/", StringComparison.Ordinal))).IsTrue();
         await Assert.That(customerKeys.Any(key => key.StartsWith(File(database) + "/wal/", StringComparison.Ordinal))).IsTrue();
-        await Assert.That(customerKeys.All(oci.Objects.ContainsKey)).IsTrue();
-        await Assert.That(oci.Objects.Keys.Any(key => key.StartsWith("v1/_system/", StringComparison.Ordinal))).IsTrue();
+        await Assert.That(customerKeys.All(s3.Objects.ContainsKey)).IsTrue();
+        await Assert.That(s3.Objects.Keys.Any(key => key.StartsWith("v1/_system/", StringComparison.Ordinal))).IsTrue();
         await Assert.That(customerKeys.Any(key => key.Contains("_system", StringComparison.Ordinal))).IsFalse();
-        await Assert.That(oci.CustomerObjects.All(item => item.Value.AsSpan().StartsWith("TBK1"u8) || item.Key.StartsWith("v1/keys/", StringComparison.Ordinal))).IsTrue();
-        await Assert.That(oci.CustomerObjects.Values.Any(content => content.AsSpan().IndexOf(Encoding.UTF8.GetBytes(after)) >= 0)).IsFalse();
-        await Assert.That(oci.BadSignatures).IsEqualTo(0);
+        await Assert.That(s3.CustomerObjects.All(item => item.Value.AsSpan().StartsWith("TBK1"u8) || item.Key.StartsWith("v1/keys/", StringComparison.Ordinal))).IsTrue();
+        await Assert.That(s3.CustomerObjects.Values.Any(content => content.AsSpan().IndexOf(Encoding.UTF8.GetBytes(after)) >= 0)).IsFalse();
+        await Assert.That(s3.BadSignatures).IsEqualTo(0);
     }
 
     [Test]
@@ -78,9 +78,9 @@ public sealed class CustomerBackupTests
     public async Task Project_tokens_select_platform_or_customer_plans_and_restore_only_within_each_stored_window(string mode)
     {
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         var time = Clock();
-        await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
+        await using var api = await ManagementApi.StartAsync(s3.Configure, services => ManualShipping(s3, services), time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
         var database = await api.CreateManagedDatabaseAsync();
         await api.VerifyProjectBindingAsync(database.Organization, database.Project);
@@ -175,7 +175,7 @@ public sealed class CustomerBackupTests
             await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         }
 
-        await Assert.That(oci.BadSignatures).IsEqualTo(0);
+        await Assert.That(s3.BadSignatures).IsEqualTo(0);
     }
 
     [Test]
@@ -184,45 +184,45 @@ public sealed class CustomerBackupTests
     public async Task Unusable_customer_snapshot_and_segment_entries_consume_the_paginated_plan_budget(bool segments)
     {
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         var time = Clock();
-        await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
+        await using var api = await ManagementApi.StartAsync(s3.Configure, services => ManualShipping(s3, services), time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
         var database = await api.CreateManagedDatabaseAsync();
         await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         await SetAsync(api, database, "customer");
         await ShipAsync(api, time);
         var latest = await LatestAsync(api.Client, database, "customer");
-        var generation = Generations(oci.CustomerObjects, database).Single();
+        var generation = Generations(s3.CustomerObjects, database).Single();
         var prefix = File(database) + (segments ? "/wal/" + generation + "/" : "/snapshots/");
-        oci.ObservedListPrefix = prefix;
+        s3.ObservedListPrefix = prefix;
         // Sort beyond the segment start-after cursor; each dot-component key is filtered before parsing.
         var junk = Enumerable.Range(0, 10_000).Select(index => prefix + "zzz/./junk-" + index.ToString("D5", CultureInfo.InvariantCulture)).ToArray();
         foreach (var key in junk)
         {
-            oci.SeedObject(customer: true, key, []);
+            s3.SeedObject(customer: true, key, []);
         }
 
         using var reader = ProjectClient(api, database.Project, "databases:read");
         await ErrorAssert.ErrorAsync(reader.PostAsJsonAsync(Uri(database.Data + "/point-in-time/plan"), new { pointInTime = latest, destination = "customer" }, cancellationToken),
             HttpStatusCode.ServiceUnavailable, "pitr_plan_limit", "the point-in-time plan metadata scan exceeds 10000 objects");
-        await Assert.That(oci.ListRequests).IsGreaterThanOrEqualTo(10);
-        oci.CustomerListingOverride = (requested, keys) => requested == prefix
+        await Assert.That(s3.ListRequests).IsGreaterThanOrEqualTo(10);
+        s3.CustomerListingOverride = (requested, keys) => requested == prefix
             ? [.. keys.Where(key => !key.Contains("/./", StringComparison.Ordinal))] : keys;
 
         using var recovered = await reader.PostAsJsonAsync(Uri(database.Data + "/point-in-time/plan"), new { pointInTime = latest, destination = "customer" }, cancellationToken);
         recovered.EnsureSuccessStatusCode();
         await Assert.That((await recovered.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cancellationToken)).GetProperty("snapshotAt").GetDateTimeOffset()).IsEqualTo(latest);
-        await Assert.That(oci.BadSignatures).IsEqualTo(0);
+        await Assert.That(s3.BadSignatures).IsEqualTo(0);
     }
 
     [Test]
     public async Task Project_destination_configuration_requires_scope_and_hides_other_projects_tenants_and_database_narrowed_tokens()
     {
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         var time = Clock();
-        await using var api = await ManagementApi.StartAsync(oci.Configure, oci.Route, time);
+        await using var api = await ManagementApi.StartAsync(s3.Configure, s3.Route, time);
         var database = await api.CreateManagedDatabaseAsync();
         var siblingProject = await api.CreateProjectAsync(database.Organization, "Destination sibling");
         var sibling = await api.CreateManagedDatabaseAsync(database.Organization, siblingProject, "main");
@@ -289,16 +289,16 @@ public sealed class CustomerBackupTests
             await AssertDestinationAsync(await client.GetStringAsync(Uri($"/v1/projects/{target.Project}/backup-destination"), cancellationToken), "both");
         }
 
-        await Assert.That(oci.BadSignatures).IsEqualTo(0);
+        await Assert.That(s3.BadSignatures).IsEqualTo(0);
     }
 
     [Test]
     public async Task Customer_only_shipping_is_isolated_to_its_project_and_keeps_system_backups_on_platform()
     {
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         var time = Clock();
-        await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
+        await using var api = await ManagementApi.StartAsync(s3.Configure, services => ManualShipping(s3, services), time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
         var customer = await api.CreateManagedDatabaseAsync();
         var siblingProject = await api.CreateProjectAsync(customer.Organization, "Platform sibling");
@@ -311,12 +311,12 @@ public sealed class CustomerBackupTests
         await PutAsync(data, customer, "only", text);
         await ShipAsync(api, time);
 
-        await Assert.That(oci.CustomerObjects.Keys.Any(key => key.StartsWith(File(customer) + "/snapshots/", StringComparison.Ordinal))).IsTrue();
-        await Assert.That(oci.Objects.Keys.Any(key => key.StartsWith(File(customer) + "/", StringComparison.Ordinal))).IsFalse();
-        await Assert.That(oci.Objects.Keys.Any(key => key.StartsWith(File(sibling) + "/snapshots/", StringComparison.Ordinal))).IsTrue();
-        await Assert.That(oci.Objects.Keys.Any(key => key.StartsWith(File(otherOrganization) + "/snapshots/", StringComparison.Ordinal))).IsTrue();
-        await Assert.That(oci.Objects.Keys.Any(key => key.StartsWith("v1/_system/", StringComparison.Ordinal))).IsTrue();
-        await Assert.That(oci.CustomerObjects.Keys.All(key => key.StartsWith(File(customer) + "/", StringComparison.Ordinal)
+        await Assert.That(s3.CustomerObjects.Keys.Any(key => key.StartsWith(File(customer) + "/snapshots/", StringComparison.Ordinal))).IsTrue();
+        await Assert.That(s3.Objects.Keys.Any(key => key.StartsWith(File(customer) + "/", StringComparison.Ordinal))).IsFalse();
+        await Assert.That(s3.Objects.Keys.Any(key => key.StartsWith(File(sibling) + "/snapshots/", StringComparison.Ordinal))).IsTrue();
+        await Assert.That(s3.Objects.Keys.Any(key => key.StartsWith(File(otherOrganization) + "/snapshots/", StringComparison.Ordinal))).IsTrue();
+        await Assert.That(s3.Objects.Keys.Any(key => key.StartsWith("v1/_system/", StringComparison.Ordinal))).IsTrue();
+        await Assert.That(s3.CustomerObjects.Keys.All(key => key.StartsWith(File(customer) + "/", StringComparison.Ordinal)
             || key.StartsWith($"v1/keys/{customer.Organization}/{customer.Project}/", StringComparison.Ordinal))).IsTrue();
         using var platformWindow = await api.Client.GetAsync(Uri(customer.Path + "/point-in-time"), cancellationToken);
         using var platformRestore = await api.Client.PostAsJsonAsync(Uri(customer.Path + "/point-in-time/restore"), new { pointInTime = time.GetUtcNow(), name = "no-platform" }, cancellationToken);
@@ -331,16 +331,16 @@ public sealed class CustomerBackupTests
         await Assert.That(siblingWindow.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         var restored = await RestoreAsync(api, customer, await LatestAsync(api.Client, customer, "customer"), "customer-restored", "customer");
         await AssertDocumentAsync(data, restored, "only", text);
-        await Assert.That(oci.BadSignatures).IsEqualTo(0);
+        await Assert.That(s3.BadSignatures).IsEqualTo(0);
     }
 
     [Test]
     public async Task Credentials_are_sealed_in_the_catalog_and_delete_resumes_platform_without_removing_customer_objects()
     {
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         var time = Clock();
-        await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
+        await using var api = await ManagementApi.StartAsync(s3.Configure, services => ManualShipping(s3, services), time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
         var database = await api.CreateManagedDatabaseAsync();
         var route = Uri(database.ProjectPath + "/backup-destination");
@@ -364,20 +364,20 @@ public sealed class CustomerBackupTests
         var text = new Faker().Lorem.Sentence(12);
         await PutAsync(data, database, "kept", text);
         await ShipAsync(api, time);
-        var retained = oci.CustomerObjects.ToDictionary(item => item.Key, item => item.Value.ToArray(), StringComparer.Ordinal);
+        var retained = s3.CustomerObjects.ToDictionary(item => item.Key, item => item.Value.ToArray(), StringComparer.Ordinal);
         using var deleted = await api.Client.DeleteAsync(route, cancellationToken);
         using var gone = await api.Client.GetAsync(route, cancellationToken);
         await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
         await Assert.That(gone.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         await ShipAsync(api, time);
-        await Assert.That(oci.CustomerObjects.Keys).IsEquivalentTo(retained.Keys);
-        await Assert.That(retained.All(item => oci.CustomerObjects[item.Key].AsSpan().SequenceEqual(item.Value))).IsTrue();
-        await Assert.That(oci.Objects.Keys.Any(key => key.StartsWith(File(database) + "/snapshots/", StringComparison.Ordinal))).IsTrue();
+        await Assert.That(s3.CustomerObjects.Keys).IsEquivalentTo(retained.Keys);
+        await Assert.That(retained.All(item => s3.CustomerObjects[item.Key].AsSpan().SequenceEqual(item.Value))).IsTrue();
+        await Assert.That(s3.Objects.Keys.Any(key => key.StartsWith(File(database) + "/snapshots/", StringComparison.Ordinal))).IsTrue();
         using var customerWindow = await api.Client.GetAsync(Uri(database.Path + "/point-in-time?destination=customer"), cancellationToken);
         await Assert.That(customerWindow.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         var restored = await RestoreAsync(api, database, await LatestAsync(api.Client, database), "platform-resumed");
         await AssertDocumentAsync(data, restored, "kept", text);
-        await Assert.That(oci.BadSignatures).IsEqualTo(0);
+        await Assert.That(s3.BadSignatures).IsEqualTo(0);
     }
 
     [Test]
@@ -386,12 +386,12 @@ public sealed class CustomerBackupTests
     public async Task An_empty_project_with_a_customer_backup_destination_requires_detach_before_deletion(bool viaCommit)
     {
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         var time = Clock();
         var queryClock = new SteppingClock();
-        await using var api = await ManagementApi.StartAsync(oci.Configure, services =>
+        await using var api = await ManagementApi.StartAsync(s3.Configure, services =>
         {
-            oci.Route(services);
+            s3.Route(services);
             services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, queryClock);
         }, time);
         var organization = await api.CreateOrganizationAsync(new Faker().Company.CompanyName());
@@ -418,7 +418,7 @@ public sealed class CustomerBackupTests
             .Because(await deleted.Content.ReadAsStringAsync(cancellationToken));
         using var gone = await api.Client.GetAsync(projectRoute, cancellationToken);
         await Assert.That(gone.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-        await Assert.That(oci.BadSignatures).IsEqualTo(0);
+        await Assert.That(s3.BadSignatures).IsEqualTo(0);
 
         Task<HttpResponseMessage> DeleteProjectAsync()
         {
@@ -436,9 +436,9 @@ public sealed class CustomerBackupTests
     public async Task Creating_replacing_and_detaching_a_backup_destination_advances_the_organization_fence()
     {
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         var time = Clock();
-        await using var api = await ManagementApi.StartAsync(oci.Configure, oci.Route, time);
+        await using var api = await ManagementApi.StartAsync(s3.Configure, s3.Route, time);
         var organization = await api.CreateOrganizationAsync(new Faker().Company.CompanyName());
         var project = await api.CreateProjectAsync(organization, "Backup fencing");
         var route = Uri($"/v1/management/organizations/{organization}/projects/{project}/backup-destination");
@@ -489,9 +489,9 @@ public sealed class CustomerBackupTests
     public async Task Changing_a_destination_starts_a_new_generation_and_stops_platform_shipping_in_customer_mode()
     {
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         var time = Clock();
-        await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
+        await using var api = await ManagementApi.StartAsync(s3.Configure, services => ManualShipping(s3, services), time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
         var database = await api.CreateManagedDatabaseAsync();
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
@@ -503,16 +503,16 @@ public sealed class CustomerBackupTests
         await PutAsync(data, database, "before", before);
         await ShipAsync(api, time);
         var platformLatest = time.GetUtcNow();
-        var initial = Generations(oci.CustomerObjects, database);
+        var initial = Generations(s3.CustomerObjects, database);
         await Assert.That(initial.Count).IsEqualTo(1);
-        var platformKeys = oci.Objects.Keys.Where(key => key.StartsWith(File(database) + "/", StringComparison.Ordinal)).ToArray();
+        var platformKeys = s3.Objects.Keys.Where(key => key.StartsWith(File(database) + "/", StringComparison.Ordinal)).ToArray();
         await SetAsync(api, database, "customer");
         await PutAsync(data, database, "after", after);
         await ShipAsync(api, time);
-        var changed = Generations(oci.CustomerObjects, database);
+        var changed = Generations(s3.CustomerObjects, database);
         await Assert.That(changed.Count).IsEqualTo(2);
         await Assert.That(changed.IsSupersetOf(initial)).IsTrue();
-        await Assert.That(oci.Objects.Keys.Where(key => key.StartsWith(File(database) + "/", StringComparison.Ordinal))).IsEquivalentTo(platformKeys);
+        await Assert.That(s3.Objects.Keys.Where(key => key.StartsWith(File(database) + "/", StringComparison.Ordinal))).IsEquivalentTo(platformKeys);
         using var platformWindow = await api.Client.GetAsync(Uri(database.Path + "/point-in-time?destination=platform"), cancellationToken);
         using var customerWindow = await api.Client.GetAsync(Uri(database.Path + "/point-in-time?destination=customer"), cancellationToken);
         platformWindow.EnsureSuccessStatusCode();
@@ -523,16 +523,16 @@ public sealed class CustomerBackupTests
         var restored = await RestoreAsync(api, database, customerLatest, "changed-destination", "customer");
         await AssertDocumentAsync(data, restored, "before", before);
         await AssertDocumentAsync(data, restored, "after", after);
-        await Assert.That(oci.BadSignatures).IsEqualTo(0);
+        await Assert.That(s3.BadSignatures).IsEqualTo(0);
     }
 
     [Test]
     public async Task Invalid_destinations_and_unauthorized_callers_cannot_change_or_restore_customer_backups()
     {
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         var time = Clock();
-        await using var api = await ManagementApi.StartAsync(oci.Configure, oci.Route, time);
+        await using var api = await ManagementApi.StartAsync(s3.Configure, s3.Route, time);
         var database = await api.CreateManagedDatabaseAsync();
         var route = Uri(database.ProjectPath + "/backup-destination");
         var valid = Destination("both");
@@ -548,7 +548,7 @@ public sealed class CustomerBackupTests
             await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
         }
 
-        await Assert.That(oci.CustomerObjects.Count).IsEqualTo(0);
+        await Assert.That(s3.CustomerObjects.Count).IsEqualTo(0);
         await SetAsync(api, database, "both");
         var viewerId = await api.AddMemberAsync(api.Client, database.Organization, "viewer");
         using var viewer = api.As(viewerId);
@@ -579,7 +579,7 @@ public sealed class CustomerBackupTests
         using var wrongCredentials = await api.Client.PutAsJsonAsync(route,
             new Dictionary<string, string>(valid, StringComparer.Ordinal) { ["secretKey"] = "wrong-secret" }, cancellationToken);
         await Assert.That(wrongCredentials.IsSuccessStatusCode).IsFalse();
-        await Assert.That(oci.BadSignatures).IsGreaterThan(0);
+        await Assert.That(s3.BadSignatures).IsGreaterThan(0);
         using var unchanged = await api.Client.GetAsync(route, cancellationToken);
         unchanged.EnsureSuccessStatusCode();
         await AssertDestinationAsync(await unchanged.Content.ReadAsStringAsync(cancellationToken), "both");
@@ -589,9 +589,9 @@ public sealed class CustomerBackupTests
     public async Task A_partial_mirror_upload_recovers_without_overlapping_segments_and_both_copies_restore()
     {
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         var time = Clock();
-        await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
+        await using var api = await ManagementApi.StartAsync(s3.Configure, services => ManualShipping(s3, services), time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
         var database = await api.CreateManagedDatabaseAsync();
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
@@ -601,22 +601,22 @@ public sealed class CustomerBackupTests
         var texts = Enumerable.Range(0, 4).Select(_ => faker.Lorem.Sentence(12)).ToArray();
         await PutAsync(data, database, "initial", texts[0]);
         await ShipAsync(api, time);
-        var initial = Generations(oci.CustomerObjects, database);
+        var initial = Generations(s3.CustomerObjects, database);
 
         // The platform accepts the segment; the customer refuses its copy.
-        oci.RejectCustomerWrites = key => key.StartsWith(File(database) + "/wal/", StringComparison.Ordinal);
+        s3.RejectCustomerWrites = key => key.StartsWith(File(database) + "/wal/", StringComparison.Ordinal);
         await PutAsync(data, database, "partial", texts[1]);
         await ShipAsync(api, time);
         var partialAt = time.GetUtcNow();
-        var partialSegments = oci.Objects.Keys.Where(key => key.StartsWith(File(database) + "/wal/", StringComparison.Ordinal)).ToArray();
+        var partialSegments = s3.Objects.Keys.Where(key => key.StartsWith(File(database) + "/wal/", StringComparison.Ordinal)).ToArray();
         await Assert.That(partialSegments.Length).IsEqualTo(1);
-        await Assert.That(partialSegments.Any(oci.CustomerObjects.ContainsKey)).IsFalse();
+        await Assert.That(partialSegments.Any(s3.CustomerObjects.ContainsKey)).IsFalse();
 
         // A write arrives before recovery. Its fresh generation must snapshot both writes.
         await PutAsync(data, database, "recovered", texts[2]);
-        oci.RejectCustomerWrites = _ => false;
+        s3.RejectCustomerWrites = _ => false;
         await ShipAsync(api, time);
-        await Assert.That(Generations(oci.CustomerObjects, database).Count).IsEqualTo(initial.Count + 1);
+        await Assert.That(Generations(s3.CustomerObjects, database).Count).IsEqualTo(initial.Count + 1);
         await PutAsync(data, database, "later", texts[3]);
         await ShipAsync(api, time);
 
@@ -635,23 +635,23 @@ public sealed class CustomerBackupTests
         await AssertDocumentAsync(data, earlier, "partial", texts[1]);
         using var absent = await data.GetAsync(Uri(ManagementApi.DocumentPath(earlier, "people", "recovered")), cancellationToken);
         await Assert.That(absent.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-        foreach (var objects in new[] { oci.Objects, oci.CustomerObjects })
+        foreach (var objects in new[] { s3.Objects, s3.CustomerObjects })
         {
             var segments = objects.Keys.Where(key => key.StartsWith(File(database) + "/wal/", StringComparison.Ordinal)).ToArray();
             var starts = segments.Select(key => key[..key.LastIndexOf('-')]).ToArray();
             await Assert.That(starts.Distinct(StringComparer.Ordinal).Count()).IsEqualTo(segments.Length);
         }
 
-        await Assert.That(oci.BadSignatures).IsEqualTo(0);
+        await Assert.That(s3.BadSignatures).IsEqualTo(0);
     }
 
     [Test]
     public async Task Hostile_customer_listings_cannot_read_or_delete_foreign_project_objects()
     {
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         var time = Clock();
-        await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
+        await using var api = await ManagementApi.StartAsync(s3.Configure, services => ManualShipping(s3, services), time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
         var database = await api.CreateManagedDatabaseAsync();
         var foreignProject = await api.CreateProjectAsync(database.Organization, "Foreign project");
@@ -665,15 +665,15 @@ public sealed class CustomerBackupTests
         await PutAsync(data, database, "kept", text);
         await PutAsync(foreignData, foreign, "before", text);
         await ShipAsync(api, time);
-        var foreignSnapshot = oci.Objects.Keys.Single(key => key.StartsWith(File(foreign) + "/snapshots/", StringComparison.Ordinal));
+        var foreignSnapshot = s3.Objects.Keys.Single(key => key.StartsWith(File(foreign) + "/snapshots/", StringComparison.Ordinal));
         await PutAsync(foreignData, foreign, "after", new Faker().Lorem.Sentence(12));
         await ShipAsync(api, time);
-        var foreignSegment = oci.Objects.Keys.Single(key => key.StartsWith(File(foreign) + "/wal/", StringComparison.Ordinal));
-        var preserved = new[] { foreignSnapshot, foreignSegment }.ToDictionary(key => key, key => oci.Objects[key].ToArray(), StringComparer.Ordinal);
+        var foreignSegment = s3.Objects.Keys.Single(key => key.StartsWith(File(foreign) + "/wal/", StringComparison.Ordinal));
+        var preserved = new[] { foreignSnapshot, foreignSegment }.ToDictionary(key => key, key => s3.Objects[key].ToArray(), StringComparer.Ordinal);
         // Foreign objects in the customer bucket are not this project's retention responsibility.
         foreach (var item in preserved)
         {
-            oci.SeedObject(customer: true, item.Key, item.Value);
+            s3.SeedObject(customer: true, item.Key, item.Value);
         }
         for (var day = 0; day < 2; day++)
         {
@@ -687,7 +687,7 @@ public sealed class CustomerBackupTests
         var foreignDeletes = 0;
         var snapshotListings = 0;
         var segmentListings = 0;
-        oci.ObjectRequested = (customer, method, key) =>
+        s3.ObjectRequested = (customer, method, key) =>
         {
             if (customer && preserved.ContainsKey(key))
             {
@@ -702,7 +702,7 @@ public sealed class CustomerBackupTests
                 }
             }
         };
-        oci.CustomerListingOverride = (prefix, keys) =>
+        s3.CustomerListingOverride = (prefix, keys) =>
         {
             if (prefix == File(database) + "/snapshots/")
             {
@@ -722,7 +722,7 @@ public sealed class CustomerBackupTests
         await ShipAsync(api, time);
 
         // With valid snapshots, retention and restore must also validate the WAL listing independently.
-        oci.CustomerListingOverride = (prefix, keys) =>
+        s3.CustomerListingOverride = (prefix, keys) =>
         {
             if (prefix.StartsWith(File(database) + "/wal/", StringComparison.Ordinal))
             {
@@ -748,7 +748,7 @@ public sealed class CustomerBackupTests
         }
 
         // A restore also receives a foreign snapshot alone: rejecting it and ignoring it are both safe.
-        oci.CustomerListingOverride = (prefix, keys) => prefix == File(database) + "/snapshots/" ? [foreignSnapshot] : keys;
+        s3.CustomerListingOverride = (prefix, keys) => prefix == File(database) + "/snapshots/" ? [foreignSnapshot] : keys;
         using var rejected = await api.Client.PostAsJsonAsync(Uri(database.Path + "/point-in-time/restore"),
             new { pointInTime = latest, name = "hostile-listing", destination = "customer" }, cancellationToken);
         await Assert.That(rejected.IsSuccessStatusCode).IsFalse();
@@ -757,20 +757,20 @@ public sealed class CustomerBackupTests
         await Assert.That(segmentListings).IsGreaterThan(0);
         await Assert.That(foreignReads).IsEqualTo(0);
         await Assert.That(foreignDeletes).IsEqualTo(0);
-        await Assert.That(preserved.All(item => oci.CustomerObjects.TryGetValue(item.Key, out var bytes) && bytes.AsSpan().SequenceEqual(item.Value))).IsTrue();
-        oci.CustomerListingOverride = null;
-        oci.ObjectRequested = null;
+        await Assert.That(preserved.All(item => s3.CustomerObjects.TryGetValue(item.Key, out var bytes) && bytes.AsSpan().SequenceEqual(item.Value))).IsTrue();
+        s3.CustomerListingOverride = null;
+        s3.ObjectRequested = null;
         var restored = await RestoreAsync(api, database, await LatestAsync(api.Client, database, "customer"), "safe-listing", "customer");
         await AssertDocumentAsync(data, restored, "kept", text);
-        await Assert.That(oci.BadSignatures).IsEqualTo(0);
+        await Assert.That(s3.BadSignatures).IsEqualTo(0);
     }
 
     [Test]
     public async Task Empty_truncated_customer_pages_cannot_stall_backup_passes_or_another_projects_shipping()
     {
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         var time = Clock();
-        await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
+        await using var api = await ManagementApi.StartAsync(s3.Configure, services => ManualShipping(s3, services), time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
         var customer = await api.CreateManagedDatabaseAsync();
         var siblingProject = await api.CreateProjectAsync(customer.Organization, "Platform sibling");
@@ -799,7 +799,7 @@ public sealed class CustomerBackupTests
             await RunPassAsync();
             var prefix = File(customer) + "/";
             var listings = 0;
-            oci.EmptyCustomerPages = requested =>
+            s3.EmptyCustomerPages = requested =>
             {
                 if (!requested.StartsWith(prefix, StringComparison.Ordinal))
                 {
@@ -827,7 +827,7 @@ public sealed class CustomerBackupTests
                 await AssertDocumentAsync(data, platformRestore, names[index], texts[index + 1]);
             }
 
-            oci.EmptyCustomerPages = null;
+            s3.EmptyCustomerPages = null;
             var customerRestore = await RestoreAsync(api, customer, await LatestAsync(api.Client, customer, "customer"), "unstalled-customer", "customer");
             await AssertDocumentAsync(data, customerRestore, "initial", texts[0]);
             for (var index = 0; index < names.Length; index++)
@@ -835,11 +835,11 @@ public sealed class CustomerBackupTests
                 await AssertDocumentAsync(data, customerRestore, names[index], texts[index + 1]);
             }
 
-            await Assert.That(oci.BadSignatures).IsEqualTo(0);
+            await Assert.That(s3.BadSignatures).IsEqualTo(0);
         }
         finally
         {
-            oci.EmptyCustomerPages = null;
+            s3.EmptyCustomerPages = null;
             await stop.CancelAsync();
             await pass.WaitAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
         }
@@ -848,9 +848,9 @@ public sealed class CustomerBackupTests
     [Test]
     public async Task Stalled_customer_snapshot_body_is_cancelled_at_deadline_and_releases_shipping_for_the_next_pass()
     {
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         var time = Clock();
-        await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
+        await using var api = await ManagementApi.StartAsync(s3.Configure, services => ManualShipping(s3, services), time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
         var backup = api.Server.Services.GetRequiredService<IContinuousBackup>();
         var customer = await api.CreateManagedDatabaseAsync();
@@ -868,7 +868,7 @@ public sealed class CustomerBackupTests
         using var stalled = new StalledReadStream();
         using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         var prefix = File(customer) + "/snapshots/";
-        oci.CustomerContentOverride = key =>
+        s3.CustomerContentOverride = key =>
         {
             if (!key.StartsWith(prefix, StringComparison.Ordinal))
             {
@@ -876,7 +876,7 @@ public sealed class CustomerBackupTests
             }
 
             var content = new StreamContent(stalled);
-            content.Headers.ContentLength = oci.CustomerObjects[key].LongLength;
+            content.Headers.ContentLength = s3.CustomerObjects[key].LongLength;
             return content;
         };
         // The very first pass drills its newly uploaded snapshot: headers arrive, but its body never does.
@@ -893,7 +893,7 @@ public sealed class CustomerBackupTests
             var drill = backup.Status.Files.Single(file => file.File == File(customer)).LastDrill!;
             await Assert.That(drill.Passed).IsFalse();
 
-            oci.CustomerContentOverride = null;
+            s3.CustomerContentOverride = null;
             await PutAsync(data, customer, "after", after);
             await PutAsync(data, sibling, "after", after);
             pass = ShipAsync(api, time, stop.Token);
@@ -905,11 +905,11 @@ public sealed class CustomerBackupTests
                 await AssertDocumentAsync(data, restored, "after", after);
             }
 
-            await Assert.That(oci.BadSignatures).IsEqualTo(0);
+            await Assert.That(s3.BadSignatures).IsEqualTo(0);
         }
         finally
         {
-            oci.CustomerContentOverride = null;
+            s3.CustomerContentOverride = null;
             await stop.CancelAsync();
             stalled.Release();
             await pass.WaitAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
@@ -919,9 +919,9 @@ public sealed class CustomerBackupTests
     [Test]
     public async Task Cancelled_mirror_wal_upload_abandons_the_generation_before_the_next_pass()
     {
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         var time = Clock();
-        await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
+        await using var api = await ManagementApi.StartAsync(s3.Configure, services => ManualShipping(s3, services), time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
         var backup = api.Server.Services.GetRequiredService<IContinuousBackup>();
         var database = await api.CreateManagedDatabaseAsync();
@@ -932,12 +932,12 @@ public sealed class CustomerBackupTests
         var texts = Enumerable.Range(0, 4).Select(_ => faker.Lorem.Sentence(12)).ToArray();
         await PutAsync(data, database, "initial", texts[0]);
         await ShipAsync(api, time);
-        var initial = Generations(oci.CustomerObjects, database);
+        var initial = Generations(s3.CustomerObjects, database);
         await Assert.That(initial.Count).IsEqualTo(1);
         using var stop = new CancellationTokenSource();
         var reached = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        oci.BeforeCustomerWrite = async (key, cancellationToken) =>
+        s3.BeforeCustomerWrite = async (key, cancellationToken) =>
         {
             if (key.StartsWith(File(database) + "/wal/", StringComparison.Ordinal))
             {
@@ -951,8 +951,8 @@ public sealed class CustomerBackupTests
         try
         {
             partialSegment = await reached.Task.WaitAsync(TimeSpan.FromSeconds(10));
-            await Assert.That(oci.Objects.ContainsKey(partialSegment)).IsTrue();
-            await Assert.That(oci.CustomerObjects.ContainsKey(partialSegment)).IsFalse();
+            await Assert.That(s3.Objects.ContainsKey(partialSegment)).IsTrue();
+            await Assert.That(s3.CustomerObjects.ContainsKey(partialSegment)).IsFalse();
             await stop.CancelAsync();
             await Assert.ThrowsAsync<OperationCanceledException>(() => pass.WaitAsync(TimeSpan.FromSeconds(10)));
         }
@@ -960,15 +960,15 @@ public sealed class CustomerBackupTests
         {
             await stop.CancelAsync();
             release.TrySetResult();
-            oci.BeforeCustomerWrite = null;
+            s3.BeforeCustomerWrite = null;
             await pass.WaitAsync(TimeSpan.FromSeconds(10)).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
         }
 
         await Assert.That(backup.Status.Files.Single(file => file.File == File(database)).Generation).IsNull();
         await PutAsync(data, database, "recovered", texts[2]);
         await ShipAsync(api, time);
-        await Assert.That(Generations(oci.CustomerObjects, database).Count).IsEqualTo(initial.Count + 1);
-        await Assert.That(oci.CustomerObjects.ContainsKey(partialSegment)).IsFalse();
+        await Assert.That(Generations(s3.CustomerObjects, database).Count).IsEqualTo(initial.Count + 1);
+        await Assert.That(s3.CustomerObjects.ContainsKey(partialSegment)).IsFalse();
         await PutAsync(data, database, "later", texts[3]);
         await ShipAsync(api, time);
         var names = new[] { "initial", "partial", "recovered", "later" };
@@ -981,22 +981,22 @@ public sealed class CustomerBackupTests
             }
         }
 
-        foreach (var objects in new[] { oci.Objects, oci.CustomerObjects })
+        foreach (var objects in new[] { s3.Objects, s3.CustomerObjects })
         {
             var segments = objects.Keys.Where(key => key.StartsWith(File(database) + "/wal/", StringComparison.Ordinal)).ToArray();
             await Assert.That(segments.Select(key => key[..key.LastIndexOf('-')]).Distinct(StringComparer.Ordinal).Count()).IsEqualTo(segments.Length);
         }
 
-        await Assert.That(oci.BadSignatures).IsEqualTo(0);
+        await Assert.That(s3.BadSignatures).IsEqualTo(0);
     }
 
     [Test]
     public async Task Customer_restore_accepts_exactly_sixteen_kibibytes_of_wrapped_key_and_rejects_larger_bodies()
     {
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         var time = Clock();
-        await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
+        await using var api = await ManagementApi.StartAsync(s3.Configure, services => ManualShipping(s3, services), time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
         var database = await api.CreateManagedDatabaseAsync();
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
@@ -1005,12 +1005,12 @@ public sealed class CustomerBackupTests
         var text = new Faker().Lorem.Sentence(12);
         await PutAsync(data, database, "kept", text);
         await ShipAsync(api, time);
-        var key = oci.CustomerObjects.Single(item => item.Key.StartsWith($"v1/keys/{database.Organization}/{database.Project}/", StringComparison.Ordinal));
+        var key = s3.CustomerObjects.Single(item => item.Key.StartsWith($"v1/keys/{database.Organization}/{database.Project}/", StringComparison.Ordinal));
         var latest = await LatestAsync(api.Client, database, "customer");
         // Trailing whitespace decodes to the same key. Exactly 16 KiB must remain accepted, catching >= regressions.
         var keyBody = Encoding.ASCII.GetBytes(Encoding.ASCII.GetString(key.Value).PadRight(16 * 1024));
         var keyReads = 0;
-        oci.CustomerReadOverride = requested =>
+        s3.CustomerReadOverride = requested =>
         {
             if (requested != key.Key)
             {
@@ -1033,18 +1033,18 @@ public sealed class CustomerBackupTests
         await AssertPublicAsync(error);
         await Assert.That(error.Contains(Encoding.ASCII.GetString(key.Value), StringComparison.Ordinal)).IsFalse();
         await AssertDocumentAsync(data, database, "kept", text);
-        oci.CustomerReadOverride = null;
+        s3.CustomerReadOverride = null;
         var restored = await RestoreAsync(api, database, latest, "bounded-key", "customer");
         await AssertDocumentAsync(data, restored, "kept", text);
-        await Assert.That(oci.BadSignatures).IsEqualTo(0);
+        await Assert.That(s3.BadSignatures).IsEqualTo(0);
     }
 
     [Test]
     public async Task Retention_trims_platform_snapshots_from_before_customer_attachment_and_retries_platform_locks_independently()
     {
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         var time = Clock();
-        await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
+        await using var api = await ManagementApi.StartAsync(s3.Configure, services => ManualShipping(s3, services), time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
         var database = await api.CreateManagedDatabaseAsync();
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
@@ -1052,13 +1052,13 @@ public sealed class CustomerBackupTests
         var text = new Faker().Lorem.Sentence(12);
         await PutAsync(data, database, "kept", text);
         await ShipAsync(api, time);
-        var oldPlatform = oci.Objects.Keys.Where(key => key.StartsWith(File(database) + "/snapshots/", StringComparison.Ordinal)).ToHashSet(StringComparer.Ordinal);
+        var oldPlatform = s3.Objects.Keys.Where(key => key.StartsWith(File(database) + "/snapshots/", StringComparison.Ordinal)).ToHashSet(StringComparer.Ordinal);
         await Assert.That(oldPlatform.Count).IsEqualTo(1);
         await SetAsync(api, database, "both");
         await ShipAsync(api, time);
-        var oldCustomer = oci.CustomerObjects.Keys.Where(key => key.StartsWith(File(database) + "/snapshots/", StringComparison.Ordinal)).ToArray();
+        var oldCustomer = s3.CustomerObjects.Keys.Where(key => key.StartsWith(File(database) + "/snapshots/", StringComparison.Ordinal)).ToArray();
         await Assert.That(oldCustomer.Length).IsEqualTo(1);
-        oci.Locked = oldPlatform.Contains;
+        s3.Locked = oldPlatform.Contains;
         for (var day = 0; day < 2; day++)
         {
             time.Advance(TimeSpan.FromDays(1) + TimeSpan.FromSeconds(1));
@@ -1067,28 +1067,28 @@ public sealed class CustomerBackupTests
 
         time.Advance(TimeSpan.FromHours(2));
         await ShipAsync(api, time);
-        await Assert.That(oldPlatform.All(oci.Objects.ContainsKey)).IsTrue();
-        await Assert.That(oldCustomer.Any(oci.CustomerObjects.ContainsKey)).IsFalse();
-        oci.Locked = _ => false;
+        await Assert.That(oldPlatform.All(s3.Objects.ContainsKey)).IsTrue();
+        await Assert.That(oldCustomer.Any(s3.CustomerObjects.ContainsKey)).IsFalse();
+        s3.Locked = _ => false;
         time.Advance(TimeSpan.FromHours(1));
         await ShipAsync(api, time);
-        await Assert.That(oldPlatform.Any(oci.Objects.ContainsKey)).IsFalse();
+        await Assert.That(oldPlatform.Any(s3.Objects.ContainsKey)).IsFalse();
         foreach (var destination in new[] { "platform", "customer" })
         {
             var restored = await RestoreAsync(api, database, await LatestAsync(api.Client, database, destination), "retained-" + destination, destination);
             await AssertDocumentAsync(data, restored, "kept", text);
         }
 
-        await Assert.That(oci.BadSignatures).IsEqualTo(0);
+        await Assert.That(s3.BadSignatures).IsEqualTo(0);
     }
 
     [Test]
     public async Task Customer_only_switch_refreshes_size_and_prunes_old_platform_history_while_expired_window_is_absent()
     {
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         var time = Clock();
-        await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
+        await using var api = await ManagementApi.StartAsync(s3.Configure, services => ManualShipping(s3, services), time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
         var database = await api.CreateManagedDatabaseAsync();
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
@@ -1097,7 +1097,7 @@ public sealed class CustomerBackupTests
         await PutAsync(data, database, "kept", text);
         await ShipAsync(api, time);
         await ShipAsync(api, time);
-        var old = oci.Objects.Keys.Single(key => key.StartsWith(File(database) + "/snapshots/", StringComparison.Ordinal));
+        var old = s3.Objects.Keys.Single(key => key.StartsWith(File(database) + "/snapshots/", StringComparison.Ordinal));
         var measured = await BackupRecordAsync(api, database);
         await Assert.That(measured.GetProperty("sizeBytes").GetInt64()).IsGreaterThan(0);
         var previousMeasurement = measured.GetProperty("sizedAt").GetDateTimeOffset();
@@ -1116,12 +1116,12 @@ public sealed class CustomerBackupTests
         var parts = old.Split('/')[^1].Split('-');
         var expired = string.Create(CultureInfo.InvariantCulture,
             $"{File(database)}/snapshots/{time.GetUtcNow().AddDays(-2).ToUnixTimeMilliseconds():D13}-{parts[1]}-{parts[2]}");
-        oci.SeedObject(customer: false, expired, []);
+        s3.SeedObject(customer: false, expired, []);
         time.Advance(TimeSpan.FromDays(2));
         await ShipAsync(api, time);
         await ShipAsync(api, time);
-        await Assert.That(oci.Objects.ContainsKey(expired)).IsFalse();
-        await Assert.That(oci.Objects.ContainsKey(old)).IsTrue();
+        await Assert.That(s3.Objects.ContainsKey(expired)).IsFalse();
+        await Assert.That(s3.Objects.ContainsKey(old)).IsTrue();
         using var platformWindow = await api.Client.GetAsync(Uri(database.Path + "/point-in-time?destination=platform"), cancellationToken);
         await Assert.That(platformWindow.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         using var platformRestore = await api.Client.PostAsJsonAsync(Uri(database.Path + "/point-in-time/restore"),
@@ -1129,16 +1129,16 @@ public sealed class CustomerBackupTests
         await Assert.That(platformRestore.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         var restored = await RestoreAsync(api, database, await LatestAsync(api.Client, database, "customer"), "retained-customer", "customer");
         await AssertDocumentAsync(data, restored, "kept", text);
-        await Assert.That(oci.BadSignatures).IsEqualTo(0);
+        await Assert.That(s3.BadSignatures).IsEqualTo(0);
     }
 
     [Test]
     public async Task Own_prefix_junk_is_ignored_but_nonascending_customer_listings_still_fail()
     {
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         var time = Clock();
-        await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
+        await using var api = await ManagementApi.StartAsync(s3.Configure, services => ManualShipping(s3, services), time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
         var database = await api.CreateManagedDatabaseAsync();
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
@@ -1147,14 +1147,14 @@ public sealed class CustomerBackupTests
         var text = new Faker().Lorem.Sentence(12);
         await PutAsync(data, database, "kept", text);
         await ShipAsync(api, time);
-        var snapshot = oci.CustomerObjects.Keys.Single(key => key.StartsWith(File(database) + "/snapshots/", StringComparison.Ordinal));
+        var snapshot = s3.CustomerObjects.Keys.Single(key => key.StartsWith(File(database) + "/snapshots/", StringComparison.Ordinal));
         var prefix = File(database) + "/snapshots/";
         string[] junk = [prefix + new string('x', 1025), prefix + "./" + snapshot.Split('/')[^1],
             prefix + "junk/../" + snapshot.Split('/')[^1], prefix + "negative", prefix + "invalid-name"];
         var touched = 0;
-        oci.CustomerListingOverride = (requested, keys) => requested == prefix ? [.. keys.Concat(junk).Order(StringComparer.Ordinal)] : keys;
-        oci.CustomerListingSizeOverride = key => key == prefix + "negative" ? -1 : null;
-        oci.ObjectRequested = (customer, method, key) =>
+        s3.CustomerListingOverride = (requested, keys) => requested == prefix ? [.. keys.Concat(junk).Order(StringComparer.Ordinal)] : keys;
+        s3.CustomerListingSizeOverride = key => key == prefix + "negative" ? -1 : null;
+        s3.ObjectRequested = (customer, method, key) =>
         {
             if (customer && (method == HttpMethod.Get || method == HttpMethod.Delete) && junk.Contains(key, StringComparer.Ordinal))
             {
@@ -1170,7 +1170,7 @@ public sealed class CustomerBackupTests
         await Assert.That(touched).IsEqualTo(0);
         foreach (var repeated in new[] { true, false })
         {
-            oci.CustomerListingOverride = (requested, keys) => requested != prefix ? keys
+            s3.CustomerListingOverride = (requested, keys) => requested != prefix ? keys
                 : repeated ? [snapshot, snapshot] : [prefix + "z-last", snapshot];
             using var rejected = await api.Client.GetAsync(Uri(database.Path + "/point-in-time?destination=customer"), cancellationToken);
             await Assert.That(rejected.IsSuccessStatusCode).IsFalse();
@@ -1179,16 +1179,16 @@ public sealed class CustomerBackupTests
                 HttpStatusCode.ServiceUnavailable, "pitr_plan_unavailable", "the point-in-time plan metadata could not be read");
         }
 
-        await Assert.That(oci.BadSignatures).IsEqualTo(0);
+        await Assert.That(s3.BadSignatures).IsEqualTo(0);
     }
 
     [Test]
     public async Task Missing_customer_bucket_is_unavailable_while_a_missing_snapshot_is_an_incomplete_backup()
     {
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         var time = Clock();
-        await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
+        await using var api = await ManagementApi.StartAsync(s3.Configure, services => ManualShipping(s3, services), time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
         var database = await api.CreateManagedDatabaseAsync();
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
@@ -1197,11 +1197,11 @@ public sealed class CustomerBackupTests
         var text = new Faker().Lorem.Sentence(12);
         await PutAsync(data, database, "kept", text);
         await ShipAsync(api, time);
-        var snapshot = oci.CustomerObjects.Keys.Single(key => key.StartsWith(File(database) + "/snapshots/", StringComparison.Ordinal));
+        var snapshot = s3.CustomerObjects.Keys.Single(key => key.StartsWith(File(database) + "/snapshots/", StringComparison.Ordinal));
         var latest = await LatestAsync(api.Client, database, "customer");
         foreach (var (code, status) in new[] { ("NoSuchBucket", HttpStatusCode.ServiceUnavailable), ("NoSuchKey", HttpStatusCode.InternalServerError) })
         {
-            oci.CustomerReadError = key => key == snapshot ? code : null;
+            s3.CustomerReadError = key => key == snapshot ? code : null;
             using var rejected = await api.Client.PostAsJsonAsync(Uri(database.Path + "/point-in-time/restore"),
                 new { pointInTime = latest, name = "missing-" + code.ToLowerInvariant(), destination = "customer" }, cancellationToken);
             await Assert.That(rejected.StatusCode).IsEqualTo(status);
@@ -1213,7 +1213,7 @@ public sealed class CustomerBackupTests
             await AssertPublicAsync(await rejected.Content.ReadAsStringAsync(cancellationToken));
         }
 
-        oci.CustomerReadError = null;
+        s3.CustomerReadError = null;
         var restored = await RestoreAsync(api, database, latest, "bucket-returned", "customer");
         await AssertDocumentAsync(data, restored, "kept", text);
     }
@@ -1221,9 +1221,9 @@ public sealed class CustomerBackupTests
     [Test]
     public async Task Destination_save_admission_authorizes_first_limits_each_organization_and_bounds_global_saves()
     {
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         var time = Clock();
-        await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
+        await using var api = await ManagementApi.StartAsync(s3.Configure, services => ManualShipping(s3, services), time);
         var databases = new List<ManagedDatabaseRef>();
         for (var index = 0; index < 5; index++)
         {
@@ -1239,7 +1239,7 @@ public sealed class CustomerBackupTests
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var probes = 0;
         // Each save's first customer write is its access probe, so holding it holds the save's admission.
-        oci.BeforeCustomerWrite = async (path, cancellationToken) =>
+        s3.BeforeCustomerWrite = async (path, cancellationToken) =>
         {
             if (!path.Contains(".probe/", StringComparison.Ordinal))
             {
@@ -1285,10 +1285,10 @@ public sealed class CustomerBackupTests
                 response.EnsureSuccessStatusCode();
             }
 
-            oci.BeforeCustomerWrite = null;
+            s3.BeforeCustomerWrite = null;
             await SetAsync(api, databases[4], "customer");
             await SetAsync(api, databases[0], "both");
-            await Assert.That(oci.BadSignatures).IsEqualTo(0);
+            await Assert.That(s3.BadSignatures).IsEqualTo(0);
         }
         finally
         {
@@ -1357,9 +1357,9 @@ public sealed class CustomerBackupTests
         public void Release() => _body.TrySetResult(0);
     }
 
-    private static void ManualShipping(FakeS3 oci, IServiceCollection services)
+    private static void ManualShipping(FakeS3 s3, IServiceCollection services)
     {
-        oci.Route(services);
+        s3.Route(services);
         ManualBackupHosting.Configure(services);
     }
 

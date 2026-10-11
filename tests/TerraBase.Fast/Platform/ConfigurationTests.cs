@@ -57,9 +57,9 @@ public sealed class ConfigurationTests
     [Test]
     public async Task Backup_retention_defaults_to_one_seven_and_thirty_days_and_takes_plan_overrides()
     {
-        var oci = new FakeS3();
+        var s3 = new FakeS3();
         var values = new Dictionary<string, string>();
-        oci.Configure(values);
+        s3.Configure(values);
         var defaults = TerraBaseOptions.FromValues(values).Backup!.RetentionDays;
         values["backup-retention-days"] = "pro=14, enterprise=90";
         var overridden = TerraBaseOptions.FromValues(values).Backup!.RetentionDays;

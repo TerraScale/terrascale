@@ -459,18 +459,18 @@ public sealed class FakeS3
     }
 
     // The real master key; generations and unwraps are counted like the requests of a remote key service.
-    private sealed class CountingMasterKey(MasterKey inner, FakeS3 oci) : IMasterKey
+    private sealed class CountingMasterKey(MasterKey inner, FakeS3 s3) : IMasterKey
     {
         public Task<(byte[] Key, string Wrapped)> GenerateDataKeyAsync(CancellationToken cancellationToken)
         {
-            oci.RecordGeneratedKey();
+            s3.RecordGeneratedKey();
             return inner.GenerateDataKeyAsync(cancellationToken);
         }
 
         public Task<byte[]> UnwrapAsync(string wrapped, CancellationToken cancellationToken)
         {
             var fingerprint = SHA256.HashData(Encoding.ASCII.GetBytes(wrapped));
-            foreach (var observed in oci._keyRequests.Values)
+            foreach (var observed in s3._keyRequests.Values)
             {
                 if (observed.Fingerprint.AsSpan().SequenceEqual(fingerprint))
                 {
@@ -482,9 +482,9 @@ public sealed class FakeS3
         }
     }
 
-    private sealed class Handler(FakeS3 oci) : HttpMessageHandler
+    private sealed class Handler(FakeS3 s3) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
-            oci.RespondAsync(request, cancellationToken);
+            s3.RespondAsync(request, cancellationToken);
     }
 }
