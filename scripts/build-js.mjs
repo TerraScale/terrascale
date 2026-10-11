@@ -24,6 +24,7 @@ const source = resolve(repository, 'web/assets/js');
 const outdir = resolve(repository, 'web/static/js');
 const monacoDist = resolve(repository, 'node_modules/modern-monaco/dist');
 const watchMode = process.argv.includes('--watch');
+const minify = process.argv.includes('--minify') || !watchMode;
 const release = process.argv.includes('--release');
 
 const shared = {
@@ -31,7 +32,7 @@ const shared = {
   format: 'esm',
   target: 'es2022',
   platform: 'browser',
-  minify: !watchMode,
+  minify,
   legalComments: 'none',
   logLevel: 'warning',
   outdir,
@@ -162,18 +163,18 @@ async function build() {
   const datastarMap = await readVendor('datastar.js.map');
   const datastarLicense = await readVendor('LICENSE.datastar.md');
   const pins = (await readRequired(
-    resolve(repository, 'internal/ui/datastar_pins.go'),
-    'Missing internal/ui/datastar_pins.go; the JS build reads its Datastar SRI pins',
+    resolve(repository, 'Platform/Assets/AssetUrls.cs'),
+    'Missing Platform/Assets/AssetUrls.cs; the JS build reads its Datastar SRI pins',
   )).toString('utf8');
-  const pinned = pins.match(/^\s*const\s+datastarIntegrity\s*=\s*"([^"]+)"/m)?.[1];
+  const pinned = pins.match(/public const string DatastarIntegrity\s*=\s*"([^"]+)"/)?.[1];
   const integrity = sri(datastar);
   if (integrity !== pinned) {
-    throw new Error(`vendor/datastar.js hashes to ${integrity}, but datastarIntegrity in internal/ui/datastar_pins.go is ${pinned ?? 'missing'}`);
+    throw new Error(`vendor/datastar.js hashes to ${integrity}, but DatastarIntegrity in Platform/Assets/AssetUrls.cs is ${pinned ?? 'missing'}`);
   }
-  const pinnedMap = pins.match(/^\s*const\s+datastarMapIntegrity\s*=\s*"([^"]+)"/m)?.[1];
+  const pinnedMap = pins.match(/public const string DatastarMapIntegrity\s*=\s*"([^"]+)"/)?.[1];
   const mapIntegrity = sri(datastarMap);
   if (mapIntegrity !== pinnedMap) {
-    throw new Error(`vendor/datastar.js.map hashes to ${mapIntegrity}, but datastarMapIntegrity in internal/ui/datastar_pins.go is ${pinnedMap ?? 'missing'}`);
+    throw new Error(`vendor/datastar.js.map hashes to ${mapIntegrity}, but DatastarMapIntegrity in Platform/Assets/AssetUrls.cs is ${pinnedMap ?? 'missing'}`);
   }
   const datastarFile = { path: resolve(outdir, 'datastar.js'), contents: datastar, text: datastar.toString('utf8') };
   const codicon = await extractCodicon();
@@ -224,7 +225,15 @@ async function build() {
   // Write the new build before pruning the old one, so a page loading during a
   // development rebuild never finds its chunks missing.
   await mkdir(outdir, { recursive: true });
-  await Promise.all(files.map(file => writeFile(file.path, file.contents)));
+  await Promise.all(files.map(async file => {
+    // dotnet watch observes static files. Keep unchanged timestamps stable so
+    // a Razor/C# rebuild does not trigger another rebuild through these outputs.
+    const current = await readFile(file.path).catch(error => {
+      if (error.code !== 'ENOENT') throw error;
+      return null;
+    });
+    if (!current?.equals(file.contents)) await writeFile(file.path, file.contents);
+  }));
   if (release) {
     await Promise.all(files.map(precompress));
   }
@@ -268,8 +277,8 @@ if (watchMode) {
     }, 30);
   };
   watch(source, { recursive: true }, rebuild);
-  watch(resolve(repository, 'internal/ui'), (_, filename) => {
-    if (!filename || filename === 'datastar_pins.go') rebuild();
+  watch(resolve(repository, 'Platform/Assets'), (_, filename) => {
+    if (!filename || filename === 'AssetUrls.cs') rebuild();
   });
-  console.log('JS: watching web/assets/js/ and internal/ui/datastar_pins.go');
+  console.log('JS: watching web/assets/js/ and Platform/Assets/AssetUrls.cs');
 }

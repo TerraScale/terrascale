@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "dependencies": {
+    "net10.0": {
+      "RazorSlices": {
+        "type": "Direct",
+        "requested": "[0.12.1, )",
+        "resolved": "0.12.1",
+        "contentHash": "jjgUCvKVbfpjQWJNR0dmRx9dQ1zQ2LHhSq4OTee9t3W6S/ZWyp5bxc4xK7uNuLCzF1/i7/u1WfqVc822X4Sd3Q=="
+      },
+      "TerraScale.DotNet": {
+        "type": "Direct",
+        "requested": "[0.1.0-dashboard.gdf852e3b4d3a4df324452d46792b20566eea5136, )",
+        "resolved": "0.1.0-dashboard.gdf852e3b4d3a4df324452d46792b20566eea5136",
+        "contentHash": "aNWtPejsWh91n6koXETx9vDQj0nbqoiGmf/ZVwCb5HB5Y04J6+zvz5Bf3SVjmSR6ipDRz/fUL5/yNnq9iGsTpQ==",
+        "dependencies": {
+          "NUlid": "1.7.3"
+        }
+      },
+      "NUlid": {
+        "type": "Transitive",
+        "resolved": "1.7.3",
+        "contentHash": "AXxv7eF+3REXlGLojlN4zXzvesgxiC0/Jq66Qn5L+hhw+NBCK60douGZBI+6ZTAZHRE2xg7AyCEj8cqCKp/U5w=="
+      }
+    }
+  }
+}

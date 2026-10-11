@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <RootNamespace>TerraScale.Dashboard</RootNamespace>
+    <AssemblyName>TerraScale.Dashboard</AssemblyName>
+    <WebRoot>web/static</WebRoot>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="RazorSlices" Version="0.12.1" />
+    <PackageReference Include="TerraScale.DotNet" Version="0.1.0-dashboard.gdf852e3b4d3a4df324452d46792b20566eea5136" />
+    <Compile Remove="tests/**/*.cs;scripts/**/*.cs;vendor/**/*.cs" />
+    <None Update="tests/**/*;internal/**/*;cmd/**/*;vendor/**/*;docs/**/*" Watch="false" />
+    <Content Include="web/static/**/*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Watch Include="web/assets/**/*" />
+  </ItemGroup>
+  <Target Name="BundleDashboardAssets" BeforeTargets="PrepareForBuild">
+    <Exec Command="npm ci --ignore-scripts" Condition="!Exists('node_modules/lightningcss/package.json')" />
+    <Exec Command="node scripts/build-css.mjs" />
+    <Exec Command="node scripts/build-js.mjs" />
+  </Target>
+</Project>

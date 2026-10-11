@@ -8,6 +8,21 @@ export GOFLAGS
 
 .PHONY: build check-css check-generated check-modules check-e2e-shards css dev generate js serve lint perf test-fast test-slow test-unit test-browser test-stripe-audit
 
+# Migration checks are explicit until the full Go feature surface is ported.
+.PHONY: dotnet-build dotnet-lint dotnet-test-fast dotnet-dev
+dotnet-build:
+	dotnet build TerraScale.Dashboard.slnx --configuration Release -p:RestoreLockedMode=true
+
+dotnet-lint:
+	python3 scripts/dotnet/verify-sdk.py
+	dotnet format TerraScale.Dashboard.slnx --verify-no-changes --no-restore
+
+dotnet-test-fast:
+	dotnet run --configuration Release --file tests/dotnet/AuthTests.cs -- "$(CURDIR)"
+
+dotnet-dev:
+	scripts/dotnet/dev.sh
+
 TEMPL_GENERATE_ARGS = -path internal -include-version=false -include-timestamp=false
 
 generate:

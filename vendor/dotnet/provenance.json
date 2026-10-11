@@ -1,0 +1,10 @@
+{
+  "package": "TerraScale.DotNet",
+  "version": "0.1.0-dashboard.gdf852e3b4d3a4df324452d46792b20566eea5136",
+  "repository": "https://github.com/TerraScale/ts-dotnet",
+  "sourceRevision": "df852e3b4d3a4df324452d46792b20566eea5136",
+  "file": "TerraScale.DotNet.0.1.0-dashboard.gdf852e3b4d3a4df324452d46792b20566eea5136.nupkg",
+  "sha256": "78a29c917851480e42a2e27f7018e93a680ae3dc121ca561d2987dad120a49e1",
+  "targetFramework": "net10.0",
+  "qualification": "Locally packed from a clean source archive. Public release and producer qualification are outstanding."
+}

@@ -1,0 +1,22 @@
+@inherits RazorSlice<DocumentModel>
+@implements IUsesLayout<TerraScale.Dashboard.UI.Slices.Document, DocumentModel>
+@inject AssetUrls Assets
+<main class="ts-notfound" aria-labelledby="notfound-title">
+    <header><a href="/" aria-label="TerraScale dashboard"><img class="ts-brand-logo" src="@Assets.Url("brand/logo-terrascale-principal.svg")" alt="TerraScale" width="183" height="44" decoding="async" /></a></header>
+    <div class="ts-notfound-inner">
+        <div class="ts-notfound-copy">
+            <p class="ts-eyebrow">Page not found</p>
+            <img class="ts-notfound-number" src="@Assets.Url("img/404-number.webp")" alt="" width="415" height="160" aria-hidden="true" decoding="async" />
+            <h1 class="ts-auth-title" id="notfound-title">We can’t find that page.</h1>
+            <p class="ts-auth-subtitle">The page you’re looking for has moved, or never existed. Let’s get you back on track.</p>
+            <div class="ts-row">
+                <a class="ts-btn ts-btn-primary ts-btn-lg" href="/"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1Z" /></svg><span>Back to dashboard</span></a>
+                <a class="ts-btn ts-btn-secondary ts-btn-lg" href="https://terrascale.tech/contact"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2" /><path d="m3 6 9 7 9-7" /></svg><span>Contact support</span></a>
+            </div>
+        </div>
+        <img class="ts-notfound-art" src="@Assets.Url("img/404-illustration.webp")" alt="A surprised cat playing with blue 404 numbers" width="900" height="700" decoding="async" />
+    </div>
+</main>
+@functions {
+    public DocumentModel LayoutModel => Model;
+}

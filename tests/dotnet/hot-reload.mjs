@@ -1,0 +1,50 @@
+import assert from 'node:assert/strict';
+import { readFile, readdir, writeFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { resolve } from 'node:path';
+import { chromium } from 'playwright-core';
+
+const base = process.argv[2];
+assert(base, 'Pass the running dotnet-watch host URL');
+const cache = process.env.PLAYWRIGHT_BROWSERS_PATH ?? resolve(homedir(), '.cache/ms-playwright');
+const revisions = (await readdir(cache)).filter(name => name.startsWith('chromium_headless_shell-'));
+revisions.sort((a, b) => Number(a.split('-').at(-1)) - Number(b.split('-').at(-1)));
+const browser = await chromium.launch({ executablePath: resolve(cache, revisions.at(-1), 'chrome-headless-shell-linux64/chrome-headless-shell') });
+const source = new URL('../../Features/Auth/AuthPage.cs', import.meta.url);
+const css = new URL('../../web/assets/Features/Auth/auth.css', import.meta.url);
+const originalSource = await readFile(source, 'utf8');
+const originalCss = await readFile(css, 'utf8');
+const originalCopy = 'Access your databases and cloud operations.';
+const changedCopy = `${originalCopy} Hot reload check.`;
+assert(originalSource.includes(originalCopy));
+const changedSource = originalSource.replace(originalCopy, changedCopy);
+const changedCss = originalCss + '\n.ts-login-logo { opacity: 0.99; }\n';
+let sourceChanged = false;
+let cssChanged = false;
+try {
+  const page = await browser.newPage();
+  page.setDefaultTimeout(45000);
+  await page.goto(`${base}/login`);
+  await page.locator('#ts-dev-updates[data-dev-ready="true"]').waitFor({ state: 'attached' });
+  await writeFile(source, changedSource);
+  sourceChanged = true;
+  await page.getByText(changedCopy, { exact: true }).waitFor();
+  assert.equal(await readFile(source, 'utf8'), changedSource, 'No concurrent edit to the source fixture');
+  await writeFile(source, originalSource);
+  sourceChanged = false;
+  await page.getByText(originalCopy, { exact: true }).waitFor();
+  await page.locator('#ts-dev-updates[data-dev-ready="true"]').waitFor({ state: 'attached' });
+  const opacity = await page.locator('.ts-login-logo').evaluate(element => getComputedStyle(element).opacity);
+  await writeFile(css, changedCss);
+  cssChanged = true;
+  await page.waitForFunction(() => getComputedStyle(document.querySelector('.ts-login-logo')).opacity === '0.99');
+  assert.equal(await readFile(css, 'utf8'), changedCss, 'No concurrent edit to the CSS fixture');
+  await writeFile(css, originalCss);
+  cssChanged = false;
+  await page.waitForFunction(value => getComputedStyle(document.querySelector('.ts-login-logo')).opacity === value, opacity);
+  console.log('PASS: C# hot reload and CSS updates reached the open browser over the Tailscale origin; source fixtures restored');
+} finally {
+  if (sourceChanged && await readFile(source, 'utf8') === changedSource) await writeFile(source, originalSource);
+  if (cssChanged && await readFile(css, 'utf8') === changedCss) await writeFile(css, originalCss);
+  await browser.close();
+}
