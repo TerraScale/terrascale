@@ -35,7 +35,11 @@ public sealed class VerifyProjectBindingEndpoint(IProjectCatalog catalog) : Endp
     protected override async ValueTask<ProjectBindingRequest> BindAsync(CancellationToken cancellationToken)
     {
         var routes = HttpContext.Request.RouteValues;
-        routes.Remove("organization", out var legacy);
+        if (!routes.Remove("organization", out var legacy))
+        {
+            return await base.BindAsync(cancellationToken);
+        }
+
         try
         {
             return await base.BindAsync(cancellationToken);
