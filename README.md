@@ -55,7 +55,7 @@ The current deploy step reads two repository Actions secrets:
 - `CLOUDFLARE_ACCOUNT_ID` — the account that owns the Pages project
 
 Under the TS-795 operating contract, the vendor-issued token is stored once
-in OCI Vault and publication credentials are delivered to the authorized job
+in the platform's secret store and publication credentials are delivered to the authorized job
 automatically. First-party secrets are created and delivered automatically;
 no manual Actions-secret copying belongs in setup. This documentation change
 does not implement or verify that delivery integration. The workflow must

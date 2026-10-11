@@ -105,7 +105,7 @@ test('claim validator requires the confirmed launch region names', () => {
         `${mode} validator did not reject ${retired}`,
       )
     }
-    assert.deepEqual(findProhibitedClaims('<p>Replication across São Paulo, San Jose, and Frankfurt.</p>', { mode }), [])
+    assert.deepEqual(findProhibitedClaims('<p>Replication across São Paulo and San Jose.</p>', { mode }), [])
   }
 })
 

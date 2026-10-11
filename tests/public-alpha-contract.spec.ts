@@ -316,7 +316,6 @@ test('Public Alpha claims and customer links stay within the launch contract', a
   await expect(page.getByRole('heading', { level: 1 })).toContainText('Public Alpha')
   await expect(page.getByText(/São Paulo/).first()).toBeVisible()
   await expect(page.getByText(/San Jose/).first()).toBeVisible()
-  await expect(page.getByText(/Frankfurt/).first()).toBeVisible()
   await expect(page.getByText(/asynchronous replication/i).first()).toBeVisible()
   await expect(page.getByText(/no uptime percentage or SLA/i).first()).toBeVisible()
   await expect(page.getByText(/Customer content stays in selected regions/i)).toBeVisible()

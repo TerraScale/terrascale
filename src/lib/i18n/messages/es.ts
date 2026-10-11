@@ -4,7 +4,7 @@ export const es: Messages = {
   meta: {
     title: 'TerraScale Public Alpha | Base de Documentos Regional',
     description:
-      'TerraScale Public Alpha ofrece una base de documentos tipada con replicación asíncrona en São Paulo, San Jose y Frankfurt.',
+      'TerraScale Public Alpha ofrece una base de documentos tipada con replicación asíncrona en São Paulo y San Jose.',
   },
 
   chrome: {
@@ -75,7 +75,7 @@ export const es: Messages = {
     headlineLead: 'TerraScale',
     headlineAccent: 'Public Alpha',
     subtitle:
-      'Una base de documentos tipada con replicación asíncrona en São Paulo, San Jose y Frankfurt. El endpoint global dirige a la región seleccionada saludable más cercana. Public Alpha no tiene porcentaje de disponibilidad ni SLA.',
+      'Una base de documentos tipada con replicación asíncrona en São Paulo y San Jose. El endpoint global dirige a la región seleccionada saludable más cercana. Public Alpha no tiene porcentaje de disponibilidad ni SLA.',
     ctaPrimary: 'Registrarse en Public Alpha',
     ctaPrelaunch: 'Public Alpha',
     ctaSecondary: 'Ver documentación',
@@ -88,7 +88,7 @@ export const es: Messages = {
     titleLead: 'Public Alpha,',
     titleAccent: 'con límites explícitos',
     subtitle:
-      'El contrato de lanzamiento cubre documentos, tres regiones seleccionables, clientes tipados y salud visible sin compromiso de disponibilidad.',
+      'El contrato de lanzamiento cubre documentos, dos regiones seleccionables, clientes tipados y salud visible sin compromiso de disponibilidad.',
     items: [
       {
         title: 'API de datos tipados',
@@ -102,8 +102,8 @@ export const es: Messages = {
       },
       {
         title: 'Regiones de lanzamiento',
-        text: 'Elige São Paulo, San Jose o Frankfurt durante Public Alpha.',
-        bullets: ['sfo', 'fra', 'gru'],
+        text: 'Elige São Paulo o San Jose durante Public Alpha.',
+        bullets: ['gru', 'sjc'],
       },
       {
         title: 'Señales medidas',
@@ -122,7 +122,7 @@ export const es: Messages = {
       'Catálogo de contratos OpenAPI generado',
       'Clientes tipados en C# y TypeScript',
       'El panel usa el límite público del SDK',
-      'Entradas de región para gru, sfo, fra',
+      'Entradas de región para gru, sjc',
     ],
     copy: 'Copiar',
     copied: 'Copiado',
@@ -293,7 +293,7 @@ export const es: Messages = {
     titleLead: 'Infraestructura de base de datos',
     titleAccent: 'distribuida globalmente.',
     subtitle:
-      'TerraScale Public Alpha ofrece una base de documentos en São Paulo, San Jose y Frankfurt con replicación asíncrona.',
+      'TerraScale Public Alpha ofrece una base de documentos en São Paulo y San Jose con replicación asíncrona.',
     ctaPricing: 'Ver precios',
     ctaContact: 'Habla con nosotros',
     missionEyebrow: 'Misión',

@@ -63,7 +63,7 @@ export function tokenize(code: string, lang: Lang): Token[] {
 
 export const CODE_SAMPLES: Record<Lang, string> = {
   typescript: `// Server-side: keep your tb_ API key out of browser bundles.
-// Supply an Atlas resolver and trusted origins from server configuration.
+// Supply a resolver and trusted origins from server configuration.
 // The override skips discovery.
 async function createAndQueryCustomers(
   resolveRegion: (signal: AbortSignal) => Promise<string>, trustedOrigins: readonly string[],
@@ -124,7 +124,7 @@ async function createAndQueryCustomers(
 using System.Net.Http.Json;
 
 // Server-side: TERRABASE_API_KEY holds a tb_ key.
-// Supply an Atlas resolver and trusted origins from server configuration.
+// Supply a resolver and trusted origins from server configuration.
 // The override skips discovery.
 static class DocumentsExample
 {
