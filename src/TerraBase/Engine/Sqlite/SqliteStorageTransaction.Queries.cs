@@ -4,7 +4,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Cysharp.Text;
-using Microsoft.Data.Sqlite;
+using Turso.Data.Sqlite;
 
 namespace TerraBase.Engine.Sqlite;
 

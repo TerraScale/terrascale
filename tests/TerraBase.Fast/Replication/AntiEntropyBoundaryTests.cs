@@ -1,7 +1,7 @@
 using System.Text;
 using Bogus;
 using Grpc.Core;
-using Microsoft.Data.Sqlite;
+using Turso.Data.Sqlite;
 using TerraBase.Engine;
 using TerraBase.Engine.Sqlite;
 using TerraBase.Fast.Documents;

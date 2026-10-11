@@ -1,6 +1,5 @@
 using System.Diagnostics;
-using Microsoft.Data.Sqlite;
-using SQLitePCL;
+using Turso.Data.Sqlite;
 
 namespace TerraBase.Engine.Sqlite;
 
@@ -10,7 +9,6 @@ namespace TerraBase.Engine.Sqlite;
 /// </summary>
 internal sealed class SqliteSession(SqliteConnection connection) : IDisposable
 {
-    private static readonly Lock HeapLimitGate = new();
 
     // Keyed by statement text; the statements are constants, so this holds a handful of entries.
     private readonly Dictionary<string, SqliteCommand> _commands = [with(StringComparer.Ordinal)];
@@ -62,28 +60,17 @@ internal sealed class SqliteSession(SqliteConnection connection) : IDisposable
     }
 
     /// <summary>
-    /// Holds SQLite's heap, process-wide, to a quarter of <paramref name="memoryBudget"/> (<c>soft_heap_limit</c>):
-    /// SQLite frees page cache to stay under it. The limit is global to the process, so another engine in it
-    /// (tests run several) only ever raises it, never lowers it below what an engine already set.
+    /// Loads the native library. turso-spike: SQLite held its heap to a quarter of the memory budget
+    /// (<c>soft_heap_limit</c>); Turso has no equivalent.
     /// </summary>
-    public static void LimitHeap(long memoryBudget)
+    public static void LimitHeap()
     {
         // Loads SQLite's native library, as the first connection would.
         using (new SqliteConnection())
         {
         }
 
-        var limit = memoryBudget / 4;
-        // Engines starting at once must not interleave the read and the write and lower the limit.
-        lock (HeapLimitGate)
-        {
-            // A negative argument reads the current limit; 0 means none.
-            var current = raw.sqlite3_soft_heap_limit64(-1);
-            if (current == 0 || current < limit)
-            {
-                raw.sqlite3_soft_heap_limit64(limit);
-            }
-        }
+        // turso-spike: Turso has no process heap limit (TursoShim).
     }
 
     /// <summary>
@@ -142,25 +129,24 @@ internal sealed class SqliteSession(SqliteConnection connection) : IDisposable
                 return await io.RunAsync(() =>
                 {
                     connection.DefaultTimeout = 1;
-                    raw.sqlite3_busy_timeout(connection.Handle, 100);
+                    TursoShim.BusyTimeout(connection, 100);
                     try
                     {
                         cancellationToken.ThrowIfCancellationRequested();
-                        using var interrupt = cancellationToken.Register(() => raw.sqlite3_interrupt(connection.Handle));
                         return execute();
                     }
                     finally
                     {
                         connection.DefaultTimeout = timeout;
-                        raw.sqlite3_busy_timeout(connection.Handle, 30000);
+                        TursoShim.BusyTimeout(connection, 30000);
                     }
                 }, cancellationToken).ConfigureAwait(false);
             }
-            catch (SqliteException error) when (error.SqliteErrorCode == raw.SQLITE_INTERRUPT && cancellationToken.IsCancellationRequested)
+            catch (SqliteException error) when (error.SqliteErrorCode == TursoShim.SQLITE_INTERRUPT && cancellationToken.IsCancellationRequested)
             {
                 throw new OperationCanceledException("the storage operation was cancelled", error, cancellationToken);
             }
-            catch (SqliteException error) when (error.SqliteErrorCode is raw.SQLITE_BUSY or raw.SQLITE_LOCKED
+            catch (SqliteException error) when (TursoShim.IsBusy(error)
                 && (timeout == 0 || Stopwatch.GetElapsedTime(started).TotalSeconds < timeout))
             {
                 await Task.Delay(50, cancellationToken).ConfigureAwait(false);
@@ -192,7 +178,6 @@ internal sealed class SqliteSession(SqliteConnection connection) : IDisposable
     /// </summary>
     public void Dispose()
     {
-        var handle = connection.Handle;
         try
         {
             foreach (var command in _commands.Values)
@@ -202,15 +187,7 @@ internal sealed class SqliteSession(SqliteConnection connection) : IDisposable
         }
         finally
         {
-            try
-            {
-                connection.Dispose();
-            }
-            finally
-            {
-                // A no-op when the provider already closed it.
-                handle?.Dispose();
-            }
+            connection.Dispose();
         }
     }
 }

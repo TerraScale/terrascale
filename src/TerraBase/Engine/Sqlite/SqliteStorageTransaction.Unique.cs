@@ -92,7 +92,7 @@ internal sealed partial class SqliteStorageTransaction
             ReserveJson(reader.GetInt64(3));
         }
 
-        return new StoredDocument(id, reader.GetInt64(0), reader.GetFieldValue<byte[]>(1), Scope, UniqueConflict: reader.GetBoolean(2));
+        return new StoredDocument(id, reader.GetInt64(0), TursoShim.Bytes(reader, 1), Scope, UniqueConflict: reader.GetBoolean(2));
     }
 
     // All contenders retain their merged state. Visibility is a deterministic projection of the current keys.

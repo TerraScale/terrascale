@@ -1,5 +1,5 @@
 using System.Text;
-using Microsoft.Data.Sqlite;
+using Turso.Data.Sqlite;
 using TerraBase.Engine.Lattices;
 
 namespace TerraBase.Testing;

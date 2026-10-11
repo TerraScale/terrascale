@@ -136,14 +136,6 @@
         "resolved": "10.0.2",
         "contentHash": "LG9Yll3B5aNpxv0+D47g6LiOiKBIlodhcHdQwcYzo8VeexFLGqx5ymetmA2aBRyo9cCcWsQWrFsdbsr8LvmWDw=="
       },
-      "Microsoft.Data.Sqlite.Core": {
-        "type": "Transitive",
-        "resolved": "11.0.0-rc.1.26425.128",
-        "contentHash": "PtB6tpWSM3lt91xvCCb5pNoxlaLEXPY4n8DipzIeHyD21LQletLzfKi0bGT9rIFVJtxbJMwtD78ljLd6PTlK7Q==",
-        "dependencies": {
-          "SQLitePCLRaw.core": "3.0.5"
-        }
-      },
       "Microsoft.DiaSymReader": {
         "type": "Transitive",
         "resolved": "2.2.10",
@@ -526,41 +518,6 @@
           "OpenTelemetry.Api": "1.19.1"
         }
       },
-      "SQLite": {
-        "type": "Transitive",
-        "resolved": "3.53.4",
-        "contentHash": "KN7jeWqgUPeBRe1FlcpZURzxomuKKEKHmBBQfg+Nx7NkY1LjKhzHvH+3ASkNvhayESE34nMBinL9CV21JfPRJw=="
-      },
-      "SQLitePCLRaw.bundle_e_sqlite3": {
-        "type": "Transitive",
-        "resolved": "3.0.5",
-        "contentHash": "SW8iASIyWMrLzqabUHYQRvALhvD4ylSBsj4PgEVGwc36kQjc9xT5kSV/XQ9rU7nIpBWD+LPyX3Hlw5FzyUzGeQ==",
-        "dependencies": {
-          "SQLite": "3.53.4",
-          "SQLitePCLRaw.config.e_sqlite3": "3.0.5"
-        }
-      },
-      "SQLitePCLRaw.config.e_sqlite3": {
-        "type": "Transitive",
-        "resolved": "3.0.5",
-        "contentHash": "aSk8WE5tF2MybESMgtZAEyMVCAWA0nBqOMc48HFoa9UoSdtm3goDXVzNRnefeKIwE6bV9NaNXptn1F9ReMQI0Q==",
-        "dependencies": {
-          "SQLitePCLRaw.provider.e_sqlite3": "3.0.5"
-        }
-      },
-      "SQLitePCLRaw.core": {
-        "type": "Transitive",
-        "resolved": "3.0.5",
-        "contentHash": "k81AYXXRCw3Zj8rOhyBoCsx/U97KYDFI2CSKr/ijl5BwpsW/hX/4kBiDmerFaoust8nxBwa0IHQFw8MmSHRtnQ=="
-      },
-      "SQLitePCLRaw.provider.e_sqlite3": {
-        "type": "Transitive",
-        "resolved": "3.0.5",
-        "contentHash": "um8YSWduhhuskTG2bHfZrBqMNQOydfU8pcseT+cu5RivOGyoUbCrGXxgoRNTmRYw2VbMWnEZVVFcneZT/5dsBg==",
-        "dependencies": {
-          "SQLitePCLRaw.core": "3.0.5"
-        }
-      },
       "System.Diagnostics.EventLog": {
         "type": "Transitive",
         "resolved": "11.0.0-rc.1.26425.128",
@@ -601,6 +558,19 @@
           "TUnit.Core": "1.73.19"
         }
       },
+      "Turso.Data.Common": {
+        "type": "Transitive",
+        "resolved": "0.8.2",
+        "contentHash": "ODSAH09qNwyahal7ORQZ98osKWGha5ih23/K1P+Q5eyi6gW/7fz8xygmv+KDtu/RcY77V1+SRGuFuj86fd+sGw==",
+        "dependencies": {
+          "Turso.Data.Native": "0.8.2"
+        }
+      },
+      "Turso.Data.Native": {
+        "type": "Transitive",
+        "resolved": "0.8.2",
+        "contentHash": "3ReOw1hTID2OmhQ3PNO3Vyk5DQ7iyPoXSLy8VeMgiaqTefUiTUFNmz7WpMyKTbno9y859nFXy0DBV0suPnaVbg=="
+      },
       "Utf8StringInterpolation": {
         "type": "Transitive",
         "resolved": "1.3.1",
@@ -616,7 +586,6 @@
           "Grpc.Net.Client": "[2.84.0, )",
           "JsonSchema.Net": "[8.0.5, )",
           "Microsoft.AspNetCore.OpenApi": "[11.0.0-rc.1.26425.128, )",
-          "Microsoft.Data.Sqlite": "[11.0.0-rc.1.26425.128, )",
           "Microsoft.IdentityModel.Protocols.OpenIdConnect": "[8.23.0, )",
           "NUlid": "[1.7.3, )",
           "NativeCompressions": "[0.6.1, )",
@@ -626,6 +595,7 @@
           "SqlParserCS": "[0.6.5, )",
           "TerraScale.Endpoints": "[1.0.0, )",
           "TerraScale.Logging": "[1.0.0, )",
+          "Turso.Data.Sqlite.Provider": "[0.8.2, )",
           "Ulid": "[1.4.1, )",
           "ZLogger": "[2.5.10, )",
           "ZString": "[2.6.0, )"
@@ -710,17 +680,6 @@
           "Microsoft.AspNetCore.WebUtilities": "11.0.0-rc.1.26425.128",
           "Microsoft.Extensions.Hosting": "11.0.0-rc.1.26425.128",
           "Microsoft.OpenApi": "[3.10.0, 4.0.0)"
-        }
-      },
-      "Microsoft.Data.Sqlite": {
-        "type": "CentralTransitive",
-        "requested": "[11.0.0-rc.1.26425.128, )",
-        "resolved": "11.0.0-rc.1.26425.128",
-        "contentHash": "Z/dTdDx3rCfOA1G2E2efYOtbHPTcucpLkVXn7N9N50P3LtTv4dFi5Sdj6X0B1VqyszSgF59OozIGyEBTTTVSaw==",
-        "dependencies": {
-          "Microsoft.Data.Sqlite.Core": "[11.0.0-rc.1.26425.128, 12.0.0-a)",
-          "SQLitePCLRaw.bundle_e_sqlite3": "3.0.5",
-          "SQLitePCLRaw.core": "3.0.5"
         }
       },
       "Microsoft.Extensions.Configuration": {
@@ -913,6 +872,15 @@
           "Microsoft.Extensions.ObjectPool": "8.0.1"
         }
       },
+      "Turso.Data.Sqlite.Provider": {
+        "type": "CentralTransitive",
+        "requested": "[0.8.2, )",
+        "resolved": "0.8.2",
+        "contentHash": "lYdm9gYDMuUJHm+Zux938PtKF/9fBi7lNEMqaEnwH3Kb96LPCdWxzrl1fOKzAJ4mc3zVUQnfzJCB/oGkB+rkkA==",
+        "dependencies": {
+          "Turso.Data.Common": "0.8.2"
+        }
+      },
       "Ulid": {
         "type": "CentralTransitive",
         "requested": "[1.4.1, )",
@@ -1059,15 +1027,15 @@
         "resolved": "0.6.1",
         "contentHash": "sIkjjYJ+z277MvyHTJCFI2dmoifWnQ+EsuULz1ewM15lpARdIpFPmdUhSukBov7HCFdczTIhkQyRmXulU7rang=="
       },
-      "SQLite": {
-        "type": "Transitive",
-        "resolved": "3.53.4",
-        "contentHash": "KN7jeWqgUPeBRe1FlcpZURzxomuKKEKHmBBQfg+Nx7NkY1LjKhzHvH+3ASkNvhayESE34nMBinL9CV21JfPRJw=="
-      },
       "System.Diagnostics.EventLog": {
         "type": "Transitive",
         "resolved": "11.0.0-rc.1.26425.128",
         "contentHash": "ByF+R8H7CN2iMOE6aB4901+AoNftRMJ5hqU114YI99xG4rj89dlJx3F1+iprQEo1h2YFhDPnJtFfVOUabl0IiQ=="
+      },
+      "Turso.Data.Native": {
+        "type": "Transitive",
+        "resolved": "0.8.2",
+        "contentHash": "3ReOw1hTID2OmhQ3PNO3Vyk5DQ7iyPoXSLy8VeMgiaqTefUiTUFNmz7WpMyKTbno9y859nFXy0DBV0suPnaVbg=="
       }
     },
     "net11.0/linux-x64": {
@@ -1192,15 +1160,15 @@
         "resolved": "0.6.1",
         "contentHash": "sIkjjYJ+z277MvyHTJCFI2dmoifWnQ+EsuULz1ewM15lpARdIpFPmdUhSukBov7HCFdczTIhkQyRmXulU7rang=="
       },
-      "SQLite": {
-        "type": "Transitive",
-        "resolved": "3.53.4",
-        "contentHash": "KN7jeWqgUPeBRe1FlcpZURzxomuKKEKHmBBQfg+Nx7NkY1LjKhzHvH+3ASkNvhayESE34nMBinL9CV21JfPRJw=="
-      },
       "System.Diagnostics.EventLog": {
         "type": "Transitive",
         "resolved": "11.0.0-rc.1.26425.128",
         "contentHash": "ByF+R8H7CN2iMOE6aB4901+AoNftRMJ5hqU114YI99xG4rj89dlJx3F1+iprQEo1h2YFhDPnJtFfVOUabl0IiQ=="
+      },
+      "Turso.Data.Native": {
+        "type": "Transitive",
+        "resolved": "0.8.2",
+        "contentHash": "3ReOw1hTID2OmhQ3PNO3Vyk5DQ7iyPoXSLy8VeMgiaqTefUiTUFNmz7WpMyKTbno9y859nFXy0DBV0suPnaVbg=="
       }
     }
   }

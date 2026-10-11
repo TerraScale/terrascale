@@ -1,7 +1,7 @@
 using System.Diagnostics.Metrics;
 using System.Text;
 using System.Text.Json;
-using Microsoft.Data.Sqlite;
+using Turso.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Time.Testing;

@@ -6,7 +6,7 @@ using Bogus;
 using Google.Protobuf;
 using Grpc.Core;
 using Grpc.Core.Interceptors;
-using Microsoft.Data.Sqlite;
+using Turso.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;

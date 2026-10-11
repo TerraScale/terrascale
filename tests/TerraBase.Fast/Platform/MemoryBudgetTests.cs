@@ -294,7 +294,7 @@ public sealed class MemoryBudgetTests
         // This process runs only this test, so ordinary 8-20 MiB budgets are enough.
         var budgets = Enumerable.Range(1, 4).Select(i => Budget * (i + 1)).ToArray();
         // Load the native library before reading its global state, without opening a database.
-        using (new Microsoft.Data.Sqlite.SqliteConnection())
+        using (new Turso.Data.Sqlite.SqliteConnection())
         {
         }
 
@@ -305,7 +305,6 @@ public sealed class MemoryBudgetTests
 
         async Task InitializeTogetherAsync(long initialLimit, long expectedLimit)
         {
-            SQLitePCL.raw.sqlite3_soft_heap_limit64(initialLimit);
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
             var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var database = new TenantContext(EntityIds.New().ToString(), PlanTier.Hobby, EntityIds.New().ToString(), EntityIds.New().ToString());
@@ -315,7 +314,7 @@ public sealed class MemoryBudgetTests
             try
             {
                 await initializations.WaitAsync(deadline.Token);
-                await Assert.That(SQLitePCL.raw.sqlite3_soft_heap_limit64(-1)).IsEqualTo(expectedLimit);
+                await Assert.That(TerraBase.Engine.Sqlite.TursoShim.SoftHeapLimit).IsEqualTo(expectedLimit);
 
                 // A later smaller engine must preserve the largest earlier limit too.
                 await using var smaller = await TerraBaseTestServer.StartAsync(settings =>
@@ -323,7 +322,7 @@ public sealed class MemoryBudgetTests
                 using var response = await smaller.Client.GetAsync(new Uri("/healthz", UriKind.Relative), deadline.Token);
                 response.EnsureSuccessStatusCode();
                 await smaller.Services.GetRequiredService<IStorageEngine>().CreateDatabaseAsync(database, deadline.Token);
-                await Assert.That(SQLitePCL.raw.sqlite3_soft_heap_limit64(-1)).IsEqualTo(expectedLimit);
+                await Assert.That(TerraBase.Engine.Sqlite.TursoShim.SoftHeapLimit).IsEqualTo(expectedLimit);
             }
             catch (Exception error)
             {
@@ -348,7 +347,7 @@ public sealed class MemoryBudgetTests
                     if (Interlocked.Increment(ref ready) == budgets.Length)
                     {
                         // DI construction does not call SQLite; all hosts are started before the first database work.
-                        await Assert.That(SQLitePCL.raw.sqlite3_soft_heap_limit64(-1)).IsEqualTo(initialLimit);
+                        await Assert.That(TerraBase.Engine.Sqlite.TursoShim.SoftHeapLimit).IsEqualTo(initialLimit);
                         release.TrySetResult();
                     }
                     await release.Task.WaitAsync(deadline.Token);
