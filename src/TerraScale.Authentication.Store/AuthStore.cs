@@ -70,20 +70,21 @@ public sealed class AuthStore(TerraBaseDatabase database, TimeProvider clock)
     /// <summary>Invitations to an organization or project, addressed by instance and id.</summary>
     public const string InvitationCollection = "invitations";
 
+    /// <summary>ES256 signing keys, one per key, addressed by instance and key id (<c>kid</c>).</summary>
+    public const string SigningKeyCollection = "signing_keys";
+
     /// <summary>Audit events of the platform's organizations, addressed by instance and id.</summary>
     public const string AuditEventCollection = "audit_events";
 
     /// <summary>
-    /// Every collection the service needs; provisioning creates them and readiness requires them. <c>signing_key_rings</c>
-    /// held the TS-488 key ring until TS-703 moved it to OCI Vault and stays until its legacy document is removed;
-    /// <c>rate_limits</c> belongs to the TS-488 attempt limiter,
+    /// Every collection the service needs; provisioning creates them and readiness requires them. <c>rate_limits</c> belongs to the TS-488 attempt limiter,
     /// which every headless call (TS-582) and email test send (TS-583) charges; and <c>email_configs</c> and
     /// <c>email_config_versions</c> to TS-583 email branding.
     /// </summary>
     public static IReadOnlyList<string> RequiredCollections { get; } =
     [
         UniqueCollection, ChallengeCollection, HealthCollection, UserCollection, SessionCollection, PasscodeCollection,
-        "signing_key_rings", OidcApplicationCollection, OidcAuthorizationCollection, OidcTokenCollection,
+        SigningKeyCollection, OidcApplicationCollection, OidcAuthorizationCollection, OidcTokenCollection,
         "rate_limits", "email_configs", "email_config_versions",
         OrganizationCollection, MembershipCollection, ProjectCollection, ProjectMemberCollection, ApiKeyCollection,
         InvitationCollection, AuditEventCollection, MfaCollection,

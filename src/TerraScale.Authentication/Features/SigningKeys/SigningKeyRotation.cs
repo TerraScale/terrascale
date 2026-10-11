@@ -4,13 +4,12 @@ using ZLogger;
 namespace TerraScale.Authentication.Features.SigningKeys;
 
 /// <summary>
-/// Keeps the serving issuer's signing ring usable and rotated on every replica. At startup it
-/// creates a missing ring or replaces one this master key cannot verify (<see cref="KeyRing.EnsureAsync"/>),
-/// retrying until storage answers; <see cref="Bootstrapped"/> then completes. After that, and
-/// hourly, it runs the scheduled rotation and schedules deletion of the ring secret's deprecated
-/// versions. Every write is version-conditional, so replicas agree.
+/// Keeps the serving issuer's signing keys usable and rotated on every replica. At startup it creates the first key when
+/// there is none and checks that every stored key works under this master key (<see cref="KeyRing.EnsureAsync"/>),
+/// retrying until storage answers; <see cref="Bootstrapped"/> then completes. After that, and hourly, it runs the
+/// scheduled rotation.
 /// </summary>
-public sealed class SigningKeyRotation(KeyRing ring, ISigningKeyVault vault, ILogger<SigningKeyRotation> logger) : BackgroundService
+public sealed class SigningKeyRotation(KeyRing ring, ILogger<SigningKeyRotation> logger) : BackgroundService
 {
     private static readonly TimeSpan Interval = TimeSpan.FromHours(1);
     private static readonly TimeSpan BootstrapRetry = TimeSpan.FromSeconds(5);
@@ -25,8 +24,6 @@ public sealed class SigningKeyRotation(KeyRing ring, ISigningKeyVault vault, ILo
     {
         while (!await this.TryBootstrapAsync(stoppingToken).ConfigureAwait(false))
         {
-            // A full secret refuses the bootstrap's write: free its deprecated versions before trying again.
-            await this.TryPruneAsync(stoppingToken).ConfigureAwait(false);
             await Task.Delay(BootstrapRetry, stoppingToken).ConfigureAwait(false);
         }
 
@@ -34,9 +31,6 @@ public sealed class SigningKeyRotation(KeyRing ring, ISigningKeyVault vault, ILo
         using var timer = new PeriodicTimer(Interval);
         do
         {
-            // OCI limits versions per secret: prune first and on its own, so a full secret never blocks its own relief.
-            await this.TryPruneAsync(stoppingToken).ConfigureAwait(false);
-
             try
             {
                 if (await ring.RotateIfDueAsync(OidcIssuer.InstanceId, stoppingToken).ConfigureAwait(false))
@@ -52,25 +46,13 @@ public sealed class SigningKeyRotation(KeyRing ring, ISigningKeyVault vault, ILo
         while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false));
     }
 
-    private async Task TryPruneAsync(CancellationToken stoppingToken)
-    {
-        try
-        {
-            await vault.PruneAsync(OidcIssuer.InstanceId, stoppingToken).ConfigureAwait(false);
-        }
-        catch (Exception error) when (error is not OutOfMemoryException && !stoppingToken.IsCancellationRequested)
-        {
-            this.Log(target => target.ZLogWarning(error, $"Pruning the signing key secret's deprecated versions failed; retrying at the next interval"));
-        }
-    }
-
     private async Task<bool> TryBootstrapAsync(CancellationToken stoppingToken)
     {
         try
         {
             if (await ring.EnsureAsync(OidcIssuer.InstanceId, stoppingToken).ConfigureAwait(false))
             {
-                this.Log(target => target.ZLogWarning($"Wrote a fresh signing key ring; tokens signed by any replaced key no longer validate"));
+                this.Log(target => target.ZLogInformation($"Created the first signing key"));
             }
 
             return true;

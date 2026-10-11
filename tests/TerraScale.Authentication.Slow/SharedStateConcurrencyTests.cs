@@ -7,13 +7,14 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using TerraScale.Authentication.Features.RateLimiting;
 using TerraScale.Authentication.Features.SigningKeys;
+using TerraScale.Authentication.Store;
 using TerraScale.Authentication.Tests;
 
 namespace TerraScale.Authentication.Slow;
 
 /// <summary>
 /// Key-ring and attempt-limit state under concurrent requests to two replicas that share one
-/// real TerraBase database and master key. Correctness comes from conditional writes alone.
+/// real TerraBase database and master key.
 /// </summary>
 [ClassDataSource<TerraBaseFixture>(Shared = SharedType.PerTestSession)]
 public sealed class SharedStateConcurrencyTests(TerraBaseFixture fixture)
@@ -25,8 +26,6 @@ public sealed class SharedStateConcurrencyTests(TerraBaseFixture fixture)
         settings: values =>
         {
             target.Bind(values);
-            // As in production, the vault's clock agrees with the replicas' (KeyRing.MaxClockSkew).
-            target.Vault.Clock = clock;
             values["master-key"] = masterKey;
         },
         services: services =>
@@ -72,7 +71,7 @@ public sealed class SharedStateConcurrencyTests(TerraBaseFixture fixture)
     }
 
     [Test]
-    public async Task Concurrent_first_use_on_two_replicas_creates_exactly_one_key()
+    public async Task Concurrent_first_use_on_two_replicas_publishes_every_key_and_converges_on_one_signer()
     {
         var (first, second, store) = await StartPairAsync();
         await using var _ = first;
@@ -85,8 +84,12 @@ public sealed class SharedStateConcurrencyTests(TerraBaseFixture fixture)
             return body.GetProperty("kid").GetString();
         }));
 
-        await Assert.That(kids.Distinct().Count()).IsEqualTo(1);
-        await Assert.That(Keys(store, "ins_race").Count).IsEqualTo(1);
+        // Replicas may each add a first key; every key that signed is published, and all agree on the signer after.
+        var stored = await KeysAsync(store, "ins_race");
+        await Assert.That(kids.All(kid => kid is not null && stored.Contains(kid))).IsTrue();
+        var signers = await Task.WhenAll(new[] { first, second }.Select(async server =>
+            (await server.Client.GetFromJsonAsync<JsonElement>("/__test/instances/ins_race/kid")).GetProperty("kid").GetString()));
+        await Assert.That(signers.Distinct().Count()).IsEqualTo(1);
     }
 
     [Test]
@@ -97,19 +100,18 @@ public sealed class SharedStateConcurrencyTests(TerraBaseFixture fixture)
         await using var __ = second;
         var initial = (await first.Client.GetFromJsonAsync<JsonElement>("/__test/instances/ins_rotate/kid")).GetProperty("kid").GetString();
 
-        // Six rotators: each lost write means another rotation committed or is still being applied,
-        // and the backoff between attempts spreads them, so every one finishes within eight attempts.
+        // Six rotators: every rotation stores its own key, so none is lost.
         var rotated = await Task.WhenAll(Enumerable.Range(0, 6).Select(async index =>
         {
             using var response = await (index % 2 == 0 ? first : second).Client.PostAsync("/__test/instances/ins_rotate/keys/rotate", null);
             await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
             return (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("kid").GetString();
         }));
-        var stored = Keys(store, "ins_rotate");
+        var stored = await KeysAsync(store, "ins_rotate");
 
         await Assert.That(stored.Count).IsEqualTo(7);
         await Assert.That(stored.Distinct().Count()).IsEqualTo(7);
-        await Assert.That(stored[0]).IsEqualTo(initial);
+        await Assert.That(stored).Contains(initial!);
         await Assert.That(rotated.All(kid => kid is not null && stored.Contains(kid))).IsTrue();
     }
 
@@ -130,8 +132,8 @@ public sealed class SharedStateConcurrencyTests(TerraBaseFixture fixture)
         await Assert.That(statuses.Count(status => status == HttpStatusCode.TooManyRequests)).IsEqualTo(60 - Maximum);
     }
 
-    private static List<string> Keys(SharedStateTarget store, string instance) =>
-        store.Vault.Read(instance) is not { } ring
-            ? throw new InvalidOperationException($"The vault holds no signing key ring for '{instance}'.")
-            : [.. ring.GetProperty("keys").EnumerateArray().Select(key => key.GetProperty("id").GetString()!)];
+    private static async Task<List<string>> KeysAsync(SharedStateTarget store, string instance) =>
+        [.. (await store.Database.ListDocumentsAsync(AuthStore.SigningKeyCollection)).Items
+            .Where(document => document.Document.GetProperty("instanceId").GetString() == instance)
+            .Select(document => document.Document.GetProperty("id").GetString()!)];
 }

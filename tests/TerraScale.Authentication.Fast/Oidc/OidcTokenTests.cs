@@ -10,6 +10,7 @@ using TerraScale.Authentication.Features.SigningKeys;
 using TerraScale.Authentication.Security;
 using TerraScale.Authentication.Store;
 using TerraScale.Authentication.Tests;
+using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Authentication.Fast.Oidc;
 
@@ -157,16 +158,14 @@ public sealed class OidcTokenTests(TerraBaseFixture fixture)
             .IsEquivalentTo([new JsonWebToken(older.GetProperty("id_token").GetString()!).Kid, rotated.KeyId]);
 
         // Make every private key unreadable: public requests must use persisted public material only.
-        var id = OidcIssuer.InstanceId;
-        var stored = oidc.Vault.Current(id);
-        var ring = JsonNode.Parse(stored.Document.GetRawText())!;
-        foreach (var record in ring["keys"]!.AsArray())
+        foreach (var stored in await KeyDocumentsAsync(oidc))
         {
-            record!["secretBox"] = "unavailable";
+            var record = JsonNode.Parse(stored.Document.GetRawText())!;
+            record["secretBox"] = "unavailable";
+            await OverwriteAsync(oidc, stored, record);
         }
 
-        oidc.Vault.Put(id, JsonSerializer.SerializeToElement(ring));
-        var before = oidc.Vault.Current(id);
+        var before = await KeyDocumentsAsync(oidc);
         foreach (var client in new[] { oidc.Client, replica.Client })
         {
             var jwks = await client.GetStringAsync($"/{OidcIssuer.Slug}/.well-known/jwks.json");
@@ -195,9 +194,7 @@ public sealed class OidcTokenTests(TerraBaseFixture fixture)
             }
         }
 
-        var afterPublicRequests = oidc.Vault.Current(id);
-        await Assert.That(afterPublicRequests.Version).IsEqualTo(before.Version);
-        await Assert.That(afterPublicRequests.Document.GetRawText()).IsEqualTo(before.Document.GetRawText());
+        await Assert.That((await KeyDocumentsAsync(oidc)).Select(document => document.Version)).IsEquivalentTo(before.Select(document => document.Version));
         using var refused = await oidc.RefreshAsync(newer.GetProperty("refresh_token").GetString()!, replica.Client);
         await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.InternalServerError);
         var body = await OidcHarness.JsonAsync(refused);
@@ -236,15 +233,12 @@ public sealed class OidcTokenTests(TerraBaseFixture fixture)
         await Assert.That(validation.IsValid).IsTrue();
         await Assert.That(validation.Claims["sub"]).IsEqualTo(user.Id);
 
-        var id = OidcIssuer.InstanceId;
-        var stored = oidc.Vault.Current(id);
-        var ring = JsonNode.Parse(stored.Document.GetRawText())!;
         // A storage attacker replaces only X/Y, retaining the real owner, kid and metadata MAC.
-        var record = ring["keys"]!.AsArray().Single(key => key!["id"]!.GetValue<string>() == genuine.Kid)!;
+        var stored = (await KeyDocumentsAsync(oidc)).Single(document => document.Document.GetProperty("id").GetString() == genuine.Kid);
+        var record = JsonNode.Parse(stored.Document.GetRawText())!;
         record["x"] = attackerPublic.X;
         record["y"] = attackerPublic.Y;
-        oidc.Vault.Put(id, JsonSerializer.SerializeToElement(ring));
-        var before = oidc.Vault.Current(id);
+        var before = await OverwriteAsync(oidc, stored, record);
         foreach (var client in new[] { oidc.Client, replica.Client })
         {
             using var jwks = await client.GetAsync($"/{OidcIssuer.Slug}/.well-known/jwks.json");
@@ -259,40 +253,18 @@ public sealed class OidcTokenTests(TerraBaseFixture fixture)
             await Assert.That(await OidcHarness.EnvelopeCodeAsync(organizations)).IsEqualTo("internal_error");
         }
 
-        var after = oidc.Vault.Current(id);
-        await Assert.That(after.Version).IsEqualTo(before.Version);
-        await Assert.That(after.Document.GetRawText()).IsEqualTo(before.Document.GetRawText());
+        await Assert.That((await KeyDocumentsAsync(oidc)).Single().Version).IsEqualTo(before);
     }
 
     [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task Invalid_public_key_metadata_fails_closed_without_rewriting_the_ring(bool copiedForeignRing)
+    public async Task Invalid_public_key_metadata_fails_closed_without_rewriting_the_key()
     {
         await using var oidc = await OidcHarness.StartAsync(fixture);
         var (_, _, tokens) = await oidc.SignInAndRedeemAsync();
-        var id = OidcIssuer.InstanceId;
-        var stored = oidc.Vault.Current(id);
-        var ring = JsonNode.Parse(stored.Document.GetRawText())!;
-        if (copiedForeignRing)
-        {
-            const string otherInstance = "other-tenant";
-            var foreignKeys = await oidc.Server.App.Services.GetRequiredService<KeyRing>().GetActiveAsync(otherInstance, CancellationToken.None);
-            foreach (var key in foreignKeys)
-            {
-                key.Dispose();
-            }
-
-            var foreignId = otherInstance;
-            ring = JsonNode.Parse(oidc.Vault.Current(foreignId).Document.GetRawText())!;
-        }
-        else
-        {
-            ring["keys"]![0]!["x"] = "not-a-coordinate";
-        }
-
-        oidc.Vault.Put(id, JsonSerializer.SerializeToElement(ring));
-        var before = oidc.Vault.Current(id);
+        var stored = (await KeyDocumentsAsync(oidc)).Single();
+        var record = JsonNode.Parse(stored.Document.GetRawText())!;
+        record["x"] = "not-a-coordinate";
+        var before = await OverwriteAsync(oidc, stored, record);
         using var jwks = await oidc.Client.GetAsync($"/{OidcIssuer.Slug}/.well-known/jwks.json");
         await Assert.That(jwks.StatusCode).IsEqualTo(HttpStatusCode.InternalServerError);
         await Assert.That(await jwks.Content.ReadAsStringAsync()).DoesNotContain("\"kid\"");
@@ -303,9 +275,7 @@ public sealed class OidcTokenTests(TerraBaseFixture fixture)
         using var refused = await oidc.RefreshAsync(tokens.GetProperty("refresh_token").GetString()!);
         await Assert.That(refused.IsSuccessStatusCode).IsFalse();
         await Assert.That(await refused.Content.ReadAsStringAsync()).DoesNotContain("access_token");
-        var after = oidc.Vault.Current(id);
-        await Assert.That(after.Version).IsEqualTo(before.Version);
-        await Assert.That(after.Document.GetRawText()).IsEqualTo(before.Document.GetRawText());
+        await Assert.That((await KeyDocumentsAsync(oidc)).Single(document => document.Id == stored.Id).Version).IsEqualTo(before);
     }
 
     [Test]
@@ -357,4 +327,12 @@ public sealed class OidcTokenTests(TerraBaseFixture fixture)
         start.Set();
         return await Task.WhenAll(attempts);
     }
+
+    // The instance's stored signing key documents, read directly from TerraBase.
+    private static async Task<List<TerraBaseDocument>> KeyDocumentsAsync(OidcHarness oidc, string instance = OidcIssuer.InstanceId) =>
+        [.. (await oidc.Database.ListDocumentsAsync(AuthStore.SigningKeyCollection)).Items.Where(document => document.Document.GetProperty("instanceId").GetString() == instance)];
+
+    // Overwrites a stored key as a storage writer could; returns the new version.
+    private static async Task<string> OverwriteAsync(OidcHarness oidc, TerraBaseDocument stored, JsonNode record) =>
+        (await oidc.Database.PutDocumentAsync(AuthStore.SigningKeyCollection, stored.Id, JsonSerializer.SerializeToElement(record), TerraBasePrecondition.Matches(stored.Version))).Version;
 }

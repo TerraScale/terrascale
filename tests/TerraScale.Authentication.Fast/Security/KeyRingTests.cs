@@ -20,8 +20,8 @@ using TerraScale.DotNet;
 namespace TerraScale.Authentication.Fast.Security;
 
 /// <summary>
-/// Per-instance ES256 signing keys: sealed storage, JWT signing and validation, rotation seen by
-/// every replica, and tenant isolation. Test routes sign and validate through the key ring.
+/// Per-instance ES256 signing keys in TerraBase: sealed storage, JWT signing and validation, rotation seen by every
+/// replica, and tenant isolation. Test routes sign and validate through the key ring.
 /// </summary>
 [ClassDataSource<TerraBaseFixture>(Shared = SharedType.PerTestSession)]
 public sealed class KeyRingTests(TerraBaseFixture fixture)
@@ -29,17 +29,11 @@ public sealed class KeyRingTests(TerraBaseFixture fixture)
     private const string Audience = "test-audience";
     private const string AccessType = "at+jwt";
 
-    // Binds to the real TerraBase target and its vault; without one the server's storage and vault are unreachable.
-    // The clock is this replica's and, unless vaultClock is false, the vault's too.
-    private static Task<AuthTestServer> StartAsync(SharedStateTarget? target, string? masterKey = null, TimeProvider? clock = null, TimeSpan? refresh = null, bool vaultClock = true) => AuthTestServer.StartAsync(
+    // Binds to the real TerraBase target; without one the server's storage is unreachable.
+    private static Task<AuthTestServer> StartAsync(SharedStateTarget? target, string? masterKey = null, TimeProvider? clock = null, TimeSpan? refresh = null) => AuthTestServer.StartAsync(
         settings: values =>
         {
             target?.Bind(values);
-            if (target is not null && clock is not null && vaultClock)
-            {
-                target.Vault.Clock = clock;
-            }
-
             if (masterKey is not null)
             {
                 values["master-key"] = masterKey;
@@ -100,8 +94,6 @@ public sealed class KeyRingTests(TerraBaseFixture fixture)
             });
             app.MapPost("/__test/instances/{instance}/keys/rotate-if-due", async (string instance, KeyRing ring, CancellationToken cancellationToken) =>
                 new { rotated = await ring.RotateIfDueAsync(instance, cancellationToken) });
-            app.MapPost("/__test/instances/{instance}/keys/prune", async (string instance, ISigningKeyVault vault, CancellationToken cancellationToken) =>
-                new { scheduled = await vault.PruneAsync(instance, cancellationToken) });
             app.MapGet("/__test/instances/{instance}/jwks", async (string instance, KeyRing ring, CancellationToken cancellationToken) =>
             {
                 var keys = await ring.GetPublicAsync(instance, cancellationToken);
@@ -153,17 +145,243 @@ public sealed class KeyRingTests(TerraBaseFixture fixture)
         await Assert.That(key.GetProperty("use").GetString()).IsEqualTo("sig");
         await Assert.That(key.GetProperty("d").ValueKind).IsEqualTo(JsonValueKind.Null);
 
-        // Storage holds the private key only as a v1 box under TS_AUTH_MASTER_KEY, bound to its kid and instance.
-        var stored = JsonNode.Parse(target.Vault.Read("ins_a")!.Value.GetRawText())!["keys"]!.AsArray().Single()!;
+        // TerraBase holds the private key only as a v1 box under TS_AUTH_MASTER_KEY, bound to its kid and instance.
+        var stored = (await StoredAsync(target, "ins_a")).Single();
         var boxed = stored["secretBox"]!.GetValue<string>();
         var secret = SecretBox.Open(masterKey, boxed, $"signing-key:{kid}:ins_a");
+        await Assert.That(stored["id"]!.GetValue<string>()).IsEqualTo(kid);
         await Assert.That(stored["algorithm"]!.GetValue<string>()).IsEqualTo("ES256");
         await Assert.That(boxed).StartsWith("v1:");
         await Assert.That(secret.Length).IsEqualTo(96);
         await Assert.That(Base64UrlEncoder.Encode(secret[32..64])).IsEqualTo(key.GetProperty("x").GetString());
         await Assert.That(Base64UrlEncoder.Encode(secret[64..])).IsEqualTo(key.GetProperty("y").GetString());
-        await Assert.That(target.Vault.Read("ins_a")!.Value.GetRawText()).DoesNotContain(Convert.ToBase64String(secret[..32]));
+        await Assert.That(stored.ToJsonString()).DoesNotContain(Convert.ToBase64String(secret[..32]));
         await Assert.That(() => SecretBox.Open(masterKey, boxed, $"signing-key:{kid}:ins_b")).Throws<CryptographicException>();
+    }
+
+    [Test]
+    public async Task Startup_creates_the_issuer_key_once_across_restarts()
+    {
+        var target = await SharedStateTarget.CreateAsync(fixture);
+        var masterKey = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+        string first;
+        await using (var server = await StartAsync(target, masterKey))
+        {
+            await server.App.Services.GetRequiredService<SigningKeyRotation>().Bootstrapped.WaitAsync(TimeSpan.FromSeconds(30));
+            first = (await StoredAsync(target, OidcIssuer.InstanceId)).Single()["id"]!.GetValue<string>();
+        }
+
+        await using var restarted = await StartAsync(target, masterKey);
+        await restarted.App.Services.GetRequiredService<SigningKeyRotation>().Bootstrapped.WaitAsync(TimeSpan.FromSeconds(30));
+        await Assert.That((await StoredAsync(target, OidcIssuer.InstanceId)).Single()["id"]!.GetValue<string>()).IsEqualTo(first);
+    }
+
+    [Test]
+    public async Task Scheduled_rotation_publishes_the_next_key_before_it_signs_and_retires_the_old_one_later()
+    {
+        var clock = new ManualClock(new DateTimeOffset(2026, 10, 4, 12, 0, 0, TimeSpan.Zero));
+        var target = await SharedStateTarget.CreateAsync(fixture);
+        var masterKey = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+        await using var server = await StartAsync(target, masterKey, clock);
+        await using var replica = await StartAsync(target, masterKey, clock);
+        var first = KeyId(await SignAsync(server, "ins_a", AccessType));
+
+        clock.Advance(KeyRing.RotationAge - TimeSpan.FromSeconds(1));
+        await Assert.That(await RotateIfDueAsync(server)).IsFalse();
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await Assert.That(await RotateIfDueAsync(server)).IsTrue();
+        await Assert.That(await RotateIfDueAsync(replica)).IsFalse();
+
+        // Published at once on every replica, but the old key keeps signing for the whole overlap.
+        var next = (await KeyIdsAsync(replica)).First();
+        await Assert.That(next).IsNotEqualTo(first);
+        await Assert.That(await KeyIdsAsync(server)).IsEquivalentTo([next, first]);
+        clock.Advance(KeyRing.Overlap - TimeSpan.FromSeconds(1));
+        await Assert.That(KeyId(await SignAsync(replica, "ins_a", AccessType))).IsEqualTo(first);
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await Assert.That(KeyId(await SignAsync(replica, "ins_a", AccessType))).IsEqualTo(next);
+        await Assert.That(KeyId(await SignAsync(server, "ins_a", AccessType))).IsEqualTo(next);
+
+        // The old key stays published until its successor has signed for the overlap, then the next rotation retires it.
+        clock.Advance(KeyRing.RotationAge - KeyRing.Overlap);
+        await Assert.That(await RotateIfDueAsync(server)).IsTrue();
+        var afterRetirement = await KeyIdsAsync(server);
+        await Assert.That(afterRetirement).DoesNotContain(first);
+        await Assert.That(afterRetirement).Contains(next);
+        await Assert.That(afterRetirement.Count).IsEqualTo(2);
+    }
+
+    [Test]
+    public async Task An_unscheduled_key_is_published_one_refresh_interval_before_it_signs()
+    {
+        var clock = new ManualClock(new DateTimeOffset(2026, 10, 4, 12, 0, 0, TimeSpan.Zero));
+        var target = await SharedStateTarget.CreateAsync(fixture);
+        var masterKey = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+        var refresh = TimeSpan.FromMinutes(1);
+        await using var server = await StartAsync(target, masterKey, clock, refresh);
+        var first = KeyId(await SignAsync(server, "ins_a", AccessType));
+
+        var rotated = await RotateAsync(server);
+
+        await Assert.That(await KeyIdsAsync(server)).Contains(rotated);
+        await Assert.That(KeyId(await SignAsync(server, "ins_a", AccessType))).IsEqualTo(first);
+        clock.Advance(refresh);
+        await Assert.That(KeyId(await SignAsync(server, "ins_a", AccessType))).IsEqualTo(rotated);
+    }
+
+    [Test]
+    public async Task Rotation_retires_a_key_only_after_its_successor_has_signed_for_the_overlap()
+    {
+        var clock = new ManualClock(new DateTimeOffset(2026, 10, 4, 12, 0, 0, TimeSpan.Zero));
+        await using var server = await StartAsync(await SharedStateTarget.CreateAsync(fixture), clock: clock);
+        var first = (await KeyIdsAsync(server)).Single();
+        var second = await RotateAsync(server);
+
+        // The second key signed from the start, so the first key's tokens are past the overlap only after it.
+        clock.Advance(KeyRing.Overlap - TimeSpan.FromSeconds(1));
+        var third = await RotateAsync(server);
+        var afterThird = await KeyIdsAsync(server);
+
+        clock.Advance(TimeSpan.FromSeconds(1));
+        var fourth = await RotateAsync(server);
+        var afterFourth = await KeyIdsAsync(server);
+
+        await Assert.That(afterThird).IsEquivalentTo([third, second, first]);
+        await Assert.That(afterFourth).IsEquivalentTo([fourth, third, second]);
+    }
+
+    [Test]
+    public async Task Replicas_creating_first_keys_at_once_keep_both_and_agree_on_the_signer()
+    {
+        var target = await SharedStateTarget.CreateAsync(fixture);
+        var masterKey = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+        await using var server = await StartAsync(target, masterKey);
+        await using var replica = await StartAsync(target, masterKey);
+
+        var tokens = await Task.WhenAll(SignAsync(server, "ins_a", AccessType), SignAsync(replica, "ins_a", AccessType));
+
+        var published = await KeyIdsAsync(server);
+        await Assert.That(published).Contains(KeyId(tokens[0]));
+        await Assert.That(published).Contains(KeyId(tokens[1]));
+        await Assert.That(await ValidateAsync(replica, "ins_a", tokens[0])).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(await ValidateAsync(server, "ins_a", tokens[1])).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(KeyId(await SignAsync(server, "ins_a", AccessType))).IsEqualTo(KeyId(await SignAsync(replica, "ins_a", AccessType)));
+    }
+
+    [Test]
+    public async Task A_replica_with_another_master_key_fails_closed_and_never_adds_keys()
+    {
+        var target = await SharedStateTarget.CreateAsync(fixture);
+        await using var server = await StartAsync(target);
+        var token = await SignAsync(server, "ins_a", AccessType);
+        await using var foreign = await StartAsync(target);
+
+        using var signing = await foreign.Client.PostAsJsonAsync("/__test/instances/ins_a/tokens", new SignRequest(AccessType, new() { ["sub"] = "user_1" }));
+        using var rotation = await foreign.Client.PostAsync("/__test/instances/ins_a/keys/rotate", null);
+
+        await Assert.That(signing.StatusCode).IsEqualTo(HttpStatusCode.InternalServerError);
+        await Assert.That(rotation.StatusCode).IsEqualTo(HttpStatusCode.InternalServerError);
+        await Assert.That(await ValidateAsync(foreign, "ins_a", token)).IsEqualTo(HttpStatusCode.InternalServerError);
+        await Assert.That((await StoredAsync(target, "ins_a")).Count).IsEqualTo(1);
+        await Assert.That(await ValidateAsync(server, "ins_a", token)).IsEqualTo(HttpStatusCode.OK);
+    }
+
+    [Test]
+    public async Task A_key_copied_to_another_instance_is_never_used()
+    {
+        var target = await SharedStateTarget.CreateAsync(fixture);
+        await using var server = await StartAsync(target);
+        var token = await SignAsync(server, "ins_a", AccessType);
+
+        // Storage-level tampering: instance B's address holds a copy of A's key, which still names A.
+        var copied = (await StoredAsync(target, "ins_a")).Single();
+        await target.PutAsync(AuthStore.SigningKeyCollection, "ins_b", copied["id"]!.GetValue<string>(), JsonSerializer.SerializeToElement(copied));
+
+        // B serves only keys it owns: it creates its own, and A's tokens never validate as B's.
+        var other = await SignAsync(server, "ins_b", AccessType);
+        await Assert.That(KeyId(other)).IsNotEqualTo(KeyId(token));
+        await Assert.That(await KeyIdsAsync(server, "ins_b")).DoesNotContain(KeyId(token));
+        await Assert.That(await ValidateAsync(server, "ins_b", token)).IsEqualTo(HttpStatusCode.Unauthorized);
+    }
+
+    [Test]
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Public_metadata_cannot_be_rebound_to_another_key_or_instance(bool rebindTenant)
+    {
+        var target = await SharedStateTarget.CreateAsync(fixture);
+        await using var server = await StartAsync(target);
+        var token = await SignAsync(server, "ins_a", AccessType);
+        var record = (await StoredAsync(target, "ins_a")).Single();
+        var originalId = record["id"]!.GetValue<string>();
+        var instance = rebindTenant ? "ins_b" : "ins_a";
+        if (rebindTenant)
+        {
+            record["instanceId"] = instance;
+        }
+        else
+        {
+            record["id"] = AuthStore.NewId();
+        }
+
+        // A storage writer can change ownership or kid, but cannot replace the original MAC.
+        await target.PutAsync(AuthStore.SigningKeyCollection, instance, record["id"]!.GetValue<string>(), JsonSerializer.SerializeToElement(record));
+
+        using var lookup = await server.Client.GetAsync($"/__test/instances/{instance}/jwks");
+        await Assert.That(lookup.StatusCode).IsEqualTo(HttpStatusCode.InternalServerError);
+        await Assert.That(await ValidateAsync(server, instance, token)).IsEqualTo(HttpStatusCode.InternalServerError);
+        using var signing = await server.Client.PostAsJsonAsync($"/__test/instances/{instance}/tokens", new SignRequest(AccessType, new() { ["sub"] = "user_1" }));
+        await Assert.That(signing.StatusCode).IsEqualTo(HttpStatusCode.InternalServerError);
+        using var rotation = await server.Client.PostAsync($"/__test/instances/{instance}/keys/rotate", null);
+        await Assert.That(rotation.StatusCode).IsEqualTo(HttpStatusCode.InternalServerError);
+        if (rebindTenant)
+        {
+            await Assert.That(await ValidateAsync(server, "ins_a", token)).IsEqualTo(HttpStatusCode.OK);
+            await Assert.That((await StoredAsync(target, "ins_a")).Single()["id"]!.GetValue<string>()).IsEqualTo(originalId);
+        }
+    }
+
+    [Test]
+    public async Task A_stored_key_whose_public_point_does_not_match_its_private_key_is_rejected()
+    {
+        var target = await SharedStateTarget.CreateAsync(fixture);
+        var masterKey = RandomNumberGenerator.GetBytes(32);
+        await using var server = await StartAsync(target, Convert.ToBase64String(masterKey));
+        await SignAsync(server, "ins_a", AccessType);
+
+        // Correctly sealed under the master key, but with one bit of Y flipped.
+        var record = (await StoredAsync(target, "ins_a")).Single();
+        var kid = record["id"]!.GetValue<string>();
+        var secret = SecretBox.Open(masterKey, record["secretBox"]!.GetValue<string>(), $"signing-key:{kid}:ins_a");
+        secret[80] ^= 1;
+        record["secretBox"] = SecretBox.Seal(masterKey, secret, $"signing-key:{kid}:ins_a");
+        await target.PutAsync(AuthStore.SigningKeyCollection, "ins_a", kid, JsonSerializer.SerializeToElement(record));
+
+        using var response = await server.Client.GetAsync("/__test/instances/ins_a/jwks");
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        using var signing = await server.Client.PostAsJsonAsync("/__test/instances/ins_a/tokens", new SignRequest(AccessType, new() { ["sub"] = "user_1" }));
+        await Assert.That(signing.StatusCode).IsEqualTo(HttpStatusCode.InternalServerError);
+    }
+
+    [Test]
+    public async Task Rotation_at_capacity_is_refused_until_superseded_keys_pass_the_overlap()
+    {
+        var clock = new ManualClock(new DateTimeOffset(2026, 10, 4, 12, 0, 0, TimeSpan.Zero));
+        var target = await SharedStateTarget.CreateAsync(fixture);
+        await using var server = await StartAsync(target, clock: clock);
+        await KeyIdsAsync(server);
+        for (var added = 1; added < KeyRing.MaxKeys; added++)
+        {
+            await RotateAsync(server);
+        }
+
+        using var refused = await server.Client.PostAsync("/__test/instances/ins_a/keys/rotate", null);
+        await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+        await Assert.That((await StoredAsync(target, "ins_a")).Count).IsEqualTo(KeyRing.MaxKeys);
+
+        clock.Advance(KeyRing.Overlap);
+        await RotateAsync(server);
+        await Assert.That((await StoredAsync(target, "ins_a")).Count).IsEqualTo(2);
     }
 
     [Test]
@@ -201,6 +419,7 @@ public sealed class KeyRingTests(TerraBaseFixture fixture)
         await Assert.That(await ValidateAsync(server, "ins_a", $"{hsHeader}.{parts[1]}.{hsSignature}")).IsEqualTo(HttpStatusCode.Unauthorized);
     }
 
+
     [Test]
     public async Task Correctly_signed_tokens_still_need_a_ring_kid_and_es256()
     {
@@ -210,7 +429,7 @@ public sealed class KeyRingTests(TerraBaseFixture fixture)
         var payload = (await SignAsync(server, "ins_a", AccessType)).Split('.')[1];
 
         // The test signs with the instance's own private key, so only the header differs.
-        var record = JsonNode.Parse(target.Vault.Read("ins_a")!.Value.GetRawText())!["keys"]![0]!;
+        var record = (await StoredAsync(target, "ins_a")).Single();
         var kid = record["id"]!.GetValue<string>();
         using var key = Es256Key.Import(kid, SecretBox.Open(masterKey, record["secretBox"]!.GetValue<string>(), $"signing-key:{kid}:ins_a"));
         string Sign(string header, HashAlgorithmName hash)
@@ -229,6 +448,7 @@ public sealed class KeyRingTests(TerraBaseFixture fixture)
             .IsEqualTo(HttpStatusCode.Unauthorized);
     }
 
+
     [Test]
     public async Task Audiences_match_exactly_without_trailing_slash_folding()
     {
@@ -241,6 +461,7 @@ public sealed class KeyRingTests(TerraBaseFixture fixture)
         await Assert.That(await ValidateAsync(server, "ins_a", plain, audience: Audience + "/")).IsEqualTo(HttpStatusCode.Unauthorized);
         await Assert.That(await ValidateAsync(server, "ins_a", slashed, audience: Audience + "/")).IsEqualTo(HttpStatusCode.OK);
     }
+
 
     [Test]
     [Arguments(0, HttpStatusCode.BadRequest)]
@@ -257,98 +478,6 @@ public sealed class KeyRingTests(TerraBaseFixture fixture)
         await Assert.That(response.StatusCode).IsEqualTo(expected);
     }
 
-    [Test]
-    public async Task Rotation_retires_a_key_only_after_its_successor_has_signed_for_the_overlap()
-    {
-        var clock = new ManualClock(new DateTimeOffset(2026, 10, 4, 12, 0, 0, TimeSpan.Zero));
-        await using var server = await StartAsync(await SharedStateTarget.CreateAsync(fixture), clock: clock);
-        var first = (await KeyIdsAsync(server)).Single();
-        var second = await RotateAsync(server);
-
-        // The second key signed from the start, so the first key's tokens are past the overlap only after it.
-        clock.Advance(KeyRing.Overlap - TimeSpan.FromSeconds(1));
-        var third = await RotateAsync(server);
-        var afterThird = await KeyIdsAsync(server);
-
-        clock.Advance(TimeSpan.FromSeconds(1));
-        var fourth = await RotateAsync(server);
-        var afterFourth = await KeyIdsAsync(server);
-
-        await Assert.That(string.Join(',', afterThird)).IsEqualTo(string.Join(',', third, second, first));
-        await Assert.That(string.Join(',', afterFourth)).IsEqualTo(string.Join(',', fourth, third, second));
-    }
-
-    [Test]
-    public async Task Scheduled_rotation_publishes_the_next_key_before_it_signs_and_retires_the_old_one_later()
-    {
-        var target = await SharedStateTarget.CreateAsync(fixture);
-        var masterKey = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
-        var clock = new ManualClock(new DateTimeOffset(2026, 10, 4, 12, 0, 0, TimeSpan.Zero));
-        await using var server = await StartAsync(target, masterKey, clock);
-        await using var replica = await StartAsync(target, masterKey, clock);
-        var first = (await KeyIdsAsync(server)).Single();
-
-        await Assert.That(await RotateIfDueAsync(server)).IsFalse();
-        clock.Advance(KeyRing.RotationAge);
-        // Both replicas run the schedule at once; the conditional write lets only one add a key.
-        var rotated = await Task.WhenAll(RotateIfDueAsync(server), RotateIfDueAsync(replica));
-        await Assert.That(rotated.Count(added => added)).IsEqualTo(1);
-        var published = await KeyIdsAsync(replica);
-        await Assert.That(published.Count).IsEqualTo(2);
-        await Assert.That(published[1]).IsEqualTo(first);
-        var next = published[0];
-
-        // Published but not yet signing: verifiers fetch it before any token needs it.
-        var beforeActivation = await SignAsync(replica, "ins_a", AccessType);
-        await Assert.That(KeyId(beforeActivation)).IsEqualTo(first);
-        // Activation rounds up to the second.
-        clock.Advance(KeyRing.Overlap + TimeSpan.FromSeconds(1));
-        var afterActivation = await SignAsync(server, "ins_a", AccessType);
-        await Assert.That(KeyId(afterActivation)).IsEqualTo(next);
-        await Assert.That(await ValidateAsync(replica, "ins_a", beforeActivation)).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(await RotateIfDueAsync(server)).IsFalse();
-
-        // The next scheduled rotation retires the first key, whose successor has signed for longer than the overlap.
-        clock.Advance(KeyRing.RotationAge);
-        await Assert.That(await RotateIfDueAsync(replica)).IsTrue();
-        var later = await KeyIdsAsync(server);
-        await Assert.That(later.Count).IsEqualTo(2);
-        await Assert.That(later[1]).IsEqualTo(next);
-        await Assert.That(later).DoesNotContain(first);
-        await Assert.That(await ValidateAsync(server, "ins_a", beforeActivation)).IsEqualTo(HttpStatusCode.Unauthorized);
-        await Assert.That(await ValidateAsync(server, "ins_a", afterActivation)).IsEqualTo(HttpStatusCode.OK);
-    }
-
-    [Test]
-    public async Task Rotation_at_capacity_is_refused_unchanged_until_superseded_keys_pass_the_overlap()
-    {
-        var target = await SharedStateTarget.CreateAsync(fixture);
-        var clock = new ManualClock(new DateTimeOffset(2026, 10, 4, 12, 0, 0, TimeSpan.Zero));
-        await using var server = await StartAsync(target, clock: clock);
-        await KeyIdsAsync(server);
-        for (var rotation = 1; rotation < KeyRing.MaxKeys; rotation++)
-        {
-            await RotateAsync(server);
-        }
-
-        var token = await SignAsync(server, "ins_a", AccessType);
-        var before = target.Vault.Read("ins_a")!.Value.GetRawText();
-        using var refused = await server.Client.PostAsync("/__test/instances/ins_a/keys/rotate", null);
-        var body = await refused.Content.ReadFromJsonAsync<JsonElement>();
-        var held = await KeyIdsAsync(server);
-
-        await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
-        await Assert.That(body.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("signing_key_limit");
-        await Assert.That(held.Count).IsEqualTo(KeyRing.MaxKeys);
-        await Assert.That(target.Vault.Read("ins_a")!.Value.GetRawText()).IsEqualTo(before);
-        await Assert.That(await ValidateAsync(server, "ins_a", token)).IsEqualTo(HttpStatusCode.OK);
-
-        // Every key but the signing one has been superseded for the overlap: only the signing key stays.
-        clock.Advance(KeyRing.Overlap);
-        var added = await RotateAsync(server);
-        await Assert.That(string.Join(',', await KeyIdsAsync(server))).IsEqualTo(string.Join(',', added, held[0]));
-        await Assert.That(await ValidateAsync(server, "ins_a", token)).IsEqualTo(HttpStatusCode.OK);
-    }
 
     [Test]
     public async Task Claims_cannot_override_issuer_audience_or_lifetime()
@@ -363,6 +492,7 @@ public sealed class KeyRingTests(TerraBaseFixture fixture)
             await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
         }
     }
+
 
     [Test]
     public async Task Rotation_signs_with_a_new_key_that_every_replica_sees_while_old_tokens_stay_valid()
@@ -388,86 +518,6 @@ public sealed class KeyRingTests(TerraBaseFixture fixture)
         await Assert.That(await ValidateAsync(first, "ins_a", after)).IsEqualTo(HttpStatusCode.OK);
     }
 
-    [Test]
-    public async Task A_key_ring_copied_to_another_instance_is_never_used()
-    {
-        var target = await SharedStateTarget.CreateAsync(fixture);
-        await using var server = await StartAsync(target);
-        var token = await SignAsync(server, "ins_a", AccessType);
-
-        // Storage-level tampering: instance B's ring replaced by a copy of A's.
-        target.Vault.Put("ins_b", target.Vault.Read("ins_a")!.Value);
-        using var sign = await server.Client.PostAsJsonAsync("/__test/instances/ins_b/tokens", new SignRequest(AccessType, new() { ["sub"] = "user_1" }));
-        using var validate = await server.Client.PostAsJsonAsync("/__test/instances/ins_b/tokens/validate", new ValidateRequest(token, AccessType, Audience));
-
-        await Assert.That(sign.StatusCode).IsEqualTo(HttpStatusCode.InternalServerError);
-        await Assert.That(validate.StatusCode).IsEqualTo(HttpStatusCode.InternalServerError);
-    }
-
-    [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task Public_metadata_cannot_be_rebound_to_another_key_or_instance(bool rebindTenant)
-    {
-        var target = await SharedStateTarget.CreateAsync(fixture);
-        await using var server = await StartAsync(target);
-        var token = await SignAsync(server, "ins_a", AccessType);
-        var original = target.Vault.Read("ins_a")!.Value;
-        var ring = JsonNode.Parse(original.GetRawText())!;
-        var instance = rebindTenant ? "ins_b" : "ins_a";
-        if (rebindTenant)
-        {
-            ring["instanceId"] = instance;
-        }
-        else
-        {
-            ring["keys"]![0]!["id"] = AuthStore.NewId();
-        }
-
-        // A storage writer can change ownership or kid, but cannot replace the original MAC.
-        target.Vault.Put(instance, JsonSerializer.SerializeToElement(ring));
-        var id = instance;
-        var before = target.Vault.Current(id);
-
-        using var lookup = await server.Client.GetAsync($"/__test/instances/{instance}/jwks");
-        await Assert.That(lookup.StatusCode).IsEqualTo(HttpStatusCode.InternalServerError);
-        await Assert.That(await ValidateAsync(server, instance, token)).IsEqualTo(HttpStatusCode.InternalServerError);
-        using var signing = await server.Client.PostAsJsonAsync($"/__test/instances/{instance}/tokens", new SignRequest(AccessType, new() { ["sub"] = "user_1" }));
-        await Assert.That(signing.StatusCode).IsEqualTo(HttpStatusCode.InternalServerError);
-        using var rotation = await server.Client.PostAsync($"/__test/instances/{instance}/keys/rotate", null);
-        await Assert.That(rotation.StatusCode).IsEqualTo(HttpStatusCode.InternalServerError);
-        var after = target.Vault.Current(id);
-        await Assert.That(after.Version).IsEqualTo(before.Version);
-        await Assert.That(after.Document.GetRawText()).IsEqualTo(before.Document.GetRawText());
-        if (rebindTenant)
-        {
-            await Assert.That(await ValidateAsync(server, "ins_a", token)).IsEqualTo(HttpStatusCode.OK);
-            await Assert.That(target.Vault.Read("ins_a")!.Value.GetRawText()).IsEqualTo(original.GetRawText());
-        }
-    }
-
-    [Test]
-    public async Task A_stored_key_whose_public_point_does_not_match_its_private_key_is_rejected()
-    {
-        var target = await SharedStateTarget.CreateAsync(fixture);
-        var masterKey = RandomNumberGenerator.GetBytes(32);
-        await using var server = await StartAsync(target, Convert.ToBase64String(masterKey));
-        await SignAsync(server, "ins_a", AccessType);
-
-        // Correctly sealed under the master key, but with one bit of Y flipped.
-        var ring = JsonNode.Parse(target.Vault.Read("ins_a")!.Value.GetRawText())!;
-        var record = ring["keys"]![0]!;
-        var kid = record["id"]!.GetValue<string>();
-        var secret = SecretBox.Open(masterKey, record["secretBox"]!.GetValue<string>(), $"signing-key:{kid}:ins_a");
-        secret[80] ^= 1;
-        record["secretBox"] = SecretBox.Seal(masterKey, secret, $"signing-key:{kid}:ins_a");
-        target.Vault.Put("ins_a", JsonSerializer.SerializeToElement(ring));
-
-        using var response = await server.Client.GetAsync("/__test/instances/ins_a/jwks");
-        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        using var signing = await server.Client.PostAsJsonAsync("/__test/instances/ins_a/tokens", new SignRequest(AccessType, new() { ["sub"] = "user_1" }));
-        await Assert.That(signing.StatusCode).IsEqualTo(HttpStatusCode.InternalServerError);
-    }
 
     [Test]
     public async Task Public_key_objects_cannot_export_a_secret_or_sign()
@@ -487,6 +537,7 @@ public sealed class KeyRingTests(TerraBaseFixture fixture)
         }
     }
 
+
     [Test]
     public async Task Unreachable_storage_fails_signing_closed_with_503()
     {
@@ -499,11 +550,17 @@ public sealed class KeyRingTests(TerraBaseFixture fixture)
         await Assert.That(body.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("temporarily_unavailable");
     }
 
+    // The instance's stored key documents, read directly from TerraBase.
+    private static async Task<List<JsonObject>> StoredAsync(SharedStateTarget target, string instance) =>
+        [.. (await target.Database.ListDocumentsAsync(AuthStore.SigningKeyCollection)).Items
+            .Select(document => JsonNode.Parse(document.Document.GetRawText())!.AsObject())
+            .Where(document => document["instanceId"]!.GetValue<string>() == instance)];
+
     private static string KeyId(string token) =>
         JsonDocument.Parse(Base64UrlEncoder.Decode(token.Split('.')[0])).RootElement.GetProperty("kid").GetString()!;
 
-    private static async Task<List<string>> KeyIdsAsync(AuthTestServer server) =>
-        [.. (await server.Client.GetFromJsonAsync<JsonElement>("/__test/instances/ins_a/jwks")).GetProperty("keys").EnumerateArray().Select(key => key.GetProperty("kid").GetString()!)];
+    private static async Task<List<string>> KeyIdsAsync(AuthTestServer server, string instance = "ins_a") =>
+        [.. (await server.Client.GetFromJsonAsync<JsonElement>($"/__test/instances/{instance}/jwks")).GetProperty("keys").EnumerateArray().Select(key => key.GetProperty("kid").GetString()!)];
 
     private static async Task<string> RotateAsync(AuthTestServer server)
     {
