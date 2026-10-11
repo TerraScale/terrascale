@@ -89,14 +89,26 @@ jobs:
             exit 1
           fi
           for proj in "${test_projects[@]}"; do
-            echo "== Running $proj =="
-            dotnet run \
-              --project "$proj" \
-              --configuration Release \
-              --no-build \
-              --no-restore \
-              -- \
-              --minimum-expected-tests 1
+            tfms=$(dotnet msbuild "$proj" -nologo -getProperty:TargetFrameworks)
+            if [ -z "$tfms" ]; then
+              tfms=$(dotnet msbuild "$proj" -nologo -getProperty:TargetFramework)
+            fi
+            if [ -z "$tfms" ]; then
+              echo "No target framework resolved for $proj" >&2
+              exit 1
+            fi
+            IFS=';' read -r -a tfm_list <<< "$tfms"
+            for tfm in "${tfm_list[@]}"; do
+              echo "== Running $proj ($tfm) =="
+              dotnet run \
+                --project "$proj" \
+                --framework "$tfm" \
+                --configuration Release \
+                --no-build \
+                --no-restore \
+                -- \
+                --minimum-expected-tests 1
+            done
           done
 
       - run: |

@@ -1,6 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
+    <!-- Same targets as the library so both framework runtimes run the suite. -->
+    <TargetFramework />
+    <TargetFrameworks>net10.0;net11.0</TargetFrameworks>
     <IsTestProject>true</IsTestProject>
     <IsTestingPlatformApplication>true</IsTestingPlatformApplication>
     <Nullable>enable</Nullable>
@@ -8,6 +11,8 @@
     <LangVersion>14.0</LangVersion>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <IsPackable>false</IsPackable>
+    <!-- ASP0029: the validation API used by AddValidation() is marked experimental in the net10.0 pack. -->
+    <NoWarn>$(NoWarn);ASP0029</NoWarn>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="TUnit" />

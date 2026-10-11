@@ -244,7 +244,7 @@ Package versions are calendar versions: `YYYY.MMDD.HHmm` of the build commit's
 UTC time, with a fourth `.ss` part when the parent commit lands in the same
 minute. The same commit always gives the same version.
 
-- Targets `net11.0`.
+- Targets `net10.0` and `net11.0`.
 - `AddTerraScaleEndpoints()` without arguments is now generated per project
   instead of using `Assembly.GetCallingAssembly()`.
 - `EndpointCatalog` is built by `AddTerraScaleEndpoints`, and its constructors

@@ -34,7 +34,11 @@ internal sealed class RequestBinder<TRequest>
     // Every contract member name, for the serializer-equivalent duplicate check under
     // case-insensitive names (the JSON parser only compares names exactly).
     private readonly HashSet<string>? memberNames;
+#if NET11_0_OR_GREATER
     private readonly IValidatableTypeInfo? validator;
+#else
+    private readonly IValidatableInfo? validator;
+#endif
     private readonly ValidationOptions? validationOptions;
 
     internal RequestBinder(IServiceProvider services)
@@ -124,7 +128,11 @@ internal sealed class RequestBinder<TRequest>
         Dictionary<string, List<string>>? errors = null;
         if (this.validator is not null && request is not null)
         {
+#if NET11_0_OR_GREATER
             var validation = new ValidateContext { ValidationOptions = this.validationOptions!, ServiceProvider = context.RequestServices };
+#else
+            var validation = new ValidateContext { ValidationOptions = this.validationOptions!, ValidationContext = new ValidationContext(request, typeof(TRequest).Name, context.RequestServices, null) };
+#endif
             await this.validator.ValidateAsync(request, validation, cancellationToken).ConfigureAwait(false);
             if (validation.ValidationErrors is { Count: > 0 } found)
             {
@@ -132,7 +140,11 @@ internal sealed class RequestBinder<TRequest>
                 {
                     foreach (var error in list)
                     {
-                        Add(ref errors, key, error.ErrorMessage);
+#if NET11_0_OR_GREATER
+                        Add(ref errors, key, error.ErrorMessage ?? "The request is invalid.");
+#else
+                        Add(ref errors, key, error);
+#endif
                     }
                 }
             }

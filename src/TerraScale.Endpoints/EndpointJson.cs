@@ -15,12 +15,20 @@ namespace TerraScale.Endpoints;
 internal static class EndpointJson
 {
     internal static JsonTypeInfo<TRequest> GetRequestTypeInfo<TRequest>(IServiceProvider services) =>
-        GetSerializerOptions(services).GetTypeInfo<TRequest>();
+        GetTypeInfo<TRequest>(GetSerializerOptions(services));
 
     internal static JsonTypeInfo<TResponse>? GetResponseTypeInfo<TResponse>(IServiceProvider services) =>
         typeof(IResult).IsAssignableFrom(typeof(TResponse)) || typeof(TResponse) == typeof(string)
             ? null
-            : GetSerializerOptions(services).GetTypeInfo<TResponse>();
+            : GetTypeInfo<TResponse>(GetSerializerOptions(services));
+
+    // The generic GetTypeInfo<T> only exists in net11.0; net10.0 needs the cast from the Type overload.
+    private static JsonTypeInfo<T> GetTypeInfo<T>(JsonSerializerOptions options) =>
+#if NET11_0_OR_GREATER
+        options.GetTypeInfo<T>();
+#else
+        (JsonTypeInfo<T>)options.GetTypeInfo(typeof(T));
+#endif
 
     internal static async ValueTask<TRequest> ReadBodyAsync<TRequest>(
         HttpContext context,

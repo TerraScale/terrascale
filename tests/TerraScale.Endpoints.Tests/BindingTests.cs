@@ -8,6 +8,12 @@ using Microsoft.Extensions.Validation;
 
 namespace TerraScale.Endpoints.Tests;
 
+// shortcut: net10.0 ValidationsGenerator (Microsoft.AspNetCore.App 10.0.12) fails with a duplicate ValidatableInfoResolver.g.cs when AddValidation() has two call sites, so every test enables validation here. Upgrade: inline AddValidation() again when the generator accepts it.
+internal static class ValidationSetup
+{
+    internal static void Enable(WebApplicationBuilder builder) => builder.Services.AddValidation();
+}
+
 public sealed class BindingTests
 {
     [Test]
@@ -57,6 +63,20 @@ public sealed class BindingTests
     }
 
     [Test]
+    public async Task SynchronousAttributesResolveServicesFromTheRequestScope()
+    {
+        await using var app = await StartAsync();
+        using var client = Client(app);
+        using var taken = await client.PostAsync("/reserved-code", new StringContent("""{"code":"taken"}""", Encoding.UTF8, "application/json"));
+        using var free = await client.PostAsync("/reserved-code", new StringContent("""{"code":"free"}""", Encoding.UTF8, "application/json"));
+        await Assert.That(taken.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        using var problem = JsonDocument.Parse(await taken.Content.ReadAsStringAsync());
+        await Assert.That(problem.RootElement.GetProperty("errors").GetProperty("Code")[0].GetString()).IsEqualTo("Code 'taken' is already in use.");
+        await Assert.That(free.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+    }
+
+#if NET11_0_OR_GREATER
+    [Test]
     [Arguments("""{"name":"taken"}""", "Name", "'taken' is already taken.")]
     [Arguments("""{"name":"free","code":"bad"}""", "Code", "Code is rejected.")]
     public async Task AsyncValidationRejectsInvalidRequests(string body, string key, string message)
@@ -70,6 +90,7 @@ public sealed class BindingTests
         using var valid = await client.PostAsync("/async-validated", new StringContent("""{"name":"free"}""", Encoding.UTF8, "application/json"));
         await Assert.That(valid.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
     }
+#endif
 
     [Test]
     public async Task EndpointRulesMergeWithAttributeErrors()
@@ -108,12 +129,15 @@ public sealed class BindingTests
     {
         var builder = WebApplication.CreateBuilder();
         builder.WebHost.UseUrls("http://127.0.0.1:0");
-        builder.Services.AddValidation();
+        ValidationSetup.Enable(builder);
         builder.Services.AddTerraScaleEndpoints([
             EndpointRegistration.Create<GetItemEndpoint>(),
             EndpointRegistration.Create<PutItemEndpoint>(),
             EndpointRegistration.Create<ValidatedEndpoint>(),
+            EndpointRegistration.Create<ReservedCodeEndpoint>(),
+#if NET11_0_OR_GREATER
             EndpointRegistration.Create<AsyncValidatedEndpoint>(),
+#endif
             EndpointRegistration.Create<RuleValidatedEndpoint>()]);
         builder.Services.AddSingleton<TakenNames>();
         var app = builder.Build();
@@ -166,6 +190,30 @@ public sealed class TakenNames
     public bool IsTaken(string name) => name == "taken";
 }
 
+/// <summary>Synchronous attribute that resolves a service from the request scope, as a lookup would.</summary>
+public sealed class ReservedCodeAttribute : ValidationAttribute
+{
+    protected override ValidationResult? IsValid(object? value, ValidationContext validationContext) =>
+        value is string code && validationContext.GetRequiredService<TakenNames>().IsTaken(code)
+            ? new ValidationResult($"Code '{code}' is already in use.", [validationContext.MemberName!])
+            : ValidationResult.Success;
+}
+
+[ValidatableType]
+public sealed class ReservedCodeRequest
+{
+    [ReservedCode]
+    public string Code { get; set; } = "";
+}
+
+public sealed class ReservedCodeEndpoint : Endpoint<ReservedCodeRequest>
+{
+    public override void Configure() => Post("/reserved-code");
+
+    public override ValueTask HandleAsync(ReservedCodeRequest request, CancellationToken cancellationToken) => ValueTask.CompletedTask;
+}
+
+#if NET11_0_OR_GREATER
 /// <summary>.NET 11 async attribute: resolves a service and awaits, like a database lookup would.</summary>
 public sealed class UniqueNameAttribute : AsyncValidationAttribute
 {
@@ -213,6 +261,7 @@ public sealed class AsyncValidatedEndpoint : Endpoint<AsyncValidatedRequest>
 
     public override ValueTask HandleAsync(AsyncValidatedRequest request, CancellationToken cancellationToken) => ValueTask.CompletedTask;
 }
+#endif
 
 /// <summary>Endpoint rule using a constructor-injected service, merged with the request's attribute errors.</summary>
 public sealed class RuleValidatedEndpoint(TakenNames names) : Endpoint<ValidatedRequest>
@@ -1280,7 +1329,7 @@ public sealed class NinthPassBindingTests
     [Test]
     public async Task ValidatedRequiredMembersAreRequiredQueryParameters()
     {
-        await using var app = await StartAsync(builder => builder.Services.AddValidation(), EndpointRegistration.Create<ValidatedQueryEndpoint>());
+        await using var app = await StartAsync(ValidationSetup.Enable, EndpointRegistration.Create<ValidatedQueryEndpoint>());
         using var client = Client(app);
         using var missing = await client.GetAsync("/ninth/validated");
         await Assert.That(missing.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
