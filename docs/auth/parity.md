@@ -86,7 +86,7 @@ labelled `ts-auth` in organization `terrascale` (logical dataset
 deployment; runtime uses only a `tb_…` Documents credential scoped for
 `documents:read` and `documents:write`. The required HTTPS endpoint is an
 explicit static override via `ITerraBaseEndpointResolver`; Atlas SDK discovery
-belongs to TS-507. `scripts/provision.sh` prints a plan only; live execution
+belongs to TS-507. `scripts/auth/provision.sh` prints a plan only; live execution
 belongs to TS-529 in ts-orchestrator; production activation remains gated by
 TS-470.
 

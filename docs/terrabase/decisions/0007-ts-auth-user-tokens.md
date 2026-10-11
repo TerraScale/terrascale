@@ -117,4 +117,4 @@ it must:
   TS-491 must meet (above). If TS-491 keeps the old shape instead, the `typ` rule and the
   invitation email source must change together: accepting `typ` `JWT` alone would also accept ID
   tokens, which carry the same issuer, audience and key.
-- Platform-admin authorization is still not designed (see `docs/management-api.md`).
+- Platform-admin authorization is still not designed (see `docs/terrabase/management-api.md`).

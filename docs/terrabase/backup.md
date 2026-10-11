@@ -192,7 +192,7 @@ rollout is performed by this repository change.
 
 One member ships each file. `Engine/IShipperLeases` chooses it: `ShipperEpochAsync(database)` returns the epoch of this
 member's lease on that file while it ships it, or null. `Engine/Cluster` implements it with the cell's membership
-(`docs/design/anna-core.md` §5): each file is shipped by its database's **primary** on the ring of live members, while
+(`docs/terrabase/design/anna-core.md` §5): each file is shipped by its database's **primary** on the ring of live members, while
 that member holds its member lease.
 
 - **Without `nats-url`** the members are the static `peers` list (one member when unset), whose leases never end. This

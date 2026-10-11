@@ -74,7 +74,7 @@ Audited official `ts-dotnet` main at
 [`a4ff285c051e63e72cb01c4a94173c91da1dd69a`](https://git.terrascale.tech/TerraScale/ts-dotnet/src/commit/a4ff285c051e63e72cb01c4a94173c91da1dd69a).
 The SDK's own [migration status](https://git.terrascale.tech/TerraScale/ts-dotnet/src/commit/a4ff285c051e63e72cb01c4a94173c91da1dd69a/README.md)
 says TS-589 project JWT routes are still pending. TerraBase's producer
-[public route table](https://git.terrascale.tech/TerraScale/terrabase/src/commit/f5a862b15cb08f5202a46b4183b2ef647a5feb72/docs/api.md)
+[public route table](https://git.terrascale.tech/TerraScale-Old/terrabase/src/commit/f5a862b15cb08f5202a46b4183b2ef647a5feb72/docs/api.md)
 already defines these routes.
 
 | Contract requirement | Official SDK main | Required upstream change |

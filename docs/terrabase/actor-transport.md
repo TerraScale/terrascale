@@ -27,7 +27,7 @@ The `TerraScale.TerraBase` meter records `terrabase.actors.completed` (successes
 `terrabase.actors.rejected` (capacity refusals), with actor indices bounded to 0–255.
 
 The Fast suite drives the real health endpoint through a test-only routing middleware, covering independent actors,
-serialization, bounded admission, cancellation, failures and shutdown. The companion `ts-benchmark` actor harness
+serialization, bounded admission, cancellation, failures and shutdown. The companion `benchmark/` actor harness
 measures this transport with actor-count and uniform/Zipf workloads. These measurements do not prove database scaling.
 
 To complete TS-648, wire the router into key ownership and the shared lattice delta delivery path, add per-actor

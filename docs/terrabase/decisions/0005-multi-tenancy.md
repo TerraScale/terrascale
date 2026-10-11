@@ -7,7 +7,7 @@
 
 `terrabase-rust/docs/control-plane-v1.md` says the dashboard owns organizations and projects, and
 that one TerraBase tenant is one dashboard project. The ts-go SDK sends the dashboard
-organization id as `X-TerraScale-Tenant-ID`. The Management API (`docs/management-api.md`) already
+organization id as `X-TerraScale-Tenant-ID`. The Management API (`docs/terrabase/management-api.md`) already
 stores organizations and projects in TerraBase, so the two contracts disagreed on who owns them
 and what a tenant is. Until now the engine and the data API addressed a database by name alone.
 

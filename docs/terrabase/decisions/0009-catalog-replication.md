@@ -2,7 +2,7 @@
 
 - Status: proposed (TS-561, 2026-10-06); needs human acceptance
 - Scope: `Engine` (system database capture, `ISystemReplication`), `Features/Replication` (catalog stream),
-  `Features/Management` (followers write nothing), `Features/Health` (readiness), `docs/replication.md`
+  `Features/Management` (followers write nothing), `Features/Health` (readiness), `docs/terrabase/replication.md`
 
 ## Context
 
@@ -43,7 +43,7 @@ creation, which never reads its body) that the follower refused because it would
 database is answered locally. It sends the method, decoded path, raw query, its headers without connection-specific
 ones (those HTTP/1.1's `Connection` names too) and the region pin, its region, and its body (at most 4 MiB, one
 `TBLZ4E01` envelope; larger answers 413). The primary serves it through its whole HTTP pipeline as if its own client
-listener had accepted it, answering as the follower's region (`docs/region-identity.md`): it authenticates,
+listener had accepted it, answering as the follower's region (`docs/terrabase/region-identity.md`): it authenticates,
 authorizes and validates it again, and serves a forwarded request only on those endpoints (404 otherwise). It
 buffers the response (at most 16 MiB, the first 64 KiB reserved from the memory budget before the request runs),
 reads its catalog head, which every write of the request committed before, and sends the status, headers, body

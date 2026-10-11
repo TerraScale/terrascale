@@ -618,7 +618,7 @@ The schema is inferred and read-only: TerraBase has no declared schemas yet.
   usage, not billing data. A branch or restored database starts at zero.
 - `documents` counts live documents; `collections` counts every collection, empty ones included.
 - Project usage sums every database of the project; `items` are in creation order. There is no organization usage:
-  TerraBase stores no organizations (`docs/api.md`), so ts-dashboard sums its projects. Every database is listed before
+  TerraBase stores no organizations (`docs/terrabase/api.md`), so ts-dashboard sums its projects. Every database is listed before
   any is counted, so past 100 nothing is counted; a request that has run 5 seconds starts no further catalog read or count, and one whose last listing or
   count ends past them answers `400` too.
 - Counts are kept in memory per database and UTC hour and saved to the catalog every 10 seconds: the lifetime totals

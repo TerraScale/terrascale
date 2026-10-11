@@ -14,7 +14,7 @@ and SHA-256 sidecar. The separate Slow workflow does not block delivery.
 The main-only deployment job always runs after publication; missing deployment
 configuration fails visibly instead of skipping the job.
 
-`scripts/ci/deploy.sh` downloads that release's ARM64 binary, checks its sidecar,
+`scripts/auth/ci/deploy.sh` downloads that release's ARM64 binary, checks its sidecar,
 and verifies the deployment helper against `TS_ORCH_SHA256`. The helper is the
 amd64 orchestrator binary from the pinned `TS_ORCH_RELEASE`; update these two
 variables together. The current helper uses the retired `releases/v1/services`

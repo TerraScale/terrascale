@@ -63,7 +63,7 @@ identity response header and the client's region pin.
 
 ## Probe dependency
 
-[TS-483 / TerraBase PR #16](https://git.terrascale.tech/TerraScale/terrabase/pulls/16)
+[TS-483 / TerraBase PR #16](https://git.terrascale.tech/TerraScale-Old/terrabase/pulls/16)
 was still open when checked on 2026-10-04. It owns public `/healthz` and `/readyz`
 listener exposure and readiness checks; TS-499 does not duplicate that work.
 Once composed with TS-483, both probe bodies must include `region` alongside

@@ -89,7 +89,7 @@ included, under its fresh origin.
 ### Shape history (TS-474 schemas v5/v6, replication integration v7)
 
 
-Writes to client databases append to `change_log`; shape reads replay it (`docs/shape-reads.md`).
+Writes to client databases append to `change_log`; shape reads replay it (`docs/terrabase/shape-reads.md`).
 `Documents/QueryPlanTests.cs` asserts these plans, including that neither shape read scans or sorts.
 
 | Statement | Hot path | Plan |
@@ -128,7 +128,7 @@ failure closes the session instead of pooling it.
 | Setting | Value | Why |
 | --- | --- | --- |
 | `journal_mode` | `WAL` | Persistent in the file (set at bootstrap). Readers never block the writer. |
-| `synchronous` | `NORMAL` | Decision 0003 (`docs/decisions/0003-sqlite-synchronous-normal.md`). A commit no longer waits for an fsync; SQLite syncs the WAL before each checkpoint. Committed transactions, including acknowledged writes, can be lost after a power loss or an OS crash, but not after a process crash, and the file is never corrupted. Accepted for write throughput. Every connection uses it, including the one that creates a database. |
+| `synchronous` | `NORMAL` | Decision 0003 (`docs/terrabase/decisions/0003-sqlite-synchronous-normal.md`). A commit no longer waits for an fsync; SQLite syncs the WAL before each checkpoint. Committed transactions, including acknowledged writes, can be lost after a power loss or an OS crash, but not after a process crash, and the file is never corrupted. Accepted for write throughput. Every connection uses it, including the one that creates a database. |
 | `busy_timeout` | 30 s | SQLite's own busy handler (1–100 ms back-off) instead of Microsoft.Data.Sqlite's retry loop, which sleeps 150 ms between attempts: a writer behind a 20 ms write lock waited 150 ms before, 34 ms after. Same 30 s bound as the command timeout. Cancellable session setup, bootstrap, transaction acquisition and journal reads temporarily use 100 ms native busy backoff and the provider retry loop in 1 s slices, checking cancellation between retries and interrupting active VM work, so native busy waits cannot outlast the replication attempt. |
 | `mmap_size` | `memory-budget`, at least 256 MiB | Reads map pages instead of copying them through `read()`: about 5–10 % faster point reads and 25 % faster full listings in the benchmark below. Address space only; pages are the OS page cache, not the heap, so it can be as large as the budget. SQLite caps it at its compile-time maximum (2 GiB by default). |
 | `cache_size` | ¼ of `memory-budget` ÷ `storage-threads`, at least 2 MiB | The page cache holds pages that writes change and pages mmap does not cover. A quarter of the budget, split across the connections that run at once (one per storage thread). Idle pooled connections keep their cache; it grows only with pages actually read. |
@@ -158,7 +158,7 @@ Management slice already groups its related writes in one transaction.
 
 ## Benchmark
 
-Throwaway in-process harness (not in this repository; benchmarks belong in `ts-benchmark`)
+Throwaway in-process harness (not in this repository; benchmarks belong in `benchmark/`)
 compiling `Engine/` from `main` and from this change, 20 000 documents of ~1 KiB, one database,
 local NVMe, `nice -n 19`. Mean of two runs; ranges where the runs disagreed.
 

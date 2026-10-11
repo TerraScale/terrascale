@@ -63,5 +63,5 @@ records the blocked invocation; it is not a live throughput or latency result.
 
 The scheduler, HDR histogram, intended-start correction, per-second JSONL,
 summary and ramp are still unimplemented. Implement and test them when the SDK
-follow-ups unblock a complete run. Rebase onto Slice 1's `docs/protocol.md` and
+follow-ups unblock a complete run. Rebase onto Slice 1's `benchmark/docs/protocol.md` and
 shared workloads when that slice merges; no shared contract is changed here.

@@ -501,7 +501,7 @@ Open:
 
 TS-606 has not yet run load against gru-1 (its first run stopped at preflight: `/healthz` through Cloudflare at a
 median of 73.1 ms; idle members at 2-6 % CPU and 194-236 MB peak RSS). The latest load numbers for the C# server are
-TS-500's local baseline (`ts-benchmark` `bench/csharp-baseline/ts500-20261004*`, one node, three runs), concurrency 16:
+TS-500's local baseline (`benchmark/bench/csharp-baseline/ts500-20261004*`, one node, three runs), concurrency 16:
 
 | Workload | ops/s | p99 ms |
 | --- | ---: | ---: |

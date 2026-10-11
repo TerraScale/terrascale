@@ -324,7 +324,7 @@ refreshed; submitted values cannot set or renew it. Organization/project
 exchange preserves the original value, including an accepted clock
 difference; it never replaces it with the receiving replica's time. Refresh
 and exchange never renew authentication or prove MFA completion. The
-issuance-before-enforcement deployment gate is documented in `docs/mfa.md`.
+issuance-before-enforcement deployment gate is documented in `docs/auth/mfa.md`.
 
 ### 6.4 Rules for TerraBase and other resource servers
 

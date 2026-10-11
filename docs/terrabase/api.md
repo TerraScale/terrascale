@@ -35,7 +35,7 @@ service ownership decided by the user on 2026-10-06
    | `{collection}` | Collection name, same rules as a database name. |
    | `{index}` | Index name. |
    | `{backup}`, `{recommendation}`, `{query}` | Id of the backup, index recommendation or saved query. |
-3. **Authentication: ts-auth JWTs only** (ts-auth `docs/platform-contract.md` sections 3 and 6, TS-598). Every route
+3. **Authentication: ts-auth JWTs only** (ts-auth `docs/auth/platform-contract.md` sections 3 and 6, TS-598). Every route
    except the `anonymous` ones takes `Authorization: Bearer <ts-auth access token>`. That covers users of
    ts-dashboard after a token exchange, and API keys after the SDK exchanges them through client credentials.
    TerraBase validates each token offline:
@@ -313,7 +313,7 @@ legacy callers keep working. See [the binding workflow](management-api.md#verifi
 
 1. **Credential.** Obtain a ts-auth project token with the scopes the calls need: an API key through client
    credentials (`grant_type=client_credentials&project=…`), or a signed-in user's token through token exchange
-   (RFC 8693) naming the project (ts-auth `docs/platform-contract.md` section 6).
+   (RFC 8693) naming the project (ts-auth `docs/auth/platform-contract.md` section 6).
 2. **Management paths.** Drop `/v1/management/organizations/{organization}`:
    `/v1/management/organizations/{o}/projects/{p}/databases/{id}/backups` becomes `/v1/projects/{p}/databases/{name}/backups`.
 3. **Database names.** Pass the database **name** where Management took the id.

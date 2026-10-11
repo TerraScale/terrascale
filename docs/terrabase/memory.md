@@ -9,7 +9,7 @@ included; at least 1 MiB) is the memory TerraBase plans for caches. `IMemoryBudg
 | Share | Used by |
 | --- | --- |
 | ¼ | Document and list-page cache (`Features/Documents/DocumentCache.cs`); every entry is also reserved from `IMemoryBudget` |
-| ¼ | SQLite page caches: `cache_size` per connection is this ÷ `storage-threads`, and `soft_heap_limit` requests this quarter as a process-wide soft limit (a second engine only raises it; this is not hard memory admission) (`docs/sqlite-query-plans.md`) |
+| ¼ | SQLite page caches: `cache_size` per connection is this ÷ `storage-threads`, and `soft_heap_limit` requests this quarter as a process-wide soft limit (a second engine only raises it; this is not hard memory admission) (`docs/terrabase/sqlite-query-plans.md`) |
 | all | SQLite `mmap_size`: address space backed by the OS page cache, not the heap |
 | rest | Request buffers and everything not yet reserved |
 

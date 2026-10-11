@@ -258,5 +258,5 @@ Rules:
 - Storage per collection.
 - Database names. Only catalog ids appear.
 - Persisted history. Stats are in memory, and counts restart with each process (`epoch` changes). For persisted
-  history, see [`docs/analytics.md`](analytics.md).
+  history, see [`docs/terrabase/analytics.md`](analytics.md).
 - Any storage-format change.

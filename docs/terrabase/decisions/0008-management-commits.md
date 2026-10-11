@@ -1,7 +1,7 @@
 # 0008: Management commits run in the system database, with a dashboard document space
 
 - Status: proposed (TS-521, 2026-10-05); needs human acceptance
-- Scope: `src/TerraScale.TerraBase/Features/Management`, `Features/Documents` (shared operation parsing), `docs/management-commits.md`
+- Scope: `src/TerraScale.TerraBase/Features/Management`, `Features/Documents` (shared operation parsing), `docs/terrabase/management-commits.md`
 
 ## Context
 
