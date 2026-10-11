@@ -8,5 +8,6 @@
   <ItemGroup>
     <PackageReference Include="TUnit" Version="1.72.10" />
     <ProjectReference Include="../src/BenchClient.csproj" />
+    <ProjectReference Include="../api-bench/ApiBench.csproj" />
   </ItemGroup>
 </Project>

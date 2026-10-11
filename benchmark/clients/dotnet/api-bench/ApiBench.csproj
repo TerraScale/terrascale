@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk" InitialTargets="RequireSdkBuildWrapper">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>api-bench</AssemblyName>
+    <RootNamespace>ApiBench</RootNamespace>
+    <RuntimeIdentifier>linux-x64</RuntimeIdentifier>
+    <UseAppHost>true</UseAppHost>
+    <PublishAot>true</PublishAot>
+    <IsAotCompatible>true</IsAotCompatible>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <ServerGarbageCollection>true</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
+    <TieredPGO>true</TieredPGO>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="HdrHistogram" Version="2.5.0" />
+    <ProjectReference Include="../.sdk/src/TerraScale.DotNet/TerraScale.DotNet.csproj" />
+    <InternalsVisibleTo Include="BenchClient.Tests" />
+    <EmbeddedResource Include="../sdk.rev" LogicalName="ApiBench.sdk.rev" />
+  </ItemGroup>
+  <Target Name="RequireSdkBuildWrapper">
+    <Error Condition="'$(TS_BENCH_SDK_LOCKED)' != '1'" Text="Build through make or bash clients/dotnet/with-sdk.sh dotnet ... to hold the SDK lock throughout compilation." />
+  </Target>
+  <Target Name="RequireOfficialSdk" BeforeTargets="PrepareForBuild">
+    <Exec Command="bash &quot;$(MSBuildThisFileDirectory)../prepare-sdk.sh&quot; --verify" />
+  </Target>
+</Project>

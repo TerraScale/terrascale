@@ -1,30 +1,17 @@
-# Go client prerequisite (TS-761)
+# Go API benchmark client (TS-832)
 
-The Go benchmark client is blocked on the official `ts-go` SDK's JWT data-plane
-surface. This directory deliberately contains no fake runner or API-key fallback.
+`api-bench-go` is the Go client of the TS-832 API benchmark. The scenarios and
+JSON-lines protocol are in [docs/api-bench.md](../../docs/api-bench.md).
 
-Verified against ts-go main `05ae299` and its plain-ULID PR
-[TerraScale/ts-go#35](https://git.terrascale.tech/TerraScale/ts-go/pulls/35),
-revision `49fb07f5b86680037ddf79eac907679ae7d5b8b2`:
+- `api-bench-go startup` builds the SDK client without network access and
+  prints `{"type":"startup","init_ms":…}`.
+- `api-bench-go run --spec PATH --credentials PATH` creates a `bench-<ulid in lowercase>`
+  database, seeds it, answers step lines on stdin and deletes the database when
+  stdin closes.
+- `make api-bench-build` builds it to `bin/api-bench-go`. The runner starts it;
+  run it by hand only against a non-production endpoint.
+- SDK: `terrascale.tech/sdk` is pinned in `go.mod` to ts-go main `9f704645`
+  (adds `Database.Delete`) through a replace to `git.terrascale.tech`.
 
-- `v1.New` only accepts `^tb_[A-Za-z0-9_-]{43}$`; a JWT is rejected locally.
-- `tsauth.NewAPIKeySource` obtains project-scoped JWTs but cannot be supplied to
-  `v1.Config` (it has no token source).
-- The TerraBase producer supports project-token routes; its source explicitly
-  separates them from `LegacyManagementRoute` and `/v1/management`.
-- Service-client tokens have no `org_id` or `project_id`. Registering a service
-  slug alone cannot grant tenant data access. The dedicated benchmark OAuth
-  credential must be a project client with database read/write and document
-  read/write scopes.
-
-Required SDK surface: a concurrent-safe JWT token source on the public project
-client, database creation/deletion, collection creation, index creation/readiness,
-point CRUD, queries and atomic transactions, with regional endpoint resolution.
-The benchmark must use those methods for temporary `bench-<ULID>` databases and
-for the persistent `benchmark` database. No header-rewriting transport, dummy
-`tb_` key, internal administrative listener or compatibility membership/key API.
-
-Once admitted, implement the client using automatic eligible-region discovery
-and local region inference under [the protocol](../../docs/protocol.md), and
-`internal/benchmark.RunPhase`. Setup, warmup, measured phases and deletion must
-share the bounded run lifecycle; final summary is emitted after cleanup.
+The TS-761 capacity client is not implemented here.
+See [docs/protocol.md](../../docs/protocol.md) for that protocol.
