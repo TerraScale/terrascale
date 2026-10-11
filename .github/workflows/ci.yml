@@ -2,10 +2,14 @@ name: CI
 
 # One required check: "test". It builds the Dockerfile's `test` stage on Blacksmith: format, Release build with
 # analyzers as errors, libs/auth/TerraBase checks and the Fast suites. `make docker-test` runs the same build locally.
-# After it, on the same warm layer cache:
+# Next to it, without waiting for it:
 # - preview (pull requests): TerraBase + ts-auth on one machine at https://ts-pr-<n>.fly.dev (scripts/fly/preview.sh);
 #   previews.yml deletes it when the PR closes or after 24 hours.
-# - deploy (main): both images to Fly, TerraBase then ts-auth, each gru -> live check -> sjc (scripts/fly/deploy.sh).
+# - deploy (main): the Dockerfile's chiseled images to Fly, TerraBase then ts-auth, each gru -> live check -> sjc
+#   (scripts/fly/deploy.sh); ts-auth's image builds while TerraBase rolls out. Before the rollout,
+#   scripts/fly/fast-gate.sh requires a passed `test` for this exact tree: the merged pull request's head when the merge
+#   kept its tree (rebased before merging), else main's own `test`.
+# After it:
 # - slow (main): the slow suites; never blocks.
 # - e2e (main, after deploy): tests/TerraBase.E2E against the Fly app, gru and sjc pinned with fly-prefer-region; never
 #   blocks. Between replication slices R2a and R10a nothing replicates on Fly, so E1 to E7 fail there
@@ -17,9 +21,10 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# A newer push supersedes a running check of the same branch; main always finishes.
+# A newer push supersedes a running check of the same branch. Every main push runs at once (its own group) and finishes;
+# the deploy jobs queue per app instead, so a merge never waits behind the previous run's tests.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
@@ -87,10 +92,9 @@ jobs:
           target: test-slow
 
   preview:
-    needs: test
     if: github.event_name == 'pull_request'
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    timeout-minutes: 30
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 20
     concurrency:
       group: preview-${{ github.event.pull_request.number }}
     permissions:
@@ -102,11 +106,13 @@ jobs:
     steps:
       - *checkout
       - *checkout-ts-dotnet
-      - *download-terrabase
-      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - &setup-flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@master
       - name: Create the preview app
         run: terrascale/scripts/fly/preview.sh app ${{ github.event.pull_request.number }}
-      - *setup-builder
+      - uses: useblacksmith/setup-docker-builder@v2
+        with:
+          cache-key: terrascale-images
       - uses: docker/login-action@v3
         with:
           registry: registry.fly.io
@@ -116,9 +122,6 @@ jobs:
         with:
           context: terrascale
           file: terrascale/Dockerfile
-          build-contexts: |
-            ts-dotnet=ts-dotnet
-            terrabase-pinned=terrabase-pinned
           target: terrabase
           tags: registry.fly.io/${{ env.APP }}:terrabase-${{ github.sha }}
           push: true
@@ -126,9 +129,7 @@ jobs:
         with:
           context: terrascale
           file: terrascale/Dockerfile
-          build-contexts: |
-            ts-dotnet=ts-dotnet
-            terrabase-pinned=terrabase-pinned
+          build-contexts: ts-dotnet=ts-dotnet
           target: ts-auth
           tags: registry.fly.io/${{ env.APP }}:ts-auth-${{ github.sha }}
           build-args: TS_AUTH_REVISION=${{ github.sha }}
@@ -144,21 +145,24 @@ jobs:
           gh pr comment ${{ github.event.pull_request.number }} -R "$GITHUB_REPOSITORY" --edit-last --create-if-none
           --body "Preview: https://$APP.fly.dev (TerraBase + ts-auth at ${{ github.sha }}; stops when idle, deleted on close or after 24 h)"
 
-  deploy:
-    needs: test
+  # One deploy token per app; each can push only to its own app's repository.
+  deploy-terrabase:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    timeout-minutes: 40
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 20
     concurrency:
-      group: deploy
+      group: deploy-terrabase
       cancel-in-progress: false
+    permissions:
+      contents: read
+      checks: read
+      pull-requests: read
     steps:
       - *checkout
-      - *checkout-ts-dotnet
-      - *download-terrabase
-      - uses: superfly/flyctl-actions/setup-flyctl@master
-      - *setup-builder
-      # One deploy token per app; each can push only to its own app's repository.
+      - *setup-flyctl
+      - uses: useblacksmith/setup-docker-builder@v2
+        with:
+          cache-key: terrascale-image-terrabase
       - uses: docker/login-action@v3
         with:
           registry: registry.fly.io
@@ -168,12 +172,30 @@ jobs:
         with:
           context: terrascale
           file: terrascale/Dockerfile
-          build-contexts: |
-            ts-dotnet=ts-dotnet
-            terrabase-pinned=terrabase-pinned
           target: terrabase
           tags: registry.fly.io/ts-terrabase:${{ github.sha }}
           push: true
+      # Fast must cover the exact tree being deployed (AGENTS.md): instant for a rebased, squash-merged pull request.
+      - name: Wait for Fast on this tree
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: terrascale/scripts/fly/fast-gate.sh "$GITHUB_REPOSITORY" "$GITHUB_SHA"
+      - name: Deploy TerraBase (gru, check, sjc)
+        working-directory: terrascale
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_TOKEN_TS_TERRABASE }}
+        run: scripts/fly/deploy.sh ts-terrabase src/TerraBase/fly.toml registry.fly.io/ts-terrabase:${{ github.sha }}
+
+  image-ts-auth:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 20
+    steps:
+      - *checkout
+      - *checkout-ts-dotnet
+      - uses: useblacksmith/setup-docker-builder@v2
+        with:
+          cache-key: terrascale-image-ts-auth
       - uses: docker/login-action@v3
         with:
           registry: registry.fly.io
@@ -183,18 +205,23 @@ jobs:
         with:
           context: terrascale
           file: terrascale/Dockerfile
-          build-contexts: |
-            ts-dotnet=ts-dotnet
-            terrabase-pinned=terrabase-pinned
+          build-contexts: ts-dotnet=ts-dotnet
           target: ts-auth
           tags: registry.fly.io/ts-auth:${{ github.sha }}
           build-args: TS_AUTH_REVISION=${{ github.sha }}
           push: true
-      - name: Deploy TerraBase (gru, check, sjc)
-        working-directory: terrascale
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_TOKEN_TS_TERRABASE }}
-        run: scripts/fly/deploy.sh ts-terrabase src/TerraBase/fly.toml registry.fly.io/ts-terrabase:${{ github.sha }}
+
+  # ts-auth keeps its data in TerraBase, so it rolls out after TerraBase.
+  deploy-ts-auth:
+    needs: [deploy-terrabase, image-ts-auth]
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 15
+    concurrency:
+      group: deploy-ts-auth
+      cancel-in-progress: false
+    steps:
+      - *checkout
+      - *setup-flyctl
       - name: Deploy ts-auth (gru, check, sjc)
         working-directory: terrascale
         env:
@@ -202,7 +229,7 @@ jobs:
         run: scripts/fly/deploy.sh ts-auth src/TerraScale.Authentication/fly.toml registry.fly.io/ts-auth:${{ github.sha }}
 
   e2e:
-    needs: deploy
+    needs: deploy-terrabase
     continue-on-error: true
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 30
