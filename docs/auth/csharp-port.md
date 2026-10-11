@@ -36,10 +36,10 @@ and error reporting, not the persistence boundary.
 The sibling `ts-dotnet` checkout is a project reference. Locally it is found at
 `../ts-dotnet`, or under `~/Projects/TerraScale/`; pass
 `-p:TerraScaleRoot=<dir>` to use another location. CI checks out the revision
-pinned in `.forgejo/workflows/ci.yml` into a job-owned directory outside the
-repository. TerraScale.Endpoints and TerraScale.Logging are NuGet packages.
+pinned in `.github/workflows/ci.yml` next to the repository and passes it to the
+Docker build as the `ts-dotnet` context. TerraScale.Endpoints and TerraScale.Logging are NuGet packages.
 
-Both `.forgejo/workflows/ci.yml` and `.forgejo/workflows/slow.yml` pin ts-dotnet
+`.github/workflows/ci.yml` pins ts-dotnet
 to `a4ff285c051e63e72cb01c4a94173c91da1dd69a` (SDK merge #28). This adds the
 TS-754 NUlid generator and canonical validator while preserving the Documents
 and Management APIs. It is the helper foundation: auth's persisted IDs and
