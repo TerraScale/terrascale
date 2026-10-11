@@ -1,0 +1,135 @@
+using System.Diagnostics;
+using System.Net;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+
+namespace TerraBase.E2E;
+
+/// <summary>Document calls against one region, and the canonical form the suite compares documents by.</summary>
+internal static class Docs
+{
+    // The largest page the list endpoint takes (QueryParser.MaxLimit).
+    private const int ListPage = 1000;
+
+    // Members sorted at every depth: equal documents compare equal whatever order a region stored them in.
+    public static string Canonical(JsonNode? node) => node switch
+    {
+        JsonObject obj => "{" + string.Join(',', obj.OrderBy(member => member.Key, StringComparer.Ordinal)
+            .Select(member => JsonSerializer.Serialize(member.Key) + ":" + Canonical(member.Value))) + "}",
+        JsonArray array => "[" + string.Join(',', array.Select(Canonical)) + "]",
+        _ => node?.ToJsonString() ?? "null",
+    };
+
+    public static async Task PutAsync(HttpClient client, Uri uri, JsonNode body, CancellationToken token = default)
+    {
+        using var response = await AdmittedAsync(() => client.PutAsync(uri, Json(body, "application/json"), token));
+        await EnsureSuccessAsync(response);
+    }
+
+    public static async Task PatchAsync(HttpClient client, Uri uri, JsonNode merge, CancellationToken token = default)
+    {
+        using var response = await AdmittedAsync(() => client.PatchAsync(uri, Json(merge, "application/merge-patch+json"), token));
+        await EnsureSuccessAsync(response);
+    }
+
+    public static async Task DeleteAsync(HttpClient client, Uri uri, CancellationToken token = default)
+    {
+        using var response = await AdmittedAsync(() => client.DeleteAsync(uri, token));
+        await EnsureSuccessAsync(response);
+    }
+
+    // The document as this region serves it, or null while it is absent.
+    public static async Task<JsonNode?> ReadAsync(HttpClient client, Uri uri, CancellationToken token = default)
+    {
+        using var response = await AdmittedAsync(() => client.GetAsync(uri, token));
+        if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            return null;
+        }
+
+        await EnsureSuccessAsync(response);
+        using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(token));
+        return JsonNode.Parse(json.RootElement.GetProperty("document").GetRawText());
+    }
+
+    public static async Task<HttpStatusCode> StatusAsync(HttpClient client, Uri uri, CancellationToken token = default)
+    {
+        using var response = await AdmittedAsync(() => client.GetAsync(uri, token));
+        return response.StatusCode;
+    }
+
+    // Every document of the test's collection as this region serves it.
+    public static async Task<Listing> ListAsync(HttpClient client, Cluster cluster, CancellationToken token = default)
+    {
+        var documents = new SortedDictionary<string, string>(StringComparer.Ordinal);
+        string? cursor = null;
+        do
+        {
+            var cursorQuery = cursor is null ? "" : $"&cursor={Uri.EscapeDataString(cursor)}";
+            var uri = new Uri($"{cluster.DatabasePath}/collections/{cluster.Collection}/documents?limit={ListPage}{cursorQuery}", UriKind.Relative);
+            using var response = await AdmittedAsync(() => client.GetAsync(uri, token));
+            await EnsureSuccessAsync(response);
+            using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(token));
+            foreach (var item in json.RootElement.GetProperty("items").EnumerateArray())
+            {
+                documents.Add(item.GetProperty("id").GetString()!, Canonical(JsonNode.Parse(item.GetProperty("document").GetRawText())));
+            }
+
+            cursor = json.RootElement.TryGetProperty("next_cursor", out var next) && next.ValueKind == JsonValueKind.String ? next.GetString() : null;
+        }
+        while (cursor is not null);
+
+        return new Listing(documents.Count, Digest(documents.Select(document => (document.Key, document.Value))));
+    }
+
+    // SHA-256 over "id, tab, canonical document, newline" lines in id order.
+    public static string Digest(IEnumerable<(string Id, string Canonical)> documents)
+    {
+        var text = new StringBuilder();
+        foreach (var (id, canonical) in documents.OrderBy(document => document.Id, StringComparer.Ordinal))
+        {
+            _ = text.Append(id).Append('\t').Append(canonical).Append('\n');
+        }
+
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text.ToString())));
+    }
+
+    // A failed call reports its method, address and answer, not only a status code.
+    public static async Task EnsureSuccessAsync(HttpResponseMessage response)
+    {
+        if (response.IsSuccessStatusCode)
+        {
+            return;
+        }
+
+        var answer = await response.Content.ReadAsStringAsync();
+        throw new HttpRequestException($"{response.RequestMessage?.Method} {response.RequestMessage?.RequestUri} answered {(int)response.StatusCode}: {answer}", null, response.StatusCode);
+    }
+
+    // Tenant admission answers 429 with Retry-After before it runs the request, so sending it again cannot repeat it.
+    // Past the convergence deadline the 429 is returned, and the caller reports it.
+    private static async Task<HttpResponseMessage> AdmittedAsync(Func<Task<HttpResponseMessage>> send)
+    {
+        var clock = Stopwatch.StartNew();
+        while (true)
+        {
+            var response = await send();
+            if (response.StatusCode != HttpStatusCode.TooManyRequests || clock.Elapsed > Converge.Deadline)
+            {
+                return response;
+            }
+
+            var wait = response.Headers.RetryAfter?.Delta ?? TimeSpan.FromSeconds(1);
+            response.Dispose();
+            await Task.Delay(wait);
+        }
+    }
+
+    // A fresh body per send: a retried request needs its content again.
+    private static StringContent Json(JsonNode body, string mediaType) => new(body.ToJsonString(), Encoding.UTF8, mediaType);
+}
+
+/// <summary>A region's view of a collection: its document count and the digest of its canonical documents.</summary>
+internal sealed record Listing(int Count, string Digest);
