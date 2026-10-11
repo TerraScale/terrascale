@@ -11,9 +11,14 @@
     <PublishDocumentationFile>false</PublishDocumentationFile>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <UserSecretsId />
-    <!-- No dynamic PGO (TS-607): on the 1-vCPU gru-1 nodes it doubles JIT time after every start (instrumented tier)
-         for no measurable steady-state CPU or latency gain; without it startup and idle CPU and RSS drop. -->
-    <TieredPGO>false</TieredPGO>
+    <!-- Tiered PGO: on 2 shared vCPUs it costs +12% JIT time and leaves time to ready unchanged (docs/fly/spike-1a.md);
+         TS-607's 2x JIT cost was on 1 vCPU. -->
+    <TieredPGO>true</TieredPGO>
+    <!-- ReadyToRun precompiles on publish for a faster cold start; hot methods still tier up on the JIT. -->
+    <PublishReadyToRun>true</PublishReadyToRun>
+    <!-- Workstation GC: a 512 MB machine gets no per-core server heaps; concurrent marking keeps pauses short. -->
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
     <!-- HTTP endpoints, OpenAPI and Scalar from TerraScale.Endpoints (src/TerraScale.Endpoints, Directory.Build.targets). -->
     <UseTerraScaleEndpoints>true</UseTerraScaleEndpoints>
   </PropertyGroup>

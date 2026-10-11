@@ -7,6 +7,14 @@
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <InformationalVersion Condition="'$(TS_AUTH_REVISION)' != ''">$(Version)+$(TS_AUTH_REVISION)</InformationalVersion>
     <UserSecretsId />
+    <!-- Tiered PGO: on 2 shared vCPUs it costs +12% JIT time and leaves time to ready unchanged (docs/fly/spike-1a.md);
+         TS-607's 2x JIT cost was on 1 vCPU. -->
+    <TieredPGO>true</TieredPGO>
+    <!-- ReadyToRun precompiles on publish for a faster cold start; hot methods still tier up on the JIT. -->
+    <PublishReadyToRun>true</PublishReadyToRun>
+    <!-- Workstation GC: a 512 MB machine gets no per-core server heaps; concurrent marking keeps pauses short. -->
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
     <!-- TerraScale.Endpoints (src/TerraScale.Endpoints) and its generator, referenced by Directory.Build.targets. -->
     <UseTerraScaleEndpoints>true</UseTerraScaleEndpoints>
   </PropertyGroup>
