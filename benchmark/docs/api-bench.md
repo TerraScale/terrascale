@@ -26,16 +26,19 @@ The runner refuses to run on `mariogk-desktop`.
 
 ## Credentials
 
-The runner reads OCI Vault secret `ts-bench-api-key`, whose content is JSON:
+The operator writes the key JSON to a 0600 file and sets `TS_BENCH_KEY_FILE` to its path:
 
 ```json
 {"api_key": "tsk_<ULID>_<secret>", "project": "<project ULID>"}
 ```
 
-It uses the host's OCI CLI profile (`~/.oci/config`), finds the secret by name
-with OCI Resource Search, and reads its current version. The key is written to
-a 0600 file in a fresh 0700 temp dir, which the clients receive by path. The
-runner deletes the dir when it exits. No credentials file is hand-copied.
+```sh
+export TS_BENCH_KEY_FILE=/path/to/bench-key.json
+```
+
+The runner copies the file into a 0600 file in a fresh 0700 temp dir, which the
+clients receive by path. It deletes the dir when it exits. It fails with an error
+naming `TS_BENCH_KEY_FILE` if the variable is unset or the file is unreadable.
 
 The key must be a project API key with `databases:read databases:write
 documents:read documents:write` for a dedicated benchmark project. It never
