@@ -83,7 +83,7 @@ public sealed class HealthTests
             services.AddSingleton<IStorageHealth>(health));
 
         // The first pass gives up at its two-second deadline and records not ready.
-        await Task.Delay(TimeSpan.FromSeconds(2.5));
+        await Assert.That(await ReadinessWait.StatusWithinAsync(server.Client, "not_ready", TimeSpan.FromSeconds(15))).IsTrue();
         using var response = await server.Client.GetAsync("/readyz");
         var body = await response.Content.ReadFromJsonAsync<JsonElement>();
 
@@ -97,7 +97,7 @@ public sealed class HealthTests
         var health = new FakeStorageHealth(healthy: false);
         await using var server = await AuthTestServer.StartAsync(services: services =>
             services.AddSingleton<IStorageHealth>(health));
-        await Task.Delay(TimeSpan.FromSeconds(1));
+        await Assert.That(await ReadinessWait.UntilAsync(() => Task.FromResult(health.Calls > 0), TimeSpan.FromSeconds(15))).IsTrue();
         var before = health.Calls;
 
         for (var request = 0; request < 50; request++)
@@ -107,8 +107,7 @@ public sealed class HealthTests
 
         // At most one pass can land in the burst; a check per request would add fifty.
         await Assert.That(health.Calls - before).IsLessThanOrEqualTo(1);
-        await Task.Delay(ReadinessWait.NextPass);
-        await Assert.That(health.Calls).IsGreaterThan(before);
+        await Assert.That(await ReadinessWait.UntilAsync(() => Task.FromResult(health.Calls > before), TimeSpan.FromSeconds(15))).IsTrue();
     }
 
     [Test]
@@ -125,7 +124,7 @@ public sealed class HealthTests
         });
 
         // Two passes: one at startup, one five seconds later; each ends at its two-second deadline.
-        await Task.Delay(TimeSpan.FromSeconds(8));
+        await Assert.That(await ReadinessWait.UntilAsync(() => Task.FromResult(logs.Entries.Length >= 2), TimeSpan.FromSeconds(15))).IsTrue();
         using var response = await server.Client.GetAsync("/readyz");
 
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
@@ -148,12 +147,14 @@ public sealed class HealthTests
 
         await Assert.That(await ReadinessWait.ReadyWithinAsync(server.Client, TimeSpan.FromSeconds(10))).IsTrue();
         health.Healthy = false;
-        await Task.Delay(ReadinessWait.NextPass);
+        await Assert.That(await ReadinessWait.StatusWithinAsync(server.Client, "not_ready", TimeSpan.FromSeconds(15))).IsTrue();
         using var failing = await server.Client.GetAsync("/readyz");
-        await Task.Delay(ReadinessWait.NextPass);
+        // Wait for the second failing pass to log before recovering, so its Debug line cannot race the recovery.
+        await Assert.That(await ReadinessWait.UntilAsync(() => Task.FromResult(logs.Entries.Length >= 2), TimeSpan.FromSeconds(15))).IsTrue();
         using var stillFailing = await server.Client.GetAsync("/readyz");
         health.Healthy = true;
-        await Task.Delay(ReadinessWait.NextPass);
+        await Assert.That(await ReadinessWait.ReadyWithinAsync(server.Client, TimeSpan.FromSeconds(15))).IsTrue();
+        await Assert.That(await ReadinessWait.UntilAsync(() => Task.FromResult(logs.Entries.Length >= 3), TimeSpan.FromSeconds(15))).IsTrue();
         using var recovered = await server.Client.GetAsync("/readyz");
 
         await Assert.That(failing.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
@@ -188,7 +189,7 @@ public sealed class HealthTests
     {
         private readonly ConcurrentQueue<ReadinessEntry> entries = new();
 
-        public IReadOnlyCollection<ReadinessEntry> Entries => this.entries.ToArray();
+        public ReadinessEntry[] Entries => this.entries.ToArray();
 
         // Levels of the readiness probe's own log lines, in the order they were written.
         public string Levels => string.Join(',', this.entries.Select(entry => entry.Level));
@@ -230,13 +231,8 @@ public sealed class HealthTests
                 new HttpRequestException($"connect https://user:{secret}@db.example/?key={secret}", new IOException($"password={secret}"))));
         });
 
-        // The first pass runs at startup and logs its failure; on a loaded machine that takes more than a second.
-        var deadline = DateTimeOffset.UtcNow + ReadinessWait.NextPass;
-        while (!logs.Text.Contains("Readiness check failed", StringComparison.Ordinal) && DateTimeOffset.UtcNow < deadline)
-        {
-            await Task.Delay(TimeSpan.FromMilliseconds(100));
-        }
-
+        // The first pass runs at startup and logs its failure.
+        await Assert.That(await ReadinessWait.UntilAsync(() => Task.FromResult(logs.Text.Contains("Readiness check failed", StringComparison.Ordinal)), TimeSpan.FromSeconds(15))).IsTrue();
         using var response = await server.Client.GetAsync("/readyz");
 
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);

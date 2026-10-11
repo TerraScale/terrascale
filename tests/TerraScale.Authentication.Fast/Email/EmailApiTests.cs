@@ -23,6 +23,9 @@ namespace TerraScale.Authentication.Fast.Email;
 [ClassDataSource<TerraBaseFixture>(Shared = SharedType.PerTestSession)]
 public sealed partial class EmailApiTests(TerraBaseFixture fixture)
 {
+    [ClassDataSource<BrowserFixture>(Shared = SharedType.PerTestSession)]
+    public required BrowserFixture Chromium { get; init; }
+
     private const string Base = $"/v1/{OidcIssuer.Slug}/email";
     private static readonly JsonObject Actor = new() { ["id"] = "user_123", ["email"] = "admin@example.test" };
 
@@ -378,9 +381,7 @@ public sealed partial class EmailApiTests(TerraBaseFixture fixture)
         await using var oidc = await OidcHarness.StartAsync(fixture);
         using var png = await oidc.Client.GetAsync("/admin/email-logo.png");
         var logo = await png.Content.ReadAsByteArrayAsync();
-        var (playwright, browser) = await Browser.LaunchAsync();
-        using var _ = playwright;
-        await using var __ = browser;
+        var browser = await Chromium.BrowserAsync();
         foreach (var (darkUrl, scheme, visible) in new (string?, string, string)[]
         {
             (null, "light", "light.png"), (null, "dark", "light.png"), ("https://cdn.example.test/dark.png", "light", "light.png"), ("https://cdn.example.test/dark.png", "dark", "dark.png"),
