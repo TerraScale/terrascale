@@ -141,6 +141,51 @@ public sealed class ProjectBindingTests
     }
 
     [Test]
+    public async Task A_query_organization_naming_another_authority_does_not_replace_the_body_organization()
+    {
+        await using var api = await ManagementApi.StartAsync();
+        var database = await api.CreateManagedDatabaseAsync();
+        var authorityOrganization = EntityIds.New().ToString();
+        var signIn = api.Issuer.Mint(api.User);
+        api.Issuer.GrantProject(signIn, authorityOrganization, database.Project);
+        using var owner = api.WithToken(signIn);
+        var query = "/binding?organization=" + EntityIds.New();
+        await StatusAsync(owner.PostAsJsonAsync(Uri(ProjectPath(database.Organization, database.Project) + query), new { organization = authorityOrganization }), HttpStatusCode.NoContent);
+        await Assert.That(api.Issuer.ProjectFetches).IsEqualTo(1);
+    }
+
+    [Test]
+    public async Task A_query_organization_does_not_substitute_for_a_missing_body_organization()
+    {
+        await using var api = await ManagementApi.StartAsync();
+        var database = await api.CreateManagedDatabaseAsync();
+        var authorityOrganization = EntityIds.New().ToString();
+        var signIn = api.Issuer.Mint(api.User);
+        api.Issuer.GrantProject(signIn, authorityOrganization, database.Project);
+        using var owner = api.WithToken(signIn);
+        var query = "/binding?organization=" + authorityOrganization;
+        await StatusAsync(owner.PostAsJsonAsync(Uri(ProjectPath(database.Organization, database.Project) + query), new { }), HttpStatusCode.BadRequest);
+        await Assert.That(api.Issuer.ProjectFetches).IsEqualTo(0);
+    }
+
+    [Test]
+    [Arguments("malformed")]
+    [Arguments("untyped")]
+    public async Task An_unreadable_binding_body_answers_the_organization_validation_error_without_contacting_ts_auth(string body)
+    {
+        await using var api = await ManagementApi.StartAsync();
+        var database = await api.CreateManagedDatabaseAsync();
+        var signIn = api.Issuer.Mint(api.User);
+        api.Issuer.GrantProject(signIn, database.Organization, database.Project);
+        using var owner = api.WithToken(signIn);
+        using var content = body == "malformed"
+            ? new StringContent("{", Encoding.UTF8, "application/json")
+            : new ByteArrayContent("{}"u8.ToArray());
+        await StatusAsync(owner.PostAsync(Uri(ProjectPath(database.Organization, database.Project) + "/binding"), content), HttpStatusCode.BadRequest);
+        await Assert.That(api.Issuer.ProjectFetches).IsEqualTo(0);
+    }
+
+    [Test]
     [Arguments("viewer")]
     [Arguments("member")]
     [Arguments("admin")]

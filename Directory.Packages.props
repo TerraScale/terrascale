@@ -31,7 +31,7 @@
   </ItemGroup>
   <!-- Record v1 console logs (Program.cs), published by TerraScale/ts-libs to the TerraScale Forgejo registry (NuGet.config). -->
   <ItemGroup Label="Logging">
-    <PackageVersion Include="TerraScale.Logging" Version="2026.1011.1157" />
+    <PackageVersion Include="TerraScale.Logging" Version="2026.1011.1224" />
   </ItemGroup>
   <!-- Interpolated log calls (src/TerraBase) and allocation-light strings on hot paths: Cysharp, the same release train as ZLogger. -->
   <ItemGroup Label="Interpolated strings">
@@ -40,7 +40,7 @@
   </ItemGroup>
   <ItemGroup Label="API and hosting">
     <!-- Published by TerraScale/ts-libs to the TerraScale Forgejo registry (NuGet.config). -->
-    <PackageVersion Include="TerraScale.Endpoints" Version="2026.1011.1157" />
+    <PackageVersion Include="TerraScale.Endpoints" Version="2026.1011.1224" />
     <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="11.0.0-rc.1.26425.128" />
   </ItemGroup>
   <!-- ts-auth OIDC discovery, JWKS and JWT validation (Features/UserAuth). -->

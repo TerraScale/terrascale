@@ -40,7 +40,8 @@ analyzer-check: restore
 
 test-fast: build
 	# Forgejo lacks GitHub's artifact API; HTML and JSON reports are generated locally.
-	env -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_RESULTS_URL dotnet run --project src/Tests/TerraBase.Fast --configuration $(CONFIGURATION) --no-build
+	# Capped: unbounded on 32-CPU CI runners, GC pauses push tests past their timeouts.
+	env -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_RESULTS_URL dotnet run --project src/Tests/TerraBase.Fast --configuration $(CONFIGURATION) --no-build -- --maximum-parallel-tests 16
 
 test-slow: build
 	env -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_RESULTS_URL dotnet run --project src/Tests/TerraBase.Slow --configuration $(CONFIGURATION) --no-build

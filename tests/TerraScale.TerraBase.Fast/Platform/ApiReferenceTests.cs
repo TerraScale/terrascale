@@ -94,7 +94,12 @@ public sealed class ApiReferenceTests
         await Assert.That(root.Headers.Location.OriginalString).IsEqualTo("scalar/");
         await Assert.That(page.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(page.Content.Headers.ContentType!.MediaType).IsEqualTo("text/html");
-        await Assert.That(await page.Content.ReadAsStringAsync()).Contains("openapi/v1.json");
+        var html = await page.Content.ReadAsStringAsync();
+        await Assert.That(html).Contains("openapi/v1.json");
+        // Hardened in TerraScale.Endpoints: system fonts, no telemetry and no AI agent, so the page talks to nothing but this service.
+        await Assert.That(html).Contains("\"withDefaultFonts\":false");
+        await Assert.That(html).Contains("\"telemetry\":false");
+        await Assert.That(html).Contains("\"agent\":{\"disabled\":true}");
         await Assert.That(script.StatusCode).IsEqualTo(HttpStatusCode.OK);
         foreach (var path in new[] { "/", "/scalar", "/scalar/", "/scalar/scalar.js", "/openapi/v1.json" })
         {
