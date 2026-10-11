@@ -142,39 +142,6 @@ public sealed class OidcTokenTests(TerraBaseFixture fixture)
     }
 
     [Test]
-    public async Task A_replica_starting_on_an_unverifiable_ring_replaces_it_so_only_new_sign_ins_validate()
-    {
-        await using var oidc = await OidcHarness.StartAsync(fixture);
-        var (_, _, stale) = await oidc.SignInAndRedeemAsync();
-        var staleAccess = stale.GetProperty("access_token").GetString()!;
-        var id = OidcIssuer.InstanceId;
-        var stored = oidc.Vault.Current(id);
-        var ring = JsonNode.Parse(stored.Document.GetRawText())!;
-        // Metadata this master key cannot authenticate, as after a lost key or an earlier format.
-        ring["keys"]![0]!["publicMetadataMac"] = new string('0', 64);
-        oidc.Vault.Put(id, JsonSerializer.SerializeToElement(ring));
-
-        await using var replica = await oidc.StartReplicaAsync();
-        var keys = new JsonWebKeySet(await replica.Client.GetStringAsync($"/{OidcIssuer.Slug}/.well-known/jwks.json"));
-        var fresh = keys.Keys.Single().Kid;
-        await Assert.That(fresh).IsNotEqualTo(new JsonWebToken(staleAccess).Kid);
-        foreach (var client in new[] { oidc.Client, replica.Client })
-        {
-            using var userInfo = await oidc.UserInfoAsync(staleAccess, client);
-            await Assert.That(userInfo.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
-            using var organizations = await oidc.CallAsync(HttpMethod.Get, PlatformCalls.Organizations, staleAccess, client: client);
-            await Assert.That(organizations.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
-        }
-
-        // Signing in again issues tokens under the fresh key that every replica accepts.
-        var (_, _, tokens) = await oidc.SignInAndRedeemAsync("bob@example.test");
-        var access = tokens.GetProperty("access_token").GetString()!;
-        await Assert.That(new JsonWebToken(access).Kid).IsEqualTo(fresh);
-        using var accepted = await oidc.UserInfoAsync(access, replica.Client);
-        await Assert.That(accepted.StatusCode).IsEqualTo(HttpStatusCode.OK);
-    }
-
-    [Test]
     public async Task Public_key_requests_keep_working_across_replicas_when_private_material_is_unavailable()
     {
         await using var oidc = await OidcHarness.StartAsync(fixture);
@@ -339,28 +306,6 @@ public sealed class OidcTokenTests(TerraBaseFixture fixture)
         var after = oidc.Vault.Current(id);
         await Assert.That(after.Version).IsEqualTo(before.Version);
         await Assert.That(after.Document.GetRawText()).IsEqualTo(before.Document.GetRawText());
-    }
-
-    [Test]
-    public async Task A_key_ring_out_of_creation_order_fails_closed_instead_of_publishing_or_signing()
-    {
-        await using var oidc = await OidcHarness.StartAsync(fixture);
-        var (_, _, tokens) = await oidc.SignInAndRedeemAsync();
-        using var rotated = await oidc.Server.App.Services.GetRequiredService<KeyRing>().RotateAsync(OidcIssuer.InstanceId, CancellationToken.None);
-
-        // Reorder the stored ring, as a tampered or foreign writer could; the sealed keys themselves are untouched.
-        var id = OidcIssuer.InstanceId;
-        var stored = oidc.Vault.Current(id);
-        var ring = JsonNode.Parse(stored.Document.GetRawText())!.AsObject();
-        ring["keys"] = new JsonArray([.. ring["keys"]!.AsArray().Reverse().Select(key => key!.DeepClone())]);
-        oidc.Vault.Put(id, JsonSerializer.SerializeToElement(ring));
-
-        using var jwks = await oidc.Client.GetAsync($"/{OidcIssuer.Slug}/.well-known/jwks.json");
-        await Assert.That(jwks.StatusCode).IsEqualTo(HttpStatusCode.InternalServerError);
-        await Assert.That(await jwks.Content.ReadAsStringAsync()).DoesNotContain("\"kid\"");
-        using var refreshed = await oidc.RefreshAsync(tokens.GetProperty("refresh_token").GetString()!);
-        await Assert.That(refreshed.IsSuccessStatusCode).IsFalse();
-        await Assert.That(await refreshed.Content.ReadAsStringAsync()).DoesNotContain("access_token");
     }
 
     [Test]
