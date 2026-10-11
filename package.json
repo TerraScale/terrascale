@@ -22,6 +22,7 @@
     "check:release": "npm run build && node scripts/validate-content.mjs && node scripts/validate-redirect-contract.mjs --release && node scripts/validate-claims.mjs --rendered && node scripts/validate-links.mjs --release",
     "release:check": "npm run check:release",
     "preview": "vite preview",
+    "deploy": "npm run build && wrangler pages deploy build --project-name ts-landing --branch main",
     "test": "npm run test:validators",
     "test:e2e": "playwright test",
     "test:slow": "node scripts/test-code-samples-real.mjs"
