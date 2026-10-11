@@ -149,7 +149,30 @@ What the numbers say:
 
 ## Fast suite on the swap branch
 
-FAST_SUITE_RESULTS
+Branch `feat/turso-engine-swap` (draft PR #21), real TerraBase code, `make terrabase-test-fast`. The run is
+not comparable on speed: baseline at 16-way parallelism, Turso at 8, on a loaded box.
+
+| Step | Fast suite | What blocked |
+| --- | --- | --- |
+| Baseline, Microsoft.Data.Sqlite | **1903 / 1903** in 2m07s | |
+| Package swap + `TursoShim` (compiles) | almost all failed | Every database bootstrap: `WITHOUT ROWID` |
+| Drop `WITHOUT ROWID`, trigger via `TursoConnection` | most failed | `PRAGMA query_only = ON` rejected (only `1`/`0`); `GetFieldValue<byte[]>` on TEXT throws (Microsoft.Data.Sqlite returns UTF-8 bytes); removing an unregistered UDF throws `Not Found` |
+| Shim those three | **1654 / 1903** in 13m40s | The 249 below |
+
+Remaining failure classes in the last run, by cause:
+
+1. **Backups and branches:** `VACUUM INTO requires a string literal path` (794 server errors). Turso will not
+   bind `VACUUM INTO $path`; it needs a literal.
+2. **More than one writer connection:** `database is locked` (335 server errors). TerraBase opens several
+   connections that write (sessions, maintenance). Turso needs one writer per file anyway (rule 1).
+3. **Test fixtures:** they create generated columns (behind the `generated_columns` flag) or multi-statement
+   triggers through the facade (`incomplete input`).
+4. **Cancellation-dependent tests time out**, for example `A_paused_baseline_is_isolated…` and shutdown or
+   stall tests. Interrupt and the QoS progress handler are no-ops.
+5. **Singles:** `Expression tree is too large (maximum depth N)` on one generated query (Turso's depth limit is
+   lower than SQLite's), plus downstream 404/500 assertions in backup listing tests.
+
+None of these needs Turso changes except item 4. Items 1–3 are design changes 3c makes anyway.
 
 ## Recommended 3c implementation
 
