@@ -40,7 +40,7 @@ When interacting with Forgejo, always use the `fj` CLI.
 - Never add AI attribution, generated-by notices, or co-author trailers to commits, PR titles, or PR descriptions.
 - Prefer simple, maintainable code and established libraries over custom solutions or unnecessary abstractions.
 - Follow repository conventions, keep changes focused, and avoid unrelated rewrites.
-- Never invent APIs, package names, commands, issue IDs, or successful verification results.
+- Never invent APIs, package names, commands, or successful verification results.
 - Preserve unrelated changes; never discard, overwrite, or commit another contributor’s work.
 - Do not claim a guarantee (durability, consistency, compatibility, security) without the implementation and integration evidence that proves it.
 
@@ -174,17 +174,16 @@ Maintain exactly two integration test suites:
 - Broader, expensive, edge-case, stress, or exhaustive scenarios SHOULD be covered by the **Slow** suite.
 - Never skip, disable, or weaken tests to bypass a failure.
 
-## Issues and Git
+## Git
 
-- Track development work in **`ku.mariogk.com`**. Never invent a project prefix or issue ID; ask when none is supplied.
-- Use `git` for repository operations, **`fj`** for Forgejo operations and Ku tooling for development issues. Check CLI help when syntax is uncertain.
+- Use `git` for repository operations and **`fj`** for Forgejo operations. Check CLI help when syntax is uncertain.
 - Prefer a dedicated Git worktree per task, branched from the latest `origin/main`, named `feat/`, `fix/`, `hotfix/`, or `refactor/` plus a descriptive name.
 - Never implement task changes directly on or push directly to `main`.
 
 ## Pull Requests
 
-- Target **`main`** with the title format **`{ISSUE_ID}: {title}`**.
-- Include the Ku link, change summary, validation performed, and relevant compatibility, storage or security implications.
+- Target **`main`**.
+- Include a change summary, validation performed, and relevant compatibility, storage or security implications.
 - Never claim a check passed unless it actually ran successfully. Distinguish required checks from non-blocking Slow results.
 
 ## Zero configuration (user decision 2026-10-09, do not revert)
