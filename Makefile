@@ -51,7 +51,7 @@ BENCHMARK_DOTNET_PROJECTS := benchmark/dotnet/TerraScale.Endpoints.Benchmarks/Te
 .PHONY: restore build fmt fmt-check lint test-fast test-slow test check docker-test clean \
 	libs-build libs-test libs-check libs-pack libs-nativeaot-check \
 	auth-build auth-audit auth-openapi-check auth-test-fast auth-test-slow auth-check auth-publish auth-dev \
-	terrabase-build terrabase-analyzer-check terrabase-test-fast terrabase-test-slow terrabase-e2e terrabase-e2e-fly-outage terrabase-check terrabase-run terrabase-publish \
+	terrabase-build terrabase-analyzer-check terrabase-test-fast terrabase-test-slow terrabase-tigris-e2e terrabase-e2e terrabase-e2e-fly-outage terrabase-check terrabase-run terrabase-publish \
 	benchmark-build benchmark-fmt-check benchmark-check benchmark-smoke
 
 # Global: the whole solution.
@@ -161,6 +161,12 @@ terrabase-test-fast: terrabase-build
 
 terrabase-test-slow: terrabase-build
 	dotnet run --project tests/TerraBase.Slow --configuration $(CONFIGURATION) --no-build $(TEST_ARGS)
+
+# Continuous backup and restore against the real Tigris dev bucket; loads its variables from TIGRIS_DEV_ENV.
+TIGRIS_DEV_ENV ?= $(HOME)/.config/terrascale/tigris-dev.env
+terrabase-tigris-e2e: terrabase-build
+	set -a; . $(TIGRIS_DEV_ENV); set +a; \
+	dotnet run --project tests/TerraBase.Slow --configuration $(CONFIGURATION) --no-build -- --treenode-filter '/*/*/TigrisBackupTests/*' $(TEST_ARGS)
 
 # End-to-end replication (tests/TerraBase.E2E): leaderless writes in both directions between gru and sjc. Local by default
 # (two in-process nodes). With TERRABASE_E2E_FLY_URL, TERRABASE_E2E_FLY_API_KEY, TERRABASE_E2E_FLY_PROJECT and
