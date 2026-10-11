@@ -45,8 +45,7 @@ its `.sha256`). To cut a versioned release:
    fails the `release` job and publishes nothing.
 
 Verify a download with `sha256sum -c terrabase-linux-amd64.sha256` (or
-`terrabase-linux-arm64.sha256`) in the directory that holds the binary. See `docs/terrabase/ci.md` for the
-pipeline.
+`terrabase-linux-arm64.sha256`) in the directory that holds the binary. Releases are not published automatically; see `docs/terrabase/ci.md`.
 
 ## Configuration
 

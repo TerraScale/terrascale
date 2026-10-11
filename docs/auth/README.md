@@ -123,7 +123,7 @@ src/TerraScale.Authentication.Store/          # Documents v1 persistence/readine
 tests/TerraScale.Authentication.Fast/         # blocking integration suite
 tests/TerraScale.Authentication.Slow/         # non-blocking integration suite
 tests/TerraScale.Authentication.TestHarness/  # harness source linked into both suites
-scripts/auth/                       # dev loop, OpenAPI export, CI, provisioning and real-stack smoke checks
+scripts/auth/                       # dev loop, OpenAPI export, provisioning and real-stack smoke checks
 ```
 
 Persistent uploaded files, if a feature needs them, belong in RustFS through
@@ -515,63 +515,9 @@ rotation.
 
 ## CI
 
-`.forgejo/workflows/ci.yml` runs two jobs in parallel.
-- **`test`** is the required gate. It checks out the pinned ts-dotnet and
-  ts-dotnet revision into a job-owned directory, then runs a locked restore,
-  `dotnet format --verify-no-changes`, a Release build with analyzers as
-  errors, the NuGet vulnerability audit, the Redocly lint of the served OpenAPI
-  document, the image-transfer, binary-publish and arm64-smoke guard tests and the fast integration suite,
-  including Chromium and storage/readiness against the real SDK-pinned
-  TerraBase binary. Missing binary/download prerequisites fail the suite.
-  Fast cases share one TerraBase process and run at most two at a time;
-  concurrency tests still create their own parallel requests.
-- **`build`** publishes a self-contained single-file linux-x64 executable
-  (`scripts/auth/ci/stage-release.sh`), packages it into the chiseled
-  `runtime-deps` image (`src/TerraScale.Authentication/Containerfile`, pinned by digest), and smoke-checks
-  `/healthz` (revision), `/openapi/v1.json`, fail-closed `/readyz` and the
-  absence of `/metrics` (`scripts/auth/ci/package-image.sh`). It also publishes
-  the linux-arm64 single-file executable, so every pull request proves that
-  build. `stage-release.sh` checks the ELF machine of each build, and
-  `scripts/auth/ci/smoke-arm64.sh` starts the arm64 executable under qemu-aarch64 on
-  the arm64 variant of the pinned runtime-deps image, requiring `/healthz` with
-  this revision and a fail-closed `/readyz` (its startup Argon2id self-test
-  proves the bundled libsodium loads on arm64).
+There are no CI workflows in this repository. Run `make check` locally before pushing. Releases and packages are not published automatically.
 
-On pushes to `main`, `build` stages the smoke-checked image in
-`git.terrascale.tech/<owner>/ts-auth-ci` and passes its registry manifest
-digest to `release` (`scripts/auth/ci/transfer-image.sh`). Once both jobs pass,
-`release` tags that exact image as `git.terrascale.tech/<owner>/ts-auth:<commit>`.
-The daily `registry-retention.yml` workflow removes staging candidates older
-than 30 days.
-
-On pushes to `main`, once `test` and `build` pass, `publish`
-(`scripts/auth/ci/publish-binary.sh`) attaches `ts-auth-linux-arm64` and
-`ts-auth-linux-arm64.sha256` to the Forgejo release `v<version>-dev.<commit>`,
-which ts-orchestrator downloads to run ts-auth natively. The exact bytes are
-smoke-checked under emulation before any upload. New uploads succeed only
-once both downloads match the smoke-checked executable and its checksum byte for byte;
-a rerun leaves an existing internally verified release
-untouched and replaces both assets of one an interrupted run left incomplete
-(`scripts/auth/check-binary-publish.sh` covers these paths in `test`). Download
-both assets into one directory and verify with
-`sha256sum -c ts-auth-linux-arm64.sha256`; the checksum detects a corrupt or
-mismatched download, it is not a signature.
-
-Then `deploy` (`scripts/auth/ci/deploy.sh`) automatically hands every green main
-release to ts-orchestrator for GRU and SFO. Deployment has no opt-in switch;
-the script targets both regions and the `canary` environment currently signed
-into their controller configuration. `ts-orch release service-deploy` (the
-ts-orchestrator CI build pinned by `TS_ORCH_RELEASE` and its `TS_ORCH_SHA256`) signs a release claim
-with the scoped release key it reads from OCI Vault, publishes it with the
-binary in each region's head bucket and waits until that region's
-orchestrator reports the replicas serving it; the orchestrator gates the
-rollout on `/healthz` and `/readyz` and rolls a release that never serves
-back, which fails the job before later regions see it. The script logs total
-deployment time and preserves the orchestrator's failure status. TS-768 owns
-the follow-up shared region discovery and independent regional rollouts.
-See ts-orchestrator `docs/continuous-delivery.md`, "Automatic service
-releases". `scripts/auth/ci/check-deploy.sh` (in `test`) runs the script against a
-stub API and ts-orch.
+## Native library extraction
 
 The executable extracts its bundled native library (libsodium, used for
 Argon2id) at startup into `DOTNET_BUNDLE_EXTRACT_BASE_DIR` (default
