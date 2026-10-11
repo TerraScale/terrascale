@@ -24,11 +24,11 @@ region discovery never widens that residency boundary. See
 
 ## Network membership admits a node
 
-A node on the private NetBird network joins the cluster automatically,
+A node on the private network joins the cluster automatically,
 discovers every region and starts serving. Membership in that network is the
 admission boundary; there is no separate cluster-join or per-region feature
 switch. Existing serving nodes are updated in place. Every server has at least
-2 cores (OCPU/vCPU).
+2 cores (vCPU).
 
 ## Production secrets arrive automatically
 
