@@ -1,0 +1,16 @@
+{
+  "solution": {
+    "path": "TerraScale.slnx",
+    "projects": [
+      "src/TerraScale.Endpoints/TerraScale.Endpoints.csproj",
+      "src/TerraScale.Endpoints.Generators/TerraScale.Endpoints.Generators.csproj",
+      "src/TerraScale.Endpoints.Example/TerraScale.Endpoints.Example.csproj",
+      "src/TerraScale.Logging/TerraScale.Logging.csproj",
+      "tests/TerraScale.Endpoints.Tests/TerraScale.Endpoints.Tests.csproj",
+      "tests/TerraScale.Logging.Tests/TerraScale.Logging.Tests.csproj",
+      "benchmark/dotnet/TerraScale.Endpoints.Benchmarks/TerraScale.Endpoints.Benchmarks.csproj",
+      "benchmark/dotnet/TerraScale.Logging.Benchmarks/TerraScale.Logging.Benchmarks.csproj",
+      "src/TerraScale.CLI/TerraScale.CLI.csproj"
+    ]
+  }
+}

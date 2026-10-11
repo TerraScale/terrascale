@@ -32,19 +32,7 @@ LIBS_TEST_PROJECTS := tests/TerraScale.Endpoints.Tests/TerraScale.Endpoints.Test
 LIBS_PACKAGE := src/TerraScale.Logging/TerraScale.Logging.csproj
 PACKAGE_VERSION = $(shell bash scripts/libs/package-version.sh)
 
-AUTH_PROJECTS := src/TerraScale.Authentication.Contracts/TerraScale.Authentication.Contracts.csproj \
-	src/TerraScale.Authentication.Security/TerraScale.Authentication.Security.csproj \
-	src/TerraScale.Authentication.Store/TerraScale.Authentication.Store.csproj \
-	src/TerraScale.Authentication/TerraScale.Authentication.csproj \
-	tests/TerraScale.Authentication.Fast/TerraScale.Authentication.Fast.csproj \
-	tests/TerraScale.Authentication.Slow/TerraScale.Authentication.Slow.csproj
 AUTH_HOST_DLL := src/TerraScale.Authentication/bin/$(CONFIGURATION)/net11.0/ts-auth.dll
-
-TERRABASE_PROJECTS := src/TerraBase.Analyzers/TerraBase.Analyzers.csproj \
-	src/TerraBase/TerraBase.csproj \
-	tests/TerraBase.Fast/TerraBase.Fast.csproj \
-	tests/TerraBase.Slow/TerraBase.Slow.csproj \
-	tests/TerraBase.E2E/TerraBase.E2E.csproj
 
 BENCHMARK_DOTNET_PROJECTS := benchmark/dotnet/TerraScale.Endpoints.Benchmarks/TerraScale.Endpoints.Benchmarks.csproj \
 	benchmark/dotnet/TerraScale.Logging.Benchmarks/TerraScale.Logging.Benchmarks.csproj
@@ -52,7 +40,7 @@ BENCHMARK_DOTNET_PROJECTS := benchmark/dotnet/TerraScale.Endpoints.Benchmarks/Te
 .PHONY: restore build fmt fmt-check lint test-fast test-slow test check docker-test clean \
 	libs-build libs-test libs-check libs-pack libs-nativeaot-check \
 	auth-build auth-audit auth-openapi-check auth-test-fast auth-test-slow auth-check auth-publish auth-dev \
-	terrabase-build terrabase-analyzer-check terrabase-test-fast terrabase-test-slow terrabase-tigris-e2e terrabase-e2e terrabase-e2e-fly-outage terrabase-check terrabase-run terrabase-publish \
+	terrabase-build terrabase-analyzer-check terrabase-test-fast terrabase-test-slow terrabase-e2e terrabase-e2e-fly-outage terrabase-check terrabase-run terrabase-publish \
 	benchmark-build benchmark-fmt-check benchmark-check benchmark-smoke
 
 # Global: the whole solution.
@@ -82,7 +70,7 @@ test: test-fast test-slow
 # Everything required before a push.
 check: lint libs-check auth-check terrabase-check benchmark-check test-fast
 
-# CI's `test` stage (Dockerfile), run locally. Needs ts-dotnet next to this checkout and the pinned TerraBase binary in
+# CI's three area stages (Dockerfile `test`, BuildKit runs them in parallel), run locally. Needs ts-dotnet next to this checkout and the pinned TerraBase binary in
 # the cache ts-dotnet's TerraBaseTestServer downloads it to.
 docker-test:
 	docker build --build-context ts-dotnet=$(TS_DOTNET_DIR) --build-context terrabase-pinned=$(TERRABASE_PINNED_DIR) --target test .
@@ -91,9 +79,10 @@ clean:
 	dotnet clean $(SOLUTION) --configuration $(CONFIGURATION)
 	rm -rf artifacts
 
-# ts-libs: TerraScale.Endpoints and TerraScale.Logging, their generator, tests and examples.
+# ts-libs: TerraScale.Endpoints and TerraScale.Logging, their generator, tests and examples. libs.slnf also builds
+# their benchmarks and the CLI, so libs.slnf, auth.slnf and terrabase.slnf together build the whole solution.
 libs-build: restore
-	set -e; for p in $(LIBS_PROJECTS); do dotnet build $$p --configuration $(CONFIGURATION) --no-restore; done
+	dotnet build libs.slnf --configuration $(CONFIGURATION) --no-restore
 
 libs-test: libs-build
 	set -e; for p in $(LIBS_TEST_PROJECTS); do dotnet run --project $$p --configuration $(CONFIGURATION) --no-build -- --minimum-expected-tests 1 $(TEST_ARGS); done
@@ -114,7 +103,7 @@ libs-nativeaot-check: restore
 
 # ts-auth.
 auth-build: restore
-	set -e; for p in $(AUTH_PROJECTS); do dotnet build $$p --configuration $(CONFIGURATION) --no-restore --nologo; done
+	dotnet build auth.slnf --configuration $(CONFIGURATION) --no-restore --nologo
 
 auth-audit:
 	dotnet run scripts/auth/check-nuget-vulnerabilities.cs src/TerraScale.Authentication/TerraScale.Authentication.csproj
@@ -145,7 +134,7 @@ auth-dev:
 
 # TerraBase: the server, its analyzer and its integration suites.
 terrabase-build: restore
-	set -e; for p in $(TERRABASE_PROJECTS); do dotnet build $$p --configuration $(CONFIGURATION) --no-restore; done
+	dotnet build terrabase.slnf --configuration $(CONFIGURATION) --no-restore
 
 terrabase-analyzer-check: restore
 	@set -eu; log=$$(mktemp); trap 'rm -f "$$log"' EXIT; \
@@ -166,12 +155,6 @@ terrabase-test-fast: restore
 
 terrabase-test-slow: terrabase-build
 	dotnet run --project tests/TerraBase.Slow --configuration $(CONFIGURATION) --no-build $(TEST_ARGS)
-
-# Continuous backup and restore against the real Tigris dev bucket; loads its variables from TIGRIS_DEV_ENV.
-TIGRIS_DEV_ENV ?= $(HOME)/.config/terrascale/tigris-dev.env
-terrabase-tigris-e2e: terrabase-build
-	set -a; . $(TIGRIS_DEV_ENV); set +a; \
-	dotnet run --project tests/TerraBase.Slow --configuration $(CONFIGURATION) --no-build -- --treenode-filter '/*/*/TigrisBackupTests/*' $(TEST_ARGS)
 
 # End-to-end replication (tests/TerraBase.E2E): leaderless writes in both directions between gru and sjc. Local by default
 # (two in-process nodes). With TERRABASE_E2E_FLY_URL, TERRABASE_E2E_FLY_API_KEY, TERRABASE_E2E_FLY_PROJECT and

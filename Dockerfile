@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
-# CI runs the `test` stage on every pull request and push (.github/workflows/ci.yml); `make docker-test` runs the same
-# build locally. The `terrabase` and `ts-auth` stages are the images CI deploys to Fly.
+# CI runs the `test-libs`, `test-auth` and `test-terrabase` stages on pull requests and pushes (.github/workflows/ci.yml);
+# `make docker-test` builds `test`, all three. The `terrabase` and `ts-auth` stages are the images CI deploys to Fly.
 # ts-auth builds ts-dotnet from source and its tests start the pinned TerraBase release binary that
 # ts-dotnet's TerraBaseTestServer verifies, so the build takes two named contexts: `ts-dotnet` (a checkout) and
 # `terrabase-pinned` (a directory holding terrabase-linux-amd64).
@@ -22,17 +22,30 @@ COPY --from=terrabase-pinned --chmod=755 terrabase-linux-amd64 /opt/terrabase-pi
 ENV TERRABASE_BINARY=/opt/terrabase-pinned/terrabase-linux-amd64
 WORKDIR /src/terrascale
 
-# Format, Release build with analyzers as errors, and the libs, auth and TerraBase checks.
-FROM base AS build
+FROM base AS source
 COPY . .
-RUN --mount=type=cache,target=/root/.nuget/packages \
-    make lint libs-check auth-check terrabase-check CONFIGURATION=Release
 
-FROM build AS test
+# One stage per area; CI runs them as parallel jobs. Each checks whitespace format, builds its projects in Release with
+# analyzers as errors (libs.slnf, auth.slnf, terrabase.slnf), runs its checks and its Fast suite.
+FROM source AS test-libs
 RUN --mount=type=cache,target=/root/.nuget/packages \
-    make test-fast CONFIGURATION=Release
+    make fmt-check libs-check libs-test CONFIGURATION=Release && touch /passed
 
-FROM build AS test-slow
+FROM source AS test-auth
+RUN --mount=type=cache,target=/root/.nuget/packages \
+    make fmt-check auth-check auth-test-fast CONFIGURATION=Release && touch /passed
+
+FROM source AS test-terrabase
+RUN --mount=type=cache,target=/root/.nuget/packages \
+    make fmt-check terrabase-check terrabase-test-fast CONFIGURATION=Release && touch /passed
+
+# All three areas (BuildKit runs them in parallel): `make docker-test`.
+FROM scratch AS test
+COPY --from=test-libs /passed /libs
+COPY --from=test-auth /passed /auth
+COPY --from=test-terrabase /passed /terrabase
+
+FROM source AS test-slow
 RUN --mount=type=cache,target=/root/.nuget/packages \
     make test-slow CONFIGURATION=Release
 
@@ -72,3 +85,7 @@ COPY --from=publish-ts-auth /out /app
 USER 0
 ENV ASPNETCORE_HTTP_PORTS=
 ENTRYPOINT ["/app/ts-auth"]
+
+# The single-file TerraBase executable CI attaches to a GitHub release on main (ts-go and ts-status tests start it).
+FROM scratch AS terrabase-binary
+COPY --from=publish-terrabase /out/terrabase /terrabase-linux-amd64
