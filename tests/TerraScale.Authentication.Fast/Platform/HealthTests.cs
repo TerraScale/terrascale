@@ -212,8 +212,13 @@ public sealed class HealthTests
                 new HttpRequestException($"connect https://user:{secret}@db.example/?key={secret}", new IOException($"password={secret}"))));
         });
 
-        // The first pass runs at startup and logs its failure.
-        await Task.Delay(TimeSpan.FromSeconds(1));
+        // The first pass runs at startup and logs its failure; on a loaded machine that takes more than a second.
+        var deadline = DateTimeOffset.UtcNow + ReadinessWait.NextPass;
+        while (!logs.Text.Contains("Readiness check failed", StringComparison.Ordinal) && DateTimeOffset.UtcNow < deadline)
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(100));
+        }
+
         using var response = await server.Client.GetAsync("/readyz");
 
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
