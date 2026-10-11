@@ -186,7 +186,7 @@ public sealed record TerraBaseOptions : IDisposable
 
     private static readonly FrozenSet<string> Keys = FrozenSet.Create(
         StringComparer.Ordinal,
-        ["admin-port", "data-directory", "memory-budget", "client-port", .. ClientTlsKeys, "auth-issuer", "auth-audience", "management-credential-file", "peer-port", .. PeerTlsKeys, "write-wait-ms", "shutdown-grace-seconds", "readiness-cache-seconds", "query-budget-seconds", "storage-threads", "storage-queue", .. BackupSettings.Keys, .. NatsSettings.Keys, .. WanSettings.Keys]);
+        ["admin-port", "data-directory", "memory-budget", "client-port", .. ClientTlsKeys, "auth-issuer", "auth-audience", "management-credential-file", "peer-port", .. PeerTlsKeys, "write-wait-ms", "shutdown-grace-seconds", "readiness-cache-seconds", "query-budget-seconds", "storage-threads", "storage-queue", .. BackupSettings.Keys]);
 
     /// <summary>Every setting name, in <c>--name=value</c> form without the dashes.</summary>
     public static IReadOnlySet<string> SettingNames => Keys;
@@ -334,12 +334,6 @@ public sealed record TerraBaseOptions : IDisposable
     /// <summary>Continuous backup to object storage (TS-633); <see langword="null"/> turns it off.</summary>
     public BackupSettings? Backup { get; init; }
 
-    /// <summary>ts-orchestrator's NATS, which holds the backup shippers' leases; <see langword="null"/> when not set.</summary>
-    public NatsSettings? Nats { get; init; }
-
-    /// <summary>Cross-region replication over NATS (<c>docs/cross-region.md</c>); <see langword="null"/> turns it off.</summary>
-    public WanSettings? Wan { get; init; }
-
     /// <summary>Reads and validates the configuration of this process.</summary>
     public static TerraBaseOptions FromProcess(IReadOnlyList<string> args)
     {
@@ -432,8 +426,6 @@ public sealed record TerraBaseOptions : IDisposable
         var queryBudget = TimeSpan.FromSeconds(ParseInteger(values, "query-budget-seconds", 1, MaxQueryBudgetSeconds) ?? DefaultQueryBudgetSeconds);
         var writeWait = TimeSpan.FromMilliseconds(ParseInteger(values, "write-wait-ms", 0, 60_000) ?? DefaultWriteWaitMilliseconds);
         var backup = BackupSettings.Parse(values);
-        var nats = NatsSettings.Parse(values);
-        var wan = WanSettings.Parse(values, nats);
         X509Certificate2? clientCertificate = null;
         PeerCredentials.Snapshot? peerCredentialSnapshot = null;
         try
@@ -474,8 +466,6 @@ public sealed record TerraBaseOptions : IDisposable
                 ReadinessCacheTtl = readinessCacheTtl,
                 QueryBudget = queryBudget,
                 Backup = backup,
-                Nats = nats,
-                Wan = wan,
             };
         }
         catch

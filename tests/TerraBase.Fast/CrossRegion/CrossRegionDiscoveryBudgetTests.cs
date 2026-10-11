@@ -19,7 +19,6 @@ namespace TerraBase.Fast.CrossRegion;
 
 public sealed class CrossRegionDiscoveryBudgetTests
 {
-    private const string Credentials = "-----BEGIN NATS USER JWT-----\neyJ0.e30.x\n------END NATS USER JWT------\n-----BEGIN USER NKEY SEED-----\nSUAEXAMPLE\n------END USER NKEY SEED------\n";
     private const string GruLabel = "region=\"gru-1\"";
     private static readonly string[] InSfo = ["sfo-1"];
     private static readonly string[] Members = ["gru-a", "gru-b", "gru-c"];
@@ -61,23 +60,21 @@ public sealed class CrossRegionDiscoveryBudgetTests
         var directory = Directory.CreateTempSubdirectory("terrabase-wan-budget-").FullName;
         try
         {
-            var credentials = Path.Combine(directory, "user.creds");
-            await File.WriteAllTextAsync(credentials, Credentials, token);
             // The singleton cross-link selects the first real responder; direct-page discovery starts at B.
             var sharedMember = discovery == "member-page" ? "gru-b" : "gru-a";
             var directMember = discovery == "member-page" ? "gru-a" : "gru-b";
             observation?.Phase("shared.host.start");
-            shared = await StartAsync(network, credentials, "gru-1", "gru", sharedMember, failedStartCleanup: task => sharedCleanup = task);
+            shared = await StartAsync(network, "gru-1", "gru", sharedMember, failedStartCleanup: task => sharedCleanup = task);
             observation?.ObserveServer("shared", shared.Server);
             observation?.Phase("direct.host.start");
-            direct = await StartAsync(network, credentials, "gru-1", "gru", directMember, failedStartCleanup: task => directCleanup = task);
+            direct = await StartAsync(network, "gru-1", "gru", directMember, failedStartCleanup: task => directCleanup = task);
             observation?.ObserveServer("direct", direct.Server);
             var a = discovery == "member-page" ? direct : shared;
             observation?.Phase("c.host.start");
-            c = await StartAsync(network, credentials, "gru-1", "gru", "gru-c", failedStartCleanup: task => cCleanup = task);
+            c = await StartAsync(network, "gru-1", "gru", "gru-c", failedStartCleanup: task => cCleanup = task);
             observation?.ObserveServer("c", c.Server);
             observation?.Phase("sfo.host.start");
-            sfo = await StartAsync(network, credentials, "sfo-1", "sfo", "sfo-a", bus, clock, task => sfoCleanup = task);
+            sfo = await StartAsync(network, "sfo-1", "sfo", "sfo-a", bus, clock, task => sfoCleanup = task);
             observation?.ObserveServer("sfo", sfo.Server);
             try
             {
@@ -673,14 +670,12 @@ public sealed class CrossRegionDiscoveryBudgetTests
     }
 
     private static Task<ManagementApi> StartAsync(
-        FakeRegionNetwork network, string credentials, string region, string cell, string node, IRegionBus? bus = null, DiscoveryClock? clock = null, Action<Task>? failedStartCleanup = null) =>
+        FakeRegionNetwork network, string region, string cell, string node, IRegionBus? bus = null, DiscoveryClock? clock = null, Action<Task>? failedStartCleanup = null) =>
         ManagementApi.StartAsync(settings =>
         {
             settings["region"] = region;
             settings["node-name"] = node;
             settings["wan-regions"] = "gru-1=gru,sfo-1=sfo";
-            settings["nats-url"] = "nats://127.0.0.1:4222";
-            settings["nats-credentials-file"] = credentials;
         }, services =>
         {
             services.AddSingleton(bus ?? network.Join(cell, node));
@@ -933,7 +928,7 @@ public sealed class CrossRegionDiscoveryBudgetTests
 
                 // Synthetic responders hold real A's first page; any pulls still use the real application's store.
                 var source = subject.Contains(".gru-scattered-", StringComparison.Ordinal)
-                    ? WanProtocol.MemberSubject("gru", "gru-a") : subject;
+                    ? RegionSubjects.Member("gru", "gru-a") : subject;
                 return await inner.RequestAsync(source, request, cancellationToken);
             }
 
@@ -954,17 +949,17 @@ public sealed class CrossRegionDiscoveryBudgetTests
             try
             {
                 if (discovery == "page-overflow" && (subject.Contains(".gru-unreachable-", StringComparison.Ordinal)
-                    || subject == WanProtocol.MemberSubject("gru", "gru-c")))
+                    || subject == RegionSubjects.Member("gru", "gru-c")))
                 {
                     throw new IOException("the advertised member has no heads reply");
                 }
 
                 if (discovery == "deferred-overflow" && Volatile.Read(ref _round) == 0
-                    && (subject == WanProtocol.MemberSubject("gru", "gru-d") || subject == WanProtocol.MemberSubject("gru", "gru-e")))
+                    && (subject == RegionSubjects.Member("gru", "gru-d") || subject == RegionSubjects.Member("gru", "gru-e")))
                 {
                     // No await: both valid replies finish while the caller fills its first eight pending tasks.
                     var reply = OverflowAdvertisement!.Clone();
-                    reply.Member = subject == WanProtocol.MemberSubject("gru", "gru-d") ? "gru-d" : "gru-e";
+                    reply.Member = subject == RegionSubjects.Member("gru", "gru-d") ? "gru-d" : "gru-e";
                     reply.Members.Clear();
                     reply.Members.Add(reply.Member);
                     reply.Members.Add(reply.Member + "-overflow");
@@ -979,7 +974,7 @@ public sealed class CrossRegionDiscoveryBudgetTests
                         throw new IOException("the unadvertised member has no heads reply");
                     }
 
-                    if (subject == WanProtocol.MemberSubject("gru", "gru-c") && !HealHolder)
+                    if (subject == RegionSubjects.Member("gru", "gru-c") && !HealHolder)
                     {
                         HolderQueried.TrySetResult();
                         throw new IOException("the unadvertised holder has no heads reply");
@@ -993,7 +988,7 @@ public sealed class CrossRegionDiscoveryBudgetTests
 
                 if (subject.Contains(".gru-unreachable-", StringComparison.Ordinal)
                     || subject.Contains(".gru-scattered-", StringComparison.Ordinal)
-                    || (subject == WanProtocol.MemberSubject("gru", "gru-c") && discovery is not ("refill" or "rotation" or "transitive" or "shared-page-live" or "deferred-hidden" or "deferred-overflow" or "scattered-pages"))
+                    || (subject == RegionSubjects.Member("gru", "gru-c") && discovery is not ("refill" or "rotation" or "transitive" or "shared-page-live" or "deferred-hidden" or "deferred-overflow" or "scattered-pages"))
                     || (parsed.Heads.After.Length > 0 && discovery is "shared-page" or "member-page" or "shared-page-live" or "scattered-pages"))
                 {
                     var held = Interlocked.Increment(ref _heldHeads);
@@ -1030,12 +1025,12 @@ public sealed class CrossRegionDiscoveryBudgetTests
                     throw new IOException("the slow member has no heads reply");
                 }
 
-                if (discovery == "refill" && subject == WanProtocol.MemberSubject("gru", "gru-b"))
+                if (discovery == "refill" && subject == RegionSubjects.Member("gru", "gru-b"))
                 {
                     await Pending.Task.WaitAsync(cancellationToken);
                 }
 
-                if ((discovery is "refill" or "rotation" or "transitive" or "shared-page-live" or "deferred-hidden" or "deferred-overflow" or "scattered-pages") && subject == WanProtocol.MemberSubject("gru", "gru-c"))
+                if ((discovery is "refill" or "rotation" or "transitive" or "shared-page-live" or "deferred-hidden" or "deferred-overflow" or "scattered-pages") && subject == RegionSubjects.Member("gru", "gru-c"))
                 {
                     if (discovery is "rotation" or "transitive" or "scattered-pages")
                     {
@@ -1053,7 +1048,7 @@ public sealed class CrossRegionDiscoveryBudgetTests
             finally
             {
                 _ = Interlocked.Decrement(ref _activeHeads);
-                if (discovery == "shared-page-live" && subject == WanProtocol.MemberSubject("gru", "gru-c"))
+                if (discovery == "shared-page-live" && subject == RegionSubjects.Member("gru", "gru-c"))
                 {
                     HolderReplied.TrySetResult();
                 }
@@ -1062,11 +1057,6 @@ public sealed class CrossRegionDiscoveryBudgetTests
 
         public Task ServeAsync(string subject, Func<ReadOnlyMemory<byte>, CancellationToken, ValueTask<byte[]>> answer, CancellationToken cancellationToken) =>
             inner.ServeAsync(subject, answer, cancellationToken);
-
-        public string? Cell => inner.Cell;
-
-        public ValueTask PublishAsync(string subject, ReadOnlyMemory<byte> data, CancellationToken cancellationToken) =>
-            inner.PublishAsync(subject, data, cancellationToken);
 
         private ReadOnlyMemory<byte> Rewrite(ReadOnlyMemory<byte> data, WanRequest request)
         {

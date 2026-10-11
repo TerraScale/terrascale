@@ -6,15 +6,25 @@ import "terrabase/v1/replication.proto";
 
 option csharp_namespace = "TerraBase.Features.CrossRegion.V1";
 
-// Version 1 of cross-region (WAN) replication over NATS request/reply (docs/cross-region.md). A member of one
-// region pulls the change groups of every origin of another region from the member that originated them, after
-// its own applied prefix. Every request and reply is at most 1 MiB, NATS's default max_payload.
-// The schema/package and ts.orch.v1 subjects remain unchanged; WanRequest.version selects the WAN wire version.
+// Version 1 of cross-region (WAN) replication (docs/cross-region.md). A member of one region pulls the change groups
+// of every origin of another region from the member that originated them, after its own applied prefix. Members ask
+// each other directly with Wan.Ask over the peer listener; every request and reply is at most 1 MiB.
+// WanRequest.version selects the WAN wire version.
 // HeadsReply travels inside the versioned TBLZ4E01 application envelope, checked before parsing its protobuf.
 // Requests of another version and raw protobuf heads replies are rejected; there is no wire fallback.
 
-// A request on ts.orch.v1.<cell>.query.terrabase-wan.heads, which every member of the cell answers with the first
-// page of its heads, or on ts.orch.v1.<cell>.query.terrabase-wan.member.<member>, which one member answers.
+// One request and its reply: the request is an encoded WanRequest, the reply its HeadsReply envelope or PullReply, or
+// empty when the member cannot answer.
+service Wan {
+  rpc Ask(WanFrame) returns (WanFrame);
+}
+
+message WanFrame {
+  bytes data = 1;
+}
+
+// A heads request, which every member of a region answers with the first page of its heads, or a request to one
+// member: the next page of its heads or a pull.
 message WanRequest {
   // 1: change groups of register deltas, as Replication.Sync carries them. It never increases (decision 9 of
   // docs/design/anna-core.md): a wire change ships at a cutover that stops every member first.
@@ -60,9 +70,8 @@ message HeadsReply {
   repeated Head heads = 2;
   // Whether more heads follow the last one; ask the member for the next page.
   bool more = 3;
-  // Every member of the cell the answering member sees, itself included, by node name. Across ts-orchestrator's
-  // interregion link a request gets one reply (a Singleton service import), so the asking member reaches the
-  // others through their own subjects.
+  // Every member of its region the answering member sees, itself included, by machine ID: the asking member also asks
+  // the members its own view of the region missed.
   repeated string members = 4;
 }
 

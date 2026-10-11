@@ -20,7 +20,6 @@ namespace TerraBase.Slow.CrossRegion;
 /// </summary>
 public sealed class CrossRegionPartitionTests
 {
-    private const string Credentials = "-----BEGIN NATS USER JWT-----\neyJ0.e30.x\n------END NATS USER JWT------\n-----BEGIN USER NKEY SEED-----\nSUAEXAMPLE\n------END USER NKEY SEED------\n";
     private static readonly string[] Scopes = ["documents:read", "documents:write"];
     private static readonly string[] InSfo = ["sfo-1"];
 
@@ -34,8 +33,6 @@ public sealed class CrossRegionPartitionTests
         using var peerTls = new PeerTls();
         var network = new FakeRegionNetwork { Faults = new RegionFaults(Drop: 0.1, Duplicate: 0.1, Corrupt: 0.05, MaxDelay: TimeSpan.FromMilliseconds(40), seed) };
         var directory = Directory.CreateTempSubdirectory("terrabase-wan-partition-").FullName;
-        var credentials = Path.Combine(directory, "user.creds");
-        await File.WriteAllTextAsync(credentials, Credentials);
         var members = new Member[]
         {
             new("gru-1", "gru", "gru-a", TerraBaseTestServer.FreePort(), Path.Combine(directory, "gru-a")),
@@ -53,7 +50,7 @@ public sealed class CrossRegionPartitionTests
             foreach (var member in members)
             {
                 _ = Directory.CreateDirectory(member.Data);
-                await member.StartAsync(peerTls, network, stores[member.Cell], credentials, members);
+                await member.StartAsync(peerTls, network, stores[member.Cell], members);
             }
 
             // The project in both regions; the canary at home in gru with a replica in sfo. A key per region (issued on its
@@ -142,11 +139,11 @@ public sealed class CrossRegionPartitionTests
             await Task.Delay(TimeSpan.FromSeconds(3));
             network.Partition("gru", "sfo");
             await Task.Delay(TimeSpan.FromSeconds(2));
-            await members[3].RestartAsync(peerTls, network, stores["sfo"], credentials, members);
+            await members[3].RestartAsync(peerTls, network, stores["sfo"], members);
             await Task.Delay(TimeSpan.FromSeconds(3));
             network.Heal();
             await Task.Delay(TimeSpan.FromSeconds(2));
-            await members[1].RestartAsync(peerTls, network, stores["gru"], credentials, members);
+            await members[1].RestartAsync(peerTls, network, stores["gru"], members);
             await Task.Delay(TimeSpan.FromSeconds(4));
             await writing.CancelAsync();
             await Task.WhenAll(writers);
@@ -276,7 +273,7 @@ public sealed class CrossRegionPartitionTests
         // A client of this member's current process; the caller disposes it.
         public HttpClient Client() => (Api ?? throw new InvalidOperationException("the member is restarting")).DataClient(Key);
 
-        public async Task StartAsync(PeerTls peerTls, FakeRegionNetwork network, FakeMemberStore store, string credentials, IReadOnlyList<Member> all)
+        public async Task StartAsync(PeerTls peerTls, FakeRegionNetwork network, FakeMemberStore store, IReadOnlyList<Member> all)
         {
             var peers = all.Where(member => member.Cell == Cell).ToList();
             Api = await ManagementApi.StartAsync(settings =>
@@ -289,8 +286,6 @@ public sealed class CrossRegionPartitionTests
                 settings["region"] = Region;
                 settings["node-name"] = Name;
                 settings["wan-regions"] = "gru-1=gru,sfo-1=sfo";
-                settings["nats-url"] = "nats://127.0.0.1:4222";
-                settings["nats-credentials-file"] = credentials;
             }, services =>
             {
                 services.AddSingleton(network.Join(Cell, Name));
@@ -300,12 +295,12 @@ public sealed class CrossRegionPartitionTests
 
         public int PeerPort => port;
 
-        public async Task RestartAsync(PeerTls peerTls, FakeRegionNetwork network, FakeMemberStore store, string credentials, IReadOnlyList<Member> all)
+        public async Task RestartAsync(PeerTls peerTls, FakeRegionNetwork network, FakeMemberStore store, IReadOnlyList<Member> all)
         {
             var stopped = Api!;
             Api = null;
             await stopped.DisposeAsync();
-            await StartAsync(peerTls, network, store, credentials, all);
+            await StartAsync(peerTls, network, store, all);
         }
     }
 }

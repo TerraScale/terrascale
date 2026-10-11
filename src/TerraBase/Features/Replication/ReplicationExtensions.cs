@@ -94,6 +94,7 @@ public static class ReplicationExtensions
             app.MapGrpcService<AntiEntropyService>().WithMetadata(ListenerMetadata.Peer);
             app.MapGrpcService<CatalogFeed>().WithMetadata(ListenerMetadata.Peer);
             app.MapGrpcService<ForwardedRequests>().WithMetadata(ListenerMetadata.Peer);
+            app.MapGrpcService<CrossRegion.WanService>().WithMetadata(ListenerMetadata.Peer);
         }
 
         return app;

@@ -649,8 +649,6 @@ public sealed class ExplainSqlBoundaryTests
             if (topologyDelivered)
             {
                 settings["wan-regions"] = "gru-1=gru,sfo-1=sfo";
-                settings["nats-url"] = "nats://127.0.0.1:4222";
-                settings["nats-credentials-file"] = credentials;
             }
         }, services =>
         {

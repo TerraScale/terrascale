@@ -54,7 +54,7 @@ public sealed class UpdateManagedDatabaseEndpoint(IManagementService management,
         Valid<IReadOnlyList<string>> checkedRegions = request.Name is not null ? new Validation("a database cannot be renamed")
             : request.HomeRegion is { } requested && requested != home ? new Validation("homeRegion cannot change")
             : request.ReplicaRegions is not { } replicas ? new Validation("replicaRegions is required")
-            : DatabaseRegions.Check(options, home, replicas);
+            : DatabaseRegions.Check(home, replicas);
         return checkedRegions switch
         {
             Validation error => ErrorResponse.From(error),

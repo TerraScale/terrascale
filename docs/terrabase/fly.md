@@ -36,3 +36,9 @@ record (checked 2026-10-11), so the regions are the ones these entries name. A m
 Machines of the primary region are catalog primaries; every other machine follows the first machine (lowest ID) of the
 primary region and finds it again whenever the DNS changes. The primary region holds one TerraBase machine until
 anna-full (TS-647) removes the catalog primary.
+
+## Other regions
+
+Cross-region replication pulls from every other region the DNS lists, asking each member directly with gRPC
+`Wan.Ask` on its peer listener ([cross-region.md](cross-region.md)). A region joins as soon as one of its machines is
+listed; there is no region list to maintain.

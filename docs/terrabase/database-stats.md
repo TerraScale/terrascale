@@ -1,9 +1,8 @@
 # Live per-database stats (TS-806)
 
 Each TerraBase member counts reads, writes, requests, replication bytes and lag per database in memory.
-Every 5 seconds it closes a window, exposes bounded aggregates on the existing `/metrics`, and publishes a compact
-rollup on ts-orchestrator's NATS. It also answers detail requests over NATS. The feature is always on, has no
-configuration, and does not change the storage format.
+Every 5 seconds it closes a window and exposes bounded aggregates on the existing `/metrics`, which Fly's metrics
+scraping collects. The feature is always on, has no configuration, and does not change the storage format.
 
 ## What is counted
 
@@ -116,142 +115,11 @@ Names follow the exporter's rules: dots become underscores, units become suffixe
 | `terrabase.stats.top.replication` (unit `By/s`) | `terrabase_stats_top_replication_bytes_per_second` | ObservableGauge<double>, last window, sent plus received | `rank`=1..10 | 10 |
 | `terrabase.stats.top.operations` (unit `{operation}/s`) | `terrabase_stats_top_operations_per_second` | ObservableGauge<double>, last window, reads plus writes | `rank`=1..10 | 10 |
 | `terrabase.stats.dropped` | `terrabase_stats_dropped_total` | Counter<long> | `kind`=database\|peer\|collection | 3 |
-| `terrabase.stats.rollups` | `terrabase_stats_rollups_total` | Counter<long> | `result`=published\|failed\|no_cell | 3 |
 
 Each instrument has a `CardinalityLimit` in the view switch in `Hosting/Telemetry.cs`.
 
 No tenant id, database id or collection id is ever a label. The labels are the fixed values in the table above.
 `peer_region` is a replication peer's region: it must pass `TerraBaseOptions.IsRegion`, and at most 64 appear.
-
-## NATS
-
-There are two subjects. `{cell}` is this member's cell token.
-
-| Subject | Mode | Scope |
-| --- | --- | --- |
-| `ts.orch.v1.{cell}.obs.terrabase` | Publish every window | Regional only. The controller subscribes to its own `obs.>`. The link role does not carry it across regions. |
-| `ts.orch.v1.{cell}.query.terrabase-stats.detail` | Request and reply | Every member answers once. |
-
-How the cell is derived:
-
-1. Read the `cell:<token>` tag from the NATS user JWT in `nats-credentials-file`.
-2. Take the text between `-----BEGIN NATS USER JWT-----` and `------END NATS USER JWT------`.
-3. Base64url-decode the middle segment, then parse the JSON.
-4. Use the first `nats.tags[]` entry that starts with `cell:`.
-5. The token must pass `WanSettings.IsToken`.
-
-The value is read lazily and cached once found. This is the same value that the TS-803 role templates use with
-`{{tag(cell)}}`, so no region list is needed. `IRegionBus` is registered whenever `options.Nats` is set, not only for
-WAN.
-
-Without a cell:
-
-- The member does not publish and does not serve detail requests.
-- A member without NATS configured publishes and counts nothing.
-- `no_cell` is counted (`terrabase.stats.rollups{result=no_cell}`) only when NATS is configured and the credentials
-  carry no `cell:` tag. The member logs one warning then.
-- The warning never includes the credential contents.
-- Startup never fails.
-
-Required TS-803 grants for the terrabase role:
-
-1. Publish to `ts.orch.v1.{{tag(cell)}}.obs.terrabase`.
-2. Query verb `terrabase-stats`: subscribe to `ts.orch.v1.{{tag(cell)}}.query.terrabase-stats.>` and one response per request, as for `terrabase-wan`.
-3. A `cell` tag on the NATS user JWT.
-
-## Rollup v1
-
-The rollup is JSON, registered in `TerraBaseJsonContext`, with web defaults (camelCase). `Counters`, `Peer` and
-`Database` are defined below the example.
-
-```json
-{
-  "v": 1,
-  "id": "01J...ULID of this rollup",
-  "epoch": "01J...ULID of this process; seq restarts with it",
-  "seq": 42,
-  "cell": "gru", "region": "gru-1", "member": "gru-1-db-1",
-  "at": "2026-10-10T19:00:05.000Z",
-  "windowMs": 5000,
-  "databases": 1234,
-  "totals": { Counters },
-  "peers": [ { Peer } ],
-  "top": [ { Database } ]
-}
-```
-
-Fields:
-
-- `Counters`: `reads`, `writes`, `requests`, `errors`, `sentBytes`, `receivedBytes`, `lagGroups`, `lagSeconds`,
-  `conflicts`, `storageBytes` (omitted when unknown), and `latency` (19 integers, one per bound; omitted when there
-  were no requests).
-- `Peer`: `region`, `sentBytes`, `receivedBytes`, `lagGroups`, `lagSeconds`, `conflicts`. Every peer region with
-  traffic or state appears.
-- `Database`: `org`, `project`, `database` (catalog ids, no names), the `Counters` fields, and `peers` (only peers
-  with a nonzero value).
-
-Publishing:
-
-- Each publish has a 2 second timeout. A timeout or error counts `terrabase.stats.rollups{result=failed}`.
-- `seq` still advances on a failed publish, so consumers see a gap.
-
-Top list (`top`):
-
-- It lists the databases of the last window that had activity or a storage sample.
-- It is the union of three lists: the top 20 by replication bytes (sent plus received), the top 20 by operations
-  (reads plus writes), and the top 20 by storage.
-- It holds at most 60 entries.
-- Order: replication bytes descending, then operations descending, then database id.
-- At most 60 entries times at most 64 peers. Keep the message well below 1 MiB, the WAN `MaxMessageBytes`.
-
-Latency bins (milliseconds):
-
-`0.25, 0.5, 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536`
-
-Bin `i` counts requests with elapsed time at or below bound `i`. The last bin includes everything longer. The bounds
-are defined once in `StatsLatency.BoundsMs`. `UsageReading.LatencyBounds` returns the same list.
-
-Region merge rules, when rows from members of one region are combined:
-
-| Field | Rule |
-| --- | --- |
-| `reads`, `writes`, `requests`, `errors`, `sentBytes`, `receivedBytes` | Sum |
-| `storageBytes` | Max |
-| `lagGroups`, `lagSeconds`, `conflicts` | Max (each member replicates on its own; the region is as far behind as its worst member) |
-| `latency` | Sum each bin, then compute p50 and p99 from the merged bins. Percentiles cannot be merged. |
-
-## Detail v1
-
-Request:
-
-```json
-{"v":1, "database": "<databaseId>"?, "after": "<databaseId>"?}
-```
-
-Reply, one per member, over the last closed window:
-
-```json
-{"v":1, "cell", "region", "member", "epoch", "at", "windowMs",
- "databases": [Database...], "next": "<databaseId>" | null}
-```
-
-Rules:
-
-- Without `database`: the databases of the last window that had activity or a storage sample, sorted by database id
-  (ordinal), after `after`. At most 500 databases and at most 4,096 peer entries per reply, so one reply stays under
-  1 MiB.
-- `next` is always present: the last returned database id when more remain, `null` on the last page. It is the
-  cursor for the next page.
-- A member that does not track the requested database replies with an empty `databases` array; the requester merges the replies of every member.
-- With `database`: that database only, plus `collections`, an array of `{name, reads, writes, documents, complete}`.
-  - At most 256 collections, from `IStorageTransaction.ListCollectionsAsync`.
-  - `documents` comes from `CountAsync(collection, null, maxExamined)`.
-  - All collections share one budget: 1,000,000 examined rows and 2 seconds.
-  - `complete` is `false` once the budget is spent.
-- The counts run in one read transaction from `IStorageEngine.BeginTransactionAsync` with the entry's `TenantContext`,
-  disposed afterwards.
-- A malformed request, or `v` other than 1, gets `{"v":1,"error":"bad_request"}`.
-- A storage error while counting gets `{"v":1,"error":"unavailable"}`.
 
 ## Not in scope
 

@@ -54,5 +54,5 @@ The suite is not part of `make check`.
 
 ## Local path: what depends on today's region code
 
-`Cluster.StartNodeAsync` starts each node with `wan-regions`, `nats-url` and the harness's fake region bus. When the
+`Cluster.StartNodeAsync` starts each node with the harness's `wan-regions` key and its fake region bus (`FakeRegionNetwork`). When the
 region code is replaced, this is the only place that changes.

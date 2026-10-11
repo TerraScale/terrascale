@@ -26,8 +26,6 @@ public sealed class Cluster : IAsyncDisposable
     // A ts-auth project token's scopes: an API key cannot hold databases:*, and E12 and E13 create databases.
     private const string Scopes = "databases:read databases:write documents:read documents:write";
 
-    // The fake NATS credentials of the cross-region suite: the region bus is the harness's in-memory fake.
-    private const string NatsCredentials = "-----BEGIN NATS USER JWT-----\neyJ0.e30.x\n------END NATS USER JWT------\n-----BEGIN USER NKEY SEED-----\nSUAEXAMPLE\n------END USER NKEY SEED------\n";
 
     private readonly HttpClient _gru;
     private readonly HttpClient _sjc;
@@ -78,17 +76,14 @@ public sealed class Cluster : IAsyncDisposable
     {
         var network = new FakeRegionNetwork();
         var machines = new FakeMemberStore();
-        var directory = Directory.CreateTempSubdirectory("terrabase-e2e-").FullName;
-        var credentials = Path.Combine(directory, "user.creds");
         ManagementApi? gruApi = null;
         ManagementApi? sjcApi = null;
         HttpClient? gruNode = null;
         HttpClient? sjcNode = null;
         try
         {
-            await File.WriteAllTextAsync(credentials, NatsCredentials);
-            gruApi = await StartNodeAsync(network, machines, credentials, Gru);
-            sjcApi = await StartNodeAsync(network, machines, credentials, Sjc);
+            gruApi = await StartNodeAsync(network, machines, Gru);
+            sjcApi = await StartNodeAsync(network, machines, Sjc);
             var organization = EntityIds.New().ToString();
             var project = EntityIds.New().ToString();
             var database = EntityIds.New().ToString();
@@ -118,7 +113,6 @@ public sealed class Cluster : IAsyncDisposable
                 sjcNode.Dispose();
                 await gruApi.DisposeAsync();
                 await sjcApi.DisposeAsync();
-                Directory.Delete(directory, recursive: true);
             });
         }
         catch
@@ -135,7 +129,6 @@ public sealed class Cluster : IAsyncDisposable
                 await gruApi.DisposeAsync();
             }
 
-            Directory.Delete(directory, recursive: true);
             throw;
         }
     }
@@ -209,14 +202,12 @@ public sealed class Cluster : IAsyncDisposable
     private static string NewCollection() => $"e2e-{Guid.NewGuid():N}";
 
     // FLY_REGION and FLY_MACHINE_ID come from the harness's region and node-name keys; the machine ID has Fly's shape.
-    private static Task<ManagementApi> StartNodeAsync(FakeRegionNetwork network, FakeMemberStore machines, string credentials, string region) =>
+    private static Task<ManagementApi> StartNodeAsync(FakeRegionNetwork network, FakeMemberStore machines, string region) =>
         ManagementApi.StartAsync(settings =>
         {
             settings["region"] = region;
             settings["node-name"] = Convert.ToHexStringLower(Guid.NewGuid().ToByteArray())[..14];
             settings["wan-regions"] = "gru=gru,sjc=sjc";
-            settings["nats-url"] = "nats://127.0.0.1:4222";
-            settings["nats-credentials-file"] = credentials;
         }, services =>
         {
             services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, new FakeTimeProvider());

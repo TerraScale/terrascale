@@ -37,8 +37,6 @@ public sealed class TenantLookupCacheTests
                 settings["node-name"] = "gru-member";
                 settings["data-directory"] = Directory.CreateDirectory(Path.Combine(directory, "gru")).FullName;
                 settings["wan-regions"] = "gru-1=gru,sfo-1=sfo";
-                settings["nats-url"] = "nats://127.0.0.1:4222";
-                settings["nats-credentials-file"] = credentials;
             }, services =>
             {
                 services.AddSingleton(new FakeRegionNetwork().Join("gru"));
