@@ -5,7 +5,9 @@
 # `terrabase-pinned` (a directory holding terrabase-linux-amd64).
 
 FROM mcr.microsoft.com/dotnet/sdk:11.0 AS base
-ENV CI=true DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
+# The SDK image's ASPNETCORE_HTTP_PORTS=8080 makes Kestrel warn "Overriding address(es)", which tests that assert
+# on warnings see; the services choose their own listeners.
+ENV CI=true DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 ASPNETCORE_HTTP_PORTS=
 RUN apt-get update \
     && apt-get install -y --no-install-recommends make nodejs npm \
     && rm -rf /var/lib/apt/lists/*
