@@ -1,37 +1,38 @@
-name: Fast integration
+name: CI
 
-# guard and check run first; release waits for both. Require "Fast integration / fast"
-# and "Fast integration / release" in Forgejo's branch protection for the merge gate.
-# The job id is check, but its display name stays fast so that status context keeps its name.
+# One required check: "CI / gate". It fails when a job it needs failed or was cancelled.
 #
-# - guard: the TS-795 switch guard.
-# - check (name fast): locked restore, formatting, Release build with analyzers as errors,
-#   and the Fast integration suite (make targets).
-# - release: publishes the self-contained single-file linux-amd64 and linux-arm64
-#   executables, smoke-runs the exact staged amd64 bytes and checks the arm64 ELF
-#   header. On a push to main or of a v* tag it attaches them to a draft release
-#   (scripts/ci/release.sh draft).
-# - publish: once check and release pass, publishes that draft. Nothing is rebuilt.
-# - deploy: on main, hands the published release to ts-orchestrator, which
-#   rolls it out to every region (scripts/ci/deploy.sh, TS-610).
+# Area jobs run when scripts/ci/changed-areas.sh says their files changed. A push
+# to main runs every area and publishes only the areas that push changed.
 #
-# The Slow suite runs separately (slow.yml) and never blocks.
+# - guard: the TS-795 zero-config switch guard.
+# - changes: which areas the change touches.
+# - libs: ts-libs checks, then the Logging package and the NativeAOT consumer check.
+# - auth-test, auth-build: ts-auth checks, then its image and linux-arm64 executable.
+# - terrabase: terrabase checks, then the single-file executables and a draft release.
+# - benchmark: ts-benchmark checks in its builder container.
+# - libs-publish, auth-release, terrabase-release: on main only, publish the changed areas.
+#
+# The slow suites run in slow.yml and never block.
 
 on:
   push:
     branches: [main]
-    tags: ['v*']
   pull_request:
     branches: [main]
   workflow_dispatch:
 
 # A newer push supersedes a running check of the same branch; main always finishes.
 concurrency:
-  group: terrabase-fast-${{ forgejo.ref }}
+  group: terrascale-ci-${{ forgejo.ref }}
   cancel-in-progress: ${{ forgejo.ref != 'refs/heads/main' }}
 
 env:
   CI: "true"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_NOLOGO: "1"
+  FORGEJO_SHA: ${{ forgejo.sha }}
+  TS_DOTNET_REV: a4ff285c051e63e72cb01c4a94173c91da1dd69a
 
 jobs:
   # TS-795 switch guard: fails when the change adds an on/off setting.
@@ -49,7 +50,7 @@ jobs:
       - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           github-server-url: https://git.terrascale.tech
-          repository: TerraScale/ts-builder
+          repository: Tools/general-builder
           ref: 8dacab451c3c16924622ff512d7aa17501b70ecc # guard ref
           path: .zero-config-policy
           token: ${{ secrets.TERRASCALE_BOT_TOKEN }}
@@ -64,127 +65,382 @@ jobs:
           fi
           python3 .zero-config-policy/scripts/zero-config-check.py "$ZERO_CONFIG_BASE" "$ZERO_CONFIG_HEAD"
 
-  check:
-    name: fast
+  changes:
     runs-on: terrascale-builder
-    # Fast takes a few minutes; fail a hung run before it holds the runner.
-    timeout-minutes: 20
-    steps:
-      - name: Check out the event revision
-        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-        with:
-          github-server-url: "https://git.terrascale.tech"
-          persist-credentials: false
-
-      - name: ts-libs packages are pinned to calendar versions
-        run: |
-          set -euo pipefail
-          # ts-libs publishes only YYYY.MMDD.HHmm[.ss]; any other pin is an old package.
-          found=$(grep -cE 'Include="TerraScale\.(Logging|Endpoints)" Version="' Directory.Packages.props || true)
-          bad=$(grep -oE 'Include="TerraScale\.(Logging|Endpoints)" Version="[^"]*"' Directory.Packages.props | grep -vE 'Version="[0-9]{4}\.[0-9]{3,4}\.[0-9]{1,4}(\.[0-9]{1,2})?"' || true)
-          if [[ $found -lt 2 ]]; then echo "Expected TerraScale.Logging and TerraScale.Endpoints pins in Directory.Packages.props" >&2; exit 1; fi
-          if [[ -n $bad ]]; then echo "Non-calendar ts-libs pins: $bad" >&2; exit 1; fi
-
-      - name: Use the persistent NuGet cache
-        run: bash scripts/ci/nuget-cache.sh
-
-      # One make invocation shares restore/build prerequisites across all gates.
-      - name: Formatting, Release build, analyzer check and Fast integration
-        run: make check CONFIGURATION=Release
-
-  release:
-    needs: [guard]
-    runs-on: terrascale-builder
-    timeout-minutes: 20
+    timeout-minutes: 10
     outputs:
-      release_id: ${{ steps.draft.outputs.release_id }}
+      libs: ${{ steps.areas.outputs.libs }}
+      auth: ${{ steps.areas.outputs.auth }}
+      terrabase: ${{ steps.areas.outputs.terrabase }}
+      benchmark: ${{ steps.areas.outputs.benchmark }}
+      publish_libs: ${{ steps.areas.outputs.publish_libs }}
+      publish_auth: ${{ steps.areas.outputs.publish_auth }}
+      publish_terrabase: ${{ steps.areas.outputs.publish_terrabase }}
     steps:
-      - name: Check out the event revision
-        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          github-server-url: "https://git.terrascale.tech"
-          # Full history and tags: release notes and the tag-on-main check.
+          github-server-url: https://git.terrascale.tech
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Check the area rules
+        run: bash scripts/ci/changed-areas-test.sh
+
+      - name: Find the changed areas
+        id: areas
+        env:
+          EVENT_NAME: ${{ forgejo.event_name }}
+          PR_BASE: ${{ forgejo.event.pull_request.base.sha }}
+          PR_HEAD: ${{ forgejo.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ forgejo.event.before }}
+          HEAD_SHA: ${{ forgejo.sha }}
+        run: |
+          set -euo pipefail
+          case $EVENT_NAME in
+            pull_request)
+              bash scripts/ci/changed-areas.sh "$PR_BASE" "$PR_HEAD" >> "$GITHUB_OUTPUT" ;;
+            push)
+              # main builds every area; publishing follows only what this push changed.
+              printf '%s\n' libs=true auth=true terrabase=true benchmark=true >> "$GITHUB_OUTPUT"
+              bash scripts/ci/changed-areas.sh "$PUSH_BEFORE" "$HEAD_SHA" | sed 's/^/publish_/' >> "$GITHUB_OUTPUT" ;;
+            *)
+              printf '%s\n' libs=true auth=true terrabase=true benchmark=true >> "$GITHUB_OUTPUT" ;;
+          esac
+
+  libs:
+    needs: [guard, changes]
+    if: needs.changes.outputs.libs == 'true'
+    runs-on: terrascale-builder
+    timeout-minutes: 45
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          github-server-url: https://git.terrascale.tech
+          fetch-depth: 2 # the package version reads the first parent's commit time
+          persist-credentials: false
+
+      - name: Check the calendar version script
+        run: bash scripts/libs/package-version-test.sh
+
       - name: Use the persistent NuGet cache
         run: bash scripts/ci/nuget-cache.sh
 
-      - name: Check the release script against a fake release API
-        run: bash scripts/ci/check-release.sh
+      - name: Compute the calendar package version
+        run: |
+          set -euo pipefail
+          version=$(bash scripts/libs/package-version.sh)
+          echo "PACKAGE_VERSION=$version" >> "$GITHUB_ENV"
+          echo "Package version: $version"
 
-      - name: Check the deploy script against a stub API and ts-orch
-        run: bash scripts/ci/check-deploy.sh
+      - name: Strict build, format, and every test project
+        run: make libs-check CONFIGURATION=Release
 
-      - name: Publish and check the release executables
-        run: bash scripts/ci/stage-release.sh artifacts/dist
+      - name: Pack TerraScale.Logging at the calendar version
+        run: |
+          set -euo pipefail
+          make libs-pack CONFIGURATION=Release PACKAGE_VERSION="$PACKAGE_VERSION"
+          PACKAGE_VERSION="$PACKAGE_VERSION" bash scripts/libs/check-packages.sh
 
-      # Pull requests get a read-only job token and never reach this step.
-      - name: Attach the tested bytes to a draft release
-        id: draft
-        if: ${{ forgejo.event_name == 'push' && (forgejo.ref == 'refs/heads/main' || startsWith(forgejo.ref, 'refs/tags/v')) }}
+      - name: Verify TerraScale.Endpoints in a standalone NativeAOT consumer
+        run: |
+          set -euo pipefail
+          # Regression: the local feed path must survive XML attribute escaping.
+          PACKAGE_VERSION="$PACKAGE_VERSION" bash scripts/libs/check-nativeaot-package.sh 'artifacts/nativeaot/packages & <"nativeaot">'
+
+  auth-test:
+    needs: [guard, changes]
+    if: needs.changes.outputs.auth == 'true'
+    runs-on: terrascale-builder
+    timeout-minutes: 45
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          github-server-url: https://git.terrascale.tech
+          persist-credentials: false
+
+      - name: Use the persistent NuGet cache
+        run: bash scripts/ci/nuget-cache.sh
+
+      - name: Check out the pinned ts-dotnet revision
+        env:
+          ORG_READ_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
+        run: bash scripts/auth/ci/checkout-dotnet-deps.sh
+
+      - name: Restore with locked dependencies
+        run: make restore
+
+      - name: Check formatting
+        run: make fmt-check
+
+      - name: Build Release with analyzers as errors
+        run: make auth-build CONFIGURATION=Release TS_AUTH_REVISION="${FORGEJO_SHA:0:12}"
+
+      - name: Fail closed on vulnerable NuGet packages
+        run: make auth-audit
+
+      - name: Lint the served OpenAPI contract
+        run: make auth-openapi-check CONFIGURATION=Release
+
+      - name: Check image transfer guards
+        run: bash scripts/auth/check-image-transfer.sh
+
+      - name: Check binary publish guards
+        run: bash scripts/auth/check-binary-publish.sh
+
+      - name: Check arm64 smoke guards
+        run: bash scripts/auth/check-arm64-smoke.sh
+
+      - name: Fast integration suite
+        env:
+          ORG_READ_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          TS_AUTH_CHROMIUM_PATH="$(node -p 'require("playwright").chromium.executablePath()')"
+          export TS_AUTH_CHROMIUM_PATH
+          make auth-test-fast CONFIGURATION=Release
+
+  auth-build:
+    needs: [guard, changes]
+    if: needs.changes.outputs.auth == 'true'
+    runs-on: terrascale-builder
+    timeout-minutes: 60
+    outputs:
+      image-manifest-digest: ${{ steps.stage.outputs.image-digest }}
+      publish-enabled: ${{ steps.stage.outputs.publish-enabled }}
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          github-server-url: https://git.terrascale.tech
+          persist-credentials: false
+
+      - name: Use the persistent NuGet cache
+        run: bash scripts/ci/nuget-cache.sh
+
+      - name: Check out the pinned ts-dotnet revision
+        env:
+          ORG_READ_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
+        run: bash scripts/auth/ci/checkout-dotnet-deps.sh
+
+      - name: Publish the self-contained release executable
+        run: bash scripts/auth/ci/stage-release.sh artifacts/ci/container-publish
+
+      - name: Package and smoke-check the release image
+        run: bash scripts/auth/ci/package-image.sh
+
+      # After packaging, so the arm64 executable stays out of the image build
+      # context. auth-release publishes it on protected main.
+      - name: Publish the self-contained linux-arm64 executable
+        run: bash scripts/auth/ci/stage-release.sh artifacts/ci/arm64 linux-arm64
+
+      - name: Smoke-check the linux-arm64 executable under emulation
+        run: bash scripts/auth/ci/smoke-arm64.sh artifacts/ci/arm64/ts-auth
+
+      # Artifact actions are unavailable on this runner. A registry digest
+      # works across runner machines and survives a retry of publish alone.
+      - name: Stage the image for publish
+        id: stage
+        if: forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main' && needs.changes.outputs.publish_auth == 'true'
+        env:
+          REGISTRY_USER: ${{ secrets.REGISTRY_USER }}
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+          REPOSITORY_OWNER: ${{ forgejo.repository_owner }}
+        run: bash scripts/auth/ci/transfer-image.sh stage
+
+  auth-release:
+    needs: [guard, changes, auth-build]
+    if: forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main' && needs.changes.outputs.publish_auth == 'true' && needs.auth-build.outputs.publish-enabled == 'true'
+    runs-on: terrascale-builder
+    timeout-minutes: 60
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          github-server-url: https://git.terrascale.tech
+          persist-credentials: false
+
+      - name: Use the persistent NuGet cache
+        run: bash scripts/ci/nuget-cache.sh
+
+      - name: Check out the pinned ts-dotnet revision
+        env:
+          ORG_READ_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
+        run: bash scripts/auth/ci/checkout-dotnet-deps.sh
+
+      - name: Publish the digest-pinned release image
+        env:
+          IMAGE_MANIFEST_DIGEST: ${{ needs.auth-build.outputs.image-manifest-digest }}
+          REGISTRY_USER: ${{ secrets.REGISTRY_USER }}
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+          REPOSITORY_OWNER: ${{ forgejo.repository_owner }}
+        run: bash scripts/auth/ci/transfer-image.sh publish
+
+      - name: Publish the linux-arm64 release assets
         env:
           FORGEJO_TOKEN: ${{ forgejo.token }}
-        run: bash scripts/ci/release.sh draft artifacts/dist
+          ORG_READ_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
+          FORGEJO_REF: ${{ forgejo.ref }}
+          FORGEJO_REPOSITORY: ${{ forgejo.repository }}
+        run: bash scripts/auth/ci/publish-binary.sh
 
-  publish:
-    needs: [guard, check, release]
-    if: ${{ needs.release.outputs.release_id != '' }}
+  terrabase:
+    needs: [guard, changes]
+    if: needs.changes.outputs.terrabase == 'true'
+    runs-on: terrascale-builder
+    timeout-minutes: 30
+    outputs:
+      release_id: ${{ steps.draft.outputs.release_id }}
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          github-server-url: https://git.terrascale.tech
+          persist-credentials: false
+
+      - name: Use the persistent NuGet cache
+        run: bash scripts/ci/nuget-cache.sh
+
+      - name: Formatting, Release build, analyzer check and Fast integration
+        run: make terrabase-check CONFIGURATION=Release
+
+      - name: Check the release script against a fake release API
+        run: bash scripts/terrabase/ci/check-release.sh
+
+      - name: Publish and check the release executables
+        run: bash scripts/terrabase/ci/stage-release.sh artifacts/dist
+
+      # Pull requests get a read-only job token and never reach this step.
+      # The draft is made here because only this job holds the tested bytes.
+      - name: Attach the tested bytes to a draft release
+        id: draft
+        if: forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main' && needs.changes.outputs.publish_terrabase == 'true'
+        env:
+          FORGEJO_TOKEN: ${{ forgejo.token }}
+        run: bash scripts/terrabase/ci/release.sh draft artifacts/dist
+
+  benchmark:
+    needs: [guard, changes]
+    if: needs.changes.outputs.benchmark == 'true'
+    runs-on: terrascale-builder
+    timeout-minutes: 10
+    container:
+      image: git.terrascale.tech/terrascale/ts-builder:latest
+      options: --memory=2g
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          github-server-url: https://git.terrascale.tech
+          persist-credentials: false
+
+      - name: Validate workload, scheduler and aggregation contracts
+        run: make benchmark-check
+
+  libs-publish:
+    needs: [guard, changes, libs]
+    if: forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main' && needs.changes.outputs.publish_libs == 'true'
+    runs-on: terrascale-builder
+    timeout-minutes: 15
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          github-server-url: https://git.terrascale.tech
+          fetch-depth: 2 # the package version reads the first parent's commit time
+          persist-credentials: false
+
+      - name: Use the persistent NuGet cache
+        run: bash scripts/ci/nuget-cache.sh
+
+      - name: Compute the calendar package version
+        run: |
+          set -euo pipefail
+          version=$(bash scripts/libs/package-version.sh)
+          echo "PACKAGE_VERSION=$version" >> "$GITHUB_ENV"
+          echo "Package version: $version"
+
+      - name: Pack TerraScale.Logging at the calendar version
+        run: |
+          set -euo pipefail
+          make libs-pack CONFIGURATION=Release PACKAGE_VERSION="$PACKAGE_VERSION"
+          PACKAGE_VERSION="$PACKAGE_VERSION" bash scripts/libs/check-packages.sh
+
+      - name: Publish packages to the Forgejo NuGet registry
+        env:
+          TERRASCALE_BOT_TOKEN: ${{ secrets.TERRASCALE_BOT_TOKEN }}
+        run: |
+          set -euo pipefail
+          # The job token cannot write packages; the organization bot token
+          # carries the package write grant for the registry.
+          dotnet nuget push artifacts/packages/*.nupkg \
+            --source "https://git.terrascale.tech/api/packages/TerraScale/nuget/index.json" \
+            --api-key "${TERRASCALE_BOT_TOKEN:?organization bot token is required}" \
+            --skip-duplicate
+
+      - name: Verify the packages are in the Forgejo NuGet registry
+        run: |
+          set -euo pipefail
+          # --skip-duplicate turns a version conflict into success, so confirm
+          # each pushed id/version is actually served by the registry.
+          for pkg in artifacts/packages/*.nupkg; do
+            nuspec=$(unzip -p "$pkg" '*.nuspec')
+            id=$(sed -n 's:.*<id>\(.*\)</id>.*:\1:p' <<<"$nuspec" | head -n1)
+            version=$(sed -n 's:.*<version>\(.*\)</version>.*:\1:p' <<<"$nuspec" | head -n1)
+            index="https://git.terrascale.tech/api/packages/TerraScale/nuget/package/${id,,}/index.json"
+            if ! curl -fsS "$index" | grep -q "\"${version,,}\""; then
+              echo "$id $version is not listed at $index" >&2
+              exit 1
+            fi
+            echo "Published $id $version"
+          done
+
+  terrabase-release:
+    needs: [guard, changes, terrabase]
+    if: forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main' && needs.changes.outputs.publish_terrabase == 'true' && needs.terrabase.outputs.release_id != ''
     runs-on: terrascale-builder
     timeout-minutes: 10
     steps:
-      - name: Check out the event revision
-        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          github-server-url: "https://git.terrascale.tech"
+          github-server-url: https://git.terrascale.tech
           persist-credentials: false
 
       - name: Publish the tested release
         env:
           FORGEJO_TOKEN: ${{ forgejo.token }}
-          RELEASE_ID: ${{ needs.release.outputs.release_id }}
-        run: bash scripts/ci/release.sh publish "$RELEASE_ID"
+          RELEASE_ID: ${{ needs.terrabase.outputs.release_id }}
+        run: bash scripts/terrabase/ci/release.sh publish "$RELEASE_ID"
 
-      # Deployment failure must not erase the time this build became qualified.
-      - name: Record the qualified main build for the deployment-lag guard
-        if: forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main'
-        shell: bash
+  # Fails when any job above failed or was cancelled. Skipped jobs pass.
+  gate:
+    needs: [guard, changes, libs, auth-test, auth-build, auth-release, terrabase, terrabase-release, benchmark, libs-publish]
+    if: always()
+    runs-on: terrascale-builder
+    timeout-minutes: 5
+    steps:
+      - name: Require every job to pass or be skipped
         env:
-          FORGEJO_TOKEN: ${{ forgejo.token }}
+          GUARD: ${{ needs.guard.result }}
+          CHANGES: ${{ needs.changes.result }}
+          LIBS: ${{ needs.libs.result }}
+          AUTH_TEST: ${{ needs.auth-test.result }}
+          AUTH_BUILD: ${{ needs.auth-build.result }}
+          AUTH_RELEASE: ${{ needs.auth-release.result }}
+          TERRABASE: ${{ needs.terrabase.result }}
+          TERRABASE_RELEASE: ${{ needs.terrabase-release.result }}
+          BENCHMARK: ${{ needs.benchmark.result }}
+          LIBS_PUBLISH: ${{ needs.libs-publish.result }}
         run: |
           set -euo pipefail
-          curl -fsS --connect-timeout 10 --max-time 30 -o /dev/null \
-            -H "Authorization: token ${FORGEJO_TOKEN}" -H 'Content-Type: application/json' \
-            --data '{"state":"success","context":"deployment/qualified","description":"Verified main build ready for automatic deployment"}' \
-            "https://git.terrascale.tech/api/v1/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}"
-
-  # Every green main push deploys to all discovered regions with health gates.
-  deploy:
-    needs: [publish]
-    if: ${{ forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main' }}
-    runs-on: terrascale-builder
-    # All regions share a parallel 30-minute wait. Three downloads allow
-    # 15 minutes each; setup and cleanup get 15 more.
-    timeout-minutes: 90
-    steps:
-      - name: Check out the event revision
-        uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-        with:
-          github-server-url: "https://git.terrascale.tech"
-          persist-credentials: false
-
-      - name: Roll the release out to every region
-        env:
-          ORG_READ_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
-          TS_RELEASE_OCI_KEY: ${{ secrets.TS_RELEASE_OCI_KEY }}
-          # Qualified together: this helper discovers and rolls regions in parallel.
-          TS_ORCH_RELEASE: ci-1e57e6c1736238e1f1d5a910dfe45c0cbdc20151-run-16180
-          TS_ORCH_SHA256: f29dc054716f2ed50ab97960c675753f33c8ac158d6a49f74cd5c190a93ec771
-          TS_OBJECT_NAMESPACE: ${{ vars.TS_OBJECT_NAMESPACE }}
-          TS_RELEASE_VAULT_ID: ${{ vars.TS_RELEASE_VAULT_ID }}
-          TS_RELEASE_KEY_SECRET: ${{ vars.TS_RELEASE_KEY_SECRET }}
-          TS_RELEASE_ACTOR: ${{ vars.TS_RELEASE_ACTOR }}
-          TS_RELEASE_OCI_USER: ${{ vars.TS_RELEASE_OCI_USER }}
-          TS_RELEASE_OCI_TENANCY: ${{ vars.TS_RELEASE_OCI_TENANCY }}
-          TS_RELEASE_OCI_FINGERPRINT: ${{ vars.TS_RELEASE_OCI_FINGERPRINT }}
-        run: bash scripts/ci/deploy.sh terrabase terrabase-linux-arm64 "ci-${GITHUB_SHA}-run-${GITHUB_RUN_ID}"
+          failed=0
+          check() {
+            case $2 in
+              failure|cancelled) echo "$1 $2" >&2; failed=1 ;;
+            esac
+          }
+          check guard "$GUARD"
+          check changes "$CHANGES"
+          check libs "$LIBS"
+          check auth-test "$AUTH_TEST"
+          check auth-build "$AUTH_BUILD"
+          check auth-release "$AUTH_RELEASE"
+          check terrabase "$TERRABASE"
+          check terrabase-release "$TERRABASE_RELEASE"
+          check benchmark "$BENCHMARK"
+          check libs-publish "$LIBS_PUBLISH"
+          exit "$failed"
