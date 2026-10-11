@@ -28,6 +28,18 @@ public sealed class TerraBaseClientOptionsTests
     }
 
     [Test]
+    [Arguments("http://top1.nearest.of.ts-terrabase.internal:8081/")]
+    [Arguments("http://127.0.0.1:8081/")]
+    [Arguments("http://[::1]:8081/")]
+    public async Task PrivateListenersAcceptPlainHttp(string address)
+    {
+        using var http = new HttpClient();
+        var resolver = new TerraBaseStaticEndpointResolver(new Uri(address));
+        await Assert.That(await resolver.ResolveAsync()).IsEqualTo(new Uri(address));
+        _ = new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions { BaseAddress = new Uri(address) });
+    }
+
+    [Test]
     [Arguments(null)]
     [Arguments("")]
     [Arguments("tb key")]
@@ -215,7 +227,7 @@ public sealed class TerraBaseClientOptionsTests
         using var http = new HttpClient();
         var resolver = new TerraBaseStaticEndpointResolver(Origin);
         await Assert.That(await resolver.ResolveAsync()).IsEqualTo(Origin);
-        await Assert.That(() => new TerraBaseStaticEndpointResolver(new Uri("http://localhost/"))).Throws<ArgumentException>();
+        await Assert.That(() => new TerraBaseStaticEndpointResolver(new Uri("http://terrabase.example.test/"))).Throws<ArgumentException>();
         await Assert.That(() => new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions { BaseAddress = Origin, EndpointResolver = resolver, ApiKey = "tb_key" }))
             .Throws<ArgumentException>();
         await Assert.That(() => new TerraBaseManagementClient(http, new TerraBaseManagementClientOptions { BaseAddress = Origin, EndpointResolver = resolver, ServiceCredential = "secret" }))

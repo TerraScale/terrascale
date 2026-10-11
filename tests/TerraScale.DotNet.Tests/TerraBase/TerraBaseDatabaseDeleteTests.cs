@@ -52,4 +52,22 @@ public sealed class TerraBaseDatabaseDeleteTests
         await Assert.That(error.StatusCode).IsEqualTo(status);
         await Assert.That(error.ErrorCode).IsEqualTo(code);
     }
+
+    [Test]
+    public async Task ClientsWithoutCredentialSendNoAuthorization()
+    {
+        string? authorization = "unset";
+        using var handler = new NativeClientTests.Handler((request, _) =>
+        {
+            authorization = request.Headers.Authorization?.ToString();
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent));
+        });
+        using var http = new HttpClient(handler);
+        var database = new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions { BaseAddress = new Uri("http://top1.nearest.of.ts-terrabase.internal:8081/") })
+            .Database("project", "app");
+
+        await database.DeleteAsync();
+
+        await Assert.That(authorization).IsNull();
+    }
 }

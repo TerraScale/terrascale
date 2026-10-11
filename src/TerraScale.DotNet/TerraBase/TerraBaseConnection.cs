@@ -28,11 +28,12 @@ internal sealed class TerraBaseConnection
     private readonly ITerraBaseEndpointResolver endpointResolver;
     private readonly AuthenticationHeaderValue? authorization;
     private readonly Func<CancellationToken, ValueTask<string>>? accessTokenProvider;
+    private readonly bool anonymous;
     private readonly TimeSpan timeout;
     private readonly int maxResponseBytes;
 
     public TerraBaseConnection(HttpClient http, Uri? baseAddress, ITerraBaseEndpointResolver? endpointResolver, string? secret, string secretName, TimeSpan timeout, int maxResponseBytes,
-        Func<CancellationToken, ValueTask<string>>? accessTokenProvider = null)
+        Func<CancellationToken, ValueTask<string>>? accessTokenProvider = null, bool anonymousAllowed = false)
     {
         ArgumentNullException.ThrowIfNull(http);
         this.http = http;
@@ -47,7 +48,10 @@ internal sealed class TerraBaseConnection
             throw new ArgumentException($"Set either {secretName} or AccessTokenProvider, not both.", nameof(accessTokenProvider));
         }
 
-        if (accessTokenProvider is null) ValidateSecret(secret, secretName);
+        // Anonymous requests reach only TerraBase's plain-HTTP private (6PN) listener, which trusts its network instead of a credential.
+        anonymous = anonymousAllowed && secret is null && accessTokenProvider is null;
+        if (accessTokenProvider is null && !anonymous) ValidateSecret(secret, secretName);
+        if (anonymous && baseAddress?.Scheme == Uri.UriSchemeHttps) ValidateSecret(secret, secretName);
 
         if (timeout <= TimeSpan.Zero || timeout > MaxRequestTimeout)
         {
@@ -141,6 +145,11 @@ internal sealed class TerraBaseConnection
         {
             var origin = Origin(await endpointResolver.ResolveAsync(deadline.Token).ConfigureAwait(false));
             deadline.Token.ThrowIfCancellationRequested();
+            if (anonymous && origin.Scheme == Uri.UriSchemeHttps)
+            {
+                throw new InvalidOperationException("A client without a credential reaches only a private plain-HTTP TerraBase listener.");
+            }
+
             if (accessTokenProvider is not null)
             {
                 var token = await accessTokenProvider(deadline.Token).ConfigureAwait(false);
@@ -188,14 +197,18 @@ internal sealed class TerraBaseConnection
 
     internal static Uri Origin(Uri? baseAddress)
     {
-        if (baseAddress is not { IsAbsoluteUri: true, Scheme: "https" }
+        if (baseAddress is not { IsAbsoluteUri: true } || !(baseAddress.Scheme == Uri.UriSchemeHttps || (baseAddress.Scheme == Uri.UriSchemeHttp && IsPrivate(baseAddress)))
             || baseAddress.UserInfo.Length != 0 || baseAddress.Query.Length != 0 || baseAddress.Fragment.Length != 0
             || baseAddress.AbsolutePath != "/")
         {
             throw new ArgumentException(
-                "BaseAddress must be the HTTPS origin of a TerraBase client listener, without credentials, path, query or fragment.", nameof(baseAddress));
+                "BaseAddress must be the HTTPS origin of a TerraBase client listener (plain HTTP only for a private .internal or loopback host), without credentials, path, query or fragment.", nameof(baseAddress));
         }
 
         return baseAddress;
     }
+
+    // Fly's private network (<app>.internal names, WireGuard between hosts) and loopback never leave a trusted network.
+    private static bool IsPrivate(Uri address) =>
+        address.IsLoopback || address.IdnHost.EndsWith(".internal", StringComparison.OrdinalIgnoreCase);
 }
