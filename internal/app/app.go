@@ -214,7 +214,7 @@ func NewWithMetrics(cfg config.Config, metrics core.MetricsReader, regionHealth 
 	if err := assets.Mount(mux, cfg.Dev); err != nil {
 		return nil, err
 	}
-	status.Mount(mux, deps, probe)
+	status.Mount(ctx, mux, deps, probe)
 	auth.Mount(mux, deps, tsAuth)
 	deviceAuthorization := auth.NewDeviceAuthorization(deps, grants, cfg.SecureCookies, cfg.PublicURL)
 	deviceAuthorization.MountBrowser(mux)
