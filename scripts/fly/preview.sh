@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# PR previews in the Fly org terrascale-previews: app ts-pr-<n>, one multi-container machine (TerraBase + ts-auth) with
-# a 1 GB volume, stopped when idle and started by the next request. FLY_API_TOKEN is an org token for terrascale-previews.
+# PR previews in the Fly org terrascale-previews-515: app ts-pr-<n>, one multi-container machine (TerraBase + ts-auth) with
+# a 1 GB volume, stopped when idle and started by the next request. FLY_API_TOKEN is an org token for terrascale-previews-515.
 #
 #   scripts/fly/preview.sh app <pr>                         create the app, its IPs and volume (before images are pushed)
 #   scripts/fly/preview.sh machine <pr> <terrabase-image> <auth-image>   create or update the machine
@@ -8,7 +8,7 @@
 #   scripts/fly/preview.sh reap                             destroy previews created more than 24 hours ago
 set -euo pipefail
 
-org=terrascale-previews
+org=terrascale-previews-515
 api() { curl -sS --fail-with-body -H "Authorization: $FLY_API_TOKEN" -H 'Content-Type: application/json' "$@"; }
 machines=https://api.machines.dev/v1
 
