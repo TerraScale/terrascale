@@ -45,6 +45,7 @@ import tb "terrascale.tech/sdk/v1"
 c, err := tb.New(tb.Config{BaseURL: discoveredOrigin, Token: apiKey}) // tb_…
 db := c.Database(projectID, "main")
 _, err = db.Create(ctx)                     // PUT; Created reports a 201
+err = db.Delete(ctx)                        // DELETE; needs databases:write
 _, err = db.CreateCollection(ctx, "users") // 409 name_taken when it exists
 cols, err := db.Collections(ctx, tb.ListOptions{Limit: 50})
 users := db.Collection("users")             // also Info and Drop

@@ -73,6 +73,18 @@ func (d *Database) Create(ctx context.Context) (*DatabaseInfo, error) {
 	return &info, nil
 }
 
+// Delete deletes the database and its data; its branches stay. It fails with
+// ErrDatabaseReplicated while the database has replica regions. Needs the
+// databases:write scope.
+func (d *Database) Delete(ctx context.Context) error {
+	p, err := d.path()
+	if err != nil {
+		return err
+	}
+	_, err = d.c.call(ctx, request{method: http.MethodDelete, path: p}, nil, nil)
+	return err
+}
+
 // CollectionInfo is a collection.
 type CollectionInfo struct {
 	Name      string    `json:"name"`
