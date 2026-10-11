@@ -1,0 +1,30 @@
+name: Previews
+
+# Deletes PR previews (scripts/fly/preview.sh): a PR's app when the PR closes, and hourly every preview created more
+# than 24 hours ago. ci.yml creates and updates them.
+
+on:
+  pull_request:
+    types: [closed]
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cleanup:
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 10
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_TOKEN_PREVIEWS }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - if: github.event_name == 'pull_request'
+        run: scripts/fly/preview.sh destroy ${{ github.event.pull_request.number }}
+      - if: github.event_name != 'pull_request'
+        run: scripts/fly/preview.sh reap
