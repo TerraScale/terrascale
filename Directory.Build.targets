@@ -35,8 +35,10 @@
 
   <!-- TerraBase integration suites (Fast and Slow): TUnit executables driving the real server. -->
   <PropertyGroup Condition="'$(IsTerraBaseArea)' == 'true' and '$(IsTestProject)' == 'true'">
-    <!-- The real server uses workstation GC (TerraBase.csproj); the parallel in-process hosts must use the same runtime mode. -->
-    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <!-- Server GC, unlike the production server (one host per 512 MB machine): one test process runs up to 16 hosts at
+         once, and workstation GC ran 15x more collections there, adding 42 s of pauses to a 136 s Fast run. Nothing in
+         TerraBase depends on the GC mode; the memory budget reads TotalAvailableMemoryBytes, the same in both. -->
+    <ServerGarbageCollection>true</ServerGarbageCollection>
     <!-- Tiered PGO instrumentation costs the suite about 28% of its CPU: 15m34s to 11m12s of user time on the same binary. -->
     <TieredPGO>false</TieredPGO>
     <!-- CA1515: TUnit discovers public test classes. CA1707: test names use
