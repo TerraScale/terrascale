@@ -1,18 +1,16 @@
 using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.OpenApi;
-using Scalar.AspNetCore;
 using TerraBase.Configuration;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
-using TerraScale.Endpoints;
 
 namespace TerraBase.Features.ApiReference;
 
 /// <summary>
-/// The public API reference: the OpenAPI document and Scalar, served anonymously on the client listener only. The document
-/// lists only client-listener operations, with their security schemes and authentication failures.
+/// The content of the public API reference document: client-listener operations, their security schemes, authentication
+/// failures and examples. TerraScale.Endpoints maps the document and Scalar.
 /// </summary>
 public static class ApiReferenceExtensions
 {
@@ -109,27 +107,6 @@ public static class ApiReferenceExtensions
             ApiExamples.Apply(operation);
             return Task.CompletedTask;
         }));
-
-    /// <summary>
-    /// Maps <c>/openapi/{documentName}.json</c>, Scalar at <c>/scalar/</c> and the <c>GET /</c> redirect
-    /// (<see cref="RootRedirectEndpoint"/>) on the client listener; none needs credentials.
-    /// </summary>
-    public static WebApplication MapTerraBaseApiReference(this WebApplication app)
-    {
-        ArgumentNullException.ThrowIfNull(app);
-        var options = app.Services.GetRequiredService<EndpointOptions>();
-        app.MapOpenApi(options.OpenApiRoute).WithMetadata(ListenerMetadata.Client);
-        app.MapScalarApiReference(options.ScalarRoute, scalar => scalar
-                .WithTitle(options.Title)
-                // System fonts, no telemetry and no AI agent: the page talks to nothing but this node.
-                .DisableDefaultFonts()
-                .DisableTelemetry()
-                .DisableAgent()
-                .WithOpenApiRoutePattern(options.OpenApiRoute)
-                .AddDocument(options.Version, options.Title, options.OpenApiRoute, isDefault: true))
-            .WithMetadata(ListenerMetadata.Client);
-        return app;
-    }
 
     private static OpenApiResponse Error(string description, IOpenApiSchema schema) => new()
     {

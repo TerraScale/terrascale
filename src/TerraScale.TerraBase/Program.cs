@@ -143,7 +143,8 @@ try
     app.UseTerraBaseDatabasePlacement();
     app.UseTerraBaseManagementRouteValidation();
     app.MapTerraScaleEndpoints();
-    app.MapTerraBaseApiReference();
+    // OpenAPI, Scalar and the GET / redirect are client-listener only and need no credentials.
+    app.MapTerraScaleOpenApi().WithMetadata(ListenerMetadata.Client);
     app.MapTerraBaseMetrics();
     app.MapTerraBaseReplication();
     app.MapTerraBaseUsage();

@@ -571,6 +571,11 @@
           "OpenTelemetry.Api": "1.15.3"
         }
       },
+      "Scalar.AspNetCore": {
+        "type": "Transitive",
+        "resolved": "2.17.13",
+        "contentHash": "+R0eJtJIIHW9owY61rIOgR2lywjZnjqUPAM7ll+lZYML7mZ4LxokG6wpAmkuyaLS1Ml4fI4kdAC2U6KkdrDDiA=="
+      },
       "SQLite": {
         "type": "Transitive",
         "resolved": "3.53.4",
@@ -659,10 +664,9 @@
           "OpenTelemetry.Exporter.Prometheus.AspNetCore": "[1.15.3-beta.1, )",
           "OpenTelemetry.Extensions.Hosting": "[1.15.3, )",
           "OpenTelemetry.Instrumentation.Runtime": "[1.15.1, )",
-          "Scalar.AspNetCore": "[2.17.13, )",
           "SqlParserCS": "[0.6.5, )",
-          "TerraScale.Endpoints": "[3.0.23-rc.1, )",
-          "TerraScale.Logging": "[1.0.52, )",
+          "TerraScale.Endpoints": "[2026.1011.905, )",
+          "TerraScale.Logging": "[2026.1011.905, )",
           "Ulid": "[1.4.1, )"
         }
       },
@@ -907,12 +911,6 @@
           "OpenTelemetry.Api": "[1.15.3, 2.0.0)"
         }
       },
-      "Scalar.AspNetCore": {
-        "type": "CentralTransitive",
-        "requested": "[2.17.13, )",
-        "resolved": "2.17.13",
-        "contentHash": "+R0eJtJIIHW9owY61rIOgR2lywjZnjqUPAM7ll+lZYML7mZ4LxokG6wpAmkuyaLS1Ml4fI4kdAC2U6KkdrDDiA=="
-      },
       "SqlParserCS": {
         "type": "CentralTransitive",
         "requested": "[0.6.5, )",
@@ -924,9 +922,9 @@
       },
       "TerraScale.Endpoints": {
         "type": "CentralTransitive",
-        "requested": "[3.0.23-rc.1, )",
-        "resolved": "3.0.23-rc.1",
-        "contentHash": "Ls3OzKFAKGeUBhi5q52mQsCC9FJBosPW0ZSy8tK9WItR6PnQQbenTfs1EYxzIA9d3VuCRFzsCTWeXUy+9acYeA==",
+        "requested": "[2026.1011.905, )",
+        "resolved": "2026.1011.905",
+        "contentHash": "tnlW+5Wj2qv/l74IfoL0k8T0QOMsbZVHwqKmZb+LK6RnF6GGggmuyrSaAl5q1Jsq0+a/YblsqjEF1cy+fOkO4A==",
         "dependencies": {
           "Microsoft.AspNetCore.OpenApi": "11.0.0-rc.1.26425.128",
           "Scalar.AspNetCore": "2.17.13"
@@ -934,9 +932,9 @@
       },
       "TerraScale.Logging": {
         "type": "CentralTransitive",
-        "requested": "[1.0.52, )",
-        "resolved": "1.0.52",
-        "contentHash": "DRCIlMOixnGByCNkTQSQ20v5ot6MidwiOu0GSjtO+/kTKniaYY6A3OdjCv5xIvFj/UC6kg55AqBPNokGfeGMYA==",
+        "requested": "[2026.1011.905, )",
+        "resolved": "2026.1011.905",
+        "contentHash": "JKwjKgdhD5lXszFyfEpCQKbFg3ffkqqc9j5fJSS9ctcM4Oz/m6P50uFKJftqvq8g0NgpMejDEpn0Xt7C/CCqdQ==",
         "dependencies": {
           "Microsoft.Extensions.Logging.Console": "10.0.5"
         }

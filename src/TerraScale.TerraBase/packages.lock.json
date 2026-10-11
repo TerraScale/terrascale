@@ -152,12 +152,6 @@
           "OpenTelemetry.Api": "[1.15.3, 2.0.0)"
         }
       },
-      "Scalar.AspNetCore": {
-        "type": "Direct",
-        "requested": "[2.17.13, )",
-        "resolved": "2.17.13",
-        "contentHash": "+R0eJtJIIHW9owY61rIOgR2lywjZnjqUPAM7ll+lZYML7mZ4LxokG6wpAmkuyaLS1Ml4fI4kdAC2U6KkdrDDiA=="
-      },
       "SqlParserCS": {
         "type": "Direct",
         "requested": "[0.6.5, )",
@@ -166,9 +160,9 @@
       },
       "TerraScale.Endpoints": {
         "type": "Direct",
-        "requested": "[3.0.23-rc.1, )",
-        "resolved": "3.0.23-rc.1",
-        "contentHash": "Ls3OzKFAKGeUBhi5q52mQsCC9FJBosPW0ZSy8tK9WItR6PnQQbenTfs1EYxzIA9d3VuCRFzsCTWeXUy+9acYeA==",
+        "requested": "[2026.1011.905, )",
+        "resolved": "2026.1011.905",
+        "contentHash": "tnlW+5Wj2qv/l74IfoL0k8T0QOMsbZVHwqKmZb+LK6RnF6GGggmuyrSaAl5q1Jsq0+a/YblsqjEF1cy+fOkO4A==",
         "dependencies": {
           "Microsoft.AspNetCore.OpenApi": "11.0.0-rc.1.26425.128",
           "Scalar.AspNetCore": "2.17.13"
@@ -176,9 +170,9 @@
       },
       "TerraScale.Logging": {
         "type": "Direct",
-        "requested": "[1.0.52, )",
-        "resolved": "1.0.52",
-        "contentHash": "DRCIlMOixnGByCNkTQSQ20v5ot6MidwiOu0GSjtO+/kTKniaYY6A3OdjCv5xIvFj/UC6kg55AqBPNokGfeGMYA=="
+        "requested": "[2026.1011.905, )",
+        "resolved": "2026.1011.905",
+        "contentHash": "JKwjKgdhD5lXszFyfEpCQKbFg3ffkqqc9j5fJSS9ctcM4Oz/m6P50uFKJftqvq8g0NgpMejDEpn0Xt7C/CCqdQ=="
       },
       "Ulid": {
         "type": "Direct",
@@ -525,6 +519,11 @@
         "dependencies": {
           "OpenTelemetry.Api": "1.15.3"
         }
+      },
+      "Scalar.AspNetCore": {
+        "type": "Transitive",
+        "resolved": "2.17.13",
+        "contentHash": "+R0eJtJIIHW9owY61rIOgR2lywjZnjqUPAM7ll+lZYML7mZ4LxokG6wpAmkuyaLS1Ml4fI4kdAC2U6KkdrDDiA=="
       },
       "SQLite": {
         "type": "Transitive",
