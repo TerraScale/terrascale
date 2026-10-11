@@ -13,6 +13,6 @@
          intentional RS0030 violations only in the dedicated diagnostic check. -->
     <Compile Remove="ExpectedFailures.cs" Condition="'$(TB0001BuildCheck)' != 'true'" />
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
-    <ProjectReference Condition="'$(TB0001BuildCheck)' == 'true'" Include="../TerraBase.Analyzers/TerraBase.Analyzers.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" PrivateAssets="all" />
+    <ProjectReference Condition="'$(TB0001BuildCheck)' == 'true'" Include="../TerraScale.TerraBase.Analyzers/TerraScale.TerraBase.Analyzers.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" PrivateAssets="all" />
   </ItemGroup>
 </Project>

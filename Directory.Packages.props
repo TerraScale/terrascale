@@ -10,7 +10,7 @@
   <ItemGroup Label="Global analyzers">
     <GlobalPackageReference Include="Microsoft.CodeAnalysis.BannedApiAnalyzers" Version="4.14.0" />
   </ItemGroup>
-  <!-- Roslyn for src/TerraBase.Analyzers: keep at or below the compiler in the pinned SDK
+  <!-- Roslyn for src/TerraScale.TerraBase.Analyzers: keep at or below the compiler in the pinned SDK
        (5.11 on 11.0.100-rc.1), or the analyzer fails to load (CS8032). -->
   <ItemGroup Label="Analyzer authoring">
     <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="5.9.0" />
@@ -33,7 +33,7 @@
   <ItemGroup Label="Logging">
     <PackageVersion Include="TerraScale.Logging" Version="2026.1011.1224" />
   </ItemGroup>
-  <!-- Interpolated log calls (src/TerraBase) and allocation-light strings on hot paths: Cysharp, the same release train as ZLogger. -->
+  <!-- Interpolated log calls (src/TerraScale.TerraBase) and allocation-light strings on hot paths: Cysharp, the same release train as ZLogger. -->
   <ItemGroup Label="Interpolated strings">
     <PackageVersion Include="ZLogger" Version="2.5.10" />
     <PackageVersion Include="ZString" Version="2.6.0" />

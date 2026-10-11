@@ -2,7 +2,7 @@
 
 TerraBase documents its public HTTP API with the built-in ASP.NET Core OpenAPI generator
 (`Microsoft.AspNetCore.OpenApi`) and renders it with Scalar (`Scalar.AspNetCore`). The wiring lives in
-`src/TerraBase/Features/ApiReference`.
+`src/TerraScale.TerraBase/Features/ApiReference`.
 
 | URL (client listener) | Answer |
 | --- | --- |

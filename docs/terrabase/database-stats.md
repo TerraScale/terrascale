@@ -7,7 +7,7 @@ configuration, and does not change the storage format.
 
 ## What is counted
 
-The counters live in `IDatabaseStats` (`src/TerraBase/Features/Stats/`).
+The counters live in `IDatabaseStats` (`src/TerraScale.TerraBase/Features/Stats/`).
 
 Database level. Only `UsageMeter` feeds these, through its existing metering calls:
 

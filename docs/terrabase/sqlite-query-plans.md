@@ -1,6 +1,6 @@
 # SQLite statements, query plans and connection settings
 
-Scope: `src/TerraBase/Engine/Sqlite`. Plans are from `EXPLAIN QUERY PLAN` on the
+Scope: `src/TerraScale.TerraBase/Engine/Sqlite`. Plans are from `EXPLAIN QUERY PLAN` on the
 SQLite that Microsoft.Data.Sqlite bundles (3.53.4). The Fast suite
 (`Documents/QueryPlanTests.cs`) asserts the "after" plans for every statement in
 `SqliteStatements.Shared`, `ClientOnly` and `SystemOnly`, so a statement that loses its index fails the build.

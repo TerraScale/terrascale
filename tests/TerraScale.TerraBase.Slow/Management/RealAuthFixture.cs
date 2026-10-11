@@ -72,7 +72,7 @@ internal sealed class RealAuthFixture : IAsyncDisposable
     private async Task StartCoreAsync(CancellationToken token)
     {
         var repository = new DirectoryInfo(Directory.GetCurrentDirectory());
-        while (!File.Exists(Path.Combine(repository.FullName, "TerraBase.slnx")))
+        while (!File.Exists(Path.Combine(repository.FullName, "terrascale.slnx")))
         {
             repository = repository.Parent ?? throw new InvalidOperationException("run the Slow suite from the TerraBase checkout");
         }
@@ -82,7 +82,7 @@ internal sealed class RealAuthFixture : IAsyncDisposable
         {
             acquisitionDeadline.CancelAfter(TimeSpan.FromMinutes(5));
             await using var acquisition = AuthFixtureProcess.Start("bash", _directory,
-                [Path.Combine(repository.FullName, "src/Tests/TerraBase.Slow/Management/acquire-auth-fixture.sh"), artifacts],
+                [Path.Combine(repository.FullName, "tests/TerraScale.TerraBase.Slow/Management/acquire-auth-fixture.sh"), artifacts],
                 Environment.GetEnvironmentVariable("FORGEJO_TOKEN") is { } downloadToken
                     ? new Dictionary<string, string> { ["FORGEJO_TOKEN"] = downloadToken } : null);
             await acquisition.CompleteAsync(acquisitionDeadline.Token);

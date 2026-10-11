@@ -1,8 +1,8 @@
 # TerraBase .NET targets. Locally, run them at low CPU priority, e.g.
 # `nice -n 19 make test-fast`; CI runs them at full priority. Nothing here
 # applies nice itself.
-SOLUTION := TerraBase.slnx
-ANALYZER_CHECK_PROJECT := src/TerraBase.Analyzers.BuildCheck/TerraBase.Analyzers.BuildCheck.csproj
+SOLUTION := terrascale.slnx
+ANALYZER_CHECK_PROJECT := src/TerraScale.TerraBase.Analyzers.BuildCheck/TerraScale.TerraBase.Analyzers.BuildCheck.csproj
 CONFIGURATION ?= Debug
 RUNTIME ?= linux-x64
 PUBLISH_DIR ?= artifacts/publish
@@ -41,20 +41,20 @@ analyzer-check: restore
 test-fast: build
 	# Forgejo lacks GitHub's artifact API; HTML and JSON reports are generated locally.
 	# Capped: unbounded on 32-CPU CI runners, GC pauses push tests past their timeouts.
-	env -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_RESULTS_URL dotnet run --project src/Tests/TerraBase.Fast --configuration $(CONFIGURATION) --no-build -- --maximum-parallel-tests 16
+	env -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_RESULTS_URL dotnet run --project tests/TerraScale.TerraBase.Fast --configuration $(CONFIGURATION) --no-build -- --maximum-parallel-tests 16
 
 test-slow: build
-	env -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_RESULTS_URL dotnet run --project src/Tests/TerraBase.Slow --configuration $(CONFIGURATION) --no-build
+	env -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_RESULTS_URL dotnet run --project tests/TerraScale.TerraBase.Slow --configuration $(CONFIGURATION) --no-build
 
 # Everything required before a push.
 check: lint analyzer-check test-fast
 
 run:
-	dotnet run --project src/TerraBase --configuration $(CONFIGURATION)
+	dotnet run --project src/TerraScale.TerraBase --configuration $(CONFIGURATION)
 
 # Self-contained single-file binary (JIT): $(PUBLISH_DIR)/terrabase
 publish:
-	dotnet publish src/TerraBase --configuration Release --runtime $(RUNTIME) --self-contained --output "$(PUBLISH_DIR)"
+	dotnet publish src/TerraScale.TerraBase --configuration Release --runtime $(RUNTIME) --self-contained --output "$(PUBLISH_DIR)"
 
 clean:
 	dotnet clean $(SOLUTION) --configuration $(CONFIGURATION)

@@ -8,6 +8,6 @@
     <IsTestProject>true</IsTestProject>
   </PropertyGroup>
   <ItemGroup>
-    <None Include="../../../scripts/prod-replication-check" Link="scripts/prod-replication-check" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../../scripts/terrabase/prod-replication-check" Link="scripts/prod-replication-check" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

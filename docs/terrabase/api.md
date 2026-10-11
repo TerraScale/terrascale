@@ -327,11 +327,11 @@ legacy callers keep working. See [the binding workflow](management-api.md#verifi
 The implementation retains the feature slices required by `AGENTS.md`:
 
 ```text
-src/TerraBase/Features/Management/{Backups,Indexes,Schema,Usage,Queries}
-src/TerraBase/Features/Documents
-src/TerraBase/Features/{Health,ApiReference,UserAuth,ApiKeys,Pressure}
-src/TerraBase/Engine
-src/TerraBase/Engine/Sqlite
+src/TerraScale.TerraBase/Features/Management/{Backups,Indexes,Schema,Usage,Queries}
+src/TerraScale.TerraBase/Features/Documents
+src/TerraScale.TerraBase/Features/{Health,ApiReference,UserAuth,ApiKeys,Pressure}
+src/TerraScale.TerraBase/Engine
+src/TerraScale.TerraBase/Engine/Sqlite
 ```
 
 `Management/ProjectApiRoute.cs` declares the public management hierarchy. `Management/LegacyRoutes.cs`

@@ -44,14 +44,14 @@
 
   <ItemGroup>
     <!-- TerraBase's own compile-time rules (TB0001: discarded union results); analyzer only, not in the binary. -->
-    <ProjectReference Include="../TerraBase.Analyzers/TerraBase.Analyzers.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" PrivateAssets="all" />
+    <ProjectReference Include="../TerraScale.TerraBase.Analyzers/TerraScale.TerraBase.Analyzers.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" PrivateAssets="all" />
   </ItemGroup>
 
   <ItemGroup>
     <!-- The Fast suite checks the query plan of every engine statement (Engine/Sqlite/SqliteStatements.cs);
          the shared test harness, linked into both suites, applies the engine's lock-conflict test. -->
-    <InternalsVisibleTo Include="TerraBase.Fast" />
-    <InternalsVisibleTo Include="TerraBase.Slow" />
+    <InternalsVisibleTo Include="TerraScale.TerraBase.Fast" />
+    <InternalsVisibleTo Include="TerraScale.TerraBase.Slow" />
   </ItemGroup>
 
   <ItemGroup>

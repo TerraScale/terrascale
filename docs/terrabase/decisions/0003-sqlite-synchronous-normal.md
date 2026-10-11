@@ -1,7 +1,7 @@
 # 0003: SQLite `synchronous = NORMAL` in WAL mode
 
 - Status: accepted (human decision, 2026-10-04)
-- Scope: `src/TerraBase/Engine/Sqlite` (every connection: pooled sessions and the
+- Scope: `src/TerraScale.TerraBase/Engine/Sqlite` (every connection: pooled sessions and the
   connection that creates a database)
 
 ## Context

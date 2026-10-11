@@ -3,7 +3,7 @@
 - Status: accepted (human decision to authenticate with ts-auth tokens, 2026-10-05, TS-519). COS confirmed on
   2026-10-05: no organization claim is required; the service credential stays, restricted to the loopback admin
   listener; the token contract for TS-491 below.
-- Scope: `src/TerraBase/Features/UserAuth`, `Features/Management`, `Features/Health/ReadyzEndpoint.cs`,
+- Scope: `src/TerraScale.TerraBase/Features/UserAuth`, `Features/Management`, `Features/Health/ReadyzEndpoint.cs`,
   `Configuration/TerraBaseOptions.cs`
 
 ## Context

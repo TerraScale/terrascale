@@ -64,7 +64,7 @@ When interacting with Forgejo, always use the `fj` CLI.
 
 The project MUST follow a **feature-sliced design** so related and dependent files and services are kept together.
 
-- **All projects live in `src/`**; test projects live in `src/Tests/`. All are listed in `TerraScale.TerraBase.slnx` at the repository root.
+- **All projects live in `src/`**; test projects live in `tests/`. All are listed in `terrascale.slnx` at the repository root.
 - A feature folder owns its endpoints, request/response records, services, options, storage access, metrics and `IServiceCollection` registration extension. Namespaces follow folders (`TerraScale.TerraBase.Features.<Feature>`).
 - Features talk to each other through small, explicit public types. Do not reach into another feature’s internals; prefer `internal` for anything not used across slices.
 - Truly shared primitives (validated IDs, typed errors, memory admission, versioned binary formats) go in a dedicated shared folder only once at least two features need them.
@@ -152,13 +152,13 @@ The project MUST follow a **feature-sliced design** so related and dependent fil
 
 Maintain exactly two integration test suites:
 
-- **Fast** (`src/Tests/TerraScale.TerraBase.Fast`)
+- **Fast** (`tests/TerraScale.TerraBase.Fast`)
   - Covers critical paths and common user workflows.
   - MUST remain fast enough to run routinely.
   - MUST run before every merge, deployment, release, and relevant CI action.
   - Any failure MUST block the operation.
 
-- **Slow** (`src/Tests/TerraScale.TerraBase.Slow`)
+- **Slow** (`tests/TerraScale.TerraBase.Slow`)
   - Provides comprehensive integration and end-to-end coverage.
   - MUST run independently from the release-critical pipeline.
   - MUST NOT block merges, deployments, or releases.
@@ -167,8 +167,8 @@ Maintain exactly two integration test suites:
 ### Testing Constraints
 
 - Do NOT create unit tests.
-- All tests MUST validate behavior through integration or end-to-end testing: drive the real application over its real listeners (`src/Tests/TestHarness/TerraBaseTestServer.cs`, which starts the top-level `Program` through `WebApplicationFactory<Program>.UseKestrel()` with its own data directory).
-- Shared test utilities live in `src/Tests/TestHarness` and are linked as source; they MUST NOT become a third suite.
+- All tests MUST validate behavior through integration or end-to-end testing: drive the real application over its real listeners (`tests/TerraScale.TerraBase.TestHarness/TerraBaseTestServer.cs`, which starts the top-level `Program` through `WebApplicationFactory<Program>.UseKestrel()` with its own data directory).
+- Shared test utilities live in `tests/TerraScale.TerraBase.TestHarness` and are linked as source; they MUST NOT become a third suite.
 - New functionality MUST be covered by the appropriate integration test suite.
 - Critical or commonly used functionality SHOULD be covered by the **Fast** suite.
 - Broader, expensive, edge-case, stress, or exhaustive scenarios SHOULD be covered by the **Slow** suite.

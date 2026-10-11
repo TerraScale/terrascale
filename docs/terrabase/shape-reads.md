@@ -1,8 +1,8 @@
 # Shape reads (TS-474)
 
 - Status: implemented for TS-474; divergences requested by the ticket are recorded below
-- Scope: `src/TerraBase/Features/Documents` (`GetShapeEndpoint`, `IShapeService`, `ShapeService`),
-  `src/TerraBase/Engine` (`IStorageTransaction.SnapshotAsync`, `IStorageTransaction.ChangesAsync`, `IDatabaseStore.WaitForCommitAsync`, schema v8)
+- Scope: `src/TerraScale.TerraBase/Features/Documents` (`GetShapeEndpoint`, `IShapeService`, `ShapeService`),
+  `src/TerraScale.TerraBase/Engine` (`IStorageTransaction.SnapshotAsync`, `IStorageTransaction.ChangesAsync`, `IDatabaseStore.WaitForCommitAsync`, schema v8)
 - Contracts: `terrabase-rust/docs/shapes-v1.md`, `query-v1.md`
 
 ## Summary

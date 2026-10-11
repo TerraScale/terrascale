@@ -11,7 +11,7 @@ audit contracts: those belong to ts-auth. The public routes and JWT scopes are i
 [the HTTP API table](api.md). See [the TS-493 dashboard map](dashboard-endpoints.md) for the
 remaining work and its owners; do not extend legacy identity routes.
 
-The Management feature (`src/TerraBase/Features/Management`, OpenAPI tag
+The Management feature (`src/TerraScale.TerraBase/Features/Management`, OpenAPI tag
 `Management`) stores organizations, projects and the databases they own, so ts-dashboard
 has a server-side home for state it keeps in memory today. This document maps every
 ts-dashboard feature to the TerraBase endpoint that backs it, or to the service that owns it

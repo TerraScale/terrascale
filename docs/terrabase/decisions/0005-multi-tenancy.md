@@ -1,7 +1,7 @@
 # 0005: Organizations are the tenant; storage is addressed by tenant
 
 - Status: accepted (human decision, 2026-10-04)
-- Scope: `src/TerraBase/Tenancy`, `Engine`, `Features/ApiKeys`, `Features/Documents`, `Features/Management`
+- Scope: `src/TerraScale.TerraBase/Tenancy`, `Engine`, `Features/ApiKeys`, `Features/Documents`, `Features/Management`
 
 ## Context
 
