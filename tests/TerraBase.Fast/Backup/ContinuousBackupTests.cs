@@ -89,12 +89,12 @@ public sealed class ContinuousBackupTests
             await Assert.That(metrics).Contains(metric);
         }
 
-        // The bucket holds sealed objects only, under keys from the vault, which saw only signed requests.
+        // The bucket holds sealed objects only, under data keys wrapped by the master key.
         var plain = Encoding.UTF8.GetBytes(after);
         await Assert.That(oci.Objects.Keys.Any(key => key.Contains("/snapshots/", StringComparison.Ordinal))).IsTrue();
         await Assert.That(oci.Objects.Keys.Any(key => key.Contains("/wal/", StringComparison.Ordinal))).IsTrue();
         await Assert.That(oci.Objects.Values.Any(content => content.AsSpan().IndexOf(plain) >= 0)).IsFalse();
-        await Assert.That(oci.Objects.Values.All(content => content.AsSpan().StartsWith("TBK1"u8) || content.AsSpan().StartsWith("wrapped:"u8))).IsTrue();
+        await Assert.That(oci.Objects.All(item => item.Value.AsSpan().StartsWith("TBK1"u8) || item.Key.StartsWith("v1/keys/", StringComparison.Ordinal))).IsTrue();
         await Assert.That(oci.GeneratedKeys).IsGreaterThan(0);
         await Assert.That(oci.BadSignatures).IsEqualTo(0);
     }

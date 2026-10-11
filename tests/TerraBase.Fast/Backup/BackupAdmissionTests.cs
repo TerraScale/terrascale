@@ -118,7 +118,7 @@ public sealed class BackupAdmissionTests
             await Assert.That(platformReads.Unwraps).IsEqualTo(1);
             var peerId = Ulid.NewUlid(time.GetUtcNow().AddSeconds(1)).ToString();
             var peerKey = Keys(platform) + peerId;
-            oci.StoreObject(peerKey, Encoding.ASCII.GetBytes("wrapped:" + Convert.ToBase64String(RandomNumberGenerator.GetBytes(32))));
+            oci.StoreObject(peerKey, Encoding.ASCII.GetBytes(oci.Wrap(RandomNumberGenerator.GetBytes(32))));
             var peerReads = oci.ObserveKey(peerKey);
             time.Advance(TimeSpan.FromSeconds(61));
             await PutAsync(data, platform, "after", after, token);
