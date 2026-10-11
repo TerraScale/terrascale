@@ -7,7 +7,4 @@
     <OutputType>Exe</OutputType>
     <IsTestProject>true</IsTestProject>
   </PropertyGroup>
-  <ItemGroup>
-    <None Include="../../scripts/terrabase/prod-replication-check" Link="scripts/prod-replication-check" CopyToOutputDirectory="PreserveNewest" />
-  </ItemGroup>
 </Project>
