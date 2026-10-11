@@ -14,9 +14,8 @@ govern your use of TerraScale.
 ::: danger
 DRAFT — not legal advice, not published. Blocked on owner action O-5 (legal entity name + jurisdiction).
 
-[PLACEHOLDER — the security inbox, PGP key, and provider confirmations for
-OCI and Cloudflare terms are not verified for publication. Do not publish
-until O-4/O-5 review is complete.]
+[PLACEHOLDER — the security inbox and PGP key are not verified for publication.
+Do not publish until O-4/O-5 review is complete.]
 :::
 
 ## security.txt

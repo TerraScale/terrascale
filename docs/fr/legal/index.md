@@ -18,15 +18,14 @@ govern your use of TerraScale.
 DRAFT — not legal advice, not published. Blocked on owner action O-5 (legal entity name + jurisdiction).
 
 Publication is also blocked on O-4 provider work. [PLACEHOLDER — written
-confirmation of the OCI data-processing terms and tenancy/residency, the
-Cloudflare CDN/cache terms, and the Stripe Tax account and configuration is
-not on file. Do not publish these drafts until those confirmations and the
-owner's legal review are complete.]
+confirmation of the Stripe Tax account and configuration is not on file. Do not
+publish these drafts until that confirmation and the owner's legal review are
+complete.]
 :::
 
 - [Terms of Service](./terms.md) — the rules of the service, pricing, billing, availability, and termination.
-- [Privacy Policy](./privacy.md) — what we store, sub-processors, residency, retention, and deletion.
-- [Data Processing Addendum](./dpa.md) — processing scope, sub-processors (OCI, Cloudflare), and security measures.
+- [Privacy Policy](./privacy.md) — what we store, residency, retention, and deletion.
+- [Data Processing Addendum](./dpa.md) — processing scope and security measures.
 - [Security](./security.md) — vulnerability disclosure and `security.txt`.
 - [Support policy](./support.md) — current support availability, self-service
   diagnostics, and the absence of launch response commitments.

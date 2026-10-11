@@ -14,8 +14,7 @@ govern your use of TerraScale.
 ::: danger
 DRAFT — not legal advice, not published. Blocked on owner action O-5 (legal entity name + jurisdiction).
 
-[PLACEHOLDER — written confirmation of OCI and Cloudflare processing,
-residency, and CDN/cache terms, and of the Stripe Tax account/configuration,
+[PLACEHOLDER — written confirmation of the Stripe Tax account/configuration
 is not on file (O-4). Do not publish this draft until confirmed and reviewed
 by the owner.]
 :::
@@ -43,27 +42,11 @@ retention and communications choices pending O-5 review.]
 We do not sell personal data. We run no advertising or tracking on our
 sites.
 
-## Sub-processors
-
-| Sub-processor | Role |
-| --- | --- |
-| Oracle Cloud Infrastructure (OCI) | Hosting, storage, backups, and email delivery for the service |
-| Cloudflare | DNS, TLS, WAF, and CDN delivery of your authorized reactive data; edge decryption occurs at the point of presence nearest the reader, worldwide |
-| Stripe | Intended billing, invoicing, and Stripe Tax processing; database content is not intended to be sent for this purpose |
-| [IDENTITY PROVIDER — placeholder] | Account authentication and identity data [provider, role, locations, and terms pending confirmation] |
-
-This is the intended launch list. [PLACEHOLDER — OCI and Cloudflare written
-provider confirmations, Cloudflare cache terms, and Stripe Tax account and
-configuration confirmation are pending O-4. The identity-provider entry must
-be completed or removed before publication.] No other customer-data
-subprocessor is approved for this draft.
-
 ## Residency
 
 A database's bytes at rest exist only in its selected Regions. A placement
 lock (`eu-only`, `br-only`, or an explicit region list), once set, cannot be
-widened. Reactive delivery may be processed through the listed delivery
-provider; in-region edge processing is not promised at launch.
+widened.
 
 ## Cookies
 
