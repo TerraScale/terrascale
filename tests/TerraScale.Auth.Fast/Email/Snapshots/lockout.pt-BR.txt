@@ -1,0 +1,13 @@
+Subject: Pausa temporária de autenticação em TerraScale
+
+Um método de autenticação está temporariamente pausado
+
+Muitas tentativas pausaram temporariamente um método de autenticação para jane@example.com em TerraScale até 2026-01-01 00:15:00 UTC.
+
+Outros métodos de acesso ou recuperação podem continuar disponíveis.
+
+Se não foi você, use um método disponível para revisar a segurança da sua conta ou entre em contato com o suporte. Se a redefinição de senha estiver pausada, tente novamente após o fim da pausa.
+
+-- 
+Este e-mail foi enviado para jane@example.com.
+TerraScale · terrascale.tech

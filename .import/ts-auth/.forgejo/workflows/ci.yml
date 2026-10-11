@@ -1,0 +1,256 @@
+name: ts-auth CI
+
+# test and build run in parallel. test is the required gate: locked restore,
+# formatting, a Release build with analyzers as errors, the NuGet audit, the
+# OpenAPI lint, the CI transfer- and publish-script guards and the fast
+# integration suite.
+# build publishes a self-contained executable into the chiseled runtime-deps
+# image, smoke-checks the container, builds the linux-arm64 single-file
+# executable and starts it under qemu-aarch64, and, on pushes to protected main, stages the image by registry
+# digest. release tags that exact image only after every gate passed; on main,
+# publish attaches ts-auth-linux-arm64 and its .sha256 to the Forgejo
+# release v<version>-dev.<commit>, and deploy hands that release to
+# ts-orchestrator, which rolls it out to every region (TS-610). The slow suite
+# runs separately in slow.yml and never blocks.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ts-auth-${{ forgejo.ref }}
+  cancel-in-progress: ${{ forgejo.ref != 'refs/heads/main' }}
+
+env:
+  CI: "true"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_NOLOGO: "1"
+  # The runner mounts one /cache into every job and NUGET_PACKAGES lives there,
+  # but NuGet keeps its package-extraction locks under the per-container temp
+  # directory. Concurrent jobs restoring a package new to the cache then race
+  # ("Could not find file .../<random>"). Keeping the locks on the shared mount
+  # serializes extraction across jobs.
+  NUGET_SCRATCH: /cache/nuget-scratch
+  FORGEJO_SHA: ${{ forgejo.sha }}
+  TS_DOTNET_REV: a4ff285c051e63e72cb01c4a94173c91da1dd69a
+  TS_LIBS_REV: 55b260872f8d4fb1cfa0975576632b4e022e4c91
+
+jobs:
+  # TS-795 switch guard: fails when the change adds an on/off setting.
+  # Same text in every repo; ts-builder's scripts/bump-ci-ref.sh moves the pinned ref.
+  guard:
+    runs-on: terrascale-builder
+    timeout-minutes: 10
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          github-server-url: https://git.terrascale.tech
+          ref: ${{ forgejo.event.pull_request.head.sha || forgejo.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          github-server-url: https://git.terrascale.tech
+          repository: TerraScale/ts-builder
+          ref: 8dacab451c3c16924622ff512d7aa17501b70ecc # guard ref
+          path: .zero-config-policy
+          token: ${{ secrets.TERRASCALE_BOT_TOKEN }}
+          persist-credentials: false
+      - env:
+          ZERO_CONFIG_BASE: ${{ forgejo.event.pull_request.base.sha || forgejo.event.before }}
+          ZERO_CONFIG_HEAD: ${{ forgejo.event.pull_request.head.sha || forgejo.sha }}
+        run: |
+          set -eu
+          if [ -z "$ZERO_CONFIG_BASE" ]; then
+            ZERO_CONFIG_BASE=$(git rev-parse "$ZERO_CONFIG_HEAD^")
+          fi
+          python3 .zero-config-policy/scripts/zero-config-check.py "$ZERO_CONFIG_BASE" "$ZERO_CONFIG_HEAD"
+
+  test:
+    runs-on: terrascale-builder
+    timeout-minutes: 45
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          github-server-url: https://git.terrascale.tech
+          persist-credentials: false
+
+      - name: Check out the pinned ts-dotnet and ts-libs revisions
+        env:
+          ORG_READ_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
+        run: bash scripts/ci/checkout-dotnet-deps.sh
+
+      - name: Restore with locked dependencies
+        run: dotnet restore TerraScale.Auth.slnx --locked-mode
+
+      - name: Check formatting
+        run: dotnet format TerraScale.Auth.slnx --verify-no-changes --no-restore
+
+      - name: Build Release with analyzers as errors
+        run: make build CONFIGURATION=Release TS_AUTH_REVISION="${FORGEJO_SHA:0:12}"
+
+      - name: Fail closed on vulnerable NuGet packages
+        run: make audit
+
+      - name: Lint the served OpenAPI contract
+        run: make openapi-check CONFIGURATION=Release
+
+      - name: Check image transfer guards
+        run: bash scripts/check-image-transfer.sh
+
+      - name: Check binary publish guards
+        run: bash scripts/check-binary-publish.sh
+
+      - name: Check the deploy script against a stub API and ts-orch
+        run: bash scripts/ci/check-deploy.sh
+
+      - name: Check arm64 smoke guards
+        run: bash scripts/check-arm64-smoke.sh
+
+      - name: Fast integration suite
+        env:
+          ORG_READ_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          TS_AUTH_CHROMIUM_PATH="$(node -p 'require("playwright").chromium.executablePath()')"
+          export TS_AUTH_CHROMIUM_PATH
+          make test-fast CONFIGURATION=Release
+
+  build:
+    needs: [guard]
+    runs-on: terrascale-builder
+    timeout-minutes: 60
+    env:
+      TS_AUTH_PUBLISH: ${{ forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main' }}
+    outputs:
+      image-manifest-digest: ${{ steps.hand-off.outputs.image-digest }}
+      publish-enabled: ${{ steps.hand-off.outputs.publish-enabled }}
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          github-server-url: https://git.terrascale.tech
+          persist-credentials: false
+
+      - name: Check out the pinned ts-dotnet and ts-libs revisions
+        env:
+          ORG_READ_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
+        run: bash scripts/ci/checkout-dotnet-deps.sh
+
+      - name: Publish the self-contained release executable
+        run: bash scripts/ci/stage-release.sh artifacts/ci/container-publish
+
+      - name: Package and smoke-check the release image
+        run: bash scripts/ci/package-image.sh
+
+      # After packaging, so the arm64 executable stays out of the image build
+      # context. publish rebuilds and uploads it on protected main.
+      - name: Publish the self-contained linux-arm64 executable
+        run: bash scripts/ci/stage-release.sh artifacts/ci/arm64 linux-arm64
+
+      - name: Smoke-check the linux-arm64 executable under emulation
+        run: bash scripts/ci/smoke-arm64.sh artifacts/ci/arm64/ts-auth
+
+      # Artifact actions are unavailable on this runner. A registry digest
+      # works across runner machines and survives a retry of publish alone.
+      - name: Stage the image for publish
+        id: hand-off
+        if: env.TS_AUTH_PUBLISH == 'true'
+        env:
+          REGISTRY_PUSH_TOKEN: ${{ secrets.REGISTRY_PUSH_TOKEN }}
+          REPOSITORY_OWNER: ${{ forgejo.repository_owner }}
+        run: bash scripts/ci/transfer-image.sh stage
+
+  release:
+    name: Publish the immutable container on protected main
+    needs: [guard, test, build]
+    if: forgejo.ref == 'refs/heads/main' && needs.build.outputs.publish-enabled == 'true'
+    runs-on: terrascale-builder
+    timeout-minutes: 60
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          github-server-url: https://git.terrascale.tech
+          persist-credentials: false
+
+      - name: Publish the digest-pinned release image
+        env:
+          IMAGE_MANIFEST_DIGEST: ${{ needs.build.outputs.image-manifest-digest }}
+          REGISTRY_PUSH_TOKEN: ${{ secrets.REGISTRY_PUSH_TOKEN }}
+          REPOSITORY_OWNER: ${{ forgejo.repository_owner }}
+        run: bash scripts/ci/transfer-image.sh publish
+
+  publish:
+    name: Publish the linux-arm64 executable on protected main
+    needs: [guard, test, build]
+    if: forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main'
+    runs-on: terrascale-builder
+    timeout-minutes: 45
+    outputs:
+      tag: ${{ steps.publish.outputs.tag }}
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          github-server-url: https://git.terrascale.tech
+          persist-credentials: false
+
+      - name: Check out the pinned ts-dotnet and ts-libs revisions
+        env:
+          ORG_READ_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
+        run: bash scripts/ci/checkout-dotnet-deps.sh
+
+      - name: Publish the linux-arm64 release assets
+        id: publish
+        env:
+          FORGEJO_TOKEN: ${{ forgejo.token }}
+          ORG_READ_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
+          FORGEJO_REF: ${{ forgejo.ref }}
+          FORGEJO_REPOSITORY: ${{ forgejo.repository }}
+        run: bash scripts/ci/publish-binary.sh
+
+      # Deployment failure must not erase the time this build became qualified.
+      - name: Record the qualified main build for the deployment-lag guard
+        if: forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main'
+        shell: bash
+        env:
+          FORGEJO_TOKEN: ${{ forgejo.token }}
+        run: |
+          set -euo pipefail
+          curl -fsS --connect-timeout 10 --max-time 30 -o /dev/null \
+            -H "Authorization: token ${FORGEJO_TOKEN}" -H 'Content-Type: application/json' \
+            --data '{"state":"success","context":"deployment/qualified","description":"Verified main build ready for automatic deployment"}' \
+            "https://git.terrascale.tech/api/v1/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}"
+
+  # Every green main push deploys to GRU and SFO through ts-orchestrator.
+  # deploy.sh lists the inputs; deployment has no opt-in switch.
+  deploy:
+    name: Deploy the release to every region
+    needs: [publish]
+    if: forgejo.event_name == 'push' && forgejo.ref == 'refs/heads/main'
+    runs-on: terrascale-builder
+    # Two 30-minute regional waits, three downloads of up to 15 minutes each,
+    # and 15 minutes for setup/cleanup with the current sequential helper.
+    timeout-minutes: 120
+    steps:
+      - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          github-server-url: https://git.terrascale.tech
+          persist-credentials: false
+
+      - name: Roll the release out to every region
+        env:
+          RELEASE_TAG: ${{ needs.publish.outputs.tag }}
+          ORG_READ_TOKEN: ${{ secrets.ORG_READ_TOKEN }}
+          TS_RELEASE_OCI_KEY: ${{ secrets.TS_RELEASE_OCI_KEY }}
+          TS_ORCH_RELEASE: ${{ vars.TS_ORCH_RELEASE }}
+          TS_ORCH_SHA256: ${{ vars.TS_ORCH_SHA256 }}
+          TS_OBJECT_NAMESPACE: ${{ vars.TS_OBJECT_NAMESPACE }}
+          TS_RELEASE_VAULT_ID: ${{ vars.TS_RELEASE_VAULT_ID }}
+          TS_RELEASE_KEY_SECRET: ${{ vars.TS_RELEASE_KEY_SECRET }}
+          TS_RELEASE_ACTOR: ${{ vars.TS_RELEASE_ACTOR }}
+          TS_RELEASE_OCI_USER: ${{ vars.TS_RELEASE_OCI_USER }}
+          TS_RELEASE_OCI_TENANCY: ${{ vars.TS_RELEASE_OCI_TENANCY }}
+          TS_RELEASE_OCI_FINGERPRINT: ${{ vars.TS_RELEASE_OCI_FINGERPRINT }}
+        run: bash scripts/ci/deploy.sh ts-auth ts-auth-linux-arm64 "$RELEASE_TAG"

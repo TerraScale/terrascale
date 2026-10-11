@@ -1,0 +1,15 @@
+Subject: 123456 é o seu código de acesso para TerraScale
+
+Seu código de acesso
+
+Digite este código para entrar em TerraScale como jane@example.com.
+
+    123456
+
+Este código expira em 10 minutos e só pode ser usado uma vez.
+
+Não tentou entrar? Pode ignorar este e-mail com segurança. Nunca compartilhe este código com ninguém.
+
+-- 
+Este e-mail foi enviado para jane@example.com.
+TerraScale · terrascale.tech

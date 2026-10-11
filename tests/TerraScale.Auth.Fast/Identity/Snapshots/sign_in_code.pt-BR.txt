@@ -1,0 +1,13 @@
+Seu código de acesso
+
+Digite este código para entrar em TerraScale como alice@example.test.
+
+    000000
+
+Este código expira em 10 minutos e só pode ser usado uma vez.
+
+Não tentou entrar? Pode ignorar este e-mail com segurança. Nunca compartilhe este código com ninguém.
+
+-- 
+Este e-mail foi enviado para alice@example.test.
+TerraScale · terrascale.tech

@@ -1,0 +1,62 @@
+@inherits RazorSlice<SignInPageModel>
+@implements IUsesLayout<HostedLayout, HostedLayoutModel>
+<h1>@Model.Title</h1>
+@if (Model.Error is { } error)
+{
+<p class="error" role="alert">@error</p>
+}
+@switch (Model.Step)
+{
+case SignInStep.Email:
+<form method="post" action="/ui/@Model.Slug/sign-in">
+<input type="hidden" name="next" value="@Model.Next">
+<label for="sign-in-email">Email</label>
+<input id="sign-in-email" name="email" type="email" autocomplete="username" required autofocus value="@Model.Email">
+<button type="submit">Email me a sign-in code</button>
+</form>
+break;
+case SignInStep.Code:
+<p class="muted">If an account exists for <strong>@Model.Email</strong>, we emailed it a six-digit code. It expires in 10 minutes.</p>
+<form method="post" action="/ui/@Model.Slug/sign-in/verify">
+<input type="hidden" name="next" value="@Model.Next">
+<input type="hidden" name="email" value="@Model.Email">
+<label for="sign-in-code">Code</label>
+<input id="sign-in-code" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required autofocus>
+<button type="submit">Sign in</button>
+</form>
+<form method="post" action="/ui/@Model.Slug/sign-in">
+<input type="hidden" name="next" value="@Model.Next">
+<input type="hidden" name="email" value="@Model.Email">
+<button type="submit" class="secondary">Send a new code</button>
+</form>
+break;
+case SignInStep.Continue:
+<p class="muted">Returning to the application…</p>
+<p class="hint"><a href="@Model.Next">Continue</a></p>
+break;
+case SignInStep.SignedIn:
+<p class="success" role="status">You are signed in. You can close this page.</p>
+break;
+case SignInStep.SignedOut:
+<p class="success" role="status">You are signed out. You can close this page.</p>
+break;
+case SignInStep.Rejected:
+<p class="muted">Start again from the application you were signing in to.</p>
+break;
+}
+@functions {
+    /// <inheritdoc />
+    public HostedLayoutModel LayoutModel => new(Model.Title, Model.Nonce);
+
+    /// <inheritdoc />
+    protected override Task ExecuteSectionAsync(string name)
+    {
+        // A navigation, not a redirect from the form post: form-action 'self' governs redirects after a submission.
+        if (name == "head" && Model.Step == SignInStep.Continue)
+        {
+<meta http-equiv="refresh" content="0;url=@Model.Next">
+        }
+
+        return Task.CompletedTask;
+    }
+}

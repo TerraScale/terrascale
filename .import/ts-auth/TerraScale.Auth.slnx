@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/TerraScale.Auth/TerraScale.Auth.csproj" />
+    <Project Path="src/TerraScale.Auth.Contracts/TerraScale.Auth.Contracts.csproj" />
+    <Project Path="src/TerraScale.Auth.Security/TerraScale.Auth.Security.csproj" />
+    <Project Path="src/TerraScale.Auth.Store/TerraScale.Auth.Store.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/TerraScale.Auth.Fast/TerraScale.Auth.Fast.csproj" />
+    <Project Path="tests/TerraScale.Auth.Slow/TerraScale.Auth.Slow.csproj" />
+  </Folder>
+</Solution>

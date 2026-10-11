@@ -1,0 +1,15 @@
+Subject: New sign-in to TerraScale
+
+New sign-in to your account
+
+jane@example.com just signed in to TerraScale on a new device.
+
+Device: Chrome on macOS
+Location: São Paulo, Brazil
+Time: 2026-01-01 00:00 UTC
+
+If this was you, there is nothing to do. If not, reset your password and sign out of your other sessions now.
+
+-- 
+This email was sent to jane@example.com.
+TerraScale · terrascale.tech
