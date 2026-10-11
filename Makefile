@@ -1,17 +1,57 @@
-# TerraBase .NET targets. Locally, run them at low CPU priority, e.g.
-# `nice -n 19 make test-fast`; CI runs them at full priority. Nothing here
-# applies nice itself.
+# TerraScale monorepo targets: libs (TerraScale.Endpoints, TerraScale.Logging), auth, TerraBase and benchmark.
+# Locally, run them at low CPU priority, e.g. `nice -n 19 make test-fast`; CI runs them at full priority.
+# Nothing here applies nice itself.
 SOLUTION := TerraScale.slnx
-ANALYZER_CHECK_PROJECT := src/TerraBase.Analyzers.BuildCheck/TerraBase.Analyzers.BuildCheck.csproj
 CONFIGURATION ?= Debug
 RUNTIME ?= linux-x64
 PUBLISH_DIR ?= artifacts/publish
+# Extra arguments for every TUnit runner, e.g. TEST_ARGS="--treenode-filter /*/*/Name/*".
+TEST_ARGS ?=
+# Build revision shown by ts-auth /healthz (CI passes the commit SHA).
+TS_AUTH_REVISION ?=
+export TS_AUTH_REVISION
+REDOCLY := npx --yes @redocly/cli@2.57.0
 
-.PHONY: restore build fmt fmt-check lint analyzer-check test-fast test-slow check run publish clean
+ANALYZER_CHECK_PROJECT := src/TerraBase.Analyzers.BuildCheck/TerraBase.Analyzers.BuildCheck.csproj
 
+LIBS_PROJECTS := src/TerraScale.Endpoints/TerraScale.Endpoints.csproj \
+	src/TerraScale.Endpoints.Generators/TerraScale.Endpoints.Generators.csproj \
+	src/TerraScale.Endpoints.Example/TerraScale.Endpoints.Example.csproj \
+	src/TerraScale.Logging/TerraScale.Logging.csproj \
+	tests/TerraScale.Endpoints.Tests/TerraScale.Endpoints.Tests.csproj \
+	tests/TerraScale.Logging.Tests/TerraScale.Logging.Tests.csproj
+LIBS_TEST_PROJECTS := tests/TerraScale.Endpoints.Tests/TerraScale.Endpoints.Tests.csproj \
+	tests/TerraScale.Logging.Tests/TerraScale.Logging.Tests.csproj
+# Only TerraScale.Logging is published: ts-reviewer consumes it outside this repository.
+LIBS_PACKAGE := src/TerraScale.Logging/TerraScale.Logging.csproj
+PACKAGE_VERSION = $(shell bash scripts/libs/package-version.sh)
+
+AUTH_PROJECTS := src/TerraScale.Authentication.Contracts/TerraScale.Authentication.Contracts.csproj \
+	src/TerraScale.Authentication.Security/TerraScale.Authentication.Security.csproj \
+	src/TerraScale.Authentication.Store/TerraScale.Authentication.Store.csproj \
+	src/TerraScale.Authentication/TerraScale.Authentication.csproj \
+	tests/TerraScale.Authentication.Fast/TerraScale.Authentication.Fast.csproj \
+	tests/TerraScale.Authentication.Slow/TerraScale.Authentication.Slow.csproj
+AUTH_HOST_DLL := src/TerraScale.Authentication/bin/$(CONFIGURATION)/net11.0/ts-auth.dll
+
+TERRABASE_PROJECTS := src/TerraBase.Analyzers/TerraBase.Analyzers.csproj \
+	src/TerraBase/TerraBase.csproj \
+	tests/TerraBase.Fast/TerraBase.Fast.csproj \
+	tests/TerraBase.Slow/TerraBase.Slow.csproj
+
+BENCHMARK_DOTNET_PROJECTS := benchmark/dotnet/TerraScale.Endpoints.Benchmarks/TerraScale.Endpoints.Benchmarks.csproj \
+	benchmark/dotnet/TerraScale.Logging.Benchmarks/TerraScale.Logging.Benchmarks.csproj
+
+.PHONY: restore build fmt fmt-check lint test-fast test-slow test check clean \
+	libs-build libs-test libs-check libs-pack libs-nativeaot-check \
+	auth-build auth-audit auth-openapi-check auth-test-fast auth-test-slow auth-check auth-dev \
+	terrabase-build terrabase-analyzer-check terrabase-test-fast terrabase-test-slow terrabase-check terrabase-run terrabase-publish \
+	benchmark-build benchmark-fmt-check benchmark-check benchmark-smoke
+
+# Global: the whole solution.
 restore:
-	dotnet restore $(SOLUTION)
-	dotnet restore $(ANALYZER_CHECK_PROJECT)
+	dotnet restore $(SOLUTION) --locked-mode
+	dotnet restore $(ANALYZER_CHECK_PROJECT) --locked-mode
 
 build: restore
 	dotnet build $(SOLUTION) --configuration $(CONFIGURATION) --no-restore
@@ -26,7 +66,70 @@ fmt-check: restore
 # Analyzers and code style run in the build with warnings as errors.
 lint: fmt-check build
 
-analyzer-check: restore
+test-fast: libs-test auth-test-fast terrabase-test-fast
+
+test-slow: auth-test-slow terrabase-test-slow
+
+test: test-fast test-slow
+
+# Everything required before a push.
+check: lint libs-check auth-check terrabase-check benchmark-check test-fast
+
+clean:
+	dotnet clean $(SOLUTION) --configuration $(CONFIGURATION)
+	rm -rf artifacts
+
+# ts-libs: TerraScale.Endpoints and TerraScale.Logging, their generator, tests and examples.
+libs-build: restore
+	set -e; for p in $(LIBS_PROJECTS); do dotnet build $$p --configuration $(CONFIGURATION) --no-restore; done
+
+libs-test: libs-build
+	set -e; for p in $(LIBS_TEST_PROJECTS); do dotnet run --project $$p --configuration $(CONFIGURATION) --no-build -- --minimum-expected-tests 1 $(TEST_ARGS); done
+
+libs-check: libs-build
+	set -e; for p in $(LIBS_PROJECTS); do dotnet format style $$p --verify-no-changes --no-restore; done
+
+libs-pack: restore
+	bash scripts/libs/package-version-test.sh
+	rm -rf -- artifacts/packages
+	dotnet pack $(LIBS_PACKAGE) --configuration Release --nologo --output artifacts/packages -p:Version=$(PACKAGE_VERSION)
+	ls -1 artifacts/packages
+	set -e; ls artifacts/packages/*.nupkg >/dev/null; for pkg in artifacts/packages/*.nupkg; do case "$$pkg" in *".$(PACKAGE_VERSION).nupkg") ;; *) echo "$$pkg is not the calendar version $(PACKAGE_VERSION)" >&2; exit 1;; esac; done
+
+# Publishes the in-repo example with native AOT: the generated registration and the endpoint pipeline must trim and AOT-compile.
+libs-nativeaot-check: restore
+	dotnet publish src/TerraScale.Endpoints.Example/TerraScale.Endpoints.Example.csproj --configuration Release --runtime $(RUNTIME) --output artifacts/nativeaot/endpoints-example
+
+# ts-auth.
+auth-build: restore
+	set -e; for p in $(AUTH_PROJECTS); do dotnet build $$p --configuration $(CONFIGURATION) --no-restore --nologo; done
+
+auth-audit:
+	dotnet run scripts/auth/check-nuget-vulnerabilities.cs src/TerraScale.Authentication/TerraScale.Authentication.csproj
+
+# The served document, and the platform contract (TS-598) that later slices implement.
+auth-openapi-check: auth-build
+	mkdir -p artifacts
+	scripts/auth/export-openapi.sh $(AUTH_HOST_DLL) artifacts/openapi.json
+	$(REDOCLY) lint artifacts/openapi.json docs/auth/platform-api.openapi.yaml
+
+# Cases share one TerraBase process; individual concurrency tests still run their own request races.
+auth-test-fast: auth-build
+	dotnet run --project tests/TerraScale.Authentication.Fast --configuration $(CONFIGURATION) --no-build -- --maximum-parallel-tests 2 $(TEST_ARGS)
+
+auth-test-slow: auth-build
+	dotnet run --project tests/TerraScale.Authentication.Slow --configuration $(CONFIGURATION) --no-build $(TEST_ARGS)
+
+auth-check: auth-audit auth-openapi-check
+
+auth-dev:
+	scripts/auth/dev.sh
+
+# TerraBase: the server, its analyzer and its integration suites.
+terrabase-build: restore
+	set -e; for p in $(TERRABASE_PROJECTS); do dotnet build $$p --configuration $(CONFIGURATION) --no-restore; done
+
+terrabase-analyzer-check: restore
 	@set -eu; log=$$(mktemp); trap 'rm -f "$$log"' EXIT; \
 	if dotnet build $(ANALYZER_CHECK_PROJECT) --configuration $(CONFIGURATION) --no-restore -p:TB0001BuildCheck=true >"$$log" 2>&1; then \
 		cat "$$log"; echo 'TB0001 build check unexpectedly succeeded' >&2; exit 1; \
@@ -38,24 +141,32 @@ analyzer-check: restore
 	for line in 8 10 12 14 16; do grep -q "ExpectedFailures.cs($$line," "$$log"; done; \
 	if grep -vE 'error (TB0001|RS0030)' "$$log" | grep -q ': error '; then echo 'unexpected compiler error in analyzer build check' >&2; exit 1; fi
 
-test-fast: build
-	# Forgejo lacks GitHub's artifact API; HTML and JSON reports are generated locally.
-	# Capped: unbounded on 32-CPU CI runners, GC pauses push tests past their timeouts.
-	env -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_RESULTS_URL dotnet run --project tests/TerraBase.Fast --configuration $(CONFIGURATION) --no-build -- --maximum-parallel-tests 16
+# Forgejo lacks GitHub's artifact API; the environment is cleared so the runners write their reports locally.
+terrabase-test-fast: terrabase-build
+	env -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_RESULTS_URL dotnet run --project tests/TerraBase.Fast --configuration $(CONFIGURATION) --no-build -- --maximum-parallel-tests 16 $(TEST_ARGS)
 
-test-slow: build
-	env -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_RESULTS_URL dotnet run --project tests/TerraBase.Slow --configuration $(CONFIGURATION) --no-build
+terrabase-test-slow: terrabase-build
+	env -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_RESULTS_URL dotnet run --project tests/TerraBase.Slow --configuration $(CONFIGURATION) --no-build $(TEST_ARGS)
 
-# Everything required before a push.
-check: lint analyzer-check test-fast
+terrabase-check: terrabase-build terrabase-analyzer-check
 
-run:
+terrabase-run:
 	dotnet run --project src/TerraBase --configuration $(CONFIGURATION)
 
 # Self-contained single-file binary (JIT): $(PUBLISH_DIR)/terrabase
-publish:
+terrabase-publish:
 	dotnet publish src/TerraBase --configuration Release --runtime $(RUNTIME) --self-contained --output "$(PUBLISH_DIR)"
 
-clean:
-	dotnet clean $(SOLUTION) --configuration $(CONFIGURATION)
-	rm -rf artifacts
+# ts-benchmark (Go) plus the BenchmarkDotNet projects for ts-libs.
+benchmark-build: restore
+	$(MAKE) -C benchmark build
+	set -e; for p in $(BENCHMARK_DOTNET_PROJECTS); do dotnet build $$p --configuration $(CONFIGURATION) --no-restore; done
+
+benchmark-fmt-check:
+	$(MAKE) -C benchmark fmt-check
+
+benchmark-check:
+	$(MAKE) -C benchmark check
+
+benchmark-smoke:
+	$(MAKE) -C benchmark smoke
