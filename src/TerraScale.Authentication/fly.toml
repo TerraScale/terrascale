@@ -20,9 +20,10 @@ swap_size_mb = 4096
   [[http_service.checks]]
     method = "GET"
     path = "/healthz"
-    interval = "15s"
+    # Ready ~4 s after start on shared-cpu-2x (docs/fly/spike-1a.md); flyctl deploy waits for the first passing check.
+    interval = "5s"
     timeout = "2s"
-    grace_period = "30s"
+    grace_period = "5s"
 
 # Fly's scraper connects over the private IPv4, so /metrics listens on all interfaces (not public: no service).
 [[metrics]]
