@@ -219,13 +219,18 @@ follow-up TS-495. The code is in `src/TerraScale.Authentication/Features/Oidc/` 
 
 ### Design
 
-The provider runs on OpenIddict 7.7.1 (`OidcIssuer.AddOidc`). There is no
-instance registry yet, so there is one issuer, `{TS_AUTH_PUBLIC_ORIGIN}/terrascale`,
-owned by the instance `terrascale`; per-slug issuers wait for that registry,
-and other slugs answer 404. The `TrustPublicOrigin` handler resolves OpenIddict's
-base and request URIs against `TS_AUTH_PUBLIC_ORIGIN`, so the issuer, every
-advertised URL and endpoint matching never use the request's Host header or
-scheme. TLS terminates in front of the service.
+The provider runs on OpenIddict 7.7.1 (`OidcIssuer.AddOidc`) with no fixed
+issuer: one issuer per tenant, `{origin}/{tenant}`, on the global origin
+`https://auth.terrascale.tech` (`AuthOptions.GlobalOrigin`; previews and tests
+set `TS_AUTH_PUBLIC_ORIGIN`). The `TrustPublicOrigin` handler sets each
+request's base URI to its tenant's issuer, which OpenIddict uses as the issuer
+for discovery, issued tokens and validation, and under which the relative
+endpoint URIs resolve: `terrascale` for every endpoint, an existing project
+(looked up in `projects`) for its discovery document and JWKS only. Any other
+request gets the bare origin, under which nothing matches, so it answers 404.
+Signing and validation use the request tenant's key ring. Base and request URIs
+come from the origin, never the request's Host header or scheme. TLS
+terminates in front of the service (Fly Proxy).
 
 Routes: discovery, JWKS, `authorize`, `token`, `userinfo` and `logout` under
 `/terrascale/`, and the hosted sign-in at `/ui/terrascale/sign-in` and

@@ -18,8 +18,8 @@ TUnit and Playwright integration tests.
 > storage readiness, validated locally against the pinned binary. Live production
 > activation remains gated (see provisioning below). TS-490 adds users,
 > server-side sessions and email passcodes as internal services on that store.
-> TS-491 adds an OpenID Connect provider on OpenIddict 7.7.1 for one issuer,
-> `{TS_AUTH_PUBLIC_ORIGIN}/terrascale`, so ts-dashboard can sign in: the
+> TS-491 adds an OpenID Connect provider on OpenIddict 7.7.1 for the issuer
+> `https://auth.terrascale.tech/terrascale`, so ts-dashboard can sign in: the
 > authorization code flow with S256 PKCE, rotating refresh tokens, discovery,
 > JWKS, userinfo, RP-initiated logout and a hosted email-passcode sign-in page
 > for existing accounts. Device flow, guest accounts, CORS and SAML are

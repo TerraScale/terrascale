@@ -3,7 +3,9 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
 using Microsoft.AspNetCore.Http.Metadata;
+using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Hosting;
 using TerraScale.Endpoints;
 
@@ -59,7 +61,7 @@ public sealed record MemberPageBody(
 /// <param name="Id">Its id, also its tenant.</param>
 /// <param name="OrganizationId">Its organization.</param>
 /// <param name="Name">Its name.</param>
-/// <param name="Issuer">Its end users' issuer, <c>{public origin}/{id}</c>; null until project tenants are served.</param>
+/// <param name="Issuer">Its end users' issuer, <c>{public origin}/{id}</c>.</param>
 /// <param name="CreatedBy">The creating user.</param>
 /// <param name="CreatedAt">Creation time.</param>
 /// <param name="Role">The caller's effective project role.</param>
@@ -571,9 +573,12 @@ public abstract class PlatformEndpoint(PlatformAuthentication authentication) : 
         new(organization.Id, organization.Name, organization.CreatedBy, organization.CreatedAt, role);
 
     /// <summary>The project as the caller sees it.</summary>
-    protected static ProjectBody Map(ProjectRecord project, string role) =>
-        // A project's tenant, and so its issuer, is served from the project tenants slice on (contract "Slices", 5).
-        new(project.Id, project.OrganizationId, project.Name, null, project.CreatedBy, project.CreatedAt, role);
+    protected ProjectBody Map(ProjectRecord project, string role)
+    {
+        ArgumentNullException.ThrowIfNull(project);
+        var issuer = OidcIssuer.Issuer(this.HttpContext.RequestServices.GetRequiredService<AuthOptions>(), project.Id);
+        return new(project.Id, project.OrganizationId, project.Name, issuer.AbsoluteUri, project.CreatedBy, project.CreatedAt, role);
+    }
 
     /// <summary>A member (never a collaborator, whose record has no role).</summary>
     protected static MemberBody Map(MembershipRecord member, string email) => new(member.UserId, email, member.Role!, member.JoinedAt);

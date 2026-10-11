@@ -27,7 +27,7 @@ Nothing here implies acceptance against a live TerraBase deployment.
 | Email links, hosted sign-up and recovery pages, management users/sessions/keys | TS-432 design (not in TS-490/TS-491/TS-582) | Not implemented |
 | Auth email templates, branding and copy API | TS-583 | Served: HTML + plain-text emails in `en` and `pt-BR` for every kind (the sign-in code, email verification and password reset are sent today), and `/v1/{slug}/email/*` for the `ts-dashboard` client: branding, per-kind copy with `{{ name }}` placeholders only, previews, rate-limited test sends, versions and restore. Fast tests cover authentication, validation, encoding, conflicts under concurrent saves, rollback, snapshots of every kind and the next code email using the saved branding. Sender domains (custom From addresses with OCI DKIM) are not implemented |
 | OAuth 2.0/OIDC provider on OpenIddict: authorization code with S256 PKCE, rotating refresh tokens, discovery, JWKS, userinfo, RP-initiated logout | TS-491 (TS-433 design) | Served for one issuer, `{public origin}/terrascale`, and the `ts-dashboard` client. ES256 access tokens (`at+jwt`, configured audiences, email claims) and identity tokens from the key ring; client credentials for configured service clients; exactly-once code and refresh redemption with reuse revocation. Fast test covers sign-in, code redemption, token verification with IdentityModel, userinfo and identity-token rejection (see below) |
-| Introspection, per-instance issuers, client management API, token pruning | TS-433 design (not in TS-491) | Not implemented; TS-704 adds peer-IP admission limits on every token grant and IP/email limits on hosted sign-in |
+| Introspection, client management API, token pruning | TS-433 design (not in TS-491) | Not implemented; TS-704 adds peer-IP admission limits on every token grant and IP/email limits on hosted sign-in |
 | Device flow, guest accounts, browser CORS | TS-495 (TS-433 design) | Not implemented |
 | MFA (TOTP, recovery codes, step-up) | TS-707 (TS-434 design) | Internal TOTP and recovery-code persistence implemented; no MFA HTTP endpoints or sign-in enforcement yet. [Slice status and deployment prerequisite](mfa.md). Email passcodes moved to TS-490 |
 | Passkeys | TS-435 | Not yet ported |
@@ -35,7 +35,7 @@ Nothing here implies acceptance against a live TerraBase deployment.
 | Platform organizations, projects, organization and project roles | TS-598 | Served under `/v1/terrascale/…` with the caller's sign-in access token (see below); contract in [`platform-contract.md`](platform-contract.md) |
 | Invitations, ownership transfer, audit of the platform | TS-598 | Served: email invitations to an organization or project role, ownership transfer, and audit events written with every change (see the [port guide](csharp-port.md#invitations-ownership-transfer-and-audit)) |
 | API keys exchanged for organization and project tokens (client credentials, token exchange) | TS-598 | Served: organization and project keys, rotation with a grace, the client-credentials and token-exchange grants (see the [port guide](csharp-port.md#api-keys-and-organization-and-project-tokens)) |
-| Per-project tenants (one issuer per customer project) | TS-598 | Contract published; not served |
+| Per-project tenants (one issuer per customer project) | TS-598 | Partly served: `{origin}/{project id}` issuers with their own key ring, discovery and JWKS while the project exists (404 otherwise); their OAuth endpoints answer 404 until the project tenant surface (contract slice 9). Fast tests cover issuer, keys, isolation from the platform's keys, and 404 for unknown and deleted projects |
 | `usage:read` and `billing:*` scopes, project suspension, platform administrators, ts-cli device flow, ts-auth's own storage token | TS-598 | Contract v1.1 published; not served |
 | End-user organizations of a project tenant, enrollment domains, authorization checks | TS-437 | Not yet ported |
 | SCIM directories, users, groups (including operator repair runbooks) | TS-438 | Not yet ported |
@@ -179,10 +179,12 @@ instances and API keys.
 
 ## TS-491 OpenID Connect
 
-TS-491 serves an OpenIddict 7.7.1 provider for one issuer,
-`{TS_AUTH_PUBLIC_ORIGIN}/terrascale`, so ts-dashboard can sign in. There is no
-instance registry yet; other slugs answer 404. The issuer and every advertised
-URL derive only from `TS_AUTH_PUBLIC_ORIGIN`, never the Host header.
+TS-491 serves an OpenIddict 7.7.1 provider for the platform issuer
+`{origin}/terrascale` (the origin is `https://auth.terrascale.tech` unless a
+preview or test sets `TS_AUTH_PUBLIC_ORIGIN`), so ts-dashboard can sign in.
+Each project is a tenant whose `{origin}/{project id}` discovery document and
+JWKS are served; other slugs answer 404. The issuer and every advertised URL
+derive only from the origin, never the Host header.
 
 Implemented: the authorization code flow with S256 PKCE required for every
 client, scopes `openid`, `email`, `profile` and `offline_access`, 1-minute

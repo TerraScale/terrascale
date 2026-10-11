@@ -33,15 +33,12 @@ Connect issuer.
 
 | Tenant | Who signs in | Issuer |
 | --- | --- | --- |
-| `terrascale` | TerraScale customers: people using the dashboard, the CLI and the MCP server | `https://gru.auth.terrascale.tech/terrascale` |
-| `{project id}` | The end users of one customer project | `https://gru.auth.terrascale.tech/{project id}` |
+| `terrascale` | TerraScale customers: people using the dashboard, the CLI and the MCP server | `https://auth.terrascale.tech/terrascale` |
+| `{project id}` | The end users of one customer project | `https://auth.terrascale.tech/{project id}` |
 
-- **Origin.** The issuer is `{TS_AUTH_PUBLIC_ORIGIN}/{tenant}`, and the origin
-  is regional: `https://{region}.auth.terrascale.tech`, so
-  `https://gru.auth.terrascale.tech` in gru-1. The global
-  `https://auth.terrascale.tech` is a ts-atlas proxy; its discovery documents
-  name the regional issuer, so configure relying parties with the regional one.
-  The issuer never comes from a request's `Host` header.
+- **Origin.** The issuer is `https://auth.terrascale.tech/{tenant}`: one
+  global origin, served in every region behind Fly Proxy. The issuer never
+  comes from a request's `Host` header.
 - **Project tenants.** Creating a project creates its tenant, whose slug is the
   project id (a canonical uppercase ULID). Deleting the project deletes the
   tenant: its routes answer `404`, and ts-auth refuses its tokens. The slug
@@ -69,7 +66,7 @@ Connect issuer.
 
 ## 2. Resources
 
-The platform management API is under `https://gru.auth.terrascale.tech/v1/terrascale`.
+The platform management API is under `https://auth.terrascale.tech/v1/terrascale`.
 
 ```text
 organization ─┬─ members            (org roles)
@@ -85,7 +82,7 @@ organization ─┬─ members            (org roles)
 | --- | --- |
 | Organization | `{id, name, created_by, created_at, role}`; `role` is the caller's organization role, `null` for a project-only collaborator |
 | Member | `{user_id, email, role, joined_at}` |
-| Project | `{id, organization_id, name, issuer, created_by, created_at, role}`; `issuer` is the project tenant's, `{origin}/{id}`, and `null` until project tenants are served (slice 5); `role` is the caller's effective project role |
+| Project | `{id, organization_id, name, issuer, created_by, created_at, role}`; `issuer` is the project tenant's, `{origin}/{id}`; `role` is the caller's effective project role |
 | Project member | `{user_id, email, role, granted_at}` |
 | Invitation | `{id, email, role, project_id, invited_by, created_at, expires_at, status}` |
 | Ownership transfer | `{from_user_id, to_user_id, created_at, expires_at}` |
@@ -329,7 +326,7 @@ issuance-before-enforcement deployment gate is documented in `docs/auth/mfa.md`.
 ### 6.4 Rules for TerraBase and other resource servers
 
 1. Validate `typ` `at+jwt` (or `application/at+jwt`), ES256 by a `kid` from the
-   issuer's JWKS, `iss` equal to `https://gru.auth.terrascale.tech/terrascale`
+   issuer's JWKS, `iss` equal to `https://auth.terrascale.tech/terrascale`
    exactly, `aud` including your audience, and `exp`/`nbf` (decision 0007's
    rules stay).
 2. A route under `/v1/organizations/{organization}` needs `org_id` equal to
@@ -524,7 +521,7 @@ Each slice is one pull request with its integration tests, and updates
 5. The `usage:read` and `billing:*` scopes, project suspension and platform
    administrators.
 6. The ts-cli device flow.
-7. Project tenants: per-project issuers, discovery, JWKS and key rings.
+7. Project tenants: per-project issuers, discovery, JWKS and key rings (served).
 8. ts-auth's own storage token (section 9), once TS-589 and TS-591 support it.
 9. The project tenant surface (its OAuth clients, end users, sign-in), in a
    later revision of this contract.

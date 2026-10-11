@@ -21,7 +21,6 @@ public sealed class ConfigurationTests
 
     [Test]
     [Arguments("master-key", "TS_AUTH_MASTER_KEY is required")]
-    [Arguments("public-origin", "TS_AUTH_PUBLIC_ORIGIN is required")]
     [Arguments("database", "TS_AUTH_DATABASE is required")]
     public async Task Startup_refuses_missing_required_settings(string key, string message)
     {

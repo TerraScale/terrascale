@@ -1217,7 +1217,7 @@ components:
         issuer:
           type: [string, 'null']
           format: uri
-          description: The project tenant's issuer, {public origin}/{project id}; null until project tenants are served (slice 5).
+          description: The project tenant's issuer, {public origin}/{project id}.
         created_by: { $ref: '#/components/schemas/Ulid' }
         created_at: { $ref: '#/components/schemas/Timestamp' }
         role:
