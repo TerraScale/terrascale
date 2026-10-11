@@ -238,8 +238,11 @@ are encoded straight into the response pipe without intermediate strings. An
 
 ## Upgrading from 2.0 and earlier
 
-3.0 is the first release on .NET 11. It ships as `3.0.<n>-rc.1` prerelease
-packages until .NET 11 is released.
+3.0 is the first release on .NET 11.
+
+Package versions are calendar versions: `YYYY.MMDD.HHmm` of the build commit's
+UTC time, with a fourth `.ss` part when the parent commit lands in the same
+minute. The same commit always gives the same version.
 
 - Targets `net11.0`.
 - `AddTerraScaleEndpoints()` without arguments is now generated per project

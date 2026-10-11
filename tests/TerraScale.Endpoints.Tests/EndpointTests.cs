@@ -155,10 +155,40 @@ public sealed class EndpointTests
         await Assert.That(document.RootElement.GetProperty("info").GetProperty("title").GetString()).IsEqualTo("Custom TerraScale API");
         await Assert.That(document.RootElement.GetProperty("info").GetProperty("version").GetString()).IsEqualTo("v2");
         await Assert.That(scalar).Contains("\"url\":\"docs/v2.json\"");
+        await Assert.That(scalar).Contains("\"withDefaultFonts\":false");
+        await Assert.That(scalar).Contains("\"telemetry\":false");
+        await Assert.That(scalar).Contains("\"agent\":{\"disabled\":true}");
 
         await app.StopAsync();
         await app.DisposeAsync();
     }
+
+    [Test]
+    public async Task ConventionsOnMappedDocsReachOpenApiAndScalar()
+    {
+        var builder = WebApplication.CreateBuilder();
+        builder.WebHost.UseUrls("http://127.0.0.1:0");
+        builder.Services.AddTerraScaleEndpoints([typeof(ProbeEndpoint)]);
+        var app = builder.Build();
+        app.MapTerraScaleEndpoints();
+        app.MapTerraScaleOpenApi().WithMetadata(new ListenerMarker());
+        await app.StartAsync();
+
+        var endpoints = app.Services.GetServices<EndpointDataSource>().SelectMany(source => source.Endpoints).ToArray();
+        static bool HasPattern(Endpoint endpoint, string text) => endpoint is RouteEndpoint route && route.RoutePattern.RawText?.Contains(text, StringComparison.Ordinal) == true;
+        var docs = endpoints.Where(endpoint => HasPattern(endpoint, "/openapi") || HasPattern(endpoint, "/scalar")).ToArray();
+        await Assert.That(docs.Any(endpoint => HasPattern(endpoint, "/openapi"))).IsTrue();
+        await Assert.That(docs.Any(endpoint => HasPattern(endpoint, "/scalar"))).IsTrue();
+        await Assert.That(docs.All(endpoint => endpoint.Metadata.GetMetadata<ListenerMarker>() is not null)).IsTrue();
+        var probe = endpoints.SingleOrDefault(endpoint => HasPattern(endpoint, "/probe"));
+        await Assert.That(probe).IsNotNull();
+        await Assert.That(probe!.Metadata.GetMetadata<ListenerMarker>()).IsNull();
+
+        await app.StopAsync();
+        await app.DisposeAsync();
+    }
+
+    private sealed record ListenerMarker;
 
     [Test]
     public async Task EndpointLivesThroughResultExecution()

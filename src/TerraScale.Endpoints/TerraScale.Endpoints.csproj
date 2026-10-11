@@ -3,15 +3,8 @@
     <RootNamespace>TerraScale.Endpoints</RootNamespace>
     <PackageId>TerraScale.Endpoints</PackageId>
     <Description>Shared TerraScale endpoint authoring and ASP.NET Core mapping library.</Description>
-    <!-- Bump major.minor by hand; CI sets VersionPatch to the run number so
-         every main push publishes a new version. Local builds use patch 0. -->
-    <VersionMajorMinor>3.0</VersionMajorMinor>
-    <VersionPatch Condition="'$(VersionPatch)' == ''">0</VersionPatch>
-    <!-- Prerelease until .NET 11 and Microsoft.AspNetCore.OpenApi 11 ship stable;
-         NuGet refuses a stable package with a prerelease dependency. Clear it then. -->
-    <VersionPrerelease>rc.1</VersionPrerelease>
-    <Version>$(VersionMajorMinor).$(VersionPatch)</Version>
-    <Version Condition="'$(VersionPrerelease)' != ''">$(Version)-$(VersionPrerelease)</Version>
+    <!-- Stable calendar versions while it depends on the prerelease Microsoft.AspNetCore.OpenApi 11 rc; drop when that ships stable. -->
+    <NoWarn>$(NoWarn);NU5104</NoWarn>
     <IsAotCompatible>true</IsAotCompatible>
     <PackageProjectUrl>https://git.terrascale.tech/TerraScale/ts-libs</PackageProjectUrl>
     <RepositoryUrl>https://git.terrascale.tech/TerraScale/ts-libs</RepositoryUrl>

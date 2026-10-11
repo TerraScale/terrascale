@@ -116,20 +116,25 @@ public static class EndpointServiceCollectionExtensions
         return routes;
     }
 
-    /// <summary>Maps the OpenAPI document and Scalar UI.</summary>
-    public static WebApplication MapTerraScaleOpenApi(this WebApplication app)
+    /// <summary>Maps the OpenAPI document and Scalar UI; conventions added to the returned builder apply to both.</summary>
+    public static IEndpointConventionBuilder MapTerraScaleOpenApi(this IEndpointRouteBuilder routes)
     {
-        ArgumentNullException.ThrowIfNull(app);
-        var options = app.Services.GetRequiredService<EndpointOptions>();
-        app.MapOpenApi(options.OpenApiRoute);
-        app.MapScalarApiReference(options.ScalarRoute, scalar =>
+        ArgumentNullException.ThrowIfNull(routes);
+        var options = routes.ServiceProvider.GetRequiredService<EndpointOptions>();
+        var docs = routes.MapGroup(string.Empty);
+        docs.MapOpenApi(options.OpenApiRoute);
+        docs.MapScalarApiReference(options.ScalarRoute, scalar =>
         {
+            // System fonts, no telemetry and no AI agent: the page talks to nothing but this service.
             scalar
                 .WithTitle(options.Title)
+                .DisableDefaultFonts()
+                .DisableTelemetry()
+                .DisableAgent()
                 .WithOpenApiRoutePattern(options.OpenApiRoute)
                 .AddDocument(options.Version, options.Title, options.OpenApiRoute, isDefault: true);
         });
-        return app;
+        return docs;
     }
 
     private static T? FindSingleton<T>(IServiceCollection services)

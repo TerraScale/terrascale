@@ -50,7 +50,16 @@ jobs:
       - uses: https://data.forgejo.org/actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           github-server-url: "https://git.terrascale.tech"
+          fetch-depth: 2 # the package version reads the first parent's commit time
           persist-credentials: false
+
+      - name: Compute calendar package version
+        run: |
+          set -euo pipefail
+          bash scripts/package-version-test.sh
+          version=$(bash scripts/package-version.sh)
+          echo "PACKAGE_VERSION=$version" >> "$GITHUB_ENV"
+          echo "Package version: $version"
 
       - name: Build ts-libs with strict diagnostics
         run: |
@@ -62,7 +71,7 @@ jobs:
             -p:Nullable=enable \
             -p:TreatWarningsAsErrors=true \
             -p:AnalysisLevel=latest-recommended \
-            -p:VersionPatch=${{ forgejo.run_number }}
+            -p:Version="$PACKAGE_VERSION"
 
       - run: |
           set -euo pipefail
@@ -97,7 +106,7 @@ jobs:
             --configuration Release \
             --no-build \
             --nologo \
-            -p:VersionPatch=${{ forgejo.run_number }} \
+            -p:Version="$PACKAGE_VERSION" \
             --output artifacts/packages
           echo "Packed packages:"
           ls -1 artifacts/packages
@@ -105,6 +114,13 @@ jobs:
             echo "No packages were produced; every project must be non-packable or a library is missing IsPackable" >&2
             exit 1
           fi
+          # Only calendar versions (YYYY.MMDD.HHmm[.ss]) may ever reach the registry.
+          for pkg in artifacts/packages/*.nupkg; do
+            if [[ ! $pkg =~ \.[0-9]{4}\.[0-9]{3,4}\.[0-9]{1,4}(\.[0-9]{1,2})?\.nupkg$ || $pkg != *".$PACKAGE_VERSION.nupkg" ]]; then
+              echo "$pkg is not the calendar version $PACKAGE_VERSION" >&2
+              exit 1
+            fi
+          done
 
       - name: Verify the packed package in a standalone NativeAOT consumer
         run: |
