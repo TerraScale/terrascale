@@ -80,7 +80,7 @@ func run() (bool, error) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	// Interrupts cancel ctx and return normally, so this defer also runs on the signal path.
-	creds, cleanup, err := benchCredentials(ctx)
+	creds, cleanup, err := benchCredentials()
 	if err != nil {
 		return false, err
 	}

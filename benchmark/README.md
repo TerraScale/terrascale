@@ -78,10 +78,8 @@ merges; zeroes are never substituted.
 ## Credentials and admission
 
 The final SDK client consumes `TS_BENCH_CLIENT_ID` and
-`TS_BENCH_CLIENT_SECRET`. Under the operating contract, OCI Vault creates and
-delivers first-party credentials automatically, with vendor keys stored once.
-This client/delivery integration is still pending; no manual secret copying is
-an onboarding step and the preflights must not read credentials. The client
+`TS_BENCH_CLIENT_SECRET`. Their delivery integration is still pending; the
+preflights must not read credentials. The client
 must be a dedicated project-scoped OAuth credential with database read/write
 and document read/write grants. A service slug alone has no tenant authority.
 Plain ULIDs identify runs, databases and stored entities. Credentials, JWTs and
@@ -110,7 +108,7 @@ Measures the production API through ts-go, ts-dotnet (JIT and Native AOT) and
 raw-HTTP baselines. The contract is [docs/api-bench.md](docs/api-bench.md); the
 Go client is [clients/go](clients/go/README.md).
 
-Run it against production; the key is read from OCI Vault (see the credentials section of the contract):
+Run it against production; the key comes from the file named by `TS_BENCH_KEY_FILE` (see the credentials section of the contract):
 
 ```sh
 nice -n 19 make api-bench CLUSTER_STATE=stable   # or CLUSTER_STATE=changing
