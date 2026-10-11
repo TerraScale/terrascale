@@ -90,6 +90,7 @@ target="http://127.0.0.1:${app_port}"
 
 export TS_AUTH_ENVIRONMENT=${TS_AUTH_ENVIRONMENT:-Development}
 export TS_AUTH_LISTEN="$target"
+export TS_AUTH_METRICS_LISTEN="http://127.0.0.1:$(free_port)"
 export TS_AUTH_PUBLIC_ORIGIN="$origin"
 export TS_AUTH_DATABASE=${TS_AUTH_DATABASE:-00000000-0000-0000-0000-000000000000/ts-auth-dev-$(basename "$repo")}
 export TS_AUTH_MASTER_KEY=${TS_AUTH_MASTER_KEY:-$(head -c 32 /dev/urandom | base64)}

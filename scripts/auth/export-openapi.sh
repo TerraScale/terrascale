@@ -31,6 +31,7 @@ if [[ -n $names ]]; then mapfile -t inherited <<<"$names"; fi
 # back from this process's own startup log, so no other listener can answer.
 env "${inherited[@]}" \
   TS_AUTH_LISTEN="http://127.0.0.1:0" \
+  TS_AUTH_METRICS_LISTEN="http://127.0.0.1:0" \
   TS_AUTH_PUBLIC_ORIGIN="https://auth.example.invalid" \
   TS_AUTH_DATABASE="00000000-0000-0000-0000-000000000000/openapi-export" \
   TS_AUTH_MASTER_KEY="$(head -c 32 /dev/urandom | base64)" \

@@ -17,10 +17,11 @@ public sealed class AuthTestServer : IAsyncDisposable
 {
     private static int sequence;
 
-    private AuthTestServer(WebApplication app, Uri baseAddress)
+    private AuthTestServer(WebApplication app, Uri baseAddress, Uri metricsAddress)
     {
         this.App = app;
         this.BaseAddress = baseAddress;
+        this.MetricsAddress = metricsAddress;
         this.Client = NewClient();
     }
 
@@ -30,6 +31,9 @@ public sealed class AuthTestServer : IAsyncDisposable
     /// <summary>The loopback origin the server listens on.</summary>
     public Uri BaseAddress { get; }
 
+    /// <summary>The loopback origin of the metrics listener.</summary>
+    public Uri MetricsAddress { get; }
+
     /// <summary>A client that never follows redirects and never stores cookies.</summary>
     public HttpClient Client { get; }
 
@@ -37,6 +41,7 @@ public sealed class AuthTestServer : IAsyncDisposable
     public static Dictionary<string, string> DefaultSettings() => new(StringComparer.Ordinal)
     {
         ["listen"] = "http://127.0.0.1:0",
+        ["metrics-listen"] = "http://127.0.0.1:0",
         ["public-origin"] = "https://auth.test.invalid",
         ["database"] = $"{Guid.NewGuid():D}/ts-auth-test-{Environment.ProcessId}-{Interlocked.Increment(ref sequence)}",
         ["master-key"] = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)),
@@ -68,8 +73,10 @@ public sealed class AuthTestServer : IAsyncDisposable
         {
             routes?.Invoke(app);
             await app.StartAsync();
-            var address = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single();
-            return new AuthTestServer(app, new Uri(address.Replace("[::]", "127.0.0.1", StringComparison.Ordinal)));
+            // Bound in order: the public listener, then the metrics listener.
+            var addresses = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses
+                .Select(address => new Uri(address.Replace("[::]", "127.0.0.1", StringComparison.Ordinal))).ToArray();
+            return new AuthTestServer(app, addresses[0], addresses[1]);
         }
         catch (Exception startFailure)
         {

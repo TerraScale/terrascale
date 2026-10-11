@@ -26,6 +26,24 @@ public sealed class HealthTests
     }
 
     [Test]
+    public async Task Prometheus_metrics_are_served_only_on_the_metrics_listener()
+    {
+        await using var server = await AuthTestServer.StartAsync();
+        using var metrics = new HttpClient { BaseAddress = server.MetricsAddress };
+        using var health = await server.Client.GetAsync("/healthz");
+
+        using var scrape = await metrics.GetAsync("/metrics");
+        var text = await scrape.Content.ReadAsStringAsync();
+        using var publicScrape = await server.Client.GetAsync("/metrics");
+        using var otherPath = await metrics.GetAsync("/healthz");
+
+        await Assert.That(scrape.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(text).Contains("# TYPE http_server_request_duration_seconds");
+        await Assert.That(publicScrape.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        await Assert.That(otherPath.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+    }
+
+    [Test]
     public async Task Readiness_fails_closed_when_storage_is_not_reachable()
     {
         await using var server = await AuthTestServer.StartAsync();

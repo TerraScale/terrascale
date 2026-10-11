@@ -1,3 +1,5 @@
+using Microsoft.AspNetCore.Connections.Features;
+using Microsoft.AspNetCore.Server.Kestrel.Core;
 using OpenTelemetry.Logs;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
@@ -10,13 +12,18 @@ using TerraScale.Logging;
 namespace TerraScale.Authentication.Hosting;
 
 /// <summary>
-/// OpenTelemetry traces, metrics and logs pushed over OTLP, plus error reporting to
-/// GlitchTip through the Sentry SDK. Nothing is exported unless it is configured.
+/// Prometheus metrics on the metrics listener (always), OpenTelemetry traces and logs pushed over OTLP when configured,
+/// plus error reporting to GlitchTip through the Sentry SDK when configured.
 /// </summary>
 public static partial class Telemetry
 {
     /// <summary>Service name reported in telemetry resources.</summary>
     public const string ServiceName = "ts-auth";
+
+    /// <summary>The Prometheus scrape path, served only on <see cref="AuthOptions.MetricsListen"/>.</summary>
+    public const string MetricsPath = "/metrics";
+
+    private static readonly object MetricsConnection = new();
 
     // Header values are client-chosen text (User-Agent and Accept included), so only the
     // numeric body length reaches GlitchTip.
@@ -43,11 +50,9 @@ public static partial class Telemetry
         // Every provider sees exceptions only as type names and stack traces.
         builder.Services.AddSafeLogging();
 
-        // Standard OTEL_* variables select the collector. Each signal exports only when the
-        // shared endpoint or its own endpoint is set, so a traces-only collector never also
-        // receives (or fails on) logs and metrics.
+        // Standard OTEL_* variables select the collector. Traces and logs export only when the
+        // shared endpoint or their own endpoint is set; metrics are always scraped (/metrics).
         var traces = OtlpConfigured("TRACES");
-        var metrics = OtlpConfigured("METRICS");
         var logs = OtlpConfigured("LOGS");
         if (logs)
         {
@@ -60,27 +65,20 @@ public static partial class Telemetry
             });
         }
 
-        if (traces || metrics)
+        var telemetry = builder.Services.AddOpenTelemetry()
+            .ConfigureResource(resource => resource.AddService(ServiceName, serviceVersion: ServiceVersion.Value))
+            .WithMetrics(meters => meters
+                .AddAspNetCoreInstrumentation()
+                .AddHttpClientInstrumentation()
+                .AddRuntimeInstrumentation()
+                .AddPrometheusExporter());
+        if (traces)
         {
-            var telemetry = builder.Services.AddOpenTelemetry()
-                .ConfigureResource(resource => resource.AddService(ServiceName, serviceVersion: ServiceVersion.Value));
-            if (traces)
-            {
-                telemetry.WithTracing(tracing => tracing
-                    .AddAspNetCoreInstrumentation(aspnet =>
-                        aspnet.Filter = context => !context.Request.Path.StartsWithSegments("/healthz", StringComparison.Ordinal))
-                    .AddHttpClientInstrumentation()
-                    .AddOtlpExporter());
-            }
-
-            if (metrics)
-            {
-                telemetry.WithMetrics(meters => meters
-                    .AddAspNetCoreInstrumentation()
-                    .AddHttpClientInstrumentation()
-                    .AddRuntimeInstrumentation()
-                    .AddOtlpExporter());
-            }
+            telemetry.WithTracing(tracing => tracing
+                .AddAspNetCoreInstrumentation(aspnet =>
+                    aspnet.Filter = context => !context.Request.Path.StartsWithSegments("/healthz", StringComparison.Ordinal))
+                .AddHttpClientInstrumentation()
+                .AddOtlpExporter());
         }
 
         if (options.SentryDsn is { } dsn)
@@ -197,4 +195,38 @@ public static partial class Telemetry
         url is not null && Uri.TryCreate(url, UriKind.Absolute, out var parsed)
             ? parsed.GetComponents(UriComponents.SchemeAndServer | UriComponents.Path, UriFormat.UriEscaped)
             : null;
+
+    /// <summary>Listens on <paramref name="endpoint"/> for the metrics listener, whose connections reach only <see cref="MetricsPath"/>.</summary>
+    public static void ListenForMetrics(this KestrelServerOptions kestrel, System.Net.IPEndPoint endpoint)
+    {
+        ArgumentNullException.ThrowIfNull(kestrel);
+        kestrel.Listen(endpoint, listen => listen.Use(next => connection =>
+        {
+            connection.Items[MetricsConnection] = true;
+            return next(connection);
+        }));
+    }
+
+    /// <summary>
+    /// Serves the Prometheus scrape on metrics connections and answers 404 to anything else there; on the public listener
+    /// <see cref="MetricsPath"/> is not served.
+    /// </summary>
+    public static void UseAuthMetrics(this WebApplication app)
+    {
+        ArgumentNullException.ThrowIfNull(app);
+        app.UseOpenTelemetryPrometheusScrapingEndpoint(context => IsMetricsConnection(context) && context.Request.Path == MetricsPath);
+        app.Use((HttpContext context, RequestDelegate next) =>
+        {
+            if (!IsMetricsConnection(context))
+            {
+                return next(context);
+            }
+
+            context.Response.StatusCode = StatusCodes.Status404NotFound;
+            return Task.CompletedTask;
+        });
+    }
+
+    private static bool IsMetricsConnection(HttpContext context) =>
+        context.Features.Get<IConnectionItemsFeature>()?.Items.ContainsKey(MetricsConnection) == true;
 }
