@@ -79,6 +79,9 @@ when `client-port` is set, on the client TLS listener.
 
 Point load balancers and reverse proxies (Caddy) at the client listener's `/readyz`.
 
+Target replication design (Turso + CDC + lattices across gru and sjc, with its slice plan):
+[`multi-region-replication.md`](multi-region-replication.md). It replaces the replication described below.
+
 Replication setup, certificates, limits and metrics: [`docs/terrabase/replication.md`](replication.md).
 `GET /replication` on the loopback administrative listener reports outbound per-peer
 and per-database durable lag, detected journal conflicts and catch-up times; see
