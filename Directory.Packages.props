@@ -52,7 +52,6 @@
     <PackageVersion Include="Otp.NET" Version="1.4.1" />
   </ItemGroup>
   <ItemGroup Label="Integrations">
-    <PackageVersion Include="MailKit" Version="4.18.1" />
     <PackageVersion Include="Sentry.AspNetCore" Version="6.12.0" />
   </ItemGroup>
   <!-- OpenTelemetry: keep every package on the same release train. The Prometheus

@@ -75,7 +75,8 @@ Guest admission permits 30 requests per client per minute. Upgrade requests
 permit five per user and per target-mailbox bucket per minute. These counters
 use conditional writes on the authority and do not reset on process restart.
 They supplement, rather than replace, edge controls and bot protection. User
-quota is the final durable admission boundary. Configure SMTP for actual email
+quota is the final durable admission boundary. Configure Cloudflare Email Sending
+(`CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_EMAIL_TOKEN`) for actual email
 delivery; the development logging sender does not expose verification codes.
 
 The conversion is committed before credentials are returned. If the response is

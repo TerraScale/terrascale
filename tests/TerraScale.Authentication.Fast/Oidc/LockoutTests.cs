@@ -204,7 +204,7 @@ public sealed class LockoutTests(TerraBaseFixture fixture)
             }
 
             await WaitForSendsAsync(sender, 1);
-            // More than a queue's capacity, mixing known and unknown addresses while SMTP cannot make progress.
+            // More than a queue's capacity, mixing known and unknown addresses while the sender cannot make progress.
             for (var attempt = 0; attempt < SignInMail.Capacity + 2; attempt++)
             {
                 using var refused = await oidc.GrantAsync(HeadlessGrants.EmailCode, attempt % 2 == 0 ? email : unknown,
@@ -218,7 +218,7 @@ public sealed class LockoutTests(TerraBaseFixture fixture)
                 await Assert.That(recovery.StatusCode).IsEqualTo(HttpStatusCode.Accepted);
             }
 
-            // The recovery worker reaches SMTP without waiting for the notice worker or using its full queue.
+            // The recovery worker reaches the sender without waiting for the notice worker or using its full queue.
             await WaitForSendsAsync(sender, 2);
             gate.SetResult();
             var messages = await Task.WhenAll(sender.NextAsync(), sender.NextAsync());
