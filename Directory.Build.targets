@@ -54,5 +54,8 @@
     <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
     <!-- Shared harness source; deliberately not a third test project. -->
     <Compile Include="$(MSBuildThisFileDirectory)tests/TerraBase.TestHarness/**/*.cs" Link="TestHarness/%(RecursiveDir)%(Filename)%(Extension)" />
+    <!-- Every test starts its own host, and DI's dynamic engine compiles IL resolvers per host that the finalizer thread
+         then tears down: about 13% of the suite's CPU. The reflection engine resolves the same graph. -->
+    <RuntimeHostConfigurationOption Include="Microsoft.Extensions.DependencyInjection.DisableDynamicEngine" Value="true" />
   </ItemGroup>
 </Project>

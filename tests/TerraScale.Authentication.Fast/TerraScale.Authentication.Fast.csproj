@@ -26,6 +26,10 @@
     <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" />
   </ItemGroup>
   <ItemGroup>
+    <!-- Tests start many short-lived hosts: no IL-compiled DI resolvers per host (see Directory.Build.targets). -->
+    <RuntimeHostConfigurationOption Include="Microsoft.Extensions.DependencyInjection.DisableDynamicEngine" Value="true" />
+  </ItemGroup>
+  <ItemGroup>
     <!-- Shared harness source; deliberately not a third test project. -->
     <Compile Include="../TerraScale.Authentication.TestHarness/**/*.cs" Link="TestHarness/%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>
