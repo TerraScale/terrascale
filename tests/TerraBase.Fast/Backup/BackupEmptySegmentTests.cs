@@ -19,7 +19,7 @@ public sealed class BackupEmptySegmentTests
     [Test]
     public async Task Empty_wal_segments_authenticate_and_a_cancelled_restore_does_not_block_the_next_restore(CancellationToken cancellationToken)
     {
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
         var requests = new ObserveCancelledRestore();
         await using var api = await ManagementApi.StartAsync(oci.Configure, services =>

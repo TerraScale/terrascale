@@ -15,7 +15,7 @@ public sealed class BackupClosedStoreTests
     [Test]
     public async Task A_store_closed_under_a_read_is_skipped_quietly_and_its_database_is_reopened_by_the_next_discovery(CancellationToken cancellationToken)
     {
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
         var logs = new BackupLogs();
         await using var api = await ManagementApi.StartAsync(oci.Configure, services =>

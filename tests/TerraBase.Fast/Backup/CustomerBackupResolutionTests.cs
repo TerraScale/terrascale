@@ -20,7 +20,7 @@ public sealed class CustomerBackupResolutionTests
     public async Task Unresolvable_customer_destinations_return_fixed_503_on_window_and_restore_listeners(string failure)
     {
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = Clock();
         await using var api = await StartAsync(settings => oci.Configure(settings), services =>
         {
@@ -31,7 +31,7 @@ public sealed class CustomerBackupResolutionTests
         await api.VerifyProjectBindingAsync(database.Organization, database.Project);
         using var project = ProjectClient(api, database);
         var record = new ProjectBackupDestinationRecord(failure == "unsupported-version" ? 2 : 1, Ulid.NewUlid().ToString(),
-            new(new Uri(FakeOci.CustomerEndpoint), "test-region-1", FakeOci.CustomerBucket, "customer", time.GetUtcNow()),
+            new(new Uri(FakeS3.CustomerEndpoint), "test-region-1", FakeS3.CustomerBucket, "customer", time.GetUtcNow()),
             new SealedCredentials("unwrappable-key", "unsealable-credentials"));
         // Seed persisted configuration that a previous deployment could write; exercise resolution through HTTP.
         await api.Server.Services.GetRequiredService<SystemCatalog>().WriteAsync(async transaction =>
@@ -61,7 +61,7 @@ public sealed class CustomerBackupResolutionTests
     public async Task Corrupt_customer_backup_material_remains_500_and_recovers_when_repaired(string material)
     {
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = Clock();
         await using var api = await StartAsync(oci.Configure, services =>
         {
@@ -74,11 +74,11 @@ public sealed class CustomerBackupResolutionTests
         using var project = ProjectClient(api, database);
         using (var saved = await project.PutAsJsonAsync(Uri($"/v1/projects/{database.Project}/backup-destination"), new
         {
-            endpoint = FakeOci.CustomerEndpoint,
+            endpoint = FakeS3.CustomerEndpoint,
             region = "test-region-1",
-            bucket = FakeOci.CustomerBucket,
-            accessKeyId = FakeOci.CustomerAccessKey,
-            secretKey = FakeOci.CustomerSecretKey,
+            bucket = FakeS3.CustomerBucket,
+            accessKeyId = FakeS3.CustomerAccessKey,
+            secretKey = FakeS3.CustomerSecretKey,
             mode = "customer",
         }, cancellationToken))
         {
@@ -138,8 +138,8 @@ public sealed class CustomerBackupResolutionTests
         await Assert.That(body.RootElement.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("unavailable");
         await Assert.That(body.RootElement.GetProperty("error").GetProperty("message").GetString())
             .IsEqualTo("backup bucket could not be accessed");
-        await Assert.That(text.Contains(FakeOci.CustomerEndpoint, StringComparison.Ordinal)).IsFalse();
-        await Assert.That(text.Contains(FakeOci.CustomerAccessKey, StringComparison.Ordinal)).IsFalse();
-        await Assert.That(text.Contains(FakeOci.CustomerSecretKey, StringComparison.Ordinal)).IsFalse();
+        await Assert.That(text.Contains(FakeS3.CustomerEndpoint, StringComparison.Ordinal)).IsFalse();
+        await Assert.That(text.Contains(FakeS3.CustomerAccessKey, StringComparison.Ordinal)).IsFalse();
+        await Assert.That(text.Contains(FakeS3.CustomerSecretKey, StringComparison.Ordinal)).IsFalse();
     }
 }

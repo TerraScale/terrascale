@@ -22,7 +22,7 @@ public sealed class DataKeyOverlapTests
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         using var requests = CancellationTokenSource.CreateLinkedTokenSource(token);
         using var overlapping = CancellationTokenSource.CreateLinkedTokenSource(requests.Token);
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 9, 12, 0, 0, TimeSpan.Zero));
         await using var api = await StartAsync(oci, time);
         var source = await api.CreateManagedDatabaseAsync("source");
@@ -46,7 +46,7 @@ public sealed class DataKeyOverlapTests
         var otherReads = oci.ObserveKey(otherKey);
         var stripes = new HashSet<int> { Stripe(otherKey) };
         var segmentKeys = new HashSet<string>(StringComparer.Ordinal);
-        var observed = new List<FakeOci.KeyRequests>(8);
+        var observed = new List<FakeS3.KeyRequests>(8);
         var documents = new List<(string Name, string Text)>(9) { ("before", before) };
         for (var index = 0; index < 8; index++)
         {
@@ -202,7 +202,7 @@ public sealed class DataKeyOverlapTests
         }
     }
 
-    private static async Task<ManagementApi> StartAsync(FakeOci oci, FakeTimeProvider time)
+    private static async Task<ManagementApi> StartAsync(FakeS3 oci, FakeTimeProvider time)
     {
         var api = await ManagementApi.StartAsync(oci.Configure, services =>
         {

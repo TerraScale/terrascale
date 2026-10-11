@@ -21,7 +21,7 @@ public sealed class BackupDiscoveryShutdownTests
     {
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         using var shutdown = new CancellationTokenSource();
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         using var body = new StalledSnapshotBody();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
         TrackedBackup? taps = null;
@@ -177,11 +177,11 @@ public sealed class BackupDiscoveryShutdownTests
     {
         var destination = new Dictionary<string, string>(StringComparer.Ordinal)
         {
-            ["endpoint"] = FakeOci.CustomerEndpoint,
+            ["endpoint"] = FakeS3.CustomerEndpoint,
             ["region"] = "test-region-1",
-            ["bucket"] = FakeOci.CustomerBucket,
-            ["accessKeyId"] = FakeOci.CustomerAccessKey,
-            ["secretKey"] = FakeOci.CustomerSecretKey,
+            ["bucket"] = FakeS3.CustomerBucket,
+            ["accessKeyId"] = FakeS3.CustomerAccessKey,
+            ["secretKey"] = FakeS3.CustomerSecretKey,
             ["mode"] = "customer",
         };
         using var response = await api.Client.PutAsJsonAsync(ManagementApi.Uri(database.ProjectPath + "/backup-destination"), destination, token);

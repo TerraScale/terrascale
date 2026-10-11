@@ -18,7 +18,7 @@ public sealed class BackupConfigurationIsolationTests
     {
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         using var shipping = CancellationTokenSource.CreateLinkedTokenSource(token);
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var hook = new UsageCommitHook();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 9, 12, 0, 0, TimeSpan.Zero));
         await using var api = await StartAsync(oci, time, hook);
@@ -126,7 +126,7 @@ public sealed class BackupConfigurationIsolationTests
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         using var shipping = CancellationTokenSource.CreateLinkedTokenSource(token);
         using var stop = new CancellationTokenSource();
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var hook = new UsageCommitHook();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 9, 12, 0, 0, TimeSpan.Zero));
         await using var api = await StartAsync(oci, time, hook);
@@ -213,7 +213,7 @@ public sealed class BackupConfigurationIsolationTests
         }
     }
 
-    private static async Task<ManagementApi> StartAsync(FakeOci oci, FakeTimeProvider time, UsageCommitHook hook)
+    private static async Task<ManagementApi> StartAsync(FakeS3 oci, FakeTimeProvider time, UsageCommitHook hook)
     {
         var api = await ManagementApi.StartAsync(oci.Configure, services =>
         {
@@ -229,11 +229,11 @@ public sealed class BackupConfigurationIsolationTests
     {
         using var response = await api.Client.PutAsJsonAsync(ManagementApi.Uri(database.ProjectPath + "/backup-destination"), new
         {
-            endpoint = FakeOci.CustomerEndpoint,
+            endpoint = FakeS3.CustomerEndpoint,
             region = "test-region-1",
-            bucket = FakeOci.CustomerBucket,
-            accessKeyId = FakeOci.CustomerAccessKey,
-            secretKey = FakeOci.CustomerSecretKey,
+            bucket = FakeS3.CustomerBucket,
+            accessKeyId = FakeS3.CustomerAccessKey,
+            secretKey = FakeS3.CustomerSecretKey,
             mode = "customer",
         }, token);
         response.EnsureSuccessStatusCode();

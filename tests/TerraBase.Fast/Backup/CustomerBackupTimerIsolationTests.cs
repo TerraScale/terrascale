@@ -21,7 +21,7 @@ public sealed class CustomerBackupTimerIsolationTests
     public async Task The_hosted_timer_ships_a_platform_siblings_snapshot_and_WAL_while_both_customer_slots_are_stalled()
     {
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
         using var timer = new TimerTime(time);
         TrackedBackup? taps = null;
@@ -55,11 +55,11 @@ public sealed class CustomerBackupTimerIsolationTests
                 clients.Add(data);
                 using var destination = await api.Client.PutAsJsonAsync(ManagementApi.Uri(database.ProjectPath + "/backup-destination"), new
                 {
-                    endpoint = FakeOci.CustomerEndpoint,
+                    endpoint = FakeS3.CustomerEndpoint,
                     region = "test-region-1",
-                    bucket = FakeOci.CustomerBucket,
-                    accessKeyId = FakeOci.CustomerAccessKey,
-                    secretKey = FakeOci.CustomerSecretKey,
+                    bucket = FakeS3.CustomerBucket,
+                    accessKeyId = FakeS3.CustomerAccessKey,
+                    secretKey = FakeS3.CustomerSecretKey,
                     mode = "customer",
                 }, token);
                 destination.EnsureSuccessStatusCode();
@@ -268,8 +268,8 @@ public sealed class CustomerBackupTimerIsolationTests
 
     private static async Task AssertPublicAsync(string json)
     {
-        await Assert.That(json.Contains(FakeOci.CustomerAccessKey, StringComparison.Ordinal)).IsFalse();
-        await Assert.That(json.Contains(FakeOci.CustomerSecretKey, StringComparison.Ordinal)).IsFalse();
+        await Assert.That(json.Contains(FakeS3.CustomerAccessKey, StringComparison.Ordinal)).IsFalse();
+        await Assert.That(json.Contains(FakeS3.CustomerSecretKey, StringComparison.Ordinal)).IsFalse();
         await Assert.That(json.Contains("wrappedKey", StringComparison.Ordinal)).IsFalse();
     }
 

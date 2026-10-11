@@ -20,7 +20,7 @@ public sealed class CustomerBackupProbeTests
     public async Task Cancellation_after_upload_joins_independent_bounded_cleanup_before_save_recovery(bool saveTimeout, bool cleanupTimeout)
     {
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 9, 12, 0, 0, TimeSpan.Zero));
         var request = new ObserveRequest();
         await using var api = await ManagementApi.StartAsync(oci.Configure, services =>
@@ -135,7 +135,7 @@ public sealed class CustomerBackupProbeTests
     public async Task Cleanup_preserves_probe_errors_requires_delete_permission_and_allows_object_lock(string kind)
     {
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         await using var api = await ManagementApi.StartAsync(oci.Configure, services => Manual(oci, services));
         var database = await api.CreateManagedDatabaseAsync();
         var route = Uri(database.ProjectPath + "/backup-destination");
@@ -184,7 +184,7 @@ public sealed class CustomerBackupProbeTests
     public async Task Invalid_probe_bodies_are_bounded_rejected_and_cleaned_up(string kind, bool chunked)
     {
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         await using var api = await ManagementApi.StartAsync(oci.Configure, services => Manual(oci, services));
         var database = await api.CreateManagedDatabaseAsync();
         var route = Uri(database.ProjectPath + "/backup-destination");
@@ -253,7 +253,7 @@ public sealed class CustomerBackupProbeTests
     public async Task Exact_probe_bytes_succeed_across_fragmented_reads_and_cleanup(bool chunked)
     {
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         await using var api = await ManagementApi.StartAsync(oci.Configure, services => Manual(oci, services));
         var database = await api.CreateManagedDatabaseAsync();
         var expected = Encoding.ASCII.GetBytes("TerraBase backup access check");
@@ -281,15 +281,15 @@ public sealed class CustomerBackupProbeTests
 
     private static object Destination() => new
     {
-        endpoint = FakeOci.CustomerEndpoint,
+        endpoint = FakeS3.CustomerEndpoint,
         region = "test-region-1",
-        bucket = FakeOci.CustomerBucket,
-        accessKeyId = FakeOci.CustomerAccessKey,
-        secretKey = FakeOci.CustomerSecretKey,
+        bucket = FakeS3.CustomerBucket,
+        accessKeyId = FakeS3.CustomerAccessKey,
+        secretKey = FakeS3.CustomerSecretKey,
         mode = "customer",
     };
 
-    private static void Manual(FakeOci oci, IServiceCollection services)
+    private static void Manual(FakeS3 oci, IServiceCollection services)
     {
         oci.Route(services);
         ManualBackupHosting.Configure(services);

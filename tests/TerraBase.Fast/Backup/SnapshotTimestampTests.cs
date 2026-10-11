@@ -19,7 +19,7 @@ public sealed class SnapshotTimestampTests
     [Arguments(true)]
     public async Task Initial_and_daily_snapshots_keep_the_pin_time_while_copying_allows_later_writes(bool daily)
     {
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = new ManualTime();
         var testCancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(testCancellationToken);

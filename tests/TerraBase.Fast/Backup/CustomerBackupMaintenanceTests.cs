@@ -20,7 +20,7 @@ public sealed class CustomerBackupMaintenanceTests
     public async Task Failed_destination_maintenance_preserves_measurements_and_refreshes_acknowledged_status(bool platform, bool deletion)
     {
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 9, 12, 0, 0, TimeSpan.Zero));
         await using var api = await StartAsync(oci.Configure, services =>
         {
@@ -85,7 +85,7 @@ public sealed class CustomerBackupMaintenanceTests
     public async Task Customer_body_transport_errors_are_sanitized_in_persisted_drill_diagnostics_and_restore_recovers()
     {
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 9, 12, 0, 0, TimeSpan.Zero));
         await using var api = await StartAsync(oci.Configure, services =>
         {
@@ -102,7 +102,7 @@ public sealed class CustomerBackupMaintenanceTests
         await PutAsync(data, database, "after", text, token);
         var marker = Ulid.NewUlid().ToString();
         oci.CustomerContentOverride = key => key.StartsWith(File(database) + "/snapshots/", StringComparison.Ordinal)
-            ? new StreamContent(new BrokenBody(marker + FakeOci.CustomerAccessKey + FakeOci.CustomerSecretKey)) : null;
+            ? new StreamContent(new BrokenBody(marker + FakeS3.CustomerAccessKey + FakeS3.CustomerSecretKey)) : null;
         var backup = api.Server.Services.GetRequiredService<IContinuousBackup>();
         time.Advance(TimeSpan.FromSeconds(10));
         await backup.RunOnceAsync(token);
@@ -110,7 +110,7 @@ public sealed class CustomerBackupMaintenanceTests
         await Assert.That(record.LastDrill!.Passed).IsFalse();
         await Assert.That(record.LastDrill.Error).IsEqualTo("customer backup object body could not be read");
         var diagnostic = JsonSerializer.Serialize(record, TerraBaseJsonContext.Default.BackupStatusRecord);
-        foreach (var secret in new[] { marker, FakeOci.CustomerAccessKey, FakeOci.CustomerSecretKey })
+        foreach (var secret in new[] { marker, FakeS3.CustomerAccessKey, FakeS3.CustomerSecretKey })
         {
             await Assert.That(diagnostic.Contains(secret, StringComparison.Ordinal)).IsFalse();
         }
@@ -126,11 +126,11 @@ public sealed class CustomerBackupMaintenanceTests
     {
         using var saved = await api.Client.PutAsJsonAsync(Uri(database.ProjectPath + "/backup-destination"), new
         {
-            endpoint = FakeOci.CustomerEndpoint,
+            endpoint = FakeS3.CustomerEndpoint,
             region = "test-region-1",
-            bucket = FakeOci.CustomerBucket,
-            accessKeyId = FakeOci.CustomerAccessKey,
-            secretKey = FakeOci.CustomerSecretKey,
+            bucket = FakeS3.CustomerBucket,
+            accessKeyId = FakeS3.CustomerAccessKey,
+            secretKey = FakeS3.CustomerSecretKey,
             mode = "customer",
         }, token);
         saved.EnsureSuccessStatusCode();

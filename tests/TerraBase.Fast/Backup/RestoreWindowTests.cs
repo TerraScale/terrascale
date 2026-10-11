@@ -13,7 +13,7 @@ public sealed class RestoreWindowTests
     [Test]
     public async Task An_unshipped_write_is_rejected_and_exact_latest_restores_the_last_stored_data()
     {
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
         await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
@@ -64,7 +64,7 @@ public sealed class RestoreWindowTests
     [Test]
     public async Task Exact_earliest_restores_before_later_changes_even_when_metadata_discovery_advances_time()
     {
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
         await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
@@ -140,7 +140,7 @@ public sealed class RestoreWindowTests
     [Test]
     public async Task Locked_objects_do_not_extend_the_plans_restore_window_after_stored_data_expires()
     {
-        using var oci = new FakeOci { Locked = _ => true };
+        var oci = new FakeS3 { Locked = _ => true };
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
         await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
@@ -176,7 +176,7 @@ public sealed class RestoreWindowTests
         await Assert.That(databases.GetProperty("items").EnumerateArray().Select(item => item.GetProperty("id").GetString()!)).IsEquivalentTo([database.Id]);
     }
 
-    private static void ManualShipping(FakeOci oci, IServiceCollection services)
+    private static void ManualShipping(FakeS3 oci, IServiceCollection services)
     {
         oci.Route(services);
         ManualBackupHosting.Configure(services);

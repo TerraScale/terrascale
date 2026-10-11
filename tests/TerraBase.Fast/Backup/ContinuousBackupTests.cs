@@ -23,7 +23,7 @@ public sealed class ContinuousBackupTests
     [Test]
     public async Task A_database_restores_as_of_a_chosen_second_from_its_encrypted_continuous_backup()
     {
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
         await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
@@ -102,7 +102,7 @@ public sealed class ContinuousBackupTests
     [Test]
     public async Task The_shipper_checkpoints_the_log_and_keeps_one_generation_across_its_restarts()
     {
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
         await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
@@ -147,7 +147,7 @@ public sealed class ContinuousBackupTests
     [Test]
     public async Task Automatic_checkpoints_across_several_passes_keep_one_generation()
     {
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
         await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
@@ -188,7 +188,7 @@ public sealed class ContinuousBackupTests
     [Test]
     public async Task A_log_checkpointed_by_another_process_ends_the_generation_and_loses_nothing()
     {
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
         await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
@@ -228,7 +228,7 @@ public sealed class ContinuousBackupTests
     [Test]
     public async Task A_shipper_cut_off_from_the_dns_stops_and_another_member_takes_over_once_fly_drops_it()
     {
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
         var store = new FakeMemberStore();
         var database = new TenantContext(EntityIds.New().ToString(), PlanTier.Hobby, EntityIds.New().ToString(), EntityIds.New().ToString());
@@ -303,7 +303,7 @@ public sealed class ContinuousBackupTests
     [Test]
     public async Task Retention_keeps_each_plans_window_and_the_daily_drill_rebuilds_the_database_from_the_bucket()
     {
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
         await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time, managementCredential: true);
         var backup = api.Server.Services.GetRequiredService<IContinuousBackup>();
@@ -351,7 +351,7 @@ public sealed class ContinuousBackupTests
     [Test]
     public async Task An_unavailable_plan_preserves_backup_history_and_retention_retries_after_recovery()
     {
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
         await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time, managementCredential: true);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
@@ -419,7 +419,7 @@ public sealed class ContinuousBackupTests
     [Test]
     public async Task Retention_waits_for_the_buckets_retention_rule_without_failing()
     {
-        using var oci = new FakeOci { Locked = _ => true };
+        var oci = new FakeS3 { Locked = _ => true };
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
         await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
@@ -456,7 +456,7 @@ public sealed class ContinuousBackupTests
     [Test]
     public async Task A_restore_drill_fails_when_the_bucket_no_longer_rebuilds_the_database()
     {
-        using var oci = new FakeOci();
+        var oci = new FakeS3();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
         await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
@@ -507,7 +507,7 @@ public sealed class ContinuousBackupTests
     private static string File(ManagedDatabaseRef database) => $"v1/{database.Organization}/{database.Project}/{database.Id}";
 
     // Snapshot keys are <ms>-<generation>-<position>, oldest first.
-    private static List<(DateTimeOffset At, long Position)> Snapshots(FakeOci oci, ManagedDatabaseRef database) =>
+    private static List<(DateTimeOffset At, long Position)> Snapshots(FakeS3 oci, ManagedDatabaseRef database) =>
         [.. oci.Objects.Keys.Where(key => key.StartsWith(File(database) + "/snapshots/", StringComparison.Ordinal)).Order(StringComparer.Ordinal)
             .Select(key => key.Split('/')[^1].Split('-'))
             .Select(parts => (DateTimeOffset.FromUnixTimeMilliseconds(long.Parse(parts[0], CultureInfo.InvariantCulture)), long.Parse(parts[2], CultureInfo.InvariantCulture)))];
@@ -530,7 +530,7 @@ public sealed class ContinuousBackupTests
     private static string DocumentPath(ManagedDatabaseRef database, string name, string document) =>
         $"/v1/projects/{database.Project}/databases/{name}/collections/people/documents/by-key?id={ManagementApi.DocumentId(document)}";
 
-    private static void ManualShipping(FakeOci oci, IServiceCollection services)
+    private static void ManualShipping(FakeS3 oci, IServiceCollection services)
     {
         oci.Route(services);
         ManualBackupHosting.Configure(services);
