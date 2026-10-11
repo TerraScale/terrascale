@@ -353,17 +353,17 @@
         "resolved": "1.3.1",
         "contentHash": "VIo1LtpoFvp5LlCDkTiQsKrjX+GMA7N37OEJoqHMhCOdIeNoi8uFocnwi8h3TklSySB3U4Y1+gThB00fJTnfGA=="
       },
-      "terrascale.auth.contracts": {
+      "terrascale.authentication.contracts": {
         "type": "Project"
       },
-      "terrascale.auth.security": {
+      "terrascale.authentication.security": {
         "type": "Project",
         "dependencies": {
           "Geralt": "[4.4.0, )",
           "Microsoft.IdentityModel.JsonWebTokens": "[8.23.0, )"
         }
       },
-      "terrascale.auth.store": {
+      "terrascale.authentication.store": {
         "type": "Project",
         "dependencies": {
           "TerraScale.Authentication.Contracts": "[1.0.0, )",

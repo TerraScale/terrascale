@@ -17,7 +17,7 @@
           "Microsoft.Extensions.Options.ConfigurationExtensions": "11.0.0-rc.1.26425.128"
         }
       },
-      "terrascale.auth.contracts": {
+      "terrascale.authentication.contracts": {
         "type": "Project"
       },
       "terrascale.dotnet": {
