@@ -31,6 +31,26 @@ public sealed class VerifyProjectBindingEndpoint(IProjectCatalog catalog) : Endp
     }
 
     /// <inheritdoc />
+    // The body's ts-auth organization must win over the legacy {organization} route value, which the binder prefers.
+    protected override async ValueTask<ProjectBindingRequest> BindAsync(CancellationToken cancellationToken)
+    {
+        var routes = HttpContext.Request.RouteValues;
+        if (!routes.Remove("organization", out var legacy))
+        {
+            return await base.BindAsync(cancellationToken);
+        }
+
+        try
+        {
+            return await base.BindAsync(cancellationToken);
+        }
+        finally
+        {
+            routes["organization"] = legacy;
+        }
+    }
+
+    /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(ProjectBindingRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
