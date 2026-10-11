@@ -132,15 +132,13 @@ its S3 API. Packaged fonts and static assets are embedded in the executable.
 ## Running
 
 The build needs the .NET 10 SDK (see `global.json`) and the sibling `ts-dotnet`
-checkout at the revision pinned in `.forgejo/workflows/ci.yml`. TerraScale.Endpoints
+checkout at the revision pinned in `.github/workflows/ci.yml`. TerraScale.Endpoints
 and TerraScale.Logging come from the Forgejo NuGet feed (see `nuget.config`).
 ts-dotnet is looked up at `../ts-dotnet`, or under
 `~/Projects/TerraScale/`; pass `-p:TerraScaleRoot=<dir>` or set the
-`TerraScaleRoot` environment variable to use another location. Both workflows
-pin ts-dotnet to SDK merge #28, `a4ff285c051e63e72cb01c4a94173c91da1dd69a`,
-which supplies the TS-754 ULID generator and canonical validator. The storage
-wire cutover still requires a compatible TerraBase release; this helper pin
-does not change persisted IDs or reset data.
+`TerraScaleRoot` environment variable to use another location. CI pins
+ts-dotnet to `619fa979673635663cba98be5e25713806d11cd5` (main after #1: plain
+HTTP to TerraBase's internal listener).
 Storage integration tests require the real SDK-pinned Linux x64 TerraBase
 binary locally and in CI; unavailable prerequisites fail instead of skipping.
 See [the port guide](csharp-port.md) for the binary tag, SHA-256 and
@@ -508,7 +506,7 @@ rotation.
 
 ## CI
 
-There are no CI workflows in this repository. Run `make check` locally before pushing. Releases and packages are not published automatically.
+See [docs/terrabase/ci.md](../terrabase/ci.md): the `test` check builds the Dockerfile's `test` stage, which runs `auth-check` and the Fast suite. CI checks out ts-dotnet at the revision pinned in `.github/workflows/ci.yml` with a read-only deploy key, and the Fast suite starts the pinned TerraBase binary from the `auth-test-terrabase` GitHub release.
 
 ## Native library extraction
 
@@ -518,6 +516,4 @@ Argon2id) at startup into `DOTNET_BUNDLE_EXTRACT_BASE_DIR` (default
 user, for example a systemd `StateDirectory`: files planted in a shared
 extraction directory would be loaded.
 
-`.forgejo/workflows/slow.yml` runs the slow suite after pushes, nightly and on
-demand. It never blocks merges or releases. A failure files or updates the
-open "Slow test suite failed" Forgejo issue with `fj`. The issue lists the failing test names and links the run; it never contains log text, which stays in the run behind the repository's permissions.
+The `slow` job in `.github/workflows/ci.yml` runs the slow suite after pushes to main. It never blocks merges or releases; a failure shows as a failed job on the commit.

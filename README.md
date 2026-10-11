@@ -13,7 +13,7 @@ Agent and contributor rules: [`AGENTS.md`](AGENTS.md).
 | `benchmark/` | Go benchmark code and `benchmark/bench/` results; `benchmark/dotnet/` for .NET library benchmarks |
 | `docs/` | `docs/terrabase/` and `docs/auth/`, each with a `README.md` |
 | `scripts/` | `scripts/libs`, `scripts/auth`, `scripts/terrabase` |
-| `.forgejo/workflows/` | CI workflows |
+| `.github/workflows/` | CI (GitHub Actions on Blacksmith); `Dockerfile` holds its build and test stages |
 
 ## Make targets
 

@@ -13,6 +13,8 @@ TERRABASE_TEST_PARALLEL ?= 16
 # Build revision shown by ts-auth /healthz (CI passes the commit SHA).
 TS_AUTH_REVISION ?=
 export TS_AUTH_REVISION
+TS_DOTNET_DIR ?= ../ts-dotnet
+TERRABASE_PINNED_DIR ?= $(HOME)/.cache/terrascale/terrabase/e07d173fc2bbab19dcb1fde8b121b0207b07d55452a5b19a406871d220e05e13
 REDOCLY := npx --yes @redocly/cli@2.57.0
 
 ANALYZER_CHECK_PROJECT := src/TerraBase.Analyzers.BuildCheck/TerraBase.Analyzers.BuildCheck.csproj
@@ -45,7 +47,7 @@ TERRABASE_PROJECTS := src/TerraBase.Analyzers/TerraBase.Analyzers.csproj \
 BENCHMARK_DOTNET_PROJECTS := benchmark/dotnet/TerraScale.Endpoints.Benchmarks/TerraScale.Endpoints.Benchmarks.csproj \
 	benchmark/dotnet/TerraScale.Logging.Benchmarks/TerraScale.Logging.Benchmarks.csproj
 
-.PHONY: restore build fmt fmt-check lint test-fast test-slow test check clean \
+.PHONY: restore build fmt fmt-check lint test-fast test-slow test check docker-test clean \
 	libs-build libs-test libs-check libs-pack libs-nativeaot-check \
 	auth-build auth-audit auth-openapi-check auth-test-fast auth-test-slow auth-check auth-dev \
 	terrabase-build terrabase-analyzer-check terrabase-test-fast terrabase-test-slow terrabase-check terrabase-run terrabase-publish \
@@ -77,6 +79,11 @@ test: test-fast test-slow
 
 # Everything required before a push.
 check: lint libs-check auth-check terrabase-check benchmark-check test-fast
+
+# CI's `test` stage (Dockerfile), run locally. Needs ts-dotnet next to this checkout and the pinned TerraBase binary in
+# the cache ts-dotnet's TerraBaseTestServer downloads it to.
+docker-test:
+	docker build --build-context ts-dotnet=$(TS_DOTNET_DIR) --build-context terrabase-pinned=$(TERRABASE_PINNED_DIR) --target test .
 
 clean:
 	dotnet clean $(SOLUTION) --configuration $(CONFIGURATION)
@@ -144,12 +151,11 @@ terrabase-analyzer-check: restore
 	for line in 8 10 12 14 16; do grep -q "ExpectedFailures.cs($$line," "$$log"; done; \
 	if grep -vE 'error (TB0001|RS0030)' "$$log" | grep -q ': error '; then echo 'unexpected compiler error in analyzer build check' >&2; exit 1; fi
 
-# Forgejo lacks GitHub's artifact API; the environment is cleared so the runners write their reports locally.
 terrabase-test-fast: terrabase-build
-	env -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_RESULTS_URL dotnet run --project tests/TerraBase.Fast --configuration $(CONFIGURATION) --no-build -- --maximum-parallel-tests $(TERRABASE_TEST_PARALLEL) $(TEST_ARGS)
+	dotnet run --project tests/TerraBase.Fast --configuration $(CONFIGURATION) --no-build -- --maximum-parallel-tests $(TERRABASE_TEST_PARALLEL) $(TEST_ARGS)
 
 terrabase-test-slow: terrabase-build
-	env -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_RESULTS_URL dotnet run --project tests/TerraBase.Slow --configuration $(CONFIGURATION) --no-build $(TEST_ARGS)
+	dotnet run --project tests/TerraBase.Slow --configuration $(CONFIGURATION) --no-build $(TEST_ARGS)
 
 terrabase-check: terrabase-build terrabase-analyzer-check
 

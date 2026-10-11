@@ -1,0 +1,12 @@
+.git/
+.github/
+.claude/
+**/bin/
+**/obj/
+**/node_modules/
+artifacts/
+TestResults/
+.env
+.env.*
+.secrets/
+secrets/

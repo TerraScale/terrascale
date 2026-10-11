@@ -1,0 +1,64 @@
+name: CI
+
+# One required check: "test". It builds the Dockerfile's `test` stage on Blacksmith: format, Release build with
+# analyzers as errors, libs/auth/TerraBase checks and the Fast suites. `make docker-test` runs the same build locally.
+# The slow suites run on main only and never block.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# A newer push supersedes a running check of the same branch; main always finishes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+env:
+  # ts-dotnet revision ts-auth builds against (TerraScale/ts-dotnet is private; read-only deploy key).
+  TS_DOTNET_REV: 619fa979673635663cba98be5e25713806d11cd5
+
+jobs:
+  test:
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 40
+    steps: &build-steps
+      - uses: actions/checkout@v5
+        with:
+          path: terrascale
+          persist-credentials: false
+      - uses: actions/checkout@v5
+        with:
+          repository: TerraScale/ts-dotnet
+          ref: ${{ env.TS_DOTNET_REV }}
+          ssh-key: ${{ secrets.TS_DOTNET_DEPLOY_KEY }}
+          path: ts-dotnet
+          persist-credentials: false
+      - name: Download the pinned TerraBase the ts-auth tests start
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download auth-test-terrabase -R "$GITHUB_REPOSITORY" -p terrabase-linux-amd64 -D terrabase-pinned
+      - uses: useblacksmith/setup-docker-builder@v2
+        with:
+          cache-key: terrascale-ci
+      - uses: useblacksmith/build-push-action@v2
+        with:
+          context: terrascale
+          file: terrascale/Dockerfile
+          target: ${{ github.job == 'slow' && 'test-slow' || 'test' }}
+          build-contexts: |
+            ts-dotnet=ts-dotnet
+            terrabase-pinned=terrabase-pinned
+          push: false
+
+  slow:
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    continue-on-error: true
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 60
+    steps: *build-steps
