@@ -24,10 +24,6 @@ public sealed class FakeOci : IDisposable
     public const string CustomerSecretKey = "customer-secret";
     private const string ObjectStorage = "https://objectstorage.test";
     private const string Vault = "https://vault-crypto.test";
-    private const string VaultManagement = "https://vault-management.test";
-    private const string VaultSecrets = "https://vault-secrets.test";
-    private const string VaultId = "ocid1.vault.oc1.test.backup";
-    private const string CompartmentId = "ocid1.compartment.oc1..backup";
     private const string KeyId = "ocid1.key.oc1.test.master";
     private const string ApiKey = "ocid1.tenancy.oc1..test/ocid1.user.oc1..test/aa:bb:cc";
     private static readonly XNamespace S3 = "http://s3.amazonaws.com/doc/2006-03-01/";
@@ -36,9 +32,6 @@ public sealed class FakeOci : IDisposable
     private readonly ConcurrentDictionary<string, byte[]> _objects = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, KeyRequests> _keyRequests = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, byte[]> _customerObjects = new(StringComparer.Ordinal);
-    private readonly ConcurrentDictionary<string, string> _secrets = new(StringComparer.Ordinal);
-    private readonly ConcurrentDictionary<string, string> _secretNames = new(StringComparer.Ordinal);
-    private readonly ConcurrentDictionary<string, DateTimeOffset> _scheduledSecrets = new(StringComparer.Ordinal);
     private readonly RSA _apiKey = RSA.Create(2048);
     private readonly string _directory = Directory.CreateTempSubdirectory("terrabase-oci-").FullName;
     private int _badSignatures;
@@ -106,15 +99,6 @@ public sealed class FakeOci : IDisposable
     /// <summary>Runs before customer DELETE lock checks or mutation; observes the transport cancellation token.</summary>
     public Func<string, CancellationToken, Task>? BeforeCustomerDelete { get; set; }
 
-    /// <summary>Gates a Vault Secrets request; observes cancellation without wall-clock sleeps.</summary>
-    public Func<HttpMethod, string, CancellationToken, Task>? BeforeSecretRequest { get; set; }
-
-    /// <summary>Overrides a signed Vault Secrets response, including malformed successful protocol bodies.</summary>
-    public Func<HttpMethod, string, HttpResponseMessage?>? SecretResponseOverride { get; set; }
-
-    /// <summary>Overrides a successful create response after the secret is stored, to exercise uncertain outcomes.</summary>
-    public Func<string, string, HttpResponseMessage?>? CreatedSecretResponseOverride { get; set; }
-
     /// <summary>Observes object requests without retaining an unbounded request history; true identifies the customer.</summary>
     public Action<bool, HttpMethod, string>? ObjectRequested { get; set; }
 
@@ -123,18 +107,6 @@ public sealed class FakeOci : IDisposable
 
     /// <summary>Customer bucket objects, separate from the platform bucket.</summary>
     public IReadOnlyDictionary<string, byte[]> CustomerObjects => _customerObjects;
-
-    /// <summary>Decoded secret contents stored in this test's Vault, by secret OCID.</summary>
-    public IReadOnlyDictionary<string, string> Secrets => _secrets;
-
-    /// <summary>Secret OCIDs indexed by their unique Vault names.</summary>
-    public IReadOnlyDictionary<string, string> SecretNames => _secretNames;
-
-    /// <summary>Secret OCIDs scheduled for deletion (OCI keeps their contents until deletion).</summary>
-    public IReadOnlyCollection<string> ScheduledSecrets => [.. _scheduledSecrets.Keys];
-
-    /// <summary>Requested retirement times by secret OCID; OCI keeps secrets available for at least seven days.</summary>
-    public IReadOnlyDictionary<string, DateTimeOffset> SecretDeletionTimes => _scheduledSecrets;
 
     /// <summary>Vault requests whose signature did not verify; they were refused.</summary>
     public int BadSignatures => Volatile.Read(ref _badSignatures);
@@ -204,16 +176,6 @@ public sealed class FakeOci : IDisposable
         settings["backup-kms-private-key-file"] = key;
     }
 
-    /// <summary>Enables platform backup and customer credential storage in this test's Vault.</summary>
-    public void ConfigureCustomer(Dictionary<string, string> settings)
-    {
-        Configure(settings);
-        settings["backup-vault-id"] = VaultId;
-        settings["backup-vault-compartment-id"] = CompartmentId;
-        settings["backup-vault-endpoint"] = VaultManagement;
-        settings["backup-secrets-endpoint"] = VaultSecrets;
-    }
-
     /// <summary>Routes the server's object storage and vault clients here.</summary>
     public void Route(IServiceCollection services)
     {
@@ -226,7 +188,6 @@ public sealed class FakeOci : IDisposable
     {
         services.AddHttpClient("backup-s3").ConfigurePrimaryHttpMessageHandler(() => new Handler(this));
         services.AddHttpClient("backup-kms").ConfigurePrimaryHttpMessageHandler(() => new Handler(this));
-        services.AddHttpClient("backup-vault-secrets").ConfigurePrimaryHttpMessageHandler(() => new Handler(this));
     }
 
     public void Dispose()
@@ -239,11 +200,6 @@ public sealed class FakeOci : IDisposable
     {
         var body = request.Content is null ? [] : await request.Content.ReadAsByteArrayAsync(cancellationToken);
         var uri = request.RequestUri!;
-        if (uri.GetLeftPart(UriPartial.Authority) is VaultManagement or VaultSecrets && BeforeSecretRequest is { } beforeSecret)
-        {
-            await beforeSecret(request.Method, uri.AbsolutePath, cancellationToken).ConfigureAwait(false);
-        }
-
         if (uri.GetLeftPart(UriPartial.Authority) == CustomerEndpoint && request.Method == HttpMethod.Put
             && BeforeCustomerWrite is { } beforeWrite)
         {
@@ -254,7 +210,6 @@ public sealed class FakeOci : IDisposable
         return uri.GetLeftPart(UriPartial.Authority) switch
         {
             Vault => VaultResponse(request, body),
-            VaultManagement or VaultSecrets => SecretResponse(request, body),
             ObjectStorage or CustomerEndpoint => await ObjectResponseAsync(request, body, cancellationToken),
             _ => new HttpResponseMessage(HttpStatusCode.NotFound),
         };
@@ -472,116 +427,9 @@ public sealed class FakeOci : IDisposable
         return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(response.ToJsonString(), Encoding.UTF8, "application/json") };
     }
 
-    private HttpResponseMessage SecretResponse(HttpRequestMessage request, byte[] body)
-    {
-        if (!SignatureVerifies(request, body))
-        {
-            Interlocked.Increment(ref _badSignatures);
-            return new HttpResponseMessage(HttpStatusCode.Unauthorized);
-        }
-
-        var uri = request.RequestUri!;
-        var path = uri.AbsolutePath;
-        if (SecretResponseOverride?.Invoke(request.Method, path) is { } overridden)
-        {
-            return overridden;
-        }
-
-        if (uri.GetLeftPart(UriPartial.Authority) == VaultManagement && request.Method == HttpMethod.Post && path == "/20180608/secrets")
-        {
-            var json = JsonNode.Parse(body)!;
-            if ((string?)json["vaultId"] != VaultId || (string?)json["compartmentId"] != CompartmentId || (string?)json["keyId"] != KeyId
-                || (string?)json["secretName"] is not { Length: > 0 } name
-                || (string?)json["secretContent"]?["contentType"] != "BASE64" || (string?)json["secretContent"]?["content"] is not { } content)
-            {
-                return new HttpResponseMessage(HttpStatusCode.BadRequest);
-            }
-
-            var id = "ocid1.vaultsecret.oc1.test." + Guid.NewGuid().ToString("N");
-            _secrets[id] = Encoding.UTF8.GetString(Convert.FromBase64String(content));
-            if (!_secretNames.TryAdd(name, id))
-            {
-                _secrets.TryRemove(id, out _);
-                return new HttpResponseMessage(HttpStatusCode.Conflict);
-            }
-
-            if (CreatedSecretResponseOverride?.Invoke(name, id) is { } created)
-            {
-                return created;
-            }
-
-            return Json(HttpStatusCode.OK, new JsonObject { ["id"] = id, ["lifecycleState"] = "ACTIVE" });
-        }
-
-        if (uri.GetLeftPart(UriPartial.Authority) == VaultManagement && request.Method == HttpMethod.Get && path == "/20180608/secrets")
-        {
-            var query = System.Web.HttpUtility.ParseQueryString(uri.Query);
-            if (query["compartmentId"] != CompartmentId || query["vaultId"] != VaultId || query["name"] is not { Length: > 0 } name || query["limit"] != "2")
-            {
-                return new HttpResponseMessage(HttpStatusCode.BadRequest);
-            }
-
-            var matches = new JsonArray();
-            if (_secretNames.TryGetValue(name, out var id))
-            {
-                matches.Add(SecretMetadata(name, id));
-            }
-
-            return Json(HttpStatusCode.OK, matches);
-        }
-
-        if (uri.GetLeftPart(UriPartial.Authority) == VaultManagement && request.Method == HttpMethod.Get
-            && path.StartsWith("/20180608/secrets/", StringComparison.Ordinal))
-        {
-            var id = Uri.UnescapeDataString(path["/20180608/secrets/".Length..]);
-            var name = _secretNames.FirstOrDefault(secret => secret.Value == id).Key;
-            return name is null ? new HttpResponseMessage(HttpStatusCode.NotFound) : Json(HttpStatusCode.OK, SecretMetadata(name, id));
-        }
-
-        if (uri.GetLeftPart(UriPartial.Authority) == VaultSecrets && request.Method == HttpMethod.Get
-            && path.StartsWith("/20190301/secretbundles/", StringComparison.Ordinal)
-            && System.Web.HttpUtility.ParseQueryString(uri.Query)["stage"] == "CURRENT")
-        {
-            var id = Uri.UnescapeDataString(path["/20190301/secretbundles/".Length..]);
-            return _secrets.TryGetValue(id, out var content)
-                ? Json(HttpStatusCode.OK, new JsonObject
-                {
-                    ["secretId"] = id,
-                    ["secretBundleContent"] = new JsonObject { ["contentType"] = "BASE64", ["content"] = Convert.ToBase64String(Encoding.UTF8.GetBytes(content)) },
-                })
-                : new HttpResponseMessage(HttpStatusCode.NotFound);
-        }
-
-        if (uri.GetLeftPart(UriPartial.Authority) == VaultManagement && request.Method == HttpMethod.Post
-            && path.StartsWith("/20180608/secrets/", StringComparison.Ordinal) && path.EndsWith("/actions/scheduleDeletion", StringComparison.Ordinal))
-        {
-            var id = Uri.UnescapeDataString(path["/20180608/secrets/".Length..^"/actions/scheduleDeletion".Length]);
-            if (!_secrets.ContainsKey(id))
-            {
-                return new HttpResponseMessage(HttpStatusCode.NotFound);
-            }
-
-            var deletion = (DateTimeOffset)JsonNode.Parse(body)!["timeOfDeletion"]!;
-            _scheduledSecrets[id] = deletion;
-            return Json(HttpStatusCode.OK, new JsonObject { ["id"] = id, ["lifecycleState"] = "PENDING_DELETION" });
-        }
-
-        return new HttpResponseMessage(HttpStatusCode.BadRequest);
-    }
-
-    private JsonObject SecretMetadata(string name, string id) => new()
-    {
-        ["id"] = id,
-        ["secretName"] = name,
-        ["vaultId"] = VaultId,
-        ["compartmentId"] = CompartmentId,
-        ["lifecycleState"] = _scheduledSecrets.ContainsKey(id) ? "PENDING_DELETION" : "ACTIVE",
-    };
-
-    private static HttpResponseMessage Json(HttpStatusCode status, JsonNode body) =>
-        new(status) { Content = new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json") };
-
-    // OCI HTTP signatures include the query string; GETs need no content headers.
+    // Partial SigV4: checks customer credentials, payload hash and region, but not required SignedHeaders or
+    // scope-date freshness. Path/query canonicalization covers current AWS-URL-safe ULID/digit keys only;
+    // extend before testing keys or query values requiring percent encoding.
     private bool SignatureVerifies(HttpRequestMessage request, byte[] body)
     {
         if (!request.Headers.TryGetValues("authorization", out var values)

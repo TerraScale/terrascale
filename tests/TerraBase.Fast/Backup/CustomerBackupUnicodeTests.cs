@@ -17,7 +17,7 @@ public sealed class CustomerBackupUnicodeTests
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         using var oci = new FakeOci();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
-        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services =>
+        await using var api = await ManagementApi.StartAsync(oci.Configure, services =>
         {
             oci.Route(services);
             ManualBackupHosting.Configure(services);

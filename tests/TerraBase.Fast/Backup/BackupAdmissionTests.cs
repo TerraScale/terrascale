@@ -262,7 +262,7 @@ public sealed class BackupAdmissionTests
 
     private static async Task<ManagementApi> StartAsync(FakeOci oci, FakeTimeProvider time, Action<IServiceCollection>? configure = null)
     {
-        var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services =>
+        var api = await ManagementApi.StartAsync(oci.Configure, services =>
         {
             oci.Route(services);
             ManualBackupHosting.Configure(services);

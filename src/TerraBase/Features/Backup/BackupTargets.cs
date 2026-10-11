@@ -28,7 +28,7 @@ internal sealed class BackupTarget(string revision, IObjectStore store, DataKeys
 /// <summary>Creates a fixed generation destination from current project configuration, with no credential cache.</summary>
 internal sealed class BackupTargets(
     IObjectStore platform, DataKeys platformKeys, BackupReader platformReader, IProjectBackupDestinations destinations,
-    IMasterKey master, IWalBackup engine, TerraBaseOptions options, IHttpClientFactory http, TimeProvider time, IOciVaultSecrets? secrets = null) : IDisposable
+    IMasterKey master, IWalBackup engine, TerraBaseOptions options, IHttpClientFactory http, TimeProvider time) : IDisposable
 {
     private readonly SemaphoreSlim _customerKeyReads = new(DataKeys.MaxReads, DataKeys.MaxReads);
 
@@ -65,12 +65,12 @@ internal sealed class BackupTargets(
 
     private async Task<BackupTarget> CustomerAsync(TenantContext database, ProjectBackupDestinationRecord record, bool mirror, bool freshKey, CancellationToken cancellationToken)
     {
-        if (record.Version != 1 || secrets is null)
+        if (record.Version != 1)
         {
-            throw new HttpRequestException("customer backup destination version or Vault configuration is unavailable");
+            throw new HttpRequestException("customer backup destination version is unavailable");
         }
 
-        var (accessKeyId, secretKey) = await secrets.ReadAsync(record.SecretId, cancellationToken).ConfigureAwait(false);
+        var (accessKeyId, secretKey) = await CustomerCredentials.OpenAsync(master, record.Credentials, cancellationToken).ConfigureAwait(false);
         var destination = record.Destination;
         var customer = new S3ObjectStore(destination.Endpoint, destination.Region, destination.Bucket, accessKeyId, secretKey, http, S3ObjectStore.CustomerHttpClientName, time);
         var scope = BackupLayout.KeyScope(database);

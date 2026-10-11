@@ -20,7 +20,7 @@ public sealed class CustomerBackupTests
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         using var oci = new FakeOci();
         var time = Clock();
-        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services => ManualShipping(oci, services), time);
+        await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
         var database = await api.CreateManagedDatabaseAsync();
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
@@ -80,7 +80,7 @@ public sealed class CustomerBackupTests
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         using var oci = new FakeOci();
         var time = Clock();
-        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services => ManualShipping(oci, services), time);
+        await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
         var database = await api.CreateManagedDatabaseAsync();
         await api.VerifyProjectBindingAsync(database.Organization, database.Project);
@@ -186,7 +186,7 @@ public sealed class CustomerBackupTests
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         using var oci = new FakeOci();
         var time = Clock();
-        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services => ManualShipping(oci, services), time);
+        await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
         var database = await api.CreateManagedDatabaseAsync();
         await api.VerifyProjectBindingAsync(database.Organization, database.Project);
@@ -222,7 +222,7 @@ public sealed class CustomerBackupTests
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         using var oci = new FakeOci();
         var time = Clock();
-        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, oci.Route, time);
+        await using var api = await ManagementApi.StartAsync(oci.Configure, oci.Route, time);
         var database = await api.CreateManagedDatabaseAsync();
         var siblingProject = await api.CreateProjectAsync(database.Organization, "Destination sibling");
         var sibling = await api.CreateManagedDatabaseAsync(database.Organization, siblingProject, "main");
@@ -298,7 +298,7 @@ public sealed class CustomerBackupTests
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         using var oci = new FakeOci();
         var time = Clock();
-        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services => ManualShipping(oci, services), time);
+        await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
         var customer = await api.CreateManagedDatabaseAsync();
         var siblingProject = await api.CreateProjectAsync(customer.Organization, "Platform sibling");
@@ -340,7 +340,7 @@ public sealed class CustomerBackupTests
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         using var oci = new FakeOci();
         var time = Clock();
-        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services => ManualShipping(oci, services), time);
+        await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
         var database = await api.CreateManagedDatabaseAsync();
         var route = Uri(database.ProjectPath + "/backup-destination");
@@ -389,7 +389,7 @@ public sealed class CustomerBackupTests
         using var oci = new FakeOci();
         var time = Clock();
         var queryClock = new SteppingClock();
-        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services =>
+        await using var api = await ManagementApi.StartAsync(oci.Configure, services =>
         {
             oci.Route(services);
             services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, queryClock);
@@ -438,7 +438,7 @@ public sealed class CustomerBackupTests
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         using var oci = new FakeOci();
         var time = Clock();
-        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, oci.Route, time);
+        await using var api = await ManagementApi.StartAsync(oci.Configure, oci.Route, time);
         var organization = await api.CreateOrganizationAsync(new Faker().Company.CompanyName());
         var project = await api.CreateProjectAsync(organization, "Backup fencing");
         var route = Uri($"/v1/management/organizations/{organization}/projects/{project}/backup-destination");
@@ -491,7 +491,7 @@ public sealed class CustomerBackupTests
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         using var oci = new FakeOci();
         var time = Clock();
-        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services => ManualShipping(oci, services), time);
+        await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
         var database = await api.CreateManagedDatabaseAsync();
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
@@ -532,7 +532,7 @@ public sealed class CustomerBackupTests
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         using var oci = new FakeOci();
         var time = Clock();
-        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, oci.Route, time);
+        await using var api = await ManagementApi.StartAsync(oci.Configure, oci.Route, time);
         var database = await api.CreateManagedDatabaseAsync();
         var route = Uri(database.ProjectPath + "/backup-destination");
         var valid = Destination("both");
@@ -591,7 +591,7 @@ public sealed class CustomerBackupTests
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         using var oci = new FakeOci();
         var time = Clock();
-        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services => ManualShipping(oci, services), time);
+        await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
         var database = await api.CreateManagedDatabaseAsync();
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
@@ -651,7 +651,7 @@ public sealed class CustomerBackupTests
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         using var oci = new FakeOci();
         var time = Clock();
-        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services => ManualShipping(oci, services), time);
+        await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
         var database = await api.CreateManagedDatabaseAsync();
         var foreignProject = await api.CreateProjectAsync(database.Organization, "Foreign project");
@@ -770,7 +770,7 @@ public sealed class CustomerBackupTests
     {
         using var oci = new FakeOci();
         var time = Clock();
-        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services => ManualShipping(oci, services), time);
+        await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
         var customer = await api.CreateManagedDatabaseAsync();
         var siblingProject = await api.CreateProjectAsync(customer.Organization, "Platform sibling");
@@ -850,7 +850,7 @@ public sealed class CustomerBackupTests
     {
         using var oci = new FakeOci();
         var time = Clock();
-        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services => ManualShipping(oci, services), time);
+        await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
         var backup = api.Server.Services.GetRequiredService<IContinuousBackup>();
         var customer = await api.CreateManagedDatabaseAsync();
@@ -921,7 +921,7 @@ public sealed class CustomerBackupTests
     {
         using var oci = new FakeOci();
         var time = Clock();
-        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services => ManualShipping(oci, services), time);
+        await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
         var backup = api.Server.Services.GetRequiredService<IContinuousBackup>();
         var database = await api.CreateManagedDatabaseAsync();
@@ -996,7 +996,7 @@ public sealed class CustomerBackupTests
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         using var oci = new FakeOci();
         var time = Clock();
-        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services => ManualShipping(oci, services), time);
+        await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
         var database = await api.CreateManagedDatabaseAsync();
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
@@ -1044,7 +1044,7 @@ public sealed class CustomerBackupTests
     {
         using var oci = new FakeOci();
         var time = Clock();
-        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services => ManualShipping(oci, services), time);
+        await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
         var database = await api.CreateManagedDatabaseAsync();
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
@@ -1088,7 +1088,7 @@ public sealed class CustomerBackupTests
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         using var oci = new FakeOci();
         var time = Clock();
-        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services => ManualShipping(oci, services), time);
+        await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
         var database = await api.CreateManagedDatabaseAsync();
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
@@ -1138,7 +1138,7 @@ public sealed class CustomerBackupTests
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         using var oci = new FakeOci();
         var time = Clock();
-        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services => ManualShipping(oci, services), time);
+        await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
         var database = await api.CreateManagedDatabaseAsync();
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
@@ -1188,7 +1188,7 @@ public sealed class CustomerBackupTests
         var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         using var oci = new FakeOci();
         var time = Clock();
-        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services => ManualShipping(oci, services), time);
+        await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
         var database = await api.CreateManagedDatabaseAsync();
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
@@ -1207,7 +1207,7 @@ public sealed class CustomerBackupTests
             await Assert.That(rejected.StatusCode).IsEqualTo(status);
             if (code == "NoSuchBucket")
             {
-                await AssertUnavailableAsync(rejected, "backup bucket or OCI Vault could not be accessed");
+                await AssertUnavailableAsync(rejected, "backup bucket could not be accessed");
             }
 
             await AssertPublicAsync(await rejected.Content.ReadAsStringAsync(cancellationToken));
@@ -1223,7 +1223,7 @@ public sealed class CustomerBackupTests
     {
         using var oci = new FakeOci();
         var time = Clock();
-        await using var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services => ManualShipping(oci, services), time);
+        await using var api = await ManagementApi.StartAsync(oci.Configure, services => ManualShipping(oci, services), time);
         var databases = new List<ManagedDatabaseRef>();
         for (var index = 0; index < 5; index++)
         {

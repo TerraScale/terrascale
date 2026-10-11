@@ -12,7 +12,7 @@ public static class BackupDestinationNames
     public const string Customer = "customer";
 }
 
-/// <summary>A project's customer bucket. Credentials are held only in OCI Vault.</summary>
+/// <summary>A project's customer bucket. Its credentials are held only sealed (<see cref="SealedCredentials"/>).</summary>
 /// <param name="Endpoint">S3-compatible HTTPS endpoint.</param>
 /// <param name="Region">S3 signing region.</param>
 /// <param name="Bucket">Customer bucket name.</param>
@@ -37,8 +37,8 @@ public sealed record ProjectBackupDestinationRequest(string? Endpoint, string? R
 /// <param name="Version">Persisted format, currently 1.</param>
 /// <param name="Revision">Unique revision; changing it starts a new generation.</param>
 /// <param name="Destination">Public destination settings.</param>
-/// <param name="SecretId">OCI Vault reference; no credential material is persisted in TerraBase.</param>
-public sealed record ProjectBackupDestinationRecord(int Version, string Revision, ProjectBackupDestination Destination, string SecretId);
+/// <param name="Credentials">The key pair, sealed with the master key; never returned through HTTP.</param>
+public sealed record ProjectBackupDestinationRecord(int Version, string Revision, ProjectBackupDestination Destination, SealedCredentials Credentials);
 
 /// <summary>A configured destination, or why its catalog record could not be read.</summary>
 public readonly union ReadBackupDestinationResult(ProjectBackupDestinationRecord, NotFound, Unavailable);
@@ -52,12 +52,12 @@ public readonly union DeleteBackupDestinationResult(Done, NotFound, Forbidden, U
 /// <summary>Project backup configuration owned by TerraBase.</summary>
 public interface IProjectBackupDestinations
 {
-    /// <summary>Reads the catalog record for a shipper or restore; credentials stay in OCI Vault.</summary>
+    /// <summary>Reads the catalog record for a shipper or restore; credentials stay sealed.</summary>
     ValueTask<ReadBackupDestinationResult> ReadAsync(string organizationId, string projectId, CancellationToken cancellationToken);
 
-    /// <summary>Validates bucket access, creates a Vault secret, and saves the destination with a fresh authorization check.</summary>
+    /// <summary>Validates bucket access, seals the credentials, and saves the destination with a fresh authorization check.</summary>
     Task<SaveBackupDestinationResult> SaveAsync(string userId, string organizationId, string projectId, ProjectBackupDestinationRequest request, CancellationToken cancellationToken);
 
-    /// <summary>Detaches a customer bucket, preserves its objects, schedules its Vault secret for retirement, and resumes platform shipping.</summary>
+    /// <summary>Detaches a customer bucket, preserves its objects, drops its sealed credentials, and resumes platform shipping.</summary>
     Task<DeleteBackupDestinationResult> DeleteAsync(string userId, string organizationId, string projectId, CancellationToken cancellationToken);
 }

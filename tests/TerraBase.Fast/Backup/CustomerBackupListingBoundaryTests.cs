@@ -287,7 +287,7 @@ public sealed class CustomerBackupListingBoundaryTests
 
     private static async Task<ManagementApi> StartAsync(FakeOci oci, FakeTimeProvider time)
     {
-        var api = await ManagementApi.StartAsync(oci.ConfigureCustomer, services =>
+        var api = await ManagementApi.StartAsync(oci.Configure, services =>
         {
             oci.Route(services);
             ManualBackupHosting.Configure(services);
@@ -405,6 +405,6 @@ public sealed class CustomerBackupListingBoundaryTests
         await Assert.That(error.EnumerateObject().Select(property => property.Name)).IsEquivalentTo(["code", "message"]);
         await Assert.That(error.GetProperty("code").GetString()).IsEqualTo("unavailable");
         await Assert.That(error.GetProperty("message").GetString())
-            .IsEqualTo("backup bucket or OCI Vault could not be accessed");
+            .IsEqualTo("backup bucket could not be accessed");
     }
 }

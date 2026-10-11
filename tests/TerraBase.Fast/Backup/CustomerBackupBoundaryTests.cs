@@ -104,7 +104,8 @@ public sealed class CustomerBackupBoundaryTests
             using var reader = await cold.CreateClientAsync(database.Organization, "documents:read");
             await AssertDocumentAsync(reader, restored, text, cancellationToken);
             await Assert.That(keyReads).IsEqualTo(1);
-            await Assert.That(((PaddedMasterKey)cold.Server.Services.GetRequiredService<IMasterKey>()).Unwraps).IsEqualTo(1);
+            // One unwrap of the restored data key and one of the sealed customer credentials.
+            await Assert.That(((PaddedMasterKey)cold.Server.Services.GetRequiredService<IMasterKey>()).Unwraps).IsEqualTo(2);
             await Assert.That(oci.GeneratedKeys).IsEqualTo(generatedBeforeRestore);
             await Assert.That(oci.BadSignatures).IsEqualTo(0);
         }
@@ -167,7 +168,7 @@ public sealed class CustomerBackupBoundaryTests
     {
         var api = await ManagementApi.StartAsync(settings =>
         {
-            oci.ConfigureCustomer(settings);
+            oci.Configure(settings);
             if (directory is not null)
             {
                 settings["data-directory"] = directory;
