@@ -20,25 +20,26 @@ nice -n 19 make api-bench CLUSTER_STATE=stable   # or CLUSTER_STATE=changing
 | `--cluster-state stable\|changing` | Required. `changing` (TS-803/TS-831 touching gru nodes) skips the 512 step and every 64 KB write step. Recorded in the report. |
 | `--clients go,dotnet-jit,dotnet-aot` | Clients to run, sequentially. Default all three. |
 | `--payload 4096` | Restrict to one payload size (repeatable). Default: the spec's sizes. |
-| `--credentials PATH` | Default `~/.config/ts-bench/credentials.json`. |
 | `--spec PATH` | Default `workloads/api-bench.json`. |
 
 The runner refuses to run on `mariogk-desktop`.
 
 ## Credentials
 
-A 0600 JSON file outside the repo, never committed:
+The runner reads OCI Vault secret `ts-bench-api-key`, whose content is JSON:
 
 ```json
 {"api_key": "tsk_<ULID>_<secret>", "project": "<project ULID>"}
 ```
 
-Create it once through the public product: sign up on the dashboard, create a
-benchmark organization and project, create a project API key with
-`databases:read databases:write documents:read documents:write`. The runner
-refuses a file readable by group or others. Clients receive only its path;
-the key never appears on a command line, in an environment variable, log or
-result file.
+It uses the host's OCI CLI profile (`~/.oci/config`), finds the secret by name
+with OCI Resource Search, and reads its current version. The key is written to
+a 0600 file in a fresh 0700 temp dir, which the clients receive by path. The
+runner deletes the dir when it exits. No credentials file is hand-copied.
+
+The key must be a project API key with `databases:read databases:write
+documents:read documents:write` for a dedicated benchmark project. It never
+appears on a command line, in an environment variable, log or result file.
 
 ## Scenarios
 
