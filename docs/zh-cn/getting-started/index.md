@@ -116,9 +116,8 @@ then set the public project ID, branch database ID, API URL, auth URL, and
 exact registered callback URL in `.env.local` (`.env.example` lists the names).
 The old starter's routing behavior is a legacy reference. Current
 project-scoped SDK candidates require an explicit endpoint or caller-supplied
-resolver; automatic Atlas integration is deferred. Do not assume a region
-catalog or proxy fallback. See [Atlas discovery](/zh-cn/guides/atlas) for the candidate
-`/v1/discovery` and project/database `/v1/resolve` contract.
+resolver. Do not assume a region catalog or proxy fallback. See
+[SDK compatibility](/zh-cn/guides/sdks).
 Export `TERRASCALE_API_KEY` separately for CLI commands; no API key belongs
 in the browser’s public settings. The branch runs in the cloud
 service, not in a local database process or customer-run emulator.

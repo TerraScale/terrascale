@@ -8,7 +8,7 @@ caller-supplied driver for each consumer with the same fixture key.
 
 This is explicitly fixture evidence. The server is not Dashboard, Better Auth,
 TerraBase, or a cloud API, and a passing report sets `cloudQualification` to
-`false`. It must not be used to claim production, OCI, Cloudflare, billing, or
+`false`. It must not be used to claim production, Fly.io, Cloudflare, billing, or
 provider qualification. The harness fails closed if any of the five drivers is
 missing or exits nonzero.
 

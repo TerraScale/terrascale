@@ -6,9 +6,8 @@ not published on npm; the published `@terrascale/sdk@0.0.2` does not establish
 compatibility with these examples. Stub success does not qualify the
 sign-in or live-update journey. For the project-scoped C# TerraBase candidate,
 use the [C# quickstart](/getting-started/csharp) and
-[SDK compatibility](/guides/sdks). Automatic Atlas integration in the current
-candidates is deferred; configure an explicit endpoint or resolver as described
-in [Atlas discovery](/guides/atlas).
+[SDK compatibility](/guides/sdks). The current candidates need an explicit endpoint or
+caller-supplied resolver, as described in [SDK compatibility](/guides/sdks).
 :::
 
 The target is to go from `npx create-terrascale-app` to two browser tabs

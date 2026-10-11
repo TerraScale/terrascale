@@ -22,7 +22,7 @@ published are retained as non-runnable references.
 
 - [How TerraScale runs with zero configuration](/zh-cn/guides/zero-configuration) —
   every region serves, nodes join automatically and production secrets arrive
-  through OCI Vault.
+  automatically.
 
 - **Branches** — `branch-per-developer`, `branch-per-preview`; branches share
   their organization’s normal plan allowances and billing cycle, with no
@@ -43,8 +43,6 @@ published are retained as non-runnable references.
 
 - [C# TerraBase quickstart](/zh-cn/getting-started/csharp) — CRUD, query, version
   preconditions and a package-only real-binary qualification lane.
-- [Atlas discovery](/zh-cn/guides/atlas) — project-scoped discovery and resolution,
-  signed regional pins and the SDK integration boundary.
 - [SDK compatibility and qualification](/zh-cn/guides/sdks) — artifact availability,
   API families, capabilities and real-binary qualification gates.
 

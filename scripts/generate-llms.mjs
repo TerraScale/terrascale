@@ -23,8 +23,7 @@ const routes = [
   ["/getting-started", "Legacy Next.js starter: unpublished SDK pin; sign-in and live-update journey unqualified."],
   ["/getting-started/", "Legacy Next.js live-query guide: @terrascale/sdk 0.3.0 is not published; stub success does not qualify the browser journey."],
   ["/getting-started/csharp", "C# candidate quickstart: project-scoped TerraBase Documents CRUD through an exact SDK package; isolated real-binary qualification is separate from production JWTs."],
-  ["/guides/atlas", "Atlas candidate: /v1/discovery, project/database /v1/resolve, JWKS and 600-second ES256 routing pins; automatic SDK integration deferred."],
-  [ZERO_CONFIGURATION_ROUTE, "Zero-configuration operating contract: all regions serve, NetBird membership admits nodes, OCI Vault delivers production secrets; historical switch removal is tracked separately."],
+  [ZERO_CONFIGURATION_ROUTE, "Zero-configuration operating contract: all regions serve, nodes join automatically, the platform delivers production secrets; historical switch removal is tracked separately."],
   ["/guides/sdks", "SDK compatibility: project-scoped C#, JavaScript and Go candidates; public release, real-runtime and customer-journey gates are distinct."],
   ["/concepts", "Product concepts and legacy SQL/live-query design; candidate Documents query-v1 is a separate contract."],
   ["/concepts/replication", "Replication guarantees: causal sessions, conflict limits, RegionalDurable/GlobalDurable."],
@@ -86,23 +85,8 @@ ${routes.map(([r, desc]) => `- ${desc}: ${base}${r}`).join("\n")}
 
 Base domain terrascale.tech. Regions at launch: ${canonicalRegions.map((region) => `${region.id.toUpperCase()} (${region.name})`).join(", ")}.
 
-- Atlas candidate discovery: GET https://atlas.terrascale.tech/v1/discovery
-  returns ranked regions, closest and the public service catalog.
-- Atlas candidate resolve: GET https://atlas.terrascale.tech/v1/resolve?project=…&database=…
-  (database optional; fresh=1 requests refreshed resolution) returns project/database
-  placement, api/auth origins and a 600-second ES256 session pin.
-- Atlas candidate keys: GET https://atlas.terrascale.tech/v1/keys returns JWKS.
-  Verify pin signature, issuer, scope, api and expiry before routing; send
-  X-TerraScale-Region-Pin: <region>, not the signed JWS. A routing pin grants
-  no database permissions. Re-resolution on expiry, 421 or redirect requires
-  caller integration; do not forward credentials through automatic redirects
-  or replay uncertain mutations. Deployment and integrated SDK qualification
-  remain pending.
 - Current SDK candidates require an explicit HTTPS endpoint or caller-supplied
-  resolver. Automatic Atlas integration is deferred; no catalog or proxy
-  fallback is promised. A configured endpoint proves only its own lane.
-- Deprecated compatibility catalogs: /api/v1/regions and /api/v1/auth/discovery;
-  new clients use /v1/discovery and regions[].auth.
+  resolver. No catalog or proxy fallback is promised. A configured endpoint proves only its own lane.
 - API router: https://api.terrascale.tech. Configure the service endpoint explicitly;
   the SDK candidates do not select it implicitly.
 - Regional API origins: ${regions.map((region) => `https://${region}.api.terrascale.tech`).join(",\n  ")}.
@@ -156,7 +140,7 @@ compatibility tests. The product design accepts ts-auth JWTs; production JWT
 validation, deployed sign-in and authorization remain unqualified. A historical
 key receipt does not pass that gate. Auth owns users, organizations and projects;
 all application data belongs in TerraBase. Do not duplicate identity/management
-models. Dashboard sign-in stays on native pages. Other SDK/runtime, Atlas and
+models. Dashboard sign-in stays on native pages. Other SDK/runtime and
 connected customer journeys need independent qualification.
 `;
 

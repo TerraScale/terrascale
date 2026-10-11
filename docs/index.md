@@ -25,7 +25,7 @@ features:
     details: "Every collection is a SQL table: typed columns from your schema, JSON paths into the document body, full-text search. The same query ends in .subscribe() for live results or .execute() for one shot."
   - icon: 🌍
     title: Active-active multi-region
-    details: Choose placement in GRU (São Paulo), SFO (San Jose), and FRA (Frankfurt). Causal sessions and deterministic conflict resolution have explicit limits; global uniqueness and linearizable reads are not promised.
+    details: Choose placement in GRU (São Paulo) and SJC (San Jose). Causal sessions and deterministic conflict resolution have explicit limits; global uniqueness and linearizable reads are not promised.
   - icon: 💰
     title: Operation units and storage, nothing else
     details: One operation unit = each started 4 KiB read or written; writes count once per selected region and reads only in the serving region. Storage counts once in every selected region. Plans use hard allowances with no paid overages.

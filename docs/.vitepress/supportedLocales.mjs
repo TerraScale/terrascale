@@ -10,7 +10,7 @@
 // CI never fails on coverage; run `npm run i18n:status` to see the table.
 //
 // Locales: en (root, no prefix) plus 9 prefixed locales covering the most
-// common world languages and the GRU/SFO/FRA launch regions.
+// common world languages and the GRU/SJC launch regions.
 
 export const LOCALES = [
   { code: 'en', label: 'English', lang: 'en-US', dir: 'ltr', prefix: '' },

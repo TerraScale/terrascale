@@ -11,7 +11,7 @@ uses the SDK; application data stays in TerraBase.
 
 ::: warning Candidate compatibility, not public launch
 The starter targets the project-scoped C# API and an exact SDK candidate.
-Public NuGet installation, automatic Atlas integration and production ts-auth
+Public NuGet installation and production ts-auth
 JWT authorization are separate release gates. The isolated compatibility
 fixture uses the matched binary's existing credential contract; it is not
 an instruction to provision production credentials or duplicate ts-auth's
@@ -112,7 +112,6 @@ Missing or mismatched inputs fail; no emulator or stub substitutes for a binary.
 
 A receipt identifies the SDK, testing package, producer and example source
 bytes. It qualifies only this isolated compatibility journey. Public package
-availability, deployed ts-auth JWTs, native dashboard sign-in, real Atlas
+availability, deployed ts-auth JWTs, native dashboard sign-in, endpoint
 resolution and multi-region behavior still need their own evidence.
-[Atlas discovery](/guides/atlas) describes the project-scoped discovery contract
-and the SDK integration boundary.
+[SDK compatibility](/guides/sdks) describes the SDK integration boundary.

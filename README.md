@@ -11,7 +11,7 @@ SDK. `npm run qualify:dotnet -- <artifact arguments>` runs its package-only
 real-binary lane; the starter README lists exact inputs. A sanitized
 [qualification receipt](examples/terrabase-dotnet/qualification.json) identifies
 the locally packaged SDK and binary tested. This is isolated compatibility
-evidence, separate from public releases, production JWTs and Atlas integration.
+evidence, separate from public releases, production JWTs and automatic endpoint resolution.
 
 ## Develop
 

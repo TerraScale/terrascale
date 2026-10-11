@@ -50,7 +50,7 @@ regions consumes 300 MB of included storage.
 | Regions per database | Up to 3 | Up to 3 | Up to 3 | Up to 3 |
 | PITR retention | 1 day | 7 days | 30 days | 35 days |
 
-Launch regions are GRU (São Paulo), SFO (San Jose), and FRA (Frankfurt).
+Launch regions are GRU (São Paulo) and SJC (San Jose).
 
 Starter and Pro include one eligible 30-day trial per verified payment method
 and organization.

@@ -6,7 +6,7 @@ import ts from "typescript";
 const source = await readFile(new URL("../template/connection.ts", import.meta.url), "utf8");
 const { outputText } = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 } });
 const { readConnectionSettings } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`);
-const settings = { project: "d00d0000-0000-4000-8000-000000000001", database: "starter_dev", baseUrl: "https://gru.api.terrascale.tech" };
+const settings = { project: "d00d0000-0000-4000-8000-000000000001", database: "starter_dev", baseUrl: "https://api.terrascale.tech" };
 
 test("connection uses a ts-auth project UUID, database name and bare API origin", () => {
   assert.deepEqual(readConnectionSettings({
