@@ -1,14 +1,31 @@
 <Solution>
-  <Folder Name="/src/">
-    <Project Path="src/TerraScale.CLI/TerraScale.CLI.csproj" />
+  <Folder Name="/libs/">
+    <Project Path="src/TerraScale.Endpoints/TerraScale.Endpoints.csproj" />
+    <Project Path="src/TerraScale.Endpoints.Generators/TerraScale.Endpoints.Generators.csproj" />
+    <Project Path="src/TerraScale.Endpoints.Example/TerraScale.Endpoints.Example.csproj" />
+    <Project Path="src/TerraScale.Logging/TerraScale.Logging.csproj" />
+    <Project Path="tests/TerraScale.Endpoints.Tests/TerraScale.Endpoints.Tests.csproj" />
+    <Project Path="tests/TerraScale.Logging.Tests/TerraScale.Logging.Tests.csproj" />
+  </Folder>
+  <Folder Name="/auth/">
+    <Project Path="src/TerraScale.Authentication.Contracts/TerraScale.Authentication.Contracts.csproj" />
+    <Project Path="src/TerraScale.Authentication.Security/TerraScale.Authentication.Security.csproj" />
+    <Project Path="src/TerraScale.Authentication.Store/TerraScale.Authentication.Store.csproj" />
+    <Project Path="src/TerraScale.Authentication/TerraScale.Authentication.csproj" />
+    <Project Path="tests/TerraScale.Authentication.Fast/TerraScale.Authentication.Fast.csproj" />
+    <Project Path="tests/TerraScale.Authentication.Slow/TerraScale.Authentication.Slow.csproj" />
+  </Folder>
+  <Folder Name="/terrabase/">
     <Project Path="src/TerraBase.Analyzers/TerraBase.Analyzers.csproj" />
     <Project Path="src/TerraBase.Analyzers.BuildCheck/TerraBase.Analyzers.BuildCheck.csproj">
       <Build Project="false" />
     </Project>
     <Project Path="src/TerraBase/TerraBase.csproj" />
-  </Folder>
-  <Folder Name="/tests/">
     <Project Path="tests/TerraBase.Fast/TerraBase.Fast.csproj" />
     <Project Path="tests/TerraBase.Slow/TerraBase.Slow.csproj" />
+  </Folder>
+  <Folder Name="/benchmark/">
+    <Project Path="benchmark/dotnet/TerraScale.Endpoints.Benchmarks/TerraScale.Endpoints.Benchmarks.csproj" />
+    <Project Path="benchmark/dotnet/TerraScale.Logging.Benchmarks/TerraScale.Logging.Benchmarks.csproj" />
   </Folder>
 </Solution>

@@ -4,6 +4,7 @@
     <TargetFramework>netstandard2.0</TargetFramework>
     <RootNamespace>TerraScale.Endpoints.Generators</RootNamespace>
     <IsRoslynComponent>true</IsRoslynComponent>
+    <EnableSingleFileAnalyzer>false</EnableSingleFileAnalyzer>
     <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
     <IsPackable>false</IsPackable>
   </PropertyGroup>

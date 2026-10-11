@@ -11,11 +11,14 @@ trim_trailing_whitespace = true
 [*.{csproj,props,targets,slnx,xml,json,yml,yaml}]
 indent_size = 2
 
+[*.md]
+trim_trailing_whitespace = false
+
 [Makefile]
 indent_style = tab
 
-[*.cs]
-# Style is enforced in the build (EnforceCodeStyleInBuild) with warnings as errors.
+# TerraBase: the strictest style, enforced in the build (EnforceCodeStyleInBuild) with warnings as errors.
+[{src,tests}/TerraScale.TerraBase*/**.cs]
 csharp_style_namespace_declarations = file_scoped:error
 csharp_style_var_for_built_in_types = true:error
 csharp_style_var_when_type_is_apparent = true:error
@@ -27,3 +30,43 @@ dotnet_sort_system_directives_first = true
 dotnet_style_qualification_for_field = false:suggestion
 dotnet_style_prefer_conditional_expression_over_return = true:suggestion
 csharp_prefer_braces = true:error
+
+# ts-libs (TerraScale.Endpoints, TerraScale.Logging and their tests and benchmarks): style stays out of the build.
+[{src,tests,benchmark/dotnet}/TerraScale.{Endpoints,Logging}*/**.cs]
+# One statement per line, braces on their own line.
+csharp_preserve_single_line_statements = false
+csharp_preserve_single_line_blocks = true
+csharp_new_line_before_open_brace = all
+csharp_new_line_before_else = true
+csharp_new_line_before_catch = true
+csharp_new_line_before_finally = true
+csharp_indent_case_contents = true
+csharp_indent_switch_labels = true
+dotnet_sort_system_directives_first = true
+dotnet_separate_import_directive_groups = false
+csharp_using_directive_placement = outside_namespace:suggestion
+csharp_style_namespace_declarations = file_scoped:suggestion
+
+# ts-auth: SDK 11 turns these on by default. ts-auth built on SDK 10, where they were not enforced; they stay off here.
+[{src,tests}/TerraScale.Auth*/**.cs]
+dotnet_diagnostic.CA2026.severity = silent
+dotnet_diagnostic.CA2027.severity = silent
+dotnet_diagnostic.IDE0005.severity = silent
+dotnet_diagnostic.IDE0019.severity = silent
+dotnet_diagnostic.IDE0021.severity = silent
+dotnet_diagnostic.IDE0022.severity = silent
+dotnet_diagnostic.IDE0028.severity = silent
+dotnet_diagnostic.IDE0032.severity = silent
+dotnet_diagnostic.IDE0042.severity = silent
+dotnet_diagnostic.IDE0046.severity = silent
+dotnet_diagnostic.IDE0047.severity = silent
+dotnet_diagnostic.IDE0061.severity = silent
+dotnet_diagnostic.IDE0062.severity = silent
+dotnet_diagnostic.IDE0063.severity = silent
+dotnet_diagnostic.IDE0160.severity = silent
+dotnet_diagnostic.IDE0301.severity = silent
+dotnet_diagnostic.IDE0305.severity = silent
+dotnet_diagnostic.IDE0350.severity = silent
+
+# Soft limit for editors; long string literals may exceed it.
+max_line_length = 140

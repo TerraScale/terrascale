@@ -35,11 +35,6 @@
           "Microsoft.NETCore.Platforms": "1.1.0"
         }
       },
-      "Microsoft.CodeAnalysis.Analyzers": {
-        "type": "Transitive",
-        "resolved": "5.9.0-1.26328.17",
-        "contentHash": "HP9NNk8ZjOSI2hgOyXnQg+kv7/X837Vr2nAlXiGAtqtYnYKjRRa1UmQFr8KFs5ynGYKqfbb8zB9APoWjiAGdMg=="
-      },
       "Microsoft.CodeAnalysis.Common": {
         "type": "Transitive",
         "resolved": "5.9.0",
@@ -119,6 +114,12 @@
         "dependencies": {
           "System.Runtime.CompilerServices.Unsafe": "6.1.2"
         }
+      },
+      "Microsoft.CodeAnalysis.Analyzers": {
+        "type": "CentralTransitive",
+        "requested": "[5.9.0-1.26328.17, )",
+        "resolved": "5.9.0-1.26328.17",
+        "contentHash": "HP9NNk8ZjOSI2hgOyXnQg+kv7/X837Vr2nAlXiGAtqtYnYKjRRa1UmQFr8KFs5ynGYKqfbb8zB9APoWjiAGdMg=="
       }
     },
     ".NETStandard,Version=v2.0/linux-arm64": {},

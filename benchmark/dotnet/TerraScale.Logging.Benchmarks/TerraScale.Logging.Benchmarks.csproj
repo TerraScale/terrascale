@@ -11,6 +11,6 @@
     <!-- BenchmarkDotNet 0.16 (first with net11.0 support) needs a newer Roslyn than the central pin. -->
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" VersionOverride="5.6.0" />
     <PackageReference Include="Microsoft.CodeAnalysis.Analyzers" VersionOverride="5.3.0" PrivateAssets="all" />
-    <ProjectReference Include="../../src/TerraScale.Logging/TerraScale.Logging.csproj" />
+    <ProjectReference Include="../../../src/TerraScale.Logging/TerraScale.Logging.csproj" />
   </ItemGroup>
 </Project>

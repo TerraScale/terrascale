@@ -3,9 +3,6 @@
     <RootNamespace>TerraScale.Endpoints</RootNamespace>
     <PackageId>TerraScale.Endpoints</PackageId>
     <Description>Shared TerraScale endpoint authoring and ASP.NET Core mapping library.</Description>
-    <!-- net10.0 so ts-auth (net10.0) and TerraBase (net11.0) both consume it. -->
-    <TargetFramework />
-    <TargetFrameworks>net10.0;net11.0</TargetFrameworks>
     <!-- Stable calendar versions while it depends on the prerelease Microsoft.AspNetCore.OpenApi 11 rc; drop when that ships stable. -->
     <!-- ASP0029: the validation API used by AddValidation() is marked experimental in the net10.0 pack. -->
     <NoWarn>$(NoWarn);NU5104;ASP0029</NoWarn>
@@ -27,7 +24,7 @@
   </PropertyGroup>
   <ItemGroup>
     <None Include="README.md" Pack="true" PackagePath="\" />
-    <None Include="../../LICENSE" Pack="true" PackagePath="\" />
+    <None Include="LICENSE" Pack="true" PackagePath="\" />
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
     <PackageReference Include="Scalar.AspNetCore" />

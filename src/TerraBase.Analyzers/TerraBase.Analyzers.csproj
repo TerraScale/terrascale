@@ -10,6 +10,8 @@
     <IsRoslynComponent>true</IsRoslynComponent>
     <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
     <IsPackable>false</IsPackable>
+    <!-- Namespaces stay TerraBase.Analyzers: the folder is named after the project, not the namespace. -->
+    <RootNamespace>TerraBase.Analyzers</RootNamespace>
   </PropertyGroup>
 
   <ItemGroup>

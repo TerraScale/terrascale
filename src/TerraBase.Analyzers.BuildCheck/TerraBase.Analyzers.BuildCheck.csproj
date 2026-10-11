@@ -3,6 +3,7 @@
     <OutputType>Library</OutputType>
     <TargetFramework>net11.0</TargetFramework>
     <IsPackable>false</IsPackable>
+    <RootNamespace>TerraBase.Analyzers.BuildCheck</RootNamespace>
     <!-- The project is in the solution for formatting and restore, but its source intentionally fails
          with TB0001. The dedicated Make target enables analyzers when it checks those diagnostics. -->
     <RunAnalyzers Condition="'$(TB0001BuildCheck)' != 'true'">false</RunAnalyzers>

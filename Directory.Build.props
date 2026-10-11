@@ -1,19 +1,30 @@
 <Project>
+  <!-- One rule set for every project. Each project belongs to an area by its folder; a rule that one area's code cannot
+       meet stays scoped to the area that had it before (IsTerraBaseArea, IsLibsArea). -->
+  <PropertyGroup>
+    <ProjectFolder>$([MSBuild]::MakeRelative('$(MSBuildThisFileDirectory)', '$(MSBuildProjectDirectory)'))</ProjectFolder>
+    <IsTerraBaseArea Condition="$(ProjectFolder.StartsWith('src/TerraScale.TerraBase')) or $(ProjectFolder.StartsWith('tests/TerraScale.TerraBase'))">true</IsTerraBaseArea>
+    <IsLibsArea Condition="$(ProjectFolder.Contains('TerraScale.Endpoints')) or $(ProjectFolder.Contains('TerraScale.Logging'))">true</IsLibsArea>
+  </PropertyGroup>
+
   <PropertyGroup>
     <TargetFramework>net11.0</TargetFramework>
-    <LangVersion>preview</LangVersion>
+    <!-- TerraBase's discriminated unions (`union` declarations) are a preview language feature; every other area is on 14.0. -->
+    <LangVersion Condition="'$(IsTerraBaseArea)' == 'true'">preview</LangVersion>
+    <LangVersion Condition="'$(IsTerraBaseArea)' != 'true'">14.0</LangVersion>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <EnableNETAnalyzers>true</EnableNETAnalyzers>
     <AnalysisLevel>latest-recommended</AnalysisLevel>
-    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
-    <!-- Required for IDE0005 (unused usings) in the build; public APIs carry XML docs. -->
-    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- ts-libs keeps style out of the build: its public signatures carry unused parameters that are API. -->
+    <EnforceCodeStyleInBuild Condition="'$(IsLibsArea)' != 'true'">true</EnforceCodeStyleInBuild>
+    <!-- Required for IDE0005 (unused usings) in the build; TerraBase's public APIs carry XML docs. -->
+    <GenerateDocumentationFile Condition="'$(IsTerraBaseArea)' == 'true'">true</GenerateDocumentationFile>
     <InvariantGlobalization>true</InvariantGlobalization>
     <Deterministic>true</Deterministic>
     <Authors>TerraScale</Authors>
-    <!-- Container tooling builds Linux images; the release binary is linux-x64. -->
+    <!-- Container tooling builds Linux images; the release binaries are linux-x64 and linux-arm64. -->
     <DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
     <!-- NU1507: packageSourceMapping in NuGet.config already pins each package to one source.
          NU1801: a temporarily unreachable source must not fail offline or container restores;
@@ -31,10 +42,10 @@
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
     <RestoreLockedMode Condition="'$(CI)' == 'true'">true</RestoreLockedMode>
     <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
+    <!-- ts-dotnet (the TerraScale .NET SDK) is a separate repository, consumed as source by ts-auth.
+         It is checked out next to this repository; override with -p:TsDotnetRoot=<dir containing ts-dotnet>
+         (or the TsDotnetRoot environment variable) when it lives elsewhere. -->
+    <TsDotnetRoot Condition="'$(TsDotnetRoot)' == ''">$(MSBuildThisFileDirectory)../ts-dotnet</TsDotnetRoot>
   </PropertyGroup>
 
-  <ItemGroup>
-    <!-- Banned APIs for Microsoft.CodeAnalysis.BannedApiAnalyzers (RS0030 is an error). -->
-    <AdditionalFiles Include="$(MSBuildThisFileDirectory)BannedSymbols.txt" Link="BannedSymbols.txt" />
-  </ItemGroup>
 </Project>

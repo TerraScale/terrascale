@@ -14,7 +14,7 @@
     <!-- BenchmarkDotNet 0.16 (first with net11.0 support) needs a newer Roslyn than the generator pins. -->
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" VersionOverride="5.6.0" />
     <PackageReference Include="Microsoft.CodeAnalysis.Analyzers" VersionOverride="5.3.0" PrivateAssets="all" />
-    <ProjectReference Include="../../src/TerraScale.Endpoints/TerraScale.Endpoints.csproj" />
-    <ProjectReference Include="../../src/TerraScale.Endpoints.Generators/TerraScale.Endpoints.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="../../../src/TerraScale.Endpoints/TerraScale.Endpoints.csproj" />
+    <ProjectReference Include="../../../src/TerraScale.Endpoints.Generators/TerraScale.Endpoints.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
   </ItemGroup>
 </Project>

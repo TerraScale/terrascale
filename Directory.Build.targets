@@ -1,11 +1,12 @@
 <Project>
   <!-- Imported after every project file, so these rules can key on properties the
-       projects set (UseTerraScaleEndpoints, IsTestProject). -->
+       projects set (UseTerraScaleEndpoints, IsTestProject) and the area flags of Directory.Build.props. -->
 
-  <!-- TerraScale.Endpoints, the ts-libs package (its analyzer does the compile-time endpoint
-       registration): opt in with <UseTerraScaleEndpoints>true</UseTerraScaleEndpoints>. -->
+  <!-- TerraScale.Endpoints (src/): opt in with <UseTerraScaleEndpoints>true</UseTerraScaleEndpoints>. Its generator
+       is referenced as an analyzer only, so endpoint registration happens at compile time. -->
   <ItemGroup Condition="'$(UseTerraScaleEndpoints)' == 'true'">
-    <PackageReference Include="TerraScale.Endpoints" />
+    <ProjectReference Include="$(MSBuildThisFileDirectory)src/TerraScale.Endpoints/TerraScale.Endpoints.csproj" />
+    <ProjectReference Include="$(MSBuildThisFileDirectory)src/TerraScale.Endpoints.Generators/TerraScale.Endpoints.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
   <!-- Newtonsoft.Json is not allowed: System.Text.Json (source-generated) only.
@@ -17,12 +18,23 @@
       <_NewtonsoftPackage Include="@(RuntimeCopyLocalItems->'%(NuGetPackageId)')" Condition="$([System.String]::Copy('%(RuntimeCopyLocalItems.NuGetPackageId)').Contains('Newtonsoft', System.StringComparison.OrdinalIgnoreCase))" />
       <_NewtonsoftPackage Include="@(ResolvedCompileFileDefinitions->'%(NuGetPackageId)')" Condition="$([System.String]::Copy('%(ResolvedCompileFileDefinitions.NuGetPackageId)').Contains('Newtonsoft', System.StringComparison.OrdinalIgnoreCase))" />
     </ItemGroup>
-    <Error Condition="'@(_NewtonsoftPackage)' != ''" Text="Newtonsoft packages are banned in TerraBase ('@(_NewtonsoftPackage->Distinct())'). Use System.Text.Json; remove the package or the dependency that brings it in." />
+    <Error Condition="'@(_NewtonsoftPackage)' != ''" Text="Newtonsoft packages are banned ('@(_NewtonsoftPackage->Distinct())'). Use System.Text.Json; remove the package or the dependency that brings it in." />
   </Target>
 
-  <!-- Integration suites (Fast and Slow): TUnit executables driving the real server. -->
+  <!-- Every test project: not packable. -->
   <PropertyGroup Condition="'$(IsTestProject)' == 'true'">
     <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <!-- TerraBase area: banned APIs (RS0030) and the BannedSymbols.txt list. Auth and ts-libs throw framework exceptions
+       on purpose (BadHttpRequestException in the endpoint binder), so the rule stays with TerraBase. -->
+  <ItemGroup Condition="'$(IsTerraBaseArea)' == 'true'">
+    <AdditionalFiles Include="$(MSBuildThisFileDirectory)BannedSymbols.txt" Link="BannedSymbols.txt" />
+    <PackageReference Include="Microsoft.CodeAnalysis.BannedApiAnalyzers" PrivateAssets="all" />
+  </ItemGroup>
+
+  <!-- TerraBase integration suites (Fast and Slow): TUnit executables driving the real server. -->
+  <PropertyGroup Condition="'$(IsTerraBaseArea)' == 'true' and '$(IsTestProject)' == 'true'">
     <!-- The real server uses server GC; the parallel in-process hosts must use the same runtime mode. -->
     <ServerGarbageCollection>true</ServerGarbageCollection>
     <!-- CA1515: TUnit discovers public test classes. CA1707: test names use
@@ -31,7 +43,7 @@
     <NoWarn>$(NoWarn);CA1515;CA1707;CA2007;CS1591</NoWarn>
   </PropertyGroup>
 
-  <ItemGroup Condition="'$(IsTestProject)' == 'true'">
+  <ItemGroup Condition="'$(IsTerraBaseArea)' == 'true' and '$(IsTestProject)' == 'true'">
     <ProjectReference Include="$(MSBuildThisFileDirectory)src/TerraBase/TerraBase.csproj" />
     <PackageReference Include="TUnit" />
     <PackageReference Include="Bogus" />

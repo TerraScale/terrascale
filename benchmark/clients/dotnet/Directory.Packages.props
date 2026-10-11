@@ -1,0 +1,7 @@
+<Project>
+  <!-- The .NET client is a separate tool: it pins its own SDK (global.json) and versions its packages inline, as it did
+       in ts-benchmark. The central package versions of the repository root do not apply here. -->
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+</Project>
