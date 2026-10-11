@@ -3,8 +3,8 @@
     <RootNamespace>TerraScale.Logging</RootNamespace>
     <PackageId>TerraScale.Logging</PackageId>
     <Description>Shared TerraScale logging on ZLogger: one compact JSON record per line (record v1).</Description>
-    <!-- net10.0 keeps the package usable from net10.0 hosts; TerraBase (net11.0) consumes it by project reference. -->
-    <TargetFramework>net10.0</TargetFramework>
+    <!-- NU5104: the Microsoft.Extensions dependencies come from the prerelease .NET 11 train (central versions); drop when that ships stable. -->
+    <NoWarn>$(NoWarn);NU5104</NoWarn>
     <IsAotCompatible>true</IsAotCompatible>
     <PackageProjectUrl>https://git.terrascale.tech/TerraScale/ts-libs</PackageProjectUrl>
     <RepositoryUrl>https://git.terrascale.tech/TerraScale/ts-libs</RepositoryUrl>

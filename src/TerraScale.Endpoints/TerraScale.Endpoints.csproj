@@ -19,7 +19,8 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
     <AnalysisLevel>latest-recommended</AnalysisLevel>
-    <IsPackable>true</IsPackable>
+    <!-- Not published: TerraScale.Endpoints is consumed by project reference inside this repository; only TerraScale.Logging ships. -->
+    <IsPackable>false</IsPackable>
     <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
   <ItemGroup>
