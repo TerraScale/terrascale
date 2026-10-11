@@ -34,17 +34,16 @@ const (
 // RegionCode is a TerraScale region identifier.
 type RegionCode string
 
-// Launch regions (GOAL D-05).
+// Launch regions.
 const (
 	RegionGRU RegionCode = "GRU"
-	RegionSFO RegionCode = "SFO"
-	RegionFRA RegionCode = "FRA"
+	RegionSJC RegionCode = "SJC"
 )
 
 // IsRegionCode reports whether s is a known region code (case-insensitive).
 func IsRegionCode(s string) bool {
 	switch RegionCode(strings.ToUpper(strings.TrimSpace(s))) {
-	case RegionGRU, RegionSFO, RegionFRA:
+	case RegionGRU, RegionSJC:
 		return true
 	default:
 		return false
@@ -55,31 +54,25 @@ func IsRegionCode(s string) bool {
 func ParseRegionCode(s string) (RegionCode, error) {
 	code := RegionCode(strings.ToUpper(strings.TrimSpace(s)))
 	if !IsRegionCode(string(code)) {
-		return "", fmt.Errorf("sdk: region must be exactly one of GRU, SFO, FRA, got %q", s)
+		return "", fmt.Errorf("sdk: region must be exactly one of GRU, SJC, got %q", s)
 	}
 	return code, nil
 }
 
-// DefaultAPIBaseURL identifies the historical test API origin. It is retained
-// as an explicit auth rejection boundary and is never selected automatically.
+// DefaultAPIBaseURL is the fixed global public API origin.
 const DefaultAPIBaseURL = "https://" + publicAPIHostname
 
-// Config configures a Client.
+// Config configures a Client. Hosts are fixed: every client uses the global
+// API and auth origins unless a base URL is overridden for a dev or test
+// deployment.
 type Config struct {
-	// APIBaseURL is the ts-auth origin when TSAuthBaseURL is empty.
+	// APIBaseURL is the public API origin. Empty means DefaultAPIBaseURL.
 	APIBaseURL string
-	// TSAuthBaseURL is the ts-auth deployment origin used by the TSAuth
-	// family. When empty, TSAuth uses APIBaseURL and requires it to not be
-	// the default product origin (DefaultAPIBaseURL), which never serves
-	// ts-auth routes.
+	// TSAuthBaseURL is the ts-auth origin used by the TSAuth family. Empty
+	// means the global auth origin, publicAuthBaseURL.
 	TSAuthBaseURL string
-	// TSAuthUseReverseProxy sends public auth calls through auth.terrascale.tech.
-	// By default, that public origin discovers and calls a regional ts-auth directly.
-	TSAuthUseReverseProxy bool
-	// DiscoveryBaseURL overrides Atlas metadata for public Auth discovery.
-	DiscoveryBaseURL string
 	// StatusBaseURL overrides the public ts-status origin (default
-	// https://status.terrascale.tech). It does not use auth discovery.
+	// https://status.terrascale.tech).
 	StatusBaseURL string
 	// HTTPClient defaults to one with a 30s timeout. The SDK copies it and
 	// disables redirects; explicit 421 placement repair remains supported.
@@ -98,8 +91,6 @@ type Config struct {
 type Client struct {
 	cfg  Config
 	http *http.Client
-	// authDiscovery caches ranked regional ts-auth origins for public auth calls.
-	authDiscovery tsAuthEndpointDiscovery
 
 	TSAuth *TSAuthClient
 	Status *StatusClient
@@ -109,6 +100,9 @@ type Client struct {
 // successful construction does not establish service readiness.
 func NewClient(cfg Config) (*Client, error) {
 	base := strings.TrimSpace(cfg.APIBaseURL)
+	if base == "" {
+		base = DefaultAPIBaseURL
+	}
 	base = strings.TrimSuffix(base, "/")
 	u, err := url.Parse(base + "/")
 	if err != nil {
@@ -141,25 +135,6 @@ func NewClient(cfg Config) (*Client, error) {
 	lowerPath := strings.ToLower(u.EscapedPath())
 	if strings.Contains(lowerPath, "tbep") || strings.Contains(lowerPath, "terrabase") {
 		return nil, fmt.Errorf("sdk: clients may target only the public API, not TBEP or TerraBase")
-	}
-
-	discoveryBase := strings.TrimSpace(cfg.DiscoveryBaseURL)
-	if discoveryBase != "" {
-		discoveryBase = strings.TrimSuffix(discoveryBase, "/")
-		discoveryURL, err := url.Parse(discoveryBase + "/")
-		if err != nil || (discoveryURL.Scheme != "http" && discoveryURL.Scheme != "https") || discoveryURL.Host == "" {
-			return nil, fmt.Errorf("sdk: discovery base URL must be an absolute http or https URL")
-		}
-		if discoveryURL.RawQuery != "" || discoveryURL.Fragment != "" || discoveryURL.User != nil {
-			return nil, fmt.Errorf("sdk: discovery base URL must not contain a query, fragment, or userinfo")
-		}
-		if discoveryURL.Scheme == "http" && !isDevOrigin(discoveryURL.Hostname()) {
-			return nil, fmt.Errorf("sdk: the discovery origin must use HTTPS, except loopback dev origins")
-		}
-		discoveryHost := strings.ToLower(discoveryURL.Hostname())
-		if strings.Contains(discoveryHost, "tbep") || strings.Contains(discoveryHost, "terrabase") {
-			return nil, fmt.Errorf("sdk: clients may target only the public API, not TBEP or TerraBase")
-		}
 	}
 
 	statusBase, err := statusResolveBase(cfg.StatusBaseURL)
@@ -195,15 +170,13 @@ func NewClient(cfg Config) (*Client, error) {
 	httpClient = &ownedHTTPClient
 
 	c := &Client{cfg: Config{
-		APIBaseURL:            base,
-		TSAuthBaseURL:         strings.TrimSpace(cfg.TSAuthBaseURL),
-		TSAuthUseReverseProxy: cfg.TSAuthUseReverseProxy,
-		DiscoveryBaseURL:      discoveryBase,
-		StatusBaseURL:         statusBase,
-		HTTPClient:            httpClient,
-		MaxRetryAttempts:      cfg.MaxRetryAttempts,
-		RetryDelay:            retryDelay,
-		RequestTimeout:        requestTimeout,
+		APIBaseURL:       base,
+		TSAuthBaseURL:    strings.TrimSpace(cfg.TSAuthBaseURL),
+		StatusBaseURL:    statusBase,
+		HTTPClient:       httpClient,
+		MaxRetryAttempts: cfg.MaxRetryAttempts,
+		RetryDelay:       retryDelay,
+		RequestTimeout:   requestTimeout,
 	}, http: httpClient}
 	c.TSAuth = &TSAuthClient{c: c}
 	c.Status = &StatusClient{c: c}

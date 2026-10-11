@@ -59,7 +59,7 @@ func TestTSAuthOIDCAuthenticationMethods(t *testing.T) {
 				io.WriteString(w, `{"access_token":"access","token_type":"Bearer","expires_in":60}`)
 			}))
 			defer server.Close()
-			oidc := newTSAuthTestInstance(t, Config{APIBaseURL: server.URL}).OIDC
+			oidc := newTSAuthTestInstance(t, Config{TSAuthBaseURL: server.URL}).OIDC
 			if _, err := oidc.RequestClientCredentialsToken(t.Context(), auth, "scope"); err != nil {
 				t.Fatal(err)
 			}
@@ -128,7 +128,7 @@ func newOIDCFixture(t *testing.T) *oidcFixture {
 }
 func (f *oidcFixture) application(t *testing.T) *TSAuthOIDCApplication {
 	t.Helper()
-	oidc := newTSAuthTestInstance(t, Config{APIBaseURL: f.server.URL, MaxRetryAttempts: 2}).OIDC
+	oidc := newTSAuthTestInstance(t, Config{TSAuthBaseURL: f.server.URL, MaxRetryAttempts: 2}).OIDC
 	app, err := oidc.NewApplication(TSAuthOIDCApplicationConfig{Issuer: f.issuer, Authentication: TSAuthOAuthClientAuthentication{ClientID: "client", ClientSecret: "secret", Method: TSAuthClientSecretBasic}, RedirectURI: "https://app.example/callback?intent=login", PostLogoutRedirectURIs: []string{"https://app.example/logout"}, RequireSession: true})
 	if err != nil {
 		t.Fatal(err)
@@ -310,7 +310,7 @@ func TestTSAuthOIDCDiscoveryMixupDenied(t *testing.T) {
 		})
 	}
 	f := newOIDCFixture(t)
-	oidc := newTSAuthTestInstance(t, Config{APIBaseURL: f.server.URL}).OIDC
+	oidc := newTSAuthTestInstance(t, Config{TSAuthBaseURL: f.server.URL}).OIDC
 	_, err := oidc.NewApplication(TSAuthOIDCApplicationConfig{Issuer: "https://api.terrascale.tech/acme", Authentication: TSAuthOAuthClientAuthentication{ClientID: "client", Method: TSAuthClientAuthenticationNone}, RedirectURI: "https://app.example/cb"})
 	if err == nil {
 		t.Fatal("test API proxy admitted")
@@ -350,7 +350,7 @@ func TestTSAuthOIDCPrecancelledRequest(t *testing.T) {
 	}
 }
 
-func TestTSAuthOIDCAtlasTransportPreservesCanonicalIssuer(t *testing.T) {
+func TestTSAuthOIDCCanonicalIssuerTransport(t *testing.T) {
 	f := newOIDCFixture(t)
 	f.issuer = "https://auth.terrascale.tech/acme"
 	f.document.Issuer = f.issuer
@@ -364,13 +364,7 @@ func TestTSAuthOIDCAtlasTransportPreservesCanonicalIssuer(t *testing.T) {
 	var destinations []string
 	transport := pinningRoundTripperFunc(func(request *http.Request) (*http.Response, error) {
 		destinations = append(destinations, request.URL.Host)
-		if request.URL.Host == "atlas.test" {
-			if request.Header.Get("Authorization") != "" {
-				t.Error("Atlas leaked credential")
-			}
-			return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"v":1,"refreshSeconds":5,"endpoints":[{"region":"GRU","url":"https://gru.auth.terrascale.tech"}]}`))}, nil
-		}
-		if request.URL.Host != "gru.auth.terrascale.tech" {
+		if request.URL.Host != "auth.terrascale.tech" {
 			t.Errorf("unadmitted origin %s", request.URL.Host)
 		}
 		clone := request.Clone(request.Context())
@@ -378,7 +372,7 @@ func TestTSAuthOIDCAtlasTransportPreservesCanonicalIssuer(t *testing.T) {
 		clone.URL.Host = local.Host
 		return http.DefaultTransport.RoundTrip(clone)
 	})
-	client, err := NewClient(Config{TSAuthBaseURL: "https://auth.terrascale.tech", DiscoveryBaseURL: "https://atlas.test", HTTPClient: &http.Client{Transport: transport}})
+	client, err := NewClient(Config{HTTPClient: &http.Client{Transport: transport}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -404,78 +398,63 @@ func TestTSAuthOIDCAtlasTransportPreservesCanonicalIssuer(t *testing.T) {
 		t.Fatalf("identity=%+v error=%v", identity, err)
 	}
 	for _, host := range destinations {
-		if host == "api.terrascale.tech" || host == "auth.terrascale.tech" {
-			t.Fatal("proxy fallback used")
+		if host != "auth.terrascale.tech" {
+			t.Fatalf("unexpected origin %s", host)
 		}
 	}
 }
 
-func TestTSAuthOIDCRegionalIssuer(t *testing.T) {
-	for _, tc := range []struct {
-		name  string
-		cfg   Config
-		hosts []string
-	}{
-		{"Atlas proxy calls the issuer region", Config{TSAuthBaseURL: "https://auth.terrascale.tech", DiscoveryBaseURL: "https://atlas.test"}, []string{"gru.auth.terrascale.tech"}},
-		{"reverse proxy", Config{TSAuthBaseURL: "https://auth.terrascale.tech", TSAuthUseReverseProxy: true}, []string{"auth.terrascale.tech"}},
-		{"direct regional base", Config{TSAuthBaseURL: "https://gru.auth.terrascale.tech"}, []string{"gru.auth.terrascale.tech"}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			f := newOIDCFixture(t)
-			local := strings.TrimPrefix(f.server.URL, "http://")
-			f.issuer = "https://gru.auth.terrascale.tech/acme"
-			raw, _ := json.Marshal(f.document)
-			json.Unmarshal([]byte(strings.ReplaceAll(string(raw), f.server.URL+"/acme", f.issuer)), &f.document)
-			hosts := map[string]bool{}
-			tc.cfg.HTTPClient = &http.Client{Transport: pinningRoundTripperFunc(func(request *http.Request) (*http.Response, error) {
-				hosts[request.URL.Host] = true
-				clone := request.Clone(request.Context())
-				clone.URL.Scheme, clone.URL.Host = "http", local
-				return http.DefaultTransport.RoundTrip(clone)
-			})}
-			client, err := NewClient(tc.cfg)
-			if err != nil {
-				t.Fatal(err)
-			}
-			instance, err := client.TSAuth.Instance("acme")
-			if err != nil {
-				t.Fatal(err)
-			}
-			app, err := instance.OIDC.NewApplication(TSAuthOIDCApplicationConfig{Issuer: f.issuer, Authentication: TSAuthOAuthClientAuthentication{ClientID: "client", Method: TSAuthClientAuthenticationNone}, RedirectURI: "https://app.example/callback"})
-			if err != nil {
-				t.Fatal(err)
-			}
-			attempt, err := app.BeginAuthorization(t.Context(), []string{"openid"})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !strings.HasPrefix(attempt.AuthorizationURL, f.issuer+"/oauth/authorize?") {
-				t.Fatalf("authorization URL %s", attempt.AuthorizationURL)
-			}
-			f.token = f.sign(t, f.claims(attempt.Nonce), nil)
-			if identity, err := app.VerifyIDToken(t.Context(), f.token, TSAuthIDTokenVerificationOptions{Nonce: attempt.Nonce, AccessToken: "access"}); err != nil || identity.Issuer != f.issuer {
-				t.Fatalf("identity=%+v error=%v", identity, err)
-			}
-			if err := app.Revoke(t.Context(), "opaque"); err != nil {
-				t.Fatal(err)
-			}
-			if f.requests != 1 || !reflect.DeepEqual(slices.Sorted(maps.Keys(hosts)), tc.hosts) {
-				t.Fatalf("requests=%d hosts=%v", f.requests, hosts)
-			}
-		})
+func TestTSAuthOIDCGlobalIssuer(t *testing.T) {
+	f := newOIDCFixture(t)
+	local := strings.TrimPrefix(f.server.URL, "http://")
+	f.issuer = "https://auth.terrascale.tech/acme"
+	raw, _ := json.Marshal(f.document)
+	json.Unmarshal([]byte(strings.ReplaceAll(string(raw), f.server.URL+"/acme", f.issuer)), &f.document)
+	hosts := map[string]bool{}
+	client, err := NewClient(Config{HTTPClient: &http.Client{Transport: pinningRoundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		hosts[request.URL.Host] = true
+		clone := request.Clone(request.Context())
+		clone.URL.Scheme, clone.URL.Host = "http", local
+		return http.DefaultTransport.RoundTrip(clone)
+	})}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	instance, err := client.TSAuth.Instance("acme")
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := instance.OIDC.NewApplication(TSAuthOIDCApplicationConfig{Issuer: f.issuer, Authentication: TSAuthOAuthClientAuthentication{ClientID: "client", Method: TSAuthClientAuthenticationNone}, RedirectURI: "https://app.example/callback"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempt, err := app.BeginAuthorization(t.Context(), []string{"openid"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(attempt.AuthorizationURL, f.issuer+"/oauth/authorize?") {
+		t.Fatalf("authorization URL %s", attempt.AuthorizationURL)
+	}
+	f.token = f.sign(t, f.claims(attempt.Nonce), nil)
+	if identity, err := app.VerifyIDToken(t.Context(), f.token, TSAuthIDTokenVerificationOptions{Nonce: attempt.Nonce, AccessToken: "access"}); err != nil || identity.Issuer != f.issuer {
+		t.Fatalf("identity=%+v error=%v", identity, err)
+	}
+	if err := app.Revoke(t.Context(), "opaque"); err != nil {
+		t.Fatal(err)
+	}
+	if f.requests != 1 || !reflect.DeepEqual(slices.Sorted(maps.Keys(hosts)), []string{"auth.terrascale.tech"}) {
+		t.Fatalf("requests=%d hosts=%v", f.requests, hosts)
 	}
 }
 
-func TestTSAuthOIDCRegionalIssuerRejections(t *testing.T) {
+func TestTSAuthOIDCIssuerMustBeGlobalOrigin(t *testing.T) {
 	for _, tc := range []struct{ base, issuer string }{
 		{"https://auth.terrascale.tech", "https://evil.example/acme"},
-		{"https://auth.terrascale.tech", "https://gru.auth.terrascale.tech.evil.example/acme"},
-		{"https://auth.terrascale.tech", "https://evil.gru.auth.terrascale.tech/acme"},
-		{"https://auth.terrascale.tech", "https://xyz.auth.terrascale.tech/acme"},
-		{"https://auth.terrascale.tech", "https://GRU.auth.terrascale.tech/acme"},
-		{"https://auth.terrascale.tech", "https://gru.auth.terrascale.tech:8443/acme"},
-		{"https://gru.auth.terrascale.tech", "https://sfo.auth.terrascale.tech/acme"},
-		{"https://auth.example.com", "https://gru.auth.terrascale.tech/acme"},
+		{"https://auth.terrascale.tech", "https://gru.auth.terrascale.tech/acme"},
+		{"https://auth.terrascale.tech", "https://auth.terrascale.tech.evil.example/acme"},
+		{"https://auth.terrascale.tech", "https://AUTH.terrascale.tech/acme"},
+		{"https://auth.terrascale.tech", "https://auth.terrascale.tech:8443/acme"},
+		{"https://auth.example.com", "https://auth.terrascale.tech/acme"},
 	} {
 		instance := newTSAuthTestInstance(t, Config{TSAuthBaseURL: tc.base})
 		_, err := instance.OIDC.NewApplication(TSAuthOIDCApplicationConfig{Issuer: tc.issuer, Authentication: TSAuthOAuthClientAuthentication{ClientID: "client", Method: TSAuthClientAuthenticationNone}, RedirectURI: "https://app.example/callback"})
@@ -559,32 +538,5 @@ func TestTSAuthOIDCResponseStatusAndUserInfoDenials(t *testing.T) {
 		if err := token.decodeHTTPResponse(status, []byte(`{"access_token":"a"}`)); err == nil {
 			t.Fatal("wrong token status admitted")
 		}
-	}
-}
-
-func TestTSAuthOIDCAtlasSecurityJSONAndLease(t *testing.T) {
-	for _, body := range []string{
-		`{"v":1,"v":1,"refreshSeconds":5,"endpoints":[{"region":"GRU","url":"https://gru.auth.terrascale.tech"}]}`,
-		`{"v":1,"refreshSeconds":5,"endpoints":[{"region":"GRU","url":"https://evil.example","URL":"https://gru.auth.terrascale.tech"}]}`,
-		`{"v":1,"refreshSeconds":5,"endpoints":[{"region":"GRU","region":"FRA","url":"https://fra.auth.terrascale.tech"}]}`,
-	} {
-		var discovery tsAuthEndpointDiscovery
-		transport := pinningRoundTripperFunc(func(r *http.Request) (*http.Response, error) {
-			return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(body))}, nil
-		})
-		if _, err := discovery.resolve(t.Context(), &http.Client{Transport: transport}, "https://atlas.test"); err == nil {
-			t.Fatal("untrusted Atlas security JSON admitted")
-		}
-	}
-	var discovery tsAuthEndpointDiscovery
-	transport := pinningRoundTripperFunc(func(r *http.Request) (*http.Response, error) {
-		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"v":1,"refreshSeconds":1,"endpoints":[{"region":"GRU","url":"https://gru.auth.terrascale.tech"}]}`))}, nil
-	})
-	before := time.Now()
-	if _, err := discovery.resolve(t.Context(), &http.Client{Transport: transport}, "https://atlas.test"); err != nil {
-		t.Fatal(err)
-	}
-	if discovery.expires.After(before.Add(2 * time.Second)) {
-		t.Fatal("short Atlas admission lease widened")
 	}
 }

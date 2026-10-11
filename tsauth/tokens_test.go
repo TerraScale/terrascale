@@ -322,7 +322,7 @@ func TestConfigRejection(t *testing.T) {
 		t.Fatalf("default issuer: %v", err)
 	}
 	for issuer, want := range map[string]string{
-		"":                                 "https://gru.auth.terrascale.tech/terrascale/oauth/token",
+		"":                                 "https://auth.terrascale.tech/terrascale/oauth/token",
 		"https://auth.example/terrascale/": "https://auth.example/terrascale/oauth/token",
 	} {
 		if got, err := tokenEndpoint(issuer); err != nil || got != want {

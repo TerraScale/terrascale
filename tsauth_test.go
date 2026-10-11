@@ -24,56 +24,24 @@ func newTSAuthTestInstance(t *testing.T, cfg Config) *TSAuthInstanceClient {
 	return instance
 }
 
-func TestTSAuthPublicOriginDiscoversRegionsAndProxyOptIn(t *testing.T) {
+// Auth calls go to the one global host. A 503 is retried there, never failed
+// over to another origin.
+func TestTSAuthUsesOneGlobalHost(t *testing.T) {
 	var hosts []string
 	transport := tsAuthEdgeTransport(func(r *http.Request) (*http.Response, error) {
 		hosts = append(hosts, r.URL.Hostname())
-		body := `{"sub":"01ARZ3NDEKTSV4RRFFQ69G5FA4"}`
 		status := http.StatusOK
-		switch r.URL.Hostname() {
-		case "atlas.terrascale.tech":
-			if r.Header.Get("Authorization") != "" || r.URL.Path != "/api/v1/auth/discovery" {
-				t.Errorf("metadata request leaked credentials or used wrong path: %s", r.URL)
-			}
-			body = `{"v":1,"refreshSeconds":60,"endpoints":[{"region":"SFO","url":"https://sfo.auth.terrascale.tech"},{"region":"GRU","url":"https://gru.auth.terrascale.tech"}]}`
-		case "sfo.auth.terrascale.tech":
-			if r.URL.Path == "/acme/oauth/userinfo" && r.Header.Get("Authorization") != "Bearer access-token" {
-				t.Errorf("regional request authorization = %q", r.Header.Get("Authorization"))
-			}
+		if len(hosts) == 1 {
 			status = http.StatusServiceUnavailable
-		case "gru.auth.terrascale.tech":
-			if r.URL.Path == "/acme/oauth/userinfo" && r.Header.Get("Authorization") != "Bearer access-token" {
-				t.Errorf("regional request authorization = %q", r.Header.Get("Authorization"))
-			}
-		case "auth.terrascale.tech":
-		default:
-			t.Errorf("unexpected host: %s", r.URL.Hostname())
 		}
-		return &http.Response{StatusCode: status, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
+		return &http.Response{StatusCode: status, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"sub":"01ARZ3NDEKTSV4RRFFQ69G5FA4"}`)), Request: r}, nil
 	})
-	config := Config{TSAuthBaseURL: publicAuthBaseURL, HTTPClient: &http.Client{Transport: transport}}
-	instance := newTSAuthTestInstance(t, config)
+	instance := newTSAuthTestInstance(t, Config{HTTPClient: &http.Client{Transport: transport}, MaxRetryAttempts: 1, RetryDelay: time.Millisecond})
 	if _, err := instance.OIDC.GetUserInfo(t.Context(), "access-token"); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(hosts, []string{"atlas.terrascale.tech", "sfo.auth.terrascale.tech", "gru.auth.terrascale.tech"}) {
-		t.Fatalf("direct hosts = %v", hosts)
-	}
-	hosts = nil
-	if err := instance.OIDC.RevokeToken(t.Context(), TSAuthOAuthClientAuthentication{ClientID: "client", Method: TSAuthClientAuthenticationNone}, "token"); err == nil {
-		t.Fatal("mutation unexpectedly succeeded")
-	}
-	if !reflect.DeepEqual(hosts, []string{"sfo.auth.terrascale.tech"}) {
-		t.Fatalf("mutation hosts = %v", hosts)
-	}
-	hosts = nil
-	config.TSAuthUseReverseProxy = true
-	proxy := newTSAuthTestInstance(t, config)
-	if _, err := proxy.OIDC.GetUserInfo(t.Context(), "access-token"); err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(hosts, []string{"auth.terrascale.tech"}) {
-		t.Fatalf("proxy hosts = %v", hosts)
+	if !reflect.DeepEqual(hosts, []string{"auth.terrascale.tech", "auth.terrascale.tech"}) {
+		t.Fatalf("hosts = %v", hosts)
 	}
 }
 
@@ -117,7 +85,7 @@ func TestTSAuthErrorShapes(t *testing.T) {
 	}))
 	defer server.Close()
 
-	instance := newTSAuthTestInstance(t, Config{APIBaseURL: server.URL})
+	instance := newTSAuthTestInstance(t, Config{TSAuthBaseURL: server.URL})
 	_, err := instance.OIDC.GetUserInfo(t.Context(), "access-token")
 	var apiErr *APIError
 	if !errors.As(err, &apiErr) || apiErr.Status != http.StatusBadRequest || apiErr.Code != "invalid_request" || apiErr.Message != "the request is invalid" {
@@ -152,7 +120,7 @@ func TestTSAuthRetryPolicy(t *testing.T) {
 	defer server.Close()
 
 	instance := newTSAuthTestInstance(t, Config{
-		APIBaseURL:       server.URL,
+		TSAuthBaseURL:    server.URL,
 		MaxRetryAttempts: 1,
 		RetryDelay:       time.Millisecond,
 	})
@@ -173,7 +141,7 @@ func TestTSAuthRetryPolicy(t *testing.T) {
 }
 
 func TestTSAuthPreflightValidation(t *testing.T) {
-	unwired := &TSAuthClient{c: &Client{cfg: Config{APIBaseURL: "http://127.0.0.1:1"}}}
+	unwired := &TSAuthClient{c: &Client{cfg: Config{TSAuthBaseURL: "http://127.0.0.1:1"}}}
 	if _, err := unwired.Instance(""); err == nil {
 		t.Fatal("blank slug accepted")
 	}
@@ -286,7 +254,7 @@ func TestTSAuthOIDC(t *testing.T) {
 	}))
 	defer server.Close()
 
-	oidc := newTSAuthTestInstance(t, Config{APIBaseURL: server.URL}).OIDC
+	oidc := newTSAuthTestInstance(t, Config{TSAuthBaseURL: server.URL}).OIDC
 
 	doc, err := oidc.GetDiscoveryDocument(t.Context())
 	if err != nil || doc.Issuer != "https://auth.example.com/acme" || doc.JwksURI != "https://auth.example.com/acme/.well-known/jwks.json" || len(doc.GrantTypesSupported) != 3 {

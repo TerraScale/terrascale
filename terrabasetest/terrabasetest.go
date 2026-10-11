@@ -60,7 +60,7 @@ const (
 // Audience is the ts-auth audience TerraBase accepts in Server.Token's tokens.
 const Audience = "terrabase"
 
-const downloadURL = "https://git.terrascale.tech/TerraScale/terrabase/releases/download/" + Release + "/terrabase-linux-amd64"
+const downloadURL = "https://github.com/TerraScale/terrabase/releases/download/" + Release + "/terrabase-linux-amd64"
 
 // Server is a running TerraBase with a fresh data directory.
 type Server struct {

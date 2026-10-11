@@ -124,16 +124,16 @@ type ManagedDatabase struct {
 	// BranchedFrom is the id of the database this one was branched from.
 	BranchedFrom *string   `json:"branchedFrom" ulid:"optional"`
 	CreatedAt    time.Time `json:"createdAt"`
-	// Region is the Atlas region id, such as gru-1, of the node that answered.
+	// Region is the region id, such as gru-1, of the node that answered.
 	Region string `json:"region"`
-	// HomeRegion is the Atlas region id the database was created in; it
+	// HomeRegion is the region id the database was created in; it
 	// never changes.
 	HomeRegion string `json:"homeRegion"`
-	// ReplicaRegions are the Atlas region ids that replicate the database.
+	// ReplicaRegions are the region ids that replicate the database.
 	ReplicaRegions []string `json:"replicaRegions"`
 }
 
-// Placement places a new database. Regions are Atlas region ids such as
+// Placement places a new database. Regions are region ids such as
 // gru-1, not RegionCode values. An empty HomeRegion is the called region.
 type Placement struct {
 	HomeRegion     string   `json:"homeRegion,omitempty"`
@@ -510,7 +510,7 @@ func (u *ManagementUser) CreateDatabaseIn(ctx context.Context, org, project, nam
 }
 
 // SetDatabaseRegions replaces a database's replica regions with
-// replicaRegions, the complete new list of Atlas region ids; its home region
+// replicaRegions, the complete new list of region ids; its home region
 // never changes.
 func (u *ManagementUser) SetDatabaseRegions(ctx context.Context, org, project, databaseID string, replicaRegions []string) (*ManagedDatabase, error) {
 	body := struct {

@@ -84,8 +84,8 @@ func oidcError(code, operation string, uncertain bool, cause error) error {
 	return &TSAuthOIDCError{Code: code, Operation: operation, Uncertain: uncertain, cause: cause}
 }
 
-// TSAuthOIDCApplicationConfig is server configuration, independent of regional
-// transport. Issuer must match the configured provider exactly, including slug.
+// TSAuthOIDCApplicationConfig is server configuration. Issuer must match the
+// configured provider exactly, including slug.
 type TSAuthOIDCApplicationConfig struct {
 	Issuer                 string
 	Authentication         TSAuthOAuthClientAuthentication
@@ -118,14 +118,8 @@ func (o *TSAuthOIDCClient) NewApplication(config TSAuthOIDCApplicationConfig) (*
 	if err != nil || issuer.EscapedPath() != "/"+url.PathEscape(o.i.slug) || strings.HasSuffix(config.Issuer, "/") {
 		return nil, oidcError("invalid_issuer", "configuration", false, err)
 	}
-	base, ok := o.i.issuerBase(issuer)
-	if !ok {
+	if issuer.Scheme+"://"+issuer.Host != o.i.base {
 		return nil, oidcError("issuer_transport_mismatch", "configuration", false, nil)
-	}
-	if base != o.i.base {
-		regional := *o.i
-		regional.base = base
-		o = &TSAuthOIDCClient{i: &regional}
 	}
 	if config.ClockSkew < 0 || config.ClockSkew > time.Minute {
 		return nil, oidcError("invalid_clock_skew", "configuration", false, nil)
