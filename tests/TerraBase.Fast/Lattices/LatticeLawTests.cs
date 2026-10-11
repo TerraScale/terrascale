@@ -31,8 +31,12 @@ public sealed class LatticeLawTests
             state.UpdateDelta(random.Int(0, 5), new MaxLattice(random.ULong(0, 1000))));
 
     [Test]
-    public Task Grow_only_counters_obey_the_laws() =>
-        AssertLawsAsync<GCounter>((random, state, replica, _) => state.IncrementDelta(replica, random.ULong(1, 10)));
+    public Task Document_states_obey_the_laws() =>
+        AssertLawsAsync<DocumentState>((random, state, replica, _) =>
+        {
+            var (next, stamp) = DocumentOps.Apply(random, state, replica);
+            return next.DeltaAt(stamp);
+        });
 
     [Test]
     public Task Causal_contexts_obey_the_laws() =>
@@ -43,11 +47,6 @@ public sealed class LatticeLawTests
     public Task Multi_value_registers_obey_the_laws() =>
         AssertLawsAsync<MvRegister<int>>((random, state, replica, seen) =>
             random.Bool() ? state.WriteDelta(replica, random.Int()) : state.WriteDelta(replica, random.Int(), random.ListItem(seen).Context));
-
-    [Test]
-    public Task Add_wins_sets_obey_the_laws() =>
-        AssertLawsAsync<AwSet<int>>((random, state, replica, _) =>
-            random.Bool() ? state.AddDelta(replica, random.Int(0, 6)) : state.RemoveDelta(random.Int(0, 6)));
 
     [Test]
     public async Task Causal_contexts_hold_exactly_their_dots_whatever_the_order()
@@ -97,21 +96,6 @@ public sealed class LatticeLawTests
     }
 
     [Test]
-    public async Task An_add_wins_over_a_concurrent_remove()
-    {
-        var a = new AwSet<string>();
-        a = a.Join(a.AddDelta(R(1), "x"));
-        var b = a;
-
-        var removed = a.Join(a.RemoveDelta("x"));
-        var readded = b.Join(b.AddDelta(R(2), "x"));
-
-        await Assert.That(removed.Contains("x")).IsFalse();
-        await Assert.That(removed.Join(readded).Contains("x")).IsTrue();
-        await Assert.That(readded.Join(readded.RemoveDelta("x")).Join(removed).Contains("x")).IsFalse();
-    }
-
-    [Test]
     public async Task Hybrid_clocks_never_go_back()
     {
         foreach (var seed in NewSeeds())
@@ -129,30 +113,6 @@ public sealed class LatticeLawTests
                 await Assert.That(next.Milliseconds).IsGreaterThanOrEqualTo(now).Because($"seed {seed}");
                 clock = next;
             }
-        }
-    }
-
-    [Test]
-    public async Task A_counter_counts_every_increment_once()
-    {
-        foreach (var seed in NewSeeds())
-        {
-            var random = new Randomizer(seed);
-            var replicas = Enumerable.Repeat(new GCounter(), Replicas).ToArray();
-            var deltas = new List<GCounter>();
-            var total = 0UL;
-            for (var step = 0; step < Steps; step++)
-            {
-                var replica = random.Int(0, Replicas - 1);
-                var amount = random.ULong(1, 10);
-                var delta = replicas[replica].IncrementDelta(R(replica + 1), amount);
-                replicas[replica] = replicas[replica].Join(delta);
-                deltas.Add(delta);
-                total += amount;
-            }
-
-            var merged = random.Shuffle(deltas.Concat(deltas)).Aggregate(new GCounter(), (state, delta) => state.Join(delta));
-            await Assert.That(merged.Value).IsEqualTo(total).Because($"seed {seed}");
         }
     }
 

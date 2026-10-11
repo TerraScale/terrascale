@@ -118,7 +118,9 @@ Version       = (stamp: Hlc, node: ReplicaId)
   `clear.version`. A write after a delete brings the document back with only the fields written after the delete.
   This is last-writer-wins at document level. It also stops a stale concurrent PATCH from bringing old fields back.
 - **Value of a live field**, in order:
-  1. If live dots exist: a set. The elements, sorted by ordinal canonical JSON.
+  1. If live dots exist, or the base is an array and the field has dots: a set. Its elements are the base's elements
+     without an explicit dot of their own, plus every explicit dot not removed, distinct and sorted by ordinal
+     canonical JSON. Removing every element of an array-based set therefore leaves `[]`, not the old array.
   2. Otherwise, if live counter entries exist: the base number (0 if the base is absent or a tombstone) plus
      Σ(inc − dec). This is a 64-bit integer: increments are integers.
   3. Otherwise: the base value.
@@ -139,7 +141,7 @@ Version       = (stamp: Hlc, node: ReplicaId)
 | PATCH, merge-patch key = null; ops `unset` | `base` = tombstone |
 | ops `set`, `append` | `base` = the new value. `append` is a read-modify-write of the whole array, so it is LWW |
 | ops `inc n` (an int64, may be negative) | own `counters[self]`: reset to `(epoch, 0, 0)` when its epoch is old, then `inc += n` or `dec += −n` |
-| ops `add e` / `remove e` | `add`: new dot `(e, (S, self))`. `remove`: `removedAt = S` on every dot of `e` this node sees. The first set op on an array base first turns its elements into dots at `base.version`. Every node derives the same dots from the same base, so this is deterministic |
+| ops `add e` / `remove e` | `add`: new dot `(e, (S, self))`. `remove`: `removedAt = S` on every dot of `e` this node sees. The elements of an array base are implicit dots at `base.version`: nothing is copied, and removing one writes the explicit dot `(e, base.version)` with `removedAt = S`. Every node reads the same implicit dots from the same base, so this is deterministic, even on a node whose first set op was not the conversion |
 
 Every PATCH, including `inc`, `add` and `remove`, needs a document that exists locally (404 `not_found`, as today).
 A concurrent `inc` against a delete therefore lands in the old epoch, and the delete wins. JSON Pointer paths keep
@@ -157,7 +159,10 @@ Dominance only grows under join, so normalization commutes with join. Tombstoned
 
 **Delta of an operation** = the entries with `changed = S`, plus the values of plain fields. `changed` is local
 bookkeeping: it is encoded but not merged and not hashed. A later operation in the same transaction re-sends what it
-overwrote, so nothing is lost.
+overwrote, so nothing is lost. Several operations of one request on one document share `S` and apply in order, the
+later one replacing what the earlier one wrote at `S` (a `set` after an `add` drops that dot). So the lane writes the
+document's rows once per request, after its last operation: an intermediate image would ship an entry at `S` that the
+final state no longer holds, and no join could take it back.
 
 **Materialization** is a pure function of state plus values. Fields are sorted by ordinal UTF-8 name. Values are
 compact canonical JSON (re-serialized once at write time), counters are integers and sets are sorted arrays. Every
@@ -166,9 +171,13 @@ unordered).
 
 **Encoding** (`Engine/Lattices/DocumentStateEncoding`) follows the `LatticeEncoding` rules: one format byte (1),
 canonical order, minimal LEB128 and bounded counts. It is a trust boundary and accepts canonical bytes only. A per-
-state node dictionary keeps it small. It is stored as base64url TEXT. `MvRegister`, `CausalContext`, `Dot`,
-`DocumentWrite` and `GCounter` are deleted (section 19). `Hlc`, `ReplicaId`, `ILattice`, `MaxLattice`,
-`LwwRegister`, `MapLattice` and `SetLattice` stay.
+state node dictionary keeps it small. It is stored as base64url TEXT. It has two forms: the full form carries every
+value (deltas), and the stored form leaves out a plain field's value, which the collection row's `doc` already holds
+(`_tb_state.state`); decoding the stored form needs that `doc` and checks that it is the state's materialization. The
+digest is SHA-256 over the stored form with `changed` zeroed, then `doc`. A version is the type `EntryVersion` (the
+name `Version` would collide with `System.Version`). `GCounter` and the old `AwSet` went with R1; `MvRegister`,
+`CausalContext`, `Dot` and `DocumentWrite` go with R2a, which removes their last callers (section 19). `Hlc`,
+`ReplicaId`, `ILattice`, `MaxLattice`, `LwwRegister`, `MapLattice` and `SetLattice` stay.
 
 ## 5. Storage layout (one Turso file per database)
 
@@ -367,7 +376,8 @@ message AckFrame { bytes database_id = 1; uint64 change_id = 2; fixed64 applied 
   - `_tb_state` rows with `live = 0` whose newest entry is below the horizon (index `_tb_state_dead`);
   - tombstoned bases, but only when the field has no live counter entry or dot in that epoch. Removing the base would
     move the epoch back and kill them;
-  - removed dots.
+  - removed dots, except a removed explicit dot at `base.version` of an array base: it hides an implicit element of
+    that base, so it stays as long as the base does.
 
   Dominated entries go at once through normalization (section 4).
 - **Eviction.** A machine missing from the directory for more than 24 h leaves the horizon and the CDC retention. If it
