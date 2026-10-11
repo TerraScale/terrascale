@@ -24,6 +24,9 @@ public static class App
     /// <summary>OpenAPI document title; clients key on it.</summary>
     public const string ApiTitle = "TerraScale Auth API";
 
+    /// <summary>TerraBase's internal listener on Fly's private network, nearest machine first.</summary>
+    public static readonly Uri TerraBaseOrigin = new("http://top1.nearest.of.ts-terrabase.internal:8081");
+
     /// <summary>
     /// Builds the application for validated options. <paramref name="configure"/> lets
     /// integration tests replace infrastructure before the container is built.
@@ -51,25 +54,11 @@ public static class App
         }
 
         builder.Services.AddSingleton(TimeProvider.System);
-        if (options.TerraScaleApiEndpoints.Count == 0)
-        {
-            builder.Services.AddSingleton(_ => new HttpClient(TerraBaseHttp.CreateHandler()));
-            // The configured URL is an explicit static override. Replace the resolver with Atlas
-            // discovery when ts-dotnet supplies it; every process must pin the same database authority.
-            builder.Services.AddSingleton<ITerraBaseEndpointResolver>(_ => new TerraBaseStaticEndpointResolver(options.TerraScaleApiUrl));
-        }
-        else
-        {
-            // The cell's private members, in the same order on every replica (see TerraBaseMembers).
-            builder.Services.AddSingleton<TerraBaseMembers>();
-            builder.Services.AddHostedService(services => services.GetRequiredService<TerraBaseMembers>());
-            builder.Services.AddSingleton(services => new HttpClient(services.GetRequiredService<TerraBaseMembers>().CreateHandler()));
-            builder.Services.AddSingleton<ITerraBaseEndpointResolver>(services => services.GetRequiredService<TerraBaseMembers>());
-        }
+        builder.Services.AddSingleton(_ => new HttpClient(TerraBaseHttp.CreateHandler()));
+        // The nearest TerraBase machine's private listener: no credential, it trusts the private network.
         builder.Services.AddSingleton(services => new TerraBaseDocumentsClient(services.GetRequiredService<HttpClient>(), new TerraBaseDocumentsClientOptions
         {
-            EndpointResolver = services.GetRequiredService<ITerraBaseEndpointResolver>(),
-            ApiKey = options.TerraScaleApiKey,
+            BaseAddress = TerraBaseOrigin,
         }).Database(options.StorageProject, options.StorageDatabase));
         builder.Services.AddSingleton<AuthStore>();
         builder.Services.AddSingleton<Users>();

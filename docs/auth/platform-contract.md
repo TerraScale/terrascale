@@ -447,10 +447,9 @@ without a signed-in user.
 - A user of the `terrascale` tenant can be a platform administrator. Its
   sign-in access tokens and `userinfo` carry `"platform_admin": true`;
   organization, project and API key tokens never do.
-- `PUT` and `DELETE /v1/terrascale/users/{user}/platform-admin` set and clear it
-  (`204`; `404` for an unknown user), with the operator key
-  (`Authorization: Bearer <TS_AUTH_OPERATOR_KEY>`). The TS-602 bootstrap makes
-  the first user an administrator this way.
+- Only an operator sets and clears it, through `fly ssh` on a ts-auth machine;
+  there is no HTTP route and no operator key. The TS-602 bootstrap makes the
+  first user an administrator this way.
 - The flag shows in the next token the user is issued: a refresh or a new
   sign-in. ts-dashboard decides what an administrator may do in the platform.
 
@@ -463,8 +462,10 @@ without a signed-in user.
 - **ts-dashboard** owns plans, subscriptions, billing and spending caps, and UI
   preferences such as a user's current organization. It reads identity through
   this API and suspends a project through section 8.1.
-- **ts-auth's own storage.** ts-auth reaches TerraBase like any other client,
-  with a 15-minute token it signs itself, never a `tb_…` key:
+- **ts-auth's own storage.** ts-auth reaches TerraBase at
+  `http://top1.nearest.of.ts-terrabase.internal:8081`, TerraBase's internal
+  listener on Fly's private network, which trusts the network and needs no
+  credential. The design below, a token ts-auth signs itself, is superseded:
   - `iss` the `terrascale` issuer, `sub` `ts-auth`, `org_id` and `project_id`
     of ts-auth's own organization and project (configured), `database` `auth`,
     `scope` `databases:read databases:write documents:read documents:write`
@@ -476,9 +477,7 @@ without a signed-in user.
     key ring cannot be read: TerraBase reads ts-auth's JWKS and ts-auth reads
     its key ring from TerraBase, and with both starting at once neither would
     otherwise get going. TerraBase needs nothing beyond JWKS.
-  - Until TerraBase serves project-scoped data routes for these tokens (TS-589)
-    and ts-dotnet takes a token provider (TS-591), ts-auth keeps its `tb_…` key
-    (`TS_AUTH_TERRASCALE_API_KEY`), then deletes it.
+  - The `tb_…` key (`TS_AUTH_TERRASCALE_API_KEY`) that bridged to it is deleted.
 
 ## 10. Clients
 

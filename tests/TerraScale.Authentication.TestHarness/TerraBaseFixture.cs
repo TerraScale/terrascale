@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
 using TerraScale.Authentication.Store;
 using TerraScale.DotNet.Testing;
 using TerraScale.DotNet.TerraBase;
@@ -30,6 +31,22 @@ public sealed class TerraBaseFixture : IAsyncInitializer, IAsyncDisposable
         }
 
         return (tenant, database);
+    }
+
+    /// <summary>
+    /// Points a ts-auth server's storage at <paramref name="databaseName"/> of the tenant's project in this fixture.
+    /// TODO(.cos/fly-migration-plan.md, phase 3a): the pinned TerraBase release has no internal listener yet, so tests reach
+    /// its TLS client listener with the tenant's API key; switch to the credential-free internal listener once it ships.
+    /// The fixture's HttpClient trusts its certificate; a test may register its own, wrapping <see cref="NewHandler"/>.
+    /// </summary>
+    public void UseStorage(IServiceCollection services, TerraBaseTestTenant tenant, string databaseName = "auth", string? apiKey = null)
+    {
+        services.AddSingleton(this.Server.Http);
+        services.AddSingleton(provider => new TerraBaseDocumentsClient(provider.GetRequiredService<HttpClient>(), new TerraBaseDocumentsClientOptions
+        {
+            BaseAddress = new Uri(this.Server.ClientAddress.GetLeftPart(UriPartial.Authority)),
+            ApiKey = apiKey ?? tenant.ApiKey,
+        }).Database(tenant.Project.Id, databaseName));
     }
 
     public HttpClient NewHttpClient() => new(this.NewHandler());

@@ -385,10 +385,6 @@ deadline, and `/readyz` answers its latest result; a result older than fifteen
 seconds is not ready. The Vault metadata read is cached for five minutes after it
 succeeds. Unknown `region` is omitted.
 
-The broader `scripts/auth/smoke-real-stack.sh` still targets Rust identity flows
-that later streams have not implemented; it is not evidence of TS-489 or
-TS-491 acceptance.
-
 ## Provisioning the global auth dataset
 
 The application and readiness probe never provision or repair state, and
@@ -398,8 +394,8 @@ the provisioning plan; live production execution belongs to TS-470:
 1. Resolve organization `terrascale` and project label `ts-auth` to their
    IDs through Management before deployment; keep management credentials out
    of the auth runtime.
-2. Provision the `auth` database and a `tb_…` credential restricted to the
-   auth project/database with `documents:read` and `documents:write`.
+2. Create the `auth` database through TerraBase's internal listener
+   (`http://top1.nearest.of.ts-terrabase.internal:8081`, no credential).
 3. Explicitly call `AuthStore.ProvisionAsync` with the pinned SDK against that
    existing database. It creates `uniques`, `verification_tokens` and
    `storage_health`, the TS-490 `users`, `sessions` and `passcodes`, the
@@ -415,7 +411,7 @@ the provisioning plan; live production execution belongs to TS-470:
    that adds collections; a configured dashboard or service client also stops
    startup while its collection is missing.
 4. Configure every replica with `<ts-auth-project-uuid>/auth` and the same
-   explicitly resolved HTTPS storage authority and shared auth settings.
+   shared auth settings.
 
 **Live production activation remains gated.** The pinned server uses SQLite
 WAL with `synchronous=NORMAL` (TerraBase decision 0003): a process crash alone
@@ -501,9 +497,6 @@ detect deleted or omitted events. Audit exports include integrity digests and
 authenticity seals so downstream retention systems can verify them; keep active
 and retained rotation keys available to verify historical exports after key
 rotation.
-- Operator: `POST /v1/instances` (Bearer `TS_AUTH_OPERATOR_KEY`) requires an
-  `Idempotency-Key` unique to each intentional instance bootstrap. Reuse the
-  same key when retrying that request so its first key can be recovered.
 - Liveness/readiness: `GET /healthz` is process liveness; `GET /readyz`
   checks the configured database, required collections and synthetic
   create/read/conditional-delete access through Documents v1, this
