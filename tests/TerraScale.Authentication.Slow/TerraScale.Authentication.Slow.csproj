@@ -22,6 +22,6 @@
   </ItemGroup>
   <ItemGroup>
     <!-- Shared harness source; deliberately not a third test project. -->
-    <Compile Include="../TerraScale.Auth.TestHarness/**/*.cs" Link="TestHarness/%(RecursiveDir)%(Filename)%(Extension)" />
+    <Compile Include="../TerraScale.Authentication.TestHarness/**/*.cs" Link="TestHarness/%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>
 </Project>

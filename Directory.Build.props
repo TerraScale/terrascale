@@ -3,7 +3,7 @@
        meet stays scoped to the area that had it before (IsTerraBaseArea, IsLibsArea). -->
   <PropertyGroup>
     <ProjectFolder>$([MSBuild]::MakeRelative('$(MSBuildThisFileDirectory)', '$(MSBuildProjectDirectory)'))</ProjectFolder>
-    <IsTerraBaseArea Condition="$(ProjectFolder.StartsWith('src/TerraScale.TerraBase')) or $(ProjectFolder.StartsWith('tests/TerraScale.TerraBase'))">true</IsTerraBaseArea>
+    <IsTerraBaseArea Condition="$(ProjectFolder.StartsWith('src/TerraBase')) or $(ProjectFolder.StartsWith('tests/TerraBase'))">true</IsTerraBaseArea>
     <IsLibsArea Condition="$(ProjectFolder.Contains('TerraScale.Endpoints')) or $(ProjectFolder.Contains('TerraScale.Logging'))">true</IsLibsArea>
   </PropertyGroup>
 

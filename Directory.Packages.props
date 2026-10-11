@@ -31,7 +31,7 @@
     <PackageVersion Include="Microsoft.Extensions.Logging.Configuration" Version="11.0.0-rc.1.26425.128" />
     <PackageVersion Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="11.0.0-rc.1.26425.128" />
   </ItemGroup>
-  <!-- Interpolated log calls (src/TerraScale.TerraBase, src/TerraScale.Logging) and allocation-light strings on hot paths:
+  <!-- Interpolated log calls (src/TerraBase, src/TerraScale.Logging) and allocation-light strings on hot paths:
        Cysharp, the same release train as ZLogger. -->
   <ItemGroup Label="Interpolated strings">
     <PackageVersion Include="ZLogger" Version="2.5.10" />

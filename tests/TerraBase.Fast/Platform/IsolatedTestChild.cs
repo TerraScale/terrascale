@@ -26,7 +26,7 @@ internal static class IsolatedTestChild
         }
 
         start.ArgumentList.Add("--treenode-filter");
-        // The tree root is the assembly name, which is no longer the namespace root (TerraScale.TerraBase.Fast).
+        // The tree root is the assembly name, which is no longer the namespace root (TerraBase.Fast).
         var assembly = typeof(IsolatedTestChild).Assembly.GetName().Name;
         start.ArgumentList.Add($"/{assembly}/{namespaceName}/{className}/{testName}");
         start.ArgumentList.Add("--minimum-expected-tests");
