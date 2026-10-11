@@ -7,6 +7,9 @@ name: CI
 #   previews.yml deletes it when the PR closes or after 24 hours.
 # - deploy (main): both images to Fly, TerraBase then ts-auth, each gru -> live check -> sjc (scripts/fly/deploy.sh).
 # - slow (main): the slow suites; never blocks.
+# - e2e (main, after deploy): tests/TerraBase.E2E against the Fly app, gru and sjc pinned with fly-prefer-region; never
+#   blocks. Between replication slices R2a and R10a nothing replicates on Fly, so E1 to E7 fail there
+#   (docs/terrabase/multi-region-replication.md, section 21).
 
 on:
   pull_request:
@@ -197,3 +200,23 @@ jobs:
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_TOKEN_TS_AUTH }}
         run: scripts/fly/deploy.sh ts-auth src/TerraScale.Authentication/fly.toml registry.fly.io/ts-auth:${{ github.sha }}
+
+  e2e:
+    needs: deploy
+    continue-on-error: true
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 30
+    env:
+      TERRABASE_E2E_FLY_URL: https://ts-terrabase.fly.dev
+      TERRABASE_E2E_FLY_API_KEY: ${{ secrets.TERRABASE_E2E_FLY_API_KEY }}
+      TERRABASE_E2E_FLY_PROJECT: ${{ secrets.TERRABASE_E2E_FLY_PROJECT }}
+      TERRABASE_E2E_FLY_DATABASE: ${{ secrets.TERRABASE_E2E_FLY_DATABASE }}
+    steps:
+      - *checkout
+      - *checkout-ts-dotnet
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: terrascale/global.json
+      - name: Replication e2e against Fly
+        working-directory: terrascale
+        run: make terrabase-e2e
