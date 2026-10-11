@@ -26,7 +26,7 @@
 | Regions per database | up to 3 | up to 3 | up to 3 | up to 3 |
 | PITR retention | 1 day | 7 days | 30 days | 35 days |
 
-Launch regions: GRU (São Paulo), SFO (San Jose), FRA (Frankfurt).
+Launch regions: GRU (São Paulo), SJC (San Jose).
 
 Starter and Pro include one eligible 30-day trial per verified payment method and organization.
 

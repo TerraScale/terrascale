@@ -37,8 +37,8 @@ durability apply from the first day of service.
 
 TerraScale is a multi-region document database: writes replicate across the
 Regions you select, reads are served near your users, and reactive queries
-stream live results over a CDN. Launch Regions are GRU (São Paulo), SFO (San Jose),
-and FRA (Frankfurt); you may select up to three Regions per database.
+stream live results over a CDN. Launch Regions are GRU (São Paulo) and SJC (San Jose);
+you may select up to three Regions per database.
 
 ## Accounts and organizations
 

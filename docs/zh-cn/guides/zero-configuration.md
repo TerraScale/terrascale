@@ -35,12 +35,13 @@ switch. Existing serving nodes are updated in place. Every server has at least
 
 ## Production secrets arrive automatically
 
-OCI Vault creates, delivers and configures first-party production secrets
+The platform creates, delivers and configures first-party production secrets
 automatically. Services receive the credentials they need without an operator
 copying keys, writing environment files or toggling secret delivery.
 
 Third-party providers such as Stripe and Cloudflare issue their own keys.
-Those keys are stored once in OCI Vault and picked up automatically. This
+Those keys are stored once in the platform's secret store and picked up
+automatically. This
 vendor-issued input does not turn a TerraScale feature on or off.
 
 Customer sign-in and application credentials still authorize access to customer

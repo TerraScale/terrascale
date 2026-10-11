@@ -39,9 +39,8 @@ legacy SQL/reactive API is not its query contract.
 
 Configure exactly one explicit HTTPS endpoint or caller-supplied resolver:
 C# `BaseAddress`/`EndpointResolver`, JavaScript `baseUrl`/`endpointResolver`,
-or Go `BaseURL`/`Resolver`. Automatic Atlas integration is deferred; these
-options do not promise pin verification, regional fallback or proxy fallback.
-See [Atlas discovery](/ru/guides/atlas) for the candidate public contract.
+or Go `BaseURL`/`Resolver`. These options do not promise regional fallback or
+proxy fallback.
 
 C# clients use a caller-owned `HttpClient`; use
 `TerraBaseHttp.CreateHandler()` to disable automatic redirects and cookies.
@@ -81,8 +80,8 @@ sign-in stays on native dashboard pages.
    identified C# release binary using the SDK Testing helper and an isolated
    allocation. Check persisted values, version preconditions and cleanup.
    Missing inputs or a stub cannot pass this gate.
-3. **Discovery and authorization:** qualify deployed Atlas resolution, pin
-   verification, direct regional dispatch and accepted ts-auth JWTs. A
+3. **Endpoint and authorization:** qualify the configured endpoint or resolver,
+   direct regional dispatch and accepted ts-auth JWTs. A
    configured endpoint with historical keys establishes only compatibility
    for that lane.
 4. **Customer journey:** qualify supported provisioning, native dashboard
@@ -97,7 +96,7 @@ records `PASS_REAL_TERRABASE_STARTER` for SDK source revision
 `ff256067015433c8c40b59879f1282d2a40480ce`. It verifies CRUD, a matching query,
 stale-version rejection, read-only write denial, invalid-credential rejection
 and cleanup. This is an exact locally packaged candidate, not a published release. A passing isolated CRUD receipt still leaves public package
-availability, Atlas, product JWTs, other SDK runtimes and the deployed customer
+availability, product JWTs, other SDK runtimes and the deployed customer
 journey unqualified.
 
 `npm test` checks the legacy deterministic stub and documentation consistency.

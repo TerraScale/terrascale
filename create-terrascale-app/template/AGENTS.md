@@ -7,7 +7,7 @@ AI-assisted builder gets a working assistant on minute one.
 
 - Every feature and region is always on. Do not add feature flags, activation settings, deploy toggles or tuning configuration.
 - Discover service origins and regions automatically. NetBird network membership admits production nodes; a node derives its region from where it runs.
-- OCI Vault automatically creates and delivers production service credentials. Vendor-issued keys are stored once in Vault and picked up automatically; customer credentials still authorize customer data access.
+- The platform automatically creates and delivers production service credentials. Vendor-issued keys are stored once in Vault and picked up automatically; customer credentials still authorize customer data access.
 - Fakes, demo stores and skip-auth belong only in test code and test binaries. Existing SDK configuration remains removal inventory; do not invent an unpublished replacement API.
 - APIs and subjects are v1. CI rejects new switches and review requests changes.
 

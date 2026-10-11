@@ -54,7 +54,7 @@ const TREES: Record<string, { groups: { header: string; items: string[] }[] }> =
       },
     ],
   },
-  '/guides/': { groups: [{ header: 'guides', items: ['/guides/', '/guides/atlas', '/guides/sdks', ZERO_CONFIGURATION_ROUTE] }] },
+  '/guides/': { groups: [{ header: 'guides', items: ['/guides/', '/guides/sdks', ZERO_CONFIGURATION_ROUTE] }] },
   '/blog/': {
     groups: [
       {

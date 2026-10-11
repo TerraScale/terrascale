@@ -9,7 +9,7 @@ C# SDK candidate package/feed, an explicit
 HTTPS regional API origin, and a provisioned project/database/collection with
 read/write authorization. Export the settings in `.env.example`; no dotenv
 loader is included. The application does not create users, organizations or
-projects. Public NuGet publication, automatic Atlas integration and the
+projects. Public NuGet publication, automatic endpoint resolution and the
 production ts-auth JWT journey are separate release gates.
 
 ```bash
@@ -47,4 +47,4 @@ The SDK's test helper verifies and starts the pinned real binary with an
 isolated allocation. Missing or mismatched inputs fail; there is no stub mode.
 The helper's compatibility fixture is not a production credential-provisioning
 workflow. Real-process compatibility does not qualify JWT sign-in, public
-package availability, automatic Atlas discovery, replication or billing.
+package availability, automatic endpoint discovery, replication or billing.
