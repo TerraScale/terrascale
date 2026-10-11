@@ -19,25 +19,32 @@ Area notes: `src/TerraBase/AGENTS.md` (terrabase), `src/TerraScale.Authenticatio
 ### Where things go
 
 - Projects: `src/<Project>/`. Test projects: `tests/<Project>/`. Scripts: `scripts/<area>/`. Area docs and their `README.md`: `docs/<area>/`. Benchmarks: `benchmark/` only.
-- Shared files at the root: `TerraScale.slnx`, `Directory.Build.props`, `Directory.Build.targets`, `Directory.Packages.props`, `global.json`, `NuGet.config`, `.editorconfig`, `BannedSymbols.txt`, `Makefile`, `.forgejo/workflows/`.
+- Shared files at the root: `TerraScale.slnx`, `Directory.Build.props`, `Directory.Build.targets`, `Directory.Packages.props`, `global.json`, `NuGet.config`, `.editorconfig`, `BannedSymbols.txt`, `Makefile`, `.github/workflows/`.
 - Make: `make build`, `make test-fast`, `make test-slow` and `make check` are global. Per-area targets are `libs-*`, `auth-*`, `terrabase-*` and `benchmark-*`. Use the Makefile whenever an equivalent target exists.
 - Auth and terrabase use the libs through ProjectReference, never NuGet packages.
 - The ts-dotnet SDK stays a separate repository and is referenced from its sibling checkout (`TerraScaleRoot`, see `Directory.Build.props`).
 - ts-dashboard and the SDKs (ts-go, ts-dotnet, ts-js, ts-rust, ts-cli) stay separate repositories.
+
+## Platform
+
+- Everything runs on Fly.io. Nothing runs on OCI.
+- Fly orgs: `terrascale` (production) and `terrascale-previews` (PR previews). Apps: `ts-terrabase` and `ts-auth` in `terrascale`; one `ts-pr-<number>` app per PR in `terrascale-previews`.
+- CI is GitHub Actions on Blacksmith runners: it builds and tests, then `fly deploy` ships the image.
+- Deploy order: `gru` first, then a live check, then `sjc`. A failed check stops the rollout; fix forward.
 
 ## Rules for every area
 
 ### Zero configuration (user decision 2026-10-09, do not revert)
 
 - Every feature is always on. No feature flags, on/off variables, opt-in settings, boolean enabled configuration keys, deploy toggles or kill switches in code, config or CI. Delete switches and their guarded paths.
-- Every region always serves. NetBird network membership admits a node automatically; it discovers every region, infers its own region from where it runs and starts serving without a per-region enable step.
-- OCI Vault automatically creates, delivers and configures every first-party production secret. Vendor-issued keys (such as Stripe and Cloudflare) are stored once in Vault and picked up automatically; nobody copies secrets by hand.
+- Every region always serves. A node joins Fly's private network automatically and discovers every region through `.internal` DNS (`<region>.<app>.internal`). It infers its own region from `FLY_REGION` and starts serving without a per-region enable step. Current regions: `gru` and `sjc`.
+- Fly secrets are the only secret store. Each app reads its secrets from its environment and nobody copies them into code or config. Vendor-issued keys (such as Stripe and Cloudflare) are set once with `fly secrets set` and picked up automatically. Admin access to a running machine is `fly ssh` only.
 - Values have one correct setting in code. Expose no tuning knobs. Fakes, demo stores and skip-auth belong only in test code and test binaries.
 - CI rejects new switch-style configuration; ts-reviewer requests changes. Only unavoidable third-party names may have a narrow allowance with a one-line reason.
 
-TerraBase discovers cluster membership and every serving region automatically; production authentication and persistence credentials arrive from OCI Vault.
+TerraBase discovers cluster membership and every serving region automatically through `.internal` DNS; production authentication and persistence credentials arrive from fly secrets.
 
-- Shared libraries must preserve automatic regional discovery and OCI Vault secret delivery for consuming production services.
+- Shared libraries must preserve automatic regional discovery through `.internal` DNS and fly secrets delivery for consuming production services.
 - Always-on capability does not bypass authentication, customer consent, repository permissions, credential revocation, validation, resource isolation, backups or reviewed recovery. Preserve branch/event identity, quality gates and failure/cleanup conditions in CI.
 
 ### Greenfield
@@ -53,7 +60,7 @@ TerraBase discovers cluster membership and every serving region automatically; p
 
 - Every service keeps all its application data in TerraBase databases and collections: one collection per entity type, one document per record.
 - No SQLite, local files, in-memory-only stores, Cloudflare KV/D1 or other databases for application data.
-- The only exceptions are the products and the bootstrap layer named in the workspace rules: ts-status, ts-atlas and ts-cos, plus ts-orchestrator's NATS KV and OCI Object Storage.
+- The only exceptions are ts-status (Cloudflare Worker + D1) and ts-cos (local SQLite). TerraBase's own external persistence (snapshots, logs, backups) goes to Tigris, the only object store.
 
 ### Service ownership
 
@@ -64,8 +71,7 @@ Each product owns one area. Never duplicate another product's data; call its API
 | ts-auth | Users, organizations, projects, memberships, roles, invitations, SSO, OAuth/OIDC clients, signing keys, API keys (client credentials) |
 | TerraBase | Databases, collections, documents, transactions, queries, backups, indexes, schema, usage metering |
 | ts-dashboard | Platform UI and API, MCP server, plans, subscriptions, billing, spending caps |
-| ts-orchestrator | Regions, hosts, releases, rollouts, service placement and scaling, edge |
-| ts-atlas | Region discovery and the global `api.` / `auth.` proxies |
+| Fly.io | Regions, placement, scaling, edge, TLS, secrets |
 | SDKs (ts-go, ts-dotnet, ts-js, ts-cli) | Clients for every product API. Services talk to each other only through them |
 
 - ts-auth never reads another product's storage. TerraBase authorizes from ts-auth tokens offline.
@@ -97,7 +103,7 @@ Each product owns one area. Never duplicate another product's data; call its API
 
 ### Git
 
-- Use `git` for repository operations and **`fj`** for Forgejo operations. Check CLI help when syntax is uncertain; do not invent commands.
+- Use `git` for repository operations and **`gh`** for GitHub operations. Check CLI help when syntax is uncertain; do not invent commands.
 - Prefer a dedicated Git worktree per task. Worktrees are the default, not mandatory: use the existing checkout when explicitly requested or when a worktree is impractical.
 - Branch from the latest `origin/main`. Name branches `feat/`, `fix/`, `hotfix/` or `refactor/` plus a descriptive name.
 - Keep each task's commits and PR isolated.
@@ -111,7 +117,7 @@ Each product owns one area. Never duplicate another product's data; call its API
 - Never claim a check passed unless it actually ran successfully. Distinguish required checks from non-blocking Slow results.
 - Required checks (formatting, build, analyzers, required security checks, OpenAPI validation where the area has it, and Fast) MUST pass before pushing. Do not wait for or require Slow.
 - Update documentation and compatibility notes for API, storage or authentication behavior changes.
-- Request reviews from **`mariogk`** and **`terrascale-bot`**, excluding the PR author.
+- Request reviews from **`mariogk`**, excluding the PR author.
 - Enable auto-merge once required checks pass. Never bypass checks or required reviews.
 - Before you finish, verify the target branch, title, reviewers, attachments and CI status. Send the PR URL and name any unresolved blockers or linked failure reports.
 
@@ -135,7 +141,7 @@ Each product owns one area. Never duplicate another product's data; call its API
 - Versions are managed centrally in `Directory.Packages.props`. Never put a `Version` on a `PackageReference`.
 - Prerelease packages only where .NET 11 requires them. Verify compatibility before upgrading.
 - Commit every `packages.lock.json`. CI restores in locked mode.
-- Package sources are fixed in `NuGet.config`. `TerraScale.*` packages restore only from the TerraScale Forgejo registry (`https://git.terrascale.tech/api/packages/TerraScale/nuget/index.json`); everything else restores only from nuget.org. Keep `packageSourceMapping` in sync when adding a source.
+- Package sources are fixed in `NuGet.config`, which lists nuget.org only. Keep `packageSourceMapping` in sync when adding a source.
 - Libraries that are not consumed as packages are project references.
 - Shared MSBuild configuration lives in three root files. Keep project files minimal.
   - `Directory.Build.props`: common properties for every project (framework, language, analyzers, lock files, `TerraScaleRoot`).
@@ -176,7 +182,7 @@ Each service maintains exactly two integration suites:
   - Provides comprehensive integration and end-to-end coverage.
   - MUST run independently from the release-critical pipeline and MUST NOT block merges, deployments, or releases.
   - Preserve visible failures: non-blocking does not mean passing.
-  - Any failure MUST automatically create a Forgejo issue with `fj`, or update the existing open report for the same failure. The issue contains the failed tests, commit SHA, environment, reproduction steps, expected and actual behavior, redacted logs and the CI run URL. The reporting step runs even when the test step fails.
+  - Any failure MUST automatically create a GitHub issue with `gh`, or update the existing open report for the same failure. The issue contains the failed tests, commit SHA, environment, reproduction steps, expected and actual behavior, redacted logs and the CI run URL. The reporting step runs even when the test step fails.
   - Keep sensitive vulnerability details in the approved private reporting channel, never in public issues.
 - Shared test utilities live in each service's TestHarness (`tests/TerraScale.Authentication.TestHarness`, `tests/TerraBase.TestHarness`) and are linked as source. They MUST NOT become a third suite.
 - New functionality MUST be covered by the appropriate suite. Critical or commonly used functionality SHOULD be in Fast. Broader, expensive, edge-case, stress, or exhaustive scenarios SHOULD be in Slow.
@@ -191,4 +197,4 @@ Each service maintains exactly two integration suites:
 - ALL benchmark code, datasets, reports, and results live in `benchmark/`: Go code at the top level, .NET library benchmarks in `benchmark/dotnet/`. Do not add them anywhere else in this repository.
 - Save every benchmark result as a `.md` table in `benchmark/bench/`, so differences and improvements can be compared from the very beginning.
 - Performance comparisons and historical results remain in `benchmark/`.
-- The operating contract requires automatic serving-region discovery. OCI Vault delivers production benchmark credentials. Fakes and synthetic modes belong only in test binaries.
+- The operating contract requires automatic serving-region discovery through `.internal` DNS. Fly secrets deliver production benchmark credentials. Fakes and synthetic modes belong only in test binaries.

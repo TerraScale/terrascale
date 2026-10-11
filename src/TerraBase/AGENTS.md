@@ -40,11 +40,11 @@ The project MUST follow a **feature-sliced design** so related and dependent fil
 - All storage access goes through the `Engine/` interfaces. Code outside `src/TerraBase/Engine/<Implementation>/` never references SQLite types. Adding another engine (for example Turso) requires explicit human approval and is a new `Engine/<Name>/` implementation of the same interfaces.
 - Every on-disk schema is versioned (`PRAGMA user_version`). Refuse to open a newer version.
 - Do not build a TerraBase-owned B-tree/LSM storage engine.
-- When TerraBase needs external persistence (a log, durable queue or snapshot), it uses the same NATS (JetStream) as ts-orchestrator. Never add a separate store.
+- When TerraBase needs external persistence (a log, snapshot or backup), it uses Tigris, the only object store. Never add a separate store.
 
 ### Configuration
 
-- Production values have one correct setting in code. Derive identity and discovery automatically and obtain secrets through OCI Vault. Legacy option removal belongs to TS-773; do not add operator settings.
+- Production values have one correct setting in code. Derive identity and discovery automatically (`FLY_REGION`, `FLY_MACHINE_ID`, `FLY_APP_NAME`, `.internal` DNS) and obtain secrets from fly secrets. Legacy option removal belongs to TS-773; do not add operator settings.
 - Validate derived inputs and credentials at startup. Reject invalid inputs and fail closed.
 - Error messages name settings, never their values. Never log secrets, keys, tokens or credentials.
 
@@ -72,7 +72,7 @@ The project MUST follow a **feature-sliced design** so related and dependent fil
 
 ## Networking
 
-- Resolve client regions and endpoints through ts-atlas. Allow an explicit static override and pin sessions. Never hardcode regional endpoints in client code. Follow the landed Atlas pin contract and `docs/terrabase/region-identity.md`.
+- Clients connect to the public `api.` host; Fly Proxy routes to the nearest region. Allow an explicit static override and pin sessions. Never hardcode regional endpoints in client code. Follow `docs/terrabase/region-identity.md`.
 - TerraBase-to-TerraBase communication MUST use **gRPC** with checked-in, versioned `.proto` contracts.
 - Inter-node gRPC communication MUST use **LZ4 compression** to reduce bandwidth usage.
 - Do not introduce alternative inter-node protocols without explicit human approval.
