@@ -2,7 +2,7 @@ export const en = {
   meta: {
     title: 'TerraScale Public Alpha | Regional Document Database',
     description:
-      'TerraScale Public Alpha provides a typed document database with asynchronous replication across São Paulo, San Jose, and Frankfurt.',
+      'TerraScale Public Alpha provides a typed document database with asynchronous replication across São Paulo and San Jose.',
   },
 
   chrome: {
@@ -73,7 +73,7 @@ export const en = {
     headlineLead: 'TerraScale',
     headlineAccent: 'Public Alpha',
     subtitle:
-      'A typed document database with asynchronous replication across São Paulo, San Jose, and Frankfurt. The global endpoint routes to the nearest healthy region selected by your project. Public Alpha has no uptime percentage or SLA.',
+      'A typed document database with asynchronous replication across São Paulo and San Jose. The global endpoint routes to the nearest healthy region selected by your project. Public Alpha has no uptime percentage or SLA.',
     ctaPrimary: 'Register for Public Alpha',
     ctaPrelaunch: 'Public Alpha',
     ctaSecondary: 'View Docs',
@@ -86,7 +86,7 @@ export const en = {
     titleLead: 'Public Alpha,',
     titleAccent: 'with explicit boundaries',
     subtitle:
-      'The launch contract covers document data, three selectable regions, typed clients, and customer-visible health without an uptime commitment.',
+      'The launch contract covers document data, two selectable regions, typed clients, and customer-visible health without an uptime commitment.',
     items: [
       {
         title: 'Typed Data API',
@@ -100,8 +100,8 @@ export const en = {
       },
       {
         title: 'Launch Regions',
-        text: 'Choose São Paulo, San Jose, or Frankfurt during Public Alpha.',
-        bullets: ['sfo', 'fra', 'gru'],
+        text: 'Choose São Paulo or San Jose during Public Alpha.',
+        bullets: ['gru', 'sjc'],
       },
       {
         title: 'Measured Signals',
@@ -120,7 +120,7 @@ export const en = {
       'Generated OpenAPI contract catalog',
       'Typed C# and TypeScript clients',
       'Dashboard uses the public SDK boundary',
-      'Launch-region inputs for gru, sfo, fra',
+      'Launch-region inputs for gru, sjc',
     ],
     copy: 'Copy',
     copied: 'Copied',
@@ -291,7 +291,7 @@ export const en = {
     titleLead: 'Globally distributed',
     titleAccent: 'database infrastructure.',
     subtitle:
-      'TerraScale Public Alpha provides a document database across São Paulo, San Jose, and Frankfurt with asynchronous replication.',
+      'TerraScale Public Alpha provides a document database across São Paulo and San Jose with asynchronous replication.',
     ctaPricing: 'View Pricing',
     ctaContact: 'Talk to Us',
     missionEyebrow: 'Mission',

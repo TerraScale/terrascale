@@ -12,7 +12,7 @@ export const claimInventory = [
   {
     id: 'regions',
     source: 'https://docs.terrascale.tech/guides/public-alpha-data-contract/',
-    patterns: [/São Paulo/, /San Jose/, /Frankfurt/],
+    patterns: [/São Paulo/, /San Jose/],
   },
   {
     id: 'routing',
@@ -47,7 +47,7 @@ export const prohibitedClaims = [
   { id: 'unverified-customer-count', pattern: /\b(?:thousands of|miles de|milhares de)\b/i, reason: 'Unverified customer-count claims are prohibited.' },
   { id: 'unsupported-availability', pattern: /(?:\b99[.,]9+\s*%|\b(?:uptime|availability|disponibilidad|disponibilidade|tiempo de actividad|tempo de atividade|SLA)\s+(?:guarantee|guaranteed|SLA|garantía|garantizado|garantizada|garantia|garantido|garantida)\b|\b(?:guaranteed|garantizado|garantizada|garantido|garantida)\s+(?:uptime|availability|disponibilidad|disponibilidade|tiempo de actividad|tempo de atividade)\b|\bsupport SLA\b|\bSLA de soporte\b|\bSLA de suporte\b)/i, reason: 'Unapproved availability or support SLA claims are prohibited.' },
   { id: 'retired-dashboard-path', pattern: /dash\.terrascale\.tech\/(?:signup|usage)\b/i, reason: 'Use the canonical dashboard registration URL.' },
-  { id: 'unsupported-region', pattern: /\b(?:Falkenstein|San Francisco|Guarulhos)\b/i, reason: 'Use the Public Alpha launch region names: São Paulo, San Jose, and Frankfurt.' },
+  { id: 'unsupported-region', pattern: /\b(?:Falkenstein|Frankfurt|San Francisco|Guarulhos)\b/i, reason: 'Use the Public Alpha launch region names: São Paulo and San Jose.' },
   { id: 'deferred-provider', pattern: /\b(?:Stripe|NATS JetStream)\b/i, reason: 'Do not advertise deferred products or providers.' },
   { id: 'deferred-queue-product', pattern: /\b(?:queue|queued|colas?|filas?|enfileir(?:ada|ado|ar))\b/i, reason: 'Do not advertise deferred queue products.' },
   { id: 'unsupported-consistency-or-latency', pattern: /\b(?<!sin promesa de )(?<!sem promessa de )(?:zero[- ]latency|latencia cero|latência zero|instant replication|replicaci[oó]n instant[aá]nea|replica[cç][aã]o instant[aâ]nea|bounded lag|lag acotado|retraso acotado|atraso limitado|majority writes?|quorum writes?|escrituras? de mayor[ií]a|escritas majorit[aá]rias|escrituras? de qu[oó]rum|escritas? de qu[oó]rum|serve from any region|serves? from any region|sirve? desde cualquier regi[oó]n|servir de cualquier regi[oó]n|atender de qualquer regi[aã]o)\b/i, reason: 'Unsupported consistency or latency claims are prohibited.' },

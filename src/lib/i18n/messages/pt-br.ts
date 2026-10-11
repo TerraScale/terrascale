@@ -4,7 +4,7 @@ export const ptBr: Messages = {
   meta: {
     title: 'TerraScale Public Alpha | Banco de Documentos Regional',
     description:
-      'O TerraScale Public Alpha oferece um banco de documentos tipado com replicação assíncrona em São Paulo, San Jose e Frankfurt.',
+      'O TerraScale Public Alpha oferece um banco de documentos tipado com replicação assíncrona em São Paulo e San Jose.',
   },
 
   chrome: {
@@ -75,7 +75,7 @@ export const ptBr: Messages = {
     headlineLead: 'TerraScale',
     headlineAccent: 'Public Alpha',
     subtitle:
-      'Um banco de documentos tipado com replicação assíncrona em São Paulo, San Jose e Frankfurt. O endpoint global encaminha para a região selecionada saudável mais próxima. O Public Alpha não tem percentual de disponibilidade nem SLA.',
+      'Um banco de documentos tipado com replicação assíncrona em São Paulo e San Jose. O endpoint global encaminha para a região selecionada saudável mais próxima. O Public Alpha não tem percentual de disponibilidade nem SLA.',
     ctaPrimary: 'Cadastre-se no Public Alpha',
     ctaPrelaunch: 'Public Alpha',
     ctaSecondary: 'Ver documentação',
@@ -88,7 +88,7 @@ export const ptBr: Messages = {
     titleLead: 'Public Alpha,',
     titleAccent: 'com limites explícitos',
     subtitle:
-      'O contrato de lançamento cobre documentos, três regiões selecionáveis, clientes tipados e saúde visível sem compromisso de disponibilidade.',
+      'O contrato de lançamento cobre documentos, duas regiões selecionáveis, clientes tipados e saúde visível sem compromisso de disponibilidade.',
     items: [
       {
         title: 'API de dados tipados',
@@ -102,8 +102,8 @@ export const ptBr: Messages = {
       },
       {
         title: 'Regiões de lançamento',
-        text: 'Escolha São Paulo, San Jose ou Frankfurt durante o Public Alpha.',
-        bullets: ['sfo', 'fra', 'gru'],
+        text: 'Escolha São Paulo ou San Jose durante o Public Alpha.',
+        bullets: ['gru', 'sjc'],
       },
       {
         title: 'Sinais medidos',
@@ -122,7 +122,7 @@ export const ptBr: Messages = {
       'Catálogo de contratos OpenAPI gerado',
       'Clientes tipados em C# e TypeScript',
       'O painel usa o limite público do SDK',
-      'Entradas de região para gru, sfo, fra',
+      'Entradas de região para gru, sjc',
     ],
     copy: 'Copiar',
     copied: 'Copiado',
@@ -293,7 +293,7 @@ export const ptBr: Messages = {
     titleLead: 'Globalmente distribuída,',
     titleAccent: 'infraestrutura de banco de dados.',
     subtitle:
-      'O TerraScale Public Alpha oferece um banco de documentos em São Paulo, San Jose e Frankfurt com replicação assíncrona.',
+      'O TerraScale Public Alpha oferece um banco de documentos em São Paulo e San Jose com replicação assíncrona.',
     ctaPricing: 'Ver preços',
     ctaContact: 'Fale conosco',
     missionEyebrow: 'Missão',

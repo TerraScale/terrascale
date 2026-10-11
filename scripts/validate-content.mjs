@@ -101,9 +101,8 @@ export function validatePricingCatalog(catalog) {
 
 export function validateRegionCatalog(catalog) {
   const expected = [
-    ['gru', 'São Paulo', 'sa-saopaulo-1'],
-    ['sfo', 'San Jose', 'us-sanjose-1'],
-    ['fra', 'Frankfurt', 'eu-frankfurt-1'],
+    ['gru', 'São Paulo', 'gru'],
+    ['sjc', 'San Jose', 'sjc'],
   ]
   const regions = isObject(catalog) && Array.isArray(catalog.regions) ? catalog.regions : []
   const malformed = regions.flatMap((region, index) => (isObject(region) ? [] : [`regions.json: regions[${index}] must be an object.`]))
@@ -111,7 +110,7 @@ export function validateRegionCatalog(catalog) {
   const actual = regions.map(({ id, name, providerRegion }) => [id, name, providerRegion].join('|'))
   return actual.join() === expected.map((region) => region.join('|')).join()
     ? []
-    : ['regions.json: launch regions must be gru São Paulo, sfo San Jose, and fra Frankfurt on their OCI regions.']
+    : ['regions.json: launch regions must be gru São Paulo and sjc San Jose on their Fly regions.']
 }
 
 const textOf = (node, separator) =>
