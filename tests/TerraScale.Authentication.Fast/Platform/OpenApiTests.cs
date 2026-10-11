@@ -42,7 +42,7 @@ public sealed partial class OpenApiTests
             await Assert.That(paths.TryGetProperty(oidcPath, out _)).IsTrue();
         }
 
-        // /metrics was replaced by OTLP push; it must not come back unannounced.
+        // /metrics is served only on the metrics listener, never in the public API.
         var emailStart = paths.GetProperty("/{slug}/headless/v1/email-code/start").GetProperty("post");
         await Assert.That(emailStart.GetProperty("description").GetString()).Contains("60-second cooldown");
         await Assert.That(emailStart.GetProperty("requestBody").GetProperty("content").GetProperty("application/json")

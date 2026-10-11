@@ -99,11 +99,15 @@ Configuration retains the `TS_AUTH_*` convention, with these changes:
   listener on Fly's private network, resolved by Fly DNS to the nearest
   TerraBase machine. It needs no credential, so there is no API key, member
   list, CA or failover setting.
-- **`GET /metrics` and `TS_AUTH_METRICS_KEY` are removed.** This is an
-  intentional breaking change. Metrics, traces and logs are pushed over
-  OpenTelemetry OTLP when the standard `OTEL_EXPORTER_OTLP_ENDPOINT` (and
-  optionally `OTEL_SERVICE_NAME`, `OTEL_EXPORTER_OTLP_HEADERS`) is set. A
-  collector can expose a Prometheus scrape endpoint if one is needed.
+- **Listeners.** The public API listens on `0.0.0.0:8080` (`TS_AUTH_LISTEN`)
+  behind Fly Proxy, which terminates TLS. Prometheus `GET /metrics` is served
+  only on a second listener, `0.0.0.0:9091` (`TS_AUTH_METRICS_LISTEN`), which
+  answers 404 to anything else; the public listener never serves it. Fly's
+  `[[metrics]]` scraper reaches that port over the machine's private IPv4 (a
+  6PN-only bind is not scrapable, `docs/fly/spike-1a.md`), and no Fly service
+  exposes it. Both settings exist so tests and local runs can bind ephemeral
+  ports. Traces and logs are pushed over OpenTelemetry OTLP when the standard
+  `OTEL_EXPORTER_OTLP_ENDPOINT` is set.
 - **`TS_AUTH_SENTRY_DSN`** enables error reporting to GlitchTip through the
   Sentry SDK, for errors only. It is a deployment secret and must never be
   committed. Events are scrubbed before they leave the process: only

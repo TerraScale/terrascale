@@ -35,7 +35,11 @@ public static class App
     {
         ArgumentNullException.ThrowIfNull(options);
         var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions { Args = [] });
-        builder.WebHost.ConfigureKestrel(kestrel => kestrel.Listen(options.Listen));
+        builder.WebHost.ConfigureKestrel(kestrel =>
+        {
+            kestrel.Listen(options.Listen);
+            kestrel.ListenForMetrics(options.MetricsListen);
+        });
 
         builder.Services.AddSingleton(options);
         if (options.TrustedProxies.Count > 0)
@@ -118,6 +122,7 @@ public static class App
             app.Logger.ZLogWarning($"TS_AUTH_SMTP_* is not configured: email is logged, not delivered");
         }
 
+        app.UseAuthMetrics();
         app.UseMiddleware<ErrorEnvelopeMiddleware>();
         TokenRateLimitMiddleware.UsePeerGuard(app);
         if (options.TrustedProxies.Count > 0)

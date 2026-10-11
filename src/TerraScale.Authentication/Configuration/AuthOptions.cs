@@ -20,6 +20,7 @@ public sealed partial record AuthOptions
     private static readonly FrozenSet<string> Keys = FrozenSet.Create(
         StringComparer.Ordinal,
         "listen",
+        "metrics-listen",
         "public-origin",
         "database",
         "master-key",
@@ -42,8 +43,14 @@ public sealed partial record AuthOptions
         "invitation-url",
         "environment");
 
-    /// <summary>Plain-HTTP listen address; TLS terminates in front of the service.</summary>
+    /// <summary>Plain-HTTP listen address of the public API (8080, behind Fly Proxy, which terminates TLS).</summary>
     public required IPEndPoint Listen { get; init; }
+
+    /// <summary>
+    /// Plain-HTTP listen address that serves only Prometheus <c>/metrics</c> (9091). Fly's scraper reaches it over the
+    /// machine's private IPv4, so it binds every IPv4 interface; no Fly service exposes it publicly.
+    /// </summary>
+    public required IPEndPoint MetricsListen { get; init; }
 
     /// <summary>The global origin of every issuer, <c>https://{origin}/{tenant}</c>, served in every region behind Fly Proxy.</summary>
     public const string GlobalOrigin = "https://auth.terrascale.tech";
@@ -123,7 +130,7 @@ public sealed partial record AuthOptions
     /// <c>ToString</c> would print keys and passwords into any log or exception that formats it.
     /// </summary>
     public override string ToString() =>
-        $"AuthOptions {{ Listen = {this.Listen}, PublicOrigin = {this.PublicOrigin}, "
+        $"AuthOptions {{ Listen = {this.Listen}, MetricsListen = {this.MetricsListen}, PublicOrigin = {this.PublicOrigin}, "
         + $"Database = {this.Database}, Development = {this.Development}, Smtp = {(this.SmtpHost is null ? "off" : "on")}, "
         + $"ErrorReporting = {(this.SentryDsn is null ? "off" : "on")}, DashboardClient = {(this.DashboardClient is null ? "off" : "on")}, "
         + $"AccessTokenAudiences = {this.AccessTokenAudiences.Count}, ServiceClients = {this.ServiceClients.Count} }}";
@@ -223,7 +230,8 @@ public sealed partial record AuthOptions
 
         var options = new AuthOptions
         {
-            Listen = ParseListen(Optional("listen") ?? "http://0.0.0.0:8080"),
+            Listen = ParseListen("listen", Optional("listen") ?? "http://0.0.0.0:8080"),
+            MetricsListen = ParseListen("metrics-listen", Optional("metrics-listen") ?? "http://0.0.0.0:9091"),
             PublicOrigin = publicOrigin,
             Database = database,
             MasterKey = DecodeKey("master-key", Required("master-key")),
@@ -436,17 +444,17 @@ public sealed partial record AuthOptions
         return bytes.Length == 32 ? bytes : throw Invalid($"{EnvName(key)} must decode to 32 bytes");
     }
 
-    private static IPEndPoint ParseListen(string raw)
+    private static IPEndPoint ParseListen(string key, string raw)
     {
         if (!raw.StartsWith("http://", StringComparison.Ordinal))
         {
-            throw Invalid("TS_AUTH_LISTEN must be a plain HTTP listen URL");
+            throw Invalid($"{EnvName(key)} must be a plain HTTP listen URL");
         }
 
         var authority = raw["http://".Length..];
         if (authority.IndexOfAny(['/', '?', '#', '@']) >= 0)
         {
-            throw Invalid("TS_AUTH_LISTEN must contain only an address and port");
+            throw Invalid($"{EnvName(key)} must contain only an address and port");
         }
 
         // An address (IPv4, [IPv6], localhost, + or *) and an explicit port; port 0 asks for an ephemeral one.
@@ -455,7 +463,7 @@ public sealed partial record AuthOptions
             || !int.TryParse(match.Groups["port"].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var port)
             || port > IPEndPoint.MaxPort)
         {
-            throw Invalid("TS_AUTH_LISTEN must use a host and port");
+            throw Invalid($"{EnvName(key)} must use a host and port");
         }
 
         var host = match.Groups["host"].Value;
@@ -467,7 +475,7 @@ public sealed partial record AuthOptions
             _ => IPAddress.TryParse(host, out var v4) && v4.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork ? v4 : null,
         };
         return address is null
-            ? throw Invalid("TS_AUTH_LISTEN must use a host and port")
+            ? throw Invalid($"{EnvName(key)} must use a host and port")
             : new IPEndPoint(address, port);
     }
 
