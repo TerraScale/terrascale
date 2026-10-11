@@ -169,13 +169,9 @@ public sealed class TokenRateLimitTests(TerraBaseFixture fixture)
             target.Bind(values);
             values["master-key"] = MasterKey;
             values["rate-limit"] = "3";
-            if (rejectedStorageKey)
-            {
-                values["terrascale-api-key"] = "invalid-token-guard-test-key";
-            }
         }, services =>
         {
-            target.Register(services);
+            target.Register(services, rejectedStorageKey ? "tb_invalid_token_guard_test_key" : null);
             services.AddSingleton(clock);
             if (peer is not null)
             {

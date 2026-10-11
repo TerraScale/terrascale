@@ -38,24 +38,22 @@ public sealed class AuthTestServer : IAsyncDisposable
     {
         ["listen"] = "http://127.0.0.1:0",
         ["public-origin"] = "https://auth.test.invalid",
-        ["terrascale-api-url"] = "https://127.0.0.1:9",
-        ["terrascale-api-key"] = "contract-fixture-key",
         ["database"] = $"{Guid.NewGuid():D}/ts-auth-test-{Environment.ProcessId}-{Interlocked.Increment(ref sequence)}",
         ["master-key"] = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)),
         ["audit-signing-key"] = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)),
-        ["operator-key"] = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(24)),
         ["environment"] = "Development",
     };
 
     /// <summary>
     /// Starts a server. <paramref name="settings"/> edits the defaults, <paramref name="services"/>
-    /// replaces infrastructure, and <paramref name="routes"/> adds test-only routes that exist
-    /// only inside this test process.
+    /// replaces infrastructure, <paramref name="routes"/> adds test-only routes that exist
+    /// only inside this test process, and <paramref name="configure"/> edits the host builder.
     /// </summary>
     public static async Task<AuthTestServer> StartAsync(
         Action<Dictionary<string, string>>? settings = null,
         Action<IServiceCollection>? services = null,
-        Action<WebApplication>? routes = null)
+        Action<WebApplication>? routes = null,
+        Action<WebApplicationBuilder>? configure = null)
     {
         var values = DefaultSettings();
         settings?.Invoke(values);
@@ -64,6 +62,7 @@ public sealed class AuthTestServer : IAsyncDisposable
             // Tests change rings behind the server's back; every lookup reads the vault unless a test opts in.
             builder.Services.AddSingleton(new KeyRingRefresh(TimeSpan.Zero));
             services?.Invoke(builder.Services);
+            configure?.Invoke(builder);
         });
         try
         {

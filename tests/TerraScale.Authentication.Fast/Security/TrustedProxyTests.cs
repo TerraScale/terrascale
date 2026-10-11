@@ -370,14 +370,9 @@ public sealed class TrustedProxyTests(TerraBaseFixture fixture)
             {
                 values["trusted-proxies"] = proxies;
             }
-
-            if (rejectedStorageKey)
-            {
-                values["terrascale-api-key"] = "invalid-proxy-test-storage-key";
-            }
         }, services =>
         {
-            target.Register(services);
+            target.Register(services, rejectedStorageKey ? "tb_invalid_proxy_test_storage_key" : null);
             services.AddSingleton(clock);
             services.AddSingleton<IStartupFilter>(peer);
         });

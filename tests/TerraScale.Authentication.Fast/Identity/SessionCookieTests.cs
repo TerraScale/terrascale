@@ -98,11 +98,9 @@ public sealed class SessionCookieTests(TerraBaseFixture fixture)
         AuthTestServer.StartAsync(
             settings: values =>
             {
-                values["terrascale-api-url"] = fixture.Server.ClientAddress.GetLeftPart(UriPartial.Authority);
-                values["terrascale-api-key"] = tenant.ApiKey;
                 values["database"] = $"{tenant.Project.Id}/auth";
             },
-            services: services => services.AddSingleton(fixture.Server.Http),
+            services: services => fixture.UseStorage(services, tenant),
             routes: app =>
             {
                 app.MapPost("/__test/sign-in", async (HttpContext context, Passcodes passcodes, Sessions sessions) =>

@@ -48,14 +48,12 @@ public sealed class SharedStateTarget
     public void Bind(Dictionary<string, string> values)
     {
         ArgumentNullException.ThrowIfNull(values);
-        values["terrascale-api-url"] = this.fixture.Server.ClientAddress.GetLeftPart(UriPartial.Authority);
-        values["terrascale-api-key"] = this.tenant.ApiKey;
         values["database"] = $"{this.tenant.Project.Id}/auth";
         this.Vault.Bind(values);
     }
 
-    /// <summary>Trusts the fixture's TLS certificate for the server's storage client.</summary>
-    public void Register(IServiceCollection services) => services.AddSingleton(this.fixture.Server.Http);
+    /// <summary>Points the server's storage at this database, through <paramref name="apiKey"/> instead of the tenant's own key when given.</summary>
+    public void Register(IServiceCollection services, string? apiKey = null) => this.fixture.UseStorage(services, this.tenant, apiKey: apiKey);
 
     /// <summary>A stored document, read directly from TerraBase, or <see langword="null"/>.</summary>
     public async Task<JsonElement?> ReadAsync(string collection, string instanceId, string key) =>

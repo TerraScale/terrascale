@@ -863,35 +863,6 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/Unavailable' }
-  /v1/terrascale/users/{user}/platform-admin:
-    parameters:
-      - $ref: '#/components/parameters/User'
-    put:
-      operationId: set_platform_admin
-      x-planned: true
-      tags: [Platform]
-      summary: Make a user a platform administrator
-      description: The operator key only. The user's next sign-in token carries platform_admin true.
-      security:
-        - operatorBearer: []
-      responses:
-        '204': { description: 'Set.' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '503': { $ref: '#/components/responses/Unavailable' }
-    delete:
-      operationId: clear_platform_admin
-      x-planned: true
-      tags: [Platform]
-      summary: Stop a user being a platform administrator
-      description: The operator key only. Takes effect with the user's next token.
-      security:
-        - operatorBearer: []
-      responses:
-        '204': { description: 'Cleared.' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '503': { $ref: '#/components/responses/Unavailable' }
   /terrascale/oauth/device:
     post:
       operationId: oauth_device_authorization
@@ -1040,10 +1011,6 @@ components:
       type: http
       scheme: basic
       description: A confidential service client from TS_AUTH_SERVICE_CLIENTS whose id is listed in TS_AUTH_PLATFORM_CLIENTS.
-    operatorBearer:
-      type: http
-      scheme: bearer
-      description: The operator key (TS_AUTH_OPERATOR_KEY).
   headers:
     Location:
       description: The created resource.

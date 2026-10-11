@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using System.Net;
 using System.Security.Cryptography;
-using System.Security.Cryptography.X509Certificates;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using TerraScale.Authentication.Configuration;
@@ -22,10 +21,8 @@ public sealed class ConfigurationTests
 
     [Test]
     [Arguments("master-key", "TS_AUTH_MASTER_KEY is required")]
-    [Arguments("operator-key", "TS_AUTH_OPERATOR_KEY is required")]
     [Arguments("public-origin", "TS_AUTH_PUBLIC_ORIGIN is required")]
     [Arguments("database", "TS_AUTH_DATABASE is required")]
-    [Arguments("terrascale-api-url", "TS_AUTH_TERRASCALE_API_URL is required")]
     public async Task Startup_refuses_missing_required_settings(string key, string message)
     {
         var exception = await Assert.ThrowsAsync<AuthConfigurationException>(() => AuthTestServer.StartAsync(settings: values => values.Remove(key)));
@@ -39,7 +36,6 @@ public sealed class ConfigurationTests
         var exception = await Assert.ThrowsAsync<AuthConfigurationException>(() => AuthTestServer.StartAsync(settings: values =>
         {
             values.Remove("environment");
-            values["terrascale-api-url"] = "https://api.terrascale.tech";
             values["public-origin"] = "http://auth.example.invalid";
         }));
 
@@ -70,7 +66,6 @@ public sealed class ConfigurationTests
         {
             values.Remove("environment");
             values.Remove("audit-signing-key");
-            values["terrascale-api-url"] = "https://api.terrascale.tech";
         }));
 
         await Assert.That(exception!.Message).IsEqualTo("TS_AUTH_AUDIT_SIGNING_KEY is required outside Development");
@@ -82,7 +77,6 @@ public sealed class ConfigurationTests
         var exception = await Assert.ThrowsAsync<AuthConfigurationException>(() => AuthTestServer.StartAsync(settings: values =>
         {
             values.Remove("environment");
-            values["terrascale-api-url"] = "https://api.terrascale.tech";
         }));
 
         await Assert.That(exception!.Message).IsEqualTo("TS_AUTH_SIGNING_KEY_VAULT and its TS_AUTH_OCI_* credential are required outside Development");
@@ -131,7 +125,6 @@ public sealed class ConfigurationTests
         var exception = await Assert.ThrowsAsync<AuthConfigurationException>(() => AuthTestServer.StartAsync(settings: values =>
         {
             values.Remove("environment");
-            values["terrascale-api-url"] = "https://api.terrascale.tech";
             FakeOciVault.For(Guid.NewGuid().ToString()).Bind(values);
         }));
 
@@ -177,28 +170,9 @@ public sealed class ConfigurationTests
     }
 
     [Test]
-    [Arguments("https://127.0.0.1:8420", "Production auth storage cannot use a loopback TerraScale API URL")]
-    [Arguments("https://evil.example", "Global auth storage requires a TerraScale HTTPS API origin")]
-    [Arguments("http://api.terrascale.tech", "TS_AUTH_TERRASCALE_API_URL must be an HTTPS origin without a path")]
-    public async Task Production_storage_must_be_the_terrascale_authority(string url, string message)
-    {
-        var exception = await Assert.ThrowsAsync<AuthConfigurationException>(() => AuthTestServer.StartAsync(settings: values =>
-        {
-            values.Remove("environment");
-            values["terrascale-api-url"] = url;
-        }));
-
-        await Assert.That(exception!.Message).IsEqualTo(message);
-    }
-
-    [Test]
-    [Arguments("terrascale-api-key", "Bearer ", "TS_AUTH_TERRASCALE_API_KEY is required")]
-    [Arguments("terrascale-api-key", "bearer  \t ", "TS_AUTH_TERRASCALE_API_KEY is required")]
     [Arguments("database", "auth", "TS_AUTH_DATABASE must be project-uuid/database with a lowercase database name")]
     [Arguments("database", "not-a-uuid/auth/other", "TS_AUTH_DATABASE must be project-uuid/database with a lowercase database name")]
     [Arguments("database", "auth/../other", "TS_AUTH_DATABASE must be project-uuid/database with a lowercase database name")]
-    [Arguments("terrascale-api-url", "https://localhost:8443/path", "TS_AUTH_TERRASCALE_API_URL must be an HTTPS origin without a path")]
-    [Arguments("terrascale-api-key", "tb_secret\r\nInjected", "TS_AUTH_TERRASCALE_API_KEY must contain at most 4096 characters without whitespace or controls")]
     [Arguments("master-key", "c2hvcnQ=", "TS_AUTH_MASTER_KEY must decode to 32 bytes")]
     [Arguments("master-key", "not base64!", "TS_AUTH_MASTER_KEY must be base64")]
     [Arguments("public-origin", "https://auth.example/?next=x", "TS_AUTH_PUBLIC_ORIGIN must be an absolute HTTP(S) URL")]
@@ -232,61 +206,11 @@ public sealed class ConfigurationTests
     [Arguments("trusted-proxies", "10.0.0.1;::ffff:10.0.0.1", DuplicateProxiesError)]
     [Arguments("trusted-proxies", "2001:db8::1;2001:0db8:0000:0000:0000:0000:0000:0001", DuplicateProxiesError)]
     [Arguments("trusted-proxies", "10.0.0.1;10.0.0.2;10.0.0.3;10.0.0.4;10.0.0.5;10.0.0.6;10.0.0.7;10.0.0.8;10.0.0.9", TooManyProxiesError)]
-    [Arguments("terrascale-api-endpoints", "https://10.0.0.1:9465", "TS_AUTH_TERRASCALE_API_ENDPOINTS and TS_AUTH_TERRASCALE_API_CA are required together")]
-    [Arguments("terrascale-api-ca", "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----", "TS_AUTH_TERRASCALE_API_CA must hold 1 to 4 PEM certificates and nothing else")]
-    [Arguments("terrascale-api-ca", "not a certificate", "TS_AUTH_TERRASCALE_API_CA must hold 1 to 4 PEM certificates and nothing else")]
-    [Arguments("terrascale-api-failover", "yes", "TS_AUTH_TERRASCALE_API_FAILOVER must be true or false")]
     public async Task Startup_rejects_malformed_settings(string key, string value, string message)
     {
         var exception = await Assert.ThrowsAsync<AuthConfigurationException>(() => AuthTestServer.StartAsync(settings: values => values[key] = value));
 
         await Assert.That(exception!.Message).IsEqualTo(message);
-    }
-
-    [Test]
-    [Arguments("http://10.0.0.1:9465")]
-    [Arguments("https://10.0.0.1:9465/path")]
-    [Arguments("https://10.0.0.1:9465;https://10.0.0.1:9465")]
-    [Arguments("https://user@10.0.0.1:9465")]
-    [Arguments("https://1.invalid;https://2.invalid;https://3.invalid;https://4.invalid;https://5.invalid;https://6.invalid;https://7.invalid;https://8.invalid;https://9.invalid")]
-    public async Task Private_storage_endpoints_must_be_distinct_https_origins(string endpoints)
-    {
-        var settings = AuthTestServer.DefaultSettings();
-        settings["terrascale-api-endpoints"] = endpoints;
-        settings["terrascale-api-ca"] = Root();
-
-        var exception = Assert.Throws<AuthConfigurationException>(() => AuthOptions.Load(settings));
-        await Assert.That(exception!.Message).IsEqualTo("TS_AUTH_TERRASCALE_API_ENDPOINTS must hold at most 8 distinct HTTPS origins without a path");
-    }
-
-    [Test]
-    public async Task Private_storage_trusts_only_pem_certificates()
-    {
-        var settings = AuthTestServer.DefaultSettings();
-        settings["terrascale-api-endpoints"] = "https://10.251.0.21:9465; https://10.251.0.22:9465";
-        settings["terrascale-api-ca"] = Root() + "\n" + Root();
-        var pinned = Assert.Throws<AuthConfigurationException>(() => AuthOptions.Load(settings));
-        await Assert.That(pinned!.Message).IsEqualTo("TS_AUTH_TERRASCALE_API_ENDPOINTS may list several members only with TS_AUTH_TERRASCALE_API_FAILOVER=true");
-
-        settings["terrascale-api-failover"] = "true";
-        var options = AuthOptions.Load(settings);
-        await Assert.That(options.TerraScaleApiFailover).IsTrue();
-        await Assert.That(options.TerraScaleApiEndpoints.Select(endpoint => endpoint.ToString()))
-            .IsEquivalentTo(["https://10.251.0.21:9465/", "https://10.251.0.22:9465/"]);
-        await Assert.That(options.TerraScaleApiCa.Count).IsEqualTo(2);
-
-        using var key = ECDsa.Create();
-        settings["terrascale-api-ca"] = Root() + key.ExportPkcs8PrivateKeyPem();
-        var exception = Assert.Throws<AuthConfigurationException>(() => AuthOptions.Load(settings));
-        await Assert.That(exception!.Message).IsEqualTo("TS_AUTH_TERRASCALE_API_CA must hold 1 to 4 PEM certificates and nothing else");
-    }
-
-    internal static string Root()
-    {
-        using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
-        var request = new CertificateRequest("CN=TerraBase member CA test", key, HashAlgorithmName.SHA256);
-        using var certificate = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-5), DateTimeOffset.UtcNow.AddDays(1));
-        return certificate.ExportCertificatePem();
     }
 
     [Test]
@@ -337,11 +261,11 @@ public sealed class ConfigurationTests
     private const string ArgumentSecret = "sktestvaluethatmustnotbeprinted";
 
     [Test]
-    [Arguments("--terrascale-api-ke=" + ArgumentSecret, "Unknown option (expected --key=value with a TS_AUTH_* setting name)")]
+    [Arguments("--database-nam=" + ArgumentSecret, "Unknown option (expected --key=value with a TS_AUTH_* setting name)")]
     [Arguments("--correct-horse-battery-staple-" + ArgumentSecret + "=x", "Unknown option (expected --key=value with a TS_AUTH_* setting name)")]
-    [Arguments("--operator-key:" + ArgumentSecret, "Malformed option (expected --key=value)")]
+    [Arguments("--master-key:" + ArgumentSecret, "Malformed option (expected --key=value)")]
     [Arguments("--" + ArgumentSecret, "Malformed option (expected --key=value)")]
-    [Arguments("--operator-key:" + ArgumentSecret + "=x", "Unknown option (expected --key=value with a TS_AUTH_* setting name)")]
+    [Arguments("--master-key:" + ArgumentSecret + "=x", "Unknown option (expected --key=value with a TS_AUTH_* setting name)")]
     public async Task The_service_binary_rejects_bad_options_without_echoing_their_values(string argument, string message)
     {
         var (exitCode, output) = await RunBinaryAsync(argument);
@@ -416,8 +340,6 @@ public sealed class ConfigurationTests
             var target = await SharedStateTarget.CreateAsync(fixture);
             var settings = AuthTestServer.DefaultSettings();
             target.Bind(settings);
-            settings["terrascale-api-endpoints"] = fixture.Server.ClientAddress.GetLeftPart(UriPartial.Authority);
-            settings["terrascale-api-ca"] = fixture.Server.Certificate.ExportCertificatePem();
             settings["rate-limit"] = clientCapacity.ToString(System.Globalization.CultureInfo.InvariantCulture);
             settings["listen"] = listen;
             if (proxies is not null)
@@ -449,10 +371,17 @@ public sealed class ConfigurationTests
                     JsonSerializer.SerializeToElement(new { window = bucket.Document.GetProperty("window").GetInt64(), used = 0 }), TerraBasePrecondition.Matches(bucket.Version));
             }
 
-            await using var service = await RunningBinary.StartAsync(settings, new Dictionary<string, string>
+            // In process, so storage is the fixture: both spellings of ASP.NET's automatic forwarding flag are set.
+            await using var service = await AuthTestServer.StartAsync(values =>
             {
-                ["ASPNETCORE_FORWARDEDHEADERS_ENABLED"] = "true",
-                ["ForwardedHeaders_Enabled"] = "true",
+                foreach (var (key, value) in settings)
+                {
+                    values[key] = value;
+                }
+            }, services => target.Register(services), configure: builder =>
+            {
+                builder.Configuration["ASPNETCORE_FORWARDEDHEADERS_ENABLED"] = "true";
+                builder.Configuration["ForwardedHeaders_Enabled"] = "true";
             });
 
             var (first, _) = await RawHttp.DuplicateForwardedAsync(service.Client.BaseAddress!, path, clients[0], trusted ? string.Empty : clients[0], 0);
@@ -498,14 +427,10 @@ public sealed class ConfigurationTests
     }
 
     [Test]
-    [Arguments("https://api.terrascale.tech")]
-    [Arguments("https://gru.api.terrascale.tech")]
-    public async Task Production_starts_with_either_permitted_storage_host(string apiUrl)
+    public async Task Production_starts_without_storage_settings()
     {
         var settings = AuthTestServer.DefaultSettings();
         settings.Remove("environment");
-        settings["terrascale-api-url"] = apiUrl;
-        settings["terrascale-api-key"] = "Bearer  sk_test_production_start";
         FakeOciVault.BindRefusing(settings);
         await using var service = await RunningBinary.StartAsync(settings);
 

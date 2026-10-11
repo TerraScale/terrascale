@@ -2,7 +2,6 @@ using System.Collections.Frozen;
 using System.Globalization;
 using System.Net;
 using System.Security.Cryptography;
-using System.Security.Cryptography.X509Certificates;
 using System.Text.RegularExpressions;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.DotNet;
@@ -18,23 +17,14 @@ public sealed class AuthConfigurationException(string message) : Exception(messa
 /// </summary>
 public sealed partial record AuthOptions
 {
-    /// <summary>The TerraScale API host every production replica stores through.</summary>
-    public const string TerraScaleApiHost = "api.terrascale.tech";
-
     private static readonly FrozenSet<string> Keys = FrozenSet.Create(
         StringComparer.Ordinal,
         "listen",
         "public-origin",
-        "terrascale-api-url",
-        "terrascale-api-endpoints",
-        "terrascale-api-ca",
-        "terrascale-api-failover",
-        "terrascale-api-key",
         "database",
         "master-key",
         "audit-signing-key",
         "audit-verify-keys",
-        "operator-key",
         "rate-limit",
         "trusted-proxies",
         "smtp-host",
@@ -66,28 +56,6 @@ public sealed partial record AuthOptions
     /// <summary>The public origin browsers and clients use, for example <c>https://auth.terrascale.tech</c>.</summary>
     public required Uri PublicOrigin { get; init; }
 
-    /// <summary>TerraBase API origin.</summary>
-    public required Uri TerraScaleApiUrl { get; init; }
-
-    /// <summary>
-    /// Private TerraBase member origins that storage uses instead of <see cref="TerraScaleApiUrl"/>, most preferred first:
-    /// every replica sends to the first ready one. Empty: storage uses <see cref="TerraScaleApiUrl"/>.
-    /// </summary>
-    public IReadOnlyList<Uri> TerraScaleApiEndpoints { get; init; } = [];
-
-    /// <summary>The only certificates trusted as roots for <see cref="TerraScaleApiEndpoints"/>, for example the cell's TerraBase member CA.</summary>
-    public IReadOnlyList<X509Certificate2> TerraScaleApiCa { get; init; } = [];
-
-    /// <summary>
-    /// Whether storage may move to the next of several <see cref="TerraScaleApiEndpoints"/> while the preferred member is
-    /// down: a documented exception (<c>TS_AUTH_TERRASCALE_API_FAILOVER=true</c>) to the single storage authority, for
-    /// members that replicate. Off, a deployment lists one member and fails closed while it is down.
-    /// </summary>
-    public bool TerraScaleApiFailover { get; init; }
-
-    /// <summary>TerraBase API key, without any <c>Bearer</c> prefix.</summary>
-    public required string TerraScaleApiKey { get; init; }
-
     /// <summary>TerraBase project/database selector holding all ts-auth state.</summary>
     public required string Database { get; init; }
 
@@ -105,9 +73,6 @@ public sealed partial record AuthOptions
 
     /// <summary>Up to five previous audit keys accepted for verification only.</summary>
     public IReadOnlyList<byte[]> AuditVerificationKeys { get; init; } = [];
-
-    /// <summary>Bearer key for operator instance bootstrap.</summary>
-    public required string OperatorKey { get; init; }
 
     /// <summary>Shared per-IP token and management request capacity per minute.</summary>
     public int RateLimitPerWindow { get; init; } = 1000;
@@ -166,8 +131,7 @@ public sealed partial record AuthOptions
     /// <c>ToString</c> would print keys and passwords into any log or exception that formats it.
     /// </summary>
     public override string ToString() =>
-        $"AuthOptions {{ Listen = {this.Listen}, PublicOrigin = {this.PublicOrigin}, TerraScaleApiUrl = {this.TerraScaleApiUrl}, "
-        + $"TerraScaleApiEndpoints = {this.TerraScaleApiEndpoints.Count}, "
+        $"AuthOptions {{ Listen = {this.Listen}, PublicOrigin = {this.PublicOrigin}, "
         + $"Database = {this.Database}, Development = {this.Development}, Smtp = {(this.SmtpHost is null ? "off" : "on")}, "
         + $"ErrorReporting = {(this.SentryDsn is null ? "off" : "on")}, DashboardClient = {(this.DashboardClient is null ? "off" : "on")}, "
         + $"AccessTokenAudiences = {this.AccessTokenAudiences.Count}, ServiceClients = {this.ServiceClients.Count}, "
@@ -225,45 +189,11 @@ public sealed partial record AuthOptions
             throw Invalid("TS_AUTH_PUBLIC_ORIGIN must be an origin without a path");
         }
 
-        var apiUrl = AbsoluteHttpUrl("terrascale-api-url", Required("terrascale-api-url"));
-        if (apiUrl.Scheme != Uri.UriSchemeHttps || apiUrl.AbsolutePath != "/")
-        {
-            throw Invalid("TS_AUTH_TERRASCALE_API_URL must be an HTTPS origin without a path");
-        }
-
-        var endpoints = ParseEndpoints(Optional("terrascale-api-endpoints"));
-        var trusted = ParseCertificates(Optional("terrascale-api-ca"));
-        if ((endpoints.Count == 0) != (trusted.Count == 0))
-        {
-            throw Invalid("TS_AUTH_TERRASCALE_API_ENDPOINTS and TS_AUTH_TERRASCALE_API_CA are required together");
-        }
-
-        var failover = Optional("terrascale-api-failover") switch
-        {
-            null or "false" => false,
-            "true" => true,
-            _ => throw Invalid("TS_AUTH_TERRASCALE_API_FAILOVER must be true or false"),
-        };
-        if (endpoints.Count > 1 && !failover)
-        {
-            throw Invalid("TS_AUTH_TERRASCALE_API_ENDPOINTS may list several members only with TS_AUTH_TERRASCALE_API_FAILOVER=true");
-        }
-
         var database = Required("database");
         var selector = database.Split('/');
         if (selector.Length != 2 || !StorageProjectName().IsMatch(selector[0]) || !StorageName().IsMatch(selector[1]))
         {
             throw Invalid("TS_AUTH_DATABASE must be project-uuid/database with a lowercase database name");
-        }
-
-        var normalizedApiKey = NormalizeApiKey(Required("terrascale-api-key"));
-        if (normalizedApiKey.Length == 0)
-        {
-            throw Invalid("TS_AUTH_TERRASCALE_API_KEY is required");
-        }
-        if (normalizedApiKey.Length > 4096 || normalizedApiKey.Any(character => char.IsWhiteSpace(character) || char.IsControl(character)))
-        {
-            throw Invalid("TS_AUTH_TERRASCALE_API_KEY must contain at most 4096 characters without whitespace or controls");
         }
 
         var verifyValues = (Optional("audit-verify-keys") ?? string.Empty)
@@ -304,16 +234,10 @@ public sealed partial record AuthOptions
         {
             Listen = ParseListen(Optional("listen") ?? "http://0.0.0.0:8080"),
             PublicOrigin = publicOrigin,
-            TerraScaleApiUrl = apiUrl,
-            TerraScaleApiEndpoints = endpoints,
-            TerraScaleApiCa = trusted,
-            TerraScaleApiFailover = failover,
-            TerraScaleApiKey = normalizedApiKey,
             Database = database,
             MasterKey = DecodeKey("master-key", Required("master-key")),
             AuditSigningKey = Optional("audit-signing-key") is { } signing ? DecodeKey("audit-signing-key", signing) : null,
             AuditVerificationKeys = [.. verifyValues.Select(raw => DecodeKey("audit-verify-keys", raw))],
-            OperatorKey = Required("operator-key"),
             RateLimitPerWindow = rateLimit,
             TrustedProxies = ParseTrustedProxies(Optional("trusted-proxies")),
             SmtpHost = smtp[0],
@@ -385,18 +309,6 @@ public sealed partial record AuthOptions
         if (!this.Development && this.PublicOrigin.Scheme != Uri.UriSchemeHttps)
         {
             throw Invalid("TS_AUTH_PUBLIC_ORIGIN must use HTTPS outside Development");
-        }
-
-        var loopback = this.TerraScaleApiUrl.IsLoopback;
-        if (!this.Development && loopback)
-        {
-            throw Invalid("Production auth storage cannot use a loopback TerraScale API URL");
-        }
-
-        if (!loopback && this.TerraScaleApiUrl.Host != TerraScaleApiHost
-            && !this.TerraScaleApiUrl.Host.EndsWith(".api.terrascale.tech", StringComparison.Ordinal))
-        {
-            throw Invalid("Global auth storage requires a TerraScale HTTPS API origin");
         }
 
         // The management API accepts tokens whose audience is the platform issuer (TS-598); organization and project tokens
@@ -524,63 +436,6 @@ public sealed partial record AuthOptions
     }
 
     // Distinct HTTPS origins, semicolon-separated, in order of preference.
-    private static List<Uri> ParseEndpoints(string? raw)
-    {
-        var endpoints = new List<Uri>();
-        foreach (var value in (raw ?? string.Empty).Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
-        {
-            if (!Uri.TryCreate(value, UriKind.Absolute, out var url) || url.Scheme != Uri.UriSchemeHttps || url.AbsolutePath != "/"
-                || !string.IsNullOrEmpty(url.UserInfo) || !string.IsNullOrEmpty(url.Query) || !string.IsNullOrEmpty(url.Fragment)
-                || endpoints.Contains(url) || endpoints.Count == 8)
-            {
-                throw Invalid("TS_AUTH_TERRASCALE_API_ENDPOINTS must hold at most 8 distinct HTTPS origins without a path");
-            }
-
-            endpoints.Add(url);
-        }
-
-        return endpoints;
-    }
-
-    // PEM certificates only: a private key or any other block is refused, never silently dropped. On a refusal the
-    // certificates already loaded are disposed; otherwise the options own them for the process lifetime.
-    private static List<X509Certificate2> ParseCertificates(string? raw)
-    {
-        var certificates = new List<X509Certificate2>();
-        try
-        {
-            var rest = (raw ?? string.Empty).AsSpan();
-            while (PemEncoding.TryFind(rest, out var fields))
-            {
-                if (rest[fields.Label] is not "CERTIFICATE" || rest[..fields.Location.Start].Trim().Length != 0 || certificates.Count == 4)
-                {
-                    throw InvalidCertificates();
-                }
-
-                try
-                {
-                    certificates.Add(X509CertificateLoader.LoadCertificate(Convert.FromBase64String(rest[fields.Base64Data].ToString())));
-                }
-                catch (CryptographicException)
-                {
-                    throw InvalidCertificates();
-                }
-
-                rest = rest[fields.Location.End..];
-            }
-
-            return rest.Trim().Length == 0 ? certificates : throw InvalidCertificates();
-        }
-        catch (AuthConfigurationException)
-        {
-            certificates.ForEach(certificate => certificate.Dispose());
-            throw;
-        }
-    }
-
-    private static AuthConfigurationException InvalidCertificates() =>
-        Invalid("TS_AUTH_TERRASCALE_API_CA must hold 1 to 4 PEM certificates and nothing else");
-
     private static byte[] DecodeKey(string key, string raw)
     {
         byte[] bytes;
@@ -639,20 +494,6 @@ public sealed partial record AuthOptions
 
     [GeneratedRegex(@"\A[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\z")]
     private static partial Regex StorageProjectName();
-
-    private static string NormalizeApiKey(string raw)
-    {
-        raw = raw.Trim();
-        if (raw.Equals("bearer", StringComparison.OrdinalIgnoreCase))
-        {
-            // Only the scheme was supplied: there is no credential.
-            return string.Empty;
-        }
-
-        return raw.Length > 6 && raw.StartsWith("bearer", StringComparison.OrdinalIgnoreCase) && char.IsWhiteSpace(raw[6])
-            ? raw[6..].Trim()
-            : raw;
-    }
 
     // All seven settings or none; the endpoint override is for local stand-ins of the OCI APIs.
     private static SigningKeyVaultOptions? ParseSigningKeyVault(Func<string, string?> optional, bool development)

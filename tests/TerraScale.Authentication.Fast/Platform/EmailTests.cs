@@ -116,7 +116,6 @@ public sealed class EmailTests
         await using var server = await StartAsync(logs, smtpPort: null, settings: values =>
         {
             values.Remove("environment");
-            values["terrascale-api-url"] = "https://api.terrascale.tech";
             FakeOciVault.BindRefusing(values);
         });
 

@@ -95,18 +95,13 @@ Configuration retains the `TS_AUTH_*` convention, with these changes:
   `AuthOptions` requires a lowercase hyphenated project UUID and a lowercase
   database name of at most 63 characters. An operator resolves the project
   label to its UUID through Management before deployment; runtime does no
-  Management lookup. The API key is an organization-bound `tb_…`
-  credential with `documents:read` and `documents:write`, narrowed to the
-  project/database where appropriate. Runtime uses no management credential.
-  Separate project/tenant selector options have been removed.
-- **Storage endpoint:** `TS_AUTH_TERRASCALE_API_URL` is required, with no
-  default. It must be an HTTPS origin without credentials, path, query or
-  fragment, on `api.terrascale.tech` or a host under `.api.terrascale.tech`;
-  loopback HTTPS is allowed only in Development. `App.Build` registers this
-  as an explicit `TerraBaseStaticEndpointResolver` override through
-  `ITerraBaseEndpointResolver`. The host does not hardcode GRU routing.
-  Atlas discovery in ts-dotnet belongs to TS-507; the injectable resolver
-  allows that implementation to replace the static override.
+  Management lookup. Runtime uses no credential at all (see the storage
+  endpoint below). Separate project/tenant selector options have been removed.
+- **Storage endpoint:** fixed in code (`App.TerraBaseOrigin`):
+  `http://top1.nearest.of.ts-terrabase.internal:8081`, TerraBase's internal
+  listener on Fly's private network, resolved by Fly DNS to the nearest
+  TerraBase machine. It needs no credential, so there is no API key, member
+  list, CA or failover setting.
 - **`GET /metrics` and `TS_AUTH_METRICS_KEY` are removed.** This is an
   intentional breaking change. Metrics, traces and logs are pushed over
   OpenTelemetry OTLP when the standard `OTEL_EXPORTER_OTLP_ENDPOINT` (and
@@ -851,15 +846,9 @@ The rest of the platform management API (contract section 7), in
 plan. It performs no live setup; live dataset provisioning belongs to TS-529
 in ts-orchestrator. Automatic provisioning remains pending; qualification and
 storage-integrity requirements still gate safe serving.
-Every auth replica must use the same single configured storage authority,
-without automatic write retries or failover to another copy. Atlas endpoint
-discovery (TS-507) does not supply replication or failover guarantees. The one
-documented exception is `TS_AUTH_TERRASCALE_API_FAILOVER=true` (TS-577), for
-private members that replicate: every replica still uses the first ready
-member of one shared order and never resends a request, but while the
-preferred member is down storage moves to the next one, which may not hold the
-latest writes within the members' replication lag. Without it a deployment
-lists one member and fails closed.
+Every auth replica stores through the nearest TerraBase machine's internal
+listener (`http://top1.nearest.of.ts-terrabase.internal:8081`) and never
+resends a request.
 
 The pinned server's [decision 0003](https://git.terrascale.tech/TerraScale-Old/terrabase-premonorepo/src/commit/ff256067015433c8c40b59879f1282d2a40480ce/docs/decisions/0003-sqlite-synchronous-normal.md)
 uses SQLite WAL with `synchronous=NORMAL`. A TerraBase process crash alone

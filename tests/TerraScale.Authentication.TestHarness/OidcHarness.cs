@@ -178,8 +178,6 @@ public sealed class OidcHarness : IAsyncDisposable
 
         var server = await AuthTestServer.StartAsync(values =>
         {
-            values["terrascale-api-url"] = fixture.Server.ClientAddress.GetLeftPart(UriPartial.Authority);
-            values["terrascale-api-key"] = tenant.ApiKey;
             values["database"] = $"{tenant.Project.Id}/auth";
             values["dashboard-client-secret"] = ClientSecret;
             values["dashboard-redirect-uris"] = $"{RedirectUri};{LoopbackRedirectUri}";
@@ -188,7 +186,7 @@ public sealed class OidcHarness : IAsyncDisposable
             settings?.Invoke(values);
         }, services =>
         {
-            services.AddSingleton(fixture.Server.Http);
+            fixture.UseStorage(services, tenant);
             services.AddSingleton<IEmailSender>(email);
             if (logs is not null)
             {
