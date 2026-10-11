@@ -2,6 +2,7 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "ts-docs",
   "compatibility_date": "2026-09-11",
+  "routes": [{ "pattern": "docs.terrascale.tech", "custom_domain": true }],
   "observability": {
     "enabled": true
   },
