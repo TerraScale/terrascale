@@ -8,6 +8,10 @@
 # the SHA-512 content hash in packages.lock.json before extracting it (NU1403).
 # A tampered download therefore fails the restore instead of reaching a build;
 # the extracted files, which locked mode does not rehash, are never shared.
+#
+# The scratch directory sits on the shared mount too: NuGet keeps its
+# package-extraction locks there, and per-container temp directories would let
+# concurrent jobs race on a package new to the cache.
 set -euo pipefail
 
 : "${GITHUB_ENV:?GITHUB_ENV is required}"
@@ -16,9 +20,8 @@ rm -rf "$packages"
 mkdir -p "$packages"
 echo "NUGET_PACKAGES=$packages" >> "$GITHUB_ENV"
 
-http_cache=/cache/nuget/terrabase/http-cache
-scratch=/cache/nuget/terrabase/scratch
-# NuGet coordinates concurrent HTTP-cache access through locks in its scratch directory.
+http_cache=/cache/nuget/terrascale/http-cache
+scratch=/cache/nuget/terrascale/scratch
 if mkdir -p "$http_cache" "$scratch" 2>/dev/null && [[ -w $http_cache && -w $scratch ]]; then
   echo "NUGET_HTTP_CACHE_PATH=$http_cache" >> "$GITHUB_ENV"
   echo "NUGET_SCRATCH=$scratch" >> "$GITHUB_ENV"

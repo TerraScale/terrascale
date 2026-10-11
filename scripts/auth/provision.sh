@@ -14,6 +14,6 @@ Provisioning plan (no changes executed):
    memberships, projects, project_members, api_keys, invitations and audit_events (TS-598),
    and mfa_credentials (TS-707); /readyz requires all of them.
 4. Set TS_AUTH_DATABASE=<ts-auth-project-id>/auth and TS_AUTH_TERRASCALE_API_URL to the resolved HTTPS authority.
-See docs/parity.md for collection setup, configuration and conditional-write guarantees.
+See docs/auth/parity.md for collection setup, configuration and conditional-write guarantees.
 Live execution requires the TS-470 approval flow.
 PLAN

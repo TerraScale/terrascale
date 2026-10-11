@@ -38,14 +38,14 @@ sha=${FORGEJO_SHA:-${GITHUB_SHA:-}}
 repository=${FORGEJO_REPOSITORY:-${GITHUB_REPOSITORY:-}}
 [[ $repository =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || { echo "invalid repository '$repository'" >&2; exit 2; }
 
-repo=$(cd "$(dirname "$0")/../.." && pwd)
+repo=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$repo"
 commit=$(git rev-parse HEAD)
 [[ $commit == "$sha" ]] || { echo "checkout $commit is not the event revision '$sha'" >&2; exit 1; }
 version=$(dotnet msbuild src/TerraScale.Auth/TerraScale.Auth.csproj -getProperty:Version -nologo)
 [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+[0-9A-Za-z.-]*$ ]] || { echo "invalid version '$version'" >&2; exit 1; }
 tag="v$version-dev.$commit"
-# The deploy job (scripts/ci/deploy.sh) rolls this release out; it runs only if this job passed.
+# The auth-release job runs this only after every auth gate passed.
 output=${FORGEJO_OUTPUT:-${GITHUB_OUTPUT:-}}
 [[ -z $output ]] || printf 'tag=%s\n' "$tag" >> "$output"
 
@@ -56,9 +56,9 @@ trap 'rm -rf "$work"' EXIT
 trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
-bash scripts/ci/stage-release.sh "$work/stage" linux-arm64
+bash scripts/auth/ci/stage-release.sh "$work/stage" linux-arm64
 # The exact bytes about to be published must start on arm64 (under emulation) first.
-bash scripts/ci/smoke-arm64.sh "$work/stage/ts-auth"
+bash scripts/auth/ci/smoke-arm64.sh "$work/stage/ts-auth"
 mkdir -- "$work/assets"
 install -m 0755 -- "$work/stage/ts-auth" "$work/assets/$asset"
 (cd "$work/assets" && sha256sum -- "$asset" >"$asset.sha256" && sha256sum --check --strict -- "$asset.sha256")

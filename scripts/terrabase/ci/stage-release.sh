@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Publish terrabase as the self-contained single-file linux-x64 and linux-arm64
-# executables (make publish) and stage them as DIST_DIR/terrabase-linux-amd64 and
+# executables (make terrabase-publish) and stage them as DIST_DIR/terrabase-linux-amd64 and
 # DIST_DIR/terrabase-linux-arm64. The amd64 bytes are smoke-run: /healthz must
 # report this build's version, /readyz must be ready, and an unknown setting
 # must stop the process with exit code 2. The x86_64 runner cannot run arm64,
@@ -11,7 +11,7 @@ set -euo pipefail
 dist=${1:-}
 [[ -n $dist && $# -eq 1 ]] || { echo "usage: $0 DIST_DIR" >&2; exit 2; }
 
-repo=$(cd "$(dirname "$0")/../.." && pwd)
+repo=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$repo"
 for tool in curl python3; do
   command -v "$tool" >/dev/null || { echo "$tool is required" >&2; exit 1; }
@@ -34,7 +34,7 @@ trap cleanup EXIT
 # 18, little-endian) E_MACHINE.
 publish() {
   local binary="$work/$1/terrabase"
-  make --no-print-directory publish RUNTIME="$1" PUBLISH_DIR="$work/$1"
+  make --no-print-directory terrabase-publish RUNTIME="$1" PUBLISH_DIR="$work/$1"
   [[ -x $binary ]] || { echo "publish for $1 produced no terrabase executable" >&2; exit 1; }
   [[ $(od -An -tx1 -N6 "$binary" | tr -d ' \n') == 7f454c460201 ]] ||
     { echo "$binary is not an ELF64 little-endian executable" >&2; exit 1; }

@@ -6,7 +6,7 @@
 # only ever adds and removes its own serve mapping.
 set -euo pipefail
 
-repo=$(cd "$(dirname "$0")/.." && pwd)
+repo=$(cd "$(dirname "$0")/../.." && pwd)
 cd "$repo"
 
 if [[ -f .env ]]; then

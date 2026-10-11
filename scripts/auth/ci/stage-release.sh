@@ -2,7 +2,7 @@
 # Publish ts-auth as a self-contained single-file executable for RID
 # (linux-x64 by default, or linux-arm64) and stage it as DIST_DIR/ts-auth.
 # The linux-x64 build is the one the Containerfile copies; the linux-arm64
-# build is the native release asset (scripts/ci/publish-binary.sh).
+# build is the native release asset (scripts/auth/ci/publish-binary.sh).
 # TS_AUTH_REVISION, reported in the /healthz and /readyz version, is the first
 # 12 characters of the source commit. The executable needs only glibc,
 # libstdc++, OpenSSL and CA certificates, which the chiseled runtime-deps base
@@ -20,7 +20,7 @@ case $rid in
   *) echo "unsupported runtime identifier: $rid" >&2; exit 2 ;;
 esac
 
-repo=$(cd "$(dirname "$0")/../.." && pwd)
+repo=$(cd "$(dirname "$0")/../../.." && pwd)
 cd "$repo"
 
 revision=$(git rev-parse HEAD)
