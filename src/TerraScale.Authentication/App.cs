@@ -24,8 +24,11 @@ public static class App
     /// <summary>OpenAPI document title; clients key on it.</summary>
     public const string ApiTitle = "TerraScale Auth API";
 
-    /// <summary>TerraBase's internal listener on Fly's private network, nearest machine first.</summary>
-    public static readonly Uri TerraBaseOrigin = new("http://top1.nearest.of.ts-terrabase.internal:8081");
+    /// <summary>
+    /// TerraBase's internal listener on Fly's private network, nearest machine first: app <c>ts-terrabase</c>, except in
+    /// a <c>ts-pr-&lt;n&gt;</c> preview, whose one machine (in another Fly org) runs TerraBase next to ts-auth.
+    /// </summary>
+    public static readonly Uri TerraBaseOrigin = new($"http://top1.nearest.of.{(Environment.GetEnvironmentVariable("FLY_APP_NAME") is { } app && app.StartsWith("ts-pr-", StringComparison.Ordinal) ? app : "ts-terrabase")}.internal:8081");
 
     /// <summary>
     /// Builds the application for validated options. <paramref name="configure"/> lets

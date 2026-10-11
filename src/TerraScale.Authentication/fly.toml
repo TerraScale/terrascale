@@ -11,7 +11,7 @@ swap_size_mb = 4096
 
 # Public API.
 [http_service]
-  internal_port = 8080
+  internal_port = 8090
   force_https = true
   # "off" is what keeps one machine running in every region; min_machines_running only covers primary_region.
   auto_stop_machines = "off"
@@ -27,5 +27,5 @@ swap_size_mb = 4096
 
 # Fly's scraper connects over the private IPv4, so /metrics listens on all interfaces (not public: no service).
 [[metrics]]
-  port = 9091
+  port = 9092
   path = "/metrics"

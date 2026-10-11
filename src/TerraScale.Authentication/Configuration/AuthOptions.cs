@@ -37,11 +37,11 @@ public sealed partial record AuthOptions
         "invitation-url",
         "environment");
 
-    /// <summary>Plain-HTTP listen address of the public API (8080, behind Fly Proxy, which terminates TLS).</summary>
+    /// <summary>Plain-HTTP listen address of the public API (8090, behind Fly Proxy, which terminates TLS). Not 8080: in a PR preview ts-auth shares one machine, and so its ports, with TerraBase.</summary>
     public required IPEndPoint Listen { get; init; }
 
     /// <summary>
-    /// Plain-HTTP listen address that serves only Prometheus <c>/metrics</c> (9091). Fly's scraper reaches it over the
+    /// Plain-HTTP listen address that serves only Prometheus <c>/metrics</c> (9092; TerraBase has 9091). Fly's scraper reaches it over the
     /// machine's private IPv4, so it binds every IPv4 interface; no Fly service exposes it publicly.
     /// </summary>
     public required IPEndPoint MetricsListen { get; init; }
@@ -203,8 +203,8 @@ public sealed partial record AuthOptions
 
         var options = new AuthOptions
         {
-            Listen = ParseListen("listen", Optional("listen") ?? "http://0.0.0.0:8080"),
-            MetricsListen = ParseListen("metrics-listen", Optional("metrics-listen") ?? "http://0.0.0.0:9091"),
+            Listen = ParseListen("listen", Optional("listen") ?? "http://0.0.0.0:8090"),
+            MetricsListen = ParseListen("metrics-listen", Optional("metrics-listen") ?? "http://0.0.0.0:9092"),
             PublicOrigin = publicOrigin,
             Database = database,
             MasterKey = DecodeKey("master-key", Required("master-key")),
