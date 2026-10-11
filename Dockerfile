@@ -36,29 +36,30 @@ FROM build AS test-slow
 RUN --mount=type=cache,target=/root/.nuget/packages \
     make test-slow CONFIGURATION=Release
 
-# Fly images: framework-dependent on the chiseled ASP.NET runtime (no shell, no package manager), so a deploy pushes only
-# the ~20 MB app layer; the base layer is pushed once per app. These stages skip the test stages: the pull request's
-# `test` check gates the merge, and main's `test` runs next to the deploy. Run admin commands with
-# `fly ssh console -C '/app/<binary> ...'`. root: Fly mounts volumes root-owned.
+# Fly images: the self-contained release executables (`make terrabase-publish` / `auth-publish` flags) on the chiseled
+# runtime-deps base (6 MB: no shell, no package manager). These stages skip the test stages: CI deploys only a tree whose
+# `test` passed (scripts/fly/fast-gate.sh). Run admin commands with `fly ssh console -C '/app/<binary> ...'`.
+# root: Fly mounts volumes root-owned.
 FROM mcr.microsoft.com/dotnet/sdk:11.0 AS publish-terrabase
-ENV DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
+# CI=true turns on locked-mode restore (Directory.Build.props).
+ENV CI=true DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
 WORKDIR /src/terrascale
 COPY . .
 RUN --mount=type=cache,target=/root/.nuget/packages \
-    dotnet publish src/TerraBase -c Release -r linux-x64 --no-self-contained -p:PublishSingleFile=false -o /out
+    dotnet publish src/TerraBase --configuration Release --runtime linux-x64 --self-contained --output /out
 
 FROM mcr.microsoft.com/dotnet/sdk:11.0 AS publish-ts-auth
-ENV DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
+ENV CI=true DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
 COPY --from=ts-dotnet . /src/ts-dotnet
 WORKDIR /src/terrascale
 COPY . .
 # Shown by ts-auth's /healthz as <version>+<revision>.
 ARG TS_AUTH_REVISION
 RUN --mount=type=cache,target=/root/.nuget/packages \
-    dotnet publish src/TerraScale.Authentication -c Release -r linux-x64 --no-self-contained -o /out
+    dotnet publish src/TerraScale.Authentication --configuration Release --runtime linux-x64 --self-contained --output /out
 
 # Fly mounts TerraBase's volume at /data.
-FROM mcr.microsoft.com/dotnet/aspnet:11.0-resolute-chiseled AS terrabase
+FROM mcr.microsoft.com/dotnet/runtime-deps:11.0-resolute-chiseled AS terrabase
 COPY --from=publish-terrabase /out /app
 USER 0
 # The base image's ASPNETCORE_HTTP_PORTS=8080 only makes Kestrel warn: the services bind their own listeners.
@@ -66,7 +67,7 @@ ENV ASPNETCORE_HTTP_PORTS=
 WORKDIR /data
 ENTRYPOINT ["/app/terrabase"]
 
-FROM mcr.microsoft.com/dotnet/aspnet:11.0-resolute-chiseled AS ts-auth
+FROM mcr.microsoft.com/dotnet/runtime-deps:11.0-resolute-chiseled AS ts-auth
 COPY --from=publish-ts-auth /out /app
 USER 0
 ENV ASPNETCORE_HTTP_PORTS=
