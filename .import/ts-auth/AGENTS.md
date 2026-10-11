@@ -53,9 +53,9 @@ TerraBase and the other products authorize from ts-auth tokens offline. ts-auth 
 
 ## General
 
-- Keep changes focused on the assigned issue and follow repository conventions.
+- Keep changes focused on the task and follow repository conventions.
 - Never add AI attribution, generated-by notices, or co-author trailers to commits, PR titles, or PR descriptions.
-- Never invent APIs, SDK capabilities, issue IDs, commands, or successful test results.
+- Never invent APIs, SDK capabilities, commands, or successful test results.
 - Preserve unrelated changes; never discard, overwrite, or commit another contributor’s work.
 - Do not claim feature completeness, protocol compliance, or security certification without supporting implementation and verification.
 - Do not introduce production authentication bypasses, hardcoded credentials, or silently enabled demo behavior.
@@ -248,17 +248,7 @@ Cover the implemented primary flows:
 
 Confirmed security defects MUST be surfaced immediately. Add a minimal regression to `fast` rather than leaving the defect covered only by a non-blocking test.
 
-## Issues and Git
-
-### Issue Required
-
-- Track development work in **`ku.mariogk.com`**.
-- Resolve a valid Ku issue at the start of each implementation task.
-- Accept a Ku URL, issue ID, or an unambiguously resolved issue title.
-- Normalize IDs and verify the match; never invent a project prefix or issue ID.
-- Ask for an issue when none is supplied, or clarification when multiple matches remain.
-- Never push task changes or open a PR without the corresponding Ku issue.
-- Automated `slow` failure reports use Forgejo Issues as an explicit exception; follow-up development still requires a Ku issue.
+## Git
 
 ### Branches and Worktrees
 
@@ -274,7 +264,6 @@ Confirmed security defects MUST be surfaced immediately. Add a minimal regressio
 
 - Use `git` for repository operations.
 - Use **`fj`** for Forgejo operations.
-- Use Ku tooling for development issues.
 - Check available CLI help when syntax is uncertain; do not invent commands.
 
 ## Pull Requests
@@ -289,8 +278,7 @@ Confirmed security defects MUST be surfaced immediately. Add a minimal regressio
 ### Configuration
 
 - Target **`main`**.
-- Use the title format **`{ISSUE_ID}: {title}`**.
-- Include the Ku link, change summary, validation performed, and relevant security or migration implications.
+- Include a change summary, validation performed, and relevant security or migration implications.
 - Request reviews from **`mariogk`** and **`terrascale-bot`**, excluding the PR author.
 - Enable auto-merge once required checks pass; never bypass checks or required reviews.
 
