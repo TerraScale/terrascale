@@ -12,6 +12,8 @@ using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.SigningKeys;
 using TerraScale.Authentication.Security;
+using TerraScale.Authentication.Store;
+using TerraScale.DotNet;
 using TerraScale.DotNet.TerraBase;
 using static OpenIddict.Abstractions.OpenIddictConstants;
 using static OpenIddict.Server.OpenIddictServerEvents;
@@ -19,8 +21,9 @@ using static OpenIddict.Server.OpenIddictServerEvents;
 namespace TerraScale.Authentication.Features.Oidc;
 
 /// <summary>
-/// The single hosted OpenID Connect issuer. There is no instance registry yet, so one instance serves the platform:
-/// issuer <c>{TS_AUTH_PUBLIC_ORIGIN}/terrascale</c>, with every protocol route under <c>/terrascale/</c>.
+/// The hosted OpenID Connect issuers: one per tenant, <c>{TS_AUTH_PUBLIC_ORIGIN}/{tenant}</c>, with every protocol route
+/// under <c>/{tenant}/</c>. The <c>terrascale</c> tenant serves the platform; each project is a tenant whose discovery
+/// document and JWKS are served, with its own key ring. Its OAuth endpoints answer 404 until it has clients and users.
 /// </summary>
 public static class OidcIssuer
 {
@@ -39,14 +42,24 @@ public static class OidcIssuer
     /// </summary>
     public const string EpochClaim = "ts_auth_epoch";
 
+    /// <summary>The discovery document's path under a tenant's issuer.</summary>
+    public const string ConfigurationPath = ".well-known/openid-configuration";
+
+    /// <summary>The JWKS path under a tenant's issuer.</summary>
+    public const string JwksPath = ".well-known/jwks.json";
+
     /// <summary>Lifetime of access and identity tokens; within the key ring's <c>Jwt.MaxLifetime</c>.</summary>
     public static readonly TimeSpan TokenLifetime = TimeSpan.FromHours(1);
 
-    /// <summary>The issuer, derived only from the configured public origin.</summary>
-    public static Uri Issuer(AuthOptions options)
+    /// <summary>The platform issuer, derived only from the configured public origin.</summary>
+    public static Uri Issuer(AuthOptions options) => Issuer(options, Slug);
+
+    /// <summary>A tenant's issuer, derived only from the configured public origin.</summary>
+    public static Uri Issuer(AuthOptions options, string tenant)
     {
         ArgumentNullException.ThrowIfNull(options);
-        return new Uri(options.PublicOrigin, Slug);
+        ArgumentException.ThrowIfNullOrEmpty(tenant);
+        return new Uri(options.PublicOrigin, tenant);
     }
 
     /// <summary>
@@ -78,14 +91,15 @@ public static class OidcIssuer
             })
             .AddServer(server =>
             {
-                server.SetIssuer(Issuer(options))
-                    .SetConfigurationEndpointUris($"{Slug}/.well-known/openid-configuration")
-                    .SetJsonWebKeySetEndpointUris($"{Slug}/.well-known/jwks.json")
-                    .SetAuthorizationEndpointUris($"{Slug}/oauth/authorize")
-                    .SetTokenEndpointUris($"{Slug}/oauth/token")
-                    .SetUserInfoEndpointUris($"{Slug}/oauth/userinfo")
-                    .SetEndSessionEndpointUris($"{Slug}/oauth/logout")
-                    .SetRevocationEndpointUris($"{Slug}/oauth/revoke")
+                // No fixed issuer: TrustPublicOrigin sets each request's base URI to its tenant's issuer, which OpenIddict
+                // then uses as the issuer, and these relative endpoints resolve under it.
+                server.SetConfigurationEndpointUris(ConfigurationPath)
+                    .SetJsonWebKeySetEndpointUris(JwksPath)
+                    .SetAuthorizationEndpointUris("oauth/authorize")
+                    .SetTokenEndpointUris("oauth/token")
+                    .SetUserInfoEndpointUris("oauth/userinfo")
+                    .SetEndSessionEndpointUris("oauth/logout")
+                    .SetRevocationEndpointUris("oauth/revoke")
                     .AllowAuthorizationCodeFlow()
                     .AllowRefreshTokenFlow()
                     .AllowClientCredentialsFlow()
@@ -160,19 +174,57 @@ public static class OidcIssuer
 
 /// <summary>
 /// Resolves OpenIddict's base and request URIs against the configured public origin instead of the request's Host
-/// header and scheme, so discovery, issuer checks and endpoint matching never trust request headers.
+/// header and scheme, so discovery, issuer checks and endpoint matching never trust request headers. The base URI is the
+/// tenant's issuer, named by the first path segment: <c>terrascale</c> for every endpoint, an existing project for its
+/// discovery document and JWKS only. Any other request gets the bare origin, under which no endpoint matches, so it
+/// falls through to routing and answers 404.
 /// </summary>
-public sealed class TrustPublicOrigin(AuthOptions options) : IOpenIddictServerHandler<ProcessRequestContext>
+public sealed class TrustPublicOrigin(AuthOptions options, AuthStore store) : IOpenIddictServerHandler<ProcessRequestContext>
 {
+    /// <summary>The transaction property holding the request's tenant.</summary>
+    public const string TenantProperty = "ts-auth:tenant";
+
     /// <inheritdoc />
-    public ValueTask HandleAsync(ProcessRequestContext context)
+    public async ValueTask HandleAsync(ProcessRequestContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
         var request = context.Transaction.GetHttpRequest() ?? throw new InvalidOperationException("OpenIddict ran outside an HTTP request.");
         var host = new HostString(options.PublicOrigin.Authority);
-        context.BaseUri = Uri.TryCreate(UriHelper.BuildAbsolute(options.PublicOrigin.Scheme, host, request.PathBase), UriKind.Absolute, out var baseUri) ? baseUri : null;
+        var tenant = await this.TenantAsync(request.Path, context.CancellationToken).ConfigureAwait(false);
+        var basePath = tenant is null ? request.PathBase : request.PathBase.Add(new PathString("/" + tenant));
+        context.BaseUri = Uri.TryCreate(UriHelper.BuildAbsolute(options.PublicOrigin.Scheme, host, basePath), UriKind.Absolute, out var baseUri) ? baseUri : null;
         context.RequestUri = Uri.TryCreate(UriHelper.BuildAbsolute(options.PublicOrigin.Scheme, host, request.PathBase, request.Path, request.QueryString), UriKind.Absolute, out var requestUri) ? requestUri : null;
-        return ValueTask.CompletedTask;
+        context.Transaction.SetProperty(TenantProperty, tenant);
+    }
+
+    private async Task<string?> TenantAsync(PathString path, CancellationToken cancellationToken)
+    {
+        var segments = (path.Value ?? string.Empty).Split('/', 3);
+        if (segments is not [_, var tenant, var rest] || tenant.Length == 0)
+        {
+            return null;
+        }
+
+        // Endpoint matching ignores case, as routing does; the issuer stays the canonical slug.
+        if (string.Equals(tenant, OidcIssuer.Slug, StringComparison.OrdinalIgnoreCase))
+        {
+            return OidcIssuer.Slug;
+        }
+
+        // A project tenant: its discovery document and JWKS, while the project exists.
+        if (rest is not (OidcIssuer.ConfigurationPath or OidcIssuer.JwksPath) || !TerraScaleIds.IsValid(tenant))
+        {
+            return null;
+        }
+
+        try
+        {
+            return await store.GetAsync(AuthStore.ProjectCollection, OidcIssuer.InstanceId, tenant, cancellationToken).ConfigureAwait(false) is null ? null : tenant;
+        }
+        catch (Exception error) when (error is not (OperationCanceledException or OutOfMemoryException))
+        {
+            throw ApiException.Unavailable(error);
+        }
     }
 }
 
@@ -406,9 +458,10 @@ internal static class KeyRingKeys
             return loaded;
         }
 
+        var tenant = transaction.GetProperty<string>(TrustPublicOrigin.TenantProperty) ?? throw new InvalidOperationException("The request has no tenant.");
         var keys = publicOnly
-            ? await ring.GetPublicAsync(OidcIssuer.InstanceId, keyId, cancellationToken).ConfigureAwait(false)
-            : await ring.GetActiveAsync(OidcIssuer.InstanceId, cancellationToken).ConfigureAwait(false);
+            ? await ring.GetPublicAsync(tenant, keyId, cancellationToken).ConfigureAwait(false)
+            : await ring.GetActiveAsync(tenant, cancellationToken).ConfigureAwait(false);
         var response = transaction.GetHttpRequest()?.HttpContext.Response ?? throw new InvalidOperationException("OpenIddict ran outside an HTTP request.");
         foreach (var key in keys)
         {

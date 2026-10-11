@@ -45,7 +45,10 @@ public sealed partial record AuthOptions
     /// <summary>Plain-HTTP listen address; TLS terminates in front of the service.</summary>
     public required IPEndPoint Listen { get; init; }
 
-    /// <summary>The public origin browsers and clients use, for example <c>https://auth.terrascale.tech</c>.</summary>
+    /// <summary>The global origin of every issuer, <c>https://{origin}/{tenant}</c>, served in every region behind Fly Proxy.</summary>
+    public const string GlobalOrigin = "https://auth.terrascale.tech";
+
+    /// <summary>The public origin browsers and clients use: <see cref="GlobalOrigin"/> unless a preview or test sets another.</summary>
     public required Uri PublicOrigin { get; init; }
 
     /// <summary>TerraBase project/database selector holding all ts-auth state.</summary>
@@ -170,7 +173,7 @@ public sealed partial record AuthOptions
         string Required(string key) => Optional(key) ?? throw Invalid($"{EnvName(key)} is required");
 
         var development = string.Equals(Optional("environment"), "Development", StringComparison.OrdinalIgnoreCase);
-        var publicOrigin = AbsoluteHttpUrl("public-origin", Required("public-origin"));
+        var publicOrigin = AbsoluteHttpUrl("public-origin", Optional("public-origin") ?? GlobalOrigin);
         // Routes are mapped at the root, so the public origin cannot carry a base path.
         if (publicOrigin.AbsolutePath != "/")
         {

@@ -277,8 +277,8 @@ public sealed class OrganizationTests(TerraBaseFixture fixture)
         await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.Created);
         var production = await OidcHarness.JsonAsync(created);
         var first = production.GetProperty("id").GetString()!;
-        // Its tenant is not served yet, so it advertises no issuer.
-        await Assert.That(production.GetProperty("issuer").ValueKind).IsEqualTo(JsonValueKind.Null);
+        // Its tenant's issuer, on the same origin as the platform's.
+        await Assert.That(production.GetProperty("issuer").GetString()).IsEqualTo($"{OidcHarness.PublicOrigin}/{first}");
         await Assert.That(production.GetProperty("organization_id").GetString()).IsEqualTo(id);
         await Assert.That(production.GetProperty("role").GetString()).IsEqualTo("admin");
         var second = await oidc.CreateProjectAsync(aliceToken, id, "Staging");

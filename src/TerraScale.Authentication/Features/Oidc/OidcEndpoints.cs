@@ -59,7 +59,7 @@ public sealed class DiscoveryEndpoint : EndpointWithoutRequest<IResult>
         Get("/{slug}/.well-known/openid-configuration");
         Name("oidc_discovery");
         Summary("OpenID Provider metadata");
-        Description("OpenID Connect Discovery 1.0 metadata for the issuer {public origin}/{slug}. Only the slug terrascale exists; others answer 404.");
+        Description("OpenID Connect Discovery 1.0 metadata for the issuer {public origin}/{slug}: terrascale, or an existing project's id. Other slugs answer 404. A project tenant's OAuth endpoints answer 404 until it has clients and users.");
         Tags("OAuth");
         Produces<Dictionary<string, object>>();
         Produces<OAuthErrorBody>(StatusCodes.Status404NotFound);
@@ -79,7 +79,7 @@ public sealed class JwksEndpoint : EndpointWithoutRequest<IResult>
         Get("/{slug}/.well-known/jwks.json");
         Name("oidc_jwks");
         Summary("JSON Web Key Set");
-        Description("Every ES256 key in the issuer's key ring, read from storage on each request, so tokens signed before a rotation keep validating.");
+        Description("Every ES256 key in the tenant's key ring (terrascale, or an existing project's id; others answer 404), so tokens signed before a rotation keep validating. A key is published before it signs.");
         Tags("OAuth");
         Produces<Dictionary<string, object>>();
         Produces<OAuthErrorBody>(StatusCodes.Status404NotFound);
