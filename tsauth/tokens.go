@@ -28,7 +28,7 @@ import (
 )
 
 // DefaultIssuer is the terrascale tenant, which issues every platform token.
-const DefaultIssuer = "https://gru.auth.terrascale.tech/terrascale"
+const DefaultIssuer = "https://auth.terrascale.tech/terrascale"
 
 // TerraBase scopes a token can carry (contract section 3).
 const (

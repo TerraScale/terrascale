@@ -21,13 +21,11 @@ recreate bootstrap state before serving the new contract.
 
 ## Zero-configuration operating contract
 
-First-party services must discover eligible serving regions and receive
-production credentials automatically; no region activation, endpoint pinning
-or manual secret copying belongs in setup. Customer tenant/project scope and
-authorized access credentials remain required. This docs-only TS-795 change
-implements no automatic runtime flow. The current v1 SDK still requires an
-explicit endpoint/resolver pending TS-507, and current auth issuer/proxy and
-placement selectors remain inventoried for their owning implementation changes.
+The SDK has no regional discovery or failover. Auth calls go to the fixed
+global origin `https://auth.terrascale.tech`, the default API origin is
+`https://api.terrascale.tech`, and Fly anycast handles routing. No region
+activation, endpoint pinning or manual secret copying belongs in setup.
+Customer tenant/project scope and authorized access credentials remain required.
 The examples below describe existing SDK call boundaries, not production
 onboarding. `discoveredOrigin` below is a trusted HTTPS origin supplied by an
 authorized integration, not created by this SDK. See [AGENTS.md](AGENTS.md#zero-configuration-user-decision-2026-10-09-do-not-revert).
@@ -68,8 +66,8 @@ Every call resolves its endpoint through `tb.Resolver`. `BaseURL` wraps a
 resolver implementing `Resolve(context.Context) (string, error)`. Set one of
 `BaseURL` or `Resolver`. Resolved URLs are validated before credentials are
 sent, resolution errors stop the call, and retries keep the original endpoint.
-The same configuration applies to `NewManagement`. Atlas resolution follows
-in TS-507; no production endpoint is built into the SDK.
+The same configuration applies to `NewManagement`. No production endpoint is
+built into the SDK.
 
 ### Unique keys
 
@@ -192,7 +190,7 @@ collisions and `ErrForbidden` for insufficient permission. `SetPlan` requires
 the management service credential on the admin listener.
 A rejected token or credential is `ErrInvalidKey`.
 
-Databases are placed in Atlas region ids such as `gru-1` (not `RegionCode`):
+Databases are placed in region ids such as `gru-1` (not `RegionCode`):
 `ManagedDatabase` reports `Region` (the answering node), `HomeRegion` and
 `ReplicaRegions`. `CreateDatabaseIn(ctx, org, project, name, tb.Placement{HomeRegion: "gru-1",
 ReplicaRegions: []string{"sfo-1"}})` places a new database (an empty home is
@@ -201,8 +199,7 @@ never changes), and deleting a replicated database fails with
 `ErrDatabaseReplicated`. A region outside the placement answers 421
 `ErrWrongRegion`, on Management and Documents routes alike, and the
 `*tb.APIError` carries `HomeRegion` and `Regions`. The client never retries
-it elsewhere: the existing caller resolves the region through Atlas.
-Automatic eligible-region discovery is the operating contract; customer
+it elsewhere: send the request to a region in `Regions`. Customer
 placement/residency does not enable or disable serving regions.
 The current legacy placement path still requires per-replica project
 registration: call `PrepareProjectRegistration(ctx, org, project)` using that
@@ -309,14 +306,10 @@ for applications that sign users in with the redirect flow, as the dashboard
 does for single sign-on: the authorization code with PKCE, verified ID tokens,
 refresh, userinfo, RFC 7009 revocation and RP-initiated logout. Customer auth
 instance/issuer trust and exact registered callbacks remain explicit security
-boundaries. The current implementation needs `TSAuthBaseURL` or `APIBaseURL`;
-automatic first-party issuer discovery is still an implementation gap. ts-auth issues
-from its regional host, for example `https://gru.auth.terrascale.tech/<slug>`.
-A regional issuer (`https://<region>.auth.terrascale.tech`) is accepted only
-when `TSAuthBaseURL` is the Atlas proxy `https://auth.terrascale.tech`: the
-client then calls the issuer's region directly. The existing
-`TSAuthUseReverseProxy` selector is inventoried for removal; document proxy
-overrides only for reviewed isolated development/tests, not production startup. Any other issuer must be the base origin itself.
+boundaries. ts-auth calls go to one fixed global origin, `https://auth.terrascale.tech`,
+and every tenant issues from `https://auth.terrascale.tech/<slug>`. There is no
+regional discovery or failover. `TSAuthBaseURL` overrides the origin only for
+dev and test deployments; an issuer must be that origin plus the slug.
 The platform management API, API key tokens and headless sign-in are in
 `terrascale.tech/sdk/tsauth`.
 
@@ -333,7 +326,7 @@ package checks do not qualify an actual admitted PostgreSQL runtime.
 as `"gru"` to send `?region=gru`; codes are trimmed and lowercased without
 restricting the available regions. Override the origin with `Config.StatusBaseURL`
 (HTTPS, or HTTP on loopback and `.test` origins for development). Status calls
-need no credentials and do not use auth discovery.
+need no credentials.
 
 ```go
 client, err := sdk.NewClient(sdk.Config{})
@@ -378,25 +371,6 @@ region filter, public CORS, and cache contract (404 now fails):
 TERRASCALE_STATUS_REQUIRE_LATENCY=1 nice -n 19 go test . -run '^TestStatusLatencyLive$' -v
 ```
 
-## Atlas publishing (`terrascale.tech/sdk/atlas`)
-
-`atlas.Publisher` posts signed documents to ts-atlas (`POST /v1/publish`,
-ts-atlas `docs/discovery-v1.md`): the whole topology of regions and services,
-and project placements. Under the first-party operating contract, OCI Vault
-creates and delivers publisher signing material automatically; no manual key
-wiring is an onboarding step. This SDK exposes the signing boundary but does
-not implement or verify production delivery. Atlas must independently trust
-the corresponding public JWK; each publish is signed with ES256 over
-`atlas-publish-v1\n<timestamp>\n<body>`. Atlas keeps the newest `Updated`,
-so a retry (for example after `502 store_unavailable`) never rolls a document
-back.
-
-```go
-p := atlas.Publisher{BaseURL: "https://atlas.terrascale.tech", Key: publishKey}
-report, err := p.Publish(ctx, atlas.Document{Topology: &topology}) // report.Topology: updated, stale or skipped
-var atlasErr *atlas.Error // errors.As: Status, Code (invalid_signature, invalid_topology, …), Message, Fix
-```
-
 ## ts-auth tokens (`terrascale.tech/sdk/tsauth`)
 
 ts-auth's platform contract (TS-598) issues every token TerraBase accepts.
@@ -414,7 +388,7 @@ before it expires, concurrent callers share one request, failures are not
 cached, and `Invalidate(token)` drops a token a resource server refused. It
 satisfies `v1.TokenSource`. Errors from the token endpoint are
 `*tsauth.Error{Status, Code, Description, RetryAfter}`. The issuer defaults to
-`https://gru.auth.terrascale.tech/terrascale`.
+`https://auth.terrascale.tech/terrascale`.
 
 ```go
 tokens, err := tsauth.NewAPIKeySource(tsauth.APIKeyConfig{Key: apiKey, Project: projectID})
@@ -481,8 +455,6 @@ project, err := tsauth.NewExchangeSource(tsauth.ExchangeConfig{ClientID: "ts-das
 ```
 
 ## Checks
-
-The edge artifacts and pins are in `contracts/edge/v1`.
 
 ```sh
 test -z "$(gofmt -l .)"

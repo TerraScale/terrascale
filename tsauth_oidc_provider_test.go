@@ -26,7 +26,7 @@ func TestTSAuthOIDCRealProvider(t *testing.T) {
 	if method != TSAuthClientAuthenticationNone && os.Getenv("TERRASCALE_OIDC_CLIENT_SECRET") == "" {
 		t.Fatal("real provider preflight missing confidential client secret")
 	}
-	client, err := NewClient(Config{TSAuthBaseURL: os.Getenv("TERRASCALE_OIDC_AUTH_BASE_URL"), DiscoveryBaseURL: os.Getenv("TERRASCALE_OIDC_ATLAS_URL")})
+	client, err := NewClient(Config{TSAuthBaseURL: os.Getenv("TERRASCALE_OIDC_AUTH_BASE_URL")})
 	if err != nil {
 		t.Fatal("provider client configuration failed")
 	}

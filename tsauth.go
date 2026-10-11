@@ -14,12 +14,15 @@ import (
 	"unicode"
 )
 
+// publicAuthBaseURL is the fixed global ts-auth origin. Every tenant issues
+// from https://auth.terrascale.tech/<slug>.
+const publicAuthBaseURL = "https://auth.terrascale.tech"
+
 // TSAuthClient calls a hosted ts-auth deployment's OpenID Connect provider
 // for an application that signs users in with the redirect flow (authorization
-// code with PKCE). Construct a Client with TSAuthBaseURL set to the
-// deployment's public origin and call Instance with the tenant slug. The
-// platform management API, API key tokens and the headless sign-in API are in
-// package terrascale.tech/sdk/tsauth.
+// code with PKCE). Call Instance with the tenant slug. The platform management
+// API, API key tokens and the headless sign-in API are in package
+// terrascale.tech/sdk/tsauth.
 type TSAuthClient struct{ c *Client }
 
 // Instance returns the OIDC family of one ts-auth tenant slug.
@@ -54,21 +57,21 @@ func tsAuthValidateSlug(slug string) error {
 	return nil
 }
 
-// tsAuthResolveBase picks the ts-auth deployment origin: TSAuthBaseURL when
-// configured, else a non-default APIBaseURL. The default product origin never
-// serves ts-auth routes, so silently using it is rejected instead.
+// tsAuthNoRedirectClient stops redirects so a response cannot move a
+// credential or a replayed request to another origin.
+func tsAuthNoRedirectClient(client *http.Client) *http.Client {
+	copy := *client
+	copy.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return &copy
+}
+
+// tsAuthResolveBase picks the ts-auth origin: the global auth host, unless
+// TSAuthBaseURL overrides it for a dev or test deployment.
 func tsAuthResolveBase(cfg Config) (string, error) {
-	const required = "ts-auth requires Config.TSAuthBaseURL (or an explicit non-default Config.APIBaseURL) pointing at the ts-auth deployment origin."
-	field := "ts_auth_base_url"
-	raw := strings.TrimSpace(cfg.TSAuthBaseURL)
-	if raw == "" {
-		raw = strings.TrimSpace(cfg.APIBaseURL)
-		if raw == "" || strings.EqualFold(strings.TrimSuffix(raw, "/"), DefaultAPIBaseURL) {
-			return "", &ValidationError{Field: field, Message: required}
-		}
-		field = "api_base_url"
+	if cfg.TSAuthBaseURL == "" {
+		return publicAuthBaseURL, nil
 	}
-	return resolveServiceBase(raw, field, true)
+	return resolveServiceBase(cfg.TSAuthBaseURL, "ts_auth_base_url", true)
 }
 
 // tsAuthAnySuccess accepts any 2xx answer without touching the body: the
@@ -128,12 +131,12 @@ func (c *Client) tsAuthSend(ctx context.Context, base, method, path string, quer
 }
 
 func (c *Client) tsAuthSendAuthorized(ctx context.Context, base, method, path string, query url.Values, payload []byte, contentType string, authorization tsAuthAuthorization, out any, route string) error {
-	return c.sendAuthorized(ctx, base, method, path, query, payload, contentType, authorization, out, route, true)
+	return c.sendAuthorized(ctx, base, method, path, query, payload, contentType, authorization, out, route)
 }
 
-// sendAuthorized shares the bounded request and retry pipeline. Only auth
-// calls opt into regional auth discovery.
-func (c *Client) sendAuthorized(ctx context.Context, base, method, path string, query url.Values, payload []byte, contentType string, authorization tsAuthAuthorization, out any, route string, discoverAuth bool) error {
+// sendAuthorized is the bounded request and retry pipeline shared by ts-auth
+// and status calls. Mutations are never retried.
+func (c *Client) sendAuthorized(ctx context.Context, base, method, path string, query url.Values, payload []byte, contentType string, authorization tsAuthAuthorization, out any, route string) error {
 	if ctx == nil {
 		return &ValidationError{Field: "context", Message: "cannot be nil"}
 	}
@@ -149,20 +152,11 @@ func (c *Client) sendAuthorized(ctx context.Context, base, method, path string, 
 		requestCtx, cancel = context.WithTimeout(ctx, timeout)
 	}
 	defer cancel()
-	bases := []string{base}
-	if discoverAuth && base == "https://auth.terrascale.tech" && !c.cfg.TSAuthUseReverseProxy {
-		var err error
-		bases, err = c.authDiscovery.resolve(requestCtx, c.http, c.cfg.DiscoveryBaseURL)
-		if err != nil {
-			return fmt.Errorf("sdk: auth endpoint discovery: %w", err)
-		}
-	}
 	retryable := tsAuthRetryable(method)
 	maxRetries := c.cfg.MaxRetryAttempts
-	regionIndex := 0
 	attempt := 0
 	for {
-		status, headers, respBody, err := c.tsAuthRoundTrip(requestCtx, bases[regionIndex], method, path, query, payload, contentType, authorization, route)
+		status, headers, respBody, err := c.tsAuthRoundTrip(requestCtx, base, method, path, query, payload, contentType, authorization, route)
 		var responseErr *APIError
 		if errors.As(err, &responseErr) && responseErr.Code == "response_too_large" {
 			// A capped response is the server's answer. Keep its metadata
@@ -170,10 +164,6 @@ func (c *Client) sendAuthorized(ctx context.Context, base, method, path string, 
 			return responseErr
 		}
 		if err != nil && responseErr == nil {
-			if retryable && regionIndex < len(bases)-1 && requestCtx.Err() == nil {
-				regionIndex++
-				continue
-			}
 			if retryable && attempt < maxRetries && requestCtx.Err() == nil {
 				if sleepErr := sleepContext(requestCtx, c.retryDelayFor(nil, attempt)); sleepErr != nil {
 					return sleepErr
@@ -198,11 +188,6 @@ func (c *Client) sendAuthorized(ctx context.Context, base, method, path string, 
 		apiErr := responseErr
 		if apiErr == nil {
 			apiErr = tsAuthErrorFromResponse(route, method, path, status, headers, respBody)
-		}
-		if retryable && regionIndex < len(bases)-1 &&
-			(status == http.StatusBadGateway || status == http.StatusServiceUnavailable || status == http.StatusGatewayTimeout) {
-			regionIndex++
-			continue
 		}
 		incompleteSuccess := responseErr != nil && status >= 200 && status < 300
 		if retryable && attempt < maxRetries && (retryableStatuses[status] || incompleteSuccess) {

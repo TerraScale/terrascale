@@ -55,7 +55,7 @@ func (s *StatusClient) Latency(ctx context.Context, region string) (*LatencyResp
 		query.Set("region", region)
 	}
 	var out LatencyResponse
-	if err := s.c.sendAuthorized(ctx, s.c.cfg.StatusBaseURL, http.MethodGet, "/api/latency", query, nil, "", tsAuthAuthorization{}, &out, "status.latency", false); err != nil {
+	if err := s.c.sendAuthorized(ctx, s.c.cfg.StatusBaseURL, http.MethodGet, "/api/latency", query, nil, "", tsAuthAuthorization{}, &out, "status.latency"); err != nil {
 		return nil, err
 	}
 	return &out, nil

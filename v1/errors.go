@@ -51,7 +51,7 @@ const (
 	ErrSchemaRequiresEmptyCollection ErrorCode = "schema_requires_empty_collection"
 	// ErrWrongRegion is a 421: the database is not placed in the called
 	// region. APIError.HomeRegion and Regions name where it is. The client
-	// never retries it elsewhere: resolve the region through Atlas.
+	// never retries it elsewhere: it sends the request to a region in Regions.
 	ErrWrongRegion ErrorCode = "wrong_region"
 )
 
@@ -83,7 +83,7 @@ type APIError struct {
 	// Body is the raw error object or message.
 	Body json.RawMessage
 	// HomeRegion and Regions are the database's home and every region that
-	// holds it, as Atlas region ids (X-TerraBase-Database-Home and
+	// holds it, as region ids (X-TerraBase-Database-Home and
 	// X-TerraBase-Database-Regions), on a 421 ErrWrongRegion.
 	HomeRegion string
 	Regions    []string

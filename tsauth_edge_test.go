@@ -46,7 +46,7 @@ func (rec *tsAuthEdgeRecorder) count(prefix string) int {
 
 func newTSAuthEdgeInstanceFor(t *testing.T, baseURL string, cfg Config) *TSAuthInstanceClient {
 	t.Helper()
-	cfg.APIBaseURL = baseURL
+	cfg.TSAuthBaseURL = baseURL
 	client, err := NewClient(cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -294,15 +294,15 @@ func TestTSAuthEdgeConfig(t *testing.T) {
 		t.Fatalf("empty base URL rejected: %v", err)
 	}
 
-	// G56b: ts-auth refuses the default product origin: the deployment origin
-	// must be explicit (TSAuthBaseURL, or a non-default APIBaseURL).
-	_, err = defaultClient.TSAuth.Instance("acme")
-	var originErr *ValidationError
-	if !errors.As(err, &originErr) || originErr.Field != "ts_auth_base_url" ||
-		originErr.Message != "ts-auth requires Config.TSAuthBaseURL (or an explicit non-default Config.APIBaseURL) pointing at the ts-auth deployment origin." {
-		t.Fatalf("default-origin ts-auth error = %v, want the explicit-origin ValidationError", err)
+	// G56b: ts-auth defaults to the global auth origin; TSAuthBaseURL overrides it.
+	defaultInstance, err := defaultClient.TSAuth.Instance("acme")
+	if err != nil {
+		t.Fatal(err)
 	}
-	explicitClient, err := NewClient(Config{APIBaseURL: DefaultAPIBaseURL, TSAuthBaseURL: "https://auth.example.com"})
+	if defaultInstance.base != publicAuthBaseURL {
+		t.Fatalf("default ts-auth base = %q", defaultInstance.base)
+	}
+	explicitClient, err := NewClient(Config{TSAuthBaseURL: "https://auth.example.com"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -363,12 +363,12 @@ func TestTSAuthEdgeConfig(t *testing.T) {
 		tsAuthEdgeJSON(w, `{"sub":"01ARZ3NDEKTSV4RRFFQ69G5FA4"}`)
 	}))
 	defer cfgServer.Close()
-	cfg := Config{APIBaseURL: cfgServer.URL}
+	cfg := Config{TSAuthBaseURL: cfgServer.URL}
 	client, err := NewClient(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg.APIBaseURL = "http://127.0.0.1:1/unreachable"
+	cfg.TSAuthBaseURL = "http://127.0.0.1:1/unreachable"
 	snapshotInstance, err := client.TSAuth.Instance("acme")
 	if err != nil {
 		t.Fatal(err)

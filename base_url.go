@@ -4,20 +4,13 @@ import (
 	"net"
 	"net/url"
 	"strings"
-	"time"
 )
-
-// DefaultDiscoveryBaseURL is the canonical Atlas metadata origin. Metadata
-// does not grant authority to perform product or management operations.
-const DefaultDiscoveryBaseURL = "https://atlas.terrascale.tech"
 
 // publicAPIHostname identifies the test API host for explicit rejection.
 const publicAPIHostname = "api.terrascale.tech"
 
-const discoveryTimeout = 3 * time.Second
-
 // resolveServiceBase validates and normalizes service URLs. Auth deployments
-// may include a proxy path prefix; status requires an origin without a prefix.
+// may include a path prefix; status requires an origin without one.
 func resolveServiceBase(raw, field string, allowPath bool) (string, error) {
 	base := strings.TrimSpace(raw)
 	u, err := url.Parse(base)
@@ -49,10 +42,4 @@ func isDevTransport(hostname string) bool {
 		return true
 	}
 	return host == "test" || strings.HasSuffix(host, ".test")
-}
-
-// isDevOrigin reports a loopback development metadata hostname.
-func isDevOrigin(host string) bool {
-	return host == "localhost" || strings.HasSuffix(host, ".localhost") ||
-		host == "127.0.0.1" || host == "::1" || host == "[::1]"
 }
