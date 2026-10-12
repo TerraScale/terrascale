@@ -111,7 +111,7 @@ public sealed class DocumentStateStorageTests
             await Assert.That((long)(await table.ExecuteScalarAsync())!).IsEqualTo(0);
         }
 
-        foreach (var name in new[] { "change_log", "sqlite_x", "turso_cdc" })
+        foreach (var name in new[] { "commit_offset", "sqlite_x", "turso_cdc" })
         {
             var refused = await api.SendAsync(HttpMethod.Post, api.Collections, new { name });
             await Assert.That((refused.Status, refused.Code)).IsEqualTo((HttpStatusCode.BadRequest, "reserved_name"));
