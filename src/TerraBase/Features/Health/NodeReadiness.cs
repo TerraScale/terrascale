@@ -1,4 +1,5 @@
 using TerraBase.Engine;
+using TerraBase.Features.Replication;
 
 namespace TerraBase.Features.Health;
 
@@ -13,11 +14,12 @@ public interface INodeReadiness
 }
 
 internal sealed class NodeReadiness(
-    IStorageEngine engine, IHostApplicationLifetime lifetime) : INodeReadiness
+    IStorageEngine engine, IHostApplicationLifetime lifetime, ICatalogGate gate) : INodeReadiness
 {
     public async ValueTask<bool> IsReadyAsync(CancellationToken cancellationToken)
     {
-        if (lifetime.ApplicationStopping.IsCancellationRequested)
+        // A catalog not verified since this start (it may be a restored copy) is not served (CatalogGate).
+        if (lifetime.ApplicationStopping.IsCancellationRequested || !gate.IsOpen)
         {
             return false;
         }

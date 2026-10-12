@@ -98,6 +98,13 @@ internal sealed class AntiEntropy : BackgroundService
         return peer is null ? null : await CompareAsync(database, peer, force: true, cancellationToken, horizon).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Joins every bucket of <paramref name="database"/> that differs from <paramref name="peer"/>, at once (the restore gate's
+    /// verification, <see cref="CatalogGate"/>). Throws when the peer cannot be reached.
+    /// </summary>
+    internal Task<int?> PullAsync(TenantContext database, ClusterMember peer, CancellationToken cancellationToken) =>
+        CompareAsync(database, peer, force: true, cancellationToken);
+
     private List<ClusterMember> Peers(ClusterView view) =>
         [.. view.Members.Concat(view.Elsewhere.IsDefault ? [] : view.Elsewhere).Where(member => member.Name != _membership.Self.Name && member.PeerAddress.Length > 0)];
 
