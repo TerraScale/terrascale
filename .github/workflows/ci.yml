@@ -12,14 +12,16 @@ name: CI
 #   TerraBase's rollout. Before the rollout, scripts/fly/fast-gate.sh requires a passed `test` for this exact tree: the
 #   merged pull request's head when the merge kept its tree (rebased before merging), else main's own `test`.
 # After it:
-# - slow (main): the slow suites; never blocks. A failure writes the job summary and opens (or comments on) one
-#   `slow-failure` issue per failed test.
+# - slow (main, workflow_dispatch, or a pull request labelled `full-ci`): the slow suites; never blocks. A failure
+#   writes the job summary; on main it also opens (or comments on) one `slow-failure` issue per failed test.
 # - e2e (main, after deploy): tests/TerraBase.E2E against the Fly app, gru, sjc and fra pinned with fly-prefer-region; never
 #   blocks. Between replication slices R2a and R10a nothing replicates on Fly, so E1 to E7 fail there
 #   (docs/terrabase/multi-region-replication.md, section 21).
 
 on:
   pull_request:
+    # `labeled` lets the `full-ci` label start the slow suites; any label re-runs CI and cancels the running check.
+    types: [opened, synchronize, reopened, labeled]
   push:
     branches: [main]
   workflow_dispatch:
@@ -27,7 +29,7 @@ on:
 # A newer push supersedes a running check of the same branch. Every main push runs at once (its own group) and finishes;
 # the deploy jobs queue per app instead, so a merge never waits behind the previous run's tests.
 concurrency:
-  group: ci-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
@@ -137,6 +139,9 @@ jobs:
           build-contexts: ts-dotnet=ts-dotnet
           target: test-${{ github.job }}
           push: false
+          # Per-job layer cache: the base stage (apt, Playwright Chromium, ts-dotnet) is rebuilt only when it changes.
+          cache-from: type=gha,scope=${{ github.job }}
+          cache-to: type=gha,mode=max,scope=${{ github.job }}
 
   auth:
     needs: changes
@@ -187,7 +192,9 @@ jobs:
 
   slow:
     needs: test
-    if: github.ref == 'refs/heads/main'
+    if: >-
+      github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+      || contains(github.event.pull_request.labels.*.name, 'full-ci')
     continue-on-error: true
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -207,6 +214,8 @@ jobs:
           # A rerun of the same commit runs the suites again instead of reusing the stored result.
           no-cache-filters: slow-run
           outputs: type=local,dest=slow
+          cache-from: type=gha,scope=slow
+          cache-to: type=gha,mode=max,scope=slow
       - name: Report the Slow result
         if: ${{ !cancelled() }}
         env:
@@ -227,6 +236,8 @@ jobs:
             [[ ${#failed[@]} -eq 0 ]] || printf -- '- `%s`\n' "${failed[@]}"
           } >> "$GITHUB_STEP_SUMMARY"
           (( code != 0 )) || exit 0
+          # Issues track main only; a `full-ci` pull request or a dispatched branch reports in the summary.
+          [[ $GITHUB_REF == refs/heads/main ]] || exit "$code"
           [[ ${#failed[@]} -gt 0 ]] || failed=("Slow suites failed without a failed test (build or runner error)")
           gh label create slow-failure -R "$GITHUB_REPOSITORY" --color B60205 --description "A Slow test failed on main" --force
           open=$(gh issue list -R "$GITHUB_REPOSITORY" --label slow-failure --state open --limit 500 --json number,title)
@@ -286,6 +297,8 @@ jobs:
           file: terrascale/Dockerfile
           target: terrabase
           tags: registry.fly.io/${{ env.APP }}:terrabase-${{ github.sha }}
+          cache-from: type=gha,scope=preview-terrabase
+          cache-to: type=gha,mode=max,scope=preview-terrabase
           push: true
       - uses: docker/build-push-action@v6
         with:
@@ -294,6 +307,8 @@ jobs:
           build-contexts: ts-dotnet=ts-dotnet
           target: ts-auth
           tags: registry.fly.io/${{ env.APP }}:ts-auth-${{ github.sha }}
+          cache-from: type=gha,scope=preview-ts-auth
+          cache-to: type=gha,mode=max,scope=preview-ts-auth
           build-args: TS_AUTH_REVISION=${{ github.sha }}
           push: true
       - name: Start or update the preview machine
@@ -339,6 +354,8 @@ jobs:
           file: terrascale/Dockerfile
           target: terrabase
           tags: registry.fly.io/ts-terrabase:${{ github.sha }}
+          cache-from: type=gha,scope=deploy-terrabase
+          cache-to: type=gha,mode=max,scope=deploy-terrabase
           push: true
       # Fast must cover the exact tree being deployed (AGENTS.md): instant for a rebased, squash-merged pull request.
       - name: Wait for Fast on this tree
@@ -363,6 +380,8 @@ jobs:
           build-contexts: ts-dotnet=ts-dotnet
           target: ts-auth
           tags: registry.fly.io/ts-auth:${{ github.sha }}
+          cache-from: type=gha,scope=deploy-ts-auth
+          cache-to: type=gha,mode=max,scope=deploy-ts-auth
           build-args: TS_AUTH_REVISION=${{ github.sha }}
           push: true
       - name: Deploy ts-auth (gru, sjc, fra)
@@ -387,6 +406,8 @@ jobs:
       - uses: actions/setup-dotnet@v5
         with:
           global-json-file: terrascale/global.json
+          cache: true
+          cache-dependency-path: terrascale/tests/TerraBase.E2E/packages.lock.json
       - name: Replication e2e against Fly
         working-directory: terrascale
         run: make terrabase-e2e
