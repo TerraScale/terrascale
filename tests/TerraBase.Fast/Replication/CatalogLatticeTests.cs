@@ -633,25 +633,41 @@ public sealed class CatalogLatticeTests
 
     /// <summary>
     /// When the backup bucket refuses the anchor, a revocation is not acknowledged (500; it is committed here and replicates,
-    /// and a retry is idempotent), while a creation, which grants nothing if a restore loses it, still is.
+    /// and a retry is idempotent), and neither is a management commit carrying a deletion; a creation (it grants nothing if a
+    /// restore loses it), a management commit without one, and every tenant write (documents, transactions) still are: the
+    /// tenant path never waits for the bucket.
     /// </summary>
     [Test]
-    public async Task A_revocation_the_bucket_cannot_anchor_is_not_acknowledged_while_a_creation_still_is()
+    public async Task A_revocation_the_bucket_cannot_anchor_is_not_acknowledged_while_creations_and_tenant_writes_still_are()
     {
         await using var cluster = await Cluster.StartWithAnchorsAsync("gru", "sjc");
         var gru = cluster["gru"];
         var owner = EntityIds.New().ToString();
-        var (organization, project) = (EntityIds.New().ToString(), EntityIds.New().ToString());
+        var (organization, project, doomed) = (EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString());
         await gru.CommitAsync(owner,
             new { op = "create_organization", id = organization, name = "Refused" },
-            new { op = "create_project", organization, id = project, name = "p" });
+            new { op = "set_plan", organization, plan = "enterprise" },
+            new { op = "create_project", organization, id = project, name = "p" },
+            new { op = "create_database", organization, project, name = "kept", id = EntityIds.New().ToString() },
+            new { op = "create_database", organization, project, name = "doomed", id = doomed });
         var projectPath = $"/v1/management/organizations/{organization}/projects/{project}";
         var (key, _) = await gru.CreateKeyAsync(owner, projectPath);
+        var (_, writer) = await gru.CreateKeyAsync(owner, projectPath, ["documents:read", "documents:write"]);
+        var data = $"/v1/projects/{project}/databases/kept";
+        await Assert.That(await gru.DataSendAsync(writer, HttpMethod.Post, $"{data}/collections", new { name = "items" })).IsEqualTo(HttpStatusCode.Created);
 
         cluster.Bucket!.FailPut = _ => true;
         await Assert.That(await gru.SendAsync(owner, HttpMethod.Delete, $"{projectPath}/api-keys/{key}")).IsEqualTo(HttpStatusCode.InternalServerError);
+        var deletion = new { id = EntityIds.New().ToString(), ops = new object[] { new { op = "delete_database", organization, project, database = doomed } } };
+        await Assert.That(await gru.SendAsync(owner, HttpMethod.Post, "/v1/management/commits", deletion)).IsEqualTo(HttpStatusCode.InternalServerError);
         await Assert.That(await gru.SendAsync(owner, HttpMethod.Post, $"/v1/management/organizations/{organization}/projects", new { name = "created" }))
             .IsEqualTo(HttpStatusCode.Created);
+        var creation = new { id = EntityIds.New().ToString(), ops = new object[] { new { op = "create_database", organization, project, name = "more", id = EntityIds.New().ToString() } } };
+        await Assert.That(await gru.SendAsync(owner, HttpMethod.Post, "/v1/management/commits", creation)).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(await gru.DataSendAsync(writer, HttpMethod.Put, $"{data}/collections/items/documents/by-key?id={EntityIds.New()}", new { n = 1 }))
+            .IsEqualTo(HttpStatusCode.Created);
+        var transaction = new { ops = new[] { new { op = "put", collection = "items", id = EntityIds.New().ToString(), document = new { n = 2 } } } };
+        await Assert.That((int)await gru.DataSendAsync(writer, HttpMethod.Post, $"{data}/transactions", transaction)).IsBetween(200, 299);
 
         cluster.Bucket.FailPut = _ => false;
         var (another, _) = await gru.CreateKeyAsync(owner, projectPath);
@@ -909,6 +925,14 @@ public sealed class CatalogLatticeTests
             return response.StatusCode;
         }
 
+        // A data API request with an API key on the client listener; its status.
+        public async Task<HttpStatusCode> DataSendAsync(string secret, HttpMethod method, string path, object body)
+        {
+            using var data = Api.DataClient(secret);
+            using var response = await data.SendAsync(new HttpRequestMessage(method, ManagementApi.Uri(path)) { Content = JsonContent.Create(body) });
+            return response.StatusCode;
+        }
+
         // A data API GET with an API key on the client listener; its status.
         public async Task<HttpStatusCode> DataStatusAsync(string secret, string path)
         {
@@ -918,10 +942,10 @@ public sealed class CatalogLatticeTests
         }
 
         // A project API key made by `user`: its id and secret.
-        public async Task<(string Id, string Secret)> CreateKeyAsync(string user, string projectPath)
+        public async Task<(string Id, string Secret)> CreateKeyAsync(string user, string projectPath, string[]? scopes = null)
         {
             using var service = Api.Service(user);
-            using var response = await service.PostAsJsonAsync(ManagementApi.Uri($"{projectPath}/api-keys"), new { name = "gated", scopes = ReadScope });
+            using var response = await service.PostAsJsonAsync(ManagementApi.Uri($"{projectPath}/api-keys"), new { name = "gated", scopes = scopes ?? ReadScope });
             await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Created).Because(await response.Content.ReadAsStringAsync());
             var body = await response.Content.ReadFromJsonAsync<JsonElement>();
             return (body.GetProperty("key").GetProperty("id").GetString()!, body.GetProperty("secret").GetString()!);

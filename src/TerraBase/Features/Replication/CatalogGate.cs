@@ -611,8 +611,8 @@ internal static class CatalogGateExtensions
     }
 
     // The Management requests a restore could undo to a tenant's harm: every deletion (API keys, members, invitations,
-    // databases, projects, organizations, transfers), a role change, leaving, confirming a transfer, and a commit (it may
-    // carry any of them).
+    // databases, projects, organizations, transfers), a role change, leaving, confirming a transfer. A management commit
+    // anchors itself when it carries such an operation (CommitEndpoint). Tenant document routes are never anchored.
     private static bool RevokesAccess(HttpRequest request)
     {
         if (!request.Path.StartsWithSegments(ManagementPrefix, StringComparison.Ordinal, out var rest))
@@ -623,7 +623,7 @@ internal static class CatalogGateExtensions
         var path = rest.Value ?? string.Empty;
         return HttpMethods.IsDelete(request.Method)
             || (HttpMethods.IsPut(request.Method) && path.EndsWith("/role", StringComparison.Ordinal))
-            || (HttpMethods.IsPost(request.Method) && (path is "/commits" || path.EndsWith("/leave", StringComparison.Ordinal)
+            || (HttpMethods.IsPost(request.Method) && (path.EndsWith("/leave", StringComparison.Ordinal)
                 || path.EndsWith("/ownership-transfer/confirm", StringComparison.Ordinal)));
     }
 

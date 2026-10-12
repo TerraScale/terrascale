@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -9,6 +10,7 @@ using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraScale.Endpoints;
+using TerraBase.Features.Replication;
 
 namespace TerraBase.Features.Management;
 
@@ -21,7 +23,9 @@ namespace TerraBase.Features.Management;
 public sealed record CommitRequest(string? Id, IReadOnlyList<ManagementOpRequest>? Ops);
 
 /// <summary><c>POST /v1/management/commits</c>: applies Management and dashboard document operations atomically.</summary>
-public sealed class CommitEndpoint(IManagementCommits commits, TimeProvider time, IManagementService management, IQosAdmission qos, IDocumentCacheQuota cacheQuota) : EndpointWithoutRequest<IResult>
+public sealed class CommitEndpoint(
+    IManagementCommits commits, TimeProvider time, IManagementService management, IQosAdmission qos, IDocumentCacheQuota cacheQuota, ICatalogGate gate)
+    : EndpointWithoutRequest<IResult>
 {
     /// <summary>Set on a response answered from the record of an earlier, identical commit.</summary>
     public const string ReplayedHeader = "TerraBase-Commit-Replayed";
@@ -177,12 +181,32 @@ public sealed class CommitEndpoint(IManagementCommits commits, TimeProvider time
             : await SubmitAsync(userId, email: null, body, commit, cancellationToken);
     }
 
-    private async ValueTask<IResult> SubmitAsync(string userId, string? email, byte[] body, ParsedCommit commit, CancellationToken cancellationToken) =>
-        await commits.CommitAsync(userId, email, commit.Id, Convert.ToHexStringLower(SHA256.HashData(body)), commit.Operations, cancellationToken) switch
+    private async ValueTask<IResult> SubmitAsync(string userId, string? email, byte[] body, ParsedCommit commit, CancellationToken cancellationToken)
+    {
+        switch (await commits.CommitAsync(userId, email, commit.Id, Convert.ToHexStringLower(SHA256.HashData(body)), commit.Operations, cancellationToken))
         {
-            CommitOutcome outcome => Respond(outcome),
-            CommitRejected rejected => ErrorResponse.From(rejected.Error, rejected.Op),
-        };
+            case CommitOutcome outcome:
+                // A revocation, removal or deletion is anchored before it is acknowledged (CatalogGate); other commits, the
+                // dashboard's document writes among them, do not wait for the backup bucket.
+                if (commit.Operations.OfType<ManagementCommitOperation>().Any(op => RevokingOps.Contains(op.Request.Op ?? string.Empty)))
+                {
+                    await gate.AnchorAsync(cancellationToken).ConfigureAwait(false);
+                }
+
+                return Respond(outcome);
+            case CommitRejected rejected:
+                return ErrorResponse.From(rejected.Error, rejected.Op);
+            default:
+                throw new System.Diagnostics.UnreachableException();
+        }
+    }
+
+    // The operations a restore could undo to a tenant's harm.
+    private static readonly FrozenSet<string> RevokingOps = FrozenSet.ToFrozenSet(
+    [
+        "delete_organization", "delete_project", "delete_database", "change_role", "remove_member", "leave", "revoke_invitation",
+        "decline_invitation", "confirm_transfer", "cancel_transfer",
+    ], StringComparer.Ordinal);
 
     private Microsoft.AspNetCore.Http.HttpResults.FileContentHttpResult Respond(CommitOutcome outcome)
     {
