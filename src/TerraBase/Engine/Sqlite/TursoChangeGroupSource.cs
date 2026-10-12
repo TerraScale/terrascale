@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
+using System.Runtime.CompilerServices;
 using TerraBase.Engine.Lattices;
 using TerraBase.Features.Replication;
 using TerraBase.Hosting;
@@ -42,11 +43,28 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
 
     // shortcut: lists every database file on each pass, so a database with unsent groups ships after a restart even when
     // nothing opened it; keep a set of databases with unacknowledged groups once machines hold many databases.
-    public IAsyncEnumerable<TenantContext> ListDatabasesAsync(CancellationToken cancellationToken) => _engine.ListDatabasesAsync(cancellationToken);
+    public async IAsyncEnumerable<TenantContext> ListDatabasesAsync([EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        if (_engine.SystemDatabaseExists)
+        {
+            yield return ChangeGroups.System;
+        }
+
+        await foreach (var database in _engine.ListDatabasesAsync(cancellationToken).ConfigureAwait(false))
+        {
+            yield return database;
+        }
+    }
+
+    // The store of a database the peer streams name: the system database (ChangeGroups.System) or a client one.
+    private async ValueTask<SqliteDatabaseStore?> OpenAsync(TenantContext database, CancellationToken cancellationToken) =>
+        database == ChangeGroups.System
+            ? (SqliteDatabaseStore)await _engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false)
+            : (SqliteDatabaseStore?)await _engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false);
 
     public async ValueTask<IReadOnlyList<OriginGroup>> ReadAsync(TenantContext database, long after, int maxGroups, int maxBytes, CancellationToken cancellationToken)
     {
-        if (await _engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not SqliteDatabaseStore store)
+        if (await OpenAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
         {
             return [];
         }
@@ -86,7 +104,7 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
 
     public async ValueTask<long> AckedAsync(TenantContext database, ReplicaId peer, CancellationToken cancellationToken)
     {
-        if (await _engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not SqliteDatabaseStore store)
+        if (await OpenAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
         {
             return 0;
         }
@@ -109,7 +127,7 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
 
     public async ValueTask AckAsync(TenantContext database, ReplicaId peer, long changeId, Hlc stable, CancellationToken cancellationToken)
     {
-        if (await _engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is SqliteDatabaseStore store)
+        if (await OpenAsync(database, cancellationToken).ConfigureAwait(false) is { } store)
         {
             await RecordAsync(store, peer, changeId, stable, cancellationToken).ConfigureAwait(false);
         }
@@ -117,7 +135,7 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
 
     public async ValueTask RecordStableAsync(TenantContext database, ReplicaId peer, Hlc stable, CancellationToken cancellationToken)
     {
-        if (await _engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not SqliteDatabaseStore store)
+        if (await OpenAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
         {
             return;
         }
@@ -130,15 +148,20 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
         }
     }
 
+    // The catalog keeps its tombstones (docs/terrabase/system-catalog-invariants.md): it records peers' stable stamps and
+    // frontiers like any database, but reports no stable stamp and no horizon, so no machine collects or forgets any of its
+    // states (see ExecuteAsync and ForgetAsync).
     public async ValueTask<Hlc> StableAsync(TenantContext database, CancellationToken cancellationToken) =>
-        await ReadAsync(database, (transaction, now) => transaction.GetStableAsync(now, cancellationToken), cancellationToken).ConfigureAwait(false);
+        database == ChangeGroups.System ? default
+        : await ReadAsync(database, (transaction, now) => transaction.GetStableAsync(now, cancellationToken), cancellationToken).ConfigureAwait(false);
 
     public async ValueTask<Hlc> HorizonAsync(TenantContext database, CancellationToken cancellationToken) =>
-        await ReadAsync(database, (transaction, now) => transaction.GetHorizonAsync(now, cancellationToken), cancellationToken).ConfigureAwait(false);
+        database == ChangeGroups.System ? default
+        : await ReadAsync(database, (transaction, now) => transaction.GetHorizonAsync(now, cancellationToken), cancellationToken).ConfigureAwait(false);
 
     public async ValueTask<int> ForgetAsync(TenantContext database, IReadOnlyList<(string Collection, string Id)> keys, Hlc horizon, CancellationToken cancellationToken)
     {
-        if (keys.Count == 0 || await _engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not SqliteDatabaseStore store)
+        if (keys.Count == 0 || database == ChangeGroups.System || await OpenAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
         {
             return 0;
         }
@@ -155,7 +178,7 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
     // A stamp read on a read transaction, at this machine's clock; 0 when this machine does not hold the database.
     private async ValueTask<Hlc> ReadAsync(TenantContext database, Func<SqliteStorageTransaction, Hlc, ValueTask<Hlc>> read, CancellationToken cancellationToken)
     {
-        if (await _engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not SqliteDatabaseStore store)
+        if (await OpenAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
         {
             return default;
         }
@@ -171,7 +194,7 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
 
     public async ValueTask<bool> RetainsAsync(TenantContext database, long after, CancellationToken cancellationToken)
     {
-        if (await _engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not SqliteDatabaseStore store)
+        if (await OpenAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
         {
             return true;
         }
@@ -185,7 +208,7 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
 
     public async ValueTask<long> HeadAsync(TenantContext database, CancellationToken cancellationToken)
     {
-        if (await _engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not SqliteDatabaseStore store)
+        if (await OpenAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
         {
             return 0;
         }
@@ -199,7 +222,7 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
 
     public async ValueTask<byte[]?> DigestAsync(TenantContext database, CancellationToken cancellationToken)
     {
-        if (await _engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not SqliteDatabaseStore store)
+        if (await OpenAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
         {
             return null;
         }
@@ -214,7 +237,7 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
     public async ValueTask<(IReadOnlyList<RepairState> States, BucketCursor? Next)> ReadBucketsAsync(
         TenantContext database, IReadOnlyList<int> buckets, BucketCursor? after, int maxStates, int maxBytes, CancellationToken cancellationToken)
     {
-        if (await _engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not SqliteDatabaseStore store)
+        if (await OpenAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
         {
             return ([], null);
         }
@@ -235,28 +258,14 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
             {
                 try
                 {
-                    if (await _engine.OpenDatabaseAsync(database, stoppingToken).ConfigureAwait(false) is not SqliteDatabaseStore store || store.Incarnation != incarnation)
+                    if (await OpenAsync(database, stoppingToken).ConfigureAwait(false) is not { } store || store.Incarnation != incarnation)
                     {
                         _ = _tracked.TryRemove(incarnation, out _);
                         _ = _tail.TryRemove(incarnation, out _);
                         continue;
                     }
 
-                    // Retention also runs without acks: a silent (24 h) or far-behind (1 GiB) peer stops holding rows even when
-                    // no other peer acknowledges anything.
-                    long? floor;
-                    var transaction = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: true, stoppingToken).ConfigureAwait(false);
-                    await using (transaction.ConfigureAwait(false))
-                    {
-                        (var left, floor) = await transaction.TrimAsync(store.BackupAnchor, _engine.HostTime.GetUtcNow(), stoppingToken).ConfigureAwait(false);
-                        // Garbage collection (section 11) runs with retention, below this machine's horizon.
-                        var horizon = await transaction.GetHorizonAsync(_engine.Member.Clock.Tick(), stoppingToken).ConfigureAwait(false);
-                        _ = await transaction.CollectAsync(horizon, stoppingToken).ConfigureAwait(false);
-                        _ = await transaction.CommitAsync(stoppingToken).ConfigureAwait(false);
-                        _backlog[incarnation] = left;
-                    }
-
-                    await TailAsync(store, floor, stoppingToken).ConfigureAwait(false);
+                    await TrimAsync(store, stoppingToken).ConfigureAwait(false);
                 }
                 catch (Exception) when (!stoppingToken.IsCancellationRequested)
                 {
@@ -264,6 +273,43 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
                 }
             }
         }
+    }
+
+    /// <summary>
+    /// One retention and garbage-collection pass over <paramref name="database"/>, as the background loop runs every few
+    /// seconds; for tests that drive a pass at a chosen time.
+    /// </summary>
+    internal async ValueTask TrimAsync(TenantContext database, CancellationToken cancellationToken)
+    {
+        if (await OpenAsync(database, cancellationToken).ConfigureAwait(false) is { } store)
+        {
+            await TrimAsync(store, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async ValueTask TrimAsync(SqliteDatabaseStore store, CancellationToken cancellationToken)
+    {
+        // Retention also runs without acks: a silent (24 h) or far-behind (1 GiB) peer stops holding rows even when no other
+        // peer acknowledges anything.
+        long? floor;
+        var transaction = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: true, cancellationToken).ConfigureAwait(false);
+        await using (transaction.ConfigureAwait(false))
+        {
+            (var left, floor) = await transaction.TrimAsync(store.BackupAnchor, _engine.HostTime.GetUtcNow(), cancellationToken).ConfigureAwait(false);
+            // Garbage collection (section 11) runs with retention, below this machine's horizon. Never on the catalog
+            // (docs/terrabase/system-catalog-invariants.md): its tombstones keep removed ids taken and drive file deletion in
+            // every region; it reports no stable stamp (StableAsync), so no peer collects it either.
+            if (!store.IsSystem)
+            {
+                var horizon = await transaction.GetHorizonAsync(_engine.Member.Clock.Tick(), cancellationToken).ConfigureAwait(false);
+                _ = await transaction.CollectAsync(horizon, cancellationToken).ConfigureAwait(false);
+            }
+
+            _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            _backlog[store.Incarnation] = left;
+        }
+
+        await TailAsync(store, floor, cancellationToken).ConfigureAwait(false);
     }
 
     private async ValueTask RecordAsync(SqliteDatabaseStore store, ReplicaId peer, long changeId, Hlc stable, CancellationToken cancellationToken)

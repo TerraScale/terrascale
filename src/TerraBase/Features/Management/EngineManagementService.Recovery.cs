@@ -114,7 +114,10 @@ internal sealed partial class EngineManagementService
 
     private async ValueTask<CatalogCheck> FinishDatabaseCleanupAsync(TenantContext storage, CancellationToken cancellationToken)
     {
-        // This also protects a create whose registration committed before a later error was reported.
+        // This also protects a create whose registration committed before a later error was reported. A registered database
+        // keeps its files: another region may have registered the same chosen id while this machine's own creation of it
+        // failed (the catalog replicates, docs/terrabase/multi-region-replication.md section 15), and the file here is then
+        // its local copy. Only the intent goes.
         var registered = await HasDatabaseRowAsync(storage, cancellationToken).ConfigureAwait(false);
         if (registered is Unavailable refused)
         {
@@ -123,7 +126,8 @@ internal sealed partial class EngineManagementService
 
         if (registered is bool exists && exists)
         {
-            throw new InvalidOperationException("a database cleanup intent conflicts with the catalog");
+            logger.ZLogInformation($"A cleanup intent names database {storage.DatabaseId:@Database}, which the catalog registers; its files are kept");
+            return await ClearDatabaseCleanupAsync(storage, cancellationToken).ConfigureAwait(false);
         }
 
         await engine.DeleteDatabaseAsync(storage, cancellationToken, retainIntentOwnership: true).ConfigureAwait(false);

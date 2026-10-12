@@ -91,18 +91,36 @@ internal sealed partial class SqliteStorageTransaction
                 throw new NotSupportedException("a client database drops collections one at a time, with tombstones");
             }
 
-            // The primary-key range covers every collection with this prefix.
+            // The key range covers every collection with this prefix. Every live document becomes a tombstone, which replicates
+            // and which anti-entropy cannot repair back: the catalog never collects (docs/terrabase/system-catalog-invariants.md).
+            // Read every key before the first write: Turso refuses a write on a connection while one of its reads is open.
             var to = prefix[..^1] + (char)(prefix[^1] + 1);
-            var documents = session.Command(SqliteStatements.DeleteCollectionDocuments, transaction);
-            documents.Parameters.AddWithValue("$from", prefix);
-            documents.Parameters.AddWithValue("$to", to);
-            var deleted = documents.ExecuteNonQuery();
-            cancellationToken.ThrowIfCancellationRequested();
+            var range = session.Command(SqliteStatements.PrefixDocuments, transaction);
+            range.Parameters.AddWithValue("$from", prefix);
+            range.Parameters.AddWithValue("$to", to);
+            var documents = new List<(string Collection, string Id)>();
+            using (var reader = range.ExecuteReader())
+            {
+                while (reader.Read())
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    documents.Add((reader.GetString(0), reader.GetString(1)));
+                }
+            }
+
+            foreach (var (collection, id) in documents)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                Offset();
+                var (state, at) = Begin(collection, id);
+                _ = Store(collection, id, state.Delete(at), at, null);
+            }
+
             var names = session.Command(SqliteStatements.DeleteCollectionNames, transaction);
             names.Parameters.AddWithValue("$from", prefix);
             names.Parameters.AddWithValue("$to", to);
             names.ExecuteNonQuery();
-            return (long)deleted;
+            return (long)documents.Count;
         }, cancellationToken, mutation: true);
 
     public ValueTask<IReadOnlyList<IndexDefinition>> ListIndexesAsync(CancellationToken cancellationToken) =>
