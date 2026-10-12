@@ -42,9 +42,10 @@ public interface IChangeGroupSource
 
     /// <summary>
     /// Records that <paramref name="peer"/> durably applied every group up to <paramref name="changeId"/>: the cursor a
-    /// reconnecting stream resumes from, and what CDC retention may drop once every peer acknowledged it.
+    /// reconnecting stream resumes from, and what CDC retention may drop once every peer acknowledged it; and the peer's
+    /// reported stable stamp, which bounds garbage collection here.
     /// </summary>
-    ValueTask AckAsync(TenantContext database, ReplicaId peer, long changeId, CancellationToken cancellationToken);
+    ValueTask AckAsync(TenantContext database, ReplicaId peer, long changeId, Hlc stable, CancellationToken cancellationToken);
 
     /// <summary>Completes once a group may have committed after the call (or when the source cannot tell): a wake-up, not a guarantee.</summary>
     Task ChangedAsync(CancellationToken cancellationToken);
@@ -71,6 +72,12 @@ public interface IChangeGroupSink
     /// stamp moves), durably. Returns how many documents changed, or null when this machine does not hold the database.
     /// </summary>
     ValueTask<int?> RepairAsync(TenantContext database, IReadOnlyList<RepairState> states, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Records that this machine holds every event of <paramref name="origin"/> stamped below <paramref name="frontier"/>
+    /// (its applied stamp rises there, section 11), when it holds the database.
+    /// </summary>
+    ValueTask RecordFrontierAsync(TenantContext database, ReplicaId origin, Hlc frontier, CancellationToken cancellationToken);
 }
 
 /// <summary>The wire form of change groups and its bounds; decoding is a trust boundary.</summary>

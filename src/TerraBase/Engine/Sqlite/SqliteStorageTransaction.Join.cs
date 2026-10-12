@@ -51,6 +51,11 @@ internal sealed partial class SqliteStorageTransaction
         }
 
         Member.Clock.Observe(at.Stamp);
+        if (at.Node.Value == 0 && CollectedHere(collection, id, delta))
+        {
+            return false;
+        }
+
         if (!HasTable(collection))
         {
             // A dropped collection's metadata document keeps its deletion: entries below it are dominated (section 5). A

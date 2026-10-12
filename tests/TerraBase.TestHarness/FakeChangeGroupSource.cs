@@ -81,7 +81,7 @@ internal sealed class FakeChangeGroupSource : IChangeGroupSource
 
     public ValueTask<long> AckedAsync(TenantContext database, ReplicaId peer, CancellationToken cancellationToken) => ValueTask.FromResult(AckedBy(database, peer));
 
-    public ValueTask AckAsync(TenantContext database, ReplicaId peer, long changeId, CancellationToken cancellationToken)
+    public ValueTask AckAsync(TenantContext database, ReplicaId peer, long changeId, Hlc stable, CancellationToken cancellationToken)
     {
         lock (_gate)
         {

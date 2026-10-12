@@ -445,6 +445,77 @@ public sealed class PeerStreamTests
         await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjcNode, await gru.Groups.HeadAsync(cluster.Database, CancellationToken.None))).IsTrue();
     }
 
+    [Test]
+    public async Task A_tombstone_collected_while_a_peer_was_away_is_not_brought_back_by_its_refill_or_by_repairs()
+    {
+        var clock = new ShiftedTime();
+        await using var cluster = await Cluster.StartAsync(cdc: true, clock, "gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var (deleted, kept) = (EntityIds.New().ToString(), EntityIds.New().ToString());
+        await gru.WriteAsync(async transaction =>
+        {
+            _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
+            _ = await transaction.PutAsync("items", deleted, Json("""{"n":1}"""), CancellationToken.None);
+            _ = await transaction.PutAsync("items", kept, Json("""{"n":2}"""), CancellationToken.None);
+        });
+        await Assert.That(await sjc.UntilAsync(deleted, """{"n":1}""")).IsTrue();
+
+        // sjc goes away holding the live document; gru deletes it. A day later sjc no longer holds back gru's horizon, so gru
+        // collects the tombstone: nothing on gru remembers the document ever existed.
+        await sjc.StopAsync();
+        await gru.WriteAsync(async transaction => await transaction.TombstoneAsync("items", deleted, CancellationToken.None));
+        await Assert.That(await gru.HasStateAsync("items", deleted)).IsTrue();
+        clock.Offset = TimeSpan.FromHours(25);
+        await Assert.That(await gru.UntilNoStateAsync("items", deleted)).IsTrue();
+
+        // sjc comes back with its old live copy. Its refill copies rather than merges, and neither side's repairs bring the
+        // document back, whatever the rounds pull from the other.
+        await sjc.StartAsync();
+        await Assert.That(await sjc.UntilAbsentAsync(deleted)).IsTrue();
+        for (var round = 0; round < 3; round++)
+        {
+            await gru.AntiEntropy.RunRoundAsync(CancellationToken.None);
+            await sjc.AntiEntropy.RunRoundAsync(CancellationToken.None);
+        }
+
+        await Assert.That(await gru.ReadAsync(deleted)).IsNull();
+        await Assert.That(await gru.HasStateAsync("items", deleted)).IsFalse();
+        await Assert.That(await sjc.ReadAsync(deleted)).IsNull();
+        await Assert.That(await sjc.ReadAsync(kept)).IsEqualTo("""{"n":2}""");
+    }
+
+    [Test]
+    public async Task A_tombstone_waits_for_every_live_peer_and_is_collected_everywhere_once_they_hold_it()
+    {
+        var clock = new ShiftedTime();
+        await using var cluster = await Cluster.StartAsync(cdc: true, clock, "gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var id = EntityIds.New().ToString();
+        await gru.WriteAsync(async transaction =>
+        {
+            _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
+            _ = await transaction.PutAsync("items", id, Json("""{"n":1}"""), CancellationToken.None);
+        });
+        await Assert.That(await sjc.UntilAsync(id, """{"n":1}""")).IsTrue();
+
+        // sjc is out of gru's list for a while (no stream), but was heard from recently: its stable, from before the delete,
+        // holds gru's horizon, so ten minutes on the tombstone is still there.
+        var member = (await cluster.Members.ListAsync(CancellationToken.None)).Single(listed => listed.Region == "sjc");
+        cluster.Members.Leave(member.Name);
+        await Assert.That(await gru.UntilStreamsAsync([])).IsTrue();
+        await gru.WriteAsync(async transaction => await transaction.TombstoneAsync("items", id, CancellationToken.None));
+        clock.Offset = TimeSpan.FromMinutes(10);
+        await Task.Delay(TimeSpan.FromSeconds(12));
+        await Assert.That(await gru.HasStateAsync("items", id)).IsTrue();
+
+        // Listed again, sjc applies the delete and reports stable stamps past it: both collect the tombstone.
+        cluster.Members.Join(member);
+        await Assert.That(await sjc.UntilAbsentAsync(id)).IsTrue();
+        clock.Offset = TimeSpan.FromMinutes(20);
+        await Assert.That(await gru.UntilNoStateAsync("items", id)).IsTrue();
+        await Assert.That(await sjc.UntilNoStateAsync("items", id)).IsTrue();
+    }
+
     // The first stamp of a test: now, so convergence lags stay meaningful; later operations add logical ticks.
     private static ulong Stamp() => (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() << 16;
 
@@ -701,6 +772,32 @@ public sealed class PeerStreamTests
                 return command.ExecuteNonQuery();
             }, "a test losing a document", CancellationToken.None);
             store.ForgetCollections();
+        }
+
+        // Whether this machine holds a state row of the document (live or a tombstone).
+        public async Task<bool> HasStateAsync(string collection, string id)
+        {
+            var states = Api.Server.Services.GetRequiredService<IReplicaStates>();
+            var bucket = TerraBase.Engine.Sqlite.SqliteStorageTransaction.Bucket(collection, id);
+            var (page, _) = await states.ReadBucketsAsync(cluster.Database, [bucket], null, 4096, int.MaxValue, CancellationToken.None);
+            return page.Any(state => state.Collection == collection && state.Id == id);
+        }
+
+        // Whether the document's state row goes (collected) within the deadline.
+        public async Task<bool> UntilNoStateAsync(string collection, string id)
+        {
+            var deadline = DateTime.UtcNow + Deadline;
+            while (await HasStateAsync(collection, id))
+            {
+                if (DateTime.UtcNow >= deadline)
+                {
+                    return false;
+                }
+
+                await Task.Delay(200);
+            }
+
+            return true;
         }
 
         // Whether the outbound streams that report connected become exactly `regions` within the deadline.

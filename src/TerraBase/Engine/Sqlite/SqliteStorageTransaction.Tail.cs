@@ -220,21 +220,27 @@ internal sealed partial class SqliteStorageTransaction
     /// <see cref="Retention"/> allows, continuous backup's <paramref name="backupAnchor"/> included. Returns the CDC rows left,
     /// and the smallest change id a peer heard from in the last 24 h acknowledged (null when there is none).
     /// </summary>
-    internal async ValueTask<(long Left, long? Floor)> RecordAckedAsync(ReplicaId peer, long changeId, long? backupAnchor, DateTimeOffset now, CancellationToken cancellationToken)
+    internal async ValueTask<(long Left, long? Floor)> RecordAckedAsync(
+        ReplicaId peer, long changeId, Hlc stable, long? backupAnchor, DateTimeOffset now, CancellationToken cancellationToken)
     {
         await SuspendCaptureAsync(cancellationToken).ConfigureAwait(false);
         return await RunAsync(() =>
         {
             // 0 resets a row GetAckedAsync found stale; an acknowledgement only raises it.
-            var update = Command("UPDATE _tb_peers SET acked = CASE WHEN $acked = 0 THEN 0 ELSE max(acked, $acked) END, seen = $seen WHERE node = $node;");
+            var update = Command("""
+                UPDATE _tb_peers SET acked = CASE WHEN $acked = 0 THEN 0 ELSE max(acked, $acked) END, stable = max(stable, $stable), seen = $seen
+                WHERE node = $node;
+                """);
             update.Parameters.AddWithValue("$node", unchecked((long)peer.Value));
             update.Parameters.AddWithValue("$acked", changeId);
+            update.Parameters.AddWithValue("$stable", Version(stable));
             update.Parameters.AddWithValue("$seen", now.ToUnixTimeMilliseconds());
             if (update.ExecuteNonQuery() == 0)
             {
-                var insert = Command("INSERT INTO _tb_peers (node, applied, acked, stable, seen) VALUES ($node, 0, $acked, 0, $seen);");
+                var insert = Command("INSERT INTO _tb_peers (node, applied, acked, stable, seen) VALUES ($node, 0, $acked, $stable, $seen);");
                 insert.Parameters.AddWithValue("$node", unchecked((long)peer.Value));
                 insert.Parameters.AddWithValue("$acked", changeId);
+                insert.Parameters.AddWithValue("$stable", Version(stable));
                 insert.Parameters.AddWithValue("$seen", now.ToUnixTimeMilliseconds());
                 insert.ExecuteNonQuery();
             }

@@ -24,7 +24,16 @@ message PushFrame {
     Batch batch = 2;
     Heartbeat heartbeat = 3;
     Refill refill = 4;
+    Frontier frontier = 5;
   }
+}
+
+// Sent for a database whose groups the receiver has all acknowledged (at most every 30 s): the receiver holds every event
+// of the origin stamped below hlc, so its applied stamp for the origin moves there even while the origin writes nothing
+// (section 11). hlc was taken before the read that found nothing left to send.
+message Frontier {
+  Database database = 1;
+  fixed64 hlc = 2;
 }
 
 // The first frame: the sending machine's replica id (the origin of every group on this stream), its clock and region, and
@@ -42,6 +51,9 @@ message Hello {
 message Refill {
   Database database = 1;
   uint64 change_id = 2;
+  // The sender's GC horizon (section 11): a state the receiver holds below it that the sender lacks was collected there,
+  // so the refill drops it instead of keeping it (a refill copies; it does not merge collected deletions back).
+  fixed64 horizon = 3;
 }
 
 // A client database: its organization, project and database ULIDs.
@@ -101,6 +113,8 @@ message Ack {
   uint64 change_id = 2;
   fixed64 applied = 3;
   bool refused = 4;
+  // The receiver's stable stamp for the database (section 11): every origin it hears from is applied up to it.
+  fixed64 stable = 5;
 }
 
 message DigestRequest {
