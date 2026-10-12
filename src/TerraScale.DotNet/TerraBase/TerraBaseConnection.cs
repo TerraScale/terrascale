@@ -150,9 +150,10 @@ internal sealed class TerraBaseConnection
                 throw new InvalidOperationException("A client without a credential reaches only a private plain-HTTP TerraBase listener.");
             }
 
-            if (origin.Scheme == Uri.UriSchemeHttp)
+            if (anonymous)
             {
-                // TerraBase's private listener is cleartext HTTP/2 only (it serves gRPC on the same port): prior knowledge.
+                // Only TerraBase's private listener takes uncredentialed requests, and it is cleartext HTTP/2 only (it serves
+                // gRPC on the same port): prior knowledge.
                 request.Version = HttpVersion.Version20;
                 request.VersionPolicy = HttpVersionPolicy.RequestVersionExact;
             }

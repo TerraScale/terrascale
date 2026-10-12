@@ -120,8 +120,8 @@ TerraBaseOrganization organization = await management.CreateOrganizationAsync(
 
 Every management call takes the acting `userId` first and sends it as `X-TerraBase-User-Id`; organization routes also
 send `X-TerraBase-Organization-Id`. Take the user id from an authenticated session, never from browser input. On the
-public HTTPS listener, pass the user's ts-auth access token through `AccessTokenProvider` instead. Requests to a
-private plain-HTTP origin go out as HTTP/2 with prior knowledge (TerraBase's internal listener is h2c only). Pages are
+public HTTPS listener, pass the user's ts-auth access token through `AccessTokenProvider` instead. Requests without a
+credential (private listener only) go out as HTTP/2 with prior knowledge (TerraBase's internal listener is h2c only). Pages are
 `TerraBasePage<T>(Items, Next)`; pass `Next` as `after` with an optional `limit`.
 
 Both clients accept `AccessTokenProvider`

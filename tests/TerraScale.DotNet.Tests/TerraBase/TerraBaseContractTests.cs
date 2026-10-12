@@ -127,7 +127,7 @@ public sealed class TerraBaseContractTests
         }
 
         var uri = sent?.RequestUri ?? throw new InvalidOperationException("the call sent no request");
-        if (uri.Scheme == Uri.UriSchemeHttp && (sent.Version != System.Net.HttpVersion.Version20 || sent.VersionPolicy != HttpVersionPolicy.RequestVersionExact))
+        if (client == "management" && (sent.Version != System.Net.HttpVersion.Version20 || sent.VersionPolicy != HttpVersionPolicy.RequestVersionExact))
         {
             throw new InvalidOperationException("private-listener requests must use HTTP/2 with prior knowledge");
         }
