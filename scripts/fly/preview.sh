@@ -47,11 +47,14 @@ case ${1:-} in
   machine)
     app=ts-pr-$2 terrabase=$3 auth=$4
     volume=$(flyctl volumes list -a "$app" --json | jq -r '.[0].id')
+    # App secrets reach a container only when its config maps them (staged secrets alone never arrive).
     config=$(jq -n --arg terrabase "$terrabase" --arg auth "$auth" --arg volume "$volume" --arg app "$app" '{
       guest: {cpu_kind: "shared", cpus: 1, memory_mb: 1024},
       mounts: [{volume: $volume, path: "/data"}],
       containers: [
-        {name: "terrabase", image: $terrabase},
+        {name: "terrabase", image: $terrabase, secrets: ([
+          "AWS_ENDPOINT_URL_S3", "AWS_REGION", "BUCKET_NAME", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "TERRABASE_MASTER_KEY"
+        ] | map({env_var: ., name: .}))},
         {name: "ts-auth", image: $auth, env: {TS_AUTH_PUBLIC_ORIGIN: "https://\($app).fly.dev"},
           depends_on: [{name: "terrabase", condition: "started"}]}
       ],
