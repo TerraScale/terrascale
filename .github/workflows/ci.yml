@@ -175,11 +175,12 @@ jobs:
       - name: Every area that ran passed
         run: '! grep -qE "failure|cancelled" <<< "${{ join(needs.*.result, '' '') }}"'
       - *checkout
-      - name: Fly deploy, volume reset and storage train self-checks
+      - name: Fly deploy, volume reset, storage train and e2e summary self-checks
         run: |
           bash terrascale/scripts/fly/deploy-test.sh
           bash terrascale/scripts/fly/volume-reset-test.sh
           bash terrascale/scripts/terrabase/storage-format-check-test.sh
+          bash terrascale/scripts/terrabase/e2e-summary-test.sh
       # Reads the labels live: after labelling, re-run this job (docs/terrabase/ci.md, storage train).
       - name: Storage train
         if: github.event_name == 'pull_request'
