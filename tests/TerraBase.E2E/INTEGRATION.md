@@ -1,4 +1,4 @@
-# Release candidate integration manifest
+# Release candidate integration manifest: integration phase 1
 
 Owner: the strict-test owner, the single integration owner and the single publisher of acceptance candidates (#108).
 
@@ -18,7 +18,7 @@ The integration keeps `.github/workflows/ci.yml` exactly as it is at `c691f947`:
 
 A conflict in those lines is resolved to main's version.
 
-## Items, in combine order
+## Integration phase 1: items, in combine order
 
 Commits marked "local" exist only on delta, in the shared object store, under the push freeze. The combine uses exactly
 the SHA listed. A newer head means a new manifest entry, never a silent swap.
@@ -45,12 +45,16 @@ the SHA listed. A newer head means a new manifest entry, never a silent swap.
 | 18 | **R10a: catalog as a lattice database** | #116, #121 | R10a's own stack on R7: `a54beab4` (local; `49ec3496` R10a-1, `cdcd019d` R10a-2, `21d05c9c` R10a-3, `a54beab4` e2e) on `baa2e236` | **4** | **WAITING: R10a reports done** (R3's blocking findings resolved, bounded deletion, restore gate) | Not `de0a022f` (#121's pushed head): its registration 500 is known bad. Not R3's withdrawn `e9841c75`/`f82690b6`. Sibling of `76cb23ff` on `baa2e236`, so it merges with item 17. Catalog tombstones stay out of GC (COS decision). Brings `CatalogProcessesTests.cs`; its Gaps flips are the strict owner's. |
 | 19 | Assertion side and recorder | #105 + the candidate stack | #105 `4069da9f` (pushed) + local `94086cd6`/`4b85b32c`; the candidate-9 assertion commits on `dea6b364` + R3's `1b68b852` (writer outcomes) | none (tests) | ready | The final `Gaps.cs` follows the candidate stack: it keeps only gaps that still fail their own way. #105's main-only setup-blocked classification is kept only if a scenario still needs it. |
 
-**Not in this release candidate:**
-- ts-dashboard (user-owned);
-- the Fly benchmark driver (#79, open until a real Fly run);
-- R9 (SQL writes, E11);
-- R11 (move, E13);
-- R12 (ts-auth refresh, E15's other half).
+**Phase 2 (required, later).** These are not part of the phase-1 candidate, and phase 1 does not grow to take them:
+
+| Item | Owner | Closes |
+| --- | --- | --- |
+| R9: SQL writes merge across regions | R3 | E11 (row 27) |
+| R11: home region and live move | R10a | E13 (row 25) |
+| R12: ts-auth refresh reuse, the auth half | Dogfood | E15's ts-auth half (row 28) |
+| #79: Fly 1M benchmark driver | strict-test owner (test driver) | **Acceptance dependency:** at least 1M documents; counts and checksums matching in all 3 regions; latency, CPU and RAM; results in `benchmark/bench/` |
+
+ts-dashboard is held by the user and is in neither phase.
 
 ## Storage format
 
