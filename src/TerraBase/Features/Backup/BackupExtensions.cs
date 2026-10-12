@@ -32,7 +32,8 @@ public static class BackupExtensions
         services.AddTransient<CustomerBackupResponseLimits>();
         return services
             .AddSingleton(settings)
-            .AddSingleton<IObjectStore, S3ObjectStore>()
+            .AddSingleton<S3ObjectStore>()
+            .AddSingleton<IObjectStore>(provider => provider.GetRequiredService<S3ObjectStore>())
             .AddSingleton<IMasterKey>(new MasterKey(settings.MasterKey))
             .AddSingleton<DataKeys>()
             .AddSingleton<BackupTargets>()

@@ -119,7 +119,7 @@ public static class Telemetry
                         or "terrabase.catalog.applied_sequence"
                         or "terrabase.backup.failures" or "terrabase.backup.holes" or "terrabase.backup.generations"
                         or "terrabase.backup.stored" or "terrabase.backup.files" or "terrabase.backup.lag"
-                        or "terrabase.backup.last_success"
+                        or "terrabase.backup.last_success" or "terrabase.backup.bucket_snapshot"
                         or "terrabase.replication.sent.groups" or "terrabase.replication.sent.plain"
                         or "terrabase.replication.sent.encoded" or "terrabase.replication.sender.prefix.mismatches"
                         or "terrabase.replication.sender.discovery.passes" or "terrabase.replication.sender.credit.waits"

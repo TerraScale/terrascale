@@ -36,6 +36,8 @@ internal sealed partial class ContinuousBackup
     private static readonly TimeSpan RetentionInterval = TimeSpan.FromHours(1);
     private static readonly TimeSpan DrillInterval = TimeSpan.FromDays(1);
     private static readonly TimeSpan SizeInterval = TimeSpan.FromDays(1);
+    private static readonly TimeSpan BucketSnapshotInterval = TimeSpan.FromDays(1);
+    private static readonly TimeSpan BucketSnapshotRetention = TimeSpan.FromDays(14);
 
     // Kept past the window, so a restore that picked a snapshot just inside it finishes before retention deletes it.
     private static readonly TimeSpan RetentionGrace = TimeSpan.FromHours(1);
@@ -99,7 +101,49 @@ internal sealed partial class ContinuousBackup
             (file.SizeBytes, file.SizedAt) = (size, now);
         }
 
+        if (file.Database is null)
+        {
+            await SnapshotBucketAsync(cancellationToken).ConfigureAwait(false);
+        }
+
         await RecordAsync(file, cancellationToken).ConfigureAwait(false);
+    }
+
+    // The member that ships _system keeps one Tigris snapshot of the whole bucket a day for 14 days, always keeping the
+    // newest (docs/terrabase/backup.md). Tigris has no schedule or retention of its own.
+    private async Task SnapshotBucketAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            var now = _time.GetUtcNow();
+            var snapshots = await _bucket.ListSnapshotsAsync(cancellationToken).ConfigureAwait(false);
+            if (snapshots.Count == 0 || now - snapshots.Max(snapshot => snapshot.At) >= BucketSnapshotInterval)
+            {
+                await _bucket.TakeSnapshotAsync(cancellationToken).ConfigureAwait(false);
+                _bucketSnapshots.Add(1, new KeyValuePair<string, object?>("result", "taken"));
+                _logger.ZLogInformation($"Took the daily snapshot of the backup bucket");
+                snapshots = await _bucket.ListSnapshotsAsync(cancellationToken).ConfigureAwait(false);
+            }
+
+            if (snapshots.Count == 0)
+            {
+                return;
+            }
+
+            var newest = snapshots.MaxBy(snapshot => snapshot.At);
+            _newestBucketSnapshot = newest.At;
+            foreach (var (version, at) in snapshots.Where(snapshot => now - snapshot.At > BucketSnapshotRetention && snapshot.Version != newest.Version))
+            {
+                await _bucket.DeleteSnapshotAsync(version, cancellationToken).ConfigureAwait(false);
+                _bucketSnapshots.Add(1, new KeyValuePair<string, object?>("result", "deleted"));
+                _logger.ZLogInformation($"Deleted the backup bucket snapshot {version} taken {at:O}");
+            }
+        }
+        catch (Exception error) when (!cancellationToken.IsCancellationRequested)
+        {
+            _bucketSnapshots.Add(1, new KeyValuePair<string, object?>("result", "failed"));
+            _logger.ZLogWarning(error, $"Daily snapshot of the backup bucket failed; it retries next hour");
+        }
     }
 
     // Inventories and deletions belong to one destination: partial uploads or a failed delete in the other destination

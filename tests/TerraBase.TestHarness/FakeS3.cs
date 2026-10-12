@@ -32,7 +32,10 @@ public sealed class FakeS3
     private readonly ConcurrentDictionary<string, KeyRequests> _keyRequests = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, byte[]> _customerObjects = new(StringComparer.Ordinal);
     private readonly byte[] _masterKey = RandomNumberGenerator.GetBytes(32);
+    private readonly List<(string Version, DateTimeOffset At)> _snapshots = [];
     private int _badSignatures;
+    private int _bucketDeletes;
+    private long _snapshotVersion = 1_791_000_000_000_000_000;
     private int _generatedKeys;
     private int _listRequests;
     private string? _lastListStartAfter;
@@ -111,6 +114,36 @@ public sealed class FakeS3
 
     /// <summary>Data keys the master key generated.</summary>
     public int GeneratedKeys => Volatile.Read(ref _generatedKeys);
+
+    /// <summary>The clock Tigris snapshots are dated with; tests on a fake clock set theirs.</summary>
+    public TimeProvider Time { get; set; } = TimeProvider.System;
+
+    /// <summary>Refuses snapshot takes with 403 while true.</summary>
+    public bool RejectSnapshots { get; set; }
+
+    /// <summary>The platform bucket's Tigris snapshots, oldest first.</summary>
+    public IReadOnlyList<(string Version, DateTimeOffset At)> Snapshots
+    {
+        get
+        {
+            lock (_snapshots)
+            {
+                return [.. _snapshots.OrderBy(snapshot => snapshot.At)];
+            }
+        }
+    }
+
+    /// <summary>DeleteBucket requests without a snapshot version: deleting the bucket itself, which TerraBase never asks.</summary>
+    public int BucketDeletes => Volatile.Read(ref _bucketDeletes);
+
+    /// <summary>Seeds a Tigris snapshot of the platform bucket taken at <paramref name="at"/>.</summary>
+    public void SeedSnapshot(DateTimeOffset at)
+    {
+        lock (_snapshots)
+        {
+            _snapshots.Add((NextSnapshotVersion(), at));
+        }
+    }
 
     private void RecordGeneratedKey() => Interlocked.Increment(ref _generatedKeys);
 
@@ -198,6 +231,12 @@ public sealed class FakeS3
         {
             var path = Uri.UnescapeDataString(uri.AbsolutePath).TrimStart('/');
             await beforeWrite(path[(path.IndexOf('/', StringComparison.Ordinal) + 1)..], cancellationToken).ConfigureAwait(false);
+        }
+
+        if (uri.GetLeftPart(UriPartial.Authority) == ObjectStorage && uri.AbsolutePath.TrimStart('/').TrimEnd('/') is "" or Bucket
+            && (request.Method != HttpMethod.Get || uri.AbsolutePath == "/"))
+        {
+            return SnapshotResponse(request);
         }
 
         return uri.GetLeftPart(UriPartial.Authority) switch
@@ -434,6 +473,51 @@ public sealed class FakeS3
 
     private static HttpResponseMessage S3Error(HttpStatusCode status, string code) =>
         Xml(status, new XElement("Error", new XElement("Code", code), new XElement("Message", code)));
+
+    // Tigris versions are numbers; these only need to be unique.
+    private string NextSnapshotVersion() => Interlocked.Increment(ref _snapshotVersion).ToString(CultureInfo.InvariantCulture);
+
+    // Tigris bucket snapshots: ListBuckets, CreateBucket and DeleteBucket with the X-Tigris-Snapshot headers.
+    private HttpResponseMessage SnapshotResponse(HttpRequestMessage request)
+    {
+        var snapshot = Header(request, "X-Tigris-Snapshot");
+        var version = Header(request, "X-Tigris-Snapshot-Version");
+        lock (_snapshots)
+        {
+            if (request.Method == HttpMethod.Get && snapshot == Bucket)
+            {
+                return Xml(HttpStatusCode.OK, new XElement(S3 + "ListAllMyBucketsResult",
+                    new XElement(S3 + "Buckets", _snapshots.Select(item => new XElement(S3 + "Bucket",
+                        new XElement(S3 + "Name", item.Version), new XElement(S3 + "CreationDate", item.At.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture)))))));
+            }
+
+            if (request.Method == HttpMethod.Put && snapshot == "true")
+            {
+                if (RejectSnapshots)
+                {
+                    return S3Error(HttpStatusCode.Forbidden, "AccessDenied");
+                }
+
+                _snapshots.Add((NextSnapshotVersion(), Time.GetUtcNow()));
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent([]) };
+            }
+
+            if (request.Method == HttpMethod.Delete && version is not null)
+            {
+                return _snapshots.RemoveAll(item => item.Version == version) == 1
+                    ? new HttpResponseMessage(HttpStatusCode.NoContent) { Content = new ByteArrayContent([]) }
+                    : S3Error(HttpStatusCode.NotFound, "NoSuchVersion");
+            }
+
+            if (request.Method == HttpMethod.Delete)
+            {
+                Interlocked.Increment(ref _bucketDeletes);
+                return S3Error(HttpStatusCode.Conflict, "BucketNotEmpty");
+            }
+        }
+
+        return S3Error(HttpStatusCode.BadRequest, "InvalidRequest");
+    }
 
     private static HttpResponseMessage Xml(HttpStatusCode status, XElement body) =>
         new(status) { Content = new StringContent(new XDocument(new XDeclaration("1.0", "UTF-8", null), body).ToString(), Encoding.UTF8, "application/xml") };
