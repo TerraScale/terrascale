@@ -4,7 +4,6 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text.Json.Nodes;
 using Bogus;
-using Turso.Data.Sqlite;
 using TerraBase.Primitives;
 
 namespace TerraBase.E2E;
@@ -175,68 +174,12 @@ public sealed class CrashAndStallE2ETests
 
     private sealed record StallOutcome(IReadOnlyDictionary<string, string> Acknowledged, int Refused, int AfterStall);
 
-    // Writers on writing write through the whole window; region's database file is locked (BEGIN EXCLUSIVE from another
-    // connection) for stall in the middle; answers which writes were acknowledged.
-    private static async Task<StallOutcome> StallAsync(Cluster cluster, string region, string[] writing, TimeSpan stall)
-    {
-        var faker = new Faker();
-        var acknowledged = new ConcurrentDictionary<string, string>();
-        var refused = 0;
-        var afterStall = 0;
-        var released = false;
-        using var stop = new CancellationTokenSource();
-        var writers = Enumerable.Range(0, 8).Select(index => Task.Run(async () =>
-        {
-            while (!stop.IsCancellationRequested)
-            {
-                var (id, body) = (EntityIds.New().ToString(), ThreeRegionE2ETests.Synthetic(faker));
-                try
-                {
-                    await Docs.PutAsync(cluster[writing[index % writing.Length]], cluster.Document(id), body);
-                    acknowledged[id] = Docs.Canonical(body);
-                    if (Volatile.Read(ref released))
-                    {
-                        _ = Interlocked.Increment(ref afterStall);
-                    }
-                }
-                catch (HttpRequestException error) when (error.StatusCode is >= HttpStatusCode.InternalServerError)
-                {
-                    _ = Interlocked.Increment(ref refused);
-                }
-            }
-        })).ToArray();
-        await Task.Delay(TimeSpan.FromSeconds(1));
-        try
-        {
-            await using var locker = new SqliteConnection($"Data Source={cluster.DatabaseFile(region)};Pooling=False");
-            await locker.OpenAsync();
-            await using var transaction = (SqliteTransaction)await locker.BeginTransactionAsync();
-            using (var exclusive = locker.CreateCommand())
-            {
-                // Takes the write lock now, so the node's commits wait or fail until it is released.
-                exclusive.CommandText = "CREATE TABLE IF NOT EXISTS _e2e_stall (x INTEGER); INSERT INTO _e2e_stall VALUES (1); DELETE FROM _e2e_stall;";
-                exclusive.Transaction = transaction;
-                _ = await exclusive.ExecuteNonQueryAsync();
-            }
-
-            await Task.Delay(stall);
-            await transaction.RollbackAsync();
-        }
-        catch (SqliteException error) when (error.Message.Contains("database is locked", StringComparison.Ordinal))
-        {
-            // Since the Turso engine (#98) the node's single writer keeps the file's write lock, so an outside writer can no
-            // longer stall it: the scenario needs an IO-delay hook in the engine's storage path.
-            await stop.CancelAsync();
-            await Task.WhenAll(writers);
-            throw new NotSupportedException("no storage stall hook: the engine holds the database file's write lock, so the test cannot stall it from outside", error);
-        }
-
-        Volatile.Write(ref released, true);
-        await Task.Delay(TimeSpan.FromSeconds(2));
-        await stop.CancelAsync();
-        await Task.WhenAll(writers);
-        return new StallOutcome(acknowledged, refused, afterStall);
-    }
+    // The Turso engine (#98) holds the database file's write lock for its single writer, so no outside writer can stall it
+    // (it used to, or got "database is locked", depending on timing). The stall needs the harness's in-process hook
+    // (Cluster.StallStorageAsync, R3's #106), so until then the scenario reports itself not supported, every run.
+    private static Task<StallOutcome> StallAsync(Cluster cluster, string region, string[] writing, TimeSpan stall) =>
+        throw new NotSupportedException(
+            $"no storage stall hook: cannot stall {cluster.DatabaseFile(region)} for {stall.TotalSeconds:F0} s while {string.Join(", ", writing)} write; it needs Cluster.StallStorageAsync (#106)");
 
     private static Uri Document(string database, string id) =>
         new($"{database}/collections/crash/documents/by-key?id={Uri.EscapeDataString(id)}", UriKind.Relative);

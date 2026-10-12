@@ -3,7 +3,8 @@ namespace TerraBase.E2E;
 /// <summary>
 /// The record of which e2e scenarios pass today and which wait on a replication slice
 /// (docs/terrabase/multi-region-replication.md, section 21). A listed scenario is a strict expected failure: it passes
-/// while the scenario fails and fails once it passes, so the slice that lands removes its rows here. A scenario that is
+/// while the scenario fails the way its signature names (<see cref="Expected"/>) and fails once it passes, so the slice
+/// that lands removes its rows here. A listed scenario failing any other way fails. A scenario that is
 /// not listed must pass.
 /// </summary>
 internal static class Gaps
@@ -15,60 +16,65 @@ internal static class Gaps
     // (CounterSetApiTests). Across regions they wait on the streams' source (R3).
     private const string Counters = "counters and sets over peer streams (R4a) fed by the CDC source (R3)";
 
-    private static readonly Dictionary<string, string> Waiting = new(StringComparer.Ordinal)
+    // On main every listed scenario stops in the cluster's setup: the collection it creates in gru never reaches the other
+    // regions without replication. That is reported as not supported (it never reached its own assertions), apart from a
+    // scenario failing its own way.
+    private const string AtSetup = "collection on sjc did not converge";
+
+    private static readonly Dictionary<string, Gap> Waiting = new(StringComparer.Ordinal)
     {
         // ReplicationE2ETests, LatticeE2ETests, CatalogE2ETests (design section 20).
-        ["E1"] = Streams,
-        ["E2"] = Streams,
-        ["E3"] = Streams,
-        ["E4"] = Streams,
-        ["E5"] = Streams,
-        ["E6"] = Streams,
-        ["E8"] = Counters,
-        ["E9"] = Counters,
-        ["E10"] = "the changes feed (R8) over peer streams (R4a)",
-        ["E11"] = "SQL writes (R9) over peer streams (R4a)",
-        ["E12"] = "the catalog as a lattice database (R10a)",
-        ["E13"] = "home region and live move (R11)",
-        ["E14"] = "garbage collection (R7) over peer streams (R4a)",
-        ["E15"] = "the changes feed (R8) over peer streams (R4a)",
+        ["E1"] = new(Streams, AtSetup),
+        ["E2"] = new(Streams, AtSetup),
+        ["E3"] = new(Streams, AtSetup),
+        ["E4"] = new(Streams, AtSetup),
+        ["E5"] = new(Streams, AtSetup),
+        ["E6"] = new(Streams, AtSetup),
+        ["E8"] = new(Counters, AtSetup),
+        ["E9"] = new(Counters, AtSetup),
+        ["E10"] = new("the changes feed (R8) over peer streams (R4a)", AtSetup),
+        ["E11"] = new("SQL writes (R9) over peer streams (R4a)", AtSetup),
+        ["E12"] = new("the catalog as a lattice database (R10a)", AtSetup),
+        ["E13"] = new("home region and live move (R11)", AtSetup),
+        ["E14"] = new("garbage collection (R7) over peer streams (R4a)", AtSetup),
+        ["E15"] = new("the changes feed (R8) over peer streams (R4a)", AtSetup),
 
         // ThreeRegionE2ETests.
-        ["pair"] = Streams,
-        ["three-way-same-field"] = Streams,
-        ["three-way-different-fields"] = Streams,
-        ["three-way-delete-versus-edit"] = Streams,
-        ["three-way-bulk"] = Streams,
-        ["three-way-burst"] = Streams,
-        ["large-documents"] = Streams,
-        ["three-way-counters"] = Counters,
-        ["three-way-sets"] = Counters,
+        ["pair"] = new(Streams, AtSetup),
+        ["three-way-same-field"] = new(Streams, AtSetup),
+        ["three-way-different-fields"] = new(Streams, AtSetup),
+        ["three-way-delete-versus-edit"] = new(Streams, AtSetup),
+        ["three-way-bulk"] = new(Streams, AtSetup),
+        ["three-way-burst"] = new(Streams, AtSetup),
+        ["large-documents"] = new(Streams, AtSetup),
+        ["three-way-counters"] = new(Counters, AtSetup),
+        ["three-way-sets"] = new(Counters, AtSetup),
 
         // ThreeRegionFaultE2ETests. Cluster.Partition needs R4a's streams to cut.
-        ["partition-heal"] = Streams,
-        ["region-down-rejoin"] = Streams,
-        ["restart-mid-replication"] = Streams,
-        ["ack-then-stop"] = Streams,
-        ["restarted-sender-backlog"] = Streams,
+        ["partition-heal"] = new(Streams, AtSetup),
+        ["region-down-rejoin"] = new(Streams, AtSetup),
+        ["restart-mid-replication"] = new(Streams, AtSetup),
+        ["ack-then-stop"] = new(Streams, AtSetup),
+        ["restarted-sender-backlog"] = new(Streams, AtSetup),
 
         // CrashAndStallE2ETests. Node processes and lossy links also need test hooks on the peer path (COVERAGE.md).
-        ["crash-replicated"] = Streams,
-        ["storage-stall"] = Streams,
+        ["crash-replicated"] = new(Streams, AtSetup),
+        ["storage-stall"] = new(Streams, AtSetup),
         // Passed on SQLite until the Turso engine (#98) took the file's write lock for its single writer.
-        ["storage-stall-single"] = "a storage stall hook for the Turso engine (#98 holds the file's write lock)",
-        ["lossy-link"] = Streams,
+        ["storage-stall-single"] = new("a storage stall hook for the Turso engine (#98 holds the file's write lock)", AtSetup),
+        ["lossy-link"] = new(Streams, AtSetup),
 
         // RepairAndContractE2ETests.
-        ["anti-entropy-repair"] = "anti-entropy (R6) over peer streams fed by the CDC source (R3)",
-        ["restore-older-state"] = "refill and anti-entropy (R6) over peer streams fed by the CDC source (R3)",
-        ["unique-under-partition"] = Streams,
-        ["deleted-database-stays-deleted"] = "the catalog as a lattice database (R10a) and garbage collection (R7)",
-        ["replication-metrics"] = "replication metrics with the CDC source (R3): tail lag, and stream lags that move",
-        ["flow-control"] = "peer streams fed by the CDC source (R3) and the catalog as a lattice database (R10a)",
-        ["ddl-replication"] = Streams,
-        ["backlog"] = Streams,
-        ["skew-causal"] = Streams,
-        ["skew-concurrent"] = Streams,
+        ["anti-entropy-repair"] = new("anti-entropy (R6) over peer streams fed by the CDC source (R3)", AtSetup),
+        ["restore-older-state"] = new("refill and anti-entropy (R6) over peer streams fed by the CDC source (R3)", AtSetup),
+        ["unique-under-partition"] = new(Streams, AtSetup),
+        ["deleted-database-stays-deleted"] = new("the catalog as a lattice database (R10a) and garbage collection (R7)", AtSetup),
+        ["replication-metrics"] = new("replication metrics with the CDC source (R3): tail lag, and stream lags that move", AtSetup),
+        ["flow-control"] = new("peer streams fed by the CDC source (R3) and the catalog as a lattice database (R10a)", AtSetup),
+        ["ddl-replication"] = new(Streams, AtSetup),
+        ["backlog"] = new(Streams, AtSetup),
+        ["skew-causal"] = new(Streams, AtSetup),
+        ["skew-concurrent"] = new(Streams, AtSetup),
     };
 
     // BLOCKED on Fly, not an expected failure there: the Fly suite's TerraBase API key holds documents:read/write on the e2e
@@ -101,14 +107,18 @@ internal static class Gaps
         }
 
         // A scenario that stopped at a test hook nobody has wired yet is reported apart: it proves less than one that ran.
-        var failure = await Expected.FailureAsync(gap, scenario);
+        var failure = await Expected.FailureAsync(gap.Waits, gap.Fails, scenario);
         if (Unsupported(failure) is { } unsupported)
         {
-            Outcomes.Mark("not-supported", $"{gap}; {unsupported.Message}");
+            Outcomes.Mark("not-supported", $"{gap.Waits}; {unsupported.Message}");
+        }
+        else if (gap.Fails == AtSetup)
+        {
+            Outcomes.Mark("not-supported", $"{gap.Waits}; never reached its assertions: the cluster's setup cannot finish without it ({failure.GetType().Name} with \"{AtSetup}\")");
         }
         else
         {
-            Outcomes.Mark("expected-failure", gap);
+            Outcomes.Mark("expected-failure", $"{gap.Waits}; failed as named: {failure.GetType().Name} with \"{gap.Fails}\"");
         }
     }
 
@@ -120,3 +130,7 @@ internal static class Gaps
         _ => Unsupported(error.InnerException),
     };
 }
+
+/// <summary>A gap: the slice the scenario waits on, and the text its own failure carries today (<see cref="Expected"/>).</summary>
+internal sealed record Gap(string Waits, string Fails);
+
