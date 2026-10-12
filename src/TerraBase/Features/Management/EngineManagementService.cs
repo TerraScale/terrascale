@@ -51,7 +51,9 @@ internal sealed partial class EngineManagementService(
     private const string CatalogVersionId = "version";
 
     private const string CatalogVersion = "1";
-    private const string PendingDatabaseCleanup = "pending_database_cleanup";
+    // Each machine's own intents (docs/terrabase/multi-region-replication.md section 15): the catalog replicates them like
+    // every document, but only the machine whose files they name acts on them.
+    private string PendingDatabaseCleanup => $"machines/{options.MachineId}/pending_database_cleanup";
 
     // Global: project id to its organization id, so a client-chosen project id is unique across organizations.
     private const string ProjectOrganizations = "project_organizations";
@@ -626,7 +628,7 @@ internal sealed partial class EngineManagementService(
 
     // Removes a database from the catalog and records its cleanup intent, in the caller's transaction; the files go
     // after it commits (FinishDatabaseCleanupAsync), or at the next start.
-    private static async ValueTask<UnregisterResult> UnregisterDatabaseAsync(
+    private async ValueTask<UnregisterResult> UnregisterDatabaseAsync(
         IStorageTransaction transaction, string userId, string organizationId, string projectId, string databaseId, string region, CancellationToken cancellationToken) =>
         await DeletableAsync(transaction, userId, organizationId, projectId, databaseId, region, cancellationToken).ConfigureAwait(false) switch
         {
@@ -637,11 +639,16 @@ internal sealed partial class EngineManagementService(
         };
 
     // Removes a database's record and records its cleanup intent, in the caller's transaction, after the caller's checks.
-    private static async ValueTask<TenantContext> UnregisterRecordAsync(
-        IStorageTransaction transaction, TenantContext storage, ManagedDatabase database, CancellationToken cancellationToken)
+    // A database that lost its name to another (EngineManagementService.Convergence) leaves the name to the winner.
+    private async ValueTask<TenantContext> UnregisterRecordAsync(
+        IStorageTransaction transaction, TenantContext storage, ManagedDatabase database, CancellationToken cancellationToken, bool releaseName = true)
     {
         await PutAsync(transaction, PendingDatabaseCleanup, database.Id, storage, TerraBaseJsonContext.Default.TenantContext, cancellationToken).ConfigureAwait(false);
-        await transaction.DeleteAsync(DatabaseNames(database.ProjectId), database.Name, cancellationToken).ConfigureAwait(false);
+        if (releaseName)
+        {
+            await transaction.DeleteAsync(DatabaseNames(database.ProjectId), database.Name, cancellationToken).ConfigureAwait(false);
+        }
+
         await transaction.DeleteAsync(Databases(database.ProjectId), database.Id, cancellationToken).ConfigureAwait(false);
         // The database's backups expire through the storage sweep from this commit on, and its tooling state
         // (backup schedule, usage and query field counts) goes with it.
@@ -897,7 +904,7 @@ internal sealed partial class EngineManagementService(
     }
 
     // Registers prepared storage and clears its intent in the caller's transaction, when the project still allows it.
-    private static async ValueTask<AddDatabaseCheck> RegisterDatabaseAsync(
+    private async ValueTask<AddDatabaseCheck> RegisterDatabaseAsync(
         IStorageTransaction transaction, Func<IStorageTransaction, ValueTask<ProjectTenant>> project, ManagedDatabase database,
         CancellationToken cancellationToken)
     {
@@ -1226,7 +1233,7 @@ internal sealed partial class EngineManagementService(
     private static async ValueTask<bool> HasCatalogStateAsync(IStorageTransaction transaction, CancellationToken cancellationToken)
     {
         // System puts need no collection metadata; include tombstones and retained deletions, not just live rows.
-        foreach (var collection in new[] { Catalog, Organizations, CurrentOrganizations, ProjectOrganizations, PendingDatabaseCleanup,
+        foreach (var collection in new[] { Catalog, Organizations, CurrentOrganizations, ProjectOrganizations,
             InvitationTokens, OrganizationVersions, AccountVersions, CommitExpiries, OwnershipTransfers, AuditRetentions,
             AuditSequences, InvitationSequences, "organization_names", "backed_up_databases", "backup_sequence", "storage_sweep",
             "dashboard_query_shapes", "dashboard_query_shapes_flush" })
@@ -1237,7 +1244,7 @@ internal sealed partial class EngineManagementService(
             }
         }
 
-        foreach (var prefix in new[] { "organizations/", "users/", "projects/", "databases/", "dashboard/" })
+        foreach (var prefix in new[] { "organizations/", "users/", "projects/", "databases/", "dashboard/", "machines/" })
         {
             if (await transaction.HasCollectionStateAsync(prefix, prefix: true, cancellationToken).ConfigureAwait(false))
             {
