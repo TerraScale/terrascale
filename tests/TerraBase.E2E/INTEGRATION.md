@@ -18,6 +18,29 @@ The integration keeps `.github/workflows/ci.yml` exactly as it is at `c691f947`:
 
 A conflict in those lines is resolved to main's version.
 
+## MERGE TRAIN PAUSED (17:30Z): CI is disabled
+
+**State:** the CI workflow 381575024 is `disabled_manually` by the user (the "Reduce Blacksmith CI Runner Costs" thread,
+to stop Blacksmith spend). #139 (merged 17:29Z → main `b25787f5`, outside this train) moved CI to GitHub-hosted
+`ubuntu-latest`, but CI stays disabled, so `b25787f5` has **no run**, and no PR can get a `test` check on its exact
+head. Main's `ci.yml` still has both gates (preview L259, deploy L315, `if: false &&`).
+
+**No merges or closes** until the user re-enables CI and the new runners prove green on main.
+
+**Local runs are not a substitute.** Owners keep preparing and testing locally under `flock -o /tmp/ts-heavy.lock`;
+those runs are evidence only and never replace the required CI `test` check on the exact head.
+
+**Waiting for CI:**
+- **#112** `81172462`: R3 merged main in, and it is clean. No run yet.
+- **#118** (R8): conflict resolution pending; T1 reviews it.
+- **#134** (Dogfood): conflict pending.
+- **#127**: auth failure.
+- **#125**: fresh run.
+
+**Also seen on main:** `c59bfcc5`'s `auth` job failed on logging tests
+(`Console_records_are_json_and_withhold_exception_messages`,
+`ZLogger_entries_keep_values_and_exception_messages_out_of_every_provider`). Routed to Dogfood.
+
 ## Merge train (user order 2026-10-12 14:58Z: the merge hold is lifted; deploy pause #122 and previews off #123 stay)
 
 Phase 1 is now merged to main in manifest order, and acceptance runs on main's head. Each row is recorded at merge time:
