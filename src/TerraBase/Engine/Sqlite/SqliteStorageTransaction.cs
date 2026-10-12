@@ -1159,12 +1159,12 @@ internal sealed partial class SqliteStorageTransaction(
     private const string GroupSavepoint = "batched";
 
     /// <summary>
-    /// Set once Turso rolled the whole write transaction back after a failed statement, every savepoint included:
-    /// it can only be disposed.
+    /// Set once Turso rolled the whole transaction back after a failed statement, every savepoint included: it can only
+    /// be disposed.
     /// </summary>
     internal bool Aborted { get; private set; }
 
-    // Worker-only: runs a call of this transaction, and notices when a failure ended a write transaction.
+    // Worker-only: runs a call of this transaction, and notices when a failure ended it.
     private T Guarded<T>(Func<T> call)
     {
         if (Aborted)
@@ -1176,11 +1176,30 @@ internal sealed partial class SqliteStorageTransaction(
         {
             return call();
         }
-        // Any failure: a stopped read surfaces as a QueryCapacityException, not the SqliteException it started as.
-        catch (Exception) when (write && !session.InTransaction())
+        // Whatever surfaced: a stopped read arrives as a QueryCapacityException or an OperationCanceledException.
+        catch (Exception) when (Ended())
         {
             Aborted = _faulted = true;
             throw;
+        }
+    }
+
+    // Unlike SQLite, Turso rolls the whole transaction back when a statement fails while it steps (a stopped read, for
+    // one). The driver then marks the transaction ended (src/vendor/Turso.Data.Sqlite, patch 0003) and refuses the
+    // commands bound to it; preparing one runs nothing.
+    private bool Ended()
+    {
+        using var probe = session.Connection.CreateCommand();
+        probe.Transaction = transaction;
+        probe.CommandText = "SELECT 1;";
+        try
+        {
+            probe.Prepare();
+            return false;
+        }
+        catch (InvalidOperationException)
+        {
+            return true;
         }
     }
 
@@ -1287,14 +1306,8 @@ internal sealed partial class SqliteStorageTransaction(
                     }
                     finally
                     {
-                        try
-                        {
-                            transaction.Dispose();
-                        }
-                        catch (SqliteException error) when (SqliteSession.NoTransaction(error))
-                        {
-                            // A failed statement already ended it (SqliteSession.InTransaction).
-                        }
+                        // Also when a failed statement ended it: the driver then knows, and rolls nothing back.
+                        transaction.Dispose();
                     }
 
                     if (_captureSuspended)
