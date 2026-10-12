@@ -1,6 +1,6 @@
 # TerraScale Landing Page
 
-The official TerraScale marketing site, built as a fully prerendered SvelteKit app for static deployment on Cloudflare Pages.
+The official TerraScale marketing site, built as a fully prerendered SvelteKit app served as static assets by Cloudflare Workers.
 
 ## Stack
 
@@ -32,32 +32,15 @@ npm run dev
 npm run build
 npm run preview
 npm run icons:sync
-npm run cf:pages:dev
+npm run cf:dev
 ```
 
 ## Deployment
 
-There is no CI and no test suite. Cloudflare Pages builds `main` from Git
-(build command `npm run build`, output directory `build`) and serves it on
-`terrascale.tech` and `www.terrascale.tech`.
-
-The `wrangler.toml` in this working tree pins the Pages project name for
-the local preview and plays no part in the pipeline.
-
-This repo is intentionally configured for static output only. Do not assume
-Cloudflare Functions, Workers, or SSR are part of the deployment flow unless the
-repo instructions change.
-
-### Local Pages Preview
-
-To verify the static build through the Cloudflare Pages CLI locally:
-
-```bash
-npm run cf:pages:dev
-```
-
-That builds the site and serves the generated `build/` output through
-`wrangler pages dev`.
+There is no CI and no test suite. Cloudflare Workers Builds builds `main` from
+Git (`npm run build`, then `npx wrangler deploy`). `wrangler.toml` serves
+`build/` as static assets only (no Worker script) on `terrascale.tech` and
+`www.terrascale.tech`. `npm run cf:dev` serves the built site locally.
 
 ## Icons
 
