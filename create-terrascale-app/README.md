@@ -74,7 +74,7 @@ it writes posts through the published typed `client.documents.put` API. There is
 ## Status
 
 Migration preparation for ts-auth project JWTs and the new TerraBase API is
-tracked in the [ownership migration checklist](qualification/ownership-migration.md).
+in progress.
 `template/connection.ts` validates the target project UUID, database name, and
 API origin; integration into the app awaits a released JWT-capable SDK. This
 preparation does not qualify the current template or change its sign-in flow.

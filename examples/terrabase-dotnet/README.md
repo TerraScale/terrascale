@@ -29,22 +29,3 @@ as absent. No document payload, credential or raw server error is printed.
 The app uses a 60-second overall deadline and 15-second request deadlines.
 Only its generated document is deleted. An interrupted request can leave that
 document behind; reconcile its outcome rather than blindly replaying a write.
-
-Use the package-only real-process qualification lane from the docs checkout:
-
-```bash
-nice -n 19 npm run qualify:dotnet -- \
-  --package /absolute/path/TerraScale.DotNet.EXACT_VERSION.nupkg \
-  --sha256 SDK_SHA256 --version EXACT_VERSION \
-  --testing-package /absolute/path/TerraScale.DotNet.Testing.EXACT_VERSION.nupkg \
-  --testing-sha256 TESTING_SHA256 \
-  --binary /absolute/path/matched-terrabase-binary \
-  --binary-sha256 PRODUCER_SHA256 \
-  --receipt /absolute/path/private-evidence/csharp.json
-```
-
-The SDK's test helper verifies and starts the pinned real binary with an
-isolated allocation. Missing or mismatched inputs fail; there is no stub mode.
-The helper's compatibility fixture is not a production credential-provisioning
-workflow. Real-process compatibility does not qualify JWT sign-in, public
-package availability, automatic endpoint discovery, replication or billing.
