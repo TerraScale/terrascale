@@ -13,9 +13,16 @@ machines() { flyctl machine list -a "$app" --json | jq -r --arg r "$1" --arg s "
 
 for region in gru sjc fra; do
   start=$SECONDS
-  if [[ $region != gru && -z $(machines "$region" .) ]]; then
-    # Clones the machine just deployed (new image, new volume).
-    flyctl scale count 1 -a "$app" -c "$config" --region "$region" --yes
+  if [[ -z $(machines "$region" .) ]]; then
+    if [[ $region != gru ]]; then
+      # Clones the machine just deployed (new image, new volume).
+      flyctl scale count 1 -a "$app" -c "$config" --region "$region" --yes
+    elif volume=$(flyctl config show -c "$config" | jq -r '.mounts[0].source // empty') && [[ -n $volume ]] \
+      && [[ -z $(flyctl volumes list -a "$app" --json | jq -r --arg v "$volume" '.[] | select(.region == "gru" and .name == $v and .attached_machine_id == null) | .id') ]]; then
+      # flyctl deploy creates gru's first machine but not its volume: 1 GB like fly.toml's initial_size (auto-extend comes
+      # from [[mounts]]).
+      flyctl volumes create "$volume" -a "$app" -r gru -s 1 --yes
+    fi
   fi
   # --ha=false: the first deploy creates one machine in primary_region (gru), not Fly's default pair.
   flyctl deploy -a "$app" -c "$config" --image "$image" --regions "$region" --ha=false --yes --wait-timeout 3m
