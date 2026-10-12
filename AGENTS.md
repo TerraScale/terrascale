@@ -2,127 +2,96 @@ AI IS NOT ALLOWED TO EDIT THIS FILE ONLY HUMANS CAN!
 
 # Rules
 
-Production uses persistent state and ts-auth authorization. In-memory demos
-and fakes belong only in test code and test binaries. Existing runtime demo
-paths are implementation gaps, not deployment requirements.
+Production uses persistent state and ts-auth authorization. In-memory demos, fakes, demo stores, and skip-auth belong only in test code and test binaries. Existing runtime demo paths are implementation gaps, not deployment requirements.
 
-- Never add AI attribution to commits, PR titles, or PR descriptions: no `Co-Authored-By:` trailers, no `🤖 Generated with [Claude Code]` or similar generated-by notices.
+- No AI attribution in commits, PR titles, or PR descriptions: no `Co-Authored-By:` trailers, no "Generated with Claude Code" or similar notices.
 
 ## Local CPU Priority
 
-- When building or testing locally, run every build, test, lint, and benchmark
-  command at low CPU priority by prefixing it with `nice -n 19` (for example
-  `nice -n 19 make test-fast`). Local dev servers and watchers count too.
-- In CI (`CI=true`) use full CPU priority: do nothing. Never add `nice` or
-  `renice` to CI workflows, Makefiles, scripts, or Containerfiles; the low
-  priority is applied by whoever runs the command locally.
+- Locally, prefix every build, test, lint, benchmark, dev server, and watcher with `nice -n 19`, e.g. `nice -n 19 make test-fast`.
+- In CI (`CI=true`), use full priority. Never add `nice` or `renice` to CI workflows, Makefiles, scripts, or Containerfiles.
 
 ## Stack
-- We need to use GO and datastar
-- The Dashboard must not depend on terrabase(project) it should depend on ts-go instead
-- We deploy to fly.io
-- We need to use the official stripe lib for payment
 
+- Use Go and datastar. Deploy to fly.io. Use the official Stripe library for payments.
+- The dashboard must not depend on terrabase (project); depend on ts-go instead.
 
 ## Preview
 
-- If the user requests a preview url to check the work that is current made you need to start the dev env and send the user a tailscale dns to access it and test if it works before sending to the user if it doesnt work fix it
-- When running a dev server it must always be accesible via the tailscale net and it must have hmr turned for really fast development
-- Make sure that the urls are different as we are using worktrees so the ports needs to be diff
+- Preview request: start the dev env, confirm it works over Tailscale, fix anything broken, then send the user the Tailscale DNS name.
+- Dev servers stay on Tailscale with HMR. Worktrees need distinct URLs and ports.
 
-# Ownership
+## Ownership
 
-## Owner of
-- Authentication via ts-auth
-- MCP endpoints and MCP logic so the user can interact with the dashboard with an AI
-- Organizations, Projects, Users, Payments, Plans
-- Stripe management
+- Owns: ts-auth authentication; MCP endpoints and logic, so users can work with the dashboard through AI; Organizations, Projects, Users, Payments, Plans; Stripe management.
+- Does not own: usage metrics; regions (availability, latency, etc.), which come from terrabase.
 
-## NOT AN OWNER OF
-- Usage metrics
-- Regions like available regions their latency and etc (This comes from terrabase)
+## State and Tests
 
-# State 
-- Stateless all state must live in the database via ts-go
+- Stateless. All state lives in the database, accessed through ts-go.
+- Keep a test covering the whole flow: create an account, use the ts-typescript SDK to interact with the database, verify the result.
 
-# Test
-- We need to have a test that tests the whole flow from creating the account and then using the ts-typescript sdk to interact with the database and make sure it is working correctly
+## Structure and Design
 
-
-## Feature Slices
-
-- Each product area owns its components and abstraction on different folders
-
-## Design System
-- We must use lightningcss to bundle to ship a single CSS file
+- Each product area owns its components and abstractions in its own folder.
+- Bundle with lightningcss into a single shipped CSS file.
 
 ## Brand Assets
 
-- TerraScale product logos, brand marks, wordmarks, and favicons must be served
-  from SVG files under `public/brand` or another committed asset file.
-- Do not inline TerraScale logo or wordmark SVG markup in React components,
-  route files, CSS, or generated templates.
-- Shared brand components may wrap those files with `<img>` for sizing,
-  accessibility, and reuse, but the SVG path/polygon data must stay in the asset
-  files.
-- Use the same file-backed brand assets consistently on auth pages, the app
-  shell, dashboard surfaces, and metadata/icon declarations.
+- Serve TerraScale logos, brand marks, wordmarks, and favicons from SVG files under `public/brand` or another committed asset file.
+- Never inline logo or wordmark SVG in React components, route files, CSS, or generated templates. Shared components may wrap the files in `<img>`; path and polygon data stays in the asset files.
+- Use the same file-backed assets on auth pages, the app shell, dashboard surfaces, and metadata/icon declarations.
 
 ## Dotted Map
 
-- Use `dotted-map` only for map visualization
-- Lazy-load map code and generated map data on routes that need it.
-- Provide accessible non-map controls as the canonical input.
-- Add to SVG the information needed so to make it easier to use the map on the code
+- Use `dotted-map` only for map visualization. Lazy-load map code and map data on routes that need them.
+- Accessible non-map controls are the canonical input. Put in the SVG the data needed to use the map from code.
+
+## Zero Configuration (user decision 2026-10-09, do not revert)
+
+- Every feature is always on. No feature flags, on/off variables, opt-in settings, boolean enabled-config keys, deploy toggles, or kill switches in code, config, or CI. Delete switches and their guarded paths.
+- Every region always serves. NetBird membership admits a node automatically; it discovers all regions, infers its own from where it runs, and serves with no per-region enable step.
+- Discover authentication, database, and orchestrator endpoints automatically. OCI Vault creates, delivers, and configures every first-party production secret; vendor-issued keys (such as Stripe and Cloudflare) are stored once there and picked up automatically. Nobody copies secrets by hand.
+- Values have one correct setting in code. Expose no tuning knobs.
+- CI rejects new switch-style configuration; ts-reviewer requests changes. Only unavoidable third-party names may have a narrow allowance, with a one-line reason.
+
+## Agent Model Routing
+
+- Short, bounded delegated agent work: Claude Haiku 5.5, `claude-haiku-5-5`. If unavailable, use Codex GPT-6.1-Sol, `gpt-6.1-sol`, after confirming that ID in the live model catalog.
+- Advisor work and tasks expected to take more than 10 minutes: Claude Opus 5.5, `claude-opus-5-5`. The Haiku rule covers only short, bounded work.
+- Run every T3 Code thread in full-access mode, within the existing tool safety rules.
+- Never use Haiku 4.5 (`claude-haiku-4-5`, or a dated ID such as `claude-haiku-4-5-20251001`), and never fall back silently to an older Haiku. If no allowed model is available, report it instead of substituting another.
 
 ## Git
 
 ### Branches
-- Branch from `origin/main` in a new worktree:
-  `feat/…`, `fix/…`, `hotfix/…`, `refactor/…`.
-- Always base work on `origin/main`, never the local `main` (it is often
-  stale in worktrees). Run `git fetch origin` first, then branch, rebase, diff
-  and compare against `origin/main`.
-- Before pushing, run `git fetch origin` and rebase onto the latest
-  `origin/main` so the PR never carries outdated code.
+
+- Branch from `origin/main` in a new worktree: `feat/…`, `fix/…`, `hotfix/…`, or `refactor/…`.
+- Never base work on local `main`, which is often stale. Run `git fetch origin` first, then branch, rebase, diff, and compare against `origin/main`.
+- Before pushing, fetch and rebase onto the latest `origin/main` so the PR never carries outdated code.
 
 ### Conflicts
-Work has been lost while resolving conflicts. When a merge, rebase, cherry-pick
-or stash apply hits conflicts:
 
-- Stop before resolving anything. Do not pick `--ours`/`--theirs`, run
-  `git checkout -- <file>`, `git reset --hard`, `git clean`, or force-push to
-  make a conflict go away.
-- Tell the user, for each conflicted file:
-  - what our side changes and what `origin/main` changes (summarize the
-    intent of each, with the commits/PRs involved),
-  - exactly what would be lost under each possible resolution,
-  - which side you recommend keeping and why (by default, keep what is already
-    on `origin/main` and reapply our changes on top of it).
-- Wait for the user to confirm the resolution before applying it.
-- Combine both sides whenever possible instead of discarding one. If something
-  really must be dropped, say so explicitly.
-- Before resolving, save a backup ref (for example
-  `git branch backup/<branch>-<date>`) so nothing is unrecoverable.
-- After resolving, show the user the final diff of the conflicted files and
-  confirm that build, lint and tests still pass.
+Work has been lost while resolving conflicts. On any merge, rebase, cherry-pick, or stash apply that conflicts:
 
-### Pull requests
+- Stop. Do not use `--ours`/`--theirs`, `git checkout -- <file>`, `git reset --hard`, `git clean`, or force-push to make a conflict go away.
+- For each conflicted file, tell the user what our side and `origin/main` each change (intent, commits, PRs), what each resolution would lose, and your recommendation with reasons. Default: keep `origin/main` and reapply our changes on top.
+- Wait for the user's confirmation. Combine both sides when possible; state explicitly anything that must be dropped.
+- Before resolving, save a backup ref, e.g. `git branch backup/<branch>-<date>`.
+- After resolving, show the final diff of the conflicted files and confirm build, lint, and tests pass.
+
+### Pull Requests
+
 - Use `fj` for git and Forgejo.
-- Before pushing: lint passes and the `fast` and `slow` tests are green.
-- Target `main` and enable auto-merge once checks pass.
-- Reviewers: `mariogk` and `terrascale-bot` (Forgejo rejects the PR author,
-  so skip whichever one opened the PR).
-- Visual changes: upload several before/after screenshots as PR
-  attachments. Never commit them.
+- Before pushing: lint passes, and the `fast` and `slow` tests are green.
+- Target `main`. Enable auto-merge once checks pass.
+- Reviewers: `mariogk` and `terrascale-bot`. Forgejo rejects the PR author, so skip whoever opened the PR.
 - Send the PR link to the user when done.
 
-## Zero configuration (user decision 2026-10-09, do not revert)
+### Evidence for User-Facing Changes
 
-- Every feature is always on. No feature flags, on/off variables, opt-in settings, boolean enabled configuration keys, deploy toggles or kill switches in code, config or CI. Delete switches and their guarded paths.
-- Every region always serves. NetBird network membership admits a node automatically; it discovers every region, infers its own region from where it runs and starts serving without a per-region enable step.
-- OCI Vault automatically creates, delivers and configures every first-party production secret. Vendor-issued keys (such as Stripe and Cloudflare) are stored once in Vault and picked up automatically; nobody copies secrets by hand.
-- Values have one correct setting in code. Expose no tuning knobs. Fakes, demo stores and skip-auth belong only in test code and test binaries.
-- CI rejects new switch-style configuration; ts-reviewer requests changes. Only unavoidable third-party names may have a narrow allowance with a one-line reason.
-
-Discover authentication, database and orchestrator endpoints automatically; OCI Vault supplies service secrets and the vendor-issued Stripe keys.
+- For each changed user-facing flow, attach actual screenshots and short videos of the running app, captured against the current tested PR head (the commit that passed the checks).
+- Show the navigation and interaction that demonstrate the change, plus success, error, and empty states where they apply.
+- Label each capture with its flow and tested commit SHA. Redact secrets and personal data (tokens, keys, emails, customer names, payment details) first.
+- Embed or link the evidence in the PR with alt text or a text description. Upload it as PR attachments; never commit it. Visual changes: include several before/after screenshots.
+- Recapture when the head changes. Never fabricate evidence or present stale or mock captures as verification; if evidence is unavailable, say why in the PR. Docs-only changes may say why running-app captures do not apply.
