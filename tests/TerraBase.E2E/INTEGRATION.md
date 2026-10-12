@@ -81,6 +81,13 @@ next; it is not opened yet.
 fetches first and fails closed on an unknown commit. Every earlier check ran on a commit that was already present
 locally (fetched or built here), and #105's and #108's merge trees matched COS's independent verification.
 
+**Merged (fixes for main's red):**
+- **#141** at `95157ef7`: `test` 38293613049 success (auth). Squash → main `2cfd1df2`; push run 38295445221, deploy and
+  preview skipped.
+- **#138** at `05ea346f`: `test` 38293602375 success (auth). Squash → main `1721bff1`; push run 38295480962, deploy and
+  preview skipped.
+- Main's run on `1721bff1`: pending. It must be green before the rest of the train.
+
 **Acceptance gaps, kept visible until each has a test and a fix:**
 - **R-A:** stale-machine retention after a SIGKILL.
 - **R-B:** a corrupt CDC entry stalls a region pair.
