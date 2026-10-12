@@ -41,10 +41,10 @@ Without `TERRABASE_E2E_FLY_URL` and `TERRABASE_E2E_FLY_OUTAGE=1` it is reported 
 
 ## Expected failure
 
-`Concurrent_writes_to_different_fields_both_survive_expected_to_fail_until_per_field_lattice` passes while the regions
-keep one of two concurrent field edits, which is whole-document last-writer-wins. The gap is tracked in
-`.cos/fly-migration-plan.md` (Product focus + replication design). When the per-field lattice lands, the test fails
-with a message to remove the marker. Then turn it into a plain assertion.
+A scenario whose slice has not landed is listed in `tests/TerraBase.E2E/Gaps.cs` with the slice it waits on, and runs as a
+strict expected failure. The test passes while the scenario fails, and fails with "has landed" once it passes, so the
+slice that lands it removes the entry. Test names carry no expected-failure suffix. The run summary reports each test as
+actual pass, harness check, expected failure, not supported, skip or fail (`tests/TerraBase.E2E/COVERAGE.md`).
 
 ## CI
 

@@ -13,7 +13,7 @@ public sealed class CatalogE2ETests
 {
     [Test]
     [Scenario(Nodes.InProcess)]
-    public async Task E12_database_created_in_sjc_is_usable_from_gru_and_one_same_name_database_survives_expected_to_fail()
+    public async Task E12_database_created_in_sjc_is_usable_from_gru_and_one_same_name_database_survives()
     {
         await Gaps.RunAsync("E12", async () =>
         {
@@ -49,7 +49,7 @@ public sealed class CatalogE2ETests
 
     [Test]
     [Scenario(Nodes.InProcess)]
-    public async Task E13_move_from_gru_to_sjc_under_write_load_loses_no_write_and_succeeds_expected_to_fail()
+    public async Task E13_move_from_gru_to_sjc_under_write_load_loses_no_write_and_succeeds()
     {
         await Gaps.RunAsync("E13", async () =>
         {
