@@ -94,6 +94,11 @@ public static class QosExtensions
             return;
         }
 
+        if (lease is not null)
+        {
+            context.Features.Set(new QosRequestLease(lease));
+        }
+
         if (context.Request.ContentLength > DocumentRoute.MaxRequestBytes)
         {
             await BadRequests.WriteAsync(context, StatusCodes.Status413PayloadTooLarge, "payload_too_large", "the request body exceeds the size limit", null).ConfigureAwait(false);
