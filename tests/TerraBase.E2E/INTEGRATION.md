@@ -93,8 +93,27 @@ All are routed to T1.
 
 - **#115 MERGED** at its exact head `93fe0a56`: `test` run 38274256511 success (libs, auth, terrabase); 0 open threads.
   Merge commit → main `df790dbb`; push run 38274891319, deploy and preview skipped, both gates present; preview
-  workflow 381612805 re-verified `disabled_manually` at 16:04:49Z. Main's `test` on `df790dbb`: pending. It decides
-  whether main is green again.
+  workflow 381612805 re-verified `disabled_manually` at 16:04:49Z. **Main's run on `df790dbb`: everything green, Slow included** (auth, terrabase, libs, test, slow). So #102, #103, #104 and #68
+  now pass on main, and main is green again. The train resumes.
+
+**Fresh runs on main `df790dbb` (16:15Z).** Each branch was brought up to date with `gh pr update-branch` (a merge
+commit from main; no force push), after its push check passed and the preview workflow was re-verified disabled:
+- #88 → `8122d5d3`;
+- #106 → `36de93da`;
+- #127 → `f0b58ec4`;
+- #133 → `2719d3d8`;
+- #130 → `03115e4c`;
+- #134 → `f6aff9b5`;
+- #79 → `a18c40e9` (merged by hand; a `benchmark/bench/README.md` row conflict, both rows kept).
+
+**Planned merge order once each is green:**
+1. #130, then a fresh run on #125;
+2. #133, then close #132 as superseded;
+3. #88;
+4. #106, then retarget #111 and its stack;
+5. #127;
+6. #134;
+7. #79.
 
 **Not merged until fixed and verified:**
 - **R10a's stack**, until the no-peer fail-open and the unprotected override are fixed and R3 verifies in writing;
