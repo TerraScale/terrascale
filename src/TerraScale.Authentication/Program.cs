@@ -1,5 +1,6 @@
 using TerraScale.Authentication;
 using TerraScale.Authentication.Configuration;
+using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.SigningKeys;
 using TerraScale.Authentication.Security;
 
@@ -31,6 +32,12 @@ catch (Exception error) when (error is not OutOfMemoryException)
 }
 
 var app = App.Build(options);
+if (args is [GitHubActionsBinding.BindCommand or GitHubActionsBinding.UnbindCommand, ..])
+{
+    // Operator commands: bind (activate) or unbind the GitHub Actions e2e workload, then exit without serving.
+    return await GitHubActionsBinding.RunAsync(args[0], app.Services, CancellationToken.None);
+}
+
 if (args is [SigningKeyProvisioning.Command, ..])
 {
     // Operator command: provisions signing keys with the server's secrets and exits without serving.

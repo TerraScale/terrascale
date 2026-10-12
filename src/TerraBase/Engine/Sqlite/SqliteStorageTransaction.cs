@@ -20,7 +20,7 @@ namespace TerraBase.Engine.Sqlite;
 /// <param name="runner">Runs every SQLite call of this transaction.</param>
 /// <param name="write">Whether mutations are allowed.</param>
 /// <param name="durable">Whether the session runs with <c>synchronous = FULL</c> until disposal resets it to <c>NORMAL</c>.</param>
-/// <param name="committed">Runs after a commit advances the local shape history or its head.</param>
+/// <param name="committed">Runs after a commit that changed the database.</param>
 /// <param name="changesCommitted">When set, local mutations are captured and it receives the group's sequence after commit.</param>
 /// <param name="ownsAdmission">Whether disposal releases this transaction's I/O admission.</param>
 internal sealed partial class SqliteStorageTransaction(
@@ -117,7 +117,7 @@ internal sealed partial class SqliteStorageTransaction(
     // Worker-only: query readers fetch bodies after their id/key page has admitted the row.
     private StoredDocument? ReadDocument(string collection, string id)
     {
-        if (Shaped)
+        if (IsClient)
         {
             return ReadUniqueDocument(collection, id, reserveResult: true);
         }
@@ -202,8 +202,8 @@ internal sealed partial class SqliteStorageTransaction(
     {
         ThrowIfReadOnly();
         var body = Admit(json);
-        using var schemaReservation = Shaped ? ReserveCollectionMetadata(collection) : null;
-        if (Shaped && ReadCollectionSchema(collection) is { } schema)
+        using var schemaReservation = IsClient ? ReserveCollectionMetadata(collection) : null;
+        if (IsClient && ReadCollectionSchema(collection) is { } schema)
         {
             CollectionSchemaValidation.Validate(schema, json, cancellationToken, store.SchemaMemory, store.SchemaEvaluations);
         }
@@ -243,15 +243,14 @@ internal sealed partial class SqliteStorageTransaction(
             next = state.Put(at, parsed.RootElement);
         }
 
-        // Reads, uniqueness and shape history see the materialized document: canonical JSON, fields in name order.
+        // Reads and uniqueness see the materialized document: canonical JSON, fields in name order.
         var materialized = Materialize(next);
         var affected = ReplaceUniqueKeys(collection, id, materialized, cancellationToken);
         ClearUniqueConflict(collection, id);
         cancellationToken.ThrowIfCancellationRequested();
-        var offset = Offset();
+        Offset();
         var version = Store(collection, id, next, at, materialized);
-        ReconcileUnique(collection, affected, id, cancellationToken);
-        AppendChange(collection, id, offset, version, materialized, cancellationToken);
+        ReconcileUnique(collection, affected, cancellationToken);
         return version;
     }
 
@@ -301,11 +300,10 @@ internal sealed partial class SqliteStorageTransaction(
                 var affected = ReplaceUniqueKeys(collection, id, null, cancellationToken);
                 ClearUniqueConflict(collection, id);
                 cancellationToken.ThrowIfCancellationRequested();
-                var offset = Offset();
+                Offset();
                 var (state, at) = Begin(collection, id);
                 var written = Store(collection, id, state.Delete(at), at, null);
-                ReconcileUnique(collection, affected, id, cancellationToken);
-                AppendChange(collection, id, offset, written, null, cancellationToken);
+                ReconcileUnique(collection, affected, cancellationToken);
                 return written;
             }
 
@@ -324,8 +322,8 @@ internal sealed partial class SqliteStorageTransaction(
         }, cancellationToken, mutation: true).ConfigureAwait(false);
     }
 
-    // Client commits keep shape history and its limits; _system is never a client database.
-    private bool Shaped => !store.IsSystem;
+    // Client commits keep per-commit limits and metadata documents; _system is never a client database.
+    private bool IsClient => !store.IsSystem;
 
     private long Write(Action<long> apply, CancellationToken cancellationToken)
     {
@@ -335,42 +333,10 @@ internal sealed partial class SqliteStorageTransaction(
         return offset;
     }
 
-    private void AppendChange(string collection, string id, long offset, long documentVersion, string? body, CancellationToken cancellationToken)
-    {
-        if (!Shaped)
-        {
-            return;
-        }
-
-        if (Append() == 1)
-        {
-            return;
-        }
-
-        // An implicit collection carries the same captured identity metadata as an explicit creation.
-        cancellationToken.ThrowIfCancellationRequested();
-        CreateCollection(new CollectionInfo(collection, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
-        if (Append() != 1)
-        {
-            throw new InvalidOperationException("a document write needs its collection's metadata for shape history");
-        }
-
-        int Append()
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var command = Command(SqliteStatements.AppendChange, collection);
-            command.Parameters.AddWithValue("$id", id);
-            command.Parameters.AddWithValue("$version", offset);
-            command.Parameters.AddWithValue("$documentVersion", documentVersion);
-            command.Parameters.AddWithValue("$body", (object?)body ?? DBNull.Value);
-            return command.ExecuteNonQuery();
-        }
-    }
-
     // Admits one write against the per-commit limits of a client database.
     private void Reserve(string id, int documentBytes)
     {
-        if (!Shaped)
+        if (!IsClient)
         {
             return;
         }
@@ -484,6 +450,7 @@ internal sealed partial class SqliteStorageTransaction(
     }
 
     private bool _qosScanRegistered;
+    private QueryBudget? _queryBudget;
 
     // The handler and its removal run only on workers while this transaction owns the connection.
     private QueryBudget StartQueryBudget(CancellationToken cancellationToken)
@@ -497,7 +464,7 @@ internal sealed partial class SqliteStorageTransaction(
         // octet_length reads the stored byte size without decoding or copying the JSON body.
         session.Connection.CreateFunction<long, long>("tb_qos_scan", size =>
         {
-            if (budget.ScansLimited && budget.Scan(size))
+            if (budget.Limited && budget.Scan(size))
             {
                 throw new OperationCanceledException(SqliteSession.StoppedMessage);
             }
@@ -506,11 +473,12 @@ internal sealed partial class SqliteStorageTransaction(
             return 1;
         });
         _qosScanRegistered = true;
-        return budget;
+        return _queryBudget = budget;
     }
 
     private void StopQueryBudget()
     {
+        _queryBudget = null;
         session.StopWhen(null);
         if (_qosScanRegistered)
         {
@@ -533,19 +501,33 @@ internal sealed partial class SqliteStorageTransaction(
         private long _started = time.GetTimestamp();
         private TimeSpan _paused;
 
+        // Turso counts no VM instructions, so a candidate row charges about what SQLite ran for it: 8 for the row
+        // and 4 per JSON read. This keeps the plans' former instruction limits (1M Hobby, 5M Pro) at their scale.
+        private const long RowWork = 8;
+        private const long ReadWork = 4;
+
+        private readonly long _workLimit = policy?.QueryWork ?? 5_000_000;
         private long _rows;
         private long _bytes;
+        private long _work;
         private bool ScanExceeded { get; set; }
 
-        public bool ScansLimited => policy is not null && (policy.ScanRows != long.MaxValue || policy.ScanBytes != long.MaxValue);
+        private int _jsonReads;
 
-        // Turso counts no VM instructions: execution time and scanned candidates bound a statement.
+        /// <summary>Charges each later candidate row the JSON reads (filter and sort keys) of the statement about to run.</summary>
+        public void Charge(string sql) => _jsonReads = JsonRead().Count(sql);
+
+        public bool Limited => _workLimit != long.MaxValue
+            || policy is not null && (policy.ScanRows != long.MaxValue || policy.ScanBytes != long.MaxValue);
+
+        // Execution time, engine work and scanned candidates bound a statement.
         public bool Exceeded => ScanExceeded
             || (policy?.QueryTimeout ?? defaultDeadline) is var deadline && deadline != Timeout.InfiniteTimeSpan && Spent >= deadline;
 
         public bool Scan(long size)
         {
-            if (_rows >= policy!.ScanRows || size > policy.ScanBytes - _bytes)
+            _work += RowWork + ReadWork * _jsonReads;
+            if (_work > _workLimit || policy is not null && (_rows >= policy.ScanRows || size > policy.ScanBytes - _bytes))
             {
                 ScanExceeded = true;
                 return true;
@@ -610,6 +592,7 @@ internal sealed partial class SqliteStorageTransaction(
         // Compiled per request so every new filter shape does not grow the session's command cache.
         using var command = Uncached(query.Collection);
         command.CommandText = new SqliteQueryCompiler(command.Parameters, Rows(query.Collection)).Compile(query, observation is not null);
+        _queryBudget!.Charge(command.CommandText);
         var rows = new List<QueryRow>();
         long bytes = 0;
         using var reader = command.ExecuteReader();
@@ -651,8 +634,11 @@ internal sealed partial class SqliteStorageTransaction(
     {
         return await RunAsync(() => WithQueryBudget(() =>
         {
+            // A client count examines the collection's state rows: this transaction's writes need theirs.
+            FlushStates();
             using var command = Uncached(collection);
             command.CommandText = new SqliteQueryCompiler(command.Parameters, Rows(collection)).CompileCount(filter, maxExamined, observation is not null);
+            _queryBudget!.Charge(command.CommandText);
             using var reader = command.ExecuteReader();
             cancellationToken.ThrowIfCancellationRequested();
             reader.Read();
@@ -662,9 +648,6 @@ internal sealed partial class SqliteStorageTransaction(
 
     public ValueTask<long> GetOffsetAsync(CancellationToken cancellationToken) =>
         RunAsync(() => (long?)session.Command(SqliteStatements.CurrentOffset, transaction).ExecuteScalar() ?? 0, cancellationToken);
-
-    public ValueTask<long> GetHistoryFloorAsync(CancellationToken cancellationToken) =>
-        RunAsync(() => (long)session.Command(SqliteStatements.HistoryFloor, transaction).ExecuteScalar()!, cancellationToken);
 
     private async IAsyncEnumerable<StoredDocument> ReadBudgetedAsync(
         Func<SqliteCommand> createCommand, SqlQuery query, QueryObservation? observation,
@@ -691,6 +674,7 @@ internal sealed partial class SqliteStorageTransaction(
                         CheckSortBudget(query.Collection, 8 * 1024 * 1024, cancellationToken, observation);
                     }
 
+                    budget.Charge(command.CommandText);
                     reader = command.ExecuteReader();
                 }
                 catch (SqliteException error) when (SqliteSession.Stopped(error))
@@ -802,7 +786,7 @@ internal sealed partial class SqliteStorageTransaction(
     // local: the applied registers carry what it needs.
     private void WriteMetadata(string collection, string name, string? body)
     {
-        if (!Shaped)
+        if (!IsClient)
         {
             return;
         }
@@ -860,7 +844,7 @@ internal sealed partial class SqliteStorageTransaction(
         return await RunAsync(() =>
         {
             using var reader = Command(SqliteStatements.GetCollection, name).ExecuteReader();
-            return reader.Read() ? new CollectionInfo(reader.GetString(0), reader.GetInt64(1), reader.GetInt64(2), reader.GetString(3)) : null;
+            return reader.Read() ? new CollectionInfo(reader.GetString(0), reader.GetInt64(1), reader.GetString(2)) : null;
         }, cancellationToken).ConfigureAwait(false);
     }
 
@@ -932,7 +916,7 @@ internal sealed partial class SqliteStorageTransaction(
                     return (collections, true);
                 }
 
-                collections.Add(new CollectionInfo(reader.GetString(0), reader.GetInt64(1), reader.GetInt64(2), reader.GetString(3)));
+                collections.Add(new CollectionInfo(reader.GetString(0), reader.GetInt64(1), reader.GetString(2)));
             }
 
             return (collections, false);
@@ -952,8 +936,6 @@ internal sealed partial class SqliteStorageTransaction(
                     CaptureSystemDeletions(name, name + '\0', cancellationToken);
                 }
 
-                Command(SqliteStatements.DropHistory, name).ExecuteNonQuery();
-                cancellationToken.ThrowIfCancellationRequested();
                 Command(SqliteStatements.DropDocuments, name).ExecuteNonQuery();
             }
             else if (Command(SqliteStatements.GetCollection, name).ExecuteScalar() is not null)
@@ -979,8 +961,7 @@ internal sealed partial class SqliteStorageTransaction(
         }, cancellationToken, mutation: true).ConfigureAwait(false);
     }
 
-    // Worker-only: drops a client collection's table, documents and states. Its history goes with the generation, so this
-    // runs before the collection row it finds the dropped generation through goes. Dropping the table drops its indexes too.
+    // Worker-only: drops a client collection's table, documents and states. Dropping the table drops its indexes too.
     private void DropTable(string name)
     {
         using (var table = PlainCommand($"DROP TABLE {Table(name)};"))
@@ -993,8 +974,6 @@ internal sealed partial class SqliteStorageTransaction(
         {
             _pending.Remove(key);
         }
-
-        Command(SqliteStatements.DropHistory, name).ExecuteNonQuery();
     }
 
     public async ValueTask<long> CommitAsync(CancellationToken cancellationToken)
@@ -1002,7 +981,7 @@ internal sealed partial class SqliteStorageTransaction(
         long? sequence = null;
         var offset = await RunAsync(() =>
         {
-            if (_faulted || _aborted)
+            if (_faulted || Aborted)
             {
                 throw new InvalidOperationException("an operation of this transaction failed, so it can only be rolled back");
             }
@@ -1137,13 +1116,16 @@ internal sealed partial class SqliteStorageTransaction(
 
     private const string GroupSavepoint = "batched";
 
-    // Set once Turso rolled the whole write transaction back after a failed statement: it can only be disposed.
-    private bool _aborted;
+    /// <summary>
+    /// Set once Turso rolled the whole transaction back after a failed statement, every savepoint included: it can only
+    /// be disposed.
+    /// </summary>
+    internal bool Aborted { get; private set; }
 
-    // Worker-only: runs a call of this transaction, and notices when a failure ended a write transaction.
+    // Worker-only: runs a call of this transaction, and notices when a failure ended it.
     private T Guarded<T>(Func<T> call)
     {
-        if (_aborted)
+        if (Aborted)
         {
             throw new InvalidOperationException("a failed statement rolled this transaction back, so it can only be disposed");
         }
@@ -1152,10 +1134,30 @@ internal sealed partial class SqliteStorageTransaction(
         {
             return call();
         }
-        catch (SqliteException) when (write && !session.InTransaction())
+        // Whatever surfaced: a stopped read arrives as a QueryCapacityException or an OperationCanceledException.
+        catch (Exception) when (Ended())
         {
-            _aborted = _faulted = true;
+            Aborted = _faulted = true;
             throw;
+        }
+    }
+
+    // Unlike SQLite, Turso rolls the whole transaction back when a statement fails while it steps (a stopped read, for
+    // one). The driver then marks the transaction ended (src/vendor/Turso.Data.Sqlite, patch 0003) and refuses the
+    // commands bound to it; preparing one runs nothing.
+    private bool Ended()
+    {
+        using var probe = session.Connection.CreateCommand();
+        probe.Transaction = transaction;
+        probe.CommandText = "SELECT 1;";
+        try
+        {
+            probe.Prepare();
+            return false;
+        }
+        catch (InvalidOperationException)
+        {
+            return true;
         }
     }
 
@@ -1262,14 +1264,8 @@ internal sealed partial class SqliteStorageTransaction(
                     }
                     finally
                     {
-                        try
-                        {
-                            transaction.Dispose();
-                        }
-                        catch (SqliteException error) when (SqliteSession.NoTransaction(error))
-                        {
-                            // A failed statement already ended it (SqliteSession.InTransaction).
-                        }
+                        // Also when a failed statement ended it: the driver then knows, and rolls nothing back.
+                        transaction.Dispose();
                     }
 
                     if (_captureSuspended)
@@ -1466,14 +1462,6 @@ internal sealed partial class SqliteStorageTransaction(
     private void ReserveJson(long size)
     {
         QosContext.ReserveResult(checked(size * 3 + 2048), store.IsSystem ? null : QosContext.Current);
-    }
-
-    private byte[] ReadShapeJson(SqliteDataReader reader, int ordinal, long size)
-    {
-        ReserveJson(size);
-        var json = SqliteSession.Bytes(reader, ordinal);
-        DocumentJson.ValidateStored(json);
-        return json;
     }
 
     private static DocumentChange Change(SqliteDataReader reader) => new(

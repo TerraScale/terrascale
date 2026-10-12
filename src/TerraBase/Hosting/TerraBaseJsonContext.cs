@@ -50,7 +50,6 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(CreateProjectApiKeyRequest))]
 [JsonSerializable(typeof(DatabaseBackup))]
 [JsonSerializable(typeof(ErrorBody))]
-[JsonSerializable(typeof(ChangeFeedBody))]
 [JsonSerializable(typeof(DatabaseBody))]
 [JsonSerializable(typeof(DatabaseOwner))]
 [JsonSerializable(typeof(DatabaseUsage))]

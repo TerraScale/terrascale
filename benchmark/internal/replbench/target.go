@@ -56,8 +56,13 @@ func LoadTargets(path string) (Targets, error) {
 		return Targets{}, fmt.Errorf("%s: needs project, database and at least one region", path)
 	}
 	for name, r := range t.Regions {
+		// A Fly run's targets carry no key: the machines read it from the TS_BENCH_API_KEY Fly secret.
+		if r.Token == "" {
+			r.Token = os.Getenv("TS_BENCH_API_KEY")
+			t.Regions[name] = r
+		}
 		if r.URL == "" || r.Token == "" {
-			return Targets{}, fmt.Errorf("%s: region %s needs url and token", path, name)
+			return Targets{}, fmt.Errorf("%s: region %s needs url and a token (in the file or TS_BENCH_API_KEY)", path, name)
 		}
 	}
 	return t, nil

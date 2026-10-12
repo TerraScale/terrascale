@@ -59,7 +59,7 @@ if (options.Backup is null && environmentName != Environments.Development)
 // (for example Kestrel__Endpoints__X__Url): drop every configuration source.
 var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions { Args = [], EnvironmentName = environmentName });
 builder.Configuration.Sources.Clear();
-builder.WebHost.ConfigureKestrel(kestrel => kestrel.AddTerraBaseListeners(options, internalAddress));
+builder.WebHost.ConfigureKestrel(kestrel => kestrel.AddTerraBaseListeners(options, internalAddress, environmentName));
 // Per-request framework logs are metrics' job; keep the log stream for events. An unauthenticated request is answered 401
 // on purpose, so its challenge is not an event either.
 builder.Logging.AddTerraBaseLogging();

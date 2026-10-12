@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Connections.Features;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.OpenApi;
 using TerraBase.Configuration;
+using TerraBase.Engine.Cluster;
 using TerraBase.Features.Management;
 using TerraBase.Features.Pressure;
 
@@ -86,17 +87,46 @@ public static class Listeners
         return context.Features.Get<AnsweringRegion>()?.Region ?? context.RequestServices.GetRequiredService<TerraBaseOptions>().Region;
     }
 
+    // <region>.api.terrascale.tech: the host that pins a region (docs/terrabase/region-identity.md); api.terrascale.tech
+    // itself goes to the nearest region.
+    private const string RegionalHostSuffix = ".api.terrascale.tech";
+
+    // Whether host is <label>.api.terrascale.tech, and the region the label names (null when it names none).
+    // Case-insensitive; Kestrel's Host.Host has no port.
+    private static bool IsRegionalHost(string host, out string? region)
+    {
+        region = null;
+        if (!host.EndsWith(RegionalHostSuffix, StringComparison.OrdinalIgnoreCase) || host.Length == RegionalHostSuffix.Length)
+        {
+            return false;
+        }
+
+        var label = host[..^RegionalHostSuffix.Length].ToLowerInvariant();
+        region = TerraBaseOptions.IsRegion(label) ? label : null;
+        return true;
+    }
+
+    private static string RegionalHosts(IEnumerable<string> regions) => string.Join(", ", regions.Select(name => name + RegionalHostSuffix));
+
+    // The regions with a started machine of this app, this one's included, in order.
+    private static async Task<SortedSet<string>> ServedRegionsAsync(HttpContext context)
+    {
+        var view = await context.RequestServices.GetRequiredService<IMembership>().RefreshAsync(context.RequestAborted).ConfigureAwait(false);
+        return [.. view.Members.Concat(view.Elsewhere.IsDefault ? [] : view.Elsewhere).Select(member => member.Region).Append(RegionOf(context))];
+    }
+
     /// <summary>
     /// Asks Fly Proxy to replay a client-listener request in <paramref name="region"/> (<c>fly-replay</c>), unless Fly replayed
     /// it already: a replayed request is answered where it landed, so a disagreement between regions never loops. Callers
-    /// still write their 421, which a caller outside Fly Proxy receives.
+    /// still write their 421, which a caller outside Fly Proxy receives. With <paramref name="fallback"/> (<c>prefer_self</c>),
+    /// a replay that finds no machine there comes back here with <c>fly-replay-failed</c> instead of a proxy error.
     /// </summary>
-    public static void ReplayIn(HttpContext context, string region)
+    public static void ReplayIn(HttpContext context, string region, string? fallback = null)
     {
         ArgumentNullException.ThrowIfNull(context);
         if (ArrivedOn(context) == TerraBaseListener.Client && !context.Request.Headers.ContainsKey("Fly-Replay-Src"))
         {
-            context.Response.Headers["fly-replay"] = $"region={region}";
+            context.Response.Headers["fly-replay"] = fallback is null ? $"region={region}" : $"region={region};fallback={fallback}";
         }
     }
 
@@ -180,29 +210,42 @@ public static class Listeners
     }
 
     /// <summary>
-    /// Binds the internal listener on <paramref name="internalAddress"/>, then the public and the metrics listeners on every
-    /// interface, in that order.
+    /// Binds the internal listener on <paramref name="internalAddress"/>, then the public and the metrics listeners, in that
+    /// order. Those two bind every interface, except in local development (Development off Fly), where nothing but this
+    /// machine may reach them: loopback only.
     /// </summary>
-    public static void AddTerraBaseListeners(this KestrelServerOptions kestrel, TerraBaseOptions options, IPAddress internalAddress)
+    public static void AddTerraBaseListeners(this KestrelServerOptions kestrel, TerraBaseOptions options, IPAddress internalAddress, string environmentName)
     {
         ArgumentNullException.ThrowIfNull(kestrel);
         ArgumentNullException.ThrowIfNull(options);
+        var local = options.App is null && environmentName == Environments.Development;
         // HTTP/2 only: without TLS there is no ALPN, and gRPC needs HTTP/2 prior knowledge.
         kestrel.Listen(internalAddress, options.InternalPort, listen =>
         {
             listen.Protocols = HttpProtocols.Http2;
             listen.UseTerraBaseListener(TerraBaseListener.Internal);
         });
-        kestrel.ListenAnyIP(options.Port, listen =>
+        Bind(options.Port, TerraBaseListener.Client);
+        Bind(options.MetricsPort, TerraBaseListener.Metrics);
+
+        void Bind(int port, TerraBaseListener listener)
         {
-            listen.Protocols = HttpProtocols.Http1;
-            listen.UseTerraBaseListener(TerraBaseListener.Client);
-        });
-        kestrel.ListenAnyIP(options.MetricsPort, listen =>
-        {
-            listen.Protocols = HttpProtocols.Http1;
-            listen.UseTerraBaseListener(TerraBaseListener.Metrics);
-        });
+            void Configure(ListenOptions listen)
+            {
+                listen.Protocols = HttpProtocols.Http1;
+                listen.UseTerraBaseListener(listener);
+            }
+
+            // Not ListenLocalhost: it refuses port 0, which tests use.
+            if (local)
+            {
+                kestrel.Listen(IPAddress.Loopback, port, Configure);
+            }
+            else
+            {
+                kestrel.ListenAnyIP(port, Configure);
+            }
+        }
     }
 
     /// <summary>
@@ -212,7 +255,7 @@ public static class Listeners
     public static WebApplication UseTerraBaseListeners(this WebApplication app)
     {
         ArgumentNullException.ThrowIfNull(app);
-        app.Use((context, next) =>
+        app.Use(async (context, next) =>
         {
             var arrivedOn = ArrivedOn(context);
             if (arrivedOn == TerraBaseListener.Client)
@@ -224,8 +267,44 @@ public static class Listeners
                     context.Response.Headers["X-TerraBase-Region"] = region;
                     return Task.CompletedTask;
                 });
-                if (context.Request.Headers.TryGetValue("X-TerraScale-Region-Pin", out var pin)
-                    && (pin.Count != 1 || !string.Equals(pin[0], region, StringComparison.Ordinal)))
+                var hasPin = context.Request.Headers.TryGetValue("X-TerraScale-Region-Pin", out var pin);
+                if (IsRegionalHost(context.Request.Host.Host, out var host))
+                {
+                    // An explicit regional host fails closed: it is answered in its region or refused, never served by
+                    // another region (docs/terrabase/region-identity.md).
+                    if (host is null)
+                    {
+                        await BadRequests.WriteAsync(context, StatusCodes.Status421MisdirectedRequest, "misdirected_request",
+                            $"that host names no region; the regional hosts are {RegionalHosts(await ServedRegionsAsync(context))}", op: null);
+                        return;
+                    }
+
+                    // A header naming another region contradicts the host.
+                    if (hasPin && (pin.Count != 1 || !string.Equals(pin[0], host, StringComparison.Ordinal)))
+                    {
+                        context.Response.StatusCode = StatusCodes.Status421MisdirectedRequest;
+                        return;
+                    }
+
+                    if (!string.Equals(host, region, StringComparison.Ordinal))
+                    {
+                        // Fly already replayed it (it landed in the wrong region), Fly's replay found no machine there
+                        // (fly-replay-failed), or no machine of the region is started: the region is unavailable.
+                        var served = await ServedRegionsAsync(context);
+                        if (context.Request.Headers.ContainsKey("Fly-Replay-Src") || context.Request.Headers.ContainsKey("fly-replay-failed") || !served.Contains(host))
+                        {
+                            await BadRequests.WriteAsync(context, StatusCodes.Status503ServiceUnavailable, "region_unavailable",
+                                $"region {host} has no machine to answer; the regional hosts are {RegionalHosts(served)}", op: null);
+                            return;
+                        }
+
+                        // Without a machine there, Fly sends the request back here with fly-replay-failed instead of an error.
+                        ReplayIn(context, host, fallback: "prefer_self");
+                        context.Response.StatusCode = StatusCodes.Status421MisdirectedRequest;
+                        return;
+                    }
+                }
+                else if (hasPin && (pin.Count != 1 || !string.Equals(pin[0], region, StringComparison.Ordinal)))
                 {
                     if (pin.Count == 1 && TerraBaseOptions.IsRegion(pin[0]))
                     {
@@ -233,7 +312,7 @@ public static class Listeners
                     }
 
                     context.Response.StatusCode = StatusCodes.Status421MisdirectedRequest;
-                    return Task.CompletedTask;
+                    return;
                 }
             }
 
@@ -243,16 +322,16 @@ public static class Listeners
                 && context.Features.Get<LegacyManagementRoute>() is null)
             {
                 context.Response.StatusCode = StatusCodes.Status404NotFound;
-                return Task.CompletedTask;
+                return;
             }
 
             if (arrivedOn is not { } listener || !servedBy.Contains(listener))
             {
                 context.Response.StatusCode = StatusCodes.Status404NotFound;
-                return Task.CompletedTask;
+                return;
             }
 
-            return next(context);
+            await next(context);
         });
         return app;
     }
