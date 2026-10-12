@@ -8,7 +8,7 @@
     "build": "vite build && node ./scripts/inline-prerendered-css.mjs",
     "cf:login": "wrangler login",
     "cf:whoami": "wrangler whoami",
-    "cf:pages:dev": "npm run build && wrangler pages dev",
+    "cf:dev": "npm run build && wrangler dev",
     "prepare": "svelte-kit sync",
     "icons:sync": "node ./scripts/icons-sync.mjs",
     "world-map:sync": "node ./scripts/world-map-sync.mjs",
