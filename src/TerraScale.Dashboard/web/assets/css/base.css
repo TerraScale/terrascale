@@ -157,7 +157,7 @@ hr {
 }
 
 /* Navigation activity: Datastar sets body.ts-nav-pending while the next
-   document loads (see internal/ui/layouts.templ). Wait before revealing the
+   document loads (see UI/Slices/ShellDocument.cshtml). Wait before revealing the
    full-width bar so quick navigations never flash it. A bright shimmer shows
    an ongoing wait without implying a measured completion percentage. */
 body.ts-nav-pending::before {

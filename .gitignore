@@ -11,3 +11,5 @@ obj/
 src/TerraScale.Dashboard/web/static/js/
 # Written by release builds of scripts/build-css.mjs.
 src/TerraScale.Dashboard/web/static/css/*.br
+# Local platform stack state from the retired stack/ tool (certs, keys, data, .stack/env).
+/.stack/

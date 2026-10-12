@@ -17,7 +17,3 @@ Rerun it only when the map artwork changes:
 ```sh
 cd tools && npm ci && node generate-region-map.mjs
 ```
-
-The script still writes to the pre-move path `web/static/brand/region-map.svg`
-at the repository root. Move that file to
-`src/TerraScale.Dashboard/web/static/brand/` until the script is updated.

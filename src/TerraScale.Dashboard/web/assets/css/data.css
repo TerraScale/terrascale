@@ -226,7 +226,7 @@ code:not(pre code) {
   background: var(--ts-surface-3);
 }
 
-/* Charts rendered by internal/ui/charts. */
+/* Charts rendered by Features/Analytics (AnalyticsLinePlot.cs). */
 .ts-chart-shell {
   display: grid;
   gap: var(--ts-s2);

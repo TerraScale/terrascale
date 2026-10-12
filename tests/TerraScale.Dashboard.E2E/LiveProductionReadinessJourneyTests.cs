@@ -29,7 +29,7 @@ public sealed class LiveProductionReadinessJourneyTests
             RedirectStandardOutput = true,
             RedirectStandardError = true
         };
-        foreach (var argument in new[] { application, "--environment", "Production", "--urls", "http://127.0.0.1:0", "--contentRoot", root })
+        foreach (var argument in new[] { application, "--environment", "Production", "--urls", "http://127.0.0.1:0", "--contentRoot", project })
             start.ArgumentList.Add(argument);
 
         Process? process = null;

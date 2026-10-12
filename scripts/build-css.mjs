@@ -72,7 +72,7 @@ async function build() {
 }
 
 // Root-relative url()s name files served from web/static. They get the
-// content hash static.URL appends in Go, so the asset handler caches them as
+// content hash AssetUrls (Platform/Assets) appends, so the asset handler caches them as
 // immutable and a changed file is fetched under a new URL.
 function fingerprint(url) {
   if (!url.url.startsWith('/') || url.url.startsWith('//')) {

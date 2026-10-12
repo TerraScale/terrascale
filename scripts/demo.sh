@@ -6,6 +6,8 @@ cd "$(dirname "$0")/.."
 # .NET 10 file-app watch cannot reload its transient project after new files
 # appear. Materialize the same test host outside the repo for a stable watch
 # graph; the solution still contains exactly one committed application project.
+# This machine's tailnet name, so the demo is reachable over Tailscale.
+dashboard_demo_host=$(tailscale status --json | python3 -c 'import json, sys; print(json.load(sys.stdin)["Self"]["DNSName"].rstrip("."))')
 dashboard_demo_dir=$(mktemp -d)
 python3 - "$PWD" "$dashboard_demo_dir" <<'PY'
 from pathlib import Path
@@ -15,11 +17,12 @@ root, target = map(Path, sys.argv[1:])
 (target / 'Program.cs').write_text('''using System.Security.Cryptography;
 using System.Text;
 var root = args[0];
+var host = args[1];
 var port = 7500 + (int)(Convert.ToUInt32(Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(root)))[..8], 16) % 1000);
 var environment = new DemoEnvironment();
 await environment.InitializeAsync();
-await using var app = environment.CreateHost(root, port, $"http://{Environment.MachineName}.tail057f.ts.net:{port}");
-Console.WriteLine($"Test-only demo: http://{Environment.MachineName}.tail057f.ts.net:{port}; user@example.com / test-password; code 123456");
+await using var app = environment.CreateHost(root, port, $"http://{host}:{port}");
+Console.WriteLine($"Test-only demo: http://{host}:{port}; user@example.com / test-password; code 123456");
 await app.RunAsync();
 ''')
 (target / 'DemoHost.csproj').write_text(f'''<Project Sdk="Microsoft.NET.Sdk.Web">
@@ -38,7 +41,7 @@ node scripts/build-css.mjs --watch --minify &
 dashboard_demo_css_pid=$!
 node scripts/build-js.mjs --watch --minify &
 dashboard_demo_js_pid=$!
-setsid dotnet watch --project "$dashboard_demo_dir/DemoHost.csproj" --non-interactive --no-launch-profile -- "$PWD" --serve &
+setsid dotnet watch --project "$dashboard_demo_dir/DemoHost.csproj" --non-interactive --no-launch-profile -- "$PWD" "$dashboard_demo_host" --serve &
 dashboard_demo_host_pid=$!
 cleanup() {
   trap - EXIT INT TERM

@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 
 namespace TerraScale.Dashboard.E2E;
 
@@ -13,7 +14,7 @@ public sealed class HotReloadJourneyTests(DashboardE2EFixture fixture)
     public async Task CSharpAndCssChangesReachTheOpenTailscaleBrowserAndRestore()
     {
         var hash = Convert.ToUInt32(Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(fixture.Root)))[..8], 16);
-        var origin = new Uri($"http://{Environment.MachineName}.tail057f.ts.net:{7500 + hash % 1000}");
+        var origin = new Uri($"http://{await TailnetHostAsync()}:{7500 + hash % 1000}");
         var start = new ProcessStartInfo("bash")
         {
             WorkingDirectory = fixture.Root,
@@ -58,5 +59,17 @@ public sealed class HotReloadJourneyTests(DashboardE2EFixture fixture)
             }
             Console.WriteLine(await output + await errors);
         }
+    }
+
+    // scripts/demo.sh serves on this machine's tailnet name too.
+    private static async Task<string> TailnetHostAsync()
+    {
+        var start = new ProcessStartInfo("tailscale") { RedirectStandardOutput = true };
+        start.ArgumentList.Add("status");
+        start.ArgumentList.Add("--json");
+        using var process = Process.Start(start) ?? throw new IOException("Could not read this machine's Tailscale name.");
+        using var status = JsonDocument.Parse(await process.StandardOutput.ReadToEndAsync());
+        await process.WaitForExitAsync();
+        return status.RootElement.GetProperty("Self").GetProperty("DNSName").GetString()!.TrimEnd('.');
     }
 }
