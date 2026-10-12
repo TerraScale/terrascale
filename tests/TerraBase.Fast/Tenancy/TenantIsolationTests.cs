@@ -50,6 +50,11 @@ public sealed class TenantIsolationTests
         "GET /v1/management/documents/{collection}/by-key",
         "POST /v1/management/documents/{collection}/query",
         "GET /management/query-shapes",
+        // The platform explore API: platform admins only, over TerraScale's own databases, never a tenant's (PlatformExploreTests).
+        "GET /v1/platform/databases",
+        "GET /v1/platform/databases/{database}/collections",
+        "GET /v1/platform/databases/{database}/collections/{collection}/documents",
+        "GET /v1/platform/databases/{database}/collections/{collection}/documents/by-key",
     ];
 
     [Test]

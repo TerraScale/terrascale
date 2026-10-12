@@ -52,3 +52,29 @@ await database.CreateCollectionAsync("plans");
 
 Every route the SDK calls is listed in ts-dotnet's `contracts/terrabase/routes.json`; the monorepo's
 `TerraBaseSdkContractTests` fails when TerraBase stops serving one.
+
+## Explore API (platform admins)
+
+Read-only, on the public listener, for the dashboard's platform-admin pages. The dashboard forwards the signed-in user's
+ts-auth access token; TerraBase accepts it only when it is a user token (no `project_id`) whose `platform_role` claim is
+`admin` (ts-auth issues that claim to platform admins). Anyone else: 401 without a token, 403 with one. Only
+`platform-auth` and `platform-dashboard` resolve; any other database answers 404.
+
+| Route | Answer |
+|---|---|
+| `GET /v1/platform/databases` | `{items: [{name, id, homeRegion, replicaRegions}]}` |
+| `GET /v1/platform/databases/{database}/collections` | Up to 200 collections in name order |
+| `GET /v1/platform/databases/{database}/collections/{collection}/documents?limit=&cursor=` | A page of documents |
+| `GET /v1/platform/databases/{database}/collections/{collection}/documents/by-key?id=` | One document |
+
+- **Redaction.** Before a document leaves, every field whose name (lowercased, without `_` and `-`) contains `secret`,
+  `password`, `hash`, `digest`, `sealed`, `box`, `private`, `token`, `mac`, `cipher`, `nonce`, `salt`, `otp`,
+  `recovery`, `credential` or `masterkey`, or is exactly `d`, `p`, `q`, `dp`, `dq`, `qi`, `k`, `key`, `code`, `codes` or
+  `pin`, reads `"[redacted]"`, at any depth. ts-auth's sealed signing keys (`secretBox`), private key parameters and
+  password hashes never leave. Over-redaction is the intended failure.
+- **Audit.** Every read logs `Platform admin <user id> read <database>/<collection>/<document id>` (never the content).
+  A durable audit collection follows once the catalog is leaderless (R10a); today a catalog follower cannot write one.
+- **No writes.** There is no write route; changes go through the owning service.
+
+The ts-dotnet SDK client for these routes ships with the dashboard work (TerraScale/ts-dotnet); its routes join
+`contracts/terrabase/routes.json` and the monorepo's `TerraBaseSdkContractTests` then checks them too.
