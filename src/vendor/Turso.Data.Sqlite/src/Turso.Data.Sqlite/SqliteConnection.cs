@@ -655,30 +655,42 @@ public partial class SqliteConnection : DbConnection
         if (IsManagedConnection || Transaction is not { IsCompleted: false, WasRolledBackExternally: false } transaction)
             return;
 
-        using (var begin = TursoBindings.PrepareStatement(DatabaseHandle, "BEGIN;"))
+        // TerraScale: the probe runs while the caller's error propagates and must never replace it: a probe that fails
+        // leaves the transaction as it is.
+        try
         {
-            try
+            using (var begin = PrepareProbe("BEGIN;"))
             {
-                while (TursoBindings.Read(begin))
+                try
                 {
+                    while (TursoBindings.Read(begin))
+                    {
+                    }
+                }
+                catch (TursoException)
+                {
+                    // Still inside the transaction ("cannot start a transaction within a transaction").
+                    return;
                 }
             }
-            catch (TursoException)
-            {
-                // Still inside the transaction ("cannot start a transaction within a transaction").
-                return;
-            }
-        }
 
-        using (var rollback = TursoBindings.PrepareStatement(DatabaseHandle, "ROLLBACK;"))
-        {
+            // The BEGIN succeeded, so the transaction had ended: mark it before the probe's own ROLLBACK, which may fail.
+            transaction.MarkCompletedExternally(rolledBack: true);
+            using var rollback = PrepareProbe("ROLLBACK;");
             while (TursoBindings.Read(rollback))
             {
             }
         }
-
-        transaction.MarkCompletedExternally(rolledBack: true);
+        catch (Exception)
+        {
+        }
     }
+
+    // TerraScale: tests replace how the transaction probe prepares its statements, to make the probe fail.
+    internal Func<string, TursoStatementHandle>? ProbeStatements { get; set; }
+
+    private TursoStatementHandle PrepareProbe(string sql)
+        => ProbeStatements?.Invoke(sql) ?? TursoBindings.PrepareStatement(DatabaseHandle, sql);
 
     internal TursoDatabaseHandle DatabaseHandle
     {

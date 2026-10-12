@@ -1,0 +1,83 @@
+From d15f4333951ee999cd0556f01a63ddeb0e822383 Mon Sep 17 00:00:00 2001
+From: mariogk <mariogk@terrascale.tech>
+Date: Mon, 12 Oct 2026 11:44:00 -0300
+Subject: [PATCH] Turso driver: the transaction probe never replaces the
+ caller's error
+
+CheckTransactionAfterFailure (patch 0003) runs inside the catch blocks
+of the failing call, before its error is rethrown: if the probe itself
+failed (preparing its BEGIN, or its ROLLBACK after a successful BEGIN),
+its exception replaced the caller's. The probe now swallows its own
+failures, leaving the transaction as it is, and marks a transaction it
+found ended before running its ROLLBACK, so a failing ROLLBACK cannot
+leave it unmarked. Probe statements are prepared through a per-connection
+hook (ProbeStatements) that tests set to make the probe fail.
+
+Test: TransactionTests.AFailingProbeNeverReplacesTheOriginalError (BEGIN;
+and ROLLBACK; failing): before, both got the probe's exception instead of
+the read's.
+---
+ src/Turso.Data.Sqlite/SqliteConnection.cs | 38 +++++++++++++++--------
+ 1 file changed, 25 insertions(+), 13 deletions(-)
+
+diff --git a/src/Turso.Data.Sqlite/SqliteConnection.cs b/src/Turso.Data.Sqlite/SqliteConnection.cs
+index c156d9ba..ed0f438c 100644
+--- a/src/Turso.Data.Sqlite/SqliteConnection.cs
++++ b/src/Turso.Data.Sqlite/SqliteConnection.cs
+@@ -655,31 +655,43 @@ public partial class SqliteConnection : DbConnection
+         if (IsManagedConnection || Transaction is not { IsCompleted: false, WasRolledBackExternally: false } transaction)
+             return;
+ 
+-        using (var begin = TursoBindings.PrepareStatement(DatabaseHandle, "BEGIN;"))
++        // TerraScale: the probe runs while the caller's error propagates and must never replace it: a probe that fails
++        // leaves the transaction as it is.
++        try
+         {
+-            try
++            using (var begin = PrepareProbe("BEGIN;"))
+             {
+-                while (TursoBindings.Read(begin))
++                try
+                 {
++                    while (TursoBindings.Read(begin))
++                    {
++                    }
++                }
++                catch (TursoException)
++                {
++                    // Still inside the transaction ("cannot start a transaction within a transaction").
++                    return;
+                 }
+             }
+-            catch (TursoException)
+-            {
+-                // Still inside the transaction ("cannot start a transaction within a transaction").
+-                return;
+-            }
+-        }
+ 
+-        using (var rollback = TursoBindings.PrepareStatement(DatabaseHandle, "ROLLBACK;"))
+-        {
++            // The BEGIN succeeded, so the transaction had ended: mark it before the probe's own ROLLBACK, which may fail.
++            transaction.MarkCompletedExternally(rolledBack: true);
++            using var rollback = PrepareProbe("ROLLBACK;");
+             while (TursoBindings.Read(rollback))
+             {
+             }
+         }
+-
+-        transaction.MarkCompletedExternally(rolledBack: true);
++        catch (Exception)
++        {
++        }
+     }
+ 
++    // TerraScale: tests replace how the transaction probe prepares its statements, to make the probe fail.
++    internal Func<string, TursoStatementHandle>? ProbeStatements { get; set; }
++
++    private TursoStatementHandle PrepareProbe(string sql)
++        => ProbeStatements?.Invoke(sql) ?? TursoBindings.PrepareStatement(DatabaseHandle, sql);
++
+     internal TursoDatabaseHandle DatabaseHandle
+     {
+         get
