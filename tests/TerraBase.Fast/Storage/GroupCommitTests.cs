@@ -8,6 +8,7 @@ using TerraBase.Engine;
 using TerraBase.Engine.Sqlite;
 using TerraBase.Fast.Documents;
 using TerraBase.Fast.Management;
+using TerraBase.Features.Replication;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Storage;
@@ -391,23 +392,125 @@ public sealed class GroupCommitTests
     }
 
     [Test]
-    public async Task A_failure_after_a_catalog_group_commit_still_fails_the_write()
+    [Arguments(true)]
+    [Arguments(false)]
+    public async Task A_failure_after_a_catalog_group_commit_still_fails_the_write(bool insideCommit)
     {
         await using var api = await DocumentApi.StartAsync();
         var engine = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
         var system = (SqliteDatabaseStore)await engine.OpenSystemDatabaseAsync(CancellationToken.None);
-        system.AfterGroupCommit = () => throw new IOException("the test fails the work after the commit");
+        static void Fail()
+        {
+            throw new IOException("the test fails the work after the commit");
+        }
+
+        if (insideCommit)
+        {
+            system.AfterSqliteCommit = Fail;
+        }
+        else
+        {
+            system.AfterGroupCommit = Fail;
+        }
+
         var id = DocumentApi.NewId();
+        var sequence = system.CommitSequence;
+        var feed = system.WaitForCommitAsync(sequence, CancellationToken.None);
 
         // The catalog fails closed: a write whose commit landed is still answered as a failure.
         await Assert.ThrowsAsync<IOException>(async () => await system.WriteAsync(
             (transaction, token) => transaction.PutAsync("group_commit_probe", id, """{"n":1}"""u8.ToArray(), token), _ => true, CancellationToken.None));
-        system.AfterGroupCommit = null;
+
+        // It stays consistent: the commit count and the catalog feed's wake-up follow the commit. Every other catalog commit
+        // meanwhile fails at the hook too, so none of them can stand in for this one.
+        await feed.WaitAsync(TimeSpan.FromSeconds(10));
+        await Assert.That(system.CommitSequence).IsGreaterThan(sequence);
+        system.AfterSqliteCommit = system.AfterGroupCommit = null;
         var read = await system.BeginTransactionAsync(write: false, CancellationToken.None);
         await using (read)
         {
             await Assert.That(await read.GetAsync("group_commit_probe", id, CancellationToken.None)).IsNotNull();
         }
+    }
+
+    [Test]
+    public async Task A_failure_right_after_the_commit_still_wakes_what_waits_for_commits()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        var store = await StoreAsync(api);
+        var sequence = store.CommitSequence;
+        var committed = store.WaitForCommitAsync(sequence, CancellationToken.None);
+        var tail = api.Server.Services.GetRequiredService<IChangeGroupSource>().ChangedAsync(CancellationToken.None);
+        store.AfterSqliteCommit = () => throw new IOException("the test fails the work right after the commit");
+
+        var written = await api.PutAsync(DocumentApi.NewId(), new { n = 1 });
+
+        // No later commit: the database's commit count and the peer streams' wake-up still follow this one.
+        await Assert.That(written.Status).IsEqualTo(HttpStatusCode.Created);
+        await committed.WaitAsync(TimeSpan.FromSeconds(10));
+        await tail.WaitAsync(TimeSpan.FromSeconds(10));
+        await Assert.That(store.CommitSequence).IsGreaterThan(sequence);
+        store.AfterSqliteCommit = null;
+    }
+
+    [Test]
+    public async Task A_failure_right_after_creating_a_collection_still_serves_the_new_collection()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        var store = await StoreAsync(api);
+        var id = DocumentApi.NewId();
+        // Loads the collection names the database serves, without the new one.
+        await Assert.That((await api.GetAsync(id)).Code).IsEqualTo("not_found");
+        store.AfterSqliteCommit = () => throw new IOException("the test fails the work right after the commit");
+
+        var created = await api.SendAsync(HttpMethod.Post, api.Collections, new { name = "fresh" });
+        store.AfterSqliteCommit = null;
+
+        // Not a group commit: it answers the unknown outcome. With no later commit, the new collection is served.
+        await Assert.That(created.Status).IsEqualTo(HttpStatusCode.InternalServerError);
+        var read = await api.SendAsync(HttpMethod.Get, $"{api.Collections}/fresh/documents/by-key?id={id}");
+        await Assert.That((read.Status, read.Code)).IsEqualTo((HttpStatusCode.NotFound, "not_found"));
+    }
+
+    [Test]
+    public async Task A_failure_right_after_an_index_build_still_moves_the_statistics_generation()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        var store = await StoreAsync(api);
+        var generation = store.Statistics;
+        var transaction = await store.BeginTransactionAsync(write: true, CancellationToken.None);
+        await using (transaction)
+        {
+            await Assert.That(await transaction.CreateIndexAsync(
+                new IndexDefinition("items_id", DocumentApi.Collection, [DocumentField.Id]), CancellationToken.None)).IsTrue();
+            store.AfterSqliteCommit = () => throw new IOException("the test fails the work right after the commit");
+            await Assert.ThrowsAsync<IOException>(async () => await transaction.CommitAsync(CancellationToken.None));
+            store.AfterSqliteCommit = null;
+        }
+
+        // Sessions opened before the ANALYZE are closed instead of pooled, so later queries plan with its statistics.
+        await Assert.That(store.Statistics).IsEqualTo(generation + 1);
+    }
+
+    // Client databases keep their tenant's version scope; only a catalog follower's system database adopts an incarnation.
+    [Test]
+    public async Task A_failure_right_after_a_catalog_replica_commit_still_adopts_its_incarnation()
+    {
+        await using var server = await TerraBaseTestServer.StartAsync();
+        var engine = server.Services.GetRequiredService<SqliteStorageEngine>();
+        var system = (SqliteDatabaseStore)await engine.OpenSystemDatabaseAsync(CancellationToken.None);
+        var origin = Ulid.NewUlid();
+        var replica = await system.BeginReplicaAsync(CancellationToken.None);
+        await using (replica)
+        {
+            await replica.ResetReplicaAsync(origin.ToByteArray(), CancellationToken.None);
+            system.AfterSqliteCommit = () => throw new IOException("the test fails the work right after the commit");
+            // The catalog fails closed, but its ETags already use the incarnation the committed file holds.
+            await Assert.ThrowsAsync<IOException>(async () => await replica.CommitAsync(CancellationToken.None));
+            system.AfterSqliteCommit = null;
+        }
+
+        await Assert.That(system.Incarnation).IsEqualTo(origin);
     }
 
     [Test]

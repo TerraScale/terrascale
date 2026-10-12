@@ -1,6 +1,7 @@
 using System.Buffers;
 using System.Globalization;
 using System.Runtime.CompilerServices;
+using System.Runtime.ExceptionServices;
 using System.Text;
 using System.Text.Json;
 using Turso.Data.Sqlite;
@@ -74,6 +75,9 @@ internal sealed partial class SqliteStorageTransaction(
 
     /// <summary>The offset this transaction committed at, set as soon as its SQLite commit succeeded; null before.</summary>
     internal long? Committed { get; private set; }
+
+    /// <summary>Whether the state readers see (collection names, the incarnation) followed the commit; false before it.</summary>
+    internal bool Settled { get; private set; }
 
     // Taken when the transaction begins: a catalog follower adopting its primary's incarnation never mixes it into a
     // snapshot read before.
@@ -1001,25 +1005,7 @@ internal sealed partial class SqliteStorageTransaction(
 
                 cancellationToken.ThrowIfCancellationRequested();
                 transaction.Commit();
-                // From here on the write is in the database: a failure below must not answer it as not committed.
                 Committed = offset;
-                store.AfterSqliteCommit?.Invoke();
-                if (_collectionsChanged)
-                {
-                    store.ForgetCollections();
-                }
-
-                if (_statisticsChanged)
-                {
-                    store.StatisticsChanged();
-                }
-
-                if (_adoptedIncarnation is { } adopted)
-                {
-                    // Before the commit wakes waiters: readers see the adopted documents with their incarnation.
-                    store.AdoptIncarnation(adopted);
-                }
-
                 return offset;
             }
             catch
@@ -1029,17 +1015,60 @@ internal sealed partial class SqliteStorageTransaction(
             }
         }, cancellationToken).ConfigureAwait(false);
 
+        // The write is in the database: every step below runs, each even when one before it failed.
+        // Rule: a failed wake-up still answers committed; reader state that could not follow the commit answers unknown.
+        Exception? failure = null;
+        Follow(store.AfterSqliteCommit, ref failure);
+        var settled = true;
+        if (_collectionsChanged)
+        {
+            settled &= Follow(store.ForgetCollections, ref failure);
+        }
+
+        if (_adoptedIncarnation is { } adopted)
+        {
+            // Before the commit wakes waiters: readers see the adopted documents with their incarnation.
+            settled &= Follow(() => store.AdoptIncarnation(adopted), ref failure);
+        }
+
+        Settled = settled;
+        if (_statisticsChanged)
+        {
+            // Only query plans depend on it: a session opened before the ANALYZE plans without the new statistics.
+            Follow(store.StatisticsChanged, ref failure);
+        }
+
         if (_offset is not null || _replicaChanged)
         {
-            committed?.Invoke();
+            Follow(committed, ref failure);
         }
 
         if (sequence is { } appended)
         {
-            changesCommitted!(appended);
+            Follow(() => changesCommitted!(appended), ref failure);
+        }
+
+        if (failure is not null)
+        {
+            ExceptionDispatchInfo.Throw(failure);
         }
 
         return offset;
+    }
+
+    // Runs one step after the commit; its failure is kept for the caller instead of skipping the steps after it.
+    private static bool Follow(Action? step, ref Exception? failure)
+    {
+        try
+        {
+            step?.Invoke();
+            return true;
+        }
+        catch (Exception error)
+        {
+            failure ??= error;
+            return false;
+        }
     }
 
     // Savepoints are lazy: SAVEPOINT runs with the write's first statement and RELEASE with the next write's, so a

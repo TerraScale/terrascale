@@ -316,16 +316,23 @@ internal sealed partial class SqliteDatabaseStore(
 
     private void Committed()
     {
-        committed?.Invoke();
-        TaskCompletionSource signal;
-        lock (_commits)
+        try
         {
-            _sequence++;
-            signal = _signal;
-            _signal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            committed?.Invoke();
         }
+        finally
+        {
+            // The count (a cache key of StorageQuota) moves and waiters wake even when the engine's notification failed.
+            TaskCompletionSource signal;
+            lock (_commits)
+            {
+                _sequence++;
+                signal = _signal;
+                _signal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            }
 
-        signal.SetResult();
+            signal.SetResult();
+        }
     }
 
     // Takes the writer, waiting at most 30 s as busy_timeout did before this wait replaced it in-process. A wait of
@@ -559,6 +566,9 @@ internal sealed partial class SqliteDatabaseStore(
     /// <summary>Runs inside a transaction's CommitAsync right after its SQLite commit succeeded; integration tests fail it.</summary>
     internal Action? AfterSqliteCommit { get; set; }
 
+    /// <summary>The generation <see cref="StatisticsChanged"/> moves, for tests.</summary>
+    internal int Statistics => Volatile.Read(ref _statistics);
+
     /// <summary>Writes waiting for the next batch, for tests.</summary>
     internal int QueuedWrites
     {
@@ -739,18 +749,18 @@ internal sealed partial class SqliteDatabaseStore(
                 }
             }
         }
-        catch (Exception error) when (!IsSystem && transaction?.Committed is { } committedAt)
+        catch (Exception error) when (!IsSystem && transaction is { Committed: { } committedAt, Settled: true })
         {
-            // A client database's batch committed: its writes are answered as committed, not as a failure a client would
-            // retry. What failed is the work after the SQLite commit (the rest of CommitAsync, disposing the transaction,
-            // releasing the writer).
+            // A client database's batch committed and what readers see followed it: its writes are answered as committed,
+            // not as a failure a client would retry. What failed is other work after the SQLite commit (a wake-up, disposing
+            // the transaction, releasing the writer).
             offset = committedAt;
             logger?.ZLogError(error, $"A group commit of database {name:@Database} committed, but the work after its commit failed; its writes are answered as committed");
         }
         catch (Exception error)
         {
-            // Nothing of this batch committed, or it is the catalog's, which fails closed: every write not answered yet
-            // fails with it.
+            // Nothing of this batch committed, what readers see is unknown, or it is the catalog's, which fails closed: every
+            // write not answered yet fails with it.
             batch.ForEach(write => write.Fail(error));
             return [];
         }
