@@ -70,7 +70,8 @@ public sealed class CorruptChangeLogTests
 
     // Two databases share gru's stream to sjc. The one gru lists first gets a write whose state row is cut in half while sjc
     // is unlisted ("damaged"; "intact" leaves it alone: the control); the other gets a clean write. Once sjc is listed again,
-    // the clean write reaches it, and the damaged one is never applied there in any form.
+    // the clean write reaches it; the damaged one is never applied there in any form, and gru counts the refused reads and
+    // reports the held database in send_lag.
     [Test]
     [Arguments("damaged")]
     [Arguments("intact")]
@@ -110,10 +111,14 @@ public sealed class CorruptChangeLogTests
         if (firstWrite == "damaged")
         {
             await Assert.That(await sjc.ReadAsync(first, "damaged")).IsNull();
+            // The held database shows: its failed reads are counted, and its send_lag grows while the write is held.
+            await Assert.That(await gru.UntilMetricAsync("terrabase_replication_unreadable_reads_total", value => value >= 1, "sjc")).IsTrue();
+            await Assert.That(await gru.UntilMetricAsync("terrabase_replication_send_lag_seconds", value => value > 0, "sjc")).IsTrue();
         }
         else
         {
             await Assert.That(await sjc.UntilAsync(first, "damaged", """{"n":1}""")).IsTrue();
+            await Assert.That(await gru.UntilMetricAsync("terrabase_replication_unreadable_reads_total", _ => false, absent: true)).IsTrue();
         }
     }
 
@@ -452,6 +457,31 @@ public sealed class CorruptChangeLogTests
                 }
 
                 await Task.Delay(100);
+            }
+
+            return false;
+        }
+
+        // Whether a sample of the metric (with the label, when given) satisfies `holds` within the deadline, or with `absent`,
+        // whether the metric has no sample.
+        public async Task<bool> UntilMetricAsync(string name, Func<double, bool> holds, string? label = null, bool absent = false)
+        {
+            using var metrics = new HttpClient { BaseAddress = Api.Server.MetricsAddress };
+            var deadline = DateTime.UtcNow + Deadline;
+            while (DateTime.UtcNow < deadline)
+            {
+                var line = (await metrics.GetStringAsync(new Uri("/metrics", UriKind.Relative))).Split('\n')
+                    .FirstOrDefault(line => line.StartsWith(name, StringComparison.Ordinal) && !line.StartsWith(name + "_", StringComparison.Ordinal)
+                        && (label is null || line.Contains(label, StringComparison.Ordinal)));
+                // name{labels} value [timestamp]
+                var sample = line?[(Math.Max(line.LastIndexOf('}'), name.Length - 1) + 1)..].Trim().Split(' ')[0];
+                if (absent ? line is null
+                    : double.TryParse(sample, System.Globalization.CultureInfo.InvariantCulture, out var value) && holds(value))
+                {
+                    return true;
+                }
+
+                await Task.Delay(200);
             }
 
             return false;
