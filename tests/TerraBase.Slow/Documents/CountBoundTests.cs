@@ -34,7 +34,7 @@ public sealed class CountBoundTests
             await connection.OpenAsync();
             await using var command = connection.CreateCommand();
             command.CommandText = $$"""
-                INSERT INTO collections VALUES ('items', 0, 1, $collectionId);
+                INSERT INTO collections VALUES ('items', 0, $collectionId);
                 CREATE TABLE "items" (id TEXT NOT NULL UNIQUE, doc TEXT NOT NULL);
                 WITH RECURSIVE rows(n) AS (VALUES(1) UNION ALL SELECT n + 1 FROM rows WHERE n < 100001),
                     bodies(n, body) AS (SELECT n, CASE WHEN n = 100001 THEN $last ELSE '{"n":1}' END FROM rows)
