@@ -7,6 +7,7 @@
       "src/vendor/Turso.Data.Sqlite/src/Turso.Raw/Turso.Raw.csproj",
       "src/vendor/Turso.Data.Sqlite/src/Turso.Data/Turso.Data.csproj",
       "src/vendor/Turso.Data.Sqlite/src/Turso.Data.Sqlite/Turso.Data.Sqlite.csproj",
+      "tests/Turso.Data.Sqlite.Tests/Turso.Data.Sqlite.Tests.csproj",
       "tests/TerraBase.Fast/TerraBase.Fast.csproj",
       "tests/TerraBase.Slow/TerraBase.Slow.csproj",
       "tests/TerraBase.E2E/TerraBase.E2E.csproj"
