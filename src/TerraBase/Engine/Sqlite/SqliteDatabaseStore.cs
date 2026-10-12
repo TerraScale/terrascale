@@ -453,14 +453,20 @@ internal sealed partial class SqliteDatabaseStore(
     /// <summary>Releases what <see cref="BeginTransactionAsync"/> took; called once per transaction.</summary>
     internal void End(bool write, bool ownsAdmission)
     {
-        if (write)
+        try
         {
-            ReleaseWriter();
+            if (write)
+            {
+                // Closing a stale writer connection can throw; the admission is released all the same.
+                ReleaseWriter();
+            }
         }
-
-        if (ownsAdmission)
+        finally
         {
-            io.Release();
+            if (ownsAdmission)
+            {
+                io.Release();
+            }
         }
     }
 

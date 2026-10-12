@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Data;
 using System.Net;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
@@ -8,6 +9,8 @@ using TerraBase.Engine;
 using TerraBase.Engine.Sqlite;
 using TerraBase.Fast.Documents;
 using TerraBase.Fast.Management;
+using TerraBase.Features.Management.Usage;
+using TerraBase.Tenancy;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Storage;
@@ -339,6 +342,55 @@ public sealed class GroupCommitTests
     }
 
     [Test]
+    public async Task A_writer_close_that_fails_after_a_commit_still_releases_the_writer_and_the_admission()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        var store = await StoreAsync(api);
+        var engine = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
+        await store.WithWriterAsync(writer =>
+        {
+            writer.Connection.StateChange += (_, change) =>
+            {
+                if (change.CurrentState == ConnectionState.Closed)
+                {
+                    throw new IOException("the test fails closing the writer connection");
+                }
+            };
+            return true;
+        }, "a test", CancellationToken.None);
+        // As after an index build: the writer connection is stale, so the next write transaction closes it as it ends.
+        store.StatisticsChanged();
+
+        // The collection commits, then closing the writer fails: the answer stays the failure it was.
+        var created = await api.SendAsync(HttpMethod.Post, api.Collections, new { name = "more" });
+        await Assert.That(created.Status).IsEqualTo(HttpStatusCode.InternalServerError);
+
+        // The transaction's admission came back, and the next writer opens a connection of its own.
+        await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(engine.Io.Admitted == 0), TimeSpan.FromSeconds(10));
+        await Assert.That((await api.SendAsync(HttpMethod.Get, $"{api.Collections}/more")).Status).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That((await api.PutAsync(DocumentApi.NewId(), new { n = 1 })).Status).IsEqualTo(HttpStatusCode.Created);
+    }
+
+    [Test]
+    public async Task Accounting_that_fails_after_a_commit_answers_the_committed_write_and_logs_it()
+    {
+        var logs = new CapturedLogs();
+        await using var api = await DocumentApi.StartAsync(services: services => services
+            .AddSingleton<ILoggerProvider>(logs)
+            .AddSingleton<IUsageMeter>(provider => new FailingWriteCounts(provider.GetRequiredService<UsageMeter>())));
+        var id = DocumentApi.NewId();
+
+        var written = await api.PutAsync(id, new { n = 1 });
+
+        await Assert.That(written.Status).IsEqualTo(HttpStatusCode.Created);
+        await Assert.That(written.Json.GetProperty("offset").GetString()).IsNotEqualTo("0");
+        var read = await api.GetAsync(id);
+        await Assert.That(read.Status).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(read.Json.GetProperty("document").GetProperty("n").GetInt32()).IsEqualTo(1);
+        await Assert.That(logs.Messages.Any(message => message.Contains("Accounting a committed write", StringComparison.Ordinal))).IsTrue();
+    }
+
+    [Test]
     public async Task A_storage_thread_busy_with_a_long_read_does_not_hold_up_writes()
     {
         await using var api = await DocumentApi.StartAsync(settings => settings["storage-threads"] = "1");
@@ -367,6 +419,33 @@ public sealed class GroupCommitTests
     {
         var engine = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
         return (SqliteDatabaseStore)(await engine.OpenDatabaseAsync(await api.TenantOfAsync(), CancellationToken.None))!;
+    }
+
+    // Fails counting committed writes, as accounting after a commit may; everything else reaches the real meter.
+    private sealed class FailingWriteCounts(IUsageMeter inner) : IUsageMeter
+    {
+        public void RecordRead(TenantContext database) => inner.RecordRead(database);
+
+        public void RecordWrites(TenantContext database, int writes) => throw new InvalidOperationException("the test fails counting committed writes");
+
+        public void RecordOperation(TenantContext database, string kind, int count) => inner.RecordOperation(database, kind, count);
+
+        public void RecordRequest(TenantContext database, string method, int status, TimeSpan elapsed, long received, long sent) =>
+            inner.RecordRequest(database, method, status, elapsed, received, sent);
+
+        public void RecordClientBytes(TenantContext database, long received, long sent, DateTimeOffset? transferredAt = null) =>
+            inner.RecordClientBytes(database, received, sent, transferredAt);
+
+        public IDisposable TrackActive(Action report) => inner.TrackActive(report);
+
+        public void RecordReplicationBytes(TenantContext database, string peerRegion, string kind, bool sent, long bytes) =>
+            inner.RecordReplicationBytes(database, peerRegion, kind, sent, bytes);
+
+        public void RecordReplicatedOperations(TenantContext database, string peerRegion, int operations) =>
+            inner.RecordReplicatedOperations(database, peerRegion, operations);
+
+        public void RecordReplicationState(TenantContext database, string peerRegion, long remaining, bool diverged, double? convergenceMs = null) =>
+            inner.RecordReplicationState(database, peerRegion, remaining, diverged, convergenceMs);
     }
 
     // The application's log lines, as an operator would read them.

@@ -1304,8 +1304,14 @@ internal sealed partial class SqliteStorageTransaction(
         }
         finally
         {
-            store.End(write, ownsAdmission);
-            _gate.Release();
+            try
+            {
+                store.End(write, ownsAdmission);
+            }
+            finally
+            {
+                _gate.Release();
+            }
         }
     }
 

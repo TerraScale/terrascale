@@ -13,11 +13,13 @@ using TerraBase.Features.Stats;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
+using ZLogger;
 
 namespace TerraBase.Features.Documents;
 
 internal sealed partial class DocumentService(IStorageEngine engine, TimeProvider time, DocumentCache cache, IUsageMeter usage,
-    IQueryShapeTracker shapes, IMemoryBudget memory, IMeterFactory meters, IStorageQuota quota, IDatabaseStats stats)
+    IQueryShapeTracker shapes, IMemoryBudget memory, IMeterFactory meters, IStorageQuota quota, IDatabaseStats stats,
+    ILogger<DocumentService> logger)
     : IDocumentService, ISystemDocumentReader
 {
     // assert_count examines at most this many documents.
@@ -384,6 +386,22 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
             return outcome;
         }
 
+        try
+        {
+            RecordCommitted(database, operations, admission, delta);
+        }
+        catch (Exception error)
+        {
+            // The write committed: failed accounting after it is logged, never answered as a failed write.
+            logger.ZLogError(error, $"Accounting a committed write to database {database.DatabaseId:@Database} failed; the write is answered as committed");
+        }
+
+        return written with { Offset = offset };
+    }
+
+    // Quota, usage and statistics of a committed client write.
+    private void RecordCommitted(TenantContext database, IReadOnlyList<DocumentOperation> operations, StorageQuotaLease admission, long delta)
+    {
         var writes = operations.Count(operation => operation is PutOperation or PatchOperation or DeleteOperation);
         if (writes > 0)
         {
@@ -408,8 +426,6 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
                 usage.RecordOperation(database, group.Key, group.Count());
             }
         }
-
-        return written with { Offset = offset };
     }
 
     // Every operation of one client write; the commit offset is filled in once its batch committed.
