@@ -5,6 +5,7 @@ using System.Text.Json;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
+using TerraBase.Features.Backup;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using ZLogger;
@@ -25,13 +26,13 @@ public interface ICatalogGate
 
 /// <summary>
 /// The restore gate. Closed at every start. Opens once a forced anti-entropy pull of <c>_system</c> (every differing bucket,
-/// at once) completed since this start from every other machine the member directory lists as started, and from at least one
-/// machine of every other region the catalog records (<see cref="Members"/>), which covers a stopped machine that holds the
-/// only copy of a change. No machine to pull from is unknown, not proof of a current catalog: the gate stays closed. Two
-/// ways out of that, and nothing else: the cell is a single machine by configuration (no member directory, nothing listed,
-/// no other region recorded), or an operator requests the bootstrap of a new cluster (<see cref="BootstrapFile"/>), which
-/// succeeds only on a genesis catalog. A failed directory read or an unreachable machine keeps it closed, however long,
-/// unless an operator opens it for one start (<see cref="OpenFile"/>, audited).
+/// at once) completed since this start from every other machine the member directory lists as started and every machine the
+/// catalog records (<see cref="Members"/>), which covers a stopped machine that holds the only copy of a change; and only when
+/// the catalog is not behind the head this machine anchored in its backup bucket (a restore of an older copy, which no pull
+/// among restored peers can fix). Nothing to pull from is unknown, not proof of a current catalog: the gate stays closed.
+/// Ways out without pulls: the cell is a single machine by configuration (no member directory, nothing listed or recorded),
+/// an operator requests the bootstrap of a new cluster (<see cref="BootstrapFile"/>, genesis catalogs only), or an operator
+/// opens it for one start (<see cref="OpenFile"/>, audited). Nothing else opens it, however long.
 /// </summary>
 internal sealed class CatalogGate : BackgroundService, ICatalogGate
 {
@@ -60,6 +61,9 @@ internal sealed class CatalogGate : BackgroundService, ICatalogGate
     private const int MaxReasonBytes = 500;
     private static readonly TimeSpan Pass = TimeSpan.FromSeconds(1);
 
+    // How often an open machine moves its restore anchor to its catalog's head.
+    private static readonly TimeSpan AnchorEvery = TimeSpan.FromSeconds(15);
+
     // The first pass runs before the listeners start; past this, the machine starts closed and the passes go on.
     private static readonly TimeSpan StartBudget = TimeSpan.FromSeconds(5);
 
@@ -73,27 +77,46 @@ internal sealed class CatalogGate : BackgroundService, ICatalogGate
     private readonly TimeProvider _time;
     private readonly ILogger<CatalogGate> _logger;
     private readonly HashSet<string> _verified = [with(StringComparer.Ordinal)];
-    private readonly HashSet<string> _verifiedRegions = [with(StringComparer.Ordinal)];
+    private readonly IChangeGroupSource _source;
+    private readonly IObjectStore? _anchors;
+    private readonly DataKeys? _keys;
     private readonly SemaphoreSlim _pass = new(1, 1);
     private volatile bool _open;
 
+    // The catalog's change log head at this start, before any pull: what the restore anchor is compared with.
+    private long _startHead;
+
+    // Whether the anchor shows this catalog restored to an older copy: null until it was read.
+    private bool? _restored;
+
+    // The head last written to the anchor.
+    private long _anchored = -1;
+
+    /// <summary>The catalog head last written to the restore anchor, or -1.</summary>
+    internal long Anchored => Interlocked.Read(ref _anchored);
+
     public CatalogGate(
-        IMembership membership, AntiEntropy antiEntropy, IReplicaStates states, IStorageEngine engine, TerraBaseOptions options, LocalReplica self,
-        TimeProvider time, IMeterFactory meters, ILogger<CatalogGate> logger, IMemberDirectory? directory = null)
+        IMembership membership, AntiEntropy antiEntropy, IReplicaStates states, IChangeGroupSource source, IStorageEngine engine, TerraBaseOptions options,
+        LocalReplica self, TimeProvider time, IMeterFactory meters, ILogger<CatalogGate> logger, IMemberDirectory? directory = null,
+        IObjectStore? bucket = null, DataKeys? keys = null)
     {
-        (_membership, _directory, _antiEntropy, _states, _engine, _options, _self, _time, _logger) =
-            (membership, directory, antiEntropy, states, engine, options, self, time, logger);
+        (_membership, _directory, _antiEntropy, _states, _source, _engine, _options, _self, _time, _logger) =
+            (membership, directory, antiEntropy, states, source, engine, options, self, time, logger);
+        // The anchor needs the backup bucket and its keys: it is sealed like every backup object.
+        (_anchors, _keys) = bucket is not null && keys is not null ? (bucket, keys) : (null, null);
         meters.Create(Telemetry.MeterName).CreateObservableGauge("terrabase.catalog.verified", () => _open ? 1 : 0,
             description: "1 once this machine's catalog was verified since it started (or bootstrapped as a new cluster's), else 0.");
     }
 
     public bool IsOpen => _open;
 
-    /// <summary>What the gate still waits for, as of the last pass: machine ids and <c>region:&lt;region&gt;</c> entries.</summary>
+    /// <summary>What the gate still waits for, as of the last pass: machine ids, and the restore anchor's verdict.</summary>
     public ImmutableArray<string> Pending { get; private set; } = [];
 
     public override async Task StartAsync(CancellationToken cancellationToken)
     {
+        _startHead = _engine.SystemDatabaseExists ? await _source.HeadAsync(ChangeGroups.System, cancellationToken).ConfigureAwait(false) : 0;
+
         // A machine of a cluster records itself; a single machine by configuration leaves its catalog uncreated until used.
         if (_directory is not null || await ListedAsync(cancellationToken).ConfigureAwait(false) is { Count: > 0 })
         {
@@ -116,22 +139,32 @@ internal sealed class CatalogGate : BackgroundService, ICatalogGate
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        if (_open)
+        if (!_open)
+        {
+            using var timer = new PeriodicTimer(Pass, _time);
+            while (!_open && await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false))
+            {
+                try
+                {
+                    _ = await VerifyAsync(stoppingToken).ConfigureAwait(false);
+                }
+                catch (Exception error) when (!stoppingToken.IsCancellationRequested)
+                {
+                    _logger.ZLogWarning(error, $"A catalog gate pass failed; this machine stays closed and tries again");
+                }
+            }
+        }
+
+        if (_anchors is null)
         {
             return;
         }
 
-        using var timer = new PeriodicTimer(Pass, _time);
-        while (!_open && await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false))
+        // Open: the anchor follows the catalog's head, so a later restore of an older copy shows.
+        using var anchorTimer = new PeriodicTimer(AnchorEvery, _time);
+        while (await anchorTimer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false))
         {
-            try
-            {
-                _ = await VerifyAsync(stoppingToken).ConfigureAwait(false);
-            }
-            catch (Exception error) when (!stoppingToken.IsCancellationRequested)
-            {
-                _logger.ZLogWarning(error, $"A catalog gate pass failed; this machine stays closed and tries again");
-            }
+            await WriteAnchorAsync(stoppingToken).ConfigureAwait(false);
         }
     }
 
@@ -152,13 +185,14 @@ internal sealed class CatalogGate : BackgroundService, ICatalogGate
                 return false;
             }
 
+            _restored ??= await ReadAnchorAsync(cancellationToken).ConfigureAwait(false);
+
             foreach (var peer in listed.Where(peer => !_verified.Contains(peer.Name)))
             {
                 try
                 {
                     _ = await _antiEntropy.PullAsync(ChangeGroups.System, peer, cancellationToken).ConfigureAwait(false);
                     _ = _verified.Add(peer.Name);
-                    _ = _verifiedRegions.Add(peer.Region);
                 }
                 catch (Exception error) when (!cancellationToken.IsCancellationRequested)
                 {
@@ -166,23 +200,33 @@ internal sealed class CatalogGate : BackgroundService, ICatalogGate
                 }
             }
 
-            // Read after the pulls: a pull may record more regions. A catalog not created yet records none.
-            var regions = _engine.SystemDatabaseExists ? await RecordedRegionsAsync(cancellationToken).ConfigureAwait(false) : [];
-            Pending = [.. listed.Select(peer => peer.Name).Where(name => !_verified.Contains(name)),
-                .. regions.Where(region => !_verifiedRegions.Contains(region)).Select(region => $"region:{region}")];
+            // Read after the pulls: a pull may record more machines. A catalog not created yet records none.
+            var recorded = _engine.SystemDatabaseExists ? await RecordedMachinesAsync(cancellationToken).ConfigureAwait(false) : [];
+            Pending = [.. listed.Select(peer => peer.Name).Union(recorded, StringComparer.Ordinal).Where(name => !_verified.Contains(name)),
+                .. _restored switch
+                {
+                    null => ["restore anchor unread"],
+                    true => ["restored to an older copy: an operator's decision"],
+                    false => Array.Empty<string>(),
+                }];
             if (Pending.IsEmpty && (_verified.Count > 0 || _directory is null))
             {
-                // Pulled from every machine needed, at least one of them; or a single machine by configuration.
+                // Pulled from every machine needed, at least one of them, and not restored; or a single machine by configuration.
                 _open = true;
                 _logger.ZLogInformation($"The catalog is verified against {_verified.Count} other machines; this machine serves");
             }
             else
             {
-                await TryBootstrapAsync(listed.Count + regions.Count + _verified.Count == 0, cancellationToken).ConfigureAwait(false);
+                await TryBootstrapAsync(_restored == false && listed.Count + recorded.Count + _verified.Count == 0, cancellationToken).ConfigureAwait(false);
                 if (!_open)
                 {
                     await TryOperatorOpenAsync(cancellationToken).ConfigureAwait(false);
                 }
+            }
+
+            if (_open)
+            {
+                await WriteAnchorAsync(cancellationToken).ConfigureAwait(false);
             }
 
             return _open;
@@ -204,7 +248,7 @@ internal sealed class CatalogGate : BackgroundService, ICatalogGate
         }
 
         var refused = reason.Length == 0 ? "the request holds no reason of 1 to 500 bytes"
-            : !alone ? "another machine is listed or recorded: this machine opens by pulling from it"
+            : !alone ? "another machine is listed or recorded (it opens by pulling from it), or the catalog is restored or its anchor unread"
             : await GenesisAsync(cancellationToken).ConfigureAwait(false) ? null
             : "the catalog is not a new cluster's: it holds another machine's state or an organization";
         await AuditAsync(Bootstraps, null, reason, refused, null, cancellationToken).ConfigureAwait(false);
@@ -339,30 +383,108 @@ internal sealed class CatalogGate : BackgroundService, ICatalogGate
         _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    // The regions of every other machine the catalog records, this machine's own region aside.
-    private async Task<HashSet<string>> RecordedRegionsAsync(CancellationToken cancellationToken)
+    // Every other machine the catalog records.
+    private async Task<HashSet<string>> RecordedMachinesAsync(CancellationToken cancellationToken)
     {
         const int Page = 100;
-        var regions = new HashSet<string>(StringComparer.Ordinal);
+        var machines = new HashSet<string>(StringComparer.Ordinal);
         var store = await _engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false);
         await using var transaction = await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
         string? afterId = null;
         do
         {
             var page = await transaction.ListAsync(Members, afterId, Page, 1024 * 1024, cancellationToken).ConfigureAwait(false);
-            foreach (var member in page.Documents.Where(member => member.Id != _options.MachineId))
-            {
-                if (RegionOf(member.Json.Span) is { } region && region != _options.Region)
-                {
-                    _ = regions.Add(region);
-                }
-            }
-
+            machines.UnionWith(page.Documents.Select(member => member.Id).Where(id => id != _options.MachineId));
             afterId = page.Documents.Count == Page ? page.Documents[^1].Id : null;
         }
         while (afterId is not null);
-        return regions;
+        return machines;
     }
+
+    // Whether the catalog is behind the head this machine last anchored outside its volume (a restored older copy), or null
+    // while that cannot be told: the anchor unreadable, or no backup bucket on Fly. Off Fly without a bucket (dev servers,
+    // tests) nothing is anchored and nothing is detected.
+    private async Task<bool?> ReadAnchorAsync(CancellationToken cancellationToken)
+    {
+        if (_anchors is null)
+        {
+            if (_options.App is null)
+            {
+                return false;
+            }
+
+            _logger.ZLogWarning($"No backup bucket holds this machine's catalog anchor: a restore cannot be told apart, so the catalog gate stays closed");
+            return null;
+        }
+
+        try
+        {
+            long? anchored = null;
+            _ = await _anchors.ReadAsync(AnchorKey, async (stream, token) =>
+            {
+                // Authenticated: an anchor edited or forged without the key fails here, and the gate stays closed.
+                using var plain = new MemoryStream();
+                await BackupObject.ReadAsync(stream, plain, AnchorKey, id => _keys!.GetAsync(KeyScope, id, token), token).ConfigureAwait(false);
+                using var document = JsonDocument.Parse(plain.ToArray());
+                anchored = document.RootElement.GetProperty("head").GetInt64();
+            }, cancellationToken).ConfigureAwait(false);
+            if (anchored is { } head && head > _startHead)
+            {
+                _logger.ZLogWarning($"This machine's catalog (head {_startHead}) is behind its anchor (head {head}): it was restored to an older copy; the catalog gate stays closed until an operator decides");
+                return true;
+            }
+
+            return false;
+        }
+        catch (Exception error) when (!cancellationToken.IsCancellationRequested)
+        {
+            _logger.ZLogWarning(error, $"This machine's catalog anchor could not be read; the catalog gate stays closed and tries again");
+            return null;
+        }
+    }
+
+    // Records the catalog's head outside the volume, when it moved. A failure leaves the last anchor; the next write catches up.
+    private async Task WriteAnchorAsync(CancellationToken cancellationToken)
+    {
+        if (_anchors is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var head = await _source.HeadAsync(ChangeGroups.System, cancellationToken).ConfigureAwait(false);
+            if (head == _anchored)
+            {
+                return;
+            }
+
+            using var body = new MemoryStream();
+            await using (var json = new Utf8JsonWriter(body))
+            {
+                json.WriteStartObject();
+                json.WriteNumber("head", head);
+                json.WriteString("at", _time.GetUtcNow());
+                json.WriteEndObject();
+            }
+
+            body.Position = 0;
+            var (keyId, dataKey) = await _keys!.CurrentAsync(KeyScope, cancellationToken).ConfigureAwait(false);
+            using var sealedAnchor = new MemoryStream();
+            await BackupObject.WriteAsync(body, sealedAnchor, AnchorKey, keyId, dataKey, cancellationToken).ConfigureAwait(false);
+            sealedAnchor.Position = 0;
+            await _anchors.PutAsync(AnchorKey, sealedAnchor, cancellationToken).ConfigureAwait(false);
+            Interlocked.Exchange(ref _anchored, head);
+        }
+        catch (Exception error) when (!cancellationToken.IsCancellationRequested)
+        {
+            _logger.ZLogWarning(error, $"This machine's catalog anchor could not be written; it is tried again");
+        }
+    }
+
+    private string AnchorKey => $"catalog-anchor/{_options.MachineId}";
+
+    private static string KeyScope => BackupLayout.KeyScope(null);
 
     private static string? RegionOf(ReadOnlySpan<byte> json)
     {

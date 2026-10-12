@@ -105,8 +105,9 @@ public sealed class CustomerBackupBoundaryTests
             using var reader = await cold.CreateClientAsync(database.Organization, "documents:read");
             await AssertDocumentAsync(reader, restored, text, cancellationToken);
             await Assert.That(keyReads).IsEqualTo(1);
-            // One unwrap of the restored data key and one of the sealed customer credentials.
-            await Assert.That(((PaddedMasterKey)cold.Server.Services.GetRequiredService<IMasterKey>()).Unwraps).IsEqualTo(2);
+            // One unwrap of the restored data key, one of the sealed customer credentials, and one of the _system data key the
+            // catalog gate's restore anchor is sealed with (read at start).
+            await Assert.That(((PaddedMasterKey)cold.Server.Services.GetRequiredService<IMasterKey>()).Unwraps).IsEqualTo(3);
             await Assert.That(s3.GeneratedKeys).IsEqualTo(generatedBeforeRestore);
             await Assert.That(s3.BadSignatures).IsEqualTo(0);
         }
