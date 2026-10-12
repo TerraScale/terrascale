@@ -125,7 +125,8 @@ public sealed class PointInTimePlanTests
                 .IsEqualTo(segments.Count == 0 ? null : segments.Max());
             await Assert.That(plan.GetProperty("window").GetRawText()).IsEqualTo(window.RootElement.GetRawText());
             await Assert.That(plan.EnumerateObject().Select(property => property.Name))
-                .IsEquivalentTo(["window", "pointInTime", "snapshotAt", "latestSegmentAt", "segmentCount"]);
+                .IsEquivalentTo(["window", "pointInTime", "snapshotAt", "latestSegmentAt", "segmentCount", "historyCheck"]);
+            await Assert.That(plan.GetProperty("historyCheck").GetString()).IsEqualTo("metadata");
         }
 
         await Assert.That(probe.Writes).IsEqualTo(writes);

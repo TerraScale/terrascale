@@ -1199,7 +1199,7 @@ public sealed class CustomerBackupTests
         await ShipAsync(api, time);
         var snapshot = s3.CustomerObjects.Keys.Single(key => key.StartsWith(File(database) + "/snapshots/", StringComparison.Ordinal));
         var latest = await LatestAsync(api.Client, database, "customer");
-        foreach (var (code, status) in new[] { ("NoSuchBucket", HttpStatusCode.ServiceUnavailable), ("NoSuchKey", HttpStatusCode.InternalServerError) })
+        foreach (var (code, status) in new[] { ("NoSuchBucket", HttpStatusCode.ServiceUnavailable), ("NoSuchKey", HttpStatusCode.Conflict) })
         {
             s3.CustomerReadError = key => key == snapshot ? code : null;
             using var rejected = await api.Client.PostAsJsonAsync(Uri(database.Path + "/point-in-time/restore"),
@@ -1208,6 +1208,11 @@ public sealed class CustomerBackupTests
             if (code == "NoSuchBucket")
             {
                 await AssertUnavailableAsync(rejected, "backup bucket could not be accessed");
+            }
+            else
+            {
+                await ErrorAssert.ErrorAsync(rejected, HttpStatusCode.Conflict, "backup_history_incomplete",
+                    "continuous backup cannot prove this database's history complete up to pointInTime");
             }
 
             await AssertPublicAsync(await rejected.Content.ReadAsStringAsync(cancellationToken));

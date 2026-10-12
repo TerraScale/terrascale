@@ -32,9 +32,23 @@ internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKe
     /// read by <paramref name="at"/> and, when <paramref name="until"/> is set, starting before that log position. Returns
     /// the file, which the caller deletes with <see cref="Delete"/>, and the log position it reached.
     /// </summary>
-    /// <exception cref="InvalidDataException">The backup is incomplete or fails authentication or its integrity check.</exception>
+    /// <exception cref="BackupHistoryIncompleteException">A segment or object is missing.</exception>
+    /// <exception cref="InvalidDataException">The backup fails authentication or its integrity check.</exception>
+    public Task<(string Path, long Position)> BuildAsync(
+        string file, string scope, SnapshotKey snapshot, DateTimeOffset at, long? until, CancellationToken cancellationToken) =>
+        BuildAsync(file, scope, snapshot, at, until, next: null, cancellationToken);
+
+    /// <summary>
+    /// <see cref="BuildAsync(string, string, SnapshotKey, DateTimeOffset, long?, CancellationToken)"/>; without
+    /// <paramref name="until"/>, the generation's history must also be proven complete up to <paramref name="at"/>: the
+    /// first later segment starts where the replayed ones end, the last replayed segment (or the snapshot) was read in the
+    /// same millisecond as <paramref name="at"/>, or <paramref name="next"/>, the generation's following snapshot, holds
+    /// exactly the replayed log.
+    /// </summary>
+    /// <exception cref="BackupHistoryIncompleteException">A segment is missing, or the history up to the time is unproven.</exception>
+    /// <exception cref="InvalidDataException">The backup fails authentication or its integrity check.</exception>
     public async Task<(string Path, long Position)> BuildAsync(
-        string file, string scope, SnapshotKey snapshot, DateTimeOffset at, long? until, CancellationToken cancellationToken)
+        string file, string scope, SnapshotKey snapshot, DateTimeOffset at, long? until, SnapshotKey? next, CancellationToken cancellationToken)
     {
         Directory.CreateDirectory(_scratch);
         var restored = Path.Combine(_scratch, EntityIds.New().ToString() + ".db");
@@ -46,7 +60,7 @@ internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKe
             }
 
             var reached = new StrongBox<long>(snapshot.Position);
-            var segments = SegmentsAsync(file, scope, snapshot, at, until, reached, cancellationToken);
+            var segments = SegmentsAsync(file, scope, snapshot, at, until, next, reached, cancellationToken);
             using var replay = observation?.Enter(BackupReadObservation.Phase.Replay);
             if (observation is not null)
             {
@@ -111,7 +125,7 @@ internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKe
         }
     }
 
-    /// <summary>Deletes a file <see cref="BuildAsync"/> returned, with whatever SQLite left next to it.</summary>
+    /// <summary>Deletes a file <see cref="BuildAsync(string, string, SnapshotKey, DateTimeOffset, long?, SnapshotKey?, CancellationToken)"/> returned, with whatever SQLite left next to it.</summary>
     public static void Delete(string path)
     {
         foreach (var leftover in new[] { "", "-journal", "-wal", "-shm" })
@@ -122,14 +136,18 @@ internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKe
 
     // The segments of the snapshot's generation from its position, up to the time (and before until), in order, each as a
     // scratch file the caller disposes. Up to Prefetch download at once; contiguity is checked in order as they are handed
-    // out, and reached ends at the log position the last one handed out ends at.
+    // out, and reached ends at the log position the last one handed out ends at. Once they are all handed out (without
+    // until), the history must be proven to reach the time: the first later segment starts exactly there, the last one
+    // handed out (or the snapshot) was read at the time, or the generation's next snapshot holds exactly that log.
     private async IAsyncEnumerable<Stream> SegmentsAsync(
-        string file, string scope, SnapshotKey snapshot, DateTimeOffset at, long? until, StrongBox<long> reached,
+        string file, string scope, SnapshotKey snapshot, DateTimeOffset at, long? until, SnapshotKey? next, StrongBox<long> reached,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var inFlight = new Queue<(SegmentKey Segment, Task<FileStream> Log)>();
         var expected = snapshot.Position;
+        var readAt = snapshot.At;
+        SegmentKey? boundary = null;
         try
         {
             await foreach (var item in store.ListAsync(BackupLayout.Segments(file, snapshot.Generation),
@@ -142,9 +160,11 @@ internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKe
 
                 if (segment.At > at || segment.Start >= until)
                 {
+                    boundary = segment;
                     break;
                 }
 
+                readAt = segment.At;
                 inFlight.Enqueue((segment, DownloadSegmentAsync(item.Key, scope, stop.Token)));
                 if (inFlight.Count == Prefetch)
                 {
@@ -159,6 +179,14 @@ internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKe
                 var (frames, after) = await TakeAsync(inFlight, expected).ConfigureAwait(false);
                 expected = reached.Value = after;
                 yield return frames;
+            }
+
+            // Read at the time, the replayed log is the whole state then, whatever follows; a drill checks its end itself.
+            if (until is null && boundary?.Start != expected && !PointInTimeRestore.Covers(readAt, at) && next?.Position != expected)
+            {
+                throw new BackupHistoryIncompleteException(boundary is null
+                    ? "the backup of this database cannot prove its history up to the requested time"
+                    : "the backup of this database is missing a log segment");
             }
         }
         finally
@@ -187,7 +215,7 @@ internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKe
         if (segment.Start != expected)
         {
             await frames.DisposeAsync().ConfigureAwait(false);
-            throw new InvalidDataException("the backup of this database is missing a log segment");
+            throw new BackupHistoryIncompleteException("the backup of this database is missing a log segment");
         }
 
         return (frames, expected + frames.Length);
@@ -233,7 +261,7 @@ internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKe
 
             if (!found)
             {
-                throw new InvalidDataException("a backup object of this database disappeared during the restore");
+                throw new BackupHistoryIncompleteException("a backup object of this database disappeared during the restore");
             }
 
             return;
@@ -259,3 +287,7 @@ internal sealed class BackupReader(IWalBackup engine, IObjectStore store, DataKe
         }, cancellationToken).ConfigureAwait(false);
     }
 }
+
+/// <summary>A backup cannot prove a file's history complete up to the requested time or log position.</summary>
+/// <param name="message">What is missing or unproven.</param>
+internal sealed class BackupHistoryIncompleteException(string message) : Exception(message);
