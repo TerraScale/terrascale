@@ -78,8 +78,8 @@ settings in `.env` (gitignored); without it, throwaway Development values are us
 
 ## Configuration changes from the Rust service
 
-The Fly image is the framework-dependent publish on the chiseled
-`aspnet` base (see the root Dockerfile and docs/terrabase/ci.md).
+The Fly image is the self-contained executable on the chiseled
+`runtime-deps` base (see the root Dockerfile and docs/terrabase/ci.md).
 
 
 Configuration retains the `TS_AUTH_*` convention, with these changes:

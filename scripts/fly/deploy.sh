@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Rolls one Fly app out region by region: gru, a live check of the new gru machine, then sjc. A failed check stops the
-# rollout (fix forward). Each region runs one always-on machine; the first rollout creates them. Prints how long each
+# Rolls one Fly app out region by region: gru, sjc, fra, each followed by a live check of its new machine. A failed
+# check stops the rollout (fix forward). Each region runs one always-on machine; the first rollout creates them. Prints how long each
 # region took (and appends it to the GitHub job summary in CI).
 #
 #   FLY_API_TOKEN=<deploy token> scripts/fly/deploy.sh <app> <fly.toml> <image>
@@ -11,7 +11,7 @@ app=$1 config=$2 image=$3
 
 machines() { flyctl machine list -a "$app" --json | jq -r --arg r "$1" --arg s "$2" '.[] | select(.region == $r and (.state | test($s))) | .id'; }
 
-for region in gru sjc; do
+for region in gru sjc fra; do
   start=$SECONDS
   if [[ $region != gru && -z $(machines "$region" .) ]]; then
     # Clones the machine just deployed (new image, new volume).

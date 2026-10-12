@@ -1,5 +1,5 @@
 # ts-auth on Fly. CI deploys the image built from the root Dockerfile
-# (`--target ts-auth`), gru first, then sjc: .github/workflows/ci.yml.
+# (`--target ts-auth`), gru, then sjc, then fra: .github/workflows/ci.yml.
 app = "ts-auth"
 primary_region = "gru"
 # 512 MB RAM; the 4 GB swap only absorbs spikes (it pages at a few MB/s).
