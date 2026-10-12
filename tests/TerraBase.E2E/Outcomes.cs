@@ -31,7 +31,8 @@ internal static class Outcomes
         }
 
         _ = Marked.TryRemove(context.Id, out var marked);
-        var scenario = context.Metadata.TestDetails.GetAttributes<ScenarioAttribute>().FirstOrDefault();
+        var details = context.Metadata.TestDetails;
+        var scenario = details.ClassType.GetMethod(details.MethodName)?.GetCustomAttributes(typeof(ScenarioAttribute), inherit: false).OfType<ScenarioAttribute>().FirstOrDefault();
         var (category, detail) = context.Execution.Result?.State switch
         {
             TestState.Passed => marked.Category is not null ? marked : scenario?.Nodes == Nodes.Harness ? ("harness", "") : ("pass", ""),
