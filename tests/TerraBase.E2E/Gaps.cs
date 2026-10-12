@@ -20,9 +20,7 @@ internal static class Gaps
         // RepairAndContractE2ETests.
         ["anti-entropy-repair"] = "anti-entropy (R6) over peer streams fed by the CDC source (R3)",
         ["restore-older-state"] = "refill and anti-entropy (R6) over peer streams fed by the CDC source (R3)",
-        ["unique-under-partition"] = "the unique-loser rule on replicated applies (design section 9): under the full suite's load sjc still serves the larger id 60 s after the heal (it converges when the class runs alone)",
         ["deleted-database-stays-deleted"] = "the catalog as a lattice database (R10a) and garbage collection (R7)",
-        ["ddl-replication"] = "index, schema and drop replication through the metadata documents (design section 5): an index made in gru never reaches sjc",
     };
 
     // BLOCKED on Fly, not an expected failure there: the Fly suite's TerraBase API key holds documents:read/write on the e2e
