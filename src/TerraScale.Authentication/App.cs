@@ -25,10 +25,16 @@ public static class App
     public const string ApiTitle = "TerraScale Auth API";
 
     /// <summary>
-    /// TerraBase's internal listener on Fly's private network, nearest machine first: app <c>ts-terrabase</c>, except in
-    /// a <c>ts-pr-&lt;n&gt;</c> preview, whose one machine (in another Fly org) runs TerraBase next to ts-auth.
+    /// TerraBase's internal listener on Fly's private network: app <c>ts-terrabase</c> in gru, the home region of the
+    /// platform databases, from every region; in a <c>ts-pr-&lt;n&gt;</c> preview, whose one machine (in another Fly org)
+    /// runs TerraBase next to ts-auth, that machine.
     /// </summary>
-    public static readonly Uri TerraBaseOrigin = new($"http://top1.nearest.of.{(Environment.GetEnvironmentVariable("FLY_APP_NAME") is { } app && app.StartsWith("ts-pr-", StringComparison.Ordinal) ? app : "ts-terrabase")}.internal:8081");
+    // shortcut: every region stores in gru's copy, because TerraBase does not replicate documents between regions yet (the
+    // client replication paths were deleted in R2a; peer streams come with R4a). Nearest-region storage would give each
+    // region its own signing keys and users. Switch back to top1.nearest.of.ts-terrabase.internal once R4a replicates.
+    public static readonly Uri TerraBaseOrigin = new(Environment.GetEnvironmentVariable("FLY_APP_NAME") is { } app && app.StartsWith("ts-pr-", StringComparison.Ordinal)
+        ? $"http://top1.nearest.of.{app}.internal:8081"
+        : "http://gru.ts-terrabase.internal:8081");
 
     /// <summary>
     /// The TerraBase project holding the platform's own databases. TerraBase seeds it with this fixed id on every start
