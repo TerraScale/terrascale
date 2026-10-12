@@ -339,6 +339,66 @@ public sealed class GroupCommitTests
     }
 
     [Test]
+    public async Task A_failure_after_the_commit_answers_the_committed_writes_and_logs_it()
+    {
+        var logs = new CapturedLogs();
+        await using var api = await DocumentApi.StartAsync(services: services => services.AddSingleton<ILoggerProvider>(logs));
+        await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "enterprise");
+        var store = await StoreAsync(api);
+        var failed = 0;
+        store.AfterGroupCommit = () =>
+        {
+            Interlocked.Increment(ref failed);
+            throw new IOException("the test fails the work after the commit");
+        };
+
+        var id = DocumentApi.NewId();
+        var written = await api.PutAsync(id, new { n = 1 });
+        var transacted = DocumentApi.NewId();
+        var transaction = await api.TransactAsync(new { op = "put", collection = DocumentApi.Collection, id = transacted, document = new { n = 3 } });
+
+        // Answered as the commits they are, not as a 500 a client would retry.
+        await Assert.That(Volatile.Read(ref failed)).IsGreaterThanOrEqualTo(2);
+        await Assert.That(written.Status).IsEqualTo(HttpStatusCode.Created);
+        await Assert.That(written.Json.GetProperty("offset").GetString()).IsNotEqualTo("0");
+        await Assert.That(written.Json.GetProperty("durability").GetString()).IsEqualTo("local_durable");
+        await Assert.That(transaction.Status).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(transaction.Json.GetProperty("offset").GetString()).IsNotEqualTo("0");
+        var read = await api.GetAsync(id);
+        await Assert.That(read.Status).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(read.ETag).IsEqualTo(written.ETag);
+        await Assert.That(read.Json.GetProperty("document").GetProperty("n").GetInt32()).IsEqualTo(1);
+        await Assert.That((await api.GetAsync(transacted)).Json.GetProperty("document").GetProperty("n").GetInt32()).IsEqualTo(3);
+        await Assert.That(logs.Messages.Any(message => message.Contains("committed, but the work after its commit failed", StringComparison.Ordinal))).IsTrue();
+
+        // The writer keeps working.
+        store.AfterGroupCommit = null;
+        var next = DocumentApi.NewId();
+        await Assert.That((await api.PutAsync(next, new { n = 2 })).Status).IsEqualTo(HttpStatusCode.Created);
+        await Assert.That((await api.GetAsync(next)).Json.GetProperty("document").GetProperty("n").GetInt32()).IsEqualTo(2);
+    }
+
+    [Test]
+    public async Task A_failure_after_a_catalog_group_commit_still_fails_the_write()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        var engine = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
+        var system = (SqliteDatabaseStore)await engine.OpenSystemDatabaseAsync(CancellationToken.None);
+        system.AfterGroupCommit = () => throw new IOException("the test fails the work after the commit");
+        var id = DocumentApi.NewId();
+
+        // The catalog fails closed: a write whose commit landed is still answered as a failure.
+        await Assert.ThrowsAsync<IOException>(async () => await system.WriteAsync(
+            (transaction, token) => transaction.PutAsync("group_commit_probe", id, """{"n":1}"""u8.ToArray(), token), _ => true, CancellationToken.None));
+        system.AfterGroupCommit = null;
+        var read = await system.BeginTransactionAsync(write: false, CancellationToken.None);
+        await using (read)
+        {
+            await Assert.That(await read.GetAsync("group_commit_probe", id, CancellationToken.None)).IsNotNull();
+        }
+    }
+
+    [Test]
     public async Task A_storage_thread_busy_with_a_long_read_does_not_hold_up_writes()
     {
         await using var api = await DocumentApi.StartAsync(settings => settings["storage-threads"] = "1");

@@ -553,6 +553,9 @@ internal sealed partial class SqliteDatabaseStore(
     /// <summary>Writes of the batch that is running (waiting for the writer or committing), for tests.</summary>
     internal int BatchedWrites => Volatile.Read(ref _batched);
 
+    /// <summary>Runs once a group commit batch committed, before its transaction is disposed; integration tests fail it.</summary>
+    internal Action? AfterGroupCommit { get; set; }
+
     /// <summary>Writes waiting for the next batch, for tests.</summary>
     internal int QueuedWrites
     {
@@ -648,6 +651,7 @@ internal sealed partial class SqliteDatabaseStore(
         List<IBatchedWrite> refused = [];
         List<IBatchedWrite> deferred = [];
         long offset = 0;
+        var batchCommitted = false;
         try
         {
             var transaction = await BeginAsync(write: true, capture: true, durable: false, CancellationToken.None, "a group commit batch").ConfigureAwait(false);
@@ -728,14 +732,23 @@ internal sealed partial class SqliteDatabaseStore(
                 if (kept.Count > 0)
                 {
                     offset = await transaction.CommitAsync(CancellationToken.None).ConfigureAwait(false);
+                    batchCommitted = true;
+                    AfterGroupCommit?.Invoke();
                 }
             }
         }
-        catch (Exception error)
+        catch (Exception error) when (!batchCommitted || IsSystem)
         {
-            // Nothing of this batch committed: every write not answered yet fails with it.
+            // Nothing of this batch committed, or it is the catalog's, which fails closed: every write not answered yet
+            // fails with it.
             batch.ForEach(write => write.Fail(error));
             return [];
+        }
+        catch (Exception error)
+        {
+            // A client database's batch committed: its writes are answered as committed, not as a failure a client would
+            // retry. What failed is the cleanup after the commit (disposing the transaction, releasing the writer).
+            logger?.ZLogError(error, $"A group commit of database {name:@Database} committed, but the work after its commit failed; its writes are answered as committed");
         }
 
         // After the transaction released its session, as an admission's resource must be (SqliteIoPool).
