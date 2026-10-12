@@ -1,7 +1,7 @@
 # Build, lint and test on every pull request and push to main. `check` (locked Release build, lint,
 # `make test-fast`) and `slow` (`make test-slow`) together run the whole non-explicit TUnit E2E suite,
 # `make test-e2e`, the merge gate. Hot reload, performance and live readiness are explicit journeys and
-# do not run here (Makefile). This workflow builds no image and deploys nothing.
+# do not run here (Makefile). This workflow pushes no image and deploys nothing.
 name: CI
 
 on:
@@ -20,8 +20,8 @@ env:
   DOTNET_CLI_TELEMETRY_OPTOUT: "1"
   DOTNET_NOLOGO: "1"
 
-# Self-hosted alpha runners only: no hosted fallback. Each job installs its own toolchains and keeps its
-# NuGet packages and browsers under its own runner temp directory, so jobs share no mutable cache.
+# Self-hosted alpha runners only: no hosted fallback. `check` installs its own toolchains and keeps its NuGet
+# packages under its runner temp directory; `slow` builds in a Dockerfile stage and shares no mutable cache.
 jobs:
   check:
     runs-on: alpha
@@ -42,6 +42,8 @@ jobs:
       - run: make lint
       - run: make test-fast
 
+  # The browser journeys need Chromium's system libraries, which the runner does not have: they run in the
+  # Dockerfile's test-slow stage on alpha's BuildKit daemon. That stage is never taken from cache.
   slow:
     runs-on: alpha
     timeout-minutes: 45
@@ -49,16 +51,13 @@ jobs:
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
-      - uses: actions/setup-dotnet@v5
+      - uses: docker/setup-buildx-action@v3
         with:
-          global-json-file: global.json
-      - uses: actions/setup-node@v5
+          driver: remote
+          endpoint: unix:///run/buildkit/buildkitd.sock
+      - uses: docker/build-push-action@v6
         with:
-          node-version: 24.21.0 # .mise.toml
-      - run: echo "NUGET_PACKAGES=$RUNNER_TEMP/nuget" >> "$GITHUB_ENV"
-      - run: npm ci --ignore-scripts --no-audit --no-fund
-      # The browser revision matching Microsoft.Playwright and playwright-core 1.63.0.
-      - run: |
-          echo "PLAYWRIGHT_BROWSERS_PATH=$RUNNER_TEMP/ms-playwright" >> "$GITHUB_ENV"
-          PLAYWRIGHT_BROWSERS_PATH="$RUNNER_TEMP/ms-playwright" node node_modules/playwright-core/cli.js install chromium
-      - run: make test-slow
+          context: .
+          target: test-slow
+          no-cache-filters: test-slow
+          push: false
