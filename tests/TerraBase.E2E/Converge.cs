@@ -27,7 +27,7 @@ internal static class Converge
 
             if (clock.Elapsed > deadline)
             {
-                throw new TimeoutException($"{what} did not converge within {deadline.TotalSeconds:F0} s; last read: {(object?)latest ?? "nothing"}");
+                throw new NotConvergedException($"{what} did not converge within {deadline.TotalSeconds:F0} s; last read: {(object?)latest ?? "nothing"}");
             }
 
             await Task.Delay(Interval);
@@ -96,3 +96,6 @@ internal sealed record RegionCopies(JsonNode? Gru, JsonNode? Sjc)
 
     public override string ToString() => $"gru={(Gru is null ? "absent" : Docs.Canonical(Gru))} sjc={(Sjc is null ? "absent" : Docs.Canonical(Sjc))}";
 }
+
+/// <summary>A convergence that did not come within its deadline: a scenario failure, unlike a harness timeout.</summary>
+internal sealed class NotConvergedException(string message) : TimeoutException(message);
