@@ -15,7 +15,10 @@ public sealed record DocumentBody(string Id, string Version, string State, JsonE
 /// <param name="Version">The new version; for a delete, the tombstone's.</param>
 /// <param name="Offset">The database commit offset of the write, a decimal string.</param>
 /// <param name="Durability">Always <c>local_durable</c>.</param>
-public sealed record WriteBody(string Id, string Version, string Offset, string Durability);
+/// <param name="Document">After a PATCH, the stored document, with counters as integers and sets as sorted arrays.</param>
+public sealed record WriteBody(
+    string Id, string Version, string Offset, string Durability,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] JsonElement? Document = null);
 
 /// <summary>A count of query matches.</summary>
 /// <param name="Value">Decimal count; a lower bound when not exact.</param>
@@ -69,10 +72,10 @@ public sealed record QueryRequest(
     JsonElement Explain);
 
 /// <summary>One patch operation.</summary>
-/// <param name="Op"><c>set</c>, <c>unset</c>, <c>inc</c> or <c>append</c>.</param>
-/// <param name="Path">JSON Pointer of object members.</param>
-/// <param name="Value">Value for <c>set</c> and <c>append</c>.</param>
-/// <param name="By">Number for <c>inc</c>.</param>
+/// <param name="Op"><c>set</c>, <c>unset</c>, <c>append</c>, <c>inc</c>, <c>add</c> or <c>remove</c>.</param>
+/// <param name="Path">JSON Pointer of object members; a top-level field (<c>/name</c>) for <c>inc</c>, <c>add</c> and <c>remove</c>.</param>
+/// <param name="Value">Value for <c>set</c> and <c>append</c>; a JSON scalar of at most 1 KiB for <c>add</c> and <c>remove</c>.</param>
+/// <param name="By">Non-zero 64-bit integer for <c>inc</c>.</param>
 public sealed record PatchOpRequest(string? Op, string? Path, JsonElement Value, JsonElement By);
 
 /// <summary>An <c>application/vnd.terrabase.ops+json</c> patch.</summary>
@@ -115,11 +118,13 @@ public sealed record TransactionRequest(IReadOnlyList<TransactionOpRequest>? Ops
 /// <param name="Version">Written document version.</param>
 /// <param name="Asserted">Set by assertions.</param>
 /// <param name="Count">Decimal count of <c>assert_count</c>.</param>
+/// <param name="Document">After a <c>patch</c>, the stored document, with counters as integers and sets as sorted arrays.</param>
 public sealed record TransactionResultBody(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Id,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Version,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? Asserted,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Count);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Count,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] JsonElement? Document = null);
 
 /// <summary>Result of a transaction.</summary>
 /// <param name="Offset">The database commit offset, a decimal string.</param>

@@ -514,7 +514,9 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
                     }
 
                     var document = JsonNode.Parse(current.Json.Span, documentOptions: RequestJson.StoredDocumentOptions)!.AsObject();
-                    switch (patch.Patch.Apply(document))
+                    var hadId = document.ContainsKey("id");
+                    var operations = new List<FieldOperation>();
+                    switch (patch.Patch.Apply(document, operations))
                     {
                         case Validation error:
                             return new DocumentRejected(error);
@@ -523,12 +525,28 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
                     }
 
                     // Validate the complete patched result before removing duplicate identity.
-                    var patched = JsonSerializer.SerializeToUtf8Bytes(document, TerraBaseJsonContext.Default.JsonObject);
-                    _ = DocumentJson.Read(patched, requireObject: true);
-                    var json = EntityPayload.WithoutId(patched, patch.Id);
-                    var version = await transaction.PatchAsync(patch.Collection, patch.Id, json, cancellationToken).ConfigureAwait(false);
+                    var json = JsonSerializer.SerializeToUtf8Bytes(document, TerraBaseJsonContext.Default.JsonObject);
+                    _ = DocumentJson.Read(json, requireObject: true);
+                    // An id equal to the document's is not stored: the field stays as it was before.
+                    if (document["id"] is JsonValue identity && identity.GetValueKind() == JsonValueKind.String && identity.GetValue<string>() == patch.Id)
+                    {
+                        document.Remove("id");
+                        operations.RemoveAll(operation => operation.Field == "id");
+                        if (hadId)
+                        {
+                            operations.Add(new FieldOperation(FieldOperationKind.Unset, "id"));
+                        }
+
+                        json = JsonSerializer.SerializeToUtf8Bytes(document, TerraBaseJsonContext.Default.JsonObject);
+                    }
+
+                    var version = await transaction.PatchAsync(patch.Collection, patch.Id, json, operations, cancellationToken).ConfigureAwait(false);
+                    // The stored document is the merged state's materialization, which counters and sets can make differ
+                    // from the request's view of it.
+                    var stored = await transaction.GetAsync(patch.Collection, patch.Id, cancellationToken).ConfigureAwait(false)
+                        ?? throw new InvalidOperationException("a patched document has no body in the same transaction");
                     return new OperationResult(patch.Id, version, false, null,
-                        StoredETag(transaction, patch.Collection, patch.Id, version, json));
+                        ETags.Version(transaction.Scope, patch.Collection, patch.Id, version, stored.Json), stored.Json);
                 }
 
             case DeleteOperation delete:
@@ -602,10 +620,8 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
 
 
     // The precondition failure, or null when it holds.
-    // The ETag a read of the written document answers with: storage keeps the materialized document (canonical JSON, fields
-    // in name order), not the request's bytes.
-    // shortcut: a PUT or PATCH sets plain fields only, so the materialization is the canonical JSON; read it back once the
-    // counter and set operations of slice R5 can leave other values in the stored document.
+    // The ETag a read of the written document answers with: a PUT replaces the whole state, so a client database stores
+    // the canonical JSON of its body (fields in name order); the system database stores the bytes written.
     private static string StoredETag(IStorageTransaction transaction, string collection, string id, long version, ReadOnlyMemory<byte> json)
     {
         if (!transaction.Materializes)

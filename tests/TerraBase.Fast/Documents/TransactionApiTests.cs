@@ -266,7 +266,7 @@ public sealed class TransactionApiTests
             (Ops(create, $$$"""{"op":"put","collection":"items","id":"{{{existing}}}","document":{},"if_match":"tbv1-00000000000000000000000000000000"}"""), HttpStatusCode.PreconditionFailed, "precondition_failed", "the document version does not match", 1),
             (Ops(create, $$$"""{"op":"assert","collection":"items","id":"{{{existing}}}","filter":{"exists":"/missing"}}"""), HttpStatusCode.PreconditionFailed, "precondition_failed", "the document does not match", 1),
             (Ops(create, """{"op":"assert_count","collection":"items","filter":{"exists":"/n"},"lte":0}"""), HttpStatusCode.PreconditionFailed, "precondition_failed", "the count is out of bounds", 1),
-            (Ops(create, Patch(existing, """{"op":"inc","path":"/a","by":1}""")), HttpStatusCode.Conflict, "patch_conflict", "inc needs a number", 1),
+            (Ops(create, Patch(existing, """{"op":"inc","path":"/a","by":1}""")), HttpStatusCode.Conflict, "patch_conflict", "inc needs an integer", 1),
             (Ops(create, Patch(existing, """{"op":"append","path":"/n","value":1}""")), HttpStatusCode.Conflict, "patch_conflict", "append needs an array", 1),
             (Ops(create, Patch(existing, """{"op":"set","path":"/n/x","value":1}""")), HttpStatusCode.Conflict, "patch_conflict", "a patch path crosses a value that is not an object", 1),
         ];

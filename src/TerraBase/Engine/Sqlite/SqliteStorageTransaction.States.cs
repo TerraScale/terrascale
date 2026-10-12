@@ -130,32 +130,6 @@ internal sealed partial class SqliteStorageTransaction
 
     private static string? Materialize(DocumentState state) => state.Materialize() is { } json ? StrictUtf8.GetString(json) : null;
 
-    // Worker-only: the state a PATCH that leaves the document as `next` writes. Every top-level field whose value changed
-    // is set, and every one `next` lacks is removed, so a concurrent write of another field survives the merge.
-    private static DocumentState Patch(DocumentState state, EntryVersion at, JsonElement next)
-    {
-        using var current = JsonDocument.Parse(state.Materialize() ?? "{}"u8.ToArray(), DocumentState.JsonOptions);
-        var patched = state;
-        foreach (var field in next.EnumerateObject())
-        {
-            if (!current.RootElement.TryGetProperty(field.Name, out var previous)
-                || DocumentState.Canonical(previous) != DocumentState.Canonical(field.Value))
-            {
-                patched = patched.Set(at, field.Name, field.Value);
-            }
-        }
-
-        foreach (var field in current.RootElement.EnumerateObject())
-        {
-            if (!next.TryGetProperty(field.Name, out _))
-            {
-                patched = patched.Unset(at, field.Name);
-            }
-        }
-
-        return patched;
-    }
-
     /// <summary>
     /// Writes the <c>_tb_state</c> row of every document the request changed, then forgets them: the end of one group
     /// commit write (before its savepoint is released) or of a transaction (before it commits).

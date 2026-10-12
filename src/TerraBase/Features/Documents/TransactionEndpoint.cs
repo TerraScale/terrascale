@@ -113,7 +113,7 @@ public sealed class TransactionEndpoint(IDocumentService documents, IAuthorizati
                 DocumentRoute.Durability,
                 [.. written.Results.Select(result => result switch
                 {
-                    { ETag: { } version } => new TransactionResultBody(result.Id, version, null, null),
+                    { ETag: { } version } => new TransactionResultBody(result.Id, version, null, null, DocumentRoute.Json(result.Document)),
                     { Count: { } count } => new TransactionResultBody(null, null, true, DocumentRoute.Decimal(count)),
                     _ => new TransactionResultBody(null, null, true, null),
                 })])),

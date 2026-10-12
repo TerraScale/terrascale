@@ -170,7 +170,7 @@ public sealed class LatticeE2ETests
 
     // An op of section 13: inc takes "by", the others "value".
     private static JsonObject Op(string op, string field, JsonNode value) =>
-        new() { ["op"] = op, ["field"] = field, [op == "inc" ? "by" : "value"] = value };
+        new() { ["op"] = op, ["path"] = "/" + field, [op == "inc" ? "by" : "value"] = value };
 
     private static Task<RegionCopies> SettledAsync(Cluster cluster, Uri uri, string what) =>
         Converge.UntilAsync(() => Converge.BothAsync(cluster, uri), copies => copies.Identical && copies.Gru is not null, what);

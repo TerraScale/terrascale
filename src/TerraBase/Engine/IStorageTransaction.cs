@@ -135,12 +135,15 @@ public interface IStorageTransaction : IAsyncDisposable
     ValueTask<long> PutAsync(string collection, string id, ReadOnlyMemory<byte> json, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Writes an existing document of a client database as a PATCH that leaves it as <paramref name="json"/>: each top-level
-    /// field whose value changed is set and each one <paramref name="json"/> lacks is removed, so a concurrent write of
-    /// another field survives the merge (docs/terrabase/multi-region-replication.md section 4). Returns the version, under
-    /// the limits and errors of <see cref="PutAsync"/>. Several writes of one document in one transaction share their version.
+    /// Writes a PATCH of an existing document that leaves it as <paramref name="json"/>. A client database writes
+    /// <paramref name="operations"/>, in order, to the document's state, so a concurrent write of another field survives the
+    /// merge and concurrent increments and set operations converge (docs/terrabase/multi-region-replication.md section 4);
+    /// <paramref name="json"/> is the materialization they leave locally. The system database stores <paramref name="json"/>.
+    /// Returns the version, under the limits and errors of <see cref="PutAsync"/>. Several writes of one document in one
+    /// transaction share their version.
     /// </summary>
-    ValueTask<long> PatchAsync(string collection, string id, ReadOnlyMemory<byte> json, CancellationToken cancellationToken);
+    ValueTask<long> PatchAsync(
+        string collection, string id, ReadOnlyMemory<byte> json, IReadOnlyList<FieldOperation> operations, CancellationToken cancellationToken);
 
     /// <summary>
     /// Runs <see cref="GetVersionAsync"/> then <see cref="PutAsync"/> for each of <paramref name="puts"/> in order, under
