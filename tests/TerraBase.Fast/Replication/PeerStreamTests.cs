@@ -64,8 +64,13 @@ public sealed class PeerStreamTests
         var id = EntityIds.New().ToString();
         await gru.CommitAsync(Metadata(gru, stamp, "items"), Put(gru, stamp, id, """{"n":1}"""));
         await Assert.That(await sjc.UntilAsync(id, """{"n":1}""")).IsTrue();
-        var acked = gru.Source.AckedBy(cluster.Database, sjc.Node);
-        await Assert.That(acked).IsEqualTo(1);
+        // sjc acks only after its commit, so seeing the document there does not mean gru has recorded the ack yet.
+        using (var deadline = new CancellationTokenSource(Deadline))
+        {
+            await gru.Source.UntilAckedAsync(cluster.Database, sjc.Node, 1, deadline.Token);
+        }
+
+        await Assert.That(gru.Source.AckedBy(cluster.Database, sjc.Node)).IsEqualTo(1);
 
         // Written while sjc is down: gru keeps the groups past sjc's ack and ships them once sjc is back.
         await sjc.StopAsync();
@@ -74,6 +79,11 @@ public sealed class PeerStreamTests
         await sjc.StartAsync();
 
         await Assert.That(await sjc.UntilAsync(id, """{"m":3,"n":2}""")).IsTrue();
+        using (var deadline = new CancellationTokenSource(Deadline))
+        {
+            await gru.Source.UntilAckedAsync(cluster.Database, sjc.Node, 3, deadline.Token);
+        }
+
         await Assert.That(gru.Source.AckedBy(cluster.Database, sjc.Node)).IsEqualTo(3);
     }
 

@@ -296,7 +296,7 @@ reproduced with the provider alone; the workaround is in the code next to it:
 | A runtime error while a SELECT steps (a function that throws) rolls the whole transaction back; later statements then run in autocommit. Constraint, parse and `RAISE(FAIL)` errors do not | A failed statement in a write transaction checks `BEGIN` (`SqliteSession.InTransaction`); if the transaction is gone it can only be disposed |
 | A write on a connection while one of its own SELECT readers is open fails with "database is locked" | Read the ids first, then write (`CaptureSystemDeletions`) |
 | Closing a reader steps the statement to its end | Every early-closed statement has a `LIMIT`, and the per-row `tb_qos_scan` stops a cancelled one |
-| No interrupt, progress handler or VM instruction count | `tb_qos_scan(octet_length(doc))` in every scan: it accounts candidates, checks the deadline every 32 rows and cancellation every row, and throws to stop the statement. The plan's instruction limit is gone |
+| No interrupt, progress handler or VM instruction count | `tb_qos_scan(octet_length(doc))` in every scan: it accounts candidates, checks the deadline every 32 rows and cancellation every row, and throws to stop the statement. It also charges the plan's work budget per candidate row (8, plus 4 per JSON read), in place of SQLite's instruction count |
 | A function without arguments is evaluated once per statement | `tb_query_scan(id)` takes the row's id |
 | A subquery in FROM is not flattened (it is materialized, then sorted) | Document queries and the history reads are single flat statements |
 | A row-value comparison `(a, b) > (?, ?)`, or the same as an `OR`, scans the whole index; `max(x)` scans | Two bounded seeks joined by `UNION ALL`; `ORDER BY x DESC LIMIT 1` |

@@ -11,6 +11,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"log"
@@ -84,7 +86,7 @@ func main() {
 	defer cancel()
 
 	host, _ := os.Hostname()
-	res := replbench.Result{Name: *name, Kind: t.Kind, Commit: *commitFlag, Host: host, Start: time.Now(), Machines: t.Machines,
+	res := replbench.Result{Name: *name, Kind: t.Kind, Commit: *commitFlag, WorkingTree: workingTree(), Host: host, Start: time.Now(), Machines: t.Machines,
 		TerraBaseApp: t.App, TerraBaseOrg: t.Org,
 		Config: map[string]any{"docs": *docs, "sizes": *sizes, "batch": *batch, "concurrency_per_region": *conc, "delete_pct": *deletePct,
 			"conflict_docs": *conflicts, "conflict_rounds": *rounds, "probe_every": probeEvery.String(), "seed": *seed}}
@@ -207,11 +209,26 @@ func main() {
 }
 
 func commit() string {
-	b, err := exec.Command("git", "rev-parse", "--short=12", "HEAD").Output()
+	b, err := exec.Command("git", "rev-parse", "HEAD").Output()
 	if err != nil {
 		return "unknown"
 	}
 	return strings.TrimSpace(string(b))
+}
+
+// workingTree is "clean", or the SHA-256 of the tracked changes plus the untracked files' hashes, so a report names the
+// exact code it measured even when it was not committed.
+func workingTree() string {
+	diff, err := exec.Command("git", "diff", "HEAD", "--binary").Output()
+	if err != nil {
+		return "unknown"
+	}
+	untracked, _ := exec.Command("sh", "-c", "git ls-files --others --exclude-standard -z | xargs -0 -r sha256sum").Output()
+	if len(diff) == 0 && len(untracked) == 0 {
+		return "clean"
+	}
+	sum := sha256.Sum256(append(append(diff, '\n'), untracked...))
+	return hex.EncodeToString(sum[:])
 }
 
 func notTestedLines(t replbench.Targets, cfg replbench.Config, extra string) []string {
