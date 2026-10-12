@@ -113,17 +113,14 @@ secret happens outside this repository.
 
 ## Code changes still required in the dashboard
 
-These are separate from delivery:
+These are separate from delivery. The dashboard already calls ts-auth at its
+global issuer `https://auth.terrascale.tech/terrascale`.
 
-- **ts-auth origin.** The app finds ts-auth through
-  `https://atlas.terrascale.tech/api/v1/auth/discovery` and accepts only
-  `https://<region>.auth.terrascale.tech` origins
-  (`Features/Auth/TsAuthGateway.cs`). Current ts-auth source serves one
-  global issuer `https://auth.terrascale.tech/{tenant}` in every region, and
-  Atlas is NXDOMAIN. The app must move to the global issuer.
 - **Project-token audience.** `Features/Auth/ProjectAccessTokens.cs` expects
-  the regional TerraBase origin as `aud`; it must follow the audience the
-  ts-auth owner settles (#134 proposes `https://api.terrascale.tech`).
+  the regional TerraBase origin as `aud` and only accepts resource hosts that
+  end in `.api.terrascale.tech`. Both must follow the audience the ts-auth
+  owner settles (#134 proposes `https://api.terrascale.tech`, which fails that
+  host check too).
 - **TerraBase origin.** `Platform/Persistence/TerraBaseDiscovery.cs` reads
   Atlas `/v1/discovery`, which does not exist. The direction is the SDK
   `Region` contract (ts-dotnet PR #5) once a reviewed public 0.0.2 exists.
