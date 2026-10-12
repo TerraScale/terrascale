@@ -12,7 +12,7 @@ using TerraScale.Authentication.Tests;
 
 namespace TerraScale.Authentication.Fast.Oidc;
 
-/// <summary>Account lockout notices over real HTTP, with durable claims shared through the pinned TerraBase.</summary>
+/// <summary>Account lockout notices over real HTTP, with durable claims shared through the real TerraBase.</summary>
 [ClassDataSource<TerraBaseFixture>(Shared = SharedType.PerTestSession)]
 public sealed class LockoutTests(TerraBaseFixture fixture)
 {

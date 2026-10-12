@@ -166,7 +166,6 @@ public sealed class TokenRateLimitTests(TerraBaseFixture fixture)
     private static Task<AuthTestServer> StartAsync(SharedStateTarget target, TimeProvider clock, PeerAddress? peer = null, bool rejectedStorageKey = false) =>
         AuthTestServer.StartAsync(values =>
         {
-            target.Bind(values);
             values["master-key"] = MasterKey;
             values["rate-limit"] = "3";
         }, services =>

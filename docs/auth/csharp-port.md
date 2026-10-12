@@ -39,27 +39,13 @@ The sibling `ts-dotnet` checkout is a project reference. Locally it is found at
 pinned in `.github/workflows/ci.yml` next to the repository and passes it to the
 Docker build as the `ts-dotnet` context. TerraScale.Endpoints and TerraScale.Logging are NuGet packages.
 
-`.github/workflows/ci.yml` pins ts-dotnet
-to `619fa979673635663cba98be5e25713806d11cd5` (main after #1: plain HTTP to
-TerraBase's internal listener). That revision's
-`src/TerraScale.DotNet.Testing/TerraBaseRelease.cs` pins the Linux x64 server:
-
-| Pin | Value |
-|---|---|
-| TerraBase commit | `ff256067015433c8c40b59879f1282d2a40480ce` |
-| Release tag | `ci-ff256067015433c8c40b59879f1282d2a40480ce-run-13258` |
-| Binary SHA-256 | `e07d173fc2bbab19dcb1fde8b121b0207b07d55452a5b19a406871d220e05e13` |
-
-The helper verifies the binary's SHA-256 on every start. Provide a matching
-`TERRABASE_BINARY`, a verified cached binary, or `TERRABASE_DOWNLOAD_TOKEN` /
-`ORG_READ_TOKEN` to download the private release. `TERRABASE_CACHE_DIRECTORY`
-overrides the cache location. The ts-auth fixture fails when the binary is
-unavailable, including locally; it never skips these tests. The SDK's
-`docs/terrabase-consumers.md` describes the adoption procedure but reflects
-ts-auth before TS-489; its older pins and local-skip example do not describe
-this integration. Local Release validation passed: formatting, build, locked
-restore, NuGet audit, OpenAPI lint, 100 fast tests and 21 slow tests with zero
-skips. No production/live acceptance is claimed.
+`.github/workflows/ci.yml` pins the ts-dotnet revision (`TS_DOTNET_REV`). ts-auth's tests start the TerraBase built
+from the same monorepo commit: `make auth-test-fast` / `auth-test-slow` build `src/TerraBase` and pass its executable as
+`TERRABASE_BINARY` to the harness (`tests/TerraScale.Authentication.TestHarness/TerraBaseTestServer.cs`). There is no
+pinned TerraBase release. Each test tenant runs on the enterprise plan, as TerraScale's platform organization does.
+`TerraBaseSdkContractTests` checks that this TerraBase serves every route in ts-dotnet's
+`contracts/terrabase/routes.json`. Locally, if the framework-dependent `terrabase` apphost cannot load the runtime,
+point `DOTNET_ROOT` at a readable .NET install or set `TERRABASE_BINARY` to a `make terrabase-publish` output.
 
 ## Commands
 
@@ -84,16 +70,11 @@ The Fly image is the self-contained executable on the chiseled
 
 Configuration retains the `TS_AUTH_*` convention, with these changes:
 
-- **Storage selectors and credentials:** `TS_AUTH_DATABASE` is required as
-  `project-uuid/database`. The intended production dataset is `ts-auth/auth` in
-  organization `terrascale`, where `ts-auth` is the project
-  label. The pinned server and inspected TerraBase `origin/main` resolve that
-  route by project ID, not label: configure `<ts-auth-project-uuid>/auth`.
-  `AuthOptions` requires a lowercase hyphenated project UUID and a lowercase
-  database name of at most 63 characters. An operator resolves the project
-  label to its UUID through Management before deployment; runtime does no
-  Management lookup. Runtime uses no credential at all (see the storage
-  endpoint below). Separate project/tenant selector options have been removed.
+- **Storage database:** fixed in code, no setting. ts-auth stores everything in database `platform-auth` of the
+  platform project `00000000000000000000000002` (`App.StorageProject`, `App.StorageDatabase`), which TerraBase seeds on
+  every start. At startup ts-auth creates its collections there (`AuthStore.ProvisionAsync`, idempotent) before the
+  signing key bootstrap, retrying every five seconds; `/readyz` answers 503 until both succeed, so ts-auth may start
+  before TerraBase and recovers on its own. `TS_AUTH_DATABASE` is gone.
 - **Storage endpoint:** fixed in code (`App.TerraBaseOrigin`):
   `http://top1.nearest.of.ts-terrabase.internal:8081`, TerraBase's internal
   listener on Fly's private network, resolved by Fly DNS to the nearest
@@ -851,10 +832,8 @@ The rest of the platform management API (contract section 7), in
 
 ## Production activation gate
 
-[`scripts/auth/provision.sh`](../../scripts/auth/provision.sh) prints only a provisioning
-plan. It performs no live setup; live dataset provisioning belongs to TS-529
-in ts-orchestrator. Automatic provisioning remains pending; qualification and
-storage-integrity requirements still gate safe serving.
+ts-auth creates its collections at startup in the seeded `platform-auth` database (see "Storage database" above);
+qualification and storage-integrity requirements still gate safe serving.
 Every auth replica stores through the nearest TerraBase machine's internal
 listener (`http://top1.nearest.of.ts-terrabase.internal:8081`) and never
 resends a request.
@@ -892,8 +871,8 @@ real SDK-pinned TerraBase; test-only wrappers inject failures and contention
 over that real store, and two servers bound to one database stand in for
 replicas.
 
-Their collections, `signing_keys` and `rate_limits`, are provisioned
-with the other collections (`scripts/auth/provision.sh`); while one is missing the
+Their collections, `signing_keys` and `rate_limits`, are created at startup
+with the other collections; while one is missing the
 feature answers 503. `signing_keys` is one of `AuthStore.RequiredCollections`,
 because OpenID Connect signs every token with an instance's keys, so `/readyz`
 reports 503 while it is missing.

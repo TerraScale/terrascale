@@ -16,7 +16,7 @@ using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Authentication.Fast.Security;
 
-/// <summary>Opt-in, single-hop client IP resolution over real HTTP and the pinned TerraBase.</summary>
+/// <summary>Opt-in, single-hop client IP resolution over real HTTP and the real TerraBase.</summary>
 [ClassDataSource<TerraBaseFixture>(Shared = SharedType.PerTestSession)]
 public sealed class TrustedProxyTests(TerraBaseFixture fixture)
 {
@@ -363,7 +363,6 @@ public sealed class TrustedProxyTests(TerraBaseFixture fixture)
     private static Task<AuthTestServer> StartAsync(SharedStateTarget target, TimeProvider clock, PeerAddress peer, string? proxies = Proxy,
         int capacity = Capacity, bool rejectedStorageKey = false) => AuthTestServer.StartAsync(values =>
         {
-            target.Bind(values);
             values["master-key"] = MasterKey;
             values["rate-limit"] = capacity.ToString(System.Globalization.CultureInfo.InvariantCulture);
             if (proxies is not null)

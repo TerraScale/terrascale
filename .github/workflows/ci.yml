@@ -35,7 +35,7 @@ permissions:
 
 env:
   # ts-dotnet revision ts-auth builds against (TerraScale/ts-dotnet is private; read-only deploy key).
-  TS_DOTNET_REV: 619fa979673635663cba98be5e25713806d11cd5
+  TS_DOTNET_REV: db742ad2ca27d51cd38fadeb58b430317a4217a8
 
 jobs:
   # Runs on every event: a skipped job would skip everything downstream of "test" (deploy, slow).
@@ -81,6 +81,8 @@ jobs:
               - tests/TerraScale.Authentication*/**
               - docs/auth/**
               - scripts/auth/**
+              # ts-auth's tests run against the TerraBase built from the same commit and check the SDK's routes on it.
+              - src/TerraBase/**
             terrabase:
               - *shared
               - terrabase.slnf
@@ -107,11 +109,6 @@ jobs:
           ssh-key: ${{ secrets.TS_DOTNET_DEPLOY_KEY }}
           path: ts-dotnet
           persist-credentials: false
-      - &download-terrabase
-        name: Download the pinned TerraBase the ts-auth tests start
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release download auth-test-terrabase -R "$GITHUB_REPOSITORY" -p terrabase-linux-amd64 -D terrabase-pinned
       # One layer cache per job: concurrent jobs sharing a key would overwrite each other's cache.
       - &setup-builder
         uses: useblacksmith/setup-docker-builder@v2
@@ -122,9 +119,7 @@ jobs:
         with:
           context: terrascale
           file: terrascale/Dockerfile
-          build-contexts: |
-            ts-dotnet=ts-dotnet
-            terrabase-pinned=terrabase-pinned
+          build-contexts: ts-dotnet=ts-dotnet
           target: test-${{ github.job }}
           push: false
 
@@ -136,7 +131,6 @@ jobs:
     steps:
       - *checkout
       - *checkout-ts-dotnet
-      - *download-terrabase
       - *setup-builder
       - *build-area
 
@@ -148,7 +142,6 @@ jobs:
     steps:
       - *checkout
       - *checkout-ts-dotnet
-      - *download-terrabase
       - *setup-builder
       - *build-area
 
@@ -173,15 +166,12 @@ jobs:
     steps:
       - *checkout
       - *checkout-ts-dotnet
-      - *download-terrabase
       - *setup-builder
       - uses: useblacksmith/build-push-action@v2
         with:
           context: terrascale
           file: terrascale/Dockerfile
-          build-contexts: |
-            ts-dotnet=ts-dotnet
-            terrabase-pinned=terrabase-pinned
+          build-contexts: ts-dotnet=ts-dotnet
           target: test-slow
           # A rerun of the same commit runs the suites again instead of reusing the stored result.
           no-cache-filters: slow-run

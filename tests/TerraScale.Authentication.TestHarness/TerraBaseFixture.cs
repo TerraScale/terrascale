@@ -1,13 +1,12 @@
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using TerraScale.Authentication.Store;
-using TerraScale.DotNet.Testing;
 using TerraScale.DotNet.TerraBase;
 using TUnit.Core.Interfaces;
 
 namespace TerraScale.Authentication.Tests;
 
-/// <summary>One pinned real TerraBase process per suite; every test gets its own tenant and database.</summary>
+/// <summary>One real TerraBase process per suite, built from this commit; every test gets its own tenant and database.</summary>
 public sealed class TerraBaseFixture : IAsyncInitializer, IAsyncDisposable
 {
     private TerraBaseTestServer? server;
@@ -17,7 +16,7 @@ public sealed class TerraBaseFixture : IAsyncInitializer, IAsyncDisposable
     public async Task InitializeAsync()
     {
         var (running, unavailable) = await TerraBaseTestServer.StartAsync();
-        this.server = running ?? throw new InvalidOperationException($"Real TerraBase integration tests require the pinned binary: {unavailable}");
+        this.server = running ?? throw new InvalidOperationException($"Real TerraBase integration tests need TerraBase: {unavailable}");
     }
 
     public async Task<(TerraBaseTestTenant Tenant, TerraBaseDatabase Database)> CreateDatabaseAsync(bool provision = true)
@@ -35,8 +34,8 @@ public sealed class TerraBaseFixture : IAsyncInitializer, IAsyncDisposable
 
     /// <summary>
     /// Points a ts-auth server's storage at <paramref name="databaseName"/> of the tenant's project in this fixture.
-    /// TODO(.cos/fly-migration-plan.md, phase 3a): the pinned TerraBase release has no internal listener yet, so tests reach
-    /// its TLS client listener with the tenant's API key; switch to the credential-free internal listener once it ships.
+    /// TODO(.cos/fly-migration-plan.md, phase 3a): TerraBase has no internal listener yet, so tests reach its TLS client
+    /// listener with the tenant's API key; switch to the credential-free internal listener once it ships.
     /// The fixture's HttpClient trusts its certificate; a test may register its own, wrapping <see cref="NewHandler"/>.
     /// </summary>
     public void UseStorage(IServiceCollection services, TerraBaseTestTenant tenant, string databaseName = "auth", string? apiKey = null)

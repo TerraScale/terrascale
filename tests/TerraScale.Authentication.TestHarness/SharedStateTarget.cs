@@ -2,7 +2,6 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using TerraScale.Authentication.Features.RateLimiting;
 using TerraScale.Authentication.Store;
-using TerraScale.DotNet.Testing;
 using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Authentication.Tests;
@@ -39,13 +38,6 @@ public sealed class SharedStateTarget
         }
 
         return new SharedStateTarget(fixture, tenant, database);
-    }
-
-    /// <summary>Points a server's settings at this database.</summary>
-    public void Bind(Dictionary<string, string> values)
-    {
-        ArgumentNullException.ThrowIfNull(values);
-        values["database"] = $"{this.tenant.Project.Id}/auth";
     }
 
     /// <summary>Points the server's storage at this database, through <paramref name="apiKey"/> instead of the tenant's own key when given.</summary>

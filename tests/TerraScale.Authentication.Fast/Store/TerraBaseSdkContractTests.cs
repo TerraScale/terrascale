@@ -1,0 +1,60 @@
+using System.Net;
+using System.Text;
+using System.Text.Json;
+using System.Text.RegularExpressions;
+using TerraScale.Authentication.Tests;
+
+namespace TerraScale.Authentication.Fast.Store;
+
+/// <summary>
+/// The TerraBase built from this commit serves every route the pinned ts-dotnet clients call
+/// (<c>$(TsDotnetRoot)/contracts/terrabase/routes.json</c>; ts-dotnet's own tests check its clients send exactly those).
+/// An unknown route answers 404 and a known path with the wrong method 405, so an unauthenticated request that gets
+/// neither reached an endpoint. Documents routes are tried on the client listener, management routes on the
+/// administrative listener, where the management service credential works.
+/// </summary>
+[ClassDataSource<TerraBaseFixture>(Shared = SharedType.PerTestSession)]
+public sealed class TerraBaseSdkContractTests(TerraBaseFixture fixture)
+{
+    private static readonly Dictionary<string, string> Values = new(StringComparer.Ordinal)
+    {
+        ["organization"] = "01JA0000000000000000000001",
+        ["project"] = "01JA0000000000000000000002",
+        ["user"] = "01JA0000000000000000000003",
+        ["invitation"] = "01JA0000000000000000000004",
+        ["collection"] = "users",
+    };
+
+    [Test]
+    public async Task TerraBase_serves_every_route_the_sdk_calls()
+    {
+        using var manifest = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "contracts", "terrabase", "routes.json")));
+        var operations = manifest.RootElement.GetProperty("operations").EnumerateArray().ToList();
+        await Assert.That(operations.Count).IsGreaterThan(0);
+        var missing = new List<string>();
+        foreach (var operation in operations)
+        {
+            var client = operation.GetProperty("client").GetString()!;
+            var method = new HttpMethod(operation.GetProperty("method").GetString()!);
+            var template = operation.GetProperty("path").GetString()!;
+            // Data routes name a database; management routes address it by id.
+            var database = client == "documents" ? "app" : "01JA0000000000000000000005";
+            var path = Regex.Replace(template, @"\{([a-z]+)\}", match => match.Groups[1].Value == "database" ? database : Values[match.Groups[1].Value]);
+            var origin = client == "documents" ? fixture.Server.ClientAddress : fixture.Server.AdminAddress;
+            using var request = new HttpRequestMessage(method, new Uri(origin, path));
+            if (method != HttpMethod.Get && method != HttpMethod.Delete)
+            {
+                request.Content = new StringContent("{}", Encoding.UTF8, "application/json");
+            }
+
+            using var response = await fixture.Server.Http.SendAsync(request);
+            if (response.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.MethodNotAllowed
+                && (await response.Content.ReadAsStringAsync()) is var body && (body.Length == 0 || body.Contains("unknown_route", StringComparison.Ordinal)))
+            {
+                missing.Add($"{operation.GetProperty("operation").GetString()}: {method} {template} answered {(int)response.StatusCode}");
+            }
+        }
+
+        await Assert.That(missing).IsEmpty();
+    }
+}

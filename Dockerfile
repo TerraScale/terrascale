@@ -1,14 +1,14 @@
 # syntax=docker/dockerfile:1
 # CI runs the `test-libs`, `test-auth` and `test-terrabase` stages on pull requests and pushes (.github/workflows/ci.yml);
 # `make docker-test` builds `test`, all three. The `terrabase` and `ts-auth` stages are the images CI deploys to Fly.
-# ts-auth builds ts-dotnet from source and its tests start the pinned TerraBase release binary that
-# ts-dotnet's TerraBaseTestServer verifies, so the build takes two named contexts: `ts-dotnet` (a checkout) and
-# `terrabase-pinned` (a directory holding terrabase-linux-amd64).
+# ts-auth builds ts-dotnet from source (named context `ts-dotnet`, a checkout); its tests start the TerraBase built from
+# this same tree (Makefile TERRABASE_BINARY).
 
 FROM mcr.microsoft.com/dotnet/sdk:11.0 AS base
 # The SDK image's ASPNETCORE_HTTP_PORTS=8080 makes Kestrel warn "Overriding address(es)", which tests that assert
 # on warnings see; the services choose their own listeners.
-ENV CI=true DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 ASPNETCORE_HTTP_PORTS=
+# DOTNET_ROOT lets the framework-dependent `terrabase` apphost that ts-auth's tests start find the runtime.
+ENV CI=true DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 ASPNETCORE_HTTP_PORTS= DOTNET_ROOT=/usr/share/dotnet
 RUN apt-get update \
     && apt-get install -y --no-install-recommends make nodejs npm \
     && rm -rf /var/lib/apt/lists/*
@@ -18,8 +18,6 @@ RUN npx --yes playwright@1.63.0 install --with-deps chromium \
     && npx --yes @redocly/cli@2.57.0 --version \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=ts-dotnet . /src/ts-dotnet
-COPY --from=terrabase-pinned --chmod=755 terrabase-linux-amd64 /opt/terrabase-pinned/terrabase-linux-amd64
-ENV TERRABASE_BINARY=/opt/terrabase-pinned/terrabase-linux-amd64
 WORKDIR /src/terrascale
 
 FROM base AS source

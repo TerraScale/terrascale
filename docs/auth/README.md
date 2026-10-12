@@ -136,13 +136,10 @@ checkout at the revision pinned in `.github/workflows/ci.yml`. TerraScale.Endpoi
 and TerraScale.Logging come from the Forgejo NuGet feed (see `nuget.config`).
 ts-dotnet is looked up at `../ts-dotnet`, or under
 `~/Projects/TerraScale/`; pass `-p:TerraScaleRoot=<dir>` or set the
-`TerraScaleRoot` environment variable to use another location. CI pins
-ts-dotnet to `619fa979673635663cba98be5e25713806d11cd5` (main after #1: plain
-HTTP to TerraBase's internal listener).
-Storage integration tests require the real SDK-pinned Linux x64 TerraBase
-binary locally and in CI; unavailable prerequisites fail instead of skipping.
-See [the port guide](csharp-port.md) for the binary tag, SHA-256 and
-download/cache settings. Run local commands at low CPU priority:
+`TerraScaleRoot` environment variable to use another location. CI pins the
+ts-dotnet revision in `.github/workflows/ci.yml`. Storage integration tests run
+against the TerraBase built from the same commit (the Makefile passes it as
+`TERRABASE_BINARY`); see [the port guide](csharp-port.md). Run local commands at low CPU priority:
 
 ```sh
 nice -n 19 make check      # format, build (analyzers as errors), NuGet audit, OpenAPI lint, fast suite
@@ -389,33 +386,14 @@ fallback. A background check runs every five seconds with a two-second
 deadline, and `/readyz` answers its latest result; a result older than fifteen
 seconds is not ready. Unknown `region` is omitted.
 
-## Provisioning the global auth dataset
+## The global auth dataset
 
-The application and readiness probe never provision or repair state, and
-there is no migration of Rust documents. `scripts/auth/provision.sh` prints only
-the provisioning plan; live production execution belongs to TS-470:
-
-1. Resolve organization `terrascale` and project label `ts-auth` to their
-   IDs through Management before deployment; keep management credentials out
-   of the auth runtime.
-2. Create the `auth` database through TerraBase's internal listener
-   (`http://top1.nearest.of.ts-terrabase.internal:8081`, no credential).
-3. Explicitly call `AuthStore.ProvisionAsync` with the pinned SDK against that
-   existing database. It creates `uniques`, `verification_tokens` and
-   `storage_health`, the TS-490 `users`, `sessions` and `passcodes`, the
-   `signing_keys`, the TS-488 `rate_limits`, the TS-491 `oidc_applications`,
-   `oidc_authorizations` and `oidc_tokens`, the TS-583 `email_configs` and
-   `email_config_versions`, and the TS-598 `organizations`, `memberships`,
-   `projects`, `project_members`, `api_keys`, `invitations`, `audit_events`
-   and the TS-707 `mfa_credentials`
-   collections; later feature streams own their other collections. `/readyz`
-   requires all twenty-one, so a
-   database provisioned before a release that adds one (TS-583, TS-598, TS-707)
-   reports 503 until this step is repeated. Run it before rolling out a release
-   that adds collections; a configured dashboard or service client also stops
-   startup while its collection is missing.
-4. Configure every replica with `<ts-auth-project-uuid>/auth` and the same
-   shared auth settings.
+Zero-config: TerraBase seeds the platform project `00000000000000000000000002` with database `platform-auth` on every
+start, and ts-auth stores everything there through TerraBase's internal listener
+(`http://top1.nearest.of.ts-terrabase.internal:8081`, no credential). At startup every replica creates
+`AuthStore.RequiredCollections` (idempotent) and then its signing key, retrying every five seconds; `/readyz` answers
+503 until both succeed. The readiness probe itself never repairs state, so a collection lost later fails closed until
+the next start.
 
 **Live production activation remains gated.** The pinned server uses SQLite
 WAL with `synchronous=NORMAL` (TerraBase decision 0003): a process crash alone

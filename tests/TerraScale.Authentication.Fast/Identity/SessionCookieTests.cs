@@ -8,7 +8,6 @@ using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Ui;
 using TerraScale.Authentication.Hosting;
 using TerraScale.Authentication.Tests;
-using TerraScale.DotNet.Testing;
 
 namespace TerraScale.Authentication.Fast.Identity;
 
@@ -96,10 +95,6 @@ public sealed class SessionCookieTests(TerraBaseFixture fixture)
 
     private Task<AuthTestServer> StartAsync(TerraBaseTestTenant tenant) =>
         AuthTestServer.StartAsync(
-            settings: values =>
-            {
-                values["database"] = $"{tenant.Project.Id}/auth";
-            },
             services: services => fixture.UseStorage(services, tenant),
             routes: app =>
             {

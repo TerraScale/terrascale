@@ -31,6 +31,15 @@ public static class App
     public static readonly Uri TerraBaseOrigin = new($"http://top1.nearest.of.{(Environment.GetEnvironmentVariable("FLY_APP_NAME") is { } app && app.StartsWith("ts-pr-", StringComparison.Ordinal) ? app : "ts-terrabase")}.internal:8081");
 
     /// <summary>
+    /// The TerraBase project holding the platform's own databases. TerraBase seeds it with this fixed id on every start
+    /// (<c>PlatformDatabases</c> in src/TerraBase); the two must stay equal.
+    /// </summary>
+    public const string StorageProject = "00000000000000000000000002";
+
+    /// <summary>ts-auth's database in <see cref="StorageProject"/>; ts-auth creates its collections there itself.</summary>
+    public const string StorageDatabase = "platform-auth";
+
+    /// <summary>
     /// Builds the application for validated options. <paramref name="configure"/> lets
     /// integration tests replace infrastructure before the container is built.
     /// </summary>
@@ -66,7 +75,7 @@ public static class App
         builder.Services.AddSingleton(services => new TerraBaseDocumentsClient(services.GetRequiredService<HttpClient>(), new TerraBaseDocumentsClientOptions
         {
             BaseAddress = TerraBaseOrigin,
-        }).Database(options.StorageProject, options.StorageDatabase));
+        }).Database(StorageProject, StorageDatabase));
         builder.Services.AddSingleton<AuthStore>();
         builder.Services.AddSingleton<Users>();
         builder.Services.AddSingleton<Sessions>();

@@ -13,7 +13,6 @@ using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.SigningKeys;
 using TerraScale.DotNet.TerraBase;
-using TerraScale.DotNet.Testing;
 
 namespace TerraScale.Authentication.Tests;
 
@@ -169,7 +168,6 @@ public sealed class OidcHarness : IAsyncDisposable
     {
         var server = await AuthTestServer.StartAsync(values =>
         {
-            values["database"] = $"{tenant.Project.Id}/auth";
             values["dashboard-client-secret"] = ClientSecret;
             values["dashboard-redirect-uris"] = $"{RedirectUri};{LoopbackRedirectUri}";
             values["dashboard-post-logout-redirect-uris"] = PostLogoutRedirectUri;
