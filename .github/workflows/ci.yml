@@ -12,7 +12,6 @@ name: CI
 #   scripts/fly/fast-gate.sh requires a passed `test` for this exact tree: the merged pull request's head when the merge
 #   kept its tree (rebased before merging), else main's own `test`.
 # After it:
-# - release (main): the TerraBase linux-amd64 executable as GitHub release terrabase-<sha12>; releases beyond the newest 10 are deleted.
 # - slow (main): the slow suites; never blocks.
 # - e2e (main, after deploy): tests/TerraBase.E2E against the Fly app, gru and sjc pinned with fly-prefer-region; never
 #   blocks. Between replication slices R2a and R10a nothing replicates on Fly, so E1 to E7 fail there
@@ -38,7 +37,7 @@ env:
   TS_DOTNET_REV: 619fa979673635663cba98be5e25713806d11cd5
 
 jobs:
-  # Runs on every event: a skipped job would skip everything downstream of "test" (deploy, release, slow).
+  # Runs on every event: a skipped job would skip everything downstream of "test" (deploy, slow).
   changes:
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 5
@@ -160,49 +159,6 @@ jobs:
     steps:
       - name: Every area that ran passed
         run: '! grep -qE "failure|cancelled" <<< "${{ join(needs.*.result, '' '') }}"'
-
-  release:
-    needs: test
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    timeout-minutes: 20
-    permissions:
-      contents: write
-    steps:
-      - *checkout
-      - *setup-builder
-      - uses: useblacksmith/build-push-action@v2
-        with:
-          context: terrascale
-          file: terrascale/Dockerfile
-          target: terrabase-binary
-          outputs: type=local,dest=release
-      # Consumers (ts-go terrabasetest, ts-status) pin a tag and the SHA256 of the asset.
-      - name: Publish terrabase-<sha12>
-        working-directory: release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          sha256sum terrabase-linux-amd64 > terrabase-linux-amd64.sha256
-          tag="terrabase-${GITHUB_SHA::12}"
-          # A re-run of the same commit replaces the assets instead of failing on the existing tag.
-          if gh release view "$tag" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$tag" terrabase-linux-amd64 terrabase-linux-amd64.sha256 -R "$GITHUB_REPOSITORY" --clobber
-          else
-            gh release create "$tag" terrabase-linux-amd64 terrabase-linux-amd64.sha256 \
-              -R "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --latest --title "TerraBase ${GITHUB_SHA::12}" \
-              --notes "TerraBase linux-amd64 executable built from $GITHUB_SHA on main."
-          fi
-      # Keeps the newest 10 TerraBase releases; older ones go with their tags. Only terrabase-<12 hex> matches.
-      - name: Prune terrabase releases beyond the newest 10
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release list -R "$GITHUB_REPOSITORY" --limit 1000 --json tagName,createdAt \
-            --jq '[.[] | select(.tagName | test("^terrabase-[0-9a-f]{12}$"))] | sort_by(.createdAt) | reverse | .[10:][].tagName' |
-            while read -r tag; do
-              gh release delete "$tag" -R "$GITHUB_REPOSITORY" --cleanup-tag -y
-            done
 
   slow:
     needs: test
