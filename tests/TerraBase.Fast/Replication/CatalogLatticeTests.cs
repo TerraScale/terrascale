@@ -30,6 +30,55 @@ public sealed class CatalogLatticeTests
 
     private static readonly string[] SjcFra = ["sjc", "fra"];
 
+    // Every mutating route not anchored before it acknowledges: grants, creations, renames, preferences, reads through POST,
+    // restores into new databases, the management commit (it anchors itself per operation) and tenant data.
+    private static readonly string[] NotAnchored =
+    [
+        "DELETE /v1/projects/{project}/databases/{database}/collections/{collection}",
+        "DELETE /v1/projects/{project}/databases/{database}/collections/{collection}/documents/by-key",
+        "DELETE /v1/projects/{project}/databases/{database}/collections/{collection}/schema",
+        "DELETE /v1/projects/{project}/databases/{database}/indexes/{index}",
+        "PATCH /v1/management/organizations/{organization}",
+        "PATCH /v1/management/organizations/{organization}/projects/{project}",
+        "PATCH /v1/projects/{project}/databases/{database}/collections/{collection}/documents/by-key",
+        "POST /admin/api-keys",
+        "POST /v1/management/commits",
+        "POST /v1/management/documents/{collection}/query",
+        "POST /v1/management/invitations/accept",
+        "POST /v1/management/invitations/lookup",
+        "POST /v1/management/organizations",
+        "POST /v1/management/organizations/{organization}/invitations",
+        "POST /v1/management/organizations/{organization}/ownership-transfer",
+        "POST /v1/management/organizations/{organization}/projects",
+        "POST /v1/management/organizations/{organization}/projects/{project}/api-keys",
+        "POST /v1/management/organizations/{organization}/projects/{project}/binding",
+        "POST /v1/projects/{project}/databases",
+        "POST /v1/projects/{project}/databases/{database}/backups",
+        "POST /v1/projects/{project}/databases/{database}/backups/{backup}/restore",
+        "POST /v1/projects/{project}/databases/{database}/branches",
+        "POST /v1/projects/{project}/databases/{database}/collections",
+        "POST /v1/projects/{project}/databases/{database}/collections/{collection}/documents",
+        "POST /v1/projects/{project}/databases/{database}/collections/{collection}/query",
+        "POST /v1/projects/{project}/databases/{database}/index-recommendations/{recommendation}/apply",
+        "POST /v1/projects/{project}/databases/{database}/indexes",
+        "POST /v1/projects/{project}/databases/{database}/point-in-time/plan",
+        "POST /v1/projects/{project}/databases/{database}/point-in-time/restore",
+        "POST /v1/projects/{project}/databases/{database}/sql",
+        "POST /v1/projects/{project}/databases/{database}/sql/check",
+        "POST /v1/projects/{project}/databases/{database}/sql/explain",
+        "POST /v1/projects/{project}/databases/{database}/transactions",
+        "POST /v1/projects/{project}/saved-queries",
+        "PUT /v1/management/current-organization",
+        "PUT /v1/management/organizations/{organization}/audit-retention",
+        "PUT /v1/management/organizations/{organization}/members/{user}",
+        "PUT /v1/projects/{project}/databases/{database}",
+        "PUT /v1/projects/{project}/databases/{database}/auto-index/{collection}",
+        "PUT /v1/projects/{project}/databases/{database}/collections/{collection}/documents/by-key",
+        "PUT /v1/projects/{project}/databases/{database}/collections/{collection}/schema",
+        "PUT /v1/projects/{project}/databases/{database}/schema/{collection}",
+        "PUT /v1/projects/{project}/saved-queries/{query}",
+    ];
+
     [Test]
     public async Task An_organization_created_in_one_region_reaches_every_region_with_the_same_document_and_version()
     {
@@ -644,14 +693,15 @@ public sealed class CatalogLatticeTests
         var gru = cluster["gru"];
         var owner = EntityIds.New().ToString();
         var (organization, project, doomed) = (EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString());
-        var aliased = EntityIds.New().ToString();
+        var (aliased, replicated) = (EntityIds.New().ToString(), EntityIds.New().ToString());
         await gru.CommitAsync(owner,
             new { op = "create_organization", id = organization, name = "Refused" },
             new { op = "set_plan", organization, plan = "enterprise" },
             new { op = "create_project", organization, id = project, name = "p" },
             new { op = "create_database", organization, project, name = "kept", id = EntityIds.New().ToString() },
             new { op = "create_database", organization, project, name = "doomed", id = doomed },
-            new { op = "create_database", organization, project, name = "aliased", id = aliased });
+            new { op = "create_database", organization, project, name = "aliased", id = aliased },
+            new { op = "create_database", organization, project, name = "replicated", id = replicated, replica_regions = Sjc });
         var projectPath = $"/v1/management/organizations/{organization}/projects/{project}";
         var (key, _) = await gru.CreateKeyAsync(owner, projectPath);
         var (_, writer) = await gru.CreateKeyAsync(owner, projectPath, ["documents:read", "documents:write"]);
@@ -668,13 +718,26 @@ public sealed class CatalogLatticeTests
             mode = "customer",
         };
         await Assert.That((int)await gru.SendAsync(owner, HttpMethod.Put, $"{projectPath}/backup-destination", destination)).IsBetween(200, 299);
-        cluster.Bucket!.FailPut = _ => true;
+        // The bucket refuses the anchor only, so each request below fails on its anchor and nothing else.
+        cluster.Bucket!.FailPut = key => key.StartsWith("catalog-anchor/", StringComparison.Ordinal);
         await Assert.That(await gru.SendAsync(owner, HttpMethod.Delete, $"{projectPath}/api-keys/{key}")).IsEqualTo(HttpStatusCode.InternalServerError);
         // Decided on the routed endpoint: the legacy management alias of the project API's database deletion is anchored too.
         await Assert.That(await gru.SendAsync(owner, HttpMethod.Delete, $"{projectPath}/databases/{aliased}")).IsEqualTo(HttpStatusCode.InternalServerError);
+        // Not only deletions: replacing the destination, removing a replica region and changing the plan revoke too.
+        await Assert.That(await gru.SendAsync(owner, HttpMethod.Put, $"{projectPath}/backup-destination", destination)).IsEqualTo(HttpStatusCode.InternalServerError);
+        await Assert.That(await gru.SendAsync(owner, HttpMethod.Patch, $"{projectPath}/databases/{replicated}", new { replicaRegions = Array.Empty<string>() }))
+            .IsEqualTo(HttpStatusCode.InternalServerError);
+        await Assert.That(await gru.SendAsync(owner, HttpMethod.Put, $"/v1/management/organizations/{organization}/plan", new { plan = "hobby" }))
+            .IsEqualTo(HttpStatusCode.InternalServerError);
         await Assert.That(await gru.SendAsync(owner, HttpMethod.Delete, $"{projectPath}/backup-destination")).IsEqualTo(HttpStatusCode.InternalServerError);
         var deletion = new { id = EntityIds.New().ToString(), ops = new object[] { new { op = "delete_database", organization, project, database = doomed } } };
+        var narrowing = new
+        {
+            id = EntityIds.New().ToString(),
+            ops = new object[] { new { op = "set_database_regions", organization, project, database = replicated, replica_regions = Array.Empty<string>() } },
+        };
         await Assert.That(await gru.SendAsync(owner, HttpMethod.Post, "/v1/management/commits", deletion)).IsEqualTo(HttpStatusCode.InternalServerError);
+        await Assert.That(await gru.SendAsync(owner, HttpMethod.Post, "/v1/management/commits", narrowing)).IsEqualTo(HttpStatusCode.InternalServerError);
         await Assert.That(await gru.SendAsync(owner, HttpMethod.Post, $"/v1/management/organizations/{organization}/projects", new { name = "created" }))
             .IsEqualTo(HttpStatusCode.Created);
         var creation = new { id = EntityIds.New().ToString(), ops = new object[] { new { op = "create_database", organization, project, name = "more", id = EntityIds.New().ToString() } } };
@@ -786,32 +849,52 @@ public sealed class CatalogLatticeTests
     }
 
     /// <summary>
-    /// Which endpoints are anchored before they acknowledge is decided by endpoint metadata (AnchoredRevocation), so every
-    /// route that removes access or deletes catalog state must carry it and no tenant data route may: a new revoking endpoint
-    /// fails here until it is classified. The management commit endpoint anchors itself, per operation.
+    /// Which writes are anchored before they acknowledge is decided by endpoint metadata (AnchoredRevocation) and, for a
+    /// management commit, by its operations. Every mutating endpoint (POST, PUT, PATCH, DELETE) and every commit operation is
+    /// classified here, anchored or not: a new write fails until it is.
     /// </summary>
     [Test]
-    public async Task Every_revoking_endpoint_and_no_tenant_route_is_anchored_before_it_acknowledges()
+    public async Task Every_mutating_endpoint_and_commit_operation_is_classified_and_only_revocations_are_anchored()
     {
         await using var api = await ManagementApi.StartAsync();
-        var endpoints = api.Server.Services.GetRequiredService<Microsoft.AspNetCore.Routing.EndpointDataSource>().Endpoints
-            .Select(endpoint => (Name: endpoint.Metadata.GetMetadata<Microsoft.AspNetCore.Routing.IEndpointNameMetadata>()?.EndpointName,
-                Methods: endpoint.Metadata.GetMetadata<Microsoft.AspNetCore.Routing.IHttpMethodMetadata>()?.HttpMethods ?? [],
-                Anchored: endpoint.Metadata.GetMetadata<AnchoredRevocation>() is not null))
+        var mutating = api.Server.Services.GetRequiredService<Microsoft.AspNetCore.Routing.EndpointDataSource>().Endpoints
+            .OfType<Microsoft.AspNetCore.Routing.RouteEndpoint>()
+            .Where(endpoint => endpoint.Metadata.GetMetadata<Grpc.AspNetCore.Server.GrpcMethodMetadata>() is null)
+            .SelectMany(endpoint => (endpoint.Metadata.GetMetadata<Microsoft.AspNetCore.Routing.IHttpMethodMetadata>()?.HttpMethods ?? [])
+                .Where(method => method is "POST" or "PUT" or "PATCH" or "DELETE")
+                .Select(method => (Key: $"{method} {endpoint.RoutePattern.RawText}", Anchored: endpoint.Metadata.GetMetadata<AnchoredRevocation>() is not null)))
             .ToList();
-        string[] revoking =
+        // A restore could undo these to a tenant's harm: revocations, removals, deletions of catalog state, and narrowing
+        // where data goes or what a plan allows.
+        string[] anchored =
         [
-            "deleteOrganization", "deleteProject", "deleteDatabase", "revokeProjectApiKey", "removeMember", "changeMemberRole",
-            "leaveOrganization", "revokeInvitation", "confirmOwnershipTransfer", "cancelOwnershipTransfer", "deleteBackupDestination",
-            "deleteSavedQuery",
+            "DELETE /v1/management/organizations/{organization}", "DELETE /v1/management/organizations/{organization}/projects/{project}",
+            "DELETE /v1/projects/{project}/databases/{database}", "PATCH /v1/projects/{project}/databases/{database}",
+            "DELETE /v1/management/organizations/{organization}/projects/{project}/api-keys/{key}",
+            "DELETE /v1/management/organizations/{organization}/members/{user}", "PUT /v1/management/organizations/{organization}/members/{user}/role",
+            "POST /v1/management/organizations/{organization}/leave", "DELETE /v1/management/organizations/{organization}/invitations/{invitation}",
+            "POST /v1/management/organizations/{organization}/ownership-transfer/confirm",
+            "DELETE /v1/management/organizations/{organization}/ownership-transfer", "PUT /v1/projects/{project}/backup-destination",
+            "DELETE /v1/projects/{project}/backup-destination", "PUT /v1/projects/{project}/databases/{database}/backup-policy",
+            "DELETE /v1/projects/{project}/saved-queries/{query}", "PUT /v1/management/organizations/{organization}/plan",
         ];
-        // Deletions of tenant data: client databases, not the catalog.
-        string[] tenant = ["deleteDocument", "dropCollection", "dropIndex", "deleteDeclaredCollectionSchema"];
+        var unanchored = mutating.Where(endpoint => !endpoint.Anchored).Select(endpoint => endpoint.Key).Order(StringComparer.Ordinal).ToArray();
 
-        await Assert.That(endpoints.Where(endpoint => endpoint.Anchored).Select(endpoint => endpoint.Name!).ToArray()).IsEquivalentTo(revoking);
-        await Assert.That(endpoints.Where(endpoint => endpoint.Methods.Contains("DELETE") && !endpoint.Anchored).Select(endpoint => endpoint.Name!).ToArray())
-            .IsEquivalentTo(tenant);
-        await Assert.That(endpoints.Single(endpoint => endpoint.Name == "commit").Anchored).IsFalse().Because("it anchors itself, per operation");
+        await Assert.That(mutating.Where(endpoint => endpoint.Anchored).Select(endpoint => endpoint.Key).ToArray()).IsEquivalentTo(anchored);
+        // Grants, creations, renames, preferences, reads through POST, restores into new databases, and tenant data.
+        await Assert.That(unanchored).IsEquivalentTo(NotAnchored).Because(string.Join("\n", unanchored));
+
+        string[] anchoredOps =
+        [
+            "delete_organization", "delete_project", "delete_database", "change_role", "remove_member", "leave", "revoke_invitation",
+            "decline_invitation", "confirm_transfer", "cancel_transfer", "set_plan", "set_database_regions",
+        ];
+        await Assert.That(Features.Management.CommitEndpoint.AnchoredOperations.ToArray()).IsEquivalentTo(anchoredOps);
+        await Assert.That(Features.Management.CommitEndpoint.Operations.Except(anchoredOps).Order(StringComparer.Ordinal).ToArray()).IsEquivalentTo(
+        [
+            "accept_invitation", "branch_database", "create_database", "create_organization", "create_project", "fence", "invite", "limit",
+            "rename_organization", "rename_project", "resend_invitation", "set_audit_retention", "set_current_organization", "start_transfer",
+        ]);
     }
 
     // Whether `condition` holds within the deadline.

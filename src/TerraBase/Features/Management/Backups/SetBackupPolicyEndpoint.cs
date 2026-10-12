@@ -4,6 +4,7 @@ using TerraBase.Features.ApiKeys;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using TerraScale.Endpoints;
+using TerraBase.Features.Replication;
 
 namespace TerraBase.Features.Management.Backups;
 
@@ -17,6 +18,8 @@ public sealed class SetBackupPolicyEndpoint(IManagementService management, IMana
     {
         Put(ProjectApiRoute.Database + "/backup-policy");
         Name("setBackupPolicy");
+        // A restore could undo it to a tenant's harm: anchored before it is acknowledged (CatalogGate).
+        Metadata(AnchoredRevocation.Instance);
         Summary("Saves the backup policy of a database");
         Description("fullBackupCron is a standard 5-field cron expression evaluated in UTC, or null or empty for no scheduled backups. retentionDays (1 to 35) applies to manual and scheduled backups. disabled pauses scheduled backups." + " " + ProjectApiRoute.IdentityDescription);
         Tags("Backups");
