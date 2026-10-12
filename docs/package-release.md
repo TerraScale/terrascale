@@ -43,9 +43,10 @@ names repository owner `TerraScale`, repository `ts-dotnet`, workflow file
 `release.yml` and no environment; `nuget-user` is the profile name of the
 account that created it. A policy for this private repository is only
 temporarily active for 7 days until its first publish; restart that window on
-nuget.org if it lapses. The policy cannot check the ref (environment deployment
-rules need a paid plan for a private repository), so anyone who can push a
-workflow to this repository can publish; keep write access to its admins.
+nuget.org if it lapses. The policy cannot check the ref, and the TerraScale
+organization's GitHub Free plan offers neither environments nor tag rulesets
+for a private repository, so anyone who can push a workflow to this
+repository can publish; keep write access to its admins.
 
 nuget.org repository-signs packages, so its download adds
 `.signature.p7s`; every other entry is byte-identical to the GitHub Packages
