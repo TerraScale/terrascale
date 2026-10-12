@@ -12,7 +12,7 @@ title: C# quickstart
 Run the console example through `TerraScale.DotNet.TerraBase.TerraBaseDocumentsClient`. It creates, reads, updates, queries and deletes one synthetic document, verifies stale-version rejection and uses only the SDK for database requests.
 
 ::: warning Candidate package required
-The public NuGet package endpoint returns 404 as of October 12, 2026 (UTC). Obtain an exact verified candidate package containing `TerraBaseDocumentsClient`. Source version numbers and local package receipts do not establish public installation or production JWT authorization. See [SDK reference](/ar/guides/sdks).
+The public NuGet package endpoint returns 404 as of October 12, 2026 (UTC). Version `0.0.2` remains an in-progress candidate, not a verified public release. Obtain an exact verified candidate package containing `TerraBaseDocumentsClient`. Source version numbers do not establish public installation or production JWT authorization. See [SDK reference](/ar/guides/sdks).
 :::
 
 ## 1. Obtain the example and package
@@ -49,8 +49,8 @@ Only the generated document is deleted. An interrupted request can leave it behi
 
 ## Qualification boundary
 
-The retained starter's package-only real-binary receipt covers its exact candidate's persisted CRUD/query values, version preconditions, read-only write denial, invalid credentials and cleanup. The example source is unchanged from that receipt.
+This repository provides the starter source without a retained real-service qualification receipt. Validate persisted CRUD/query values, version preconditions, read-only write denial, invalid credentials and cleanup against the exact candidate package in an authorized isolated real-service run.
 
-That result does not qualify the latest SDK source, public NuGet availability, production JWTs, automatic endpoint resolution, dashboard sign-in or multi-region behavior. Fresh artifacts and an authorized isolated real-service run are needed to establish those independently.
+Public NuGet availability, production JWT authorization, automatic endpoint resolution, dashboard sign-in and multi-region behavior require separate current evidence. The example source alone does not establish them.
 
 </div>
