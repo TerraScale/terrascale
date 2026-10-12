@@ -102,16 +102,21 @@ version said a document a machine held is never missing; that holds only without
     key): an anchor edited or forged without the key fails authentication and reads as unreadable (closed). At start, before any pull, M compares its head with the anchor: behind means M's
     catalog was put back to an older copy, which a volume snapshot cannot hide (the anchor lives outside the volume). A
     restored M then never opens by pulling (its peers may be restored copies too); only the operator open does.
-  - **Anchored before acknowledged.** Every Management request a restore could undo to a tenant's harm (every DELETE
-    under `/v1/management`: API keys, members, invitations, databases, projects, organizations, transfers; a role change;
-    leaving; confirming a transfer) writes the anchor before its response starts (`Response.OnStarting`), and a management
-    commit (`POST /v1/management/commits`) does so when it carries such an operation (`delete_organization`,
-    `delete_project`, `delete_database`, `change_role`, `remove_member`, `leave`, `revoke_invitation`,
-    `decline_invitation`, `confirm_transfer`, `cancel_transfer`). When the anchor cannot be written it answers 500 instead
-    of acknowledging (the change is committed here and replicates; a retry is idempotent). So no acknowledged revocation,
-    removal or deletion is newer than its machine's anchor. Creations, other commits (the dashboard's document writes among
-    them) and **every tenant route** (`/v1/projects/…`: documents, transactions) never wait for the bucket: tenant writes
-    change client databases, not `_system`, and a creation lost to a restore grants nothing.
+  - **Anchored before acknowledged.** Every endpoint a restore could undo to a tenant's harm carries the endpoint
+    metadata `AnchoredRevocation`: `deleteOrganization`, `deleteProject`, `deleteDatabase` (the project API and its legacy
+    management alias reach the same endpoint), `revokeProjectApiKey`, `removeMember`, `changeMemberRole`,
+    `leaveOrganization`, `revokeInvitation`, `confirmOwnershipTransfer`, `cancelOwnershipTransfer`,
+    `deleteBackupDestination` (losing its removal would resume shipping to a bucket the customer removed) and
+    `deleteSavedQuery`. The gate middleware reads the **routed endpoint's** metadata (never the request path, which the
+    legacy routes rewrite) and, for a successful response, writes the anchor before the response starts
+    (`Response.OnStarting`). A management commit (`POST /v1/management/commits`) anchors itself when it carries such an
+    operation (`delete_organization`, `delete_project`, `delete_database`, `change_role`, `remove_member`, `leave`,
+    `revoke_invitation`, `decline_invitation`, `confirm_transfer`, `cancel_transfer`). When the anchor cannot be written the
+    request answers 500 instead of acknowledging (the change is committed here and replicates; a retry is idempotent). So no
+    acknowledged revocation, removal or deletion is newer than its machine's anchor. Creations, other commits (the
+    dashboard's document writes among them) and **every tenant data route** (documents, transactions, collections, indexes,
+    schemas: client databases, not `_system`) never wait for the bucket. A test enumerates every endpoint, so a new
+    revoking or deleting endpoint fails until it is classified.
   - **Only trusted peers verify.** A pull counts only when the peer reports itself trusted (`GET /catalog-gate` on its
     internal listener, anonymous like the probes: `open`, or its anchor read and not ahead of its catalog). A restored,
     closed machine verifies nobody, so a peer whose own anchor had not caught a change it received by stream cannot open by
@@ -223,7 +228,10 @@ version said a document a machine held is never missing; that holds only without
   the acknowledgement, the anchor is not past the revocation when it is acknowledged; ignoring peer trust opens sjc);
   `A_revocation_the_bucket_cannot_anchor_is_not_acknowledged_while_creations_and_tenant_writes_still_are` (swallowing the
   anchor failure acknowledges the revocation; anchoring every commit refuses a creation commit; anchoring tenant writes
-  refuses a document write); `A_missing_anchor_keeps_a_non_genesis_catalog_closed_until_a_trusted_peer_or_an_operator_decides`
+  refuses a document write; the path-based rule acknowledged the legacy-alias database deletion with 204, R3's finding;
+  without its marker the backup-destination removal is acknowledged);
+  `Every_revoking_endpoint_and_no_tenant_route_is_anchored_before_it_acknowledges` (fails when a revoking endpoint lacks
+  the marker or a tenant route carries it); `A_missing_anchor_keeps_a_non_genesis_catalog_closed_until_a_trusted_peer_or_an_operator_decides`
   (treating a missing anchor as fine opens gru on an anchorless catalog with an organization).
 - **Stale groups are joined (decision, this version):** a stale group (committed 24 h or more before it is read, whole
   states) from a peer can carry an entry M minted after T. R7's rule for client databases drops a stale state of a

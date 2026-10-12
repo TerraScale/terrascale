@@ -644,20 +644,35 @@ public sealed class CatalogLatticeTests
         var gru = cluster["gru"];
         var owner = EntityIds.New().ToString();
         var (organization, project, doomed) = (EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString());
+        var aliased = EntityIds.New().ToString();
         await gru.CommitAsync(owner,
             new { op = "create_organization", id = organization, name = "Refused" },
             new { op = "set_plan", organization, plan = "enterprise" },
             new { op = "create_project", organization, id = project, name = "p" },
             new { op = "create_database", organization, project, name = "kept", id = EntityIds.New().ToString() },
-            new { op = "create_database", organization, project, name = "doomed", id = doomed });
+            new { op = "create_database", organization, project, name = "doomed", id = doomed },
+            new { op = "create_database", organization, project, name = "aliased", id = aliased });
         var projectPath = $"/v1/management/organizations/{organization}/projects/{project}";
         var (key, _) = await gru.CreateKeyAsync(owner, projectPath);
         var (_, writer) = await gru.CreateKeyAsync(owner, projectPath, ["documents:read", "documents:write"]);
         var data = $"/v1/projects/{project}/databases/kept";
         await Assert.That(await gru.DataSendAsync(writer, HttpMethod.Post, $"{data}/collections", new { name = "items" })).IsEqualTo(HttpStatusCode.Created);
 
+        var destination = new
+        {
+            endpoint = FakeS3.CustomerEndpoint,
+            region = "test-region-1",
+            bucket = FakeS3.CustomerBucket,
+            accessKeyId = FakeS3.CustomerAccessKey,
+            secretKey = FakeS3.CustomerSecretKey,
+            mode = "customer",
+        };
+        await Assert.That((int)await gru.SendAsync(owner, HttpMethod.Put, $"{projectPath}/backup-destination", destination)).IsBetween(200, 299);
         cluster.Bucket!.FailPut = _ => true;
         await Assert.That(await gru.SendAsync(owner, HttpMethod.Delete, $"{projectPath}/api-keys/{key}")).IsEqualTo(HttpStatusCode.InternalServerError);
+        // Decided on the routed endpoint: the legacy management alias of the project API's database deletion is anchored too.
+        await Assert.That(await gru.SendAsync(owner, HttpMethod.Delete, $"{projectPath}/databases/{aliased}")).IsEqualTo(HttpStatusCode.InternalServerError);
+        await Assert.That(await gru.SendAsync(owner, HttpMethod.Delete, $"{projectPath}/backup-destination")).IsEqualTo(HttpStatusCode.InternalServerError);
         var deletion = new { id = EntityIds.New().ToString(), ops = new object[] { new { op = "delete_database", organization, project, database = doomed } } };
         await Assert.That(await gru.SendAsync(owner, HttpMethod.Post, "/v1/management/commits", deletion)).IsEqualTo(HttpStatusCode.InternalServerError);
         await Assert.That(await gru.SendAsync(owner, HttpMethod.Post, $"/v1/management/organizations/{organization}/projects", new { name = "created" }))
@@ -768,6 +783,35 @@ public sealed class CatalogLatticeTests
         {
             await Assert.That(await region.UntilOpenAsync()).IsTrue().Because($"{region.Name}: anchored, no operator");
         }
+    }
+
+    /// <summary>
+    /// Which endpoints are anchored before they acknowledge is decided by endpoint metadata (AnchoredRevocation), so every
+    /// route that removes access or deletes catalog state must carry it and no tenant data route may: a new revoking endpoint
+    /// fails here until it is classified. The management commit endpoint anchors itself, per operation.
+    /// </summary>
+    [Test]
+    public async Task Every_revoking_endpoint_and_no_tenant_route_is_anchored_before_it_acknowledges()
+    {
+        await using var api = await ManagementApi.StartAsync();
+        var endpoints = api.Server.Services.GetRequiredService<Microsoft.AspNetCore.Routing.EndpointDataSource>().Endpoints
+            .Select(endpoint => (Name: endpoint.Metadata.GetMetadata<Microsoft.AspNetCore.Routing.IEndpointNameMetadata>()?.EndpointName,
+                Methods: endpoint.Metadata.GetMetadata<Microsoft.AspNetCore.Routing.IHttpMethodMetadata>()?.HttpMethods ?? [],
+                Anchored: endpoint.Metadata.GetMetadata<AnchoredRevocation>() is not null))
+            .ToList();
+        string[] revoking =
+        [
+            "deleteOrganization", "deleteProject", "deleteDatabase", "revokeProjectApiKey", "removeMember", "changeMemberRole",
+            "leaveOrganization", "revokeInvitation", "confirmOwnershipTransfer", "cancelOwnershipTransfer", "deleteBackupDestination",
+            "deleteSavedQuery",
+        ];
+        // Deletions of tenant data: client databases, not the catalog.
+        string[] tenant = ["deleteDocument", "dropCollection", "dropIndex", "deleteDeclaredCollectionSchema"];
+
+        await Assert.That(endpoints.Where(endpoint => endpoint.Anchored).Select(endpoint => endpoint.Name!).ToArray()).IsEquivalentTo(revoking);
+        await Assert.That(endpoints.Where(endpoint => endpoint.Methods.Contains("DELETE") && !endpoint.Anchored).Select(endpoint => endpoint.Name!).ToArray())
+            .IsEquivalentTo(tenant);
+        await Assert.That(endpoints.Single(endpoint => endpoint.Name == "commit").Anchored).IsFalse().Because("it anchors itself, per operation");
     }
 
     // Whether `condition` holds within the deadline.

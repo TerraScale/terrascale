@@ -2,6 +2,7 @@ using TerraBase.Errors;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
+using TerraBase.Features.Replication;
 
 namespace TerraBase.Features.Management;
 
@@ -17,6 +18,8 @@ public sealed class ChangeMemberRoleEndpoint(IAccessService access) : Endpoint<R
     {
         Put(ManagementRoute.Member + "/role");
         Name("changeMemberRole");
+        // A restore could undo it to a tenant's harm: anchored before it is acknowledged (CatalogGate).
+        Metadata(AnchoredRevocation.Instance);
         Summary("Changes a member's role");
         Description($"role: owner, admin, member or viewer. Needs admin, and owner when the member is or becomes an owner. 409 when it would demote the last owner. {ManagementRoute.IdentityDescription}");
         Tags(ManagementRoute.AccessTag);

@@ -46,6 +46,21 @@ public interface ICatalogGate
 }
 
 /// <summary>
+/// Endpoint metadata: a request a restore could undo to a tenant's harm (a revocation, a removal, a deletion of catalog
+/// state). Its success is anchored before it is acknowledged (<see cref="ICatalogGate.AnchorAsync"/>); decided on the routed
+/// endpoint, so a rewritten or aliased path cannot skip it. Tenant data routes never carry it.
+/// </summary>
+public sealed class AnchoredRevocation
+{
+    private AnchoredRevocation()
+    {
+    }
+
+    /// <summary>The marker.</summary>
+    public static AnchoredRevocation Instance { get; } = new();
+}
+
+/// <summary>
 /// The restore gate. Closed at every start. Opens once a forced anti-entropy pull of <c>_system</c> (every differing bucket,
 /// at once) completed since this start from every other machine the member directory lists as started and every machine the
 /// catalog records (<see cref="Members"/>), which covers a stopped machine that holds the only copy of a change; and only when
@@ -628,11 +643,13 @@ internal static class CatalogGateExtensions
         var gate = app.Services.GetRequiredService<ICatalogGate>();
         app.Use((context, next) =>
         {
-            if (gate.IsOpen && RevokesAccess(context.Request))
+            if (gate.IsOpen && context.GetEndpoint()?.Metadata.GetMetadata<AnchoredRevocation>() is not null)
             {
-                // A revocation, removal or deletion is anchored before it is acknowledged; when the anchor cannot be written the
-                // response fails instead (creations do not wait for the bucket).
-                context.Response.OnStarting(() => gate.AnchorAsync(context.RequestAborted));
+                // A successful revocation, removal or deletion is anchored before it is acknowledged; when the anchor cannot be
+                // written the response fails instead (creations and tenant writes do not wait for the bucket).
+                context.Response.OnStarting(() => context.Response.StatusCode < StatusCodes.Status400BadRequest
+                    ? gate.AnchorAsync(context.RequestAborted)
+                    : Task.CompletedTask);
             }
 
             return gate.IsOpen || context.GetEndpoint() is not { } endpoint
@@ -643,25 +660,6 @@ internal static class CatalogGateExtensions
         });
         return app;
     }
-
-    // The Management requests a restore could undo to a tenant's harm: every deletion (API keys, members, invitations,
-    // databases, projects, organizations, transfers), a role change, leaving, confirming a transfer. A management commit
-    // anchors itself when it carries such an operation (CommitEndpoint). Tenant document routes are never anchored.
-    private static bool RevokesAccess(HttpRequest request)
-    {
-        if (!request.Path.StartsWithSegments(ManagementPrefix, StringComparison.Ordinal, out var rest))
-        {
-            return false;
-        }
-
-        var path = rest.Value ?? string.Empty;
-        return HttpMethods.IsDelete(request.Method)
-            || (HttpMethods.IsPut(request.Method) && path.EndsWith("/role", StringComparison.Ordinal))
-            || (HttpMethods.IsPost(request.Method) && (path.EndsWith("/leave", StringComparison.Ordinal)
-                || path.EndsWith("/ownership-transfer/confirm", StringComparison.Ordinal)));
-    }
-
-    private const string ManagementPrefix = "/v1/management";
 
     public static Task Closed(HttpContext context)
     {

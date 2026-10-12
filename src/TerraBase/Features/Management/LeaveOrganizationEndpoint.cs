@@ -2,6 +2,7 @@ using TerraBase.Errors;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
+using TerraBase.Features.Replication;
 
 namespace TerraBase.Features.Management;
 
@@ -13,6 +14,8 @@ public sealed class LeaveOrganizationEndpoint(IAccessService access) : EndpointW
     {
         Post(ManagementRoute.Leave);
         Name("leaveOrganization");
+        // A restore could undo it to a tenant's harm: anchored before it is acknowledged (CatalogGate).
+        Metadata(AnchoredRevocation.Instance);
         Summary("Leaves an organization");
         Description($"Needs member. 409 for the last owner, who must make another member an owner first. {ManagementRoute.IdentityDescription}");
         Tags(ManagementRoute.AccessTag);
