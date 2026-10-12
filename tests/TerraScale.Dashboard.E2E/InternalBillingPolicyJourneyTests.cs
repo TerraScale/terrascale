@@ -8,6 +8,7 @@ namespace TerraScale.Dashboard.E2E;
 
 [ClassDataSource<DashboardE2EFixture>(Shared = SharedType.PerTestSession)]
 [NotInParallel("dashboard-demo")]
+[Category("Slow")]
 public sealed class InternalBillingPolicyJourneyTests(DashboardE2EFixture fixture)
 {
     private const string CapAlert = "Internal spending cap reached: estimated bill US$ 124.40, cap US$ 120.00. Report only; services remain active.";

@@ -51,7 +51,9 @@ nice -n 19 make test-live-readiness
 nice -n 19 make perf
 ```
 
-`test-fast`, `test-slow` and `test-browser` are aliases of `test-e2e`.
+`test-fast` runs the HTTP, MCP, CLI and customer-SDK journeys; `test-slow` runs the
+browser journeys and the internal-billing policy suites (`[Category("Slow")]`);
+`test-e2e` runs both and is the merge gate.
 `check-e2e-shards` lists the discovered tests. The solution contains one
 production application and its E2E project; the test executable owns
 TUnit discovery, assertions, fixtures and TRX reports. Fixtures start real

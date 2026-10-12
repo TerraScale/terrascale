@@ -6,6 +6,7 @@ namespace TerraScale.Dashboard.E2E;
 
 [ClassDataSource<DashboardE2EFixture>(Shared = SharedType.PerTestSession)]
 [NotInParallel("dashboard-demo")]
+[Category("Slow")]
 public sealed class ReportingJourneyTests(DashboardE2EFixture fixture)
 {
     [Test]
@@ -44,6 +45,7 @@ public sealed class ReportingJourneyTests(DashboardE2EFixture fixture)
 
 [ClassDataSource<DashboardE2EFixture>(Shared = SharedType.PerTestSession)]
 [NotInParallel("dashboard-demo")]
+[Category("Slow")]
 public sealed class AccountBrowserJourneyTests(DashboardE2EFixture fixture)
 {
     [Test]

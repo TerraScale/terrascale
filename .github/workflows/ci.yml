@@ -1,0 +1,64 @@
+# Build, lint and test on every pull request and push to main. `check` (locked Release build, lint,
+# `make test-fast`) and `slow` (`make test-slow`) together run the whole non-explicit TUnit E2E suite,
+# `make test-e2e`, the merge gate. Hot reload, performance and live readiness are explicit journeys and
+# do not run here (Makefile). This workflow builds no image and deploys nothing.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_NOLOGO: "1"
+
+# Self-hosted alpha runners only: no hosted fallback. Each job installs its own toolchains and keeps its
+# NuGet packages and browsers under its own runner temp directory, so jobs share no mutable cache.
+jobs:
+  check:
+    runs-on: alpha
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24.21.0 # .mise.toml
+      - run: echo "NUGET_PACKAGES=$RUNNER_TEMP/nuget" >> "$GITHUB_ENV"
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: make build
+      - run: make lint
+      - run: make test-fast
+
+  slow:
+    runs-on: alpha
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24.21.0 # .mise.toml
+      - run: echo "NUGET_PACKAGES=$RUNNER_TEMP/nuget" >> "$GITHUB_ENV"
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      # The browser revision matching Microsoft.Playwright and playwright-core 1.63.0.
+      - run: |
+          echo "PLAYWRIGHT_BROWSERS_PATH=$RUNNER_TEMP/ms-playwright" >> "$GITHUB_ENV"
+          PLAYWRIGHT_BROWSERS_PATH="$RUNNER_TEMP/ms-playwright" node node_modules/playwright-core/cli.js install chromium
+      - run: make test-slow

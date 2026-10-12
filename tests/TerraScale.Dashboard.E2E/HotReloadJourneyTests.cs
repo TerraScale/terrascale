@@ -8,6 +8,8 @@ namespace TerraScale.Dashboard.E2E;
 
 [ClassDataSource<DashboardE2EFixture>(Shared = SharedType.PerTestSession)]
 [NotInParallel("dashboard-demo")]
+// Needs this machine's tailnet name and dotnet watch, so it runs on a dev machine: make test-hot-reload.
+[Explicit]
 public sealed class HotReloadJourneyTests(DashboardE2EFixture fixture)
 {
     [Test]

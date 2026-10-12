@@ -143,9 +143,11 @@ harness versions and other test runners. Dependencies are pinned and locked;
 see [TUnit installation](https://tunit.dev/docs/getting-started/installation/)
 and [running tests](https://tunit.dev/docs/getting-started/running-your-tests/).
 
-All dashboard test targets run TUnit E2E journeys; `test-fast`, `test-slow`
-and `test-browser` are aliases for `test-e2e`. There is no unit-test target.
-Hot reload is a TUnit E2E journey too, with a dedicated target for focused runs.
+All dashboard test targets run TUnit E2E journeys. `test-fast` runs the
+non-browser journeys, `test-slow` the browser journeys and internal-billing
+policy suites (`[Category("Slow")]`), and `test-e2e` both. There is no
+unit-test target. Hot reload is an explicit TUnit E2E journey that needs a
+tailnet dev machine; it runs only through `make test-hot-reload`.
 The journeys exercise desktop/mobile rendering, accessibility, native
 forms, document updates, schema/SQL, credential issuance, MCP visibility and
 revocation, and organization checkout. The hot-reload check temporarily changes
