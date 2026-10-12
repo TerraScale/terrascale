@@ -178,6 +178,18 @@ public interface IStorageTransaction : IAsyncDisposable
     ValueTask<long?> TombstoneAsync(string collection, string id, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Joins a replicated delta into a client database document (docs/terrabase/multi-region-replication.md section 9): the
+    /// operation stamped <paramref name="at"/>, made by its node. Writes the document only when the join changed its state,
+    /// with that stamp and origin, and returns whether it did, so a duplicate or replayed delta changes nothing. A delta of a
+    /// collection this database does not have creates the collection, unless the collection's deletion dominates it. Unique
+    /// constraints hide losers instead of failing. <c>_collections</c> documents run their collection's local DDL.
+    /// </summary>
+    ValueTask<bool> JoinAsync(string collection, string id, DocumentState delta, EntryVersion at, CancellationToken cancellationToken);
+
+    /// <summary>Records in <c>_tb_peers</c> that every change of <paramref name="origin"/> up to <paramref name="applied"/> it streamed was joined here.</summary>
+    ValueTask RecordAppliedAsync(ReplicaId origin, Hlc applied, CancellationToken cancellationToken);
+
+    /// <summary>
     /// Lists live documents with ids after <paramref name="afterId"/> in id order: at most
     /// <paramref name="limit"/> documents and, beyond the first, at most <paramref name="maxBytes"/>
     /// of JSON in total. A page cut short by either bound reports <see cref="DocumentPage.HasMore"/>.

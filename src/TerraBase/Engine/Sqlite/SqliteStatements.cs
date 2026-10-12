@@ -81,6 +81,14 @@ internal static class SqliteStatements
 
     public const string DropStates = "DELETE FROM _tb_state WHERE collection = $collection;";
 
+    // What this member joined from an origin's stream (section 9): the highest stamp, and when it last heard from it.
+    public const string UpdateApplied = "UPDATE _tb_peers SET applied = max(applied, $applied), seen = $seen WHERE node = $node;";
+
+    public const string InsertApplied = "INSERT INTO _tb_peers (node, applied, acked, stable, seen) VALUES ($node, $applied, 0, 0, $seen);";
+
+    // A replicated collection metadata document gives an existing collection its identity.
+    public const string UpdateCollection = "UPDATE collections SET created_at = $created, entity_id = $entityId WHERE name = $collection;";
+
     // The system database: the version is the commit offset of the writing transaction.
     public const string Put = """
         INSERT INTO documents (collection, id, version, body) VALUES ($collection, $id, $version, $body)
@@ -283,6 +291,9 @@ internal static class SqliteStatements
         [nameof(UpdateState)] = UpdateState,
         [nameof(InsertState)] = InsertState,
         [nameof(DropStates)] = DropStates,
+        [nameof(UpdateApplied)] = UpdateApplied,
+        [nameof(InsertApplied)] = InsertApplied,
+        [nameof(UpdateCollection)] = UpdateCollection,
     };
 
     /// <summary>Statements only the system database runs, by name, for query-plan checks (TS-647 step 5 removes them).</summary>

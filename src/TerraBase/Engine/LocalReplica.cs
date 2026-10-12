@@ -1,8 +1,8 @@
 using TerraBase.Engine.Lattices;
 
-namespace TerraBase.Engine.Sqlite;
+namespace TerraBase.Engine;
 
 /// <summary>What a client database's local writes mint with: this member's replica id and its hybrid clock.</summary>
-/// <param name="Id">The replica id of this process (<see cref="ReplicaIdentityFile"/>).</param>
+/// <param name="Id">The replica id of this process (the data directory's replica identity file).</param>
 /// <param name="Clock">The member's clock.</param>
 internal sealed record LocalReplica(ReplicaId Id, MemberClock Clock);

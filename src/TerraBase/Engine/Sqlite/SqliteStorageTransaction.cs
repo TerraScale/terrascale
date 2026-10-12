@@ -1078,21 +1078,8 @@ internal sealed partial class SqliteStorageTransaction(
             else if (Command(SqliteStatements.GetCollection, name).ExecuteScalar() is not null)
             {
                 // A drop is local: the collection's documents and states go, and its own metadata document's deletion is
-                // what replicates (docs/terrabase/multi-region-replication.md section 5). Its history goes with the
-                // generation below. Dropping the table drops its indexes too.
-                using (var table = PlainCommand($"DROP TABLE {Table(name)};"))
-                {
-                    table.ExecuteNonQuery();
-                }
-
-                Command(SqliteStatements.DropStates, name).ExecuteNonQuery();
-                foreach (var key in _pending.Keys.Where(key => key.Collection == name).ToList())
-                {
-                    _pending.Remove(key);
-                }
-
-                // History before the collection row it finds the dropped generation through.
-                Command(SqliteStatements.DropHistory, name).ExecuteNonQuery();
+                // what replicates (docs/terrabase/multi-region-replication.md section 5).
+                DropTable(name);
             }
 
             cancellationToken.ThrowIfCancellationRequested();
@@ -1103,12 +1090,30 @@ internal sealed partial class SqliteStorageTransaction(
 
             _collectionsChanged = true;
 
-            DropUniqueCollection(name);
+            DropUniqueCollection(name, local: true);
 
             Write(_ => { }, cancellationToken);
             WriteMetadata(DocumentDelta.Collections, name, null);
             return true;
         }, cancellationToken, mutation: true).ConfigureAwait(false);
+    }
+
+    // Worker-only: drops a client collection's table, documents and states. Its history goes with the generation, so this
+    // runs before the collection row it finds the dropped generation through goes. Dropping the table drops its indexes too.
+    private void DropTable(string name)
+    {
+        using (var table = PlainCommand($"DROP TABLE {Table(name)};"))
+        {
+            table.ExecuteNonQuery();
+        }
+
+        Command(SqliteStatements.DropStates, name).ExecuteNonQuery();
+        foreach (var key in _pending.Keys.Where(key => key.Collection == name).ToList())
+        {
+            _pending.Remove(key);
+        }
+
+        Command(SqliteStatements.DropHistory, name).ExecuteNonQuery();
     }
 
     public async ValueTask<long> CommitAsync(CancellationToken cancellationToken)

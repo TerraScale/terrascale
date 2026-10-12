@@ -255,6 +255,19 @@ internal sealed class StampingStorageEngine(IStorageEngine inner, ISystemReplica
         public ValueTask<long> PatchAsync(string collection, string id, ReadOnlyMemory<byte> json, CancellationToken cancellationToken) =>
             WriteAsync(collection, id, () => inner.PatchAsync(collection, id, json, cancellationToken), cancellationToken);
 
+        // A collection's metadata document drops or creates its collection, as a replicated delta of a collection it lacks may.
+        public ValueTask<bool> JoinAsync(string collection, string id, Lattices.DocumentState delta, Lattices.EntryVersion at, CancellationToken cancellationToken) =>
+            collection == DocumentDelta.Collections
+                ? WriteCollectionAsync(() => inner.JoinAsync(collection, id, delta, at, cancellationToken), cancellationToken)
+                : WriteAsync(collection, id, () => inner.JoinAsync(collection, id, delta, at, cancellationToken), cancellationToken);
+
+        public async ValueTask RecordAppliedAsync(Lattices.ReplicaId origin, Lattices.Hlc applied, CancellationToken cancellationToken) =>
+            _ = await RunAsync(async () =>
+            {
+                await inner.RecordAppliedAsync(origin, applied, cancellationToken).ConfigureAwait(false);
+                return true;
+            }, cancellationToken, mutation: true).ConfigureAwait(false);
+
         public ValueTask<bool> DeleteAsync(string collection, string id, CancellationToken cancellationToken) =>
             WriteAsync(collection, id, () => inner.DeleteAsync(collection, id, cancellationToken), cancellationToken);
 
