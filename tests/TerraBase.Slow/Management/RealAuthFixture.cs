@@ -1,0 +1,202 @@
+extern alias tsauth;
+
+using System.Net;
+using System.Net.Http.Headers;
+using System.Net.Sockets;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
+using System.Text;
+using System.Text.Json;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Hosting.Server;
+using Microsoft.AspNetCore.Hosting.Server.Features;
+using Microsoft.Extensions.DependencyInjection;
+using TerraBase.Features.UserAuth;
+using TerraBase.Primitives;
+using TerraBase.Testing;
+using tsauth::TerraScale.Authentication.Configuration;
+using TerraScale.Authentication.Store;
+using AuthStorage = TerraScale.DotNet.Testing.TerraBaseTestServer;
+
+namespace TerraBase.Slow.Management;
+
+/// <summary>
+/// The real ts-auth application, built from this monorepo and run in process as its own tests run it: its storage is the
+/// TerraBase release ts-auth's own suite pins (ts-dotnet's test server, <c>TERRABASE_BINARY</c>), its public origin <see cref="PublicOrigin"/> is served over TLS on a
+/// loopback port, and one service client gets client-credentials access tokens. Tokens, discovery and JWKS all come from
+/// ts-auth itself; the TerraBase under test reaches them through its production HTTP client, only connected to that port.
+/// </summary>
+internal sealed class RealAuthFixture : IAsyncDisposable
+{
+    public const string Audience = "https://terrabase.test";
+    private const string PublicOrigin = "https://auth.test.invalid";
+
+    private readonly string _clientSecret = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
+    private readonly X509Certificate2 _certificate = Certificate();
+    private AuthStorage? _storage;
+    private WebApplication? _auth;
+    private HttpClient? _tokens;
+    private int _tlsPort;
+
+    public string Subject { get; } = EntityIds.New().ToString();
+
+    /// <summary>The <c>terrascale</c> tenant's issuer, which every platform access token names.</summary>
+    public static string Issuer => PublicOrigin + "/terrascale";
+
+    public static async Task<RealAuthFixture> StartAsync(CancellationToken token)
+    {
+        var fixture = new RealAuthFixture();
+        try
+        {
+            await fixture.StartCoreAsync(token);
+            return fixture;
+        }
+        catch (Exception startupError)
+        {
+            try
+            {
+                await fixture.DisposeAsync();
+            }
+            catch (Exception cleanupError)
+            {
+                throw new AggregateException(startupError, cleanupError);
+            }
+
+            throw;
+        }
+    }
+
+    /// <summary>The settings that make a TerraBase server trust this ts-auth.</summary>
+    public static void Configure(Dictionary<string, string> settings)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        settings["auth-issuer"] = Issuer;
+        settings["auth-audience"] = Audience;
+    }
+
+    /// <summary>
+    /// Points the production ts-auth HTTP client of a TerraBase server at this ts-auth's TLS port, trusting only its
+    /// certificate. The handler is the production one, configured, never replaced.
+    /// </summary>
+    public void TrustIssuer(IServiceCollection services) =>
+        services.AddHttpClient(TsAuthKeys.HttpClientName).ConfigurePrimaryHttpMessageHandler((handler, _) =>
+        {
+            var sockets = (SocketsHttpHandler)handler;
+            sockets.ConnectCallback = ConnectAsync;
+            sockets.SslOptions.RemoteCertificateValidationCallback = (_, presented, _, _) =>
+                presented is not null && presented.GetCertHash().AsSpan().SequenceEqual(_certificate.GetCertHash());
+        });
+
+    /// <summary>An access token of the service client, from ts-auth's token endpoint (client credentials).</summary>
+    public async Task<string> AccessTokenAsync(CancellationToken token)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, new Uri("/terrascale/oauth/token", UriKind.Relative))
+        {
+            Content = new FormUrlEncodedContent(new Dictionary<string, string> { ["grant_type"] = "client_credentials" }),
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Basic", Convert.ToBase64String(Encoding.UTF8.GetBytes($"{Subject}:{_clientSecret}")));
+        using var response = await _tokens!.SendAsync(request, token);
+        response.EnsureSuccessStatusCode();
+        var body = await response.Content.ReadFromJsonAsync<JsonElement>(token);
+        return body.GetProperty("access_token").GetString() ?? throw new InvalidOperationException("ts-auth answered without an access token");
+    }
+
+    private async Task StartCoreAsync(CancellationToken token)
+    {
+        // ts-auth's own storage, provisioned as ts-auth's tests provision it (TerraBaseFixture): the pinned TerraBase release
+        // speaks the Documents API of ts-auth's pinned ts-dotnet. It is not the TerraBase under test.
+        var (started, unavailable) = await AuthStorage.StartAsync(cancellationToken: token);
+        _storage = started ?? throw new InvalidOperationException($"the real ts-auth fixture needs the pinned TerraBase release: {unavailable}");
+        var tenant = await _storage.CreateTenantAsync(token);
+        var storage = _storage.Documents(tenant.ApiKey).Database(tenant.Project.Id, "auth");
+        await storage.CreateAsync(token);
+        await new AuthStore(storage, TimeProvider.System).ProvisionAsync(token);
+
+        var options = AuthOptions.Load(new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["listen"] = "http://127.0.0.1:0",
+            ["metrics-listen"] = "http://127.0.0.1:0",
+            ["public-origin"] = PublicOrigin,
+            ["database"] = $"{tenant.Project.Id}/auth",
+            ["master-key"] = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)),
+            ["audit-signing-key"] = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)),
+            ["environment"] = "Development",
+            ["service-clients"] = $"{Subject}:{_clientSecret}",
+            ["access-token-audiences"] = Audience,
+        });
+        _auth = tsauth::TerraScale.Authentication.App.Build(options, builder =>
+        {
+            builder.Services.AddSingleton(_storage.Http);
+            builder.Services.AddSingleton(storage);
+            // The public origin over TLS, after ts-auth's own listeners, for TerraBase's discovery and JWKS fetches.
+            builder.WebHost.ConfigureKestrel(kestrel => kestrel.Listen(IPAddress.Loopback, 0, listen => listen.UseHttps(_certificate)));
+        });
+        await _auth.StartAsync(token);
+        // Bound in order: ts-auth's public listener, its metrics listener, then the TLS port.
+        var addresses = _auth.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Select(address => new Uri(address)).ToArray();
+        _tlsPort = addresses[2].Port;
+        _tokens = new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false }) { BaseAddress = addresses[0], Timeout = TimeSpan.FromSeconds(30) };
+
+        // Ready once its signing ring exists in storage and its public signing metadata serves.
+        await TerraBaseTestServer.EventuallyAsync(async deadline =>
+        {
+            using var ready = await _tokens.GetAsync(new Uri("/readyz", UriKind.Relative), deadline);
+            return ready.StatusCode == HttpStatusCode.OK;
+        });
+    }
+
+    private async ValueTask<Stream> ConnectAsync(SocketsHttpConnectionContext context, CancellationToken cancellationToken)
+    {
+        var socket = new Socket(SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
+        try
+        {
+            await socket.ConnectAsync(IPAddress.Loopback, _tlsPort, cancellationToken);
+            return new NetworkStream(socket, ownsSocket: true);
+        }
+        catch
+        {
+            socket.Dispose();
+            throw;
+        }
+    }
+
+    private static X509Certificate2 Certificate()
+    {
+        using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var request = new CertificateRequest("CN=auth.test.invalid", key, HashAlgorithmName.SHA256);
+        var names = new SubjectAlternativeNameBuilder();
+        names.AddDnsName("auth.test.invalid");
+        request.CertificateExtensions.Add(names.Build());
+        request.CertificateExtensions.Add(new X509EnhancedKeyUsageExtension([new Oid("1.3.6.1.5.5.7.3.1")], false));
+        using var created = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-5), DateTimeOffset.UtcNow.AddDays(1));
+        // Kestrel needs the private key in a persistable form on Linux.
+        return X509CertificateLoader.LoadPkcs12(created.Export(X509ContentType.Pkcs12), password: null);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        _tokens?.Dispose();
+        try
+        {
+            if (_auth is not null)
+            {
+                await _auth.DisposeAsync();
+            }
+        }
+        finally
+        {
+            try
+            {
+                if (_storage is not null)
+                {
+                    await _storage.DisposeAsync();
+                }
+            }
+            finally
+            {
+                _certificate.Dispose();
+            }
+        }
+    }
+}
