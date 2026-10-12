@@ -86,14 +86,45 @@ public sealed class DocumentStateStorageTests
         await Assert.That((long)(await count.ExecuteScalarAsync())!).IsEqualTo(0);
     }
 
+    [Test]
+    public async Task Each_collection_is_a_table_of_its_own_and_reserved_names_are_refused()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        var id = DocumentApi.NewId();
+        (await api.PutAsync(id, new { n = 1 })).Status.ShouldBe(HttpStatusCode.Created);
+        await using (var connection = new SqliteConnection(DocumentApi.ConnectionString(await api.DatabaseFileAsync(), readOnly: true)))
+        {
+            await connection.OpenAsync();
+            await using var row = connection.CreateCommand();
+            row.CommandText = "SELECT doc FROM \"items\" WHERE id = $id;";
+            row.Parameters.AddWithValue("$id", id);
+            await Assert.That((string?)await row.ExecuteScalarAsync()).IsEqualTo("""{"n":1}""");
+        }
+
+        (await api.SendAsync(HttpMethod.Delete, $"{api.Collections}/{DocumentApi.Collection}")).Status.ShouldBe(HttpStatusCode.OK);
+        await using (var connection = new SqliteConnection(DocumentApi.ConnectionString(await api.DatabaseFileAsync(), readOnly: true)))
+        {
+            await connection.OpenAsync();
+            await using var table = connection.CreateCommand();
+            table.CommandText = "SELECT count(*) FROM sqlite_schema WHERE type = 'table' AND name = 'items';";
+            await Assert.That((long)(await table.ExecuteScalarAsync())!).IsEqualTo(0);
+        }
+
+        foreach (var name in new[] { "change_log", "sqlite_x", "turso_cdc" })
+        {
+            var refused = await api.SendAsync(HttpMethod.Post, api.Collections, new { name });
+            await Assert.That((refused.Status, refused.Code)).IsEqualTo((HttpStatusCode.BadRequest, "reserved_name"));
+        }
+    }
+
     private static async Task<Stored> ReadAsync(DocumentApi api, string id)
     {
         await using var connection = new SqliteConnection(DocumentApi.ConnectionString(await api.DatabaseFileAsync(), readOnly: true));
         await connection.OpenAsync();
         await using var read = connection.CreateCommand();
         read.CommandText = """
-            SELECT s.state, d.body, s.stamp, s.live, s.bucket, s.h1, s.h2 FROM _tb_state s
-            LEFT JOIN documents d ON d.collection = s.collection AND d.id = s.id
+            SELECT s.state, d.doc, s.stamp, s.live, s.bucket, s.h1, s.h2 FROM _tb_state s
+            LEFT JOIN "items" d ON d.id = s.id
             WHERE s.collection = $collection AND s.id = $id;
             """;
         read.Parameters.AddWithValue("$collection", DocumentApi.Collection);

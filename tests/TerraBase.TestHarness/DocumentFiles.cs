@@ -101,13 +101,19 @@ public static class DocumentFiles
                 continue;
             }
 
+            await using (var table = connection.CreateCommand())
+            {
+                table.CommandText = SqliteStorageTransaction.CreateTable(collection).Replace("CREATE TABLE", "CREATE TABLE IF NOT EXISTS", StringComparison.Ordinal);
+                await table.ExecuteNonQueryAsync();
+            }
+
             await StoredStates.WriteAsync(connection, collection, id, body);
 
             await using var change = connection.CreateCommand();
             change.CommandText = $"""
                 INSERT INTO change_log (collection, generation, id, version, body, document_version)
-                SELECT $collection, generation, $id, 1, body, {StoredStates.Version} FROM collections, documents
-                WHERE name = $collection AND documents.collection = $collection AND documents.id = $id;
+                SELECT $collection, generation, $id, 1, (SELECT doc FROM {SqliteStorageTransaction.Table(collection)} WHERE id = $id),
+                    {StoredStates.Version} FROM collections WHERE name = $collection;
                 """;
             change.Parameters.AddWithValue("$collection", collection);
             change.Parameters.AddWithValue("$id", id);

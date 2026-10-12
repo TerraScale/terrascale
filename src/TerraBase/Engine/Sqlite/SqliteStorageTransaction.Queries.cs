@@ -9,13 +9,11 @@ using Microsoft.Data.Sqlite;
 namespace TerraBase.Engine.Sqlite;
 
 /// <remarks>
-/// SQL-subset queries and indexes compile to SQL over the live rows of the <c>documents</c> table (<c>body IS NOT NULL</c>;
-/// a tombstone has a NULL body). Fields become <c>id</c>, <c>version</c> or <c>json_extract(body, '$.path')</c>, and every
-/// index is a partial expression index restricted to the live documents of its collection. The key starts with
-/// <c>collection</c>, which the query repeats as an equality, so the index can also return a collection in field order.
-/// The collection and the paths are embedded as literals, never as parameters: SQLite uses an expression index only for
-/// a textually equal expression, and a partial index only when the query repeats its <c>WHERE</c> terms. Both are safe to
-/// embed because <see cref="DatabaseName"/> and <see cref="DocumentField"/> admit no quotes.
+/// SQL-subset queries and indexes compile to SQL over a client collection's table, which holds its live documents only.
+/// Fields become <c>id</c>, the version from <c>_tb_state</c>, or <c>json_extract(doc, '$.path')</c>, and every index is an
+/// expression index on the collection's table. The collection and the paths are embedded as literals, never as
+/// parameters: SQLite uses an expression index only for a textually equal expression. Both are safe to embed because
+/// <see cref="DatabaseName"/> and <see cref="DocumentField"/> admit no quotes.
 /// </remarks>
 internal sealed partial class SqliteStorageTransaction
 {
@@ -24,10 +22,9 @@ internal sealed partial class SqliteStorageTransaction
     public ValueTask<long> CountDocumentsAsync(string collection, CancellationToken cancellationToken) =>
         RunAsync(() => WithQueryBudget(() =>
         {
+            var rows = Rows(collection);
             using var command = Uncached(collection);
-            command.CommandText = ScansLimited
-                ? "SELECT count(*) FROM documents WHERE collection = $collection AND body IS NOT NULL AND tb_qos_scan(octet_length(body));"
-                : SqliteStatements.CountDocuments;
+            command.CommandText = $"SELECT count(*) FROM {rows.From} WHERE {rows.Live}{(ScansLimited ? $" AND tb_qos_scan(octet_length({rows.Json}))" : "")};";
             return (long)command.ExecuteScalar()!;
         }, cancellationToken), cancellationToken);
 
@@ -35,6 +32,22 @@ internal sealed partial class SqliteStorageTransaction
         RunAsync(() => WithQueryBudget<IReadOnlyList<CollectionStats>>(() =>
         {
             var collections = new List<CollectionStats>();
+            if (!store.IsSystem)
+            {
+                foreach (var name in CollectionNames(cancellationToken))
+                {
+                    using var stats = Uncached(name);
+                    stats.CommandText = string.Format(CultureInfo.InvariantCulture, ScansLimited
+                        ? "SELECT count(*), coalesce(sum(octet_length(doc)), 0) FROM {0} WHERE tb_qos_scan(octet_length(doc));"
+                        : SqliteStatements.ClientCollectionStats, Table(name));
+                    using var row = stats.ExecuteReader();
+                    row.Read();
+                    collections.Add(new CollectionStats(name, row.GetInt64(0), row.GetInt64(1)));
+                }
+
+                return collections;
+            }
+
             using var command = PlainCommand(ScansLimited
                 ? SqliteStatements.ListCollectionStats.Replace("documents.body IS NOT NULL", "documents.body IS NOT NULL AND tb_qos_scan(octet_length(documents.body))", StringComparison.Ordinal)
                 : SqliteStatements.ListCollectionStats);
@@ -49,14 +62,14 @@ internal sealed partial class SqliteStorageTransaction
         }, cancellationToken), cancellationToken);
 
     public IAsyncEnumerable<StoredDocument> QuerySqlAsync(SqlQuery query, CancellationToken cancellationToken, QueryObservation? observation = null) =>
-        ReadBudgetedAsync(() => QueryCommand(query, "SELECT id, version FROM documents", observation is not null), cancellationToken, query, observation);
+        ReadBudgetedAsync(() => QueryCommand(query, explain: false, observation is not null), cancellationToken, query, observation);
 
     public ValueTask<SqlQueryPlan> ExplainSqlAsync(SqlQuery query, CancellationToken cancellationToken) =>
         RunAsync(() => WithQueryBudget(() => ReadSqlPlan(query, cancellationToken), cancellationToken), cancellationToken);
 
     private SqlQueryPlan ReadSqlPlan(SqlQuery query, CancellationToken cancellationToken)
     {
-        using var command = QueryCommand(query, "EXPLAIN QUERY PLAN SELECT id, version FROM documents");
+        using var command = QueryCommand(query, explain: true);
         var steps = new List<string>();
         using var reader = command.ExecuteReader();
         while (reader.Read())
@@ -144,29 +157,25 @@ internal sealed partial class SqliteStorageTransaction
             return false;
         }
 
-        // The collection leads the key, so the index also orders a whole collection by its fields (ORDER BY),
-        // not only answers equality on them.
-        var keys = "collection, " + string.Join(", ", index.Fields.Select(Column));
-        // Without statistics the planner prefers the primary key or documents_live, whose leading column (collection) is
-        // also an equality, over any secondary index. ANALYZE of the new index alone reads only that partial index, so
-        // the write lock is held for its collection's size, not the database's. The two collection-leading indexes get
-        // no full scan either: each is seeded or raised from the new index's row count when that establishes a larger
-        // lower bound for the table (SQLite lets applications write to sqlite_stat1), and the statistics are reloaded.
-        // The primary key's statistics row is named after the table (WITHOUT ROWID).
+        // An expression index on the collection's own table; versions live in _tb_state, so no key reads them.
+        if (store.IsSystem || index.Fields.Any(field => field == DocumentField.Version))
+        {
+            throw new ArgumentException("an index is built on a client collection's id and fields", nameof(index));
+        }
+
+        if (!HasTable(index.Collection))
+        {
+            CreateCollection(new CollectionInfo(index.Collection, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
+        }
+
+        // ANALYZE of the new index alone reads only that index, so the write lock is held for its collection's size.
         // ponytail: statistics are refreshed only when an index is built; run PRAGMA optimize periodically if data shifts a lot.
+        // The id closes the key: queries break ties by id, so the index also serves their whole ORDER BY.
+        var keys = string.Join(", ", index.Fields.Select(field => Column(field, "doc"))) + ", id";
         var name = IndexPrefix + index.Name;
         var command = PlainCommand($"""
-        CREATE INDEX "{name}" ON documents ({keys}) WHERE collection = '{index.Collection}' AND body IS NOT NULL;
+        CREATE INDEX "{name}" ON {Table(index.Collection)} ({keys});
         ANALYZE "{name}";
-        DELETE FROM sqlite_stat1
-            WHERE tbl = 'documents' AND idx IN ('documents', 'documents_live')
-            AND CAST(substr(stat, 1, instr(stat || ' ', ' ') - 1) AS INTEGER)
-                < (SELECT CAST(substr(stat, 1, instr(stat || ' ', ' ') - 1) AS INTEGER) FROM sqlite_stat1 WHERE idx = '{name}');
-        INSERT INTO sqlite_stat1 (tbl, idx, stat)
-            SELECT 'documents', seeded.idx, rows || ' ' || rows || ' 1'
-            FROM (SELECT substr(stat, 1, instr(stat || ' ', ' ') - 1) AS rows FROM sqlite_stat1 WHERE idx = '{name}'),
-                (SELECT 'documents' AS idx UNION ALL SELECT 'documents_live') AS seeded
-            WHERE NOT EXISTS (SELECT 1 FROM sqlite_stat1 WHERE tbl = 'documents' AND idx = seeded.idx);
         ANALYZE sqlite_schema;
         """);
         using (command)
@@ -259,8 +268,9 @@ internal sealed partial class SqliteStorageTransaction
     // Recovers a definition from the CREATE INDEX statement CreateIndexAsync wrote.
     private static IndexDefinition ParseIndex(string name, string sql)
     {
-        var keys = sql[(sql.IndexOf('(', StringComparison.Ordinal) + 1)..sql.LastIndexOf(") WHERE", StringComparison.Ordinal)];
-        // Not a split on ", ": json_extract(body, '$.path') contains one.
+        // The key ends with the id every index carries as its tie-break (CreateIndex).
+        var keys = sql[(sql.IndexOf('(', StringComparison.Ordinal) + 1)..sql.LastIndexOf(", id)", StringComparison.Ordinal)];
+        // Not a split on ", ": json_extract(doc, '$.path') contains one.
         var fields = IndexKey().Matches(keys).Select(key => key.Value switch
         {
             "id" => DocumentField.Id,
@@ -273,7 +283,7 @@ internal sealed partial class SqliteStorageTransaction
         return new IndexDefinition(name[IndexPrefix.Length..], collection, fields);
     }
 
-    private SqliteCommand QueryCommand(SqlQuery query, string select, bool observe = false)
+    private SqliteCommand QueryCommand(SqlQuery query, bool explain, bool observe = false)
     {
         ArgumentNullException.ThrowIfNull(query);
         if (!DatabaseName.TryParse(query.Collection, out _))
@@ -281,32 +291,32 @@ internal sealed partial class SqliteStorageTransaction
             throw new ArgumentException("invalid collection name", nameof(query));
         }
 
-        var command = PlainCommand(string.Empty);
-        // Tombstones are excluded with the same term the indexes' WHERE carries, so a partial index stays usable.
+        var rows = Rows(query.Collection);
+        var command = Uncached(query.Collection);
         // The visit runs before residual rejection, without wrapping predicates that SQLite can use as index constraints.
         // A using variable cannot be passed by ref, so the builder is disposed in finally.
         var sql = ZString.CreateStringBuilder();
         try
         {
-            sql.Append(select);
-            sql.AppendFormat(" WHERE collection = '{0}' AND {1}body IS NOT NULL", query.Collection, observe ? "tb_query_scan() AND " : "");
+            sql.AppendFormat("{0}SELECT id, {1} AS version FROM {2}", explain ? "EXPLAIN QUERY PLAN " : "", rows.Version, rows.From);
+            sql.AppendFormat(" WHERE {0}{1}", observe ? "tb_query_scan() AND " : "", rows.Live);
             if (ScansLimited)
             {
                 // Keep indexable predicates visible to the planner. Index seeks narrow the candidates;
                 // the scan guard precedes residual JSON predicates in SQLite's WHERE evaluation.
-                sql.Append(" AND tb_qos_scan(octet_length(body))");
+                sql.AppendFormat(" AND tb_qos_scan(octet_length({0}))", rows.Json);
             }
 
             if (query.Filter is not null)
             {
                 sql.Append(" AND ");
-                AppendFilter(ref sql, command, query.Filter);
+                AppendFilter(ref sql, command, query.Filter, rows.Json);
             }
 
             sql.Append(" ORDER BY ");
             foreach (var order in query.Order)
             {
-                sql.Append(Column(order.Field));
+                sql.Append(Column(order.Field, rows.Json));
                 sql.Append(order.Descending ? " DESC, " : ", ");
             }
 
@@ -323,23 +333,23 @@ internal sealed partial class SqliteStorageTransaction
         return command;
     }
 
-    private static void AppendFilter(ref Utf16ValueStringBuilder sql, SqliteCommand command, SqlFilter filter)
+    private static void AppendFilter(ref Utf16ValueStringBuilder sql, SqliteCommand command, SqlFilter filter, string json)
     {
         switch (filter)
         {
             case SqlAndFilter and:
-                AppendGroup(ref sql, command, and.Filters, " AND ");
+                AppendGroup(ref sql, command, and.Filters, " AND ", json);
                 break;
             case SqlOrFilter or:
-                AppendGroup(ref sql, command, or.Filters, " OR ");
+                AppendGroup(ref sql, command, or.Filters, " OR ", json);
                 break;
             case SqlNotFilter not:
                 sql.Append("NOT (");
-                AppendFilter(ref sql, command, not.Filter);
+                AppendFilter(ref sql, command, not.Filter, json);
                 sql.Append(')');
                 break;
             case SqlCompareFilter compare:
-                sql.Append(Column(compare.Field));
+                sql.Append(Column(compare.Field, json));
                 switch (compare.Operator)
                 {
                     case SqlOperator.IsNull:
@@ -374,13 +384,13 @@ internal sealed partial class SqliteStorageTransaction
         }
     }
 
-    private static void AppendGroup(ref Utf16ValueStringBuilder sql, SqliteCommand command, IReadOnlyList<SqlFilter> filters, string separator)
+    private static void AppendGroup(ref Utf16ValueStringBuilder sql, SqliteCommand command, IReadOnlyList<SqlFilter> filters, string separator, string json)
     {
         sql.Append('(');
         for (var i = 0; i < filters.Count; i++)
         {
             sql.Append(i == 0 ? string.Empty : separator);
-            AppendFilter(ref sql, command, filters[i]);
+            AppendFilter(ref sql, command, filters[i], json);
         }
 
         sql.Append(')');
@@ -394,11 +404,11 @@ internal sealed partial class SqliteStorageTransaction
         return name;
     }
 
-    private static string Column(DocumentField field) => field.Path switch
+    private static string Column(DocumentField field, string json) => field.Path switch
     {
         "_id" => "id",
         "_rev" => "version",
-        _ => $"json_extract(body, '$.{field.Path}')",
+        _ => $"json_extract({json}, '$.{field.Path}')",
     };
 
     private SqliteCommand PlainCommand(string sql)
@@ -413,10 +423,10 @@ internal sealed partial class SqliteStorageTransaction
     [GeneratedRegex(@"\A[a-z][a-z0-9_]{0,62}\z", RegexOptions.CultureInvariant)]
     private static partial Regex IndexName();
 
-    [GeneratedRegex(@"WHERE collection = '([^']*)' AND body IS NOT NULL\z", RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"\bON ""([^""]*)"" \(", RegexOptions.CultureInvariant)]
     private static partial Regex IndexCollection();
 
-    [GeneratedRegex(@"json_extract\(body, '\$\.([^']*)'\)|\bid\b|\bversion\b", RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"json_extract\(doc, '\$\.([^']*)'\)|\bid\b|\bversion\b", RegexOptions.CultureInvariant)]
     private static partial Regex IndexKey();
 
     [GeneratedRegex(@"INDEX tb_index_([a-z0-9_]+)", RegexOptions.CultureInvariant)]

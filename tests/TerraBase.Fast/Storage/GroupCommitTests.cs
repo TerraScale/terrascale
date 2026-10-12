@@ -63,7 +63,7 @@ public sealed class GroupCommitTests
                 return 0;
             });
             using var trigger = session.Connection.CreateCommand();
-            trigger.CommandText = "CREATE TEMP TRIGGER qos_pause_insert BEFORE INSERT ON documents BEGIN SELECT qos_pause_insert(NEW.id); END;";
+            trigger.CommandText = "CREATE TEMP TRIGGER qos_pause_insert BEFORE INSERT ON main.\"items\" BEGIN SELECT qos_pause_insert(NEW.id); END;";
             trigger.ExecuteNonQuery();
         }
         finally

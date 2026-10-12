@@ -82,13 +82,35 @@ internal sealed partial class SqliteStorageTransaction(
     public ValueTask<long> GetDocumentBytesAsync(string collection, string id, CancellationToken cancellationToken) =>
         RunAsync(() =>
         {
-            var command = Command(SqliteStatements.DocumentBytes, collection);
-            command.Parameters.AddWithValue("$id", id);
-            return command.ExecuteScalar() as long? ?? 0;
+            if (store.IsSystem)
+            {
+                var command = Command(SqliteStatements.DocumentBytes, collection);
+                command.Parameters.AddWithValue("$id", id);
+                return command.ExecuteScalar() as long? ?? 0;
+            }
+
+            return HasTable(collection) ? TableCommand(SqliteStatements.ClientDocumentBytes, collection, id).ExecuteScalar() as long? ?? 0 : 0;
         }, cancellationToken);
 
     public ValueTask<long> GetStoredDocumentBytesAsync(CancellationToken cancellationToken) =>
-        RunAsync(() => (long)Command(SqliteStatements.StoredDocumentBytes).ExecuteScalar()!, cancellationToken);
+        RunAsync(() =>
+        {
+            if (store.IsSystem)
+            {
+                return (long)Command(SqliteStatements.StoredDocumentBytes).ExecuteScalar()!;
+            }
+
+            // Hidden uniqueness losers are kept aside, out of their collections' tables.
+            var bytes = (long)Command(SqliteStatements.ClientConflictBytes).ExecuteScalar()!;
+            foreach (var name in CollectionNames(cancellationToken))
+            {
+                using var reader = TableCommand(SqliteStatements.ClientCollectionStats, name).ExecuteReader();
+                reader.Read();
+                bytes += reader.GetInt64(1);
+            }
+
+            return bytes;
+        }, cancellationToken);
 
     // Worker-only: query readers fetch bodies after their id/key page has admitted the row.
     private StoredDocument? ReadDocument(string collection, string id)
@@ -118,10 +140,20 @@ internal sealed partial class SqliteStorageTransaction(
     // Worker-only.
     private DocumentVersion? ReadVersion(string collection, string id)
     {
-        var command = Command(UniqueVersion, collection);
+        if (!store.IsSystem && !HasTable(collection))
+        {
+            return null;
+        }
+
+        var command = store.IsSystem ? Command(SqliteStatements.Version, collection) : TableCommand(UniqueVersion, collection);
         command.Parameters.AddWithValue("$id", id);
         using var reader = command.ExecuteReader();
-        return reader.Read() ? new DocumentVersion(reader.GetInt64(0), reader.GetBoolean(1)) : null;
+        if (!reader.Read() || (reader.IsDBNull(0) && !_pending.ContainsKey((collection, id))))
+        {
+            return null;
+        }
+
+        return new DocumentVersion(store.IsSystem ? reader.GetInt64(0) : Version(collection, id, reader, 0), reader.GetBoolean(1));
     }
 
     // Worker-only; runs inside a mutation, so a rejected document also makes the transaction roll back only.
@@ -189,6 +221,12 @@ internal sealed partial class SqliteStorageTransaction(
             }, cancellationToken);
         }
 
+        if (!HasTable(collection))
+        {
+            // An implicit collection carries the same captured identity metadata as an explicit creation.
+            CreateCollection(new CollectionInfo(collection, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
+        }
+
         var (state, at) = Begin(collection, id);
         DocumentState next;
         using (var parsed = JsonDocument.Parse(body, DocumentState.JsonOptions))
@@ -242,14 +280,9 @@ internal sealed partial class SqliteStorageTransaction(
         {
             ThrowIfReadOnly();
             // Check liveness from metadata without reading a body, within this serialized call.
-            var version = Command(UniqueVersion, collection);
-            version.Parameters.AddWithValue("$id", id);
-            using (var reader = version.ExecuteReader())
+            if (ReadVersion(collection, id) is not { Deleted: false })
             {
-                if (!reader.Read() || reader.GetBoolean(1))
-                {
-                    return null;
-                }
+                return null;
             }
 
             Reserve(id, 0);
@@ -358,7 +391,14 @@ internal sealed partial class SqliteStorageTransaction(
         return await RunAsync(() => WithQueryBudget(() =>
         {
             // A missing cursor is not "", so the first page also holds an empty id.
-            var command = Command(afterId is null ? SqliteStatements.ListFirst : SqliteStatements.ListAfter, collection);
+            if (!store.IsSystem && !HasTable(collection))
+            {
+                return new DocumentPage([], HasMore: false);
+            }
+
+            var command = store.IsSystem
+                ? Command(afterId is null ? SqliteStatements.ListFirst : SqliteStatements.ListAfter, collection)
+                : TableCommand(afterId is null ? SqliteStatements.ClientListFirst : SqliteStatements.ClientListAfter, collection);
             if (afterId is not null)
             {
                 command.Parameters.AddWithValue("$after", afterId);
@@ -385,7 +425,8 @@ internal sealed partial class SqliteStorageTransaction(
 
                 bytes += size;
                 ReserveJson(size);
-                documents.Add(new StoredDocument(reader.GetString(0), reader.GetInt64(1), reader.GetFieldValue<byte[]>(2), Scope));
+                var id = reader.GetString(0);
+                documents.Add(new StoredDocument(id, store.IsSystem ? reader.GetInt64(1) : Version(collection, id, reader, 1), reader.GetFieldValue<byte[]>(2), Scope));
             }
 
             return new DocumentPage(documents, HasMore: false);
@@ -535,10 +576,11 @@ internal sealed partial class SqliteStorageTransaction(
     // Bound both candidate count and JSON bytes before SQLite retains bodies in its temporary sorter.
     private void CheckSortBudget(string collection, long maxBytes, CancellationToken cancellationToken, QueryObservation? observation = null)
     {
+        var source = Rows(collection);
         using var command = Uncached(collection);
         command.CommandText = $"""
-            SELECT octet_length(body) FROM documents INDEXED BY documents_live
-            WHERE collection = $collection AND {(observation is not null ? "tb_query_scan() AND " : "")}body IS NOT NULL ORDER BY id LIMIT 10001;
+            SELECT octet_length({source.Json}) FROM {source.From}
+            WHERE {(observation is not null ? "tb_query_scan() AND " : "")}{source.Live} ORDER BY id LIMIT 10001;
             """;
         using var reader = command.ExecuteReader();
         long bytes = 0;
@@ -563,7 +605,7 @@ internal sealed partial class SqliteStorageTransaction(
     {
         // Compiled per request so every new filter shape does not grow the session's command cache.
         using var command = Uncached(query.Collection);
-        command.CommandText = new SqliteQueryCompiler(command.Parameters, ScansLimited).Compile(query, observation is not null);
+        command.CommandText = new SqliteQueryCompiler(command.Parameters, Rows(query.Collection), ScansLimited).Compile(query, observation is not null);
         var rows = new List<QueryRow>();
         long bytes = 0;
         using var reader = command.ExecuteReader();
@@ -606,7 +648,7 @@ internal sealed partial class SqliteStorageTransaction(
         return await RunAsync(() => WithQueryBudget(() =>
         {
             using var command = Uncached(collection);
-            command.CommandText = new SqliteQueryCompiler(command.Parameters, ScansLimited).CompileCount(filter, maxExamined, observation is not null);
+            command.CommandText = new SqliteQueryCompiler(command.Parameters, Rows(collection), ScansLimited).CompileCount(filter, maxExamined, observation is not null);
             using var reader = command.ExecuteReader();
             cancellationToken.ThrowIfCancellationRequested();
             reader.Read();
@@ -633,7 +675,7 @@ internal sealed partial class SqliteStorageTransaction(
             using var command = Uncached(query.Collection);
             // One streamed read of the births key in id order: each id that existed at the offset is a step with
             // its last write at the offset, so the cost follows the ids read, never the depth of their history.
-            command.CommandText = new SqliteQueryCompiler(command.Parameters, ScansLimited).CompileSnapshot(query.Filter, generation, offset);
+            command.CommandText = new SqliteQueryCompiler(command.Parameters, RowSource.History, ScansLimited).CompileSnapshot(query.Filter, generation, offset);
             command.Parameters.AddWithValue("$after", query.After?.Id ?? "");
             var rows = new List<QueryRow>();
             long bytes = 0;
@@ -725,7 +767,7 @@ internal sealed partial class SqliteStorageTransaction(
         ReadBudgetedAsync(() =>
         {
             var command = Uncached(collection);
-            command.CommandText = new SqliteQueryCompiler(command.Parameters, ScansLimited).CompileChanges(filter, after, through);
+            command.CommandText = new SqliteQueryCompiler(command.Parameters, RowSource.History, ScansLimited).CompileChanges(filter, after, through);
             return command;
         }, cancellationToken);
 
@@ -905,12 +947,23 @@ internal sealed partial class SqliteStorageTransaction(
             throw new ArgumentException("a collection id must be a canonical uppercase ULID", nameof(collection));
         }
 
+        if (CollectionName.IsReserved(collection.Name))
+        {
+            throw new ArgumentException("the collection name is reserved", nameof(collection));
+        }
+
         var command = Command(SqliteStatements.CreateCollection, collection.Name);
         command.Parameters.AddWithValue("$created", collection.CreatedAt);
         command.Parameters.AddWithValue("$entityId", collection.Id);
         if (command.ExecuteNonQuery() == 0)
         {
             return false;
+        }
+
+        if (!store.IsSystem)
+        {
+            using var table = PlainCommand(CreateTable(collection.Name));
+            table.ExecuteNonQuery();
         }
 
         _collectionsChanged = true;
@@ -1026,8 +1079,12 @@ internal sealed partial class SqliteStorageTransaction(
             {
                 // A drop is local: the collection's documents and states go, and its own metadata document's deletion is
                 // what replicates (docs/terrabase/multi-region-replication.md section 5). Its history goes with the
-                // generation below.
-                Command(SqliteStatements.DropDocuments, name).ExecuteNonQuery();
+                // generation below. Dropping the table drops its indexes too.
+                using (var table = PlainCommand($"DROP TABLE {Table(name)};"))
+                {
+                    table.ExecuteNonQuery();
+                }
+
                 Command(SqliteStatements.DropStates, name).ExecuteNonQuery();
                 foreach (var key in _pending.Keys.Where(key => key.Collection == name).ToList())
                 {

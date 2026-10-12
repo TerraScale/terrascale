@@ -136,9 +136,11 @@ internal static class DocumentRoute
 
     /// <summary>A collection name, or the rule it breaks.</summary>
     public static Valid<string> CheckCollectionName(string? name) =>
-        DatabaseName.TryParse(name, out var parsed)
-            ? parsed.Value
-            : new Validation("collection must be a lowercase name of at most 63 characters");
+        !DatabaseName.TryParse(name, out var parsed)
+            ? new Validation("collection must be a lowercase name of at most 63 characters")
+            : CollectionName.IsReserved(parsed.Value)
+                ? new Validation("collection name is reserved", "reserved_name")
+                : parsed.Value;
 
     /// <summary>The route's document: malformed collection and id first (400), then the tenant (404).</summary>
     public static async ValueTask<KeyResult> CheckKeyAsync(HttpContext context, ITenantDirectory tenants, CancellationToken cancellationToken) =>

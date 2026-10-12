@@ -302,7 +302,7 @@ public sealed class IndexApiTests
     }
 
     [Test]
-    public async Task An_index_on_a_larger_collection_raises_the_initial_primary_key_estimate()
+    public async Task An_index_on_a_larger_collection_is_used_and_leaves_other_statistics_alone()
     {
         await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
@@ -313,21 +313,19 @@ public sealed class IndexApiTests
         // A thousand orders, stored without a request each.
         await ManagementApi.ExecuteStoredAsync(api.Server.DataDirectory, database, """
             WITH RECURSIVE rows(n) AS (VALUES(0) UNION ALL SELECT n + 1 FROM rows WHERE n < 999)
-            INSERT INTO documents SELECT 'orders', printf('00000000-0000-7000-8000-%012x', n), 65536,
+            INSERT INTO "orders" (id, doc) SELECT printf('00000000-0000-7000-8000-%012x', n),
                 json_object('sku', 'sku-' || n) FROM rows;
+            INSERT INTO _tb_state (collection, id, bucket, state, stamp, origin, live, h1, h2) SELECT 'orders', id, 0, '', 65536, 0, 1, 0, 0 FROM "orders";
             """);
 
         (await api.Client.PostAsJsonAsync(Uri($"{database.Path}/indexes"), new { collection = "people", fields = Email })).EnsureSuccessStatusCode();
         var peopleStats = await ReadIndexStatsAsync(api, database, "tb_index_people_email");
         (await api.Client.PostAsJsonAsync(Uri($"{database.Path}/indexes"), new { collection = "orders", fields = Sku })).EnsureSuccessStatusCode();
-        var primaryStats = await ReadIndexStatsAsync(api, database, "documents");
-        var liveStats = await ReadIndexStatsAsync(api, database, "documents_live");
         using var check = await api.Client.PostAsJsonAsync(Uri($"{database.Path}/sql/check"), new { sql = "SELECT * FROM orders WHERE sku = 'sku-750'" });
         check.EnsureSuccessStatusCode();
         var plan = await check.Content.ReadFromJsonAsync<JsonElement>();
 
-        await Assert.That(primaryStats).IsEqualTo("1000 1000 1");
-        await Assert.That(liveStats).IsEqualTo("1000 1000 1");
+        await Assert.That(await ReadIndexStatsAsync(api, database, "tb_index_orders_sku")).StartsWith("1000 ");
         await Assert.That(await ReadIndexStatsAsync(api, database, "tb_index_people_email")).IsEqualTo(peopleStats);
         await Assert.That(plan.GetProperty("indexes").EnumerateArray().Select(index => index.GetString()!)).Contains("orders_sku");
     }

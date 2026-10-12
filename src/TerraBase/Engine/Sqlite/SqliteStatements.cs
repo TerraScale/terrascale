@@ -26,29 +26,48 @@ internal static class SqliteStatements
         FROM collections;
         """;
 
-    public const string UniqueRawDocument = """
-        SELECT d.version, coalesce(c.body, d.body), c.body IS NOT NULL,
-            coalesce(octet_length(c.body), octet_length(d.body), 0)
-        FROM documents d LEFT JOIN unique_conflicts c ON c.collection = d.collection AND c.id = d.id
-        WHERE d.collection = $collection AND d.id = $id;
-        """;
-
     // typeof() reads the column's type from the record header, not its content: no body is loaded.
     public const string Version = "SELECT version, typeof(body) = 'null' FROM documents WHERE collection = $collection AND id = $id;";
 
+    // A client collection's documents ({0}, its table), with their versions from _tb_state, and its retained JSON sizes.
+    // octet_length reads a size from the record header without loading the JSON.
+    public const string ClientDocumentBytes = """
+        SELECT coalesce((SELECT octet_length(body) FROM unique_conflicts WHERE collection = $collection AND id = $id),
+            (SELECT octet_length(doc) FROM {0} WHERE id = $id), 0);
+        """;
+
+    // The version is a correlated lookup, so the page walks the table's id key in order and stops at the limit.
+    public const string ClientListFirst = """
+        SELECT d.id, (SELECT s.stamp FROM _tb_state s WHERE s.collection = $collection AND s.id = d.id), d.doc, octet_length(d.doc)
+        FROM {0} d ORDER BY d.id LIMIT $limit;
+        """;
+
+    public const string ClientListAfter = """
+        SELECT d.id, (SELECT s.stamp FROM _tb_state s WHERE s.collection = $collection AND s.id = d.id), d.doc, octet_length(d.doc)
+        FROM {0} d WHERE d.id > $after ORDER BY d.id LIMIT $limit;
+        """;
+
+    public const string ClientCollectionStats = "SELECT count(*), coalesce(sum(octet_length(doc)), 0) FROM {0};";
+
+    public const string ClientConflictBytes = "SELECT coalesce(sum(octet_length(body)), 0) FROM unique_conflicts;";
+
+    public const string ClientCollectionNames = "SELECT name FROM collections ORDER BY name;";
+
     // Client databases (docs/terrabase/multi-region-replication.md section 5): a document's state, and the materialized
     // JSON it is stored beside (a hidden uniqueness loser's is kept aside), which the stored form leaves its values to.
+    // {0} is the collection's table (SqliteStorageTransaction.Table).
     public const string GetState = """
-        SELECT s.state, coalesce(c.body, d.body) FROM _tb_state s
-        LEFT JOIN documents d ON d.collection = s.collection AND d.id = s.id
+        SELECT s.state, coalesce(c.body, d.doc) FROM _tb_state s
+        LEFT JOIN {0} d ON d.id = s.id
         LEFT JOIN unique_conflicts c ON c.collection = s.collection AND c.id = s.id
         WHERE s.collection = $collection AND s.id = $id;
         """;
 
-    public const string PutDocument = """
-        INSERT INTO documents (collection, id, version, body) VALUES ($collection, $id, $version, $body)
-        ON CONFLICT (collection, id) DO UPDATE SET version = excluded.version, body = excluded.body;
-        """;
+    public const string UpdateRow = "UPDATE {0} SET doc = $body WHERE id = $id;";
+
+    public const string InsertRow = "INSERT INTO {0} (id, doc) VALUES ($id, $body);";
+
+    public const string DeleteRow = "DELETE FROM {0} WHERE id = $id;";
 
     public const string UpdateState = """
         UPDATE _tb_state SET state = $state, stamp = $stamp, origin = $origin, live = $live, h1 = $h1, h2 = $h2
@@ -117,13 +136,13 @@ internal static class SqliteStatements
 
     // A client database keeps no journal deletions to look at.
     public const string ClientHasCollectionState = """
-        SELECT EXISTS(SELECT 1 FROM documents WHERE collection >= $from AND collection < $to)
+        SELECT EXISTS(SELECT 1 FROM _tb_state WHERE collection >= $from AND collection < $to)
             OR EXISTS(SELECT 1 FROM collections WHERE name >= $from AND name < $to)
             OR EXISTS(SELECT 1 FROM change_log INDEXED BY change_log_by_offset WHERE collection >= $from AND collection < $to);
         """;
 
     public const string ClientHasCollectionStateFrom = """
-        SELECT EXISTS(SELECT 1 FROM documents WHERE collection >= $from)
+        SELECT EXISTS(SELECT 1 FROM _tb_state WHERE collection >= $from)
             OR EXISTS(SELECT 1 FROM collections WHERE name >= $from)
             OR EXISTS(SELECT 1 FROM change_log INDEXED BY change_log_by_offset WHERE collection >= $from);
         """;
@@ -230,13 +249,6 @@ internal static class SqliteStatements
     /// <summary>Statements both client and system databases run, by name, for query-plan checks.</summary>
     public static IReadOnlyDictionary<string, string> Shared { get; } = new Dictionary<string, string>(StringComparer.Ordinal)
     {
-        [nameof(Get)] = Get,
-        [nameof(UniqueRawDocument)] = UniqueRawDocument,
-        [nameof(DocumentBytes)] = DocumentBytes,
-        [nameof(StoredDocumentBytes)] = StoredDocumentBytes,
-        [nameof(Version)] = Version,
-        [nameof(ListFirst)] = ListFirst,
-        [nameof(ListAfter)] = ListAfter,
         [nameof(NextOffset)] = NextOffset,
         [nameof(CurrentOffset)] = CurrentOffset,
         [nameof(Incarnation)] = Incarnation,
@@ -249,20 +261,25 @@ internal static class SqliteStatements
         [nameof(AppendChange)] = AppendChange,
         [nameof(HistoryFloor)] = HistoryFloor,
         [nameof(DropHistory)] = DropHistory,
-        [nameof(CountDocuments)] = CountDocuments,
-        [nameof(ListCollectionStats)] = ListCollectionStats,
         [nameof(ListIndexes)] = ListIndexes,
         [nameof(IndexExists)] = IndexExists,
-        [nameof(DropDocuments)] = DropDocuments,
     };
 
-    /// <summary>Statements only client databases run, by name, for query-plan checks.</summary>
+    /// <summary>Statements only client databases run, by name, for query-plan checks; <c>{0}</c> stands for a collection's table.</summary>
     public static IReadOnlyDictionary<string, string> ClientOnly { get; } = new Dictionary<string, string>(StringComparer.Ordinal)
     {
         [nameof(GetState)] = GetState,
         [nameof(ClientHasCollectionState)] = ClientHasCollectionState,
         [nameof(ClientHasCollectionStateFrom)] = ClientHasCollectionStateFrom,
-        [nameof(PutDocument)] = PutDocument,
+        [nameof(ClientDocumentBytes)] = ClientDocumentBytes,
+        [nameof(ClientListFirst)] = ClientListFirst,
+        [nameof(ClientListAfter)] = ClientListAfter,
+        [nameof(ClientCollectionStats)] = ClientCollectionStats,
+        [nameof(ClientConflictBytes)] = ClientConflictBytes,
+        [nameof(ClientCollectionNames)] = ClientCollectionNames,
+        [nameof(UpdateRow)] = UpdateRow,
+        [nameof(InsertRow)] = InsertRow,
+        [nameof(DeleteRow)] = DeleteRow,
         [nameof(UpdateState)] = UpdateState,
         [nameof(InsertState)] = InsertState,
         [nameof(DropStates)] = DropStates,
@@ -271,6 +288,15 @@ internal static class SqliteStatements
     /// <summary>Statements only the system database runs, by name, for query-plan checks (TS-647 step 5 removes them).</summary>
     public static IReadOnlyDictionary<string, string> SystemOnly { get; } = new Dictionary<string, string>(StringComparer.Ordinal)
     {
+        [nameof(Get)] = Get,
+        [nameof(DocumentBytes)] = DocumentBytes,
+        [nameof(StoredDocumentBytes)] = StoredDocumentBytes,
+        [nameof(Version)] = Version,
+        [nameof(ListFirst)] = ListFirst,
+        [nameof(ListAfter)] = ListAfter,
+        [nameof(CountDocuments)] = CountDocuments,
+        [nameof(ListCollectionStats)] = ListCollectionStats,
+        [nameof(DropDocuments)] = DropDocuments,
         [nameof(Put)] = Put,
         [nameof(Delete)] = Delete,
         [nameof(Tombstone)] = Tombstone,

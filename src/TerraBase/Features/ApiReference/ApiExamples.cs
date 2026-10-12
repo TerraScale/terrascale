@@ -148,7 +148,7 @@ internal static class ApiExamples
         "listDocuments" => DataPage(Document),
         "queryDocuments" => "{\"items\":[" + Document + "],\"next_cursor\":null,\"count\":{\"value\":\"1\",\"exact\":true}}",
         "runSql" => """{"matched":1,"truncated":false,"rows":[{"id":"01ARZ3NDEKTSV4RRFFQ69G5FA3","value":{"name":"Ada"}}]}""",
-        "explainSql" => """{"ok":true,"error":null,"collection":"people","hasLimit":true,"plan":["SEARCH documents USING INDEX tb_index_people_email (collection=? AND <expr>=?)"],"indexes":["people_email"],"suggestions":[]}""",
+        "explainSql" => """{"ok":true,"error":null,"collection":"people","hasLimit":true,"plan":["SEARCH people USING INDEX tb_index_people_email (<expr>=?)"],"indexes":["people_email"],"suggestions":[]}""",
         "checkSql" => """{"ok":true,"error":null,"collection":"people","hasLimit":true,"plan":[],"indexes":[],"suggestions":[]}""",
         "createSavedQuery" or "getSavedQuery" => Saved,
         "updateSavedQuery" => Saved.Replace("\"updatedAt\":null", "\"updatedAt\":\"2026-10-07T12:00:00Z\"", StringComparison.Ordinal),

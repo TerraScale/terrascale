@@ -108,9 +108,9 @@ internal sealed partial class SqliteDatabaseStore(
         ) WITHOUT ROWID;
         """;
 
-    // A client database (docs/terrabase/multi-region-replication.md section 5). A document row keeps the stamp of its last
-    // write (version) and its materialized JSON (body), NULL when it is deleted or loses a uniqueness conflict, so reads,
-    // queries, indexes and shapes never decode a state. _tb_state keeps each document's replicated DocumentState in its
+    // A client database (docs/terrabase/multi-region-replication.md section 5). Each collection is a table of its own, created
+    // with it (the metadata collections here), holding the materialized JSON of its live documents (doc): reads, queries,
+    // indexes and shapes never decode a state. _tb_state keeps each document's replicated DocumentState in its
     // stored form (base64url), with its anti-entropy bucket and digest; the other _tb_ tables belong to the change feed,
     // the peer streams and anti-entropy, which later slices fill. Every new table is a rowid table. Shape history: every
     // write is retained in change_log so shape snapshots at an offset and closed log chunks never change
@@ -118,11 +118,9 @@ internal sealed partial class SqliteDatabaseStore(
     // change_log_high the generation's highest id over time, so a snapshot finds the ids that existed at its offset
     // without reading later ones.
     private const string ClientSchemaSql = """
-        CREATE TABLE documents (
-            collection TEXT NOT NULL, id TEXT NOT NULL, version INTEGER NOT NULL, body TEXT,
-            PRIMARY KEY (collection, id)
-        ) WITHOUT ROWID;
-        CREATE INDEX documents_live ON documents (collection, id) WHERE body IS NOT NULL;
+        CREATE TABLE "_collections" (id TEXT NOT NULL UNIQUE, doc TEXT NOT NULL);
+        CREATE TABLE "_indexes" (id TEXT NOT NULL UNIQUE, doc TEXT NOT NULL);
+        CREATE TABLE "_unique" (id TEXT NOT NULL UNIQUE, doc TEXT NOT NULL);
         CREATE TABLE _tb_state (
             collection TEXT NOT NULL, id TEXT NOT NULL, bucket INTEGER NOT NULL, state TEXT NOT NULL,
             stamp INTEGER NOT NULL, origin INTEGER NOT NULL, live INTEGER NOT NULL, h1 INTEGER NOT NULL, h2 INTEGER NOT NULL,

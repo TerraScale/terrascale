@@ -21,7 +21,9 @@ internal sealed partial class SqliteStorageTransaction
 
     private IMemoryReservation? ReserveCollectionMetadata(string name)
     {
-        var command = Command("SELECT length(CAST(body AS BLOB)) FROM documents WHERE collection = $collection AND id = $id;", DocumentDelta.Collections);
+        var command = store.IsSystem
+            ? Command("SELECT length(CAST(body AS BLOB)) FROM documents WHERE collection = $collection AND id = $id;", DocumentDelta.Collections)
+            : TableCommand("SELECT octet_length(doc) FROM {0} WHERE id = $id;", DocumentDelta.Collections);
         command.Parameters.AddWithValue("$id", name);
         var bytes = command.ExecuteScalar();
         return bytes is long length ? ReserveSchemaMemory(8L * length, MemoryLane.Foreground) : null;
