@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text;
 using System.Text.Json;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
@@ -124,6 +125,51 @@ public sealed class PointInTimeHistoryTests
         }
     }
 
+    [Test]
+    public async Task Empty_segments_sharing_a_start_continue_the_history_in_restore_and_plan(CancellationToken cancellationToken)
+    {
+        await using var host = await Host.StartAsync(cancellationToken);
+        await host.PutAsync("a", cancellationToken);
+        await host.ShipAsync(TimeSpan.FromSeconds(1), cancellationToken);
+        var s1 = host.Segments(host.Generation).Single();
+        // A segment holding no log ends where it starts: three read before s1, all starting where s1 does.
+        foreach (var ms in new[] { 100, 200, 300 })
+        {
+            await host.StoreEmptySegmentAsync(s1.Start, host.SnapshotAt.AddMilliseconds(ms), cancellationToken);
+        }
+
+        var last = host.SnapshotAt.AddMilliseconds(300);
+        var plan = await host.PlanAsync(last, cancellationToken);
+        await Assert.That(plan.GetProperty("segmentCount").GetInt32()).IsEqualTo(3);
+        await host.RestoresAsync(last, "at-empty", ["seed"], ["a"], cancellationToken);
+        // s1, read after the time, starts where the empty ones end.
+        await host.RestoresAsync(last.AddMilliseconds(200), "before-a", ["seed"], ["a"], cancellationToken);
+
+        // The daily snapshot holds exactly the log an empty segment after s1 ends at.
+        await host.ShipAsync(TimeSpan.FromDays(1), cancellationToken);
+        await host.StoreEmptySegmentAsync(host.LogBytes, s1.At.AddHours(1), cancellationToken);
+        await host.RestoresAsync(s1.At.AddHours(2), "quiet", ["seed", "a"], [], cancellationToken);
+    }
+
+    [Test]
+    public async Task A_segment_starting_where_a_non_empty_one_starts_is_refused_at_restore(CancellationToken cancellationToken)
+    {
+        await using var host = await Host.StartAsync(cancellationToken);
+        var (_, s2, s3) = await host.ShipThreeSegmentsAsync(cancellationToken);
+        var duplicate = s2.At.AddMilliseconds(500);
+        await host.StoreEmptySegmentAsync(s2.Start, duplicate, cancellationToken);
+
+        // Only s2's length shows it holds log the duplicate does not continue; the plan says it checked names only.
+        var plan = await host.PlanAsync(duplicate, cancellationToken);
+        await Assert.That(plan.GetProperty("historyCheck").GetString()).IsEqualTo("metadata");
+        foreach (var at in new[] { duplicate, s3.At })
+        {
+            await host.RefusedAsync(at, cancellationToken);
+        }
+
+        await host.RestoresAsync(s2.At, "at-b", ["seed", "a", "b"], ["c"], cancellationToken);
+    }
+
     // One node shipping only when a test runs a pass; its database holds the document seed in its generation's snapshot.
     private sealed class Host(ManagementApi api, FakeS3 s3, FakeTimeProvider time, ManagedDatabaseRef database, HttpClient data) : IAsyncDisposable
     {
@@ -138,6 +184,9 @@ public sealed class PointInTimeHistoryTests
         public DateTimeOffset SnapshotAt { get; private set; }
 
         public string Generation => Api.Server.Services.GetRequiredService<IContinuousBackup>().Status.Files.Single(file => file.File == File).Generation!;
+
+        // The generation's log the shipper has read: where its next segment starts.
+        public long LogBytes => Api.Server.Services.GetRequiredService<IContinuousBackup>().Status.Files.Single(file => file.File == File).LogBytes;
 
         private string File => $"v1/{Database.Organization}/{Database.Project}/{Database.Id}";
 
@@ -194,6 +243,17 @@ public sealed class PointInTimeHistoryTests
         public IReadOnlyList<SegmentKey> Segments(string generation) =>
             [.. s3.Objects.Keys.Where(key => key.StartsWith($"{File}/wal/{generation}/", StringComparison.Ordinal))
                 .Order(StringComparer.Ordinal).Select(key => BackupLayout.ParseSegment(key)!)];
+
+        // A sealed segment holding no log, which the shipper never stores, under the data key of the generation's snapshot.
+        public async Task StoreEmptySegmentAsync(long start, DateTimeOffset at, CancellationToken cancellationToken)
+        {
+            var key = BackupLayout.Segment(File, Ulid.Parse(Generation), start, at);
+            var keyId = Encoding.ASCII.GetString(s3.Objects.First(item => item.Key.StartsWith($"{File}/snapshots/", StringComparison.Ordinal)).Value, 4, 26);
+            var dataKey = s3.Unwrap(Encoding.ASCII.GetString(s3.Objects[BackupLayout.Key($"{Database.Organization}/{Database.Project}", keyId)]));
+            using var output = new MemoryStream();
+            await BackupObject.WriteAsync(Stream.Null, output, key, keyId, dataKey, cancellationToken);
+            s3.StoreObject(key, output.ToArray());
+        }
 
         // A real S3 DELETE through the node's own object store, as a bucket-side deletion would remove it.
         public async Task DeleteAsync(string key, CancellationToken cancellationToken)

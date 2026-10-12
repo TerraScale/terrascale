@@ -331,6 +331,7 @@ times it cannot prove answer `409` instead of restoring a possibly incomplete st
 
 Two segments with the same start (an upload stored but answered as failed, then sent again with more log) are not
 contiguous: the first one's own time still restores, and later times answer `409` until the generation's next snapshot.
+A segment that holds no log ends where it starts, so the next one may share its start.
 
 ### Restore preview (TS-493)
 
@@ -357,11 +358,12 @@ segments after its position and read by the requested time. The latter is null w
 none apply. No object keys or credentials are returned.
 
 The preview runs the restore's name-only check of [Proven history](#proven-history): the first segment starts at the
-snapshot's position, later ones start after it in order, and the history reaches `pointInTime`. When object names
-already show the history incomplete (a missing final segment, an ended generation, a later snapshot whose position no
-stored segment reaches), it answers `409` `backup_history_incomplete`, as the restore would. `historyCheck` is always
-`metadata`: segment names hold their start but not their length, so whether each segment begins exactly where the
-previous one ends (a missing middle segment) is checked only by an actual restore, which can still answer `409`.
+snapshot's position, each later one starts at or after the previous one, and the history reaches `pointInTime`. When
+object names already show the history incomplete (a missing final segment, an ended generation, a later snapshot whose
+position no stored segment reaches), it answers `409` `backup_history_incomplete`, as the restore would. `historyCheck`
+is always `metadata`: segment names hold their start but not their length, so whether each segment begins exactly where
+the previous one ends (a missing middle segment, or two segments with the same start where the first holds log) is
+checked only by an actual restore, which can still answer `409`.
 
 The request needs a ts-auth project token granting `databases:read`; `{database}` is its name.
 The hidden legacy management alias retains membership checks, including organization viewers. Access is checked

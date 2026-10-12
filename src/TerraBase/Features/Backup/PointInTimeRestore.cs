@@ -331,9 +331,9 @@ internal sealed class PointInTimeRestore(
 
     // The selection restore makes, from object names: segments up to the time, stopping at the first later one even when
     // subsequent wall-clock timestamps regress. Proven unless the names already show the history incomplete up to the time:
-    // the first segment must start at the snapshot's position and each later one after the previous; then either the first
-    // later segment follows them, the last one (or the snapshot) was read at the time, or the generation's next snapshot
-    // is past them.
+    // the first segment must start at the snapshot's position and each later one at or after the previous (one holding no
+    // log ends where it starts; the replay checks lengths); then either the first later segment follows them, the last one
+    // (or the snapshot) was read at the time, or the generation's next snapshot is not before them.
     private static async Task<SegmentScan?> ScanSegmentsAsync(
         IObjectStore store, string file, SnapshotKey snapshot, SnapshotKey? next, DateTimeOffset at, int limit, bool stopAfterTarget, CancellationToken cancellationToken)
     {
@@ -364,7 +364,7 @@ internal sealed class PointInTimeRestore(
                 continue;
             }
 
-            var follows = last is null ? segment.Start == snapshot.Position : segment.Start > last.Start;
+            var follows = last is null ? segment.Start == snapshot.Position : segment.Start >= last.Start;
             if (segment.At > at)
             {
                 bounded = follows;
@@ -383,7 +383,7 @@ internal sealed class PointInTimeRestore(
         }
 
         var proven = ordered && (bounded == true || Covers(last?.At ?? snapshot.At, at)
-            || next is not null && (last is null ? next.Position == snapshot.Position : next.Position > last.Start));
+            || next is not null && (last is null ? next.Position == snapshot.Position : next.Position >= last.Start));
         return new(latest, newest, count, scanned, proven);
     }
 
