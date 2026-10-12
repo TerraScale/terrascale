@@ -1,17 +1,12 @@
 "$schema" = "./node_modules/wrangler/config-schema.json"
 
 name = "ts-landing"
-pages_build_output_dir = "./build"
 compatibility_date = "2026-04-21"
+routes = [
+  { pattern = "terrascale.tech", custom_domain = true },
+  { pattern = "www.terrascale.tech", custom_domain = true },
+]
 
-# Add shared Pages bindings and variables below when needed.
-# [vars]
-# PUBLIC_API_BASE = "https://api.example.com"
-
-# Preview-only overrides.
-# [env.preview.vars]
-# PUBLIC_API_BASE = "https://preview-api.example.com"
-
-# Production-only overrides.
-# [env.production.vars]
-# PUBLIC_API_BASE = "https://api.example.com"
+[assets]
+directory = "./build"
+not_found_handling = "404-page"
