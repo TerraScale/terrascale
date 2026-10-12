@@ -768,6 +768,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
                 system = new SqliteDatabaseStore(SystemName, path, Pool, Io, _pragmas, null, Time, RecordCommittedWrite, _logger)
                 {
                     QueryBudget = QueryBudget,
+                    Member = Member,
                 };
                 try
                 {

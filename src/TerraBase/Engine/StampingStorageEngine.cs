@@ -164,7 +164,6 @@ internal sealed class StampingStorageEngine(IStorageEngine inner) : IStorageEngi
         public Guid Scope => inner.Scope;
 
 
-        public bool Materializes => inner.Materializes;
 
         public ValueTask<StoredDocument?> GetAsync(string collection, string id, CancellationToken cancellationToken) =>
             RunAsync(() => inner.GetAsync(collection, id, cancellationToken), cancellationToken);

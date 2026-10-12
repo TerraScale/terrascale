@@ -1044,12 +1044,7 @@ public sealed class BackupApiTests
         var path = Path.Combine(dataDirectory, "_system.db");
         await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Pooling = false, DefaultTimeout = 30 }.ToString());
         await connection.OpenAsync();
-        await using var command = connection.CreateCommand();
-        command.CommandText = "INSERT INTO documents (collection, id, version, body) VALUES ($collection, $id, 1, $body);";
-        command.Parameters.AddWithValue("$collection", collection);
-        command.Parameters.AddWithValue("$id", id);
-        command.Parameters.AddWithValue("$body", body);
-        await command.ExecuteNonQueryAsync();
+        await StoredStates.WriteAsync(connection, collection, id, body, system: true);
     }
 
     private static Uri Uri(string path) => ManagementApi.Uri(path);

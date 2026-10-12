@@ -141,7 +141,9 @@ internal sealed class UsageFlushService(
         var status = replication.Snapshot();
         if (status.Initialized)
         {
+            // The catalog's own replication (ChangeGroups.System) belongs to no tenant's usage.
             foreach (var group in status.Peers.SelectMany(peer => peer.Databases.Select(database => (peer.Region, Database: database)))
+                .Where(observation => observation.Database.OrganizationId != ChangeGroups.System.OrganizationId)
                 .GroupBy(observation => (observation.Database.OrganizationId, observation.Database.ProjectId, observation.Database.DatabaseId, observation.Region)))
             {
                 var (organization, project, database, region) = group.Key;

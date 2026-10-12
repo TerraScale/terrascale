@@ -498,7 +498,7 @@ internal sealed partial class EngineManagementService
     private async ValueTask<long> CountAsync(IStorageTransaction transaction, ManagementOpRequest limit, CancellationToken cancellationToken)
     {
         var organizationId = limit.Organization!;
-        if (await transaction.GetVersionAsync(Organizations, organizationId, cancellationToken).ConfigureAwait(false) is null)
+        if (await transaction.GetVersionAsync(Organizations, organizationId, cancellationToken).ConfigureAwait(false) is not { Deleted: false })
         {
             return 0;
         }
