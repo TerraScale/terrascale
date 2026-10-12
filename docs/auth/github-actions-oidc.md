@@ -93,6 +93,8 @@ workload token can never pass the general path, even if that is enabled one day:
   - `sub` starts with `github-actions:`
 - **Principal:** the existing `ProjectToken` shape for project `…06`, so the existing project checks apply unchanged. A
   route under any other project answers 404, the same as for a token of that other project today.
+  Project resolution for this principal uses the seeded catalog entry (`…06` → organization `…05`). It does not use
+  `ResolveProjectAsync`, which needs `auth-issuer` and stays off, and it never creates a project namespace.
 - **Metrics/logs:** accept and refuse counters (the reason as a bounded label), never the token.
 - **Inert until bind:** the workload ring has no keys before the bind, so the JWKS is empty or 404 and nothing verifies.
 
