@@ -39,8 +39,9 @@ public static class ApiKeyScopes
 /// </param>
 /// <param name="ProjectId">The only project of the organization the key reaches; <see langword="null"/> for all of them.</param>
 /// <param name="DatabaseId">The only database of <paramref name="ProjectId"/> the key reaches; <see langword="null"/> for all of them.</param>
+/// <param name="ExpiresAt">When the key stops authenticating; <see langword="null"/> for never.</param>
 public sealed record ApiKey(
-    string Id, string Name, IReadOnlyList<string> Scopes, string OrganizationId, string? ProjectId = null, string? DatabaseId = null)
+    string Id, string Name, IReadOnlyList<string> Scopes, string OrganizationId, string? ProjectId = null, string? DatabaseId = null, DateTimeOffset? ExpiresAt = null)
 {
     /// <summary>The key that authenticated <paramref name="context"/>.</summary>
     public static ApiKey Of(HttpContext context)
@@ -105,9 +106,10 @@ public interface IApiKeyStore
     /// <see cref="CreateProjectKeyAsync"/> had issued it.
     /// </summary>
     ValueTask<CreateApiKeyResult> CreateAsync(
-        string name, IReadOnlyList<string> scopes, string organizationId, string? projectId, string? databaseId, CancellationToken cancellationToken);
+        string name, IReadOnlyList<string> scopes, string organizationId, string? projectId, string? databaseId, CancellationToken cancellationToken,
+        DateTimeOffset? expiresAt = null);
 
-    /// <summary>Finds the key for a presented secret; <see cref="NotFound"/> when unknown or stored before tenancy.</summary>
+    /// <summary>Finds the key for a presented secret; <see cref="NotFound"/> when unknown, expired or stored before tenancy.</summary>
     ValueTask<Found<ApiKey>> FindAsync(string secret, CancellationToken cancellationToken);
 
     /// <summary>

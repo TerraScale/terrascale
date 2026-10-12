@@ -169,11 +169,12 @@ public sealed class Cluster : IAsyncDisposable
     private static async Task<Cluster> StartFlyAsync(string[] regions)
     {
         var url = new Uri(Required(FlyUrlVariable), UriKind.Absolute);
-        var project = Required("TERRABASE_E2E_FLY_PROJECT");
-        var tokens = new ProjectTokens(Required("TERRABASE_E2E_FLY_API_KEY"), project);
-        var projectPath = $"/v1/projects/{project}";
+        // A TerraBase API key of the dedicated e2e project (documents:read and documents:write, with an expiry):
+        // .cos/e2e-credential-plan.md.
+        var key = Required("TERRABASE_E2E_FLY_API_KEY");
+        var projectPath = $"/v1/projects/{Required("TERRABASE_E2E_FLY_PROJECT")}";
         var path = $"{projectPath}/databases/{Required("TERRABASE_E2E_FLY_DATABASE")}";
-        var clients = regions.ToDictionary(region => region, region => FlyClient(url, tokens, region), StringComparer.Ordinal);
+        var clients = regions.ToDictionary(region => region, region => FlyClient(url, key, region), StringComparer.Ordinal);
         var collection = NewCollection();
         try
         {
@@ -240,75 +241,11 @@ public sealed class Cluster : IAsyncDisposable
 
     private static string NewCollection() => $"e2e-{Guid.NewGuid():N}";
 
-    private static HttpClient FlyClient(Uri url, ProjectTokens tokens, string region) =>
-        new(new RegionPin(region) { InnerHandler = new Bearer(tokens) { InnerHandler = new SocketsHttpHandler() } }) { BaseAddress = url, Timeout = Timeout.InfiniteTimeSpan };
-
-    // Sends the current project token with every request.
-    private sealed class Bearer(ProjectTokens tokens) : DelegatingHandler
+    private static HttpClient FlyClient(Uri url, string key, string region)
     {
-        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
-        {
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", await tokens.CurrentAsync(cancellationToken));
-            return await base.SendAsync(request, cancellationToken);
-        }
-    }
-
-    /// <summary>
-    /// Project access tokens for the e2e project, from ts-auth's token endpoint with the CI's API key (client credentials;
-    /// the key's first 24 characters are its id). They live 15 minutes, so a new one is fetched after 10.
-    /// scripts/e2e/install-ci-credential.sh installs the key.
-    /// </summary>
-    private sealed class ProjectTokens(string key, string project) : IDisposable
-    {
-        private const string TokenEndpoint = "https://ts-auth.fly.dev/terrascale/oauth/token";
-        private static readonly TimeSpan Renew = TimeSpan.FromMinutes(10);
-        private readonly HttpClient http = new();
-        private readonly SemaphoreSlim gate = new(1, 1);
-        private string? token;
-        private DateTimeOffset fetched;
-
-        public async Task<string> CurrentAsync(CancellationToken cancellationToken)
-        {
-            await gate.WaitAsync(cancellationToken);
-            try
-            {
-                if (token is null || DateTimeOffset.UtcNow - fetched > Renew)
-                {
-                    using var request = new HttpRequestMessage(HttpMethod.Post, TokenEndpoint)
-                    {
-                        Content = new FormUrlEncodedContent(new Dictionary<string, string>
-                        {
-                            ["grant_type"] = "client_credentials",
-                            ["project"] = project,
-                            ["scope"] = "databases:read databases:write documents:read documents:write",
-                        }),
-                    };
-                    request.Headers.Authorization = new AuthenticationHeaderValue("Basic", Convert.ToBase64String(Encoding.UTF8.GetBytes($"{key[..Math.Min(24, key.Length)]}:{key}")));
-                    using var response = await http.SendAsync(request, cancellationToken);
-                    // Never the body or the key in the error: only the status.
-                    if (!response.IsSuccessStatusCode)
-                    {
-                        throw new InvalidOperationException($"ts-auth refused the e2e API key: HTTP {(int)response.StatusCode}");
-                    }
-
-                    using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
-                    token = body.RootElement.GetProperty("access_token").GetString();
-                    fetched = DateTimeOffset.UtcNow;
-                }
-
-                return token!;
-            }
-            finally
-            {
-                gate.Release();
-            }
-        }
-
-        public void Dispose()
-        {
-            http.Dispose();
-            gate.Dispose();
-        }
+        var client = new HttpClient(new RegionPin(region) { InnerHandler = new SocketsHttpHandler() }) { BaseAddress = url, Timeout = Timeout.InfiniteTimeSpan };
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", key);
+        return client;
     }
 
     private static string Required(string name) =>
