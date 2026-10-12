@@ -1,0 +1,14 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Auth.AuthFailurePage>
+@implements IUsesLayout<TerraScale.Dashboard.UI.Slices.Document, DocumentModel>
+@inject AssetUrls Assets
+<main class="ts-auth">
+    <div class="ts-auth-card">
+        <div class="ts-auth-brand"><img class="ts-brand-logo" src="@Assets.Url("brand/logo-terrascale-blue.svg")" alt="TerraScale" decoding="async" /></div>
+        <div class="ts-auth-heading"><h1 class="ts-auth-title">Sign in</h1><p class="ts-auth-subtitle">Sign-in through ts-auth did not finish.</p></div>
+        <div class="ts-alert ts-alert-warning" role="status"><p class="ts-alert-body">@Model.Message</p><p class="ts-alert-body">Reference: <code>@Model.Reference</code></p></div>
+        <div class="ts-form"><a class="ts-btn ts-btn-primary ts-btn-lg ts-btn-block" href="@Model.RetryUrl">Try again</a><a class="ts-btn ts-btn-secondary ts-btn-block" href="@Model.CodeUrl">Sign in with an emailed code</a></div>
+        <p class="ts-meta">Still failing? Check <a class="ts-link" href="https://status.terrascale.tech">TerraScale status</a>, and quote the reference when you contact us.</p>
+    </div>
+    <div class="ts-auth-locale"><label class="ts-sr-only" for="auth-locale">Language</label><select id="auth-locale" class="ts-select ts-input-sm" aria-label="Language"><option value="en" selected>English</option><option value="pt-BR">Português</option></select></div>
+</main>
+@functions { public DocumentModel LayoutModel => Model.Document; }

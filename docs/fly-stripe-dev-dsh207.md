@@ -1,14 +1,11 @@
 # DSH-207: homologação Stripe no Fly
 
-Estas instruções são para `terrascale-dashboard-dev` e chaves **Stripe de teste**.
-A referência de configuração e o comportamento da integração estão em
-[`stripe.md`](stripe.md).
-O runtime atual usa TerraBase via ts-go para contas, sessões, throttle e estado
-Stripe, e a API headless do ts-auth para autenticação. O login permanece nas
-páginas do dashboard; apenas SSO redireciona para a página hospedada. Fakes
-e demonstrações ficam restritos a binários de teste isolados.
+Estas instruções se referem ao app `terrascale-dashboard-dev`. A integração usa
+Stripe.net 53 e a identidade do dashboard entregue pelo OCI Vault. Não configure
+chaves, segredos, modo ou origem manualmente. As regras do fluxo de cobrança e
+da auditoria estão em [`stripe.md`](stripe.md).
 
-## 1. Acesso e app
+## 1. Verifique o app dev
 
 No computador de quem administra a organização Fly:
 
@@ -18,53 +15,50 @@ fly apps list
 fly status -a terrascale-dashboard-dev
 ```
 
-Confirme o app existente e a organização. Se ele não existir, pare: estas
-instruções não autorizam criar ou substituir infraestrutura. Não use o app de
-produção `ts-dashboard` para estes testes.
+Confirme o app existente e a organização. Se ele não existir, pare; este
+runbook não autoriza criar ou substituir infraestrutura. Não use o app de
+produção `ts-dashboard` para estes passos.
 
-## 2. Contrato de homologação e segredos
+## 2. Identidade e auditoria somente leitura
 
-O [contrato de configuração zero](zero-configuration.md) exige persistência e
-autenticação reais no app compartilhado. Fakes e demonstrações pertencem somente
-a código e binários de teste. Os seletores de modo atuais são pendências do
-runtime; estas instruções não autorizam usá-los para ativar recursos.
+A produção exige que OCI Vault entregue automaticamente o documento de identidade do dashboard,
+incluindo a chave Stripe e o segredo de assinatura do webhook. A aplicação e o
+comando de auditoria leem essa mesma identidade. O comando não aceita opções,
+chaves, segredos, origem, versão da API ou configuração de modo. Ele infere
+test/live pelo prefixo da chave entregue e faz apenas leituras pelo Stripe.net
+53 `V1` client.
 
-OCI Vault deve entregar automaticamente credenciais de serviço, CSRF e chaves
-Stripe armazenadas uma única vez. O provisionamento deve vincular o app dev ao
-issuer, callbacks, banco e conta Stripe de teste corretos. Não copie credenciais
-para arquivos dotenv ou importe segredos manualmente no Fly.
+A entrega automática e o deploy C# ainda precisam de qualificação. Este runbook
+não implementa essa entrega; veja [`csharp-migration.md`](csharp-migration.md).
 
-Preserve HTTPS, cookies seguros, readiness, isolamento da conta de teste e
-permissões mínimas. Verifique o endpoint exclusivo
-`https://terrascale-dashboard-dev.fly.dev/api/v1/billing/stripe/webhook`:
-identidade, versão de API e todos os eventos de `payments.WebhookEvents`.
-Produtos, preços e assinatura precisam
-pertencer à mesma conta de teste. As garantias de armazenamento e a validação
-nativa de login continuam obrigatórias. A entrega automática ainda não foi
-implementada por esta mudança de documentação.
-
-## 4. Deploy e verificação
-
-Depois de verificar a configuração persistente do app dev existente:
+Execute o comando no ambiente que contém o checkout do dashboard e a identidade
+entregue:
 
 ```sh
-fly deploy -c fly.dev.toml -a terrascale-dashboard-dev --ha=false
+nice -n 19 dotnet run --project TerraScale.Dashboard.csproj -- audit-stripe
+```
+
+A auditoria usa a origem canônica fixa compartilhada pelo fluxo de Checkout,
+retorno do portal e configuração de webhook: `https://dashboard.terrascale.tech`.
+Ela não substitui a verificação das tentativas de entrega do endpoint no Stripe
+Workbench, nem exercita Checkout, pagamentos, renovações ou alterações de plano.
+Nenhum resultado atual de auditoria ou validação ao vivo é afirmado por este
+runbook.
+
+## 3. Deploy e readiness
+
+Faça deploy apenas depois de revisar as alterações e confirmar que o app dev
+existente está usando a identidade entregue e o backend persistente esperado:
+
+```sh
+nice -n 19 fly deploy -c fly.dev.toml -a terrascale-dashboard-dev --ha=false
 fly status -a terrascale-dashboard-dev
 fly machine list -a terrascale-dashboard-dev
 fly logs -a terrascale-dashboard-dev
 curl -fsS https://terrascale-dashboard-dev.fly.dev/health/ready
-nice -n 19 python3 scripts/audit-stripe.py --online --env-file /caminho/privado/stripe-dev.env
 scripts/smoke-native-login.sh https://terrascale-dashboard-dev.fly.dev
 ```
 
-A auditoria usa credenciais de teste fornecidas pelo ambiente de teste aprovado,
-sem exibir valores. Uma auditoria não prova a entrega automática em produção.
-Ela retorna falha se preço, produto, evento ou endpoint não corresponder.
-
-No Workbench, confira as tentativas do endpoint dev e exija respostas 2xx.
-O inventário atual mostrou dez eventos `invoice.created` com uma entrega
-pendente. Resolva essas entregas e confirme a finalização das faturas antes
-de aprovar renovação e fim de trial. Faça o percurso de Checkout, upgrade,
-downgrade, troca de periodicidade, volta ao Free, cancelamento e falha de
-pagamento usando cartões e relógios de teste. Reinicie o app dev após uma
-alteração e confira que conta, vínculo Stripe e plano continuam presentes.
+Não copie credenciais para arquivos dotenv nem importe segredos manualmente no
+Fly. Registre apenas identidade do release e resultados operacionais sem valores
+secretos.

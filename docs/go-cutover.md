@@ -81,9 +81,12 @@ commit `75730298160e97cf2175cee873b5983ad6e3c84c` (baseline tree
 source/config is identified by the 58-file manifest at
 `/tmp/dsh198-final-app-source-manifest.sha256`
 (SHA-256 `7c412faedcc65e1d0b36220495d01bf34bedebd0897822e4c1ebfa0225f9c4bf`).
-`make generate`, `make css`, `make check-generated`, `make lint`,
-`make test-fast` (Go race suite), `DASHBOARD_E2E_PORT=5625 make test-slow`
-(23/23 browser and SDK tests), and `make build` passed. The release binary SHA-256
+The historical run passed `make generate`, `make css`, `make check-generated`,
+`make lint`, `make test-fast` (then the Go race suite),
+`DASHBOARD_E2E_PORT=5625 make test-slow` (then 23/23 browser and SDK tests), and
+`make build`. The current test targets instead run the full TUnit application
+E2E suite; those historical results are not C# qualification evidence.
+The release binary SHA-256
 is `a433ffeee760bc273e39615010663f7f0dc385acc4910bc8d1b3fdde51809b6f`; the
 170,288-byte CSS bundle SHA-256 is
 `81209a05ef143ad74b52a3c62334783cf678e6755af8fd41cc9ada7043f15497`.
@@ -146,7 +149,11 @@ make build
 The current `make dev` launcher still selects a demo backend while running
 Go/template and CSS watchers. This is an implementation gap; fakes and demos
 belong only in isolated test binaries.
-`make test-slow` runs the Playwright suite and the local test-only SDK fixture.
+`make test-fast`, `make test-slow` and `make test-browser` now each run the same
+full TUnit application E2E suite over running HTTP, MCP, browser and customer SDK
+boundaries. They do not reproduce the historical Go test runs above. Original
+Go browser reference capture is a separate, explicit TUnit journey launched by
+`make dotnet-parity-reference`; ordinary E2E runs do not regenerate the baseline.
 `make build` bundles the CSS and produces the optimized Go executable. These
 commands do not exercise live persistence, live Stripe, or a production ts-auth
 provider.

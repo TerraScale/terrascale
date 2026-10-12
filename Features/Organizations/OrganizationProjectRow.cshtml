@@ -1,0 +1,23 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Organizations.ProjectDialogModel>
+@using TerraScale.Dashboard.Features.Organizations
+@if (Model.Project is { } project)
+{
+    <tr>
+        <td><div class="ts-stack-sm ts-org-project-name"><span class="ts-table-strong">@project.Name</span><span class="ts-meta ts-mono">@project.Id</span></div></td>
+        <td class="ts-muted">@(project.Slug.Length > 0 ? project.Slug : "—")</td>
+        <td><span class="ts-badge @(Model.Page.Shell.Context.Project?.Id == project.Id ? "ts-badge-success" : "ts-badge-neutral")">@(Model.Page.Shell.Context.Project?.Id == project.Id ? "Current" : "Available")</span></td>
+        <td>@if (project.BackupRegion.Length > 0) { <span class="ts-badge ts-badge-info">@project.BackupRegion.ToUpperInvariant()</span> } else { <span class="ts-meta">None</span> }</td>
+        <td class="ts-muted">@(project.CreatedAt == DateTimeOffset.MinValue ? "" : project.CreatedAt.UtcDateTime.ToString("MMM d, yyyy HH:mm 'UTC'", System.Globalization.CultureInfo.InvariantCulture))</td>
+        <td class="ts-table-actions"><div class="ts-row ts-row-end">
+            @if (Model.Page.Shell.Context.Project?.Id != project.Id)
+            {
+                <form method="post" action="/api/v1/dashboard/switch-project"><input type="hidden" name="_csrf" value="@Model.Page.Shell.CsrfToken" /><input type="hidden" name="projectId" value="@project.Id" /><input type="hidden" name="returnUrl" value="/organization?tab=projects" /><button class="ts-btn ts-btn-secondary ts-btn-sm" type="submit">Select</button></form>
+            }
+            @if (Model.Page.CanManage)
+            {
+                <button class="ts-btn ts-btn-ghost ts-btn-sm" type="button" command="show-modal" commandfor="rename-project-@project.Id">@Icons.Render("Pencil", 14)<span>Rename</span></button>
+                @(await RenderPartialAsync<TerraScale.Dashboard.Features.Organizations.ProjectDialog, ProjectDialogModel>(Model))
+            }
+        </div></td>
+    </tr>
+}

@@ -1,0 +1,54 @@
+using Stripe;
+using TerraScale.Dashboard.Features.Accounts;
+using TerraScale.Dashboard.Features.Auth;
+using TerraScale.Dashboard.Features.Onboarding;
+using AccountService = TerraScale.Dashboard.Features.Accounts.AccountService;
+
+namespace TerraScale.Dashboard.Features.Billing;
+
+public static class BillingPlanEndpoints
+{
+    public static IEndpointRouteBuilder MapBillingPlanChanges(this IEndpointRouteBuilder endpoints)
+    {
+        endpoints.MapPost("/billing/change", (HttpContext http, DashboardSessions sessions, AccountService accounts, StripeBilling billing) =>
+            MutateAsync(http, sessions, accounts, billing, "change"));
+        endpoints.MapPost("/billing/change/undo", (HttpContext http, DashboardSessions sessions, AccountService accounts, StripeBilling billing) =>
+            MutateAsync(http, sessions, accounts, billing, "undo"));
+        endpoints.MapPost("/billing/checkout/cancel", (HttpContext http, DashboardSessions sessions, AccountService accounts, StripeBilling billing) =>
+            MutateAsync(http, sessions, accounts, billing, "cancel"));
+        endpoints.MapPost("/checkout/{sessionId}/cancel", (HttpContext http, DashboardSessions sessions, AccountService accounts, StripeBilling billing) =>
+            MutateAsync(http, sessions, accounts, billing, "cancel"));
+        endpoints.MapGet("/billing/checkout/return", async (HttpContext http, DashboardSessions sessions, AccountService accounts, StripeBilling billing) =>
+        {
+            var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
+            if (context is null) return AccountEndpoints.LoginRedirect(http);
+            try { return AuthEndpoints.SeeOther(await billing.CheckoutReturnAsync(context, http.Request.Query["session_id"].ToString(), http.RequestAborted)); }
+            catch (Exception error) when (BillingFailure(error, http)) { return Failure(error); }
+        });
+        return endpoints;
+    }
+    private static async Task<IResult> MutateAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, StripeBilling billing, string operation)
+    {
+        var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
+        if (context is null) return AccountEndpoints.LoginRedirect(http);
+        var form = await http.Request.ReadFormAsync(http.RequestAborted);
+        if (!Csrf.Validate(http, form)) return Results.Text("Invalid CSRF token.", statusCode: 403);
+        try
+        {
+            if (operation == "cancel") return AuthEndpoints.SeeOther(await billing.CancelCheckoutAsync(context,
+                http.Request.RouteValues["sessionId"]?.ToString() ?? form["sessionId"].ToString(), http.RequestAborted));
+            var outcome = operation == "undo" ? await billing.UndoPlanChangeAsync(context, http.RequestAborted)
+                : await billing.ChangePlanAsync(context, form["plan"].ToString(), form["interval"].ToString(), http.RequestAborted);
+            return AuthEndpoints.SeeOther("/organization?tab=billing" + (outcome == "current" ? "" : "&billing=" + outcome));
+        }
+        catch (Exception error) when (BillingFailure(error, http)) { return Failure(error); }
+    }
+    private static bool BillingFailure(Exception error, HttpContext http) => error is AccountAccessException or OnboardingValidationException or StripeException or HttpRequestException or IOException ||
+        error is OperationCanceledException && !http.RequestAborted.IsCancellationRequested;
+    private static IResult Failure(Exception error) => error switch
+    {
+        AccountAccessException access => Results.Text(access.Message, statusCode: access.StatusCode),
+        OnboardingValidationException validation => Results.Text(validation.Message, statusCode: 400),
+        _ => Results.Text("Stripe could not complete this billing change. Reload billing and try again.", statusCode: 502)
+    };
+}

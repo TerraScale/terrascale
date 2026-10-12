@@ -1,0 +1,16 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Analytics.AnalyticsPage>
+@implements IUsesLayout<TerraScale.Dashboard.UI.Slices.ShellDocument, ShellModel>
+<main class="ts-page"><h1 class="ts-sr-only">Analytics</h1><div class="ts-page-actions"></div>
+    <form class="ts-filters" method="get" action="/analytics" role="search" aria-label="Filter analytics" data-submit-once>
+        <input type="hidden" name="project" value="@Model.Selection.Context.Project!.Id" />
+        <label class="ts-filter-field" for="analytics-range"><span class="ts-label">Range</span><select class="ts-select" id="analytics-range" name="range">@foreach (var range in new[] { "1h", "24h", "7d", "30d" }) { <option value="@range" selected="@(range == Model.Selection.Range ? "selected" : null)">@range</option> }</select></label>
+        <label class="ts-filter-field" for="analytics-database"><span class="ts-label">Database</span><select class="ts-select" id="analytics-database" name="database"><option value="">All databases</option>@foreach (var database in Model.Selection.Context.Project!.Databases.Values.OrderBy(item => item.Name, StringComparer.Ordinal)) { <option value="@database.Id" selected="@(database.Id == Model.Selection.DatabaseId ? "selected" : null)">@database.Name</option> }</select></label>
+        <label class="ts-filter-field" for="analytics-region"><span class="ts-label">Region</span><select class="ts-select" id="analytics-region" name="region"><option value="">All regions</option>@foreach (var region in Model.Selection.Regions) { <option value="@region" selected="@(region == Model.Selection.Region ? "selected" : null)">@region</option> }</select></label>
+        <button class="ts-btn ts-btn-secondary" type="submit">Apply</button>
+    </form>
+    <p class="ts-meta ts-measurement-loading" role="status">Loading analytics measurements…</p>
+    <p class="ts-meta">Measured by TerraBase. Time buckets are selected automatically for the range. Request latency percentiles are approximate histogram estimates in microseconds. Storage is shown when sampled. Replication uses its own replication_bytes meter.</p>
+    @(await RenderPartialAsync<TerraScale.Dashboard.Features.Analytics.AnalyticsSummaryView, TerraScale.Dashboard.Features.Analytics.AnalyticsPage>(Model))
+    @if (Model.Totals is not null) { <div class="ts-grid ts-grid-2">@foreach (var chart in Model.Charts) { @(await RenderPartialAsync<TerraScale.Dashboard.Features.Analytics.AnalyticsChartView, TerraScale.Dashboard.Features.Analytics.AnalyticsChart>(chart)) }</div> }
+</main>
+@functions { public ShellModel LayoutModel => Model.Shell; }

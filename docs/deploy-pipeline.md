@@ -2,10 +2,15 @@
 
 Part of [TS-768](https://ku.mariogk.com/terrascale/issue/TS-768).
 
-Every main push verifies public Go modules, generated assets, lint, unit tests
-and all browser shards. The production job depends on every gate in the same
-workflow. The actual merge commit must pass; pull requests never deploy.
-Main jobs queue instead of cancelling an active delivery.
+Current dashboard test targets run the full TUnit application E2E suite over
+running HTTP, MCP, browser and customer SDK boundaries. There is one TUnit test
+inventory; the targets do not run isolated unit tests or the former Go browser
+shards. Public Go module, generated-asset and lint checks remain separate.
+
+The historical Go deployment workflow described below requires the actual merge
+commit to pass its gates; pull requests never deploy. Main jobs queue instead of
+cancelling an active delivery. This document does not establish current remote
+CI results or qualify a C# production cutover.
 
 The job writes the full revision's deployment/qualified commit status before
 calling Fly. Fly builds with VERSION set to that revision and replaces the

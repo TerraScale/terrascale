@@ -1,0 +1,840 @@
+using System.Collections.Concurrent;
+using System.Net;
+using System.Net.Http.Headers;
+using System.Reflection;
+using System.Security.Cryptography;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using TerraScale.Dashboard;
+using TerraScale.Dashboard.E2E;
+using TerraScale.Dashboard.Features.Auth;
+using TerraScale.Dashboard.Features.Accounts;
+using TerraScale.Dashboard.Features.Billing;
+using TerraScale.Dashboard.Features.Databases;
+using TerraScale.Dashboard.Features.Data;
+using TerraScale.Dashboard.Features.Organizations;
+using TerraScale.Dashboard.Features.Home;
+using TerraScale.Dashboard.Features.Onboarding;
+using TerraScale.Dashboard.Features.Profile;
+using TerraScale.Dashboard.Platform.Datastar;
+using TerraScale.Dashboard.Platform.Persistence;
+using TerraScale.DotNet.TerraBase;
+
+public sealed class DemoEnvironment
+{
+    private readonly TestState state = new();
+    private readonly TestAuth auth = new();
+    private readonly TestIdentity identity = new();
+    private readonly TestClock clock = new();
+    private readonly TestWorkspace workspace = new();
+    private readonly TestDocuments documents = new();
+    private readonly TestDatabases databases;
+    private readonly TestOrganizationAccess organizationAccess = new();
+    private readonly TestStripeTransport stripe = new();
+    private readonly TestBillingPlanTransport billingPlans;
+    private readonly TestBillingCheckoutPersistence checkoutPersistence;
+    private readonly TestReportingTransport reporting;
+
+    public DemoEnvironment()
+    {
+        databases = new TestDatabases(documents);
+        billingPlans = new TestBillingPlanTransport(stripe);
+        checkoutPersistence = new TestBillingCheckoutPersistence(state);
+        reporting = new TestReportingTransport(state, auth.ResolveAccessToken, billingPlans, auth.ResolveProjectToken);
+    }
+
+    public async Task InitializeAsync()
+    {
+        var personal = await workspace.EnsurePersonalAsync(new("test-user", "Test User", "user@example.com", "", null, clock.GetUtcNow().AddHours(1)), default);
+        await state.PutAsync(AccountService.OrganizationsCollection, personal.Id, JsonSerializer.SerializeToElement(personal), TerraBasePrecondition.Absent, default);
+        var account = new AccountRecord
+        {
+            Id = AccountService.AccountId("test-user"),
+            UserId = "test-user",
+            Name = "Test User",
+            Email = "user@example.com",
+            OnboardingCompleted = true,
+            OnboardingStep = "",
+            OrganizationIds = [personal.Id],
+            ActiveOrganizationId = personal.Id,
+            ActiveProjectId = personal.Projects.Keys.First(),
+            CreatedAt = clock.GetUtcNow()
+        };
+        await state.PutAsync(AccountService.AccountsCollection, account.Id, JsonSerializer.SerializeToElement(account), TerraBasePrecondition.Absent, default);
+    }
+
+    public async Task<GoReferencePersonas> InitializeGoReferenceAsync(string root)
+    {
+        await InitializeAsync();
+        return await GoReferenceFixtures.InitializeAsync(root, state, auth.RegisterFixturePrincipal, databases.SeedFixtureDatabase, documents);
+    }
+
+    public WebApplication CreateHost(string root, int port, string origin, Action<WebApplicationBuilder>? configureScenario = null)
+    {
+        var hostArgs = new[] { "--contentRoot", root, "--environment", "Development", "--urls", $"http://0.0.0.0:{port}" };
+        stripe.SetOrigin(origin);
+        var app = DashboardApplication.Build(hostArgs, builder =>
+        {
+            builder.Services.AddSingleton<IStartupFilter, TestClientAddress>();
+            builder.Services.AddSingleton(stripe);
+            builder.Services.Replace(ServiceDescriptor.Singleton<IAuthAttemptBudget>(new TestAuthAttemptBudget()));
+            builder.Services.Replace(ServiceDescriptor.Singleton<IDashboardState>(checkoutPersistence));
+            builder.Services.Replace(ServiceDescriptor.Singleton<IAuthGateway>(auth));
+            builder.Services.Replace(ServiceDescriptor.Singleton<IAuthRefreshGateway>(auth));
+            builder.Services.Replace(ServiceDescriptor.Singleton<IAuthEnrollmentGateway>(auth));
+            builder.Services.Replace(ServiceDescriptor.Singleton<IAuthOidcGateway>(auth));
+            builder.Services.Replace(ServiceDescriptor.Singleton<IAuthLogoutGateway>(auth));
+            builder.Services.Replace(ServiceDescriptor.Singleton<IProfileIdentityGateway>(auth));
+            builder.Services.Replace(ServiceDescriptor.Singleton<IPlatformRoleGateway>(auth));
+            builder.Services.Replace(ServiceDescriptor.Singleton<IProjectAccessTokens>(auth));
+            builder.Services.Replace(ServiceDescriptor.Singleton<IWorkspaceGateway>(workspace));
+            builder.Services.Replace(ServiceDescriptor.Singleton<IDatabaseBackend>(databases));
+            builder.Services.Replace(ServiceDescriptor.Singleton<IDocumentBackend>(documents));
+            builder.Services.Replace(ServiceDescriptor.Singleton<IOrganizationAccess>(organizationAccess));
+            builder.Services.Replace(ServiceDescriptor.Singleton<IInvitationGateway>(new TestInvitationGateway()));
+            builder.Services.Replace(ServiceDescriptor.Singleton<IOrganizationLifecycle>(new TestOrganizationLifecycle()));
+            builder.Services.Replace(ServiceDescriptor.Singleton<IHomeMeasurements>(new TestMeasurements()));
+            builder.Services.Replace(ServiceDescriptor.Singleton<IHttpClientFactory>(new TestHttpFactory(reporting)));
+            builder.Services.Replace(ServiceDescriptor.Singleton<IDashboardIdentity>(identity));
+            builder.Services.Replace(ServiceDescriptor.Singleton<TimeProvider>(TimeProvider.System));
+            builder.Logging.ClearProviders();
+            builder.Logging.AddConsole().SetMinimumLevel(LogLevel.Warning);
+            configureScenario?.Invoke(builder);
+        });
+        app.MapGet("/__test/session", async (HttpContext context, DashboardSessions sessions) =>
+            await sessions.ReadAsync(context) is { } session ? Results.Json(new { session.UserId }) : (IResult)Results.Unauthorized());
+        app.MapGet("/__test/signals", async (HttpContext context) =>
+        {
+            await DatastarEvents.PatchSignalsAsync(context, new { count = 1 });
+            await DatastarEvents.PatchSignalsAsync(context, new { count = 2 });
+        });
+        app.MapGet("/__test/elements", (HttpContext context) => DatastarEvents.PatchElementsAsync(context, TerraScale.Dashboard.UI.Slices.RegionMap.Create()));
+        app.MapGet("/__test/checkout", (string id) => Results.Redirect(stripe.Complete(id)));
+        app.MapGet("/__test/oidc", (string? state) => state is { Length: 64 } && state.All(char.IsAsciiHexDigitLower)
+            ? (IResult)Results.Redirect("/login/callback?state=" + Uri.EscapeDataString(state) + "&code=test-code")
+            : Results.BadRequest("Invalid test-only OIDC state."));
+        app.MapGet("/__test/portal", () => Results.Content("<h1>Test-only Stripe customer portal</h1><p>The official Stripe SDK issued this portal session.</p><a href='/organization?tab=billing'>Return to billing</a>", "text/html"));
+        reporting.MapRoutes(app);
+        billingPlans.MapRoutes(app);
+        checkoutPersistence.MapRoutes(app);
+        BillingWebhookScenario.MapRoutes(app);
+        InvitationExpiryScenario.MapRoutes(app);
+        OrganizationProviderScenario.MapRoutes(app);
+        return app;
+    }
+}
+
+sealed class TestIdentity : IDashboardIdentity
+{
+    private readonly DashboardCredentials credentials = new("test-project", "test-api-key", "test-management", "test-instance", "test-client", "test-client-secret", Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)), new("sk_test_demo", "whsec_demo"));
+    public Task<DashboardCredentials> ReadAsync(CancellationToken cancellationToken) => Task.FromResult(credentials);
+}
+sealed class TestClock : TimeProvider
+{
+    private DateTimeOffset now = DateTimeOffset.UtcNow;
+    public override DateTimeOffset GetUtcNow() => now;
+    public void Advance(TimeSpan delta) => now += delta;
+}
+sealed class TestAuth : IAuthGateway, IAuthEnrollmentGateway, IAuthOidcGateway, IAuthRefreshGateway, IAuthLogoutGateway, IProfileIdentityGateway, IPlatformRoleGateway, IProjectAccessTokens
+{
+    private readonly TerraScale.DotNet.TerraScaleIdGenerator subjectIds = new();
+    private readonly ConcurrentDictionary<string, string> passwords = new();
+    private readonly ConcurrentDictionary<string, GoReferencePrincipal> fixturePrincipals = new();
+    private readonly ConcurrentDictionary<string, string> tokenOwners = new();
+    private readonly ConcurrentDictionary<string, string> tokenFamilies = new();
+    private readonly ConcurrentDictionary<string, TestRefresh> refreshGrants = new();
+    private readonly ConcurrentDictionary<string, byte> consumedRefresh = new();
+    private readonly ConcurrentDictionary<string, byte> revokedFamilies = new();
+    private readonly ConcurrentDictionary<string, byte> revoked = new();
+    private readonly ConcurrentDictionary<string, (string SessionToken, string OrganizationId, string ProjectId)> projectTokens = new();
+    public bool Active { get; set; } = true;
+    public Exception? RevokeError { get; set; }
+    public int SignIns { get; private set; }
+    public int Resets { get; private set; }
+    public string LastPasswordIp { get; private set; } = "";
+    public void RegisterFixturePrincipal(GoReferencePrincipal principal)
+    {
+        if (string.IsNullOrEmpty(principal.Subject) || string.IsNullOrEmpty(principal.Email) ||
+            !fixturePrincipals.TryAdd(principal.Email, principal)) throw new InvalidDataException("Invalid or duplicate fixture principal.");
+        passwords[principal.Email] = principal.Password;
+    }
+    public (string UserId, string Email)? ResolveAccessToken(string token)
+    {
+        if (!Active || revoked.ContainsKey(token) || !tokenOwners.TryGetValue(token, out var email) ||
+            !tokenFamilies.TryGetValue(token, out var family) || revokedFamilies.ContainsKey(family)) return null;
+        if (fixturePrincipals.TryGetValue(email, out var principal)) return (principal.Subject, principal.Email);
+        return (email == "user@example.com" ? "test-user" : "test-signup-" + email, email);
+    }
+    public Task<string> GetAsync(SessionRecord session, string organizationId, string projectId, Uri resourceOrigin, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (ResolveAccessToken(session.AccessToken) is not { } actor || actor.UserId != session.UserId)
+            throw new HttpRequestException("Test project authority requires a live sign-in.");
+        var token = "test-project-access-" + Guid.NewGuid().ToString("N");
+        projectTokens[token] = (session.AccessToken, organizationId, projectId);
+        return Task.FromResult(token);
+    }
+    public (string UserId, string OrganizationId, string ProjectId)? ResolveProjectToken(string token) =>
+        projectTokens.TryGetValue(token, out var grant) && ResolveAccessToken(grant.SessionToken) is { } actor
+            ? (actor.UserId, grant.OrganizationId, grant.ProjectId) : null;
+    public Task<SessionRecord> PasswordAsync(string email, string password, string ip, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(ip)) throw new ArgumentException("Test password provider requires client address.");
+        LastPasswordIp = ip;
+        SignIns++;
+        if (!Active || email != "user@example.com" && !passwords.ContainsKey(email) || password != passwords.GetValueOrDefault(email, "test-password")) throw new SignInRejectedException();
+        if (fixturePrincipals.TryGetValue(email, out var principal))
+            return Task.FromResult(Issue(principal.Subject, principal.Name, principal.Email));
+        return Task.FromResult(Issue(email == "user@example.com" ? "test-user" : "test-signup-" + email, email == "user@example.com" ? "Test User" : email, email));
+    }
+    public Task<SessionRecord> EmailCodeAsync(string email, string code, string ip, CancellationToken cancellationToken) => code == "123456"
+        ? PasswordAsync(email, passwords.GetValueOrDefault(email, "test-password"), ip, cancellationToken) : Task.FromException<SessionRecord>(new SignInRejectedException());
+    public Task StartEmailCodeAsync(string email, string ip, CancellationToken cancellationToken) => Task.CompletedTask;
+    public Task StartPasswordResetAsync(string email, string ip, CancellationToken cancellationToken) => Task.CompletedTask;
+    public Task CompletePasswordResetAsync(string email, string code, string password, string ip, CancellationToken cancellationToken)
+    {
+        if (code != "123456") throw new SignInRejectedException();
+        Resets++;
+        passwords[email] = password;
+        foreach (var token in tokenOwners.Where(entry => entry.Value == email).Select(entry => entry.Key))
+        {
+            revoked[token] = 0;
+            if (tokenFamilies.TryGetValue(token, out var family)) revokedFamilies[family] = 0;
+        }
+        return Task.CompletedTask;
+    }
+    public Task<bool> IsActiveAsync(SessionRecord session, CancellationToken cancellationToken) =>
+        Task.FromResult(ResolveAccessToken(session.AccessToken) is { } identity && identity.UserId == session.UserId && identity.Email == session.Email);
+    public Task RevokeAsync(SessionRecord session, CancellationToken cancellationToken)
+    {
+        if (RevokeError is not null) return Task.FromException(RevokeError);
+        revoked[session.AccessToken] = 0;
+        if (tokenFamilies.TryGetValue(session.AccessToken, out var family)) revokedFamilies[family] = 0;
+        return Task.CompletedTask;
+    }
+    public Task<SessionRecord> RefreshAsync(SessionRecord record, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!Active || record.RefreshToken is not { } secret || !refreshGrants.TryGetValue(secret, out var previous) ||
+            previous.Session.UserId != record.UserId || previous.Session.Email != record.Email || revokedFamilies.ContainsKey(previous.Family))
+            throw new SignInRejectedException();
+        if (!consumedRefresh.TryAdd(secret, 0))
+        {
+            revokedFamilies[previous.Family] = 0;
+            throw new SignInRejectedException();
+        }
+        var fresh = Issue(record.UserId, record.Name, record.Email, previous.Family);
+        return Task.FromResult(fresh with { SessionExpiresAt = record.SessionExpiresAt });
+    }
+    public Task<string?> PlatformRoleAsync(SessionRecord freshlyRotatedSession, CancellationToken cancellationToken) => Task.FromResult<string?>(null);
+
+    private SessionRecord Issue(string subject, string name, string email, string? family = null)
+    {
+        family ??= Guid.NewGuid().ToString("N");
+        var access = "test-access-" + Guid.NewGuid().ToString("N");
+        var refresh = "test-refresh-" + Guid.NewGuid().ToString("N");
+        var session = new SessionRecord(subject, name, email, access, refresh, DateTimeOffset.UtcNow.AddHours(1));
+        tokenOwners[access] = email;
+        tokenFamilies[access] = family;
+        refreshGrants[refresh] = new(session, family);
+        return session;
+    }
+    private sealed record TestRefresh(SessionRecord Session, string Family);
+    public Task<string> EndSessionUrlAsync(string dashboardOrigin, CancellationToken cancellationToken) => Task.FromResult("/login");
+    public async Task ChangePasswordAsync(SessionRecord session, string currentPassword, string newPassword, string confirmPassword, string ip, CancellationToken cancellationToken)
+    {
+        if (newPassword.EnumerateRunes().Count() < 12 || System.Text.Encoding.UTF8.GetByteCount(newPassword) > 1024 || newPassword != confirmPassword) throw new AuthRequestRejectedException("Enter matching passwords with at least 12 characters.", "password");
+        var grant = await PasswordAsync(session.Email, currentPassword, ip, cancellationToken);
+        if (grant.UserId != session.UserId) throw new SignInRejectedException();
+        await CompletePasswordResetAsync(session.Email, "123456", newPassword, ip, cancellationToken);
+    }
+    public Task<string> SignUpAsync(string email, string password, string ip, CancellationToken cancellationToken)
+    {
+        passwords[email] = password;
+        if (email != "user@example.com") fixturePrincipals.GetOrAdd(email, address => new(subjectIds.NewId(), address, address, password));
+        return Task.FromResult("test-pending-signup");
+    }
+    public Task<SessionRecord> VerifySignUpAsync(string email, string code, string pendingToken, string ip, CancellationToken cancellationToken) => code == "123456"
+        ? PasswordAsync(email, passwords.GetValueOrDefault(email, "test-password"), ip, cancellationToken)
+        : Task.FromException<SessionRecord>(new SignInRejectedException());
+    public Task<string> AuthorizationUrlAsync(OidcFlow flow, bool promptLogin, CancellationToken cancellationToken) => Task.FromResult("/__test/oidc?state=" + Uri.EscapeDataString(flow.State));
+    public Task<SessionRecord> ExchangeAsync(string code, OidcFlow flow, CancellationToken cancellationToken) => code == "test-code"
+        ? PasswordAsync("user@example.com", passwords.GetValueOrDefault("user@example.com", "test-password"), "127.0.0.1", cancellationToken)
+        : Task.FromException<SessionRecord>(new SignInRejectedException());
+}
+sealed class TestState : IDashboardState
+{
+    public ConcurrentDictionary<string, TerraBaseDocument> Items { get; } = new();
+    public Exception? ReadyError { get; set; }
+    public Func<string, string, Task>? BeforeWriteAsync { get; set; }
+    public Func<string, string, Exception?>? WriteFailure { get; set; }
+    public Task InitializeAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+    public Task CheckReadyAsync(CancellationToken cancellationToken) => ReadyError is null ? Task.CompletedTask : Task.FromException(ReadyError);
+    public Task<TerraBaseDocument?> GetAsync(string collection, string id, CancellationToken cancellationToken) => Task.FromResult(Items.GetValueOrDefault(collection + "/" + id));
+    public async Task PutAsync(string collection, string id, JsonElement document, TerraBasePrecondition precondition, CancellationToken cancellationToken)
+    {
+        if (BeforeWriteAsync is { } before) await before(collection, id);
+        if (WriteFailure?.Invoke(collection, id) is { } error) throw error;
+        lock (Items)
+        {
+            var key = collection + "/" + id;
+            var existing = Items.GetValueOrDefault(key);
+            var match = typeof(TerraBasePrecondition).GetField("ifMatch", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(precondition) as EntityTagHeaderValue;
+            if (ReferenceEquals(precondition, TerraBasePrecondition.Absent) && existing is not null ||
+                match is not null && (existing is null || match.Tag != "*" && match.Tag != "\"" + existing.Version + "\"")) throw PreconditionFailed();
+            Items[key] = new(id, "tbv1-" + Guid.NewGuid().ToString("N"), "value", document.Clone());
+        }
+    }
+    public Task DeleteAsync(string collection, string id, string version, CancellationToken cancellationToken)
+    {
+        var key = collection + "/" + id;
+        lock (Items)
+        {
+            if (Items.GetValueOrDefault(key)?.Version != version) throw PreconditionFailed();
+            Items.TryRemove(key, out _);
+        }
+        return Task.CompletedTask;
+    }
+    private static Exception PreconditionFailed() => (Exception)Activator.CreateInstance(typeof(TerraBasePreconditionFailedException), BindingFlags.Instance | BindingFlags.NonPublic,
+        binder: null, args: [HttpStatusCode.PreconditionFailed, "Test version precondition failed", null, null], culture: null)!;
+}
+
+sealed class TestWorkspace : IWorkspaceGateway
+{
+    public static readonly object Gate = new();
+    public static readonly Dictionary<string, OrganizationRecord> Organizations = [];
+    private static string globalRole = "owner";
+    // Root authorization tests deliberately override every role. Default owner
+    // means use the scoped provider registry, never grant an arbitrary caller.
+    public string Role { get => globalRole; set => globalRole = value; }
+    public string GlobalRole { get => Role; set => Role = value; }
+    public static string ScopedRole(string userId, string organizationId)
+    {
+        lock (Gate) return globalRole != "owner" ? globalRole : Organizations.GetValueOrDefault(organizationId)?.Members.GetValueOrDefault(userId)?.Role ?? "";
+    }
+    public static OrganizationRecord Clone(OrganizationRecord value) => JsonSerializer.Deserialize<OrganizationRecord>(JsonSerializer.Serialize(value))!;
+    public Task<OrganizationRecord> EnsurePersonalAsync(SessionRecord session, CancellationToken cancellationToken)
+    {
+        lock (Gate)
+        {
+            var id = "test-org-" + AccountService.AccountId(session.UserId)[..16];
+            if (Organizations.TryGetValue(id, out var existing)) return Task.FromResult(Clone(existing));
+            var projectId = "test-project-" + AccountService.AccountId(session.UserId)[..16];
+            var org = new OrganizationRecord { Id = id, Name = "Personal", Slug = "personal", OwnerUserId = session.UserId, CreatedAt = DateTimeOffset.UtcNow };
+            org.Members[session.UserId] = new() { UserId = session.UserId, Name = session.Name, Email = session.Email, Role = "owner", CreatedAt = org.CreatedAt };
+            org.Projects[projectId] = new() { Id = projectId, OrganizationId = id, Name = "Personal", Slug = "personal", Region = "GRU", Regions = ["GRU"], IsDefault = true, CreatedAt = DateTimeOffset.UtcNow };
+            Organizations[id] = org;
+            return Task.FromResult(Clone(org));
+        }
+    }
+    public Task<OrganizationRecord> CreateOrganizationAsync(SessionRecord session, string name, CancellationToken cancellationToken)
+    {
+        lock (Gate)
+        {
+            var org = new OrganizationRecord { Id = Guid.CreateVersion7().ToString(), Name = name, Slug = AccountService.Slug(name), OwnerUserId = session.UserId, CreatedAt = DateTimeOffset.UtcNow };
+            org.Members[session.UserId] = new() { UserId = session.UserId, Name = session.Name, Email = session.Email, Role = "owner", CreatedAt = org.CreatedAt };
+            Organizations[org.Id] = org;
+            return Task.FromResult(Clone(org));
+        }
+    }
+    public Task<ProjectRecord> CreateProjectAsync(SessionRecord session, string organizationId, string name, CancellationToken cancellationToken)
+    {
+        lock (Gate)
+        {
+            var org = Get(organizationId);
+            if (ScopedRole(session.UserId, organizationId) is not ("owner" or "admin" or "member")) throw new AccountAccessException("Project provisioning is forbidden.");
+            if (org.Projects.Values.Any(project => project.Name == name)) throw new AccountAccessException("A project with that name already exists.", 409);
+            var project = new ProjectRecord { Id = Guid.CreateVersion7().ToString(), OrganizationId = organizationId, Name = name, Slug = AccountService.Slug(name), CreatedAt = DateTimeOffset.UtcNow };
+            org.Projects[project.Id] = project;
+            return Task.FromResult(Clone(new() { Projects = new() { [project.Id] = project } }).Projects[project.Id]);
+        }
+    }
+    public Task<string> RoleAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken) => Task.FromResult(ScopedRole(session.UserId, organizationId));
+    public Task RenameOrganizationAsync(SessionRecord session, string organizationId, string name, CancellationToken cancellationToken)
+    { lock (Gate) { Manage(session.UserId, organizationId).Name = name; return Task.CompletedTask; } }
+    public Task RenameProjectAsync(SessionRecord session, string organizationId, string projectId, string name, CancellationToken cancellationToken)
+    { lock (Gate) { var org = Manage(session.UserId, organizationId); var project = org.Projects.GetValueOrDefault(projectId) ?? throw new AccountAccessException("Project is unavailable.", 404); project.Name = name; project.Slug = AccountService.Slug(name); return Task.CompletedTask; } }
+    public static OrganizationRecord Get(string id) => Organizations.GetValueOrDefault(id) ?? throw new AccountAccessException("Organization is unavailable.", 404);
+    public static OrganizationRecord Manage(string userId, string id)
+    {
+        var org = Get(id);
+        if (ScopedRole(userId, id) is not ("owner" or "admin")) throw new AccountAccessException("Organization management is required.");
+        return org;
+    }
+}
+sealed class TestMeasurements : IHomeMeasurements
+{
+    public Task<HomeMeasurement> ReadAsync(AccountContext context, string range, CancellationToken cancellationToken) => Task.FromResult(new HomeMeasurement { ActivityNote = "Reads and writes metered by TerraBase.", Regions = [new("GRU", "Operational", "12.00 ms", context.Project?.Databases.Count ?? 0)] });
+}
+sealed class TestDatabases(TestDocuments documents) : IDatabaseBackend
+{
+    private readonly ConcurrentDictionary<string, ManagedDatabase> databases = new();
+    private readonly ConcurrentDictionary<string, ProjectCredential> credentials = new();
+    private readonly ConcurrentDictionary<string, string> credentialRegions = new();
+    private readonly ConcurrentDictionary<string, DatabaseIndex> indexes = new();
+    private static readonly IReadOnlyList<DatabaseRegion> regions = [new("GRU", "gru-1", "São Paulo", "br", new("https://gru.api.terrascale.tech"), true), new("SFO", "sfo-1", "San Francisco", "us", new("https://sfo.api.terrascale.tech"), true)];
+    public void SeedFixtureDatabase(ManagedDatabase database)
+    {
+        if (string.IsNullOrEmpty(database.Id) || string.IsNullOrEmpty(database.ProjectId) ||
+            !regions.Any(region => region.Code == database.HomeRegion || region.Id == database.HomeRegion) ||
+            !databases.TryAdd(database.Id, database)) throw new InvalidDataException("Invalid or duplicate fixture database.");
+    }
+    public Task<IReadOnlyList<DatabaseRegion>> RegionsAsync(CancellationToken cancellationToken) => Task.FromResult(regions);
+    public Task RegisterAsync(DatabaseScope scope, DatabaseRegion region, CancellationToken cancellationToken) => Task.CompletedTask;
+    public Task<IReadOnlyList<ManagedDatabase>> ListAsync(DatabaseScope scope, DatabaseRegion home, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<ManagedDatabase>>(databases.Values.Where(item => item.ProjectId == scope.ProjectId).ToArray());
+    public Task<ManagedDatabase> CreateAsync(DatabaseScope scope, string name, IReadOnlyList<DatabaseRegion> placement, CancellationToken cancellationToken)
+    { var value = new ManagedDatabase(Guid.CreateVersion7().ToString(), scope.ProjectId, name, DateTimeOffset.UtcNow, HomeRegion: placement[0].Id, ReplicaRegions: placement.Skip(1).Select(item => item.Id).ToArray()); databases[value.Id] = value; return Task.FromResult(value); }
+    public Task<ManagedDatabase> BranchAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string name, CancellationToken cancellationToken)
+    {
+        var source = Database(scope, databaseId);
+        var value = new ManagedDatabase(Guid.CreateVersion7().ToString(), scope.ProjectId, name, DateTimeOffset.UtcNow, databaseId, home.Id, []);
+        documents.CopyDatabase(scope, source.Name, value.Name);
+        foreach (var index in indexes.Where(item => item.Key.StartsWith(databaseId + "/", StringComparison.Ordinal)).Select(item => item.Value).ToArray()) indexes[value.Id + "/" + index.Name] = index;
+        databases[value.Id] = value;
+        return Task.FromResult(value);
+    }
+    public Task DeleteAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken)
+    {
+        var database = Database(scope, databaseId);
+        databases.TryRemove(databaseId, out _);
+        documents.DropDatabase(scope, database.Name);
+        foreach (var key in indexes.Keys.Where(key => key.StartsWith(databaseId + "/", StringComparison.Ordinal))) indexes.TryRemove(key, out _);
+        return Task.CompletedTask;
+    }
+    public Task<ManagedDatabase> SetRegionsAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, IReadOnlyList<DatabaseRegion> placement, CancellationToken cancellationToken) { var changed = databases[databaseId] with { ReplicaRegions = placement.Skip(1).Select(item => item.Id).ToArray() }; databases[databaseId] = changed; return Task.FromResult(changed); }
+    public Task<IReadOnlyList<CollectionStats>> CollectionsAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken) => Task.FromResult(documents.Statistics(scope, Database(scope, databaseId).Name));
+    public Task<DatabaseSqlResult> SqlAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string statement, CancellationToken cancellationToken) => Task.FromResult(documents.Query(scope, databases[databaseId].Name, statement));
+    public Task<IReadOnlyList<DatabaseIndex>> IndexesAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, CancellationToken cancellationToken)
+    { Database(scope, databaseId); return Task.FromResult<IReadOnlyList<DatabaseIndex>>(indexes.Where(item => item.Key.StartsWith(databaseId + "/", StringComparison.Ordinal)).Select(item => item.Value).OrderBy(item => item.Name, StringComparer.Ordinal).ToArray()); }
+    public Task<DatabaseIndex> CreateIndexAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string collection, IReadOnlyList<string> fields, CancellationToken cancellationToken)
+    {
+        Database(scope, databaseId);
+        var name = collection + "-" + Convert.ToHexStringLower(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(string.Join('\0', fields))))[..12];
+        return Task.FromResult(indexes.GetOrAdd(databaseId + "/" + name, _ => new(name, collection, fields.ToArray(), "ready")));
+    }
+    public Task DropIndexAsync(DatabaseScope scope, DatabaseRegion home, string databaseId, string name, CancellationToken cancellationToken)
+    { Database(scope, databaseId); indexes.TryRemove(databaseId + "/" + name, out _); return Task.CompletedTask; }
+    public Task<IReadOnlyList<ProjectCredential>> CredentialsAsync(DatabaseScope scope, DatabaseRegion home, CancellationToken cancellationToken) => Task.FromResult<IReadOnlyList<ProjectCredential>>(credentials.Values.Where(item => item.ProjectId == scope.ProjectId && credentialRegions.GetValueOrDefault(item.Id) == home.Id).ToArray());
+    public Task<CreatedProjectCredential> CreateCredentialAsync(DatabaseScope scope, DatabaseRegion home, string name, IReadOnlyList<string> scopes, string? databaseId, CancellationToken cancellationToken)
+    { var secret = "tb_" + Guid.NewGuid().ToString("N"); var key = new ProjectCredential(Guid.CreateVersion7().ToString(), scope.ProjectId, name, scopes, databaseId, secret[^4..], DateTimeOffset.UtcNow); credentialRegions[key.Id] = home.Id; credentials[key.Id] = key; return Task.FromResult(new CreatedProjectCredential(key, secret)); }
+    public Task RevokeCredentialAsync(DatabaseScope scope, DatabaseRegion home, string keyId, CancellationToken cancellationToken)
+    {
+        if (!credentials.TryGetValue(keyId, out var key) || key.ProjectId != scope.ProjectId || credentialRegions.GetValueOrDefault(keyId) != home.Id) throw new HttpRequestException("Test credential missing.", null, HttpStatusCode.NotFound);
+        credentials.TryRemove(keyId, out _); credentialRegions.TryRemove(keyId, out _); return Task.CompletedTask;
+    }
+    private ManagedDatabase Database(DatabaseScope scope, string id) => databases.TryGetValue(id, out var database) && database.ProjectId == scope.ProjectId ? database : throw new HttpRequestException("Test database missing.", null, HttpStatusCode.NotFound);
+}
+
+sealed class TestOrganizationAccess : IOrganizationAccess
+{
+    private static readonly Dictionary<string, (string OrganizationId, TerraBaseInvitation Invitation)> invitations = [];
+    private static readonly Dictionary<string, TerraBaseOwnershipTransfer> transfers = [];
+    public static void ExpireInvitation(AccountContext context, string id, DateTimeOffset expiresAt)
+    {
+        lock (TestWorkspace.Gate)
+        {
+            var org = TestWorkspace.Get(context.Organization!.Id);
+            if (TestWorkspace.ScopedRole(context.UserId, org.Id) != "owner") throw new AccountAccessException("Organization ownership is required.");
+            if (!invitations.TryGetValue(id, out var value) || value.OrganizationId != org.Id) throw new AccountAccessException("Invitation is unavailable.", 404);
+            invitations[id] = (org.Id, value.Invitation with { ExpiresAt = expiresAt });
+        }
+    }
+    public Task<OrganizationAccessView> ReadAsync(AccountContext context, CancellationToken cancellationToken)
+    {
+        lock (TestWorkspace.Gate)
+        {
+            var org = TestWorkspace.Get(context.Organization!.Id);
+            if (TestWorkspace.ScopedRole(context.UserId, org.Id).Length == 0) throw new AccountAccessException("Organization membership is required.");
+            var members = org.Members.Values.Select(member => new MemberRecord { UserId = member.UserId, Role = member.Role, Name = context.Organization.Members.GetValueOrDefault(member.UserId)?.Name ?? member.Name, Email = member.Email, CreatedAt = member.CreatedAt, JoinedOn = context.Organization.Members.GetValueOrDefault(member.UserId)?.JoinedOn ?? member.JoinedOn }).ToArray();
+            return Task.FromResult(new OrganizationAccessView(members, context.CanManage ? invitations.Values.Where(value => value.OrganizationId == org.Id).Select(value => value.Invitation).ToArray() : [], context.CanManage ? context.Organization.AuditEvents : [], transfers.GetValueOrDefault(org.Id), context.CanManage ? 90 : null));
+        }
+    }
+    public Task<TerraBaseCreatedInvitation> InviteAsync(AccountContext context, string email, string role, CancellationToken cancellationToken)
+    {
+        lock (TestWorkspace.Gate)
+        {
+            var org = TestWorkspace.Manage(context.UserId, context.Organization!.Id);
+            if (role is not ("member" or "admin")) throw new AccountAccessException("Choose an available role.", 422);
+            var value = new TerraBaseInvitation(Guid.CreateVersion7().ToString(), email, role == "admin" ? TerraBaseRole.Admin : TerraBaseRole.Member, context.UserId, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddDays(7));
+            invitations[value.Id] = (org.Id, value);
+            return Task.FromResult(new TerraBaseCreatedInvitation(value, "test-invitation-" + value.Id));
+        }
+    }
+    public Task RevokeInvitationAsync(AccountContext context, string id, CancellationToken cancellationToken)
+    {
+        lock (TestWorkspace.Gate)
+        {
+            _ = TestWorkspace.Manage(context.UserId, context.Organization!.Id);
+            if (!invitations.TryGetValue(id, out var value) || value.OrganizationId != context.Organization.Id) throw new AccountAccessException("Invitation is unavailable.", 404);
+            invitations.Remove(id);
+            return Task.CompletedTask;
+        }
+    }
+    public Task ChangeRoleAsync(AccountContext context, string userId, string role, CancellationToken cancellationToken)
+    {
+        lock (TestWorkspace.Gate)
+        {
+            var org = TestWorkspace.Manage(context.UserId, context.Organization!.Id);
+            if (role is not ("member" or "admin")) throw new AccountAccessException("Choose an available role.", 422);
+            var member = org.Members.GetValueOrDefault(userId) ?? throw new AccountAccessException("Member is unavailable.", 404);
+            if (userId == context.UserId || member.Role == "owner") throw new AccountAccessException("Choose another member than yourself or the owner.", 422);
+            member.Role = role;
+            return Task.CompletedTask;
+        }
+    }
+    public Task RemoveMemberAsync(AccountContext context, string userId, CancellationToken cancellationToken)
+    {
+        lock (TestWorkspace.Gate)
+        {
+            var org = TestWorkspace.Manage(context.UserId, context.Organization!.Id);
+            var member = org.Members.GetValueOrDefault(userId) ?? throw new AccountAccessException("Member is unavailable.", 404);
+            if (userId == context.UserId || member.Role == "owner") throw new AccountAccessException("Choose another member than yourself or the owner.", 422);
+            org.Members.Remove(userId);
+            return Task.CompletedTask;
+        }
+    }
+    public Task TransferAsync(AccountContext context, string operation, string? userId, CancellationToken cancellationToken)
+    {
+        lock (TestWorkspace.Gate)
+        {
+            var org = TestWorkspace.Get(context.Organization!.Id);
+            var role = TestWorkspace.ScopedRole(context.UserId, org.Id);
+            if (operation == "start")
+            {
+                if (role != "owner") throw new AccountAccessException("Organization ownership is required.");
+                if (string.IsNullOrEmpty(userId) || userId == context.UserId || !org.Members.ContainsKey(userId)) throw new AccountAccessException("Choose another active member as the new owner.", 422);
+                transfers[org.Id] = new(context.UserId, userId, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow.AddHours(24));
+            }
+            else
+            {
+                var transfer = transfers.GetValueOrDefault(org.Id) ?? throw new AccountAccessException("Ownership transfer is unavailable.", 404);
+                if (operation == "confirm")
+                {
+                    if (transfer.ToUserId != context.UserId || transfer.ExpiresAt <= DateTimeOffset.UtcNow || !org.Members.ContainsKey(context.UserId)) throw new AccountAccessException("This ownership transfer belongs to another member.");
+                    org.Members[transfer.FromUserId].Role = "member"; org.Members[transfer.ToUserId].Role = "owner"; org.OwnerUserId = transfer.ToUserId;
+                }
+                else if (operation != "cancel" || role != "owner" && transfer.ToUserId != context.UserId) throw new AccountAccessException("Ownership transfer cancellation is forbidden.");
+                transfers.Remove(org.Id);
+            }
+            return Task.CompletedTask;
+        }
+    }
+    public static TerraBaseMember Accept(SessionRecord session, string token)
+    {
+        lock (TestWorkspace.Gate)
+        {
+            const string prefix = "test-invitation-";
+            if (!token.StartsWith(prefix, StringComparison.Ordinal) || !invitations.TryGetValue(token[prefix.Length..], out var found) || found.Invitation.ExpiresAt <= DateTimeOffset.UtcNow || !found.Invitation.Email.Equals(session.Email, StringComparison.OrdinalIgnoreCase)) throw new AccountAccessException("Invitation is unavailable.", 404);
+            var org = TestWorkspace.Get(found.OrganizationId);
+            var role = found.Invitation.Role.ToString().ToLowerInvariant();
+            if (org.Members.TryGetValue(session.UserId, out var existing)) role = existing.Role;
+            else org.Members[session.UserId] = new() { UserId = session.UserId, Name = session.Name, Email = session.Email, Role = role, CreatedAt = DateTimeOffset.UtcNow };
+            invitations.Remove(found.Invitation.Id);
+            return new(session.UserId, role switch { "owner" => TerraBaseRole.Owner, "admin" => TerraBaseRole.Admin, "member" => TerraBaseRole.Member, _ => throw new AccountAccessException("Membership role is unavailable.") }, org.Members[session.UserId].CreatedAt);
+        }
+    }
+}
+sealed class TestDocuments : IDocumentBackend
+{
+    private readonly Dictionary<string, Dictionary<string, TerraBaseDocument>> collections = [];
+    private long offset;
+    private static string Key(DatabaseScope scope, string database, string collection) => scope.ProjectId + "/" + database + "/" + collection;
+    public IReadOnlyList<CollectionStats> Statistics(DatabaseScope scope, string database)
+    {
+        var prefix = scope.ProjectId + "/" + database + "/";
+        lock (collections) return collections.Where(item => item.Key.StartsWith(prefix, StringComparison.Ordinal)).Select(item => new CollectionStats(item.Key[prefix.Length..], item.Value.Count, item.Value.Values.Sum(document => (long)System.Text.Encoding.UTF8.GetByteCount(document.Document.GetRawText())))).OrderBy(item => item.Name, StringComparer.Ordinal).ToArray();
+    }
+    public void CopyDatabase(DatabaseScope scope, string source, string target)
+    {
+        var prefix = scope.ProjectId + "/" + source + "/";
+        lock (collections)
+            foreach (var (key, rows) in collections.Where(item => item.Key.StartsWith(prefix, StringComparison.Ordinal)).ToArray()) collections[Key(scope, target, key[prefix.Length..])] = rows.ToDictionary(item => item.Key, item => item.Value with { Document = item.Value.Document.Clone() }, StringComparer.Ordinal);
+    }
+    public void DropDatabase(DatabaseScope scope, string database)
+    {
+        var prefix = scope.ProjectId + "/" + database + "/";
+        lock (collections) foreach (var key in collections.Keys.Where(key => key.StartsWith(prefix, StringComparison.Ordinal)).ToArray()) collections.Remove(key);
+    }
+    public Task<IReadOnlyList<TerraBaseCollection>> CollectionsAsync(DatabaseScope scope, DatabaseRegion home, string databaseName, CancellationToken cancellationToken)
+    {
+        var prefix = scope.ProjectId + "/" + databaseName + "/";
+        lock (collections) return Task.FromResult<IReadOnlyList<TerraBaseCollection>>(collections.Keys.Where(key => key.StartsWith(prefix, StringComparison.Ordinal)).Select(key => new TerraBaseCollection(key[prefix.Length..], DateTimeOffset.UtcNow)).OrderBy(item => item.Name).ToArray());
+    }
+    public Task CreateCollectionAsync(DatabaseScope scope, DatabaseRegion home, string databaseName, string collection, CancellationToken cancellationToken)
+    { lock (collections) collections.TryAdd(Key(scope, databaseName, collection), []); return Task.CompletedTask; }
+    public Task<TerraBaseDocumentPage> DocumentsAsync(DatabaseScope scope, DatabaseRegion home, string databaseName, string collection, TerraBaseQuery query, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (query.Filter is not null || query.Project is not null) throw new InvalidOperationException("The demo document query fixture does not implement filters or projections.");
+        lock (collections)
+        {
+            var rows = collections.GetValueOrDefault(Key(scope, databaseName, collection))?.Values.ToArray() ?? [];
+            Array.Sort(rows, (left, right) =>
+            {
+                foreach (var key in query.Sort ?? [])
+                {
+                    var compared = key.Path == "$id" ? StringComparer.Ordinal.Compare(left.Id, right.Id) : CompareValue(QueryValue(left.Document, key.Path), QueryValue(right.Document, key.Path));
+                    if (compared != 0) return key.Order == "desc" ? -compared : compared;
+                }
+                return StringComparer.Ordinal.Compare(left.Id, right.Id);
+            });
+            var offset = query.Cursor is null ? 0 : int.Parse(query.Cursor, System.Globalization.CultureInfo.InvariantCulture);
+            var page = rows.Skip(offset).Take(query.Limit ?? 50).ToArray();
+            return Task.FromResult(new TerraBaseDocumentPage(page, offset + page.Length < rows.Length ? (offset + page.Length).ToString(System.Globalization.CultureInfo.InvariantCulture) : null,
+                query.Count == true ? new(rows.Length, true) : null));
+        }
+    }
+    private static JsonElement QueryValue(JsonElement document, string path)
+    {
+        if (!path.StartsWith('/')) throw new InvalidOperationException("The demo query sort path must be a JSON Pointer or $id.");
+        foreach (var segment in path[1..].Split('/'))
+            if (document.ValueKind != JsonValueKind.Object || !document.TryGetProperty(segment.Replace("~1", "/", StringComparison.Ordinal).Replace("~0", "~", StringComparison.Ordinal), out document)) return default;
+        return document;
+    }
+    private static int CompareValue(JsonElement left, JsonElement right)
+    {
+        static int Rank(JsonElement value) => value.ValueKind switch
+        { JsonValueKind.Undefined => 0, JsonValueKind.Null => 1, JsonValueKind.False => 2, JsonValueKind.True => 3, JsonValueKind.Number => 4, JsonValueKind.String => 5, _ => 6 };
+        var ranked = Rank(left).CompareTo(Rank(right));
+        if (ranked != 0) return ranked;
+        return left.ValueKind switch
+        {
+            JsonValueKind.Number => left.GetDecimal().CompareTo(right.GetDecimal()),
+            JsonValueKind.String => StringComparer.Ordinal.Compare(left.GetString(), right.GetString()),
+            JsonValueKind.Array or JsonValueKind.Object => StringComparer.Ordinal.Compare(left.GetRawText(), right.GetRawText()),
+            _ => 0
+        };
+    }
+    public Task<TerraBaseDocumentPage> ListAsync(DatabaseScope scope, DatabaseRegion home, string databaseName, string collection, int limit, string? cursor, CancellationToken cancellationToken)
+    {
+        lock (collections)
+        {
+            var rows = collections.GetValueOrDefault(Key(scope, databaseName, collection))?.Values.OrderBy(item => item.Id, StringComparer.Ordinal).ToArray() ?? [];
+            var offset = cursor is null ? 0 : int.Parse(cursor, System.Globalization.CultureInfo.InvariantCulture);
+            var page = rows.Skip(offset).Take(limit).ToArray();
+            return Task.FromResult(new TerraBaseDocumentPage(page, offset + page.Length < rows.Length ? (offset + page.Length).ToString(System.Globalization.CultureInfo.InvariantCulture) : null));
+        }
+    }
+    public Task<TerraBaseDocument?> GetAsync(DatabaseScope scope, DatabaseRegion home, string databaseName, string collection, string id, CancellationToken cancellationToken)
+    { lock (collections) return Task.FromResult(collections.GetValueOrDefault(Key(scope, databaseName, collection))?.GetValueOrDefault(id)); }
+    public Task<TerraBaseWriteResult> WriteAsync(DatabaseScope scope, DatabaseRegion home, string databaseName, string collection, string operation, string id, JsonElement document, string version, CancellationToken cancellationToken)
+    {
+        lock (collections)
+        {
+            if (!collections.TryGetValue(Key(scope, databaseName, collection), out var items)) throw new HttpRequestException("Test collection missing.", null, HttpStatusCode.NotFound);
+            if (id.Length == 0) id = Guid.CreateVersion7().ToString();
+            var previous = items.GetValueOrDefault(id);
+            if (operation == "create" && previous is not null) throw ProviderError(typeof(TerraBaseConflictException), HttpStatusCode.Conflict, "Test document exists.");
+            if (version.Length != 0 && previous?.Version != version) throw ProviderError(typeof(TerraBasePreconditionFailedException), HttpStatusCode.PreconditionFailed, "Test document version changed.");
+            var nextVersion = "tbv1-" + Guid.NewGuid().ToString("N");
+            if (operation == "delete") items.Remove(id);
+            else items[id] = new(id, nextVersion, "value", operation == "patch" ? JsonSerializer.SerializeToElement(Merge(JsonNode.Parse(previous?.Document.GetRawText() ?? "{}"), JsonNode.Parse(document.GetRawText()))) : document.Clone());
+            return Task.FromResult(new TerraBaseWriteResult(id, nextVersion, ++offset, "local_durable"));
+        }
+    }
+    public Task<TerraBaseCollectionSchema> SchemaAsync(DatabaseScope scope, DatabaseRegion home, string databaseName, string collection, CancellationToken cancellationToken)
+    { lock (collections) { var documents = collections.GetValueOrDefault(Key(scope, databaseName, collection))?.Values.ToArray() ?? []; var fields = documents.SelectMany(document => document.Document.EnumerateObject()).GroupBy(property => property.Name).Select(field => new TerraBaseSchemaField(field.Key, field.Count(), field.GroupBy(property => property.Value.ValueKind.ToString().ToLowerInvariant()).ToDictionary(group => group.Key, group => group.Count()))).ToArray(); return Task.FromResult(new TerraBaseCollectionSchema(collection, documents.Length, documents.Length, fields)); } }
+    public DatabaseSqlResult Query(DatabaseScope scope, string databaseName, string statement)
+    {
+        var match = Regex.Match(statement, "^SELECT \\* FROM ([a-z][a-z0-9_-]*) LIMIT ([0-9]+)$", RegexOptions.IgnoreCase);
+        if (!match.Success) throw ProviderError(typeof(TerraBaseValidationException), HttpStatusCode.BadRequest, "Demo SQL fixture supports SELECT * FROM collection LIMIT n.");
+        lock (collections) { var rows = collections.GetValueOrDefault(Key(scope, databaseName, match.Groups[1].Value))?.Values.OrderBy(item => item.Id).Select(item => new DatabaseSqlRow(item.Id, item.Document.Clone())).ToArray() ?? []; var limit = int.Parse(match.Groups[2].Value); return new(rows.Length, rows.Length > limit, rows.Take(limit).ToArray()); }
+    }
+    private static JsonNode? Merge(JsonNode? target, JsonNode? patch)
+    {
+        if (patch is not JsonObject changes) return patch?.DeepClone();
+        var value = target as JsonObject ?? new JsonObject();
+        foreach (var (key, change) in changes) { if (change is null) value.Remove(key); else value[key] = Merge(value[key], change); }
+        return value;
+    }
+    private static Exception ProviderError(Type type, HttpStatusCode status, string message) => (Exception)Activator.CreateInstance(type, BindingFlags.Instance | BindingFlags.NonPublic, binder: null, args: [status, message, status == HttpStatusCode.PreconditionFailed ? "precondition_failed" : "name_taken", null], culture: null)!;
+}
+
+// Protocol fixtures are confined to this test binary. Production billing still
+// runs the official Stripe SDK, including its real request serialization.
+sealed class TestHttpFactory(HttpMessageHandler transport) : IHttpClientFactory
+{
+    public HttpClient CreateClient(string name) => new(transport, disposeHandler: false);
+}
+sealed class TestStripeTransport : HttpMessageHandler
+{
+    private readonly ConcurrentDictionary<string, Checkout> checkouts = new();
+    private readonly ConcurrentDictionary<string, object> subscriptions = new();
+    private readonly ConcurrentDictionary<string, string> customerIds = new();
+    private readonly ConcurrentDictionary<string, string> customerOrganizations = new();
+    private readonly ConcurrentDictionary<string, string> checkoutIds = new();
+    private readonly ConcurrentDictionary<string, Invoice[]> invoices = new();
+    private string origin = "http://localhost";
+    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        if (request.RequestUri?.Host != "api.stripe.com") throw new HttpRequestException("Unexpected external request in demo: " + request.RequestUri?.Host);
+        var path = request.RequestUri.AbsolutePath;
+        var form = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(request.Content is null ? "" : await request.Content.ReadAsStringAsync(cancellationToken));
+        var idempotency = request.Headers.TryGetValues("Idempotency-Key", out var values) ? values.Single() : Guid.NewGuid().ToString();
+        object value;
+        if (request.Method == HttpMethod.Post && path == "/v1/customers")
+        {
+            var customerId = customerIds.GetOrAdd(idempotency, _ => "cus_" + Guid.NewGuid().ToString("N"));
+            var organizationId = form["metadata[organization_id]"].ToString();
+            if (organizationId.Length == 0 || customerOrganizations.GetOrAdd(customerId, organizationId) != organizationId)
+                throw new HttpRequestException("The Stripe fixture customer must retain its original organization metadata.");
+            value = new { id = customerId, @object = "customer", metadata = new { organization_id = organizationId } };
+        }
+        else if (request.Method == HttpMethod.Get && path.StartsWith("/v1/customers/", StringComparison.Ordinal))
+        {
+            var customerId = path["/v1/customers/".Length..];
+            var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(request.RequestUri.Query);
+            if (!customerOrganizations.TryGetValue(customerId, out var organizationId) || query.GetValueOrDefault("expand[0]") != "invoice_settings.default_payment_method")
+                throw new HttpRequestException("The Stripe fixture card read must target an existing scoped customer with the official expansion.");
+            value = new { id = customerId, @object = "customer", metadata = new { organization_id = organizationId }, invoice_settings = new { default_payment_method = (object?)null } };
+        }
+        else if (request.Method == HttpMethod.Get && path == "/v1/prices")
+            value = new { @object = "list", has_more = false, data = PlanCatalog.Plans.Where(item => item.PriceCents > 0).SelectMany(item => new[] { "monthly", "annual" }.Select(interval => Price(item, interval))).ToArray() };
+        else if (request.Method == HttpMethod.Get && path == "/v1/invoices")
+        {
+            var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(request.RequestUri.Query);
+            if (!query.TryGetValue("customer", out var customer) || query.GetValueOrDefault("limit") != "100")
+                throw new HttpRequestException("Invoice history must request a customer and its bounded page size.");
+            var rows = invoices.GetValueOrDefault(customer.ToString()) ?? [];
+            var after = query.GetValueOrDefault("starting_after").ToString();
+            var index = after.Length == 0 ? 0 : Array.FindIndex(rows, row => row.Id == after) + 1;
+            if (after.Length > 0 && index == 0) throw new HttpRequestException("Unknown invoice cursor.");
+            var page = rows.Skip(index).Take(7).ToArray();
+            value = new
+            {
+                @object = "list",
+                has_more = index + page.Length < rows.Length,
+                url = "/v1/invoices",
+                data = page.Select(row => new
+                {
+                    id = row.Id,
+                    @object = "invoice",
+                    customer = customer.ToString(),
+                    number = row.Number,
+                    status = row.Status,
+                    amount_due = row.Amount,
+                    currency = row.Currency,
+                    created = row.Created.ToUnixTimeSeconds(),
+                    period_start = row.Created.AddDays(-10).ToUnixTimeSeconds(),
+                    period_end = row.Created.AddDays(20).ToUnixTimeSeconds(),
+                    hosted_invoice_url = row.HostedUrl,
+                    invoice_pdf = row.PdfUrl
+                }).ToArray()
+            };
+        }
+        else if (request.Method == HttpMethod.Post && path == "/v1/checkout/sessions")
+        {
+            var id = checkoutIds.GetOrAdd(idempotency, _ => "cs_" + Guid.NewGuid().ToString("N"));
+            var checkout = checkouts.GetOrAdd(id, _ => new(id, form["customer"].ToString(), form["client_reference_id"].ToString(), form["mode"].ToString(),
+                form.Where(item => item.Key.StartsWith("metadata[", StringComparison.Ordinal)).ToDictionary(item => item.Key[9..^1], item => item.Value.ToString()), form["success_url"].ToString()));
+            value = Session(checkout);
+        }
+        else if (request.Method == HttpMethod.Get && path.StartsWith("/v1/checkout/sessions/", StringComparison.Ordinal))
+            value = Session(checkouts[path[("/v1/checkout/sessions/".Length)..]]);
+        else if (request.Method == HttpMethod.Get && path.StartsWith("/v1/subscriptions/", StringComparison.Ordinal))
+            value = subscriptions[path[("/v1/subscriptions/".Length)..]];
+        else if (request.Method == HttpMethod.Post && path == "/v1/billing_portal/sessions")
+            value = new { id = "bps_demo", @object = "billing_portal.session", url = origin + "/__test/portal" };
+        else throw new HttpRequestException("Unsupported Stripe test request: " + request.Method + " " + path);
+        return new(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(value), System.Text.Encoding.UTF8, "application/json") };
+    }
+    public void SetOrigin(string value) => origin = value;
+    public string Complete(string id)
+    {
+        var checkout = checkouts[id];
+        checkout.Completed = true;
+        if (checkout.Mode == "subscription")
+        {
+            checkout.SubscriptionId = "sub_" + id[3..];
+            var plan = PlanCatalog.For(checkout.Metadata["plan"]);
+            subscriptions[checkout.SubscriptionId] = new
+            {
+                id = checkout.SubscriptionId,
+                @object = "subscription",
+                customer = checkout.CustomerId,
+                status = "trialing",
+                metadata = checkout.Metadata,
+                default_payment_method = "pm_demo",
+                items = new { @object = "list", data = new[] { new { id = "si_demo", @object = "subscription_item", quantity = 1, current_period_end = DateTimeOffset.UtcNow.AddDays(plan.TrialDays).ToUnixTimeSeconds(), price = Price(plan, checkout.Metadata["interval"]) } } }
+            };
+            invoices.TryAdd(checkout.CustomerId, Enumerable.Range(0, 24).Select(index => new Invoice("in_" + checkout.CustomerId + "_" + index,
+                "INV-" + index.ToString("D2"), index % 2 == 0 ? "open" : "paid", 500 + index,
+                index == 2 ? "eur" : "usd", DateTimeOffset.UtcNow.AddDays(1 - index),
+                index == 0 ? "http://invoice.test/unsafe" : "https://invoice.test/" + index,
+                index == 0 ? "https://user:password@invoice.test/unsafe.pdf" : "https://invoice.test/" + index + ".pdf")).ToArray());
+        }
+        var success = new Uri(checkout.SuccessUrl.Replace("{CHECKOUT_SESSION_ID}", Uri.EscapeDataString(id), StringComparison.Ordinal));
+        return success.PathAndQuery;
+    }
+    private object Session(Checkout checkout) => new
+    {
+        id = checkout.Id,
+        @object = "checkout.session",
+        customer = checkout.CustomerId,
+        client_reference_id = checkout.OrganizationId,
+        metadata = checkout.Metadata,
+        status = checkout.Completed ? "complete" : "open",
+        mode = checkout.Mode,
+        url = origin + "/__test/checkout?id=" + checkout.Id,
+        subscription = checkout.SubscriptionId.Length > 0 ? checkout.SubscriptionId : null,
+        setup_intent = checkout.Mode == "setup" && checkout.Completed ? new { id = "seti_demo", @object = "setup_intent", status = "succeeded", payment_method = "pm_demo" } : null
+    };
+    private static object Price(BillingPlan plan, string interval) => new
+    {
+        id = "price_" + plan.Key + "_" + interval,
+        @object = "price",
+        active = true,
+        currency = "usd",
+        unit_amount = interval == "annual" ? plan.AnnualPriceCents : plan.PriceCents,
+        recurring = new { interval = interval == "annual" ? "year" : "month", interval_count = 1 },
+        product = new { id = "prod_" + plan.Key, @object = "product", active = true, name = "TerraScale " + plan.Name, metadata = new { plan = plan.Key } }
+    };
+    private sealed class Checkout(string id, string customerId, string organizationId, string mode, Dictionary<string, string> metadata, string successUrl)
+    {
+        public string Id { get; } = id;
+        public string CustomerId { get; } = customerId;
+        public string OrganizationId { get; } = organizationId;
+        public string Mode { get; } = mode;
+        public Dictionary<string, string> Metadata { get; } = metadata;
+        public string SuccessUrl { get; } = successUrl;
+        public bool Completed { get; set; }
+        public string SubscriptionId { get; set; } = "";
+    }
+    private sealed record Invoice(string Id, string Number, string Status, long Amount, string Currency, DateTimeOffset Created, string HostedUrl, string PdfUrl);
+}
+
+sealed class TestInvitationGateway : IInvitationGateway
+{
+    public Task<TerraBaseMember> AcceptAsync(SessionRecord session, string token, CancellationToken cancellationToken) => Task.FromResult(TestOrganizationAccess.Accept(session, token));
+}
+sealed class TestOrganizationLifecycle : IOrganizationLifecycle
+{
+    public Task LeaveAsync(AccountContext context, CancellationToken cancellationToken)
+    { lock (TestWorkspace.Gate) { var org = TestWorkspace.Get(context.Organization!.Id); if (TestWorkspace.ScopedRole(context.UserId, org.Id) == "owner") throw new AccountAccessException("Transfer ownership before leaving.", 409); if (!org.Members.Remove(context.UserId)) throw new AccountAccessException("Organization membership is required."); return Task.CompletedTask; } }
+    public Task DeleteAsync(AccountContext context, CancellationToken cancellationToken)
+    { lock (TestWorkspace.Gate) { var org = TestWorkspace.Get(context.Organization!.Id); if (TestWorkspace.ScopedRole(context.UserId, org.Id) != "owner") throw new AccountAccessException("Organization ownership is required."); if (org.Projects.Count > 0) throw new AccountAccessException("Organization is not empty.", 409); TestWorkspace.Organizations.Remove(org.Id); return Task.CompletedTask; } }
+    public Task DeleteProjectAsync(AccountContext context, string projectId, CancellationToken cancellationToken)
+    { lock (TestWorkspace.Gate) { var org = TestWorkspace.Manage(context.UserId, context.Organization!.Id); if (!org.Projects.TryGetValue(projectId, out var project)) throw new AccountAccessException("Project is unavailable.", 404); if (project.Databases.Count > 0) throw new AccountAccessException("Project is not empty.", 409); org.Projects.Remove(projectId); return Task.CompletedTask; } }
+}
+
+sealed class TestClientAddress(TestStripeTransport stripe) : IStartupFilter
+{
+    public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next) => app =>
+    {
+        app.Use((context, handler) => { context.Connection.RemoteIpAddress ??= IPAddress.Loopback; stripe.SetOrigin(context.Request.Scheme + "://" + context.Request.Host); return handler(context); });
+        next(app);
+    };
+}
+sealed class TestAuthAttemptBudget : IAuthAttemptBudget
+{
+    public Task ReserveAsync(HttpContext http, string account, AuthBudgetKind kind, CancellationToken cancellationToken) => Task.CompletedTask;
+    public Task ForgiveAsync(HttpContext http, string account, CancellationToken cancellationToken) => Task.CompletedTask;
+}

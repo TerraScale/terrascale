@@ -1,69 +1,50 @@
 # DSH-207 Stripe sandbox audit
 
-This change adds plan selection and review to `/usage?tab=billing`. The Go
-dashboard can show the flow in demo mode. The live Stripe adapter supports
-upgrades on the existing subscription, scheduled downgrades and interval
-changes, Personal cancellation to Free, undo, invoice projection, and a
-one-time Checkout trial. Plan changes are limited to Stripe test mode.
-The seeded paid-plan limits now come from the prior onboarding catalog:
-Starter has 5 databases, 1M operations/month, 5 GB-region and 5 members;
-Pro has 25, 100M, 25 GB-region and 25; Business has 100, **50M**,
-5 TB-region and 100. The owner confirmed the 50M Business value for DSH-207.
-Free limits are not fully published in the current source; the known one
-database cap is enforced for new databases while existing data is retained.
+The dashboard's Stripe checkout and subscription flows use the official
+Stripe.net 53 SDK and its `StripeClient.V1` resources. The audit command is
+read-only and uses the same automatically delivered DashboardIdentity as the
+application. It does not accept a test/live selector, manual key, origin or
+other options; key mode is inferred from the delivered key prefix.
 
-## Reproduce the read-only configuration audit
+## Run the read-only audit
+
+Run this from the dashboard checkout in an environment where OCI Vault has
+delivered the dashboard identity:
 
 ```sh
-nice -n 19 python3 scripts/audit-stripe.py --online --env-file /path/to/local/test.env
+nice -n 19 dotnet run --project TerraScale.Dashboard.csproj -- audit-stripe
 ```
 
-The file uses the `STRIPE_*` names documented in [`stripe.md`](stripe.md). It
-never prints keys, webhook secrets, customer IDs, or subscription IDs. It
-checks six active recurring USD prices and their products, portal features,
-matching webhook URL, events, and API version, and inventories
-subscription statuses and duplicate current subscriptions per customer. A
-customer count does not prove which TerraScale organization owns a Stripe
-subscription; attribution requires the account's stored customer and
-subscription IDs.
+Automatic delivery of the fixed identity and deployment of the C# application
+remain open qualification gates. This command consumes the identity; it does
+not create or deliver it. See [`csharp-migration.md`](csharp-migration.md).
 
-The read-only run on 2026-09-25 found all six price/product checks passing,
-the portal active, one matching enabled webhook, and no customer with multiple
-current subscriptions among 6 active and 5 trialing subscriptions. The
-webhook lacks at least one required invoice event. The configured public
-origin is a Tailscale development host; it is not the Fly staging app.
-Per-endpoint delivery success must be checked in Stripe Workbench because the
-public event list does not prove HTTP delivery to a particular endpoint.
+The audit uses the fixed canonical origin `https://dashboard.terrascale.tech`,
+shared by checkout return/cancel URLs, the billing portal return URL and
+webhook configuration. It inventories Stripe prices/products, webhook
+endpoints/events, recent invoice-created event delivery counts, portal settings,
+and subscription mode/status counts. It expects exactly one valid recurring
+USD price for each paid plan and interval: Starter, Pro and Business, monthly
+and annual, or six unique paid plan prices total. The inventory does not identify
+which dashboard organization owns a Stripe customer. Per-endpoint delivery
+success must be checked in Stripe Workbench.
 
-A disposable test customer and subscription confirmed that the Stripe test API
-accepts an invoice proration preview, an immediate Starter-to-Pro update, a
-scheduled Pro-to-Starter change, and releasing that schedule. The temporary
-resources were deleted afterward. A separate test clock advanced a 30-day
-trial through expiry and renewal. The subscription became active, but invoices
-were still in draft at the advance boundaries; only one recurring invoice was
-paid by day 63. This does not pass the invoice or webhook delivery gate. At
-least one enabled test webhook subscribes to `invoice.created`. Confirm its
-delivery attempts in Stripe Workbench before attributing the invoice delay.
-The ten most recent `invoice.created` events all reported one pending webhook
-delivery in the API when checked on 2026-09-25; the API does not identify
-which endpoint is pending.
+The command reports observations from the account it reads. This document does
+not claim that a current sandbox or live audit has passed. A read-only audit
+does not exercise signed webhook delivery, checkout completion, card failure,
+upgrades, downgrades, renewal or trial expiry; those require separate verified
+acceptance evidence before a staging gate can be considered complete.
 
-## Staging gate
+## Fly dev environment
 
-The Go runtime now has TerraBase-backed account, session and throttle storage
-through ts-go, and headless ts-auth integration. Dashboard sign-in remains on
-its own password/email-code pages; only SSO redirects to hosted authorization.
-Production uses the existing `TERRABASE_*`, `TS_AUTH_*` and
-`TS_DASHBOARD_CSRF_SECRET` configuration. Billing uses that same database.
-Local demo runs belong only in isolated test binaries and do not satisfy the
-Stripe staging gate.
+The dev app remains `terrascale-dashboard-dev`. Use the existing Fly app and
+its automatically delivered identity; do not add dotenv files or manually
+copy vendor credentials into Fly settings. See
+[`fly-stripe-dev-dsh207.md`](fly-stripe-dev-dsh207.md) for app readiness and
+deploy checks. The fixed audit origin is the canonical production origin even
+when the command runs from a development checkout; the command does not provide
+an origin override.
 
-Verify the existing dev target and configure a dedicated test origin and
-webhook with all required events. Require successful signed deliveries and
-durable state after restart. Run Checkout, card failure, upgrades, downgrades,
-Free, cancellation, renewal and trial expiry with Stripe test clocks against
-that app. The 2026-09-25 evidence above is historical; repeat these checks
-against the current runtime before passing the gate.
-
-The operator steps for the dev app are in
-[`fly-stripe-dev-dsh207.md`](fly-stripe-dev-dsh207.md).
+Internal billing is a separate report-only usage estimate and cap. It does not
+create Stripe subscriptions or charges, and does not suspend service. It is not
+part of Stripe sandbox payment acceptance; see [`internal-billing.md`](internal-billing.md).

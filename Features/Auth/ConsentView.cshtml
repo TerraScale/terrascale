@@ -1,0 +1,4 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Auth.ConsentPage>
+@implements IUsesLayout<TerraScale.Dashboard.UI.Slices.Document, DocumentModel>
+<main class="ts-flow-root"><section class="ts-flow-panel" data-tone="amber"><header class="ts-flow-header"><span class="ts-flow-icon" aria-hidden="true">!</span><div class="ts-flow-header-content"><h1 class="ts-flow-title">@Model.Title</h1><p class="ts-flow-subtitle">@Model.Description</p></div></header><div class="ts-alert ts-alert-warning" role="status"><p class="ts-alert-title">Request unavailable</p><p class="ts-alert-body">@Model.Message</p></div><p class="ts-flow-note"><a class="ts-link" href="/login">← Back to sign in</a></p></section></main>
+@functions { public DocumentModel LayoutModel => Model.Document; }
