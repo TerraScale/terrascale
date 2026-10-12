@@ -1,4 +1,5 @@
 using TerraBase.Configuration;
+using TerraBase.Engine.Sqlite;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
 
@@ -30,7 +31,7 @@ public sealed class ReadyzEndpoint(
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
         return await readiness.IsReadyAsync(cancellationToken).ConfigureAwait(false)
-            ? TypedResults.Ok(new StatusBody("ready", ServiceVersion.Value, options.Region))
-            : TypedResults.Json(new StatusBody("unavailable", ServiceVersion.Value, options.Region), statusCode: StatusCodes.Status503ServiceUnavailable);
+            ? TypedResults.Ok(new StatusBody("ready", ServiceVersion.Value, options.Region, StorageFormat.Id))
+            : TypedResults.Json(new StatusBody("unavailable", ServiceVersion.Value, options.Region, StorageFormat.Id), statusCode: StatusCodes.Status503ServiceUnavailable);
     }
 }

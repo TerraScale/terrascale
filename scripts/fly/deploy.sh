@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Rolls one Fly app out region by region: gru, sjc, fra, each followed by a live check of its new machine. A failed
-# check stops the rollout (fix forward). Each region runs one always-on machine, created by a human (never by CI). Prints
+# check stops the rollout (fix forward). For TerraBase a gate first compares the region's on-disk storage format with
+# the new image's and, when they differ, resets the region's volume as one planned step (volume-reset.sh --image). Each region runs one always-on machine, created by a human (never by CI). Prints
 # how long each region took (and appends it to the GitHub job summary in CI).
 #
 #   FLY_API_TOKEN=<deploy token> scripts/fly/deploy.sh <app> <fly.toml> <image>
@@ -10,6 +11,17 @@ test "$#" -eq 3 || { echo "usage: $0 <app> <fly.toml> <image>" >&2; exit 2; }
 app=$1 config=$2 image=$3
 
 machines() { flyctl machine list -a "$app" --json | jq -r --arg r "$1" --arg s "$2" '.[] | select(.region == $r and (.state | test($s))) | .id'; }
+
+# The storage format the region's machine serves (a build refuses a directory of another format, so a serving machine's
+# format is the one on its disk; "unversioned" before builds reported it), or nothing when it does not answer from its
+# own region: then the rollout runs and a refusal is classified from the logs.
+running_format() {
+  local id body
+  id=$(machines "$1" '^started$' | head -n1)
+  [[ -n $id ]] || return 0
+  body=$(curl -fsS --retry 3 --retry-all-errors --max-time 5 -H "fly-force-instance-id: $id" "https://$app.fly.dev/healthz") || return 0
+  jq -r --arg r "$1" 'select(.region == $r) | .storageFormat // "unversioned"' <<<"$body"
+}
 
 # Checks the region's machine and sets id. Runs as an if condition, where set -e is off: every step returns on failure.
 live() {
@@ -33,6 +45,13 @@ live() {
   [[ $deployed == "$image" ]] || { echo "$app $region ($id) runs $deployed, not $image" >&2; return 1; }
 }
 
+if [[ $app == ts-terrabase ]]; then
+  # `terrabase --storage-format` prints the format the image writes without starting a server (the image has no shell).
+  format=$(docker run --rm "$image" --storage-format) && [[ -n $format ]] \
+    || { echo "could not read the storage format of $image" >&2; exit 1; }
+  echo "$image writes storage format $format"
+fi
+
 for region in gru sjc fra; do
   start=$SECONDS
   # Machines and volumes cost money: CI never adds them (volume-reset.sh only replaces a region's refused volume).
@@ -43,6 +62,10 @@ for region in gru sjc fra; do
       "flyctl scale count 1 -a $app -c $config --region $region) and reruns this deploy." >&2
     exit 1
   fi
+  if [[ $app == ts-terrabase ]] && running=$(running_format "$region") && [[ -n $running && $running != "$format" ]]; then
+    echo "$app $region stores format $running, $image writes $format: planned volume reset"
+    "$(dirname "$0")/volume-reset.sh" "$app" "$region" --image "$image" || exit 1
+  fi
   # --ha=false: a deploy never adds Fly's default second machine. A storage-format refusal can fail the deploy or only
   # the live checks after it (the machine starts, then exits): either way the reset moves the region onto a fresh volume
   # (only while TerraBase holds no customer data) and the checks run again; any other failure, or a refused reset, stops
@@ -50,7 +73,7 @@ for region in gru sjc fra; do
   if ! { flyctl deploy -a "$app" -c "$config" --image "$image" --regions "$region" --ha=false --yes --wait-timeout 3m && live; }; then
     { [[ $app == ts-terrabase ]] && "$(dirname "$0")/volume-reset.sh" "$app" "$region" && live; } || exit 1
   fi
-  line="$app $region ($id) runs ${image##*:}: live $((SECONDS - start)) s after its deploy started"
+  line="$app $region ($id) runs ${image##*:}${format:+, storage format $format}: live $((SECONDS - start)) s after its deploy started"
   echo "$line"
   if [[ -n ${GITHUB_STEP_SUMMARY:-} ]]; then echo "- $line" >>"$GITHUB_STEP_SUMMARY"; fi
 done

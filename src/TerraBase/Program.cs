@@ -2,6 +2,7 @@ using System.Net;
 using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
+using TerraBase.Engine.Sqlite;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.ApiReference;
 using TerraBase.Features.Backup;
@@ -19,6 +20,13 @@ using TerraBase.Features.Stats;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
+
+// The deploy gate (scripts/fly/deploy.sh) reads the storage format a new image writes without starting a server.
+if (args is ["--storage-format"])
+{
+    Console.WriteLine(StorageFormat.Id);
+    return 0;
+}
 
 // Match the slim host's environment precedence; WebApplicationFactory supplies an argument override.
 var environmentName = args.LastOrDefault(argument => argument.StartsWith("--environment=", StringComparison.Ordinal))?[14..]

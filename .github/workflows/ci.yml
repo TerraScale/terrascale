@@ -150,12 +150,24 @@ jobs:
     if: ${{ !cancelled() }}
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - name: Every area that ran passed
         run: '! grep -qE "failure|cancelled" <<< "${{ join(needs.*.result, '' '') }}"'
       - *checkout
-      - name: Fly deploy and volume reset self-checks
-        run: bash terrascale/scripts/fly/deploy-test.sh && bash terrascale/scripts/fly/volume-reset-test.sh
+      - name: Fly deploy, volume reset and storage train self-checks
+        run: |
+          bash terrascale/scripts/fly/deploy-test.sh
+          bash terrascale/scripts/fly/volume-reset-test.sh
+          bash terrascale/scripts/terrabase/storage-format-check-test.sh
+      # Reads the labels live: after labelling, re-run this job (docs/terrabase/ci.md, storage train).
+      - name: Storage train
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: terrascale/scripts/terrabase/storage-format-check.sh "$GITHUB_REPOSITORY" "${{ github.event.pull_request.number }}"
 
   slow:
     needs: test

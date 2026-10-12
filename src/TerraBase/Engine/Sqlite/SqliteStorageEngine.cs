@@ -1,8 +1,10 @@
+using System.Buffers;
 using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 using System.Diagnostics.Metrics;
 using System.IO.Enumeration;
 using System.Runtime.CompilerServices;
+using System.Text;
 using TerraBase.Configuration;
 using TerraBase.Engine.Lattices;
 using TerraBase.Features.Memory;
@@ -30,14 +32,10 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
     private static readonly TimeSpan StalledProbe = TimeSpan.FromSeconds(2);
     private readonly TimeSpan _readinessCacheTtl;
     internal const string SystemName = "_system";
-    // Recorded in the lock file: the layout of this build, one directory per tenant.
-    private const byte LayoutVersion = 1;
-
-    // The lock file's record: the layout, then the storage format that wrote the directory. Builds from before the format
-    // was recorded accept only the one layout byte, so they refuse a directory this build wrote instead of migrating it.
-    private static readonly byte[] LayoutRecord = [LayoutVersion, .. SqliteDatabaseStore.FormatDigest];
-    private const string OtherFormat =
-        "data directory was written by another TerraBase layout or storage format; start with an empty data directory (no automatic migration)";
+    // The lock file's record: the storage format that created the directory (StorageFormat.Id, ASCII). Records of builds
+    // from before the format had a version are binary and read as "unversioned".
+    private static readonly byte[] LayoutRecord = Encoding.ASCII.GetBytes(StorageFormat.Id);
+    private static readonly SearchValues<char> FormatCharacters = SearchValues.Create("0123456789abcdef-");
     private const string PreTenancyLayout = "data directory uses the pre-tenancy layout; start with an empty data directory (no automatic migration)";
 
     /// <summary>The file whose exclusive lock makes a process the only owner of a data directory.</summary>
@@ -1052,9 +1050,10 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
     private static void CheckLayout(string dataDirectory, FileStream ownership)
     {
         var recorded = ownership.Length > 0;
-        if (recorded && !RecordMatches(ownership))
+        if (recorded && RecordedFormat(ownership) is var format && format != StorageFormat.Id)
         {
-            throw new TerraBaseConfigurationException(OtherFormat);
+            throw new TerraBaseConfigurationException(
+                $"data directory has storage format {format}; this build writes {StorageFormat.Id}; start with an empty data directory (no automatic migration)");
         }
 
         var entries = Directory.EnumerateFileSystemEntries(dataDirectory)
@@ -1072,17 +1071,19 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
         }
     }
 
-    private static bool RecordMatches(FileStream ownership)
+    // The recorded format, or "unversioned" for a record that is not a format ID (a build from before the version).
+    private static string RecordedFormat(FileStream ownership)
     {
-        if (ownership.Length != LayoutRecord.Length)
+        if (ownership.Length > 32)
         {
-            return false;
+            return "unversioned";
         }
 
-        Span<byte> record = stackalloc byte[LayoutRecord.Length];
+        Span<byte> record = stackalloc byte[(int)ownership.Length];
         ownership.Position = 0;
         ownership.ReadExactly(record);
-        return record.SequenceEqual(LayoutRecord);
+        var text = Encoding.ASCII.GetString(record);
+        return text.Contains('-', StringComparison.Ordinal) && !text.AsSpan().ContainsAnyExcept(FormatCharacters) ? text : "unversioned";
     }
 
     /// <summary>

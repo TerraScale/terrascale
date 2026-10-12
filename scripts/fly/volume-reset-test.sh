@@ -31,6 +31,7 @@ case "$1 $2" in
     esac ;;
   "volumes destroy") ;;
   "logs -a") cat "$STATE/logs" ;;
+  "machine stop" | "machine update") ;;
   "machine clone") touch "$STATE/cloned" ;;
   "machine destroy") touch "$STATE/destroyed" ;;
   *) echo "fake flyctl: unexpected $*" >&2; exit 1 ;;
@@ -38,7 +39,7 @@ esac
 FAKE
 chmod +x "$tmp/bin/flyctl"
 export PATH="$tmp/bin:$PATH"
-refusal="terrabase: data directory was written by another TerraBase layout or storage format; start with an empty data directory (no automatic migration)"
+refusal="terrabase: data directory has storage format 1-00000000000f; this build writes 2-51772a611d03; start with an empty data directory (no automatic migration)"
 
 # run <name> <guard|no-guard|unhealthy> <log line> <args...>: a fresh repo copy and fake state; returns the exit code.
 run() {
@@ -54,7 +55,7 @@ run() {
 }
 fail() { echo "volume-reset-test: $*" >&2; exit 1; }
 # The calls that change Fly state, in order.
-changes() { [[ ! -e $tmp/$1/calls ]] || grep -oE "snapshots create|machine clone|machine destroy|volumes destroy [a-z_]+" "$tmp/$1/calls" | paste -sd, -; }
+changes() { [[ ! -e $tmp/$1/calls ]] || grep -oE "machine stop|snapshots create|machine update .*--image [^ ]+|machine clone|machine destroy|volumes destroy [a-z_]+" "$tmp/$1/calls" | paste -sd, -; }
 untouched() { [[ -z $(changes "$1") ]] || fail "$1 changed Fly state: $(changes "$1")"; }
 
 ! run no-guard no-guard "$refusal" || fail "ran without the greenfield guard"
@@ -66,17 +67,24 @@ untouched no-refusal
 
 ! run bad-usage guard "$refusal" --approve gru || fail "accepted unknown arguments"
 untouched bad-usage
+! run no-image guard "$refusal" --image || fail "accepted --image without an image"
+untouched no-image
 
 run dry-run guard "$refusal" --dry-run || fail "dry run failed: $(cat "$tmp/dry-run/out")"
 grep -q "Cost: a new 1 GB volume replaces vol_old" "$tmp/dry-run/out" || fail "dry run printed no cost: $(cat "$tmp/dry-run/out")"
 untouched dry-run
 
 ! run unhealthy unhealthy "$refusal" || fail "kept going with a clone whose checks fail"
-[[ $(changes unhealthy) == "snapshots create,machine clone" ]] || fail "unhealthy clone changed: $(changes unhealthy)"
+[[ $(changes unhealthy) == "machine stop,snapshots create,machine clone" ]] || fail "unhealthy clone changed: $(changes unhealthy)"
 
 run reset guard "$refusal" || fail "reset failed: $(cat "$tmp/reset/out")"
-[[ $(changes reset) == "snapshots create,machine clone,machine destroy,volumes destroy vol_old" ]] \
+[[ $(changes reset) == "machine stop,snapshots create,machine clone,machine destroy,volumes destroy vol_old" ]] \
   || fail "reset ran: $(changes reset)"
+
+# Planned by the deploy gate (formats differ): no refusal needed; the stopped machine gets the new image before the clone.
+run planned guard "started" --image registry.fly.io/ts-terrabase:new || fail "planned reset failed: $(cat "$tmp/planned/out")"
+[[ $(changes planned) == "machine stop,snapshots create,machine update m1 -a ts-terrabase --image registry.fly.io/ts-terrabase:new,machine clone,machine destroy,volumes destroy vol_old" ]] \
+  || fail "planned reset ran: $(changes planned)"
 grep -q "machine m1 -> m2, volume vol_old (deleted) -> vol_new (1 GB), snapshot vs_new" "$tmp/reset/out" \
   || fail "reset recorded: $(cat "$tmp/reset/out")"
 echo "volume-reset: all checks passed"
