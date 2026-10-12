@@ -28,7 +28,7 @@ public sealed class RegionPinTests
     }
 
     [Test]
-    public async Task Answer_without_a_fly_region_header_is_refused()
+    public async Task Answer_without_a_region_header_is_refused()
     {
         using var client = Client(pinned: Cluster.Sjc, served: null);
 
@@ -43,7 +43,7 @@ public sealed class RegionPinTests
         var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(request.Headers.GetValues("fly-prefer-region").Single()) };
         if (served is not null)
         {
-            response.Headers.Add("fly-region", served);
+            response.Headers.Add("X-TerraBase-Region", served);
         }
 
         return response;

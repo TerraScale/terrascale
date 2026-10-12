@@ -3,8 +3,9 @@ namespace TerraBase.E2E;
 /// <summary>
 /// Pins every request to one Fly region with <c>fly-prefer-region</c> and refuses an answer served from elsewhere.
 /// Fly falls back to another region when the preferred one is unavailable; without this check a write meant for sjc
-/// could land in gru and the test would pass without exercising sjc. Fly reports the serving region in the
-/// <c>fly-region</c> response header.
+/// could land in gru and the test would pass without exercising sjc. The serving node names its region in the
+/// <c>X-TerraBase-Region</c> response header; Fly's proxy sends no <c>fly-region</c> header on responses (checked against
+/// ts-terrabase on 2026-10-12).
 /// </summary>
 internal sealed class RegionPin(string region) : DelegatingHandler
 {
@@ -12,7 +13,7 @@ internal sealed class RegionPin(string region) : DelegatingHandler
     {
         request.Headers.Add("fly-prefer-region", region);
         var response = await base.SendAsync(request, cancellationToken);
-        var served = response.Headers.TryGetValues("fly-region", out var values) ? string.Join(',', values) : "(no fly-region header)";
+        var served = response.Headers.TryGetValues("X-TerraBase-Region", out var values) ? string.Join(',', values) : "(no X-TerraBase-Region header)";
         if (served == region)
         {
             return response;
