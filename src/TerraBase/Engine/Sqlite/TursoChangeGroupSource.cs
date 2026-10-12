@@ -104,7 +104,7 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
 
     public async ValueTask<long> QuietAsync(TenantContext database, long after, CancellationToken cancellationToken)
     {
-        if (await _engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not SqliteDatabaseStore store)
+        if (await OpenAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
         {
             return after;
         }
