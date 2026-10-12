@@ -5,11 +5,6 @@ primary_region = "gru"
 # 512 MB RAM; the 4 GB swap only absorbs spikes (it pages at a few MB/s).
 swap_size_mb = 4096
 
-# shortcut: a syntactically valid placeholder so ts-auth boots and answers /healthz (readiness stays false: the database
-# does not exist). The dogfood seed (TerraBase platform-auth database) replaces it; delete this block then.
-[env]
-  TS_AUTH_DATABASE = "00000000-0000-0000-0000-000000000000/auth"
-
 [[vm]]
   size = "shared-cpu-2x"
   memory = "512mb"
