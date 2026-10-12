@@ -211,8 +211,11 @@ public sealed class AuthProviderScenario : IAsyncDisposable
                 return stripe!.SendAsync(request, cancellationToken);
             }
             if (original.Scheme != "https" || !original.IsDefaultPort || original.UserInfo.Length != 0 ||
-                original.Host is not ("atlas.terrascale.tech" or "auth.terrascale.tech" or "gru.auth.terrascale.tech" or "gru.api.terrascale.tech"))
+                original.Host is not ("atlas.terrascale.tech" or "auth.terrascale.tech" or "gru.api.terrascale.tech"))
                 throw new HttpRequestException("Unexpected outbound origin in the test-only auth producer.");
+            // Atlas publishes only the TerraBase region catalog; ts-auth has no Atlas discovery.
+            if (original.Host == "atlas.terrascale.tech" && original.AbsolutePath != "/v1/discovery")
+                throw new HttpRequestException("atlas.terrascale.tech serves no ts-auth discovery.");
             // Preserve the trusted Host and all authorization headers. Only the
             // physical test transport changes; issuer/audience/signatures do not.
             request.Headers.Host = original.Authority;
@@ -229,7 +232,8 @@ public sealed class AuthProviderScenario : IAsyncDisposable
 
     private sealed class ScenarioProvider(ScenarioClock clock, TestState state) : IDisposable
     {
-        private const string Issuer = "https://gru.auth.terrascale.tech/terrascale";
+        // ts-auth 6bb896bb: one global issuer, {PublicOrigin}/{tenant}, served from every region.
+        private const string Issuer = "https://auth.terrascale.tech/terrascale";
         private const string ClientId = "01M4EQ2FRJ8S8B29E8TQVWNW4J";
         private readonly ECDsa signingKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
         private readonly ECDsa wrongKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
@@ -261,7 +265,7 @@ public sealed class AuthProviderScenario : IAsyncDisposable
         private int userinfoPauses;
         private int descendantIssuerGrants;
         private string fault = "";
-        private string CurrentIssuer => fault == "descendant-issuer" ? Issuer + "/descendant" : fault == "project-global-issuer" ? "https://auth.terrascale.tech/terrascale" : Issuer;
+        private string CurrentIssuer => fault == "descendant-issuer" ? Issuer + "/descendant" : Issuer;
         private string? platformRole;
         private string password = "test-password";
         private int tokenSeconds = 3600;
@@ -318,9 +322,7 @@ public sealed class AuthProviderScenario : IAsyncDisposable
                 if (Ownership is not null && await Ownership.DispatchAsync(http) is { } owned) return owned;
                 return await Billing.UsageAsync(http, Bearer(http, out var metered) ? metered.Subject : null);
             }
-            if (path == "/api/v1/auth/discovery")
-                return Results.Json(new { v = 1, endpoints = new[] { new { region = "GRU", url = fault == "untrusted-discovery" ? "https://untrusted.example" : "https://gru.auth.terrascale.tech" } } });
-            if (http.Request.Host.Host is not ("gru.auth.terrascale.tech" or "auth.terrascale.tech"))
+            if (http.Request.Host.Host != "auth.terrascale.tech")
             {
                 // The browser-equivalent authorize request uses the producer's
                 // physical URL and still supplies its public trusted Host.
@@ -520,7 +522,7 @@ public sealed class AuthProviderScenario : IAsyncDisposable
         private IResult Discovery() => Results.Json(new
         {
             issuer = CurrentIssuer,
-            authorization_endpoint = CurrentIssuer + "/oauth/authorize",
+            authorization_endpoint = (fault == "untrusted-endpoint" ? "https://untrusted.example/terrascale" : CurrentIssuer) + "/oauth/authorize",
             token_endpoint = CurrentIssuer + "/oauth/token",
             userinfo_endpoint = CurrentIssuer + "/oauth/userinfo",
             jwks_uri = CurrentIssuer + "/.well-known/jwks.json",
