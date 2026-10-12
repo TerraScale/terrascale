@@ -2,7 +2,6 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Json;
-using System.Net.Sockets;
 using System.Text.Json;
 using TerraScale.DotNet;
 using TerraScale.DotNet.TerraBase;
@@ -11,7 +10,7 @@ namespace TerraScale.Authentication.Tests;
 
 /// <summary>
 /// One real TerraBase process built from this same commit (<c>TERRABASE_BINARY</c>, set by the Makefile's auth test
-/// targets) on free loopback ports with a fresh data directory: its public listener (plain HTTP, as behind Fly Proxy) and
+/// targets) on ports it binds itself (port 0, read back from its startup log) with a fresh data directory: its public listener (plain HTTP, as behind Fly Proxy) and
 /// its internal listener (h2c, loopback off Fly), where the platform operator needs no credential. Share one per test
 /// session and dispose it at the end.
 /// </summary>
@@ -21,10 +20,11 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
     private static readonly TerraScaleIdGenerator Ids = new();
 
     private readonly ConcurrentQueue<string> output = new();
+    private readonly ConcurrentQueue<Uri> listening = new();
     private readonly string directory;
-    private readonly int publicPort = FreePort();
-    private readonly int internalPort = FreePort();
-    private readonly int metricsPort = FreePort();
+    private int publicPort;
+    private int internalPort;
+    private int metricsPort;
     private Process? process;
 
     private TerraBaseTestServer(string directory) => this.directory = directory;
@@ -158,6 +158,10 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
             start.Environment.Remove(name);
         }
 
+        // Port 0 the first time: TerraBase binds free ports itself, so no other process can take one between a probe and
+        // the bind. shortcut: a restart reuses the bound ports, which ts-auth already holds; another process can take one
+        // while TerraBase is down. Upgrade (a stable front port) if restart tests ever flake on it.
+        this.listening.Clear();
         start.ArgumentList.Add("--environment=Development");
         start.ArgumentList.Add($"--port={this.publicPort}");
         start.ArgumentList.Add($"--internal-port={this.internalPort}");
@@ -178,8 +182,20 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
                 throw new InvalidOperationException($"TerraBase exited with {this.process.ExitCode}: {string.Join('\n', this.output)}");
             }
 
+            if (this.publicPort == 0 && this.listening.Count >= 3)
+            {
+                // Bound in order: the internal listener (loopback off Fly), then the public and the metrics listeners.
+                var bound = this.listening.Take(3).ToArray();
+                (this.internalPort, this.publicPort, this.metricsPort) = (bound[0].Port, bound[1].Port, bound[2].Port);
+            }
+
             try
             {
+                if (this.publicPort == 0)
+                {
+                    throw new HttpRequestException("TerraBase has not reported its ports yet");
+                }
+
                 using var health = await this.Http.GetAsync(new Uri(this.ClientAddress, "healthz"), startup.Token);
                 if (health.StatusCode == HttpStatusCode.OK)
                 {
@@ -210,17 +226,34 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
         }
 
         this.output.Enqueue(line);
+        if (Listening(line) is { } address)
+        {
+            this.listening.Enqueue(address);
+        }
+
         while (this.output.Count > 200 && this.output.TryDequeue(out _))
         {
         }
     }
 
-    // shortcut: another process can take the port between this probe and TerraBase's bind (or a restart); rare on loopback.
-    private static int FreePort()
+    // Kestrel's "Now listening on: {address}" line, one per listener in binding order, in TerraBase's JSON log format.
+    private static Uri? Listening(string line)
     {
-        using var probe = new TcpListener(IPAddress.Loopback, 0);
-        probe.Start();
-        return ((IPEndPoint)probe.LocalEndpoint).Port;
+        var json = line.IndexOf('{', StringComparison.Ordinal);
+        if (json < 0 || !line.Contains("Now listening on", StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var entry = JsonDocument.Parse(line.AsMemory(json));
+            return entry.RootElement.TryGetProperty("address", out var address) && Uri.TryCreate(address.GetString(), UriKind.Absolute, out var uri) ? uri : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 }
 /// <summary>A tenant created by <see cref="TerraBaseTestServer.CreateTenantAsync"/>.</summary>
