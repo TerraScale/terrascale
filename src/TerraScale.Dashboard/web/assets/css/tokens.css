@@ -1,4 +1,8 @@
-/* Design tokens: color, tone, type, spacing, radius, motion, layering. */
+/* Design tokens: color, tone, type, spacing, radius, motion, layering.
+   The only file holding raw color and shape values: swap it to restyle the
+   app. :root is the dark default; <html data-theme="light|dark"> (set in the
+   layouts' head script) selects a theme once a [data-theme="light"] block
+   exists here. */
 
 :root {
   color-scheme: dark;
@@ -34,6 +38,24 @@
   --ts-severe: #fb923c;
   --ts-danger: #f87171;
   --ts-info: #60a5fa;
+
+  /* Special inks. */
+  --ts-ink-accent: #cfe0ff; /* current nav item, unread notification */
+  --ts-code-ink: #c9d4ff;
+  --ts-on-tone: #0a0c12; /* text on a filled section tone */
+  --ts-on-danger: #1a0707; /* text on a solid danger fill */
+  --ts-violet: #a78bfa;
+  --ts-violet-ink: #c4b5fd;
+  --ts-blue-ink: #7ea6ff;
+
+  /* Interaction tints. */
+  --ts-hover: rgb(255 255 255 / 0.06);
+  --ts-selected: rgb(255 255 255 / 0.04);
+  --ts-row-hover: rgb(59 130 246 / 0.05);
+
+  /* Region map. */
+  --ts-map-arc: rgb(106 145 255 / 0.7);
+  --ts-map-node: #8aa8ff;
 
   /* Chart series (kept for the SVG chart renderer). */
   /* Charts: a blue family, validated against the canvas. */
@@ -80,6 +102,9 @@
   /* Depth. */
   /* Overlays separate by a hairline; the faint drop only lifts them off content. */
   --ts-shadow-overlay: 0 0 0 1px var(--ts-line-strong), 0 12px 24px -16px rgb(0 0 0 / 0.6);
+  --ts-shadow-menu: 0 16px 32px -20px rgb(0 0 0 / 0.8);
+  --ts-shadow-dialog: 0 24px 48px -24px rgb(0 0 0 / 0.8);
+  --ts-shadow-tip: 0 8px 12px rgb(0 0 0 / 0.45);
   --ts-scrim: rgb(5 6 10 / 0.6);
   /* Translucent overlay fill, blurred over the content behind it. */
   --ts-glass: rgb(17 20 28 / 0.72);

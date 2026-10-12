@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Text;
 
 namespace TerraScale.Dashboard.Features.Home;
 
@@ -8,17 +7,14 @@ public sealed record RequestPath(string Name, string Class, string Dash, string 
 public sealed record RequestDot(string X, string Y, string Class, string Dash);
 public sealed record RequestTipRow(string Name, string Value, string Class, string Dash, string Y);
 public sealed record RequestColumn(string X, string Left, string Width, string Label, string Header, string TipX, string TipWidth, string TipHeight, IReadOnlyList<RequestDot> Dots, IReadOnlyList<RequestTipRow> Rows);
-public sealed record HomeRequestChart(string Label, string GradientId, string Area, IReadOnlyList<ChartGrid> Grid, IReadOnlyList<ChartTick> Ticks, IReadOnlyList<RequestPath> Paths, IReadOnlyList<RequestColumn> Columns)
+public sealed record HomeRequestChart(string Label, string Area, IReadOnlyList<ChartGrid> Grid, IReadOnlyList<ChartTick> Ticks, IReadOnlyList<RequestPath> Paths, IReadOnlyList<RequestColumn> Columns)
 {
     public static HomeRequestChart For(HomePage page)
     {
         var points = page.Measurement.RequestPoints;
         var label = "Requests by type, " + page.Range;
-        uint hash = 2166136261;
-        foreach (var item in Encoding.UTF8.GetBytes(label)) hash = unchecked((hash ^ item) * 16777619);
-        var gradient = "ts-chart-fill-" + hash.ToString("x");
         var names = points.SelectMany(point => point.Requests.Keys).Distinct().Order(StringComparer.Ordinal).ToArray();
-        if (points.Count == 0 || names.Length == 0) return new(label, gradient, "", [], [], [], []);
+        if (points.Count == 0 || names.Length == 0) return new(label, "", [], [], [], []);
         var maximum = points.SelectMany(point => point.Requests.Values).DefaultIfEmpty().Max();
         double magnitude = 1;
         while (magnitude <= maximum / 10d) magnitude *= 10;
@@ -48,6 +44,6 @@ public sealed record HomeRequestChart(string Label, string GradientId, string Ar
             var dots = paths.Select(path => new RequestDot(C(X(index)), C(Y(points[index].Requests.GetValueOrDefault(path.Name))), path.Class, path.Dash)).ToArray();
             columns.Add(new(C(X(index)), C(Math.Max(48, X(index) - columnWidth / 2)), C(Math.Min(708, X(index) + columnWidth / 2) - Math.Max(48, X(index) - columnWidth / 2)), header + ": " + string.Join(", ", rows.Select(row => row.Name + " " + row.Value)), header, C(left), C(width), C(12 + (rows.Length + 1) * 17), dots, rows));
         }
-        return new(label, gradient, paths.Length == 1 ? paths[0].Path + " L 708,168 L 48,168 Z" : "", grid, ticks, paths, columns);
+        return new(label, paths.Length == 1 ? paths[0].Path + " L 708,168 L 48,168 Z" : "", grid, ticks, paths, columns);
     }
 }

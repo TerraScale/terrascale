@@ -39,7 +39,7 @@
 }
 
 .ts-table tbody tr:hover {
-  background: rgb(59 130 246 / 0.05);
+  background: var(--ts-row-hover);
 }
 
 .ts-table tbody tr:last-child td {
@@ -208,7 +208,7 @@
 .ts-snippet-body {
   margin: 0;
   padding: var(--ts-s4);
-  color: #c9d4ff;
+  color: var(--ts-code-ink);
   font-family: var(--ts-font-mono);
   font-size: var(--ts-fs-sm);
   line-height: 1.6;
@@ -266,8 +266,8 @@ code:not(pre code) {
 .ts-chart .ts-chart-series-1 { stroke: var(--ts-chart-1); }
 .ts-chart .ts-chart-series-2 { stroke: var(--ts-chart-2); }
 
-.ts-chart-fill-start { stop-color: var(--ts-chart-1); stop-opacity: 0.32; }
-.ts-chart-fill-end { stop-color: var(--ts-chart-1); stop-opacity: 0; }
+/* Single-series area: a flat tint, never a gradient. */
+.ts-chart .ts-chart-area { fill: var(--ts-chart-1); fill-opacity: 0.1; stroke: none; }
 
 /* Hover columns: a guide line, dots per value, and a tooltip, revealed on
    hover and keyboard focus. The focused column tints its band instead of
@@ -318,7 +318,7 @@ code:not(pre code) {
 .ts-chart-tip-box {
   fill: var(--ts-surface-2);
   stroke: var(--ts-line-strong);
-  filter: drop-shadow(0 8px 12px rgb(0 0 0 / 0.45));
+  filter: drop-shadow(var(--ts-shadow-tip));
 }
 
 .ts-chart .ts-chart-tip text {

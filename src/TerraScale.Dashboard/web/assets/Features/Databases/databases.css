@@ -443,20 +443,12 @@ dialog.ts-db-create-dialog .ts-dialog-title {
   width: min(16rem, 100%);
   height: 4px;
   border-radius: var(--ts-radius-pill);
-  background:
-    linear-gradient(90deg, transparent, var(--ts-accent), transparent) 0 0 / 40% 100% no-repeat,
-    var(--ts-surface-3);
-  animation: ts-progress-shine var(--ts-loop) linear infinite;
+  background: var(--ts-accent);
 }
 
 @media (prefers-reduced-motion: reduce) {
   .ts-db-progress-mark::after {
     border-color: var(--ts-accent);
-    animation: none;
-  }
-
-  .ts-db-progress-bar {
-    background: var(--ts-accent);
     animation: none;
   }
 }

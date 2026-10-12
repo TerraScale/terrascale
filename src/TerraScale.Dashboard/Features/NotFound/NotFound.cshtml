@@ -2,11 +2,11 @@
 @implements IUsesLayout<TerraScale.Dashboard.UI.Slices.Document, DocumentModel>
 @inject AssetUrls Assets
 <main class="ts-notfound" aria-labelledby="notfound-title">
-    <header><a href="/" aria-label="TerraScale dashboard"><img class="ts-brand-logo" src="@Assets.Url("brand/logo-terrascale-principal.svg")" alt="TerraScale" width="183" height="44" decoding="async" /></a></header>
+    <header><a href="/" aria-label="TerraScale dashboard"><img class="ts-brand-logo ts-logo-on-dark" src="@Assets.Url("brand/logo-terrascale-principal.svg")" alt="TerraScale" width="183" height="44" decoding="async" /><img class="ts-brand-logo ts-logo-on-light" src="@Assets.Url("brand/logo-terrascale-blue.svg")" alt="TerraScale" width="183" height="44" decoding="async" /></a></header>
     <div class="ts-notfound-inner">
         <div class="ts-notfound-copy">
             <p class="ts-eyebrow">Page not found</p>
-            <img class="ts-notfound-number" src="@Assets.Url("img/404-number.webp")" alt="" width="415" height="160" aria-hidden="true" decoding="async" />
+            <p class="ts-notfound-number" aria-hidden="true">404</p>
             <h1 class="ts-auth-title" id="notfound-title">We can’t find that page.</h1>
             <p class="ts-auth-subtitle">The page you’re looking for has moved, or never existed. Let’s get you back on track.</p>
             <div class="ts-row">

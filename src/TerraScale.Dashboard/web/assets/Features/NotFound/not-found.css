@@ -28,7 +28,6 @@
 }
 
 .ts-notfound-copy .ts-eyebrow {
-  color: #a78bfa;
   font-size: clamp(12px, 1vw, 16px);
 }
 
@@ -47,8 +46,12 @@
 }
 
 .ts-notfound-number {
-  width: min(100%, 36rem);
-  height: auto;
+  margin: 0;
+  color: var(--ts-accent);
+  font-size: clamp(88px, 10vw, 160px);
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
 }
 
 .ts-notfound-art {

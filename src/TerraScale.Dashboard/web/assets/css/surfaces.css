@@ -238,9 +238,9 @@
 .ts-badge-success { --badge: var(--ts-success); }
 .ts-badge-warning { --badge: var(--ts-warning); }
 .ts-badge-danger { --badge: var(--ts-danger); }
-.ts-badge-violet { --badge: #c4b5fd; }
+.ts-badge-violet { --badge: var(--ts-violet-ink); }
 .ts-badge-tone { --badge: var(--tone); }
-.ts-badge-blue { --badge: #7ea6ff; }
+.ts-badge-blue { --badge: var(--ts-blue-ink); }
 
 /* A leading status dot. */
 .ts-dot {

@@ -238,13 +238,13 @@ details[open] > .ts-context-trigger {
 
 .ts-nav-link[aria-current="page"] {
   background: var(--ts-accent-soft);
-  color: #cfe0ff;
+  color: var(--ts-ink-accent);
   font-weight: 600;
 }
 
 .ts-nav-link[aria-current="page"] .ts-nav-icon {
   background: var(--tone);
-  color: #0a0c12;
+  color: var(--ts-on-tone);
 }
 
 /* Collapsible section: the summary looks like a link and the chevron turns
@@ -309,7 +309,7 @@ details[open] > .ts-context-trigger {
 
 .ts-subnav-link[aria-current="page"] {
   background: var(--ts-accent-soft);
-  color: #cfe0ff;
+  color: var(--ts-ink-accent);
   font-weight: 600;
 }
 
@@ -390,8 +390,8 @@ details[open] > .ts-account-trigger {
 /* The account avatar is a flat violet tile with a presence dot. */
 .ts-account-avatar {
   position: relative;
-  background: color-mix(in oklab, #a78bfa 24%, transparent);
-  color: #c4b5fd;
+  background: color-mix(in oklab, var(--ts-violet) 24%, transparent);
+  color: var(--ts-violet-ink);
 }
 
 .ts-account-avatar::after {

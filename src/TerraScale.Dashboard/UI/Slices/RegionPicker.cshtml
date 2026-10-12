@@ -8,7 +8,7 @@
         {
             <button type="button" class="ts-region-node" data-region="@pin.Code" aria-label="@($"{pin.Name} ({pin.Code})")" aria-pressed="@(Model.Selected.Split(' ').Contains(pin.Code) ? "true" : "false")" data-on:click="@Model.Pick" aria-description="@Model.Ping(pin.Code)">
                 <img class="ts-region-node-flag" src="@Assets.Url($"flags/{pin.Country}.svg")" alt="" aria-hidden="true" />
-                <span class="ts-region-node-ring" aria-hidden="true"></span><span class="ts-region-node-core" aria-hidden="true"></span>
+                <span class="ts-region-node-core" aria-hidden="true"></span>
                 <span class="ts-region-node-label" aria-hidden="true"><strong>@pin.Name</strong>
                     @if (Model.Ping(pin.Code) is { Length: > 0 } ping) { <span class="ts-region-node-ping">@ping</span> }
                 </span>

@@ -156,35 +156,31 @@ hr {
   transform: none;
 }
 
+/* The wordmark with white lettering only shows on the dark theme. */
+:root[data-theme="light"] .ts-logo-on-dark,
+:root:not([data-theme="light"]) .ts-logo-on-light {
+  display: none;
+}
+
 /* Navigation activity: Datastar sets body.ts-nav-pending while the next
    document loads (see UI/Slices/ShellDocument.cshtml). Wait before revealing the
-   full-width bar so quick navigations never flash it. A bright shimmer shows
-   an ongoing wait without implying a measured completion percentage. */
+   full-width bar so quick navigations never flash it. A flat accent bar,
+   no shimmer or glow. */
 body.ts-nav-pending::before {
   content: "";
   position: fixed;
   inset: 0 0 auto;
   z-index: var(--ts-z-progress);
-  height: 5px;
-  background:
-    linear-gradient(90deg, transparent, rgb(255 255 255 / 0.55), transparent) 0 0 / 35% 100% no-repeat,
-    var(--ts-accent);
-  box-shadow: 0 1px 8px rgb(59 130 246 / 0.35);
+  height: 3px;
+  background: var(--ts-accent);
   opacity: 0;
   pointer-events: none;
-  animation:
-    ts-progress-reveal 100ms ease-out 80ms forwards,
-    ts-progress-shine 1.2s linear 80ms infinite;
+  animation: ts-progress-reveal 100ms ease-out 80ms forwards;
 }
 
 @keyframes ts-progress-reveal {
   from { opacity: 0; }
   to { opacity: 1; }
-}
-
-@keyframes ts-progress-shine {
-  from { background-position: -45% 0, 0 0; }
-  to { background-position: 145% 0, 0 0; }
 }
 
 @keyframes ts-pop-in {
@@ -193,11 +189,6 @@ body.ts-nav-pending::before {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  body.ts-nav-pending::before {
-    background: var(--ts-accent);
-    animation-name: ts-progress-reveal;
-  }
-
   *,
   *::before,
   *::after {

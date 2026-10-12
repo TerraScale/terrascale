@@ -103,7 +103,7 @@ body.ts-nav-pending form[data-submit-once] .ts-btn[type="submit"] {
 .ts-btn-danger:hover,
 .ts-btn-destructive:hover {
   background: var(--ts-danger);
-  color: #1a0707;
+  color: var(--ts-on-danger);
 }
 
 .ts-btn-sm {

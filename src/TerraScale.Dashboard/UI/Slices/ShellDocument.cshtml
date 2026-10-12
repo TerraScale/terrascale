@@ -5,6 +5,7 @@
 <html lang="@Model.Context.Account.Locale" data-theme="dark" data-nonce="@Model.Nonce">
 <head>
     <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><meta name="color-scheme" content="dark" /><meta name="theme-color" content="#0a0c12" />
+    <script nonce="@Model.Nonce">try { document.documentElement.dataset.theme = localStorage.getItem("ts-theme") || (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark"); } catch {}</script>
     <title>@Model.Title · TerraScale</title>
     <link rel="icon" type="image/svg+xml" href="@Assets.Url("brand/logo-icon-blue.svg")" />
     <link rel="preload" href="@Assets.Url("fonts/oxanium-latin-wght-normal.woff2")" as="font" type="font/woff2" crossorigin />
@@ -25,7 +26,7 @@
         @(await RenderPartialAsync<TerraScale.Dashboard.UI.Slices.ShellSidebar, ShellModel>(Model))
         <div class="ts-inset" data-attr:inert="$navOpen">
             <header class="ts-topbar"><button type="button" id="ts-nav-toggle" class="ts-icon-btn ts-fab-nav" aria-label="Open navigation" aria-controls="ts-navigation" aria-expanded="false" data-on:click="$navOpen = true; setTimeout(() => document.getElementById('ts-nav-close').focus())" data-attr:aria-expanded="$navOpen ? 'true' : 'false'">@ShellIcons.Svg("panel-left", 18)</button>
-            <img class="ts-topbar-brand" src="@Assets.Url("brand/logo-terrascale-principal.svg")" alt="TerraScale" decoding="async" />
+            <img class="ts-topbar-brand ts-logo-on-dark" src="@Assets.Url("brand/logo-terrascale-principal.svg")" alt="TerraScale" decoding="async" /><img class="ts-topbar-brand ts-logo-on-light" src="@Assets.Url("brand/logo-terrascale-blue.svg")" alt="TerraScale" decoding="async" />
             @(await RenderPartialAsync<TerraScale.Dashboard.UI.Slices.ShellNotificationsBell, ShellModel>(Model))</header>
             <div id="ts-main" class="ts-main" tabindex="-1">@await RenderBodyAsync()</div>
         </div>

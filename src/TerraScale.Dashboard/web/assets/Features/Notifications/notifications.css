@@ -45,7 +45,7 @@
 }
 
 .ts-notification-unread .ts-strong {
-  color: #cfe0ff;
+  color: var(--ts-ink-accent);
 }
 
 .ts-notification-marker {
