@@ -8,65 +8,25 @@ namespace TerraBase.E2E;
 /// </summary>
 internal static class Gaps
 {
-    // R2a-1 (#48) deleted the old replication. R4a's peer streams carry change groups, but only the CDC tailer (R3) produces
-    // them from real writes; until it lands nothing crosses regions, locally or on Fly.
-    private const string Streams = "the CDC change group source (R3) for the peer streams (R4a)";
-    // R5 landed the counter and set ops; Fast proves they converge when three nodes' states join
-    // (CounterSetApiTests). Across regions they wait on the streams' source (R3).
-    private const string Counters = "counters and sets over peer streams (R4a) fed by the CDC source (R3)";
-
     private static readonly Dictionary<string, string> Waiting = new(StringComparer.Ordinal)
     {
         // ReplicationE2ETests, LatticeE2ETests, CatalogE2ETests (design section 20).
-        ["E1"] = Streams,
-        ["E2"] = Streams,
-        ["E3"] = Streams,
-        ["E4"] = Streams,
-        ["E5"] = Streams,
-        ["E6"] = Streams,
-        ["E8"] = Counters,
-        ["E9"] = Counters,
         ["E10"] = "the changes feed (R8) over peer streams (R4a)",
         ["E11"] = "SQL writes (R9) over peer streams (R4a)",
         ["E12"] = "the catalog as a lattice database (R10a)",
         ["E13"] = "home region and live move (R11)",
-        ["E14"] = "garbage collection (R7) over peer streams (R4a)",
         ["E15"] = "the changes feed (R8) over peer streams (R4a)",
 
-        // ThreeRegionE2ETests.
-        ["pair"] = Streams,
-        ["three-way-same-field"] = Streams,
-        ["three-way-different-fields"] = Streams,
-        ["three-way-delete-versus-edit"] = Streams,
-        ["three-way-bulk"] = Streams,
-        ["three-way-burst"] = Streams,
-        ["large-documents"] = Streams,
-        ["three-way-counters"] = Counters,
-        ["three-way-sets"] = Counters,
-
-        // ThreeRegionFaultE2ETests. Cluster.Partition needs R4a's streams to cut.
-        ["partition-heal"] = Streams,
-        ["region-down-rejoin"] = Streams,
-        ["restart-mid-replication"] = Streams,
-        ["ack-then-stop"] = Streams,
-        ["restarted-sender-backlog"] = Streams,
-
-        // CrashAndStallE2ETests. Node processes and lossy links also need test hooks on the peer path (COVERAGE.md).
-        ["crash-replicated"] = Streams,
-        ["storage-stall"] = Streams,
-        ["lossy-link"] = Streams,
+        // CrashAndStallE2ETests.
+        ["crash-replicated"] = "node processes as regions in the harness (region identity and peer addresses off Fly)",
 
         // RepairAndContractE2ETests.
         ["anti-entropy-repair"] = "anti-entropy (R6) over peer streams fed by the CDC source (R3)",
         ["restore-older-state"] = "refill and anti-entropy (R6) over peer streams fed by the CDC source (R3)",
-        ["unique-under-partition"] = Streams,
+        ["unique-under-partition"] = "the unique-loser rule on replicated applies (design section 9): after the heal gru answers 409 for the larger id, sjc still serves it",
         ["deleted-database-stays-deleted"] = "the catalog as a lattice database (R10a) and garbage collection (R7)",
-        ["replication-metrics"] = "replication metrics with the CDC source (R3): tail lag, and stream lags that move",
-        ["flow-control"] = "peer streams fed by the CDC source (R3) and the catalog as a lattice database (R10a)",
-        ["ddl-replication"] = Streams,
-        ["backlog"] = Streams,
-        ["skew-causal"] = Streams,
-        ["skew-concurrent"] = Streams,
+        ["replication-metrics"] = "the CDC tail lag metric terrabase_replication_tail_lag (design section 18; R3 publishes send and ack lag only)",
+        ["ddl-replication"] = "index, schema and drop replication through the metadata documents (design section 5): an index made in gru never reaches sjc",
     };
 
     // BLOCKED on Fly, not an expected failure there: the Fly suite's TerraBase API key holds documents:read/write on the e2e
