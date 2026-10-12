@@ -1,6 +1,5 @@
 using System.Text;
 using System.Text.Json;
-using TerraBase.Engine.Lattices;
 using TerraBase.Hosting;
 
 namespace TerraBase.Engine.Sqlite;
@@ -53,7 +52,6 @@ internal sealed partial class SqliteStorageTransaction
         new(RunAsync(() =>
         {
             ThrowIfReadOnly();
-            DocumentMutation(replicated: false);
             if (!DatabaseName.TryParse(collection, out _) || !UniqueKeys.Valid(constraints))
             {
                 throw new InvalidDataException("invalid unique schema");
@@ -72,7 +70,7 @@ internal sealed partial class SqliteStorageTransaction
                 throw new UniqueConstraintException();
             }
 
-            Reserve(DocumentDelta.Unique, collection, Encoding.UTF8.GetByteCount(body));
+            Reserve(collection, Encoding.UTF8.GetByteCount(body));
             WriteMetadata(DocumentDelta.Unique, collection, body);
             return true;
         }, cancellationToken, mutation: true).AsTask());
@@ -168,16 +166,9 @@ internal sealed partial class SqliteStorageTransaction
 
     private void UniqueHistory(DocumentChange change, CancellationToken cancellationToken)
     {
-        if (_imported)
-        {
-            ImportHistory(change);
-        }
-        else
-        {
-            Reserve(change.Collection, change.Id, change.Json?.Length ?? 0);
-            AppendChange(change.Collection, change.Id, Offset(), change.Version,
-                change.Json is { } json ? StrictUtf8.GetString(json.Span) : null, cancellationToken);
-        }
+        Reserve(change.Id, change.Json?.Length ?? 0);
+        AppendChange(change.Collection, change.Id, Offset(), change.Version,
+            change.Json is { } json ? StrictUtf8.GetString(json.Span) : null, cancellationToken);
     }
 
     private void ClearUniqueConflict(string collection, string id)
@@ -186,29 +177,6 @@ internal sealed partial class SqliteStorageTransaction
         command.Parameters.AddWithValue("$id", id);
         command.ExecuteNonQuery();
     }
-
-    // Worker-only: stores a replicated register whose last-writer-wins write changed, and projects the uniqueness of its
-    // new winner (body, null for a tombstone) and of every contender it shares or shared a key with.
-    private void StoreWinner(string collection, string id, MvRegister<DocumentWrite> state, byte[] encoded, string? body, CancellationToken cancellationToken)
-    {
-        var constraints = ReadUniqueConstraints(collection);
-        if (constraints.Count == 0)
-        {
-            Store(collection, id, state, encoded);
-            return;
-        }
-
-        QueueUniqueContenders(collection, id);
-        IndexUniqueKeys(collection, id, body, constraints, local: false, cancellationToken);
-        QueueUniqueContenders(collection, id);
-        ClearUniqueConflict(collection, id);
-        Store(collection, id, state, encoded);
-        ReconcileUnique(collection, UniqueProjectionIds(collection, affected: true, cancellationToken), id, cancellationToken);
-        Command("DELETE FROM temp.unique_affected;").ExecuteNonQuery();
-    }
-
-    private DocumentChange UniqueVisibleChange(DocumentChange change) =>
-        ReadUniqueDocument(change.Collection, change.Id) is { UniqueConflict: true } ? change with { Json = null } : change;
 
     private void DropUniqueCollection(string collection)
     {
@@ -219,40 +187,5 @@ internal sealed partial class SqliteStorageTransaction
         {
             WriteMetadata(DocumentDelta.Unique, collection, null);
         }
-    }
-
-    // The constraints of a replicated declaration; anything else fails the replicated group.
-    private static IReadOnlyList<UniqueConstraint> ReadUniqueSchema(string body)
-    {
-        try
-        {
-            var schema = JsonSerializer.Deserialize(body, TerraBaseJsonContext.Default.UniqueSchema);
-            return schema is not null && UniqueKeys.Valid(schema.Constraints)
-                ? schema.Constraints
-                : throw new InvalidDataException("invalid replicated unique schema");
-        }
-        catch (JsonException error)
-        {
-            throw new InvalidDataException("invalid replicated unique schema", error);
-        }
-    }
-
-    // A declaration's last-writer-wins write changed (body, null for a tombstone): every state of the collection is indexed
-    // again under it.
-    private void ApplyUniqueMetadata(string collection, string? body, CancellationToken cancellationToken)
-    {
-        var constraints = body is null ? [] : ReadUniqueSchema(body);
-
-        // Build all keys before projecting, so receiver size and arrival order cannot change the result.
-        Command("DELETE FROM unique_keys WHERE collection = $collection;", collection).ExecuteNonQuery();
-        Command("DELETE FROM unique_invalid WHERE collection = $collection;", collection).ExecuteNonQuery();
-        foreach (var id in UniqueProjectionIds(collection, affected: false, cancellationToken))
-        {
-            var raw = ReadUniqueDocument(collection, id);
-            IndexUniqueKeys(collection, id, raw is null ? null : StrictUtf8.GetString(raw.Json.Span), constraints, local: false, cancellationToken);
-        }
-
-        ReconcileUnique(collection, UniqueProjectionIds(collection, affected: false, cancellationToken), writtenId: null, cancellationToken);
-        _metadataChanged = true;
     }
 }

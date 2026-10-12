@@ -2,7 +2,6 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
-using TerraBase.Features.CrossRegion;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
@@ -98,7 +97,7 @@ public sealed class MembershipTests
     }
 
     [Test]
-    public async Task Three_regions_in_the_dns_each_see_their_own_members_and_the_other_two_regions()
+    public async Task Three_regions_in_the_dns_each_see_their_own_members_and_the_other_regions_members()
     {
         var store = new FakeMemberStore();
         var machines = new (string Name, string Region)[] { ("gru-a", "gru"), ("gru-b", "gru"), ("sjc-a", "sjc"), ("fra-a", "fra") };
@@ -117,16 +116,13 @@ public sealed class MembershipTests
             foreach (var (server, (name, region)) in servers.Zip(machines))
             {
                 var membership = server.Services.GetRequiredService<IMembership>();
-                var peers = server.Services.GetRequiredService<IRegionPeers>();
                 string[] own = [.. machines.Where(machine => machine.Region == region).Select(machine => machine.Name).Order(StringComparer.Ordinal)];
                 string[] elsewhere = [.. machines.Where(machine => machine.Region != region).Select(machine => machine.Name).Order(StringComparer.Ordinal)];
-                string[] regions = [.. machines.Select(machine => machine.Region).Where(other => other != region).Distinct().Order(StringComparer.Ordinal)];
                 await TerraBaseTestServer.EventuallyAsync(async token =>
                 {
                     var view = await membership.RefreshAsync(token);
                     return view.Members.Select(member => member.Name).Order(StringComparer.Ordinal).SequenceEqual(own)
-                        && view.Elsewhere.Select(member => member.Name).Order(StringComparer.Ordinal).SequenceEqual(elsewhere)
-                        && (await peers.RegionsAsync(token)).Order(StringComparer.Ordinal).SequenceEqual(regions);
+                        && view.Elsewhere.Select(member => member.Name).Order(StringComparer.Ordinal).SequenceEqual(elsewhere);
                 });
                 await Assert.That(membership.Self.Name).IsEqualTo(name);
             }

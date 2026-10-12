@@ -11,7 +11,7 @@ public static class DocumentFiles
     /// <summary>
     /// Seeds a current-format database file at <paramref name="path"/> holding exactly these documents. A client database
     /// holds them as registers of one write each (<see cref="StoredRegisters"/>), in one commit at offset 1 with its shape
-    /// history, and its journal still needs its baseline, like a copy.
+    /// history.
     /// </summary>
     public static async Task WriteAsync(string path, params (string Collection, string Id, string Body)[] documents)
     {
@@ -19,7 +19,7 @@ public static class DocumentFiles
         await using var io = new SqliteIoPool(1, 1, meter);
         var system = Path.GetFileName(path) == "_system.db";
         // The name chooses the schema the file bootstraps: the system database keeps its own until TS-647 step 5.
-        await SqliteDatabaseStore.InitializeAsync(system ? "_system" : "fixture", path, io, string.Empty, afterBootstrap: null, CancellationToken.None);
+        await SqliteDatabaseStore.InitializeAsync(system ? "_system" : "fixture", path, io, string.Empty, CancellationToken.None);
         // Built, never interpolated: a path may contain ';' or quotes.
         await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Pooling = false }.ToString());
         await connection.OpenAsync();
@@ -34,7 +34,6 @@ public static class DocumentFiles
         snapshot.CommandText = """
             UPDATE commit_offset SET value = max(value, 1);
             UPDATE shape_history SET floor = 1;
-            UPDATE replication_state SET complete = 0;
             """;
         await snapshot.ExecuteNonQueryAsync();
     }

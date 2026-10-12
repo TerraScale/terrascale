@@ -371,16 +371,14 @@ public sealed class ExplainSqlBoundaryTests
     }
 
     [Test]
-    [Arguments(false, true)]
-    [Arguments(true, true)]
-    [Arguments(false, false)]
-    [Arguments(true, false)]
-    public async Task Placement_is_checked_before_the_body_even_with_a_stale_file_or_only_a_catalog_record(bool catalogOnly, bool topologyDelivered)
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Placement_is_checked_before_the_body_even_with_a_stale_file_or_only_a_catalog_record(bool catalogOnly)
     {
         var directory = Directory.CreateTempSubdirectory("terrabase-explain-wan-").FullName;
         try
         {
-            await using var api = await StartWanAsync(directory, topologyDelivered: topologyDelivered);
+            await using var api = await StartWanAsync(directory);
             var local = await CreateDatabaseAsync(api);
             var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
             var tenants = api.Server.Services.GetRequiredService<ITenantDirectory>();
@@ -630,22 +628,16 @@ public sealed class ExplainSqlBoundaryTests
         }
     }
 
-    private static async Task<ManagementApi> StartWanAsync(string directory, UsageCommitHook? hook = null, bool topologyDelivered = true)
+    private static async Task<ManagementApi> StartWanAsync(string directory, UsageCommitHook? hook = null)
     {
         var credentials = System.IO.Path.Combine(directory, "user.creds");
         await File.WriteAllTextAsync(credentials, "-----BEGIN NATS USER JWT-----\neyJ0.e30.x\n------END NATS USER JWT------\n-----BEGIN USER NKEY SEED-----\nSUAEXAMPLE\n------END USER NKEY SEED------\n");
-        var network = new FakeRegionNetwork();
         return await ManagementApi.StartAsync(settings =>
         {
             settings["region"] = "gru-1";
             settings["node-name"] = "gru-member";
-            if (topologyDelivered)
-            {
-                settings["wan-regions"] = "gru-1=gru,sfo-1=sfo";
-            }
         }, services =>
         {
-            services.AddSingleton(network.Join("gru"));
             services.AddSingleton<IMemberDirectory>(new FakeMemberStore());
             hook?.Install(services);
         });

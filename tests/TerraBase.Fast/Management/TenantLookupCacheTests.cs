@@ -36,10 +36,8 @@ public sealed class TenantLookupCacheTests
                 settings["region"] = "gru-1";
                 settings["node-name"] = "gru-member";
                 settings["data-directory"] = Directory.CreateDirectory(Path.Combine(directory, "gru")).FullName;
-                settings["wan-regions"] = "gru-1=gru,sfo-1=sfo";
             }, services =>
             {
-                services.AddSingleton(new FakeRegionNetwork().Join("gru"));
                 services.AddSingleton<IMemberDirectory>(new FakeMemberStore());
             });
             var tenants = gru.Server.Services.GetRequiredService<ITenantDirectory>();

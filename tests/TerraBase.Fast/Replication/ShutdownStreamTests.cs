@@ -1,13 +1,9 @@
-using System.Security.Cryptography;
-using Bogus;
 using Grpc.Core;
 using Grpc.Core.Interceptors;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
-using TerraBase.Primitives;
-using TerraBase.Tenancy;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Replication;
@@ -45,43 +41,6 @@ public sealed class ShutdownStreamTests
             while (call.ResponseStream.Current.FrameCase != FollowResponse.FrameOneofCase.Heartbeat);
             await evidence.IdleFollow.Task.WaitAsync(token);
 
-            await AssertShutdownAsync(server, call.ResponseStream, evidence, shutdown, token);
-        }
-        finally
-        {
-            shutdown.Release.TrySetResult();
-        }
-    }
-
-    [Test]
-    public async Task Shutdown_ends_an_idle_replication_Sync_before_Kestrel_stops()
-    {
-        var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
-        using var tls = new PeerTls();
-        var evidence = new StreamCompletion();
-        var shutdown = new AwaitStreamCompletion(evidence, token);
-        await using var server = await TerraBaseTestServer.StartAsync(tls.Apply, services =>
-        {
-            services.AddSingleton(evidence);
-            services.AddGrpc(options => options.Interceptors.Add<StreamCompletion>());
-            services.AddHostedService(_ => shutdown);
-        });
-        try
-        {
-            var fake = new Faker();
-            var database = await server.RegisterAsync(new TenantContext(EntityIds.New().ToString(), PlanTier.Hobby,
-                EntityIds.New().ToString(), EntityIds.New().ToString()));
-            using var channel = tls.CreateChannel(server.PeerAddress!);
-            using var call = new Features.Replication.V1.Replication.ReplicationClient(channel).Sync(cancellationToken: token);
-            await call.RequestStream.WriteAsync(new SyncRequest
-            {
-                Hello = ReplicationProtocol.CreateHello(database, RandomNumberGenerator.GetBytes(16)),
-            }, token);
-            await Assert.That(await call.ResponseStream.MoveNext(token)).IsTrue();
-            await Assert.That(call.ResponseStream.Current.Welcome).IsNotNull();
-            await evidence.IdleRead.Task.WaitAsync(token);
-
-            // Leave the request side open: the service must cancel its idle read, not observe a client half-close.
             await AssertShutdownAsync(server, call.ResponseStream, evidence, shutdown, token);
         }
         finally

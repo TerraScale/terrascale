@@ -2,14 +2,19 @@ syntax = "proto3";
 
 package terrabase.v1;
 
-import "terrabase/v1/replication.proto";
-
 option csharp_namespace = "TerraBase.Features.Replication.V1";
+
+enum PayloadCodec {
+  // Versioned application envelope stores the payload unchanged.
+  PAYLOAD_CODEC_IDENTITY = 0;
+  // Version 1 raw LZ4 block inside the checked tb-format envelope.
+  PAYLOAD_CODEC_LZ4_BLOCK_V1 = 1;
+}
 
 // Internal: a catalog follower replicates TerraBase's own database (management catalog, API key hashes,
 // dashboard documents) from its catalog primary, the only member that writes it (docs/decisions/0009).
 // TerraBase C# only; terrabase-rust has no equivalent. Pages are TBDCG001 change groups inside a
-// TBLZ4E01 LZ4 application envelope, as in Replication.Sync; gRPC transport compression stays disabled.
+// TBLZ4E01 LZ4 application envelope; gRPC transport compression stays disabled.
 service CatalogReplication {
   // One request, then the primary streams until the follower cancels. A member that is not a
   // catalog primary answers FAILED_PRECONDITION.

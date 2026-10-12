@@ -237,12 +237,6 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
         }
         public ValueTask DisposeAsync() => inner.DisposeAsync();
 
-        public event EventHandler<ChangeGroupCommitted>? ChangesCommitted
-        {
-            add => inner.ChangesCommitted += value;
-            remove => inner.ChangesCommitted -= value;
-        }
-
         public event EventHandler<IDatabaseStore>? DatabaseDeleted
         {
             add => inner.DatabaseDeleted += value;
@@ -378,13 +372,6 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
         public ValueTask SetUniqueConstraintsAsync(string collection, IReadOnlyList<UniqueConstraint> constraints, CancellationToken cancellationToken) => inner.SetUniqueConstraintsAsync(collection, constraints, cancellationToken);
         public ValueTask<ReadOnlyMemory<byte>> GetOriginAsync(CancellationToken cancellationToken) => inner.GetOriginAsync(cancellationToken);
         public ValueTask<long> GetLastChangeSequenceAsync(CancellationToken cancellationToken) => inner.GetLastChangeSequenceAsync(cancellationToken);
-        public ValueTask<CapturedGroup?> ReadChangesAsync(long sequence, CancellationToken cancellationToken) => inner.ReadChangesAsync(sequence, cancellationToken);
-
-        public ValueTask<ReplicationStatePage> ReadReplicationStateAsync(string? afterCollection, string? afterId, CancellationToken cancellationToken) =>
-            inner.ReadReplicationStateAsync(afterCollection, afterId, cancellationToken);
-        public ValueTask<bool> ApplyAsync(DocumentDelta change, CancellationToken cancellationToken) => inner.ApplyAsync(change, cancellationToken);
-        public ValueTask<long> GetAppliedSequenceAsync(ReadOnlyMemory<byte> origin, CancellationToken cancellationToken) => inner.GetAppliedSequenceAsync(origin, cancellationToken);
-        public ValueTask SetAppliedSequenceAsync(ReadOnlyMemory<byte> origin, long sequence, CancellationToken cancellationToken) => inner.SetAppliedSequenceAsync(origin, sequence, cancellationToken);
         public ValueTask DisposeAsync() => inner.DisposeAsync();
 
         public ValueTask<long> PutAsync(string collection, string id, ReadOnlyMemory<byte> json, CancellationToken cancellationToken)

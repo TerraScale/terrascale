@@ -3,13 +3,13 @@ using TerraBase.Hosting;
 
 namespace TerraBase.Features.Replication;
 
-/// <summary>Registers the inter-node gRPC services on the internal listener, and the sender.</summary>
+/// <summary>Registers the catalog's inter-node gRPC services on the internal listener.</summary>
 public static class ReplicationExtensions
 {
     /// <summary>
-    /// Registers the <c>Replication</c> and <c>CatalogReplication</c> services, the sender to the other members of this
-    /// region, and the catalog follower and <see cref="ICatalogPrimaryClient"/>, which only a machine that follows a catalog
-    /// primary runs. Payloads are LZ4 application envelopes; gRPC transport compression is not used.
+    /// Registers the <c>CatalogReplication</c> services, and the catalog follower and <see cref="ICatalogPrimaryClient"/>,
+    /// which only a machine that follows a catalog primary runs. Payloads are LZ4 application envelopes; gRPC transport
+    /// compression is not used.
     /// </summary>
     public static WebApplicationBuilder AddTerraBaseReplication(this WebApplicationBuilder builder)
     {
@@ -18,16 +18,13 @@ public static class ReplicationExtensions
         builder.Services.AddSingleton<ICatalogReadiness>(provider => provider.GetRequiredService<TerraBaseOptions>().CatalogFollower
             ? provider.GetRequiredService<CatalogFollower>()
             : new CatalogPrimaryReadiness());
+        // Nothing replicates client databases until the CDC peer streams arrive (docs/terrabase/multi-region-replication.md).
+        builder.Services.AddSingleton<IReplicationStatus, NoReplicationStatus>();
+        builder.Services.AddSingleton<IReplicationPressure, NoReplicationPressure>();
         builder.Services.AddSingleton<CatalogFollower>();
         builder.Services.AddHostedService(provider => provider.GetRequiredService<CatalogFollower>());
         builder.Services.AddSingleton<CatalogForwarder>();
         builder.Services.AddSingleton<ICatalogPrimaryClient, CatalogPrimaryClient>();
-        builder.Services.AddSingleton<ReplicationMetrics>();
-        builder.Services.AddSingleton<IReplicationJournal, EngineReplicationJournal>();
-        builder.Services.AddSingleton<ReplicationService>();
-        builder.Services.AddSingleton<IAntiEntropyState, AntiEntropyState>();
-        builder.Services.AddSingleton<AntiEntropyService>();
-        builder.Services.AddHostedService<AntiEntropyWorker>();
         builder.Services.AddSingleton<CatalogFeed>();
         builder.Services.AddSingleton<ForwardedRequests>();
         builder.Services.AddGrpc(grpc =>
@@ -35,35 +32,15 @@ public static class ReplicationExtensions
             grpc.MaxReceiveMessageSize = ReplicationProtocol.MaxMessageBytes;
             grpc.MaxSendMessageSize = ReplicationProtocol.MaxMessageBytes;
         });
-        builder.Services.AddSingleton<ReplicationSender>();
-        builder.Services.AddSingleton<IReplicationWait>(provider => provider.GetRequiredService<ReplicationSender>());
-        builder.Services.AddSingleton<IReplicationStatus>(provider => provider.GetRequiredService<ReplicationSender>());
-        builder.Services.AddSingleton<IReplicationPressure>(provider => provider.GetRequiredService<ReplicationSender>());
-        builder.Services.AddHostedService(provider => provider.GetRequiredService<ReplicationSender>());
         return builder;
     }
 
-    /// <summary>Maps the inter-node gRPC services onto the internal listener.</summary>
+    /// <summary>Maps the catalog's inter-node gRPC services onto the internal listener.</summary>
     public static WebApplication MapTerraBaseReplication(this WebApplication app)
     {
         ArgumentNullException.ThrowIfNull(app);
-        app.MapGrpcService<ReplicationService>().WithMetadata(ListenerMetadata.Internal);
-        app.MapGrpcService<AntiEntropyService>().WithMetadata(ListenerMetadata.Internal);
         app.MapGrpcService<CatalogFeed>().WithMetadata(ListenerMetadata.Internal);
         app.MapGrpcService<ForwardedRequests>().WithMetadata(ListenerMetadata.Internal);
-        app.MapGrpcService<CrossRegion.WanService>().WithMetadata(ListenerMetadata.Internal);
-        return app;
-    }
-
-    /// <summary>Keeps anti-entropy response backpressure inside its admission and transmission deadline.</summary>
-    public static WebApplication UseTerraBaseAntiEntropyResponses(this WebApplication app)
-    {
-        ArgumentNullException.ThrowIfNull(app);
-        app.Use(async (context, next) =>
-        {
-            await next(context).ConfigureAwait(false);
-            await AntiEntropyService.FlushResponseAsync(context).ConfigureAwait(false);
-        });
         return app;
     }
 

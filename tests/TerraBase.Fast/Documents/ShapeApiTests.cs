@@ -1,5 +1,6 @@
 using System.Diagnostics.Metrics;
 using System.Net;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Bogus;
@@ -7,6 +8,7 @@ using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
+using TerraBase.Engine.Lattices;
 using TerraBase.Engine.Sqlite;
 using TerraBase.Fast.Management;
 using TerraBase.Features.ApiKeys;
@@ -913,43 +915,6 @@ public sealed class ShapeApiTests
     }
 
     [Test]
-    public async Task A_transaction_cannot_capture_more_than_2_MiB_of_distinct_document_states()
-    {
-        await using var api = await DocumentApi.StartAsync();
-        var ids = Ids(8);
-        var padding = new string('x', 950 * 1024);
-        var versions = new Dictionary<string, string>(StringComparer.Ordinal);
-        ApiResponse? last = null;
-        foreach (var id in ids)
-        {
-            last = await api.PutAsync(id, new { padding, n = 0 });
-            last.Status.ShouldBe(HttpStatusCode.Created);
-            versions.Add(id, last.Version);
-        }
-
-        var before = long.Parse(last!.Json.GetProperty("offset").GetString()!, System.Globalization.CultureInfo.InvariantCulture);
-        // The third 950 KiB final state exceeds capture's 2 MiB limit before the 7 MiB shape framing limit.
-        var patched = await api.TransactAsync([.. ids.Select(id => new { op = "patch", collection = DocumentApi.Collection, id, merge = new { n = 1 } })]);
-        await Assert.That((patched.Status, patched.Code, patched.Op)).IsEqualTo((HttpStatusCode.ServiceUnavailable, "capacity", (int?)2));
-        foreach (var id in ids)
-        {
-            var unchanged = await api.GetAsync(id);
-            await Assert.That(unchanged.Status).IsEqualTo(HttpStatusCode.OK);
-            await Assert.That(unchanged.Version).IsEqualTo(versions[id]);
-            await Assert.That(unchanged.Json.GetProperty("document").GetProperty("n").GetInt32()).IsEqualTo(0);
-        }
-
-        var bounded = await api.TransactAsync([.. ids.Take(2).Select(id => new { op = "patch", collection = DocumentApi.Collection, id, merge = new { n = 1 } })]);
-        await Assert.That(bounded.Status).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(long.Parse(bounded.Json.GetProperty("offset").GetString()!, System.Globalization.CultureInfo.InvariantCulture)).IsEqualTo(before + 1);
-        foreach (var id in ids.Take(2))
-        {
-            var changed = await api.GetAsync(id);
-            await Assert.That(changed.Json.GetProperty("document").GetProperty("n").GetInt32()).IsEqualTo(1);
-        }
-    }
-
-    [Test]
     public async Task A_max_size_document_is_an_allowed_singleton_above_1_MiB_with_framing()
     {
         await using var api = await DocumentApi.StartAsync();
@@ -1151,7 +1116,7 @@ public sealed class ShapeApiTests
         using var store = new SqliteDatabaseStore(database.DatabaseId!, await api.DatabaseFileAsync(), engine.Pool, engine.Io,
             "PRAGMA cache_size = -64; PRAGMA busy_timeout = 30000;", database, TimeProvider.System, changesCommitted: null, committed: null)
         {
-            Member = new LocalReplica(Deltas.NewReplica(), new MemberClock(TimeProvider.System, meter)),
+            Member = new LocalReplica(ReplicaId.Of(ushort.MaxValue, BitConverter.ToUInt32(RandomNumberGenerator.GetBytes(4)) | 1, 0), new MemberClock(TimeProvider.System, meter)),
         };
         await using (var write = await store.BeginTransactionAsync(write: true, token))
         {

@@ -5,13 +5,12 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.Extensions.DependencyInjection;
-using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
 
 namespace TerraBase.Testing;
 
 /// <summary>
-/// A scripted <c>Replication</c> receiver or <c>CatalogReplication</c> primary on its own HTTP/2 listener, for tests that
+/// A scripted <c>CatalogReplication</c> primary on its own HTTP/2 listener, for tests that
 /// need a peer to answer in ways a real node never does. Each stream runs <c>serve</c>.
 /// </summary>
 public sealed class FakePeer : IAsyncDisposable
@@ -26,11 +25,6 @@ public sealed class FakePeer : IAsyncDisposable
 
     /// <summary>The <c>http://127.0.0.1</c> address to put in a node's <c>peer-addresses</c>.</summary>
     public Uri Address { get; }
-
-    /// <summary>Starts a fake peer.</summary>
-    public static Task<FakePeer> StartAsync(
-        PeerTls tls, Func<IAsyncStreamReader<SyncRequest>, IServerStreamWriter<SyncResponse>, ServerCallContext, Task> serve) =>
-        StartAsync(tls, services => services.AddSingleton(new Service(serve)), app => app.MapGrpcService<Service>());
 
     /// <summary>
     /// Starts a fake catalog primary (<c>CatalogReplication</c>); each
@@ -78,45 +72,6 @@ public sealed class FakePeer : IAsyncDisposable
         }
     }
 
-    /// <summary>
-    /// A <c>Welcome</c> a real node would send for <paramref name="hello"/>, with <paramref name="limits"/> (by
-    /// default the sender's own) and no applied prefix, and the receiving <paramref name="member"/> it names.
-    /// </summary>
-    public static SyncResponse Welcome(Hello hello, out PeerIdentity member, TransferLimits? limits = null)
-    {
-        ArgumentNullException.ThrowIfNull(hello);
-        var id = Google.Protobuf.ByteString.CopyFrom(System.Security.Cryptography.RandomNumberGenerator.GetBytes(16));
-        member = hello.LocalIdentity.Clone();
-        member.MemberId = member.MemberIncarnation = id;
-        return new SyncResponse
-        {
-            Welcome = new Welcome
-            {
-                LocalIdentity = member,
-                ProtocolVersion = new ProtocolVersion { Major = ReplicationProtocol.Major },
-                EventFormatVersion = ReplicationProtocol.FormatVersion,
-                RecordFormatVersion = ReplicationProtocol.FormatVersion,
-                MergePolicyVersion = ReplicationProtocol.FormatVersion,
-                Codecs = { PayloadCodec.Lz4BlockV1 },
-                Limits = limits ?? hello.Limits,
-            },
-        };
-    }
-
-    /// <summary>The <c>DurableAck</c> a real node would send after applying <paramref name="batch"/> up to <paramref name="prefix"/>.</summary>
-    public static SyncResponse Ack(PeerIdentity member, CommittedGroupBatch batch, ulong prefix)
-    {
-        ArgumentNullException.ThrowIfNull(batch);
-        return new SyncResponse
-        {
-            Durable = new DurableAck
-            {
-                Context = new AckContext { AcknowledgingPeer = member, EventId = batch.EventId },
-                DurablePrefix = prefix,
-            },
-        };
-    }
-
     /// <inheritdoc />
     public async ValueTask DisposeAsync()
     {
@@ -135,12 +90,5 @@ public sealed class FakePeer : IAsyncDisposable
     {
         public override Task Forward(ForwardRequest request, IServerStreamWriter<ForwardResponse> responseStream, ServerCallContext context) =>
             forward(request, responseStream, context);
-    }
-
-    private sealed class Service(Func<IAsyncStreamReader<SyncRequest>, IServerStreamWriter<SyncResponse>, ServerCallContext, Task> serve)
-        : Features.Replication.V1.Replication.ReplicationBase
-    {
-        public override Task Sync(IAsyncStreamReader<SyncRequest> requestStream, IServerStreamWriter<SyncResponse> responseStream, ServerCallContext context) =>
-            serve(requestStream, responseStream, context);
     }
 }

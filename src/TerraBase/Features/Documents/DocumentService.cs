@@ -8,7 +8,6 @@ using TerraBase.Features.Management.Queries;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
-using TerraBase.Features.Replication;
 using TerraBase.Features.Stats;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
@@ -16,11 +15,7 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Documents;
 
-/// <remarks>
-/// A committed client write answers only after <see cref="IReplicationWait"/>, outside its transaction: the database's
-/// writer lock must not wait on the network, and a peer applying this member's groups needs it.
-/// </remarks>
-internal sealed partial class DocumentService(IStorageEngine engine, TimeProvider time, DocumentCache cache, IUsageMeter usage, IReplicationWait replication,
+internal sealed partial class DocumentService(IStorageEngine engine, TimeProvider time, DocumentCache cache, IUsageMeter usage,
     IQueryShapeTracker shapes, IMemoryBudget memory, IMeterFactory meters, IStorageQuota quota, IDatabaseStats stats)
     : IDocumentService, ISystemDocumentReader
 {
@@ -57,7 +52,6 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         }
 
-        await replication.WaitAsync(database, cancellationToken).ConfigureAwait(false);
         return collection;
     }
 
@@ -130,7 +124,6 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
             }
         }
 
-        await replication.WaitAsync(database, cancellationToken).ConfigureAwait(false);
         return collection;
     }
 
@@ -341,17 +334,9 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
         }
     }
 
-    public async ValueTask<WriteOutcome> WriteAsync(
-        TenantContext database, IReadOnlyList<DocumentOperation> operations, bool indexErrors, CancellationToken cancellationToken)
-    {
-        var written = await CommitAsync(database, operations, indexErrors, cancellationToken).ConfigureAwait(false);
-        if (written is WriteResult)
-        {
-            await replication.WaitAsync(database, cancellationToken).ConfigureAwait(false);
-        }
-
-        return written;
-    }
+    public ValueTask<WriteOutcome> WriteAsync(
+        TenantContext database, IReadOnlyList<DocumentOperation> operations, bool indexErrors, CancellationToken cancellationToken) =>
+        CommitAsync(database, operations, indexErrors, cancellationToken);
 
     // Group commit: the write shares a transaction with other writes queued at the same time, in its own savepoint.
     private async ValueTask<WriteOutcome> CommitAsync(

@@ -74,7 +74,6 @@ public sealed class Cluster : IAsyncDisposable
 
     private static async Task<Cluster> StartLocalAsync()
     {
-        var network = new FakeRegionNetwork();
         var machines = new FakeMemberStore();
         ManagementApi? gruApi = null;
         ManagementApi? sjcApi = null;
@@ -82,8 +81,8 @@ public sealed class Cluster : IAsyncDisposable
         HttpClient? sjcNode = null;
         try
         {
-            gruApi = await StartNodeAsync(network, machines, Gru);
-            sjcApi = await StartNodeAsync(network, machines, Sjc);
+            gruApi = await StartNodeAsync(machines, Gru);
+            sjcApi = await StartNodeAsync(machines, Sjc);
             var organization = EntityIds.New().ToString();
             var project = EntityIds.New().ToString();
             var database = EntityIds.New().ToString();
@@ -202,16 +201,14 @@ public sealed class Cluster : IAsyncDisposable
     private static string NewCollection() => $"e2e-{Guid.NewGuid():N}";
 
     // FLY_REGION and FLY_MACHINE_ID come from the harness's region and node-name keys; the machine ID has Fly's shape.
-    private static Task<ManagementApi> StartNodeAsync(FakeRegionNetwork network, FakeMemberStore machines, string region) =>
+    private static Task<ManagementApi> StartNodeAsync(FakeMemberStore machines, string region) =>
         ManagementApi.StartAsync(settings =>
         {
             settings["region"] = region;
             settings["node-name"] = Convert.ToHexStringLower(Guid.NewGuid().ToByteArray())[..14];
-            settings["wan-regions"] = "gru=gru,sjc=sjc";
         }, services =>
         {
             services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, new FakeTimeProvider());
-            services.AddSingleton(network.Join(region));
             services.AddSingleton<IMemberDirectory>(machines);
         });
 

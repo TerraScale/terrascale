@@ -1,5 +1,10 @@
 # Replication
 
+> **Removed (2026-10-11, slice R2a).** Client databases no longer replicate this way: the sender, receiver,
+> anti-entropy and write-wait described here are deleted, and design C replaces them
+> ([multi-region-replication.md](multi-region-replication.md)). Until slice R4a ships, client databases do not
+> replicate between machines. The catalog (`_system`) sections still describe the running code until R10a.
+
 Nodes send each other the committed document changes of client databases over gRPC with mutual
 TLS. Every change group travels LZ4-compressed in a versioned application envelope. Design, wire
 format and open questions: [0007](decisions/0007-lz4-application-envelope-replication.md).

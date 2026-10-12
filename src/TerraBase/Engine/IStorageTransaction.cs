@@ -1,4 +1,3 @@
-using System.Text;
 using System.Text.Json;
 using TerraBase.Engine.Lattices;
 
@@ -23,18 +22,6 @@ public sealed record StoredDocument(string Id, long Version, ReadOnlyMemory<byte
 /// <param name="Documents">The documents of this page.</param>
 /// <param name="HasMore">Whether documents after the last one exist.</param>
 public sealed record DocumentPage(IReadOnlyList<StoredDocument> Documents, bool HasMore);
-
-/// <summary>One bounded page of stored document registers, live or tombstone, in collection and id order.</summary>
-/// <param name="States">The registers in this page, including collection, index and uniqueness metadata.</param>
-/// <param name="HasMore">Whether keys after the returned cursor remain.</param>
-/// <param name="AfterCollection">Last examined collection; null before any key.</param>
-/// <param name="AfterId">Last examined id; null before any key.</param>
-/// <param name="Unmaterialized">
-/// The states of <paramref name="States"/> whose row does not read as the register's last-writer-wins write (damage to its
-/// version or body alone); applying such a state rewrites its row.
-/// </param>
-public sealed record ReplicationStatePage(
-    IReadOnlyList<DocumentDelta> States, bool HasMore, string? AfterCollection, string? AfterId, IReadOnlyList<DocumentDelta> Unmaterialized);
 
 /// <summary>The version of a document or its tombstone, read without its body.</summary>
 /// <param name="Version">The version of <see cref="StoredDocument"/>.</param>
@@ -75,14 +62,8 @@ public sealed record CollectionInfo(string Name, long CreatedAt, long Generation
 // TS-647 step 5 makes the system database a lattice database too, and this goes with the catalog primary.
 public sealed record DocumentChange(string Collection, string Id, long Version, ReadOnlyMemory<byte>? Json);
 
-/// <summary>
-/// A replicated change of one client document (docs/design/anna-core.md, Documents): a delta of its register, as a local
-/// write captured it, or its whole state, as a snapshot sends it. Applying joins it into the stored register.
-/// </summary>
-/// <param name="Collection">Collection name.</param>
-/// <param name="Id">Document id.</param>
-/// <param name="State">The register delta or state.</param>
-public sealed record DocumentDelta(string Collection, string Id, MvRegister<DocumentWrite> State)
+/// <summary>The reserved collections a client database keeps its metadata in, as documents.</summary>
+public static class DocumentDelta
 {
     /// <summary>
     /// Reserved collection of a client database's collections: one document per collection, a tombstone once dropped, so
@@ -94,49 +75,9 @@ public sealed record DocumentDelta(string Collection, string Id, MvRegister<Docu
     internal const string Indexes = "_indexes";
 
     internal const string Unique = "_unique";
-
-    private static readonly UTF8Encoding Utf8 = new(false, true);
-
-    internal static bool HasValidKey(string collection, string id)
-    {
-        if (!(DatabaseName.TryParse(collection, out _) || collection is Collections or Indexes or Unique) || id.Length is 0 or > 256 || id.Any(char.IsControl))
-        {
-            return false;
-        }
-
-        try
-        {
-            _ = Utf8.GetByteCount(id);
-            return true;
-        }
-        catch (EncoderFallbackException)
-        {
-            return false;
-        }
-    }
 }
 
-/// <summary>A position in an origin's stream: the 16-byte origin and the last of its groups applied.</summary>
-/// <param name="Origin">The origin.</param>
-/// <param name="Sequence">The group, 1 or more.</param>
-public sealed record OriginPosition(ReadOnlyMemory<byte> Origin, long Sequence);
-
-/// <summary>
-/// One change group a client database captured (docs/design/anna-core.md, Per-origin streams): the deltas of one commit,
-/// at most one per document, and its dependency vector: the applied position of every other origin it had applied when
-/// it committed.
-/// </summary>
-/// <param name="Dependencies">One position per origin, in origin byte order.</param>
-/// <param name="Changes">The deltas, in the order the commit first wrote their documents.</param>
-public sealed record CapturedGroup(IReadOnlyList<OriginPosition> Dependencies, IReadOnlyList<DocumentDelta> Changes);
-
 /// <summary>Document and collection operations inside one engine transaction.</summary>
-/// <remarks>
-/// Local document mutation calls (<see cref="PutAsync"/>, <see cref="DeleteAsync"/>, <see cref="TombstoneAsync"/>,
-/// <see cref="SetCollectionSchemaAsync"/> and <see cref="DropCollectionAsync"/>) cannot share a transaction with <see cref="ApplyAsync"/>, in either order,
-/// even when a call changes nothing. Mixing them throws and makes the transaction rollback-only.
-/// Collection creation and applied-position updates remain available to replicated transactions.
-/// </remarks>
 public interface IStorageTransaction : IAsyncDisposable
 {
     /// <summary>Most document changes one captured write transaction may commit.</summary>
@@ -366,43 +307,11 @@ public interface IStorageTransaction : IAsyncDisposable
     ValueTask<long> CommitAsync(CancellationToken cancellationToken);
 
     /// <summary>
-    /// The origin of this database's own stream, 16 bytes. In a client database: this member's replica id
-    /// (little-endian) and the first 8 bytes of the file's incarnation, so a new epoch or a copied file starts a new
-    /// stream (docs/design/anna-core.md, Per-origin streams). In the system database: its incarnation. Captured change
-    /// groups are numbered 1, 2, … under it.
+    /// The origin of the system database's journal, 16 bytes: its incarnation. Captured change groups are numbered 1, 2, …
+    /// under it. A client database keeps no journal and refuses it with <see cref="NotSupportedException"/>.
     /// </summary>
     ValueTask<ReadOnlyMemory<byte>> GetOriginAsync(CancellationToken cancellationToken);
 
-    /// <summary>The last locally committed change group sequence, or 0 for an empty journal.</summary>
+    /// <summary>The system database's last committed change group sequence, or 0 for an empty journal.</summary>
     ValueTask<long> GetLastChangeSequenceAsync(CancellationToken cancellationToken);
-
-    /// <summary>
-    /// Reads captured change group <paramref name="sequence"/> of a client database, or <see langword="null"/> when it does
-    /// not exist. The system database's groups are read through <see cref="ISystemReplication"/>.
-    /// </summary>
-    ValueTask<CapturedGroup?> ReadChangesAsync(long sequence, CancellationToken cancellationToken);
-
-    /// <summary>
-    /// Reads the stored register of every document, live or tombstone, including collection, index and uniqueness
-    /// metadata, after the (<paramref name="afterCollection"/>, <paramref name="afterId"/>) cursor in collection and id
-    /// order. Both cursor parts are null for the first page. Each page examines at most 128 keys and holds at most 128
-    /// registers: the first of at most <see cref="MaxSingleChangeBytes"/> and all of them of at most
-    /// <see cref="MaxChangeGroupBytes"/> bytes of keys and encoded states, as <see cref="ApplyAsync"/> admits them.
-    /// Sizes are checked before a register is read. Reuse one transaction for every page to read a consistent state.
-    /// </summary>
-    ValueTask<ReplicationStatePage> ReadReplicationStateAsync(string? afterCollection, string? afterId, CancellationToken cancellationToken);
-
-    /// <summary>
-    /// Joins a replicated delta into the stored register of its document; it is never captured. Joins are associative,
-    /// commutative and idempotent, so every replica that applies the same deltas in any order, any number of times, ends
-    /// in the same state. Returns whether the stored state changed. A delta whose dot carries another value than the
-    /// stored one (a replica minted it twice) is refused with <see cref="InvalidDataException"/>.
-    /// </summary>
-    ValueTask<bool> ApplyAsync(DocumentDelta change, CancellationToken cancellationToken);
-
-    /// <summary>The last change group of <paramref name="origin"/> applied to this database; 0 when none.</summary>
-    ValueTask<long> GetAppliedSequenceAsync(ReadOnlyMemory<byte> origin, CancellationToken cancellationToken);
-
-    /// <summary>Records that the change groups of <paramref name="origin"/> through <paramref name="sequence"/> are applied.</summary>
-    ValueTask SetAppliedSequenceAsync(ReadOnlyMemory<byte> origin, long sequence, CancellationToken cancellationToken);
 }

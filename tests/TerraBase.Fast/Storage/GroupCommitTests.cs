@@ -224,7 +224,7 @@ public sealed class GroupCommitTests
     }
 
     [Test]
-    public async Task A_rolled_back_write_restores_what_an_earlier_write_of_its_batch_captured()
+    public async Task A_rolled_back_write_keeps_what_an_earlier_write_of_its_batch_wrote()
     {
         await using var api = await DocumentApi.StartAsync();
         await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "enterprise");
@@ -265,19 +265,7 @@ public sealed class GroupCommitTests
         await Assert.That((await failing).Status).IsEqualTo(HttpStatusCode.PreconditionFailed);
         await Assert.That((await last).Status).IsEqualTo(HttpStatusCode.Created);
         await Assert.That((await api.GetAsync(shared)).Json.GetProperty("document").GetProperty("n").GetInt32()).IsEqualTo(1);
-
-        // The change groups replicated to peers carry the first write's state, never the rolled-back one.
-        await using var reader = await store.BeginTransactionAsync(write: false, CancellationToken.None);
-        var captured = new List<DocumentDelta>();
-        for (var sequence = await reader.GetLastChangeSequenceAsync(CancellationToken.None); sequence > 0 && captured.Count < 3; sequence--)
-        {
-            captured.AddRange((await reader.ReadChangesAsync(sequence, CancellationToken.None))?.Changes ?? []);
-        }
-
-        var states = captured.Where(change => change.Id == shared).Select(change => Deltas.Json(change)!).ToList();
-        await Assert.That(states).IsNotEmpty();
-        await Assert.That(states.All(json => json.Contains("\"n\":1", StringComparison.Ordinal))).IsTrue();
-        await Assert.That(captured.Any(change => change.Id == other)).IsTrue();
+        await Assert.That((await api.GetAsync(other)).Json.GetProperty("document").GetProperty("n").GetInt32()).IsEqualTo(3);
     }
 
     [Test]

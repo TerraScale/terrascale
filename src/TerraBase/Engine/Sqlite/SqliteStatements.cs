@@ -40,14 +40,6 @@ internal static class SqliteStatements
     // last-writer-wins write, written together.
     public const string GetState = "SELECT state FROM documents WHERE collection = $collection AND id = $id;";
 
-    // Whether a row reads as its register's last-writer-wins write: that write's version, and its JSON (NULL for a tombstone)
-    // in the row or, for a hidden uniqueness loser, kept aside with a NULL row body.
-    public const string Materialized = """
-        SELECT 1 FROM documents d LEFT JOIN unique_conflicts c ON c.collection = d.collection AND c.id = d.id
-        WHERE d.collection = $collection AND d.id = $id AND d.version = $version
-            AND coalesce(c.body, d.body) IS $body AND (c.body IS NULL OR d.body IS NULL);
-        """;
-
     public const string PutState = """
         INSERT INTO documents (collection, id, state, version, body) VALUES ($collection, $id, $state, $version, $body)
         ON CONFLICT (collection, id) DO UPDATE SET state = excluded.state, version = excluded.version, body = excluded.body;
@@ -121,8 +113,6 @@ internal static class SqliteStatements
 
     public const string GetCollection = "SELECT name, created_at, generation, entity_id FROM collections WHERE name = $collection;";
 
-    public const string AdoptCollectionIdentity = "UPDATE collections SET entity_id = $entityId, created_at = $created WHERE name = $collection;";
-
     // The first page walks the primary key in order and stops at the limit.
     public const string ListCollectionsFirst = "SELECT name, created_at, generation, entity_id FROM collections ORDER BY name LIMIT $limit;";
 
@@ -176,82 +166,8 @@ internal static class SqliteStatements
         SELECT id FROM documents INDEXED BY documents_live WHERE collection = $collection AND body IS NOT NULL ORDER BY id LIMIT $limit;
         """;
 
-    // A client database's journal goes when it was captured under another replica id: whole-table deletes, once per open,
-    // so not in ClientOnly (no plan to check).
-    public const string ResetJournal = "DELETE FROM changes; DELETE FROM journal;";
-
     // The system database's origin is its persisted incarnation, a ULID.
     public const string Origin = "SELECT incarnation FROM commit_offset WHERE id = 1;";
-
-    // A client database's own stream (docs/design/anna-core.md, Per-origin streams): the replica id it is captured under,
-    // whether it covers every register (complete), its groups' dependency vectors (journal) and changes.
-    public const string JournalState = "SELECT replica, complete FROM replication_state WHERE id = 1;";
-
-    public const string ClaimJournal = "UPDATE replication_state SET replica = $replica, complete = $complete WHERE id = 1;";
-
-    public const string MarkComplete = "UPDATE replication_state SET complete = 1 WHERE id = 1;";
-
-    public const string LastGroup = "SELECT coalesce(max(sequence), 0) FROM journal;";
-
-    public const string AppendGroup = "INSERT INTO journal (sequence, dependencies) VALUES ($sequence, $dependencies);";
-
-    public const string AppendGroupChange = """
-        INSERT INTO changes (sequence, ordinal, collection, id, state) VALUES ($sequence, $ordinal, $collection, $id, $state);
-        """;
-
-    public const string GroupDependencies = "SELECT dependencies FROM journal WHERE sequence = $sequence;";
-
-    // Sizes come from the record header, so an oversized state is refused before it is read.
-    public const string GroupChanges = """
-        SELECT collection, id, CASE WHEN octet_length(state) <= $maxBytes THEN state END,
-            octet_length(collection) + octet_length(id) + octet_length(state)
-        FROM changes WHERE sequence = $sequence ORDER BY ordinal LIMIT $limit;
-        """;
-
-    public const string GetApplied = "SELECT sequence FROM applied WHERE origin = $origin;";
-
-    // At most one past the most dependencies a group holds, in origin order.
-    public const string AppliedPositions = "SELECT origin, sequence FROM applied ORDER BY origin LIMIT $limit;";
-
-    public const string SetApplied = """
-        INSERT INTO applied (origin, sequence) VALUES ($origin, $sequence)
-        ON CONFLICT (origin) DO UPDATE SET sequence = excluded.sequence;
-        """;
-
-    // A member's later epoch supersedes its earlier ones on the same database file (bytes 3 to 16 of the origin): its stream
-    // starts with a baseline of everything the member held, which covers any dependency on an earlier epoch, so their
-    // positions go and the table keeps one row per member and file, not one per unclean start. The epoch is bytes 1 and 2,
-    // little-endian.
-    public const string DropSupersededApplied = """
-        DELETE FROM applied WHERE substr(origin, 3) = substr($origin, 3)
-            AND hex(substr(origin, 2, 1)) || hex(substr(origin, 1, 1)) < hex(substr($origin, 2, 1)) || hex(substr($origin, 1, 1));
-        """;
-
-    // A baseline sends every register, live or tombstone, in key order; an oversized one is refused before it is read.
-    public const string BaselineFirst = """
-        SELECT collection, id, CASE WHEN octet_length(state) <= $maxBytes THEN state END, octet_length(state)
-        FROM documents ORDER BY collection, id LIMIT $limit;
-        """;
-
-    public const string BaselineAfter = """
-        SELECT collection, id, CASE WHEN octet_length(state) <= $maxBytes THEN state END, octet_length(state)
-        FROM documents WHERE (collection, id) > ($collection, $id) ORDER BY collection, id LIMIT $limit;
-        """;
-
-    // Shared with the client schema's partial index: SQLite needs the matching predicate to use it.
-    internal const string BoundedReplicationKeys = "octet_length(collection) <= 63 AND octet_length(id) <= 1024 AND collection != '' AND id != ''";
-
-    // Anti-entropy pages read registers in key order, as a baseline does, past keys no peer admits.
-    public const string ReplicationStateFirst = $$"""
-        SELECT collection, id, CASE WHEN octet_length(state) <= $maxBytes THEN state END, octet_length(state)
-        FROM documents INDEXED BY documents_replication_keys WHERE {{BoundedReplicationKeys}} ORDER BY collection, id LIMIT $limit;
-        """;
-
-    public const string ReplicationStateAfter = $$"""
-        SELECT collection, id, CASE WHEN octet_length(state) <= $maxBytes THEN state END, octet_length(state)
-        FROM documents INDEXED BY documents_replication_keys WHERE (collection, id) > ($collection, $id) AND {{BoundedReplicationKeys}}
-        ORDER BY collection, id LIMIT $limit;
-        """;
 
     // The system database's journal: every write in order, with a SHA-256 prefix digest per group (docs/decisions/0009).
     public const string LastSequence = "SELECT coalesce(max(sequence), 0) FROM changes;";
@@ -333,25 +249,8 @@ internal static class SqliteStatements
         [nameof(GetState)] = GetState,
         [nameof(ClientHasCollectionState)] = ClientHasCollectionState,
         [nameof(ClientHasCollectionStateFrom)] = ClientHasCollectionStateFrom,
-        [nameof(Materialized)] = Materialized,
         [nameof(PutState)] = PutState,
         [nameof(LiveIds)] = LiveIds,
-        [nameof(JournalState)] = JournalState,
-        [nameof(ClaimJournal)] = ClaimJournal,
-        [nameof(MarkComplete)] = MarkComplete,
-        [nameof(LastGroup)] = LastGroup,
-        [nameof(AppendGroup)] = AppendGroup,
-        [nameof(AppendGroupChange)] = AppendGroupChange,
-        [nameof(GroupDependencies)] = GroupDependencies,
-        [nameof(GroupChanges)] = GroupChanges,
-        [nameof(AppliedPositions)] = AppliedPositions,
-        [nameof(GetApplied)] = GetApplied,
-        [nameof(SetApplied)] = SetApplied,
-        [nameof(DropSupersededApplied)] = DropSupersededApplied,
-        [nameof(BaselineFirst)] = BaselineFirst,
-        [nameof(BaselineAfter)] = BaselineAfter,
-        [nameof(ReplicationStateFirst)] = ReplicationStateFirst,
-        [nameof(ReplicationStateAfter)] = ReplicationStateAfter,
     };
 
     /// <summary>Statements only the system database runs, by name, for query-plan checks (TS-647 step 5 removes them).</summary>

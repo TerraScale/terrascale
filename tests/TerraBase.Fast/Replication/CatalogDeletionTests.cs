@@ -32,19 +32,6 @@ public sealed class CatalogDeletionTests
         var followerDirectory = Directory.CreateTempSubdirectory("terrabase-delete-follower-").FullName;
         TerraBaseTestServer? primary = null;
         TerraBaseTestServer? follower = null;
-        // A Sync stream for the database named here stops between its registration check and its open, until released.
-        string? paused = null;
-        using var reached = new SemaphoreSlim(0);
-        using var release = new SemaphoreSlim(0);
-        void Pause(string step, TenantContext database)
-        {
-            if (step == "replication.registered" && database.DatabaseId == Volatile.Read(ref paused))
-            {
-                reached.Release();
-                _ = release.Wait(TimeSpan.FromSeconds(30));
-            }
-        }
-
         Task<TerraBaseTestServer> StartFollowerAsync()
         {
             return TerraBaseTestServer.StartAsync(settings =>
@@ -53,7 +40,7 @@ public sealed class CatalogDeletionTests
                 tls.Apply(settings);
                 settings["data-directory"] = followerDirectory;
                 settings["catalog-primary"] = primary!.PeerAddress!.ToString();
-            }, services => services.AddSingleton<DatabaseLifecycleCheckpoint>(Pause));
+            });
         }
 
         try
@@ -106,44 +93,24 @@ public sealed class CatalogDeletionTests
 
             await Assert.That(File.Exists(FileOf(orders)) && File.Exists(FileOf(invoices))).IsTrue();
 
-            // Deleted while the follower follows, and while a peer's Sync stream for it passed the registration check but has not
-            // opened it: the follower's file goes, the stream's reopened file goes too, and nothing brings it back.
-            using (var channel = peers.CreateChannel(follower.PeerAddress!))
-            {
-                var client = new Features.Replication.V1.Replication.ReplicationClient(channel);
-                Volatile.Write(ref paused, orders.DatabaseId);
-                var racing = HelloAsync(client, orders, token);
-                await reached.WaitAsync(token);
-                await Assert.That(await management.DeleteDatabaseAsync(user, organization.Id, project.Id, orders.DatabaseId!, token) is Done).IsTrue();
-                await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(!File.Exists(FileOf(orders))));
-                release.Release();
-                var raced = await racing;
-                await Assert.That(raced.Error?.Code).IsEqualTo(StreamErrorCode.StreamErrorUnauthorized);
-                await Assert.That(File.Exists(FileOf(orders))).IsFalse();
+            // Deleted while the follower follows: the follower's file goes, and nothing brings it back.
+            await Assert.That(await management.DeleteDatabaseAsync(user, organization.Id, project.Id, orders.DatabaseId!, token) is Done).IsTrue();
+            await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(!File.Exists(FileOf(orders))));
 
-                var refused = await HelloAsync(client, orders, token);
-                await Assert.That(refused.Error?.Code).IsEqualTo(StreamErrorCode.StreamErrorUnauthorized);
-                await Assert.That(refused.Error!.Retryable).IsTrue();
-                await Assert.That(File.Exists(FileOf(orders))).IsFalse();
-                await Assert.That((await HelloAsync(client, invoices, token)).Welcome).IsNotNull();
-
-                // A catalog at a version this build does not read refuses streams, and deletes nothing on its account.
-                var engine = primary.Services.GetRequiredService<IStorageEngine>();
-                await WriteVersionAsync(engine, "\"99\""u8.ToArray(), token);
-                await TerraBaseTestServer.EventuallyAsync(async probe => (await HelloAsync(client, invoices, probe)).Error is not null);
-                var followerTenants = follower.Services.GetRequiredService<ITenantDirectory>();
-                await Assert.That(await followerTenants.RegisteredAsync(invoices, token) is Unavailable).IsTrue();
-                await Assert.That(await followerTenants.ReplicatesAsync(invoices, token) is Unavailable).IsTrue();
-                await Assert.That(await followerTenants.DatabaseRecordAsync(invoices, token) is Unavailable).IsTrue();
-                await Assert.That(await followerTenants.PlanAsync(invoices.OrganizationId, token) is Unavailable).IsTrue();
-                await Assert.That(File.Exists(FileOf(invoices))).IsTrue();
-                await WriteVersionAsync(engine, "\"1\""u8.ToArray(), token);
-                await TerraBaseTestServer.EventuallyAsync(async probe => (await HelloAsync(client, invoices, probe)).Welcome is not null);
-                await Assert.That(await followerTenants.RegisteredAsync(invoices, token) is bool registered && registered).IsTrue();
-                await Assert.That(await followerTenants.ReplicatesAsync(invoices, token) is bool replicates && replicates).IsTrue();
-                await Assert.That(await followerTenants.DatabaseRecordAsync(invoices, token) is TenantDatabaseRecord { Name: "invoices" }).IsTrue();
-                await Assert.That(await followerTenants.PlanAsync(EntityIds.New().ToString(), token) is PlanTier.Hobby).IsTrue();
-            }
+            // A catalog at a version this build does not read is unavailable to the follower, and deletes nothing on its account.
+            var engine = primary.Services.GetRequiredService<IStorageEngine>();
+            var followerTenants = follower.Services.GetRequiredService<ITenantDirectory>();
+            await WriteVersionAsync(engine, "\"99\""u8.ToArray(), token);
+            await TerraBaseTestServer.EventuallyAsync(async probe => await followerTenants.RegisteredAsync(invoices, probe) is Unavailable);
+            await Assert.That(await followerTenants.ReplicatesAsync(invoices, token) is Unavailable).IsTrue();
+            await Assert.That(await followerTenants.DatabaseRecordAsync(invoices, token) is Unavailable).IsTrue();
+            await Assert.That(await followerTenants.PlanAsync(invoices.OrganizationId, token) is Unavailable).IsTrue();
+            await Assert.That(File.Exists(FileOf(invoices))).IsTrue();
+            await WriteVersionAsync(engine, "\"1\""u8.ToArray(), token);
+            await TerraBaseTestServer.EventuallyAsync(async probe => await followerTenants.RegisteredAsync(invoices, probe) is bool registered && registered);
+            await Assert.That(await followerTenants.ReplicatesAsync(invoices, token) is bool replicates && replicates).IsTrue();
+            await Assert.That(await followerTenants.DatabaseRecordAsync(invoices, token) is TenantDatabaseRecord { Name: "invoices" }).IsTrue();
+            await Assert.That(await followerTenants.PlanAsync(EntityIds.New().ToString(), token) is PlanTier.Hobby).IsTrue();
 
             using (var data = tls.CreateClient(follower.ClientAddress!, key))
             {
@@ -423,12 +390,4 @@ public sealed class CatalogDeletionTests
             using var response = await server.Client.GetAsync(new Uri("/readyz", UriKind.Relative), token);
             return response.StatusCode == HttpStatusCode.OK;
         });
-
-    // The receiver's first answer to a Sync stream for database.
-    private static async Task<SyncResponse> HelloAsync(Features.Replication.V1.Replication.ReplicationClient client, TenantContext database, CancellationToken cancellationToken)
-    {
-        using var call = client.Sync(cancellationToken: cancellationToken);
-        await call.RequestStream.WriteAsync(new SyncRequest { Hello = ReplicationProtocol.CreateHello(database, RandomNumberGenerator.GetBytes(16)) }, cancellationToken);
-        return await call.ResponseStream.MoveNext(cancellationToken) ? call.ResponseStream.Current : throw new InvalidOperationException("no answer");
-    }
 }
