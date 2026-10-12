@@ -683,8 +683,8 @@ dashboards and alerts already query those names.
    `IShapeService`, `IShapeSubscriptionService`, the `shapes:read` scope on the TerraBase side, the shape headers,
    offsets and models, `UriTooLong` (414) and the `must_refetch` handle, the engine's snapshot and change-stream reads
    (`SnapshotAsync`, `ChangesAsync`, `CompileSnapshot`, `CompileChanges`), and `shape-reads.md` and
-   `subscriptions.md`. It leaves the on-disk format unchanged. ts-auth still issues `shapes:read`; TerraBase ignores
-   scopes it does not know.
+   `subscriptions.md`. It leaves the on-disk format unchanged. ts-auth stopped issuing `shapes:read` afterwards; TerraBase
+   ignores scopes it does not know.
 
 Kept: `StampingStorageEngine`, which still drives the document read cache's invalidation (`IWriteStamps`), and the
 preconditions (`If-Match`, `If-None-Match: *`, transaction `assert`), which ts-auth's stores depend on through

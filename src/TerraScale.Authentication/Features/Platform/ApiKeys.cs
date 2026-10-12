@@ -24,16 +24,13 @@ public static class TerraBaseScopes
     /// <summary>Write collections and documents; transactions.</summary>
     public const string DocumentsWrite = "documents:write";
 
-    /// <summary>Live shapes.</summary>
-    public const string ShapesRead = "shapes:read";
-
     /// <summary>Every scope.</summary>
-    public static IReadOnlyList<string> All { get; } = [DatabasesRead, DatabasesWrite, DocumentsRead, DocumentsWrite, ShapesRead];
+    public static IReadOnlyList<string> All { get; } = [DatabasesRead, DatabasesWrite, DocumentsRead, DocumentsWrite];
 
     /// <summary>The scopes a project role grants (an organization role grants those of the project role it implies).</summary>
     public static IReadOnlyList<string> For(string? projectRole) => projectRole switch
     {
-        Roles.Viewer => [DatabasesRead, DocumentsRead, ShapesRead],
+        Roles.Viewer => [DatabasesRead, DocumentsRead],
         Roles.Member or Roles.Admin => All,
         _ => [],
     };

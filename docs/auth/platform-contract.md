@@ -148,14 +148,13 @@ interpreted; TerraBase and the platform API check scopes, never roles.
 | `databases:write` | TerraBase: create, branch and delete databases; backups, restores and policies; indexes; saved queries |
 | `documents:read` | TerraBase: read collections and documents; queries |
 | `documents:write` | TerraBase: write collections and documents; transactions |
-| `shapes:read` | TerraBase: live shapes |
 | `usage:read` | TerraBase usage, and the platform API's usage views |
 | `billing:read` | Platform API (ts-dashboard): read the organization's plan, subscription, invoices and spending caps |
 | `billing:write` | Platform API: change the plan, payment method and spending caps |
 
 | Token | Role | Scopes |
 | --- | --- | --- |
-| Project token | project `viewer` | `databases:read documents:read shapes:read usage:read` |
+| Project token | project `viewer` | `databases:read documents:read usage:read` |
 | Project token | project `member`, `admin` | the viewer's and `databases:write documents:write` |
 | Organization token | organization `viewer` | the project viewer's and `billing:read` |
 | Organization token | organization `member`, `admin` | the project member's and `billing:read` |
