@@ -54,6 +54,9 @@ internal sealed class TursoChangeTap : IWalTap
     /// <summary>Runs after a snapshot is pinned and writers are released, before the file is copied; for integration tests.</summary>
     internal Func<CancellationToken, Task>? AfterSnapshotPinned { get; set; }
 
+    /// <summary>Runs after a read, before its change-log cleanup on the writer; for integration tests.</summary>
+    internal Func<CancellationToken, Task>? BeforeTrim { get; set; }
+
     private TursoChangeTap(SqliteDatabaseStore store, SqliteIoPool io, TimeProvider time, TursoConnection reader)
     {
         _store = store;
@@ -97,6 +100,11 @@ internal sealed class TursoChangeTap : IWalTap
             {
                 try
                 {
+                    if (BeforeTrim is { } trim)
+                    {
+                        await trim(cancellationToken).ConfigureAwait(false);
+                    }
+
                     await _store.WithWriterAsync(Truncate, "the continuous backup's cleanup", cancellationToken).ConfigureAwait(false);
                 }
                 catch
