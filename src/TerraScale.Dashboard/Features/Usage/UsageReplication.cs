@@ -41,8 +41,8 @@ public sealed class UsageReplicationBackend(IHttpClientFactory factory, IProject
         try
         {
             var client = factory.CreateClient("platform");
-            var origin = await new TerraBaseDiscovery(client).ResolveAsync(deadline.Token);
-            var token = await projectTokens.GetAsync(context.Session, organization.Id, project.Id, origin, deadline.Token);
+            var origin = await new TerraBaseDiscovery().ResolveAsync(deadline.Token);
+            var token = await projectTokens.GetAsync(context.Session, organization.Id, project.Id, deadline.Token);
             var path = $"/v1/projects/{Uri.EscapeDataString(project.Id)}/replication?range={Uri.EscapeDataString(selection.Range)}";
             if (selection.DatabaseId.Length > 0)
                 path += "&database=" + Uri.EscapeDataString(selection.DatabaseId);
@@ -144,7 +144,7 @@ public sealed class UsageReplicationBackend(IHttpClientFactory factory, IProject
     }
 
     private static string DisplayRegion(string producerRegion, IReadOnlyList<DatabaseRegion> regionCatalog) =>
-        regionCatalog.FirstOrDefault(region => region.Id == producerRegion)?.Code ?? producerRegion;
+        (regionCatalog.FirstOrDefault(region => region.Id == producerRegion) ?? DatabaseRegion.FromId(producerRegion))?.Code ?? producerRegion;
 
     private static bool ValidRegion(string value, IReadOnlyList<DatabaseRegion> regionCatalog) =>
         regionCatalog.Any(region => region.Id == value || region.Code == value) ||

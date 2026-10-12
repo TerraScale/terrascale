@@ -101,7 +101,7 @@ public sealed class UsageStorageBackend(AccountService accounts, IDatabaseBacken
                 {
                     await concurrency.WaitAsync(deadline.Token); acquired = true;
                     var code = database.Region.Length > 0 ? database.Region : project.Region;
-                    var home = regions.SingleOrDefault(region => region.Code == code || region.Id == code)
+                    var home = DatabaseRegion.Resolve(regions, code)
                         ?? throw new HttpRequestException("The database home region is unavailable.");
                     var scope = DatabaseService.Scope(context with { Project = project });
                     var contents = await databases.CollectionsAsync(scope, home, database.Id, deadline.Token);

@@ -64,7 +64,7 @@ public sealed partial class TerraBaseHomeMeasurements(IHttpClientFactory http, T
         try
         {
             var client = http.CreateClient("platform");
-            var origin = await new TerraBaseDiscovery(client).ResolveAsync(cancellationToken);
+            var origin = await new TerraBaseDiscovery().ResolveAsync(cancellationToken);
             var now = time.GetUtcNow().UtcDateTime;
             var hour = new DateTime(now.Year, now.Month, now.Day, now.Hour, 0, 0, DateTimeKind.Utc);
             var start = range switch { "1h" => hour, "24h" => hour.AddHours(-23), "30d" => now.Date.AddDays(-29), _ => hour.AddHours(-167) };

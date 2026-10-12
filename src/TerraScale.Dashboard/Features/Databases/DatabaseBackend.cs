@@ -12,7 +12,22 @@ public sealed record DatabaseScope(string UserId, string AccessToken, string Org
     public override string ToString() => $"Database scope {OrganizationId}/{ProjectId} [REDACTED]";
 }
 
-public sealed record DatabaseRegion(string Code, string Id, string Name, string Country, Uri Api, bool Healthy);
+public sealed record DatabaseRegion(string Code, string Id, string Name, string Country, Uri Api, bool Healthy)
+{
+    // TerraBase's regional contract (terrascale docs/terrabase/region-identity.md): a region id is a lowercase letter,
+    // then lowercase letters, digits or hyphens, at most 63 characters, not ending in a hyphen, and
+    // https://<id>.api.terrascale.tech/ serves only that region. Anything else derives no origin.
+    public static DatabaseRegion? FromId(string? id) =>
+        id is { Length: >= 1 and <= 63 } && id[0] is >= 'a' and <= 'z' && id[^1] != '-' &&
+        id.All(character => character is >= 'a' and <= 'z' or >= '0' and <= '9' or '-')
+            ? new(id.ToUpperInvariant(), id, DatabasesPage.RegionDisplay(id), "", new($"https://{id}.api.terrascale.tech/"), true)
+            : null;
+
+    // A stored or producer-named region: the catalog's entry, else the region its id names. A home or replica outside
+    // the catalog keeps its own region instead of being dropped or moved.
+    public static DatabaseRegion? Resolve(IReadOnlyList<DatabaseRegion> catalog, string? code) =>
+        catalog.FirstOrDefault(region => region.Code == code || region.Id == code) ?? FromId(code?.ToLowerInvariant());
+}
 public sealed record ManagedDatabase(string Id, string ProjectId, string Name, DateTimeOffset CreatedAt, string? BranchedFrom = null, string HomeRegion = "", IReadOnlyList<string>? ReplicaRegions = null);
 public sealed record CollectionStats(string Name, long Documents, long Bytes);
 public sealed record DatabaseSqlRow(string Id, JsonElement Value);
@@ -50,38 +65,25 @@ public sealed class DatabaseBackend(IHttpClientFactory factory) : IDatabaseBacke
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { RespectRequiredConstructorParameters = true, RespectNullableAnnotations = true };
 
+    // No producer publishes a region catalog: Atlas /v1/discovery was never served and is gone, and TerraBase has no catalog
+    // route yet. The one verified region is the one answering api.terrascale.tech, named by both its /healthz body and its
+    // X-TerraBase-Region header. It is not necessarily the nearest, a database's home, or every serving region.
     public async Task<IReadOnlyList<DatabaseRegion>> RegionsAsync(CancellationToken cancellationToken)
     {
-        using var response = await factory.CreateClient("platform").GetAsync("https://atlas.terrascale.tech/v1/discovery", HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        using var response = await factory.CreateClient("platform").GetAsync(new Uri(TerraBaseDiscovery.Origin, "/healthz"), HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         response.EnsureSuccessStatusCode();
-        using var document = await PlatformJson.ReadAsync(response.Content, cancellationToken);
-        var result = new List<DatabaseRegion>();
-        var ids = new HashSet<string>(StringComparer.Ordinal);
-        var codes = new HashSet<string>(StringComparer.Ordinal);
+        string? region;
         try
         {
-            foreach (var region in document.RootElement.GetProperty("regions").EnumerateArray())
-            {
-                var id = region.GetProperty("id").GetString() ?? "";
-                var name = region.GetProperty("name").GetString() ?? "";
-                var country = region.GetProperty("country").GetString() ?? "";
-                var health = region.GetProperty("health").GetString();
-                if (id.Length is 0 or > 63 || id[0] is < 'a' or > 'z' || id[^1] == '-' ||
-                    id.Any(character => character is not (>= 'a' and <= 'z' or >= '0' and <= '9' or '-')) ||
-                    string.IsNullOrWhiteSpace(name) || name.Any(char.IsControl) || country.Length != 2 ||
-                    country.Any(character => character is < 'A' or > 'Z') || health is not ("ok" or "unknown" or "down"))
-                    throw new HttpRequestException("Region discovery returned an invalid region.");
-                if (!Uri.TryCreate(region.GetProperty("api").GetString(), UriKind.Absolute, out var api) || api.Scheme != "https" || !api.IsDefaultPort || api.UserInfo.Length != 0 || api.AbsolutePath != "/" || api.Query.Length != 0 || api.Fragment.Length != 0 || !api.Host.EndsWith(".api.terrascale.tech", StringComparison.Ordinal))
-                    throw new HttpRequestException("Region discovery returned an invalid service origin.");
-                var code = id switch { "sa-saopaulo-1" => "GRU", "us-sanjose-1" => "SFO", _ => id.Split('-')[0].ToUpperInvariant() };
-                if (!ids.Add(id) || !codes.Add(code)) throw new HttpRequestException("Region discovery returned ambiguous region identities.");
-                result.Add(new(code, id, name, country.ToLowerInvariant(), api, health != "down"));
-            }
+            using var document = await PlatformJson.ReadAsync(response.Content, cancellationToken);
+            region = document.RootElement.ValueKind == JsonValueKind.Object && document.RootElement.TryGetProperty("region", out var value) &&
+                value.ValueKind == JsonValueKind.String ? value.GetString() : null;
         }
-        catch (Exception error) when (error is InvalidOperationException or KeyNotFoundException or JsonException)
-        { throw new HttpRequestException("Region discovery returned an invalid catalog.", error); }
-        if (result.Count == 0) throw new HttpRequestException("Region discovery is unavailable.");
-        return result.OrderBy(region => region.Code, StringComparer.Ordinal).ToArray();
+        catch (JsonException error) { throw new HttpRequestException("TerraBase returned an invalid health answer.", error); }
+        if (!response.Headers.TryGetValues("X-TerraBase-Region", out var named) || named.Count() != 1 || named.Single() != region ||
+            DatabaseRegion.FromId(region) is not { } serving)
+            throw new HttpRequestException("TerraBase did not name a valid serving region.");
+        return [serving];
     }
 
     public async Task<IReadOnlyList<ManagedDatabase>> ListAsync(DatabaseScope scope, DatabaseRegion home, CancellationToken cancellationToken)
@@ -191,8 +193,10 @@ public sealed class DatabaseBackend(IHttpClientFactory factory) : IDatabaseBacke
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", scope.AccessToken);
         request.Headers.Add("X-TerraBase-Organization-Id", scope.OrganizationId);
         request.Headers.Add("X-TerraBase-User-Id", scope.UserId);
+        request.Headers.Add(TerraBaseRegionPin, region.Id);
         if (body is not null) request.Content = JsonContent.Create(body, options: Json);
         using var response = await factory.CreateClient("platform").SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadline.Token);
+        if (response.StatusCode == HttpStatusCode.MisdirectedRequest) throw DatabaseWrongRegionException.From(response);
         if (!response.IsSuccessStatusCode) throw new DatabaseProviderException(response.StatusCode);
         if (response.StatusCode == HttpStatusCode.NoContent) return default!;
         const int maxBytes = 8 * 1024 * 1024;
@@ -215,6 +219,8 @@ public sealed class DatabaseBackend(IHttpClientFactory factory) : IDatabaseBacke
         catch (JsonException error) { throw new HttpRequestException("Database returned an invalid response.", error); }
     }
 
+    // TerraBase.Region.PinHeader in ts-dotnet 0.0.2: the region that must answer, or 421.
+    private const string TerraBaseRegionPin = "X-TerraScale-Region-Pin";
     private static string Segment(string value) => Uri.EscapeDataString(value);
     private static string ProjectPath(DatabaseScope scope) => "/v1/management/organizations/" + Segment(scope.OrganizationId) + "/projects/" + Segment(scope.ProjectId);
     private static string DatabasePath(DatabaseScope scope, string databaseId) => ProjectPath(scope) + "/databases/" + Segment(databaseId);
@@ -223,4 +229,25 @@ public sealed class DatabaseBackend(IHttpClientFactory factory) : IDatabaseBacke
     private sealed record DatabasePage(IReadOnlyList<ManagedDatabase> Items, string? Next);
 }
 
-public sealed class DatabaseProviderException(HttpStatusCode status) : HttpRequestException("The database service could not complete the request.", null, status);
+public class DatabaseProviderException(HttpStatusCode status, string message = "The database service could not complete the request.") : HttpRequestException(message, null, status);
+
+// TerraBase's 421 wrong_region, as ts-dotnet 0.0.2's TerraBaseWrongRegionException reads it: the answering region
+// (X-TerraBase-Region) and the database's home and serving regions (X-TerraBase-Database-Home/-Regions). Nothing is
+// retried or redirected; malformed region names are dropped.
+public sealed class DatabaseWrongRegionException(string? region, string? homeRegion, IReadOnlyList<string> regions)
+    : DatabaseProviderException(HttpStatusCode.MisdirectedRequest, homeRegion is null
+        ? "The database is served in another region. Nothing was changed."
+        : $"The database is managed in {DatabasesPage.RegionDisplay(homeRegion)}. Nothing was changed.")
+{
+    public string? Region { get; } = region;
+    public string? HomeRegion { get; } = homeRegion;
+    public IReadOnlyList<string> Regions { get; } = regions;
+
+    public static DatabaseWrongRegionException From(HttpResponseMessage response)
+    {
+        string? Header(string name) => response.Headers.TryGetValues(name, out var values) && values.Count() == 1 ? values.Single() : null;
+        string? Valid(string? id) => DatabaseRegion.FromId(id)?.Id;
+        return new(Valid(Header("X-TerraBase-Region")), Valid(Header("X-TerraBase-Database-Home")),
+            (Header("X-TerraBase-Database-Regions") ?? "").Split(',').Select(Valid).OfType<string>().ToArray());
+    }
+}

@@ -33,7 +33,7 @@ public sealed class BackupConfirmationJourneyTests(DashboardE2EFixture fixture)
                 var stored = await StoredAsync(producer!, id);
                 rawNullObserved = stored.GetProperty("replicaRegions").ValueKind == JsonValueKind.Null;
                 using var request = ScopedRequest(http, HttpMethod.Patch, http.Request.Path.Value!);
-                request.Content = JsonContent.Create(new { replicaRegions = new[] { "sfo-1" } });
+                request.Content = JsonContent.Create(new { replicaRegions = new[] { "sfo" } });
                 using var changed = await producer!.SendAsync(request, http.RequestAborted);
                 changed.EnsureSuccessStatusCode();
             }
@@ -105,7 +105,7 @@ public sealed class BackupConfirmationJourneyTests(DashboardE2EFixture fixture)
     [Arguments("home")]
     [Arguments("missing-home")]
     [Arguments("missing-replicas")]
-    [Arguments("unknown-replica")]
+    [Arguments("invalid-replica")]
     [Arguments("duplicate-replica")]
     public Task InvalidFullConfirmationNeverPublishesAClaimedRestore(string failure) => RefusedAndRetryAsync(failure, interruptedMetadata: false);
 
@@ -138,11 +138,11 @@ public sealed class BackupConfirmationJourneyTests(DashboardE2EFixture fixture)
                 case "project": row["projectId"] = "01K78000000000000000000001"; break;
                 case "name": row["name"] = "another-restored-name"; break;
                 case "source": row["branchedFrom"] = "01K78000000000000000000002"; break;
-                case "home": row["homeRegion"] = "sfo-1"; break;
+                case "home": row["homeRegion"] = "sfo"; break;
                 case "missing-home": row.Remove("homeRegion"); break;
                 case "missing-replicas": row.Remove("replicaRegions"); break;
-                case "unknown-replica": row["replicaRegions"] = new JsonArray("unpublished-region"); break;
-                case "duplicate-replica": row["replicaRegions"] = new JsonArray("sfo-1", "sfo-1"); break;
+                case "invalid-replica": row["replicaRegions"] = new JsonArray("Unpublished_Region"); break;
+                case "duplicate-replica": row["replicaRegions"] = new JsonArray("sfo", "sfo"); break;
             }
             return Results.Json(row);
         });

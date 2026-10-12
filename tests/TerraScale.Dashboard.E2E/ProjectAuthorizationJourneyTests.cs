@@ -56,6 +56,7 @@ public sealed class ProjectAuthorizationJourneyTests(DashboardE2EFixture fixture
         string[] invalidProjectResponses =
         [
             "project-missing-scope",
+            "project-response-scope",
             "project-foreign-project",
             "project-foreign-organization",
             "project-wrong-audience",
@@ -99,7 +100,7 @@ public sealed class ProjectAuthorizationJourneyTests(DashboardE2EFixture fixture
         await Assert.That(reportRequests[0].GetProperty("organizationId").GetString()).IsEqualTo(organizationId);
         await Assert.That(reportRequests[0].GetProperty("projectId").GetString()).IsEqualTo(projectIdFromDashboard);
         await Assert.That(reportRequests[0].GetProperty("scope").GetString()).IsEqualTo("databases:read");
-        await Assert.That(reportRequests[0].GetProperty("audience").GetString()).IsEqualTo("https://gru.api.terrascale.tech");
+        await Assert.That(reportRequests[0].GetProperty("audience").GetString()).IsEqualTo("https://api.terrascale.tech");
         await Assert.That(reportRequests[0].GetProperty("tokenClass").GetString()).IsEqualTo("project");
 
         // Clearing the issuer fault demonstrates recoverability without a new

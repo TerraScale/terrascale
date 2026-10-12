@@ -42,7 +42,7 @@ public sealed class DatabaseBranchJourneyTests(DashboardE2EFixture fixture)
                 if (Volatile.Read(ref mode) is "list-home" or "list-source")
                 {
                     var row = JsonNode.Parse(pendingBranch.GetRawText())!.AsObject();
-                    if (mode == "list-home") row["homeRegion"] = "sfo-1";
+                    if (mode == "list-home") row["homeRegion"] = "sfo";
                     else row["branchedFrom"] = "01K78000000000000000000000";
                     return Task.FromResult<IResult?>(Results.Json(new { items = new[] { row }, next = (string?)null }));
                 }
@@ -103,7 +103,7 @@ public sealed class DatabaseBranchJourneyTests(DashboardE2EFixture fixture)
             request.Headers.Add("Authorization", bearer);
             request.Headers.Add("X-TerraBase-User-Id", actingUser);
             request.Headers.Add("X-TerraBase-Organization-Id", organizationId);
-            request.Content = JsonContent.Create(new { replicaRegions = new[] { "sfo-1" } });
+            request.Content = JsonContent.Create(new { replicaRegions = new[] { "sfo" } });
             using var placed = await producer.SendAsync(request);
             await Assert.That(placed.StatusCode).IsEqualTo(HttpStatusCode.OK).Because(await EvidenceAsync(placed, producer));
             pendingBranch = await BodyAsync(placed);
@@ -265,7 +265,7 @@ public sealed class DatabaseBranchJourneyTests(DashboardE2EFixture fixture)
                 case "id": row["id"] = "01K78000000000000000000000"; break;
                 case "project": row["projectId"] = "01K78000000000000000000001"; break;
                 case "name": row["name"] = "another-branch"; break;
-                case "home": row["homeRegion"] = "sfo-1"; break;
+                case "home": row["homeRegion"] = "sfo"; break;
                 case "source": row["branchedFrom"] = "01K78000000000000000000002"; break;
                 case "missing-source": row.Remove("branchedFrom"); break;
             }

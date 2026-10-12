@@ -36,7 +36,7 @@ public static class InvitationEndpoints
             var form = await http.Request.ReadFormAsync(http.RequestAborted);
             if (!Csrf.Validate(http, form)) return Results.StatusCode(403);
             await sessions.EndAsync(http);
-            return AuthEndpoints.SeeOther("/login?returnTo=" + Uri.EscapeDataString("/invitations/" + Uri.EscapeDataString(token)) + "&prompt=login");
+            return AuthEndpoints.SeeOther("/login?returnTo=" + Uri.EscapeDataString("/invitations/" + Uri.EscapeDataString(token)));
         });
         return endpoints;
     }

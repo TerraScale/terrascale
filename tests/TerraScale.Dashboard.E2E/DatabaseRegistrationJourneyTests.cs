@@ -17,7 +17,6 @@ public sealed class DatabaseRegistrationJourneyTests(DashboardE2EFixture fixture
     [Arguments("organization-identity", 503)]
     [Arguments("project-identity", 503)]
     [Arguments("project-organization", 503)]
-    [Arguments("replica-project-missing", 404)]
     public async Task UnavailableRegionalScopeNeverUsesOperatorCommitsOrInventsResources(string fault, int status)
     {
         var armed = false;
@@ -27,8 +26,8 @@ public sealed class DatabaseRegistrationJourneyTests(DashboardE2EFixture fixture
         var refusedReads = 0;
         var forbiddenCommits = 0;
         var unauthorizedCreates = 0;
-        var targetHost = fault == "replica-project-missing" ? "sfo.api.terrascale.tech" : "gru.api.terrascale.tech";
-        string[] regions = fault == "replica-project-missing" ? ["GRU", "SFO"] : ["GRU"];
+        const string targetHost = "gru.api.terrascale.tech";
+        string[] regions = ["GRU"];
         await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root, producerExtension: http =>
         {
             if (http.Request.Method == "POST" && http.Request.Path == "/v1/management/commits")

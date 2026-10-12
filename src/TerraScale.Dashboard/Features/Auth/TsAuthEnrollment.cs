@@ -35,7 +35,8 @@ public sealed partial class TsAuthGateway
     public Task<SessionRecord> VerifySignUpAsync(string email, string code, string pendingToken, string ip, CancellationToken cancellationToken) =>
         GrantAsync("urn:terrascale:params:oauth:grant-type:email-code", email, "code", code, ip, cancellationToken, pendingToken);
 
-    public async Task<string> AuthorizationUrlAsync(OidcFlow flow, bool promptLogin, CancellationToken cancellationToken)
+    // ts-auth answers prompt=login with login_required, so no prompt is sent; sign-out ends its session instead.
+    public async Task<string> AuthorizationUrlAsync(OidcFlow flow, CancellationToken cancellationToken)
     {
         var credentials = await identity.ReadAsync(cancellationToken);
         var origin = AuthOrigin;
@@ -52,7 +53,6 @@ public sealed partial class TsAuthGateway
             ["code_challenge"] = Base64Url(SHA256.HashData(Encoding.ASCII.GetBytes(flow.Verifier))),
             ["code_challenge_method"] = "S256"
         };
-        if (promptLogin) fields["prompt"] = "login";
         return endpoint + "?" + string.Join("&", fields.Select(field => Uri.EscapeDataString(field.Key) + "=" + Uri.EscapeDataString(field.Value)));
     }
 
@@ -120,12 +120,12 @@ public sealed partial class TsAuthGateway
             var credentials = await identity.ReadAsync(cancellationToken);
             var origin = AuthOrigin;
             var metadata = await Client(credentials, origin).Oidc.GetDiscoveryDocumentAsync(cancellationToken);
-            if (string.IsNullOrWhiteSpace(metadata.EndSessionEndpoint)) return "/login?prompt=login";
+            if (string.IsNullOrWhiteSpace(metadata.EndSessionEndpoint)) return "/login";
             var endpoint = TrustedEndpoint(metadata.EndSessionEndpoint, origin, credentials.AuthInstanceSlug);
             return endpoint + "?client_id=" + Uri.EscapeDataString(credentials.AuthClientId) +
                 "&post_logout_redirect_uri=" + Uri.EscapeDataString(new Uri(dashboard, "/login").AbsoluteUri);
         }
-        catch (HttpRequestException) { return "/login?prompt=login"; }
+        catch (HttpRequestException) { return "/login"; }
     }
 
     private async Task<SessionRecord> SessionAsync(TerraScaleAuthTokenResponse tokens, DashboardCredentials credentials, Uri origin, string? nonce, CancellationToken cancellationToken)

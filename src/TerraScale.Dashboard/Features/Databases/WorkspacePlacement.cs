@@ -17,7 +17,8 @@ public sealed class WorkspacePlacement(IDatabaseBackend databases) : IWorkspaceP
         var scope = new DatabaseScope(context.UserId, context.Session.AccessToken, context.Organization.Id, context.Organization.Name, project.Id, project.Name);
         foreach (var code in codes.Distinct(StringComparer.Ordinal))
         {
-            var region = catalog.FirstOrDefault(item => item.Code == code && item.Healthy) ?? throw new AccountAccessException("Choose a serving region listed by discovery.", 422);
+            // A project's stored regions keep their own region; only an id that names no TerraBase region is refused.
+            var region = DatabaseRegion.Resolve(catalog, code) is { Healthy: true } serving ? serving : throw new AccountAccessException("Choose a serving region listed by discovery.", 422);
             await databases.RegisterAsync(scope, region, cancellationToken);
         }
     }

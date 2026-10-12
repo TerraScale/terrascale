@@ -42,8 +42,7 @@ public static class AuthEndpoints
         return new AuthPage(
             new DocumentModel(mode.StartsWith("reset", StringComparison.Ordinal) ? "Reset password" : mode.StartsWith("code", StringComparison.Ordinal) ? "Sign in with a code" : "Sign in", DocumentModel.NonceFor(context)),
             mode, Csrf.Token(context), Email: query["email"].ToString(), ReturnTo: Csrf.LocalRedirect(returnTo),
-            Notice: mode == "login" && query["notice"] == "password-reset" ? "Your password was changed. Sign in with your new password." : "",
-            PromptLogin: query["prompt"] == "login");
+            Notice: mode == "login" && query["notice"] == "password-reset" ? "Your password was changed. Sign in with your new password." : "");
     }
 
     private static async Task<IResult> SubmitAsync(HttpContext context, IAuthGateway auth, DashboardSessions sessions, string mode)
@@ -52,7 +51,7 @@ public static class AuthEndpoints
         var form = await context.Request.ReadFormAsync(context.RequestAborted);
         if (!Csrf.Validate(context, form)) return Results.StatusCode(403);
         var email = form["email"].ToString().Trim();
-        var model = Page(context, mode) with { Email = email, ReturnTo = Csrf.LocalRedirect(form["redirectTo"]), PromptLogin = form["prompt"] == "login" };
+        var model = Page(context, mode) with { Email = email, ReturnTo = Csrf.LocalRedirect(form["redirectTo"]) };
         SignUpFlow? signUp = null;
         if (mode == "code-verify" && form["signUp"] == "1")
         {

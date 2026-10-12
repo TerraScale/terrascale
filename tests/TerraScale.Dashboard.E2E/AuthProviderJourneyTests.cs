@@ -642,7 +642,8 @@ public sealed class AuthProviderJourneyTests(DashboardE2EFixture fixture)
         Check(started.StatusCode == HttpStatusCode.SeeOther && started.Headers.Location is { Scheme: "https", Host: "auth.terrascale.tech", AbsolutePath: "/terrascale/oauth/authorize" },
             "Native SSO selects the discovered trusted authorization endpoint");
         var target = started.Headers.Location!;
-        Check(target.Query.Contains("prompt=login", StringComparison.Ordinal), "Native SSO retains explicit reauthentication intent");
+        // ts-auth answers login_required to prompt=login, so a legacy /login/sso?prompt=login link must not forward it.
+        Check(!target.Query.Contains("prompt", StringComparison.Ordinal), "Native SSO sends no prompt ts-auth refuses");
         using var request = new HttpRequestMessage(HttpMethod.Get, target.PathAndQuery);
         request.Headers.Host = target.Authority;
         using var authorized = await producer.SendAsync(request);

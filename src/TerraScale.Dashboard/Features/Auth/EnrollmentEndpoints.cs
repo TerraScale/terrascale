@@ -79,7 +79,7 @@ public static class EnrollmentEndpoints
         try
         {
             var flow = await flows.StartOidcAsync(context, returnTo);
-            var target = await auth.AuthorizationUrlAsync(flow, context.Request.Query["prompt"] == "login", context.RequestAborted);
+            var target = await auth.AuthorizationUrlAsync(flow, context.RequestAborted);
             return AuthEndpoints.SeeOther(target);
         }
         catch (Exception error) when (DependencyFailure(error, context))

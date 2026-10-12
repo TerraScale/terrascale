@@ -89,7 +89,7 @@ public sealed class OwnershipSdkProtocol(IDashboardState state, TimeProvider clo
         if (!accepting && !scoped) return null;
         try
         {
-            if (http.Request.Host.Host != "gru.api.terrascale.tech") return Error(403, "forbidden");
+            if (http.Request.Host.Host is not ("api.terrascale.tech" or "gru.api.terrascale.tech")) return Error(403, "forbidden");
             var header = http.Request.Headers.Authorization.ToString();
             var actor = header.StartsWith("Bearer ", StringComparison.Ordinal) ? resolveActiveBearer(header[7..]) : null;
             if (actor is null) return Error(401, "unauthorized");

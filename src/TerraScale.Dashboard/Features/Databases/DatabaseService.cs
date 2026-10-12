@@ -27,17 +27,19 @@ public sealed partial class DatabaseService(AccountService accounts, IDatabaseBa
     public async Task<DatabaseRegion> HomeAsync(AccountContext context, DatabaseRecord? database, CancellationToken cancellationToken)
     {
         var code = database?.Region ?? context.Project?.Region;
-        return (await backend.RegionsAsync(cancellationToken)).FirstOrDefault(region => region.Code == code || region.Id == code)
-            ?? throw new HttpRequestException("Region discovery does not list this database's home region.");
+        return DatabaseRegion.Resolve(await backend.RegionsAsync(cancellationToken), code)
+            ?? throw new HttpRequestException("This database's home region is not a TerraBase region.");
     }
 
-    public async Task<IReadOnlyList<DatabaseRegion>> PlacementAsync(IEnumerable<string> codes, CancellationToken cancellationToken)
+    // kept: the database's current regions, which stay choosable though the catalog does not list them.
+    public async Task<IReadOnlyList<DatabaseRegion>> PlacementAsync(IEnumerable<string> codes, CancellationToken cancellationToken, IReadOnlyList<string>? kept = null)
     {
         var catalog = await backend.RegionsAsync(cancellationToken);
         var placement = new List<DatabaseRegion>();
         foreach (var code in codes)
         {
-            var region = ResolveRegion(catalog, code);
+            var region = kept?.Contains(code.Trim(), StringComparer.OrdinalIgnoreCase) == true
+                ? DatabaseRegion.Resolve(catalog, code.Trim()) ?? ResolveRegion(catalog, code) : ResolveRegion(catalog, code);
             if (placement.Any(selected => selected.Id.Length > 0 && selected.Id == region.Id || selected.Code.Equals(region.Code, StringComparison.OrdinalIgnoreCase)))
                 throw new AccountAccessException("Choose each region once.", 422);
             placement.Add(region);
@@ -52,7 +54,8 @@ public sealed partial class DatabaseService(AccountService accounts, IDatabaseBa
         var placement = new List<DatabaseRegion>();
         foreach (var code in codes.Where(code => !string.IsNullOrWhiteSpace(code)))
         {
-            var region = ResolveRegion(catalog, code);
+            // Stored regions keep their own region when the catalog does not list them.
+            var region = DatabaseRegion.Resolve(catalog, code.Trim()) ?? ResolveRegion(catalog, code);
             if (!placement.Any(selected => selected.Id == region.Id && selected.Code == region.Code)) placement.Add(region);
         }
         if (placement.Count == 0) throw new AccountAccessException("Choose at least one region.", 422);
@@ -151,7 +154,7 @@ public sealed partial class DatabaseService(AccountService accounts, IDatabaseBa
         if (!context.CanManage) throw new AccountAccessException("Organization management access is required.");
         var scope = Scope(context);
         var home = await HomeAsync(context, database, cancellationToken);
-        var placement = (await PlacementAsync(regions, cancellationToken)).ToList();
+        var placement = (await PlacementAsync(regions, cancellationToken, Regions(database))).ToList();
         if (!placement.Remove(home)) throw new AccountAccessException("The home region must stay selected.", 422);
         placement.Insert(0, home);
         var remote = await backend.SetRegionsAsync(scope, home, id, placement, cancellationToken);
@@ -246,8 +249,8 @@ public sealed partial class DatabaseService(AccountService accounts, IDatabaseBa
         var ids = remote.ReplicaRegions.Prepend(remote.HomeRegion).ToArray();
         if (ids.Distinct(StringComparer.Ordinal).Count() != ids.Length) throw new HttpRequestException("The database service returned ambiguous placement.");
         var catalog = await backend.RegionsAsync(cancellationToken);
-        return ids.Select(id => catalog.SingleOrDefault(region => region.Id == id)
-            ?? throw new HttpRequestException("The database service returned an undiscovered region.")).ToArray();
+        return ids.Select(id => (catalog.SingleOrDefault(region => region.Id == id) ?? DatabaseRegion.FromId(id))
+            ?? throw new HttpRequestException("The database service returned an invalid region.")).ToArray();
     }
     private static bool SameReplicas(IReadOnlyList<DatabaseRegion> left, IReadOnlyList<DatabaseRegion> right) =>
         left.Skip(1).Select(region => region.Id).Order(StringComparer.Ordinal)

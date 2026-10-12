@@ -116,7 +116,7 @@ public sealed partial class DataService(DatabaseService databases, IDocumentBack
         collection = ValidCollection(collection);
         var home = await databases.HomeAsync(context, database, cancellationToken);
         var scope = DatabaseService.Scope(context);
-        var token = await projectTokens.GetAsync(context.Session, scope.OrganizationId, scope.ProjectId, home.Api, cancellationToken);
+        var token = await projectTokens.GetAsync(context.Session, scope.OrganizationId, scope.ProjectId, cancellationToken);
         return await documents.SchemaAsync(scope with { AccessToken = token }, home, database.Name, collection, cancellationToken);
     }
 

@@ -22,7 +22,7 @@ public sealed class TsOrganizationAccess(IHttpClientFactory http) : IOrganizatio
     private TerraBaseManagementClient Client(AccountContext context)
     {
         var client = http.CreateClient("platform");
-        return new(client, new TerraBaseManagementClientOptions { EndpointResolver = new TerraBaseDiscovery(client), AccessTokenProvider = _ => ValueTask.FromResult(context.Session.AccessToken) });
+        return new(client, new TerraBaseManagementClientOptions { EndpointResolver = new TerraBaseDiscovery(), AccessTokenProvider = _ => ValueTask.FromResult(context.Session.AccessToken) });
     }
     private static string Organization(AccountContext context) => context.Organization?.Id ?? throw new AccountAccessException("Select an organization.");
     private static void Manage(AccountContext context)

@@ -57,7 +57,7 @@ public sealed class TerraBaseDashboardState(IDashboardIdentity identity, IHttpCl
         if (!TerraScaleIds.IsValid(credentials.StateProjectId)) throw new IOException("Dashboard state project identity is invalid.");
         var client = new TerraBaseDocumentsClient(http.CreateClient("platform"), new TerraBaseDocumentsClientOptions
         {
-            EndpointResolver = new TerraBaseDiscovery(http.CreateClient("platform")),
+            EndpointResolver = new TerraBaseDiscovery(),
             ApiKey = credentials.StateApiKey
         });
         return client.Database(credentials.StateProjectId, DashboardStateSchema.Database);
