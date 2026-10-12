@@ -14,9 +14,10 @@ namespace TerraBase.Engine.Sqlite;
 /// <remarks>
 /// <para>
 /// The tap reads rows after the last one it read (its anchor) on its own <see cref="TursoConnection"/>, up to the last
-/// commit row, and appends them as <see cref="ChangeLog"/> records. It then deletes the rows before its anchor on the writer,
-/// always keeping the newest: an empty <c>turso_cdc</c> restarts its ids at 1 after a reopen. An anchor that is gone means
-/// someone else deleted rows the tap never read: a hole, so the backup starts a new generation.
+/// commit row or the first commit past <see cref="ReadBudget"/>, and appends them as <see cref="ChangeLog"/> records. It
+/// then deletes the rows before its anchor on the writer, always keeping the newest: an empty <c>turso_cdc</c> restarts
+/// its ids at 1 after a reopen. An anchor that is gone means someone else deleted rows the tap never read: a hole, so the
+/// backup starts a new generation.
 /// </para>
 /// <para>
 /// A delete in mode <c>after</c> carries only the rowid. For <c>sqlite_schema</c> that is not enough, because Turso does
@@ -34,6 +35,10 @@ internal sealed class TursoChangeTap : IWalTap
     // Rows read per call, and bytes appended per call before the rest of the page is left for the next one.
     private const int PageRows = 1024;
     private const int PageBytes = 4 << 20;
+
+    // Log bytes one ReadAsync appends before it stops at the next commit and leaves the rest to the next call: a segment
+    // holds about this much, and a backlog (after a long snapshot upload) ships as several segments at upload speed.
+    private const long ReadBudget = 32L << 20;
 
     private readonly SqliteDatabaseStore _store;
     private readonly SqliteIoPool _io;
@@ -82,14 +87,26 @@ internal sealed class TursoChangeTap : IWalTap
         ArgumentNullException.ThrowIfNull(destination);
         return await AdmittedAsync(async () =>
         {
-            var read = await ReadCoreAsync(destination, cancellationToken).ConfigureAwait(false);
+            var (anchor, schema) = (_anchor, _schema);
+            var read = await ReadCoreAsync(destination, ReadBudget, cancellationToken).ConfigureAwait(false);
             if (!read.Continuous)
             {
                 await _store.WithWriterAsync(Reset, "the continuous backup's tap", cancellationToken).ConfigureAwait(false);
             }
             else if (read.Bytes > 0)
             {
-                await _store.WithWriterAsync(Truncate, "the continuous backup's cleanup", cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    await _store.WithWriterAsync(Truncate, "the continuous backup's cleanup", cancellationToken).ConfigureAwait(false);
+                }
+                catch
+                {
+                    // A call that throws has not moved the tap (IWalTap.ReadAsync): the next one reads the same changes
+                    // again, or finds a hole if the delete ran.
+                    (_anchor, _schema) = (anchor, schema);
+                    _store.BackupAnchor = anchor;
+                    throw;
+                }
             }
 
             return read;
@@ -104,7 +121,7 @@ internal sealed class TursoChangeTap : IWalTap
         {
             var snapshot = await _store.WithWritersHeldAsync(async () =>
             {
-                var read = await ReadCoreAsync(destination, cancellationToken).ConfigureAwait(false);
+                var read = await ReadCoreAsync(destination, long.MaxValue, cancellationToken).ConfigureAwait(false);
                 await _store.OnWriterAsync(writer =>
                 {
                     // Nothing commits meanwhile: the anchor is the newest row, and after a hole the next generation starts here.
@@ -153,8 +170,9 @@ internal sealed class TursoChangeTap : IWalTap
         }
     }
 
-    // Appends the records committed after the anchor and moves the anchor to the last of them.
-    private async Task<WalRead> ReadCoreAsync(Stream destination, CancellationToken cancellationToken)
+    // Appends the records committed after the anchor, up to the first commit past `budget` bytes, and moves the anchor to
+    // the last of them.
+    private async Task<WalRead> ReadCoreAsync(Stream destination, long budget, CancellationToken cancellationToken)
     {
         ObjectDisposedException.ThrowIf(_store.Closed, _store);
         var end = await _io.RunAsync(() =>
@@ -168,33 +186,37 @@ internal sealed class TursoChangeTap : IWalTap
         }, cancellationToken).ConfigureAwait(false);
         if (end < 0)
         {
-            return new(0, false);
+            return new(0, false, false);
         }
 
         var buffer = new ArrayBufferWriter<byte>();
         var schema = new Dictionary<long, (string Type, string Name)>(_schema);
         long bytes = 0;
-        for (var after = _anchor; after < end;)
+        var after = _anchor;
+        var spent = false;
+        while (after < end && !spent)
         {
-            var (next, placed) = await _io.RunAsync(() => ReadPage(after, end, schema, buffer), cancellationToken).ConfigureAwait(false);
+            var (next, placed, stop) = await _io.RunAsync(() => ReadPage(after, end, budget - bytes, schema, buffer), cancellationToken).ConfigureAwait(false);
             if (!placed)
             {
-                return new(0, false);
+                return new(0, false, false);
             }
 
             await destination.WriteAsync(buffer.WrittenMemory, cancellationToken).ConfigureAwait(false);
             bytes += buffer.WrittenCount;
             buffer.ResetWrittenCount();
-            after = next;
+            (after, spent) = (next, stop);
         }
 
-        (_anchor, _schema) = (end, schema);
-        _store.BackupAnchor = end;
-        return new(bytes, true);
+        (_anchor, _schema) = (after, schema);
+        _store.BackupAnchor = after;
+        return new(bytes, true, after < end);
     }
 
-    // Appends rows after `after`, up to `end`, and returns the last one read; false when a schema row cannot be placed.
-    private (long Next, bool Placed) ReadPage(long after, long end, Dictionary<long, (string Type, string Name)> schema, ArrayBufferWriter<byte> buffer)
+    // Appends rows after `after`, up to `end`, and returns the last one read; Placed is false when a schema row cannot be
+    // placed, and Spent true when the page stopped at the first commit that reached `allowance` bytes.
+    private (long Next, bool Placed, bool Spent) ReadPage(
+        long after, long end, long allowance, Dictionary<long, (string Type, string Name)> schema, ArrayBufferWriter<byte> buffer)
     {
         using var command = _reader.CreateCommand();
         command.CommandText = "SELECT change_id, change_type, table_name, id, after FROM turso_cdc WHERE change_id > $after AND change_id <= $end ORDER BY change_id LIMIT $limit;";
@@ -210,6 +232,11 @@ internal sealed class TursoChangeTap : IWalTap
             if (type == 2)
             {
                 ChangeLog.WriteCommit(buffer);
+                if (buffer.WrittenCount >= allowance)
+                {
+                    return (last, true, true);
+                }
+
                 continue;
             }
 
@@ -220,7 +247,7 @@ internal sealed class TursoChangeTap : IWalTap
             {
                 if (!Place(type, rowid, image, schema, buffer))
                 {
-                    return (last, false);
+                    return (last, false, false);
                 }
             }
             else if (!ChangeLog.EngineTable(table))
@@ -236,7 +263,7 @@ internal sealed class TursoChangeTap : IWalTap
             }
         }
 
-        return (last, true);
+        return (last, true, false);
     }
 
     // Logs a schema change by name: a created object with its SQL, a dropped one by type and name.
