@@ -36,6 +36,7 @@ public sealed class ApiReferenceTests
         GET /v1/projects/{project}/databases/{database}/auto-index/{collection} TsAuth(databases:read) getAutoIndexPolicy Indexes
         GET /v1/projects/{project}/databases/{database}/backup-policy TsAuth(databases:read) getBackupPolicy Backups
         GET /v1/projects/{project}/databases/{database}/backups TsAuth(databases:read) listBackups Backups
+        GET /v1/projects/{project}/databases/{database}/changes TsAuth(documents:read) streamDatabaseChanges Documents
         GET /v1/projects/{project}/databases/{database}/collections TsAuth(documents:read) listCollections Collections
         GET /v1/projects/{project}/databases/{database}/collections/{collection} TsAuth(documents:read) getCollection Collections
         GET /v1/projects/{project}/databases/{database}/collections/{collection}/changes TsAuth(documents:read) getCollectionChanges Documents

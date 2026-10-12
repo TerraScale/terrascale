@@ -348,6 +348,11 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
 
         public ValueTask RecordAppliedAsync(ReplicaId origin, Hlc applied, CancellationToken cancellationToken) =>
             inner.RecordAppliedAsync(origin, applied, cancellationToken);
+        public ValueTask<FeedPage> ReadFeedAsync(
+            IReadOnlyDictionary<ReplicaId, Hlc> cursor, IReadOnlySet<string>? collections, int maxEvents, long maxBytes, CancellationToken cancellationToken) =>
+            inner.ReadFeedAsync(cursor, collections, maxEvents, maxBytes, cancellationToken);
+        public ValueTask<IReadOnlyDictionary<ReplicaId, Hlc>> GetFeedHeadAsync(CancellationToken cancellationToken) => inner.GetFeedHeadAsync(cancellationToken);
+        public ValueTask<int> TrimFeedAsync(Hlc before, int limit, CancellationToken cancellationToken) => inner.TrimFeedAsync(before, limit, cancellationToken);
         public async ValueTask<DocumentPage> ListAsync(string collection, string? afterId, int limit, long maxBytes, CancellationToken cancellationToken)
         {
             hook.BeforeList?.Invoke(collection);

@@ -278,6 +278,16 @@ internal sealed class StampingStorageEngine(IStorageEngine inner, ISystemReplica
         public ValueTask<bool> DeleteAsync(string collection, string id, CancellationToken cancellationToken) =>
             WriteAsync(collection, id, () => inner.DeleteAsync(collection, id, cancellationToken), cancellationToken);
 
+        public ValueTask<FeedPage> ReadFeedAsync(
+            IReadOnlyDictionary<Lattices.ReplicaId, Lattices.Hlc> cursor, IReadOnlySet<string>? collections, int maxEvents, long maxBytes, CancellationToken cancellationToken) =>
+            RunAsync(() => inner.ReadFeedAsync(cursor, collections, maxEvents, maxBytes, cancellationToken), cancellationToken);
+
+        public ValueTask<IReadOnlyDictionary<Lattices.ReplicaId, Lattices.Hlc>> GetFeedHeadAsync(CancellationToken cancellationToken) =>
+            RunAsync(() => inner.GetFeedHeadAsync(cancellationToken), cancellationToken);
+
+        public ValueTask<int> TrimFeedAsync(Lattices.Hlc before, int limit, CancellationToken cancellationToken) =>
+            RunAsync(() => inner.TrimFeedAsync(before, limit, cancellationToken), cancellationToken);
+
         public async ValueTask PutBatchAsync(
             IReadOnlyList<(string Collection, string Id, ReadOnlyMemory<byte> Json)> puts, Memory<(long Version, DocumentVersion? Previous)> results,
             CancellationToken cancellationToken)
