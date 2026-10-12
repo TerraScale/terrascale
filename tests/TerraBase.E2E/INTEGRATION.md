@@ -97,6 +97,18 @@ ts-dashboard is held by the user and is in neither phase.
   - No new candidate while a batch runs; fixes go into the next named candidate.
 - **Storage format:** record `dotnet src/TerraBase/bin/$(CONFIGURATION)/net11.0/terrabase.dll --storage-format` (the build the acceptance runs used), or the built
   image's `terrabase --storage-format`, at the frozen SHA. It goes in the #108 publication and in `COVERAGE.md`.
+- **Release gap: Slow FAILS on main `c691f947`.** Run 38251442518 has the `slow` job failed; the workflow shows success
+  only because Slow is non-blocking. The open failures:
+
+  | Issue | Failing Slow test | Fix (phase 1 item) |
+  | --- | --- | --- |
+  | #102 | `Access_tokens_from_the_real_ts_auth_authenticate_on_the_management_api` (hung) | #107 (Dogfood), item 6 |
+  | #103 | `Enterprise_can_execute_beyond_the_pro_sqlite_instruction_limit` | #109 (T1), item 1 |
+  | #104 | `Statements_past_the_engine_work_budget_are_too_expensive_even_before_their_first_row` | #109 (T1), item 1 |
+  | #68 | `Assert_count_examines_at_most_10000_rows_whatever_it_matches` | #110 (T1), item 5 |
+
+  The release is not green until Slow passes on main. Acceptance of the frozen candidate also runs
+  `make terrabase-test-slow` and records it.
 - **Still blocked after acceptance:**
   - the open 500 ops/s write-floor gate (`benchmark/bench/2026-10-12-write-floor-open-gate.md`, #79 branch, local);
   - the Fly runs (credential handoff, holds).
