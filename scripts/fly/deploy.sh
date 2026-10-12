@@ -13,8 +13,7 @@ machines() { flyctl machine list -a "$app" --json | jq -r --arg r "$1" --arg s "
 
 for region in gru sjc fra; do
   start=$SECONDS
-  # Machines and volumes cost money: CI never creates them, a human does with approval (scripts/fly/volume-reset.sh for a
-  # region whose data the new build refuses).
+  # Machines and volumes cost money: CI never adds them (volume-reset.sh only replaces a region's refused volume).
   if [[ -z $(machines "$region" .) ]]; then
     echo "$app has no machine in $region; CI creates no machines or volumes. With approval, a human creates it" \
       "(gru: flyctl volumes create <mount source> -a $app -r gru -s 1 if fly.toml mounts one, then" \
@@ -24,9 +23,9 @@ for region in gru sjc fra; do
   fi
   # --ha=false: a deploy never adds Fly's default second machine.
   if ! flyctl deploy -a "$app" -c "$config" --image "$image" --regions "$region" --ha=false --yes --wait-timeout 3m; then
-    # A storage-format refusal needs a human's approved volume reset; the dry run says whether that is the failure.
-    if [[ $app == ts-terrabase ]]; then "$(dirname "$0")/volume-reset.sh" "$app" "$region" --dry-run || true; fi
-    exit 1
+    # A storage-format refusal: the reset moves the region onto a fresh volume (only while TerraBase holds no customer
+    # data); any other failure, or a refused reset, stops the rollout.
+    [[ $app == ts-terrabase ]] && "$(dirname "$0")/volume-reset.sh" "$app" "$region" || exit 1
   fi
   # A machine that hit its restart limit stays stopped through a deploy that fixes it (docs/fly/spike-1a.md).
   for id in $(machines "$region" '^stopped$'); do
