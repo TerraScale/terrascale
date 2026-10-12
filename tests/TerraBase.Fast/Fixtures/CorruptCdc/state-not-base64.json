@@ -1,0 +1,6 @@
+{
+  "description": "The state column of the _tb_state record is re-encoded as text that is not base64url.",
+  "row": "state",
+  "mutation": { "kind": "column", "column": 3, "text": "%%% not base64url %%%" },
+  "expect": "refused"
+}
