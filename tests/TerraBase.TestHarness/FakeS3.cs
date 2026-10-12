@@ -185,6 +185,9 @@ public sealed class FakeS3
         _objects[key] = content;
     }
 
+    /// <summary>Removes an object from this test's bucket, as a lifecycle rule or an operator could.</summary>
+    public bool RemoveObject(string key) => _objects.TryRemove(key, out _);
+
     /// <summary>Seeds an object in this test's bucket, including historical keys whose timestamp is encoded in the key.</summary>
     public void SeedObject(bool customer, string key, byte[] content)
     {
