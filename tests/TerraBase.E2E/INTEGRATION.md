@@ -88,6 +88,34 @@ locally (fetched or built here), and #105's and #108's merge trees matched COS's
   preview skipped.
 - Main's run on `1721bff1`: pending. It must be green before the rest of the train.
 
+**#127 (Aspire) MERGED outside the train's hand.** Merged by **MarioGK** (the shared account; not this integration
+owner) at 19:13:16Z, at its exact head `fd80c0a5` → main `6bb896bb`. `test` run 38294328854 on `fd80c0a5` succeeded
+(libs, auth, terrabase); preview and deploy were skipped.
+
+Tester A's review at `f0b58ec4` and what happened to each point:
+- **Should-fix #1 is NOT addressed (flagged).** "ts-auth's localhost fallback isn't limited to Development."
+  - On main, `src/TerraScale.Authentication/App.cs:38` still maps `FLY_APP_NAME` null or empty to
+    `http://127.0.0.1:8081` **in every environment**.
+  - The fix commits (`8cd4cd23`, `fd80c0a5`) only changed `localhost` to `127.0.0.1`.
+  - So an off-Fly ts-auth that is not in Development stores to whatever listens on 127.0.0.1:8081, where before #127 it
+    failed closed.
+  - It needs a follow-up fix from #127's owner, relayed by the coordinator: the same condition as TerraBase (Development
+    and off Fly), failing closed otherwise.
+- **The auth readiness failure is not reproduced, and not explained.** `Readiness_treats_a_hung_authority_as_not_ready`
+  failed on run 38276106422 (`f0b58ec4`). The final head's auth passed (one run).
+  - Tester A noted that #127 changes what the bootstrap hits off Fly: `127.0.0.1:8081` is refused at once, where the
+    old Fly DNS name failed to resolve. A first-log ordering race is not excluded.
+  - It stays a watch item. A recurrence is a race in that test to fix, not a flake.
+- Points 3 (per-run data directory) and 4 (scaffold leftovers): `8cd4cd23` says "data directory emptied at start, no
+  ESLint", and its diff shrinks `aspire/package.json`. Point 2 (no local token flow) is a README note. Not
+  re-verified line by line.
+
+**Main push runs** after #141, #138 and #127 (`2cfd1df2` 38295445221, `1721bff1` 38295480962, `6bb896bb` 38296187467)
+are in progress on alpha. **Nothing else merges until they are reported.**
+
+**T1's #144** (`46cb6806`, base main): "the system database syncs every commit (decision 0012)", the `_system`
+`synchronous=FULL` PR. It merges after #143, per the agreed order.
+
 **Acceptance gaps, kept visible until each has a test and a fix:**
 - **R-A:** stale-machine retention after a SIGKILL.
 - **R-B:** a corrupt CDC entry stalls a region pair.
