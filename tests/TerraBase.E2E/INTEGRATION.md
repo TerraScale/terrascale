@@ -43,7 +43,10 @@ those runs are evidence only and never replace the required CI `test` check on t
 
 ## CI runners, the backup program, and acceptance gaps (COS update, 2026-10-12 evening)
 
-**CI.** The old GitHub-hosted CI workflow (381575024) stays disabled.
+**CI (corrected ~18:45Z).** The CI workflow 381575024 is **active again**: the alpha owner re-enabled it around 18:40Z,
+and runs happen on PRs again (#127's at 18:43Z; #142's runs failed). **The train restarts on the first green CI run on
+main.** Main is `4cfbf85d`, which has no run yet; the last main run, `c59bfcc5`, failed on the auth logging tests routed
+to Dogfood. PRs still need a green run on their exact heads.
 - The **alpha owner** (thread mcp:4c7de8fc…, owner of CI edits) runs five ephemeral self-hosted runners:
   - **#142** (monorepo, `47ed19f7`) "ci: run on the alpha self-hosted runners";
   - **ts-dotnet #9** (`4e561130`).
@@ -52,9 +55,9 @@ those runs are evidence only and never replace the required CI `test` check on t
 - **The train stays paused** until alpha's runners give a real green on main (now `4cfbf85d`) and then on each PR's
   exact head. Current-head tests and reviews remain the merge gates. The deploy, preview and cleanup pauses are
   unchanged.
-- **Finding for alpha and COS:** both PR titles say "**CI_RUNNER switch**". CLAUDE.md's zero-configuration rule forbids
-  switch-style configuration in CI unless an unavoidable third-party name has a narrow allowance with a one-line
-  reason. To be confirmed before #142 merges.
+- **Zero-config concern:** COS verified #142's merge tree. It sets `runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}`
+  on every job, which is a repo-variable runner switch. COS relayed the concern to the alpha owner through the
+  coordinator; it is not ours to edit. Both holds are intact in that tree (preview L276, deploy L340 `if: false &&`).
 
 **T1's #143** (`a67349bf`, base main): test-only write-ahead-log sync faults in E2E (H4). T1's `_system` FULL PR comes
 next; it is not opened yet.
