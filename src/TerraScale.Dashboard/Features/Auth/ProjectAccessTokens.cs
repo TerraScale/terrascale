@@ -30,9 +30,8 @@ public sealed partial class TsAuthGateway : IProjectAccessTokens
         try
         {
             var issuer = TrustedIssuer(discovery.Issuer, origin, credentials.AuthInstanceSlug);
-            var endpoint = TrustedEndpoint(discovery.TokenEndpoint, origin, credentials.AuthInstanceSlug);
-            if (new Uri(endpoint).AbsolutePath != "/terrascale/oauth/token") throw new SignInRejectedException();
-            using var request = new HttpRequestMessage(HttpMethod.Post, endpoint);
+            // Credentials go to the fixed token endpoint, never to a URL taken from discovery.
+            using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(origin, "/terrascale/oauth/token"));
             Authenticate(request, credentials);
             request.Content = new FormUrlEncodedContent(new Dictionary<string, string>
             {
