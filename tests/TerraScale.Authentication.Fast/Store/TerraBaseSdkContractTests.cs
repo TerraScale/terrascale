@@ -10,7 +10,7 @@ namespace TerraScale.Authentication.Fast.Store;
 /// The TerraBase built from this commit serves every route the pinned ts-dotnet clients call
 /// (<c>$(TsDotnetRoot)/contracts/terrabase/routes.json</c>; ts-dotnet's own tests check its clients send exactly those).
 /// An unknown route answers 404 and a known path with the wrong method 405, so an unauthenticated request that gets
-/// neither reached an endpoint. Documents routes are tried on the public listener, management routes on the internal
+/// neither reached an endpoint. Documents and platform routes are tried on the public listener, management routes on the internal
 /// listener (HTTP/2), where the platform operator calls them.
 /// </summary>
 [ClassDataSource<TerraBaseFixture>(Shared = SharedType.PerTestSession)]
@@ -37,10 +37,10 @@ public sealed class TerraBaseSdkContractTests(TerraBaseFixture fixture)
             var client = operation.GetProperty("client").GetString()!;
             var method = new HttpMethod(operation.GetProperty("method").GetString()!);
             var template = operation.GetProperty("path").GetString()!;
-            // Data routes name a database; management routes address it by id.
-            var database = client == "documents" ? "app" : "01JA0000000000000000000005";
+            // Data and platform routes name a database; management routes address it by id.
+            var database = client == "management" ? "01JA0000000000000000000005" : client == "platform" ? "platform-auth" : "app";
             var path = Regex.Replace(template, @"\{([a-z]+)\}", match => match.Groups[1].Value == "database" ? database : Values[match.Groups[1].Value]);
-            using var request = client == "documents"
+            using var request = client != "management"
                 ? new HttpRequestMessage(method, new Uri(fixture.Server.ClientAddress, path))
                 : new HttpRequestMessage(method, new Uri(fixture.Server.InternalAddress, path)) { Version = HttpVersion.Version20, VersionPolicy = HttpVersionPolicy.RequestVersionExact };
             if (method != HttpMethod.Get && method != HttpMethod.Delete)
