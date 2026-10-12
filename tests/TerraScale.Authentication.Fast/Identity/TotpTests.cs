@@ -109,7 +109,7 @@ public sealed class TotpTests(TerraBaseFixture fixture)
     public async Task Confirmation_returns_durable_recovery_codes_when_a_validated_proof_expires_during_commit(bool enrollmentExpires)
     {
         var clock = new StoreTestClock();
-        var pause = new PausingTransactions { InnerHandler = fixture.NewHandler() };
+        var pause = new PausingTransactions { InnerHandler = TerraBaseFixture.NewHandler() };
         await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock,
             services: services => services.AddSingleton(new HttpClient(pause)));
         var mfa = oidc.Server.App.Services.GetRequiredService<TotpCredentials>();
@@ -181,7 +181,7 @@ public sealed class TotpTests(TerraBaseFixture fixture)
     public async Task Verification_and_disable_report_success_when_a_validated_proof_expires_during_commit(bool disable, bool recovery)
     {
         var clock = new StoreTestClock();
-        var pause = new PausingTransactions { InnerHandler = fixture.NewHandler() };
+        var pause = new PausingTransactions { InnerHandler = TerraBaseFixture.NewHandler() };
         await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock,
             services: services => services.AddSingleton(new HttpClient(pause)));
         var mfa = oidc.Server.App.Services.GetRequiredService<TotpCredentials>();
@@ -305,7 +305,7 @@ public sealed class TotpTests(TerraBaseFixture fixture)
     public async Task An_epoch_change_between_reads_and_commit_refuses_activation_and_preserves_unspent_proofs()
     {
         var clock = new StoreTestClock();
-        var pause = new PausingTransactions { InnerHandler = fixture.NewHandler() };
+        var pause = new PausingTransactions { InnerHandler = TerraBaseFixture.NewHandler() };
         await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock,
             services: services => services.AddSingleton(new HttpClient(pause)));
         await using var replica = await oidc.StartReplicaAsync(clock: clock);

@@ -198,7 +198,7 @@ public sealed partial class InvitationTests(TerraBaseFixture fixture)
     [Test]
     public async Task An_invitation_accepted_on_two_replicas_at_once_works_once()
     {
-        var pause = new PausingTransactions { InnerHandler = fixture.NewHandler() };
+        var pause = new PausingTransactions { InnerHandler = TerraBaseFixture.NewHandler() };
         await using var oidc = await OidcHarness.StartAsync(fixture, services: services => services.AddSingleton(new HttpClient(pause)));
         await using var replica = await oidc.StartReplicaAsync();
         var (_, aliceToken) = await oidc.SignInUserAsync("alice@example.test");
@@ -220,7 +220,7 @@ public sealed partial class InvitationTests(TerraBaseFixture fixture)
     [Test]
     public async Task An_invitation_paused_while_its_organization_is_deleted_is_refused()
     {
-        var pause = new PausingTransactions { InnerHandler = fixture.NewHandler() };
+        var pause = new PausingTransactions { InnerHandler = TerraBaseFixture.NewHandler() };
         await using var oidc = await OidcHarness.StartAsync(fixture, values => values["invitation-url"] = AcceptPage, services: services => services.AddSingleton(new HttpClient(pause)));
         var (_, aliceToken) = await oidc.SignInUserAsync("alice@example.test");
         var id = await oidc.CreateOrganizationAsync(aliceToken);

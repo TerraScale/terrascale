@@ -551,7 +551,7 @@ public sealed partial class EmailApiTests(TerraBaseFixture fixture)
     [NotInParallel]
     public async Task A_stalled_configuration_read_delays_a_backlog_of_codes_once_and_they_go_out_with_the_defaults()
     {
-        var stalled = new StallingHandler("/email_configs/") { InnerHandler = fixture.NewHandler() };
+        var stalled = new StallingHandler("/email_configs/") { InnerHandler = TerraBaseFixture.NewHandler() };
         await using var oidc = await OidcHarness.StartAsync(fixture, services: services => services.AddSingleton(new HttpClient(stalled)));
         string[] addresses = [.. Enumerable.Range(0, 4).Select(index => $"user{index}@example.test")];
         foreach (var address in addresses)

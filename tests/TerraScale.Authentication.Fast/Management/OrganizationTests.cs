@@ -383,7 +383,7 @@ public sealed class OrganizationTests(TerraBaseFixture fixture)
     {
         // The primary's TerraBase client holds the next transaction after every read of the change; a replica commits the
         // competing change; then the held transaction goes through. It must fail and be decided again on fresh reads.
-        var pause = new PausingTransactions { InnerHandler = fixture.NewHandler() };
+        var pause = new PausingTransactions { InnerHandler = TerraBaseFixture.NewHandler() };
         await using var oidc = await OidcHarness.StartAsync(fixture, services: services => services.AddSingleton(new HttpClient(pause)));
         await using var replica = await oidc.StartReplicaAsync();
         var (_, aliceToken) = await oidc.SignInUserAsync("alice@example.test");
@@ -421,7 +421,7 @@ public sealed class OrganizationTests(TerraBaseFixture fixture)
     [Test]
     public async Task A_role_change_paused_while_its_organization_is_deleted_changes_nothing()
     {
-        var pause = new PausingTransactions { InnerHandler = fixture.NewHandler() };
+        var pause = new PausingTransactions { InnerHandler = TerraBaseFixture.NewHandler() };
         await using var oidc = await OidcHarness.StartAsync(fixture, services: services => services.AddSingleton(new HttpClient(pause)));
         var (_, aliceToken) = await oidc.SignInUserAsync("alice@example.test");
         var (bob, _) = await oidc.SignInUserAsync("bob@example.test");

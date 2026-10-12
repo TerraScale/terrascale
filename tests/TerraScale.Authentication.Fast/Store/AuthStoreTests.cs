@@ -175,7 +175,7 @@ public sealed class AuthStoreTests(TerraBaseFixture fixture)
         var (tenant, database) = await fixture.CreateDatabaseAsync();
         await database.CreateCollectionAsync("items");
         string version;
-        using (var http = fixture.NewHttpClient())
+        using (var http = TerraBaseFixture.NewHttpClient())
         {
             var client = new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions { BaseAddress = fixture.Server.ClientAddress, ApiKey = tenant.ApiKey });
             var store = new AuthStore(client.Database(tenant.Project.Id, "auth"), TimeProvider.System);
@@ -183,7 +183,7 @@ public sealed class AuthStoreTests(TerraBaseFixture fixture)
             await Assert.That(await store.ClaimUniqueAsync("tenant", "email", "durable@example.test", "owner")).IsTrue();
         }
 
-        using var restartedHttp = fixture.NewHttpClient();
+        using var restartedHttp = TerraBaseFixture.NewHttpClient();
         var restartedClient = new TerraBaseDocumentsClient(restartedHttp, new TerraBaseDocumentsClientOptions { BaseAddress = fixture.Server.ClientAddress, ApiKey = tenant.ApiKey });
         var restartedStore = new AuthStore(restartedClient.Database(tenant.Project.Id, "auth"), TimeProvider.System);
         var read = await restartedStore.GetAsync("items", "tenant", "persistent");

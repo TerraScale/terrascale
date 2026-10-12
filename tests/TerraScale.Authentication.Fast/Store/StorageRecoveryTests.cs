@@ -73,10 +73,6 @@ public sealed class StorageRecoveryTests
         AuthTestServer.StartAsync(services: services =>
         {
             services.AddSingleton(terrabase.Http);
-            services.AddSingleton(_ => new TerraBaseDocumentsClient(terrabase.Http, new TerraBaseDocumentsClientOptions
-            {
-                BaseAddress = terrabase.ClientAddress,
-                ApiKey = tenant.ApiKey,
-            }).Database(tenant.Project.Id, "auth"));
+            services.AddSingleton(_ => terrabase.InternalDocuments().Database(tenant.Project.Id, "auth"));
         });
 }

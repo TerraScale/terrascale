@@ -10,8 +10,8 @@ namespace TerraScale.Authentication.Fast.Store;
 /// The TerraBase built from this commit serves every route the pinned ts-dotnet clients call
 /// (<c>$(TsDotnetRoot)/contracts/terrabase/routes.json</c>; ts-dotnet's own tests check its clients send exactly those).
 /// An unknown route answers 404 and a known path with the wrong method 405, so an unauthenticated request that gets
-/// neither reached an endpoint. Documents routes are tried on the client listener, management routes on the
-/// administrative listener, where the management service credential works.
+/// neither reached an endpoint. Documents routes are tried on the public listener, management routes on the internal
+/// listener (HTTP/2), where the platform operator calls them.
 /// </summary>
 [ClassDataSource<TerraBaseFixture>(Shared = SharedType.PerTestSession)]
 public sealed class TerraBaseSdkContractTests(TerraBaseFixture fixture)
@@ -40,8 +40,9 @@ public sealed class TerraBaseSdkContractTests(TerraBaseFixture fixture)
             // Data routes name a database; management routes address it by id.
             var database = client == "documents" ? "app" : "01JA0000000000000000000005";
             var path = Regex.Replace(template, @"\{([a-z]+)\}", match => match.Groups[1].Value == "database" ? database : Values[match.Groups[1].Value]);
-            var origin = client == "documents" ? fixture.Server.ClientAddress : fixture.Server.AdminAddress;
-            using var request = new HttpRequestMessage(method, new Uri(origin, path));
+            using var request = client == "documents"
+                ? new HttpRequestMessage(method, new Uri(fixture.Server.ClientAddress, path))
+                : new HttpRequestMessage(method, new Uri(fixture.Server.InternalAddress, path)) { Version = HttpVersion.Version20, VersionPolicy = HttpVersionPolicy.RequestVersionExact };
             if (method != HttpMethod.Get && method != HttpMethod.Delete)
             {
                 request.Content = new StringContent("{}", Encoding.UTF8, "application/json");

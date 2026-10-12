@@ -33,34 +33,23 @@ public sealed class TerraBaseFixture : IAsyncInitializer, IAsyncDisposable
     }
 
     /// <summary>
-    /// Points a ts-auth server's storage at <paramref name="databaseName"/> of the tenant's project in this fixture.
-    /// TODO(.cos/fly-migration-plan.md, phase 3a): TerraBase has no internal listener yet, so tests reach its TLS client
-    /// listener with the tenant's API key; switch to the credential-free internal listener once it ships.
-    /// The fixture's HttpClient trusts its certificate; a test may register its own, wrapping <see cref="NewHandler"/>.
+    /// Points a ts-auth server's storage at <paramref name="databaseName"/> of the tenant's project in this fixture: by
+    /// default through TerraBase's internal listener without a credential, as ts-auth reaches it on Fly; with
+    /// <paramref name="apiKey"/>, through the public listener with that key. A test may register its own HttpClient,
+    /// wrapping <see cref="NewHandler"/>.
     /// </summary>
     public void UseStorage(IServiceCollection services, TerraBaseTestTenant tenant, string databaseName = "auth", string? apiKey = null)
     {
         services.AddSingleton(this.Server.Http);
-        services.AddSingleton(provider => new TerraBaseDocumentsClient(provider.GetRequiredService<HttpClient>(), new TerraBaseDocumentsClientOptions
-        {
-            BaseAddress = new Uri(this.Server.ClientAddress.GetLeftPart(UriPartial.Authority)),
-            ApiKey = apiKey ?? tenant.ApiKey,
-        }).Database(tenant.Project.Id, databaseName));
+        services.AddSingleton(provider => new TerraBaseDocumentsClient(provider.GetRequiredService<HttpClient>(), apiKey is null
+            ? new TerraBaseDocumentsClientOptions { BaseAddress = this.Server.InternalAddress }
+            : new TerraBaseDocumentsClientOptions { BaseAddress = this.Server.ClientAddress, ApiKey = apiKey }).Database(tenant.Project.Id, databaseName));
     }
 
-    public HttpClient NewHttpClient() => new(this.NewHandler());
+    public static HttpClient NewHttpClient() => new(NewHandler());
 
-    /// <summary>A handler that trusts only this fixture's TerraBase certificate.</summary>
-    public SocketsHttpHandler NewHandler()
-    {
-        var trusted = this.Server.Certificate.RawData;
-        return new SocketsHttpHandler
-        {
-            AllowAutoRedirect = false,
-            UseCookies = false,
-            SslOptions = { RemoteCertificateValidationCallback = (_, presented, _, _) => presented is not null && presented.GetRawCertData().AsSpan().SequenceEqual(trusted) },
-        };
-    }
+    /// <summary>A handler for this fixture's TerraBase that never follows redirects.</summary>
+    public static SocketsHttpHandler NewHandler() => new() { AllowAutoRedirect = false, UseCookies = false };
 
     public static JsonElement Json(string json)
     {

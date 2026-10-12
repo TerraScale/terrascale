@@ -96,7 +96,7 @@ public sealed class TotpTransactionTests(TerraBaseFixture fixture)
     public async Task A_competing_delete_or_stale_session_version_rolls_back_all_credential_and_user_writes(string transition, bool stale)
     {
         var clock = new StoreTestClock();
-        var pause = new PausingTransactions(CredentialTransactions.IsCredentialTransaction) { InnerHandler = fixture.NewHandler() };
+        var pause = new PausingTransactions(CredentialTransactions.IsCredentialTransaction) { InnerHandler = TerraBaseFixture.NewHandler() };
         using var http = new HttpClient(new CredentialTransactions { InnerHandler = pause });
         await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock, services: services => services.AddSingleton(http));
         await using var replica = await oidc.StartReplicaAsync(clock: clock);
@@ -170,7 +170,7 @@ public sealed class TotpTransactionTests(TerraBaseFixture fixture)
     public async Task Independent_replicas_racing_distinct_recovery_codes_for_one_caller_session_leave_the_losing_code_unspent()
     {
         var clock = new StoreTestClock();
-        var pause = new PausingTransactions(CredentialTransactions.IsCredentialTransaction) { InnerHandler = fixture.NewHandler() };
+        var pause = new PausingTransactions(CredentialTransactions.IsCredentialTransaction) { InnerHandler = TerraBaseFixture.NewHandler() };
         using var http = new HttpClient(new CredentialTransactions { InnerHandler = pause });
         await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock, services: services => services.AddSingleton(http));
         await using var replica = await oidc.StartReplicaAsync(clock: clock);
@@ -218,7 +218,7 @@ public sealed class TotpTransactionTests(TerraBaseFixture fixture)
     public async Task Revocation_between_read_and_commit_leaves_the_caller_session_and_recovery_state_unchanged(bool disable)
     {
         var clock = new StoreTestClock();
-        var pause = new PausingTransactions(CredentialTransactions.IsCredentialTransaction) { InnerHandler = fixture.NewHandler() };
+        var pause = new PausingTransactions(CredentialTransactions.IsCredentialTransaction) { InnerHandler = TerraBaseFixture.NewHandler() };
         using var http = new HttpClient(new CredentialTransactions { InnerHandler = pause });
         await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock, services: services => services.AddSingleton(http));
         await using var replica = await oidc.StartReplicaAsync(clock: clock);
@@ -279,7 +279,7 @@ public sealed class TotpTransactionTests(TerraBaseFixture fixture)
         var clock = new StoreTestClock();
         var pause = new PausingTransactions(request => request.Method == HttpMethod.Get
             && request.RequestUri!.AbsolutePath.Contains($"/collections/{AuthStore.MfaCollection}/documents/", StringComparison.Ordinal))
-        { InnerHandler = fixture.NewHandler() };
+        { InnerHandler = TerraBaseFixture.NewHandler() };
         var transport = new CredentialTransactions { InnerHandler = pause };
         using var http = new HttpClient(transport);
         await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock, services: services => services.AddSingleton(http));
@@ -332,7 +332,7 @@ public sealed class TotpTransactionTests(TerraBaseFixture fixture)
     public async Task A_begin_acknowledged_after_enrollment_expiry_returns_the_committed_enrollment()
     {
         var clock = new StoreTestClock();
-        var transport = new CredentialTransactions { InnerHandler = fixture.NewHandler() };
+        var transport = new CredentialTransactions { InnerHandler = TerraBaseFixture.NewHandler() };
         using var http = new HttpClient(transport);
         await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock, services: services => services.AddSingleton(http));
         var mfa = oidc.Server.App.Services.GetRequiredService<TotpCredentials>();
@@ -366,7 +366,7 @@ public sealed class TotpTransactionTests(TerraBaseFixture fixture)
     public async Task Losing_the_real_credential_commit_response_returns_no_success_but_preserves_state_and_refuses_replay(string transition)
     {
         var clock = new StoreTestClock();
-        var transport = new CredentialTransactions { InnerHandler = fixture.NewHandler() };
+        var transport = new CredentialTransactions { InnerHandler = TerraBaseFixture.NewHandler() };
         using var http = new HttpClient(transport);
         await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock, services: services => services.AddSingleton(http));
         var mfa = oidc.Server.App.Services.GetRequiredService<TotpCredentials>();

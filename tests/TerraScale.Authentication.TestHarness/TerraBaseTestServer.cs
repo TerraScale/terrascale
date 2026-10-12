@@ -2,10 +2,8 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Json;
-using System.Security.Cryptography;
-using System.Security.Cryptography.X509Certificates;
+using System.Net.Sockets;
 using System.Text.Json;
-using System.Text.RegularExpressions;
 using TerraScale.DotNet;
 using TerraScale.DotNet.TerraBase;
 
@@ -13,51 +11,32 @@ namespace TerraScale.Authentication.Tests;
 
 /// <summary>
 /// One real TerraBase process built from this same commit (<c>TERRABASE_BINARY</c>, set by the Makefile's auth test
-/// targets) on free loopback ports, with a fresh data directory, a generated self-signed certificate for <c>localhost</c>
-/// and a generated management service credential. Share one per test session and dispose it at the end.
+/// targets) on free loopback ports with a fresh data directory: its public listener (plain HTTP, as behind Fly Proxy) and
+/// its internal listener (h2c, loopback off Fly), where the platform operator needs no credential. Share one per test
+/// session and dispose it at the end.
 /// </summary>
-public sealed partial class TerraBaseTestServer : IAsyncDisposable
+public sealed class TerraBaseTestServer : IAsyncDisposable
 {
     private static readonly TimeSpan StartupTimeout = TimeSpan.FromSeconds(30);
     private static readonly TerraScaleIdGenerator Ids = new();
 
     private readonly ConcurrentQueue<string> output = new();
     private readonly string directory;
-    private readonly HttpClient admin = new(new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false }) { Timeout = TimeSpan.FromSeconds(10) };
+    private readonly int publicPort = FreePort();
+    private readonly int internalPort = FreePort();
+    private readonly int metricsPort = FreePort();
     private Process? process;
-    private int adminPort;
-    private int clientPort;
 
-    // Listeners the current process announced; both are up at 2.
-    private int listening;
+    private TerraBaseTestServer(string directory) => this.directory = directory;
 
-    private TerraBaseTestServer(string directory, X509Certificate2 certificate)
-    {
-        this.directory = directory;
-        this.Certificate = certificate;
-        var trusted = certificate.RawData;
-        this.Http = new HttpClient(new SocketsHttpHandler
-        {
-            AllowAutoRedirect = false,
-            UseCookies = false,
-            SslOptions = { RemoteCertificateValidationCallback = (_, presented, _, _) => presented is not null && presented.GetRawCertData().AsSpan().SequenceEqual(trusted) },
-        });
-    }
+    /// <summary>Origin of the public listener (Documents API with API keys and ts-auth tokens).</summary>
+    public Uri ClientAddress => new($"http://127.0.0.1:{this.publicPort}/");
 
-    /// <summary>HTTPS origin of the client listener (Documents API).</summary>
-    public Uri ClientAddress => new($"https://localhost:{this.clientPort}/");
+    /// <summary>Origin of the internal listener (HTTP/2 only), where the platform operator needs no credential.</summary>
+    public Uri InternalAddress => new($"http://127.0.0.1:{this.internalPort}/");
 
-    /// <summary>HTTP origin of the loopback administrative listener, the only one that accepts <see cref="ServiceCredential"/>.</summary>
-    public Uri AdminAddress => new($"http://127.0.0.1:{this.adminPort}/");
-
-    /// <summary>The management service credential the administrative listener accepts.</summary>
-    public string ServiceCredential { get; } = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(32));
-
-    /// <summary>A client that trusts only this server's certificate and never follows redirects. Owned by the server.</summary>
-    public HttpClient Http { get; }
-
-    /// <summary>The server's self-signed certificate.</summary>
-    public X509Certificate2 Certificate { get; }
+    /// <summary>A client that never follows redirects. Owned by the server.</summary>
+    public HttpClient Http { get; } = new(new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false });
 
     /// <summary>Starts <c>TERRABASE_BINARY</c>; returns the reason instead when it names no file.</summary>
     public static async Task<(TerraBaseTestServer? Server, string? Unavailable)> StartAsync(CancellationToken cancellationToken = default)
@@ -68,7 +47,7 @@ public sealed partial class TerraBaseTestServer : IAsyncDisposable
             return (null, "TERRABASE_BINARY must name the TerraBase binary built from this commit (make auth-test-fast sets it)");
         }
 
-        var server = new TerraBaseTestServer(Directory.CreateTempSubdirectory("terrabase-test-").FullName, CreateCertificate());
+        var server = new TerraBaseTestServer(Directory.CreateTempSubdirectory("terrabase-test-").FullName);
         try
         {
             await server.StartAsync(binary, cancellationToken);
@@ -81,25 +60,33 @@ public sealed partial class TerraBaseTestServer : IAsyncDisposable
         }
     }
 
-    /// <summary>A Management API client on the administrative listener, acting with <see cref="ServiceCredential"/>.</summary>
-    public TerraBaseManagementClient Management() =>
-        new(this.admin, new TerraBaseManagementClientOptions { BaseAddress = this.AdminAddress, ServiceCredential = this.ServiceCredential });
+    /// <summary>A Management API client on the internal listener, acting as the platform operator.</summary>
+    public TerraBaseManagementClient Management() => new(this.Http, new TerraBaseManagementClientOptions { BaseAddress = this.InternalAddress });
 
     /// <summary>A Documents API client on the client listener, authenticated with <paramref name="apiKey"/>.</summary>
     public TerraBaseDocumentsClient Documents(string apiKey) =>
         new(this.Http, new TerraBaseDocumentsClientOptions { BaseAddress = this.ClientAddress, ApiKey = apiKey });
 
-    /// <summary>Issues an API key for <paramref name="organizationId"/> (<c>POST /admin/api-keys</c>, administrative listener).</summary>
+    /// <summary>A Documents API client on the internal listener without a credential: how ts-auth reaches TerraBase on Fly.</summary>
+    public TerraBaseDocumentsClient InternalDocuments() => new(this.Http, new TerraBaseDocumentsClientOptions { BaseAddress = this.InternalAddress });
+
+    /// <summary>Issues an API key for <paramref name="organizationId"/> (<c>POST /admin/api-keys</c>, internal listener).</summary>
     public async Task<string> CreateApiKeyAsync(
         string organizationId, IReadOnlyList<string>? scopes = null, string? projectId = null, CancellationToken cancellationToken = default)
     {
-        using var response = await this.admin.PostAsJsonAsync(new Uri(this.AdminAddress, "admin/api-keys"), new
+        using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(this.InternalAddress, "admin/api-keys"))
         {
-            name = "integration test",
-            scopes = scopes ?? ["documents:read", "documents:write"],
-            organizationId,
-            projectId,
-        }, cancellationToken);
+            Version = HttpVersion.Version20,
+            VersionPolicy = HttpVersionPolicy.RequestVersionExact,
+            Content = JsonContent.Create(new
+            {
+                name = "integration test",
+                scopes = scopes ?? ["documents:read", "documents:write"],
+                organizationId,
+                projectId,
+            }),
+        };
+        using var response = await this.Http.SendAsync(request, cancellationToken);
         response.EnsureSuccessStatusCode();
         using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
         return body.RootElement.GetProperty("secret").GetString()!;
@@ -142,7 +129,6 @@ public sealed partial class TerraBaseTestServer : IAsyncDisposable
     }
 
     /// <summary>Starts the stopped server again on the same data directory, ports and credential.</summary>
-    // shortcut: another process could take a released port before the restart binds it; fine for loopback test ports.
     public Task RestartAsync(CancellationToken cancellationToken = default) =>
         this.process is null
             ? this.StartAsync(Environment.GetEnvironmentVariable("TERRABASE_BINARY")!, cancellationToken)
@@ -153,24 +139,11 @@ public sealed partial class TerraBaseTestServer : IAsyncDisposable
     {
         await this.StopAsync();
         this.Http.Dispose();
-        this.admin.Dispose();
-        this.Certificate.Dispose();
         Directory.Delete(this.directory, recursive: true);
     }
 
     private async Task StartAsync(string binary, CancellationToken cancellationToken)
     {
-        var certificatePath = Path.Combine(this.directory, "client.crt");
-        var keyPath = Path.Combine(this.directory, "client.key");
-        var credentialPath = Path.Combine(this.directory, "management-credential");
-        await File.WriteAllTextAsync(certificatePath, this.Certificate.ExportCertificatePem(), cancellationToken);
-        using (var key = this.Certificate.GetECDsaPrivateKey()!)
-        {
-            await File.WriteAllTextAsync(keyPath, key.ExportPkcs8PrivateKeyPem(), cancellationToken);
-        }
-
-        await File.WriteAllTextAsync(credentialPath, this.ServiceCredential, cancellationToken);
-        var (adminPort, clientPort) = (Volatile.Read(ref this.adminPort), Volatile.Read(ref this.clientPort));
         var start = new ProcessStartInfo(binary)
         {
             WorkingDirectory = this.directory,
@@ -178,13 +151,18 @@ public sealed partial class TerraBaseTestServer : IAsyncDisposable
             RedirectStandardError = true,
             UseShellExecute = false,
         };
-        start.ArgumentList.Add($"--admin-port={adminPort}");
-        start.ArgumentList.Add($"--client-port={clientPort}");
-        start.ArgumentList.Add($"--client-certificate={certificatePath}");
-        start.ArgumentList.Add($"--client-private-key={keyPath}");
-        start.ArgumentList.Add($"--management-credential-file={credentialPath}");
+        // Development: no Tigris backup to attach in a test. The test process's own Fly, Tigris and TerraBase variables never reach it.
+        foreach (var name in start.Environment.Keys.Where(name => name.StartsWith("FLY_", StringComparison.Ordinal) || name.StartsWith("AWS_", StringComparison.Ordinal)
+            || name.StartsWith("TERRABASE_", StringComparison.Ordinal) || name is "BUCKET_NAME" or "PRIMARY_REGION").ToList())
+        {
+            start.Environment.Remove(name);
+        }
+
+        start.ArgumentList.Add("--environment=Development");
+        start.ArgumentList.Add($"--port={this.publicPort}");
+        start.ArgumentList.Add($"--internal-port={this.internalPort}");
+        start.ArgumentList.Add($"--metrics-port={this.metricsPort}");
         start.ArgumentList.Add($"--data-directory={Path.Combine(this.directory, "data")}");
-        Volatile.Write(ref this.listening, 0);
         this.process = Process.Start(start) ?? throw new InvalidOperationException("TerraBase did not start.");
         this.process.OutputDataReceived += (_, line) => this.Keep(line.Data);
         this.process.ErrorDataReceived += (_, line) => this.Keep(line.Data);
@@ -200,20 +178,17 @@ public sealed partial class TerraBaseTestServer : IAsyncDisposable
                 throw new InvalidOperationException($"TerraBase exited with {this.process.ExitCode}: {string.Join('\n', this.output)}");
             }
 
-            if (Volatile.Read(ref this.listening) == 2)
+            try
             {
-                try
+                using var health = await this.Http.GetAsync(new Uri(this.ClientAddress, "healthz"), startup.Token);
+                if (health.StatusCode == HttpStatusCode.OK)
                 {
-                    using var health = await this.admin.GetAsync(new Uri(this.AdminAddress, "healthz"), startup.Token);
-                    if (health.StatusCode == HttpStatusCode.OK)
-                    {
-                        return;
-                    }
+                    return;
                 }
-                catch (HttpRequestException)
-                {
-                    // Not listening yet.
-                }
+            }
+            catch (HttpRequestException)
+            {
+                // Not listening yet.
             }
 
             try
@@ -227,28 +202,11 @@ public sealed partial class TerraBaseTestServer : IAsyncDisposable
         }
     }
 
-    // TerraBase logs each listener as one JSON event whose address field holds its URL: loopback http is the
-    // administrative listener, https the client listener.
     private void Keep(string? line)
     {
         if (line is null)
         {
             return;
-        }
-
-        if (line.Contains("Now listening on", StringComparison.Ordinal) && ListenAddress().Match(line) is { Success: true } match
-            && Uri.TryCreate(match.Value, UriKind.Absolute, out var address) && address.Port > 0)
-        {
-            if (address.Scheme == Uri.UriSchemeHttp && address.IsLoopback)
-            {
-                Volatile.Write(ref this.adminPort, address.Port);
-                Interlocked.Increment(ref this.listening);
-            }
-            else if (address.Scheme == Uri.UriSchemeHttps)
-            {
-                Volatile.Write(ref this.clientPort, address.Port);
-                Interlocked.Increment(ref this.listening);
-            }
         }
 
         this.output.Enqueue(line);
@@ -257,22 +215,14 @@ public sealed partial class TerraBaseTestServer : IAsyncDisposable
         }
     }
 
-    [GeneratedRegex(@"https?://[^\s""]+")]
-    private static partial Regex ListenAddress();
-
-    private static X509Certificate2 CreateCertificate()
+    // shortcut: another process can take the port between this probe and TerraBase's bind (or a restart); rare on loopback.
+    private static int FreePort()
     {
-        using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
-        var request = new CertificateRequest("CN=localhost", key, HashAlgorithmName.SHA256);
-        var names = new SubjectAlternativeNameBuilder();
-        names.AddDnsName("localhost");
-        request.CertificateExtensions.Add(names.Build());
-        request.CertificateExtensions.Add(new X509EnhancedKeyUsageExtension([new Oid("1.3.6.1.5.5.7.3.1")], critical: false));
-        var now = DateTimeOffset.UtcNow;
-        return request.CreateSelfSigned(now.AddMinutes(-5), now.AddDays(1));
+        using var probe = new TcpListener(IPAddress.Loopback, 0);
+        probe.Start();
+        return ((IPEndPoint)probe.LocalEndpoint).Port;
     }
 }
-
 /// <summary>A tenant created by <see cref="TerraBaseTestServer.CreateTenantAsync"/>.</summary>
 /// <param name="UserId">The owner's user id.</param>
 /// <param name="Organization">The organization.</param>

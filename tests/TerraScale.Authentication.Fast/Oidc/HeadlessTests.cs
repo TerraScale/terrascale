@@ -870,7 +870,7 @@ public sealed class HeadlessTests(TerraBaseFixture fixture)
     {
         var pause = new PausingTransactions(request => request.Method == HttpMethod.Put
             && request.RequestUri!.AbsolutePath.Contains("/collections/passcodes/documents/", StringComparison.Ordinal))
-        { InnerHandler = fixture.NewHandler() };
+        { InnerHandler = TerraBaseFixture.NewHandler() };
         await using var oidc = await OidcHarness.StartAsync(fixture, services: services => services.AddSingleton(new HttpClient(pause)));
         await using var replica = await oidc.StartReplicaAsync();
         const string email = "race@example.test";

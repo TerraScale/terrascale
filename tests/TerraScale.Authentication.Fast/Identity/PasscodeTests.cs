@@ -91,7 +91,7 @@ public sealed class PasscodeTests(TerraBaseFixture fixture)
     public async Task A_reset_racing_session_issuance_consumes_the_passcode_and_returns_a_normal_refusal()
     {
         var clock = new StoreTestClock();
-        var pause = new PausingTransactions { InnerHandler = fixture.NewHandler() };
+        var pause = new PausingTransactions { InnerHandler = TerraBaseFixture.NewHandler() };
         using var http = new HttpClient(pause);
         await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock, services: services => services.AddSingleton(http));
         await using var replica = await oidc.StartReplicaAsync(clock: clock);

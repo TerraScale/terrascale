@@ -242,7 +242,7 @@ public sealed class LockoutTests(TerraBaseFixture fixture)
     {
         var start = WindowStart();
         var clock = new ManualClock(start);
-        var advancing = new ExpiringEmailConfigHandler(clock) { InnerHandler = fixture.NewHandler() };
+        var advancing = new ExpiringEmailConfigHandler(clock) { InnerHandler = TerraBaseFixture.NewHandler() };
         await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock,
             services: services => services.AddSingleton(new HttpClient(advancing)));
         var email = Address();
