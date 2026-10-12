@@ -38,6 +38,47 @@ public sealed class RegionPinTests
         await Assert.That(async () => await client.GetAsync(new Uri("/", UriKind.Relative))).Throws<RegionMismatchException>();
     }
 
+    // A disposable app's run pins each request to one machine: fly-force-instance-id goes out, and only an answer naming that
+    // machine and its region is accepted.
+    [Test]
+    [Scenario(Nodes.Harness)]
+    [Arguments("gru", "m-gru", true)]
+    [Arguments("sjc", "m-gru", false)]
+    [Arguments("gru", "m-other", false)]
+    [Arguments(null, null, false)]
+    public async Task A_machine_pinned_request_is_accepted_only_from_that_machine_in_its_region(string? region, string? machine, bool accepted)
+    {
+        string? forced = null;
+        var pin = new MachinePin(Cluster.Gru, "m-gru")
+        {
+            InnerHandler = new Stand(request =>
+            {
+                forced = request.Headers.GetValues("fly-force-instance-id").Single();
+                var response = new HttpResponseMessage(HttpStatusCode.OK);
+                if (region is not null)
+                {
+                    response.Headers.Add("X-TerraBase-Region", region);
+                    response.Headers.Add("X-TerraBase-Machine", machine);
+                }
+
+                return response;
+            }),
+        };
+        using var client = new HttpClient(pin) { BaseAddress = new Uri("http://fly.test") };
+
+        if (accepted)
+        {
+            using var response = await client.GetAsync(new Uri("/", UriKind.Relative));
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        }
+        else
+        {
+            await Assert.That(async () => await client.GetAsync(new Uri("/", UriKind.Relative))).Throws<RegionMismatchException>();
+        }
+
+        await Assert.That(forced).IsEqualTo("m-gru");
+    }
+
     private static HttpClient Client(string pinned, string? served) =>
         new(new RegionPin(pinned) { InnerHandler = new Stand(request => Answer(request, served)) }) { BaseAddress = new Uri("http://fly.test") };
 
