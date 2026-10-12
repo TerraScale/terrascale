@@ -400,18 +400,19 @@ retries 5 s later. R6 adds `Digest`, `ReadBucket` and `refill_required`; R7 adds
 
 `POST …/sql` accepts `INSERT`, `UPDATE` and `DELETE` in the `SqlSubset` grammar (SqlParserCS, SQLite dialect). The
 same bounds apply as for reads: 16 KiB, 256 conditions, no joins, no subqueries, no functions in `WHERE`. Turso cannot
-cancel a statement (section 2), so the grammar stays bounded. Write statements need the `documents:write` scope.
+cancel a statement (section 2), so the grammar stays bounded. Writes use the same route and also need the
+`documents:write` scope. Design and slices: [r9-sql-writes-design.md](r9-sql-writes-design.md).
 
 | Statement | Translation |
 | --- | --- |
 | `INSERT INTO c (_id, f1, f2) VALUES (…), (…)` | one PUT per row. `_id` is optional (a ULID is generated). An `_id` that exists locally is an error (409, local check only; concurrent inserts across regions resolve by LWW) |
-| `UPDATE c SET f = <literal>, g = g + <n>, h = <field or arithmetic> WHERE <filter>` | the lane runs the compiled `SELECT id, <expressions> FROM "c" WHERE <filter> LIMIT 1025` on the writer connection, inside the write transaction. Each row becomes `base` writes for literals and computed values, and `f = f ± <integer>` becomes `inc` (a convergent increment). Nested `SET a.b = …` is a read-modify-write of `a` |
+| `UPDATE c SET f = <literal>, f = NULL, g = g + <n> WHERE <filter>` | the lane runs the compiled `SELECT id FROM "c" WHERE <filter> LIMIT 1025` on the writer connection, inside the write transaction. Each row becomes the document API's ops: `set` for literals, `unset` for `NULL`, and `f = f ± <integer>` becomes `inc` (a convergent increment). A value computed from other fields and nested `SET a.b = …` are refused in v1 (400): they do not converge |
 | `DELETE FROM c WHERE <filter>` | the same `SELECT id`, then one DELETE per row |
 
 - `WHERE` sees the local state at write time. Results are eventually consistent, as for API writes.
-- One statement is one operation with one stamp. It is atomic up to 1024 documents. Up to 10,000 it commits in chunks
-  of 1024, each atomic with its own stamp, and the statement as a whole is not atomic. More than 10,000 rows is 400
-  `sql_too_many_rows`.
+- One statement is one operation with one stamp, in one atomic change group: at most 1024 documents and 2 MiB. A
+  larger statement is 413 `sql_too_large`, naming the limit, and nothing commits (COS decision for v1). Chunked
+  statements past one group are the planned follow-up R9c ([r9-sql-writes-design.md](r9-sql-writes-design.md)).
 - Response: `{"affected": n, "ids": [... up to 1000]}`. No `RETURNING` in v1.
 - Rejected: `INSERT … SELECT`, `ON CONFLICT`, `REPLACE`, DDL, `PRAGMA`, `ATTACH`, and writes to `_tb_*` or reserved
   collections.

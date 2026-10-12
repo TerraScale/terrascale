@@ -37,7 +37,7 @@ one of three writes.
 | `f = <literal>` (string, number, boolean, JSON via `json('…')` is out of v1) | `set` | per-field last-writer-wins on the HLC stamp |
 | `f = NULL` | `unset` | per-field LWW (a tombstone base) |
 | `f = f + <int>` / `f = f - <int>` (the same field, an int64 literal, non-zero) | `inc` | PN-counter: concurrent increments add |
-| `f = <other field or arithmetic>` | refused in v1 (400): a value computed from local state is not convergent, and silently writing it as LWW would surprise | — |
+| `f = <other field or arithmetic>` | refused in v1 (COS decision): 400 "SET may assign a literal, NULL, or the same field plus or minus an integer; a value computed from other fields does not converge across regions" | — |
 | `a.b = …` (nested) | refused in v1 (400 `nested_lattice_path`, as the ops API) | — |
 
 - One statement is one write transaction and one stamp. Every row's operations share it ("several writes of one
@@ -50,18 +50,19 @@ one of three writes.
   set, as the ops API's `set` does.
 - Rejected with 400: `INSERT … SELECT`, `ON CONFLICT`, `REPLACE`, `RETURNING`, `UPSERT`, DDL, `PRAGMA`, `ATTACH`,
   several statements, writes to reserved collections (`_collections`, `_indexes`, `_unique`) and `_tb_*`.
-- Scope: reads keep their scope. A write needs `documents:write` as well, checked after parsing (the statement kind is
-  only known then). Same route `POST …/sql`.
+- Scope (COS decision): the same route `POST …/sql`. Reads keep their scope; a write also needs `documents:write`,
+  checked after parsing (the statement kind is only known then).
 - Response: `{"affected": n, "ids": [… up to 1000]}`.
 
 ## 3. Limits and transactions
 
-- **Atomic up to one change group.** A statement writes at most 1024 documents and 2 MiB of captured state and
-  bodies (`Capture`), the same bounds as any transaction, so it is one change group: it commits whole and replicates
-  whole. The compiled select reads `LIMIT 1025`; 1025 rows is 400 `sql_too_many_rows`; a capacity overflow is answered as a
-  transaction's (`ChangeGroupCapacityException`: 503 `capacity`; storage write limits: 413). Nothing commits in either case.
-- Chunked statements (up to 10,000 rows, non-atomic, section 12) are deferred to slice R9c and may be dropped: a
-  non-atomic statement is a new contract, and the transaction API already covers bulk writes.
+- **One atomic change group per statement (COS decision, v1).** A statement writes at most 1024 documents and 2 MiB
+  of captured state and bodies (`Capture`), the same bounds as any transaction, so it is one change group: it commits
+  whole and replicates whole. The compiled select reads `LIMIT 1025`. A 1025th row, or a statement whose rows pass
+  2 MiB (`ChangeGroupCapacityException` or the storage write limits), is **413 `sql_too_large`**: "a SQL write changes
+  at most 1024 documents and 2 MiB in one atomic change group; split it, or use the transaction API". Nothing commits.
+- Chunked statements past one group (non-atomic) are the planned follow-up R9c, so read-write SQL is not capped at one
+  group for good.
 - Unique checks run per operation in order, as in a transaction: a duplicate is 409 `unique_violation` with
   `error.row` (the zero-based row), and the whole statement rolls back.
 - No `BEGIN`/`COMMIT`: one statement per request. Multi-statement atomicity is the transaction API's.
@@ -95,7 +96,7 @@ gate is the harness's; R9 changes no limit.
 | Stale change | Fast (`ShiftedTime`, `StaleEditAsync` with a SQL `UPDATE`): queued > 24 h while gru deletes and collects | loses to the collected deletion everywhere (R7 rule, same as an API write) |
 | GC interplay | Fast: SQL `DELETE`, collection below the horizon, then `INSERT` of the same id | no ghost fields (E14 rule); the new document only has its own fields |
 | Unique | Fast: concurrent `INSERT`s of one unique value in two regions | smallest id wins everywhere; `UPDATE … WHERE` does not see the loser |
-| Limits | Fast: 1025 rows; 2 MiB of bodies; 257 conditions | 400 / 503 `capacity` / 400, nothing committed |
+| Limits | Fast: 1025 rows; 2 MiB of bodies; 257 conditions | 413 `sql_too_large` / 413 `sql_too_large` / 400, nothing committed |
 | Scope | Fast: a `documents:read` key posts an `UPDATE` | 403, nothing written |
 | Grammar | Fast: every rejected form of section 2 | 400 with a message that quotes no client text |
 
@@ -105,14 +106,13 @@ gate is the harness's; R9 changes no limit.
 | --- | --- | --- |
 | R9a | Grammar for `UPDATE` (`set`, `unset`, `inc`) and `DELETE`; compiled select in the write transaction; operations through `WriteAsync`; scope; one-group limit; response | E11 actual pass (3+3 repeats); Fast for limits, scope, grammar, restart mid-statement |
 | R9b | `INSERT` (multi-row `VALUES`, generated ULIDs, create-only puts), unique `error.row` | Fast: unique, GC re-create, stale change; E2E partition |
-| R9c (optional) | Chunked statements past one group, only if COS/user keep section 12's 10,000-row contract | its own tests; otherwise section 12 is amended to "one group" |
+| R9c (planned) | Chunked statements past one group (non-atomic, each chunk one atomic group), with a restart-safe resume or a clear partial result | its own tests: kill between chunks, chunk boundaries, retry semantics |
 
 The storage format stays `StorageFormat.Id` of the base (no schema or encoding change); each slice checks it.
 
-## 7. Open questions (decisions for COS/user, not taken here)
+## 7. Decisions (COS, 2026-10-12; routine and reversible)
 
-1. Keep the 10,000-row chunked statements of section 12 (non-atomic), or limit SQL writes to one atomic group
-   (recommended)?
-2. Refuse computed `SET f = <expression of other fields>` in v1 (recommended), or allow it as a non-convergent LWW
-   write?
-3. Writes on the same `POST …/sql` route with an added `documents:write` check (recommended), or a separate route?
+1. v1: one atomic change group per statement (1024 documents / 2 MiB); a larger statement is 413 `sql_too_large`,
+   naming the limit. Chunking (R9c) is the planned follow-up. Section 12 of multi-region-replication.md says so.
+2. v1 refuses a computed `SET f = <other field or arithmetic>` with a 400 that names the rule (it does not converge).
+3. The same `POST …/sql` route; a write also requires `documents:write`.
