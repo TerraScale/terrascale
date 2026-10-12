@@ -114,6 +114,8 @@ public sealed class RegionTests
         var databases = $"{Organizations}/{organization}/projects/{project}/databases";
         var before = Directory.EnumerateFiles(api.Server.DataDirectory, "*.db", SearchOption.AllDirectories).ToList();
         string[] pins = second is null ? [first] : [first, second];
+        // Behind Fly Proxy, only a single well-formed region is replayed there.
+        var replay = first == "iad-1" ? "region=iad-1" : null;
 
         using var mutation = new HttpRequestMessage(HttpMethod.Post, new Uri(databases, UriKind.Relative))
         {
@@ -121,13 +123,13 @@ public sealed class RegionTests
         };
         mutation.Headers.TryAddWithoutValidation(PinHeader, pins);
         using var deniedMutation = await api.Client.SendAsync(mutation);
-        await AssertMisdirectedAsync(deniedMutation, first);
+        await AssertMisdirectedAsync(deniedMutation, first, replay);
 
         using var anonymous = api.DataClient();
         using var unauthenticated = new HttpRequestMessage(HttpMethod.Put, new Uri($"/v1/projects/{project}/databases/rejected", UriKind.Relative));
         unauthenticated.Headers.TryAddWithoutValidation(PinHeader, pins);
         using var deniedAnonymous = await anonymous.SendAsync(unauthenticated);
-        await AssertMisdirectedAsync(deniedAnonymous, first);
+        await AssertMisdirectedAsync(deniedAnonymous, first, replay);
 
         var list = await api.Client.GetFromJsonAsync<JsonElement>(new Uri(databases, UriKind.Relative));
         await Assert.That(list.GetProperty("items").GetArrayLength()).IsEqualTo(0);
@@ -188,9 +190,10 @@ public sealed class RegionTests
         }
     }
 
-    private static async Task AssertMisdirectedAsync(HttpResponseMessage response, string pin)
+    private static async Task AssertMisdirectedAsync(HttpResponseMessage response, string pin, string? replay)
     {
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.MisdirectedRequest);
+        await Assert.That(response.Headers.TryGetValues("fly-replay", out var replayed) ? replayed.Single() : null).IsEqualTo(replay);
         await Assert.That(response.Headers.GetValues(RegionHeader)).IsEquivalentTo(["gru-1"]);
         await Assert.That(response.Headers.CacheControl!.ToString()).IsEqualTo("no-store");
         await Assert.That(response.Headers.Contains(PinHeader)).IsFalse();

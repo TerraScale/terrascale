@@ -58,3 +58,22 @@ listed; there is no region list to maintain.
   HTTP/2 only: its clients send HTTP/2 with prior knowledge (`curl --http2-prior-knowledge`, .NET
   `HttpVersion.Version20` with `RequestVersionExact`).
 - `port`, `internal-port` and `metrics-port` exist only so tests can bind ephemeral ports.
+
+## fly-replay
+
+A public request a machine cannot serve because it landed in the wrong region still answers its 421, and also sets
+`fly-replay: region=<region>`, so Fly Proxy replays it there and the client gets that region's answer:
+
+- a database outside this region's placement, or a Management change of a database managed elsewhere: its home region
+  (`421 wrong_region`, [cross-region.md](cross-region.md));
+- a mismatched `X-TerraScale-Region-Pin` naming a single well-formed region: that region.
+
+A request carrying `Fly-Replay-Src` was replayed already and is answered where it landed, without another replay, so a
+disagreement between regions never loops. Requests on the internal listener never get `fly-replay`; Fly Proxy is not in
+front of it.
+
+Catalog primary forwarding stays on gRPC (`CatalogForwarding.Forward` on the internal listener) rather than
+`fly-replay: instance=<primary>`. A replayed request would be answered by the primary as its own region, not the region the
+client reached (the default `homeRegion` of a new database, placement checks, `X-TerraBase-Region`), and the follower
+could not wait until it applied what the request wrote, so the client's next request in its region could miss the
+database or key it just created. Fly also replays only bodies below 1 MB.
