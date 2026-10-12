@@ -176,9 +176,9 @@ public sealed class StorageMutationTests
         var (_, snapshotUrl, snapshotText) = await SnapshotAsync(api, shapes);
         var trigger = failure == "offset"
             ? "CREATE TRIGGER reject_offset BEFORE UPDATE ON commit_offset BEGIN SELECT RAISE(FAIL, 'injected offset failure'); END;"
-            // The row is already a tombstone when an AFTER UPDATE trigger fails: the transaction must still refuse to commit.
+            // The row is already gone when an AFTER DELETE trigger fails: the transaction must still refuse to commit.
             : failure == "document"
-                ? "CREATE TRIGGER reject_document AFTER UPDATE ON documents BEGIN SELECT RAISE(FAIL, 'injected document failure'); END;"
+                ? "CREATE TRIGGER reject_document AFTER DELETE ON \"items\" BEGIN SELECT RAISE(FAIL, 'injected document failure'); END;"
             : mutation == "create"
                 ? "CREATE TRIGGER reject_collection AFTER INSERT ON collections BEGIN SELECT RAISE(FAIL, 'injected collection failure'); END;"
                 : "CREATE TRIGGER reject_collection BEFORE DELETE ON collections BEGIN SELECT RAISE(FAIL, 'injected collection failure'); END;";

@@ -6,10 +6,9 @@ namespace TerraBase.Engine.Sqlite;
 internal sealed partial class SqliteStorageTransaction
 {
     private bool _uniqueAffected;
+    // A live document of a client collection ({0}), a retained uniqueness loser included.
     private const string UniqueLiveDocument = """
-        SELECT 1 FROM documents d WHERE d.collection = $collection
-            AND (d.body IS NOT NULL OR EXISTS (
-                SELECT 1 FROM unique_conflicts c WHERE c.collection = d.collection AND c.id = d.id)) LIMIT 1;
+        SELECT 1 FROM {0} UNION ALL SELECT 1 FROM unique_conflicts WHERE collection = $collection LIMIT 1;
         """;
 
     private void IndexUniqueKeys(string collection, string id, string? body, IReadOnlyList<UniqueConstraint> constraints, bool local, CancellationToken cancellationToken)
@@ -88,17 +87,13 @@ internal sealed partial class SqliteStorageTransaction
     }
 
     // Only ids are paged (128 KiB maximum); each source body is read and released individually.
-    private IEnumerable<string> UniqueProjectionIds(string collection, bool affected, CancellationToken cancellationToken)
+    private IEnumerable<string> UniqueProjectionIds(CancellationToken cancellationToken)
     {
         var after = string.Empty;
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var command = Command(affected ? """
-                SELECT id FROM temp.unique_affected WHERE id > $after ORDER BY id LIMIT 128;
-                """ : """
-                SELECT d.id FROM documents d WHERE d.collection = $collection AND d.id > $after ORDER BY d.id LIMIT 128;
-                """, affected ? null : collection);
+            var command = Command("SELECT id FROM temp.unique_affected WHERE id > $after ORDER BY id LIMIT 128;");
             command.Parameters.AddWithValue("$after", after);
 
             var ids = new List<string>(128);

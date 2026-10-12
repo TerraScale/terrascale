@@ -17,7 +17,6 @@ public sealed class QueryPlanTests
         ["DocumentBytes"] = "SEARCH d USING PRIMARY KEY (collection=? AND id=?) | SEARCH c USING PRIMARY KEY (collection=? AND id=?) LEFT-JOIN",
         ["StoredDocumentBytes"] = "SCAN collections | CORRELATED SCALAR SUBQUERY 1 | SEARCH d USING PRIMARY KEY (collection=?) | SEARCH c USING PRIMARY KEY (collection=? AND id=?) LEFT-JOIN",
         ["Get"] = "SEARCH documents USING PRIMARY KEY (collection=? AND id=?)",
-        ["UniqueRawDocument"] = "SEARCH d USING PRIMARY KEY (collection=? AND id=?) | SEARCH c USING PRIMARY KEY (collection=? AND id=?) LEFT-JOIN",
         ["Version"] = "SEARCH documents USING PRIMARY KEY (collection=? AND id=?)",
         // Inserts have no plan; the upsert's conflict check is a primary-key lookup.
         ["Put"] = "",
@@ -50,10 +49,9 @@ public sealed class QueryPlanTests
         ["IndexExists"] = "SCAN sqlite_schema",
         ["ObserveOffset"] = "SEARCH commit_offset USING INTEGER PRIMARY KEY (rowid=?)",
         // Client databases (docs/terrabase/multi-region-replication.md): states and documents by key.
-        ["GetState"] = "SEARCH s USING INDEX sqlite_autoindex__tb_state_1 (collection=? AND id=?) | SEARCH d USING PRIMARY KEY (collection=? AND id=?) LEFT-JOIN | SEARCH c USING PRIMARY KEY (collection=? AND id=?) LEFT-JOIN",
-        ["ClientHasCollectionState"] = "SCAN CONSTANT ROW | SCALAR SUBQUERY 1 | SEARCH documents USING PRIMARY KEY (collection>? AND collection<?) | SCALAR SUBQUERY 2 | SEARCH collections USING PRIMARY KEY (name>? AND name<?) | SCALAR SUBQUERY 3 | SEARCH change_log USING COVERING INDEX change_log_by_offset (collection>? AND collection<?)",
-        ["ClientHasCollectionStateFrom"] = "SCAN CONSTANT ROW | SCALAR SUBQUERY 1 | SEARCH documents USING PRIMARY KEY (collection>?) | SCALAR SUBQUERY 2 | SEARCH collections USING PRIMARY KEY (name>?) | SCALAR SUBQUERY 3 | SEARCH change_log USING COVERING INDEX change_log_by_offset (collection>?)",
-        ["PutDocument"] = "",
+        ["GetState"] = "SEARCH s USING INDEX sqlite_autoindex__tb_state_1 (collection=? AND id=?) | SEARCH d USING INDEX sqlite_autoindex_items_1 (id=?) LEFT-JOIN | SEARCH c USING PRIMARY KEY (collection=? AND id=?) LEFT-JOIN",
+        ["ClientHasCollectionState"] = "SCAN CONSTANT ROW | SCALAR SUBQUERY 1 | SEARCH _tb_state USING COVERING INDEX sqlite_autoindex__tb_state_1 (collection>? AND collection<?) | SCALAR SUBQUERY 2 | SEARCH collections USING PRIMARY KEY (name>? AND name<?) | SCALAR SUBQUERY 3 | SEARCH change_log USING COVERING INDEX change_log_by_offset (collection>? AND collection<?)",
+        ["ClientHasCollectionStateFrom"] = "SCAN CONSTANT ROW | SCALAR SUBQUERY 1 | SEARCH _tb_state USING COVERING INDEX sqlite_autoindex__tb_state_1 (collection>?) | SCALAR SUBQUERY 2 | SEARCH collections USING PRIMARY KEY (name>?) | SCALAR SUBQUERY 3 | SEARCH change_log USING COVERING INDEX change_log_by_offset (collection>?)",
         ["UpdateState"] = "SEARCH _tb_state USING INDEX sqlite_autoindex__tb_state_1 (collection=? AND id=?)",
         ["InsertState"] = "",
         ["Origin"] = "SEARCH commit_offset USING INTEGER PRIMARY KEY (rowid=?)",
@@ -70,6 +68,15 @@ public sealed class QueryPlanTests
         ["ReplaceDocument"] = "",
         ["SystemLastSequence"] = "SEARCH journal_prefixes USING PRIMARY KEY",
         ["TruncateChanges"] = "SEARCH changes USING PRIMARY KEY (sequence<?)",
+        ["ClientDocumentBytes"] = "SCAN CONSTANT ROW | SCALAR SUBQUERY 1 | SEARCH unique_conflicts USING PRIMARY KEY (collection=? AND id=?) | SCALAR SUBQUERY 2 | SEARCH items USING INDEX sqlite_autoindex_items_1 (id=?)",
+        ["ClientListFirst"] = "SCAN d USING INDEX sqlite_autoindex_items_1 | CORRELATED SCALAR SUBQUERY 1 | SEARCH s USING INDEX sqlite_autoindex__tb_state_1 (collection=? AND id=?)",
+        ["ClientListAfter"] = "SEARCH d USING INDEX sqlite_autoindex_items_1 (id>?) | CORRELATED SCALAR SUBQUERY 1 | SEARCH s USING INDEX sqlite_autoindex__tb_state_1 (collection=? AND id=?)",
+        ["ClientCollectionStats"] = "SCAN items",
+        ["ClientConflictBytes"] = "SCAN unique_conflicts",
+        ["ClientCollectionNames"] = "SCAN collections",
+        ["UpdateRow"] = "SEARCH items USING INDEX sqlite_autoindex_items_1 (id=?)",
+        ["InsertRow"] = "",
+        ["DeleteRow"] = "SEARCH items USING INDEX sqlite_autoindex_items_1 (id=?)",
         ["TruncatePrefixes"] = "SEARCH journal_prefixes USING PRIMARY KEY (sequence<?)",
     };
 
@@ -98,7 +105,9 @@ public sealed class QueryPlanTests
         {
             foreach (var (name, sql) in SqliteStatements.Shared.Concat(statements))
             {
-                var plan = await QueryPlan.ExplainAsync(path, sql);
+                // A client statement over one collection's table names it as {0}.
+                var plan = await QueryPlan.ExplainAsync(
+                    path, statements == SqliteStatements.ClientOnly ? string.Format(System.Globalization.CultureInfo.InvariantCulture, sql, "\"items\"") : sql);
                 await Assert.That($"{database} {name}: {plan}").IsEqualTo($"{database} {name}: {Expected[name]}").Because(plan);
             }
         }
@@ -122,11 +131,11 @@ public sealed class QueryPlanTests
 
         var databaseFile = await api.DatabaseFileAsync();
         using var command = new Microsoft.Data.Sqlite.SqliteCommand();
-        var sql = new SqliteQueryCompiler(command.Parameters).Compile(new TerraBase.Engine.DocumentQuery(
+        var sql = new SqliteQueryCompiler(command.Parameters, RowSource.Client("items")).Compile(new TerraBase.Engine.DocumentQuery(
             "items", null, [], null, 1, 1024));
         var plan = await QueryPlan.ExplainAsync(databaseFile, sql);
-        await Assert.That(plan.Contains("USING INDEX documents_live", StringComparison.Ordinal)).IsTrue();
-        await Assert.That(plan.Contains("SCAN documents", StringComparison.Ordinal)).IsFalse();
+        // The collection's table holds live documents only: its id key leads straight to the live one.
+        await Assert.That(plan).IsEqualTo("SCAN items USING INDEX sqlite_autoindex_items_1 | CORRELATED SCALAR SUBQUERY 1 | SEARCH s USING INDEX sqlite_autoindex__tb_state_1 (collection=? AND id=?)");
         foreach (var descending in new[] { false, true })
         {
             foreach (var duplicate in new[] { false, true })
@@ -137,11 +146,12 @@ public sealed class QueryPlanTests
                 {
                     using var idCommand = new Microsoft.Data.Sqlite.SqliteCommand();
                     var position = cursor ? new TerraBase.Engine.QueryPosition(duplicate ? [5L, live, 5L, live] : [5L, live], live) : null;
-                    var idSql = new SqliteQueryCompiler(idCommand.Parameters).Compile(new TerraBase.Engine.DocumentQuery(
+                    var idSql = new SqliteQueryCompiler(idCommand.Parameters, RowSource.Client("items")).Compile(new TerraBase.Engine.DocumentQuery(
                         "items", null, keys, position, 1, 1024));
                     var idPlan = await QueryPlan.ExplainAsync(databaseFile, idSql);
                     var range = cursor ? (descending ? " AND id<?" : " AND id>?") : "";
-                    await Assert.That(idPlan).IsEqualTo($"SEARCH documents USING INDEX documents_live (collection=?{range})");
+                    var walk = cursor ? $"SEARCH items USING INDEX sqlite_autoindex_items_1 (id{range[7..]})" : "SCAN items USING INDEX sqlite_autoindex_items_1";
+                    await Assert.That(idPlan).IsEqualTo($"{walk} | CORRELATED SCALAR SUBQUERY 1 | SEARCH s USING INDEX sqlite_autoindex__tb_state_1 (collection=? AND id=?)");
                     await Assert.That(idPlan.Contains("TEMP B-TREE", StringComparison.Ordinal)).IsFalse();
                 }
             }
@@ -163,7 +173,7 @@ public sealed class QueryPlanTests
             new TerraBase.Engine.ScalarValue(TerraBase.Engine.ScalarKind.Text, "open"));
         using (var command = new Microsoft.Data.Sqlite.SqliteCommand())
         {
-            var sql = new SqliteQueryCompiler(command.Parameters).CompileSnapshot(filter, 1, 10);
+            var sql = new SqliteQueryCompiler(command.Parameters, RowSource.History).CompileSnapshot(filter, 1, 10);
             var plan = await QueryPlan.ExplainAsync(path, sql);
             Console.WriteLine($"snapshot: {plan}");
             // One walk of the births key in id order, no sort; version <= offset is tested on each key entry. An id
@@ -178,7 +188,7 @@ public sealed class QueryPlanTests
         }
 
         using var changes = new Microsoft.Data.Sqlite.SqliteCommand();
-        var changeSql = new SqliteQueryCompiler(changes.Parameters).CompileChanges(filter, 1, 4097);
+        var changeSql = new SqliteQueryCompiler(changes.Parameters, RowSource.History).CompileChanges(filter, 1, 4097);
         var changePlan = await QueryPlan.ExplainAsync(path, changeSql);
         Console.WriteLine($"changes: {changePlan}");
         await Assert.That(changePlan).StartsWith("SEARCH c USING INDEX change_log_by_offset (collection=? AND generation=? AND version>? AND version<?)");

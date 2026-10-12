@@ -25,6 +25,12 @@ internal sealed partial class SqliteStorageTransaction
     // A stamp's 48 bits of milliseconds keep it below 2^63.
     private static long Version(Hlc stamp) => checked((long)stamp.Value);
 
+    // The version a read reports from `ordinal` (a stored stamp, NULL when none): a document this request wrote has its
+    // version in memory until the request ends and writes its state row.
+    private long Version(string collection, string id, SqliteDataReader reader, int ordinal) =>
+        _pending.TryGetValue((collection, id), out var pending) ? Version(pending.At.Stamp)
+            : reader.IsDBNull(ordinal) ? throw new InvalidDataException("a stored document has no state") : reader.GetInt64(ordinal);
+
     /// <summary>
     /// Bucket of a document for anti-entropy: the first 12 bits of SHA-256 over the collection's UTF-8 byte length (4 bytes,
     /// little-endian), the collection and the id, so no two (collection, id) pairs share an input.
@@ -60,9 +66,12 @@ internal sealed partial class SqliteStorageTransaction
     // Worker-only: the stored state of a document, or the empty state.
     private DocumentState ReadState(string collection, string id)
     {
-        var command = Command(SqliteStatements.GetState, collection);
-        command.Parameters.AddWithValue("$id", id);
-        using var reader = command.ExecuteReader();
+        if (!HasTable(collection))
+        {
+            return DocumentState.Bottom;
+        }
+
+        using var reader = TableCommand(SqliteStatements.GetState, collection, id).ExecuteReader();
         if (!reader.Read())
         {
             return DocumentState.Bottom;
@@ -88,11 +97,35 @@ internal sealed partial class SqliteStorageTransaction
     private long Store(string collection, string id, DocumentState state, EntryVersion at, string? body)
     {
         _pending[(collection, id)] = (state, at);
-        var put = BodyCommand(SqliteStatements.PutDocument, collection, id);
-        put.Parameters.AddWithValue("$version", Version(at.Stamp));
-        put.Parameters.AddWithValue("$body", (object?)body ?? DBNull.Value);
-        put.ExecuteNonQuery();
+        PutRow(collection, id, body);
         return Version(at.Stamp);
+    }
+
+    // Worker-only: a document's row in its collection's table, or none when `body` is null. Plain UPDATE, INSERT and
+    // DELETE: the change feed reads after-images only.
+    private void PutRow(string collection, string id, string? body)
+    {
+        if (body is null)
+        {
+            TableCommand(SqliteStatements.DeleteRow, collection, id).ExecuteNonQuery();
+            return;
+        }
+
+        var update = TableCommand(SqliteStatements.UpdateRow, collection, id);
+        update.Parameters.AddWithValue("$body", body);
+        if (update.ExecuteNonQuery() == 0)
+        {
+            var insert = TableCommand(SqliteStatements.InsertRow, collection, id);
+            insert.Parameters.AddWithValue("$body", body);
+            insert.ExecuteNonQuery();
+        }
+    }
+
+    // The materialization a PUT of `json` stores: canonical JSON, fields in name order.
+    private static string Canonical(string json)
+    {
+        using var parsed = JsonDocument.Parse(json, DocumentState.JsonOptions);
+        return Materialize(DocumentState.Bottom.Put(default, parsed.RootElement))!;
     }
 
     private static string? Materialize(DocumentState state) => state.Materialize() is { } json ? StrictUtf8.GetString(json) : null;

@@ -623,9 +623,15 @@ dashboards and alerts already query those names.
    savepoint is released; otherwise at commit). The materialized row may be rewritten by each operation of the
    request; the tailer (R3) pairs a state row with the last document row before it. A collection drop deletes its
    rows and states locally and deletes its `_collections` document. Materialized rows still live in `documents`.
-3. R2a-3 moves the materialized rows to one rowid table per collection, together with the `SqlSubset` compiler,
-   indexes and unique tables on them (the core of R2b), because the Fast suite cannot stay green with queries on a
-   table that no longer holds the rows.
+3. R2a-3 moves the materialized rows to one rowid table per collection (`id TEXT NOT NULL UNIQUE, doc TEXT NOT
+   NULL`), together with the document and `SqlSubset` compilers, indexes and unique tables on them (the core of R2b),
+   because the Fast suite cannot stay green with queries on a table that no longer holds the rows. Versions are read
+   from `_tb_state` by a correlated lookup; a document a request wrote reads its version from memory until the request
+   ends. Index keys end with `id` (the tie-break every query sorts by); an index cannot key `_rev`. Until R2b and R2c
+   rename or delete them, the old engine tables (`collections`, `commit_offset`, `shape_history`, `change_log*`,
+   `unique_*`) are reserved collection names, as are the `sqlite_` and `turso_` prefixes (400 `reserved_name`). The
+   query compiler still emits `json_type` and `json_each`; R2b makes it `json_extract`-only and adds the `IN` and
+   prefix-`LIKE` rewrites and the planner check.
 
 R2a is built on the Microsoft.Data.Sqlite engine and writes only SQL that Turso accepts (rowid tables for every new
 table, plain `INSERT`/`UPDATE`/`DELETE` on captured tables). The engine swap (1b, PR #21) lands separately: on Turso,

@@ -20,7 +20,8 @@ public sealed class ScanBudgetTests
         // isolated database; all budget failures and the probes are exercised through real listeners.
         await ManagementApi.ExecuteStoredAsync(api.Server.DataDirectory, database, """
             WITH RECURSIVE rows(n) AS (VALUES(1) UNION ALL SELECT n + 1 FROM rows WHERE n < 1100000)
-            INSERT INTO documents SELECT 'items', printf('00000000-0000-7000-8000-%012x', n), 65536, '{"n":1}' FROM rows;
+            INSERT INTO "items" (id, doc) SELECT printf('00000000-0000-7000-8000-%012x', n), '{"n":1}' FROM rows;
+            INSERT INTO _tb_state (collection, id, bucket, state, stamp, origin, live, h1, h2) SELECT 'items', id, 0, '', 65536, 0, 1, 0, 0 FROM "items";
             """);
         foreach (var path in new[]
         {

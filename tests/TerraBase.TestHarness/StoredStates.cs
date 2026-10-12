@@ -18,20 +18,25 @@ public static class StoredStates
     /// <summary>The node of every write this helper makes; no node draws region 0xFFFE.</summary>
     public static ReplicaId Replica { get; } = ReplicaId.Of(ushort.MaxValue - 1, 1, 0);
 
-    /// <summary>Writes the document row and state of one PUT of <paramref name="body"/> (a JSON object).</summary>
-    public static async Task WriteAsync(SqliteConnection connection, string collection, string id, string body)
+    /// <summary>
+    /// Writes the document row and state of one PUT of <paramref name="body"/> (a JSON object) at <paramref name="version"/>
+    /// (<see cref="Version"/> by default) into the existing table of its collection.
+    /// </summary>
+    public static async Task WriteAsync(
+        SqliteConnection connection, string collection, string id, string body, long version = Version, SqliteTransaction? transaction = null)
     {
         ArgumentNullException.ThrowIfNull(connection);
         using var json = JsonDocument.Parse(body, DocumentState.JsonOptions);
-        var state = DocumentState.Bottom.Put(new EntryVersion(new Hlc(Version), Replica), json.RootElement);
+        var state = DocumentState.Bottom.Put(new EntryVersion(new Hlc((ulong)version), Replica), json.RootElement);
         var digest = DocumentStateEncoding.Digest(state);
         await using var insert = connection.CreateCommand();
+        insert.Transaction = transaction;
         insert.CommandText = $"""
-            INSERT INTO documents (collection, id, version, body) VALUES ($collection, $id, {Version}, $body)
-            ON CONFLICT (collection, id) DO UPDATE SET body = excluded.body;
+            DELETE FROM {SqliteStorageTransaction.Table(collection)} WHERE id = $id;
+            INSERT INTO {SqliteStorageTransaction.Table(collection)} (id, doc) VALUES ($id, $body);
             DELETE FROM _tb_state WHERE collection = $collection AND id = $id;
             INSERT INTO _tb_state (collection, id, bucket, state, stamp, origin, live, h1, h2)
-            VALUES ($collection, $id, $bucket, $state, {Version}, $origin, 1, $h1, $h2);
+            VALUES ($collection, $id, $bucket, $state, {version}, $origin, 1, $h1, $h2);
             """;
         insert.Parameters.AddWithValue("$collection", collection);
         insert.Parameters.AddWithValue("$id", id);

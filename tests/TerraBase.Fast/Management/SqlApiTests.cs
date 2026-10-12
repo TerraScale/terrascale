@@ -602,7 +602,8 @@ public sealed class SqlApiTests
         {
             (await data.PutAsJsonAsync(Uri(ManagementApi.DocumentPath(database, "big", $"r{i}")), new { padding = "" })).EnsureSuccessStatusCode();
             await ManagementApi.ExecuteStoredAsync(
-                api.Server.DataDirectory, database, "UPDATE documents SET id = $legacy WHERE collection = 'big' AND id = $id;",
+                api.Server.DataDirectory, database,
+                "UPDATE \"big\" SET id = $legacy WHERE id = $id; UPDATE _tb_state SET id = $legacy WHERE collection = 'big' AND id = $id;",
                 ("$legacy", i + new string('<', 255)), ("$id", Id($"r{i}")));
         }
 
@@ -613,7 +614,7 @@ public sealed class SqlApiTests
         {
             var padding = new string('x', paddingBytes / 8 + (i < paddingBytes % 8 ? 1 : 0));
             await ManagementApi.ExecuteStoredAsync(
-                api.Server.DataDirectory, database, "UPDATE documents SET body = $body WHERE collection = 'big' AND id = $legacy;",
+                api.Server.DataDirectory, database, "UPDATE \"big\" SET doc = $body WHERE id = $legacy;",
                 ("$body", JsonSerializer.Serialize(new { padding })), ("$legacy", i + new string('<', 255)));
         }
 

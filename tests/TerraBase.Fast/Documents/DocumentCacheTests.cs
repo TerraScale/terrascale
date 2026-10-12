@@ -47,7 +47,7 @@ public sealed class DocumentCacheTests
 
         // Only a miss can see this disk edit; it bypasses the application's write invalidation.
         await StorageFixture.ExecuteAsync(await tenant.FileAsync(management.Server, "clock", deadline.Token),
-            """UPDATE documents SET body = json_set(body, '$.name', 'disk') WHERE collection = 'items';""");
+            """UPDATE "items" SET doc = json_set(doc, '$.name', 'disk');""");
         await GetAsync(tenant, "clock", "items", "d", deadline.Token);
         await Assert.That((await GetAsync(tenant, "clock", "items", "b", deadline.Token)).Name).IsEqualTo("first");
         await GetAsync(tenant, "clock", "items", "e", deadline.Token);
@@ -86,7 +86,7 @@ public sealed class DocumentCacheTests
             await VerifyAsync("new");
             // A cache miss would now expose this value; the warmed entry must survive the late snapshot.
             await StorageFixture.ExecuteAsync(await tenant.FileAsync(management.Server, "race", deadline.Token),
-                """UPDATE documents SET body = '{"name":"disk"}' WHERE collection = 'items';""");
+                """UPDATE "items" SET doc = '{"name":"disk"}';""");
             release.SetResult();
             await Assert.That(await old.WaitAsync(deadline.Token)).IsEqualTo("old");
             await VerifyAsync("new");
@@ -154,8 +154,8 @@ public sealed class DocumentCacheTests
         await Assert.That(await GetAsync(second, "shop", "items", "same")).IsEqualTo((secondVersion, "second"));
         await ListAsync(first, "shop", "items");
         await ListAsync(second, "shop", "items");
-        await StorageFixture.ExecuteAsync(firstFile, """UPDATE documents SET body = '{"name":"disk-first"}';""");
-        await StorageFixture.ExecuteAsync(secondFile, """UPDATE documents SET body = '{"name":"disk-second"}';""");
+        await StorageFixture.ExecuteAsync(firstFile, """UPDATE "items" SET doc = '{"name":"disk-first"}';""");
+        await StorageFixture.ExecuteAsync(secondFile, """UPDATE "items" SET doc = '{"name":"disk-second"}';""");
 
         await Assert.That(await GetAsync(first, "shop", "items", "same")).IsEqualTo((firstVersion, "first"));
         await Assert.That(await GetAsync(second, "shop", "items", "same")).IsEqualTo((secondVersion, "second"));
@@ -163,7 +163,7 @@ public sealed class DocumentCacheTests
         await Assert.That(await ListAsync(second, "shop", "items")).IsEquivalentTo([$"{StorageFixture.Id("same")}:second"]);
         // Stamp stripes may conservatively invalidate unrelated entries. Restore the second file before
         // writing the first tenant so this verifies data isolation without requiring collision-free stamps.
-        await StorageFixture.ExecuteAsync(secondFile, """UPDATE documents SET body = '{"name":"second"}';""");
+        await StorageFixture.ExecuteAsync(secondFile, """UPDATE "items" SET doc = '{"name":"second"}';""");
         var updated = await PutAsync(first, "shop", "items", "same", "updated");
         await Assert.That(await GetAsync(first, "shop", "items", "same")).IsEqualTo((updated, "updated"));
         await Assert.That(await ListAsync(first, "shop", "items")).IsEquivalentTo([$"{StorageFixture.Id("same")}:updated"]);
@@ -369,12 +369,12 @@ public sealed class DocumentCacheTests
         var other = await PutAsync(tenant, "shop", "people", "p2", "first");
 
         var miss = await GetAsync(tenant, "shop", "people", "p1");
-        await StorageFixture.ExecuteAsync(file, """UPDATE documents SET body = '{"name":"disk"}';""");
+        await StorageFixture.ExecuteAsync(file, """UPDATE "people" SET doc = '{"name":"disk"}';""");
         var hit = await GetAsync(tenant, "shop", "people", "p1");
         var neverRead = await GetAsync(tenant, "shop", "people", "p2");
         var written = await PutAsync(tenant, "shop", "people", "p1", "second");
         var afterWrite = await GetAsync(tenant, "shop", "people", "p1");
-        await StorageFixture.ExecuteAsync(file, """UPDATE documents SET body = '{"name":"disk"}';""");
+        await StorageFixture.ExecuteAsync(file, """UPDATE "people" SET doc = '{"name":"disk"}';""");
         var cachedAgain = await GetAsync(tenant, "shop", "people", "p1");
         using var deleted = await client.DeleteAsync(new Uri($"/v1/projects/{tenant.ProjectId}/databases/shop/collections/people/documents/by-key?id={StorageFixture.Id("p1")}", UriKind.Relative));
         using var afterDelete = await client.GetAsync(new Uri($"/v1/projects/{tenant.ProjectId}/databases/shop/collections/people/documents/by-key?id={StorageFixture.Id("p1")}", UriKind.Relative));
@@ -403,7 +403,7 @@ public sealed class DocumentCacheTests
         await PutAsync(tenant, "shop", "items", "b", "first");
 
         var miss = await ListAsync(tenant, "shop", "items");
-        await StorageFixture.ExecuteAsync(file, """UPDATE documents SET body = '{"name":"disk"}';""");
+        await StorageFixture.ExecuteAsync(file, """UPDATE "items" SET doc = '{"name":"disk"}';""");
         var hit = await ListAsync(tenant, "shop", "items");
         // A write to another document of the collection invalidates every page of it.
         await PutAsync(tenant, "shop", "items", "c", "first");
@@ -658,12 +658,12 @@ public sealed class DocumentCacheTests
 
         await Assert.That(await ReadAsync("small")).IsEquivalentTo([$"{StorageFixture.Id("a")}:first"]);
         await StorageFixture.ExecuteAsync(file,
-            """UPDATE documents SET body = json_set(body, '$.name', 'disk') WHERE collection = 'small';""");
+            """UPDATE "small" SET doc = json_set(doc, '$.name', 'disk');""");
         var budget = observed ?? throw new InvalidOperationException("cache admission observation was not registered");
         for (var i = 0; i < 5; i++)
         {
             await StorageFixture.ExecuteAsync(file,
-                $"UPDATE documents SET body = json_set(body, '$.name', 'disk{i}') WHERE collection = 'large';");
+                $"UPDATE \"large\" SET doc = json_set(doc, '$.name', 'disk{i}');");
             await Assert.That(await ReadAsync("large")).IsEquivalentTo(ids.Select(id => $"{StorageFixture.Id(id)}:disk{i}"));
             // Cache-only admission observation catches an oversized retention attempt synchronously.
             await Assert.That(budget.OversizedAttempts).IsEqualTo(0);

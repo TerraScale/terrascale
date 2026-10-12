@@ -402,10 +402,10 @@ public sealed class MemoryBudgetTests
             await Assert.That(IsHeld(budget, Budget - Padding)).IsTrue();
             // And the entry really is cached (not refused and about to be released): a change made behind the
             // server's back stays invisible.
-            await StorageFixture.ExecuteAsync(await tenant.FileAsync(server, "shop"), """UPDATE documents SET body = json_set(body, '$.disk', 1);""");
+            await StorageFixture.ExecuteAsync(await tenant.FileAsync(server, "shop"), """UPDATE "items" SET doc = json_set(doc, '$.disk', 1);""");
             await Assert.That(await client.GetStringAsync(uri)).DoesNotContain("disk");
             // The stored document is its state's materialization again before the delete writes over it.
-            await StorageFixture.ExecuteAsync(await tenant.FileAsync(server, "shop"), """UPDATE documents SET body = json_remove(body, '$.disk');""");
+            await StorageFixture.ExecuteAsync(await tenant.FileAsync(server, "shop"), """UPDATE "items" SET doc = json_remove(doc, '$.disk');""");
 
             // The read after a delete finds nothing to cache, so it must evict the invalidated entry itself.
             using (var deleted = await client.DeleteAsync(uri))

@@ -39,15 +39,16 @@ internal static class StorageFixture
         await command.ExecuteNonQueryAsync();
     }
 
-    /// <summary>Observes real row-body evaluation without replacing the table or its live-row index.</summary>
-    public static void ObserveBodies(SqliteConnection connection, string functionName)
+    /// <summary>
+    /// Observes real row-body evaluation in a collection's table without replacing it or its id key: its documents read
+    /// through <paramref name="functionName"/>, and the table takes no more writes.
+    /// </summary>
+    public static void ObserveBodies(SqliteConnection connection, string functionName, string collection = "items")
     {
         using var command = connection.CreateCommand();
         command.CommandText = $"""
-            ALTER TABLE documents RENAME COLUMN body TO stored_body;
-            ALTER TABLE documents ADD COLUMN body TEXT GENERATED ALWAYS AS ({functionName}(stored_body)) VIRTUAL;
-            DROP INDEX documents_live;
-            CREATE INDEX documents_live ON documents (collection, id) WHERE body IS NOT NULL;
+            ALTER TABLE "{collection}" RENAME COLUMN doc TO stored_doc;
+            ALTER TABLE "{collection}" ADD COLUMN doc TEXT GENERATED ALWAYS AS ({functionName}(stored_doc)) VIRTUAL;
             """;
         command.ExecuteNonQuery();
     }
@@ -121,7 +122,7 @@ internal static class StorageFixture
 
                 return body;
             }, isDeterministic: true);
-            ObserveBodies(session.Connection, "held_body");
+            ObserveBodies(session.Connection, "held_body", "held");
         }
         finally
         {

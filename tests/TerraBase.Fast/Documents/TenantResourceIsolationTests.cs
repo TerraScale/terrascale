@@ -302,9 +302,9 @@ public sealed class TenantResourceIsolationTests
         await Assert.That(await ReadAsync(hobby, "b0", false)).IsEqualTo("hobby");
         // Out-of-band changes identify hits without depending on write-stamp hash collisions.
         await StorageFixture.ExecuteAsync(await paid.FileAsync(management.Server, "shop", deadline.Token),
-            """UPDATE documents SET body = json_set(body, '$.name', 'disk');""");
+            """UPDATE "items" SET doc = json_set(doc, '$.name', 'disk');""");
         await StorageFixture.ExecuteAsync(await hobby.FileAsync(management.Server, "shop", deadline.Token),
-            $"UPDATE documents SET body = json_set(body, '$.name', 'disk') WHERE id = '{StorageFixture.Id("b0")}';");
+            $"UPDATE \"items\" SET doc = json_set(doc, '$.name', 'disk') WHERE id = '{StorageFixture.Id("b0")}';");
         for (var i = 1; i < 24; i++)
         {
             await Assert.That(await ReadAsync(hobby, $"b{i}", false)).IsEqualTo("hobby");

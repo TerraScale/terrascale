@@ -219,9 +219,8 @@ public sealed class ManagementApi : IAsyncDisposable
         var changed = await ExecuteStoredAsync(
             dataDirectory,
             database,
-            "UPDATE documents SET body = $body WHERE collection = $collection AND id = $id AND body IS NOT NULL;",
+            $"UPDATE {TerraBase.Engine.Sqlite.SqliteStorageTransaction.Table(collection)} SET doc = $body WHERE id = $id;",
             ("$body", json),
-            ("$collection", collection),
             ("$id", DocumentId(name)));
         if (changed != 1)
         {

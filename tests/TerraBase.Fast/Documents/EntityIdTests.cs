@@ -161,7 +161,7 @@ public sealed class EntityIdTests
         {
             await connection.OpenAsync();
             await using var readStored = connection.CreateCommand();
-            readStored.CommandText = "SELECT body FROM documents WHERE collection = 'items' AND id = $id;";
+            readStored.CommandText = "SELECT doc FROM \"items\" WHERE id = $id;";
             readStored.Parameters.AddWithValue("$id", id);
             await Assert.That((string)(await readStored.ExecuteScalarAsync())!).IsEqualTo(deep);
         }

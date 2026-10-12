@@ -8,7 +8,7 @@ using Microsoft.Data.Sqlite;
 namespace TerraBase.Engine.Sqlite;
 
 /// <summary>
-/// Compiles a <see cref="DocumentQuery"/> into one SQLite statement over the <c>documents</c> table,
+/// Compiles a <see cref="DocumentQuery"/> into one SQLite statement over the live rows of a <see cref="RowSource"/>,
 /// so filtering, ordering, keyset pagination and the limit all run inside SQLite (<c>json_type</c>,
 /// <c>json_extract</c>, <c>json_each</c>). Every client value, including paths, is a bound parameter.
 /// </summary>
@@ -18,7 +18,7 @@ namespace TerraBase.Engine.Sqlite;
 /// ponytail: no secondary indexes yet, so filters and sorts scan the collection's primary-key range;
 /// expression indexes belong to the Indexing slice.
 /// </remarks>
-internal sealed class SqliteQueryCompiler(SqliteParameterCollection parameters, bool budgetScans = false)
+internal sealed class SqliteQueryCompiler(SqliteParameterCollection parameters, RowSource rows, bool budgetScans = false)
 {
     // Sort rank by JSON type: missing < null < false < true < numbers < strings < arrays/objects.
     private const string RankCases =
@@ -51,11 +51,11 @@ internal sealed class SqliteQueryCompiler(SqliteParameterCollection parameters, 
         // Keep the non-deterministic visit before residual predicates; seek constraints still bound the scan.
         sql.AppendFormat("""
             SELECT * FROM (
-                SELECT id, version, octet_length(body) AS size{0}
-                FROM documents INDEXED BY documents_live WHERE collection = $collection AND {1}body IS NOT NULL AND {2}
+                SELECT id, {4} AS version, octet_length({5}) AS size{0}
+                FROM {6} WHERE {1}{7} AND {2}
             ) WHERE {3}
             ORDER BY
-            """, columns.ToString(), observe ? "tb_query_scan() AND " : "", BudgetedFilter(query.Filter), after);
+            """, columns.ToString(), observe ? "tb_query_scan() AND " : "", BudgetedFilter(query.Filter), after, rows.Version, rows.Json, rows.From, rows.Live);
         if (leadingId)
         {
             // Ids are unique within a collection: later sort keys cannot break a tie. Ordering by the
@@ -81,10 +81,10 @@ internal sealed class SqliteQueryCompiler(SqliteParameterCollection parameters, 
     public string CompileCount(DocumentFilter? filter, long maxExamined, bool observe = false) =>
         $"""
         SELECT count(*) + EXISTS (
-            SELECT 1 FROM documents WHERE collection = $collection {(observe ? "AND tb_query_scan()" : "")} ORDER BY id LIMIT 1 OFFSET {Parameter(maxExamined)}
+            SELECT 1 FROM {Counted} {(observe ? "AND tb_query_scan()" : "")} ORDER BY id LIMIT 1 OFFSET {Parameter(maxExamined)}
         ), coalesce(sum(matched), 0) FROM (
             SELECT {BudgetedFilter(filter, includeTombstones: true)} AS matched
-            FROM documents WHERE collection = $collection {(observe ? "AND tb_query_scan()" : "")} ORDER BY id LIMIT {Parameter(maxExamined)}
+            FROM {Counted} {(observe ? "AND tb_query_scan()" : "")} ORDER BY id LIMIT {Parameter(maxExamined)}
         );
         """;
 
@@ -141,12 +141,15 @@ internal sealed class SqliteQueryCompiler(SqliteParameterCollection parameters, 
         ) ORDER BY version, sequence;
         """;
 
+    // A count examines a system collection's tombstones too; a client collection's table holds live documents only.
+    private string Counted => rows == RowSource.System ? "documents WHERE collection = $collection" : $"{rows.From} WHERE 1";
+
     // CASE fixes evaluation order: account a candidate before any JSON predicate parses its body.
     // This counts document candidates, not SQLite VM instructions, index entries or physical disk bytes.
     private string BudgetedFilter(DocumentFilter? filter, bool includeTombstones = false)
     {
-        var predicate = includeTombstones ? $"CASE WHEN body IS NOT NULL THEN {Filter(filter)} ELSE 0 END" : Filter(filter);
-        return budgetScans ? $"CASE WHEN tb_qos_scan(coalesce(octet_length(body), 0)) THEN {predicate} ELSE 0 END" : predicate;
+        var predicate = includeTombstones ? $"CASE WHEN {rows.Json} IS NOT NULL THEN {Filter(filter)} ELSE 0 END" : Filter(filter);
+        return budgetScans ? $"CASE WHEN tb_qos_scan(coalesce(octet_length({rows.Json}), 0)) THEN {predicate} ELSE 0 END" : predicate;
     }
 
     private string Filter(DocumentFilter? filter) => filter switch
@@ -256,7 +259,7 @@ internal sealed class SqliteQueryCompiler(SqliteParameterCollection parameters, 
             ScalarKind.Number => $"element.type IN ('integer', 'real') AND element.value = {Parameter(value.Value!)}",
             _ => $"element.type = 'text' AND element.value = {Parameter(value.Value!)}",
         };
-        return $"({Type(contains.Path)} IS 'array' AND EXISTS (SELECT 1 FROM json_each(body, {Path(contains.Path)}) AS element WHERE {element}))";
+        return $"({Type(contains.Path)} IS 'array' AND EXISTS (SELECT 1 FROM json_each({rows.Json}, {Path(contains.Path)}) AS element WHERE {element}))";
     }
 
     private string Rank(DocumentPath path) => path.IsId ? "5" : $"CASE {Type(path)} {RankCases}";
@@ -287,9 +290,9 @@ internal sealed class SqliteQueryCompiler(SqliteParameterCollection parameters, 
         return "(" + string.Join(" OR ", branches) + ")";
     }
 
-    private string Type(DocumentPath path) => path.IsId ? "'text'" : $"json_type(body, {Path(path)})";
+    private string Type(DocumentPath path) => path.IsId ? "'text'" : $"json_type({rows.Json}, {Path(path)})";
 
-    private string Extract(DocumentPath path) => path.IsId ? "id" : $"json_extract(body, {Path(path)})";
+    private string Extract(DocumentPath path) => path.IsId ? "id" : $"json_extract({rows.Json}, {Path(path)})";
 
     // Each segment is a quoted object label, so a numeric segment is a member name, never an array index.
     private string Path(DocumentPath path)

@@ -6,12 +6,22 @@ namespace TerraBase.Engine.Sqlite;
 
 internal sealed partial class SqliteStorageTransaction
 {
+    // A client document's stored version (NULL until its first request ends, see Version) and whether it is deleted:
+    // neither in its collection's table ({0}) nor kept aside.
     private const string UniqueVersion = """
-        SELECT d.version, d.body IS NULL AND NOT EXISTS (
-            SELECT 1 FROM unique_conflicts c WHERE c.collection = d.collection AND c.id = d.id)
-        FROM documents d WHERE d.collection = $collection AND d.id = $id;
+        SELECT (SELECT s.stamp FROM _tb_state s WHERE s.collection = $collection AND s.id = $id),
+            NOT EXISTS (SELECT 1 FROM {0} WHERE id = $id) AND NOT EXISTS (SELECT 1 FROM unique_conflicts WHERE collection = $collection AND id = $id);
         """;
-    private const string UniqueDefinitions = "SELECT body FROM documents WHERE collection = '_unique' AND id = $collection;";
+
+    // A client document as stored: its version (as UniqueVersion), its JSON (a hidden uniqueness loser's is kept aside),
+    // whether it is hidden, and the JSON's size.
+    private const string UniqueRawDocument = """
+        SELECT (SELECT s.stamp FROM _tb_state s WHERE s.collection = $collection AND s.id = $id),
+            coalesce(c.body, d.doc), c.body IS NOT NULL, coalesce(octet_length(c.body), octet_length(d.doc), 0)
+        FROM (SELECT $id AS id) k LEFT JOIN {0} d ON d.id = k.id LEFT JOIN unique_conflicts c ON c.collection = $collection AND c.id = k.id;
+        """;
+
+    private const string UniqueDefinitions = "SELECT doc FROM \"_unique\" WHERE id = $collection;";
     private const string UniqueOtherContender = """
         SELECT 1 FROM unique_keys mine JOIN unique_keys other
         ON other.collection = mine.collection AND other.constraint_name = mine.constraint_name AND other.value = mine.value
@@ -26,15 +36,12 @@ internal sealed partial class SqliteStorageTransaction
     private const string UniqueDeleteKeys = "DELETE FROM unique_keys WHERE collection = $collection AND id = $id;";
     private const string UniqueDeleteConflict = "DELETE FROM unique_conflicts WHERE collection = $collection AND id = $id;";
 
-    // Visibility only: the register and its winner's version stay as they are.
-    private const string UniqueVisibleBody = "UPDATE documents SET body = $body WHERE collection = $collection AND id = $id;";
-
     public ValueTask<IReadOnlyList<UniqueConstraint>> GetUniqueConstraintsAsync(string collection, CancellationToken cancellationToken) =>
         RunAsync(() => ReadUniqueConstraints(collection), cancellationToken);
 
     private IReadOnlyList<UniqueConstraint> ReadUniqueConstraints(string collection)
     {
-        if (Command(UniqueDefinitions, collection).ExecuteScalar() is not string body)
+        if (store.IsSystem || Command(UniqueDefinitions, collection).ExecuteScalar() is not string body)
         {
             return [];
         }
@@ -55,14 +62,14 @@ internal sealed partial class SqliteStorageTransaction
             }
 
             var body = JsonSerializer.Serialize(new UniqueSchema(constraints), TerraBaseJsonContext.Default.UniqueSchema);
-            if (Command(UniqueDefinitions, collection).ExecuteScalar() is string previous && previous == body)
+            if (Command(UniqueDefinitions, collection).ExecuteScalar() is string previous && previous == Canonical(body))
             {
                 return true;
             }
 
             // Declarations belong to a collection without live documents, a retained uniqueness loser included; consumers
-            // must drop and recreate it for a changed schema. A drop's tombstones stay as registers and do not count.
-            if (Command(UniqueLiveDocument, collection).ExecuteScalar() is not null)
+            // must drop and recreate it for a changed schema.
+            if (HasTable(collection) && TableCommand(UniqueLiveDocument, collection).ExecuteScalar() is not null)
             {
                 throw new UniqueConstraintException();
             }
@@ -74,9 +81,12 @@ internal sealed partial class SqliteStorageTransaction
 
     private StoredDocument? ReadUniqueDocument(string collection, string id, bool reserveResult = false)
     {
-        var command = Command(SqliteStatements.UniqueRawDocument, collection);
-        command.Parameters.AddWithValue("$id", id);
-        using var reader = command.ExecuteReader();
+        if (!HasTable(collection))
+        {
+            return null;
+        }
+
+        using var reader = TableCommand(UniqueRawDocument, collection, id).ExecuteReader();
         if (!reader.Read() || reader.IsDBNull(1))
         {
             return null;
@@ -87,7 +97,7 @@ internal sealed partial class SqliteStorageTransaction
             ReserveJson(reader.GetInt64(3));
         }
 
-        return new StoredDocument(id, reader.GetInt64(0), reader.GetFieldValue<byte[]>(1), Scope, UniqueConflict: reader.GetBoolean(2));
+        return new StoredDocument(id, Version(collection, id, reader, 0), reader.GetFieldValue<byte[]>(1), Scope, UniqueConflict: reader.GetBoolean(2));
     }
 
     // All contenders retain their merged state. Visibility is a deterministic projection of the current keys.
@@ -116,7 +126,7 @@ internal sealed partial class SqliteStorageTransaction
         }
 
         QueueUniqueContenders(collection, id);
-        return UniqueProjectionIds(collection, affected: true, cancellationToken);
+        return UniqueProjectionIds(cancellationToken);
     }
 
     private void ReconcileUnique(string collection, IEnumerable<string> ids, string? writtenId, CancellationToken cancellationToken)
@@ -135,22 +145,18 @@ internal sealed partial class SqliteStorageTransaction
             var hidden = loses.ExecuteScalar() is not null;
             if (hidden != raw.UniqueConflict)
             {
-                var conflict = Command(hidden ? """
-                    INSERT INTO unique_conflicts (collection, id, body) SELECT collection, id, body FROM documents
-                    WHERE collection = $collection AND id = $id;
-                    """ : UniqueDeleteConflict, collection);
-                conflict.Parameters.AddWithValue("$id", id);
+                // A hidden loser's JSON moves aside, out of its collection's table; a winner's moves back.
                 if (hidden)
                 {
-                    conflict.ExecuteNonQuery();
+                    TableCommand("""
+                        INSERT INTO unique_conflicts (collection, id, body) SELECT $collection, id, doc FROM {0} WHERE id = $id;
+                        """, collection, id).ExecuteNonQuery();
                 }
 
-                var visible = BodyCommand(UniqueVisibleBody, collection, id);
-                visible.Parameters.AddWithValue("$body", hidden ? DBNull.Value : (object)StrictUtf8.GetString(raw.Json.Span));
-                visible.ExecuteNonQuery();
+                PutRow(collection, id, hidden ? null : StrictUtf8.GetString(raw.Json.Span));
                 if (!hidden)
                 {
-                    conflict.ExecuteNonQuery();
+                    ClearUniqueConflict(collection, id);
                 }
             }
 

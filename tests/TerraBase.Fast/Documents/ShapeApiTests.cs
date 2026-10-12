@@ -63,7 +63,7 @@ public sealed class ShapeApiTests
             await connection.OpenAsync();
             await using var corrupt = connection.CreateCommand();
             corrupt.CommandText = """
-                UPDATE documents SET body = $body WHERE collection = 'items' AND id = $id;
+                UPDATE "items" SET doc = $body WHERE id = $id;
                 UPDATE change_log SET body = $body WHERE collection = 'items' AND id = $id AND version = $version;
                 """;
             corrupt.Parameters.AddWithValue("$body", raw);
@@ -113,7 +113,7 @@ public sealed class ShapeApiTests
         {
             await connection.OpenAsync();
             await using var restore = connection.CreateCommand();
-            restore.CommandText = "UPDATE documents SET body = '{\"n\":2}' WHERE collection = 'items' AND id = $id;";
+            restore.CommandText = "UPDATE \"items\" SET doc = '{\"n\":2}' WHERE id = $id;";
             restore.Parameters.AddWithValue("$id", id);
             await Assert.That(await restore.ExecuteNonQueryAsync()).IsEqualTo(1);
         }
@@ -1281,14 +1281,12 @@ public sealed class ShapeApiTests
             INSERT INTO change_log (collection, generation, id, version, document_version, body)
                 SELECT c.name, c.generation, $id, o.value + 1 + i / 1000, o.value + 1 + i / 1000, json_object('n', i)
                 FROM n, collections c, commit_offset o WHERE c.name = $collection AND o.id = 1 ORDER BY i;
-            INSERT INTO documents (collection, id, version, body)
-                SELECT $collection, $id, value + 50, json_object('n', 49999) FROM commit_offset WHERE id = 1
-                ON CONFLICT (collection, id) DO UPDATE SET version = excluded.version, body = excluded.body;
-            UPDATE commit_offset SET value = value + 50 WHERE id = 1;
+            UPDATE commit_offset SET value = value + 50 WHERE id = 1 RETURNING value;
             """;
         write.Parameters.AddWithValue("$collection", DocumentApi.Collection);
         write.Parameters.AddWithValue("$id", id);
-        await write.ExecuteNonQueryAsync();
+        var offset = (long)(await write.ExecuteScalarAsync())!;
+        await StoredStates.WriteAsync(connection, DocumentApi.Collection, id, """{"n":49999}""", offset, (SqliteTransaction)transaction);
         await transaction.CommitAsync();
     }
 

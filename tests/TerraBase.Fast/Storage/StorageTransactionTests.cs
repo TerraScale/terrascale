@@ -29,15 +29,20 @@ public sealed class StorageTransactionTests
     {
         await using var server = await TerraBaseTestServer.StartAsync();
         var (engine, store) = await OpenAsync(server);
+        await using (var seed = await store.BeginTransactionAsync(write: true, CancellationToken.None))
+        {
+            await seed.PutAsync("items", "a", "{}"u8.ToArray(), CancellationToken.None);
+            await seed.CommitAsync(CancellationToken.None);
+        }
+
         var session = ((SqliteStorageEngine)engine).Pool.Rent(store) ?? throw new InvalidOperationException("missing idle session");
         try
         {
             using var view = session.Connection.CreateCommand();
-            // Report the native connection flag through the engine's normal document read, without
-            // exposing the rented transaction's connection or depending on private implementation fields.
+            // Report the native connection flag through the engine's normal document read, without exposing the rented
+            // transaction's connection or depending on private implementation fields: the temporary view hides the table.
             view.CommandText = """
-                CREATE TEMP VIEW documents AS SELECT 'items' AS collection, 'a' AS id, 1 AS version,
-                    json_object('readOnly', (SELECT query_only FROM pragma_query_only)) AS body;
+                CREATE TEMP VIEW items AS SELECT 'a' AS id, json_object('readOnly', (SELECT query_only FROM pragma_query_only)) AS doc;
                 """;
             await view.ExecuteNonQueryAsync();
         }

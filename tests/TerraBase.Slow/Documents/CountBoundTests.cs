@@ -35,10 +35,12 @@ public sealed class CountBoundTests
             await using var command = connection.CreateCommand();
             command.CommandText = $$"""
                 INSERT INTO collections VALUES ('items', 0, 1, $collectionId);
+                CREATE TABLE "items" (id TEXT NOT NULL UNIQUE, doc TEXT NOT NULL);
                 WITH RECURSIVE rows(n) AS (VALUES(1) UNION ALL SELECT n + 1 FROM rows WHERE n < 100001),
                     bodies(n, body) AS (SELECT n, CASE WHEN n = 100001 THEN $last ELSE '{"n":1}' END FROM rows)
-                INSERT INTO documents (collection, id, version, body)
-                    SELECT 'items', printf('%026d', n), {{StoredStates.Version}}, body FROM bodies;
+                INSERT INTO "items" (id, doc) SELECT printf('%026d', n), body FROM bodies;
+                INSERT INTO _tb_state (collection, id, bucket, state, stamp, origin, live, h1, h2)
+                    SELECT 'items', id, 0, '', {{StoredStates.Version}}, 0, 1, 0, 0 FROM "items";
                 """;
             command.Parameters.AddWithValue("$collectionId", TerraBase.Primitives.EntityIds.New().ToString());
             command.Parameters.AddWithValue("$last", overflowMatches ? "{\"n\":1}" : "{\"n\":0}");
