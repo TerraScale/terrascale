@@ -3,101 +3,75 @@
 > [!IMPORTANT]
 > **AI agents MUST NOT edit this file. Only humans may modify it.**
 
+TerraScale public landing site: https://terrascale.tech
+
 ## Local CPU Priority
 
-- When building or testing locally, run every build, test, lint, and benchmark
-  command at low CPU priority by prefixing it with `nice -n 19` (for example
-  `nice -n 19 make test-fast`). Local dev servers and watchers count too.
-- In CI (`CI=true`) use full CPU priority: do nothing. Never add `nice` or
-  `renice` to CI workflows, Makefiles, scripts, or Containerfiles; the low
-  priority is applied by whoever runs the command locally.
+- Prefix local builds, tests, lints, benchmarks, dev servers, and watchers with `nice -n 19` (for example `nice -n 19 npm run build`).
+- In CI (`CI=true`), use full priority. Never add `nice` or `renice` to CI workflows, Makefiles, scripts, or Containerfiles.
 
-## Project
+## Model Routing
 
-This repository contains the TerraScale public landing site.
-
-**Production URL:** https://terrascale.tech
+- Short, bounded work (quick subagents, lookups, small edits) uses Claude Haiku 5.5, `claude-haiku-5-5`. If unavailable, use GPT-6.1-Sol through Codex, `gpt-6.1-sol`, after confirming the ID in the live model catalog.
+- Never use Claude Haiku 4.5 under any ID (`claude-haiku-4-5`, dated variants included), and never fall back silently to an older model. If neither model is available, stop and report it.
+- Claude Opus 5.5 (`claude-opus-5-5`) is the advisor and runs any task expected to take more than 10 minutes. The Haiku default never overrides this.
+- Every T3 Code thread runs in full-access mode, subject to tool safety constraints.
 
 ## General
 
-- Keep changes focused on the assigned task; avoid unrelated rewrites.
-- Follow repository conventions and reuse established components and dependencies.
+- Keep changes focused on the assigned task. Follow repository conventions and reuse established components and dependencies.
 - Never add AI attribution, generated-by notices, or co-author trailers to commits, PR titles, or PR descriptions.
 - Never invent URLs, commands, test results, or product claims.
-- Preserve unrelated local changes. Never discard, overwrite, or commit another contributor’s work.
+- Preserve unrelated local changes. Never discard, overwrite, or commit another contributor's work.
 
 ## Stack
 
-- **SvelteKit + Svelte + TypeScript**.
-- **Vite** for development and builds.
-- **Tailwind CSS**, with shared design tokens in the `@theme` block in `src/index.css`.
-- **`@sveltejs/adapter-static`** for static prerendering.
-- **Cloudflare Pages** for deployment.
-
-### Dependencies
-
-- Use the **latest stable, mutually compatible releases**. This file does not mandate specific version numbers.
-- Verify compatibility and migration requirements before upgrading; do not assume the newest releases work together.
-- Keep dependency manifests and the committed lockfile synchronized so installations and builds remain reproducible.
-- Use the repository’s existing package manager and scripts.
-- Do not introduce competing frameworks, package managers, or build pipelines.
-- Consult official documentation matching the installed versions before changing integrations.
+- SvelteKit + Svelte + TypeScript, built with Vite. Tailwind CSS uses the shared design tokens in the `@theme` block in `src/index.css`. Static prerendering uses `@sveltejs/adapter-static`. Deployment is Cloudflare Pages.
+- Use the latest stable, mutually compatible releases; this file mandates no version numbers. Verify compatibility and migrations, and read the official docs for the installed version, before upgrading.
+- Keep manifests and the committed lockfile in sync. Use the existing package manager and scripts. Do not add competing frameworks, package managers, or build pipelines.
 
 ## Rendering and Deployment
 
-- The entire site MUST deploy as static HTML, CSS, JavaScript, and assets from `build/`.
-- Use `@sveltejs/adapter-static`; do not replace it with a server or platform-runtime adapter.
-- Enable prerendering in the root layout and ensure every public page is generated.
-- Keep SvelteKit rendering enabled during the build. Do NOT set `ssr = false` to enforce static hosting.
-- **Runtime SSR, application servers, Cloudflare Workers, and Pages Functions are prohibited.**
-- Do not introduce server actions, request-time API handlers, or features requiring a deployed application runtime.
-- Build-time data loading and generated static resources are allowed when their output is fully included in `build/`.
-- Do not disable strict prerender checks or introduce an SPA fallback to hide missing pages or build failures.
-- Keep browser-only code isolated from build-time execution.
-- Never include secrets or private credentials in client bundles or generated files.
-- Changes requiring a runtime server MUST receive explicit human approval and an updated deployment plan before implementation.
+- The whole site MUST deploy as static HTML, CSS, JavaScript, and assets from `build/` via `@sveltejs/adapter-static`. Never swap in a server or platform-runtime adapter.
+- Prerender in the root layout and generate every public page. Keep SvelteKit rendering on at build time; never set `ssr = false`.
+- **Runtime SSR, application servers, Cloudflare Workers, and Pages Functions are prohibited.** No server actions, request-time API handlers, or features that need a deployed app runtime. Build-time data and generated static resources are fine when fully included in `build/`.
+- Never disable strict prerender checks or add an SPA fallback to hide missing pages or build failures.
+- Keep browser-only code out of build-time execution. Never put secrets or private credentials in client bundles or generated files.
+- Changes that need a runtime server MUST get explicit human approval and an updated deployment plan first.
 
 ## Cloudflare: use the `cf` CLI
 
-Use an authenticated `cf` CLI installation for the authorized Cloudflare
-account. Keep operator hostnames, account identities and private topology out
-of this public repository.
+Use an authenticated `cf` CLI for the authorized account. Keep operator hostnames, account identities, and private topology out of this public repository.
 
-- Use `cf` for Cloudflare work: DNS records, zones, origin CA / client certificates, SSL/TLS and cache settings, rules, analytics, API tokens. Workers deploys keep using `wrangler`.
-- Before you start, run `cf auth whoami`. It must show `"authenticated": true`.
-- Never print tokens or the config file. Print the plan before you change anything. Deleting zones, production DNS records or Workers needs the user's confirmation. Record changed Cloudflare object IDs (not secrets) in the PR or runbook.
+- Use `cf` for DNS, zones, origin CA and client certificates, SSL/TLS, cache, rules, analytics, and API tokens. Workers deploys keep using `wrangler`.
+- Before starting, run `cf auth whoami`; it must show `"authenticated": true`.
+- Never print tokens or the config file. Show the plan before any change. Deleting zones, production DNS records, or Workers needs the user's confirmation. Record changed Cloudflare object IDs (never secrets) in the PR or runbook.
 
 ## Code and Design
 
-- Keep routes, components, styles, and utilities organized by responsibility.
-- Prefer small, reusable Svelte components over duplicated markup or unnecessary abstractions.
-- Use the shared Tailwind theme instead of duplicating design tokens.
-- Preserve existing branding, typography, spacing, and interaction patterns unless the task explicitly changes them.
-- Reuse committed brand assets; do not create inconsistent logo variants.
-- Support mobile and desktop layouts without unintended horizontal overflow.
-- Use semantic HTML, accessible controls, keyboard navigation, visible focus states, and appropriate image alternatives.
-- Respect reduced-motion preferences.
-- Keep primary content and navigation present in prerendered HTML.
-- Maintain page titles, descriptions, canonical URLs, and social-sharing metadata. Production canonical URLs MUST use `https://terrascale.tech`.
+- Organize routes, components, styles, and utilities by responsibility. Prefer small reusable Svelte components over duplicated markup or needless abstractions.
+- Use the shared Tailwind theme, not copied tokens. Reuse committed brand assets; never create inconsistent logo variants.
+- Preserve branding, typography, spacing, and interaction patterns unless the task changes them.
+- Support mobile and desktop without unintended horizontal overflow. Respect reduced motion.
+- Use semantic HTML, accessible controls, keyboard navigation, visible focus, and image alternatives.
+- Keep primary content and navigation in the prerendered HTML.
+- Keep page titles, descriptions, canonical URLs, and social metadata. Production canonical URLs MUST use `https://terrascale.tech`.
 - Optimize assets and defer nonessential browser code. Avoid unnecessary dependencies and render-blocking third-party scripts.
 
 ## Development and Previews
 
-- Every development server MUST be accessible through the Tailscale network.
-- Enable Vite HMR and verify it works through the Tailscale-accessible URL.
-- Assign each active worktree its own available development and HMR ports where separate ports are required.
-- Never stop another worktree’s processes or reuse its occupied ports.
-- Preview URLs MUST identify the correct worktree or checkout. A shared Tailscale hostname with different ports is acceptable.
-- Limit development-server exposure to the intended Tailscale access path.
-- Allow the required Tailscale hostname explicitly rather than disabling host validation globally.
+- Every dev server MUST be reachable over Tailscale, with Vite HMR enabled and verified through the Tailscale URL.
+- Give each active worktree its own dev and HMR ports. Never stop another worktree's processes or reuse its occupied ports.
+- Preview URLs MUST identify the correct worktree or checkout. A shared Tailscale hostname with different ports is fine.
+- Limit exposure to the intended Tailscale path. Allow the required hostname explicitly; never disable host validation globally.
 
-When the user requests a preview:
+Preview requests, in order:
 
-1. Start the development environment for the correct branch and worktree.
-2. Obtain the actual Tailscale DNS URL, including the port when required.
-3. Open that URL and verify the changed functionality, assets, and HMR.
-4. Fix failures before sharing the preview.
-5. Send the verified URL to the user.
+1. Start the dev environment for the correct branch and worktree.
+2. Get the real Tailscale DNS URL, with the port if needed.
+3. Open it and verify the changed functionality, assets, and HMR.
+4. Fix failures before sharing.
+5. Send the verified URL.
 
 Never send a localhost URL as a remote preview, invent a hostname, or present an unverified preview as working. Report unresolved access or verification blockers.
 
@@ -108,85 +82,41 @@ Never send a localhost URL as a remote preview, invent a hostname, or present an
 Before pushing, opening or updating a PR, or merging:
 
 - Formatting, lint, and type checks MUST pass.
-- The production build and prerendering MUST succeed.
-- All configured test suites MUST pass.
-- **The `slow` suite is mandatory and blocking in this repository.** Run `fast` as well when configured.
-- Results MUST apply to the current changes or exact commit being advanced.
-- Rerun affected checks after subsequent changes.
-- Never skip, disable, or weaken checks to bypass a failure.
-- Never claim a check passed unless it actually ran successfully.
+- The production build and prerendering MUST succeed (`npm run build`).
+- All configured test suites MUST pass. The `slow` suite is mandatory and blocking; run `fast` too when configured.
+- Results MUST match the exact commit being advanced. Rerun affected checks after any change.
+- Never skip, disable, or weaken checks to pass. Never claim a check passed unless it ran successfully.
 
 ### Coverage
 
-- Add or update tests for changed behavior.
-- Validate navigation, calls to action, forms when present, and important interactive states.
-- For visual changes, check representative mobile and desktop layouts.
-- Verify changed routes through direct navigation and page refresh, not only client-side navigation.
+- Add or update tests for changed behavior: navigation, calls to action, forms when present, and important interactive states.
+- Check representative mobile and desktop layouts for visual changes.
+- Verify changed routes by direct navigation and refresh, not only client-side navigation.
 - Check for broken links, missing assets, hydration errors, and browser console errors.
-- Validate the generated production site using the repository’s static-preview workflow; a working development server alone is insufficient.
+- Validate the generated site with the repository's static-preview workflow. A working dev server alone is insufficient.
 
 ## Git
 
-### Branches and Worktrees
-
-- **Prefer a dedicated Git worktree for each task.** Worktrees are the default approach, not a mandatory requirement.
-- Fetch the latest `origin/main` and use it as the base for every new task branch.
-- Do not branch from a stale local `main`.
-- Use the existing checkout when explicitly requested or when a worktree is impractical.
-- Inspect the working directory before switching branches or creating a worktree; preserve existing changes.
-- Never implement task changes directly on or push directly to `main`.
-- Keep each task’s changes, commits, and PR isolated.
-
-Allowed branch prefixes:
-
-- `feat/{feature-name}`
-- `fix/{fix-name}`
-- `hotfix/{fix-name}`
-- `refactor/{description}`
-
-Remove task worktrees only when no longer needed and after confirming they contain no uncommitted changes, unpushed commits, or other files that must be preserved.
-
-### Tooling
-
-- Use `git` for repository operations, including fetching, branching, worktree management, committing, and pushing.
-- Use the **`gh` CLI** for GitHub operations, including PR creation, reviewer requests, and status checks.
-- Inspect available CLI help when syntax is uncertain; do not invent commands.
+- Prefer a dedicated worktree per task (default, not mandatory). Use the existing checkout only when explicitly requested or when a worktree is impractical. Before switching branches or creating a worktree, inspect the working directory and preserve existing changes.
+- Base every task branch on freshly fetched `origin/main`, never a stale local `main`. Never implement or push task changes directly on `main`. Keep each task's changes, commits, and PR isolated.
+- Branch prefixes: `feat/{name}`, `fix/{name}`, `hotfix/{name}`, `refactor/{name}`.
+- Remove a task worktree only when it is no longer needed and holds no uncommitted changes, unpushed commits, or files to keep.
+- Use `git` for repository operations and the **`gh` CLI** for GitHub operations, including PR creation, reviewer requests, and status checks. Check CLI help when unsure; do not invent commands.
 
 ## Pull Requests
 
-### Requirements
-
-- Open a PR into **`main`** when the work is ready for review and all required local checks pass.
-- Include a concise change summary and the validation performed.
+- Open a PR into **`main`** when the work is ready for review and required local checks pass. Keep it focused, with a concise change summary and the validation performed.
 - Request reviews from **`mariogk`** and **`terrascale-bot`**, excluding whichever account authored the PR.
-- Keep the PR focused on its task.
-- Do not merge while required checks are pending or failing.
-
-### Visual Changes
-
-- Capture multiple useful before/after screenshots covering the affected layouts and states.
-- Include mobile and desktop examples when the change affects both.
-- Upload screenshots as PR attachments; do not commit images solely for PR documentation.
-- Capture screenshots from the actual implementation, not mockups presented as completed work.
-
-### Completion
-
-- Verify the target branch, issue-prefixed title, reviewers, attachments, and current checks.
-- Send the PR URL to the user.
-- State which checks passed and identify any unresolved blockers.
+- Never merge while required checks are pending or failing.
+- Visual changes: attach several before/after screenshots of the affected layouts and states (mobile and desktop when both apply). Capture them from the real implementation, never mockups. Upload them as PR attachments; do not commit images just for PR documentation.
+- Before finishing, verify the target branch, title, reviewers, attachments, and current checks. Send the PR URL with the checks that passed and any unresolved blockers.
 
 ## Zero configuration (user decision 2026-10-09, do not revert)
 
-- Every feature is always on. No feature flags, on/off variables, opt-in settings, boolean enabled configuration keys, deploy toggles or kill switches in code, config or CI. Delete switches and their guarded paths.
+- Every feature is always on. No feature flags, on/off variables, opt-in settings, boolean enabled configuration keys, deploy toggles, or kill switches in code, config, or CI. Delete switches and their guarded paths.
 - Every region always serves. A region starts serving as soon as its machines boot, with no per-region enable step.
 - Production secrets live in the platform secret store and are never copied by hand. Vendor-issued keys (such as Stripe and Cloudflare) are set the same way.
-- Values have one correct setting in code. Expose no tuning knobs. Fakes, demo stores and skip-auth belong only in test code and test binaries.
-- CI rejects new switch-style configuration; ts-reviewer requests changes. Only unavoidable third-party names may have a narrow allowance with a one-line reason.
+- Values have one correct setting in code. Expose no tuning knobs. Fakes, demo stores, and skip-auth belong only in test code and test binaries.
+- CI rejects new switch-style configuration, and ts-reviewer requests changes. Only unavoidable third-party names get a narrow allowance, with a one-line reason.
 
-The operating contract requires automatic public endpoint discovery; production publication and Cloudflare credentials come from the platform secret store.
-
-This section is the TS-795 operating contract, not evidence that every runtime
-flow has shipped. See [README.md](README.md) for current SDK/qualification gaps.
-Existing production switches are inventoried for their owning implementation
-threads; documentation changes must not invent APIs or bypass authorization,
-tenant scope, registered callbacks, payment consent, or safety guards.
+This is the operating contract, not evidence that every runtime flow has shipped; see [README.md](README.md) for SDK and qualification gaps. It requires automatic public endpoint discovery; production publication and Cloudflare credentials come from the platform secret store. Existing production switches are inventoried for their owning implementation work. Documentation must not invent APIs or bypass authorization, tenant scope, registered callbacks, payment consent, or safety guards.
