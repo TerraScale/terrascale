@@ -42,8 +42,14 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-      # alpha keeps a NuGet cache shared across jobs; release bytes build only from packages restored for this job.
-      - run: echo "NUGET_PACKAGES=$RUNNER_TEMP/nuget-packages" >> "$GITHUB_ENV"
+      # alpha shares its .NET and NuGet caches with every job of every repository: release jobs install the SDK and
+      # restore packages into folders of their own.
+      - run: |
+          {
+            echo "DOTNET_INSTALL_DIR=$RUNNER_TEMP/dotnet"
+            echo "NUGET_PACKAGES=$RUNNER_TEMP/nuget-packages"
+            echo "NUGET_HTTP_CACHE_PATH=$RUNNER_TEMP/nuget-http"
+          } >> "$GITHUB_ENV"
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: |
@@ -88,6 +94,7 @@ jobs:
       - uses: actions/download-artifact@v7
         with:
           name: package
+      - run: echo "DOTNET_INSTALL_DIR=$RUNNER_TEMP/dotnet" >> "$GITHUB_ENV"
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 10.0.x
@@ -115,6 +122,7 @@ jobs:
         with:
           persist-credentials: false
           sparse-checkout: tests/TerraScale.DotNet.PackageConsumer
+      - run: echo "DOTNET_INSTALL_DIR=$RUNNER_TEMP/dotnet" >> "$GITHUB_ENV"
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: |
@@ -183,6 +191,7 @@ jobs:
       - uses: actions/download-artifact@v7
         with:
           name: restored-package
+      - run: echo "DOTNET_INSTALL_DIR=$RUNNER_TEMP/dotnet" >> "$GITHUB_ENV"
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 10.0.x
