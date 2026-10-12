@@ -4,7 +4,9 @@
 //
 //	repl-bench --targets cluster.json --docs 1000000 --out bench
 //
-// The targets file comes from the local cluster host (make benchmark-repl-local) or, for Fly, from repl-bench fly-targets.
+// The targets file comes from the local cluster host (make benchmark-repl-local) or, for Fly, from
+// benchmark/scripts/repl-fly.sh. A multi-machine run uses --step: setup once, load on one machine per region (--only),
+// then verify with every region's partial.
 package main
 
 import (
@@ -38,6 +40,12 @@ func main() {
 		converge    = flag.Duration("converge", 30*time.Minute, "longest wait for every region to match after the load")
 		seed        = flag.Uint64("seed", uint64(time.Now().UnixNano()), "content seed")
 		notTested   = flag.String("not-tested", "", "extra not-tested lines, separated by ';'")
+		step        = flag.String("step", "all", "all, or one step of a multi-machine run: setup, load or verify")
+		statePath   = flag.String("state", "state.json", "setup's output and the load and verify steps' input")
+		only        = flag.String("only", "", "load step: the one region this machine writes to")
+		partialOut  = flag.String("partial", "", "load step: where this region's partial goes")
+		partials    = flag.String("partials", "", "verify step: every region's partial, separated by ','")
+		commitFlag  = flag.String("commit", "", "commit to record (default: git rev-parse HEAD)")
 	)
 	flag.Parse()
 	logf := log.New(os.Stderr, "repl-bench ", log.LstdFlags|log.Lmsgprefix).Printf
@@ -56,7 +64,13 @@ func main() {
 		log.Fatal("--batch must be 1..1024, --concurrency and --docs at least 1")
 	}
 	cfg := replbench.Config{Docs: *docs, Sizes: sw, Batch: *batch, Concurrency: *conc, DeletePct: *deletePct, ConflictDocs: *conflicts,
-		ConflictRounds: *rounds, ProbeEvery: *probeEvery, Converge: *converge, Seed: *seed}
+		ConflictRounds: *rounds, ProbeEvery: *probeEvery, Converge: *converge, Seed: *seed, Only: *only}
+	if (*step == "load") != (*only != "") {
+		log.Fatal("--only goes with --step load, and --step load needs --only")
+	}
+	if *commitFlag == "" {
+		*commitFlag = commit()
+	}
 	if *name == "" {
 		*name = fmt.Sprintf("repl-%s-%d", t.Kind, *docs)
 	}
@@ -64,7 +78,7 @@ func main() {
 	defer cancel()
 
 	host, _ := os.Hostname()
-	res := replbench.Result{Name: *name, Kind: t.Kind, Commit: commit(), Host: host, Start: time.Now(), Machines: t.Machines,
+	res := replbench.Result{Name: *name, Kind: t.Kind, Commit: *commitFlag, Host: host, Start: time.Now(), Machines: t.Machines,
 		Config: map[string]any{"docs": *docs, "sizes": *sizes, "batch": *batch, "concurrency_per_region": *conc, "delete_pct": *deletePct,
 			"conflict_docs": *conflicts, "conflict_rounds": *rounds, "probe_every": probeEvery.String(), "seed": *seed}}
 	r, err := replbench.NewRunner(cfg, t, logf)
@@ -76,13 +90,69 @@ func main() {
 		logf("%s: %v", stage, err)
 	}
 
+	switch *step {
+	case "setup":
+		if err := r.Setup(ctx); err != nil {
+			log.Fatal(err)
+		}
+		if err := replbench.WriteJSON(*statePath, r.State()); err != nil {
+			log.Fatal(err)
+		}
+		return
+	case "load":
+		var state replbench.State
+		if err := replbench.ReadJSON(*statePath, &state); err != nil {
+			log.Fatal(err)
+		}
+		r.Attach(state)
+		start := time.Now()
+		elapsed, err := r.Load(ctx)
+		if err := replbench.WriteJSON(*partialOut, r.Partial(start, elapsed.Seconds())); err != nil {
+			log.Fatal(err)
+		}
+		if err != nil {
+			log.Fatal(err)
+		}
+		logf("%s loaded in %.1f s", *only, elapsed.Seconds())
+		return
+	case "verify", "all":
+	default:
+		log.Fatalf("--step %q: want all, setup, load or verify", *step)
+	}
+
 	var sampler *replbench.LocalSampler
 	if t.Kind == "local" && t.PID > 0 {
 		sampler = replbench.StartLocalSampler(t.PID, t.DataDirs)
 	}
 	var loadSecs float64
 	var loadEnd time.Time
-	if err := r.Setup(ctx); err != nil {
+	var parts []replbench.Partial
+	if *step == "verify" {
+		var state replbench.State
+		if err := replbench.ReadJSON(*statePath, &state); err != nil {
+			log.Fatal(err)
+		}
+		r.Attach(state)
+		for path := range strings.SplitSeq(*partials, ",") {
+			var p replbench.Partial
+			if err := replbench.ReadJSON(path, &p); err != nil {
+				log.Fatal(err)
+			}
+			parts = append(parts, p)
+			if p.End.After(loadEnd) {
+				loadEnd = p.End
+			}
+		}
+		if err := r.Merge(parts); err != nil {
+			log.Fatal(err)
+		}
+		if res.Convergence, err = r.Converge(ctx, loadEnd); err != nil {
+			fail("converge", err)
+		}
+		if res.Conflicts, err = r.CheckConflicts(ctx); err != nil {
+			fail("conflicts", err)
+		}
+	} else if err := r.Setup(ctx); err != nil {
 		fail("setup", err)
 	} else {
 		elapsed, err := r.Load(ctx)
@@ -99,6 +169,10 @@ func main() {
 		}
 	}
 	r.Collect(&res, loadSecs)
+	if parts != nil {
+		replbench.FromPartials(&res, parts)
+		res.Start = res.Start.Add(-time.Duration(res.LoadSeconds * float64(time.Second))) // the run began with the load
+	}
 	res.End = time.Now()
 	switch {
 	case sampler != nil:

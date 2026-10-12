@@ -157,7 +157,7 @@ type fakeRun struct {
 	lag       Summary
 }
 
-func runFake(t *testing.T, drop func(region, collection, id string) bool) fakeRun {
+func fakeTargets(t *testing.T, drop func(region, collection, id string) bool) Targets {
 	t.Helper()
 	f := &fakeCluster{docs: map[string]map[string]map[string]json.RawMessage{}, drop: drop}
 	tg := Targets{Kind: "test", Project: "p", Database: "d", Regions: map[string]RegionTarget{}}
@@ -167,9 +167,15 @@ func runFake(t *testing.T, drop func(region, collection, id string) bool) fakeRu
 		t.Cleanup(srv.Close)
 		tg.Regions[region] = RegionTarget{URL: srv.URL, Token: "t"}
 	}
-	cfg := Config{Docs: 600, Sizes: []SizeWeight{{128, 1}, {512, 1}}, Batch: 4, Concurrency: 3, DeletePct: 10, ConflictDocs: 5, ConflictRounds: 3,
-		ProbeEvery: 20 * time.Millisecond, Converge: 5 * time.Second, Seed: 1}
-	r, err := NewRunner(cfg, tg, t.Logf)
+	return tg
+}
+
+var fakeConfig = Config{Docs: 600, Sizes: []SizeWeight{{128, 1}, {512, 1}}, Batch: 4, Concurrency: 3, DeletePct: 10, ConflictDocs: 5, ConflictRounds: 3,
+	ProbeEvery: 20 * time.Millisecond, Converge: 5 * time.Second, Seed: 1}
+
+func runFake(t *testing.T, drop func(region, collection, id string) bool) fakeRun {
+	t.Helper()
+	r, err := NewRunner(fakeConfig, fakeTargets(t, drop), t.Logf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,5 +225,79 @@ func TestRunnerReportsADocumentARegionNeverGot(t *testing.T) {
 	})
 	if fra := res.conv.Regions["fra"]; res.conv.Converged || fra.Missing != 1 || !slices.Contains(fra.Examples, "missing "+lost) {
 		t.Fatalf("the document %s fra never got went unnoticed: %+v", lost, fra)
+	}
+}
+
+// The multi-machine steps: setup in one runner, one load runner per region, partials through JSON, verify in another.
+func TestStepsAcrossRunnersVerifyEveryRegion(t *testing.T) {
+	tg := fakeTargets(t, nil)
+	ctx := context.Background()
+	dir := t.TempDir()
+	setup, err := NewRunner(fakeConfig, tg, t.Logf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := setup.Setup(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteJSON(dir+"/state.json", setup.State()); err != nil {
+		t.Fatal(err)
+	}
+	var state State
+	if err := ReadJSON(dir+"/state.json", &state); err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	paths := []string{}
+	for _, region := range []string{"gru", "sjc", "fra"} {
+		paths = append(paths, dir+"/"+region+".json")
+		wg.Go(func() {
+			cfg := fakeConfig
+			cfg.Only = region
+			r, err := NewRunner(cfg, tg, t.Logf)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			r.Attach(state)
+			start := time.Now()
+			elapsed, err := r.Load(ctx)
+			if err != nil {
+				t.Error(err)
+			}
+			if err := WriteJSON(dir+"/"+region+".json", r.Partial(start, elapsed.Seconds())); err != nil {
+				t.Error(err)
+			}
+		})
+	}
+	wg.Wait()
+	verify, err := NewRunner(fakeConfig, tg, t.Logf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	verify.Attach(state)
+	var parts []Partial
+	for _, path := range paths {
+		var p Partial
+		if err := ReadJSON(path, &p); err != nil {
+			t.Fatal(err)
+		}
+		parts = append(parts, p)
+	}
+	if err := verify.Merge(parts); err != nil {
+		t.Fatal(err)
+	}
+	conv, err := verify.Converge(ctx, time.Now())
+	if err != nil || !conv.Converged || conv.Expected+conv.Deleted != 600 {
+		t.Fatalf("converge: %+v %v", conv, err)
+	}
+	conflicts, err := verify.CheckConflicts(ctx)
+	if err != nil || conflicts.Identical != 5 || conflicts.SameField["invalid"] != 0 {
+		t.Fatalf("conflicts: %+v %v", conflicts, err)
+	}
+	var res Result
+	FromPartials(&res, parts)
+	if len(res.Writes) != 3 || res.Writes["sjc"].Created != 200 || res.Lag["fra->gru"].Count == 0 {
+		t.Fatalf("writes %+v lag %+v", res.Writes, res.Lag)
 	}
 }

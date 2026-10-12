@@ -42,7 +42,7 @@ BENCHMARK_DOTNET_PROJECTS := benchmark/dotnet/TerraScale.Endpoints.Benchmarks/Te
 	libs-build libs-test handoff-test libs-check libs-pack libs-nativeaot-check \
 	auth-build auth-audit auth-openapi-check auth-test-fast auth-test-slow auth-check auth-publish auth-dev \
 	terrabase-build terrabase-analyzer-check terrabase-test-fast terrabase-test-slow terrabase-e2e terrabase-e2e-fly-outage terrabase-check terrabase-run terrabase-publish \
-	benchmark-build benchmark-fmt-check benchmark-check benchmark-smoke benchmark-repl-local
+	benchmark-build benchmark-fmt-check benchmark-check benchmark-smoke benchmark-repl-local benchmark-repl-fly
 
 # Global: the whole solution.
 restore:
@@ -205,3 +205,8 @@ benchmark-repl-local:
 	$(MAKE) terrabase-build CONFIGURATION=Release
 	$(MAKE) -C benchmark repl-bench-build
 	benchmark/scripts/repl-local.sh
+
+# The same benchmark on Fly: one temporary load machine per region (gru, sjc, fra) in a throwaway app, destroyed on exit.
+# Needs TS_BENCH_FLY_TARGETS (benchmark/scripts/repl-fly-tenant.sh writes it) and FLY_API_TOKEN. Flags come from REPL_ARGS.
+benchmark-repl-fly:
+	benchmark/scripts/repl-fly.sh $(REPL_ARGS)
