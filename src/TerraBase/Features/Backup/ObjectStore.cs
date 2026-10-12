@@ -212,6 +212,32 @@ internal sealed class S3ObjectStore : IObjectStore, IDisposable
             new DateTimeOffset(DateTime.SpecifyKind(bucket.CreationDate ?? DateTime.MinValue, DateTimeKind.Utc))))];
     }
 
+    /// <summary>Whether the bucket has Tigris snapshots enabled (HeadBucket's <c>X-Tigris-Enable-Snapshot</c>).</summary>
+    public async Task<bool> SnapshotsEnabledAsync(CancellationToken cancellationToken)
+    {
+        var request = new HeadBucketRequest { BucketName = _bucket };
+        string? enabled = null;
+        void read(object sender, ResponseEventArgs args)
+        {
+            if (args is WebServiceResponseEventArgs response && ReferenceEquals(response.Request, request))
+            {
+                enabled = response.ResponseHeaders.FirstOrDefault(header => header.Key.Equals("X-Tigris-Enable-Snapshot", StringComparison.OrdinalIgnoreCase)).Value;
+            }
+        }
+
+        _s3.AfterResponseEvent += read;
+        try
+        {
+            await _s3.HeadBucketAsync(request, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _s3.AfterResponseEvent -= read;
+        }
+
+        return enabled == "true";
+    }
+
     /// <summary>Takes a Tigris snapshot of the whole bucket (<c>X-Tigris-Snapshot: true</c> on CreateBucket).</summary>
     public Task TakeSnapshotAsync(CancellationToken cancellationToken) =>
         _s3.PutBucketAsync(Tigris(new PutBucketRequest { BucketName = _bucket }, "X-Tigris-Snapshot", "true"), cancellationToken);

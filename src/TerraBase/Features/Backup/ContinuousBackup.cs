@@ -91,6 +91,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
     private readonly Counter<long> _bucketSnapshots;
     private readonly S3ObjectStore _bucket;
     private DateTimeOffset? _newestBucketSnapshot;
+    private bool? _bucketSnapshotsEnabled;
     private DateTimeOffset _nextDiscovery = DateTimeOffset.MinValue;
 
     public ContinuousBackup(

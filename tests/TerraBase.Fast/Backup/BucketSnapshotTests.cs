@@ -57,6 +57,22 @@ public sealed class BucketSnapshotTests
         await Assert.That(metrics).Contains("terrabase_backup_bucket_snapshots_total{otel_scope_name=\"TerraScale.TerraBase\",result=\"failed\"} 1");
     }
 
+    [Test]
+    public async Task A_bucket_without_snapshots_skips_the_job_without_failures()
+    {
+        var time = new FakeTimeProvider(Start);
+        var s3 = new FakeS3 { Time = time, SnapshotsEnabled = false };
+        await using var api = await StartAsync(s3, time);
+        var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
+
+        await PassAsync(api, time, TimeSpan.FromHours(1), token);
+        await PassAsync(api, time, TimeSpan.FromHours(25), token);
+        var metrics = await api.Server.Client.GetStringAsync(new Uri("/metrics", UriKind.Relative), token);
+
+        await Assert.That(s3.Snapshots).IsEmpty();
+        await Assert.That(metrics).DoesNotContain("terrabase_backup_bucket_snapshots_total");
+    }
+
     private static async Task<ManagementApi> StartAsync(FakeS3 s3, FakeTimeProvider time)
     {
         var api = await ManagementApi.StartAsync(s3.Configure, services =>

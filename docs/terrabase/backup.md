@@ -353,12 +353,14 @@ hour, during `_system`'s retention:
 - It takes a snapshot when the newest one is a day old or more.
 - It deletes snapshots older than 14 days, but never the newest, so a failing take never leaves the bucket without one.
 - It logs every take and delete, and a failure as a warning ("retries next hour").
+- A bucket without Tigris snapshots (a PR preview's) is detected once per process from HeadBucket's
+  `X-Tigris-Enable-Snapshot` header; that process logs it once and skips the job.
 
 Snapshots use the S3 API with Tigris headers: `X-Tigris-Snapshot: true` on CreateBucket takes one,
 `X-Tigris-Snapshot: <bucket>` on ListBuckets lists them, and `X-Tigris-Snapshot-Version: <version>` on DeleteBucket
 deletes one. TerraBase refuses to send a DeleteBucket without a numeric version. Because snapshots go through
 CreateBucket and ListBuckets, the bucket's key policy (`ts-terrabase-only`) allows those; Tigris cannot scope them to
-one bucket.
+one bucket. The dev key's policy (`ts-terrabase-dev-only`) still denies both.
 
 Both buckets (`ts-terrabase`, `ts-terrabase-dev`) have snapshots and **soft delete** (14 days) enabled. A deleted bucket
 can be restored with `tigris buckets restore` within 14 days. Delete protection is off on purpose: it also refuses
