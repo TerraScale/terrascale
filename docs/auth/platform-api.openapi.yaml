@@ -951,6 +951,7 @@ paths:
                 - $ref: '#/components/schemas/ClientCredentialsGrant'
                 - $ref: '#/components/schemas/TokenExchangeGrant'
                 - $ref: '#/components/schemas/DeviceCodeGrant'
+                - $ref: '#/components/schemas/GitHubActionsGrant'
             examples:
               apiKey:
                 summary: An organization API key, for a project token
@@ -966,6 +967,12 @@ paths:
                   subject_token_type: urn:ietf:params:oauth:token-type:access_token
                   organization: 01M4EQ2FRJ8S8B29E8TQVWNW4J
                   project: 01M4EQ2FRJ8S8B29E8TQVWNW4K
+              githubActions:
+                summary: The bound GitHub Actions e2e workload's OIDC token, for a project token of the e2e project
+                value:
+                  grant_type: urn:terrascale:params:oauth:grant-type:github-actions
+                  client_id: 01M4GHA0E2E000000000000000
+                  subject_token: eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9…
       responses:
         '200':
           description: An organization or project access token.
@@ -1542,6 +1549,20 @@ components:
           description: Space-separated subset of the key's scopes; default all of them.
         client_id: { type: string, description: 'With client_secret_post, the key id.' }
         client_secret: { type: string, description: 'With client_secret_post, the whole key string.' }
+    GitHubActionsGrant:
+      type: object
+      description: |
+        The bound GitHub Actions workload (docs/auth/github-actions-oidc.md): a GitHub Actions OIDC token of
+        TerraScale/terrascale's ci.yml on a push to main, audience the platform issuer, used once, for a 15-minute
+        project token of the bound e2e project. Refused with invalid_client until an operator binds the workload.
+      required: [grant_type, client_id, subject_token]
+      properties:
+        grant_type: { type: string, const: 'urn:terrascale:params:oauth:grant-type:github-actions' }
+        client_id: { type: string, const: '01M4GHA0E2E000000000000000' }
+        subject_token: { type: string, description: 'The GitHub Actions OIDC token (RS256, signed by GitHub).' }
+        scope:
+          type: string
+          description: Space-separated subset of databases:read databases:write documents:read documents:write; default all four.
     TokenExchangeGrant:
       type: object
       description: A user's sign-in access token exchanged for an organization or project token (RFC 8693).

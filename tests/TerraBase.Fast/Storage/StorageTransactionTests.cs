@@ -440,8 +440,14 @@ public sealed class StorageTransactionTests
                 "items", afterCursor ? StorageFixture.Id("d000") : null, Rows, 1024 * 1024, cancelled.Token).AsTask());
             await Assert.That(scanned).IsGreaterThan(0);
             await Assert.That(scanned).IsLessThan(Rows);
-            // The cancelled scan ended on its worker; the same connection can safely execute again.
-            await Assert.That(await transaction.GetAsync("items", StorageFixture.Id("d000"), deadline.Token)).IsNotNull();
+            // Turso ended the transaction with the stopped scan: it refuses to read outside its snapshot.
+            await Assert.ThrowsAsync<InvalidOperationException>(() => transaction.GetAsync("items", StorageFixture.Id("d000"), deadline.Token).AsTask());
+        }
+
+        // The cancelled scan ended on its worker; the connection serves the next transaction.
+        await using (var next = await store.BeginTransactionAsync(write: false, deadline.Token))
+        {
+            await Assert.That(await next.GetAsync("items", StorageFixture.Id("d000"), deadline.Token)).IsNotNull();
         }
 
         await Assert.That(engine.Io.Admitted).IsEqualTo(0);
