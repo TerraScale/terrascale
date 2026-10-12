@@ -17,6 +17,7 @@ using OpenTelemetry;
 using OpenTelemetry.Exporter;
 using TerraBase.Configuration;
 using TerraBase.Engine.Sqlite;
+using TerraBase.Features.Platform;
 using TerraBase.Hosting;
 
 namespace TerraBase.Testing;
@@ -28,6 +29,9 @@ namespace TerraBase.Testing;
 /// </summary>
 public sealed class TerraBaseTestServer : IAsyncDisposable
 {
+    /// <summary>Harness setting that runs the platform seed (<c>"true"</c>); without it a test node seeds nothing.</summary>
+    public const string PlatformSeedKey = "platform-seed";
+
     private readonly Factory _factory;
 
     // The temporary directory this harness created, deleted on dispose even when a test chose another data directory.
@@ -140,6 +144,10 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
             };
             settings?.Invoke(values);
             var topology = TestTopology.Take(values);
+            // Harness key, not a TerraBase setting: production always seeds the platform databases (PlatformSeed). Most tests
+            // assert the exact catalog and files of an empty node, so the harness leaves the seed out unless a test opts in;
+            // PlatformDatabasesTests do, and ts-auth's suites run the real binary, which seeds.
+            var platformSeed = values.Remove(PlatformSeedKey, out var seedValue) && seedValue == "true";
 
             // UseSetting values reach Program as --name=value entry-point arguments. Every other
             // setting is passed empty, which clears it, so ambient TERRABASE_* variables of the
@@ -150,7 +158,16 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
                 arguments[key] = value;
             }
 
-            factory = new Factory(arguments, topology, services, environmentName, linkedCancellation, testCancellation);
+            var withoutSeed = platformSeed ? services : collection =>
+            {
+                foreach (var seed in collection.Where(descriptor => descriptor.ImplementationType == typeof(PlatformSeed)).ToList())
+                {
+                    collection.Remove(seed);
+                }
+
+                services?.Invoke(collection);
+            };
+            factory = new Factory(arguments, topology, withoutSeed, environmentName, linkedCancellation, testCancellation);
             factory.UseKestrel();
             IServerAddressesFeature addresses;
             try
