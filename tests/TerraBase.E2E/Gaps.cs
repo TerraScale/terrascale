@@ -54,6 +54,8 @@ internal static class Gaps
         // CrashAndStallE2ETests. Node processes and lossy links also need test hooks on the peer path (COVERAGE.md).
         ["crash-replicated"] = Streams,
         ["storage-stall"] = Streams,
+        // Passed on SQLite until the Turso engine (#98) took the file's write lock for its single writer.
+        ["storage-stall-single"] = "a storage stall hook for the Turso engine (#98 holds the file's write lock)",
         ["lossy-link"] = Streams,
 
         // RepairAndContractE2ETests.
@@ -85,13 +87,36 @@ internal static class Gaps
     };
 
     /// <summary>Runs <paramref name="scenario"/>: plainly, or as a strict expected failure while it is listed; skipped as BLOCKED on Fly when it is.</summary>
-    public static Task RunAsync(string id, Func<Task> scenario)
+    public static async Task RunAsync(string id, Func<Task> scenario)
     {
         if (Cluster.FlyRequested && BlockedOnFly.TryGetValue(id, out var blocked))
         {
             Skip.Test($"BLOCKED on Fly: {blocked}");
         }
 
-        return Waiting.TryGetValue(id, out var gap) ? Expected.FailureAsync(gap, scenario) : scenario();
+        if (!Waiting.TryGetValue(id, out var gap))
+        {
+            await scenario();
+            return;
+        }
+
+        // A scenario that stopped at a test hook nobody has wired yet is reported apart: it proves less than one that ran.
+        var failure = await Expected.FailureAsync(gap, scenario);
+        if (Unsupported(failure) is { } unsupported)
+        {
+            Outcomes.Mark("not-supported", $"{gap}; {unsupported.Message}");
+        }
+        else
+        {
+            Outcomes.Mark("expected-failure", gap);
+        }
     }
+
+    private static NotSupportedException? Unsupported(Exception? error) => error switch
+    {
+        null => null,
+        NotSupportedException unsupported => unsupported,
+        AggregateException aggregate => aggregate.InnerExceptions.Select(Unsupported).FirstOrDefault(found => found is not null),
+        _ => Unsupported(error.InnerException),
+    };
 }
