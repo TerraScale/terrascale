@@ -10,16 +10,18 @@ trap 'rm -rf "$tmp"' EXIT
 fail() { echo "e2e-summary-test: $*" >&2; exit 1; }
 
 cat > "$tmp/results.jsonl" <<'JSON'
-{"test":"Pin_a","category":"pass","detail":""}
-{"test":"E1","category":"expected-failure","detail":"the CDC source (R3)"}
-{"test":"E2","category":"expected-failure","detail":"the CDC source (R3)"}
-{"test":"E10","category":"expected-failure","detail":"the changes feed (R8)"}
-{"test":"Partition","category":"not-supported","detail":"R3; no local link"}
-{"test":"Outage","category":"skip","detail":"Fly outage test: set TERRABASE_E2E_FLY_URL"}
+{"test":"Pin_a","category":"harness","detail":"","nodes":"no node (harness)","faults":"none"}
+{"test":"Kill","category":"pass","detail":"","nodes":"separate OS processes","faults":"ProcessKill"}
+{"test":"E1","category":"expected-failure","detail":"the CDC source (R3)","nodes":"in-process nodes","faults":"none"}
+{"test":"E2","category":"expected-failure","detail":"the CDC source (R3)","nodes":"in-process nodes","faults":"none"}
+{"test":"E10","category":"expected-failure","detail":"the changes feed (R8)","nodes":"in-process nodes","faults":"none"}
+{"test":"Partition","category":"not-supported","detail":"R3; no local link","nodes":"in-process nodes","faults":"SimulatedPartition"}
+{"test":"Outage","category":"skip","detail":"Fly outage test: set TERRABASE_E2E_FLY_URL","nodes":"in-process nodes","faults":"NodeStop"}
 JSON
 "$summary" report "$tmp/results.jsonl" test > "$tmp/report.md" || fail "a run without failures must exit 0"
-for line in '| actual pass | 1 |' '| expected failure | 3 |' '| not supported | 1 |' '| skip | 1 |' '| fail | 0 |' '| total | 6 |' \
-  '- the CDC source (R3): 2 (E1, E2)' '- `Outage` — Fly outage test: set TERRABASE_E2E_FLY_URL' '- `Partition` — R3; no local link'; do
+for line in '| actual pass | 1 |' '| harness check | 1 |' '| expected failure | 3 |' '| not supported | 1 |' '| skip | 1 |' '| fail | 0 |' '| total | 7 |' \
+  '| `Kill` | actual pass | separate OS processes | ProcessKill |  |' '| `Partition` | not supported | in-process nodes | SimulatedPartition | R3; no local link |' \
+  '| `Outage` | skip | in-process nodes | NodeStop | Fly outage test: set TERRABASE_E2E_FLY_URL |' '| `E1` | expected failure | in-process nodes | none | the CDC source (R3) |'; do
   grep -qF -- "$line" "$tmp/report.md" || fail "report lacks: $line"
 done
 grep -qE '^- Commit: `[0-9a-f]{40}`; working tree: (clean|[0-9a-f]{64})$' "$tmp/report.md" || fail "report lacks the commit and patch identity"
@@ -29,7 +31,7 @@ E2E_STACKED_ON=HEAD "$summary" report "$tmp/results.jsonl.ok" stacked > "$tmp/st
 grep -qE '^- Stacked on: `[0-9a-f]{40}` \(the harness commit' "$tmp/stacked.md" || fail "a stacked run must name its harness commit"
 "$summary" check "$tmp/stacked.md" > /dev/null || fail "a stacked report must pass the check"
 
-echo '{"test":"Broken","category":"fail","detail":"Failed: boom"}' >> "$tmp/results.jsonl"
+echo '{"test":"Broken","category":"fail","detail":"Failed: boom","nodes":"in-process nodes","faults":"none"}' >> "$tmp/results.jsonl"
 if "$summary" report "$tmp/results.jsonl" > /dev/null; then fail "a run with a failure must exit 1"; fi
 
 refused() {
@@ -42,4 +44,6 @@ grep -v '^- Stacked on:' "$tmp/report.md" > "$tmp/bad.md"; refused "no stacked-o
 sed 's/working tree: .*/working tree: dirty/' "$tmp/report.md" > "$tmp/bad.md"; refused "a patch that is not a sha256"
 sed 's/^E2E run.*/E2E run: 40 successes/' "$tmp/report.md" > "$tmp/bad.md"; refused "a summary that reports successes"
 echo "no block here" > "$tmp/bad.md"; refused "a file without a summary block"
+grep -v '^| `E10`' "$tmp/report.md" > "$tmp/bad.md"; refused "a test missing from the per-test table"
+sed 's/| `E1` | expected failure | in-process nodes |/| `E1` | expected failure | undeclared |/' "$tmp/report.md" > "$tmp/bad.md"; refused "a test without its nodes"
 echo "e2e-summary-test: ok"
