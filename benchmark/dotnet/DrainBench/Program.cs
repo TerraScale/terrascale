@@ -29,37 +29,51 @@ using var http = new HttpClient(new SocketsHttpHandler { UseCookies = false, Max
 };
 using var scrape = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{metricsPort}/") };
 
+// Set once the server serves the database; the local functions below read them.
+var (database, pid, allowed) = ("", 0, 0.0);
 var server = await StartAsync();
-var (owner, organization, project, databaseId, database) = await CreateTenantAsync();
-await SendAsync(HttpMethod.Post, $"{database}/collections", new { name = "items" }, HttpStatusCode.Created);
-await SendAsync(HttpMethod.Put, Document("existing"), new { n = 0 }, HttpStatusCode.Created);
-await SendAsync(HttpMethod.Put, Document("seed-fail"), new { fail = 1 }, HttpStatusCode.Created);
-await StopAsync(server);
-
-// A write of a document marked "fail" then fails its INSERT on this UNIQUE index: a failed statement, as a stopped read or
-// an aborted transaction fails one. Added while the server is down: one writer per file.
-var file = Path.Combine(data, organization, project, databaseId + ".db");
-using (var connection = new Turso.TursoConnection($"Data Source={file}"))
+// Whatever happens, the server stops and its data directory goes: a failed run must not leave a server behind.
+try
 {
-    connection.Open();
-    connection.ExecuteNonQuery("CREATE UNIQUE INDEX bench_fail ON \"items\" (json_extract(doc, '$.fail'));");
-    connection.ExecuteNonQuery("PRAGMA wal_checkpoint(TRUNCATE);");
-}
+    var (owner, organization, project, databaseId, path) = await CreateTenantAsync();
+    database = path;
+    await SendAsync(HttpMethod.Post, $"{database}/collections", new { name = "items" }, HttpStatusCode.Created);
+    await SendAsync(HttpMethod.Put, Document("existing"), new { n = 0 }, HttpStatusCode.Created);
+    await SendAsync(HttpMethod.Put, Document("seed-fail"), new { fail = 1 }, HttpStatusCode.Created);
+    await StopAsync(server);
 
-server = await StartAsync();
-var pid = ServerPid();
-var allowed = await LimitsAsync(pid);
-Console.WriteLine($"# {label}: {writers} writers, {readers} readers, {seconds} s per phase, wrap: {string.Join(' ', wrap)}");
-Console.WriteLine("| variant | failing writes | kind | valid writes/s | write p50 / p95 / p99 ms | failing p50 / p99 ms | read p50 / p95 / p99 ms | reads/s | CPU s (user+sys) | % of allowed CPU | peak RSS MB | max GC heap / committed MB | GC/s (gen2/s) | GC pause ms/s | unexpected |");
-Console.WriteLine("| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |");
-foreach (var (rate, kind) in new[] { (0.0, "none"), (0.01, "statement"), (0.10, "statement"), (0.50, "statement"), (0.10, "conflict 412"), (0.50, "conflict 412") })
+    // A write of a document marked "fail" then fails its INSERT on this UNIQUE index: a failed statement, as a stopped read or
+    // an aborted transaction fails one. Added while the server is down: one writer per file.
+    var file = Path.Combine(data, organization, project, databaseId + ".db");
+    using (var connection = new Turso.TursoConnection($"Data Source={file}"))
+    {
+        connection.Open();
+        connection.ExecuteNonQuery("CREATE UNIQUE INDEX bench_fail ON \"items\" (json_extract(doc, '$.fail'));");
+        connection.ExecuteNonQuery("PRAGMA wal_checkpoint(TRUNCATE);");
+    }
+
+    server = await StartAsync();
+    pid = ServerPid();
+    allowed = await LimitsAsync(pid);
+    Console.WriteLine($"# {label}: {writers} writers, {readers} readers, {seconds} s per phase, wrap: {string.Join(' ', wrap)}");
+    Console.WriteLine("| variant | failing writes | kind | valid writes/s | write p50 / p95 / p99 ms | failing p50 / p99 ms | read p50 / p95 / p99 ms | reads/s | CPU s (user+sys) | % of allowed CPU | peak RSS MB | max GC heap / committed MB | GC/s (gen2/s) | GC pause ms/s | unexpected |");
+    Console.WriteLine("| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |");
+    foreach (var (rate, kind) in new[] { (0.0, "none"), (0.01, "statement"), (0.10, "statement"), (0.50, "statement"), (0.10, "conflict 412"), (0.50, "conflict 412") })
+    {
+        await PhaseAsync(rate, kind, TimeSpan.FromSeconds(3), record: false);
+        await PhaseAsync(rate, kind, TimeSpan.FromSeconds(seconds), record: true);
+    }
+
+}
+finally
 {
-    await PhaseAsync(rate, kind, TimeSpan.FromSeconds(3), record: false);
-    await PhaseAsync(rate, kind, TimeSpan.FromSeconds(seconds), record: true);
-}
+    if (!server.HasExited)
+    {
+        await StopAsync(server);
+    }
 
-await StopAsync(server);
-Directory.Delete(data, recursive: true);
+    Directory.Delete(data, recursive: true);
+}
 
 async Task PhaseAsync(double rate, string kind, TimeSpan duration, bool record)
 {
