@@ -183,7 +183,7 @@ terrabase-e2e-fly-outage: terrabase-build
 	scripts/terrabase/e2e-summary.sh report "$(E2E_RESULTS)" "$${E2E_LABEL:-fly-outage}" || status=1; exit $$status
 
 terrabase-check: terrabase-build terrabase-analyzer-check
-	scripts/terrabase/e2e-summary.sh check tests/TerraBase.E2E/COVERAGE.md
+	scripts/terrabase/e2e-summary.sh check tests/TerraBase.E2E/COVERAGE.md tests/TerraBase.E2E/RUNS.md
 
 terrabase-run:
 	dotnet run --project src/TerraBase --configuration $(CONFIGURATION)
