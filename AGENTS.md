@@ -59,13 +59,14 @@ This repository contains the TerraScale public landing site.
 
 ## Cloudflare: use the `cf` CLI
 
-Use an authenticated `cf` CLI installation for the authorized Cloudflare
-account. Keep operator hostnames, account identities and private topology out
-of this public repository.
+Use the `cf` CLI for ALL Cloudflare interaction. Keep operator hostnames,
+account identities and private topology out of this repository.
 
-- Use `cf` for Cloudflare work: DNS records, zones, origin CA / client certificates, SSL/TLS and cache settings, rules, analytics, API tokens. Workers deploys keep using `wrangler`.
-- Before you start, run `cf auth whoami`. It must show `"authenticated": true`.
-- Never print tokens or the config file. Print the plan before you change anything. Deleting zones, production DNS records or Workers needs the user's confirmation. Record changed Cloudflare object IDs (not secrets) in the PR or runbook.
+- `cf` covers everything Cloudflare: Pages projects and deploys, deploy settings, preview URLs, DNS, zones, certificates, SSL/TLS and cache settings, rules, analytics and API tokens. Do not use wrangler or the dashboard for anything `cf` can do; if `cf` truly can't, say so in the PR.
+- Find commands with `cf cli search "<task>"` (no names, domains, IDs or tokens in the query), then `<command> --help`; `cf schema ...` shows the API request.
+- Run it as `env -u CLOUDFLARE_API_TOKEN cf ...`: a narrow `CLOUDFLARE_API_TOKEN` in the shell shadows the OAuth login.
+- Check auth with `env -u CLOUDFLARE_API_TOKEN cf auth whoami` (must show `"authenticated": true`); log in with `cf auth login --no-browser`.
+- Never print tokens or the config file. Print the plan before you change anything. Deleting zones, production DNS records, Pages projects or Workers needs the user's confirmation. Record changed Cloudflare object IDs (not secrets) in the PR or runbook.
 
 ## Code and Design
 
