@@ -747,13 +747,13 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
     {
         // Like every other store: none is handed out after shutdown, even a cached one.
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed), this);
-        _ = LocateSystem();
+        // An open store keeps its file handles, so only an opening checks the path for links: this runs on every request.
         if (Volatile.Read(ref _system) is { } system)
         {
             return system;
         }
 
-        var path = Path.Combine(_dataDirectory, SystemName + FileExtension);
+        var path = LocateSystem();
         await EnterCreationAsync(cancellationToken).ConfigureAwait(false);
         try
         {
