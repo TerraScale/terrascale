@@ -243,7 +243,7 @@ public sealed class Cluster : IAsyncDisposable
     }
 
     // Creates the collection in gru and waits until every other region serves it, so every test starts from a replicated database.
-    private static async Task CreateCollectionAsync(Dictionary<string, HttpClient> clients, string path, string collection)
+    internal static async Task CreateCollectionAsync(Dictionary<string, HttpClient> clients, string path, string collection)
     {
         using var created = await clients[Gru].PostAsJsonAsync(new Uri($"{path}/collections", UriKind.Relative), new { name = collection });
         await Docs.EnsureSuccessAsync(created);
