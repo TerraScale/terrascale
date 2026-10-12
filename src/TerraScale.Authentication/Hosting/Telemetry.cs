@@ -71,6 +71,7 @@ public static partial class Telemetry
                 .AddAspNetCoreInstrumentation()
                 .AddHttpClientInstrumentation()
                 .AddRuntimeInstrumentation()
+                .AddMeter(AuthMetrics.MeterName)
                 .AddPrometheusExporter());
         if (traces)
         {

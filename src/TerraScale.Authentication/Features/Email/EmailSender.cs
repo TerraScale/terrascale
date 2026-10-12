@@ -2,6 +2,7 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json.Serialization;
 using TerraScale.Authentication.Configuration;
+using TerraScale.Authentication.Hosting;
 using ZLogger;
 
 namespace TerraScale.Authentication.Features.Email;
@@ -48,6 +49,7 @@ public sealed class LoggingEmailSender(ILogger<LoggingEmailSender> logger) : IEm
             return Task.FromCanceled(cancellationToken);
         }
 
+        AuthMetrics.Email("not_configured");
         // Best effort, like the Cloudflare sender's failure log: a failing provider must not fail the flow.
         try
         {
@@ -84,6 +86,7 @@ public sealed class CloudflareEmailSender(HttpClient http, CloudflareEmailOption
             };
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", email.ApiToken);
             using var response = await http.SendAsync(request, cancellationToken);
+            AuthMetrics.Email(response.IsSuccessStatusCode ? "sent" : "failed");
             if (!response.IsSuccessStatusCode)
             {
                 // The response body can quote the recipient, so only the status is logged.
@@ -95,6 +98,7 @@ public sealed class CloudflareEmailSender(HttpClient http, CloudflareEmailOption
             // Caller cancellation wins over whatever failure it raced with; every other failure
             // is a swallowed delivery failure.
             cancellationToken.ThrowIfCancellationRequested();
+            AuthMetrics.Email("failed");
 
             // The safe logger keeps only the exception type and frames. Logging is best effort: a failing
             // provider must not turn a swallowed delivery failure into a failed request.

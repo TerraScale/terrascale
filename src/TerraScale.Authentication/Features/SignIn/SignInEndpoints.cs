@@ -136,11 +136,13 @@ public sealed class VerifyPasscodeEndpoint(Passcodes passcodes, Sessions session
             ?? await headless.LimitCodeAsync(address, PasscodePurpose.SignIn, issuing: false, cancellationToken,
                 AuthEmails.Locale(this.HttpContext.Request.Headers.AcceptLanguage))) is { } wait)
         {
+            AuthMetrics.SignIn("hosted_code", "rate_limited");
             return SignInFlow.Limited(this.HttpContext, SignInStep.Code, wait, address, next);
         }
 
         if (await passcodes.VerifyAsync(OidcIssuer.InstanceId, address, form.Code ?? string.Empty, cancellationToken) is not { } session)
         {
+            AuthMetrics.SignIn("hosted_code", "refused");
             return SignInPageModel.Render(this.HttpContext,
                 new SignInPageModel(SignInStep.Code, OidcIssuer.Slug, address, next, "That code is wrong or has expired. Request a new one if needed."), StatusCodes.Status401Unauthorized);
         }
@@ -148,6 +150,7 @@ public sealed class VerifyPasscodeEndpoint(Passcodes passcodes, Sessions session
         // The browser's previous session, if any, ends with this sign-in.
         await sessions.RevokeAsync(OidcIssuer.InstanceId, this.HttpContext.Request.Cookies[SecuritySchemes.SessionCookieName], cancellationToken);
         BrowserSecurity.SetSessionCookie(this.HttpContext.Response, session.Token);
+        AuthMetrics.SignIn("hosted_code", "succeeded");
         return SignInPageModel.Render(this.HttpContext, new SignInPageModel(next is null ? SignInStep.SignedIn : SignInStep.Continue, OidcIssuer.Slug, Next: next));
     }
 }

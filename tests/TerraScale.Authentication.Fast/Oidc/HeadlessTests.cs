@@ -111,6 +111,23 @@ public sealed class HeadlessTests(TerraBaseFixture fixture)
         using var other = await oidc.RefreshAsync(second.GetProperty("refresh_token").GetString()!);
         await Assert.That(other.StatusCode).IsEqualTo(HttpStatusCode.OK);
 
+        // The outcome counters the Grafana dashboards read (ops/grafana).
+        using (var metrics = new HttpClient { BaseAddress = oidc.Server.MetricsAddress })
+        {
+            var scrape = (await metrics.GetStringAsync("/metrics")).Split('\n');
+            foreach (var (name, label, outcome) in new[]
+            {
+                ("ts_auth_sign_ins_total{", "method=\"email_code\"", "outcome=\"succeeded\""),
+                ("ts_auth_sign_ins_total{", "method=\"password\"", "outcome=\"refused\""),
+                ("ts_auth_tokens_total{", "grant_type=\"refresh_token\"", "outcome=\"issued\""),
+                ("ts_auth_tokens_total{", "grant_type=\"email_code\"", "outcome=\"invalid_scope\""),
+            })
+            {
+                await Assert.That(scrape.Any(line => line.StartsWith(name, StringComparison.Ordinal) && line.Contains(label, StringComparison.Ordinal)
+                    && line.Contains(outcome, StringComparison.Ordinal))).IsTrue();
+            }
+        }
+
         // Logs carry the audit lines but never the address, password, code, pending token or IP.
         await Assert.That(logs.Text).Contains($"Audit: headless sign-up created user {user.Id}");
         foreach (var secret in new[] { "dana@example.test", "Dana@Example", Password, code, pending, Ip })
