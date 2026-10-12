@@ -131,9 +131,9 @@ its S3 API. Packaged fonts and static assets are embedded in the executable.
 
 ## Running
 
-The build needs the .NET 10 SDK (see `global.json`) and the sibling `ts-dotnet`
+The build needs the .NET 11 SDK (see `global.json`) and the sibling `ts-dotnet`
 checkout at the revision pinned in `.github/workflows/ci.yml`. TerraScale.Endpoints
-and TerraScale.Logging come from the Forgejo NuGet feed (see `nuget.config`).
+and TerraScale.Logging are project references in this repository.
 ts-dotnet is looked up at `../ts-dotnet`; pass `-p:TsDotnetRoot=<the ts-dotnet checkout>`
 or set the `TsDotnetRoot` environment variable to use another location (a worktree, or a
 clone at the pinned revision; see the root README). CI pins the ts-dotnet revision

@@ -18,13 +18,14 @@ public sealed class ListenerBindingTests
     }
 
     [Test]
-    public async Task Outside_development_the_public_and_metrics_listeners_bind_every_interface()
+    public async Task Outside_development_the_internal_listener_stays_on_loopback_and_the_others_bind_every_interface()
     {
         // Outside Development a node needs its backup bucket and master key.
         var s3 = new FakeS3();
         await using var server = await TerraBaseTestServer.StartAsync(s3.Configure, s3.Route, environmentName: "Production");
 
         await Assert.That(server.Listeners.Count).IsEqualTo(3);
+        await Assert.That(IPAddress.IsLoopback(IPAddress.Parse(server.Listeners[0].Host))).IsTrue();
         foreach (var listener in server.Listeners.Skip(1))
         {
             var address = IPAddress.Parse(listener.Host.Trim('[', ']'));
