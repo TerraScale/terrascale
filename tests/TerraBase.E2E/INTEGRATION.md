@@ -178,6 +178,24 @@ coordinator).
 
 **#117** is retargeted to main, merges cleanly, and is updated to `e161a139`; its run is in progress. Then R7's #120 follows (R3 pushes `24e138c0`).
 
+**MAIN IS RED AGAIN (22:45Z): #149 was merged with a RED exact-head `test`.**
+- **The merge:** #149 ("health probes name the exact commit and machine") was merged by MarioGK (the shared account,
+  not this integration owner) at 22:08:08Z, at head `27858113`. Its own `test` run 38311725043 was **failure**, which
+  breaks the merge gate.
+- **The damage:** main's run on `2a3eeb14` (38314879993) failed 13 Fast Healthz/Readyz tests, all
+  `ArgumentNullException (stringValue)` in `HealthTests.AssertProbeAsync`: `Healthz_reports_ok_and_the_running_version`,
+  `Readyz_is_ready_on_the_admin_listener`, `Readyz_is_unavailable_once_the_storage_engine_is_closed` and others.
+- **#117 is collateral, not the cause.** Its fresh run on `5c791aac` (38316832119) failed the same tests.
+- **The train holds product merges** until #149's owner fixes main and main's push run is green.
+
+**Other merges outside the train since 21:44Z:**
+- #150 (agent docs) → `90cf9046`;
+- #118 (R8) → `71585005`, merged by MarioGK at 22:37:57Z at head `8ebcbd60`. Its storage-side review was done by a
+  reviewer "standing in for T1" at 22:29Z, not T1 itself;
+- #151 (machine-pinned E2E identity) → `e30ffdc2`.
+
+Main is now `e30ffdc2`.
+
 **Acceptance gaps, kept visible until each has a test and a fix:**
 - **R-A:** stale-machine retention after a SIGKILL.
 - **R-B:** a corrupt CDC entry stalls a region pair.
