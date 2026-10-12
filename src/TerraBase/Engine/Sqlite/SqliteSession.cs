@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using Turso.Data.Sqlite;
+using Turso.Raw.Public;
+using Turso.Raw.Public.Handles;
 
 namespace TerraBase.Engine.Sqlite;
 
@@ -75,7 +77,8 @@ internal sealed class SqliteSession(SqliteConnection connection) : IDisposable
     /// </summary>
     public static void ReleaseAbandonedStatements(Exception error)
     {
-        if (!FailedStatement(error) || error.Data.Contains(Released))
+        // A stopped statement is always a read (the per-row functions run only in SELECTs): its reader disposes it.
+        if (!FailedStatement(error) || Stopped(error) || error.Data.Contains(Released))
         {
             return;
         }
@@ -104,6 +107,20 @@ internal sealed class SqliteSession(SqliteConnection connection) : IDisposable
     /// <summary>Whether <paramref name="error"/> is a statement <see cref="ThrowIfStopped"/> failed.</summary>
     public static bool Stopped(SqliteException error) => error.Message.Contains(StoppedMessage, StringComparison.Ordinal);
 
+    // Whether the failed statement in error's chain is a stopped one.
+    private static bool Stopped(Exception? error)
+    {
+        for (; error is not null; error = error.InnerException)
+        {
+            if (error is SqliteException statement)
+            {
+                return Stopped(statement);
+            }
+        }
+
+        return false;
+    }
+
     /// <summary>
     /// Whether the connection is inside a transaction. Unlike SQLite, Turso rolls the whole transaction back when a
     /// statement fails while it steps through rows (a stopped read, for one); the statements after it would then commit
@@ -111,20 +128,27 @@ internal sealed class SqliteSession(SqliteConnection connection) : IDisposable
     /// </summary>
     public bool InTransaction()
     {
-        using var command = connection.CreateCommand();
-        command.CommandText = "BEGIN;";
-        try
+        // The BEGIN runs on the native handle and is disposed even when it fails, as it does inside a transaction: the
+        // provider would abandon it (ReleaseAbandonedStatements).
+        var native = NativeHandle?.GetValue(connection) as TursoDatabaseHandle ?? throw new InvalidOperationException("the connection is closed");
+        using (var begin = TursoBindings.PrepareStatement(native, "BEGIN;"))
         {
-            command.ExecuteNonQuery();
-        }
-        catch (SqliteException error) when (error.Message.Contains("within a transaction", StringComparison.Ordinal))
-        {
-            ReleaseAbandonedStatements(error);
-            return true;
+            try
+            {
+                while (TursoBindings.Read(begin))
+                {
+                }
+            }
+            catch (TursoException error) when (error.Message.Contains("within a transaction", StringComparison.Ordinal))
+            {
+                return true;
+            }
         }
 
-        command.CommandText = "ROLLBACK;";
-        command.ExecuteNonQuery();
+        // Through the provider, which then knows its transaction ended: disposing it rolls nothing back.
+        using var rollback = connection.CreateCommand();
+        rollback.CommandText = "ROLLBACK;";
+        rollback.ExecuteNonQuery();
         return false;
     }
 
