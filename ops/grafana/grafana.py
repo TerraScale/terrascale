@@ -112,9 +112,8 @@ def terrabase():
     peer = "{{region}} → {{peer_region}}"
     return traffic("ts-terrabase") + [
         row("Replication (design C: docs/terrabase/multi-region-replication.md, Metrics)"),
-        ts("CDC tailer lag", [(f"max by (region) (terrabase_replication_tail_lag_seconds{{{f}}})", "{{region}}")], "s",
-           "Age of the oldest committed change not yet in a change group (R3)."),
-        ts("CDC backlog (rows awaiting every peer's ack)", [(f"max by (region) (terrabase_replication_cdc_backlog{{{f}}})", "{{region}}")], "short"),
+        ts("CDC backlog (rows awaiting every peer's ack)", [(f"max by (region) (terrabase_replication_cdc_backlog{{{f}}})", "{{region}}")], "short",
+           "turso_cdc rows kept because some peer has not acknowledged them (R3): the outbox change groups are rebuilt from."),
         ts("Send lag per peer", [(f"max by (region, peer_region) (terrabase_replication_send_lag_seconds{{{f}}})", peer)], "s",
            "Age of the oldest change group not yet sent to the peer (R4a)."),
         ts("Ack lag per peer", [(f"max by (region, peer_region) (terrabase_replication_ack_lag_seconds{{{f}}})", peer)], "s",
@@ -217,8 +216,6 @@ def alerts():
     return [
         rule("ts-replication-send-lag", "Replication send lag > 30 s", f"max by (region, peer_region) (terrabase_replication_send_lag_seconds{{{tb}}})", "gt", 30, "5m",
              "{{ $labels.region }} has not sent changes to {{ $labels.peer_region }} for {{ $values.A }} s."),
-        rule("ts-replication-tail-lag", "CDC tailer lag > 10 s", f"max by (region) (terrabase_replication_tail_lag_seconds{{{tb}}})", "gt", 10, "5m",
-             "The CDC tailer in {{ $labels.region }} is {{ $values.A }} s behind its commits."),
         rule("ts-backup-lag", "Backup shipping lag > 10 min", f"max by (region) (terrabase_backup_lag_seconds{{{tb}}})", "gt", 600, "10m",
              "{{ $labels.region }} has committed data not in Tigris for {{ $values.A }} s."),
         rule("ts-error-rate", "5xx ratio > 5%",

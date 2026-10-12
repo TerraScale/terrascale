@@ -75,7 +75,6 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
     private readonly TimeSpan _shutdownGrace;
     private readonly DatabaseLifecycleCheckpoint _checkpoint;
     private readonly Action<SqliteDatabaseStore>? _afterBootstrap;
-    private readonly TimeProvider _backupTime;
 
     // Set before any store opens: every client database's writes mint with it.
     /// <summary>This member's replica id and clock, which every client database write and replicated join uses.</summary>
@@ -222,8 +221,15 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
         return ValueTask.CompletedTask;
     }
 
+    // Completed and replaced by every committed write: the change group source's wake-up.
+    private TaskCompletionSource _commitSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>Completes at the next committed write to any database.</summary>
+    internal Task NextCommitAsync(CancellationToken cancellationToken) => Volatile.Read(ref _commitSignal).Task.WaitAsync(cancellationToken);
+
     private void RecordCommittedWrite()
     {
+        Interlocked.Exchange(ref _commitSignal, new(TaskCreationOptions.RunContinuationsAsynchronously)).TrySetResult();
         long current;
         do
         {
@@ -313,6 +319,9 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
     /// </summary>
     internal TimeProvider Time { get; }
 
+    /// <summary>The host's UTC clock: stamps, snapshot boundaries and CDC retention, independent of query deadlines.</summary>
+    internal TimeProvider HostTime { get; }
+
     internal TimeSpan QueryBudget { get; }
     internal SqliteSessionPool Pool { get; }
 
@@ -350,7 +359,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
         _shutdownGrace = shutdownGrace;
         _checkpoint = checkpoint ?? (static (_, _) => { });
         _afterBootstrap = afterBootstrap;
-        _backupTime = backupTime ?? TimeProvider.System;
+        HostTime = backupTime ?? TimeProvider.System;
         _readinessCacheTtl = readinessCacheTtl ?? TimeSpan.FromSeconds(1);
         Time = time ?? TimeProvider.System;
         QueryBudget = queryBudget ?? SqliteDatabaseStore.DefaultQueryBudget;
@@ -361,7 +370,8 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
         try
         {
             ReplicaId = ReplicaIdentityFile.Start(dataDirectory);
-            Member = new LocalReplica(ReplicaId, new MemberClock(Time, meter));
+            // Stamps follow the host's clock: the query deadline's clock may be a test's fake that never moves.
+            Member = new LocalReplica(ReplicaId, new MemberClock(HostTime, meter));
             meter.CreateObservableGauge("terrabase.replica.member", () => (long)ReplicaId.Member, description: "This member's number in its replica id.");
             meter.CreateObservableGauge("terrabase.replica.epoch", () => (long)ReplicaId.Epoch, description: "Unclean starts of this member since its number was taken.");
 

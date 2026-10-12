@@ -5,7 +5,7 @@ using TerraBase.Tenancy;
 namespace TerraBase.Testing;
 
 /// <summary>
-/// One test machine's change groups, in memory, as the CDC tailer (R3) will read them from <c>turso_cdc</c>: the test adds a
+/// One test machine's change groups, in memory, as the CDC tailer reads them from <c>turso_cdc</c>: the test adds a
 /// group after it committed the same deltas locally, and peers' acknowledgements are kept per database and peer node.
 /// </summary>
 internal sealed class FakeChangeGroupSource : IChangeGroupSource

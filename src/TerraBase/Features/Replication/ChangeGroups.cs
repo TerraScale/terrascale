@@ -61,21 +61,6 @@ public interface IChangeGroupSink
     ValueTask<Hlc?> ApplyAsync(TenantContext database, ReplicaId origin, IReadOnlyList<OriginGroup> groups, CancellationToken cancellationToken);
 }
 
-/// <summary>No source until the CDC tailer (R3) lands: nothing ships, and the status says replication is not running.</summary>
-internal sealed class NoChangeGroupSource : IChangeGroupSource
-{
-    public IAsyncEnumerable<TenantContext> ListDatabasesAsync(CancellationToken cancellationToken) => AsyncEnumerable.Empty<TenantContext>();
-
-    public ValueTask<IReadOnlyList<OriginGroup>> ReadAsync(TenantContext database, long after, int maxGroups, int maxBytes, CancellationToken cancellationToken) =>
-        ValueTask.FromResult<IReadOnlyList<OriginGroup>>([]);
-
-    public ValueTask<long> AckedAsync(TenantContext database, ReplicaId peer, CancellationToken cancellationToken) => ValueTask.FromResult(0L);
-
-    public ValueTask AckAsync(TenantContext database, ReplicaId peer, long changeId, CancellationToken cancellationToken) => ValueTask.CompletedTask;
-
-    public Task ChangedAsync(CancellationToken cancellationToken) => Task.Delay(Timeout.Infinite, cancellationToken);
-}
-
 /// <summary>The wire form of change groups and its bounds; decoding is a trust boundary.</summary>
 internal static class ChangeGroups
 {
