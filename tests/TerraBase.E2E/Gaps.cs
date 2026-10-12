@@ -54,8 +54,6 @@ internal static class Gaps
         // CrashAndStallE2ETests. Node processes and lossy links also need test hooks on the peer path (COVERAGE.md).
         ["crash-replicated"] = Streams,
         ["storage-stall"] = Streams,
-        // Passed on SQLite until the Turso engine (#98) took the file's write lock for its single writer.
-        ["storage-stall-single"] = "a storage stall hook for the Turso engine (#98 holds the file's write lock)",
         ["lossy-link"] = Streams,
 
         // RepairAndContractE2ETests.

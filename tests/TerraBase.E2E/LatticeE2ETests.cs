@@ -24,7 +24,9 @@ public sealed class LatticeE2ETests
             var uri = cluster.Document(EntityIds.New().ToString());
             await Converge.SeedAsync(cluster, uri, new JsonObject { ["name"] = "counter" });
             await Task.WhenAll(IncAsync(cluster[Cluster.Gru], uri, 5), IncAsync(cluster[Cluster.Sjc], uri, 5));
-            var summed = await SettledAsync(cluster, uri, "concurrent inc");
+            // Equal copies are not enough: each region may still lack the other's last inc (9 = 5 + 4 on both sides).
+            var summed = await Converge.UntilAsync(() => Converge.BothAsync(cluster, uri),
+                copies => copies.Identical && copies.Gru?["n"]?.ToJsonString() == "10", "concurrent inc");
             Expected.Check(summed.Gru!["n"]?.ToJsonString() == "10", $"five inc in each region sum to 10; {summed}");
             _ = await Docs.OpsAsync(cluster[Cluster.Gru], uri, Op("set", "n", 0));
             var reset = await SettledAsync(cluster, uri, "set 0");
