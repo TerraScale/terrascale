@@ -10,7 +10,7 @@
         <div class="ts-login-panel">
             <div class="ts-login-stack">
                 <div class="ts-login-heading">
-                    <img class="ts-login-logo" src="@Assets.Url("brand/logo-terrascale-blue.svg")" alt="TerraScale" decoding="async" />
+                    <img class="ts-login-logo ts-logo-on-dark" src="@Assets.Url("brand/logo-terrascale-principal.svg")" alt="TerraScale" decoding="async" /><img class="ts-login-logo ts-logo-on-light" src="@Assets.Url("brand/logo-terrascale-blue.svg")" alt="TerraScale" decoding="async" />
                     <div class="ts-auth-heading"><h1 class="ts-auth-title" id="login-title">@Model.Title</h1><p class="ts-auth-subtitle">@Model.Subtitle</p></div>
                 </div>
                 @if (Model.Error.Length != 0) { <div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@Model.Error</p></div> }

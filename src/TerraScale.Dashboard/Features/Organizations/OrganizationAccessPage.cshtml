@@ -1,7 +1,7 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Organizations.OrganizationPage>
 @using TerraScale.Dashboard.Features.Organizations
 <main id="access-page" class="ts-page ts-access-page">
-    <h1 class="ts-sr-only">Organization</h1><div class="ts-page-actions"></div>
+    <header class="ts-page-header"><div class="ts-page-heading"><p class="ts-eyebrow">Manage</p><h1 class="ts-page-title">@(Model.Shell.Context.Organization?.Name ?? "Organization")</h1><p class="ts-lede">Members, projects, billing and audit for this organization.</p></div></header>
     @if (Model.Error.Length > 0) { <div class="ts-alert ts-alert-warning" role="alert"><p class="ts-alert-title">Could not update access</p><p class="ts-alert-body">@Model.Error</p></div> }
     @if (Model.InvitationLink.Length > 0)
     {

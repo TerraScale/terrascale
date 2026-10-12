@@ -13,6 +13,6 @@
 }
 @if (owner)
 {
-    <div class="ts-row"><button class="ts-btn ts-btn-primary" type="button" command="show-modal" commandfor="change-billing-plan">@(subscribed ? "Change plan" : "Choose plan")</button>@if (subscribed) { <a class="ts-btn ts-btn-secondary" href="/billing/portal">Manage payment</a> }@if (data.Binding is { CheckoutId.Length: > 0, SubscriptionId.Length: 0, Status: "pending" }) { <form method="post" action="/billing/checkout/cancel"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><button class="ts-btn ts-btn-secondary" type="submit">Cancel checkout</button></form> }</div>
+    <div class="ts-row"><button class="ts-btn ts-btn-secondary" type="button" command="show-modal" commandfor="change-billing-plan">@(subscribed ? "Change plan" : "Choose plan")</button>@if (subscribed) { <a class="ts-btn ts-btn-secondary" href="/billing/portal">Manage payment</a> }@if (data.Binding is { CheckoutId.Length: > 0, SubscriptionId.Length: 0, Status: "pending" }) { <form method="post" action="/billing/checkout/cancel"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><button class="ts-btn ts-btn-secondary" type="submit">Cancel checkout</button></form> }</div>
 }
 else { <div class="ts-row"><p class="ts-meta">@(Model.InternalBill is not null ? "Internal billing reports usage without Stripe charges." : "Only the organization owner can manage billing.")</p></div> }

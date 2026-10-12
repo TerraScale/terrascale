@@ -8,7 +8,7 @@
 else
 {
 <main class="ts-page @(Model.Tab == "audit" ? "ts-audit-page" : "")">
-    <h1 class="ts-sr-only">@(Model.Shell.Context.Organization?.Name ?? "Organization")</h1><div class="ts-page-actions"></div>
+    <header class="ts-page-header"><div class="ts-page-heading"><p class="ts-eyebrow">Manage</p><h1 class="ts-page-title">@(Model.Shell.Context.Organization?.Name ?? "Organization")</h1><p class="ts-lede">Members, projects, billing and audit for this organization.</p></div></header>
     @if (Model.Error.Length > 0) { <div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@Model.Error</p></div> }
     @if (Model.InvitationLink.Length > 0) { <section class="ts-alert ts-alert-success" aria-labelledby="invitation-link-title" data-init="history.replaceState(null, '', '/organization?tab=members')"><p class="ts-alert-title" id="invitation-link-title">Invitation created</p><p class="ts-alert-body">Copy this link and send it to the invitee. It works once and expires in seven days.</p><a id="invitation-link" class="ts-link ts-break" href="@Model.InvitationLink" rel="noreferrer">@Model.InvitationLink</a></section> }
     <nav class="ts-tabs" aria-label="Organization sections">@foreach (var tab in Tabs) { <a class="ts-tab" href="@tab.Url" aria-current="@(Model.Tab == tab.Key || Model.Tab == "invitations" && tab.Key == "members" ? "page" : null)"><span>@tab.Label</span></a> }</nav>

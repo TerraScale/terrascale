@@ -2,17 +2,16 @@
 @inject AssetUrls Assets
 @inject Microsoft.AspNetCore.Hosting.IWebHostEnvironment HostEnvironment
 <!DOCTYPE html>
-<html lang="en" data-theme="dark" data-nonce="@Model.Nonce">
+<html lang="en" data-theme="@Theme" data-nonce="@Model.Nonce">
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="color-scheme" content="dark" />
-    <meta name="theme-color" content="#0a0c12" />
-    <script nonce="@Model.Nonce">try { document.documentElement.dataset.theme = localStorage.getItem("ts-theme") || (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark"); } catch {}</script>
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#ffffff" /><meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0a0a0a" />
     <title>@Model.Title · TerraScale</title>
     <link rel="icon" type="image/svg+xml" href="@Assets.Url("brand/logo-icon-blue.svg")" />
-    <link rel="preload" href="@Assets.Url("fonts/oxanium-latin-wght-normal.woff2")" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="@Assets.Url("fonts/Geist-Variable.woff2")" as="font" type="font/woff2" crossorigin />
     <link id="ts-css" rel="stylesheet" href="@Assets.Url("css/terrascale.css")" data-dashboard-css />
+    <script nonce="@Model.Nonce">window.tsMode = () => { const scheme = getComputedStyle(document.documentElement).colorScheme; document.documentElement.dataset.mode = scheme.includes("light") && scheme.includes("dark") ? (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light") : scheme.includes("light") ? "light" : "dark"; }; tsMode();</script>
     <script type="module" src="@Assets.Url("js/button-loading.js")" nonce="@Model.Nonce"></script>
     <script type="module" src="@Assets.Url("js/datastar.js")" integrity="@AssetUrls.DatastarIntegrity" crossorigin="anonymous" nonce="@Model.Nonce"></script>
 </head>
@@ -31,3 +30,6 @@
     }
 </body>
 </html>
+@functions {
+    private string? Theme => HttpContext?.Request.Cookies["ts-theme"] is ("light" or "dark" or "system") and var theme ? theme : null;
+}

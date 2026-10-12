@@ -24,7 +24,7 @@
 }
 
 .ts-btn:focus-visible {
-  outline: 2px solid var(--ts-accent);
+  outline: 2px solid var(--ts-focus);
   outline-offset: 2px;
 }
 
@@ -44,8 +44,8 @@ body.ts-nav-pending form[data-submit-once] .ts-btn[type="submit"] {
 }
 
 .ts-btn-primary {
-  background: var(--ts-accent-fill);
-  color: var(--ts-on-accent);
+  background: var(--ts-primary);
+  color: var(--ts-on-primary);
 }
 
 .ts-btn.ts-btn-loading {
@@ -67,7 +67,7 @@ body.ts-nav-pending form[data-submit-once] .ts-btn[type="submit"] {
 }
 
 .ts-btn-primary:hover {
-  background: var(--ts-accent-fill-hover);
+  background: var(--ts-primary-hover);
 }
 
 .ts-btn-secondary,
@@ -95,15 +95,14 @@ body.ts-nav-pending form[data-submit-once] .ts-btn[type="submit"] {
 
 .ts-btn-danger,
 .ts-btn-destructive {
-  border-color: color-mix(in oklab, var(--ts-danger) 35%, transparent);
-  background: color-mix(in oklab, var(--ts-danger) 14%, transparent);
+  background: color-mix(in oklab, var(--ts-danger) var(--ts-tint-badge), transparent);
   color: var(--ts-danger);
 }
 
 .ts-btn-danger:hover,
 .ts-btn-destructive:hover {
   background: var(--ts-danger);
-  color: var(--ts-on-danger);
+  color: var(--ts-canvas);
 }
 
 .ts-btn-sm {
@@ -171,7 +170,7 @@ body.ts-nav-pending form[data-submit-once] .ts-btn[type="submit"] {
 .ts-label {
   color: var(--ts-ink);
   font-size: var(--ts-fs-sm);
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .ts-hint {
@@ -218,8 +217,8 @@ textarea.ts-input {
 .ts-input:focus,
 .ts-input:focus-visible,
 .ts-select:focus-visible {
-  border-color: var(--ts-accent);
-  outline: 1px solid var(--ts-accent);
+  border-color: transparent;
+  outline: 2px solid var(--ts-focus);
   outline-offset: 0;
 }
 
@@ -273,7 +272,7 @@ select[multiple] option {
 }
 
 select[multiple] option:checked {
-  background: linear-gradient(color-mix(in oklab, var(--tone) 28%, transparent), color-mix(in oklab, var(--tone) 28%, transparent));
+  background-color: var(--ts-accent-soft);
   color: var(--ts-ink);
 }
 
@@ -432,8 +431,7 @@ legend {
   min-width: 150px;
   color: var(--ts-ink-3);
   font-size: var(--ts-fs-xs);
-  font-weight: 600;
-  letter-spacing: 0.02em;
+  font-weight: 500;
 }
 
 .ts-filter-field .ts-input,
@@ -464,8 +462,8 @@ legend {
 }
 
 .ts-filter-inline:focus-within {
-  border-color: var(--ts-accent);
-  outline: 1px solid var(--ts-accent);
+  border-color: transparent;
+  outline: 2px solid var(--ts-focus);
   outline-offset: 0;
 }
 
@@ -473,8 +471,7 @@ legend {
   flex: none;
   color: var(--ts-ink-3);
   font-size: var(--ts-fs-xs);
-  font-weight: 600;
-  letter-spacing: 0.02em;
+  font-weight: 500;
   white-space: nowrap;
 }
 
@@ -499,17 +496,16 @@ legend {
   display: inline-flex;
   flex: none;
   gap: 2px;
-  padding: 3px;
-  border: 1px solid var(--ts-line);
+  padding: 2px;
+  border: 1px solid var(--ts-line-strong);
   border-radius: var(--ts-radius);
-  background: var(--ts-surface);
 }
 
 .ts-segment {
   display: inline-flex;
   align-items: center;
   gap: var(--ts-s2);
-  height: calc(var(--ts-control-h-sm) - 8px);
+  height: calc(var(--ts-control-h-sm) - 6px);
   padding: 0 var(--ts-s3);
   border-radius: var(--ts-radius-sm);
   color: var(--ts-ink-2);

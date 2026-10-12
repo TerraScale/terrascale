@@ -24,7 +24,7 @@
   background: color-mix(in oklab, var(--tone) 22%, var(--ts-surface-2));
   color: color-mix(in oklab, var(--tone) 70%, var(--ts-ink));
   font-size: var(--ts-fs-xs);
-  font-weight: 700;
+  font-weight: 600;
   letter-spacing: 0.02em;
 }
 
@@ -97,8 +97,8 @@
 }
 
 .ts-idp-empty > .ts-idp-tile {
-  width: 44px;
-  height: 44px;
+  width: 40px;
+  height: 40px;
   margin-bottom: var(--ts-s1);
 }
 
@@ -334,7 +334,7 @@ button.ts-idp-provider:focus-visible {
   border-radius: 50%;
   color: var(--tone);
   font-size: var(--ts-fs-sm);
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .ts-idp-step-done .ts-idp-step-marker {

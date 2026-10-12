@@ -37,12 +37,14 @@
 }
 
 .ts-card-title {
-  font-size: var(--ts-fs-lg);
-  font-weight: 600;
+  font-family: var(--ts-font-display);
+  font-size: var(--ts-fs-xl);
+  font-weight: var(--ts-heading-weight);
+  letter-spacing: var(--ts-heading-tracking);
 }
 
 .ts-card-description {
-  color: var(--ts-ink-3);
+  color: var(--ts-ink-2);
   font-size: var(--ts-fs-sm);
 }
 
@@ -96,27 +98,31 @@
   border-top: 1px solid var(--ts-line);
 }
 
-/* Headline numbers: flat rows split by vertical hairlines. Every stat has a
-   leading divider; the grid is shifted left and clipped so the first stat of
-   each row hides its divider and lines up with the page edge. */
+/* Headline numbers: a borderless row with hairlines above and below and
+   vertical hairlines between tiles. */
 .ts-stats {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr));
-  row-gap: var(--ts-s2);
-  margin-left: calc(-1 * var(--ts-s5));
-  overflow: hidden;
-  /* The bottom hairline starts where the content does, not at the shift. */
-  background: linear-gradient(var(--ts-line), var(--ts-line)) no-repeat right bottom / calc(100% - var(--ts-s5)) 1px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+  border-block: 1px solid var(--ts-line);
 }
 
 .ts-stat {
   display: grid;
   align-content: start;
-  gap: var(--ts-s1);
+  gap: var(--ts-s2);
   min-width: 0;
-  margin-left: -1px;
-  padding: var(--ts-s1) var(--ts-s5) var(--ts-s6);
+  padding: var(--ts-s5) var(--ts-s6);
   border-left: 1px solid var(--ts-line);
+}
+
+.ts-stat:first-child {
+  padding-left: 0;
+  border-left: 0;
+}
+
+/* Under a tab bar the bar's hairline already sits above the row. */
+:is(.ts-toolbar, .ts-tabs) + .ts-stats {
+  border-top: 0;
 }
 
 .ts-stat-label {
@@ -124,19 +130,22 @@
   align-items: center;
   gap: var(--ts-s2);
   color: var(--ts-ink-3);
-  font-size: var(--ts-fs-xs);
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  font-family: var(--ts-label-font);
+  font-size: var(--ts-label-size);
+  font-weight: var(--ts-label-weight);
+  letter-spacing: var(--ts-label-tracking);
+  text-transform: var(--ts-label-case);
 }
 
 .ts-stat-value {
   overflow-wrap: anywhere;
   color: var(--ts-ink);
+  font-family: var(--ts-font-num);
   font-size: var(--ts-fs-3xl);
-  font-weight: 600;
+  font-weight: var(--ts-display-weight);
   font-variant-numeric: tabular-nums;
-  line-height: 1.15;
+  letter-spacing: -0.02em;
+  line-height: 1;
 }
 
 /* For stats whose values are words ("Not recorded") rather than numbers. */
@@ -155,7 +164,16 @@
   }
 
   .ts-stat {
-    padding: var(--ts-s3) var(--ts-s3) var(--ts-s3) var(--ts-s5);
+    padding: var(--ts-s4);
+  }
+
+  .ts-stat:nth-child(odd) {
+    padding-left: 0;
+    border-left: 0;
+  }
+
+  .ts-stat:nth-child(n + 3) {
+    border-top: 1px solid var(--ts-line);
   }
 
   .ts-stat-value {
@@ -163,26 +181,36 @@
   }
 }
 
-/* Empty states. */
+/* Empty states: a dashed outline, never a filled box. */
 .ts-empty {
   display: grid;
   justify-items: center;
-  gap: var(--ts-s2);
-  padding: var(--ts-s8) var(--ts-s6);
-  border-radius: var(--ts-radius);
-  background: var(--ts-surface);
+  gap: var(--ts-s3);
+  padding: var(--ts-s12) var(--ts-s6);
+  border: 1px dashed var(--ts-line-strong);
+  border-radius: var(--ts-radius-lg);
   text-align: center;
+}
+
+.ts-empty-icon {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--ts-line-strong);
+  border-radius: var(--ts-radius-lg);
+  color: var(--ts-ink-2);
 }
 
 .ts-empty-title {
   color: var(--ts-ink);
-  font-weight: 600;
+  font-size: var(--ts-fs-lg);
+  font-weight: 500;
 }
 
 .ts-empty-detail {
-  max-width: 52ch;
-  color: var(--ts-ink-3);
-  font-size: var(--ts-fs-sm);
+  max-width: 44ch;
+  color: var(--ts-ink-2);
 }
 
 .ts-empty > .ts-btn,
@@ -192,7 +220,7 @@
 
 /* Alerts. */
 .ts-alert {
-  --alert: var(--ts-info);
+  --alert: var(--state, var(--ts-info));
   display: grid;
   gap: 2px;
   padding: var(--ts-s3) var(--ts-s4);
@@ -209,7 +237,7 @@
 
 .ts-alert-title {
   font-size: inherit;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .ts-alert-body {
@@ -218,7 +246,7 @@
 
 /* Badges. */
 .ts-badge {
-  --badge: var(--ts-ink-2);
+  --badge: var(--state, var(--ts-ink-2));
   display: inline-flex;
   flex: none;
   align-items: center;
@@ -226,10 +254,10 @@
   height: 22px;
   padding: 0 var(--ts-s2);
   border-radius: var(--ts-radius-sm);
-  background: color-mix(in oklab, var(--badge) 14%, transparent);
+  background: color-mix(in oklab, var(--badge) var(--ts-tint-badge), transparent);
   color: var(--badge);
   font-size: var(--ts-fs-xs);
-  font-weight: 600;
+  font-weight: 500;
   line-height: 1;
   white-space: nowrap;
 }
@@ -238,9 +266,20 @@
 .ts-badge-success { --badge: var(--ts-success); }
 .ts-badge-warning { --badge: var(--ts-warning); }
 .ts-badge-danger { --badge: var(--ts-danger); }
-.ts-badge-violet { --badge: var(--ts-violet-ink); }
+.ts-badge-violet,
+.ts-badge-blue,
+.ts-badge-accent { --badge: var(--ts-link); }
 .ts-badge-tone { --badge: var(--tone); }
-.ts-badge-blue { --badge: var(--ts-blue-ink); }
+.ts-badge-neutral { background: var(--ts-surface-3); color: var(--ts-ink-2); }
+
+/* One status contract: data-state sets --state for dots, badges and alerts. */
+[data-state="operational"] { --state: var(--ts-success); }
+[data-state="degraded"] { --state: var(--ts-warning); }
+[data-state="partial"] { --state: var(--ts-severe); }
+[data-state="outage"] { --state: var(--ts-danger); }
+[data-state="maintenance"] { --state: var(--ts-info); }
+[data-state="pending"],
+[data-state="none"] { --state: var(--ts-ink-3); }
 
 /* A leading status dot. */
 .ts-dot {
@@ -249,11 +288,11 @@
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: currentColor;
+  background: var(--state, currentColor);
 }
 
-.ts-stat[data-tone] .ts-dot {
-  color: var(--tone);
+.ts-stat .ts-dot {
+  color: var(--ts-ink-3);
 }
 
 .ts-badge > .ts-dot {
@@ -281,9 +320,9 @@
   flex: none;
   align-items: center;
   gap: var(--ts-s2);
-  padding: var(--ts-s3) 0;
-  color: var(--ts-ink-3);
-  font-weight: 600;
+  height: 40px;
+  color: var(--ts-ink-2);
+  font-weight: 500;
   white-space: nowrap;
   transition: color var(--ts-fast) var(--ts-ease);
 }
@@ -305,7 +344,7 @@
   inset: auto 0 -1px;
   height: 2px;
   border-radius: 2px;
-  background: var(--tone);
+  background: var(--ts-accent);
 }
 
 .ts-tab-count {
@@ -314,7 +353,7 @@
   border-radius: var(--ts-radius-pill);
   background: var(--ts-surface-3);
   color: var(--ts-ink-2);
-  font-size: 11px;
+  font-size: var(--ts-fs-xs);
   line-height: 18px;
   text-align: center;
 }

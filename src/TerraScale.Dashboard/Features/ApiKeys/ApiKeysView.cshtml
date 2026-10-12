@@ -1,7 +1,7 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.ApiKeys.ApiKeysPage>
 @implements IUsesLayout<TerraScale.Dashboard.UI.Slices.ShellDocument, ShellModel>
 <main class="ts-page ts-apikeys-page" data-project-id="@Model.Context.Project?.Id" data-organization-id="@Model.Context.Organization?.Id">
-<h1 class="ts-sr-only">API keys</h1><div class="ts-page-actions"></div>
+<header class="ts-page-header"><div class="ts-page-heading"><p class="ts-eyebrow">Secure</p><h1 class="ts-page-title">API keys</h1><p class="ts-lede">Credentials that let SDKs, the CLI and your services reach this project.</p></div></header>
 @if (Model.Error.Length > 0 && Model.Create.Length == 0) { <div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@Model.Error</p></div> }
 @if (Model.Revealed is not null) {
 <section class="ts-alert ts-alert-success ts-apikeys-secret" role="status" data-list-url="@Model.With("/api-keys")" data-init="history.replaceState(null, '', el.dataset.listUrl)"><h2 class="ts-alert-title">Secret for @Model.Revealed.Key.Name</h2><p class="ts-alert-body">Copy it now: it is shown only once. If you lose it, rotate the credential to issue a new one.</p><div class="ts-row"><code class="ts-apikeys-secret-value">@Model.Revealed.Secret</code><button class="ts-btn ts-btn-secondary ts-btn-sm" type="button" data-signals="{_copied: false}" data-on:click="navigator.clipboard.writeText(el.previousElementSibling.textContent).then(() => $_copied = true)">@Icons.Render("Copy", 14)<span data-text="$_copied ? 'Copied' : 'Copy'">Copy</span></button></div></section>

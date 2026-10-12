@@ -1,7 +1,7 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Profile.ProfilePage>
 @implements IUsesLayout<TerraScale.Dashboard.UI.Slices.ShellDocument, ShellModel>
 <main class="ts-page">
-    <h1 class="ts-sr-only">@Model.Shell.Context.Account.Name</h1><div class="ts-page-actions"></div>
+    <header class="ts-page-header"><div class="ts-page-heading"><p class="ts-eyebrow">Account</p><h1 class="ts-page-title">@Model.Shell.Context.Account.Name</h1><p class="ts-lede">Your sign-in details, access tokens and preferences.</p></div></header>
     @if (Model.Error.Length > 0) { <div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@Model.Error</p></div> }
     @if (Model.Status.Length > 0) { <p role="status" aria-live="polite" class="ts-alert ts-alert-success">@Model.Status</p> }
     <dl class="ts-stats" aria-label="Account summary"><div class="ts-stat"><dt class="ts-stat-label">Roles</dt><dd class="ts-stat-value">@(Model.Shell.Context.Role == "" ? 0 : 1)</dd></div><div class="ts-stat"><dt class="ts-stat-label">Listed capabilities</dt><dd class="ts-stat-value">@Model.Permissions.Length</dd></div><div class="ts-stat"><dt class="ts-stat-label">Sessions</dt><dd class="ts-stat-value">@(Model.Sessions?.Count.ToString() ?? "Not loaded")</dd></div></dl>

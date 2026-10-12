@@ -2,7 +2,7 @@
 @implements IUsesLayout<TerraScale.Dashboard.UI.Slices.ShellDocument, ShellModel>
 @{ var current = Model.Section; }
 <main class="ts-page ts-idp" data-tone="@current.Tone" data-auth-section="@current.Key">
-<h1 class="ts-sr-only">@Model.Heading</h1><div class="ts-page-actions"></div>
+<header class="ts-page-header"><div class="ts-page-heading"><p class="ts-eyebrow">Secure</p><h1 class="ts-page-title">@Model.Heading</h1></div></header>
 <div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@TerraScale.Dashboard.Features.AuthenticationManagement.AuthenticationConsole.Unavailable</p></div>
 @if (!Model.Context.CanManage && current.Key is not ("overview" or "quickstart" or "audit")) { <div class="ts-alert ts-alert-info" role="status"><p class="ts-alert-body">You can view this configuration. Organization owners and admins can change it.</p></div> }
 @if (current.Key == "overview") {

@@ -1,10 +1,12 @@
-/* Signed-in shell: sidebar, context switchers, colorful navigation, account
-   menu, and the mobile drawer. */
+/* Signed-in shell: sidebar, context switchers, navigation, account menu,
+   and the mobile drawer. */
 
 .ts-shell {
   display: grid;
   grid-template-columns: var(--ts-sidebar-width) minmax(0, 1fr);
   min-height: 100dvh;
+  /* The sidebar column keeps its fill below the pinned sidebar. */
+  background: var(--ts-sidebar);
 }
 
 /* The sidebar stays pinned at full viewport height while the page scrolls,
@@ -79,29 +81,30 @@ details[open] > .ts-context-trigger {
   background-color: var(--ts-surface-2);
 }
 
-/* Organization and project initials sit on flat tiles tinted in their tone. */
+/* Organization and project initials sit on flat neutral tiles. */
 .ts-context-icon,
 .ts-menu-tile {
   display: grid;
   flex: none;
   place-items: center;
+  border: 1px solid var(--ts-line);
   border-radius: var(--ts-radius);
-  background: color-mix(in oklab, var(--tone) 20%, transparent);
-  color: var(--tone);
-  font-weight: 700;
+  background: var(--ts-surface-2);
+  color: var(--ts-ink-2);
+  font-weight: 600;
 }
 
 .ts-context-icon {
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   font-size: var(--ts-fs-sm);
 }
 
 .ts-menu-tile {
   width: 22px;
   height: 22px;
-  border-radius: 6px;
-  font-size: 11px;
+  border-radius: var(--ts-radius-sm);
+  font-size: var(--ts-fs-xs);
 }
 
 .ts-context-chevron {
@@ -135,7 +138,7 @@ details[open] > .ts-context-trigger {
   gap: 6px;
   min-width: 0;
   color: var(--ts-ink);
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .ts-context-dot {
@@ -143,7 +146,7 @@ details[open] > .ts-context-trigger {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--tone);
+  background: var(--ts-success);
 }
 
 .ts-context-menu {
@@ -165,7 +168,7 @@ details[open] > .ts-context-trigger {
   overflow-y: auto;
 }
 
-/* Navigation: every destination carries its own tone ([data-tone]). */
+/* Navigation: plain 16px icons; the current item turns the accent. */
 .ts-sidebar-content {
   display: grid;
   flex: 1;
@@ -185,10 +188,11 @@ details[open] > .ts-context-trigger {
 .ts-nav-group-label {
   padding: 0 var(--ts-s3);
   color: var(--ts-ink-3);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-family: var(--ts-label-font);
+  font-size: var(--ts-label-size);
+  font-weight: var(--ts-label-weight);
+  letter-spacing: var(--ts-label-tracking);
+  text-transform: var(--ts-label-case);
 }
 
 .ts-nav {
@@ -202,8 +206,8 @@ details[open] > .ts-context-trigger {
   display: flex;
   align-items: center;
   gap: var(--ts-s3);
-  min-height: 36px;
-  padding: var(--ts-s1) var(--ts-s2);
+  min-height: var(--ts-control-h);
+  padding: var(--ts-s1) var(--ts-s3);
   border-radius: var(--ts-radius);
   color: var(--ts-ink-2);
   font-weight: 500;
@@ -220,12 +224,19 @@ details[open] > .ts-context-trigger {
   display: grid;
   flex: none;
   place-items: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 7px;
-  background: color-mix(in oklab, var(--tone) 14%, transparent);
-  color: var(--tone);
-  transition: background-color var(--ts-fast) var(--ts-ease), color var(--ts-fast) var(--ts-ease);
+  width: var(--ts-icon);
+  height: var(--ts-icon);
+  color: var(--ts-ink-3);
+  transition: color var(--ts-fast) var(--ts-ease);
+}
+
+.ts-nav-icon > svg {
+  width: var(--ts-icon);
+  height: var(--ts-icon);
+}
+
+.ts-nav-link:hover .ts-nav-icon {
+  color: var(--ts-ink-2);
 }
 
 .ts-nav-label {
@@ -238,13 +249,11 @@ details[open] > .ts-context-trigger {
 
 .ts-nav-link[aria-current="page"] {
   background: var(--ts-accent-soft);
-  color: var(--ts-ink-accent);
-  font-weight: 600;
+  color: var(--ts-ink);
 }
 
 .ts-nav-link[aria-current="page"] .ts-nav-icon {
-  background: var(--tone);
-  color: var(--ts-on-tone);
+  color: var(--ts-accent);
 }
 
 /* Collapsible section: the summary looks like a link and the chevron turns
@@ -270,7 +279,7 @@ details[open] > .ts-context-trigger {
 
 .ts-nav-collapsible:has([aria-current="page"]) > summary {
   color: var(--ts-ink);
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .ts-subnav {
@@ -285,10 +294,11 @@ details[open] > .ts-context-trigger {
 .ts-subnav-group {
   padding: var(--ts-s2) var(--ts-s2) 2px;
   color: var(--ts-ink-3);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-family: var(--ts-label-font);
+  font-size: var(--ts-label-size);
+  font-weight: var(--ts-label-weight);
+  letter-spacing: var(--ts-label-tracking);
+  text-transform: var(--ts-label-case);
 }
 
 .ts-subnav-link {
@@ -309,8 +319,7 @@ details[open] > .ts-context-trigger {
 
 .ts-subnav-link[aria-current="page"] {
   background: var(--ts-accent-soft);
-  color: var(--ts-ink-accent);
-  font-weight: 600;
+  color: var(--ts-ink);
 }
 
 .ts-subnav-link[aria-current="page"]::before {
@@ -320,20 +329,42 @@ details[open] > .ts-context-trigger {
   left: calc(-1 * var(--ts-s3) - 1px);
   width: 2px;
   border-radius: 2px;
-  background: var(--tone);
+  background: var(--ts-accent);
   content: "";
 }
 
 .ts-nav-count {
   min-width: 20px;
+  margin-left: auto;
   padding: 0 6px;
   border-radius: var(--ts-radius-pill);
-  background: color-mix(in oklab, var(--tone) 18%, transparent);
-  color: color-mix(in oklab, var(--tone) 60%, var(--ts-ink));
-  font-size: 11px;
-  font-weight: 600;
+  background: var(--ts-surface-3);
+  color: var(--ts-ink-2);
+  font-size: var(--ts-fs-xs);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
   line-height: 20px;
   text-align: center;
+}
+
+/* Status link: the platform status page, from every app. */
+.ts-status-link {
+  display: inline-flex;
+  align-items: center;
+  justify-self: center;
+  gap: var(--ts-s2);
+  height: 28px;
+  padding: 0 var(--ts-s3);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-pill);
+  color: var(--ts-ink-2);
+  font-size: var(--ts-fs-xs);
+}
+
+.ts-status-link:hover {
+  border-color: var(--ts-line-strong);
+  color: var(--ts-ink);
+  text-decoration: none;
 }
 
 /* Account. */
@@ -381,17 +412,15 @@ details[open] > .ts-account-trigger {
   width: 32px;
   height: 32px;
   border-radius: 50%;
-  background: var(--ts-accent-fill);
-  color: var(--ts-on-accent);
-  font-size: 12px;
-  font-weight: 700;
+  background: var(--ts-surface-3);
+  color: var(--ts-ink);
+  font-size: var(--ts-fs-xs);
+  font-weight: 600;
 }
 
-/* The account avatar is a flat violet tile with a presence dot. */
+/* The account avatar is a flat neutral tile with a presence dot. */
 .ts-account-avatar {
   position: relative;
-  background: color-mix(in oklab, var(--ts-violet) 24%, transparent);
-  color: var(--ts-violet-ink);
 }
 
 .ts-account-avatar::after {
@@ -407,9 +436,9 @@ details[open] > .ts-account-trigger {
 }
 
 .ts-account-avatar-lg {
-  width: 38px;
-  height: 38px;
-  font-size: 13px;
+  width: 36px;
+  height: 36px;
+  font-size: var(--ts-fs-sm);
 }
 
 .ts-account-avatar-lg::after {
@@ -431,7 +460,7 @@ details[open] > .ts-account-trigger {
 }
 
 .ts-account-name {
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .ts-account-email,
@@ -452,6 +481,7 @@ details[open] > .ts-account-trigger {
   flex-direction: column;
   min-width: 0;
   border-left: 1px solid var(--ts-line);
+  background: var(--ts-canvas);
 }
 
 .ts-topbar {
@@ -512,10 +542,11 @@ details[open] > .ts-account-trigger {
 
 .ts-status-notice-label {
   color: var(--impact);
-  font-size: var(--ts-fs-xs);
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-family: var(--ts-label-font);
+  font-size: var(--ts-label-size);
+  font-weight: var(--ts-label-weight);
+  letter-spacing: var(--ts-label-tracking);
+  text-transform: var(--ts-label-case);
 }
 
 .ts-status-notice-title {
@@ -553,7 +584,9 @@ details[open] > .ts-account-trigger {
     inset: 0 auto 0 0;
     z-index: var(--ts-z-modal);
     width: min(86vw, 300px);
-    box-shadow: var(--ts-shadow-overlay);
+    border-right: 1px solid var(--ts-glass-line);
+    background: var(--ts-glass-strong);
+    backdrop-filter: blur(var(--ts-blur-lg)) saturate(var(--ts-saturate));
     transform: translateX(-102%);
     visibility: hidden;
   }
@@ -593,10 +626,11 @@ details[open] > .ts-account-trigger {
     display: flex;
     align-items: center;
     gap: var(--ts-s3);
-    height: 56px;
+    height: var(--ts-header-h);
     padding-inline: var(--ts-s4);
-    border-bottom: 1px solid var(--ts-line);
-    background: var(--ts-canvas);
+    border-bottom: 1px solid var(--ts-glass-line);
+    background: var(--ts-glass);
+    backdrop-filter: blur(var(--ts-blur)) saturate(var(--ts-saturate));
   }
 
   .ts-topbar-brand {
@@ -615,12 +649,31 @@ details[open] > .ts-account-trigger {
     right: -8px;
     min-width: 18px;
     padding: 0 5px;
-    background: var(--tone);
-    color: var(--ts-canvas);
+    background: var(--ts-accent-fill);
+    color: var(--ts-on-accent);
     line-height: 18px;
   }
 
   .ts-status-notice {
     padding-inline: var(--ts-s4);
   }
+}
+
+/* Theme switch in the account menu: Light, Dark or System. */
+.ts-theme-toggle {
+  display: flex;
+  margin: 0 var(--ts-s1) var(--ts-s1);
+}
+
+.ts-theme-toggle > .ts-segment {
+  flex: 1;
+  justify-content: center;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.ts-theme-toggle > .ts-segment[aria-pressed="true"] {
+  background: var(--ts-surface-3);
+  color: var(--ts-ink);
 }

@@ -39,9 +39,10 @@
   place-items: center;
   width: 36px;
   height: 36px;
+  border: 1px solid var(--ts-line);
   border-radius: var(--ts-radius);
-  background: color-mix(in oklab, var(--tone) 16%, transparent);
-  color: var(--tone);
+  background: var(--ts-surface-2);
+  color: var(--ts-ink-2);
 }
 
 .ts-db-icon-lg {
@@ -51,7 +52,7 @@
 }
 
 .ts-db-name:hover .ts-strong {
-  color: var(--tone);
+  color: var(--ts-link);
 }
 
 /* Detail header: breadcrumb above the database identity. */
@@ -65,7 +66,11 @@
   align-items: center;
   gap: var(--ts-s2);
   color: var(--ts-ink-3);
-  font-size: var(--ts-fs-sm);
+  font-family: var(--ts-label-font);
+  font-size: var(--ts-label-size);
+  font-weight: var(--ts-label-weight);
+  letter-spacing: var(--ts-label-tracking);
+  text-transform: var(--ts-label-case);
 }
 
 .ts-breadcrumb > a {
@@ -84,8 +89,7 @@
 }
 
 .ts-db-title {
-  font-size: var(--ts-fs-2xl);
-  font-weight: 700;
+  font-size: var(--ts-fs-3xl);
   overflow-wrap: anywhere;
 }
 
@@ -436,7 +440,7 @@ dialog.ts-db-create-dialog .ts-dialog-title {
 
 .ts-db-progress-title {
   font-size: var(--ts-fs-xl);
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .ts-db-progress-bar {
@@ -454,10 +458,22 @@ dialog.ts-db-create-dialog .ts-dialog-title {
 }
 
 /* Ready: the new database's first view confirms the create finished. */
+/* The ?created=1 confirmation is a toast: frosted, bottom-right. */
 .ts-db-created {
+  position: fixed;
+  right: var(--ts-s6);
+  bottom: var(--ts-s6);
+  z-index: var(--ts-z-tooltip);
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   gap: var(--ts-s3);
+  width: min(360px, calc(100vw - 2 * var(--ts-s4)));
+  padding: var(--ts-s3) var(--ts-s4);
+  border: 1px solid var(--ts-glass-line);
+  border-radius: var(--ts-radius-lg);
+  background: var(--ts-glass);
+  backdrop-filter: blur(var(--ts-blur)) saturate(var(--ts-saturate));
+  box-shadow: var(--ts-shadow-overlay);
   animation: ts-pop-in var(--ts-base) var(--ts-ease);
 }
 
@@ -467,6 +483,6 @@ dialog.ts-db-create-dialog .ts-dialog-title {
   width: 32px;
   height: 32px;
   border-radius: var(--ts-radius-pill);
-  background: color-mix(in oklab, var(--alert) 18%, transparent);
+  background: color-mix(in oklab, var(--alert) var(--ts-tint-badge), transparent);
   color: var(--alert);
 }

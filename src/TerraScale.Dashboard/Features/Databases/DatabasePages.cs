@@ -15,7 +15,7 @@ public sealed record DatabasesPage(ShellModel Shell, IReadOnlyList<DatabaseRecor
     public IReadOnlyList<string> Selected => Selection ?? (Context.Project is null || Context.Project.Region.Length == 0 ? [] : [Context.Project.Region]);
     public bool CanProvision => Context.Organization?.CanProvision(Context.UserId) ?? false;
     public string Description => Search.Length == 0 ? $"{Databases.Count} {(Databases.Count == 1 ? "database" : "databases")} in this project" : $"{Databases.Count} {(Databases.Count == 1 ? "database" : "databases")} matching \"{Search}\"";
-    public static string Tone(string status) => status switch { "ready" => "emerald", "failed" => "rose", "provisioning" or "accepted" or "pending" => "amber", _ => "slate" };
+    public static string State(string status) => status switch { "ready" => "operational", "failed" => "outage", "provisioning" or "accepted" or "pending" => "pending", _ => "none" };
     public static string RegionDisplay(string code) => code.ToUpperInvariant() switch { "SFO" => "SFO · San Francisco", "GRU" => "GRU · São Paulo", "" => "Not configured", _ => code.ToUpperInvariant() };
     public static string Bytes(long bytes) => bytes < 1024 ? $"{bytes} B" : bytes < 1024 * 1024 ? $"{bytes / 1024d:0.0} KiB" : $"{bytes / (1024d * 1024):0.0} MiB";
 }
@@ -28,12 +28,12 @@ public sealed record DatabaseDetailPage(ShellModel Shell, DatabaseRecord Databas
     public IReadOnlyList<DatabaseRecord> Branches => Context.Project!.Databases.Values.Where(database => database.BranchedFrom == Database.Id).OrderBy(database => database.Name, StringComparer.Ordinal).ToArray();
     public string Placement => DatabaseService.Regions(Database).Count == 0 ? DatabasesPage.RegionDisplay("")
         : string.Join(", ", DatabaseService.Regions(Database).Select(DatabasesPage.RegionDisplay));
-    public (string Tone, string Title, string Body) CreatedState => DatabasesPage.Tone(Database.Status) switch
+    public (string Tone, string Title, string Body) CreatedState => DatabasesPage.State(Database.Status) switch
     {
-        "emerald" => ("success", Database.Name + " is ready", DatabaseService.Regions(Database).Count == 1
+        "operational" => ("success", Database.Name + " is ready", DatabaseService.Regions(Database).Count == 1
             ? "It serves " + Placement + ". Add a collection in Documents, or connect with an API key."
             : "Its home region is ready. Replica progress is shown below. Add a collection in Documents, or connect with an API key."),
-        "rose" => ("danger", Database.Name + " could not be created", "The data plane did not finish creating it. Delete it and create it again, or contact support if it keeps failing."),
+        "outage" => ("danger", Database.Name + " could not be created", "The data plane did not finish creating it. Delete it and create it again, or contact support if it keeps failing."),
         _ => ("info", Database.Name + " is being created", "The data plane is still placing it in " + Placement + ". Its status changes to ready when it can take requests.")
     };
     public IReadOnlyList<string> PlacementLabels

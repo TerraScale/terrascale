@@ -1,7 +1,7 @@
 @inherits RazorSlice<RegionMapField>
 @inject AssetUrls Assets
 <div class="ts-region-map" role="group" aria-label="Choose regions on the map" data-select-id="@Model.SelectId" data-selected="@Model.Selected" data-init="@Model.Sync" data-on:change__window="@Model.Change">
-    <img class="ts-region-map-image" src="@Assets.Url("brand/region-map.svg")" alt="" loading="lazy" decoding="async" />
+    <span class="ts-region-map-image" aria-hidden="true"></span>
     @foreach (var pin in new[] { (Code: "SFO", Name: "San Francisco", Country: "us"), (Code: "GRU", Name: "São Paulo", Country: "br") })
     {
         @if (Model.Shows(pin.Code))

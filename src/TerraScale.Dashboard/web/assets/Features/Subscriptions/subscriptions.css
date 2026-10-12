@@ -27,7 +27,7 @@
 
 .ts-billing-plan-name {
   font-size: var(--ts-fs-xl);
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .ts-billing-facts {
@@ -69,22 +69,20 @@
   gap: var(--ts-s4);
 }
 
-/* Plan card: a flat surface whose top edge carries the plan's tone. */
+/* Plan card: one box style for every plan; the current one is marked by
+   its badge and an accent hairline. */
 .ts-plan {
   display: grid;
   grid-template-rows: auto auto 1fr auto;
   gap: var(--ts-s5);
   padding: var(--ts-s6);
   border: 1px solid var(--ts-line);
-  border-top: 2px solid var(--tone);
   border-radius: var(--ts-radius-lg);
   background: var(--ts-surface);
 }
 
 .ts-plan-current {
-  border-color: color-mix(in oklab, var(--tone) 45%, transparent);
-  border-top-color: var(--tone);
-  background: color-mix(in oklab, var(--tone) 5%, var(--ts-surface));
+  border-color: var(--ts-accent);
 }
 
 .ts-plan-head {
@@ -95,17 +93,18 @@
 }
 
 .ts-plan-name {
-  color: var(--tone);
+  color: var(--ts-ink);
   font-size: var(--ts-fs-lg);
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .ts-plan-price {
   display: flex;
   align-items: baseline;
   gap: var(--ts-s1);
+  font-family: var(--ts-font-num);
   font-size: var(--ts-fs-3xl);
-  font-weight: 700;
+  font-weight: var(--ts-display-weight);
   font-variant-numeric: tabular-nums;
 }
 
@@ -132,12 +131,11 @@
 .ts-plan-features svg {
   flex: none;
   margin-top: 2px;
-  color: var(--tone);
+  color: var(--ts-ink-3);
 }
 
 /* The plan an accepted change moves to. */
 .ts-plan-upcoming {
-  border-color: color-mix(in oklab, var(--tone) 45%, transparent);
   border-style: dashed;
-  border-top: 2px solid var(--tone);
+  border-color: var(--ts-line-strong);
 }

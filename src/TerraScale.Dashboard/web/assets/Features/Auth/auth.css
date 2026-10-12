@@ -1,8 +1,8 @@
-/* Sign-in page: a full-bleed region map beside the credential column. */
+/* Sign-in page: the region map beside the sign-in card. */
 
 .ts-login {
   display: grid;
-  grid-template-columns: minmax(0, 3fr) minmax(19rem, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(480px, 0.7fr);
   min-height: 100dvh;
 }
 
@@ -47,19 +47,22 @@
 .ts-login-column {
   display: grid;
   grid-template-rows: 1fr auto;
-  border-left: 1px solid color-mix(in oklab, var(--ts-accent) 45%, transparent);
+  border-left: 1px solid var(--ts-line);
   background: var(--ts-canvas);
 }
 
-/* The reference places the header in the top 304px and the account link
-   immediately above the locale footer. */
+/* The sign-in card: 400px, hairline, no shadow. */
 .ts-login-panel {
   display: grid;
   grid-template-rows: 1fr auto;
+  align-self: center;
   gap: var(--ts-s5);
-  width: min(384px, calc(100% - 2 * var(--ts-s5)));
-  margin-inline: auto;
-  padding-top: var(--ts-s4);
+  width: min(var(--ts-form-max), calc(100% - 2 * var(--ts-s4)));
+  margin: var(--ts-s8) auto;
+  padding: var(--ts-s8);
+  border: 1px solid var(--ts-line);
+  border-radius: var(--ts-radius-xl);
+  background: var(--ts-surface);
 }
 
 .ts-login-stack {
@@ -73,19 +76,16 @@
   display: grid;
   align-content: end;
   gap: var(--ts-s5);
-  min-height: 288px;
-  padding-bottom: var(--ts-s3);
 }
 
-.ts-login-heading .ts-auth-title {
-  font-size: var(--ts-fs-3xl);
+.ts-login-heading .ts-auth-heading {
+  text-align: left;
 }
 
 .ts-login-logo {
-  justify-self: center;
+  justify-self: start;
   width: auto;
-  height: 80px;
-  object-fit: contain;
+  height: 28px;
 }
 
 .ts-login-panel .ts-auth-providers .ts-btn {
@@ -128,13 +128,14 @@
 .ts-email-code-slot {
   display: grid;
   place-items: center;
-  height: var(--ts-s12);
-  border: 1px solid var(--ts-accent);
+  height: var(--ts-control-h-lg);
+  border: 1px solid var(--ts-control-line);
   border-radius: var(--ts-radius);
-  background: var(--ts-canvas);
+  background: var(--ts-surface);
   color: var(--ts-ink);
-  font-size: var(--ts-fs-2xl);
-  font-weight: 600;
+  font-family: var(--ts-font-mono);
+  font-size: var(--ts-fs-xl);
+  font-weight: 500;
   font-variant-numeric: tabular-nums;
 }
 
@@ -170,14 +171,6 @@
   }
 
   .ts-login-panel {
-    width: min(384px, calc(100% - 2 * var(--ts-s4)));
-  }
-
-  .ts-login-logo {
-    height: 64px;
-  }
-
-  .ts-login-heading {
-    min-height: 0;
+    padding: var(--ts-s6);
   }
 }

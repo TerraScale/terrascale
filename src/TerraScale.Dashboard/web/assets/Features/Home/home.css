@@ -76,7 +76,7 @@
   border-radius: 50%;
   color: var(--ts-ink-2);
   font-size: var(--ts-fs-sm);
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .ts-home-step-done .ts-home-step-number {
@@ -94,7 +94,7 @@
   align-content: start;
   gap: var(--ts-s3);
   padding-top: var(--ts-s4);
-  border-top: 2px solid var(--ts-accent);
+  border-top: 1px solid var(--ts-line);
 }
 
 .ts-home-connect-icon {

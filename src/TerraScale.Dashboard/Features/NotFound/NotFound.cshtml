@@ -3,18 +3,15 @@
 @inject AssetUrls Assets
 <main class="ts-notfound" aria-labelledby="notfound-title">
     <header><a href="/" aria-label="TerraScale dashboard"><img class="ts-brand-logo ts-logo-on-dark" src="@Assets.Url("brand/logo-terrascale-principal.svg")" alt="TerraScale" width="183" height="44" decoding="async" /><img class="ts-brand-logo ts-logo-on-light" src="@Assets.Url("brand/logo-terrascale-blue.svg")" alt="TerraScale" width="183" height="44" decoding="async" /></a></header>
-    <div class="ts-notfound-inner">
-        <div class="ts-notfound-copy">
-            <p class="ts-eyebrow">Page not found</p>
-            <p class="ts-notfound-number" aria-hidden="true">404</p>
-            <h1 class="ts-auth-title" id="notfound-title">We can’t find that page.</h1>
-            <p class="ts-auth-subtitle">The page you’re looking for has moved, or never existed. Let’s get you back on track.</p>
-            <div class="ts-row">
-                <a class="ts-btn ts-btn-primary ts-btn-lg" href="/">@Icons.Render("Home")<span>Back to dashboard</span></a>
-                <a class="ts-btn ts-btn-secondary ts-btn-lg" href="https://terrascale.tech/contact">@Icons.Render("Mail")<span>Contact support</span></a>
-            </div>
+    <div class="ts-empty ts-notfound-inner">
+        <img class="ts-notfound-mark" src="@Assets.Url("brand/logo-icon-blue.svg")" alt="" aria-hidden="true" width="32" height="36" decoding="async" />
+        <p class="ts-notfound-number" aria-hidden="true">404</p>
+        <h1 class="ts-empty-title" id="notfound-title">We can’t find that page.</h1>
+        <p class="ts-empty-detail">The page you’re looking for has moved, or never existed.</p>
+        <div class="ts-row">
+            <a class="ts-btn ts-btn-primary" href="/">@Icons.Render("Home", 16)<span>Back to dashboard</span></a>
+            <a class="ts-btn ts-btn-secondary" href="https://terrascale.tech/contact">@Icons.Render("Mail", 16)<span>Contact support</span></a>
         </div>
-        <img class="ts-notfound-art" src="@Assets.Url("img/404-illustration.webp")" alt="A surprised cat playing with blue 404 numbers" width="900" height="700" decoding="async" />
     </div>
 </main>
 @functions {
