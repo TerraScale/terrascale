@@ -17,7 +17,8 @@ RUN apt-get update \
 RUN npx --yes playwright@1.63.0 install --with-deps chromium \
     && npx --yes @redocly/cli@2.57.0 --version \
     && rm -rf /var/lib/apt/lists/*
-COPY --from=ts-dotnet . /src/ts-dotnet
+# Per-job Git metadata changes even at the pinned SDK revision and invalidates every preparation layer.
+COPY --from=ts-dotnet --exclude=.git . /src/ts-dotnet
 WORKDIR /src/terrascale
 
 FROM base AS source
