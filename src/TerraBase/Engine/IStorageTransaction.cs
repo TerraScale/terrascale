@@ -28,19 +28,6 @@ public sealed record DocumentPage(IReadOnlyList<StoredDocument> Documents, bool 
 /// <param name="Deleted">Whether the document is a tombstone.</param>
 public readonly record struct DocumentVersion(long Version, bool Deleted);
 
-/// <summary>One page of a snapshot at an offset.</summary>
-/// <param name="Rows">Matching live documents in id order.</param>
-/// <param name="HasMore">Whether documents after <paramref name="ResumeAfter"/> remain to be examined.</param>
-/// <param name="ResumeAfter">
-/// Id to continue after: the last document of <paramref name="Rows"/> when the page filled, or the last id examined
-/// when the page's work limit stopped it (possibly with no rows); <see langword="null"/> without <paramref name="HasMore"/>.
-/// </param>
-/// <param name="Expired">
-/// Whether the page would have to pass over too many ids first written after the offset: the snapshot is too old to
-/// read within bounded work, and the reader must start a new one. Rows are then empty.
-/// </param>
-public sealed record SnapshotPage(IReadOnlyList<QueryRow> Rows, bool HasMore, string? ResumeAfter, bool Expired = false);
-
 /// <summary>A collection of one database.</summary>
 /// <param name="Name">Collection name.</param>
 /// <param name="CreatedAt">Creation time in Unix milliseconds.</param>
@@ -128,7 +115,7 @@ public interface IStorageTransaction : IAsyncDisposable
     /// stamp of this write, which replaces every value of the document's register this member knows; in the system
     /// database the offset of this transaction. A transaction writes at most 1024 documents of at most 1 MiB. Captured ids have 1 to 256
     /// characters, no control characters, and valid UTF-8; collection names satisfy <see cref="DatabaseName"/>.
-    /// Total writes and operation framing fit at most 7 MiB, so one commit fits a shape log chunk.
+    /// Total writes and operation framing fit at most 7 MiB.
     /// Invalid keys throw <see cref="InvalidDataException"/>; exceeded write budgets throw
     /// <see cref="StorageWriteLimitException"/>. A rejected write prevents the transaction from committing.
     /// </summary>
@@ -191,34 +178,11 @@ public interface IStorageTransaction : IAsyncDisposable
     /// <remarks><paramref name="observation"/> accumulates candidate visits, including sort admission, even when execution fails.</remarks>
     ValueTask<QueryPage> QueryAsync(DocumentQuery query, CancellationToken cancellationToken, QueryObservation? observation = null);
 
-    /// <summary>
-    /// Reads a page of the live documents of one collection as they were at commit <paramref name="offset"/>, in id
-    /// order after <see cref="DocumentQuery.After"/>, from the retained change history. Sort keys are ignored. A page
-    /// examines a bounded number of ids, so a sparse filter can return a page without rows that still continues. It
-    /// ends at <see cref="DocumentQuery.Limit"/> rows, after the row that reaches <see cref="DocumentQuery.MaxBytes"/>
-    /// (which may cross it; the caller trims), or at its step limit, without reading on, so it may continue where
-    /// nothing follows.
-    /// </summary>
-    ValueTask<SnapshotPage> SnapshotAsync(DocumentQuery query, long offset, CancellationToken cancellationToken);
-
     /// <summary>Oldest offset for which a complete snapshot and every later change are retained.</summary>
     ValueTask<long> GetHistoryFloorAsync(CancellationToken cancellationToken);
 
     /// <summary>The latest committed offset this transaction sees, without committing it.</summary>
     ValueTask<long> GetOffsetAsync(CancellationToken cancellationToken);
-
-    /// <summary>
-    /// Streams every retained write and tombstone of the current generation of one collection whose local history offset is in
-    /// (<paramref name="after"/>, <paramref name="through"/>], in (history offset, write) order. A live document that does
-    /// not match <paramref name="filter"/> comes back as a tombstone, so it reads as leaving the filtered view.
-    /// </summary>
-    /// <remarks>
-    /// Enumeration exclusively owns the transaction. Other operations, another stream, and transaction disposal
-    /// fail with <see cref="InvalidOperationException"/> until the enumerator completes or is disposed.
-    /// A write refused during enumeration still makes the transaction rollback-only.
-    /// </remarks>
-    IAsyncEnumerable<StoredDocument> ChangesAsync(
-        string collection, DocumentFilter? filter, long after, long through, CancellationToken cancellationToken);
 
     /// <summary>
     /// Reads every retained write and tombstone of the current collection generation, including repeated writes,

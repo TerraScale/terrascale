@@ -62,7 +62,7 @@ internal sealed partial class SqliteStorageTransaction
         }, cancellationToken), cancellationToken);
 
     public IAsyncEnumerable<StoredDocument> QuerySqlAsync(SqlQuery query, CancellationToken cancellationToken, QueryObservation? observation = null) =>
-        ReadBudgetedAsync(() => QueryCommand(query, explain: false, observation is not null), cancellationToken, query, observation);
+        ReadBudgetedAsync(() => QueryCommand(query, explain: false, observation is not null), query, observation, cancellationToken);
 
     public ValueTask<SqlQueryPlan> ExplainSqlAsync(SqlQuery query, CancellationToken cancellationToken) =>
         RunAsync(() => WithQueryBudget(() => ReadSqlPlan(query, cancellationToken), cancellationToken), cancellationToken);

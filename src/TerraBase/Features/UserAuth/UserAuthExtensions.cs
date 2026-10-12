@@ -3,7 +3,6 @@ using System.Security.Claims;
 using Microsoft.AspNetCore.Authentication;
 using TerraBase.Engine;
 using TerraBase.Errors;
-using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Management;
 using TerraBase.Hosting;
 
@@ -14,9 +13,6 @@ public static class UserAuthExtensions
 {
     /// <summary>Authorization policy of endpoints that act as a ts-auth user.</summary>
     public const string PolicyName = "user";
-
-    /// <summary>Client subscriptions accept only signed ts-auth access tokens.</summary>
-    public const string SubscriptionPolicy = "subscription";
 
     /// <summary>The scheme that validates ts-auth access tokens.</summary>
     public const string TokenScheme = "TsAuth";
@@ -51,9 +47,6 @@ public static class UserAuthExtensions
         services.AddAuthorizationBuilder().AddPolicy(PolicyName, policy => policy
             .AddAuthenticationSchemes(UserAuthenticationHandler.SchemeName, OperatorHandler.SchemeName)
             .RequireAuthenticatedUser());
-        services.AddAuthorizationBuilder().AddPolicy(SubscriptionPolicy, policy => policy
-            .AddAuthenticationSchemes(UserAuthenticationHandler.SchemeName).RequireAuthenticatedUser()
-            .RequireClaim(ApiKeyAuthenticationHandler.ScopeClaim, ApiKeyScopes.ShapesRead));
         return services;
     }
 

@@ -79,7 +79,7 @@ public sealed class ManagementErrorTests
 
     [Test]
     [Arguments("", "documents:read", "name must be 1 to 100 characters")]
-    [Arguments("key", "unknown", "scopes must be a non-empty subset of: documents:read, documents:write, shapes:read")]
+    [Arguments("key", "unknown", "scopes must be a non-empty subset of: documents:read, documents:write")]
     public async Task Invalid_operator_key_input_returns_the_validation_envelope(string name, string scope, string message)
     {
         await using var api = await ManagementApi.StartAsync();

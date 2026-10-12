@@ -322,7 +322,7 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
         }
         catch (StorageWriteLimitException)
         {
-            // One commit must fit one shape log chunk (docs/shape-reads.md).
+            // The commit is over its write count or bytes.
             return new DocumentRejected(WriteLimits);
         }
         catch (ChangeGroupCapacityException)

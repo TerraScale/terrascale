@@ -14,13 +14,11 @@ public sealed record ErrorBody(ErrorDetail Error);
 /// <param name="Code">Stable machine-readable code, such as <c>not_found</c>.</param>
 /// <param name="Message">Human-readable rule that failed; never echoes client input.</param>
 /// <param name="Op">Index of the failing transaction operation.</param>
-/// <param name="Handle">Current shape handle of a <c>must_refetch</c> error.</param>
 /// <param name="Details">Bounded schema validation errors, without document values.</param>
 public sealed record ErrorDetail(
     string Code,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Message = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? Op = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Handle = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<ValidationDetail>? Details = null);
 
 /// <summary>

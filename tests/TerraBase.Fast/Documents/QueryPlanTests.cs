@@ -161,39 +161,4 @@ public sealed class QueryPlanTests
         await Assert.That(tombstone.Status).IsEqualTo(System.Net.HttpStatusCode.NotFound);
         await Assert.That(tombstone.ETag is not null).IsTrue();
     }
-
-    [Test]
-    public async Task Shape_snapshot_and_change_reads_seek_the_history_indexes_without_sorting()
-    {
-        await using var api = await DocumentApi.StartAsync();
-        (await api.PutAsync(DocumentApi.NewId(), new { status = "open" })).Status.ShouldBe(System.Net.HttpStatusCode.Created);
-        var path = await api.DatabaseFileAsync();
-        var filter = new TerraBase.Engine.CompareFilter(
-            new TerraBase.Engine.DocumentPath(["status"]), TerraBase.Engine.Comparison.Equal,
-            new TerraBase.Engine.ScalarValue(TerraBase.Engine.ScalarKind.Text, "open"));
-        using (var command = new Microsoft.Data.Sqlite.SqliteCommand())
-        {
-            var sql = new SqliteQueryCompiler(command.Parameters, RowSource.History).CompileSnapshot(filter, 1, 10);
-            var plan = await QueryPlan.ExplainAsync(path, sql);
-            Console.WriteLine($"snapshot: {plan}");
-            // One walk of the births key in id order, no sort; version <= offset is tested on each key entry. An id
-            // that existed at the offset seeks its last write there and reads that write by primary key.
-            // The walk is bounded above by the highest id at the offset, one seek evaluated once per page.
-            await Assert.That(plan).StartsWith("SEARCH b USING PRIMARY KEY (collection=? AND generation=? AND id>? AND id<?) | SCALAR SUBQUERY");
-            await Assert.That(plan).Contains("SEARCH high USING PRIMARY KEY (collection=? AND generation=? AND version<?)");
-            await Assert.That(plan.Contains("CORRELATED SCALAR SUBQUERY 3", StringComparison.Ordinal)).IsFalse();
-            await Assert.That(plan).Contains("SEARCH last USING COVERING INDEX change_log_by_document (collection=? AND generation=? AND id=? AND version<?)");
-            await Assert.That(plan).Contains("SEARCH change_log USING INTEGER PRIMARY KEY (rowid=?)");
-            await Assert.That(plan.Contains("SCAN", StringComparison.Ordinal) || plan.Contains("TEMP B-TREE", StringComparison.Ordinal)).IsFalse();
-        }
-
-        using var changes = new Microsoft.Data.Sqlite.SqliteCommand();
-        var changeSql = new SqliteQueryCompiler(changes.Parameters, RowSource.History).CompileChanges(filter, 1, 4097);
-        var changePlan = await QueryPlan.ExplainAsync(path, changeSql);
-        Console.WriteLine($"changes: {changePlan}");
-        await Assert.That(changePlan).StartsWith("SEARCH c USING INDEX change_log_by_offset (collection=? AND generation=? AND version>? AND version<?)");
-        // Each document's last write of a commit is one seek to its (id, version) range end.
-        await Assert.That(changePlan).Contains("SEARCH last USING COVERING INDEX change_log_by_document (collection=? AND generation=? AND id=? AND version=?)");
-        await Assert.That(changePlan.Contains("SCAN", StringComparison.Ordinal) || changePlan.Contains("TEMP B-TREE", StringComparison.Ordinal)).IsFalse();
-    }
 }

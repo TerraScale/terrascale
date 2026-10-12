@@ -46,7 +46,7 @@ public sealed class CatalogForwardingTests
 
         var project = EntityIds.New().ToString();
         var actor = EntityIds.New().ToString();
-        const string allScopes = "databases:read databases:write documents:read documents:write shapes:read";
+        const string allScopes = "databases:read databases:write documents:read documents:write";
         string Token(string target, string? scope)
         {
             return issuer.Mint(actor, token =>

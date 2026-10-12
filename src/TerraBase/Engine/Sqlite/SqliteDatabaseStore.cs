@@ -112,11 +112,9 @@ internal sealed partial class SqliteDatabaseStore(
     // with it (the metadata collections here), holding the materialized JSON of its live documents (doc): reads, queries,
     // indexes and shapes never decode a state. _tb_state keeps each document's replicated DocumentState in its
     // stored form (base64url), with its anti-entropy bucket and digest; the other _tb_ tables belong to the change feed,
-    // the peer streams and anti-entropy, which later slices fill. Every new table is a rowid table. Shape history: every
-    // write is retained in change_log so shape snapshots at an offset and closed log chunks never change
-    // (docs/shape-reads.md); change_log_births holds each document's first write per collection generation, and
-    // change_log_high the generation's highest id over time, so a snapshot finds the ids that existed at its offset
-    // without reading later ones.
+    // the peer streams and anti-entropy, which later slices fill. Every new table is a rowid table. change_log retains
+    // every write for the per-collection change feed; change_log_births, change_log_high, their trigger and
+    // change_log_by_document no longer have readers (shape reads are gone) and leave with the R2c-2 format change.
     private const string ClientSchemaSql = """
         CREATE TABLE "_collections" (id TEXT NOT NULL UNIQUE, doc TEXT NOT NULL);
         CREATE TABLE "_indexes" (id TEXT NOT NULL UNIQUE, doc TEXT NOT NULL);

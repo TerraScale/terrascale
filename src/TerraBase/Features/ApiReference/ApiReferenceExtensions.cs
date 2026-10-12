@@ -85,11 +85,6 @@ public static class ApiReferenceExtensions
 
                 var scopes = policies.Where(scope => ApiKeyScopes.All.Contains(scope)
                     || ApiKeyScopes.ProjectTokenScopes.Contains(scope)).ToList();
-                if (policies.Contains(UserAuthExtensions.SubscriptionPolicy))
-                {
-                    scopes.Add(ApiKeyScopes.ShapesRead);
-                }
-
                 // EXPLAIN validates its exact project scope in the endpoint after JWT authentication.
                 if (operation.OperationId == "explainSql" && policies.Contains(UserAuthExtensions.PolicyName))
                 {

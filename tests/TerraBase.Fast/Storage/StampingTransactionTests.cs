@@ -26,7 +26,7 @@ public sealed class StampingTransactionTests
         (long Version, DocumentVersion? Previous)[] results = [(7, new DocumentVersion(3, false)), (8, new DocumentVersion(4, false))];
         await using (var transaction = await store.BeginTransactionAsync(write: true, token))
         {
-            await using var changes = transaction.ChangesAsync(DocumentApi.Collection, null, 0, long.MaxValue, token).GetAsyncEnumerator();
+            await using var changes = transaction.QuerySqlAsync(new SqlQuery(DocumentApi.Collection, null, [], 100), token).GetAsyncEnumerator();
             if (streaming)
             {
                 await Assert.That(await changes.MoveNextAsync()).IsTrue();
@@ -49,7 +49,7 @@ public sealed class StampingTransactionTests
     [Test]
     [Arguments(false)]
     [Arguments(true)]
-    public async Task Cancelling_a_changes_stream_waiting_behind_an_operation_restores_submissions(bool raw)
+    public async Task Cancelling_a_query_stream_waiting_behind_an_operation_restores_submissions(bool raw)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         await using var api = await DocumentApi.StartAsync(settings => settings["storage-threads"] = "1", cancellationToken: deadline.Token);
@@ -59,7 +59,7 @@ public sealed class StampingTransactionTests
         var store = (await engine.OpenDatabaseAsync(await api.TenantOfAsync(cancellationToken: deadline.Token), deadline.Token))!;
         await using var transaction = await store.BeginTransactionAsync(write: false, deadline.Token);
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
-        await using var changes = transaction.ChangesAsync(DocumentApi.Collection, null, 0, long.MaxValue, cancellation.Token).GetAsyncEnumerator();
+        await using var changes = transaction.QuerySqlAsync(new SqlQuery(DocumentApi.Collection, null, [], 100), cancellation.Token).GetAsyncEnumerator();
         using var release = new ManualResetEventSlim();
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var pending = new List<Task>();

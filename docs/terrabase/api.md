@@ -65,7 +65,6 @@ service ownership decided by the user on 2026-10-06
    | `databases:write` | Create, branch and delete databases; create and restore backups; set the backup policy; create and drop indexes; apply recommendations; change saved queries |
    | `documents:read` | Read collections and documents; document queries |
    | `documents:write` | Create and drop collections; write documents; transactions |
-   | `shapes:read` | Shape reads (Live) |
 
    The public contract advertises only project JWTs. Hidden compatibility paths still accept existing `tb_`
    document keys and membership tokens. `/admin/api-keys`, the internal listener's platform operator and
@@ -233,15 +232,9 @@ rejects invalid SQL with `400 invalid_request`. It does not execute or meter the
 
 ### Live
 
-| Method | Route | operationId | Scope |
-| --- | --- | --- | --- |
-| GET | `C/shape` | `getShape` | `shapes:read` |
-| GET | `C/subscribe` | `subscribeCollection` | `shapes:read` |
-
-TS-690 adds the SSE subscription route above. It authenticates project-scoped ts-auth JWTs
-and streams the existing shape contract; see [subscriptions](subscriptions.md) for selection, resume,
-expiry and resource bounds. The former unversioned subscription path returns `404`; no alias is registered.
-WebSocket delivery and plan entitlements remain subsequent slices.
+There are no live routes. Slice R2c deleted shape reads (`C/shape`), SSE subscriptions (`C/subscribe`) and the
+`shapes:read` scope; both routes now return `404`. The database change stream (`GET D/changes`, slice R8 of
+[multi-region replication](multi-region-replication.md)) replaces them.
 
 ## System
 

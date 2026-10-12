@@ -139,7 +139,7 @@ public sealed class ProjectApiTests
     private static HttpClient ProjectClient(ManagementApi api, string project) => api.WithToken(api.Issuer.Mint(api.User, token =>
     {
         token.Claims["project_id"] = project;
-        token.Claims["scope"] = "databases:read databases:write documents:read documents:write shapes:read";
+        token.Claims["scope"] = "databases:read databases:write documents:read documents:write";
     }));
 
     private static async Task<JsonElement> JsonAsync(HttpResponseMessage response, HttpStatusCode status = HttpStatusCode.OK)

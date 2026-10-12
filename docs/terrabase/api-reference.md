@@ -15,7 +15,7 @@ and served on the client listener only; the internal listener answers `404`, lik
 
 ## Document contents
 
-- Only operations served on the client listener: data plane (Documents v1, queries, transactions, shape reads),
+- Only operations served on the client listener: data plane (Documents v1, queries, transactions),
   Management and the health probes, with the paths and operation ids in [the route table](api.md). Administrative
   operations and hidden legacy routes are left out. Scalar organizes tags under Management, Data and System.
 - One security scheme: `TsAuth` (`Authorization: Bearer <ts-auth project access token>`), naming `auth-issuer`

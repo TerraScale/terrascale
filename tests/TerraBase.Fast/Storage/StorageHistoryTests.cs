@@ -1,13 +1,11 @@
 using System.Globalization;
 using System.Net;
 using System.Text;
-using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Engine.Sqlite;
 using TerraBase.Fast.Documents;
 using TerraBase.Primitives;
-using TerraBase.Tenancy;
 
 namespace TerraBase.Fast.Storage;
 
@@ -66,26 +64,26 @@ public sealed class StorageHistoryTests
     [Arguments(true, "break")]
     [Arguments(false, "cancel")]
     [Arguments(true, "cancel")]
-    public async Task An_active_changes_stream_refuses_overlap_and_releases_its_transaction(bool native, string ending)
+    public async Task An_active_query_stream_refuses_overlap_and_releases_its_transaction(bool native, string ending)
     {
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         await using var api = await DocumentApi.StartAsync(settings => settings["storage-threads"] = "1", cancellationToken: token);
         var id = DocumentApi.NewId();
         (await api.PutAsync(id, new { n = 1 }, cancellationToken: token)).Status.ShouldBe(HttpStatusCode.Created);
-        (await api.PutAsync(id, new { n = 2 }, cancellationToken: token)).Status.ShouldBe(HttpStatusCode.OK);
+        (await api.PutAsync(DocumentApi.NewId(), new { n = 2 }, cancellationToken: token)).Status.ShouldBe(HttpStatusCode.Created);
         var engine = native ? api.Server.Services.GetRequiredService<SqliteStorageEngine>()
             : api.Server.Services.GetRequiredService<IStorageEngine>();
         var store = (await engine.OpenDatabaseAsync(await api.TenantOfAsync(cancellationToken: token), token))!;
         await using var transaction = await store.BeginTransactionAsync(write: false, token);
         var offset = await transaction.GetOffsetAsync(token);
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(token);
-        await using (var changes = transaction.ChangesAsync(DocumentApi.Collection, null, 0, offset, cancellation.Token).GetAsyncEnumerator())
+        await using (var changes = transaction.QuerySqlAsync(new SqlQuery(DocumentApi.Collection, null, [], 100), cancellation.Token).GetAsyncEnumerator())
         {
             await Assert.That(await changes.MoveNextAsync()).IsTrue();
             await Assert.That(changes.Current.Id).IsEqualTo(id);
             await Assert.ThrowsAsync<InvalidOperationException>(() => transaction.GetOffsetAsync(token).AsTask().WaitAsync(token));
             await Assert.ThrowsAsync<InvalidOperationException>(() => transaction.DisposeAsync().AsTask().WaitAsync(token));
-            await using (var overlapping = transaction.ChangesAsync(DocumentApi.Collection, null, 0, offset, token).GetAsyncEnumerator())
+            await using (var overlapping = transaction.QuerySqlAsync(new SqlQuery(DocumentApi.Collection, null, [], 100), token).GetAsyncEnumerator())
             {
                 await Assert.ThrowsAsync<InvalidOperationException>(() => overlapping.MoveNextAsync().AsTask().WaitAsync(token));
             }
@@ -112,7 +110,7 @@ public sealed class StorageHistoryTests
     [Test]
     [Arguments(false)]
     [Arguments(true)]
-    public async Task A_write_refused_during_a_changes_stream_cannot_commit_earlier_writes(bool native)
+    public async Task A_write_refused_during_a_query_stream_cannot_commit_earlier_writes(bool native)
     {
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         await using var api = await DocumentApi.StartAsync(cancellationToken: token);
@@ -128,7 +126,7 @@ public sealed class StorageHistoryTests
         {
             offset = await writer.GetOffsetAsync(token);
             await writer.PutAsync(DocumentApi.Collection, idA, Encoding.UTF8.GetBytes("{}"), token);
-            await using (var changes = writer.ChangesAsync(DocumentApi.Collection, null, 0, long.MaxValue, token).GetAsyncEnumerator())
+            await using (var changes = writer.QuerySqlAsync(new SqlQuery(DocumentApi.Collection, null, [], 100), token).GetAsyncEnumerator())
             {
                 await Assert.That(await changes.MoveNextAsync()).IsTrue();
                 await Assert.ThrowsAsync<InvalidOperationException>(() => writer.PutAsync(DocumentApi.Collection, idB, Encoding.UTF8.GetBytes("{}"), token).AsTask().WaitAsync(token));
@@ -145,7 +143,7 @@ public sealed class StorageHistoryTests
     [Test]
     public async Task Storage_refuses_an_empty_document_id()
     {
-        // A snapshot resumes strictly after an id; the empty id would have none before it, so no writer may store it.
+        // List pages resume strictly after an id; the empty id would have none before it, so no writer may store it.
         await using var api = await DocumentApi.StartAsync();
         var store = await StoreAsync(api);
         await using var writer = await store.BeginTransactionAsync(write: true, CancellationToken.None);
@@ -154,9 +152,9 @@ public sealed class StorageHistoryTests
     }
 
     [Test]
-    public async Task A_write_below_the_documents_api_creates_missing_collection_metadata_and_keeps_its_history()
+    public async Task A_write_below_the_documents_api_creates_missing_collection_metadata()
     {
-        // Engine callers may write to a collection they never created: its metadata is created so history is never dropped.
+        // Engine callers may write to a collection they never created: its metadata is created with the write.
         await using var api = await DocumentApi.StartAsync();
         var store = await StoreAsync(api);
         var id = DocumentApi.NewId();
@@ -167,21 +165,15 @@ public sealed class StorageHistoryTests
         }
 
         await using var reader = await store.BeginTransactionAsync(write: false, CancellationToken.None);
-        var changes = new List<StoredDocument>();
-        await foreach (var change in reader.ChangesAsync("unlisted", null, 0, long.MaxValue, CancellationToken.None))
-        {
-            changes.Add(change);
-        }
-
         await Assert.That(await reader.GetCollectionAsync("unlisted", CancellationToken.None)).IsNotNull();
-        await Assert.That(changes.Select(change => change.Id)).IsEquivalentTo([id]);
+        await Assert.That(await reader.GetAsync("unlisted", id, CancellationToken.None)).IsNotNull();
     }
 
     [Test]
-    public async Task The_system_database_keeps_no_shape_history()
+    public async Task The_system_database_has_no_per_commit_write_count_limit()
     {
-        // Clients cannot name _system, so its writes (API keys, Management) carry no shape history and no
-        // per-commit shape limits; Management cleanup may delete more than 1024 entries in one transaction.
+        // Clients cannot name _system, so its writes (API keys, Management) carry no per-commit client limits;
+        // Management cleanup may delete more than 1024 entries in one transaction.
         await using var api = await DocumentApi.StartAsync();
         var engine = api.Server.Services.GetRequiredService<IStorageEngine>();
         var system = await engine.OpenSystemDatabaseAsync(CancellationToken.None);
@@ -196,14 +188,7 @@ public sealed class StorageHistoryTests
         }
 
         await using var reader = await system.BeginTransactionAsync(write: false, CancellationToken.None);
-        var changes = 0;
-        await foreach (var _ in reader.ChangesAsync("bulk", null, 0, long.MaxValue, CancellationToken.None))
-        {
-            changes++;
-        }
-
         await Assert.That(await reader.GetAsync("bulk", "1099", CancellationToken.None)).IsNotNull();
-        await Assert.That(changes).IsEqualTo(0);
     }
 
     [Test]
@@ -229,53 +214,6 @@ public sealed class StorageHistoryTests
             }
 
             await Assert.That(await HistoryRowsAsync(Path.Combine(directory, "_system.db"), CancellationToken.None)).IsEqualTo(0);
-        }
-        finally
-        {
-            Directory.Delete(directory, recursive: true);
-        }
-    }
-
-    [Test]
-    public async Task Restart_preserves_snapshot_births_and_later_history()
-    {
-        var directory = Directory.CreateTempSubdirectory("terrabase-history-restart-").FullName;
-        try
-        {
-            var (early, late, revised) = (DocumentApi.NewId(), DocumentApi.NewId(), DocumentApi.NewId());
-            TenantContext database;
-            long offset;
-            await using (var api = await DocumentApi.StartAsync(settings => settings["data-directory"] = directory))
-            {
-                (await api.PutAsync(early, new { status = "open" })).Status.ShouldBe(HttpStatusCode.Created);
-                (await api.PutAsync(revised, new { status = "first" })).Status.ShouldBe(HttpStatusCode.Created);
-                var written = await api.TransactAsync(new { op = "put", collection = DocumentApi.Collection, id = revised, document = new { status = "at-offset" } });
-                offset = long.Parse(written.Json.GetProperty("offset").GetString()!, CultureInfo.InvariantCulture);
-                (await api.PutAsync(late, new { status = "later" })).Status.ShouldBe(HttpStatusCode.Created);
-                await api.TransactAsync(new { op = "put", collection = DocumentApi.Collection, id = revised, document = new { status = "later" } });
-                database = await api.TenantOfAsync();
-            }
-
-            await using var reopened = await DocumentApi.StartAsync(
-                settings => settings["data-directory"] = directory, StorageTransactionTests.ConfigurePool);
-            var engine = reopened.Server.Services.GetRequiredService<IStorageEngine>();
-            var store = (await engine.OpenDatabaseAsync(database, CancellationToken.None))!;
-            var after = DocumentApi.NewId();
-            await using (var writer = await store.BeginTransactionAsync(write: true, CancellationToken.None))
-            {
-                await writer.PutAsync(DocumentApi.Collection, after, Encoding.UTF8.GetBytes("{}"), CancellationToken.None);
-                await writer.CommitAsync(CancellationToken.None);
-            }
-
-            await using var reader = await store.BeginTransactionAsync(write: false, CancellationToken.None);
-            var query = new DocumentQuery(DocumentApi.Collection, null, [], null, 1000, long.MaxValue);
-            var atOffset = await reader.SnapshotAsync(query, offset, CancellationToken.None);
-            var atHead = await reader.SnapshotAsync(query, await reader.GetOffsetAsync(CancellationToken.None), CancellationToken.None);
-
-            // Persisted births keep earlier snapshots intact while new writes extend the history.
-            await Assert.That(atOffset.Rows.Select(row => row.Document.Id)).IsEquivalentTo([early, revised]);
-            await Assert.That(Encoding.UTF8.GetString(atOffset.Rows.Single(row => row.Document.Id == revised).Document.Json.Span)).Contains("at-offset");
-            await Assert.That(atHead.Rows.Select(row => row.Document.Id)).IsEquivalentTo([early, revised, late, after]);
         }
         finally
         {
@@ -317,17 +255,10 @@ public sealed class StorageHistoryTests
     public async Task Storage_commit_limits_bound_distinct_states_and_count_repeated_writes_with_framing(bool repeated)
     {
         await using var api = await DocumentApi.StartAsync();
-        using var shapes = await api.ClientWithScopesAsync("shapes:read");
         var store = await StoreAsync(api);
         var ids = Enumerable.Range(0, 7).Select(_ => DocumentApi.NewId()).ToArray();
         var document = Encoding.UTF8.GetBytes("{\"v\":\"" + new string('x', (1 << 20) - 8) + "\"}");
         await Assert.That(document.Length).IsEqualTo(1 << 20);
-        var shape = api.Shape;
-        using var start = await shapes.GetAsync(new Uri(shape + "?offset=-1", UriKind.Relative));
-        var handle = start.Headers.GetValues("TB-Shape-Handle").Single();
-        using var snapshot = await shapes.GetAsync(start.Headers.Location!);
-        using var snapshotBody = JsonDocument.Parse(await snapshot.Content.ReadAsStringAsync());
-        var head = snapshotBody.RootElement.GetProperty("next_offset").GetString();
         var sequence = store.CommitSequence;
         using var cancelled = new CancellationTokenSource();
         var waiting = store.WaitForCommitAsync(sequence, cancelled.Token);
@@ -339,7 +270,7 @@ public sealed class StorageHistoryTests
                 await rejected.PutAsync(DocumentApi.Collection, ids[repeated ? 0 : i], document, CancellationToken.None);
             }
 
-            // Seven raw 1 MiB writes, of one key or of seven, leave no room for shape framing.
+            // Seven raw 1 MiB writes, of one key or of seven, exceed the per-commit byte limit with framing.
             await Assert.ThrowsAsync<StorageWriteLimitException>(() => rejected.PutAsync(DocumentApi.Collection, ids[repeated ? 0 : 6], document, CancellationToken.None).AsTask());
 
             await Assert.ThrowsAsync<InvalidOperationException>(() => rejected.CommitAsync(CancellationToken.None).AsTask());
@@ -349,15 +280,9 @@ public sealed class StorageHistoryTests
         await Assert.That((await api.GetAsync(ids[1])).Status).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(store.CommitSequence).IsEqualTo(sequence);
         await Assert.That(waiting.IsCompleted).IsFalse();
-        using var unchanged = await shapes.GetAsync(new Uri($"{shape}?handle={handle}&offset={head}", UriKind.Relative));
-        using var unchangedBody = JsonDocument.Parse(await unchanged.Content.ReadAsStringAsync());
-        await Assert.That(unchanged.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(unchangedBody.RootElement.GetProperty("next_offset").GetString()).IsEqualTo(head);
-        await Assert.That(unchangedBody.RootElement.GetProperty("changes").GetArrayLength()).IsEqualTo(0);
 
         // Six smaller distinct documents fit; six full-size writes of one key retain only its final state.
         var acceptedDocument = repeated ? document : Encoding.UTF8.GetBytes("{\"v\":\"" + new string('x', 300 * 1024) + "\"}");
-        long committed;
         await using (var accepted = await store.BeginTransactionAsync(write: true, CancellationToken.None))
         {
             for (var i = 0; i < 6; i++)
@@ -365,21 +290,15 @@ public sealed class StorageHistoryTests
                 await accepted.PutAsync(DocumentApi.Collection, ids[repeated ? 0 : i], acceptedDocument, CancellationToken.None);
             }
 
-            committed = await accepted.CommitAsync(CancellationToken.None);
+            await accepted.CommitAsync(CancellationToken.None);
         }
 
         await waiting.WaitAsync(TimeSpan.FromSeconds(10));
         await Assert.That(store.CommitSequence).IsEqualTo(sequence + 1);
-        await Assert.That(committed).IsEqualTo(long.Parse(head!, CultureInfo.InvariantCulture) + 1);
-        using var log = await shapes.GetAsync(new Uri($"{shape}?handle={handle}&offset={head}", UriKind.Relative));
-        log.EnsureSuccessStatusCode();
-        var bytes = await log.Content.ReadAsByteArrayAsync();
-        using var body = JsonDocument.Parse(bytes);
-        await Assert.That(bytes.Length).IsLessThanOrEqualTo(8 * 1024 * 1024);
-        await Assert.That(body.RootElement.GetProperty("changes").GetArrayLength()).IsEqualTo(1);
-        // Repeated writes count toward shape framing, but the chunk retains one final state per key.
-        await Assert.That(body.RootElement.GetProperty("changes")[0].GetProperty("ops").GetArrayLength()).IsEqualTo(repeated ? 1 : 6);
-        await Assert.That(body.RootElement.GetProperty("next_offset").GetString()).IsEqualTo(committed.ToString(CultureInfo.InvariantCulture));
+        foreach (var id in repeated ? ids[..1] : ids[..6])
+        {
+            await Assert.That((await api.GetAsync(id)).Status).IsEqualTo(HttpStatusCode.OK);
+        }
     }
 
     [Test]

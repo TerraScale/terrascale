@@ -609,7 +609,7 @@ The schema is inferred and read-only: TerraBase has no declared schemas yet.
 - `storageBytes` is the size on disk. `logicalBytes` is the metered logical storage: the JSON bytes of the live
   documents, read from SQLite's record headers.
 - Counting rule: each request the engine answers is **one read**, however many documents it returns: a document get,
-  a list page, a query page (its optional count included), a shape response (a live wait included) and a Management
+  a list page, a query page (its optional count included) and a Management
   SQL run. Each committed put, patch or delete is **one write**, each operation of a transaction included; transaction
   assertions are not counted. A read counts once the engine answered it, even if the document does not exist; a
   request rejected before that (unknown collection, invalid id, too expensive) and a rolled-back transaction count
@@ -824,7 +824,7 @@ A project key is an API key of the project's organization narrowed to the projec
 - A key that the administrative listener (`POST /admin/api-keys`) narrows to a project is stored and listed the same
   way: it appears here, can be revoked here, and blocks deleting its project. The scope it names is checked in the
   issuing write; a missing one answers 400. Its `name` and `scopes` follow the administrative endpoint's rules (up to
-  100 characters; any client scope, such as `shapes:read`). Organization-wide keys are not listed here. Every key authentication record is keyed by its canonical ULID; a separate SHA-256 secret lookup points to that id.
+  100 characters; any client scope, such as `documents:read`). Organization-wide keys are not listed here. Every key authentication record is keyed by its canonical ULID; a separate SHA-256 secret lookup points to that id.
   The closed-beta cutover deletes old credentials and recreates service keys.
 
 ## Dashboard feature map
