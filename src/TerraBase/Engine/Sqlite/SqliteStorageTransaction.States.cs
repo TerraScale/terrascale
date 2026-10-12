@@ -107,17 +107,17 @@ internal sealed partial class SqliteStorageTransaction
     {
         if (body is null)
         {
-            TableCommand(SqliteStatements.DeleteRow, collection, id).Run();
+            TableCommand(SqliteStatements.DeleteRow, collection, id).ExecuteNonQuery();
             return;
         }
 
         var update = TableCommand(SqliteStatements.UpdateRow, collection, id);
         update.Parameters.AddWithValue("$body", body);
-        if (update.Run() == 0)
+        if (update.ExecuteNonQuery() == 0)
         {
             var insert = TableCommand(SqliteStatements.InsertRow, collection, id);
             insert.Parameters.AddWithValue("$body", body);
-            insert.Run();
+            insert.ExecuteNonQuery();
         }
     }
 
@@ -153,12 +153,12 @@ internal sealed partial class SqliteStorageTransaction
         var digest = DocumentStateEncoding.Digest(state);
         var update = BodyCommand(SqliteStatements.UpdateState, collection, id);
         Bind(update);
-        if (update.Run() == 0)
+        if (update.ExecuteNonQuery() == 0)
         {
             var insert = BodyCommand(SqliteStatements.InsertState, collection, id);
             Bind(insert);
             insert.Parameters.AddWithValue("$bucket", Bucket(collection, id));
-            insert.Run();
+            insert.ExecuteNonQuery();
         }
 
         void Bind(SqliteCommand command)

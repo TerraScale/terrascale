@@ -98,15 +98,15 @@ internal sealed partial class SqliteStorageTransaction
                 CaptureSystemDeletions(prefix, to, cancellationToken);
             }
 
-            var documents = session.Command(SqliteStatements.DeleteCollectionDocuments);
+            var documents = session.Command(SqliteStatements.DeleteCollectionDocuments, transaction);
             documents.Parameters.AddWithValue("$from", prefix);
             documents.Parameters.AddWithValue("$to", to);
-            var deleted = documents.Run();
+            var deleted = documents.ExecuteNonQuery();
             cancellationToken.ThrowIfCancellationRequested();
-            var names = session.Command(SqliteStatements.DeleteCollectionNames);
+            var names = session.Command(SqliteStatements.DeleteCollectionNames, transaction);
             names.Parameters.AddWithValue("$from", prefix);
             names.Parameters.AddWithValue("$to", to);
-            names.Run();
+            names.ExecuteNonQuery();
             return (long)deleted;
         }, cancellationToken, mutation: true);
 
@@ -117,7 +117,7 @@ internal sealed partial class SqliteStorageTransaction
     private List<IndexDefinition> ReadIndexes(CancellationToken cancellationToken)
     {
         var indexes = new List<IndexDefinition>();
-        using (var reader = session.Command(SqliteStatements.ListIndexes).ExecuteReader())
+        using (var reader = session.Command(SqliteStatements.ListIndexes, transaction).ExecuteReader())
         {
             while (reader.Read())
             {
@@ -187,7 +187,7 @@ internal sealed partial class SqliteStorageTransaction
             try
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                command.Run();
+                command.ExecuteNonQuery();
                 cancellationToken.ThrowIfCancellationRequested();
             }
             catch
@@ -230,7 +230,7 @@ internal sealed partial class SqliteStorageTransaction
             try
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                command.Run();
+                command.ExecuteNonQuery();
             }
             catch
             {
@@ -265,7 +265,7 @@ internal sealed partial class SqliteStorageTransaction
 
     private bool IndexExists(string name)
     {
-        var command = session.Command(SqliteStatements.IndexExists);
+        var command = session.Command(SqliteStatements.IndexExists, transaction);
         command.Parameters.AddWithValue("$name", IndexPrefix + name);
         return command.ExecuteScalar() is not null;
     }
@@ -436,6 +436,7 @@ internal sealed partial class SqliteStorageTransaction
     {
         // Not cached on the session: these statements embed collections and paths, so their text varies.
         var command = session.Connection.CreateCommand();
+        command.Transaction = transaction;
         command.CommandText = sql;
         return command;
     }

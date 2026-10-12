@@ -24,7 +24,7 @@ namespace TerraBase.Engine.Sqlite;
 /// <param name="changesCommitted">When set, local mutations are captured and it receives the group's sequence after commit.</param>
 /// <param name="ownsAdmission">Whether disposal releases this transaction's I/O admission.</param>
 internal sealed partial class SqliteStorageTransaction(
-    SqliteDatabaseStore store, SqliteSession session, TursoTransaction transaction, SqliteRunner runner, bool write, bool durable, Action? committed,
+    SqliteDatabaseStore store, SqliteSession session, SqliteTransaction transaction, SqliteRunner runner, bool write, bool durable, Action? committed,
     Action<long>? changesCommitted, bool ownsAdmission)
     : IStorageTransaction
 {
@@ -221,7 +221,7 @@ internal sealed partial class SqliteStorageTransaction(
                 var put = BodyCommand(SqliteStatements.Put, collection, id);
                 put.Parameters.AddWithValue("$version", offset);
                 put.Parameters.AddWithValue("$body", body);
-                put.Run();
+                put.ExecuteNonQuery();
             }, cancellationToken);
         }
 
@@ -268,7 +268,7 @@ internal sealed partial class SqliteStorageTransaction(
 
             var command = Command(SqliteStatements.Delete, collection);
             command.Parameters.AddWithValue("$id", id);
-            if (command.Run() == 0)
+            if (command.ExecuteNonQuery() == 0)
             {
                 return false;
             }
@@ -319,7 +319,7 @@ internal sealed partial class SqliteStorageTransaction(
                 var command = Command(SqliteStatements.Tombstone, collection);
                 command.Parameters.AddWithValue("$id", id);
                 command.Parameters.AddWithValue("$version", offset);
-                command.Run();
+                command.ExecuteNonQuery();
             }, cancellationToken);
         }, cancellationToken, mutation: true).ConfigureAwait(false);
     }
@@ -363,7 +363,7 @@ internal sealed partial class SqliteStorageTransaction(
             command.Parameters.AddWithValue("$version", offset);
             command.Parameters.AddWithValue("$documentVersion", documentVersion);
             command.Parameters.AddWithValue("$body", (object?)body ?? DBNull.Value);
-            return command.Run();
+            return command.ExecuteNonQuery();
         }
     }
 
@@ -679,10 +679,10 @@ internal sealed partial class SqliteStorageTransaction(
     }
 
     public ValueTask<long> GetOffsetAsync(CancellationToken cancellationToken) =>
-        RunAsync(() => (long?)session.Command(SqliteStatements.CurrentOffset).ExecuteScalar() ?? 0, cancellationToken);
+        RunAsync(() => (long?)session.Command(SqliteStatements.CurrentOffset, transaction).ExecuteScalar() ?? 0, cancellationToken);
 
     public ValueTask<long> GetHistoryFloorAsync(CancellationToken cancellationToken) =>
-        RunAsync(() => (long)session.Command(SqliteStatements.HistoryFloor).ExecuteScalar()!, cancellationToken);
+        RunAsync(() => (long)session.Command(SqliteStatements.HistoryFloor, transaction).ExecuteScalar()!, cancellationToken);
 
     private async IAsyncEnumerable<StoredDocument> ReadBudgetedAsync(
         Func<SqliteCommand> createCommand, SqlQuery query, QueryObservation? observation,
@@ -855,7 +855,7 @@ internal sealed partial class SqliteStorageTransaction(
         var command = Command(SqliteStatements.CreateCollection, collection.Name);
         command.Parameters.AddWithValue("$created", collection.CreatedAt);
         command.Parameters.AddWithValue("$entityId", collection.Id);
-        if (command.Run() == 0)
+        if (command.ExecuteNonQuery() == 0)
         {
             return false;
         }
@@ -863,7 +863,7 @@ internal sealed partial class SqliteStorageTransaction(
         if (!store.IsSystem)
         {
             using var table = PlainCommand(CreateTable(collection.Name));
-            table.Run();
+            table.ExecuteNonQuery();
         }
 
         _collectionsChanged = true;
@@ -894,7 +894,7 @@ internal sealed partial class SqliteStorageTransaction(
                 (false, true) => SqliteStatements.HasCollectionState,
                 (true, false) => SqliteStatements.ClientHasCollectionStateFrom,
                 (false, false) => SqliteStatements.ClientHasCollectionState,
-            });
+            }, transaction);
             command.Parameters.AddWithValue("$from", name);
             if (through is not null)
             {
@@ -929,7 +929,7 @@ internal sealed partial class SqliteStorageTransaction(
     {
         return await RunAsync<(IReadOnlyList<CollectionInfo>, bool)>(() =>
         {
-            var command = session.Command(afterName is null ? SqliteStatements.ListCollectionsFirst : SqliteStatements.ListCollectionsAfter);
+            var command = session.Command(afterName is null ? SqliteStatements.ListCollectionsFirst : SqliteStatements.ListCollectionsAfter, transaction);
             if (afterName is not null)
             {
                 command.Parameters.AddWithValue("$after", afterName);
@@ -971,9 +971,9 @@ internal sealed partial class SqliteStorageTransaction(
                     CaptureSystemDeletions(name, name + '\0', cancellationToken);
                 }
 
-                Command(SqliteStatements.DropHistory, name).Run();
+                Command(SqliteStatements.DropHistory, name).ExecuteNonQuery();
                 cancellationToken.ThrowIfCancellationRequested();
-                Command(SqliteStatements.DropDocuments, name).Run();
+                Command(SqliteStatements.DropDocuments, name).ExecuteNonQuery();
             }
             else if (Command(SqliteStatements.GetCollection, name).ExecuteScalar() is not null)
             {
@@ -983,7 +983,7 @@ internal sealed partial class SqliteStorageTransaction(
             }
 
             cancellationToken.ThrowIfCancellationRequested();
-            if (Command(SqliteStatements.DropCollection, name).Run() == 0)
+            if (Command(SqliteStatements.DropCollection, name).ExecuteNonQuery() == 0)
             {
                 return false;
             }
@@ -1004,16 +1004,16 @@ internal sealed partial class SqliteStorageTransaction(
     {
         using (var table = PlainCommand($"DROP TABLE {Table(name)};"))
         {
-            table.Run();
+            table.ExecuteNonQuery();
         }
 
-        Command(SqliteStatements.DropStates, name).Run();
+        Command(SqliteStatements.DropStates, name).ExecuteNonQuery();
         foreach (var key in _pending.Keys.Where(key => key.Collection == name).ToList())
         {
             _pending.Remove(key);
         }
 
-        Command(SqliteStatements.DropHistory, name).Run();
+        Command(SqliteStatements.DropHistory, name).ExecuteNonQuery();
     }
 
     public async ValueTask<long> CommitAsync(CancellationToken cancellationToken)
@@ -1157,12 +1157,12 @@ internal sealed partial class SqliteStorageTransaction(
     private const string GroupSavepoint = "batched";
 
     /// <summary>
-    /// Set once Turso rolled the whole write transaction back after a failed statement, every savepoint included:
-    /// it can only be disposed.
+    /// Set once Turso rolled the whole transaction back after a failed statement, every savepoint included: it can only
+    /// be disposed.
     /// </summary>
     internal bool Aborted { get; private set; }
 
-    // Worker-only: runs a call of this transaction, and notices when a failure ended a write transaction.
+    // Worker-only: runs a call of this transaction, and notices when a failure ended it.
     private T Guarded<T>(Func<T> call)
     {
         if (Aborted)
@@ -1175,10 +1175,29 @@ internal sealed partial class SqliteStorageTransaction(
             return call();
         }
         // A failed statement, also one that surfaces as another exception (a stopped read as a QueryCapacityException).
-        catch (Exception error) when (write && SqliteSession.FailedStatement(error) && !session.InTransaction())
+        catch (Exception error) when (SqliteSession.FailedStatement(error) && Ended())
         {
             Aborted = _faulted = true;
             throw;
+        }
+    }
+
+    // Unlike SQLite, Turso rolls the whole transaction back when a statement fails while it steps (a stopped read, for
+    // one). The driver then marks the transaction ended (src/vendor/Turso.Data.Sqlite, patch 0003) and refuses the
+    // commands bound to it; preparing one runs nothing.
+    private bool Ended()
+    {
+        using var probe = session.Connection.CreateCommand();
+        probe.Transaction = transaction;
+        probe.CommandText = "SELECT 1;";
+        try
+        {
+            probe.Prepare();
+            return false;
+        }
+        catch (InvalidOperationException)
+        {
+            return true;
         }
     }
 
@@ -1242,8 +1261,9 @@ internal sealed partial class SqliteStorageTransaction(
         return new(RunAsync(() =>
         {
             using var command = session.Connection.CreateCommand();
+            command.Transaction = transaction;
             command.CommandText = SqliteSession.CaptureOff;
-            command.Run();
+            command.ExecuteNonQuery();
             _captureSuspended = true;
             return true;
         }, cancellationToken).AsTask());
@@ -1284,14 +1304,8 @@ internal sealed partial class SqliteStorageTransaction(
                     }
                     finally
                     {
-                        try
-                        {
-                            transaction.Dispose();
-                        }
-                        catch (SqliteException error) when (SqliteSession.NoTransaction(error))
-                        {
-                            // A failed statement already ended it (SqliteSession.InTransaction).
-                        }
+                        // Also when a failed statement ended it: the driver then knows, and rolls nothing back.
+                        transaction.Dispose();
                     }
 
                     if (_captureSuspended)
@@ -1299,7 +1313,7 @@ internal sealed partial class SqliteStorageTransaction(
                         // A failed reset closes the writer: the next one opens with capture on.
                         using var capture = session.Connection.CreateCommand();
                         capture.CommandText = SqliteSession.CaptureOn;
-                        capture.Run();
+                        capture.ExecuteNonQuery();
                     }
 
                     if (!write)
@@ -1307,7 +1321,7 @@ internal sealed partial class SqliteStorageTransaction(
                         // Failed read-only reset closes the session instead of reusing it.
                         using var writable = session.Connection.CreateCommand();
                         writable.CommandText = "PRAGMA query_only = 0;";
-                        writable.Run();
+                        writable.ExecuteNonQuery();
                     }
 
                     if (durable)
@@ -1315,7 +1329,7 @@ internal sealed partial class SqliteStorageTransaction(
                         // Likewise a failed reset: pooled sessions keep decision 0003's NORMAL.
                         using var normal = session.Connection.CreateCommand();
                         normal.CommandText = "PRAGMA synchronous = NORMAL;";
-                        normal.Run();
+                        normal.ExecuteNonQuery();
                     }
                 }
                 catch
@@ -1335,7 +1349,7 @@ internal sealed partial class SqliteStorageTransaction(
         }
     }
 
-    private long GetOffset() => (long?)session.Command(SqliteStatements.CurrentOffset).ExecuteScalar() ?? 0;
+    private long GetOffset() => (long?)session.Command(SqliteStatements.CurrentOffset, transaction).ExecuteScalar() ?? 0;
 
     // Every write in one transaction shares one offset, allocated under the database writer gate.
     private long Offset()
@@ -1345,7 +1359,7 @@ internal sealed partial class SqliteStorageTransaction(
             VersionClock.EnsureCanAllocate(GetOffset());
         }
 
-        _offset ??= session.Command(SqliteStatements.NextOffset).ExecuteScalar() is long offset
+        _offset ??= session.Command(SqliteStatements.NextOffset, transaction).ExecuteScalar() is long offset
             ? offset
             : throw new OverflowException("the commit offset is exhausted");
         return _offset.Value;
@@ -1459,7 +1473,7 @@ internal sealed partial class SqliteStorageTransaction(
 
     private SqliteCommand Command(string sql, string? collection = null)
     {
-        var command = session.Command(sql);
+        var command = session.Command(sql, transaction);
         if (collection is not null)
         {
             command.Parameters.AddWithValue("$collection", collection);
@@ -1473,6 +1487,7 @@ internal sealed partial class SqliteStorageTransaction(
         if (!_bodyCommands.TryGetValue(sql, out var command))
         {
             command = session.Connection.CreateCommand();
+            command.Transaction = transaction;
             command.CommandText = sql;
             _bodyCommands.Add(sql, command);
         }
@@ -1529,14 +1544,14 @@ internal sealed partial class SqliteStorageTransaction(
             append.Parameters.AddWithValue("$ordinal", ordinal++);
             append.Parameters.AddWithValue("$version", change.Version);
             append.Parameters.AddWithValue("$body", change.Json is { } json ? Encoding.UTF8.GetString(json.Span) : DBNull.Value);
-            append.Run();
+            append.ExecuteNonQuery();
         }
 
         cancellationToken.ThrowIfCancellationRequested();
         var prefix = Command(SqliteStatements.AppendChangeDigest);
         prefix.Parameters.AddWithValue("$sequence", sequence);
         prefix.Parameters.AddWithValue("$digest", digest);
-        prefix.Run();
+        prefix.ExecuteNonQuery();
         TruncateSystemJournal(sequence - ISystemReplication.RetainedGroups);
         return sequence;
     }
@@ -1544,6 +1559,7 @@ internal sealed partial class SqliteStorageTransaction(
     private SqliteCommand Uncached(string collection)
     {
         var command = session.Connection.CreateCommand();
+        command.Transaction = transaction;
         command.Parameters.AddWithValue("$collection", collection);
         return command;
     }

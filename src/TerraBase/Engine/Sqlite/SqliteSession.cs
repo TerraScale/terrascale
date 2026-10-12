@@ -82,29 +82,6 @@ internal sealed class SqliteSession(SqliteConnection connection) : IDisposable
     /// <summary>Whether <paramref name="error"/> is a statement <see cref="ThrowIfStopped"/> failed.</summary>
     public static bool Stopped(SqliteException error) => error.Message.Contains(StoppedMessage, StringComparison.Ordinal);
 
-    /// <summary>
-    /// Whether the connection is inside a transaction. Unlike SQLite, Turso rolls the whole transaction back when a
-    /// statement fails while it steps through rows (a stopped read, for one); the statements after it would then commit
-    /// on their own. Run on the connection's worker.
-    /// </summary>
-    public bool InTransaction()
-    {
-        try
-        {
-            connection.Run("BEGIN;");
-        }
-        catch (SqliteException error) when (error.Message.Contains("within a transaction", StringComparison.Ordinal))
-        {
-            return true;
-        }
-
-        connection.Run("ROLLBACK;");
-        return false;
-    }
-
-    /// <summary>Whether <paramref name="error"/> is a rollback or commit of a transaction Turso already rolled back.</summary>
-    public static bool NoTransaction(SqliteException error) => error.Message.Contains("no transaction is active", StringComparison.Ordinal);
-
     /// <summary>Whether <paramref name="error"/> is lock contention; Turso reports every local error with code 1.</summary>
     public static bool Busy(SqliteException error) => error.Message.Contains("database is locked", StringComparison.Ordinal);
 
@@ -155,7 +132,7 @@ internal sealed class SqliteSession(SqliteConnection connection) : IDisposable
             {
                 using var command = connection.CreateCommand();
                 command.CommandText = pragmas;
-                return command.Run();
+                return command.ExecuteNonQuery();
             }, cancellationToken).ConfigureAwait(false);
             return session;
         }
@@ -225,10 +202,10 @@ internal sealed class SqliteSession(SqliteConnection connection) : IDisposable
     }
 
     /// <summary>
-    /// Returns the session's command for <paramref name="sql"/>, without parameters. It runs inside whatever transaction
-    /// the connection is in (<see cref="TursoTransaction"/>).
+    /// Returns the prepared command for <paramref name="sql"/>, bound to <paramref name="transaction"/>
+    /// and without parameters. The provider keeps a command's statements prepared while its text is unchanged.
     /// </summary>
-    public SqliteCommand Command(string sql)
+    public SqliteCommand Command(string sql, SqliteTransaction transaction)
     {
         if (!_commands.TryGetValue(sql, out var command))
         {
@@ -236,6 +213,8 @@ internal sealed class SqliteSession(SqliteConnection connection) : IDisposable
             command.CommandText = sql;
             _commands.Add(sql, command);
         }
+
+        command.Transaction = transaction;
         command.Parameters.Clear();
         return command;
     }
