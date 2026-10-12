@@ -118,6 +118,9 @@ public sealed class FakeS3
     /// <summary>The clock Tigris snapshots are dated with; tests on a fake clock set theirs.</summary>
     public TimeProvider Time { get; set; } = TimeProvider.System;
 
+    /// <summary>Whether the platform bucket has Tigris snapshots enabled, as HeadBucket reports it.</summary>
+    public bool SnapshotsEnabled { get; set; } = true;
+
     /// <summary>Refuses snapshot takes with 403 while true.</summary>
     public bool RejectSnapshots { get; set; }
 
@@ -484,6 +487,19 @@ public sealed class FakeS3
         var version = Header(request, "X-Tigris-Snapshot-Version");
         lock (_snapshots)
         {
+            if (request.Method == HttpMethod.Head)
+            {
+                var head = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent([]) };
+                head.Headers.Add("X-Tigris-Enable-Snapshot", SnapshotsEnabled ? "true" : "false");
+                return head;
+            }
+
+            // Like Tigris on a bucket without snapshots.
+            if (!SnapshotsEnabled && snapshot is not null)
+            {
+                return S3Error(HttpStatusCode.BadRequest, request.Method == HttpMethod.Get ? "InvalidArgument" : "InvalidRequest");
+            }
+
             if (request.Method == HttpMethod.Get && snapshot == Bucket)
             {
                 return Xml(HttpStatusCode.OK, new XElement(S3 + "ListAllMyBucketsResult",

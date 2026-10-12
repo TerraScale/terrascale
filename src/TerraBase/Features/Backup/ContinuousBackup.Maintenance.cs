@@ -115,6 +115,21 @@ internal sealed partial class ContinuousBackup
     {
         try
         {
+            // Checked once per process: a bucket without snapshots (a PR preview's) skips the job quietly.
+            if (_bucketSnapshotsEnabled is null)
+            {
+                _bucketSnapshotsEnabled = await _bucket.SnapshotsEnabledAsync(cancellationToken).ConfigureAwait(false);
+                if (_bucketSnapshotsEnabled is false)
+                {
+                    _logger.ZLogInformation($"The backup bucket has no Tigris snapshots enabled; this process takes no bucket snapshots");
+                }
+            }
+
+            if (_bucketSnapshotsEnabled is false)
+            {
+                return;
+            }
+
             var now = _time.GetUtcNow();
             var snapshots = await _bucket.ListSnapshotsAsync(cancellationToken).ConfigureAwait(false);
             if (snapshots.Count == 0 || now - snapshots.Max(snapshot => snapshot.At) >= BucketSnapshotInterval)
