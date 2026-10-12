@@ -1,17 +1,21 @@
 ---
+title: Documentation changelog
 ---
+
 <!-- i18n:fallback:ja -->
 > **翻訳レビュー待ち。** このページはまだ日本語の人力レビューがなく、英語の原文を表示しています。
 
-# Changelog
+<div lang="en" dir="ltr">
 
-TerraScale is pre-launch. This changelog starts with the first public release.
+# Documentation changelog
 
-What you can rely on before then:
+## October 12, 2026
 
-- **`/api/v1` is additive-only from launch.** Fields and endpoints are added,
-  never renamed or removed. Deprecations are announced here and kept for at
-  least 12 months. A breaking change would use a separate versioned endpoint, served side by side.
-- **SDKs follow semver**; a major bump is a product event, not routine.
-- **Prices only go down.** Any price change is announced here before it takes
-  effect.
+- Added a JavaScript quickstart for published `@terrascale/sdk@0.0.3`.
+- Documented authentication, errors, pagination and conditional writes against the current Documents contract.
+- Distinguished candidate SDKs and multi-region requirements from verified public releases.
+- Aligned the documentation with TerraScale's shared visual design.
+
+Documentation changes are not a service release or a production-readiness announcement.
+
+</div>

@@ -1,120 +1,56 @@
 ---
-title: C# TerraBase quickstart
+title: C# quickstart
 ---
 
 <!-- i18n:fallback:fr -->
 > **Traduction en attente.** Cette page n’a pas encore été relue en français et affiche le contenu original en anglais.
 
-# C# TerraBase quickstart
+<div lang="en" dir="ltr">
 
-Run the [C# console starter](https://github.com/TerraScale/ts-docs/src/branch/main/examples/terrabase-dotnet)
-to create, read, update, query and delete a JSON document through
-`TerraScale.DotNet.TerraBase.TerraBaseDocumentsClient`. Every database request
-uses the SDK; application data stays in TerraBase.
+# C# quickstart
 
-::: warning Candidate compatibility, not public launch
-The starter targets the project-scoped C# API and an exact SDK candidate.
-Public NuGet installation and production ts-auth
-JWT authorization are separate release gates. The isolated compatibility
-fixture uses the matched binary's existing credential contract; it is not
-an instruction to provision production credentials or duplicate ts-auth's
-users, organizations or projects. Dashboard sign-in stays on its native pages.
-See [SDK compatibility](/fr/guides/sdks).
+Run the console example through `TerraScale.DotNet.TerraBase.TerraBaseDocumentsClient`. It creates, reads, updates, queries and deletes one synthetic document, verifies stale-version rejection and uses only the SDK for database requests.
+
+::: warning Candidate package required
+The public NuGet package endpoint returns 404 as of October 12, 2026 (UTC). Obtain an exact verified candidate package containing `TerraBaseDocumentsClient`. Source version numbers and local package receipts do not establish public installation or production JWT authorization. See [SDK reference](/fr/guides/sdks).
 :::
 
-## 1. Obtain the matched SDK
+## 1. Obtain the example and package
 
-Install .NET SDK 10 or newer, with the .NET 10 runtime installed. Obtain an immutable `TerraScale.DotNet` package containing
-`TerraBaseDocumentsClient` and record its exact version and SHA-256. Public NuGet
-availability must be verified before presenting an install command with a
-released version; a source version alone does not establish publication.
-An older `TerraScaleClient` package or the legacy UUID/shard `NativeClient`
-contract is not an interchangeable dependency.
+Install .NET SDK 10 or newer with the .NET 10 runtime. Download <a href="/examples/terrabase-dotnet/Program.cs" download>Program.cs</a> and <a href="/examples/terrabase-dotnet/TerraBaseStarter.csproj" download>TerraBaseStarter.csproj</a> into one directory. Obtain the verified package's exact version, immutable bytes and SHA-256 through your supported access process.
 
-Copy `examples/terrabase-dotnet` from the docs checkout. The starter consumes
-only a package reference, with no SDK source reference or custom API transport.
+The project uses a package reference, with no SDK source dependency. A legacy `NativeClient` package is not interchangeable with the project-scoped Documents API.
 
-## 2. Configure a provisioned database
+## 2. Supply authorized connection details
 
-Export these values in your private shell; `.env.example` lists the settings
-but the console app does not load dotenv files:
+Set `TERRASCALE_API_URL`, `TERRASCALE_PROJECT_ID`, `TERRASCALE_DATABASE_NAME` and `TERRASCALE_COLLECTION_NAME` from your isolated development allocation. Supply `TERRASCALE_ACCESS_TOKEN` privately through the application's secret manager or shell. The console app reads environment variables; it does not load dotenv files.
 
-```bash
-export TERRASCALE_API_URL='https://<region>.api.terrascale.tech'
-export TERRASCALE_PROJECT_ID=YOUR_PROJECT_ID
-export TERRASCALE_DATABASE_NAME=quickstart
-export TERRASCALE_COLLECTION_NAME=posts
-# Set TERRASCALE_ACCESS_TOKEN through your secret manager or private shell.
-```
-
-Use an explicit HTTPS regional origin from the allocation's supported routing
-workflow. The project, database and collection must already exist, with read
-and write authorization. The starter neither creates identity resources nor
-implements a credential exchange. Production credentials come from ts-auth's
-supported flow and must be qualified against the serving API. Keep secrets out
-of source control, browser public settings and console output.
+Use the actual provisioned HTTPS endpoint and a credential the serving API accepts. The project, database and collection must exist with document read/write access. The example does not create account identity resources or implement an unverified credential exchange.
 
 ## 3. Build and run
 
-From the copied starter directory:
+From the example directory:
 
 ```bash
 dotnet build -c Release -p:TerraBaseSdkPackageVersion=EXACT_VERSION \
-  --source /absolute/path/verified-sdk-feed --source https://api.nuget.org/v3/index.json
+  --source /path/to/verified-sdk-feed --source https://api.nuget.org/v3/index.json
 dotnet bin/Release/net10.0/TerraBaseStarter.dll
 ```
 
-Prefix local builds/checks in this repository with `nice -n 19`.
-Success prints `PASS_TERRABASE_CRUD_QUERY`: the created document was read,
-updated and found by its query, a stale version was rejected, and the document
-was deleted and read back as absent. The application has a 60-second overall
-deadline and 15-second request deadlines. It prints neither document bodies,
-credentials nor arbitrary server error messages.
+Replace `EXACT_VERSION` with the verified package version and the feed path with its local location. Success prints `PASS_TERRABASE_CRUD_QUERY`. The example uses 60-second overall and 15-second request deadlines, disables cookies and redirects, and prints no credentials or customer document bodies.
 
 ## 4. Preserve versions and bound queries
 
-The starter generates one document and carries its opaque version through
-`TerraBasePrecondition.Matches(version)` for update and deletion. A concurrent
-change produces `TerraBasePreconditionFailedException`; refetch and resolve
-that conflict before attempting another write. Do not parse ETags, invent a
-version or blindly retry an interrupted mutation. The matched SDK sends each
-request once and the producer rejects `Idempotency-Key`.
+<<< @/../examples/terrabase-dotnet/Program.cs{31-78}
 
-`TerraBaseQuery` uses JSON filter grammar, such as an equality filter over a
-JSON Pointer. It is distinct from older SQL/live-view examples. Query pages
-carry `NextCursor`; pass that opaque cursor with the same filter/sort settings
-when requesting another page. The example uses a unique run field and a limit
-of 20, so it can verify its own document without inspecting unrelated data.
+Versions are opaque. Use `TerraBasePrecondition.Matches(version)` for dependent updates and deletes; a stale version throws `TerraBasePreconditionFailedException`. `TerraBaseQuery` uses JSON filters and carries `NextCursor` into the next request's `Cursor` with unchanged filter, sort and projection. See [queries and pagination](/fr/guides/queries).
 
-Only the generated document is deleted. An interrupted request can leave it
-behind; reconcile the outcome rather than deleting unrelated resources.
-Disposing the caller-owned `HttpClient` closes its transport.
-`TerraBaseHttp.CreateHandler()` disables redirects and cookies.
+Only the generated document is deleted. An interrupted request can leave it behind; reconcile its outcome before retrying. The SDK sends each request once and this contract does not support mutation deduplication or `Idempotency-Key`. See [errors](/fr/guides/errors).
 
-## 5. Qualify against the real binary
+## Qualification boundary
 
-From the docs checkout, run the package-only qualification lane described in
-the [starter README](https://github.com/TerraScale/ts-docs/src/branch/main/examples/terrabase-dotnet/README.md):
+The retained starter's package-only real-binary receipt covers its exact candidate's persisted CRUD/query values, version preconditions, read-only write denial, invalid credentials and cleanup. The example source is unchanged from that receipt.
 
-```bash
-nice -n 19 npm run qualify:dotnet -- \
-  --package /absolute/path/TerraScale.DotNet.EXACT_VERSION.nupkg \
-  --sha256 SDK_SHA256 --version EXACT_VERSION \
-  --testing-package /absolute/path/TerraScale.DotNet.Testing.EXACT_VERSION.nupkg \
-  --testing-sha256 TESTING_SHA256 \
-  --binary /absolute/path/matched-terrabase-binary \
-  --binary-sha256 PRODUCER_SHA256 \
-  --receipt /absolute/path/private-evidence/csharp.json
-```
+That result does not qualify the latest SDK source, public NuGet availability, production JWTs, automatic endpoint resolution, dashboard sign-in or multi-region behavior. Fresh artifacts and an authorized isolated real-service run are needed to establish those independently.
 
-The runner verifies artifact hashes, installs the exact packages into a fresh
-consumer/cache, and uses the SDK's testing helper to start the real pinned
-binary. It runs this same starter journey, verifies read-only write denial,
-invalid-credential rejection and absence of live documents after cleanup.
-Missing or mismatched inputs fail; no emulator or stub substitutes for a binary.
-
-A receipt identifies the SDK, testing package, producer and example source
-bytes. It qualifies only this isolated compatibility journey. Public package
-availability, deployed ts-auth JWTs, native dashboard sign-in, endpoint
-resolution and multi-region behavior still need their own evidence.
-[SDK compatibility](/fr/guides/sdks) describes the SDK integration boundary.
+</div>

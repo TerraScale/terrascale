@@ -1,57 +1,22 @@
 ---
+title: Practical guides
 ---
+
 <!-- i18n:fallback:es -->
 > **Traducción pendiente.** Esta página aún no tiene revisión humana en español y muestra el contenido original en inglés.
 
-# Guides
+<div lang="en" dir="ltr">
 
-Task-focused guides. During pre-launch this section is an index of what ships
-at public launch; published runnable snippets run against a real branch
-pre-filled with your key. Management fixtures whose producer contracts are not
-published are retained as non-runnable references.
+# Practical guides
 
-## Data
+Use the [quickstart](/es/getting-started/) to establish one working application connection, then choose the guide for the next operation.
 
-- **Live queries in React** — `useQuery`, optimistic updates, typed resets.
-- **Collection sync with TanStack DB** — the recommended local-first pattern;
-  keeps distinct-view counts low.
-- **Full-text search** — FTS5 `MATCH`, auto-indexed.
-- **TTL** — expiry is free; TTL removal pushes are free.
+- [SDK reference](/es/guides/sdks): public installation, language support and API compatibility.
+- [Authentication](/es/guides/authentication): credential scope and server/browser boundaries.
+- [Queries and pagination](/es/guides/queries): filters, projection, cursors and version preconditions.
+- [Errors and safe retries](/es/guides/errors): typed failures and uncertain write outcomes.
+- [Dashboard usage](/es/guides/dashboard): customer account and database workflow.
 
-## Operations
+The [zero-configuration contract](/es/guides/zero-configuration) explains the platform's intended operating behavior without disclosing deployment internals.
 
-- [How TerraScale runs with zero configuration](/es/guides/zero-configuration) —
-  every region serves, nodes join automatically and production secrets arrive
-  automatically.
-
-- **Branches** — `branch-per-developer`, `branch-per-preview`; branches share
-  their organization’s normal plan allowances and billing cycle, with no
-  separate branch allowance. See [pricing](/es/pricing/).
-- **Backups and PITR** — intended continuous backup, restore-to-new-database,
-  and branching from the retention window; the producer workflow is awaiting
-  qualification.
-- **Regions and placement** — select regions per database; placement is the
-  residency guarantee (`eu-only`, `br-only`, or an explicit list) and can
-  never be widened. Writes consume operation units once per selected Region
-  before consuming the organization’s shared allowance.
-- **Tenants** — the intended database-per-customer model, with
-  tenant-scoped keys, per-tenant usage and
-  branching. Tenant provisioning is awaiting its producer contract.
-- **Webhooks** — change streams with retries and signing; delivery is free.
-
-## Tooling
-
-- [C# TerraBase quickstart](/es/getting-started/csharp) — CRUD, query, version
-  preconditions and a package-only real-binary qualification lane.
-- [SDK compatibility and qualification](/es/guides/sdks) — artifact availability,
-  API families, capabilities and real-binary qualification gates.
-
-- **`terrascale dev`** — a personal cloud dev branch. The CLI supports data-file
-  seeds, bounded branch diagnostic polling, and local schema codegen watch.
-  TypeScript seed functions are not executed. See the installed CLI’s help
-  for its available flags; cloud integration still requires qualification.
-- **`terrascale push` / `diff`** — intended schema evolution with resumable
-  backfills and field renames; the full workflow is awaiting qualification.
-- **`terrascale doctor`** — self-service diagnosis.
-- **MCP** — intended scoped, audited access; the public read-write workflow is
-  awaiting qualification.
+</div>

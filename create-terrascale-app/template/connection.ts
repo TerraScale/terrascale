@@ -1,7 +1,7 @@
 /** Public TerraBase connection settings; credentials are supplied separately. */
 export type ConnectionSettings = { project: string; database: string; baseUrl: string };
 
-/** TS-589 uses the ts-auth project UUID and database name, never a database ID. */
+/** legacy reference uses the ts-auth project UUID and database name, never a database ID. */
 export function readConnectionSettings(input: {
   project?: string;
   database?: string;

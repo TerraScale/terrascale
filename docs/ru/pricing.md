@@ -3,13 +3,16 @@
 <!-- i18n:fallback:ru -->
 > **Перевод на проверке.** У этой страницы пока нет проверенного человеком перевода на русский, поэтому показан английский оригинал.
 
+<div lang="en" dir="ltr">
+
 <!-- GENERATED from data/canonical/pricing.json (https://terrascale.tech/pricing.json) and data/policies.json by scripts/generate-pricing.mjs — do not edit. -->
 # Pricing
 
-> **Public Alpha.** Prices and allowances come from the canonical catalog at
+> **Pre-launch policy.** Public Alpha prices and allowances come from the canonical catalog at
 > [terrascale.tech/pricing.json](https://terrascale.tech/pricing.json); the
 > [pricing page](https://terrascale.tech/pricing) renders the same catalog.
-> All prices are in USD.
+> All prices are in USD. Confirm approved enrollment terms and
+> serving-release availability; this catalog does not qualify a workflow.
 
 ## How usage is metered
 
@@ -68,3 +71,5 @@ Removing the required card, confirmed expiry, or permanent invalidity ends Hobby
 Deletion protection is opt-in and disabled by default. An owner must explicitly disable it before customer deletion. Protection prevents automatic idle-Hobby deletion, but not idle pause, unpaid-storage deletion, or required-card-loss deletion. Once authorized deletion is accepted, access is revoked immediately and further billable usage stops. Previously incurred charges remain payable; asynchronous physical cleanup must not create new usage charges. Deletion progress continues until retained copies are removed. Physical completion timing and final notices require verified retention behavior and owner approval.
 
 See also: [Limits](./limits.md).
+
+</div>

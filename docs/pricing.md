@@ -1,10 +1,11 @@
 <!-- GENERATED from data/canonical/pricing.json (https://terrascale.tech/pricing.json) and data/policies.json by scripts/generate-pricing.mjs — do not edit. -->
 # Pricing
 
-> **Public Alpha.** Prices and allowances come from the canonical catalog at
+> **Pre-launch policy.** Public Alpha prices and allowances come from the canonical catalog at
 > [terrascale.tech/pricing.json](https://terrascale.tech/pricing.json); the
 > [pricing page](https://terrascale.tech/pricing) renders the same catalog.
-> All prices are in USD.
+> All prices are in USD. Confirm approved enrollment terms and
+> serving-release availability; this catalog does not qualify a workflow.
 
 ## How usage is metered
 

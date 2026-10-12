@@ -1,52 +1,34 @@
 ---
+title: Replication and durability
 ---
+
 <!-- i18n:fallback:zh-cn -->
 > **翻译待审。** 此页面尚无经人工审校的中文译文，暂显示英文原文。
 
+<div lang="en" dir="ltr">
+
 # Replication and durability
 
-> Pre-launch: these describe required service guarantees. Production fault and
-> recovery qualification remains incomplete.
+Read the durability reported by the serving API literally. The current Documents examples do not establish leaderless operation, global serializability or a multi-region production guarantee.
 
-A database accepts reads and writes in its selected Regions. Placement is
-explicit and immutable: selecting additional Regions changes both residency
-and usage accounting. Copies across Regions converge with causal replication
-and deterministic conflict resolution. This does not provide linearizable
-reads or global uniqueness.
+## Current application contract
 
-## Durability choices
+Document writes return an opaque version, an offset and a durability label. The candidate's `local_durable` label is an accepting-service acknowledgement. It is not proof that every selected region has persisted the write. Do not parse versions or use a database offset as a portable session token.
 
-- **RegionalDurable** acknowledges a write after it is durable on both copies
-  in the accepting Region.
-- **GlobalDurable** requires durability in every selected Region, including
-  the write’s causal dependencies. An unavailable required Region prevents
-  this acknowledgement; the service must not silently weaken durability.
-  At least two selected Regions must be active; a single-Region database
-  cannot request this acknowledgement.
+A version precondition rejects an update when the observed document version is no longer current at the serving API. It does not establish globally unique application values or cross-region linearizability.
 
-A timeout may leave a write’s outcome uncertain. Reuse its idempotency identity
-and follow the SDK’s retry guidance; creating a new operation can duplicate it.
+A timeout or lost response can leave a write committed. This contract does not support `Idempotency-Key`; [safe retry guidance](/zh-cn/guides/errors) describes reconciliation.
 
-## Sessions and conflicts
+## Multi-region product requirements
 
-Session guarantees include read-your-writes and monotonic reads. Keep the
-opaque session token returned by the API and pass it on subsequent requests.
-A Region that cannot satisfy the requested session must return a useful
-restriction or retry response rather than silently return stale data.
+The intended service keeps data within the selected placement and converges authorized replicas without widening residency. Fault recovery, causal sessions, conflict resolution and cross-region durability require independent real-service evidence. The retained isolated CRUD receipt does not qualify them.
 
-Concurrent writes across Regions can conflict. Deterministic resolution makes
-copies converge; retained history provides conflict information within the
-configured retention period. Do not treat a local uniqueness or conditional
-write check as a global constraint. Applications needing global uniqueness
-must use a separately qualified authority for that decision.
+Earlier documents described `RegionalDurable` and `GlobalDurable` requirements. Those names are not selectable write modes in the documented current Documents SDK example. Do not assume a current SDK can request them or provides their historical guarantees.
 
-During an outage, admitted operations may continue only where the requested
-placement, session, authorization, and durability guarantees can be satisfied.
-Recovery does not widen residency or invent a successful acknowledgement.
+## Plan an application
 
-## Usage
+Define the consistency and residency requirements of the application before choosing a serving release. Operations that need global uniqueness or an authoritative single ordering need an explicitly supported contract. Keep read-your-writes and failover assumptions out of application logic until the relevant session behavior is verified.
 
-Multiply each write’s 4 KiB units by selected Regions before consuming the
-organization’s shared database and branch allowances. Logical storage also
-counts selected Regions over time. Reads and replication delivery create no
-separate charge; see [pricing and limits](/zh-cn/pricing/).
+See [SDK availability](/zh-cn/guides/sdks), [live-update compatibility](/zh-cn/concepts/sync) and [pricing](/zh-cn/pricing/) for their separate boundaries.
+
+</div>

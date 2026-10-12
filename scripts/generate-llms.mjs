@@ -1,157 +1,67 @@
-// Generates docs/public/llms.txt (P-8: llms.txt).
-// Usage: node scripts/generate-llms.mjs [--check]
-// --check exits non-zero when the checked-in file differs from generated output.
-import { readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { ZERO_CONFIGURATION_ROUTE } from "../docs/.vitepress/routes.mjs";
+// Generate the public docs map and a fixed allowlist of downloadable examples.
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const outPath = join(root, "docs", "public", "llms.txt");
-const check = process.argv.includes("--check");
-
-const base = "https://docs.terrascale.tech";
-const canonicalRegions = JSON.parse(readFileSync(join(root, "data", "canonical", "regions.json"), "utf8")).regions;
-const regions = canonicalRegions.map((region) => region.id);
-const catalog = JSON.parse(readFileSync(join(root, "data", "canonical", "pricing.json"), "utf8"));
-const unit = catalog.metering.operationUnit;
-const planSummary = catalog.plans
-  .map((plan) => `${plan.name} $${plan.priceMonthlyUsd}/month${plan.available ? "" : " (unavailable during Public Alpha)"}`)
-  .join(", ");
+const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+const check = process.argv.includes('--check');
 const routes = [
-  ["/", "TerraScale docs home: what TerraScale is, quickstart with an unqualified five-minute target."],
-  ["/getting-started", "Legacy Next.js starter: unpublished SDK pin; sign-in and live-update journey unqualified."],
-  ["/getting-started/", "Legacy Next.js live-query guide: @terrascale/sdk 0.3.0 is not published; stub success does not qualify the browser journey."],
-  ["/getting-started/csharp", "C# candidate quickstart: project-scoped TerraBase Documents CRUD through an exact SDK package; isolated real-binary qualification is separate from production JWTs."],
-  [ZERO_CONFIGURATION_ROUTE, "Zero-configuration operating contract: all regions serve, nodes join automatically, the platform delivers production secrets; historical switch removal is tracked separately."],
-  ["/guides/sdks", "SDK compatibility: project-scoped C#, JavaScript and Go candidates; public release, real-runtime and customer-journey gates are distinct."],
-  ["/concepts", "Product concepts and legacy SQL/live-query design; candidate Documents query-v1 is a separate contract."],
-  ["/concepts/replication", "Replication guarantees: causal sessions, conflict limits, RegionalDurable/GlobalDurable."],
-  ["/concepts/sync", "Sync model: shared views, immutable delta log, CDN delivery."],
-  ["/concepts/sql", "SQL: live subset, allow-list, typed builder, auto-indexing."],
-  ["/concepts/pricing-philosophy", "Pricing philosophy: operation units and storage across regions are the two meters."],
-  ["/guides/", "Guides overview."],
-  ["/pricing", "Pricing (generated from the canonical https://terrascale.tech/pricing.json): plans, operation units, storage across regions."],
-  ["/pricing/", "Pricing & limits: plans, quotas, guards, shared organization allowances."],
-  ["/limits", "Limits and unbilled abuse guards, generated from the same source as pricing."],
-  ["/snippets", "Legacy CRUD, SQL and live-subscription fixtures use an unpublished 0.3.0 pin; database-scoped branch, backup, and export routes are published in the retained legacy contract only, not qualified by these fixtures. Candidate APIs require separate evidence."],
-  ["/blog/reads-are-free", "Superseded launch post draft: Reads are free — how."],
-  ["/blog/benchmarks", "Benchmark publication policy: no measured results published."],
-  ["/blog/replication", "Draft: choosing durability across Regions."],
-  ["/blog/database-per-customer", "Launch post draft: a database per customer."],
-  ["/changelog", "Changelog."],
+  ['/', 'Developer documentation'],
+  ['/getting-started/', 'Current quickstarts and service availability'],
+  ['/getting-started/javascript', 'Published JavaScript SDK 0.0.3 installation and CRUD/query example'],
+  ['/getting-started/csharp', 'C# candidate package-only quickstart; public NuGet release unavailable'],
+  ['/guides/sdks', 'Supported runtimes, public package availability and current SDK contracts'],
+  ['/guides/authentication', 'Scoped credentials, server/browser boundaries and authorization availability'],
+  ['/guides/queries', 'JSON filters, projection, opaque pagination and version preconditions'],
+  ['/guides/errors', 'Typed errors, SDK retry behavior and uncertain mutation reconciliation'],
+  ['/guides/dashboard', 'Customer dashboard and application database workflow'],
+  ['/guides/zero-configuration', 'Public always-on operating contract and secret-store delivery'],
+  ['/concepts/replication', 'Current write results and separate multi-region qualification boundary'],
+  ['/concepts/sync', 'Shape reads and legacy live-update compatibility'],
+  ['/concepts/sql', 'Separate SQL entrypoint and contract compatibility'],
+  ['/pricing/', 'Pricing overview'], ['/pricing', 'Generated canonical plan catalog'],
+  ['/limits', 'Documents API limits and proposed plan safety policies'],
+  ['/snippets', 'Current examples and legacy fixture boundaries'],
+  ['/changelog', 'Documentation changes, not service release announcements'],
 ];
+const text = `# TerraScale documentation
 
-const txt = `# TerraScale docs — llms.txt (P-8)
+> TerraBase stores project-scoped JSON documents. The JavaScript SDK
+> @terrascale/sdk@0.0.3 is published. C# and Go candidate availability and
+> hosted authorization must be verified independently. A package release
+> does not establish public self-service launch or multi-region guarantees.
 
-> TerraScale is a multi-region document database-as-a-service. The current
-> C# TerraBase candidate exposes project-scoped JSON Documents APIs, typed
-> filter queries and transactions. Retained SQL, reactive, branching and
-> tenant guides describe separate legacy contracts and product targets;
-> they are not evidence of candidate runtime or launch qualification.
-> Usage is metered in operation units (each started 4 KiB read
-> or written; writes count once per selected region, reads only in the
-> serving region) and storage across regions. Plans use hard allowances with
-> no paid overages during Public Alpha.
-> SQL-only querying (D-78) belongs to the retained legacy design, not candidate
-> Documents query-v1. A write counts once per selected region regardless of
-> views/subscribers (D-22).
+## Documentation
 
-Base URL: ${base}
+${routes.map(([route, title]) => `- [${title}](https://docs.terrascale.tech${route})`).join('\n')}
 
-## Docs map
+## Current contract
 
-${routes.map(([r, desc]) => `- ${desc}: ${base}${r}`).join("\n")}
-
-## Pricing summary (canonical source: https://terrascale.tech/pricing.json; full tables in /pricing and /pricing/)
-
-- Plans: ${planSummary}.
-- ${unit.definition} ${unit.rules.join(" ")}
-- ${catalog.metering.storage.name}: ${catalog.metering.storage.definition}
-- ${catalog.metering.allowances.definition}
-
-## Legacy snippet harness
-
-- Fixtures retain @terrascale/sdk 0.3.0, which is not published on npm.
-  Stub success does not establish candidate producer compatibility.
-- Snippet sources: docs/snippets/*.ts. Runnable snippets export \`run(sandbox)\`.
-- Local mode (the default): \`npm test\` runs the deterministic stub harness.
-- Remote qualification (explicit, fail-closed): set TERRASCALE_SANDBOX_URL,
-  TERRASCALE_SANDBOX_API_KEY, and TERRASCALE_SANDBOX_DATABASE_ID, then run
-  \`npm run test:remote\`. The local harness does not qualify the remote
-  contract.
-
-## API entry points
-
-Base domain terrascale.tech. Regions at launch: ${canonicalRegions.map((region) => `${region.id.toUpperCase()} (${region.name})`).join(", ")}.
-
-- Current SDK candidates require an explicit HTTPS endpoint or caller-supplied
-  resolver. No catalog or proxy fallback is promised. A configured endpoint proves only its own lane.
-- API router: https://api.terrascale.tech. Configure the service endpoint explicitly;
-  the SDK candidates do not select it implicitly.
-- Regional API origins: ${regions.map((region) => `https://${region}.api.terrascale.tech`).join(",\n  ")}.
-  Use configured or verified resolved endpoints, not a hardcoded region default.
-- Candidate documents: GET/PUT/PATCH/DELETE
-  /v1/projects/{project}/databases/{database}/collections/{collection}/documents/{id};
-  POST to the collection's /documents route creates a document.
-- Candidate queries: POST
-  /v1/projects/{project}/databases/{database}/collections/{collection}/query
-  uses filter, sort, project, limit, cursor and count; cursors are opaque.
-- Candidate transactions: POST /v1/projects/{project}/databases/{database}/transactions.
-  Versions are opaque ETags. C# requests go once; mutation deduplication is not
-  promised and Idempotency-Key is rejected.
-
-## Retained legacy API references (not candidate qualification)
-
-- Reactive HTTP (live queries; CDN-backed long-polling, capability header):
-  https://sync.api.terrascale.tech
-- SQL (read-only; JSON or MessagePack):
-  POST /api/v1/databases/{id}/sql
-- Reactive views (create/attach; returns view id, snapshot chunk URLs, log
-  URL, checkpoint, view capability):
-  POST /api/v1/reactive/views
-- Reactive log (shared cache key; offset = revision):
-  GET /api/v1/reactive/views/{view}/{generation}/log?offset={revision}
-- Export (lossless bundle or JSONL):
-  POST /api/v1/databases/{id}/exports
-- Public status and metrics pages are deferred.
-
-## SDKs
-
-C# candidate: TerraScale.DotNet.TerraBase.TerraBaseDocumentsClient with
-Database(projectId, databaseName), document CRUD, QueryAsync and TransactAsync.
-JavaScript candidate: @terrascale/sdk createTerraBaseV1Client with explicit
-baseUrl or endpointResolver. Go candidate: terrascale.tech/sdk/v1 with an
-explicit Config.BaseURL or Config.Resolver. Retired NativeClient and UUID/shard
-admission are legacy and do not describe this project-scoped contract.
-
-Current NuGet/npm candidates are not publicly released. As checked October 7,
-2026, the latest public @terrascale/sdk version on npm is 0.0.2; it does not qualify the
-candidate or the legacy 0.3.0 pin. An exact locally packaged C# candidate passed
-real C# binary CRUD/query, stale-version, credential-denial and cleanup checks
-through the SDK Testing helper. Its source-bound receipt is checked in at
-examples/terrabase-dotnet/qualification.json.
-Compilation, isolated compatibility, public package availability and deployed
-customer qualification are separate gates. Follow /getting-started/csharp for
-the current qualification evidence; cross-SDK parity is not established.
-
-The candidate C# Documents client accepts historical tb_ keys in isolated
-compatibility tests. The product design accepts ts-auth JWTs; production JWT
-validation, deployed sign-in and authorization remain unqualified. A historical
-key receipt does not pass that gate. Auth owns users, organizations and projects;
-all application data belongs in TerraBase. Do not duplicate identity/management
-models. Dashboard sign-in stays on native pages. Other SDK/runtime and
-connected customer journeys need independent qualification.
+- Documents use JSON, opaque versions and conditional writes.
+- Queries use JSON filters and opaque continuation cursors, not legacy SQL.
+- JavaScript and C# send once. Mutation deduplication and Idempotency-Key
+  are unsupported. Reconcile a lost response before replaying a write.
+- Configure an authorized HTTPS endpoint or caller-supplied resolver.
+- Do not infer production JWT authorization, leaderless guarantees,
+  automatic endpoint discovery or hosted readiness from a local test.
 `;
-
-if (check) {
-  const cur = readFileSync(outPath, "utf8");
-  if (cur !== txt) {
-    console.error("FAIL: docs/public/llms.txt is stale; run node scripts/generate-llms.mjs");
-    process.exit(1);
-  }
-  console.log("llms.txt is up to date.");
-} else {
-  writeFileSync(outPath, txt);
-  console.log("wrote docs/public/llms.txt");
+const outputs = [['docs/public/llms.txt', Buffer.from(text)]];
+for (const [folder, files] of [
+  ['terrabase-js', ['quickstart.mjs', 'package.json']],
+  ['terrabase-dotnet', ['Program.cs', 'TerraBaseStarter.csproj']],
+]) {
+  for (const file of files) outputs.push([
+    `docs/public/examples/${folder}/${file}`,
+    readFileSync(join(root, 'examples', folder, file)),
+  ]);
 }
+for (const [name, content] of outputs) {
+  const path = join(root, name);
+  if (check) {
+    if (!readFileSync(path).equals(content)) throw new Error(`Generated public asset is stale: ${name}`);
+  } else {
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, content);
+  }
+}
+console.log(`Public map and ${outputs.length - 1} example assets ${check ? 'verified' : 'generated'}.`);

@@ -1,7 +1,7 @@
-// Stub sandbox branch (D-56 harness, CI mode).
+// Stub sandbox branch (legacy reference harness, CI mode).
 // In-memory stand-in for a real sandbox branch (a cloud dev branch pre-filled
 // with the reader's key). The remote client (same interface, fetch-based)
-// replaces this once the contract is pinned (P-1) and `make stack` exists
+// replaces this once the contract is pinned (legacy reference) and `make stack` exists
 // (E-15); until then every snippet runs here with no credentials.
 export function createStubSandbox() {
   const databaseId = "stub-database";
@@ -54,7 +54,7 @@ export function createStubSandbox() {
       return existed;
     },
     // Minimal SQL-ish surface for snippets: filter over extracted fields.
-    // Real SQL runs over POST /api/v1/databases/{id}/sql (D-54/D-78) once P-1 lands.
+    // Real SQL runs over POST /api/v1/databases/{id}/sql (legacy reference/legacy reference) once legacy reference lands.
     async query({ databaseId: requestedDatabaseId, collection, query }) {
       if (requestedDatabaseId !== databaseId) throw new Error("stub databaseId does not match");
       return [...col(collection).values()].filter((doc) => doc[query.field] === query.value);

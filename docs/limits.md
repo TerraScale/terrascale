@@ -1,6 +1,21 @@
 <!-- GENERATED from data/canonical/pricing.json (https://terrascale.tech/pricing.json) and data/policies.json by scripts/generate-pricing.mjs — do not edit. -->
 # Limits
 
+## Documents API
+
+The current project-scoped contract has a 4 MiB request-body limit, a query
+page limit of 1–1000 items (default 50), at most 4 sort keys and 64 projection
+paths. A query page also stops at 8 MiB of document JSON or its scan budget,
+so an empty page can still have a continuation cursor. Follow cursors until
+exhaustion; see [queries and pagination](/guides/queries).
+
+## Plan policies (pre-launch)
+
+The figures below come from the public pricing catalog and documentation
+policy. They do not establish deployed enforcement, live-update availability
+or qualified retention, recovery and deletion behavior. Confirm the serving
+release before depending on them.
+
 PITR retention (days): Hobby 1 / Starter 7 / Pro 30 / Enterprise 35.
 
 Databases per org: Hobby 1 / Starter 5 / Pro 25 / Enterprise Custom.

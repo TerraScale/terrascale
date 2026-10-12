@@ -1,49 +1,56 @@
-# TerraScale docs (`ts-docs`)
+# TerraScale public documentation
 
-Product docs site source: runnable snippets, `llms.txt`, launch-post drafts,
-and pricing/limits pages generated from the checked-in pricing data.
+VitePress site source for SDK installation, application examples, customer
+workflows and public service contracts. Hosting and publication credentials
+are managed outside this source tree. A draft PR is not publication approval.
 
-This repo holds docs source only.
-
-The [C# TerraBase starter](examples/terrabase-dotnet/README.md) exercises
-project-scoped CRUD, queries and version preconditions through the official
-SDK. `npm run qualify:dotnet -- <artifact arguments>` runs its package-only
-real-binary lane; the starter README lists exact inputs. A sanitized
-[qualification receipt](examples/terrabase-dotnet/qualification.json) identifies
-the locally packaged SDK and binary tested. This is isolated compatibility
-evidence, separate from public releases, production JWTs and automatic endpoint resolution.
-
-## Develop
+## Develop and verify
 
 ```bash
-npm ci
-npm run dev
+nice -n 19 npm ci
+nice -n 19 npm run dev -- --host 0.0.0.0 --port 5176
+nice -n 19 npm run build
+nice -n 19 npm test
 ```
 
-## Verify
+Local builds, tests and watchers run at low CPU priority. CI runs at its normal
+priority. The build checks canonical public catalogs, generates an allowlist
+of downloadable examples, builds the site and audits every bundled text file
+for private material and broken local links/assets/anchors.
 
-```bash
-npm ci && npm run build
-```
+`npm test` verifies generated files, locale freshness, current JavaScript
+example behavior, privacy redaction and the retained legacy fixture suite.
+Synthetic transport checks are local evidence, not hosted-service qualification.
+The existing C# consumer's receipt is checked against its unchanged source hashes.
 
-`npm test` runs the deterministic local stub harness. This checks the build and
-runnable snippet behavior without cloud credentials.
+## Edit public content
 
-The explicit remote qualification lane runs against a real sandbox branch and
-fails closed unless all sandbox credentials are supplied:
+English pages are canonical. Run `nice -n 19 npm run i18n:sync` after editing.
+All current locale copies are visibly bannered English fallbacks; a reviewed
+translation removes its fallback marker. Never mark untranslated content as
+reviewed. Keep legal routes noindex until approved documents are available.
 
-```bash
-TERRASCALE_SANDBOX_URL=https://<region>.api.terrascale.tech \
-TERRASCALE_SANDBOX_API_KEY=ts_... \
-TERRASCALE_SANDBOX_DATABASE_ID=db_... \
-npm run test:remote
-```
+Pricing derives from the published catalog and documentation policy; use
+`nice -n 19 npm run canonical:sync` to refresh it. Do not invent SDK releases,
+API routes, endpoint discovery or production guarantees from local evidence.
 
-For the deterministic local harness, use the explicit stub mode:
+## Shared design
 
-```bash
-npm run test:stub
-```
+The [design reference](docs/.vitepress/design-reference.md) records the
+committed dashboard revision, imported asset files and SDK evidence.
+Update that reference and the token/asset snapshot after a reviewed dashboard
+merge. The docs adapt VitePress's navigation, search, keyboard support and
+mobile drawer using the dashboard's colors, fonts, spacing and flat sections.
 
-The stub harness is local smoke evidence only; it never substitutes for the
-remote qualification lane.
+## Examples and qualification
+
+The [JavaScript example](examples/terrabase-js/README.md) pins published npm
+version 0.0.3. The [C# example](examples/terrabase-dotnet/README.md) consumes an
+exact candidate package. Their downloadable public assets are generated from
+an explicit file list; package caches, tests and credentials are not copied.
+
+A real run requires an authorized isolated allocation and synthetic data.
+Retained legacy `test:remote` and candidate `qualify:dotnet` commands require
+their own verified inputs. Never replace missing service access with a fake
+qualification result. Do not merge or publish until privacy checks pass and
+publication approval is recorded.

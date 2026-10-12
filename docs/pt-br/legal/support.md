@@ -1,46 +1,21 @@
 ---
-title: Support policy
-description: Actual support availability and self-service diagnostics.
+title: Support availability
 head: [['meta', { name: 'robots', content: 'noindex' }]]
 ---
 
 <!-- i18n:fallback:pt-br -->
 > **Tradução pendente.** Esta página ainda não passou por revisão humana em português e mostra o conteúdo original em inglês.
 
-# Support policy
+<div lang="en" dir="ltr">
+
+# Support availability
 
 ::: warning Draft — not yet in effect
-This document is an unpublished draft. It is not yet in effect and does not
-govern your use of TerraScale.
+This page is not an effective legal contract or service commitment.
 :::
 
-::: danger
-DRAFT — owner legal review and confirmation of actual service availability
-are required before publication. No staffed response commitment is approved.
-:::
+A staffed support channel, response deadline or service-level agreement is not established by these docs. Confirm support availability through your supported access process before enrollment. Keep diagnostics free of credentials and customer data.
 
-## Availability
+See [authentication](/pt-br/guides/authentication) and [service availability](/pt-br/getting-started/).
 
-Customer support email intake, a support form, and diagnostic attachments are
-deferred until after launch. Do not send account information to an unconfirmed
-address. Community channels may be listed once their operation is confirmed.
-No response-time guarantee, staffed incident coverage, or Enterprise shared channel
-is promised at launch. Enterprise support/compliance benefits require explicit
-confirmation before enrollment; SOC 2 and contractual SLA capabilities are
-post-launch work.
-
-Public status and metrics pages are also deferred. The launch availability
-objective is a 99.9% monthly SLO per Region, measured by external probes;
-this is not a contractual SLA or promise of a public incident timeline.
-
-## Self-service
-
-Use the dashboard, CLI, and MCP health and diagnostic workflows as their
-public contracts become available. Diagnostics must exclude credentials,
-customer documents, and other tenants’ information. See the [docs](/pt-br/) for
-setup and [pricing and billing policies](/pt-br/pricing/) for restrictions and the
-steps to restore write access.
-
-Mandatory recovery, billing, and deletion notices are delivered through the
-dashboard and email, separately from customer support intake. Relevant
-deadlines remain visible in the dashboard if email delivery fails.
+</div>

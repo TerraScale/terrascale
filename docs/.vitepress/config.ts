@@ -5,17 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { LOCALES } from './supportedLocales.mjs'
 import { ZERO_CONFIGURATION_ROUTE } from './routes.mjs'
 
-// TerraScale product docs — docs.terrascale.tech.
-// Static build (npm run build), default theme, dark default. No design-system
-// work here; product UI styling lives in ts-dashboard (D-80).
-//
-// i18n: 10 first-class locales (en root + 9 prefixed). English is the source
-// of truth; `node scripts/i18n-sync.mjs` guarantees every English page has a
-// counterpart in every locale (reviewed translation or bannered English
-// fallback). Sidebar labels are read from each page's own frontmatter title
-// so they always match the page language; section headers and nav chrome
-// come from STRINGS below.
-
+// Public docs reuse the committed dashboard tokens; see design-reference.md.
 const docsDir = join(dirname(fileURLToPath(import.meta.url)), '..')
 
 function titleOf(localePrefix: string, link: string): string {
@@ -28,6 +18,8 @@ function titleOf(localePrefix: string, link: string): string {
         const m = fm[1].match(/^title:\s*(.+?)\s*$/m)
         if (m) return m[1].trim()
       }
+      const heading = text.match(/^# (.+)$/m)
+      if (heading) return heading[1]
     } catch {
       /* missing file: fall through */
     }
@@ -35,49 +27,13 @@ function titleOf(localePrefix: string, link: string): string {
   return rel.split('/').pop() || link
 }
 
-// Shared page trees (English links). Per locale they are prefixed and
-// relabeled from each page's frontmatter. The legal pages are unpublished
-// drafts (noindex, Draft banner) and stay out of the nav and sidebar until
-// the legal entity details exist.
-const TREES: Record<string, { groups: { header: string; items: string[] }[] }> = {
-  '/getting-started/': { groups: [{ header: 'quickstart', items: ['/getting-started/', '/getting-started/csharp'] }] },
-  '/concepts/': {
-    groups: [
-      {
-        header: 'concepts',
-        items: [
-          '/concepts/replication',
-          '/concepts/sync',
-          '/concepts/sql',
-          '/concepts/pricing-philosophy',
-        ],
-      },
-    ],
-  },
-  '/guides/': { groups: [{ header: 'guides', items: ['/guides/', '/guides/sdks', ZERO_CONFIGURATION_ROUTE] }] },
-  '/blog/': {
-    groups: [
-      {
-        header: 'drafts',
-        items: [
-          '/blog/reads-are-free',
-          '/blog/benchmarks',
-          '/blog/replication',
-          '/blog/database-per-customer',
-        ],
-      },
-    ],
-  },
-  '/pricing': {
-    groups: [{ header: 'pricingGen', items: ['/pricing'] }],
-  },
-  '/pricing/': {
-    groups: [{ header: 'pricingLimits', items: ['/pricing/'] }],
-  },
-  '/limits': { groups: [{ header: 'limitsGen', items: ['/limits'] }] },
-  '/snippets': { groups: [{ header: 'snippets', items: ['/snippets'] }] },
-  '/changelog': { groups: [{ header: 'changelog', items: ['/changelog'] }] },
-}
+const GROUPS = [
+  { header: 'quickstart', items: ['/getting-started/', '/getting-started/javascript', '/getting-started/csharp'] },
+  { header: 'sdks', items: ['/guides/sdks', '/guides/authentication', '/guides/queries', '/guides/errors'] },
+  { header: 'guides', items: ['/guides/dashboard', ZERO_CONFIGURATION_ROUTE] },
+  { header: 'concepts', items: ['/concepts/replication', '/concepts/sync', '/concepts/sql'] },
+  { header: 'pricingLimits', items: ['/pricing/', '/limits', '/changelog'] },
+]
 
 interface NavLeaf {
   text: string
@@ -101,31 +57,10 @@ interface LocaleStrings {
   footer: string
 }
 
-// English nav keeps the existing dropdown structure.
 const EN_NAV = [
-  { text: 'Getting started', link: '/getting-started/' },
-  {
-    text: 'Concepts',
-    items: [
-      { text: 'Replication model', link: '/concepts/replication' },
-      { text: 'Sync model', link: '/concepts/sync' },
-      { text: 'SQL', link: '/concepts/sql' },
-      { text: 'Pricing philosophy', link: '/concepts/pricing-philosophy' },
-    ],
-  },
-  { text: 'Guides', link: '/guides/' },
+  { text: 'Documentation', link: '/getting-started/' },
+  { text: 'SDKs', link: '/guides/sdks' },
   { text: 'Pricing & limits', link: '/pricing/' },
-  { text: 'Snippets', link: '/snippets' },
-  {
-    text: 'Blog',
-    items: [
-      { text: 'Reads are free: how (draft)', link: '/blog/reads-are-free' },
-      { text: 'Benchmark publication policy', link: '/blog/benchmarks' },
-      { text: 'Choosing durability (draft)', link: '/blog/replication' },
-      { text: 'A database per customer (draft)', link: '/blog/database-per-customer' },
-    ],
-  },
-  { text: 'Changelog', link: '/changelog' },
 ]
 
 const EN_STRINGS: LocaleStrings = {
@@ -142,7 +77,7 @@ const EN_STRINGS: LocaleStrings = {
     about: 'About',
     drafts: 'Launch posts (drafts)',
     pricingGen: 'Pricing (draft, generated)',
-    pricingLimits: 'Pricing & limits',
+    pricingLimits: 'Resources',
     limitsGen: 'Limits (generated)',
     snippets: 'Snippets',
     support: 'Support',
@@ -551,25 +486,15 @@ const STRINGS: Record<string, LocaleStrings> = {
   },
 }
 
-function prefixItems(items: string[], prefix: string): string[] {
-  return items.map((l) => (l.startsWith('http') ? l : `${prefix}${l}`))
-}
-
 function sidebarFor(code: string) {
-  const s = STRINGS[code]
   const prefix = code === 'en' ? '' : `/${code}`
-  const out: Record<string, { text: string; items: { text: string; link: string }[] }[]> = {}
-  for (const [match, tree] of Object.entries(TREES)) {
-    const key = match === '/' ? match : `${prefix}${match}`
-    out[key] = tree.groups.map((g) => ({
-      text: s.headers[g.header] ?? g.header,
-      items: prefixItems(g.items, prefix).map((link) => ({
-        text: titleOf(code === 'en' ? '' : code, link),
-        link,
-      })),
-    }))
-  }
-  return out
+  return GROUPS.map((group) => ({
+    text: STRINGS[code].headers[group.header] ?? group.header,
+    items: group.items.map((link) => ({
+      text: titleOf(code === 'en' ? '' : code, link),
+      link: `${prefix}${link}`,
+    })),
+  }))
 }
 
 function navFor(code: string) {
@@ -615,17 +540,15 @@ for (const l of LOCALES) {
 export default defineConfig({
   title: 'TerraScale',
   description:
-    'Multi-region document database: leaderless CRDT replication, CDN-backed live queries, SQL you already know. Metered in operation units and storage across selected regions, with hard plan allowances.',
-  appearance: 'dark',
+    'TerraScale developer documentation: TerraBase SDK installation, document CRUD, queries, authentication and service limits.',
+  appearance: 'force-dark',
   lastUpdated: true,
   srcDir: '.',
-  head: [['link', { rel: 'icon', href: '/favicon.svg', type: 'image/svg+xml' }]],
+  head: [['link', { rel: 'icon', href: '/favicon.svg', type: 'image/svg+xml' }], ['link', { rel: 'preload', href: '/fonts/oxanium-latin-wght-normal.woff2', as: 'font', type: 'font/woff2', crossorigin: 'anonymous' }]],
   locales: localesConfig,
   themeConfig: {
-    siteTitle: 'TerraScale',
-    socialLinks: [
-      { icon: 'github', link: 'https://git.terrascale.tech/TerraScale' },
-      { icon: 'discord', link: 'https://discord.gg/terrascale' },
-    ],
+    siteTitle: 'Docs',
+    logo: { src: '/brand/logo-terrascale-white.svg', alt: 'TerraScale' },
+    search: { provider: 'local' },
   },
 })
