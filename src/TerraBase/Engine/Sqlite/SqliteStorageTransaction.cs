@@ -66,7 +66,7 @@ internal sealed partial class SqliteStorageTransaction(
 
     // Group commit (SqliteDatabaseStore.WriteAsync): each queued write runs inside a savepoint, and this snapshot of the
     // in-memory capture and limits rolls back with it.
-    private (int Changes, long ChangeBytes, int Writes, long WrittenBytes, long? Offset, bool CollectionsChanged)?
+    private (int Changes, long ChangeBytes, int Captured, int Writes, long WrittenBytes, long? Offset, bool CollectionsChanged)?
         _savepoint;
 
     /// <summary>Whether a per-commit limit refused a write since the last savepoint: alone in a transaction, it could fit.</summary>
@@ -1045,7 +1045,7 @@ internal sealed partial class SqliteStorageTransaction(
     internal void Savepoint()
     {
         ThrowIfReadOnly();
-        _savepoint = (_changes?.Count ?? 0, _changeBytes, _writes, _writtenBytes, _offset, _collectionsChanged);
+        _savepoint = (_changes?.Count ?? 0, _changeBytes, _captured, _writes, _writtenBytes, _offset, _collectionsChanged);
         _savepointPending = true;
         LimitsReached = false;
     }
@@ -1088,12 +1088,12 @@ internal sealed partial class SqliteStorageTransaction(
     }
 
     private void Restore(
-        (int Changes, long ChangeBytes, int Writes, long WrittenBytes, long? Offset, bool CollectionsChanged) saved)
+        (int Changes, long ChangeBytes, int Captured, int Writes, long WrittenBytes, long? Offset, bool CollectionsChanged) saved)
     {
         _changes?.RemoveRange(saved.Changes, _changes.Count - saved.Changes);
         _pending.Clear();
-        (_changeBytes, _writes, _writtenBytes, _offset, _collectionsChanged) =
-            (saved.ChangeBytes, saved.Writes, saved.WrittenBytes, saved.Offset, saved.CollectionsChanged);
+        (_changeBytes, _captured, _writes, _writtenBytes, _offset, _collectionsChanged) =
+            (saved.ChangeBytes, saved.Captured, saved.Writes, saved.WrittenBytes, saved.Offset, saved.CollectionsChanged);
         _savepoint = null;
         _faulted = false;
     }

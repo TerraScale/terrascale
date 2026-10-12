@@ -18,9 +18,8 @@ public static class ReplicationExtensions
         builder.Services.AddSingleton<ICatalogReadiness>(provider => provider.GetRequiredService<TerraBaseOptions>().CatalogFollower
             ? provider.GetRequiredService<CatalogFollower>()
             : new CatalogPrimaryReadiness());
-        // Peer streams of client databases (docs/terrabase/multi-region-replication.md sections 8 and 9). Their source is the
-        // CDC tailer (R3); until it lands nothing ships, and the status says so.
-        builder.Services.AddSingleton<IChangeGroupSource, NoChangeGroupSource>();
+        // Peer streams of client databases (docs/terrabase/multi-region-replication.md sections 8 and 9). Their source, the CDC
+        // tailer, comes with the engine (AddTerraBaseEngine).
         builder.Services.AddSingleton<IChangeGroupSink, StorageChangeGroupSink>();
         builder.Services.AddSingleton<PeerStreamReceiver>();
         builder.Services.AddSingleton<PeerStreams>();

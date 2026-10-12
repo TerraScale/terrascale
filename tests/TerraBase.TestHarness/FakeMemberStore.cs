@@ -41,6 +41,12 @@ internal sealed class FakeMemberStore : IMemberDirectory
         }
     }
 
+    /// <summary>
+    /// Rewrites each other member as the member named in the first argument sees it: an e2e harness gives every machine
+    /// its own route to each peer (a proxy it can cut), so the machines' views of the directory differ.
+    /// </summary>
+    public Func<string, ClusterMember, ClusterMember>? Map { get; set; }
+
     /// <summary>The directory as the member named <paramref name="node"/> reads it.</summary>
     public IMemberDirectory For(string node) => new Reader(this, node);
 
@@ -62,9 +68,18 @@ internal sealed class FakeMemberStore : IMemberDirectory
                 partitioned = store._partitioned.Contains(node);
             }
 
-            return partitioned
-                ? Task.FromException<ImmutableArray<ClusterMember>>(new IOException("the member is cut off from the DNS"))
-                : store.ListAsync(cancellationToken);
+            if (partitioned)
+            {
+                return Task.FromException<ImmutableArray<ClusterMember>>(new IOException("the member is cut off from the DNS"));
+            }
+
+            ImmutableArray<ClusterMember> members;
+            lock (store._gate)
+            {
+                members = [.. store._members.Values];
+            }
+
+            return Task.FromResult(store.Map is { } map ? [.. members.Select(member => member.Name == node ? member : map(node, member))] : members);
         }
     }
 }

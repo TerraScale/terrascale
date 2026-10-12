@@ -18,7 +18,11 @@ namespace TerraBase.Engine.Sqlite;
 internal sealed partial class SqliteStorageTransaction
 {
     // The documents this request changed, with the version their operations share; their state rows are not written yet.
-    private readonly Dictionary<(string Collection, string Id), (DocumentState State, EntryVersion At)> _pending = [];
+    private readonly Dictionary<(string Collection, string Id), (DocumentState State, EntryVersion At, int BodyBytes)> _pending = [];
+
+    // The state rows of this machine's own writes this transaction wrote: the tailer ships them as one change group, so they
+    // stay within a group's bounds (the bytes are counted in _changeBytes, which only the system database uses otherwise).
+    private int _captured;
 
     private LocalReplica Member => store.Member ?? throw new InvalidOperationException("a client database writes with this member's replica id");
 
@@ -53,7 +57,7 @@ internal sealed partial class SqliteStorageTransaction
     {
         if (_pending.TryGetValue((collection, id), out var pending))
         {
-            return pending;
+            return (pending.State, pending.At);
         }
 
         var state = ReadState(collection, id);
@@ -96,7 +100,7 @@ internal sealed partial class SqliteStorageTransaction
     // the request. Returns the version of the write.
     private long Store(string collection, string id, DocumentState state, EntryVersion at, string? body)
     {
-        _pending[(collection, id)] = (state, at);
+        _pending[(collection, id)] = (state, at, body is null ? 0 : StrictUtf8.GetByteCount(body));
         PutRow(collection, id, body);
         return Version(at.Stamp);
     }
@@ -148,7 +152,7 @@ internal sealed partial class SqliteStorageTransaction
 
     // Worker-only: the _tb_state row of a document, stamped with the operation `at` that last changed it and that
     // operation's node. A plain UPDATE, then an INSERT when no row exists: the change feed reads after-images only.
-    private void WriteState(string collection, string id, DocumentState state, EntryVersion at)
+    private void WriteState(string collection, string id, DocumentState state, EntryVersion at, byte[]? stored = null)
     {
         var digest = DocumentStateEncoding.Digest(state);
         var update = BodyCommand(SqliteStatements.UpdateState, collection, id);
@@ -163,13 +167,30 @@ internal sealed partial class SqliteStorageTransaction
 
         void Bind(SqliteCommand command)
         {
-            command.Parameters.AddWithValue("$state", Base64Url.EncodeToString(DocumentStateEncoding.EncodeStored(state)));
+            command.Parameters.AddWithValue("$state", Base64Url.EncodeToString(stored ?? DocumentStateEncoding.EncodeStored(state)));
             command.Parameters.AddWithValue("$stamp", Version(at.Stamp));
             command.Parameters.AddWithValue("$origin", unchecked((long)at.Node.Value));
             command.Parameters.AddWithValue("$live", state.Exists ? 1 : 0);
             command.Parameters.AddWithValue("$h1", unchecked((long)(ulong)(digest >> 64)));
             command.Parameters.AddWithValue("$h2", unchecked((long)(ulong)digest));
         }
+    }
+
+    // Worker-only: admits one local state row into this transaction's change group: at most 1024 of them, and 2 MiB of
+    // collections, ids, stored states and documents, which bounds the group's encoded deltas. A transaction holding
+    // others is refused with LimitsReached, so group commit moves the write to the next batch.
+    private void Capture(string collection, string id, int storedBytes, int bodyBytes)
+    {
+        var bytes = StrictUtf8.GetByteCount(collection) + StrictUtf8.GetByteCount(id) + (long)storedBytes + bodyBytes;
+        if (_captured == IStorageTransaction.MaxChangeGroupChanges || (_captured > 0 && _changeBytes + bytes > IStorageTransaction.MaxChangeGroupBytes))
+        {
+            LimitsReached = true;
+            throw new ChangeGroupCapacityException(
+                $"a transaction changes at most {IStorageTransaction.MaxChangeGroupChanges} documents and {IStorageTransaction.MaxChangeGroupBytes} bytes of documents and their states");
+        }
+
+        _captured++;
+        _changeBytes += bytes;
     }
 
     // Worker-only.
@@ -180,9 +201,11 @@ internal sealed partial class SqliteStorageTransaction
             return;
         }
 
-        foreach (var ((collection, id), (state, at)) in _pending)
+        foreach (var ((collection, id), (state, at, bodyBytes)) in _pending)
         {
-            WriteState(collection, id, state, at);
+            var stored = DocumentStateEncoding.EncodeStored(state);
+            Capture(collection, id, stored.Length, bodyBytes);
+            WriteState(collection, id, state, at, stored);
         }
 
         _pending.Clear();

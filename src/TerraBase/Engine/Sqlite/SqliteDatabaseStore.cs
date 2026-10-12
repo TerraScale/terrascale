@@ -485,6 +485,18 @@ internal sealed partial class SqliteDatabaseStore(
     /// <summary>The database file.</summary>
     internal string FilePath => path;
 
+    private long _backupAnchor = -1;
+
+    /// <summary>
+    /// The change id continuous backup's tap read up to, or null while no tap reads this file: CDC retention keeps the rows
+    /// from it on (<see cref="SqliteStorageTransaction.RecordAckedAsync"/>).
+    /// </summary>
+    internal long? BackupAnchor
+    {
+        get => Volatile.Read(ref _backupAnchor) is >= 0 and var anchor ? anchor : null;
+        set => Volatile.Write(ref _backupAnchor, value ?? -1);
+    }
+
     /// <summary>
     /// Runs <paramref name="call"/> while no write transaction of this process is open on this database; writers queue
     /// meanwhile. Continuous backup reads the log and checkpoints it under this (TS-633).

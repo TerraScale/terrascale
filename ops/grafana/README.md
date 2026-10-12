@@ -99,8 +99,8 @@ list in `src/TerraBase/Hosting/Telemetry.cs` (`peer_region` has one value per re
 
 | Slice | Instrument | Kind, unit | Labels | Meaning |
 | --- | --- | --- | --- | --- |
-| R3 | `terrabase.replication.tail_lag` | gauge, `s` | — | Age of the oldest commit not yet in a change group |
-| R3 | `terrabase.replication.cdc_backlog` | gauge, no unit | — | CDC rows kept because some peer has not acked them |
+| R3 | `terrabase.replication.tail_lag` | gauge, `s` | — | Age of the oldest local commit that a peer heard from in the last 24 h has not acknowledged, max over databases (looked at after acks, at most once a second per database). R3 builds groups from `turso_cdc` on demand, so this is the age of what the slowest live peer still lacks |
+| R3 | `terrabase.replication.cdc_backlog` | gauge, no unit | — | CDC rows kept because some peer has not acked them, summed over databases as of each one's last ack |
 | R4a | `terrabase.replication.send_lag` | gauge, `s` | `peer_region` | Age of the oldest change group not yet sent to the peer |
 | R4a | `terrabase.replication.ack_lag` | gauge, `s` | `peer_region` | Age of the oldest change group sent but not acked |
 | R4a | `terrabase.replication.apply_delay` | histogram, `s`, buckets 0.05 … 300 | `peer_region` (origin) | Apply time minus the origin stamp's physical time: convergence lag |

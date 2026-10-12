@@ -134,7 +134,11 @@ internal sealed class TursoChangeTap : IWalTap
         }).ConfigureAwait(false);
     }
 
-    public async ValueTask DisposeAsync() => await _io.RunAsync(_reader.Dispose, CancellationToken.None).ConfigureAwait(false);
+    public async ValueTask DisposeAsync()
+    {
+        _store.BackupAnchor = null;
+        await _io.RunAsync(_reader.Dispose, CancellationToken.None).ConfigureAwait(false);
+    }
 
     private async Task<T> AdmittedAsync<T>(Func<Task<T>> call)
     {
@@ -185,6 +189,7 @@ internal sealed class TursoChangeTap : IWalTap
         }
 
         (_anchor, _schema) = (end, schema);
+        _store.BackupAnchor = end;
         return new(bytes, true);
     }
 
@@ -265,6 +270,7 @@ internal sealed class TursoChangeTap : IWalTap
         {
             newest.CommandText = "SELECT coalesce(max(change_id), 0) FROM turso_cdc;";
             _anchor = (long)newest.ExecuteScalar()!;
+            _store.BackupAnchor = _anchor;
         }
 
         var schema = new Dictionary<long, (string Type, string Name)>();
@@ -280,13 +286,23 @@ internal sealed class TursoChangeTap : IWalTap
         return true;
     }
 
-    // Deletes the rows before the anchor; Turso does not capture changes to turso_cdc itself.
-    // R3: once the change tailer and peer streams also read turso_cdc, delete below the smallest of their positions.
+    // Deletes the rows before the anchor; a client database's peer streams also hold the rows they have not acknowledged
+    // (SqliteStorageTransaction.Retention). Turso does not capture changes to turso_cdc itself.
     private bool Truncate(SqliteSession writer)
     {
         using var command = writer.Connection.CreateCommand();
-        command.CommandText = "DELETE FROM turso_cdc WHERE change_id < $anchor;";
-        command.Parameters.AddWithValue("$anchor", _anchor);
+        if (_store.IsSystem)
+        {
+            command.CommandText = "DELETE FROM turso_cdc WHERE change_id < $anchor;";
+            command.Parameters.AddWithValue("$anchor", _anchor);
+        }
+        else
+        {
+            command.CommandText = SqliteStorageTransaction.Retention;
+            command.Parameters.AddWithValue("$below", _anchor);
+            command.Parameters.AddWithValue("$now", _time.GetUtcNow().ToUnixTimeSeconds());
+        }
+
         command.ExecuteNonQuery();
         return true;
     }

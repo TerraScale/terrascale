@@ -78,8 +78,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus
             }
         }
 
-        // Without a change group source (until the CDC tailer, R3) nothing replicates, whatever the streams say.
-        return new ReplicationStatus(_source is not NoChangeGroupSource, databases.Count, omitted, peers);
+        return new ReplicationStatus(true, databases.Count, omitted, peers);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -142,8 +141,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus
             {
                 await StreamAsync(link, () => backoff = Idle, cancellationToken).ConfigureAwait(false);
             }
-            catch (Exception error) when (!cancellationToken.IsCancellationRequested
-                && error is RpcException or IOException or InvalidDataException or TimeoutException or HttpRequestException)
+            catch (Exception error) when (!cancellationToken.IsCancellationRequested)
             {
                 _logger.ZLogWarning(error, $"The replication stream to machine {link.Peer.Name:@Peer} in {link.Peer.Region:@Region} failed; it reconnects and resumes from the last ack");
             }
