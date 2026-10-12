@@ -1,0 +1,5 @@
+TerraBase on Fly holds no customer data yet: a storage-format change may reset a region's volume
+(scripts/fly/volume-reset.sh, after a verified snapshot and a human's per-run approval).
+
+DELETE THIS FILE BEFORE THE FIRST CUSTOMER IS ONBOARDED. Without it the script refuses every reset, and a deploy that
+hits the storage-format refusal fails until the data is migrated by hand.

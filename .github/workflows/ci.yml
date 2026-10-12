@@ -153,6 +153,9 @@ jobs:
     steps:
       - name: Every area that ran passed
         run: '! grep -qE "failure|cancelled" <<< "${{ join(needs.*.result, '' '') }}"'
+      - *checkout
+      - name: Fly volume reset self-check
+        run: bash terrascale/scripts/fly/volume-reset-test.sh
 
   slow:
     needs: test

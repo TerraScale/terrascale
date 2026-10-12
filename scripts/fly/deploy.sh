@@ -25,7 +25,11 @@ for region in gru sjc fra; do
     fi
   fi
   # --ha=false: the first deploy creates one machine in primary_region (gru), not Fly's default pair.
-  flyctl deploy -a "$app" -c "$config" --image "$image" --regions "$region" --ha=false --yes --wait-timeout 3m
+  if ! flyctl deploy -a "$app" -c "$config" --image "$image" --regions "$region" --ha=false --yes --wait-timeout 3m; then
+    # A storage-format refusal needs a human's approved volume reset; the dry run says whether that is the failure.
+    if [[ $app == ts-terrabase ]]; then "$(dirname "$0")/volume-reset.sh" "$app" "$region" --dry-run || true; fi
+    exit 1
+  fi
   # A machine that hit its restart limit stays stopped through a deploy that fixes it (docs/fly/spike-1a.md).
   for id in $(machines "$region" '^stopped$'); do
     flyctl machine start "$id" -a "$app"
