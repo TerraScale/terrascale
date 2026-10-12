@@ -65,12 +65,11 @@
 </script>
 
 {#if variant === 'inline'}
-  <div class="lang lang--inline" role="group" aria-label={$dict.chrome.language.menu}>
+  <div class="ts-segmented lang--inline" role="group" aria-label={$dict.chrome.language.menu}>
     {#each LOCALES as l (l.code)}
       <button
         type="button"
-        class="lang__inline-btn"
-        class:is-active={l.code === $locale}
+        aria-pressed={l.code === $locale}
         aria-current={l.code === $locale ? 'true' : undefined}
         lang={l.bcp47}
         on:click={() => choose(l.code)}
@@ -84,7 +83,7 @@
     <button
       bind:this={triggerEl}
       type="button"
-      class="lang__trigger"
+      class="ts-btn ts-btn-ghost ts-btn-sm lang__trigger"
       aria-haspopup="listbox"
       aria-expanded={open}
       aria-label={triggerAria}
@@ -98,7 +97,7 @@
     {#if open}
       <ul
         bind:this={menuEl}
-        class="lang__menu"
+        class="ts-menu ts-glass lang__menu"
         role="listbox"
         aria-label={$dict.chrome.language.menu}
         on:keydown={onMenuItemKeydown}
@@ -107,8 +106,7 @@
           <li role="option" aria-selected={l.code === $locale}>
             <button
               type="button"
-              class="lang__option"
-              class:is-active={l.code === $locale}
+              class="ts-menu-item lang__option"
               lang={l.bcp47}
               on:click={() => choose(l.code)}
             >
@@ -130,46 +128,18 @@
   }
 
   .lang__trigger {
-    display: inline-flex;
-    align-items: center;
-    gap: 7px;
-    padding: 8px 12px;
-    border-radius: 5px;
-    border: 1px solid var(--ts-line);
-    background: transparent;
-    color: var(--ts-ink-2);
-    font-family: var(--ts-font-sans);
-    font-size: 12px;
-    font-weight: 700;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    cursor: pointer;
-    transition:
-      color 150ms ease,
-      border-color 150ms ease,
-      background 150ms ease;
+    gap: 6px;
   }
 
-  .lang__trigger:hover {
-    color: var(--ts-ink);
-    border-color: color-mix(in srgb, var(--ts-accent) 40%, transparent);
-    background: color-mix(in srgb, var(--ts-accent) 8%, transparent);
+  .lang__trigger :global(.lang__globe) {
+    width: var(--ts-icon);
+    height: var(--ts-icon);
   }
 
-  :global(.lang__globe) {
-    width: 15px;
-    height: 15px;
-    color: var(--ts-accent);
-  }
-
-  .lang__code {
-    line-height: 1;
-  }
-
-  :global(.lang__chev) {
-    width: 13px;
-    height: 13px;
-    transition: transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  .lang__trigger :global(.lang__chev) {
+    width: var(--ts-icon-sm);
+    height: var(--ts-icon-sm);
+    transition: transform var(--ts-fast) var(--ts-ease);
   }
 
   .lang__trigger[aria-expanded='true'] :global(.lang__chev) {
@@ -178,96 +148,36 @@
 
   .lang__menu {
     position: absolute;
-    top: calc(100% + 8px);
+    top: calc(100% + var(--ts-s2));
     right: 0;
-    z-index: 120;
-    list-style: none;
-    margin: 0;
-    padding: 6px;
     min-width: 188px;
-    border-radius: 8px;
-    border: 1px solid var(--ts-line);
-    background: var(--ts-glass-strong);
-    /* Write only the standard property: Lightning CSS adds -webkit-; writing both makes it drop the standard one. */
-    backdrop-filter: blur(var(--ts-blur)) saturate(var(--ts-saturate));
-    box-shadow: var(--ts-shadow-overlay);
-  }
-
-  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-    .lang__menu {
-      background: var(--ts-surface);
-    }
+    margin: 0;
+    list-style: none;
   }
 
   .lang__option {
     width: 100%;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    padding: 9px 12px;
-    border: none;
-    border-radius: 5px;
+    border: 0;
     background: transparent;
-    color: var(--ts-ink-2);
-    font-family: var(--ts-font-sans);
-    font-size: 13px;
-    font-weight: 600;
+    font: inherit;
+    font-size: var(--ts-fs-sm);
     text-align: left;
     cursor: pointer;
-    transition:
-      color 150ms ease,
-      background 150ms ease;
   }
 
-  .lang__option:hover,
   .lang__option:focus-visible {
-    background: color-mix(in srgb, var(--ts-accent) 12%, transparent);
-    color: var(--ts-ink);
-    outline: none;
+    background: var(--ts-line);
+    outline-offset: -2px;
   }
 
-  .lang__option.is-active {
+  .lang__option :global(.lang__option-check) {
+    margin-left: auto;
+    width: var(--ts-icon-sm);
+    height: var(--ts-icon-sm);
     color: var(--ts-accent);
   }
 
-  :global(.lang__option-check) {
-    width: 14px;
-    height: 14px;
-    color: var(--ts-accent);
-  }
-
-  .lang--inline {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-  }
-
-  .lang__inline-btn {
-    padding: 8px 12px;
-    border-radius: 5px;
-    border: 1px solid var(--ts-line);
-    background: transparent;
-    color: var(--ts-ink-2);
-    font-family: var(--ts-font-sans);
-    font-size: 13px;
-    font-weight: 600;
-    cursor: pointer;
-    transition:
-      color 150ms ease,
-      border-color 150ms ease,
-      background 150ms ease;
-  }
-
-  .lang__inline-btn:hover {
-    color: var(--ts-ink);
-    border-color: color-mix(in srgb, var(--ts-accent) 40%, transparent);
-    background: color-mix(in srgb, var(--ts-accent) 8%, transparent);
-  }
-
-  .lang__inline-btn.is-active {
-    color: var(--ts-accent);
-    border-color: color-mix(in srgb, var(--ts-accent) 45%, transparent);
-    background: color-mix(in srgb, var(--ts-accent) 14%, transparent);
+  .lang--inline button {
+    height: 100%;
   }
 </style>

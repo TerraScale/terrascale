@@ -11,35 +11,30 @@
   }))
 </script>
 
-<section class="features" id="features">
-  <div class="features__inner">
+<section class="ts-section features" id="features">
+  <div class="ts-container">
     <SectionHeader
       eyebrow={$dict.features.eyebrow}
       subtitle={$dict.features.subtitle}
     >
       <svelte:fragment slot="title">
-        {$dict.features.titleLead}<br />
-        <span class="ts-accent-text">{$dict.features.titleAccent}</span>
+        {$dict.features.titleLead}
+        <span class="ts-h-muted">{$dict.features.titleAccent}</span>
       </svelte:fragment>
     </SectionHeader>
 
     <div class="features__grid">
       {#each features as feature (feature.title)}
-        <article class="feature-card ts-card">
-          <div class="feature-card__head">
-            <div class="feature-card__icon">
-              <Icon name={feature.icon} className="feature-card__icon-svg" />
-            </div>
-            <h3 class="feature-card__title">{feature.title}</h3>
+        <article class="feature">
+          <div class="feature__head">
+            <Icon name={feature.icon} className="feature__icon" />
+            <h3 class="feature__title">{feature.title}</h3>
           </div>
 
-          <p class="feature-card__text">{feature.text}</p>
-          <div class="feature-card__bullets">
+          <p class="feature__text">{feature.text}</p>
+          <div class="feature__bullets">
             {#each feature.bullets as bullet (bullet)}
-              <span class="feature-card__bullet">
-                <span class="feature-card__bullet-dot"></span>
-                {bullet}
-              </span>
+              <span class="ts-badge ts-badge-outline">{bullet}</span>
             {/each}
           </div>
         </article>
@@ -49,119 +44,53 @@
 </section>
 
 <style>
-  .features {
-    padding: 80px 0;
-    position: relative;
-  }
-
-  .features__inner {
-    position: relative;
-    max-width: 1240px;
-    margin: 0 auto;
-    padding: 0 40px;
-  }
-
   .features__grid {
     display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 18px;
-    margin-top: 48px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: var(--ts-s10);
+    margin-top: var(--ts-s12);
   }
 
-  .feature-card {
-    position: relative;
-    overflow: hidden;
-    border-radius: 12px;
-    padding: 28px;
-    transition: border-color var(--ts-base) ease;
+  /* Flat items split by a top hairline (no boxes). */
+  .feature {
+    display: grid;
+    align-content: start;
+    gap: var(--ts-s3);
+    padding: var(--ts-s6) 0 var(--ts-s8);
+    border-top: 1px solid var(--ts-line);
   }
 
-  .feature-card:hover {
-    border-color: var(--ts-line-strong);
-  }
-
-  .feature-card__head {
+  .feature__head {
     display: flex;
     align-items: center;
-    gap: 14px;
-    margin-bottom: 14px;
+    gap: var(--ts-s3);
   }
 
-  .feature-card__icon {
-    flex-shrink: 0;
-    width: 42px;
-    height: 42px;
-    border-radius: 8px;
-    background: color-mix(in srgb, var(--ts-accent) 14%, transparent);
-    border: 1px solid color-mix(in srgb, var(--ts-accent) 30%, transparent);
-    display: flex;
-    align-items: center;
-    justify-content: center;
+  .feature :global(.feature__icon) {
+    width: var(--ts-icon-lg);
+    height: var(--ts-icon-lg);
     color: var(--ts-accent);
   }
 
-  :global(.feature-card__icon-svg) {
-    width: 20px;
-    height: 20px;
-    color: var(--ts-accent);
+  .feature__title {
+    font-size: var(--ts-fs-xl);
   }
 
-  .feature-card__title {
-    font-size: 19px;
-    font-weight: 700;
-    color: var(--ts-ink);
-    margin: 0;
-    letter-spacing: -0.01em;
-  }
-
-  .feature-card__text {
-    font-size: 14.5px;
+  .feature__text {
     color: var(--ts-ink-2);
-    line-height: 1.6;
-    margin: 0 0 18px;
+    line-height: var(--ts-lh);
   }
 
-  .feature-card__bullets {
+  .feature__bullets {
     display: flex;
     flex-wrap: wrap;
-    gap: 6px;
+    gap: var(--ts-s2);
   }
 
-  .feature-card__bullet {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    padding: 3px 8px;
-    border-radius: 4px;
-    background: color-mix(in srgb, var(--ts-accent) 8%, transparent);
-    border: 1px solid color-mix(in srgb, var(--ts-accent) 18%, transparent);
-    color: var(--ts-accent);
-    font-family: var(--ts-font-mono);
-    font-size: 10.5px;
-    font-weight: 600;
-  }
-
-  .feature-card__bullet-dot {
-    width: 4px;
-    height: 4px;
-    border-radius: 2px;
-    background: var(--ts-accent);
-  }
-
-  @media (max-width: 640px) {
-    .features {
-      padding: 60px 0;
-    }
+  @media (max-width: 860px) {
     .features__grid {
-      grid-template-columns: 1fr;
-      gap: 14px;
-      margin-top: 36px;
-    }
-    .features__inner {
-      padding: 0 20px;
-    }
-    .feature-card {
-      padding: 22px;
+      grid-template-columns: minmax(0, 1fr);
+      margin-top: var(--ts-s8);
     }
   }
 </style>

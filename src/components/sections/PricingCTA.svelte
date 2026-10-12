@@ -5,13 +5,13 @@
   import { registrationUrl } from '@/lib/site'
 </script>
 
-<section class="pricing-cta">
-  <div class="pricing-cta__inner">
-    <h2 class="pricing-cta__title">{$dict.pricing.finalCta.titleLead} <span class="ts-accent-text">{$dict.pricing.finalCta.titleAccent}</span></h2>
-    <p class="pricing-cta__text">
+<section class="ts-section pricing-cta">
+  <div class="ts-container pricing-cta__inner">
+    <h2 class="pricing-cta__title">{$dict.pricing.finalCta.titleLead} <span class="ts-h-muted">{$dict.pricing.finalCta.titleAccent}</span></h2>
+    <p class="ts-lede pricing-cta__text">
       {$dict.pricing.finalCta.text}
     </p>
-    <ExternalLink href={registrationUrl} class="ts-btn ts-btn-primary">
+    <ExternalLink href={registrationUrl} class="ts-btn ts-btn-primary ts-btn-lg">
       {$dict.pricing.finalCta.cta}
       <Icon name="arrowRight" className="pricing-cta__icon" />
     </ExternalLink>
@@ -20,43 +20,31 @@
 
 <style>
   .pricing-cta {
-    position: relative;
-    padding: 80px 0 100px;
-    overflow: hidden;
+    border-top: 1px solid var(--ts-line);
   }
 
   .pricing-cta__inner {
-    position: relative;
-    max-width: 720px;
-    margin: 0 auto;
-    padding: 0 40px;
-    text-align: center;
+    display: grid;
+    gap: var(--ts-s4);
+    justify-items: start;
   }
 
   .pricing-cta__title {
-    font-size: clamp(2rem, 2.5vw + 1rem, 3rem);
-    font-weight: 700;
-    color: var(--ts-ink);
-    letter-spacing: -0.025em;
-    line-height: 1.12;
-    margin: 0 0 14px;
+    font-size: var(--ts-fs-4xl);
   }
 
   .pricing-cta__text {
-    font-family: var(--ts-font-sans);
-    font-size: 17px;
-    color: var(--ts-ink-2);
-    margin: 0 0 28px;
+    margin-top: 0;
   }
 
-  :global(.pricing-cta__icon) {
-    width: 14px;
-    height: 14px;
+  .pricing-cta :global(.pricing-cta__icon) {
+    width: var(--ts-icon);
+    height: var(--ts-icon);
   }
 
   @media (max-width: 640px) {
-    .pricing-cta__inner {
-      padding: 0 20px;
+    .pricing-cta__title {
+      font-size: var(--ts-fs-3xl);
     }
   }
 </style>

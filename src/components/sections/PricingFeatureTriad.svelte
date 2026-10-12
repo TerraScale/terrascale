@@ -11,13 +11,11 @@
 </script>
 
 <section class="triad">
-  <div class="triad__inner">
+  <div class="ts-container">
     <div class="triad__grid">
       {#each items as it (it.title)}
-        <div class="triad__card ts-card">
-          <div class="triad__icon">
-            <Icon name={it.icon} className="triad__icon-svg" />
-          </div>
+        <div class="triad__item">
+          <Icon name={it.icon} className="triad__icon" />
           <div>
             <div class="triad__title">{it.title}</div>
             <div class="triad__text">{it.text}</div>
@@ -30,68 +28,57 @@
 
 <style>
   .triad {
-    padding: 40px 0 80px;
+    padding-bottom: var(--ts-s16);
   }
 
-  .triad__inner {
-    max-width: 1120px;
-    margin: 0 auto;
-    padding: 0 40px;
-  }
-
+  /* Stat-style row: hairlines above and below, vertical hairlines between items. */
   .triad__grid {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 16px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    border-block: 1px solid var(--ts-line);
   }
 
-  .triad__card {
+  .triad__item {
     display: flex;
-    align-items: flex-start;
-    gap: 14px;
-    padding: 22px;
-    border-radius: 10px;
+    gap: var(--ts-s3);
+    padding: var(--ts-s5) var(--ts-s6);
+    border-left: 1px solid var(--ts-line);
   }
 
-  .triad__icon {
-    width: 40px;
-    height: 40px;
-    border-radius: 6px;
-    flex-shrink: 0;
-    background: color-mix(in srgb, var(--ts-accent) 14%, transparent);
-    border: 1px solid color-mix(in srgb, var(--ts-accent) 30%, transparent);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--ts-accent);
+  .triad__item:first-child {
+    border-left: 0;
+    padding-left: 0;
   }
 
-  :global(.triad__icon-svg) {
-    width: 18px;
-    height: 18px;
+  .triad__item :global(.triad__icon) {
+    width: var(--ts-icon-lg);
+    height: var(--ts-icon-lg);
+    margin-top: 2px;
     color: var(--ts-accent);
   }
 
   .triad__title {
-    font-size: 15px;
-    font-weight: 700;
+    font-size: var(--ts-fs-md);
+    font-weight: 500;
     color: var(--ts-ink);
-    margin-bottom: 4px;
   }
 
   .triad__text {
-    font-family: var(--ts-font-sans);
-    font-size: 13px;
+    margin-top: var(--ts-s1);
+    font-size: var(--ts-fs-sm);
     color: var(--ts-ink-2);
-    line-height: 1.5;
   }
 
   @media (max-width: 860px) {
-    .triad__inner {
-      padding: 0 20px;
-    }
     .triad__grid {
-      grid-template-columns: 1fr;
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .triad__item {
+      border-left: 0;
+      padding: var(--ts-s4) 0;
+    }
+    .triad__item + .triad__item {
+      border-top: 1px solid var(--ts-line);
     }
   }
 </style>

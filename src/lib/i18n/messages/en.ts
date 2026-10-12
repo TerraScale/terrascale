@@ -19,7 +19,6 @@ export const en = {
     login: 'Log in',
     getStarted: 'Start building',
     toggleNav: 'Toggle navigation menu',
-    toggleTheme: 'Switch light or dark theme',
     language: {
       trigger: 'Language',
       currentSuffix: 'Language: {label}',
@@ -69,14 +68,15 @@ export const en = {
   },
 
   hero: {
-    headlineLead: 'Regional document database.',
-    headlineAccent: 'Now in Public Alpha.',
+    eyebrow: 'Public Alpha',
+    headlineLead: 'Typed document database,',
+    headlineAccent: 'replicated across regions.',
     subtitle:
       'A typed document database with asynchronous replication across São Paulo and San Jose. The global endpoint routes to the nearest healthy region selected by your project. Public Alpha has no uptime percentage or SLA.',
     ctaPrimary: 'Start building',
     ctaSecondary: 'Read the docs',
-    highlightsAria: 'Key capabilities',
-    highlights: ['Selected-region routing', 'Asynchronous replication', 'Typed SDKs'],
+    installCopy: 'Copy install command',
+    installCopied: 'Copied',
   },
 
   features: {

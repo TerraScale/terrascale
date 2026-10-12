@@ -21,7 +21,6 @@ export const ptBr: Messages = {
     login: 'Entrar',
     getStarted: 'Comece a construir',
     toggleNav: 'Abrir menu de navegação',
-    toggleTheme: 'Alternar tema claro ou escuro',
     language: {
       trigger: 'Idioma',
       currentSuffix: 'Idioma: {label}',
@@ -71,14 +70,15 @@ export const ptBr: Messages = {
   },
 
   hero: {
-    headlineLead: 'Banco de dados de documentos regional.',
-    headlineAccent: 'Agora em Public Alpha.',
+    eyebrow: 'Public Alpha',
+    headlineLead: 'Banco de dados de documentos tipado,',
+    headlineAccent: 'replicado entre regiões.',
     subtitle:
       'Um banco de documentos tipado com replicação assíncrona em São Paulo e San Jose. O endpoint global encaminha para a região selecionada saudável mais próxima. O Public Alpha não tem percentual de disponibilidade nem SLA.',
     ctaPrimary: 'Comece a construir',
     ctaSecondary: 'Leia a documentação',
-    highlightsAria: 'Principais recursos',
-    highlights: ['Roteamento por região selecionada', 'Replicação assíncrona', 'SDKs tipados'],
+    installCopy: 'Copiar comando de instalação',
+    installCopied: 'Copiado',
   },
 
   features: {

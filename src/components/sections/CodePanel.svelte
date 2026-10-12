@@ -26,325 +26,157 @@
   }
 </script>
 
-<section class="code">
-  <div class="code__inner">
-    <div class="code__grid">
-      <div class="code__copy">
-        <div class="code__eyebrow">
-          <Icon name="code2" className="code__eyebrow-icon" />
-          {$dict.code.eyebrow}
-        </div>
-        <h2 class="code__headline">
-          {$dict.code.headlineLead}<br />
-          <span class="ts-accent-text">{$dict.code.headlineAccent}</span>
-        </h2>
-        <p class="code__text">
-          {$dict.code.text}
-        </p>
-        <ul class="code__bullets">
-          {#each bullets as bullet (bullet)}
-            <li class="code__bullet">
-              <span class="code__bullet-check">
-                <Icon name="check" className="code__bullet-icon" />
-              </span>
-              <span>{bullet}</span>
-            </li>
-          {/each}
-        </ul>
-      </div>
+<section class="ts-section code">
+  <div class="ts-container code__grid">
+    <div class="code__copy">
+      <span class="ts-eyebrow"><span class="ts-dot" aria-hidden="true"></span>{$dict.code.eyebrow}</span>
+      <h2 class="code__headline">
+        {$dict.code.headlineLead}
+        <span class="ts-h-muted">{$dict.code.headlineAccent}</span>
+      </h2>
+      <p class="ts-lede code__text">{$dict.code.text}</p>
+      <ul class="code__bullets">
+        {#each bullets as bullet (bullet)}
+          <li>
+            <Icon name="check" className="code__bullet-icon" />
+            <span>{bullet}</span>
+          </li>
+        {/each}
+      </ul>
+    </div>
 
-      <div class="code__terminal">
-        <div class="code__chrome">
-          <div class="code__chrome-left">
-            <span class="code__dot code__dot--red"></span>
-            <span class="code__dot code__dot--yellow"></span>
-            <span class="code__dot code__dot--green"></span>
-            <span class="code__filename">~/app/queries.{ext}</span>
-          </div>
-          <button
-            type="button"
-            class="code__copy-btn"
-            class:is-copied={copied}
-            on:click={handleCopy}
-            aria-label={$dict.code.copyAria}
-          >
-            <Icon name={copied ? 'check' : 'code2'} className="code__copy-icon" />
-            {copied ? $dict.code.copied : $dict.code.copy}
-          </button>
-        </div>
-
+    <div class="ts-code code__panel">
+      <div class="ts-code-head">
         <div class="code__tabs" role="tablist" aria-label={$dict.code.tablistLabel}>
           {#each LANG_META as l (l.id)}
             <button
               type="button"
-              class="code__tab"
-              class:is-active={lang === l.id}
+              class="ts-tab code__tab"
               role="tab"
               aria-selected={lang === l.id}
               on:click={() => (lang = l.id)}
             >
-              <img src={l.icon} alt="" width="13" height="13" class="code__tab-icon" />
+              <img src={l.icon} alt="" width="14" height="14" class="code__tab-icon" />
               {l.label}
             </button>
           {/each}
         </div>
-
-        <pre class="code__pre"><code>{#each tokens as t, i (i)}{#if t.className}<span class={t.className}>{t.text}</span>{:else}{t.text}{/if}{/each}</code></pre>
+        <button
+          type="button"
+          class="ts-icon-btn"
+          on:click={handleCopy}
+          aria-label={copied ? $dict.code.copied : $dict.code.copyAria}
+        >
+          <Icon name={copied ? 'check' : 'copy'} className="code__copy-icon" />
+        </button>
       </div>
+      <pre class="code__pre"><code>{#each tokens as t, i (i)}{#if t.className}<span class={t.className}>{t.text}</span>{:else}{t.text}{/if}{/each}</code></pre>
     </div>
   </div>
 </section>
 
 <style>
-  .code {
-    padding: 80px 0;
-    position: relative;
-  }
-
-  .code__inner {
-    max-width: 1240px;
-    margin: 0 auto;
-    padding: 0 40px;
-  }
-
   .code__grid {
     display: grid;
-    grid-template-columns: 1fr 1.2fr;
-    gap: 72px;
+    grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+    gap: var(--ts-s12);
     align-items: center;
   }
 
-  .code__eyebrow {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    padding: 5px 12px;
-    border-radius: 4px;
-    margin-bottom: 20px;
-    background: color-mix(in srgb, var(--ts-accent) 10%, transparent);
-    border: 1px solid color-mix(in srgb, var(--ts-accent) 25%, transparent);
-    color: var(--ts-accent);
-    font-family: var(--ts-font-sans);
-    font-size: 11px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.14em;
-    line-height: 1;
-  }
-
-  :global(.code__eyebrow-icon) {
-    width: 12px;
-    height: 12px;
+  .code__copy {
+    display: grid;
+    gap: var(--ts-s4);
+    justify-items: start;
   }
 
   .code__headline {
-    font-size: clamp(1.8rem, 2.5vw + 0.5rem, 2.8rem);
-    font-weight: 700;
-    color: var(--ts-ink);
-    line-height: 1.14;
-    letter-spacing: -0.02em;
-    margin: 0 0 20px;
-  }
-
-  @media (min-width: 961px) {
-    .code__headline {
-      white-space: nowrap;
-    }
+    font-size: var(--ts-fs-4xl);
   }
 
   .code__text {
-    font-family: var(--ts-font-sans);
-    font-size: 17px;
-    color: var(--ts-ink-2);
-    line-height: 1.7;
-    margin: 0 0 32px;
+    margin-top: 0;
   }
 
   .code__bullets {
     list-style: none;
+    margin: var(--ts-s2) 0 0;
     padding: 0;
-    margin: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
-  }
-
-  .code__bullet {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    color: var(--ts-ink);
-    font-size: 15px;
-  }
-
-  .code__bullet-check {
-    width: 20px;
-    height: 20px;
-    border-radius: 4px;
-    background: var(--ts-success);
-    color: var(--ts-canvas);
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-  }
-
-  :global(.code__bullet-icon) {
-    width: 12px;
-    height: 12px;
-  }
-
-  .code__terminal {
-    position: relative;
-    background: var(--ts-surface);
-    border: 1px solid var(--ts-line);
-    border-radius: 10px;
-    overflow: hidden;
-  }
-
-  .code__chrome {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 12px 16px;
-    background: var(--ts-surface-2);
-    border-bottom: 1px solid var(--ts-line);
-  }
-
-  .code__chrome-left {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-
-  .code__dot {
-    width: 11px;
-    height: 11px;
-    border-radius: 6px;
-    display: inline-block;
-  }
-  .code__dot {
-    background: var(--ts-surface-3);
-  }
-
-  .code__filename {
-    margin-left: 12px;
-    font-family: var(--ts-font-mono);
-    font-size: 11px;
-    color: var(--ts-ink-2);
-  }
-
-  .code__copy-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 4px 10px;
-    border-radius: 4px;
-    background: var(--ts-surface);
-    border: 1px solid var(--ts-line);
-    color: var(--ts-ink-2);
-    font-size: 11px;
-    font-weight: 600;
-    cursor: pointer;
-    font-family: var(--ts-font-mono);
-    transition: all 150ms ease;
-  }
-
-  .code__copy-btn:hover {
-    background: var(--ts-surface-3);
+    display: grid;
+    gap: var(--ts-s3);
+    font-size: var(--ts-fs-md);
     color: var(--ts-ink);
   }
 
-  .code__copy-btn.is-copied {
-    background: color-mix(in srgb, var(--ts-success) 14%, transparent);
-    border-color: color-mix(in srgb, var(--ts-success) 35%, transparent);
+  .code__bullets li {
+    display: flex;
+    align-items: center;
+    gap: var(--ts-s3);
+  }
+
+  .code__bullets :global(.code__bullet-icon) {
+    width: var(--ts-icon);
+    height: var(--ts-icon);
     color: var(--ts-success);
   }
 
-  :global(.code__copy-icon) {
-    width: 11px;
-    height: 11px;
+  .code__panel {
+    min-width: 0;
   }
 
   .code__tabs {
     display: flex;
-    gap: 2px;
-    padding: 10px 12px 0;
-    background: var(--ts-surface-2);
-    border-bottom: 1px solid var(--ts-line);
-    overflow-x: auto;
+    gap: var(--ts-s4);
+    height: 100%;
   }
 
   .code__tab {
-    display: inline-flex;
-    align-items: center;
-    gap: 7px;
-    padding: 8px 14px;
+    height: 39px;
+    padding: 0;
+    border-top: 0;
+    border-inline: 0;
     background: transparent;
-    border: none;
-    border-bottom: 2px solid transparent;
-    border-top-left-radius: 5px;
-    border-top-right-radius: 5px;
-    color: var(--ts-ink-2);
-    font-size: 12px;
-    font-weight: 600;
+    font: inherit;
+    font-size: var(--ts-fs-sm);
     cursor: pointer;
-    margin-bottom: -1px;
-    font-family: var(--ts-font-mono);
-    white-space: nowrap;
-    transition:
-      color 150ms,
-      background 150ms,
-      border-color 150ms;
-  }
-
-  .code__tab:hover {
-    color: var(--ts-ink);
-  }
-
-  .code__tab.is-active {
-    background: var(--ts-surface);
-    border-bottom-color: var(--ts-accent);
-    color: var(--ts-ink);
   }
 
   .code__tab-icon {
-    width: 13px;
-    height: 13px;
-    filter: grayscale(1) opacity(0.7);
-    transition: filter 150ms ease;
+    width: var(--ts-icon-sm);
+    height: var(--ts-icon-sm);
+    filter: grayscale(1);
+    opacity: 0.7;
   }
 
-  .code__tab.is-active .code__tab-icon {
+  .code__tab[aria-selected='true'] .code__tab-icon {
     filter: none;
+    opacity: 1;
+  }
+
+  .code__panel :global(.code__copy-icon) {
+    width: var(--ts-icon-sm);
+    height: var(--ts-icon-sm);
   }
 
   .code__pre {
-    margin: 0;
-    padding: 24px;
-    font-family: var(--ts-font-mono);
-    font-size: 13.5px;
-    line-height: 1.75;
-    color: var(--ts-ink);
-    overflow: auto;
     max-height: 480px;
+    overflow: auto;
     white-space: pre;
   }
 
   .code__pre code {
-    font-family: inherit;
+    font: inherit;
   }
 
-  @media (max-width: 960px) {
-    .code {
-      padding: 60px 0;
-    }
-    .code__inner {
-      padding: 0 20px;
-    }
+  @media (max-width: 1100px) {
     .code__grid {
-      grid-template-columns: 1fr;
-      gap: 40px;
+      grid-template-columns: minmax(0, 1fr);
+      gap: var(--ts-s8);
+    }
+  }
+
+  @media (max-width: 640px) {
+    .code__headline {
+      font-size: var(--ts-fs-3xl);
     }
   }
 </style>

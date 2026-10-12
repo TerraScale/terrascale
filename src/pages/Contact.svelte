@@ -17,246 +17,135 @@
 
 </script>
 
-<section class="contact-hero">
-  <div class="contact-hero__inner">
-    <div class="contact-hero__eyebrow">
-      <Icon name="messageSquare" className="contact-hero__eyebrow-icon" />
-      {$dict.contact.eyebrow}
-    </div>
+<section class="ts-section contact-hero">
+  <div class="ts-container contact-hero__inner">
+    <span class="ts-eyebrow"><span class="ts-dot" aria-hidden="true"></span>{$dict.contact.eyebrow}</span>
     <h1 class="contact-hero__title">
-      {$dict.contact.titleLead}<br />
-      <span class="ts-accent-text">{$dict.contact.titleAccent}</span>
+      {$dict.contact.titleLead}
+      <span class="ts-h-muted">{$dict.contact.titleAccent}</span>
     </h1>
-    <p class="contact-hero__subtitle">
-      {$dict.contact.subtitle}
-    </p>
+    <p class="ts-lede contact-hero__lede">{$dict.contact.subtitle}</p>
+    <ExternalLink href={channelMeta[0].href} class="ts-btn ts-btn-primary ts-btn-lg">
+      <Icon name="mail" className="contact__icon" />
+      {$dict.contact.channels[0].value}
+    </ExternalLink>
   </div>
 </section>
 
-<section class="contact-body">
-  <div class="contact-body__inner">
-    <div class="contact-body__grid">
-      <div class="contact-email ts-card">
-        <h2 class="contact-email__title">{$dict.contact.formTitle}</h2>
-        <ExternalLink href={channelMeta[0].href} class="ts-btn ts-btn-primary">
-          <Icon name="mail" />
-          {$dict.contact.channels[0].value}
-        </ExternalLink>
-      </div>
-
-      <div class="contact-channels">
-        <h2 class="contact-channels__title">{$dict.contact.channelsTitle}</h2>
-        <div class="contact-channels__list">
-          {#each channels as c (c.label)}
-            {#if c.kind === 'external'}
-              <ExternalLink
-                href={c.href}
-                target="_blank"
-                class="contact-channel ts-card"
-              >
-                <div class="contact-channel__icon">
-                  <Icon name={c.icon} className="contact-channel__icon-svg" />
-                </div>
-                <div class="contact-channel__body">
-                  <div class="contact-channel__label">{c.label}</div>
-                  <div class="contact-channel__value">{c.value}</div>
-                </div>
-                <Icon name="chevronRight" className="contact-channel__chev" />
-              </ExternalLink>
-            {:else}
-              <ExternalLink href={c.href} class="contact-channel ts-card">
-                <div class="contact-channel__icon">
-                  <Icon name={c.icon} className="contact-channel__icon-svg" />
-                </div>
-                <div class="contact-channel__body">
-                  <div class="contact-channel__label">{c.label}</div>
-                  <div class="contact-channel__value">{c.value}</div>
-                </div>
-                <Icon name="chevronRight" className="contact-channel__chev" />
-              </ExternalLink>
-            {/if}
-          {/each}
-        </div>
-
-      </div>
-    </div>
+<section class="ts-section contact-body">
+  <div class="ts-container contact-body__inner">
+    <h2 class="contact-body__title">{$dict.contact.channelsTitle}</h2>
+    <ul class="contact-channels">
+      {#each channels as c (c.label)}
+        <li>
+          <ExternalLink href={c.href} target={c.kind === 'external' ? '_blank' : undefined} class="contact-channel">
+            <Icon name={c.icon} className="contact-channel__icon" />
+            <span class="contact-channel__label">{c.label}</span>
+            <span class="contact-channel__value">{c.value}</span>
+            <Icon name="chevronRight" className="contact-channel__chev" />
+          </ExternalLink>
+        </li>
+      {/each}
+    </ul>
   </div>
 </section>
 
 <style>
   .contact-hero {
-    position: relative;
-    padding: 120px 0 60px;
-    overflow: hidden;
+    border-bottom: 1px solid var(--ts-line);
   }
 
   .contact-hero__inner {
-    position: relative;
-    max-width: 840px;
-    margin: 0 auto;
-    padding: 0 40px;
-    text-align: center;
-  }
-
-  .contact-hero__eyebrow {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    padding: 5px 12px;
-    border-radius: 4px;
-    margin-bottom: 24px;
-    background: color-mix(in srgb, var(--ts-accent) 10%, transparent);
-    border: 1px solid color-mix(in srgb, var(--ts-accent) 25%, transparent);
-    color: var(--ts-accent);
-    font-family: var(--ts-font-sans);
-    font-size: 11px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.14em;
-  }
-
-  :global(.contact-hero__eyebrow-icon) {
-    width: 11px;
-    height: 11px;
+    display: grid;
+    gap: var(--ts-s5);
+    justify-items: start;
   }
 
   .contact-hero__title {
-    font-size: clamp(2.2rem, 4vw + 1rem, 4rem);
-    font-weight: 700;
-    color: var(--ts-ink);
-    letter-spacing: -0.025em;
-    line-height: 1.1;
-    margin: 0 0 20px;
+    max-width: 820px;
+    font-size: var(--ts-fs-5xl);
+    font-weight: var(--ts-display-weight);
+    letter-spacing: var(--ts-display-tracking);
+    line-height: 1.04;
   }
 
-  .contact-hero__subtitle {
-    font-family: var(--ts-font-sans);
-    font-size: 18px;
-    color: var(--ts-ink-2);
-    line-height: 1.65;
-    max-width: 600px;
-    margin: 0 auto;
+  .contact-hero__lede {
+    margin-top: 0;
   }
 
-  .contact-body {
-    padding: 40px 0 100px;
+  .contact-hero :global(.contact__icon) {
+    width: var(--ts-icon);
+    height: var(--ts-icon);
   }
 
   .contact-body__inner {
-    max-width: 1120px;
-    margin: 0 auto;
-    padding: 0 40px;
-  }
-
-  .contact-body__grid {
     display: grid;
-    grid-template-columns: 1.3fr 1fr;
-    gap: 40px;
+    grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+    gap: var(--ts-s12);
+    align-items: start;
   }
 
-  .contact-email {
-    padding: 36px;
-    border-radius: 12px;
+  .contact-body__title {
+    font-size: var(--ts-fs-3xl);
   }
 
-  .contact-email__title {
-    font-size: 22px;
-    font-weight: 700;
-    color: var(--ts-ink);
-    margin: 0 0 24px;
+  .contact-channels {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    border-top: 1px solid var(--ts-line);
   }
 
-  .contact-channels__title {
-    font-size: 22px;
-    font-weight: 700;
-    color: var(--ts-ink);
-    margin: 0 0 20px;
+  .contact-channels li {
+    border-bottom: 1px solid var(--ts-line);
   }
 
-  .contact-channels__list {
-    display: grid;
-    gap: 10px;
-  }
-
-  :global(.contact-channel) {
+  .contact-channels :global(.contact-channel) {
     display: flex;
     align-items: center;
-    gap: 14px;
-    padding: 18px;
-    border-radius: 8px;
+    gap: var(--ts-s3);
+    min-height: 56px;
+    padding: 0 var(--ts-s2);
+    color: var(--ts-ink);
+    transition: background-color var(--ts-fast) var(--ts-ease);
+  }
+
+  .contact-channels :global(.contact-channel:hover) {
+    background: var(--ts-surface-2);
     text-decoration: none;
-    transition: border-color var(--ts-base) ease;
   }
 
-  :global(.contact-channel:hover) {
-    border-color: var(--ts-line-strong);
-  }
-
-  .contact-channel__icon {
-    width: 40px;
-    height: 40px;
-    border-radius: 6px;
-    flex-shrink: 0;
-    background: color-mix(in srgb, var(--ts-accent) 14%, transparent);
-    border: 1px solid color-mix(in srgb, var(--ts-accent) 30%, transparent);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--ts-accent);
-  }
-
-  :global(.contact-channel__icon-svg) {
-    width: 18px;
-    height: 18px;
-    color: var(--ts-accent);
-  }
-
-  .contact-channel__body {
-    flex: 1;
+  .contact-channels :global(.contact-channel__icon) {
+    width: var(--ts-icon-lg);
+    height: var(--ts-icon-lg);
+    color: var(--ts-ink-2);
   }
 
   .contact-channel__label {
-    font-family: var(--ts-font-sans);
-    font-size: 10px;
-    color: var(--ts-ink-2);
-    text-transform: uppercase;
-    letter-spacing: 0.14em;
-    font-weight: 700;
-    margin-bottom: 3px;
+    font-weight: 500;
+    min-width: 88px;
   }
 
   .contact-channel__value {
-    font-size: 14px;
-    color: var(--ts-ink);
-    font-weight: 600;
-  }
-
-  :global(.contact-channel__chev) {
-    width: 14px;
-    height: 14px;
     color: var(--ts-ink-2);
-    transition: transform 200ms ease;
+    font-size: var(--ts-fs-md);
+    overflow-wrap: anywhere;
   }
 
-  :global(.contact-channel:hover .contact-channel__chev) {
-    transform: translateX(2px);
-    color: var(--ts-accent);
+  .contact-channels :global(.contact-channel__chev) {
+    width: var(--ts-icon);
+    height: var(--ts-icon);
+    margin-left: auto;
+    color: var(--ts-ink-3);
   }
 
-  @media (max-width: 960px) {
-    .contact-hero {
-      padding: 80px 0 40px;
+  @media (max-width: 860px) {
+    .contact-hero__title {
+      font-size: var(--ts-fs-4xl);
     }
-    .contact-hero__inner,
     .contact-body__inner {
-      padding: 0 20px;
-    }
-    .contact-body__grid {
-      grid-template-columns: 1fr;
-      gap: 32px;
-    }
-    .contact-email {
-      padding: 24px;
+      grid-template-columns: minmax(0, 1fr);
+      gap: var(--ts-s6);
     }
   }
 </style>

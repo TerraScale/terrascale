@@ -1,97 +1,50 @@
 @import "tailwindcss";
 @import "./tokens.css";
+@import "./components.css";
 
+/* Self-hosted fonts (OFL, see static/fonts/OFL-*.txt). Oxanium is only used when a direction sets it as display. */
 @font-face {
-  font-family: 'Quantico';
-  src: url('/fonts/quantico.woff2') format('woff2');
-  font-weight: 400;
-  font-style: normal;
+  font-family: 'Geist';
+  src: url('/fonts/Geist-Variable.woff2') format('woff2');
+  font-weight: 100 900;
   font-display: swap;
 }
 
 @font-face {
-  font-family: 'Quantico';
-  src: url('/fonts/quantico-bold.woff2') format('woff2');
-  font-weight: 700;
-  font-style: normal;
+  font-family: 'Geist Mono';
+  src: url('/fonts/GeistMono-Variable.woff2') format('woff2');
+  font-weight: 100 900;
   font-display: swap;
 }
 
 @font-face {
-  font-family: 'JetBrains Mono';
-  src: url('/fonts/jetbrains-mono.woff2') format('woff2');
-  font-weight: 400;
-  font-style: normal;
+  font-family: 'Oxanium';
+  src: url('/fonts/oxanium-latin-wght-normal.woff2') format('woff2');
+  font-weight: 200 800;
   font-display: swap;
 }
 
-@font-face {
-  font-family: 'JetBrains Mono';
-  src: url('/fonts/jetbrains-mono-bold.woff2') format('woff2');
-  font-weight: 700;
-  font-style: normal;
-  font-display: swap;
+@theme inline {
+  --font-sans: var(--ts-font-sans);
+  --font-display: var(--ts-font-display);
+  --font-mono: var(--ts-font-mono);
 }
 
-@theme {
-  --font-quantico: "Quantico", system-ui, -apple-system, sans-serif;
-  --font-roboto: "Roboto", system-ui, sans-serif;
-  --font-roboto-mono: "Roboto Mono", "JetBrains Mono", ui-monospace, monospace;
-}
-
-:root {
-  font-family: var(--ts-font-sans);
-  background-color: var(--ts-canvas);
-  color: var(--ts-ink);
-}
-
-*,
-*::before,
-*::after {
-  box-sizing: border-box;
-}
-
-html,
-body {
-  margin: 0;
-  padding: 0;
+@media (max-width: 860px) {
+  :root {
+    --ts-gutter: 16px;
+  }
 }
 
 html {
   background-color: var(--ts-canvas);
 }
 
-h1,
-h2,
-h3,
-h4,
-h5,
-h6 {
-  font-family: var(--ts-font-display);
-}
-
 body {
   min-height: 100vh;
-  background-color: var(--ts-canvas);
-  color: var(--ts-ink);
-  font-family: var(--ts-font-sans);
+  font-size: var(--ts-fs-lg);
   text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
   overflow-x: hidden;
-}
-
-a {
-  color: inherit;
-  text-decoration: none;
-}
-
-button,
-input,
-textarea,
-select {
-  font: inherit;
-  color: inherit;
 }
 
 img,
@@ -100,174 +53,34 @@ svg {
   max-width: 100%;
 }
 
-:focus-visible {
-  outline: 2px solid var(--ts-focus);
-  outline-offset: 2px;
-  border-radius: 4px;
+/* Landing layout: one container width, one section rhythm. */
+.ts-container {
+  width: 100%;
+  max-width: calc(var(--ts-content-max) + 2 * var(--ts-gutter));
+  margin: 0 auto;
+  padding: 0 var(--ts-gutter);
 }
 
-@keyframes ts-pulse-soft {
-  0%, 100% { opacity: 1; }
-  50%      { opacity: 0.45; }
+.ts-section {
+  padding: var(--ts-s24) 0;
 }
 
-.pulse-dot {
-  animation: ts-pulse-soft 2.2s ease-in-out infinite;
-  display: inline-block;
-  border-radius: 999px;
+@media (max-width: 640px) {
+  .ts-section {
+    padding: var(--ts-s16) 0;
+  }
 }
 
-.ts-reveal {
-  opacity: 0;
-  transition:
-    opacity var(--ts-reveal-duration, 720ms) cubic-bezier(.22, 1, .36, 1),
-    transform var(--ts-reveal-duration, 720ms) cubic-bezier(.22, 1, .36, 1),
-    filter var(--ts-reveal-duration, 720ms) cubic-bezier(.22, 1, .36, 1);
-  transition-delay: var(--ts-reveal-delay, 0s);
-  will-change: opacity, transform, filter;
-  filter: blur(4px);
+/* Two-tone headings: the second phrase is muted, never coloured. */
+.ts-h-muted {
+  color: var(--ts-ink-3);
 }
 
-.ts-reveal-up    { transform: translate3d(0,  22px, 0); }
-.ts-reveal-down  { transform: translate3d(0, -22px, 0); }
-.ts-reveal-left  { transform: translate3d( 22px, 0, 0); }
-.ts-reveal-right { transform: translate3d(-22px, 0, 0); }
-.ts-reveal-none  { transform: none; }
-
-.ts-reveal.is-visible {
-  opacity: 1;
-  transform: translate3d(0, 0, 0);
-  filter: none;
-}
-
-.ts-accent-text {
-  color: var(--ts-accent);
-}
-
-.ts-eyebrow {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 5px 12px;
-  border-radius: 4px;
-  background: color-mix(in srgb, var(--ts-accent) 10%, transparent);
-  border: 1px solid color-mix(in srgb, var(--ts-accent) 25%, transparent);
-  color: var(--ts-accent);
-  font-family: var(--ts-font-sans);
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.14em;
-  line-height: 1;
-}
-
-.ts-eyebrow::before {
-  content: '';
-  display: inline-block;
-  width: 5px;
-  height: 5px;
-  border-radius: 3px;
-  background: var(--ts-accent);
-}
-
-.ts-eyebrow--plain::before {
-  display: none;
-}
-
-.ts-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 15px 32px;
-  border-radius: 6px;
-  border: 1px solid transparent;
-  font-family: var(--ts-font-sans);
-  font-size: 13px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  cursor: pointer;
-  text-decoration: none;
-  transition:
-    background var(--ts-fast) ease,
-    border-color var(--ts-fast) ease;
-}
-
-.ts-btn-primary {
-  background: var(--ts-primary);
-  color: var(--ts-on-primary);
-}
-
-.ts-btn-primary:hover {
-  background: var(--ts-primary-hover);
-}
-
-.ts-btn-secondary {
-  background: var(--ts-surface-2);
-  border-color: var(--ts-line-strong);
-  color: var(--ts-ink);
-}
-
-.ts-btn-secondary:hover {
-  background: var(--ts-surface-3);
-}
-
-.ts-btn-compact {
-  padding: 11px 22px;
-  font-size: 12px;
-}
-
-.ts-card {
-  background: var(--ts-surface);
-  border: 1px solid var(--ts-line);
-}
-
+/* Landing's own highlighter classes (src/lib/highlight.ts). */
 .tok-keyword { color: var(--ts-syn-keyword); }
 .tok-string  { color: var(--ts-syn-string); }
-.tok-comment { color: var(--ts-syn-comment); font-style: italic; }
+.tok-comment { color: var(--ts-syn-comment); }
 .tok-fn      { color: var(--ts-syn-fn); }
 .tok-num     { color: var(--ts-syn-number); }
 .tok-op      { color: var(--ts-syn-punct); }
 
-::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
-}
-
-::-webkit-scrollbar-track {
-  background: var(--ts-canvas);
-}
-
-::-webkit-scrollbar-thumb {
-  background: var(--ts-line);
-  border-radius: 5px;
-  border: 2px solid var(--ts-canvas);
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: color-mix(in srgb, var(--ts-accent) 40%, transparent);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
-    scroll-behavior: auto !important;
-  }
-
-  .ts-reveal,
-  .ts-reveal.is-visible {
-    opacity: 1;
-    transform: none;
-    filter: none;
-    transition: none;
-  }
-
-  .pulse-dot {
-    animation: none !important;
-  }
-}
