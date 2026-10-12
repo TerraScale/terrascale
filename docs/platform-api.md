@@ -1,5 +1,9 @@
 # Platform API
 
+**Status (2026-10-12): not implemented by the C# application.** The Go
+implementation was removed. This page describes that removed implementation;
+see [remaining parity](csharp-migration.md#remaining-parity-and-qualification).
+
 `https://platform.terrascale.tech` serves the platform REST API: what
 ts-dashboard owns under the service ownership in the umbrella `AGENTS.md`,
 namely plans, subscriptions, Stripe billing and spending caps.
@@ -24,7 +28,7 @@ The API is a resource server under ts-auth's `docs/platform-contract.md`
 - the operation's scope in `scope` (`403 insufficient_scope` otherwise):
   `billing:read`, `billing:write` (owners) or `usage:read`.
 
-Users and the CLI get one by exchanging their sign-in token (ts-go
+Users and the CLI got one by exchanging their sign-in token (historical: ts-go
 `tsauth.NewExchangeSource`). The dashboard's services still act as a user and
 check roles too, so API key tokens (no user) are refused until the identity
 store moves to ts-auth, and until then `org_id` must be a dashboard
@@ -32,10 +36,11 @@ organization id.
 
 ## Operations
 
-Each operation is an MCP tool with a `Route` (see [mcp.md](mcp.md#adding-tools)),
-so both surfaces share validation, permissions and schemas. The JSON body,
-query parameters and path wildcards fill the tool's input; unknown fields are
-refused, and only the path names the organization and project.
+In the Go application each operation was an MCP tool with a `Route`, so both
+surfaces shared validation, permissions and schemas. The JSON body, query
+parameters and path wildcards filled the tool's input; unknown fields were
+refused, and only the path named the organization and project. The C# MCP
+tools ([mcp.md](mcp.md)) have no REST routes.
 
 Routes are under `/v1/organizations/{organizationId}`:
 
@@ -60,10 +65,11 @@ not the token's), `409 conflict` and `503 temporarily_unavailable`.
 
 ## Hosts
 
-The dashboard's Fly app serves all three hosts; `internal/app` routes
-`platform.terrascale.tech` to this API and `mcp.terrascale.tech` to the MCP
-server. Their Cloudflare DNS records (TS-599, not proxied) point at the app's
-Fly addresses, and Fly issues their certificates:
+Historically the Go deployment of the Fly app served all three hosts, and the
+Go `internal/app` package routed `platform.terrascale.tech` to this API and
+`mcp.terrascale.tech` to the MCP server. The C# application routes only
+`mcp.terrascale.tech`. Their Cloudflare DNS records (TS-599, not proxied)
+point at the app's Fly addresses, and Fly issues their certificates:
 
 | Host | A record | AAAA record |
 | --- | --- | --- |

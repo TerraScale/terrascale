@@ -6,8 +6,8 @@ committed.
 ## Dotted region map
 
 `generate-region-map.mjs` regenerates
-`web/static/brand/region-map.svg`, a decorative dotted world map produced with
-`dotted-map`. The SVG records its projection, grid, view box, title, and
+`src/TerraScale.Dashboard/web/static/brand/region-map.svg`, a decorative dotted
+world map produced with `dotted-map`. The SVG records its projection, grid, view box, title, and
 description so a route that renders it can identify the visual layer. Region
 selection remains available through ordinary labeled form controls and does
 not depend on the map.
@@ -17,3 +17,7 @@ Rerun it only when the map artwork changes:
 ```sh
 cd tools && npm ci && node generate-region-map.mjs
 ```
+
+The script still writes to the pre-move path `web/static/brand/region-map.svg`
+at the repository root. Move that file to
+`src/TerraScale.Dashboard/web/static/brand/` until the script is updated.

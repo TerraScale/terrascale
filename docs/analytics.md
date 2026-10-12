@@ -28,29 +28,34 @@ health, lag, divergence, convergence time and last applied are provider values.
 Overview shows analytics, replication for the selected project, and every region
 used by the selected organization. Database counts include all its authorized
 projects, counting each database once per region. Region health and latency
-come from ts-status through the TS-752 ts-go contract; missing latency is shown
-as unknown, not zero. Reads have five-second deadlines and Overview reads its
-three measurement sources concurrently. Native GET filters use the existing
+come from ts-status's public `https://status.terrascale.tech/api/latency`
+(`src/TerraScale.Dashboard/Features/Home/HomeMeasurements.cs`); missing
+latency is shown as unknown, not zero. Reads have five-second deadlines and
+Overview reads its three measurement sources concurrently. Native GET filters use the existing
 navigation progress and an accessible loading status. Provider failures preserve
 the page and filters, with a retry message instead of fabricated measurements.
 
 ## SDK integration gate
 
-`core.MetricsReader` is the injectable read-only contract used by the UI and the
-Playwright fake client. The current ts-go pin does not publish the TS-762
-analytics/replication methods. `app.New` therefore leaves this reader unset and
-displays explicit unavailable states. TS-752 is merged: region measurements are
-wired through `sdk.Status.Latency` on the public status origin. Test fixtures
-are only in test files; production and the in-memory demo never synthesize metrics.
+Paths are relative to `src/TerraScale.Dashboard`. `IAnalyticsBackend`
+(`Features/Analytics/AnalyticsModels.cs`) is the read-only contract used by
+the UI. Tests keep the real adapter and serve a test-only producer protocol
+from `tests/TerraScale.Dashboard.E2E/Demo/TestReporting.cs`. Production never
+synthesizes metrics.
 
-When slice 2 merges, repin ts-go and implement this reader under
-`internal/adapters/tsgo`, using those typed methods and the signed-in user's
-access token. Wire it in `app.New`. Keep provider IDs unchanged; do not generate
-UUIDs, add versioned types/routes, use direct HTTP fallbacks, or read TerraBase's
-internal data. The SDK adapter and live verification are required before calling
-this slice complete.
+The pinned ts-dotnet SDK (`TerraScale.DotNet`) does not publish the TS-762
+analytics/replication methods. `Features/Analytics/AnalyticsBackend.cs`
+therefore calls the producer's `/v1/projects/{projectId}/analytics` route over
+HTTP with a `databases:read` project token from the RFC 8693 exchange; see
+[runtime integration gates](csharp-migration.md#runtime-integration-gates).
+It keeps provider IDs unchanged. When the SDK publishes typed methods, move
+this adapter to them. Live verification is required before calling this slice
+complete.
 
-The public status source has one correct setting. The current `TS_STATUS_URL`
-override and empty-value measurement-disable path are runtime removal gaps;
-regional measurement is always available under the operating contract.
-The public status read never receives the signed-in user's token.
+Historical: the Go application left its `core.MetricsReader` unset because the
+ts-go pin lacked these methods, and read region latency through ts-go
+`sdk.Status.Latency`.
+
+The public status origin is fixed in code; there is no override or
+measurement-disable setting. The public status read never receives the
+signed-in user's token.

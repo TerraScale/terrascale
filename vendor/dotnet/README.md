@@ -3,7 +3,8 @@
 The dashboard references the official `TerraScale.DotNet` SDK as a NuGet
 package. It does not reference a sibling checkout or the TerraBase project.
 `NuGet.Config` maps this package exclusively to this committed feed; other
-dependencies come from NuGet.org. The application solution contains one project.
+dependencies come from NuGet.org. The solution contains one application
+project plus its E2E test project.
 
 `provenance.json` records the exact bytes and source revision. This is a local
 dashboard candidate built from an unmodified, clean `git archive` of the official
@@ -24,7 +25,7 @@ dotnet pack src/TerraScale.DotNet/TerraScale.DotNet.csproj --configuration Relea
 ```
 
 Prefix local pack/build/test commands with `nice -n 19`.
-Run `python3 scripts/dotnet/verify-sdk.py` to verify the package hash, nuspec
+Run `python3 scripts/verify-sdk.py` to verify the package hash, nuspec
 identity, repository metadata, assembly, and application package reference.
 
 The candidate fixes point-document requests to the current producer's

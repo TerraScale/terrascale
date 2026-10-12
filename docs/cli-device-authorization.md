@@ -26,7 +26,8 @@ tokens cannot authorize another device. The browser approval POST remains behind
 CSRF protection. Codes are retained as SHA-256 digests; issuance and code lookup
 are throttled, and at most 1,000 unexpired grants are held.
 
-This implementation follows the dashboard's required in-memory demo mode. Pending
-grants, accounts, sessions, and personal tokens belong to the current demo process
-and are lost when it restarts. It does not claim persistent production state or
-issue regional database credentials; native API login remains a separate flow.
+Pending grants are stored in the dashboard's TerraBase state (the
+`device_grants` collection, `src/TerraScale.Dashboard/Features/Auth/DeviceGrants.cs`),
+as are sessions and personal tokens. Persistence across a deployed restart is
+not yet qualified. The flow does not issue regional database credentials;
+native API login remains a separate flow.

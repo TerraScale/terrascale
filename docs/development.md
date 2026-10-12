@@ -1,15 +1,11 @@
 # Dashboard development
 
-The active migration uses .NET 10, RazorSlices, Datastar and the official
-ts-dotnet SDK in one production application, `TerraScale.Dashboard`.
+The dashboard uses .NET 10, RazorSlices, Datastar and the official
+ts-dotnet SDK in one production application, `src/TerraScale.Dashboard`.
 Node.js and npm build the Lightning CSS stylesheet and browser assets.
-The Go application still serves production until migration and producer
-qualification are complete. See [migration status](csharp-migration.md) for
+It is the only implementation; the Go application was removed on 2026-10-12.
+Production is not deployed. See [migration status](csharp-migration.md) for
 outstanding deployment and persistence gates.
-
-The user accepted merging this additive implementation into GitHub `main`
-on 2026-10-12 with the known visual and live-service gaps documented. Merge
-acceptance does not change the production deployment or qualify a C# cutover.
 
 ## Local development
 
@@ -18,16 +14,17 @@ browser/build dependencies with `npm ci`. Run local builds, lint, tests and
 watchers with low CPU priority:
 
 ```sh
-nice -n 19 make dotnet-build
-nice -n 19 make dotnet-lint
-nice -n 19 make dotnet-dev
-nice -n 19 make dotnet-demo
+nice -n 19 make build
+nice -n 19 make lint
+nice -n 19 make dev
+nice -n 19 make demo
 ```
 
 The production development host requires automatically delivered platform
 identity and persistent services. The demo launcher creates a temporary
-test host from sources under `tests/dotnet/demo`; demo stores, identities and
-vendor protocol fixtures are excluded from application compilation.
+test host from sources under `tests/TerraScale.Dashboard.E2E/Demo`; demo
+stores, identities and vendor protocol fixtures are excluded from application
+compilation.
 Use the Tailscale URL and worktree-specific port printed by the launcher.
 Both launchers bind all interfaces and watch C#/Razor and browser assets.
 Same-origin Datastar SSE updates CSS and refreshes pages when source changes.
@@ -42,20 +39,21 @@ Their transports reject unknown external origins.
 All dashboard tests use **TUnit**, and all tests exercise the running
 application through browser, HTTP, MCP or customer SDK boundaries. Do not
 create isolated service/component/unit tests or introduce another runner.
-Test providers and protocol controls belong under `tests/dotnet/demo`.
-Journey tests belong under `tests/dotnet/e2e`, in `*JourneyTests.cs` files.
+Test providers and protocol controls belong under
+`tests/TerraScale.Dashboard.E2E/Demo`. Journey tests belong under
+`tests/TerraScale.Dashboard.E2E`, in `*JourneyTests.cs` files.
+Node browser journeys are in `tests/TerraScale.Dashboard.E2E/browser`.
 
 ```sh
-nice -n 19 make dotnet-test-e2e
-nice -n 19 make dotnet-parity-reference
-nice -n 19 make dotnet-parity
-nice -n 19 make dotnet-test-hot-reload
-nice -n 19 make dotnet-test-live-readiness
+nice -n 19 make test-e2e
+nice -n 19 make test-hot-reload
+nice -n 19 make test-live-readiness
+nice -n 19 make perf
 ```
 
-`test-fast`, `test-slow`, `test-browser`, `dotnet-test-fast` and
-`dotnet-test-browser` all invoke the TUnit E2E executable. The solution
-contains one production application; the separate test executable owns
+`test-fast`, `test-slow` and `test-browser` are aliases of `test-e2e`.
+`check-e2e-shards` lists the discovered tests. The solution contains one
+production application and its E2E project; the test executable owns
 TUnit discovery, assertions, fixtures and TRX reports. Fixtures start real
 Kestrel replicas on operating-system-assigned ports with common test-provider
 state and dispose them after execution. They drive Chromium using pinned Playwright dependencies and
@@ -66,7 +64,7 @@ For a focused journey, use the TUnit tree-node filter:
 
 ```sh
 nice -n 19 dotnet run --configuration Release \
-  --project tests/dotnet/e2e/TerraScale.Dashboard.E2E.csproj -- \
+  --project tests/TerraScale.Dashboard.E2E -- \
   --treenode-filter '/*/*/BillingBrowserJourneyTests/*' --report-trx \
   --results-directory "$PWD/test-results/tunit"
 ```
@@ -76,27 +74,22 @@ relative path under its build output. Billing journeys capture current UTC
 time once and carry the independently calculated month into their assertions;
 fixed historical clocks can make real HTTP clients discard expired cookies.
 
-The strict visual journey compares the original Go application's captured
-desktop/mobile states with C# using status, DOM, controls, geometry and every
-pixel. `dotnet-parity-reference` captures that original implementation;
-TUnit starts a plain Go reference executable and owns capture, comparison
-and failure reports. Reference capture is explicit and excluded from the
-normal E2E run, so a comparison never replaces its baseline. Capture also
-exports the actual source account and workspace IDs through authenticated
-HTTP/MCP, after screenshots. Missing reference artifacts
-fail the journey. Fixture and feature differences remain failures.
+The Go application, its reference capture and the strict visual parity
+journey were removed; the seed fixture captured from it lives at
+`tests/TerraScale.Dashboard.E2E/Fixtures/reference-workspace.json`.
 
 The hot-reload journey starts the test-only watcher, opens its Tailscale
 origin, changes C# copy and CSS, verifies both in the browser, restores the
 files and verifies the original rendering. Run it with the worktree's demo
 port free and without concurrent edits to the auth copy or CSS fixtures.
 
-Lint verifies SDK package provenance, the E2E-only test boundary and formatting
-of the application and test project. The live account-to-ts-typescript-SDK
+Lint checks that the committed stylesheet matches `web/assets`, then verifies
+SDK package provenance, the E2E-only test boundary and formatting of the
+application and test project. The live account-to-ts-typescript-SDK
 journey and persistent restart qualification remain required; a passing
 demo cannot substitute for either.
 
-The explicit `dotnet-test-live-readiness` journey launches the genuine
+The explicit `test-live-readiness` journey launches the genuine
 production executable with no demo/provider overrides, then requires startup
 and HTTP readiness. Normal startup establishes the fixed state schema using
 the automatically delivered identity. Missing delivery or unavailable
@@ -108,7 +101,7 @@ identity descriptor at `/run/secrets/terrascale/dashboard.json`; it accepts no
 configuration options. Run it with:
 
 ```sh
-nice -n 19 dotnet run --project TerraScale.Dashboard.csproj -- audit-stripe
+nice -n 19 dotnet run --project src/TerraScale.Dashboard -- audit-stripe
 ```
 
 The process/TLS-HTTP E2E journey is `StripeAuditJourneyTests`; its nineteen
@@ -120,10 +113,12 @@ is no separate unit-test runner.
 
 ## Assets and production integration
 
-Lightning CSS bundles `web/assets` into the single stylesheet
+Paths below are relative to `src/TerraScale.Dashboard`. Lightning CSS
+bundles `web/assets` into the single stylesheet
 `web/static/css/terrascale.css`. esbuild bundles the self-hosted Datastar and
-Monaco scripts under `web/static/js`. Datastar version, source map and license
-are pinned together; the build validates their recorded hashes. Monaco
+Monaco scripts under `web/static/js`. The project build runs both bundlers.
+Datastar version, source map and license are pinned together; the build
+validates their recorded hashes. Monaco
 loads only on editor pages, and map code/data loads only where needed.
 Brand marks are file-backed SVG assets under `web/static/brand`.
 
@@ -133,6 +128,5 @@ Production state belongs in TerraBase, authorization belongs to ts-auth,
 and secrets must arrive automatically from OCI Vault. Feature flags,
 production demo selection and manual endpoint/secret overrides are prohibited.
 
-The existing Go sources, deployment and browser fixtures are retained as
-migration references. Do not deploy C# or remove that reference until the
-feature, visual, live SDK, persistence and release gates are satisfied.
+Do not deploy until the live SDK, persistence, identity delivery and release
+gates in [migration status](csharp-migration.md) are satisfied.
