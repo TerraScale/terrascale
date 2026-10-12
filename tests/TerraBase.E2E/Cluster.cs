@@ -293,6 +293,10 @@ public sealed class Cluster : IAsyncDisposable
         private readonly string _project = EntityIds.New().ToString();
         private readonly string _database = EntityIds.New().ToString();
 
+        // The first region's user owns the organization on every node: once the catalog replicates (R10a), a node that
+        // answers id_taken holds the first region's organization, and only its owner can set its plan.
+        private string? _owner;
+
         // Every machine reaches each peer through a PeerLink of its own: its view of the shared directory names the link, not
         // the peer's listener. A partition cuts the links between two regions both ways, on the real peer path, so the CDC
         // groups and acks stop at once; links made later (a restart, a new view) start cut until the heal.
@@ -412,9 +416,10 @@ public sealed class Cluster : IAsyncDisposable
 
             // Registered once in the first region; every other node registers the same ids too, which a replicated catalog
             // (R10a) answers with 409 id_taken or name_taken: it already holds them. Until then each node keeps its own catalog.
+            _owner = _nodes[regions[0]].Api!.User;
             foreach (var node in _nodes.Values)
             {
-                await CommitAsync(node.Api!, Registration(_organization, _project, _database, "canary", [.. regions.Where(region => region != node.Region)]),
+                await CommitAsync(node.Api!, _owner, Registration(_organization, _project, _database, "canary", [.. regions.Where(region => region != node.Region)]),
                     alreadyHeld: node.Region != regions[0]);
             }
 
@@ -522,7 +527,7 @@ public sealed class Cluster : IAsyncDisposable
         private async Task AuthorizeAsync(Node node, bool restart)
         {
             var api = node.Api!;
-            node.User ??= api.User;
+            node.User ??= _owner ?? api.User;
             if (!restart)
             {
                 // The enterprise plan lifts the organization's request budget, as the cross-region suite does. Fly's plan is its own.
@@ -546,9 +551,9 @@ public sealed class Cluster : IAsyncDisposable
         }
 
         // With alreadyHeld, a 409 naming ids or names already taken counts as done: the catalog brought them.
-        private static async Task CommitAsync(ManagementApi api, string commit, bool alreadyHeld = false)
+        private static async Task CommitAsync(ManagementApi api, string user, string commit, bool alreadyHeld = false)
         {
-            using var service = api.Service(api.User);
+            using var service = api.Service(user);
             using var response = await service.PostAsync(new Uri("/v1/management/commits", UriKind.Relative), new StringContent(commit, Encoding.UTF8, "application/json"));
             if (!alreadyHeld || !await Cluster.TakenAsync(response))
             {
