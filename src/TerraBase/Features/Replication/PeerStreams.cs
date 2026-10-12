@@ -289,11 +289,25 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus
                 continue;
             }
 
-            // Taken before the read: when it finds nothing to send, the peer holds every event of this machine stamped below it.
+            // Taken before the read: when it finds nothing to send, the peer holds every event of this machine stamped below it,
+            // and no change id up to this newest one holds a group of this machine past the ack (only bookkeeping, such as the rows a
+            // peer's frontier reports write here, and joins of other machines' groups).
             var frontier = _self.Clock.Tick();
+            var newest = await _source.HeadAsync(database, cancellationToken).ConfigureAwait(false);
             var groups = await _source.ReadAsync(database, acked, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, cancellationToken).ConfigureAwait(false);
             if (groups.Count == 0)
             {
+                if (newest > acked)
+                {
+                    // Nothing up to the newest change id is for the peer: acknowledged here, so retention drops those rows and a resumed stream
+                    // starts past them. Without it an idle database's ack stays below its head while the bookkeeping rows grow.
+                    await _source.AckAsync(database, peer, newest, default, cancellationToken).ConfigureAwait(false);
+                    lock (link.Gate)
+                    {
+                        cursor.Acked = newest;
+                    }
+                }
+
                 if (_time.GetElapsedTime(cursor.FrontierAt) >= FrontierEvery || cursor.FrontierAt == 0)
                 {
                     await stream.WriteAsync(new PushFrame { Frontier = new Frontier { Database = ChangeGroups.Wire(database), Hlc = frontier.Value } }, cancellationToken)
