@@ -414,6 +414,18 @@ public sealed class Cluster : IAsyncDisposable
                 await StartNodeAsync(node);
             }
 
+            // The catalog gate (R10a) is closed until verified: a lone region is a new cluster, which the operator's bootstrap
+            // opens; every node then waits for its gate before the first commit.
+            if (regions.Length == 1)
+            {
+                await CatalogBootstrap.OpenAsync(_nodes[regions[0]].Api!.Server);
+            }
+
+            foreach (var node in _nodes.Values)
+            {
+                await CatalogBootstrap.WaitOpenAsync(node.Api!.Server);
+            }
+
             // Registered once in the first region; every other node registers the same ids too, which a replicated catalog
             // (R10a) answers with 409 id_taken or name_taken: it already holds them. Until then each node keeps its own catalog.
             _owner = _nodes[regions[0]].Api!.User;
