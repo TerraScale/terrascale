@@ -95,7 +95,6 @@ export const footerColumns: FooterColumn[] = [
     key: 'company',
     links: [
       { key: 'about', href: '/about' },
-      { key: 'blog', href: 'https://docs.terrascale.tech/blog/' },
       { key: 'contact', href: '/contact' },
     ],
   },
@@ -123,7 +122,7 @@ export type SocialLink = {
 export const socialLinks: SocialLink[] = [
   {
     key: 'github',
-    href: 'https://git.terrascale.tech/TerraScale',
+    href: 'https://github.com/TerraScale',
     icon: 'brandGithub',
     color: '#F1F5F9',
     bg: 'rgba(241,245,249,0.08)',
