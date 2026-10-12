@@ -61,20 +61,13 @@ unused. Both shapes include the uniqueness tables `_tb_unique_keys`, `_tb_unique
 | `Delete`: `DELETE … WHERE collection = ? AND id = ?` | every `_system` delete | `SEARCH documents USING PRIMARY KEY (collection=? AND id=?)` | unchanged |
 | List, first page: `… WHERE collection = ? ORDER BY id LIMIT ?` | list without cursor | `SEARCH documents USING PRIMARY KEY (collection=?)` | `SEARCH documents USING INDEX documents_live (collection=?)` (`ListFirst`), skipping tombstones |
 | List, next page: `… WHERE collection = ? AND id > ? ORDER BY id LIMIT ?` | list with cursor | `SEARCH documents USING PRIMARY KEY (collection=?)` — one statement used `($after IS NULL OR id > $after)`, which kept SQLite from seeking to the cursor: every page walked the collection from its first id | `SEARCH documents USING INDEX documents_live (collection=? AND id>?)` (`ListAfter`) |
-| `ObserveOffset`, `Origin` | a catalog follower's offset, the `_system` stream identity | — | integer-primary-key search on `commit_offset` |
 | `ClientHasCollectionState`, `ClientHasCollectionStateFrom` | collection state checks on a client database | — | two `EXISTS` range seeks of `_tb_state` and `collections`: a client database keeps a drop's tombstones as registers, so it has no journal deletions to look at |
-| `LastSequence`, `AppendReplicationChange`, `GetChangeDigest`, `AppendChangeDigest` | `_system` journal append | — | journal primary-key search; inserts have no plan rows |
 | `PRAGMA user_version`, `PRAGMA journal_mode = WAL`, `CREATE TABLE` | once per database per process (bootstrap) | DDL, no plan | unchanged |
 | `VACUUM INTO $path` | database copy (Management API), rare | maintenance, `EXPLAIN QUERY PLAN` returns no rows | unchanged; runs on a pooled connection |
 | `CountDocuments`: `SELECT count(*) … WHERE collection = ? AND body IS NOT NULL` | schema inference, query-field records in `_system` (Management API) | — | `SEARCH documents USING PRIMARY KEY (collection=?)`; tests each record header's body type, never loads a body. `documents_live` would not cover the `body` test and would add a lookup per row |
 | `ListCollectionStats` | usage, collection list (Management API) | — | `SCAN collections` in key order, then per collection `SEARCH documents USING PRIMARY KEY (collection=?)` (a `LEFT-JOIN` summing `octet_length(body)`, which reads the size from the record header) |
 | `DeleteCollectionDocuments`, `DeleteCollectionNames`: `DELETE … WHERE name >= ? AND name < ?` | database or project deletion in `_system` (Management API) | — | `SEARCH documents USING PRIMARY KEY (collection>? AND collection<?)`; `SEARCH collections USING PRIMARY KEY (name>? AND name<?)` |
 | `ListIndexes`, `IndexExists` on `sqlite_schema` | index list, create and drop (Management API) | — | `SCAN sqlite_schema` (a handful of rows); the list is sorted in memory, not in a temporary B-tree |
-| `SystemDocumentsFirst`, `SystemDocumentsAfter` | catalog snapshot pages in `_system` (catalog primary, [0009](decisions/0009-catalog-replication.md)) | — | `SCAN documents USING INDEX documents_live` under LIMIT; `SEARCH documents USING INDEX documents_live ((collection,id)>(?,?))` |
-| `GroupSize`, `ReadGroupPage` | catalog group pages in `_system` | — | `SEARCH changes USING PRIMARY KEY (sequence=?)`; `SEARCH changes USING PRIMARY KEY (sequence=? AND ordinal>?)` |
-| `CollectionRangeIds` | captured prefix drop in `_system` | — | `SEARCH documents USING PRIMARY KEY (collection>? AND collection<?)`, ids only |
-| `ReplaceDocument` | every replicated catalog change on a follower | — | upsert, no plan rows |
-| `SystemLastSequence`, `TruncateChanges`, `TruncatePrefixes` | every `_system` commit (journal head and its 1024-group tail) | — | `SEARCH journal_prefixes USING PRIMARY KEY`; `SEARCH changes USING PRIMARY KEY (sequence<?)`; `SEARCH journal_prefixes USING PRIMARY KEY (sequence<?)` |
 
 No fixed statement sorts in a temporary B-tree. The first collections, baseline and anti-entropy pages scan in key order
 up to their limits; anti-entropy pages read the partial key index, so excluded empty or oversized keys consume no scan
@@ -191,6 +184,3 @@ indexes; neither is in `SqliteStatements.All`. Both read live documents only.
 - SQL-subset queries share the document query work budget (`QueryBudget` in `SqliteStorageTransaction`: 5 seconds,
   or cancellation). The seconds are `query-budget-seconds` (default 5); the test harness raises them so that a loaded runner's
   descheduling or GC pauses do not fail tiny queries, and tests of the time budget pin the default.
-
-`_system` schema 8 stores its catalog journal's prefix SHA-256 values in `journal_prefixes` (sequence primary key);
-`GetChangeDigest` seeks it by sequence. Client databases keep no prefix digests: an origin never reuses a sequence.

@@ -184,66 +184,6 @@ internal static class SqliteStatements
 
     public const string IndexExists = "SELECT 1 FROM sqlite_schema WHERE type = 'index' AND name = $name;";
 
-    // The system database: a catalog follower's commit offset reaches its primary's.
-    public const string ObserveOffset = "UPDATE commit_offset SET value = max(value, $version) WHERE id = 1;";
-
-    // The system database's origin is its persisted incarnation, a ULID.
-    public const string Origin = "SELECT incarnation FROM commit_offset WHERE id = 1;";
-
-    // The system database's journal: every write in order, with a SHA-256 prefix digest per group (docs/decisions/0009).
-    // ORDER BY ... LIMIT 1, not max(): Turso reads max() by a scan.
-    public const string LastSequence = "SELECT coalesce((SELECT sequence FROM changes ORDER BY sequence DESC LIMIT 1), 0);";
-
-    public const string AppendReplicationChange = """
-        INSERT INTO changes (sequence, ordinal, collection, id, version, body)
-        VALUES ($sequence, $ordinal, $collection, $id, $version, $body);
-        """;
-
-    public const string GetChangeDigest = "SELECT digest FROM journal_prefixes WHERE sequence = $sequence;";
-
-    public const string AppendChangeDigest = "INSERT INTO journal_prefixes (sequence, digest) VALUES ($sequence, $digest);";
-
-    // System database replication (docs/decisions/0009). A snapshot reads live documents in key order, any collection.
-    public const string SystemDocumentsFirst = "SELECT collection, id, version, body FROM documents WHERE body IS NOT NULL ORDER BY collection, id LIMIT $limit;";
-
-    // Two bounded seeks: Turso scans the whole index for a row-value comparison or an OR of the two ranges.
-    public const string SystemDocumentsAfter = """
-        SELECT * FROM (
-            SELECT collection, id, version, body FROM documents WHERE collection = $collection AND id > $id AND body IS NOT NULL
-            ORDER BY id LIMIT $limit)
-        UNION ALL
-        SELECT * FROM (
-            SELECT collection, id, version, body FROM documents WHERE collection > $collection AND body IS NOT NULL
-            ORDER BY collection, id LIMIT $limit)
-        ORDER BY 1, 2 LIMIT $limit;
-        """;
-
-    public const string GroupSize = "SELECT count(*) FROM changes WHERE sequence = $sequence;";
-
-    // Ordinals of a group are 0, 1, …, so a page resumes at an index.
-    public const string ReadGroupPage = "SELECT collection, id, version, body FROM changes WHERE sequence = $sequence AND ordinal >= $skip ORDER BY ordinal LIMIT $limit;";
-
-    // A system prefix drop captures each deletion: the same range as DeleteCollectionDocuments.
-    public const string CollectionRangeIds = "SELECT collection, id FROM documents WHERE collection >= $from AND collection < $to;";
-
-    public const string ReplaceDocument = """
-        INSERT INTO documents (collection, id, version, body) VALUES ($collection, $id, $version, $body)
-        ON CONFLICT (collection, id) DO UPDATE SET version = excluded.version, body = excluded.body;
-        """;
-
-    // The system journal keeps a bounded tail (and a follower only its head), so its head is the last stored digest.
-    public const string SystemLastSequence = "SELECT coalesce((SELECT sequence FROM journal_prefixes ORDER BY sequence DESC LIMIT 1), 0);";
-
-    public const string TruncateChanges = "DELETE FROM changes WHERE sequence <= $floor;";
-
-    public const string TruncatePrefixes = "DELETE FROM journal_prefixes WHERE sequence <= $floor;";
-
-    // A follower's snapshot replaces its documents and journal: whole-table deletes, once per snapshot, so not in All (no
-    // plan to check). commit_offset keeps its value (its incarnation is renewed separately); replication_state holds
-    // nothing for _system.
-    public const string ResetReplica =
-        "DELETE FROM documents; DELETE FROM collections; DELETE FROM changes; DELETE FROM journal_prefixes; DELETE FROM applied;";
-
     /// <summary>Statements both client and system databases run, by name, for query-plan checks.</summary>
     public static IReadOnlyDictionary<string, string> Shared { get; } = new Dictionary<string, string>(StringComparer.Ordinal)
     {
@@ -300,22 +240,7 @@ internal static class SqliteStatements
         [nameof(Tombstone)] = Tombstone,
         [nameof(DeleteCollectionDocuments)] = DeleteCollectionDocuments,
         [nameof(DeleteCollectionNames)] = DeleteCollectionNames,
-        [nameof(ObserveOffset)] = ObserveOffset,
         [nameof(HasCollectionState)] = HasCollectionState,
         [nameof(HasCollectionStateFrom)] = HasCollectionStateFrom,
-        [nameof(Origin)] = Origin,
-        [nameof(LastSequence)] = LastSequence,
-        [nameof(AppendReplicationChange)] = AppendReplicationChange,
-        [nameof(GetChangeDigest)] = GetChangeDigest,
-        [nameof(AppendChangeDigest)] = AppendChangeDigest,
-        [nameof(SystemDocumentsFirst)] = SystemDocumentsFirst,
-        [nameof(SystemDocumentsAfter)] = SystemDocumentsAfter,
-        [nameof(GroupSize)] = GroupSize,
-        [nameof(ReadGroupPage)] = ReadGroupPage,
-        [nameof(CollectionRangeIds)] = CollectionRangeIds,
-        [nameof(ReplaceDocument)] = ReplaceDocument,
-        [nameof(SystemLastSequence)] = SystemLastSequence,
-        [nameof(TruncateChanges)] = TruncateChanges,
-        [nameof(TruncatePrefixes)] = TruncatePrefixes,
     };
 }

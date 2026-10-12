@@ -68,7 +68,7 @@ public sealed class ReplicationHealthTests
 
         private sealed class View(TerraBase.Configuration.TerraBaseOptions options, string[] regions) : IMembership
         {
-            private readonly ClusterView _view = new(1, [new(options.MachineId, string.Empty, options.Region, string.Empty)], null,
+            private readonly ClusterView _view = new(1, [new(options.MachineId, string.Empty, options.Region, string.Empty)],
                 [.. regions.Select((region, index) => new ClusterMember($"m{index}", string.Empty, region, string.Empty))]);
 
             public ClusterMember Self => _view.Members[0];

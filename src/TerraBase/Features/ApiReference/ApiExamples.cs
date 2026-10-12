@@ -186,10 +186,10 @@ internal static class ApiExamples
         "421" => "misdirected_request, wrong_region",
         "429" => "tenant_busy, tenant_memory",
         "503" when id is "dropCollection" or "runTransaction" => "capacity, storage_busy, unavailable",
-        "503" when id == "planPointInTime" => "pitr_plan_limit, pitr_plan_timeout, pitr_plan_unavailable, storage_busy, catalog_primary_unavailable",
+        "503" when id == "planPointInTime" => "pitr_plan_limit, pitr_plan_timeout, pitr_plan_unavailable, storage_busy",
         "503" when id is "createDocument" or "putDocument" or "patchDocument" or "deleteDocument" => "capacity, storage_busy, unavailable",
         "503" when id is "queryDocuments" or "getDocument" or "listDocuments" or "createCollection" or "getCollection" or "listCollections" => "storage_busy, unavailable",
-        "503" => "storage_busy, capacity, catalog_primary_unavailable, not_primary, unavailable",
+        "503" => "storage_busy, capacity, unavailable",
         _ => "internal_error",
     };
 
