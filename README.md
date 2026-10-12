@@ -101,41 +101,32 @@ TerraBaseDocument? current = await database.GetDocumentAsync("users", userId, ca
 `DeleteAsync` deletes the database and its data; it throws `TerraBaseConflictException` (`database_replicated`) while replica regions exist.
 
 `GetDocumentAsync` returns `null` for an absent document. `CreateDocumentAsync`
-posts a document and TerraBase generates a UUIDv7 id. Lists and queries return
+posts a document and TerraBase generates a ULID. Lists and queries return
 pages with `NextCursor`. Patches take an RFC 7396 merge patch `JsonElement` or a
 list of `TerraBasePatchOperation`. `TransactAsync` applies `Create`, `Put`,
 `Patch`, `Delete`, `Assert`, `AssertAbsent` and `AssertCount` operations
 atomically.
 
 ```csharp
+// On Fly's private network: TerraBase's internal listener trusts the network and acts as the platform operator.
 var management = new TerraBaseManagementClient(httpClient, new TerraBaseManagementClientOptions
 {
-    BaseAddress = discoveredOrigin,
-    ServiceCredential = dashboardServiceCredential
+    BaseAddress = new Uri("http://top1.nearest.of.ts-terrabase.internal:8081"),
 });
 
 TerraBaseOrganization organization = await management.CreateOrganizationAsync(
     authenticatedUserId, "Acme", cancellationToken);
-TerraBaseProject project = await management.CreateProjectAsync(
-    authenticatedUserId, organization.Id, "web", cancellationToken);
-TerraBasePage<TerraBaseProject> page = await management.ListProjectsAsync(
-    authenticatedUserId, organization.Id, cancellationToken: cancellationToken);
 ```
 
-The service credential is sent as a bearer token. Every management call takes
-the acting `userId` first and sends it as `X-TerraBase-User-Id`; organization
-routes also send `X-TerraBase-Organization-Id`. Take the user id from an
-authenticated session, never from browser input. Pages are
+Every management call takes the acting `userId` first and sends it as `X-TerraBase-User-Id`; organization routes also
+send `X-TerraBase-Organization-Id`. Take the user id from an authenticated session, never from browser input. On the
+public HTTPS listener, pass the user's ts-auth access token through `AccessTokenProvider` instead. Requests to a
+private plain-HTTP origin go out as HTTP/2 with prior knowledge (TerraBase's internal listener is h2c only). Pages are
 `TerraBasePage<T>(Items, Next)`; pass `Next` as `after` with an optional `limit`.
 
-First-party service credentials must be created and delivered automatically
-under the operating contract. Static credential inputs in these examples
-represent the current API boundary; they do not instruct operators to copy
-production secrets. Customer credentials still authorize consumer access.
-
-Both clients also accept `AccessTokenProvider`
-(`Func<CancellationToken, ValueTask<string>>`) instead of their static `ApiKey`
-or `ServiceCredential`. Supply exactly one credential source. The provider runs
+Both clients accept `AccessTokenProvider`
+(`Func<CancellationToken, ValueTask<string>>`); the Documents client also takes a static `ApiKey`. Supply at most one
+credential source, and none only for a private plain-HTTP origin. The provider runs
 once per request after origin validation, shares the request deadline, and must
 be thread-safe and honor cancellation. It supplies the credential accepted by
 the deployed server; the SDK performs no exchange, background refresh, or retry.

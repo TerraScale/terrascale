@@ -15,6 +15,7 @@ public sealed class TerraBaseContractTests
     private const string Project = "01JA0000000000000000000001";
     private const string Organization = "01JA0000000000000000000002";
     private const string User = "01JA0000000000000000000003";
+    private static readonly Uri Private = new("http://top1.nearest.of.ts-terrabase.internal:8081/");
 
     [Test]
     public async Task EveryOperationSendsItsRecordedRouteAndEveryRouteIsUsed()
@@ -112,9 +113,10 @@ public sealed class TerraBaseContractTests
         });
         using var http = new HttpClient(handler);
         var origin = new Uri("https://terrabase.example.test/");
+        // Management here goes to the private listener (the platform operator, no credential), so it also proves HTTP/2.
         object sdk = client == "documents"
             ? new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions { BaseAddress = origin, ApiKey = "tb_test_key" })
-            : new TerraBaseManagementClient(http, new TerraBaseManagementClientOptions { BaseAddress = origin, ServiceCredential = new string('c', 40) });
+            : new TerraBaseManagementClient(http, new TerraBaseManagementClientOptions { BaseAddress = Private });
         try
         {
             await call(sdk);
@@ -125,6 +127,11 @@ public sealed class TerraBaseContractTests
         }
 
         var uri = sent?.RequestUri ?? throw new InvalidOperationException("the call sent no request");
+        if (uri.Scheme == Uri.UriSchemeHttp && (sent.Version != System.Net.HttpVersion.Version20 || sent.VersionPolicy != HttpVersionPolicy.RequestVersionExact))
+        {
+            throw new InvalidOperationException("private-listener requests must use HTTP/2 with prior knowledge");
+        }
+
         return (sent.Method, uri.AbsolutePath, uri.Query);
     }
 

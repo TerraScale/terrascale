@@ -229,6 +229,7 @@ public sealed class TerraBaseResponseTests
 public sealed class TerraBaseResponseIntegrationTests
 {
     private static readonly Uri Origin = new("https://terrabase.example.test/");
+    private static readonly Uri Private = new("http://top1.nearest.of.ts-terrabase.internal:8081/");
     private const string DocumentPath = "/v1/projects/01JA0000000000000000000001/databases/bounds/collections/items/documents/by-key?id=01JA0000000000000000000009";
 
     [Test]
@@ -266,11 +267,12 @@ public sealed class TerraBaseResponseIntegrationTests
     {
         using var handler = new NativeClientTests.Handler(async (_, cancellationToken) =>
         {
-            await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken);
+            await Task.Delay(TimeSpan.FromSeconds(30), cancellationToken);
             return new HttpResponseMessage(HttpStatusCode.OK);
         });
-        using var http = new HttpClient(handler) { Timeout = TimeSpan.FromMilliseconds(200) };
-        var management = new TerraBaseManagementClient(http, new TerraBaseManagementClientOptions { BaseAddress = Origin, ServiceCredential = new string('c', 40) });
+        // The other deadline is far away, so a loaded runner cannot make the two race.
+        using var http = new HttpClient(handler) { Timeout = callerCancels ? TimeSpan.FromSeconds(20) : TimeSpan.FromMilliseconds(200) };
+        var management = new TerraBaseManagementClient(http, new TerraBaseManagementClientOptions { BaseAddress = Private });
         using var caller = new CancellationTokenSource();
         if (callerCancels)
         {
@@ -290,8 +292,8 @@ public sealed class TerraBaseResponseIntegrationTests
         using var handler = new NativeClientTests.Handler((_, _) => throw new HttpRequestException("no TerraBase here"));
         using var http = new HttpClient(handler);
         var resolver = new TerraBaseClientOptionsTests.CountingResolver(Origin);
-        var adminResolver = new TerraBaseClientOptionsTests.CountingResolver(Origin);
-        var management = new TerraBaseManagementClient(http, new TerraBaseManagementClientOptions { EndpointResolver = adminResolver, ServiceCredential = new string('c', 40) });
+        var adminResolver = new TerraBaseClientOptionsTests.CountingResolver(Private);
+        var management = new TerraBaseManagementClient(http, new TerraBaseManagementClientOptions { EndpointResolver = adminResolver });
         var database = new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions { EndpointResolver = resolver, ApiKey = "tb_test_key" })
             .Database("01JA0000000000000000000001", "resolver");
 
