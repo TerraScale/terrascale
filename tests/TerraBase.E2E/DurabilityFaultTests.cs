@@ -645,7 +645,20 @@ public sealed class DurabilityFaultTests
         /// <summary>The sum of the scraped series of <paramref name="name"/> (with <paramref name="label"/> when given), or null without one.</summary>
         public async Task<double?> MetricAsync(string region, string name, string? label)
         {
-            var text = await this[region].GetStringAsync(new Uri("/metrics", UriKind.Relative));
+            string text;
+            try
+            {
+                text = await this[region].GetStringAsync(new Uri("/metrics", UriKind.Relative));
+            }
+            catch (TaskCanceledException error)
+            {
+                // A scrape that never answers is a finding of its own: say whether the listener still answers anything else.
+                using var probe = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                var replication = await this[region].GetAsync(new Uri("/replication", UriKind.Relative), probe.Token)
+                    .ContinueWith(answer => answer.IsCompletedSuccessfully ? $"{(int)answer.Result.StatusCode}" : "no answer in 5 s", TaskScheduler.Default);
+                throw new TimeoutException($"/metrics on {region} did not answer within the client's 30 s; /replication then: {replication}", error);
+            }
+
             double? sum = null;
             foreach (var line in text.Split('\n').Where(line => line.StartsWith(name, StringComparison.Ordinal) && (label is null || line.Contains(label, StringComparison.Ordinal))))
             {
