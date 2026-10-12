@@ -47,9 +47,9 @@ listed; there is no region list to maintain.
 
 | Listener | Port | Binds | Protocol | Serves |
 | --- | --- | --- | --- | --- |
-| Public | 8080 | every interface, behind Fly Proxy (`[http_service]`) | HTTP/1.1, TLS ends at Fly's edge | the client API, `/healthz`, `/readyz`, OpenAPI |
+| Public | 8080 | every interface, behind Fly Proxy (`[http_service]`); loopback in Development off Fly | HTTP/1.1, TLS ends at Fly's edge | the client API, `/healthz`, `/readyz`, OpenAPI |
 | Internal | 8081 | `fly-local-6pn` (loopback off Fly) | HTTP/2 without TLS (h2c) | inter-node gRPC, the platform operator's Management API, administration, `/metrics` |
-| Metrics | 9091 | every interface, no Fly service (`[[metrics]]`) | HTTP/1.1 | `/metrics` only |
+| Metrics | 9091 | every interface, no Fly service (`[[metrics]]`); loopback in Development off Fly | HTTP/1.1 | `/metrics` only |
 
 - There is no mTLS and no service credential: Fly's private network is the trust boundary (plan decision). On the
   internal listener the platform operator acts as the user named in `X-TerraBase-User-Id`; every use is logged.

@@ -134,10 +134,10 @@ its S3 API. Packaged fonts and static assets are embedded in the executable.
 The build needs the .NET 10 SDK (see `global.json`) and the sibling `ts-dotnet`
 checkout at the revision pinned in `.github/workflows/ci.yml`. TerraScale.Endpoints
 and TerraScale.Logging come from the Forgejo NuGet feed (see `nuget.config`).
-ts-dotnet is looked up at `../ts-dotnet`, or under
-`~/Projects/TerraScale/`; pass `-p:TerraScaleRoot=<dir>` or set the
-`TerraScaleRoot` environment variable to use another location. CI pins the
-ts-dotnet revision in `.github/workflows/ci.yml`. Storage integration tests run
+ts-dotnet is looked up at `../ts-dotnet`; pass `-p:TsDotnetRoot=<the ts-dotnet checkout>`
+or set the `TsDotnetRoot` environment variable to use another location (a worktree, or a
+clone at the pinned revision; see the root README). CI pins the ts-dotnet revision
+(`TS_DOTNET_REV`) in `.github/workflows/ci.yml`. Storage integration tests run
 against the TerraBase built from the same commit (the Makefile passes it as
 `TERRABASE_BINARY`); see [the port guide](csharp-port.md). Run local commands at low CPU priority:
 

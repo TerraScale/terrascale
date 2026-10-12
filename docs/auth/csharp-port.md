@@ -86,7 +86,9 @@ Configuration retains the `TS_AUTH_*` convention, with these changes:
   list, CA or failover setting. In a PR preview (`FLY_APP_NAME` is
   `ts-pr-<n>`, in the separate org `terrascale-previews`) the app's one machine
   runs TerraBase next to ts-auth, so the address is
-  `http://top1.nearest.of.ts-pr-<n>.internal:8081`: that same machine.
+  `http://top1.nearest.of.ts-pr-<n>.internal:8081`: that same machine. Off Fly
+  (`FLY_APP_NAME` unset, local development) it is `http://localhost:8081`, the
+  TerraBase on the same machine.
 - **Listeners.** The public API listens on `0.0.0.0:8090` (`TS_AUTH_LISTEN`)
   behind Fly Proxy, which terminates TLS. Prometheus `GET /metrics` is served
   only on a second listener, `0.0.0.0:9092` (`TS_AUTH_METRICS_LISTEN`), which

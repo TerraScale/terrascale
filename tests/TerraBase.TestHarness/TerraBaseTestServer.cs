@@ -43,7 +43,8 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
         _factory = factory;
         _temporaryDirectory = temporaryDirectory;
         DataDirectory = Path.GetFullPath(settings["data-directory"]);
-        // Kestrel reports listeners in bind order: internal, public, metrics. The last two bind every interface.
+        // Kestrel reports listeners in bind order: internal, public, metrics. The last two bind every interface outside Development.
+        Listeners = listeners;
         BaseAddress = listeners[0];
         ClientAddress = new UriBuilder(listeners[1]) { Host = "127.0.0.1" }.Uri;
         MetricsAddress = new UriBuilder(listeners[2]) { Host = "127.0.0.1" }.Uri;
@@ -55,6 +56,9 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
     /// (which the test then owns).
     /// </summary>
     public string DataDirectory { get; }
+
+    /// <summary>The addresses Kestrel bound, in bind order: internal, public, metrics.</summary>
+    public IReadOnlyList<Uri> Listeners { get; }
 
     /// <summary>The loopback origin of the internal listener (HTTP/2 only).</summary>
     public Uri BaseAddress { get; }

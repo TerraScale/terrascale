@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "aspire": {
+      "command": "dotnet",
+      "args": ["aspire", "agent", "mcp"]
+    }
+  }
+}
