@@ -125,6 +125,8 @@ jobs:
           file: terrascale/Dockerfile
           build-contexts: ts-dotnet=ts-dotnet
           target: test-${{ github.job }}
+          # Reuse preparation, but execute Fast (and auth's dependency audit) on every attempt of this commit.
+          no-cache-filters: test-${{ github.job }}
           push: false
 
   auth:
