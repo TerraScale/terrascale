@@ -35,7 +35,7 @@ permissions:
 
 env:
   # ts-dotnet revision ts-auth builds against (TerraScale/ts-dotnet is private; read-only deploy key).
-  TS_DOTNET_REV: ec74ec5c9830f87dcae2587a1724818f0e1b13f1
+  TS_DOTNET_REV: 130925898daf0207134d9582b7b672a5a1c3233b
 
 jobs:
   # Runs on every event: a skipped job would skip everything downstream of "test" (deploy, slow).
