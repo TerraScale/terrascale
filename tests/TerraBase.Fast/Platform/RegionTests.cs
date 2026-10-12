@@ -20,7 +20,13 @@ public sealed class RegionTests
     [Arguments("abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijk")]
     public async Task Health_reports_the_machine_region(string region)
     {
-        await using var server = await TerraBaseTestServer.StartAsync(settings => settings["region"] = region, environmentName: "Production");
+        // Outside Development a node needs its backup bucket and master key.
+        var s3 = new FakeS3();
+        await using var server = await TerraBaseTestServer.StartAsync(settings =>
+        {
+            settings["region"] = region;
+            s3.Configure(settings);
+        }, s3.Route, environmentName: "Production");
         using var response = await server.Client.GetAsync(new Uri("/healthz", UriKind.Relative));
         var body = await response.Content.ReadFromJsonAsync<JsonElement>();
 

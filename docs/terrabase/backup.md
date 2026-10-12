@@ -19,13 +19,18 @@ of TS-633 are done. Not done yet:
 
 ## Production backup contract
 
-Continuous backup is always available. Retention and rotation use the correct settings in code;
-there is no backup activation step or operator tuning table.
+Continuous backup is always on. Outside Development a node refuses to start (exit code 2, before it opens any file)
+unless its Tigris bucket and master key are present, so no deployed node runs without backup. Only Development runs
+without backup; tests use an in-memory S3 fake. Retention and rotation use the correct settings in code; there is no
+backup activation step or operator tuning table.
 
 Settings come from the environment. The Tigris variables that Fly sets when a bucket is attached fill
 `backup-endpoint`, `backup-region`, `backup-bucket`, `backup-access-key-id` and `backup-secret-key`
 (`AWS_ENDPOINT_URL_S3`, `AWS_REGION`, `BUCKET_NAME`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`).
 `master-key` comes from the fly secret `TERRABASE_MASTER_KEY` (32 bytes, base64).
+
+Production (`ts-terrabase`) has its bucket `ts-terrabase` attached and the secret set. Each PR preview gets its own
+bucket `terrascale-ts-pr-<n>` and a random master key from `scripts/fly/preview.sh`, destroyed with the preview.
 
 ### Customer buckets (TS-635)
 
@@ -355,6 +360,23 @@ After each hourly retention pass and each drill, the shipper writes the file's r
 shipping member, generation, last shipped time, lag, bucket size (measured daily), retention days and the last drill.
 The database's state is deleted with it. A catalog follower cannot write the catalog, so it keeps the record in memory
 only (`GET /v1/backup`) until TS-647 makes `_system` writable on every member.
+
+## Verify a rollout
+
+`scripts/fly/deploy.sh` checks each region's new machine twice before it moves on: `/healthz`, then `/backupz`
+(pinned with `fly-force-instance-id`, retried for about 90 s). `/backupz` answers 200 once backup has found the
+node's files and every file the node ships has reached the bucket with less than a minute of lag, and 503 otherwise.
+A 503 stops the rollout (fix forward). `/backupz` is not a Fly health check: a Tigris outage never takes a node out of
+service, it only shows on `/backupz` and in the metrics.
+
+After a rollout, also check:
+
+1. Grafana (fly-metrics.net): `terrabase_backup_lag_seconds` (the RPO) stays under 2 s under writes,
+   `terrabase_backup_last_success_seconds` keeps moving, and `terrabase_backup_failures_total` and
+   `terrabase_backup_holes_total` do not rise. `/v1/backup` is on the loopback admin listener and the image has no
+   shell, so the metrics are the way in.
+2. Restore: `POST …/point-in-time/restore` of a scratch database to a second between two writes; check that the first
+   write is in the new database and the second is not; delete the restored database.
 
 ## Tigris check (2026-10-11)
 

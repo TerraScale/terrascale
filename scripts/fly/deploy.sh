@@ -27,6 +27,11 @@ for region in gru sjc fra; do
   id=$(machines "$region" . | head -n1)
   curl -fsS --retry 20 --retry-delay 2 --retry-all-errors --max-time 5 -H "fly-force-instance-id: $id" \
     -o /dev/null -w "Live check $app $region ($id): HTTP %{http_code}, request %header{fly-request-id}\n" "https://$app.fly.dev/healthz"
+  if [[ $app == ts-terrabase ]]; then
+    # The new machine must ship its backup to Tigris: /backupz is 503 until every file it ships reached the bucket.
+    curl -fsS --retry 45 --retry-delay 2 --retry-all-errors --max-time 5 -H "fly-force-instance-id: $id" \
+      -o /dev/null -w "Backup check $app $region ($id): HTTP %{http_code}\n" "https://$app.fly.dev/backupz"
+  fi
   line="$app $region: live $((SECONDS - start)) s after its deploy started"
   echo "$line"
   if [[ -n ${GITHUB_STEP_SUMMARY:-} ]]; then echo "- $line" >>"$GITHUB_STEP_SUMMARY"; fi

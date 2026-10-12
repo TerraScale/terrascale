@@ -14,6 +14,8 @@ set -euo pipefail
 org=terrascale-previews-515
 api() { curl -sS --fail-with-body -H "Authorization: $FLY_API_TOKEN" -H 'Content-Type: application/json' "$@"; }
 machines=https://api.machines.dev/v1
+# The preview's Tigris bucket (terrascale-<app>; bucket names are global) outlives the app unless destroyed first.
+destroy_app() { flyctl storage destroy "terrascale-$1" --yes || true; flyctl apps destroy "$1" --yes; }
 
 case ${1:-} in
   app)
@@ -32,6 +34,14 @@ case ${1:-} in
     if ! flyctl secrets list -a "$app" --json | jq -e 'any(.[]; .name == "TS_AUTH_MASTER_KEY")' >/dev/null; then
       flyctl secrets set -a "$app" --stage TS_AUTH_MASTER_KEY="$(openssl rand -base64 32)" \
         TS_AUTH_AUDIT_SIGNING_KEY="$(openssl rand -base64 32)"
+    fi
+    # TerraBase refuses to start without backup: each preview gets its own Tigris bucket and master key.
+    secrets=$(flyctl secrets list -a "$app" --json | jq -r '.[].name')
+    if ! grep -qx BUCKET_NAME <<<"$secrets"; then
+      flyctl storage create -a "$app" -n "terrascale-$app" --yes
+    fi
+    if ! grep -qx TERRABASE_MASTER_KEY <<<"$secrets"; then
+      flyctl secrets set -a "$app" --stage TERRABASE_MASTER_KEY="$(openssl rand -base64 32)"
     fi
     ;;
   machine)
@@ -67,7 +77,7 @@ case ${1:-} in
   destroy)
     app=ts-pr-$2
     if flyctl status -a "$app" >/dev/null 2>&1; then
-      flyctl apps destroy "$app" --yes
+      destroy_app "$app"
     fi
     ;;
   reap)
@@ -76,7 +86,7 @@ case ${1:-} in
       created=$(api "$machines/apps/$app/machines" | jq -r '[.[].created_at] | min // empty')
       if [[ -n $created ]] && (( $(date -u -d "$created" +%s) < cutoff )); then
         echo "Reaping $app (machine created $created)"
-        flyctl apps destroy "$app" --yes
+        destroy_app "$app"
       fi
     done
     ;;

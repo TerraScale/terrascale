@@ -38,6 +38,14 @@ catch (TerraBaseConfigurationException error)
     return 2;
 }
 
+// Zero config: outside Development a node never runs without continuous backup (docs/terrabase/backup.md).
+if (options.Backup is null && environmentName != Environments.Development)
+{
+    options.Dispose();
+    await Console.Error.WriteLineAsync($"terrabase: backup requires {string.Join(", ", BackupSettings.TigrisVariables.Select(variable => variable.Variable))} (attach the Tigris bucket) and TERRABASE_MASTER_KEY outside Development");
+    return 2;
+}
+
 // The externally registered options owns any certificates not handed to a service, even if building fails.
 using var configuration = options;
 
