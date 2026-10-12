@@ -1,4 +1,5 @@
 import { defineConfig } from 'vitepress'
+import { createCssVariablesTheme } from 'shiki'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -541,14 +542,22 @@ export default defineConfig({
   title: 'TerraScale',
   description:
     'TerraScale developer documentation: TerraBase SDK installation, document CRUD, queries, authentication and service limits.',
-  appearance: 'force-dark',
+  appearance: true,
   lastUpdated: true,
   srcDir: '.',
-  head: [['link', { rel: 'icon', href: '/favicon.svg', type: 'image/svg+xml' }], ['link', { rel: 'preload', href: '/fonts/oxanium-latin-wght-normal.woff2', as: 'font', type: 'font/woff2', crossorigin: 'anonymous' }]],
+  head: [
+    ['link', { rel: 'icon', href: '/favicon.svg', type: 'image/svg+xml' }],
+    ['link', { rel: 'preload', href: '/fonts/oxanium-latin-wght-normal.woff2', as: 'font', type: 'font/woff2', crossorigin: 'anonymous' }],
+    // Mirror VitePress's html.dark to html[data-theme] so the shared tokens file can use either selector.
+    ['script', {}, `(() => { const h = document.documentElement, sync = () => { h.dataset.theme = h.classList.contains('dark') ? 'dark' : 'light' }; sync(); new MutationObserver(sync).observe(h, { attributeFilter: ['class'] }) })()`],
+  ],
+  // Syntax colors come from --shiki-* variables, mapped to --ts-* tokens in theme/style.css.
+  markdown: { theme: createCssVariablesTheme({ name: 'ts-tokens', variablePrefix: '--shiki-' }) },
   locales: localesConfig,
   themeConfig: {
     siteTitle: 'Docs',
-    logo: { src: '/brand/logo-terrascale-white.svg', alt: 'TerraScale' },
+    logo: { light: '/brand/logo-terrascale-black.svg', dark: '/brand/logo-terrascale-white.svg', alt: 'TerraScale' },
     search: { provider: 'local' },
+    notFound: { quote: 'This page does not exist or has moved.', linkText: 'Back to the docs home' },
   },
 })

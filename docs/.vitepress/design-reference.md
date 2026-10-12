@@ -9,7 +9,8 @@ work or migration implementation was imported, and the dashboard was not modifie
 
 Imported verbatim:
 
-- `web/assets/css/tokens.css` → `theme/dashboard-tokens.css`.
+- `web/assets/css/tokens.css` → `theme/tokens.css` (dark block; the docs add a light block
+  and select them with `.dark` / `[data-theme]`).
 - `web/static/brand/logo-terrascale-white.svg` → public wordmark.
 - `web/static/brand/logo-icon-blue.svg` → public favicon.
 - Oxanium and JetBrains Mono WOFF2 files and their OFL license texts.
