@@ -4,21 +4,25 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>@Model.Title · ts-auth</title>
+<title>@Model.Title · TerraScale</title>
+<link rel="icon" href="/admin/icon.svg" type="image/svg+xml">
 <style nonce="@Model.Nonce">@WriteHtml(HostedLayoutModel.PageCss)</style>
 @if (Model.AccentColor is { } accent)
 {
-<style nonce="@Model.Nonce">:root{--accent:@accent}</style>
+<style nonce="@Model.Nonce">:root{--ts-accent:@accent;--ts-accent-fill:@accent}</style>
 }
 @await RenderSectionAsync("head")
 </head>
 <body>
-<main class="card">
-<div class="brand">@if (Model.LogoUrl is { } logo)
+<div class="shell">
+<header class="brand">@if (Model.LogoUrl is { } logo)
 {<img src="@logo" alt="" class="logo-img">}
 else
-{<span class="logo">◇</span>} ts-auth</div>
+{<picture><source srcset="/admin/logo-dark.svg" media="(prefers-color-scheme: dark)"><img src="/admin/logo.svg" alt="TerraScale" width="149" height="36" class="logo"></picture>}</header>
+<main class="card">
 @await RenderBodyAsync()
 </main>
+<footer class="foot">TerraScale · <a href="https://terrascale.tech">terrascale.tech</a></footer>
+</div>
 </body>
 </html>

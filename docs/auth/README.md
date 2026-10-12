@@ -22,7 +22,10 @@ TUnit and Playwright integration tests.
 > `https://auth.terrascale.tech/terrascale`, so ts-dashboard can sign in: the
 > authorization code flow with S256 PKCE, rotating refresh tokens, discovery,
 > JWKS, userinfo, RP-initiated logout and a hosted email-passcode sign-in page
-> for existing accounts. Device flow, guest accounts, CORS and SAML are
+> for existing accounts. Authorization and logout errors that cannot go back to
+> the client (an unknown client, an unregistered redirect URI, a malformed
+> request) answer with the hosted error page and the OAuth error code, in
+> OpenIddict's status, instead of plain text. Device flow, guest accounts, CORS and SAML are
 > follow-up TS-495. The other identity features below are being ported stream
 > by stream. Until a stream lands, its routes are not served.
 > [`docs/auth/parity.md`](parity.md) tracks each capability, and

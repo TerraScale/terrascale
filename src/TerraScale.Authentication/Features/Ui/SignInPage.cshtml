@@ -1,13 +1,15 @@
 @inherits RazorSlice<SignInPageModel>
 @implements IUsesLayout<HostedLayout, HostedLayoutModel>
+<div class="badge">@WriteHtml(Model.Icon)</div>
 <h1>@Model.Title</h1>
 @if (Model.Error is { } error)
 {
-<p class="error" role="alert">@error</p>
+<p class="error" role="alert">@WriteHtml(HostedIcons.CircleAlert)<span>@error</span></p>
 }
 @switch (Model.Step)
 {
 case SignInStep.Email:
+<p class="muted">We'll email you a six-digit sign-in code.</p>
 <form method="post" action="/ui/@Model.Slug/sign-in">
 <input type="hidden" name="next" value="@Model.Next">
 <label for="sign-in-email">Email</label>
@@ -21,18 +23,21 @@ case SignInStep.Code:
 <input type="hidden" name="next" value="@Model.Next">
 <input type="hidden" name="email" value="@Model.Email">
 <label for="sign-in-code">Code</label>
-<input id="sign-in-code" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required autofocus>
+<input id="sign-in-code" class="code" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required autofocus>
 <button type="submit">Sign in</button>
 </form>
+<div class="actions">
+<a class="back" href="/ui/@Model.Slug/sign-in@(Model.Next is { Length: > 0 } next ? "?next=" + Uri.EscapeDataString(next) : null)">@WriteHtml(HostedIcons.ArrowLeft)<span>Use a different email</span></a>
 <form method="post" action="/ui/@Model.Slug/sign-in">
 <input type="hidden" name="next" value="@Model.Next">
 <input type="hidden" name="email" value="@Model.Email">
-<button type="submit" class="secondary">Send a new code</button>
+<button type="submit" class="link">Send a new code</button>
 </form>
+</div>
 break;
 case SignInStep.Continue:
 <p class="muted">Returning to the application…</p>
-<p class="hint"><a href="@Model.Next">Continue</a></p>
+<p><a href="@Model.Next">Continue</a></p>
 break;
 case SignInStep.SignedIn:
 <p class="success" role="status">You are signed in. You can close this page.</p>
@@ -42,6 +47,10 @@ case SignInStep.SignedOut:
 break;
 case SignInStep.Rejected:
 <p class="muted">Start again from the application you were signing in to.</p>
+@if (Model.Detail is { } detail)
+{
+<p class="detail">Error code: @detail</p>
+}
 break;
 }
 @functions {

@@ -4,6 +4,7 @@ using TerraScale.Authentication.Features.Headless;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.RateLimiting;
+using TerraScale.Authentication.Features.Ui;
 using TerraScale.Authentication.Tests;
 
 namespace TerraScale.Authentication.Fast.Oidc;
@@ -50,7 +51,7 @@ public sealed class AuthThrottleTests(TerraBaseFixture fixture)
             await Assert.That(page).DoesNotContain("id=\"sign-in-email\"");
             await Assert.That(page).Contains($"name=\"email\" value=\"{email.ToUpperInvariant()}\"");
             await Assert.That(page).Contains($"name=\"next\" value=\"{WebUtility.HtmlEncode(Next)}\"");
-            await Assert.That(page).Contains($"<p class=\"error\" role=\"alert\">Too many attempts. Try again in {limited.Headers.GetValues("Retry-After").Single()} seconds.</p>");
+            await Assert.That(page).Contains($"<p class=\"error\" role=\"alert\">{HostedIcons.CircleAlert}<span>Too many attempts. Try again in {limited.Headers.GetValues("Retry-After").Single()} seconds.</span></p>");
 
             // The reset budget is independent, even for the same normalized email.
             using var recovery = await oidc.HeadlessAsync("password-reset/complete", new { email, code = "not-a-code", new_password = "new password", ip_address = "192.0.2.5" });
@@ -104,7 +105,7 @@ public sealed class AuthThrottleTests(TerraBaseFixture fixture)
             await Assert.That(page).DoesNotContain("we emailed it a six-digit code");
             await Assert.That(page).Contains($"value=\"{email.ToUpperInvariant()}\"");
             await Assert.That(page).Contains($"name=\"next\" value=\"{WebUtility.HtmlEncode(Next)}\"");
-            await Assert.That(page).Contains($"<p class=\"error\" role=\"alert\">Too many attempts. Try again in {hosted.Headers.GetValues("Retry-After").Single()} seconds.</p>");
+            await Assert.That(page).Contains($"<p class=\"error\" role=\"alert\">{HostedIcons.CircleAlert}<span>Too many attempts. Try again in {hosted.Headers.GetValues("Retry-After").Single()} seconds.</span></p>");
             using var reset = await oidc.HeadlessAsync("password-reset/start", new { email, ip_address = "192.0.2.8" });
             await Assert.That(reset.StatusCode).IsEqualTo(HttpStatusCode.TooManyRequests);
             await Assert.That(await OidcHarness.EnvelopeCodeAsync(reset)).IsEqualTo("rate_limited");
@@ -211,7 +212,7 @@ public sealed class AuthThrottleTests(TerraBaseFixture fixture)
         await Assert.That(page).DoesNotContain("id=\"sign-in-code\"");
         await Assert.That(page).DoesNotContain("Check your email");
         await Assert.That(page).DoesNotContain("we emailed it a six-digit code");
-        await Assert.That(page).Contains($"<p class=\"error\" role=\"alert\">Too many attempts. Try again in {refused.Headers.GetValues("Retry-After").Single()} seconds.</p>");
+        await Assert.That(page).Contains($"<p class=\"error\" role=\"alert\">{HostedIcons.CircleAlert}<span>Too many attempts. Try again in {refused.Headers.GetValues("Retry-After").Single()} seconds.</span></p>");
         await Assert.That(oidc.Email.HasPending).IsFalse();
     }
 

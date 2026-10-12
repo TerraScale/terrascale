@@ -9,7 +9,11 @@ public static class EmbeddedAssets
     {
         ["admin.css"] = ("assets/admin/admin.css", "text/css; charset=utf-8"),
         ["datastar.js"] = ("assets/admin/datastar.js", "text/javascript; charset=utf-8"),
+        // ts-resources' horizontal TerraScale logo (blue, and blue with a light wordmark for dark backgrounds) and cube mark,
+        // with inline fills in place of the source files' <style> blocks, which the asset CSP (style-src 'none') covers.
         ["logo.svg"] = ("assets/admin/logo.svg", "image/svg+xml"),
+        ["logo-dark.svg"] = ("assets/admin/logo-dark.svg", "image/svg+xml"),
+        ["icon.svg"] = ("assets/admin/icon.svg", "image/svg+xml"),
         // Email clients do not show SVG; these are the dashboard's horizontal logos rasterized at 2x.
         ["email-logo.png"] = ("assets/email/logo.png", "image/png"),
         ["email-logo-dark.png"] = ("assets/email/logo-dark.png", "image/png"),

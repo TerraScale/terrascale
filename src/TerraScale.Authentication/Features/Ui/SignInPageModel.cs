@@ -18,7 +18,7 @@ public enum SignInStep
     /// <summary>Signed out.</summary>
     SignedOut,
 
-    /// <summary>A cross-origin form post was refused.</summary>
+    /// <summary>A cross-origin form post, or an authorization or end-session request, was refused.</summary>
     Rejected,
 }
 
@@ -28,7 +28,8 @@ public enum SignInStep
 /// <param name="Email">The address entered so far.</param>
 /// <param name="Next">A validated same-origin authorization URL to resume.</param>
 /// <param name="Error">A message about the last attempt.</param>
-public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? Email = null, string? Next = null, string? Error = null)
+/// <param name="Detail">A machine-readable error code shown under a refused request, e.g. <c>invalid_request</c>.</param>
+public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? Email = null, string? Next = null, string? Error = null, string? Detail = null)
 {
     /// <summary>The response's CSP nonce, set by <see cref="Render"/>.</summary>
     public string Nonce { get; init; } = string.Empty;
@@ -41,6 +42,15 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
         SignInStep.Rejected => "Request refused",
         SignInStep.Continue or SignInStep.SignedIn => "Signed in",
         _ => "Sign in",
+    };
+
+    /// <summary>The step's icon, shown above the title.</summary>
+    public string Icon => this.Step switch
+    {
+        SignInStep.Code => HostedIcons.Mail,
+        SignInStep.Continue or SignInStep.SignedIn or SignInStep.SignedOut => HostedIcons.CircleCheck,
+        SignInStep.Rejected => HostedIcons.CircleAlert,
+        _ => HostedIcons.KeyRound,
     };
 
     /// <summary>Renders the page with the hosted-page security headers and a fresh nonce.</summary>

@@ -153,6 +153,12 @@ public static class OidcIssuer
                         .SetType(OpenIddictServerHandlerType.Custom))
                     .AddEventHandler<ApplyTokenResponseContext>(handler => handler.UseSingletonHandler<CountTokenResponses>()
                         .SetOrder(int.MinValue)
+                        .SetType(OpenIddictServerHandlerType.Custom))
+                    .AddEventHandler<ApplyAuthorizationResponseContext>(handler => handler.UseSingletonHandler<RenderLocalErrorPage<ApplyAuthorizationResponseContext>>()
+                        .SetOrder(OpenIddictServerAspNetCoreHandlers.ProcessLocalErrorResponse<ApplyAuthorizationResponseContext>.Descriptor.Order - 1)
+                        .SetType(OpenIddictServerHandlerType.Custom))
+                    .AddEventHandler<ApplyEndSessionResponseContext>(handler => handler.UseSingletonHandler<RenderLocalErrorPage<ApplyEndSessionResponseContext>>()
+                        .SetOrder(OpenIddictServerAspNetCoreHandlers.ProcessLocalErrorResponse<ApplyEndSessionResponseContext>.Descriptor.Order - 1)
                         .SetType(OpenIddictServerHandlerType.Custom));
                 server.UseAspNetCore()
                     .EnableAuthorizationEndpointPassthrough()
