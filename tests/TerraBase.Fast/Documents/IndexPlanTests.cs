@@ -1,6 +1,6 @@
 using System.Net;
 using System.Text.Json;
-using Microsoft.Data.Sqlite;
+using Turso.Data.Sqlite;
 using TerraBase.Engine;
 using TerraBase.Engine.Sqlite;
 using TerraBase.Testing;
@@ -49,12 +49,12 @@ public sealed class IndexPlanTests
         }
 
         var sorted = await ExplainAsync(api, database, "SELECT email FROM people ORDER BY email DESC LIMIT 2");
-        await Assert.That(Steps(sorted)).DoesNotContain("TEMP B-TREE");
+        await Assert.That(Steps(sorted)).DoesNotContain("USE SORTER FOR ORDER BY");
         await Assert.That(Indexes(sorted)).IsEquivalentTo(["people_email"]);
     }
 
     [Test]
-    public async Task Document_query_equality_range_in_and_prefix_seek_the_index_with_and_without_a_scan_budget()
+    public async Task Document_query_equality_range_in_and_prefix_seek_the_index_under_the_scan_guard()
     {
         await using var api = await ManagementApi.StartAsync();
         var database = await SeedAsync(api);
@@ -69,18 +69,18 @@ public sealed class IndexPlanTests
         ];
         foreach (var filter in filters)
         {
-            foreach (var budget in new[] { false, true })
-            {
-                using var command = new SqliteCommand();
-                var sql = new SqliteQueryCompiler(command.Parameters, RowSource.Client("people"), budget)
-                    .Compile(new DocumentQuery("people", filter, [], null, 10, 1024));
-                // Values are read with json_extract, never spelled ->>, and a short list is equalities, not json_each.
-                await Assert.That(sql).DoesNotContain("->>");
-                await Assert.That(sql).DoesNotContain("json_each");
-                var plan = await QueryPlan.ExplainAsync(path, sql.Replace("tb_qos_scan(", "abs(", StringComparison.Ordinal));
-                await Assert.That(plan).Contains($"USING INDEX {Index}").Because($"{filter} (budget {budget}): {plan}");
-                await Assert.That(plan).DoesNotContain("SCAN people").Because(plan);
-            }
+            // Every compiled scan carries the per-row budget guard (tb_qos_scan), and the index still serves the filter.
+            using var command = new SqliteCommand();
+            var sql = new SqliteQueryCompiler(command.Parameters, RowSource.Client("people"))
+                .Compile(new DocumentQuery("people", filter, [], null, 10, 1024));
+            // Values are read with json_extract, never spelled ->>, and a short list is equalities, not json_each.
+            await Assert.That(sql).DoesNotContain("->>");
+            await Assert.That(sql).DoesNotContain("json_each");
+            var plan = await QueryPlan.ExplainAsync(path, sql);
+            // An IN list, rewritten to OR, is Turso's MULTI-INDEX OR over the same index.
+            await Assert.That(plan.Contains($"USING INDEX {Index}", StringComparison.Ordinal)
+                || plan.StartsWith($"MULTI-INDEX OR people ({Index}", StringComparison.Ordinal)).IsTrue().Because($"{filter}: {plan}");
+            await Assert.That(plan).DoesNotContain("SCAN people").Because(plan);
         }
     }
 

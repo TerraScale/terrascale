@@ -1,5 +1,5 @@
 using System.Text;
-using Microsoft.Data.Sqlite;
+using Turso.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Engine.Sqlite;
@@ -40,18 +40,28 @@ internal static class StorageFixture
     }
 
     /// <summary>
-    /// Observes real row-body evaluation in a collection's table without replacing it or its id key: its documents read
-    /// through <paramref name="functionName"/>, and the table takes no more writes.
+    /// Observes real row-body evaluation of a collection without replacing its rows or their order: the collection
+    /// becomes a view of its renamed table that reads every document through <paramref name="functionName"/>, which the
+    /// reading session registers, and it takes no more writes. Turso has no generated columns, and only the database's
+    /// writer connection may change its schema.
     /// </summary>
-    public static void ObserveBodies(SqliteConnection connection, string functionName, string collection = "items")
-    {
-        using var command = connection.CreateCommand();
-        command.CommandText = $"""
-            ALTER TABLE "{collection}" RENAME COLUMN doc TO stored_doc;
-            ALTER TABLE "{collection}" ADD COLUMN doc TEXT GENERATED ALWAYS AS ({functionName}(stored_doc)) VIRTUAL;
-            """;
-        command.ExecuteNonQuery();
-    }
+    public static Task ObserveBodiesAsync(SqliteDatabaseStore store, string functionName, string collection = "items") =>
+        store.WithWriterAsync(writer =>
+        {
+            foreach (var sql in new[]
+            {
+                $"ALTER TABLE \"{collection}\" RENAME TO \"{collection}_observed\";",
+                // Ordered by id, so Turso reads it lazily along the id key instead of evaluating every body to sort.
+                $"CREATE VIEW \"{collection}\" AS SELECT id, {functionName}(doc) AS doc FROM \"{collection}_observed\" ORDER BY id;",
+            })
+            {
+                using var command = writer.Connection.CreateCommand();
+                command.CommandText = sql;
+                command.ExecuteNonQuery();
+            }
+
+            return true;
+        }, "a test fixture", CancellationToken.None);
 
     /// <summary>
     /// Rents an idle read session of <paramref name="store"/>, opening one first if none is idle: writes use the store's
@@ -64,6 +74,26 @@ internal static class StorageFixture
         }
 
         return engine.Pool.Rent(store)!;
+    }
+
+    /// <summary>
+    /// Runs <paramref name="sql"/>, which may create a trigger, on the file of <paramref name="database"/> (the system
+    /// database when null) while its writer is held, so no other connection writes meanwhile. The provider splits command
+    /// text at every ';', which breaks a trigger body, so this uses a connection of its own.
+    /// </summary>
+    public static async Task ExecuteWhileWriterHeldAsync(TerraBaseTestServer server, TenantContext? database, string sql)
+    {
+        var engine = server.Services.GetRequiredService<SqliteStorageEngine>();
+        var store = (SqliteDatabaseStore)(database is null
+            ? await engine.OpenSystemDatabaseAsync(CancellationToken.None)
+            : (await engine.OpenDatabaseAsync(database, CancellationToken.None))!);
+        await store.WithWritersHeldAsync(() =>
+        {
+            using var connection = new Turso.TursoConnection($"Data Source={store.FilePath}");
+            connection.Open();
+            connection.ExecuteNonQuery(sql);
+            return Task.FromResult(true);
+        }, CancellationToken.None, "a test fixture");
     }
 
     /// <summary>Takes the file's write lock (<c>BEGIN IMMEDIATE</c>) until the result is disposed.</summary>
@@ -134,12 +164,13 @@ internal static class StorageFixture
 
                 return body;
             }, isDeterministic: true);
-            ObserveBodies(session.Connection, "held_body", "held");
         }
         finally
         {
             engine.Pool.Return(store, session);
         }
+
+        await ObserveBodiesAsync(store, "held_body", "held");
 
         var transaction = await store.BeginTransactionAsync(write: false, cancellationToken);
         Volatile.Write(ref armed, true);

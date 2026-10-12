@@ -1,4 +1,4 @@
-using Microsoft.Data.Sqlite;
+using Turso.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Fast.Documents;
@@ -68,18 +68,9 @@ public sealed class StorageManagementMutationTests
             await writer.CommitAsync(CancellationToken.None);
         }
 
-        await using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder
-        {
-            DataSource = Path.Combine(api.Server.DataDirectory, "_system.db"),
-            Pooling = false,
-        }.ToString()))
-        {
-            await connection.OpenAsync();
-            await using var command = connection.CreateCommand();
-            // RAISE(FAIL) leaves the preceding document delete in place until this transaction rolls back.
-            command.CommandText = "CREATE TRIGGER reject_collection AFTER DELETE ON collections BEGIN SELECT RAISE(FAIL, 'injected collection failure'); END;";
-            await command.ExecuteNonQueryAsync();
-        }
+        // RAISE(FAIL) leaves the preceding document delete in place until this transaction rolls back.
+        await StorageFixture.ExecuteWhileWriterHeldAsync(api.Server, null,
+            "CREATE TRIGGER reject_collection AFTER DELETE ON collections BEGIN SELECT RAISE(FAIL, 'injected collection failure'); END;");
 
         await using (var writer = await store.BeginTransactionAsync(write: true, CancellationToken.None))
         {

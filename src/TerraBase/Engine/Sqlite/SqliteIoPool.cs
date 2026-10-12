@@ -5,7 +5,7 @@ using TerraBase.Tenancy;
 namespace TerraBase.Engine.Sqlite;
 
 /// <summary>
-/// Runs SQLite calls on dedicated threads. Microsoft.Data.Sqlite has no true async I/O: its async
+/// Runs SQLite calls on dedicated threads. The provider has no true async I/O: its async
 /// methods block the calling thread, so request threads hand the calls to this pool instead.
 /// </summary>
 /// <remarks>

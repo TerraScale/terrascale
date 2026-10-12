@@ -69,7 +69,6 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
     // another TerraBase process cannot open, create or delete databases in this data directory meanwhile.
     private readonly FileStream _ownership;
     private readonly string _dataDirectory;
-    private readonly long _memoryBudget;
     private readonly IMemoryBudget? _schemaMemory;
     private readonly Counter<long> _schemaEvaluations;
     private readonly ILogger<SqliteStorageEngine> _logger;
@@ -91,7 +90,6 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
     /// <summary>The published system store, without opening it or checking its files, for integration diagnostics.</summary>
     internal SqliteDatabaseStore? SystemStore => Volatile.Read(ref _system);
     private readonly string _pragmas;
-    private bool _heapInitialized;
 
     private readonly Lock _disposalGate = new();
     private Task? _disposal;
@@ -335,19 +333,17 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
     /// <param name="queryBudget">SQLite execution time one query may spend; <see cref="SqliteDatabaseStore.DefaultQueryBudget"/> by default.</param>
     /// <param name="afterBootstrap">Optional integration-test hook before a tenant database's baseline is seeded.</param>
     /// <param name="systemReplica">Whether this node follows a catalog primary: its system database accepts only replicated writes.</param>
-    /// <param name="walTaps">Whether continuous backup ships from this node: its <see cref="IWalTap"/>s checkpoint every database, not SQLite.</param>
     /// <param name="backupTime">The host's UTC clock for snapshot boundaries, independent of query deadlines.</param>
     /// <param name="schemaMemory">Shared process admission for collection schema evaluation.</param>
     public SqliteStorageEngine(
         string dataDirectory, int threads, int queue, long memoryBudget, Meter meter, ILogger<SqliteStorageEngine> logger,
         TimeSpan shutdownGrace, int? maxIdle = null, int? maxIdlePerDatabase = null, Func<ThreadStart, Thread>? createWorker = null,
         TimeSpan? readinessCacheTtl = null, DatabaseLifecycleCheckpoint? checkpoint = null, TimeProvider? time = null,
-        Action<SqliteDatabaseStore>? afterBootstrap = null, bool systemReplica = false, bool walTaps = false, TimeSpan? queryBudget = null,
+        Action<SqliteDatabaseStore>? afterBootstrap = null, bool systemReplica = false, TimeSpan? queryBudget = null,
         TimeProvider? backupTime = null, IMemoryBudget? schemaMemory = null)
     {
         _systemReplica = systemReplica;
         _dataDirectory = dataDirectory;
-        _memoryBudget = memoryBudget;
         _schemaMemory = schemaMemory;
         _schemaEvaluations = meter.CreateCounter<long>("terrabase.schema.keyword_evaluations", description: "Collection schema keyword evaluations started by local writes.");
         _logger = logger;
@@ -359,7 +355,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
         Time = time ?? TimeProvider.System;
         QueryBudget = queryBudget ?? SqliteDatabaseStore.DefaultQueryBudget;
         // Prepare managed state before taking ownership or starting workers.
-        _pragmas = SqliteSession.Pragmas(memoryBudget, threads, walTaps);
+        _pragmas = SqliteSession.Pragmas(memoryBudget, threads);
         Pool = new(maxIdle: maxIdle ?? 4 * Environment.ProcessorCount, maxIdlePerDatabase: maxIdlePerDatabase ?? Environment.ProcessorCount);
         _ownership = Own(dataDirectory);
         try
@@ -762,7 +758,6 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
                 var created = await CreateFileAsync(SystemName, path, cancellationToken).ConfigureAwait(false);
                 // Once published, complete the opening even if cancellation arrives.
                 var openingToken = created ? CancellationToken.None : cancellationToken;
-                await InitializeHeapAsync(openingToken).ConfigureAwait(false);
                 // Every write is captured into its journal for catalog followers (docs/decisions/0009); no engine event.
                 system = new SqliteDatabaseStore(SystemName, path, Pool, Io, _pragmas, null, Time, static _ => { }, RecordCommittedWrite, _logger)
                 {
@@ -919,6 +914,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
         }
 
         Task? closed = null;
+        List<string> files = [];
         // A copy/create holds this through every step. Let it finish before closing its stores.
         await _creation.WaitAsync().ConfigureAwait(false);
         try
@@ -927,6 +923,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
             {
                 foreach (var store in _stores.Values.Concat(_system is { } system ? [system] : []))
                 {
+                    files.Add(store.FilePath);
                     try
                     {
                         store.Dispose();
@@ -957,6 +954,14 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
             if (closed is not null)
             {
                 await closed.ConfigureAwait(false);
+                // Every connection is closed: a log its writer checkpointed empty goes, as SQLite removes it on close.
+                foreach (var file in files)
+                {
+                    if (new FileInfo(file + "-wal") is { Exists: true, Length: 0 } log)
+                    {
+                        log.Delete();
+                    }
+                }
             }
         }
         catch (Exception error)
@@ -1223,7 +1228,6 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
         }
 
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        await InitializeHeapAsync(cancellationToken).ConfigureAwait(false);
         await PublishAsync(name, path, temporary => SqliteDatabaseStore.InitializeAsync(name, temporary, Io, _pragmas, cancellationToken))
             .ConfigureAwait(false);
         return true;
@@ -1290,17 +1294,6 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
         {
             // Best effort: the database is already deleted; a directory that cannot be removed (a file appeared
             // meanwhile, or no permission) stays.
-        }
-    }
-
-    // The caller holds an admission; native heap-limit initialization also runs on a worker. Racing first
-    // calls are harmless: LimitHeap only ever raises the process-wide limit.
-    private async Task InitializeHeapAsync(CancellationToken cancellationToken)
-    {
-        if (!Volatile.Read(ref _heapInitialized))
-        {
-            await Io.RunAsync(() => SqliteSession.LimitHeap(_memoryBudget), cancellationToken).ConfigureAwait(false);
-            Volatile.Write(ref _heapInitialized, true);
         }
     }
 
@@ -1424,7 +1417,6 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
             admitted = true;
             using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _stopping.Token);
             RejectDatabaseLinks(path);
-            await InitializeHeapAsync(lifetime.Token).ConfigureAwait(false);
             await store.BootstrapAsync(lifetime.Token).ConfigureAwait(false);
             _afterBootstrap?.Invoke(store);
             await _creation.WaitAsync(lifetime.Token).ConfigureAwait(false);

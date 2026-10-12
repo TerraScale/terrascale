@@ -26,6 +26,14 @@ public sealed class PlatformExploreTests
         var admin = EntityIds.New().ToString();
         using var client = api.WithToken(AdminToken(api, admin));
 
+        // The seed creates the auth database, which WriteKeyAsync waited for, before the dashboard one. Another admin
+        // waits, so the reads counted below are only this test's four.
+        using var waiter = api.WithToken(AdminToken(api, EntityIds.New().ToString()));
+        await TerraBaseTestServer.EventuallyAsync(async token =>
+        {
+            using var seeded = await waiter.GetAsync(ManagementApi.Uri(PlatformExplore.Databases), token);
+            return (await seeded.Content.ReadFromJsonAsync<JsonElement>(token)).GetProperty("items").GetArrayLength() == 2;
+        });
         using var databases = await client.GetAsync(ManagementApi.Uri(PlatformExplore.Databases));
         using var collections = await client.GetAsync(ManagementApi.Uri($"{PlatformExplore.Databases}/{PlatformDatabases.Auth}/collections"));
         using var page = await client.GetAsync(ManagementApi.Uri(Explore));

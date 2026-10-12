@@ -24,5 +24,6 @@ internal sealed partial class SqliteDatabaseStore
             body TEXT NOT NULL,
             UNIQUE (collection, id)
         );
+        CREATE TABLE _tb_unique_affected (id TEXT PRIMARY KEY);
         """;
 }

@@ -304,13 +304,14 @@ public sealed class DocumentCacheTests
 
                 return body;
             }, isDeterministic: true);
-            StorageFixture.ObserveBodies(session.Connection, "paused_body");
             observing = true;
         }
         finally
         {
             engine.Pool.Return(store, session);
         }
+
+        await StorageFixture.ObserveBodiesAsync(store, "paused_body");
 
         var path = $"/v1/projects/{tenant.ProjectId}/databases/closing/collections/items/documents" + (list ? "" : $"/by-key?id={StorageFixture.Id("a")}");
         var pending = client.GetAsync(new Uri(path, UriKind.Relative), operationTimeout.Token);

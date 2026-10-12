@@ -197,10 +197,10 @@ public sealed class SnapshotTimestampTests
         public async ValueTask<IWalTap?> OpenTapAsync(TenantContext? database, CancellationToken cancellationToken)
         {
             var tap = await engine.OpenTapAsync(database, cancellationToken);
-            if (tap is SqliteWalTap sqlite && database is not null && pause.Database is { } selected
+            if (tap is TursoChangeTap turso && database is not null && pause.Database is { } selected
                 && database.OrganizationId == selected.Organization && database.ProjectId == selected.Project && database.DatabaseId == selected.Id)
             {
-                sqlite.AfterSnapshotPinned = pause.AfterPinnedAsync;
+                turso.AfterSnapshotPinned = pause.AfterPinnedAsync;
             }
 
             return tap;
