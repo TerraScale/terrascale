@@ -46,10 +46,13 @@ func startProbes(ctx context.Context, r *Runner, every time.Duration) *probes {
 			tick := time.NewTicker(every)
 			defer tick.Stop()
 			for n := 0; ; n++ {
-				select {
-				case <-ctx.Done():
-					return
-				case <-tick.C:
+				// The first probe goes at once, so even a short load measures each pair.
+				if n > 0 {
+					select {
+					case <-ctx.Done():
+						return
+					case <-tick.C:
+					}
 				}
 				id := ulid.Make().String()
 				resp, err := from.Do(ctx, http.MethodPut, DocPath(coll, id), []byte(`{"n":`+strconv.Itoa(n)+`}`), "application/json")
