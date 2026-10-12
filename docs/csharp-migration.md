@@ -394,10 +394,9 @@ journeys passed again in the focused follow-up.
 - **ts-auth.** The deployed `0.1.0-alpha+55979ea3` answers `/readyz` 503 and
   `/.well-known/jwks.json` 500. Its current source requires an operator to
   provision the first signing key. `auth.terrascale.tech` is NXDOMAIN.
-  The dashboard still finds ts-auth through Atlas and accepts only regional
-  `<region>.auth.terrascale.tech` origins, while current ts-auth serves one
-  global issuer `https://auth.terrascale.tech/{tenant}`; the dashboard must
-  move to the global issuer.
+  The dashboard calls ts-auth only at its global issuer
+  `https://auth.terrascale.tech/terrascale`, as ts-auth serves it from every
+  region; it no longer uses Atlas auth discovery or regional auth hosts.
 - **Identity delivery.** The Fly app `ts-dashboard` has no secrets and no
   machines. ts-auth already receives its production secrets as Fly secrets
   (its zero-configuration contract). The smallest compatible delivery is one
