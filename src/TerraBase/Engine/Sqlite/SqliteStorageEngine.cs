@@ -79,7 +79,8 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
     private readonly TimeProvider _backupTime;
 
     // Set before any store opens: every client database's writes mint with it.
-    private readonly LocalReplica _member = null!;
+    /// <summary>This member's replica id and clock, which every client database write and replicated join uses.</summary>
+    internal LocalReplica Member { get; } = null!;
 
     /// <summary>Runs every SQLite call of this engine.</summary>
     internal SqliteIoPool Io { get; }
@@ -364,7 +365,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
         try
         {
             ReplicaId = ReplicaIdentityFile.Start(dataDirectory);
-            _member = new LocalReplica(ReplicaId, new MemberClock(Time, meter));
+            Member = new LocalReplica(ReplicaId, new MemberClock(Time, meter));
             meter.CreateObservableGauge("terrabase.replica.member", () => (long)ReplicaId.Member, description: "This member's number in its replica id.");
             meter.CreateObservableGauge("terrabase.replica.epoch", () => (long)ReplicaId.Epoch, description: "Unclean starts of this member since its number was taken.");
 
@@ -1412,7 +1413,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
             null, RecordCommittedWrite, _logger, _schemaMemory, _schemaEvaluations)
         {
             QueryBudget = QueryBudget,
-            Member = _member,
+            Member = Member,
         };
         var published = false;
         var admitted = false;

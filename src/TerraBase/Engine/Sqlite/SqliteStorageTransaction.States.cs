@@ -146,7 +146,33 @@ internal sealed partial class SqliteStorageTransaction
         }
     }
 
-    // Worker-only. A plain UPDATE, then an INSERT when no row exists: the change feed reads after-images only.
+    // Worker-only: the _tb_state row of a document, stamped with the operation `at` that last changed it and that
+    // operation's node. A plain UPDATE, then an INSERT when no row exists: the change feed reads after-images only.
+    private void WriteState(string collection, string id, DocumentState state, EntryVersion at)
+    {
+        var digest = DocumentStateEncoding.Digest(state);
+        var update = BodyCommand(SqliteStatements.UpdateState, collection, id);
+        Bind(update);
+        if (update.ExecuteNonQuery() == 0)
+        {
+            var insert = BodyCommand(SqliteStatements.InsertState, collection, id);
+            Bind(insert);
+            insert.Parameters.AddWithValue("$bucket", Bucket(collection, id));
+            insert.ExecuteNonQuery();
+        }
+
+        void Bind(SqliteCommand command)
+        {
+            command.Parameters.AddWithValue("$state", Base64Url.EncodeToString(DocumentStateEncoding.EncodeStored(state)));
+            command.Parameters.AddWithValue("$stamp", Version(at.Stamp));
+            command.Parameters.AddWithValue("$origin", unchecked((long)at.Node.Value));
+            command.Parameters.AddWithValue("$live", state.Exists ? 1 : 0);
+            command.Parameters.AddWithValue("$h1", unchecked((long)(ulong)(digest >> 64)));
+            command.Parameters.AddWithValue("$h2", unchecked((long)(ulong)digest));
+        }
+    }
+
+    // Worker-only.
     private void FlushStates()
     {
         if (_pending.Count == 0)
@@ -154,29 +180,9 @@ internal sealed partial class SqliteStorageTransaction
             return;
         }
 
-        var origin = unchecked((long)Member.Id.Value);
         foreach (var ((collection, id), (state, at)) in _pending)
         {
-            var digest = DocumentStateEncoding.Digest(state);
-            var update = BodyCommand(SqliteStatements.UpdateState, collection, id);
-            Bind(update);
-            if (update.ExecuteNonQuery() == 0)
-            {
-                var insert = BodyCommand(SqliteStatements.InsertState, collection, id);
-                Bind(insert);
-                insert.Parameters.AddWithValue("$bucket", Bucket(collection, id));
-                insert.ExecuteNonQuery();
-            }
-
-            void Bind(SqliteCommand command)
-            {
-                command.Parameters.AddWithValue("$state", Base64Url.EncodeToString(DocumentStateEncoding.EncodeStored(state)));
-                command.Parameters.AddWithValue("$stamp", Version(at.Stamp));
-                command.Parameters.AddWithValue("$origin", origin);
-                command.Parameters.AddWithValue("$live", state.Exists ? 1 : 0);
-                command.Parameters.AddWithValue("$h1", unchecked((long)(ulong)(digest >> 64)));
-                command.Parameters.AddWithValue("$h2", unchecked((long)(ulong)digest));
-            }
+            WriteState(collection, id, state, at);
         }
 
         _pending.Clear();

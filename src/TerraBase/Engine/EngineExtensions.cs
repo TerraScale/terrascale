@@ -44,6 +44,7 @@ public static class EngineExtensions
                 schemaMemory: provider.GetRequiredService<IMemoryBudget>());
         });
         services.AddSingleton<IWalBackup>(provider => provider.GetRequiredService<SqliteStorageEngine>());
+        services.AddSingleton(provider => provider.GetRequiredService<SqliteStorageEngine>().Member);
         services.AddSingleton(provider =>
         {
             var sqlite = provider.GetRequiredService<SqliteStorageEngine>();

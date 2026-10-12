@@ -339,6 +339,12 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
         public ValueTask<DocumentVersion?> GetVersionAsync(string collection, string id, CancellationToken cancellationToken) => inner.GetVersionAsync(collection, id, cancellationToken);
         public ValueTask<bool> DeleteAsync(string collection, string id, CancellationToken cancellationToken) => inner.DeleteAsync(collection, id, cancellationToken);
         public ValueTask<long?> TombstoneAsync(string collection, string id, CancellationToken cancellationToken) => inner.TombstoneAsync(collection, id, cancellationToken);
+
+        public ValueTask<bool> JoinAsync(string collection, string id, DocumentState delta, EntryVersion at, CancellationToken cancellationToken) =>
+            inner.JoinAsync(collection, id, delta, at, cancellationToken);
+
+        public ValueTask RecordAppliedAsync(ReplicaId origin, Hlc applied, CancellationToken cancellationToken) =>
+            inner.RecordAppliedAsync(origin, applied, cancellationToken);
         public async ValueTask<DocumentPage> ListAsync(string collection, string? afterId, int limit, long maxBytes, CancellationToken cancellationToken)
         {
             hook.BeforeList?.Invoke(collection);

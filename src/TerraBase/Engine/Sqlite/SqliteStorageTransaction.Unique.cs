@@ -101,7 +101,8 @@ internal sealed partial class SqliteStorageTransaction
     }
 
     // All contenders retain their merged state. Visibility is a deterministic projection of the current keys.
-    private IEnumerable<string> ReplaceUniqueKeys(string collection, string id, string? body, CancellationToken cancellationToken)
+    // A local write that collides throws; a replicated join never fails a constraint, its loser is hidden instead.
+    private IEnumerable<string> ReplaceUniqueKeys(string collection, string id, string? body, CancellationToken cancellationToken, bool local = true)
     {
         if (!Shaped)
         {
@@ -117,10 +118,10 @@ internal sealed partial class SqliteStorageTransaction
         BeginUniqueAffected();
         Command("DELETE FROM temp.unique_affected;").ExecuteNonQuery();
         QueueUniqueContenders(collection, id);
-        IndexUniqueKeys(collection, id, body, constraints, local: true, cancellationToken);
+        IndexUniqueKeys(collection, id, body, constraints, local, cancellationToken);
         var contenders = Command(UniqueOtherContender, collection);
         contenders.Parameters.AddWithValue("$id", id);
-        if (contenders.ExecuteScalar() is not null)
+        if (local && contenders.ExecuteScalar() is not null)
         {
             throw new UniqueConstraintException();
         }
@@ -181,12 +182,13 @@ internal sealed partial class SqliteStorageTransaction
         command.ExecuteNonQuery();
     }
 
-    private void DropUniqueCollection(string collection)
+    // A local drop also deletes the collection's constraints document; a replicated one leaves that to its own delta.
+    private void DropUniqueCollection(string collection, bool local)
     {
         Command("DELETE FROM _tb_unique_keys WHERE collection = $collection;", collection).ExecuteNonQuery();
         Command("DELETE FROM _tb_unique_conflicts WHERE collection = $collection;", collection).ExecuteNonQuery();
         Command("DELETE FROM _tb_unique_invalid WHERE collection = $collection;", collection).ExecuteNonQuery();
-        if (Command(UniqueDefinitions, collection).ExecuteScalar() is not null)
+        if (local && Command(UniqueDefinitions, collection).ExecuteScalar() is not null)
         {
             WriteMetadata(DocumentDelta.Unique, collection, null);
         }
