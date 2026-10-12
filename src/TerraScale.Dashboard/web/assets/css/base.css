@@ -167,14 +167,6 @@ hr {
   transform: none;
 }
 
-/* The wordmark with white lettering only shows in dark mode. The layout's
-   head script resolves the effective mode (data-theme, else the token
-   file's default color-scheme) into data-mode. */
-:root[data-mode="light"] .ts-logo-on-dark,
-:root:not([data-mode="light"]) .ts-logo-on-light {
-  display: none;
-}
-
 /* Frosted glass fallback: solid surface when blur is unsupported or the
    user asks for less transparency. */
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {

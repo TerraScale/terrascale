@@ -659,21 +659,3 @@ details[open] > .ts-account-trigger {
   }
 }
 
-/* Theme switch in the account menu: Light, Dark or System. */
-.ts-theme-toggle {
-  display: flex;
-  margin: 0 var(--ts-s1) var(--ts-s1);
-}
-
-.ts-theme-toggle > .ts-segment {
-  flex: 1;
-  justify-content: center;
-  border: 0;
-  background: transparent;
-  cursor: pointer;
-}
-
-.ts-theme-toggle > .ts-segment[aria-pressed="true"] {
-  background: var(--ts-surface-3);
-  color: var(--ts-ink);
-}
