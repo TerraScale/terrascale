@@ -36,7 +36,7 @@ secrets and no machines, and the image exits at startup without the file.
 
 Checked against ts-auth source at terrascale `6bb896bb` (current `main`,
 includes #96). The deployed build is `55979ea3`, an ancestor with the same
-issuer and paths.
+issuer and paths (other differences are listed below).
 
 - Issuer: `https://auth.terrascale.tech/terrascale`, with no trailing slash.
   Every endpoint sits under it: `/oauth/authorize`, `/oauth/token`,
@@ -72,12 +72,17 @@ Contract differences to settle with the ts-auth owner before live sign-in:
 1. ts-auth answers `prompt=login` with `error=login_required` and no code.
    The dashboard sends `prompt=login` after sign-out.
 2. Project tokens: the dashboard requires `client_id` and an `aud` equal to
-   the TerraBase origin it called. ts-auth sets `aud` only from
-   `TS_AUTH_ACCESS_TOKEN_AUDIENCES` (open PR #134 adds
-   `https://api.terrascale.tech`). Whether it sets `client_id` on project
+   the regional TerraBase origin it called (`https://<region>.api.terrascale.tech`).
+   ts-auth sets `aud` only from `TS_AUTH_ACCESS_TOKEN_AUDIENCES`, and open
+   PR #134 makes `https://api.terrascale.tech` the audience in every region.
+   After #134 the dashboard would refuse every project token until its
+   expected audience changes. Whether ts-auth sets `client_id` on project
    tokens is unverified.
 3. Every token request comes from the dashboard's own IP, which shares
    ts-auth's per-peer token budget (1000/min by default).
+4. The deployed `55979ea3` predates #96 and `platform_role` in sign-in
+   access tokens. Platform administrators are not recognized until ts-auth
+   is redeployed from `6bb896bb` or later.
 
 ## Delivery path (proposal, needs approval)
 
@@ -116,6 +121,9 @@ These are separate from delivery:
   (`Features/Auth/TsAuthGateway.cs`). Current ts-auth source serves one
   global issuer `https://auth.terrascale.tech/{tenant}` in every region, and
   Atlas is NXDOMAIN. The app must move to the global issuer.
+- **Project-token audience.** `Features/Auth/ProjectAccessTokens.cs` expects
+  the regional TerraBase origin as `aud`; it must follow the audience the
+  ts-auth owner settles (#134 proposes `https://api.terrascale.tech`).
 - **TerraBase origin.** `Platform/Persistence/TerraBaseDiscovery.cs` reads
   Atlas `/v1/discovery`, which does not exist. The direction is the SDK
   `Region` contract (ts-dotnet PR #5) once a reviewed public 0.0.2 exists.

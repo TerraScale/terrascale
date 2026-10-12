@@ -12,16 +12,17 @@ on:
 permissions:
   contents: read
 
+# A newer push supersedes a pull request's run; each main commit runs in its own group and keeps its result.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  # A newer push supersedes a pull request's run; every main commit keeps its complete result.
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   DOTNET_CLI_TELEMETRY_OPTOUT: "1"
   DOTNET_NOLOGO: "1"
 
-# Self-hosted alpha runners only: no hosted fallback. Toolchains come from alpha's tool cache; `check` keeps its
+# Self-hosted alpha runners only: no hosted fallback. Node comes from alpha's tool cache and .NET from
+# setup-dotnet's install directory on the runner; `check` keeps its
 # NuGet packages under its own runner temp directory, and `slow` builds in a Dockerfile stage on alpha's
 # BuildKit daemon. This workflow has no write permission and releases nothing.
 jobs:
