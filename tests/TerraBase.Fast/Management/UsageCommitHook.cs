@@ -313,8 +313,6 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
 
         private bool _intercepted;
 
-        public ValueTask<CollectionChangePage> ReadCollectionChangesAsync(string collection, long afterOffset, long afterSequence, int limit, long maxBytes, CancellationToken cancellationToken) => inner.ReadCollectionChangesAsync(collection, afterOffset, afterSequence, limit, maxBytes, cancellationToken);
-        public ValueTask<long> GetHistoryFloorAsync(CancellationToken cancellationToken) => inner.GetHistoryFloorAsync(cancellationToken);
         public ValueTask<long> GetOffsetAsync(CancellationToken cancellationToken) => inner.GetOffsetAsync(cancellationToken);
 
         public Guid Scope => inner.Scope;

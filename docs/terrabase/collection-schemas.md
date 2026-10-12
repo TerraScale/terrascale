@@ -107,7 +107,7 @@ without committing the write.
 
 The collection's existing reserved `_collections` document stores `created_at`,
 optional `schema`, and `schema_dialect`. Attachment and detachment update this
-document atomically and preserve the collection's generation. Collection drops
+document atomically. Collection drops
 remove the declared schema; recreation starts schemaless. No relational schema
 migration or separate store is required. Backups, database copies, and collection
 metadata replication carry the schema through the existing storage paths.

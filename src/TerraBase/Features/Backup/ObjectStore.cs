@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net;
 using System.Runtime.CompilerServices;
 using System.Text;
@@ -47,6 +48,10 @@ internal sealed class S3ObjectStore : IObjectStore, IDisposable
     private static readonly TimeSpan RequestTimeout = TimeSpan.FromMinutes(15);
 
     private readonly AmazonS3Client _s3;
+    // Requests that read their response headers, with the reader. The client reads its response event twice per response
+    // (a null check, then the call), so a reader subscribed and removed per request broke a request completing at the same
+    // time (NullReferenceException in ProcessResponseHandlers): one handler stays subscribed for the client's life instead.
+    private readonly ConcurrentDictionary<AmazonWebServiceRequest, Action<WebServiceResponseEventArgs>> _responseReaders = new(ReferenceEqualityComparer.Instance);
     private readonly string _bucket;
     private readonly bool _customer;
     private readonly TimeProvider _time;
@@ -69,6 +74,13 @@ internal sealed class S3ObjectStore : IObjectStore, IDisposable
             Timeout = RequestTimeout,
             HttpClientFactory = new NamedClients(http, clientName),
         });
+        _s3.AfterResponseEvent += (_, args) =>
+        {
+            if (args is WebServiceResponseEventArgs response && response.Request is { } request && _responseReaders.TryGetValue(request, out var read))
+            {
+                read(response);
+            }
+        };
     }
 
     public async Task PutAsync(string key, Stream content, CancellationToken cancellationToken)
@@ -217,22 +229,15 @@ internal sealed class S3ObjectStore : IObjectStore, IDisposable
     {
         var request = new HeadBucketRequest { BucketName = _bucket };
         string? enabled = null;
-        void read(object sender, ResponseEventArgs args)
-        {
-            if (args is WebServiceResponseEventArgs response && ReferenceEquals(response.Request, request))
-            {
-                enabled = response.ResponseHeaders.FirstOrDefault(header => header.Key.Equals("X-Tigris-Enable-Snapshot", StringComparison.OrdinalIgnoreCase)).Value;
-            }
-        }
-
-        _s3.AfterResponseEvent += read;
+        _responseReaders[request] = response =>
+            enabled = response.ResponseHeaders.FirstOrDefault(header => header.Key.Equals("X-Tigris-Enable-Snapshot", StringComparison.OrdinalIgnoreCase)).Value;
         try
         {
             await _s3.HeadBucketAsync(request, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
-            _s3.AfterResponseEvent -= read;
+            _responseReaders.TryRemove(request, out _);
         }
 
         return enabled == "true";

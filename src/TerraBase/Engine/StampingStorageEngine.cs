@@ -311,13 +311,6 @@ internal sealed class StampingStorageEngine(IStorageEngine inner, ISystemReplica
         public ValueTask<long> GetOffsetAsync(CancellationToken cancellationToken) =>
             RunAsync(() => inner.GetOffsetAsync(cancellationToken), cancellationToken);
 
-        public ValueTask<long> GetHistoryFloorAsync(CancellationToken cancellationToken) =>
-            RunAsync(() => inner.GetHistoryFloorAsync(cancellationToken), cancellationToken);
-
-        public ValueTask<CollectionChangePage> ReadCollectionChangesAsync(
-            string collection, long afterOffset, long afterSequence, int limit, long maxBytes, CancellationToken cancellationToken) =>
-            RunAsync(() => inner.ReadCollectionChangesAsync(collection, afterOffset, afterSequence, limit, maxBytes, cancellationToken), cancellationToken);
-
         public ValueTask<(long Count, bool Complete)> CountAsync(string collection, DocumentFilter? filter, long maxExamined, CancellationToken cancellationToken, QueryObservation? observation = null) =>
             RunAsync(() => inner.CountAsync(collection, filter, maxExamined, cancellationToken, observation), cancellationToken);
 

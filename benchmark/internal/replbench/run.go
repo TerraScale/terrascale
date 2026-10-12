@@ -53,7 +53,10 @@ type Config struct {
 	ProbeEvery     time.Duration // one lag probe per origin region this often
 	Converge       time.Duration // longest wait for every region to match after the load
 	Seed           uint64
+	Only           string // one region writes and probes (a load worker of a multi-machine run); empty: every region
 }
+
+func (c Config) writes(region string) bool { return c.Only == "" || c.Only == region }
 
 func (c Config) sizeOf(i int) int {
 	total := 0
@@ -183,7 +186,7 @@ func (r *Runner) Setup(ctx context.Context) error {
 		}
 	}
 	r.log("collections %s{,-probe,-conflict} served by %d regions", r.collection, len(r.regions))
-	return nil
+	return r.seedConflicts(ctx)
 }
 
 func until(ctx context.Context, limit time.Duration, done func() bool) error {
@@ -202,9 +205,6 @@ func until(ctx context.Context, limit time.Duration, done func() bool) error {
 
 // Load writes every document and the conflict rounds, with lag probes running alongside, and answers its wall time.
 func (r *Runner) Load(ctx context.Context) (time.Duration, error) {
-	if err := r.seedConflicts(ctx); err != nil {
-		return 0, err
-	}
 	start := time.Now()
 	for _, reg := range r.regions {
 		r.timeline[reg.Name] = NewTimeline(start)
@@ -213,6 +213,9 @@ func (r *Runner) Load(ctx context.Context) (time.Duration, error) {
 	r.probes = startProbes(probeCtx, r, r.cfg.ProbeEvery)
 	var wg sync.WaitGroup
 	for ri, reg := range r.regions {
+		if !r.cfg.writes(reg.Name) {
+			continue
+		}
 		next := atomic.Int64{}
 		next.Store(int64(ri))
 		for range r.cfg.Concurrency {
@@ -231,7 +234,9 @@ loop:
 		case <-progress.C:
 			var parts []string
 			for _, reg := range r.regions {
-				parts = append(parts, fmt.Sprintf("%s=%d", reg.Name, r.created[reg.Name].Load()))
+				if r.cfg.writes(reg.Name) {
+					parts = append(parts, fmt.Sprintf("%s=%d", reg.Name, r.created[reg.Name].Load()))
+				}
 			}
 			r.log("load %s: created %s", time.Since(start).Round(time.Second), strings.Join(parts, " "))
 		}

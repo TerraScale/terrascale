@@ -40,7 +40,7 @@ service ownership decided by the user on 2026-10-06
    ts-dashboard after a token exchange, and API keys after the SDK exchanges them through client credentials.
    TerraBase validates each token offline:
    - `typ` is `at+jwt` or `application/at+jwt`, and the token is ES256-signed by a `kid` from the issuer's JWKS;
-   - `iss` is exactly the configured `auth-issuer` (`https://gru.auth.terrascale.tech/terrascale` in gru-1);
+   - `iss` is exactly the configured `auth-issuer` (`https://auth.terrascale.tech/terrascale`: ts-auth issues this one issuer in every region);
      project tenants' issuers are never trusted: those customer end-user tokens authenticate customer
      applications, while a **project access token** for TerraBase uses the trusted platform issuer and carries `project_id`;
    - `aud` includes TerraBase's audience, and `exp` and `nbf` hold with 30 seconds of skew;
@@ -242,8 +242,8 @@ starts and every 15 s) carry `{cursor}`. Every event's `id` is the cursor after 
 Query `cursor` (a cursor, or `now`; the start of retention when absent) and `collections` (comma-separated, at most
 64); `Last-Event-ID` takes precedence over `cursor`. Delivery is at least once per (origin, version, collection, id).
 Errors: `400 invalid_cursor`, `410 cursor_expired` (below the 7-day retention), `429 changes_busy` (32 streams per
-database per machine). Slice R2c deleted shape reads (`C/shape`) and SSE subscriptions (`C/subscribe`); both return
-`404`.
+database per machine). Slice R2c deleted shape reads (`C/shape`), SSE subscriptions (`C/subscribe`) and the per-collection polling feed
+(`C/changes`); those routes return `404`.
 
 ## System
 

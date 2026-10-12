@@ -255,6 +255,10 @@ public sealed partial class SafeLoggerFactory(ILoggerFactory inner) : ILoggerFac
         private static List<KeyValuePair<string, object?>> ZLoggerPairs(IZLoggerEntryCreatable zlogger)
         {
             var entry = zlogger.CreateEntry(in DecodingInfo);
+            // entry.Return() releases the state once, so take that reference first, as ZLoggerLogger does. Without it the
+            // pooled state goes back to ZLogger's pool while its ZLog call still holds it, and another thread's call reuses
+            // it: another call site's template and values (main run 38282841575).
+            (zlogger as IReferenceCountable)?.Retain();
             try
             {
                 var pairs = new List<KeyValuePair<string, object?>>(entry.ParameterCount + 1);
