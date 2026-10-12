@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 
 const DottedMap = DottedMapModule.default ?? DottedMapModule;
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const BRAND = join(ROOT, "web", "static", "brand");
+const BRAND = join(ROOT, "src", "TerraScale.Dashboard", "web", "static", "brand");
 
 const map = new DottedMap({
   height: 80,
@@ -39,4 +39,4 @@ const svg = generated.replace(
 
 mkdirSync(BRAND, { recursive: true });
 writeFileSync(join(BRAND, "region-map.svg"), svg);
-console.log("web/static/brand/region-map.svg (dotted world map)");
+console.log("src/TerraScale.Dashboard/web/static/brand/region-map.svg (dotted world map)");

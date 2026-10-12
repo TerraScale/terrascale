@@ -20,8 +20,8 @@ import { brotliCompress, constants } from 'node:zlib';
 import * as esbuild from 'esbuild';
 
 const repository = fileURLToPath(new URL('../', import.meta.url));
-const source = resolve(repository, 'web/assets/js');
-const outdir = resolve(repository, 'web/static/js');
+const source = resolve(repository, 'src/TerraScale.Dashboard/web/assets/js');
+const outdir = resolve(repository, 'src/TerraScale.Dashboard/web/static/js');
 const monacoDist = resolve(repository, 'node_modules/modern-monaco/dist');
 const watchMode = process.argv.includes('--watch');
 const minify = process.argv.includes('--minify') || !watchMode;
@@ -163,7 +163,7 @@ async function build() {
   const datastarMap = await readVendor('datastar.js.map');
   const datastarLicense = await readVendor('LICENSE.datastar.md');
   const pins = (await readRequired(
-    resolve(repository, 'Platform/Assets/AssetUrls.cs'),
+    resolve(repository, 'src/TerraScale.Dashboard/Platform/Assets/AssetUrls.cs'),
     'Missing Platform/Assets/AssetUrls.cs; the JS build reads its Datastar SRI pins',
   )).toString('utf8');
   const pinned = pins.match(/public const string DatastarIntegrity\s*=\s*"([^"]+)"/)?.[1];
@@ -277,7 +277,7 @@ if (watchMode) {
     }, 30);
   };
   watch(source, { recursive: true }, rebuild);
-  watch(resolve(repository, 'Platform/Assets'), (_, filename) => {
+  watch(resolve(repository, 'src/TerraScale.Dashboard/Platform/Assets'), (_, filename) => {
     if (!filename || filename === 'AssetUrls.cs') rebuild();
   });
   console.log('JS: watching web/assets/js/ and Platform/Assets/AssetUrls.cs');

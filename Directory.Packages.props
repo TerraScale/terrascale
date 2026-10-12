@@ -1,0 +1,19 @@
+<Project>
+  <!-- Central versions for every project; lock files pin the full graph. -->
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+  <ItemGroup Label="Application">
+    <PackageVersion Include="Cronos" Version="0.13.0" />
+    <PackageVersion Include="ModelContextProtocol.AspNetCore" Version="2.2.0" />
+    <PackageVersion Include="RazorSlices" Version="0.12.1" />
+    <PackageVersion Include="Stripe.net" Version="53.0.0" />
+    <!-- Local candidate from vendor/dotnet (NuGet.Config maps it there); see vendor/dotnet/README.md. -->
+    <PackageVersion Include="TerraScale.DotNet" Version="0.1.0-dashboard.g130925898daf0207134d9582b7b672a5a1c3233b" />
+  </ItemGroup>
+  <ItemGroup Label="E2E">
+    <PackageVersion Include="TUnit" Version="1.73.19" />
+    <!-- Same version as playwright-core in package.json (scripts/verify-e2e.py). -->
+    <PackageVersion Include="Microsoft.Playwright" Version="1.63.0" />
+  </ItemGroup>
+</Project>
