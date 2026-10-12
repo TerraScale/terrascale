@@ -56,6 +56,15 @@ TerraBase discovers cluster membership and every serving region automatically th
 - All public HTTP APIs are versioned under `/v1`. Breaking changes are explicit compatibility decisions, never incidental refactors.
 - Every generated ID is a ULID.
 
+### Cloudflare: use the `cf` CLI
+
+ts-auth sends email through Cloudflare Email Sending, and terrascale.tech DNS is on Cloudflare (DNS-only in front of Fly).
+
+- Use the `cf` CLI for ALL Cloudflare interaction: Email Sending, DNS, tokens, Workers, D1, Pages, preview URLs, deploy settings. No wrangler or dashboard steps for anything `cf` can do; if `cf` truly can't, say so in the PR.
+- Find commands with `cf cli search "<task>"` (no names, domains, IDs or tokens in the query), then `<command> --help`; `cf schema ...` shows the API request.
+- Run it as `env -u CLOUDFLARE_API_TOKEN cf ...`: a narrow `CLOUDFLARE_API_TOKEN` in the shell shadows the OAuth login. Check with `cf auth whoami`; log in with `cf auth login --no-browser`.
+- Never print tokens or put them in code, config or git. Runtime keys go in `fly secrets`.
+
 ### Data lives in TerraBase
 
 - Every service keeps all its application data in TerraBase databases and collections: one collection per entity type, one document per record.
