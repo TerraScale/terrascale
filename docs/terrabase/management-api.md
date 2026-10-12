@@ -215,8 +215,9 @@ and before publication or cleanup, but path-based SQLite access does not provide
 a hostile process with filesystem write access. The ownership lock coordinates TerraBase
 processes, not arbitrary filesystem writers; deployment permissions provide that boundary.
 
-This covers TerraBase process crashes. SQLite still uses `synchronous = NORMAL` (decision 0003),
-so it does not add a power-loss or operating-system-crash durability guarantee. Older catalogs return
+This covers TerraBase process crashes. The catalog itself is in the system database, which syncs every commit
+(decision 0012); tenant databases keep `synchronous = NORMAL` (decision 0003), so this adds no power-loss or
+operating-system-crash guarantee for their files. Older catalogs return
 `503` and are never migrated or swept.
 Unsupported catalog versions are audited without interpreting tenant rows; their files are preserved,
 logged and counted as unknown while management requests keep returning `503`.

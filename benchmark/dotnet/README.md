@@ -33,7 +33,9 @@ on an idle machine before drawing conclusions from small differences.
 
 `DrainBench` (standalone, not in the solution) measures what releasing abandoned Turso statements costs: it runs one
 `terrabase` process under a given wrapper, records the limits that process really has, and drives writes (a share of them
-failing) and reads against it. Results: `benchmark/bench/2026-10-12-statement-drain.md`.
+failing) and reads against it. Results: `benchmark/bench/2026-10-12-statement-drain.md`. With `--mode system` it
+measures system database writes (API keys, management commits) and tenant writes as a control:
+`benchmark/bench/2026-10-12-system-synchronous-full.md`.
 
 ```sh
 dotnet build -c Release benchmark/dotnet/DrainBench

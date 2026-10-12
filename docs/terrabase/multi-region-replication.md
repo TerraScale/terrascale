@@ -499,6 +499,8 @@ contract:
   goes).
 - **Management commits** ([0008](decisions/0008-management-commits.md)) stay atomic (one stamp) and idempotent by id.
   `fence` and `assert` ops are evaluated locally, with no global serializability.
+- **Durability:** every `_system` commit syncs its write-ahead log ([0012](decisions/0012-system-database-synchronous-full.md)),
+  so an acknowledged key, revocation or registration survives a power loss of its machine.
 
 Deleted: `CatalogFeed`, `CatalogFollower`, `CatalogForwarder`, `CatalogPrimaryClient`, `ForwardedRequests`,
 `catalog.proto`, `ISystemReplication`, `SqliteStorageTransaction.System*`, `SqliteStorageEngine.System`,
@@ -548,7 +550,8 @@ in the primary region" shortcut. Decision 0009 is superseded.
 | Failure | Effect | Handling |
 | --- | --- | --- |
 | Process crash mid-batch | uncommitted operations lost, not acknowledged | committed ones are in CDC and ship after restart |
-| OS crash or power loss (`NORMAL`) | the last acknowledged local commits may be lost | ones already shipped come back through anti-entropy. The epoch rises, so no version is reused |
+| OS crash or power loss, tenant database (`NORMAL`, [0003](decisions/0003-sqlite-synchronous-normal.md)) | the commits acknowledged since the database's WAL last synced (at the latest its next checkpoint) may be lost: documents, collections, indexes and schemas written there | ones already shipped come back through anti-entropy; unshipped ones are lost. The epoch rises, so no version is reused |
+| OS crash or power loss, `_system` (`FULL`, [0012](decisions/0012-system-database-synchronous-full.md)) | none: every acknowledged catalog write, API key and revocation was synced before its answer | `SystemDatabasePowerLossTests` |
 | Volume lost | the machine's databases are gone | new member number, refill from peers. Unshipped writes (< ~100 ms) are lost: "ack after one node" |
 | Region offline (partition or `machine stop`) | both sides keep accepting writes | streams resume from `acked`. Anti-entropy covers gaps. More than 24 h: evicted, refill on return |
 | Duplicate, reordered or replayed groups | none | joins are idempotent and commutative |
@@ -815,10 +818,17 @@ store closes), with `PRAGMA capture_data_changes_conn('after')` on from its open
 - Metrics: `terrabase.replication.cdc_backlog` (CDC rows left after each database's last ack, summed) and
   `terrabase.replication.tail_lag`: the age of the oldest local commit that a peer heard from in the last 24 h has not
   acknowledged, max over databases. It is looked at after acks (at most once a second per database) and every 5 s for
-  each database a peer stream reached, so it keeps growing while the only peer is away. There is no tailer pass: every
+  each database a peer stream reached, so it keeps growing while the only peer is away. `send_lag` and `ack_lag` are
+  separate per-peer-region series of the connected streams: they go when a peer's stream goes, which `tail_lag` does not. There is no tailer pass: every
   commit is readable as a group at once.
 - **Peer leaves the machine list.** `PeerStreams` drops a link whose machine is no longer listed at its next membership
   refresh (5 s), ending the open stream (`PeerStreamTests`); the peer resumes from its ack once it is listed again.
+- **Replicated DDL** (the receive side R4a left out). A joined `_indexes` document builds its index where it is missing
+  (on a collection made without local metadata when absent) or drops it when deleted; a definition this build cannot
+  read changes nothing rather than stalling the stream. A joined `_unique` document re-projects its whole collection:
+  every live document and retained loser gets its keys again, then the smallest id wins, as everywhere. Before this, a
+  replica that took documents in before their constraints kept serving the larger id. Schemas already replicate inside
+  the `_collections` document.
 - Not in R3: `_tb_feed` (R8), Merkle folding (R6), the 1 GiB retention cut and per-database readiness (R6).
 
 R2a is built on the Microsoft.Data.Sqlite engine and writes only SQL that Turso accepts (rowid tables for every new
