@@ -196,6 +196,62 @@ coordinator).
 
 Main is now `e30ffdc2`.
 
+## Stack integration plan and review status (00:15Z, COS request)
+
+**Corrections to COS's picture:**
+- **#114 (R6) is already merged.** It merged at its exact green head `2e01953e` → `afb82f95`, with a merge commit.
+- **#117 is already retargeted to main.**
+- **`mergedBy=MarioGK` appears on every merge,** this owner's included, because the account is shared. "Outside the
+  train" means only that this integration owner did not run the merge.
+
+**#118 was merged against CHANGES REQUESTED.** The storage-side review (independent, standing in for T1, comment
+6133818433) requested changes at `8ebcbd60` at 22:29:09Z. #118 merged at that same head at **22:37:57Z**. So **B1, the
+silent event loss when a new origin's events are trimmed, is on main.** **#165** (R8's B1 fix) is the fix-forward and
+gets priority right after main is green; its last run was cancelled.
+
+**Main is red since #149** (merged with a red exact-head `test`). **#166** ("Docker test stage gets TERRABASE_REVISION";
+touches `ci.yml` and the `Dockerfile`; the push check keeps both gates; 0 threads) is the fix and **merges first** once
+its exact head is green.
+
+**Exact order** (each step: exact-head Fast green on current main, all findings handled, Slow unverifiable; nothing is
+pushed to a PR whose base is not main):
+1. **#166.** Fixes main's red. Then main's push run must be green.
+2. **#165.** The B1 fix for #118, already on main. Needs an independent storage review.
+3. **#117** (harness, register once; on main): a fresh run on green main, then a **merge commit**, since it is the base
+   of #120 and #116.
+4. **#120 (R7):** retarget to main after #117 merges. Then R3 pushes the pin `24e138c0` plus origin/main to
+   `feat/r7-gc` (allowed once its base is main). Merge commit.
+5. **#121 (R10a, the whole stack):**
+   - After #120 merges, retarget #121 from `feat/r10a-catalog-lattice` to main.
+   - R10a pushes its approved final head (`0facba2f` plus the 2 nits) plus origin/main to `feat/r10a-2-system-lattice`.
+   - #121 then carries R10a-1 through the gate fixes, all of them. T1 reviews the storage-format merge: main is already
+     at 4 after #88, and R10a-2 also bumps to 4, so `--storage-format` is re-recorded.
+   - Then **#116** is proven superseded, if #121 contains all its content (checked file by file), and closed after
+     #121 merges, with the preview-workflow check recorded.
+6. **#119** (R8 e2e, on main): a fresh run on green main. Its last failure was the backup flake that #128 fixed.
+7. **Main-base candidates:**
+   - #152 (R3; R-C, R-D, R-B), then **#162**, which is stacked on #152 and retargeted only after #152 merges;
+   - #163 (change log retention by epoch), #164 (pinned runs and backup qualification), #145 (Dogfood negative-claim
+     tests).
+   - #152's red is collateral from main's red (Healthz).
+8. **#125** (CI optimizer): still a draft and conflicting.
+
+**Independent reviews, per PR:**
+
+| PR | State | Independent review |
+| --- | --- | --- |
+| #106, #111, #112, #113, #114 (R3, R6) | **merged by this owner** on exact-head green and no open findings | **none on record.** The train's written gate was exact-head green plus findings; COS's guardrail also named required independent reviews. **Recommended:** a retroactive storage review of #106, #112 and #114 (CDC source, replicated DDL and unique, anti-entropy and refill) on main. |
+| #118 (R8) | merged outside the train | **CHANGES REQUESTED (B1), merged anyway**; fix-forward is #165 |
+| #117 (harness) | open | none (test harness only) |
+| #120 (R7 GC) | open (stacked) | **missing**: storage review of `24e138c0` |
+| #121 / #116 (R10a) | open (stacked) | **APPROVED** round 2 at `0facba2f` (comment 6134686131, on #108). The 2 nits need a check that the final head changes only them. |
+| #165 (B1 fix) | open | **missing**: storage review |
+| #152, #162, #163 (R3) | open | **missing** |
+| #164 | open | **missing** |
+| #166 (CI fix) | open | CI owner (alpha) or COS |
+| #145 (Dogfood) | open | Tester A COMMENTED (19:54Z) |
+| #119 (R8 e2e) | open | test only |
+
 **Acceptance gaps, kept visible until each has a test and a fix:**
 - **R-A:** stale-machine retention after a SIGKILL.
 - **R-B:** a corrupt CDC entry stalls a region pair.
