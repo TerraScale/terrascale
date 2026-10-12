@@ -1,10 +1,11 @@
 @inherits RazorLayoutSlice<HostedLayoutModel>
 <!doctype html>
-@* No toggle without JavaScript or a cookie: the pages follow the reader's system light or dark mode. *@
-<html lang="en" data-theme="system">
+@* The hosted pages are dark only (user decision 2026-10-12); the tokens resolve light-dark() to their dark values. *@
+<html lang="en" data-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
 <title>@Model.Title · TerraScale</title>
 <link rel="icon" href="/admin/icon.svg" type="image/svg+xml">
 <style nonce="@Model.Nonce">@WriteHtml(HostedLayoutModel.PageCss)</style>
@@ -22,7 +23,7 @@
 }
 else
 {
-<picture><source srcset="/admin/logo-dark.svg" media="(prefers-color-scheme: dark)"><img src="/admin/logo.svg" alt="TerraScale" width="116" height="28" class="ts-auth-logo"></picture>
+<img src="/admin/logo-dark.svg" alt="TerraScale" width="116" height="28" class="ts-auth-logo">
 }
 @await RenderBodyAsync()
 <footer class="ts-auth-foot"><a href="https://status.terrascale.tech">Status</a><a href="https://terrascale.tech">terrascale.tech</a></footer>
