@@ -36,6 +36,7 @@ type Result struct {
 	Name        string                  `json:"name"`
 	Kind        string                  `json:"kind"`
 	Commit      string                  `json:"commit"`
+	WorkingTree string                  `json:"working_tree"` // "clean", or the SHA-256 of the uncommitted changes
 	Host        string                  `json:"host"`
 	Start       time.Time               `json:"start"`
 	End         time.Time               `json:"end"`
@@ -117,7 +118,7 @@ func (res Result) Markdown() string {
 	p("")
 	p("- Verdict: **%s** (every region holds exactly the expected documents, conflicts identical everywhere)", verdict)
 	p("- Kind: %s; regions: %s; host: %s", res.Kind, strings.Join(res.Regions, ", "), res.Host)
-	p("- Commit: `%s`; run %s to %s (UTC)", res.Commit, res.Start.UTC().Format(time.DateTime), res.End.UTC().Format(time.DateTime))
+	p("- Commit: `%s`; working tree: %s; run %s to %s (UTC)", res.Commit, res.WorkingTree, res.Start.UTC().Format(time.DateTime), res.End.UTC().Format(time.DateTime))
 	for _, k := range slices.Sorted(maps.Keys(res.Machines)) {
 		p("- Machine %s: %s", k, res.Machines[k])
 	}
