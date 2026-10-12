@@ -107,7 +107,17 @@ public sealed class ShapeApiTests
             await Assert.That(Encoding.UTF8.GetString((await local.GetAsync(DocumentApi.Collection, id, CancellationToken.None))!.Json.Span)).IsEqualTo(raw);
         }
 
-        // A bad read neither writes nor retains its flight/session; a new valid snapshot still works.
+        // A bad read neither writes nor retains its flight/session; a new valid snapshot still works. The stored document is
+        // the materialization of its state, so the restored row goes back before the document is written again.
+        await using (var connection = new SqliteConnection(DocumentApi.ConnectionString(path)))
+        {
+            await connection.OpenAsync();
+            await using var restore = connection.CreateCommand();
+            restore.CommandText = "UPDATE documents SET body = '{\"n\":2}' WHERE collection = 'items' AND id = $id;";
+            restore.Parameters.AddWithValue("$id", id);
+            await Assert.That(await restore.ExecuteNonQueryAsync()).IsEqualTo(1);
+        }
+
         (await api.PutAsync(id, new { repaired = true })).Status.ShouldBe(HttpStatusCode.OK);
         using var fresh = await GetAsync(shapes, $"{api.Shape}?offset=-1");
         await AssertStatusAsync(fresh, HttpStatusCode.TemporaryRedirect);
@@ -1264,7 +1274,6 @@ public sealed class ShapeApiTests
     {
         await using var connection = new SqliteConnection(DocumentApi.ConnectionString(await api.DatabaseFileAsync()));
         await connection.OpenAsync();
-        StoredRegisters.Register(connection);
         await using var transaction = await connection.BeginTransactionAsync();
         await using var write = connection.CreateCommand();
         write.CommandText = """
@@ -1272,9 +1281,9 @@ public sealed class ShapeApiTests
             INSERT INTO change_log (collection, generation, id, version, document_version, body)
                 SELECT c.name, c.generation, $id, o.value + 1 + i / 1000, o.value + 1 + i / 1000, json_object('n', i)
                 FROM n, collections c, commit_offset o WHERE c.name = $collection AND o.id = 1 ORDER BY i;
-            INSERT INTO documents (collection, id, state, version, body)
-                SELECT $collection, $id, tb_state(json_object('n', 49999)), value + 50, json_object('n', 49999) FROM commit_offset WHERE id = 1
-                ON CONFLICT (collection, id) DO UPDATE SET state = excluded.state, version = excluded.version, body = excluded.body;
+            INSERT INTO documents (collection, id, version, body)
+                SELECT $collection, $id, value + 50, json_object('n', 49999) FROM commit_offset WHERE id = 1
+                ON CONFLICT (collection, id) DO UPDATE SET version = excluded.version, body = excluded.body;
             UPDATE commit_offset SET value = value + 50 WHERE id = 1;
             """;
         write.Parameters.AddWithValue("$collection", DocumentApi.Collection);

@@ -10,8 +10,7 @@ public static class DocumentFiles
 {
     /// <summary>
     /// Seeds a current-format database file at <paramref name="path"/> holding exactly these documents. A client database
-    /// holds them as registers of one write each (<see cref="StoredRegisters"/>), in one commit at offset 1 with its shape
-    /// history.
+    /// holds them as one PUT each (<see cref="StoredStates"/>), in one commit at offset 1 with its shape history.
     /// </summary>
     public static async Task WriteAsync(string path, params (string Collection, string Id, string Body)[] documents)
     {
@@ -23,7 +22,6 @@ public static class DocumentFiles
         // Built, never interpolated: a path may contain ';' or quotes.
         await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Pooling = false }.ToString());
         await connection.OpenAsync();
-        StoredRegisters.Register(connection);
         await WriteDocumentsAsync(connection, documents, system);
         if (system)
         {
@@ -92,26 +90,24 @@ public static class DocumentFiles
             metadata.Parameters.AddWithValue("$collection", collection);
             metadata.Parameters.AddWithValue("$entityId", EntityIds.New().ToString());
             await metadata.ExecuteNonQueryAsync();
-            await using var insert = connection.CreateCommand();
-            insert.CommandText = system
-                ? "INSERT INTO documents VALUES ($collection, $id, 1, $body) ON CONFLICT (collection, id) DO UPDATE SET body = excluded.body;"
-                : $"""
-                    INSERT INTO documents (collection, id, state, version, body) VALUES ($collection, $id, tb_state($body), {StoredRegisters.Version}, $body)
-                    ON CONFLICT (collection, id) DO UPDATE SET state = excluded.state, body = excluded.body;
-                    """;
-            insert.Parameters.AddWithValue("$collection", collection);
-            insert.Parameters.AddWithValue("$id", id);
-            insert.Parameters.AddWithValue("$body", body);
-            await insert.ExecuteNonQueryAsync();
             if (system)
             {
+                await using var insert = connection.CreateCommand();
+                insert.CommandText = "INSERT INTO documents VALUES ($collection, $id, 1, $body) ON CONFLICT (collection, id) DO UPDATE SET body = excluded.body;";
+                insert.Parameters.AddWithValue("$collection", collection);
+                insert.Parameters.AddWithValue("$id", id);
+                insert.Parameters.AddWithValue("$body", body);
+                await insert.ExecuteNonQueryAsync();
                 continue;
             }
+
+            await StoredStates.WriteAsync(connection, collection, id, body);
 
             await using var change = connection.CreateCommand();
             change.CommandText = $"""
                 INSERT INTO change_log (collection, generation, id, version, body, document_version)
-                SELECT $collection, generation, $id, 1, $body, {StoredRegisters.Version} FROM collections WHERE name = $collection;
+                SELECT $collection, generation, $id, 1, body, {StoredStates.Version} FROM collections, documents
+                WHERE name = $collection AND documents.collection = $collection AND documents.id = $id;
                 """;
             change.Parameters.AddWithValue("$collection", collection);
             change.Parameters.AddWithValue("$id", id);

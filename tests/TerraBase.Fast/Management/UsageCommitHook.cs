@@ -320,6 +320,8 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
             inner.ChangesAsync(collection, filter, after, through, cancellationToken);
 
         public Guid Scope => inner.Scope;
+
+        public bool Materializes => inner.Materializes;
         public async ValueTask<StoredDocument?> GetAsync(string collection, string id, CancellationToken cancellationToken)
         {
             hook.BeforeGet?.Invoke(collection);
@@ -373,6 +375,12 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
         public ValueTask<ReadOnlyMemory<byte>> GetOriginAsync(CancellationToken cancellationToken) => inner.GetOriginAsync(cancellationToken);
         public ValueTask<long> GetLastChangeSequenceAsync(CancellationToken cancellationToken) => inner.GetLastChangeSequenceAsync(cancellationToken);
         public ValueTask DisposeAsync() => inner.DisposeAsync();
+
+        public ValueTask<long> PatchAsync(string collection, string id, ReadOnlyMemory<byte> json, CancellationToken cancellationToken)
+        {
+            _intercepted |= hook._intercepts(collection, id, json);
+            return inner.PatchAsync(collection, id, json, cancellationToken);
+        }
 
         public ValueTask<long> PutAsync(string collection, string id, ReadOnlyMemory<byte> json, CancellationToken cancellationToken)
         {

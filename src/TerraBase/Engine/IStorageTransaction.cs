@@ -98,6 +98,12 @@ public interface IStorageTransaction : IAsyncDisposable
     /// </summary>
     Guid Scope { get; }
 
+    /// <summary>
+    /// Whether a write stores the materialized document, canonical JSON with fields in name order (a client database),
+    /// rather than the bytes written (the system database, until it becomes a lattice database too).
+    /// </summary>
+    bool Materializes { get; }
+
     /// <summary>Reads one live document, or <see langword="null"/> when it is absent or deleted.</summary>
     ValueTask<StoredDocument?> GetAsync(string collection, string id, CancellationToken cancellationToken);
 
@@ -127,6 +133,14 @@ public interface IStorageTransaction : IAsyncDisposable
     /// <see cref="StorageWriteLimitException"/>. A rejected write prevents the transaction from committing.
     /// </summary>
     ValueTask<long> PutAsync(string collection, string id, ReadOnlyMemory<byte> json, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Writes an existing document of a client database as a PATCH that leaves it as <paramref name="json"/>: each top-level
+    /// field whose value changed is set and each one <paramref name="json"/> lacks is removed, so a concurrent write of
+    /// another field survives the merge (docs/terrabase/multi-region-replication.md section 4). Returns the version, under
+    /// the limits and errors of <see cref="PutAsync"/>. Several writes of one document in one transaction share their version.
+    /// </summary>
+    ValueTask<long> PatchAsync(string collection, string id, ReadOnlyMemory<byte> json, CancellationToken cancellationToken);
 
     /// <summary>
     /// Runs <see cref="GetVersionAsync"/> then <see cref="PutAsync"/> for each of <paramref name="puts"/> in order, under

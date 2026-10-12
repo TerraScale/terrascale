@@ -1,7 +1,7 @@
 # Multi-region replication on Turso (design C)
 
-- Status: design, 2026-10-11. Nothing below is implemented. Each guarantee holds only once its slice ships with
-  integration and e2e evidence.
+- Status: design, 2026-10-11; slices land as listed in section 21. Each guarantee holds only once its slice ships
+  with integration and e2e evidence.
 - Decision: design C (user, 2026-10-11). Turso is the storage engine, Turso CDC is the change capture, and TerraBase's
   own Anna-style lattices and gRPC streams do the replication, over Fly 6PN. Turso's sync engine is not used: it
   resolves by last push and its self-hosted hub is test-only.
@@ -611,6 +611,25 @@ dashboards and alerts already query those names.
 | R7 | GC | `stable`/horizon, directory-based origins, eviction after 24 h, tombstone and removed-dot collection, feed retention | 800 | R6 | Opus | E14 |
 | R11 | Home region + live move | `home`/`regions`, file placement, `fly-replay`, `/v1/operations/{id}`, move steps, file drop after acks; delete 421 placement | 1,400 | R10a, R6 | Opus | E13 |
 | R12 | ts-auth lattice-native | `uses` sets on refresh tokens and codes, lockout counter, `/changes` watcher revoking families; delete ts-auth CAS | 1,200 | R5, R8 | Opus | E15 |
+
+**R2a as built** (2026-10-12), in three PRs:
+
+1. R2a-1 deletes the client register replication (sender, receiver, anti-entropy, write-wait, journal, applied
+   positions) and also the CrossRegion WAN pull, because it applied register groups and no longer compiled.
+2. R2a-2 stores every client document as a `DocumentState` in `_tb_state` (stored form, base64url, bucket, digest,
+   `origin`, `live`) and deletes `MvRegister`, `CausalContext`, `Dot`, `DocumentWrite` and `LatticeEncoding`. PATCH
+   writes only the top-level fields it changes (`IStorageTransaction.PatchAsync`). A request mints one stamp per
+   document, and its `_tb_state` row is written once, at the end of the request (group commit: before the write's
+   savepoint is released; otherwise at commit). The materialized row may be rewritten by each operation of the
+   request; the tailer (R3) pairs a state row with the last document row before it. A collection drop deletes its
+   rows and states locally and deletes its `_collections` document. Materialized rows still live in `documents`.
+3. R2a-3 moves the materialized rows to one rowid table per collection, together with the `SqlSubset` compiler,
+   indexes and unique tables on them (the core of R2b), because the Fast suite cannot stay green with queries on a
+   table that no longer holds the rows.
+
+R2a is built on the Microsoft.Data.Sqlite engine and writes only SQL that Turso accepts (rowid tables for every new
+table, plain `INSERT`/`UPDATE`/`DELETE` on captured tables). The engine swap (1b, PR #21) lands separately: on Turso,
+174 Fast tests fail, most of them in continuous backup, which reads SQLite's WAL directly.
 
 **Order and parallelism:**
 

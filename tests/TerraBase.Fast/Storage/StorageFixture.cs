@@ -80,7 +80,6 @@ internal static class StorageFixture
         try
         {
             await connection.OpenAsync();
-            StoredRegisters.Register(connection);
             return connection;
         }
         catch

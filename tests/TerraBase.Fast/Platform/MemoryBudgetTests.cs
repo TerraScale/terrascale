@@ -404,6 +404,8 @@ public sealed class MemoryBudgetTests
             // server's back stays invisible.
             await StorageFixture.ExecuteAsync(await tenant.FileAsync(server, "shop"), """UPDATE documents SET body = json_set(body, '$.disk', 1);""");
             await Assert.That(await client.GetStringAsync(uri)).DoesNotContain("disk");
+            // The stored document is its state's materialization again before the delete writes over it.
+            await StorageFixture.ExecuteAsync(await tenant.FileAsync(server, "shop"), """UPDATE documents SET body = json_remove(body, '$.disk');""");
 
             // The read after a delete finds nothing to cache, so it must evict the invalidated entry itself.
             using (var deleted = await client.DeleteAsync(uri))

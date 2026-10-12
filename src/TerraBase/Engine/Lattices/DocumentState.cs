@@ -3,6 +3,7 @@ using System.Collections.Immutable;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
+using TerraBase.Primitives;
 
 namespace TerraBase.Engine.Lattices;
 
@@ -22,6 +23,9 @@ public sealed class DocumentState : ILattice<DocumentState>, IEquatable<Document
     private static readonly ImmutableSortedDictionary<string, FieldState> NoFields = ImmutableSortedDictionary.Create<string, FieldState>(Utf8Ordinal.Instance);
 
     private static readonly JsonWriterOptions WriterOptions = new() { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+
+    /// <summary>How the state parses the JSON it holds: as deep as a stored document may be.</summary>
+    internal static readonly JsonDocumentOptions JsonOptions = new() { MaxDepth = DocumentJson.MaxStoredDepth };
 
     internal DocumentState(ClearEntry? clear, ImmutableSortedDictionary<string, FieldState> fields)
     {
@@ -293,7 +297,7 @@ public sealed class DocumentState : ILattice<DocumentState>, IEquatable<Document
 
     private static bool IsInteger(string json)
     {
-        using var document = JsonDocument.Parse(json);
+        using var document = JsonDocument.Parse(json, JsonOptions);
         return document.RootElement.ValueKind == JsonValueKind.Number && document.RootElement.TryGetInt64(out _);
     }
 

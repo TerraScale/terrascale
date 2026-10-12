@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using TerraBase.Engine.Lattices;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
@@ -84,9 +85,16 @@ public sealed class SchemaApiTests
         await Assert.That(items.Select(item => item.GetProperty("name").GetString()!)).IsEquivalentTo(["orders", "people"]);
         await Assert.That(items[0].GetProperty("name").GetString()).IsEqualTo("orders");
         await Assert.That(items[0].GetProperty("documents").GetInt64()).IsEqualTo(2);
-        await Assert.That(items[0].GetProperty("bytes").GetInt64()).IsEqualTo(orders.Sum(json => (long)Encoding.UTF8.GetByteCount(json)));
+        await Assert.That(items[0].GetProperty("bytes").GetInt64()).IsEqualTo(orders.Sum(StoredBytes));
         await Assert.That(items[1].GetProperty("documents").GetInt64()).IsEqualTo(3);
-        await Assert.That(items[1].GetProperty("bytes").GetInt64()).IsEqualTo(people.Sum(json => (long)Encoding.UTF8.GetByteCount(json)));
+        await Assert.That(items[1].GetProperty("bytes").GetInt64()).IsEqualTo(people.Sum(StoredBytes));
+    }
+
+    // Storage keeps the materialized document: canonical JSON with relaxed escaping, fields in name order.
+    private static long StoredBytes(string json)
+    {
+        using var parsed = JsonDocument.Parse(json);
+        return DocumentState.Bottom.Put(default, parsed.RootElement).Materialize()!.Length;
     }
 
     [Test]

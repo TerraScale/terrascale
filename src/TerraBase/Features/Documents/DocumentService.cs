@@ -3,6 +3,7 @@ using System.Diagnostics.Metrics;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using TerraBase.Engine;
+using TerraBase.Engine.Lattices;
 using TerraBase.Errors;
 using TerraBase.Features.Management.Queries;
 using TerraBase.Features.Management.Usage;
@@ -496,7 +497,7 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
                     var json = EntityPayload.WithoutId(put.Json, put.Id);
                     var version = await transaction.PutAsync(put.Collection, put.Id, json, cancellationToken).ConfigureAwait(false);
                     return new OperationResult(put.Id, version, current is not { Deleted: false }, null,
-                        ETags.Version(transaction.Scope, put.Collection, put.Id, version, json));
+                        StoredETag(transaction, put.Collection, put.Id, version, json));
                 }
 
             case PatchOperation patch:
@@ -525,9 +526,9 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
                     var patched = JsonSerializer.SerializeToUtf8Bytes(document, TerraBaseJsonContext.Default.JsonObject);
                     _ = DocumentJson.Read(patched, requireObject: true);
                     var json = EntityPayload.WithoutId(patched, patch.Id);
-                    var version = await transaction.PutAsync(patch.Collection, patch.Id, json, cancellationToken).ConfigureAwait(false);
+                    var version = await transaction.PatchAsync(patch.Collection, patch.Id, json, cancellationToken).ConfigureAwait(false);
                     return new OperationResult(patch.Id, version, false, null,
-                        ETags.Version(transaction.Scope, patch.Collection, patch.Id, version, json));
+                        StoredETag(transaction, patch.Collection, patch.Id, version, json));
                 }
 
             case DeleteOperation delete:
@@ -601,6 +602,21 @@ internal sealed partial class DocumentService(IStorageEngine engine, TimeProvide
 
 
     // The precondition failure, or null when it holds.
+    // The ETag a read of the written document answers with: storage keeps the materialized document (canonical JSON, fields
+    // in name order), not the request's bytes.
+    // shortcut: a PUT or PATCH sets plain fields only, so the materialization is the canonical JSON; read it back once the
+    // counter and set operations of slice R5 can leave other values in the stored document.
+    private static string StoredETag(IStorageTransaction transaction, string collection, string id, long version, ReadOnlyMemory<byte> json)
+    {
+        if (!transaction.Materializes)
+        {
+            return ETags.Version(transaction.Scope, collection, id, version, json);
+        }
+
+        using var parsed = JsonDocument.Parse(json, DocumentState.JsonOptions);
+        return ETags.Version(transaction.Scope, collection, id, version, DocumentState.Bottom.Put(default, parsed.RootElement).Materialize());
+    }
+
     private static async ValueTask<PreconditionFailed?> CheckAsync(
         IStorageTransaction transaction, Precondition precondition, string collection, string id, DocumentVersion? current,
         CancellationToken cancellationToken, ReadOnlyMemory<byte>? json = null)

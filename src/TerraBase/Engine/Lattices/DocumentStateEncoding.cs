@@ -57,7 +57,7 @@ public static class DocumentStateEncoding
         JsonDocument? json = null;
         try
         {
-            json = document.IsEmpty ? null : JsonDocument.Parse(document.ToArray());
+            json = document.IsEmpty ? null : JsonDocument.Parse(document.ToArray(), DocumentState.JsonOptions);
             var state = Read(data, json?.RootElement ?? default);
             if (!document.SequenceEqual(state.Materialize()))
             {
@@ -249,7 +249,7 @@ public static class DocumentStateEncoding
     {
         try
         {
-            using var json = JsonDocument.Parse(text);
+            using var json = JsonDocument.Parse(text, DocumentState.JsonOptions);
             if (string.Equals(DocumentState.Canonical(json.RootElement), text, StringComparison.Ordinal))
             {
                 return text;

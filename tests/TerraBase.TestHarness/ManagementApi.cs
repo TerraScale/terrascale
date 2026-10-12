@@ -203,7 +203,6 @@ public sealed class ManagementApi : IAsyncDisposable
         await using var connection = new SqliteConnection(
             new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadWrite, Pooling = false }.ToString());
         await connection.OpenAsync();
-        StoredRegisters.Register(connection);
         await using var command = connection.CreateCommand();
         command.CommandText = sql;
         foreach (var (name, value) in parameters)

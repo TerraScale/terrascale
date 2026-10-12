@@ -409,8 +409,9 @@ public sealed class DocumentApiTests
 
         await Assert.That(patched.Status).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(read.ETag).IsEqualTo(patched.Version);
+        // Storage keeps top-level fields in name order (docs/terrabase/multi-region-replication.md section 4).
         await Assert.That(read.Json.GetProperty("document").GetRawText()).IsEqualTo(
-            """{"name":"Ana","profile":{"city":"Lisbon","country":"PT"},"tags":["b"],"new":{"x":1}}""");
+            """{"name":"Ana","new":{"x":1},"profile":{"city":"Lisbon","country":"PT"},"tags":["b"]}""");
         await Assert.That((notObject.Status, notObject.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_patch"));
     }
 

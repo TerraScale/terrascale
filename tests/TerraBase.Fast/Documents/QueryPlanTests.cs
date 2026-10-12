@@ -36,6 +36,7 @@ public sealed class QueryPlanTests
         ["ListCollectionsFirst"] = "SCAN collections",
         ["ListCollectionsAfter"] = "SEARCH collections USING PRIMARY KEY (name>?)",
         ["DropDocuments"] = "SEARCH documents USING PRIMARY KEY (collection=?)",
+        ["DropStates"] = "SEARCH _tb_state USING INDEX sqlite_autoindex__tb_state_1 (collection=?)",
         ["DropCollection"] = "SEARCH collections USING PRIMARY KEY (name=?)",
         // Shape history: an insert reads its collection row; the drop seeks the dropped generation.
         ["AppendChange"] = "SEARCH collections USING PRIMARY KEY (name=?)",
@@ -48,12 +49,13 @@ public sealed class QueryPlanTests
         ["ListIndexes"] = "SCAN sqlite_schema",
         ["IndexExists"] = "SCAN sqlite_schema",
         ["ObserveOffset"] = "SEARCH commit_offset USING INTEGER PRIMARY KEY (rowid=?)",
-        // Client databases (docs/design/anna-core.md): registers by key, a drop's live ids from the index alone.
-        ["GetState"] = "SEARCH documents USING PRIMARY KEY (collection=? AND id=?)",
+        // Client databases (docs/terrabase/multi-region-replication.md): states and documents by key.
+        ["GetState"] = "SEARCH s USING INDEX sqlite_autoindex__tb_state_1 (collection=? AND id=?) | SEARCH d USING PRIMARY KEY (collection=? AND id=?) LEFT-JOIN | SEARCH c USING PRIMARY KEY (collection=? AND id=?) LEFT-JOIN",
         ["ClientHasCollectionState"] = "SCAN CONSTANT ROW | SCALAR SUBQUERY 1 | SEARCH documents USING PRIMARY KEY (collection>? AND collection<?) | SCALAR SUBQUERY 2 | SEARCH collections USING PRIMARY KEY (name>? AND name<?) | SCALAR SUBQUERY 3 | SEARCH change_log USING COVERING INDEX change_log_by_offset (collection>? AND collection<?)",
         ["ClientHasCollectionStateFrom"] = "SCAN CONSTANT ROW | SCALAR SUBQUERY 1 | SEARCH documents USING PRIMARY KEY (collection>?) | SCALAR SUBQUERY 2 | SEARCH collections USING PRIMARY KEY (name>?) | SCALAR SUBQUERY 3 | SEARCH change_log USING COVERING INDEX change_log_by_offset (collection>?)",
-        ["PutState"] = "",
-        ["LiveIds"] = "SEARCH documents USING INDEX documents_live (collection=?)",
+        ["PutDocument"] = "",
+        ["UpdateState"] = "SEARCH _tb_state USING INDEX sqlite_autoindex__tb_state_1 (collection=? AND id=?)",
+        ["InsertState"] = "",
         ["Origin"] = "SEARCH commit_offset USING INTEGER PRIMARY KEY (rowid=?)",
         ["LastSequence"] = "SEARCH changes USING PRIMARY KEY",
         ["AppendReplicationChange"] = "",

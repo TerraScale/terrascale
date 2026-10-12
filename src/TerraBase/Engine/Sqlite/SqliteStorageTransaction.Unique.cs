@@ -26,9 +26,6 @@ internal sealed partial class SqliteStorageTransaction
     private const string UniqueDeleteKeys = "DELETE FROM unique_keys WHERE collection = $collection AND id = $id;";
     private const string UniqueDeleteConflict = "DELETE FROM unique_conflicts WHERE collection = $collection AND id = $id;";
 
-    // A client drop tombstones the retained uniqueness losers too: their registers are live.
-    private const string UniqueHiddenIds = "SELECT id FROM unique_conflicts WHERE collection = $collection ORDER BY id LIMIT $limit;";
-
     // Visibility only: the register and its winner's version stay as they are.
     private const string UniqueVisibleBody = "UPDATE documents SET body = $body WHERE collection = $collection AND id = $id;";
 

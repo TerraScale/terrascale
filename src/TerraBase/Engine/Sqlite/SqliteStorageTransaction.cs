@@ -4,6 +4,7 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
+using TerraBase.Engine.Lattices;
 using SQLitePCL;
 using TerraBase.Features.Qos;
 using TerraBase.Primitives;
@@ -72,6 +73,8 @@ internal sealed partial class SqliteStorageTransaction(
     // Taken when the transaction begins: a catalog follower adopting its primary's incarnation never mixes it into a
     // snapshot read before.
     public Guid Scope { get; } = store.Scope;
+
+    public bool Materializes => !store.IsSystem;
 
     public ValueTask<StoredDocument?> GetAsync(string collection, string id, CancellationToken cancellationToken) =>
         RunAsync(() => ReadDocument(collection, id), cancellationToken);
@@ -153,8 +156,13 @@ internal sealed partial class SqliteStorageTransaction(
         }, cancellationToken, mutation: true).ConfigureAwait(false);
     }
 
+    public async ValueTask<long> PatchAsync(string collection, string id, ReadOnlyMemory<byte> json, CancellationToken cancellationToken)
+    {
+        return await RunAsync(() => Put(collection, id, json, cancellationToken, patch: true), cancellationToken, mutation: true).ConfigureAwait(false);
+    }
+
     // Worker-only, inside a mutation.
-    private long Put(string collection, string id, ReadOnlyMemory<byte> json, CancellationToken cancellationToken)
+    private long Put(string collection, string id, ReadOnlyMemory<byte> json, CancellationToken cancellationToken, bool patch = false)
     {
         ThrowIfReadOnly();
         var body = Admit(json);
@@ -181,13 +189,22 @@ internal sealed partial class SqliteStorageTransaction(
             }, cancellationToken);
         }
 
-        var affected = ReplaceUniqueKeys(collection, id, body, cancellationToken);
+        var (state, at) = Begin(collection, id);
+        DocumentState next;
+        using (var parsed = JsonDocument.Parse(body, DocumentState.JsonOptions))
+        {
+            next = patch ? Patch(state, at, parsed.RootElement) : state.Put(at, parsed.RootElement);
+        }
+
+        // Reads, uniqueness and shape history see the materialized document: canonical JSON, fields in name order.
+        var materialized = Materialize(next);
+        var affected = ReplaceUniqueKeys(collection, id, materialized, cancellationToken);
         ClearUniqueConflict(collection, id);
         cancellationToken.ThrowIfCancellationRequested();
         var offset = Offset();
-        var version = WriteRegister(collection, id, json.Span, tombstone: false);
+        var version = Store(collection, id, next, at, materialized);
         ReconcileUnique(collection, affected, id, cancellationToken);
-        AppendChange(collection, id, offset, version, body, cancellationToken);
+        AppendChange(collection, id, offset, version, materialized, cancellationToken);
         return version;
     }
 
@@ -243,7 +260,8 @@ internal sealed partial class SqliteStorageTransaction(
                 ClearUniqueConflict(collection, id);
                 cancellationToken.ThrowIfCancellationRequested();
                 var offset = Offset();
-                var written = WriteRegister(collection, id, default, tombstone: true);
+                var (state, at) = Begin(collection, id);
+                var written = Store(collection, id, state.Delete(at), at, null);
                 ReconcileUnique(collection, affected, id, cancellationToken);
                 AppendChange(collection, id, offset, written, null, cancellationToken);
                 return written;
@@ -867,7 +885,16 @@ internal sealed partial class SqliteStorageTransaction(
         }
 
         Offset();
-        WriteRegister(collection, name, body is null ? default : Encoding.UTF8.GetBytes(body), tombstone: body is null);
+        var (state, at) = Begin(collection, name);
+        if (body is null)
+        {
+            Store(collection, name, state.Delete(at), at, null);
+            return;
+        }
+
+        using var parsed = JsonDocument.Parse(body, DocumentState.JsonOptions);
+        var next = state.Put(at, parsed.RootElement);
+        Store(collection, name, next, at, Materialize(next));
     }
 
     private bool CreateCollection(CollectionInfo collection)
@@ -997,48 +1024,17 @@ internal sealed partial class SqliteStorageTransaction(
             }
             else if (Command(SqliteStatements.GetCollection, name).ExecuteScalar() is not null)
             {
-                // A tombstone over every live document, which replicates with the drop; the registers stay, so a late
-                // delta of one of them joins its tombstone instead of bringing it back. Their history goes with the
+                // A drop is local: the collection's documents and states go, and its own metadata document's deletion is
+                // what replicates (docs/terrabase/multi-region-replication.md section 5). Its history goes with the
                 // generation below.
-                // ponytail: one transaction drops the collection; one of more than 1024 live documents fails its group bounds.
-                var live = Command(SqliteStatements.LiveIds, name);
-                live.Parameters.AddWithValue("$limit", IStorageTransaction.MaxChangeGroupChanges + 1);
-                var ids = new List<string>();
-                using (var reader = live.ExecuteReader())
+                Command(SqliteStatements.DropDocuments, name).ExecuteNonQuery();
+                Command(SqliteStatements.DropStates, name).ExecuteNonQuery();
+                foreach (var key in _pending.Keys.Where(key => key.Collection == name).ToList())
                 {
-                    while (reader.Read())
-                    {
-                        cancellationToken.ThrowIfCancellationRequested();
-                        ids.Add(reader.GetString(0));
-                    }
+                    _pending.Remove(key);
                 }
 
-                // A retained uniqueness loser is live in its register, though no reader sees it.
-                var hidden = Command(UniqueHiddenIds, name);
-                hidden.Parameters.AddWithValue("$limit", IStorageTransaction.MaxChangeGroupChanges + 1);
-                using (var reader = hidden.ExecuteReader())
-                {
-                    while (reader.Read())
-                    {
-                        cancellationToken.ThrowIfCancellationRequested();
-                        ids.Add(reader.GetString(0));
-                    }
-                }
-
-                if (ids.Count > IStorageTransaction.MaxChangeGroupChanges)
-                {
-                    LimitsReached = _writes > 0;
-                    throw new ChangeGroupCapacityException(
-                        $"a replicated transaction holds at most {IStorageTransaction.MaxChangeGroupChanges} changes and {IStorageTransaction.MaxChangeGroupBytes} bytes");
-                }
-
-                foreach (var id in ids)
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    WriteRegister(name, id, default, tombstone: true);
-                }
-
-                // History after the tombstones, before the collection row it finds the dropped generation through.
+                // History before the collection row it finds the dropped generation through.
                 Command(SqliteStatements.DropHistory, name).ExecuteNonQuery();
             }
 
@@ -1070,6 +1066,7 @@ internal sealed partial class SqliteStorageTransaction(
 
             try
             {
+                FlushStates();
                 DropUniqueAffected();
                 var offset = _offset ?? GetOffset();
                 if (_changes is { Count: > 0 })
@@ -1167,6 +1164,7 @@ internal sealed partial class SqliteStorageTransaction(
         (int Changes, long ChangeBytes, int Writes, long WrittenBytes, long? Offset, bool CollectionsChanged) saved)
     {
         _changes?.RemoveRange(saved.Changes, _changes.Count - saved.Changes);
+        _pending.Clear();
         (_changeBytes, _writes, _writtenBytes, _offset, _collectionsChanged) =
             (saved.ChangeBytes, saved.Writes, saved.WrittenBytes, saved.Offset, saved.CollectionsChanged);
         _savepoint = null;

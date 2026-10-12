@@ -39,63 +39,6 @@ public sealed class LatticeLawTests
         });
 
     [Test]
-    public Task Causal_contexts_obey_the_laws() =>
-        AssertLawsAsync<CausalContext>((random, state, replica, _) =>
-            CausalContext.Of([new Dot(replica, state.Max(replica) + 1), new Dot(R(random.Int(1, Replicas)), random.ULong(1, 12))]));
-
-    [Test]
-    public Task Multi_value_registers_obey_the_laws() =>
-        AssertLawsAsync<MvRegister<int>>((random, state, replica, seen) =>
-            random.Bool() ? state.WriteDelta(replica, random.Int()) : state.WriteDelta(replica, random.Int(), random.ListItem(seen).Context));
-
-    [Test]
-    public async Task Causal_contexts_hold_exactly_their_dots_whatever_the_order()
-    {
-        foreach (var seed in NewSeeds())
-        {
-            var random = new Randomizer(seed);
-            var dots = Enumerable.Range(0, random.Int(0, 30)).Select(_ => new Dot(R(random.Int(1, Replicas)), random.ULong(1, 10))).ToHashSet();
-            var context = CausalContext.Of(random.Shuffle(dots));
-            var oneByOne = random.Shuffle(dots).Aggregate(new CausalContext(), (state, dot) => state.Add(dot));
-
-            await Assert.That(oneByOne).IsEqualTo(context).Because($"seed {seed}");
-            foreach (var replica in Enumerable.Range(1, Replicas).Select(R))
-            {
-                for (var counter = 1UL; counter <= 11; counter++)
-                {
-                    await Assert.That(context.Contains(new Dot(replica, counter))).IsEqualTo(dots.Contains(new Dot(replica, counter))).Because($"seed {seed}");
-                }
-
-                var max = dots.Where(dot => dot.Replica == replica).Select(dot => dot.Counter).DefaultIfEmpty(0UL).Max();
-                await Assert.That(context.Max(replica)).IsEqualTo(max).Because($"seed {seed}");
-            }
-        }
-    }
-
-    [Test]
-    public async Task A_register_keeps_concurrent_writes_and_replaces_observed_ones()
-    {
-        var a = new MvRegister<string>();
-        var b = new MvRegister<string>();
-        var writeA = a.WriteDelta(R(1), "a");
-        var writeB = b.WriteDelta(R(2), "b");
-        a = a.Join(writeA);
-        b = b.Join(writeB);
-
-        var both = a.Join(b);
-        await Assert.That(both.Values.Values.Order()).IsEquivalentTo(["a", "b"]);
-
-        // A causal write that observed only "a" replaces "a" and keeps the concurrent "b".
-        var overA = a.Join(a.WriteDelta(R(1), "a2", a.Context));
-        await Assert.That(overA.Join(b).Values.Values.Order()).IsEquivalentTo(["a2", "b"]);
-
-        // A write over everything the replica knows leaves one value on every replica that receives it.
-        var resolved = both.WriteDelta(R(2), "c");
-        await Assert.That(both.Join(resolved).Values.Values).IsEquivalentTo(["c"]);
-        await Assert.That(a.Join(resolved).Join(b).Values.Values).IsEquivalentTo(["c"]);
-    }
-
-    [Test]
     public async Task Hybrid_clocks_never_go_back()
     {
         foreach (var seed in NewSeeds())
@@ -114,44 +57,6 @@ public sealed class LatticeLawTests
                 clock = next;
             }
         }
-    }
-
-    [Test]
-    public async Task A_dot_minted_twice_with_different_values_is_refused()
-    {
-        // A replica that lost its state mints (r, 1) again: joining must fail loudly, not drop one write everywhere.
-        var first = new MvRegister<string>().WriteDelta(R(1), "a");
-        var again = new MvRegister<string>().WriteDelta(R(1), "b");
-
-        await Assert.That(() => first.Join(again)).Throws<InvalidOperationException>();
-        await Assert.That(first.Join(new MvRegister<string>().WriteDelta(R(1), "a"))).IsEqualTo(first);
-    }
-
-    [Test]
-    public async Task A_new_epoch_never_mints_a_dot_its_member_minted_before()
-    {
-        // The member wrote "a" and shipped it, then lost it locally (an unclean start). Its next epoch writes "b".
-        var shipped = new MvRegister<string>().WriteDelta(ReplicaId.Of(0, 7, 0), "a");
-        var afterCrash = new MvRegister<string>().WriteDelta(ReplicaId.Of(0, 7, 1), "b");
-
-        await Assert.That(shipped.Values.Keys.Single()).IsNotEqualTo(afterCrash.Values.Keys.Single());
-        await Assert.That(shipped.Join(afterCrash).Values.Values.Order()).IsEquivalentTo(["a", "b"]);
-    }
-
-    [Test]
-    public async Task New_keys_and_failed_writes_never_reuse_a_dot()
-    {
-        // The database collected tombstones whose dots reached (r, 5): a key created afterwards starts above them.
-        var floor = CausalContext.Of(Enumerable.Range(1, 5).Select(counter => new Dot(R(1), (ulong)counter)));
-        var created = new MvRegister<string>(floor).WriteDelta(R(1), "new");
-        await Assert.That(created.Values.Keys.Single()).IsEqualTo(new Dot(R(1), 6));
-
-        // A write whose batch failed leaves its dot in the context, so the next write mints a new one.
-        var state = new MvRegister<string>();
-        var failed = state.WriteDelta(R(1), "lost");
-        state = state.Join(new MvRegister<string>(CausalContext.Of(failed.Values.Keys)));
-        await Assert.That(state.Values).IsEmpty();
-        await Assert.That(state.WriteDelta(R(1), "kept").Values.Keys.Single()).IsEqualTo(new Dot(R(1), 2));
     }
 
     [Test]
