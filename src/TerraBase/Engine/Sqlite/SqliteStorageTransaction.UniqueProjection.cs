@@ -8,7 +8,7 @@ internal sealed partial class SqliteStorageTransaction
     private bool _uniqueAffected;
     // A live document of a client collection ({0}), a retained uniqueness loser included.
     private const string UniqueLiveDocument = """
-        SELECT 1 FROM {0} UNION ALL SELECT 1 FROM unique_conflicts WHERE collection = $collection LIMIT 1;
+        SELECT 1 FROM {0} UNION ALL SELECT 1 FROM _tb_unique_conflicts WHERE collection = $collection LIMIT 1;
         """;
 
     private void IndexUniqueKeys(string collection, string id, string? body, IReadOnlyList<UniqueConstraint> constraints, bool local, CancellationToken cancellationToken)
@@ -16,7 +16,7 @@ internal sealed partial class SqliteStorageTransaction
         var delete = Command(UniqueDeleteKeys, collection);
         delete.Parameters.AddWithValue("$id", id);
         delete.ExecuteNonQuery();
-        delete = Command("DELETE FROM unique_invalid WHERE collection = $collection AND id = $id;", collection);
+        delete = Command("DELETE FROM _tb_unique_invalid WHERE collection = $collection AND id = $id;", collection);
         delete.Parameters.AddWithValue("$id", id);
         delete.ExecuteNonQuery();
         if (body is null || constraints.Count == 0)
@@ -49,7 +49,7 @@ internal sealed partial class SqliteStorageTransaction
         }
         catch (DocumentValidationException) when (!local)
         {
-            var invalid = Command("INSERT INTO unique_invalid (collection, id) VALUES ($collection, $id);", collection);
+            var invalid = Command("INSERT INTO _tb_unique_invalid (collection, id) VALUES ($collection, $id);", collection);
             invalid.Parameters.AddWithValue("$id", id);
             invalid.ExecuteNonQuery();
             return;
@@ -57,7 +57,7 @@ internal sealed partial class SqliteStorageTransaction
 
         foreach (var (name, key) in keys)
         {
-            var insert = Command("INSERT INTO unique_keys (collection, constraint_name, value, id) VALUES ($collection, $name, $value, $id);", collection);
+            var insert = Command("INSERT INTO _tb_unique_keys (collection, constraint_name, value, id) VALUES ($collection, $name, $value, $id);", collection);
             insert.Parameters.AddWithValue("$name", name);
             insert.Parameters.AddWithValue("$value", key);
             insert.Parameters.AddWithValue("$id", id);
@@ -77,7 +77,7 @@ internal sealed partial class SqliteStorageTransaction
         BeginUniqueAffected();
         var command = Command("""
             INSERT OR IGNORE INTO temp.unique_affected (id)
-            SELECT other.id FROM unique_keys mine JOIN unique_keys other
+            SELECT other.id FROM _tb_unique_keys mine JOIN _tb_unique_keys other
             ON other.collection = mine.collection AND other.constraint_name = mine.constraint_name AND other.value = mine.value
             WHERE mine.collection = $collection AND mine.id = $id;
             INSERT OR IGNORE INTO temp.unique_affected (id) VALUES ($id);

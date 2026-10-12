@@ -185,7 +185,10 @@ public sealed class SqlApiTests
             $"SELECT * FROM people p JOIN {secret} s ON p.id = s.id",
             $"SELECT count({secret}) FROM people",
             $"SELECT * FROM people WHERE {secret} = $1",
-            $"SELECT * FROM people WHERE {secret} LIKE 'a%'",
+            // LIKE takes only a prefix pattern.
+            $"SELECT * FROM people WHERE {secret} LIKE '%a'",
+            $"SELECT * FROM people WHERE {secret} LIKE 'a_%'",
+            $"SELECT * FROM people WHERE {secret} ILIKE 'a%'",
             // Versions are opaque: _rev can be selected, not compared or sorted.
             $"SELECT {secret} FROM people WHERE _rev = 1",
             $"SELECT {secret} FROM people ORDER BY _rev",

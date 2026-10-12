@@ -14,14 +14,14 @@ internal static class SqliteStatements
     // octet_length inspects stored JSON size without materializing or decoding its body.
     public const string DocumentBytes = """
         SELECT coalesce(octet_length(c.body), octet_length(d.body), 0)
-        FROM documents d LEFT JOIN unique_conflicts c ON c.collection = d.collection AND c.id = d.id
+        FROM documents d LEFT JOIN _tb_unique_conflicts c ON c.collection = d.collection AND c.id = d.id
         WHERE d.collection = $collection AND d.id = $id;
         """;
 
     // One scalar result, independent of the number of collections; metadata outside collections never counts.
     public const string StoredDocumentBytes = """
         SELECT coalesce(sum((SELECT sum(coalesce(octet_length(c.body), octet_length(d.body), 0))
-            FROM documents d LEFT JOIN unique_conflicts c ON c.collection = d.collection AND c.id = d.id
+            FROM documents d LEFT JOIN _tb_unique_conflicts c ON c.collection = d.collection AND c.id = d.id
             WHERE d.collection = collections.name)), 0)
         FROM collections;
         """;
@@ -32,7 +32,7 @@ internal static class SqliteStatements
     // A client collection's documents ({0}, its table), with their versions from _tb_state, and its retained JSON sizes.
     // octet_length reads a size from the record header without loading the JSON.
     public const string ClientDocumentBytes = """
-        SELECT coalesce((SELECT octet_length(body) FROM unique_conflicts WHERE collection = $collection AND id = $id),
+        SELECT coalesce((SELECT octet_length(body) FROM _tb_unique_conflicts WHERE collection = $collection AND id = $id),
             (SELECT octet_length(doc) FROM {0} WHERE id = $id), 0);
         """;
 
@@ -49,7 +49,7 @@ internal static class SqliteStatements
 
     public const string ClientCollectionStats = "SELECT count(*), coalesce(sum(octet_length(doc)), 0) FROM {0};";
 
-    public const string ClientConflictBytes = "SELECT coalesce(sum(octet_length(body)), 0) FROM unique_conflicts;";
+    public const string ClientConflictBytes = "SELECT coalesce(sum(octet_length(body)), 0) FROM _tb_unique_conflicts;";
 
     public const string ClientCollectionNames = "SELECT name FROM collections ORDER BY name;";
 
@@ -59,7 +59,7 @@ internal static class SqliteStatements
     public const string GetState = """
         SELECT s.state, coalesce(c.body, d.doc) FROM _tb_state s
         LEFT JOIN {0} d ON d.id = s.id
-        LEFT JOIN unique_conflicts c ON c.collection = s.collection AND c.id = s.id
+        LEFT JOIN _tb_unique_conflicts c ON c.collection = s.collection AND c.id = s.id
         WHERE s.collection = $collection AND s.id = $id;
         """;
 

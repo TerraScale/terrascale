@@ -349,21 +349,28 @@ internal sealed partial class SqliteStorageTransaction
                 sql.Append(')');
                 break;
             case SqlCompareFilter compare:
-                sql.Append(Column(compare.Field, json));
+                var column = Column(compare.Field, json);
                 switch (compare.Operator)
                 {
                     case SqlOperator.IsNull:
-                        sql.Append(" IS NULL");
+                        sql.Append($"{column} IS NULL");
                         break;
                     case SqlOperator.IsNotNull:
-                        sql.Append(" IS NOT NULL");
+                        sql.Append($"{column} IS NOT NULL");
                         break;
                     case SqlOperator.In:
-                        sql.Append(" IN (");
-                        sql.AppendJoin(", ", compare.Values.Select(value => Parameter(command, value)));
-                        sql.Append(')');
+                        // Equalities joined by OR: the Turso planner uses an expression index for OR, not for IN.
+                        sql.Append(SqliteQueryCompiler.Balanced([.. compare.Values.Select(value => $"{column} = {Parameter(command, value)}")], " OR "));
+                        break;
+                    case SqlOperator.Prefix:
+                        // A half-open range, which an index can seek (SqliteQueryCompiler.PrefixSuccessor).
+                        var prefix = (string)compare.Values[0];
+                        sql.Append(SqliteQueryCompiler.PrefixSuccessor(prefix) is { } successor
+                            ? $"({column} >= {Parameter(command, prefix)} AND {column} < {Parameter(command, successor)})"
+                            : $"{column} >= {Parameter(command, prefix)}");
                         break;
                     default:
+                        sql.Append(column);
                         sql.Append(compare.Operator switch
                         {
                             SqlOperator.Equal => " = ",

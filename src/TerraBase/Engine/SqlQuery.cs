@@ -74,6 +74,9 @@ public enum SqlOperator
 
     /// <summary><c>IS NOT NULL</c>, no value.</summary>
     IsNotNull,
+
+    /// <summary><c>LIKE 'prefix%'</c>: a string starting with the one value, compared case-sensitively.</summary>
+    Prefix,
 }
 
 /// <summary>
