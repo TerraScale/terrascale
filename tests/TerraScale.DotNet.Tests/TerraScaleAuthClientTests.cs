@@ -50,9 +50,10 @@ public sealed class TerraScaleAuthClientTests
     }
 
     [Test]
-    public async Task PublicAuthOriginDiscoversRegionalEndpointAndFailsOverSafeReads()
+    public async Task The_public_auth_origin_is_called_directly_without_regional_discovery()
     {
-        var handler = new RegionalAuthHandler();
+        var hosts = new List<string>();
+        using var handler = new HostsHandler(hosts);
         var client = CreateClient(handler, new TerraScaleAuthClientOptions
         {
             BaseAddress = new Uri("https://auth.terrascale.tech/"),
@@ -61,61 +62,8 @@ public sealed class TerraScaleAuthClientTests
         });
 
         _ = await client.Instance.GetAsync();
-        await Assert.That(handler.Requests.Select(uri => uri.Host).SequenceEqual([
-            "atlas.terrascale.tech", "sfo.auth.terrascale.tech", "gru.auth.terrascale.tech",
-        ])).IsTrue();
-        await Assert.That(handler.Requests[0].AbsolutePath).IsEqualTo("/api/v1/auth/discovery");
-        await Assert.That(handler.Requests[1].AbsolutePath).IsEqualTo("/v1/acme/instance");
-        await Assert.That(handler.AuthHeaders.SequenceEqual(["Bearer sk_key_secret", "Bearer sk_key_secret"])).IsTrue();
 
-        _ = await client.Instance.GetAsync();
-        await Assert.That(handler.DiscoveryRequests).IsEqualTo(1);
-    }
-
-    [Test]
-    public async Task MutationsUseOneDiscoveredRegionAndProxyModeSkipsDiscovery()
-    {
-        var directHandler = new RegionalAuthHandler();
-        var direct = CreateClient(directHandler, new TerraScaleAuthClientOptions
-        {
-            BaseAddress = new Uri("https://auth.terrascale.tech/"),
-            ApiKey = "sk_key_secret",
-            InstanceSlug = "acme",
-        });
-        _ = await Assert.ThrowsAsync<TerraScaleAuthException>(() => direct.Users.DeleteAsync("usr_1"));
-        await Assert.That(directHandler.Requests.Select(uri => uri.Host).SequenceEqual([
-            "atlas.terrascale.tech", "sfo.auth.terrascale.tech",
-        ])).IsTrue();
-
-        var proxyHandler = new RegionalAuthHandler();
-        var proxy = CreateClient(proxyHandler, new TerraScaleAuthClientOptions
-        {
-            BaseAddress = new Uri("https://auth.terrascale.tech/"),
-            ApiKey = "sk_key_secret",
-            InstanceSlug = "acme",
-            UseReverseProxy = true,
-        });
-        _ = await proxy.Instance.GetAsync();
-        await Assert.That(proxyHandler.Requests.Select(uri => uri.Host).SequenceEqual(["auth.terrascale.tech"])).IsTrue();
-    }
-
-    [Test]
-    public async Task AuthDiscoveryRejectsAHostOutsideTheSelectedRegion()
-    {
-        var handler = new RegionalAuthHandler
-        {
-            DiscoveryPayload = """{"v":1,"refreshSeconds":60,"endpoints":[{"region":"SFO","url":"https://gru.auth.terrascale.tech"}]}""",
-        };
-        var client = CreateClient(handler, new TerraScaleAuthClientOptions
-        {
-            BaseAddress = new Uri("https://auth.terrascale.tech/"),
-            ApiKey = "sk_key_secret",
-            InstanceSlug = "acme",
-        });
-
-        await Assert.ThrowsAsync<HttpRequestException>(() => client.Instance.GetAsync());
-        await Assert.That(handler.Requests.Select(uri => uri.Host).SequenceEqual(["atlas.terrascale.tech"])).IsTrue();
-        await Assert.That(handler.AuthHeaders.Count).IsEqualTo(0);
+        await Assert.That(hosts).IsEquivalentTo(["auth.terrascale.tech"]);
     }
 
     [Test]
@@ -346,33 +294,6 @@ public sealed class TerraScaleAuthClientTests
         }
     }
 
-    private sealed class RegionalAuthHandler : HttpMessageHandler
-    {
-        private const string Instance = """{"id":"ins_1","slug":"acme","name":"Acme","logo_url":null,"theme_color":null,"created_at":7}""";
-        public string DiscoveryPayload { get; init; } = """{"v":1,"refreshSeconds":60,"endpoints":[{"region":"SFO","url":"https://sfo.auth.terrascale.tech"},{"region":"GRU","url":"https://gru.auth.terrascale.tech"}]}""";
-        public List<Uri> Requests { get; } = [];
-        public List<string> AuthHeaders { get; } = [];
-        public int DiscoveryRequests { get; private set; }
-
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
-        {
-            Requests.Add(request.RequestUri!);
-            if (request.RequestUri!.Host == "atlas.terrascale.tech")
-            {
-                DiscoveryRequests++;
-                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
-                {
-                    Content = new StringContent(DiscoveryPayload),
-                });
-            }
-
-            AuthHeaders.Add(request.Headers.Authorization?.ToString() ?? "");
-            var status = request.Method == HttpMethod.Delete || request.RequestUri.Host == "sfo.auth.terrascale.tech"
-                ? HttpStatusCode.ServiceUnavailable : HttpStatusCode.OK;
-            return Task.FromResult(new HttpResponseMessage(status) { Content = new StringContent(Instance) });
-        }
-    }
-
     private sealed class FlakyOnceHandler(string body) : HttpMessageHandler
     {
         public int Attempts;
@@ -426,6 +347,18 @@ public sealed class TerraScaleAuthClientTests
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StringContent("{\"data\":[" + string.Join(",", page) + "]}", Encoding.UTF8, "application/json"),
+            });
+        }
+    }
+
+    private sealed class HostsHandler(List<string> hosts) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            hosts.Add(request.RequestUri!.Host);
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("""{"id":"ins_1","slug":"acme","name":"Acme","logo_url":null,"theme_color":null,"created_at":7}""", System.Text.Encoding.UTF8, "application/json"),
             });
         }
     }

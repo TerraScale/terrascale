@@ -68,7 +68,7 @@ public sealed class TerraBaseSchemaTests
     public async Task UniqueViolationPreservesTheFailingTransactionIndex()
     {
         using var content = new StringContent("""{"error":{"code":"unique_violation","message":"a unique field or compound key is already taken","op":1}}""");
-        var error = await TerraBaseException.FromResponseAsync(HttpStatusCode.Conflict, content, CancellationToken.None);
+        var error = await TerraBaseException.FromResponseAsync(new HttpResponseMessage(HttpStatusCode.Conflict) { Content = content }, CancellationToken.None);
         await Assert.That(error.GetType()).IsEqualTo(typeof(TerraBaseConflictException));
         await Assert.That(error.ErrorCode).IsEqualTo("unique_violation");
         await Assert.That(error.OperationIndex).IsEqualTo(1);

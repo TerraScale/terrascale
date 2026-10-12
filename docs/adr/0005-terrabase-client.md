@@ -37,3 +37,9 @@ in the manifest. `TerraScale.DotNet.Testing` and the pinned release are deleted.
 
 The monorepo's ts-auth Fast suite (TerraBaseSdkContractTests and the store tests)
 runs against the TerraBase built from its own commit at the pinned ts-dotnet revision.
+
+## Update (2026-10-12)
+
+`Native` and its Atlas admission/discovery are deleted: TerraBase serves none of the native routes
+(`/v1/tenants/{t}/databases/{d}/shards/{n}`) and Atlas is being removed. The auth client's Atlas discovery and
+`UseReverseProxy` switch are deleted too; it calls its `BaseAddress` directly. Greenfield: no shim.

@@ -1,6 +1,5 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using TerraScale.DotNet.Tests.Native;
 using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.DotNet.Tests.TerraBase;
@@ -120,7 +119,7 @@ public sealed class TerraBaseContractTests
     private static async Task<(HttpMethod Method, string Path, string Query)> RecordAsync(string client, Func<object, Task> call)
     {
         HttpRequestMessage? sent = null;
-        using var handler = new NativeClientTests.Handler((request, _) =>
+        using var handler = new TerraBaseTestHandler((request, _) =>
         {
             sent = request;
             throw new HttpRequestException("recorded");

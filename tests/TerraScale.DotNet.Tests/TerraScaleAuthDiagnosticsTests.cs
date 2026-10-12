@@ -114,19 +114,6 @@ public sealed class TerraScaleAuthDiagnosticsTests
         await Assert.That(stream.Disposed).IsTrue();
     }
 
-    [Test]
-    public async Task AuthDiscoveryAcceptsOwnerValidRegionsBeyondLaunchFallbacks()
-    {
-        var hosts = new List<string>();
-        using var http = new HttpClient(new DiscoveryHandler(hosts));
-        var client = new TerraScaleAuthClient(http, new TerraScaleAuthClientOptions
-        {
-            BaseAddress = new Uri("https://auth.terrascale.tech"), InstanceSlug = "acme", ApiKey = Secret
-        });
-        await client.Users.ListAsync();
-        await Assert.That(hosts.SequenceEqual(["atlas.terrascale.tech", "ams.auth.terrascale.tech"])).IsTrue();
-    }
-
     private static TerraScaleAuthClient Client(HttpClient http) => new(http, new TerraScaleAuthClientOptions
     {
         BaseAddress = new Uri("https://auth.customer.example"), InstanceSlug = "acme", ApiKey = Secret
@@ -173,20 +160,5 @@ public sealed class TerraScaleAuthDiagnosticsTests
         public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
         public override void SetLength(long value) => throw new NotSupportedException();
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
-    }
-
-    private sealed class DiscoveryHandler(List<string> hosts) : HttpMessageHandler
-    {
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
-        {
-            hosts.Add(request.RequestUri!.Host);
-            var body = request.RequestUri.AbsolutePath == "/api/v1/auth/discovery"
-                ? "{\"v\":1,\"refreshSeconds\":30,\"endpoints\":[{\"region\":\"AMS\",\"url\":\"https://ams.auth.terrascale.tech\"}]}"
-                : "{\"data\":[]}";
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent(body, Encoding.UTF8, "application/json")
-            });
-        }
     }
 }

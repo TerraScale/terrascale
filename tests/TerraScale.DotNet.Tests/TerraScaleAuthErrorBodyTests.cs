@@ -1,6 +1,6 @@
 using System.Net;
 using System.Net.Http.Headers;
-using TerraScale.DotNet.Tests.Native;
+using TerraScale.DotNet.Tests.TerraBase;
 using TUnit.Core;
 
 namespace TerraScale.DotNet.Tests;
@@ -12,7 +12,7 @@ public sealed class TerraScaleAuthErrorBodyTests
     [Arguments(true)]
     public async Task InterruptedAuthErrorBodyPreservesStatusAndRetryMetadata(bool acquisitionFailure)
     {
-        using var handler = new NativeClientTests.Handler((_, _) =>
+        using var handler = new TerraBaseTestHandler((_, _) =>
         {
             var response = new HttpResponseMessage(HttpStatusCode.TooManyRequests)
             {
@@ -36,7 +36,7 @@ public sealed class TerraScaleAuthErrorBodyTests
     public async Task UndeclaredSerializingAuthErrorStopsAtTheBodyLimit()
     {
         using var content = new OversizedContent();
-        using var handler = new NativeClientTests.Handler((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.TooManyRequests)
+        using var handler = new TerraBaseTestHandler((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.TooManyRequests)
         {
             Content = content,
             Headers = { RetryAfter = new RetryConditionHeaderValue(TimeSpan.FromSeconds(2)) }

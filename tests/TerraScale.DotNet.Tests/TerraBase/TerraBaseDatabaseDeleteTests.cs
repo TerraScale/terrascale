@@ -1,5 +1,4 @@
 using System.Net;
-using TerraScale.DotNet.Tests.Native;
 using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.DotNet.Tests.TerraBase;
@@ -17,7 +16,7 @@ public sealed class TerraBaseDatabaseDeleteTests
     public async Task DeleteSendsOneBearerDeleteAndSucceedsOnNoContent()
     {
         var sent = new List<(HttpMethod Method, string Uri, string? Authorization, bool HasBody)>();
-        using var handler = new NativeClientTests.Handler((request, _) =>
+        using var handler = new TerraBaseTestHandler((request, _) =>
         {
             sent.Add((request.Method, request.RequestUri!.AbsoluteUri, request.Headers.Authorization?.ToString(), request.Content is not null));
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent));
@@ -39,7 +38,7 @@ public sealed class TerraBaseDatabaseDeleteTests
     [Arguments(HttpStatusCode.Conflict, "database_replicated", typeof(TerraBaseConflictException))]
     public async Task DeleteFailuresKeepTheirStatusAndErrorCode(HttpStatusCode status, string code, Type type)
     {
-        using var handler = new NativeClientTests.Handler((_, _) => Task.FromResult(new HttpResponseMessage(status)
+        using var handler = new TerraBaseTestHandler((_, _) => Task.FromResult(new HttpResponseMessage(status)
         {
             Content = new StringContent($"{{\"error\":{{\"code\":\"{code}\",\"message\":\"refused\"}}}}"),
         }));
@@ -57,7 +56,7 @@ public sealed class TerraBaseDatabaseDeleteTests
     public async Task ClientsWithoutCredentialSendNoAuthorization()
     {
         string? authorization = "unset";
-        using var handler = new NativeClientTests.Handler((request, _) =>
+        using var handler = new TerraBaseTestHandler((request, _) =>
         {
             authorization = request.Headers.Authorization?.ToString();
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent));

@@ -1,5 +1,7 @@
 # ADR 0004: owner-published public contract parity
 
+> Superseded in part (2026-10-12): the native wire contract, `contracts/native` and Atlas discovery are removed; see ADR 0005's update.
+
 Status: Accepted boundary.
 
 Date: 2026-09-30

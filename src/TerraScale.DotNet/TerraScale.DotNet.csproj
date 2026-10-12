@@ -7,20 +7,18 @@
     <TargetFrameworks Condition="'$(TargetFrameworks)' == ''">net10.0</TargetFrameworks>
     <TargetFramework />
     <PackageId>TerraScale.DotNet</PackageId>
-    <Version>0.0.1</Version>
-    <Description>Official .NET SDK for TerraBase, TerraScale native database and auth APIs.</Description>
+    <Version>0.0.2</Version>
+    <Description>Official .NET SDK for TerraBase and ts-auth.</Description>
     <PackageProjectUrl>https://github.com/TerraScale/ts-dotnet</PackageProjectUrl>
     <RepositoryUrl>https://github.com/TerraScale/ts-dotnet</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageReadmeFile>README.md</PackageReadmeFile>
-    <PackageTags>terrascale;terrabase;database;documents;native;auth;sdk</PackageTags>
-    <PackageReleaseNotes>Limited legacy baseline. TerraBase v1 clients (documents, management, platform explore) and the ts-auth client, without TerraBase's regional contract: no Region option or region pin, and a 421 surfaces as a plain TerraBaseException. TerraScale.DotNet.Native targets the retired Rust UUID/shard API. Supports .NET 10 and .NET 11.</PackageReleaseNotes>
+    <PackageTags>terrascale;terrabase;database;documents;auth;sdk</PackageTags>
+    <PackageReleaseNotes>0.0.2: TerraBase's regional contract. A Region option (lowercase region id) targets https://&lt;region&gt;.api.terrascale.tech and pins every request with X-TerraScale-Region-Pin; a 421 is TerraBaseWrongRegionException with the answering region and the database's home and serving regions; every TerraBaseException carries the answering region. Removed since 0.0.1 (no shim): TerraScale.DotNet.Native (the retired Rust UUID/shard API and its Atlas admission) and the auth client's Atlas discovery (UseReverseProxy, DiscoveryBaseAddress). Supports .NET 10 and .NET 11.</PackageReleaseNotes>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <Deterministic>true</Deterministic>
-    <!-- Required only by source-generated platform file-persistence interop. -->
-    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <IncludeSymbols>false</IncludeSymbols>
     <IsAotCompatible>true</IsAotCompatible>
   </PropertyGroup>
@@ -29,12 +27,6 @@
     <InternalsVisibleTo Include="TerraScale.DotNet.Tests" />
     <None Include="..\..\README.md" Pack="true" PackagePath="\" />
     <None Include="../../LICENSE" Pack="true" PackagePath="\" />
-    <None Include="../../contracts/native/**/*" Pack="true" PackagePath="contracts/native" />
-    <EmbeddedResource Include="../../contracts/native/client-openapi.json" LogicalName="TerraScale.DotNet.Native.client-openapi.json" />
-    <EmbeddedResource Include="../../contracts/native/atomic_vectors.json" LogicalName="TerraScale.DotNet.Native.atomic_vectors.json" />
-    <EmbeddedResource Include="../../contracts/native/atlas/native-wire-identity.json" LogicalName="TerraScale.DotNet.Native.atlas.native-wire-identity.json" />
-    <EmbeddedResource Include="../../contracts/native/atlas/native-discovery-success.json" LogicalName="TerraScale.DotNet.Native.atlas.native-discovery-success.json" />
-    <EmbeddedResource Include="../../contracts/native/atlas/native-discovery-forbidden.json" LogicalName="TerraScale.DotNet.Native.atlas.native-discovery-forbidden.json" />
     <EmbeddedResource Include="../../contracts/auth/error-codes.json" LogicalName="TerraScale.DotNet.Auth.error-codes.json" />
     <None Include="../../contracts/auth/error-codes.json" Pack="true" PackagePath="contracts/auth" />
     <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.11" />
