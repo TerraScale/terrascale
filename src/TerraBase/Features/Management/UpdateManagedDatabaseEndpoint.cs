@@ -3,6 +3,7 @@ using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
+using TerraBase.Features.Replication;
 
 namespace TerraBase.Features.Management;
 
@@ -14,6 +15,8 @@ public sealed class UpdateManagedDatabaseEndpoint(IManagementService management,
     {
         Patch(ProjectApiRoute.Database);
         Name("updateDatabase");
+        // A restore could undo it to a tenant's harm: anchored before it is acknowledged (CatalogGate).
+        Metadata(AnchoredRevocation.Instance);
         Summary("Sets a database's replica regions");
         Description("Body {\"replicaRegions\":[…]}, the complete new list of regions besides the home region that hold a full copy and serve the database. homeRegion may be sent but cannot change; a name cannot change. Sent to the database's home region; any other answers 421 wrong_region with X-TerraBase-Database-Home. An added region takes the database once it registers the project under the same ids; a removed region stops serving it and drops its copy." + " " + ProjectApiRoute.IdentityDescription);
         Tags("Databases");

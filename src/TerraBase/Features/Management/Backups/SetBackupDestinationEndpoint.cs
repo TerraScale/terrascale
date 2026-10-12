@@ -3,6 +3,7 @@ using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Backup;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
+using TerraBase.Features.Replication;
 
 namespace TerraBase.Features.Management.Backups;
 
@@ -14,6 +15,8 @@ public sealed class SetBackupDestinationEndpoint(IManagementService management, 
     {
         Put(BackupDestinationRoute.Path);
         Name("setBackupDestination");
+        // A restore could undo it to a tenant's harm: anchored before it is acknowledged (CatalogGate).
+        Metadata(AnchoredRevocation.Instance);
         Summary("Put a project's customer backup destination");
         Description(BackupDestinationRoute.Description);
         Tags("Backups");
