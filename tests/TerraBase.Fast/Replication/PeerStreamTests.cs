@@ -380,6 +380,71 @@ public sealed class PeerStreamTests
         await Assert.That(await gru.UntilMetricAsync("terrabase_replication_send_lag_seconds", _ => false, Sjc, absent: true)).IsTrue();
     }
 
+    [Test]
+    public async Task Anti_entropy_restores_a_document_a_replica_lost_after_acknowledging_it_on_the_second_differing_round()
+    {
+        await using var cluster = await Cluster.StartAsync(cdc: true, "gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var (kept, lost) = (EntityIds.New().ToString(), EntityIds.New().ToString());
+        await gru.WriteAsync(async transaction =>
+        {
+            _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
+            _ = await transaction.PutAsync("items", kept, Json("""{"n":1}"""), CancellationToken.None);
+            _ = await transaction.PutAsync("items", lost, Json("""{"n":2}"""), CancellationToken.None);
+        });
+        await Assert.That(await sjc.UntilAsync(lost, """{"n":2}""")).IsTrue();
+
+        // sjc loses the document behind the streams' back (its rows deleted from the file): gru acknowledged nothing missing,
+        // so no stream sends it again.
+        await sjc.LoseAsync("items", lost);
+        await Assert.That(await sjc.ReadAsync(lost)).IsNull();
+
+        // The first round sees the bucket differ but waits a round, so in-flight streams settle; the second repairs it.
+        await sjc.AntiEntropy.RunRoundAsync(CancellationToken.None);
+        await Assert.That(await sjc.ReadAsync(lost)).IsNull();
+        await sjc.AntiEntropy.RunRoundAsync(CancellationToken.None);
+        await Assert.That(await sjc.ReadAsync(lost)).IsEqualTo("""{"n":2}""");
+        await Assert.That(await sjc.ReadAsync(kept)).IsEqualTo("""{"n":1}""");
+
+        // A repair is never shipped back: gru's tailer finds no group of sjc's to send for it.
+        await Assert.That(await sjc.Groups.ReadAsync(cluster.Database, 0, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, CancellationToken.None)).IsEmpty();
+    }
+
+    [Test]
+    public async Task A_peer_silent_for_24_hours_stops_holding_change_groups_and_refills_when_it_returns()
+    {
+        var clock = new ShiftedTime();
+        await using var cluster = await Cluster.StartAsync(cdc: true, clock, "gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var (first, second) = (EntityIds.New().ToString(), EntityIds.New().ToString());
+        await gru.WriteAsync(async transaction =>
+        {
+            _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
+            _ = await transaction.PutAsync("items", first, Json("""{"n":1}"""), CancellationToken.None);
+        });
+        await Assert.That(await sjc.UntilAsync(first, """{"n":1}""")).IsTrue();
+        var sjcNode = sjc.Node;
+        var acked = await gru.Groups.AckedAsync(cluster.Database, sjcNode, CancellationToken.None);
+
+        // Written while sjc is away; 25 hours later sjc no longer holds back retention, so gru drops the group sjc lacks.
+        await sjc.StopAsync();
+        await gru.WriteAsync(async transaction => await transaction.PutAsync("items", second, Json("""{"n":2}"""), CancellationToken.None));
+        await Assert.That(await gru.Groups.RetainsAsync(cluster.Database, acked, CancellationToken.None)).IsTrue();
+        clock.Offset = TimeSpan.FromHours(25);
+        var deadline = DateTime.UtcNow + Deadline;
+        while (await gru.Groups.RetainsAsync(cluster.Database, acked, CancellationToken.None) && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(200);
+        }
+
+        await Assert.That(await gru.Groups.RetainsAsync(cluster.Database, acked, CancellationToken.None)).IsFalse();
+
+        // Back, sjc cannot get the group from the stream any more: gru tells it to refill, and it joins what differs.
+        await sjc.StartAsync();
+        await Assert.That(await sjc.UntilAsync(second, """{"n":2}""")).IsTrue();
+        await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjcNode, await gru.Groups.HeadAsync(cluster.Database, CancellationToken.None))).IsTrue();
+    }
+
     // The first stamp of a test: now, so convergence lags stay meaningful; later operations add logical ticks.
     private static ulong Stamp() => (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() << 16;
 
@@ -618,6 +683,24 @@ public sealed class PeerStreamTests
             }
 
             return false;
+        }
+
+        public AntiEntropy AntiEntropy => Api.Server.Services.GetRequiredService<AntiEntropy>();
+
+        // Deletes the document's rows from the file directly, as a lost apply would leave it: no change group says so.
+        public async Task LoseAsync(string collection, string id)
+        {
+            var engine = Api.Server.Services.GetRequiredService<TerraBase.Engine.Sqlite.SqliteStorageEngine>();
+            var store = (TerraBase.Engine.Sqlite.SqliteDatabaseStore)(await engine.OpenDatabaseAsync(cluster.Database, CancellationToken.None))!;
+            _ = await store.WithWriterAsync(session =>
+            {
+                using var command = session.Connection.CreateCommand();
+                command.CommandText = $"DELETE FROM \"{collection}\" WHERE id = $id; DELETE FROM _tb_state WHERE collection = $collection AND id = $id;";
+                command.Parameters.AddWithValue("$id", id);
+                command.Parameters.AddWithValue("$collection", collection);
+                return command.ExecuteNonQuery();
+            }, "a test losing a document", CancellationToken.None);
+            store.ForgetCollections();
         }
 
         // Whether the outbound streams that report connected become exactly `regions` within the deadline.

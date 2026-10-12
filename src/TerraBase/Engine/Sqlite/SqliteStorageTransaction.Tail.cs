@@ -137,6 +137,74 @@ internal sealed partial class SqliteStorageTransaction
             return acked <= newest ? acked : (long?)null;
         }, cancellationToken);
 
+    /// <summary>
+    /// Whether every row after <paramref name="after"/> is still here: retention deletes a prefix, so they are exactly when
+    /// the oldest row left is at most the next one. A file that never captured anything holds every group (none).
+    /// </summary>
+    internal ValueTask<bool> RetainsAsync(long after, CancellationToken cancellationToken) =>
+        RunAsync(() =>
+            Command("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'turso_cdc';").ExecuteScalar() is null
+            || Command("SELECT min(change_id) FROM turso_cdc;").ExecuteScalar() is not long first
+            || first <= after + 1, cancellationToken);
+
+    /// <summary>The newest change id, or 0: where a refilled peer's stream goes on.</summary>
+    internal ValueTask<long> GetHeadAsync(CancellationToken cancellationToken) =>
+        RunAsync(() => Command("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'turso_cdc';").ExecuteScalar() is null ? 0
+            : Command("SELECT coalesce(max(change_id), 0) FROM turso_cdc;").ExecuteScalar() is long head ? head : 0, cancellationToken);
+
+    /// <summary>
+    /// Retention without an acknowledgement (uncaptured): first a peer whose unacknowledged CDC rows pass 1 GiB stops holding
+    /// them (its <c>seen</c> goes to 0 until it is heard from again, and it refills when it returns), then what
+    /// <see cref="Retention"/> allows is deleted. Returns the CDC rows left, and the smallest acknowledged id of a peer still
+    /// holding rows.
+    /// </summary>
+    internal async ValueTask<(long Left, long? Floor)> TrimAsync(long? backupAnchor, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        await SuspendCaptureAsync(cancellationToken).ConfigureAwait(false);
+        return await RunAsync(() =>
+        {
+            if (Command("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'turso_cdc';").ExecuteScalar() is null)
+            {
+                return (0L, (long?)null);
+            }
+
+            var newest = Command("SELECT coalesce(max(change_id), 0) FROM turso_cdc;").ExecuteScalar() is long head ? head : 0;
+            List<(long Node, long Acked)> peers = [];
+            using (var reader = Command("SELECT node, acked FROM _tb_peers WHERE seen > 0;").ExecuteReader())
+            {
+                while (reader.Read())
+                {
+                    peers.Add((reader.GetInt64(0), reader.GetInt64(1)));
+                }
+            }
+
+            foreach (var (node, acked) in peers.Where(peer => newest - peer.Acked > FarBehindRows))
+            {
+                var behind = Command("SELECT coalesce(sum(length(after)), 0) FROM turso_cdc WHERE change_id > $acked;");
+                behind.Parameters.AddWithValue("$acked", acked);
+                if (behind.ExecuteScalar() is long bytes && bytes > FarBehindBytes)
+                {
+                    var evict = Command("UPDATE _tb_peers SET seen = 0 WHERE node = $node;");
+                    evict.Parameters.AddWithValue("$node", node);
+                    evict.ExecuteNonQuery();
+                }
+            }
+
+            var delete = Command(Retention);
+            delete.Parameters.AddWithValue("$below", backupAnchor ?? long.MaxValue);
+            delete.Parameters.AddWithValue("$now", now.ToUnixTimeSeconds());
+            delete.ExecuteNonQuery();
+            var left = Command("SELECT coalesce(max(change_id) - min(change_id) + 1, 0) FROM turso_cdc;").ExecuteScalar() is long rows ? rows : 0;
+            var floor = Command("SELECT min(acked) FROM _tb_peers WHERE seen >= $now * 1000 - 86400000;");
+            floor.Parameters.AddWithValue("$now", now.ToUnixTimeSeconds());
+            return (left, floor.ExecuteScalar() is long min ? min : (long?)null);
+        }, cancellationToken, mutation: true).ConfigureAwait(false);
+    }
+
+    // A peer this far behind in rows has its backlog's bytes measured; past FarBehindBytes it stops holding rows.
+    private const long FarBehindRows = 65_536;
+    private const long FarBehindBytes = 1L << 30;
+
     /// <summary>The smallest change id a peer heard from since <c>now - 24 h</c> acknowledged, or null when there is none.</summary>
     internal ValueTask<long?> GetFloorAsync(DateTimeOffset now, CancellationToken cancellationToken) =>
         RunAsync(() =>

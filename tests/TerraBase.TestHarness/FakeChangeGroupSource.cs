@@ -98,4 +98,14 @@ internal sealed class FakeChangeGroupSource : IChangeGroupSource
             return _changed.Task.WaitAsync(cancellationToken);
         }
     }
+
+    public ValueTask<bool> RetainsAsync(TenantContext database, long after, CancellationToken cancellationToken) => ValueTask.FromResult(true);
+
+    public ValueTask<long> HeadAsync(TenantContext database, CancellationToken cancellationToken)
+    {
+        lock (_gate)
+        {
+            return ValueTask.FromResult(_groups.TryGetValue(database, out var groups) && groups.Count > 0 ? groups[^1].ChangeId : 0L);
+        }
+    }
 }

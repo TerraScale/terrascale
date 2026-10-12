@@ -12,7 +12,7 @@ namespace TerraBase.Engine.Sqlite;
 /// on demand from each database file's <c>turso_cdc</c>, which is the outbox. A group is one Turso transaction's state rows
 /// of this machine's own writes; joined rows carry their origin and are never shipped back.
 /// </summary>
-internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSource
+internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSource, IReplicaStates
 {
     // Cached ranges without local groups, keyed by (file incarnation, a read's start): a peer reading again from the same
     // change id starts at the range's end, so a replica that mostly joins remote writes is not rescanned on every pass.
@@ -114,6 +114,63 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
 
     public Task ChangedAsync(CancellationToken cancellationToken) => _engine.NextCommitAsync(cancellationToken);
 
+    public async ValueTask<bool> RetainsAsync(TenantContext database, long after, CancellationToken cancellationToken)
+    {
+        if (await _engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not SqliteDatabaseStore store)
+        {
+            return true;
+        }
+
+        var transaction = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
+        await using (transaction.ConfigureAwait(false))
+        {
+            return await transaction.RetainsAsync(after, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    public async ValueTask<long> HeadAsync(TenantContext database, CancellationToken cancellationToken)
+    {
+        if (await _engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not SqliteDatabaseStore store)
+        {
+            return 0;
+        }
+
+        var transaction = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
+        await using (transaction.ConfigureAwait(false))
+        {
+            return await transaction.GetHeadAsync(cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    public async ValueTask<byte[]?> DigestAsync(TenantContext database, CancellationToken cancellationToken)
+    {
+        if (await _engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not SqliteDatabaseStore store)
+        {
+            return null;
+        }
+
+        var transaction = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
+        await using (transaction.ConfigureAwait(false))
+        {
+            return await transaction.ReadDigestsAsync(cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    public async ValueTask<(IReadOnlyList<RepairState> States, BucketCursor? Next)> ReadBucketsAsync(
+        TenantContext database, IReadOnlyList<int> buckets, BucketCursor? after, int maxStates, int maxBytes, CancellationToken cancellationToken)
+    {
+        if (await _engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not SqliteDatabaseStore store)
+        {
+            return ([], null);
+        }
+
+        var transaction = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
+        await using (transaction.ConfigureAwait(false))
+        {
+            return await transaction.ReadBucketStatesAsync(buckets, after, maxStates, maxBytes, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         using var timer = new PeriodicTimer(TailRefresh, _engine.HostTime);
@@ -130,11 +187,15 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
                         continue;
                     }
 
+                    // Retention also runs without acks: a silent (24 h) or far-behind (1 GiB) peer stops holding rows even when
+                    // no other peer acknowledges anything.
                     long? floor;
-                    var transaction = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: false, stoppingToken).ConfigureAwait(false);
+                    var transaction = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: true, stoppingToken).ConfigureAwait(false);
                     await using (transaction.ConfigureAwait(false))
                     {
-                        floor = await transaction.GetFloorAsync(_engine.HostTime.GetUtcNow(), stoppingToken).ConfigureAwait(false);
+                        (var left, floor) = await transaction.TrimAsync(store.BackupAnchor, _engine.HostTime.GetUtcNow(), stoppingToken).ConfigureAwait(false);
+                        _ = await transaction.CommitAsync(stoppingToken).ConfigureAwait(false);
+                        _backlog[incarnation] = left;
                     }
 
                     await TailAsync(store, floor, stoppingToken).ConfigureAwait(false);
