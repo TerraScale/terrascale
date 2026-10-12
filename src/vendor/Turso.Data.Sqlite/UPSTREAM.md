@@ -38,7 +38,8 @@ scripts/vendor/update-turso-driver.sh v0.8.3 --commit   # pristine import commit
 ```
 
 Then set `Turso.Data.Native` in `Directory.Packages.props` to the same version, restore (`make restore`, which
-rewrites `locks/`), build and run `make terrabase-check` and the driver tests. Without `--commit` the script only
+rewrites `locks/`), build and run `make terrabase-check` and the driver tests, and redo `SECURITY-AUDIT.md` (the
+provenance, package, vulnerability, license and patch checks) for the new tag. Without `--commit` the script only
 changes the working tree. Re-importing the current tag must leave no diff.
 
 A patch that no longer applies stops the script with conflict markers in the working tree: resolve them, commit, and
