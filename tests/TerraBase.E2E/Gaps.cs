@@ -14,7 +14,6 @@ internal static class Gaps
         ["E11"] = "SQL writes (R9) over peer streams (R4a)",
         ["E12"] = "the catalog as a lattice database (R10a)",
         ["E13"] = "home region and live move (R11)",
-        ["E15"] = "ts-auth refresh-token reuse across regions (R12) on the changes feed (R8)",
 
         // RepairAndContractE2ETests.
         ["deleted-database-stays-deleted"] = "the catalog as a lattice database (R10a) and garbage collection (R7)",
