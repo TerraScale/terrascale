@@ -21,6 +21,7 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
     private const string Audience = "https://gru.api.terrascale.tech";
     private static readonly string[] ReadOnly = ["documents:read"];
     private static readonly string[] ReadWrite = ["documents:read", "documents:write"];
+    private static readonly string[] WithShapes = ["documents:read", "shapes:read"];
     private static readonly string[] Browse = ["databases:read", "documents:read"];
 
     [Test]
@@ -85,6 +86,8 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
         var keys = $"{Organizations}/{organization}/projects/{project}/api-keys";
 
         await Assert.That(await oidc.FailAsync(HttpMethod.Post, keys, token, new { name = "backend", scopes = ReadWrite, database = "app\n" })).IsEqualTo((400, "invalid_request"));
+        // TerraBase dropped shapes (R2c-1), so ts-auth no longer issues their scope.
+        await Assert.That(await oidc.FailAsync(HttpMethod.Post, keys, token, new { name = "backend", scopes = WithShapes })).IsEqualTo((400, "invalid_request"));
         var created = await oidc.OkAsync(HttpMethod.Post, keys, token, new { name = "backend", scopes = ReadWrite, database = "app" }, HttpStatusCode.Created);
         var key = created.GetProperty("key").GetString()!;
         var id = created.GetProperty("api_key").GetProperty("id").GetString()!;
@@ -474,7 +477,7 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
             await Assert.That(access.GetClaim("email").Value).IsEqualTo("alice@example.test");
             await Assert.That(access.GetClaim("org_id").Value).IsEqualTo(organization);
             await Assert.That(access.GetClaim("project_id").Value).IsEqualTo(first);
-            await Assert.That(access.GetClaim("scope").Value.Split(' ')).IsEquivalentTo(["databases:read", "databases:write", "documents:read", "documents:write", "shapes:read"]);
+            await Assert.That(access.GetClaim("scope").Value.Split(' ')).IsEquivalentTo(["databases:read", "databases:write", "documents:read", "documents:write"]);
             await Assert.That(access.Audiences.ToArray()).IsEquivalentTo([Audience]);
             await Assert.That((access.ValidTo - access.IssuedAt).TotalSeconds).IsLessThanOrEqualTo(900);
 
@@ -490,7 +493,7 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
         {
             var access = await oidc.ValidateAsync((await OidcHarness.JsonAsync(viewer)).GetProperty("access_token").GetString()!, Audience);
             await Assert.That(access.TryGetClaim("project_id", out _)).IsFalse();
-            await Assert.That(access.GetClaim("scope").Value.Split(' ')).IsEquivalentTo(["databases:read", "documents:read", "shapes:read"]);
+            await Assert.That(access.GetClaim("scope").Value.Split(' ')).IsEquivalentTo(["databases:read", "documents:read"]);
         }
 
         await Assert.That(await TokenErrorAsync(oidc.ExchangeAsync(bobToken, new() { ["organization"] = organization, ["project"] = first, ["scope"] = "documents:write" }))).IsEqualTo((400, "invalid_scope"));

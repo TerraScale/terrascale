@@ -1125,7 +1125,7 @@ components:
       enum: [viewer, member, admin]
     Scope:
       type: string
-      enum: ['databases:read', 'databases:write', 'documents:read', 'documents:write', 'shapes:read', 'usage:read', 'billing:read', 'billing:write']
+      enum: ['databases:read', 'databases:write', 'documents:read', 'documents:write', 'usage:read', 'billing:read', 'billing:write']
     ApiKeyId:
       type: string
       pattern: '^[0-7][0-9A-HJKMNP-TV-Z]{25}$'
