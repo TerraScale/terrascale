@@ -285,11 +285,12 @@ public sealed class Cluster : IAsyncDisposable
                 await StartNodeAsync(node);
             }
 
-            // The database lives in gru with the other regions as replicas; each node registers it.
+            // Each node keeps its own catalog until the catalog replicates (R10a): every node registers the database under
+            // the same id, placed in every region, so the peer streams find it on each of them.
             var database = EntityIds.New().ToString();
             foreach (var node in _nodes.Values)
             {
-                await CommitAsync(node.Api!, Registration(_organization, _project, node.Region == Gru ? database : null, "canary", [.. regions.Skip(1)]));
+                await CommitAsync(node.Api!, Registration(_organization, _project, database, "canary", [.. regions.Where(region => region != node.Region)]));
             }
 
             foreach (var node in _nodes.Values)
@@ -420,15 +421,15 @@ public sealed class Cluster : IAsyncDisposable
         }
 
         // An organization, project and database with chosen ids, in one commit.
-        private static string Registration(string organization, string project, string? database, string name, string[] replicas) => JsonSerializer.Serialize(new
+        private static string Registration(string organization, string project, string database, string name, string[] replicas) => JsonSerializer.Serialize(new
         {
             id = EntityIds.New().ToString(),
-            ops = new object?[]
+            ops = new object[]
             {
                 new { op = "create_organization", id = organization, name = $"e2e-{organization}" },
                 new { op = "create_project", organization, id = project, name = "e2e" },
-                database is null ? null : new { op = "create_database", organization, project, name, id = database, replica_regions = replicas },
-            }.OfType<object>(),
+                new { op = "create_database", organization, project, name, id = database, replica_regions = replicas },
+            },
         });
     }
 

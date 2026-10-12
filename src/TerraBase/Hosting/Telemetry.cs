@@ -133,6 +133,10 @@ public static class Telemetry
                     "terrabase_pressure_top_tenant_request_rate" or "terrabase_pressure_top_tenant_storage_bytes"
                         or "terrabase.stats.top.replication" or "terrabase.stats.top.operations"
                         => new MetricStreamConfiguration { CardinalityLimit = 10 },
+                    // One series per peer region (docs/terrabase/multi-region-replication.md, up to 20 regions) and "unknown".
+                    "terrabase.replication.send_lag" or "terrabase.replication.ack_lag" or "terrabase.replication.merged_groups"
+                        or "terrabase.replication.apply_delay"
+                        => new MetricStreamConfiguration { CardinalityLimit = 32 },
                     "terrabase.stats.replication" => new MetricStreamConfiguration { CardinalityLimit = 129 },
                     "terrabase_pressure_available" => new MetricStreamConfiguration { CardinalityLimit = 13 },
                     _ => null,

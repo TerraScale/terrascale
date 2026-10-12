@@ -1,0 +1,88 @@
+syntax = "proto3";
+
+package terrabase.v1;
+
+option csharp_namespace = "TerraBase.Features.Replication.V1";
+
+// Internal: peer streams of client databases (docs/terrabase/multi-region-replication.md sections 8 and 9). Each machine
+// pushes only the change groups of its own local writes, directly to every other machine whose region holds the database,
+// so nothing is forwarded and nothing echoes. Fly's private network is the trust boundary; no service credential.
+service Replication {
+  // One stream per (sender, receiver) machine pair, for every database they share. The sender opens it with a Hello,
+  // the receiver answers with a Welcome, then acks every batch after its durable commit.
+  rpc Push(stream PushFrame) returns (stream AckFrame);
+}
+
+message PushFrame {
+  oneof kind {
+    Hello hello = 1;
+    Batch batch = 2;
+    Heartbeat heartbeat = 3;
+  }
+}
+
+// The first frame: the sending machine's replica id (the origin of every group on this stream), its clock and region.
+message Hello {
+  fixed64 node = 1;
+  fixed64 hlc = 2;
+  string region = 3;
+}
+
+// A client database: its organization, project and database ULIDs.
+message Database {
+  string organization_id = 1;
+  string project_id = 2;
+  string database_id = 3;
+}
+
+// Consecutive change groups of one database, the last one's change id, and the groups: a GroupList inside a TBLZ4E01 LZ4
+// application envelope (decision 0007). At most 1024 groups and 2 MiB of encoded groups; one batch per database in flight.
+message Batch {
+  Database database = 1;
+  uint64 last_change_id = 2;
+  bytes groups = 3;
+}
+
+// Sent every second while nothing else is.
+message Heartbeat {
+  fixed64 hlc = 1;
+}
+
+message GroupList {
+  repeated Group groups = 1;
+}
+
+// The deltas of one committed transaction of the origin, in commit order of change ids. At most 1024 deltas.
+message Group {
+  uint64 change_id = 1;
+  repeated Delta deltas = 2;
+}
+
+// One document operation: the entries it wrote at (stamp, origin), in DocumentStateEncoding's full form.
+message Delta {
+  string collection = 1;
+  string id = 2;
+  fixed64 stamp = 3;
+  bytes state = 4;
+}
+
+message AckFrame {
+  oneof kind {
+    Welcome welcome = 1;
+    Ack ack = 2;
+  }
+}
+
+// The first answer: the receiving machine's replica id, under which the sender keeps its cursor.
+message Welcome {
+  fixed64 node = 1;
+}
+
+// A batch committed durably (change_id = its last_change_id), with the highest stamp of the origin joined. Refused: the
+// receiver does not hold the database (yet); nothing was applied, and the sender retries later.
+message Ack {
+  Database database = 1;
+  uint64 change_id = 2;
+  fixed64 applied = 3;
+  bool refused = 4;
+}

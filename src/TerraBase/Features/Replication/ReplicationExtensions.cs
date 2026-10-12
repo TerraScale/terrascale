@@ -3,7 +3,7 @@ using TerraBase.Hosting;
 
 namespace TerraBase.Features.Replication;
 
-/// <summary>Registers the catalog's inter-node gRPC services on the internal listener.</summary>
+/// <summary>Registers the inter-node gRPC services on the internal listener: the catalog's and the peer streams.</summary>
 public static class ReplicationExtensions
 {
     /// <summary>
@@ -18,8 +18,14 @@ public static class ReplicationExtensions
         builder.Services.AddSingleton<ICatalogReadiness>(provider => provider.GetRequiredService<TerraBaseOptions>().CatalogFollower
             ? provider.GetRequiredService<CatalogFollower>()
             : new CatalogPrimaryReadiness());
-        // Nothing replicates client databases until the CDC peer streams arrive (docs/terrabase/multi-region-replication.md).
-        builder.Services.AddSingleton<IReplicationStatus, NoReplicationStatus>();
+        // Peer streams of client databases (docs/terrabase/multi-region-replication.md sections 8 and 9). Their source is the
+        // CDC tailer (R3); until it lands nothing ships, and the status says so.
+        builder.Services.AddSingleton<IChangeGroupSource, NoChangeGroupSource>();
+        builder.Services.AddSingleton<IChangeGroupSink, StorageChangeGroupSink>();
+        builder.Services.AddSingleton<PeerStreamReceiver>();
+        builder.Services.AddSingleton<PeerStreams>();
+        builder.Services.AddSingleton<IReplicationStatus>(provider => provider.GetRequiredService<PeerStreams>());
+        builder.Services.AddHostedService(provider => provider.GetRequiredService<PeerStreams>());
         builder.Services.AddSingleton<IReplicationPressure, NoReplicationPressure>();
         builder.Services.AddSingleton<CatalogFollower>();
         builder.Services.AddHostedService(provider => provider.GetRequiredService<CatalogFollower>());
@@ -40,6 +46,7 @@ public static class ReplicationExtensions
     {
         ArgumentNullException.ThrowIfNull(app);
         app.MapGrpcService<CatalogFeed>().WithMetadata(ListenerMetadata.Internal);
+        app.MapGrpcService<PeerStreamReceiver>().WithMetadata(ListenerMetadata.Internal);
         app.MapGrpcService<ForwardedRequests>().WithMetadata(ListenerMetadata.Internal);
         return app;
     }

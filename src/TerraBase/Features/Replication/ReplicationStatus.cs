@@ -21,9 +21,3 @@ public sealed record ReplicationPeerStatus(int Peer, long DurableLag, IReadOnlyL
 public sealed record ReplicationDatabaseStatus(
     int Slot, string OrganizationId, string ProjectId, string DatabaseId, Ulid Incarnation,
     long Head, long Acknowledged, long DurableLag, bool Diverged, double CatchupSeconds, double? ConvergenceSeconds);
-
-/// <summary>No sender runs: nothing is behind.</summary>
-internal sealed class NoReplicationStatus : IReplicationStatus
-{
-    public ReplicationStatus Snapshot() => new(true, 0, 0, []);
-}
