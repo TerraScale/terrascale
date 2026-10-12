@@ -73,8 +73,9 @@ Configuration retains the `TS_AUTH_*` convention, with these changes:
 - **Storage database:** fixed in code, no setting. ts-auth stores everything in database `platform-auth` of the
   platform project `00000000000000000000000002` (`App.StorageProject`, `App.StorageDatabase`), which TerraBase seeds on
   every start. At startup ts-auth creates its collections there (`AuthStore.ProvisionAsync`, idempotent) before the
-  signing key bootstrap, retrying every five seconds; `/readyz` answers 503 until both succeed, so ts-auth may start
-  before TerraBase and recovers on its own. `TS_AUTH_DATABASE` is gone.
+  signing key check, retrying after five seconds and backing off; `/readyz` answers 503 until both succeed, so ts-auth
+  may start before TerraBase and recovers on its own once the issuer's key is provisioned
+  ([signing-keys.md](signing-keys.md)). `TS_AUTH_DATABASE` is gone.
 - **Storage endpoint:** fixed in code (`App.TerraBaseOrigin`):
   `http://gru.ts-terrabase.internal:8081`, TerraBase's internal listener on
   Fly's private network in gru, the home region of the platform databases,
@@ -916,9 +917,12 @@ concurrent lookups share one read. A token naming a key the cached read lacks
 rereads first (at most every ten seconds, `UnknownKeyRefresh`), and after a
 failed read lookups answer 503 for five seconds (`FailedReadBackoff`).
 
-`SigningKeyRotation` runs on every replica. At startup (`KeyRing.EnsureAsync`)
-it creates the serving issuer's first key when there is none and checks that
-every stored key verifies and opens; it never replaces keys it cannot use
+`SigningKeyRotation` runs on every replica. At startup (`KeyRing.VerifyAsync`)
+it checks that the serving issuer has keys and that every stored key verifies
+and opens. It never creates the first key: without keys the replica stays not
+ready (`/readyz` `error`: `no signing keys: operator provisioning required`)
+until an operator runs `ts-auth provision-signing-key` (`KeyRing.ProvisionAsync`,
+[signing-keys.md](signing-keys.md)). It never replaces keys it cannot use
 (another master key or tampering keeps the replica not ready until an operator
 removes them through `fly ssh`). `/readyz` stays 503 until this replica's
 bootstrap completed, and each readiness pass rechecks the public metadata.
@@ -932,8 +936,9 @@ signing for at least `Overlap`, which exceeds `Jwt.MaxLifetime` (24 hours), so
 a retired key has no live token; it answers 409 `signing_key_limit` if 16 keys
 would remain. Two replicas rotating at once may each add a key; both are
 published and the next rotations retire the extra one. Timestamps use the
-replica's clock (NTP on Fly). Project tenants (any other instance) get their
-first key on first use.
+replica's clock (NTP on Fly). A rotation never creates the platform issuer's
+first key. Project tenants (any other instance) get their first key on first
+use.
 
 Attempt buckets are keyed by an HMAC of purpose and subject under a key
 derived from the master key, within the instance's address space, and one

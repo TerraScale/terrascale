@@ -8,8 +8,9 @@ claim that the current runtime or deployed fleet already implements it.
 - A node joins Fly's private network automatically, discovers every region
   through `.internal` DNS and infers its own region from `FLY_REGION`.
 - Fly secrets deliver every production secret (the master key included);
-  ts-auth generates its signing keys and stores them in TerraBase sealed under
-  that master key. Vendor-issued credentials are set once with
+  ts-auth generates and rotates its signing keys and stores them in TerraBase sealed under
+  that master key. The platform issuer's first key is the one operator step: ts-auth fails closed
+  without it ([signing-keys.md](signing-keys.md)). Vendor-issued credentials are set once with
   `fly secrets set`; operators do not copy production credentials.
 - Each value has one correct setting in code. Production exposes no tuning
   knobs. Fakes, demo stores and authentication bypasses belong only in test

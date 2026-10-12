@@ -1,5 +1,6 @@
 using TerraScale.Authentication;
 using TerraScale.Authentication.Configuration;
+using TerraScale.Authentication.Features.SigningKeys;
 using TerraScale.Authentication.Security;
 
 AuthOptions options;
@@ -30,5 +31,11 @@ catch (Exception error) when (error is not OutOfMemoryException)
 }
 
 var app = App.Build(options);
+if (args is [SigningKeyProvisioning.Command, ..])
+{
+    // Operator command: provisions signing keys with the server's secrets and exits without serving.
+    return await SigningKeyProvisioning.RunAsync(app.Services, CancellationToken.None);
+}
+
 await app.RunAsync();
 return 0;

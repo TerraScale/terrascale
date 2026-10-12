@@ -33,7 +33,7 @@ public sealed class StorageReadinessTests(TerraBaseFixture fixture)
             key = await fixture.Server.CreateApiKeyAsync(tenant.Organization.Id, projectId: project.Id);
         }
 
-        await using var auth = await StartAuthAsync(tenant, apiKey: key);
+        await using var auth = await StartAuthAsync(tenant, apiKey: key, provision: false);
         using var response = await auth.Client.GetAsync("/readyz");
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
         await Assert.That((await database.ListDocumentsAsync("storage_health")).Items.Count).IsEqualTo(0);
@@ -51,7 +51,7 @@ public sealed class StorageReadinessTests(TerraBaseFixture fixture)
         var body = await ready.Content.ReadFromJsonAsync<JsonElement>();
         await Assert.That(body.GetProperty("status").GetString()).IsEqualTo("ready");
 
-        await using var missing = await StartAuthAsync(tenant, databaseName: "missing");
+        await using var missing = await StartAuthAsync(tenant, databaseName: "missing", provision: false);
         // Let one pass run against the missing database before asking.
         await Task.Delay(ReadinessWait.NextPass);
         using var unavailable = await missing.Client.GetAsync("/readyz");
@@ -61,7 +61,7 @@ public sealed class StorageReadinessTests(TerraBaseFixture fixture)
     }
 
     [Test]
-    public async Task Startup_stores_the_issuer_key_in_terrabase_before_reporting_ready()
+    public async Task The_provisioned_issuer_key_is_stored_in_terrabase_and_published()
     {
         var (tenant, database) = await fixture.CreateDatabaseAsync();
         await using var auth = await StartAuthAsync(tenant);
@@ -101,7 +101,7 @@ public sealed class StorageReadinessTests(TerraBaseFixture fixture)
         var key = readOnly
             ? await fixture.Server.CreateApiKeyAsync(tenant.Organization.Id, ["documents:read"], tenant.Project.Id)
             : "tb_invalid_synthetic_key";
-        await using var auth = await StartAuthAsync(tenant, apiKey: key);
+        await using var auth = await StartAuthAsync(tenant, apiKey: key, provision: false);
 
         using var response = await auth.Client.GetAsync("/readyz");
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
@@ -136,18 +136,24 @@ public sealed class StorageReadinessTests(TerraBaseFixture fixture)
     }
 
     [Test]
-    public async Task Startup_creates_every_collection_in_an_empty_database()
+    public async Task Startup_creates_every_collection_in_an_empty_database_but_no_signing_key()
     {
         var (tenant, database) = await fixture.CreateDatabaseAsync(provision: false);
-        await using var auth = await StartAuthAsync(tenant);
+        await using var auth = await StartAuthAsync(tenant, provision: false);
 
-        await Assert.That(await ReadyWithinAsync(auth, TimeSpan.FromSeconds(15))).IsTrue();
+        await Assert.That(await ReadinessWait.UntilAsync(async () => (await database.ListCollectionsAsync(limit: 200)).Items.Count == AuthStore.RequiredCollections.Count, TimeSpan.FromSeconds(15))).IsTrue();
         await Assert.That((await database.ListCollectionsAsync(limit: 200)).Items.Select(item => item.Name)).IsEquivalentTo(AuthStore.RequiredCollections);
+        await Task.Delay(ReadinessWait.NextPass);
+        using var response = await auth.Client.GetAsync("/readyz");
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        await Assert.That((await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error").GetString()).StartsWith("no signing keys: operator provisioning required");
+        await Assert.That((await database.ListDocumentsAsync(AuthStore.SigningKeyCollection)).Items).IsEmpty();
     }
 
     private static Task<bool> ReadyWithinAsync(AuthTestServer auth, TimeSpan limit) => ReadinessWait.ReadyWithinAsync(auth.Client, limit);
 
-    private Task<AuthTestServer> StartAuthAsync(TerraBaseTestTenant tenant, string databaseName = "auth", string? apiKey = null, string? masterKey = null, TimeSpan? refresh = null) =>
+    // provision: the operator's signing-key provisioning runs before the server starts, as on a provisioned deployment.
+    private Task<AuthTestServer> StartAuthAsync(TerraBaseTestTenant tenant, string databaseName = "auth", string? apiKey = null, string? masterKey = null, TimeSpan? refresh = null, bool provision = true) =>
         AuthTestServer.StartAsync(settings: values =>
         {
             if (masterKey is not null)
@@ -161,5 +167,5 @@ public sealed class StorageReadinessTests(TerraBaseFixture fixture)
             {
                 services.AddSingleton(new KeyRingRefresh(interval));
             }
-        });
+        }, beforeStart: provision ? services => SigningKeyProvisioning.ProvisionAsync(services, CancellationToken.None) : null);
 }

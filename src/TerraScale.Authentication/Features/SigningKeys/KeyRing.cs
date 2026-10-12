@@ -5,6 +5,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Contracts;
+using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Security;
 using TerraScale.Authentication.Store;
 using TerraScale.DotNet;
@@ -64,6 +65,9 @@ public sealed class KeyRing(AuthStore store, AuthOptions options, TimeProvider c
     /// <summary>After a failed shared read, lookups answer 503 without asking TerraBase for this long.</summary>
     public static readonly TimeSpan FailedReadBackoff = TimeSpan.FromSeconds(5);
 
+    /// <summary>The error code of a platform issuer without signing keys; readiness reports its message.</summary>
+    public const string NoSigningKeysCode = "no_signing_keys";
+
     private const string Algorithm = "ES256";
 
     private readonly TimeSpan refreshInterval = refresh?.Interval ?? TimeSpan.FromMinutes(1);
@@ -83,8 +87,8 @@ public sealed class KeyRing(AuthStore store, AuthOptions options, TimeProvider c
     private readonly string masterKeyId = Convert.ToHexStringLower(HKDF.DeriveKey(HashAlgorithmName.SHA256, options.MasterKey, 16, info: "ts-auth signing ring master key id v1"u8.ToArray()));
 
     /// <summary>
-    /// The instance's keys, the signing key first; the instance's first key is created on first use. The caller owns the
-    /// returned keys and disposes them.
+    /// The instance's keys, the signing key first; a project tenant's first key is created on first use, the platform
+    /// issuer's never (<see cref="NoSigningKeys"/>). The caller owns the returned keys and disposes them.
     /// </summary>
     public async Task<IReadOnlyList<Es256Key>> GetActiveAsync(string instanceId, CancellationToken cancellationToken)
     {
@@ -92,7 +96,7 @@ public sealed class KeyRing(AuthStore store, AuthOptions options, TimeProvider c
         var current = await this.ReadAsync(instanceId, fresh: false, cancellationToken).ConfigureAwait(false);
         if (current.Keys.Count == 0)
         {
-            current = await this.EnsureFirstAsync(instanceId, cancellationToken).ConfigureAwait(false);
+            current = await this.FirstKeyAsync(instanceId, cancellationToken).ConfigureAwait(false);
         }
 
         var keys = this.Restore(instanceId, this.Verify(instanceId, current));
@@ -102,7 +106,7 @@ public sealed class KeyRing(AuthStore store, AuthOptions options, TimeProvider c
         return ordered;
     }
 
-    /// <summary>Loads public verification keys, newest first, without opening any private-key box. First use creates the instance's first key.</summary>
+    /// <summary>Loads public verification keys, newest first, without opening any private-key box. First use creates a project tenant's first key.</summary>
     public Task<IReadOnlyList<Es256Key>> GetPublicAsync(string instanceId, CancellationToken cancellationToken) =>
         this.GetPublicAsync(instanceId, keyId: null, cancellationToken);
 
@@ -122,7 +126,7 @@ public sealed class KeyRing(AuthStore store, AuthOptions options, TimeProvider c
 
         if (current.Keys.Count == 0)
         {
-            current = await this.EnsureFirstAsync(instanceId, cancellationToken).ConfigureAwait(false);
+            current = await this.FirstKeyAsync(instanceId, cancellationToken).ConfigureAwait(false);
         }
 
         return RestorePublic(this.Verify(instanceId, current));
@@ -130,7 +134,7 @@ public sealed class KeyRing(AuthStore store, AuthOptions options, TimeProvider c
 
     /// <summary>
     /// Validates the instance's public key metadata as TerraBase holds it now, bypassing the refresh interval but sharing
-    /// an in-flight read; never creates or changes state. An instance without keys fails.
+    /// an in-flight read; never creates or changes state. An instance without keys fails with <see cref="NoSigningKeys"/>.
     /// </summary>
     public async Task CheckPublicMetadataAsync(string instanceId, CancellationToken cancellationToken)
     {
@@ -138,18 +142,35 @@ public sealed class KeyRing(AuthStore store, AuthOptions options, TimeProvider c
         var current = await this.ReadAsync(instanceId, fresh: false, cancellationToken, TimeSpan.Zero).ConfigureAwait(false);
         if (current.Keys.Count == 0)
         {
-            throw new InvalidOperationException("The instance has no signing key.");
+            throw NoSigningKeys();
         }
 
         RestorePublic(this.Verify(instanceId, current)).ForEach(key => key.Dispose());
     }
 
     /// <summary>
-    /// Startup bootstrap: creates the instance's first key when it has none and checks that every stored key verifies and
-    /// opens under this master key. Keys it cannot use are never replaced: that is a misconfigured replica or tampering,
-    /// and fails until an operator removes them. Returns whether it created a key; storage failures surface as 503.
+    /// Startup bootstrap: checks that the instance has keys and that every stored key verifies and opens under this
+    /// master key; never creates or changes state. No keys fails with <see cref="NoSigningKeys"/>; keys it cannot use
+    /// are a misconfigured replica or tampering and fail until an operator removes them. Storage failures surface as 503.
     /// </summary>
-    public async Task<bool> EnsureAsync(string instanceId, CancellationToken cancellationToken)
+    public async Task VerifyAsync(string instanceId, CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(instanceId);
+        var current = await this.ReadAsync(instanceId, fresh: true, cancellationToken).ConfigureAwait(false);
+        if (current.Keys.Count == 0)
+        {
+            throw NoSigningKeys();
+        }
+
+        this.Restore(instanceId, this.Verify(instanceId, current)).ForEach(key => key.Key.Dispose());
+    }
+
+    /// <summary>
+    /// Explicit operator provisioning (<see cref="SigningKeyProvisioning"/>): creates the instance's first key when it has
+    /// none, then checks every stored key like <see cref="VerifyAsync"/>. Existing keys are never replaced or changed, so
+    /// running it again, or on two replicas at once, is safe. Returns whether it created a key.
+    /// </summary>
+    public async Task<bool> ProvisionAsync(string instanceId, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrEmpty(instanceId);
         var current = await this.ReadAsync(instanceId, fresh: true, cancellationToken).ConfigureAwait(false);
@@ -162,6 +183,10 @@ public sealed class KeyRing(AuthStore store, AuthOptions options, TimeProvider c
         this.Restore(instanceId, this.Verify(instanceId, current)).ForEach(key => key.Key.Dispose());
         return created;
     }
+
+    /// <summary>The platform issuer has no signing key: 503 until an operator provisions one.</summary>
+    public static ApiException NoSigningKeys() =>
+        new(503, NoSigningKeysCode, "no signing keys: operator provisioning required (docs/auth/signing-keys.md)");
 
     /// <summary>
     /// Adds a key now, published at once and signing one refresh interval later, when every replica's cached JWKS holds it,
@@ -188,6 +213,7 @@ public sealed class KeyRing(AuthStore store, AuthOptions options, TimeProvider c
         var current = await this.ReadAsync(instanceId, fresh: true, cancellationToken).ConfigureAwait(false);
         if (current.Keys.Count == 0)
         {
+            RequireImplicitFirstKey(instanceId);
             return await this.CreateAsync(instanceId, TimeSpan.Zero, cancellationToken).ConfigureAwait(false);
         }
 
@@ -219,6 +245,23 @@ public sealed class KeyRing(AuthStore store, AuthOptions options, TimeProvider c
         // This replica serves the new set from its next read.
         this.reads.TryRemove(instanceId, out _);
         return key;
+    }
+
+    // The platform issuer's first key comes only from ProvisionAsync: an empty ring there is lost or wiped state, and a
+    // silently created key would sign tokens no relying party's cached JWKS holds and hide the loss. A project tenant's
+    // first key is created on first use; its project record, checked before any tenant request, gates it.
+    private static void RequireImplicitFirstKey(string instanceId)
+    {
+        if (instanceId == OidcIssuer.InstanceId)
+        {
+            throw NoSigningKeys();
+        }
+    }
+
+    private Task<Snapshot> FirstKeyAsync(string instanceId, CancellationToken cancellationToken)
+    {
+        RequireImplicitFirstKey(instanceId);
+        return this.EnsureFirstAsync(instanceId, cancellationToken);
     }
 
     // Creates the instance's first key unless a fresh read finds one, and returns the read that holds it. Concurrent
