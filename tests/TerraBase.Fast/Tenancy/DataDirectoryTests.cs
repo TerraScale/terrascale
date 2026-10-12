@@ -687,6 +687,9 @@ public sealed class DataDirectoryTests
             RedirectStandardOutput = true,
             RedirectStandardError = true,
         };
+        // Development, like the harness: outside it a node without a backup bucket refuses to start before any directory check.
+        start.Environment["DOTNET_ENVIRONMENT"] = "Development";
+        start.Environment["ASPNETCORE_ENVIRONMENT"] = "Development";
         start.ArgumentList.Add(Path.Combine(AppContext.BaseDirectory, typeof(Program).Assembly.GetName().Name + ".dll"));
         // Like the harness, clear every ambient TERRABASE setting through entry-point arguments.
         foreach (var name in TerraBaseOptions.SettingNames)

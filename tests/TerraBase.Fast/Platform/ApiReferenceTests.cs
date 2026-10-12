@@ -20,6 +20,7 @@ public sealed class ApiReferenceTests
         DELETE /v1/projects/{project}/databases/{database}/collections/{collection}/schema TsAuth(documents:write) deleteDeclaredCollectionSchema Collections
         DELETE /v1/projects/{project}/databases/{database}/indexes/{index} TsAuth(databases:write) dropIndex Indexes
         DELETE /v1/projects/{project}/saved-queries/{query} TsAuth(databases:write) deleteSavedQuery Queries
+        GET /backupz anonymous backupz Health
         GET /healthz anonymous healthz Health
         GET /readyz anonymous readyz Health
         GET /v1/projects/{project}/analytics TsAuth(databases:read) getProjectAnalytics Analytics
@@ -276,14 +277,14 @@ public sealed class ApiReferenceTests
                 await Assert.That(EntityIds.IsValid(example.GetProperty("id").GetString())).IsTrue().Because(line);
             }
 
-            // Every operation documents a success, and every error status the error envelope (or the readiness body).
+            // Every operation documents a success, and every error status the error envelope (or a probe's status body).
             await Assert.That(responses.Any(status => status.Name.StartsWith('2'))).IsTrue().Because(line);
             foreach (var error in responses.Where(status => string.CompareOrdinal(status.Name, "400") >= 0))
             {
                 await Assert.That(error.Value.GetProperty("content").GetProperty("application/json").TryGetProperty("example", out _)).IsTrue().Because($"{line} {error.Name}");
                 var schema = error.Value.GetProperty("content").GetProperty("application/json").GetProperty("schema").GetRawText();
                 await Assert.That(schema.Contains("ErrorBody", StringComparison.Ordinal) || schema.Contains("\"error\"", StringComparison.Ordinal)
-                    || (line.StartsWith("GET /readyz", StringComparison.Ordinal) && error.Name == "503" && schema.Contains("StatusBody", StringComparison.Ordinal))).IsTrue().Because($"{line} {error.Name}");
+                    || ((line.StartsWith("GET /readyz", StringComparison.Ordinal) || line.StartsWith("GET /backupz", StringComparison.Ordinal)) && error.Name == "503" && schema.Contains("StatusBody", StringComparison.Ordinal))).IsTrue().Because($"{line} {error.Name}");
             }
 
             if (!line.Contains(" anonymous ", StringComparison.Ordinal))

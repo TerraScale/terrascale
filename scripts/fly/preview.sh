@@ -14,6 +14,8 @@ set -euo pipefail
 org=terrascale-previews-515
 api() { curl -sS --fail-with-body -H "Authorization: $FLY_API_TOKEN" -H 'Content-Type: application/json' "$@"; }
 machines=https://api.machines.dev/v1
+# The preview's Tigris bucket (terrascale-<app>; bucket names are global) outlives the app unless destroyed first.
+destroy_app() { flyctl storage destroy "terrascale-$1" --yes || true; flyctl apps destroy "$1" --yes; }
 
 case ${1:-} in
   app)
@@ -33,15 +35,26 @@ case ${1:-} in
       flyctl secrets set -a "$app" --stage TS_AUTH_MASTER_KEY="$(openssl rand -base64 32)" \
         TS_AUTH_AUDIT_SIGNING_KEY="$(openssl rand -base64 32)"
     fi
+    # TerraBase refuses to start without backup: each preview gets its own Tigris bucket and master key.
+    secrets=$(flyctl secrets list -a "$app" --json | jq -r '.[].name')
+    if ! grep -qx BUCKET_NAME <<<"$secrets"; then
+      flyctl storage create -a "$app" -n "terrascale-$app" --yes
+    fi
+    if ! grep -qx TERRABASE_MASTER_KEY <<<"$secrets"; then
+      flyctl secrets set -a "$app" --stage TERRABASE_MASTER_KEY="$(openssl rand -base64 32)"
+    fi
     ;;
   machine)
     app=ts-pr-$2 terrabase=$3 auth=$4
     volume=$(flyctl volumes list -a "$app" --json | jq -r '.[0].id')
+    # App secrets reach a container only when its config maps them (staged secrets alone never arrive).
     config=$(jq -n --arg terrabase "$terrabase" --arg auth "$auth" --arg volume "$volume" --arg app "$app" '{
       guest: {cpu_kind: "shared", cpus: 1, memory_mb: 1024},
       mounts: [{volume: $volume, path: "/data"}],
       containers: [
-        {name: "terrabase", image: $terrabase},
+        {name: "terrabase", image: $terrabase, secrets: ([
+          "AWS_ENDPOINT_URL_S3", "AWS_REGION", "BUCKET_NAME", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "TERRABASE_MASTER_KEY"
+        ] | map({env_var: ., name: .}))},
         {name: "ts-auth", image: $auth, env: {TS_AUTH_PUBLIC_ORIGIN: "https://\($app).fly.dev"},
           depends_on: [{name: "terrabase", condition: "started"}]}
       ],
@@ -67,7 +80,7 @@ case ${1:-} in
   destroy)
     app=ts-pr-$2
     if flyctl status -a "$app" >/dev/null 2>&1; then
-      flyctl apps destroy "$app" --yes
+      destroy_app "$app"
     fi
     ;;
   reap)
@@ -76,7 +89,7 @@ case ${1:-} in
       created=$(api "$machines/apps/$app/machines" | jq -r '[.[].created_at] | min // empty')
       if [[ -n $created ]] && (( $(date -u -d "$created" +%s) < cutoff )); then
         echo "Reaping $app (machine created $created)"
-        flyctl apps destroy "$app" --yes
+        destroy_app "$app"
       fi
     done
     ;;

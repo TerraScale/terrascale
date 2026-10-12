@@ -1,7 +1,7 @@
 # Continuous backup
 
-TerraBase streams every SQLite file of a node (each database and `_system.db`) to an S3-compatible bucket, OCI Object
-Storage in production, about once a second, and restores any database as of a chosen second (TS-633). The design follows
+TerraBase streams every SQLite file of a node (each database and `_system.db`) to an S3-compatible bucket, Tigris in
+production (Fly's object store), about once a second, and restores any database as of a chosen second (TS-633). The design follows
 [Litestream](https://litestream.io/how-it-works/) (generations, snapshots, log segments), written in C# inside the
 server. It ships the SQLite write-ahead log per file, not per API database, so it keeps working whatever sits above SQLite.
 
@@ -10,8 +10,7 @@ The older scheduled backups (`…/backups`, local snapshot files next to the dat
 ## Status of the work
 
 Slices 1 (shipping and restore), 2 (shipper leases) and 3 (retention by plan, daily restore drills, records in TerraBase)
-of TS-633 are done. The gru-1 rollout is prepared and checked against real OCI ([gru-1 rollout](#gru-1-rollout)) and is
-applied after the TS-647 cutover. Not done yet:
+of TS-633 are done. Not done yet:
 
 - No restore over an existing database, and no disaster-recovery path that rebuilds a whole data directory
   (`_system.db` included) from the bucket.
@@ -20,15 +19,18 @@ applied after the TS-647 cutover. Not done yet:
 
 ## Production backup contract
 
-Continuous backup is always available. OCI Vault must automatically provision
-and deliver the platform bucket's credentials, encryption keys and secret
-lifecycle access. Retention and rotation use the correct settings in code;
-there is no backup activation step or operator tuning table.
+Continuous backup is always on. Outside Development a node refuses to start (exit code 2, before it opens any file)
+unless its Tigris bucket and master key are present, so no deployed node runs without backup. Only Development runs
+without backup; tests use an in-memory S3 fake. Retention and rotation use the correct settings in code; there is no
+backup activation step or operator tuning table.
 
-**Current gap (TS-773):** backup still depends on complete `backup-*` runtime
-options. Partial inputs are rejected with secret-free errors; this change does
-not implement automatic provisioning. The backup identity remains scoped to
-object read/write/list in its bucket and use of the one master key.
+Settings come from the environment. The Tigris variables that Fly sets when a bucket is attached fill
+`backup-endpoint`, `backup-region`, `backup-bucket`, `backup-access-key-id` and `backup-secret-key`
+(`AWS_ENDPOINT_URL_S3`, `AWS_REGION`, `BUCKET_NAME`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`).
+`master-key` comes from the fly secret `TERRABASE_MASTER_KEY` (32 bytes, base64).
+
+Production (`ts-terrabase`) has its bucket `ts-terrabase` attached and the secret set. Each PR preview gets its own
+bucket `terrascale-ts-pr-<n>` and a random master key from `scripts/fly/preview.sh`, destroyed with the preview.
 
 ### Customer buckets (TS-635)
 
@@ -62,12 +64,11 @@ and their `{database}` remains a catalog database ID. A project token cannot use
 
 `mode=both` ships the project's encrypted snapshots, WAL segments and wrapped data keys to both buckets.
 `mode=customer` ships that project's data only to the customer bucket. `_system.db` and other projects stay in the
-platform bucket. The platform backup bucket and OCI master key must be automatically provisioned; customer
-backup uses that same master key. This is customer-only **project shipping**, not a standalone backup service.
+platform bucket. Customer backup uses the same master key (`TERRABASE_MASTER_KEY`). This is customer-only **project shipping**, not a standalone backup service.
 
-`GET` at the same path returns `endpoint`, `region`, `bucket`, `mode`, and `updatedAt`; it never returns credentials or
-Vault references. `DELETE` detaches the customer destination and resumes platform shipping. It preserves customer
-objects. Reattaching the same bucket and credentials makes its older backups accessible again. Every save replaces the
+`GET` at the same path returns `endpoint`, `region`, `bucket`, `mode`, and `updatedAt`; it never returns credentials.
+`DELETE` detaches the customer destination by dropping its record, sealed credentials included, and resumes platform
+shipping. It keeps every object in the customer bucket. Reattaching the same bucket and credentials makes its older backups accessible again. Every save replaces the
 credentials and starts a new generation with a snapshot, so a newly attached bucket never receives WAL without a base.
 On the hidden organization aliases, a viewer cannot save or detach destinations; other existing writable-project
 roles can. Outsiders receive 404.
@@ -76,7 +77,7 @@ with one save per organization, so one organization cannot occupy every slot. Ea
 destination configuration at a ten-second cadence on successful passes; shipping work and retries can delay refresh.
 Each lookup has a one-second deadline. A timeout cancels and joins the read, then uses the file's shipping backoff so
 other files can be admitted.
-Project deletion returns 409 while a customer destination remains configured; detach it first so its Vault secret can retire.
+Project deletion returns 409 while a customer destination remains configured; detach it first.
 Saving, replacing or detaching an existing destination advances the organization's management version, invalidating
 stale fences. Deleting an unset destination leaves that version unchanged.
 
@@ -92,57 +93,11 @@ Customer listing pages request at most 250 objects and are bounded to 2 MiB befo
 room for XML escaping of S3's 1,024-byte UTF-8 keys. Oversized keys are skipped; malformed entries still count toward
 metadata scan limits.
 
-Customer credentials live encrypted in OCI Vault Secrets as a versioned JSON secret. TerraBase's version-1 catalog
-record under `projects/<project>/backup_destination` holds public settings and the secret OCID only. Credentials are
-write-only, and errors never include provider response bodies. The runtime identity needs secret creation, retrieval,
-metadata listing/inspection, scheduled deletion and secret encryption-key permissions
-in addition to the original backup permissions. These grants and Vault endpoints
-must be provisioned automatically. The current `backup-vault-*` and
-`backup-secrets-endpoint` inputs are a TS-773 implementation gap, not a manual
-credential-installation recipe.
-
-Changing a customer-authorized destination creates a new secret. Replacement or
-detachment records retirement in the same catalog transaction; deletion is
-scheduled after OCI's minimum seven-day window and failures retry in
-`backup_secret_lifecycle`. In-flight work retains acquired credentials and
-customer objects are preserved.
-
-Before creation, TerraBase records a unique `terrabase-backup-<ULID>` name in that collection. A successful create response
-is read under an independent bounded token so caller cancellation cannot discard a returned OCID. Uncertain responses
-are reconciled through OCI secret metadata; no credential content is stored in these records or replayed to create another
-secret. Publication removes its intent atomically. Cleanup claims an expired intent before retirement, preventing it from
-being published afterward. An empty metadata listing leaves the intent pending because the secret may appear later.
-Confirmed failures before submission and definitive OCI create rejections remove the unused intent; uncertain outcomes
-retain it for reconciliation. Confirmed removal keeps save admission until completion, allowing at most four local
-discards even while remote cleanup is full. Local catalog failures retry within an independent 30-second deadline.
-Shutdown before removal commits, or catalog unavailability through that deadline, can leave an intent pending for
-operator investigation.
-
-The lifecycle backlog separately admits at most 1,024 named create intents and 1,024 predecessor/detachment retirements,
-each bounded to 2 KiB. An abandoned create keeps its reserved intent slot even after its OCID becomes known. Unresolved
-creates can exhaust new-save admission, but cannot consume detachment retirement capacity. A full retirement pool rejects
-replacement or detachment with fixed 503 before changing the destination; an already detached destination still returns
-204. Maintenance independently reads at most eight known-ID and eight unresolved records / 32 KiB per pass, processing
-known IDs first with separate thirty-second budgets for each class, so a known-ID timeout cannot consume the unresolved
-class's deadline. Both classes share the tracked worker chain and shutdown cancellation. Keep Vault and compartment settings available until pending reconciliation and
-retirement complete. OCI 404 responses remain pending because they can mask lost authorization; restore metadata
-permissions or investigate an external deletion rather than treating 404 as proof of retirement. These records survive
-project deletion; no migration is required.
-
-Uncertain intents with no OCI match are never removed automatically. To release admission after a verified unsubmitted
-create, an operator with the management service credential can use the loopback-only recovery API:
-
-1. `GET /v1/backup-secret-lifecycle` reads eight metadata-only intents; pass its `next` ULID as `?after=...` for another page.
-2. Investigate the exact `secretName` in the configured OCI vault and compartment, including pending create requests.
-   Confirm no credential exists or can still be accepted. Restore metadata permissions before investigating; an error
-   or authorization-masked 404 is not evidence of absence. If a secret exists, let ordinary reconciliation retire it.
-3. For a `recoverable` intent, `POST /v1/backup-secret-lifecycle/{id}/confirm-absent` with
-   `{"secretName":"terrabase-backup-<id>","confirmAbsent":true}` releases its reserved slot in a FULL catalog transaction.
-
-Both routes require `management-credential-file`, Bearer service authentication and `X-TerraBase-User-Id`; the client
-listener returns 404. Recovery additionally checks an empty fresh OCI metadata listing and refuses live/unfenced,
-known-ID, mismatched or concurrently resolved rows. It does not delete or replay a remote secret. Incorrect operator
-confirmation can leave a late remote acceptance untracked, so do not use it solely because a metadata list is empty.
+Customer credentials are sealed in the catalog. Save probes the bucket, seals the key pair with AES-256-GCM under a
+per-record data key, and wraps that data key under the master key (`TERRABASE_MASTER_KEY`). The catalog record
+`projects/<project>/backup_destination` holds the public settings and the sealed credentials (`SealedCredentials`:
+wrapped key and ciphertext), written in one durable catalog write. Credentials are write-only, and errors never include
+provider response bodies.
 
 Restore selection is explicit and never falls back between buckets:
 
@@ -154,11 +109,11 @@ Restore selection is explicit and never falls back between buckets:
 
 Each source's window comes from its own stored objects, so old platform backups stay restorable after switching to
 customer-only. An invalid selector returns 400; a disabled or empty source, including an unset customer destination,
-returns 404. Window and restore bucket/Vault transport failures return a sanitized 503. Malformed window listings
+returns 404. Window and restore bucket transport failures return a sanitized 503. Malformed window listings
 also return 503; corrupt snapshot or key material during restoration remains an integrity failure. A successful restore returns
 the new database and `Location: /v1/projects/{project}/databases/{restored-name}`; a hidden legacy request retains its
 organization route and restored database ID in `Location`.
-Encryption, `TBK1` objects and the catalog schema are unchanged; restoring either source still requires OCI KMS access.
+Encryption and `TBK1` objects are unchanged; restoring either source still requires the master key (`TERRABASE_MASTER_KEY`).
 In `both` mode, shipping succeeds only when both uploads succeed; a failed destination delays this project's progress
 and starts a fresh generation after backoff to avoid overlapping WAL segments after a partial upload. Platform files
 and eligible customer jobs in other organizations continue shipping. Retention scans both configured buckets
@@ -185,7 +140,7 @@ Cold platform key reads wait with request cancellation when their pool is occupi
 SDK/dashboard integration must consume these `/v1` project contracts through typed `ts-go` methods, with a ts-auth
 project access token granting the scope above. User sign-in tokens belong to the hidden organization aliases.
 This TerraBase change supplies the server contract; it does not ship `ts-go` methods or a `ts-dashboard` bucket UI.
-Those remain dependent integration work. Native dashboard sign-in is unchanged. No live Vault, IAM or dashboard
+Those remain dependent integration work. Native dashboard sign-in is unchanged. No live dashboard
 rollout is performed by this repository change.
 
 ### Leases
@@ -221,8 +176,8 @@ that member holds its member lease.
 - At shutdown a member ships what is left, then deletes its key, so the others take its files over at their next
   refresh (within 5 s). After a crash, takeover waits for the key to expire: about 15 to 20 s.
 - ts-orchestrator delivers the NATS files and renews them every 24 h (TS-651). Every connect and reconnect reads them
-  again, and a reconnect refused with an expired JWT keeps retrying, so no restart is needed. The backup secret files
-  (`backup-secret-key-file`, `backup-kms-private-key-file`) are read at start: rotating them needs a restart.
+  again, and a reconnect refused with an expired JWT keeps retrying, so no restart is needed. Backup settings come from
+  the environment and are read at start: changing them needs a restart.
 - Every member taps every file and checkpoints it (`wal_autocheckpoint = 0` wherever backup is configured), whether or
   not it ships it.
 
@@ -257,14 +212,14 @@ starts a new generation once the bucket answers.
 
 Each object is sealed before upload (`Features/Backup/BackupObject.cs`, format 1): chunks of up to 1 MiB, LZ4-compressed
 when smaller, AES-256-GCM. Each object's AES key is HKDF-SHA256 of its project's data key, a random salt and the object's
-own key in the bucket, so an object moved elsewhere does not decrypt. Data keys come from OCI Vault (`generateDataEncryptionKey`
-on the master key) and are stored in the bucket wrapped. Only the Vault can unwrap them. Each project gets its own data
+own key in the bucket, so an object moved elsewhere does not decrypt. Data keys are generated by TerraBase, wrapped with AES-256-GCM under the master key
+(`TERRABASE_MASTER_KEY`) and stored in the bucket. Only a node with the master key can unwrap them. Each project gets its own data
 key, and `_system.db` gets one too.
 
 ### Data-key rotation
 
 Before an upload, TerraBase checks the data key's age using the creation time in its existing ULID. An expired key is
-replaced with a new OCI Vault data key, whose wrapped copy is uploaded before any object uses it. Running nodes refresh
+replaced with a new data key, whose wrapped copy is uploaded before any object uses it. Running nodes refresh
 their current selection at most once a minute, listing only keys after their cached selection, so they adopt a newer key
 published by another member without rescanning retained history. If two nodes rotate together, both wrapped keys remain
 available and each object names the key it used. A failed key upload leaves
@@ -274,7 +229,7 @@ Old snapshots and log segments are not rewritten. Old wrapped data keys are reta
 generations whose snapshot and log segments use different keys. Current plaintext keys are cached for at most 65536
 scopes, with another 65536 unwrapped keys cached for restores (at most 4 MiB of key material in both caches). Entries
 expire after a day without access. At capacity, cache admission synchronously makes room for new results so waiting
-downloads can reuse them. Evicted-key lookups retrieve keys from the bucket and Vault;
+downloads can reuse them. Evicted-key lookups retrieve keys from the bucket and unwrap them;
 size nodes to keep active scopes and restore keys within these limits. Generated keys enter the restore cache only
 after their wrapped copy is persisted. Concurrent downloads using one historical key share its retrieval and unwrap.
 Wrapped key bodies are limited to 16 KiB both before publication and during cold retrieval.
@@ -283,10 +238,9 @@ key objects are ignored during selection; a future-dated key can still decrypt h
 Changing `backup-key-rotation-days` requires a rolling
 restart; use `1` for the next daily rotation when shortening the schedule.
 
-Keep the configured master key OCID and all versions needed to unwrap retained data keys. Replacing
-`backup-kms-key-id` with another master key is not a supported rotation path: retained wrapped keys would no longer
-unwrap. OCI master-key version rotation is distinct from this data-key rotation and requires an OCI restore drill
-before retiring a version. Do not delete wrapped keys or master versions while their backups are still retained.
+The master key does not rotate yet. Changing `TERRABASE_MASTER_KEY` makes retained backups unreadable, because
+their wrapped data keys no longer unwrap. There is no key versioning yet. Do not delete wrapped keys while their
+backups are still retained.
 
 This rotation preserves the existing backup bytes, bucket layout and SQLite files. Live SQLite files, WAL files, local
 managed snapshots and restore scratch files still require encryption of the node's storage; TS-702's disk-encryption
@@ -384,7 +338,7 @@ interrupted pass never leaves segments that no snapshot reaches.
 The extra hour covers a restore that picked a snapshot just inside the window, as Litestream learned (#1450). Plans move
 to ts-dashboard (TS-599); this setting stays the fallback.
 
-A bucket retention rule (an OCI object lock) refuses deleting objects younger than its duration
+A bucket retention rule refuses deleting objects younger than its duration
 (`RetentionRuleViolation`). Retention deletes segments oldest first, stops at the first refused one without counting a
 failure, and deletes a generation's snapshots only once all its expired segments are gone. Objects therefore stay as long
 as the longer of the plan and the rule, and a pass costs at most one refused call while the rule holds.
@@ -407,72 +361,30 @@ shipping member, generation, last shipped time, lag, bucket size (measured daily
 The database's state is deleted with it. A catalog follower cannot write the catalog, so it keeps the record in memory
 only (`GET /v1/backup`) until TS-647 makes `_system` writable on every member.
 
-## gru-1 rollout
+## Verify a rollout
 
-Applied right after the TS-647 cutover, so the new engine has backups from day one. Pre-wipe data needs none (decision,
-2026-10-07).
+`scripts/fly/deploy.sh` checks each region's new machine twice before it moves on: `/healthz`, then `/backupz`
+(pinned with `fly-force-instance-id`, retried for about 90 s). `/backupz` answers 200 once backup has found the
+node's files and every file the node ships has reached the bucket with less than a minute of lag, and 503 otherwise.
+A 503 stops the rollout (fix forward). `/backupz` is not a Fly health check: a Tigris outage never takes a node out of
+service, it only shows on `/backupz` and in the metrics.
 
-### OCI resources (created 2026-10-07, tagged `ts-issue=TS-633`)
+After a rollout, also check:
 
-| Resource | Name | OCID |
-| --- | --- | --- |
-| Bucket (existing, compartment `gru-1-control`, namespace `grxnmoqvrcdv`) | `gru-1-backup` | |
-| Group | `gru-1-terrabase-backup` | `ocid1.group.oc1..aaaaaaaapzjw62quoebz4axjajz76vrv2tso4wvja7ihenkw6mahuxh2nt5a` |
-| User (API keys and customer secret keys only; no console, auth tokens, SMTP or OAuth) | `gru-1-terrabase-backup` | `ocid1.user.oc1..aaaaaaaa7nflod4z5m5b2mudqxeoxs7jcz2fm7brpzc5lpfdc2zlsg2c6mka` |
-| Policy (`gru-1-control`) | `gru-1-terrabase-backup` | `ocid1.policy.oc1..aaaaaaaaycaasxiqjfjljvvlgtpbmiek6qy7zhppq6jgggygs6raipfju7ea` |
-| Master key (HSM, AES-256, `gru-1-vault`) | `gru-1-terrabase-backup` | `ocid1.key.oc1.sa-saopaulo-1.ffvmfu2naagt6.abtxeljruhejdps4hz4tqyfmuokgfz3yunzaqnbx6ywr4r24cd2oevmcjacq` |
-| Vault secret: S3 customer secret key | `gru-1-terrabase-backup-secret-key` | `ocid1.vaultsecret.oc1.sa-saopaulo-1.amaaaaaappuhpdqa36qdp2azrk6xf6hdbj3jmqiiykoiwnb6zxxjx33nv7yq` |
-| Vault secret: API signing key (PEM) | `gru-1-terrabase-backup-kms-private-key` | `ocid1.vaultsecret.oc1.sa-saopaulo-1.amaaaaaappuhpdqafkht4blffc6rlfcwurchuu2htw62uetxtqqzhb6gx5qq` |
+1. Grafana (fly-metrics.net): `terrabase_backup_lag_seconds` (the RPO) stays under 2 s under writes,
+   `terrabase_backup_last_success_seconds` keeps moving, and `terrabase_backup_failures_total` and
+   `terrabase_backup_holes_total` do not rise. `/v1/backup` is on the loopback admin listener and the image has no
+   shell, so the metrics are the way in.
+2. Restore: `POST …/point-in-time/restore` of a scratch database to a second between two writes; check that the first
+   write is in the new database and the second is not; delete the restored database.
 
-The policy allows exactly two things: `manage objects` in the compartment where `target.bucket.name = 'gru-1-backup'`,
-and `use keys` where `target.key.id` is the master key above. Customer secret key (access key)
-`8a2eb8f587ae642e8da2cafc4e4c849900831df3`; API key fingerprint `47:c2:d8:93:d4:0b:67:4e:ae:c0:b0:83:5f:c4:3e:7d`. The
-secrets exist only in Vault.
+## Tigris check (2026-10-11)
 
-The bucket has the retention rule `backup-retention` (35 days, unlocked, created 2026-10-04): OCI refuses deleting or
-overwriting an object younger than that (`RetentionRuleViolation`). TerraBase never overwrites. Retention by plan waits
-for the rule instead of failing (see [Retention](#retention)), so every backup stays at least 35 days while restores stay
-limited to the plan's window. A 5-byte probe object `probe/ts633` from the compatibility check stays until about
-2026-11-11.
+Checked against the Tigris dev bucket `ts-terrabase-dev`:
 
-### Automatic backup delivery gap
-
-The current rollout profile still contains explicit backup/Vault references.
-TS-773/TS-796 must replace that setup dependency with automatic provisioning and
-credential delivery; operators do not add a profile to turn backup on.
-Preserve least-privilege grants, one shipper per file, fenced one-member-at-a-time
-rollout and actual post-rollout backup/restore verification.
-
-### Verify and measure after the restart
-
-1. On each member, `curl -s http://127.0.0.1:9464/v1/backup`: every file is shipped by exactly one member
-   (`shipping`), `lagSeconds` stays under 2, `lastDrill.passed` is true, `lastError` is null.
-2. `/metrics`: `terrabase_backup_lag_seconds`, `terrabase_backup_last_success_seconds`, no rising
-   `terrabase_backup_failures_total` or `terrabase_backup_holes_total`.
-3. RPO: write a document, then time how long `/v1/backup`'s `lastShippedAt` of its file takes to pass the write.
-4. Restore time: `POST …/point-in-time/restore` of a scratch database to a second between two writes; check the first write
-   is in the new database and the second is not; delete the restored database.
-5. Post the numbers on Ku TS-633.
-
-### Pre-production check against real OCI (2026-10-07)
-
-A local `terrabase` shipped to a scratch bucket with this identity, key and endpoints. That bucket and its policy
-statement were deleted afterwards. The real S3 compatibility API and Vault crypto endpoint found two bugs the fakes had
-hidden, both fixed:
-
-- **Vault path:** the data key call is `POST /20180608/generateDataEncryptionKey` (it was `generateDataKey`).
-- **Retention:** the bucket's retention rule refuses deletes, which retention now waits for.
-
-| Measure | Result |
-| --- | --- |
-| Committed write → in the bucket (10 writes) | median 0.60 s, max 1.34 s |
-| Point-in-time restore through the API, new database | 0.45 s (small database) |
-| Restored state | the write before the chosen second present, the write after it absent |
-| Generation-start drills | passed, about 0.09 s |
-| Stored objects | sealed `TBK1` objects only |
-
-A new customer secret key took about 10 minutes to authenticate on the S3 API. A rotated key needs that wait before the
-old one is deleted.
+- A node shipped `v1/_system`: 1 snapshot, 2 WAL segments and 1 wrapped data key of 80 bytes.
+- A second run with the same master key and a fresh data directory reused that key.
+- A run with another master key failed closed: `wrapped data key is not authentic under the master key`.
 
 ## Compared with Litestream
 
@@ -492,7 +404,7 @@ Checked against Litestream 0.5.17 (August 2026): its design and its bug fixes fr
 | Resumes a generation across restarts. | A new generation, so a new snapshot, per member start. |
 | Retention keeps the snapshot before the window (0.5.14); a restore raced retention (#1450). | Same: the newest snapshot before the window is kept, plus one hour of grace. |
 | Leases: S3 conditional writes (0.5.8) or a single process. | NATS KV leases with self-fencing before expiry. |
-| Optional age encryption (0.3). | Always sealed: AES-256-GCM, per-project data keys wrapped by OCI Vault. |
+| Optional age encryption (0.3). | Always sealed: AES-256-GCM, per-project data keys wrapped with AES-256-GCM under the master key (`TERRABASE_MASTER_KEY`). |
 
 ## Operations
 

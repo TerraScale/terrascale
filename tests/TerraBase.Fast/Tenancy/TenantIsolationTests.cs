@@ -29,6 +29,7 @@ public sealed class TenantIsolationTests
     [
         // Health probes and the API reference: no tenant data at all.
         "GET /",
+        "GET /backupz",
         "GET /healthz",
         "GET /openapi/{documentName}.json",
         "GET /readyz",
