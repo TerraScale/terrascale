@@ -202,11 +202,11 @@ public sealed class CommitEndpoint(
     }
 
     // The operations a restore could undo to a tenant's harm (set_plan: a downgrade or suspension; set_database_regions: a
-    // replica region removed, whose copy goes).
+    // replica region removed, whose copy goes; start_transfer: it replaces a pending offer).
     private static readonly FrozenSet<string> RevokingOps = FrozenSet.ToFrozenSet(
     [
         "delete_organization", "delete_project", "delete_database", "change_role", "remove_member", "leave", "revoke_invitation",
-        "decline_invitation", "confirm_transfer", "cancel_transfer", "set_plan", "set_database_regions",
+        "decline_invitation", "start_transfer", "confirm_transfer", "cancel_transfer", "set_plan", "set_database_regions",
     ], StringComparer.Ordinal);
 
     /// <summary>Every Management operation a commit accepts, for the classification test.</summary>

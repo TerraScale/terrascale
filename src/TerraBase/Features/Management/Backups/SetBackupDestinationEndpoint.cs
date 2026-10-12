@@ -48,18 +48,18 @@ public sealed class SetBackupDestinationEndpoint(IManagementService management, 
 
     private async ValueTask<IResult> SaveAsync(Project project, ProjectBackupDestinationRequest request, CancellationToken cancellationToken)
     {
-        // Replacing a destination revokes the old one: a restore that lost the replacement would resume shipping to the bucket
-        // the customer replaced, so it is anchored before it is acknowledged (CatalogGate). A first destination revokes nothing.
-        var replacing = await destinations.ReadAsync(ManagementRoute.OrganizationId(HttpContext), project.Id, cancellationToken) is ProjectBackupDestinationRecord;
         switch (await destinations.SaveAsync(ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), project.Id, request, cancellationToken))
         {
-            case ProjectBackupDestination saved:
-                if (replacing)
+            case SavedBackupDestination saved:
+                // Replacing a destination revokes the old one: a restore that lost the replacement would resume shipping to the
+                // bucket the customer replaced, so it is anchored before it is acknowledged (CatalogGate). A first destination
+                // revokes nothing.
+                if (saved.Replaced)
                 {
                     await gate.AnchorAsync(cancellationToken);
                 }
 
-                return TypedResults.Ok(saved);
+                return TypedResults.Ok(saved.Destination);
             case NotFound missing:
                 return ErrorResponse.From(missing);
             case Forbidden refused:
