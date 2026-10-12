@@ -199,6 +199,7 @@ internal sealed class EngineManagedBackupService(
             {
                 Done => await CopyRestoredAsync(userId, organizationId, owner, source.Name, staging.DatabaseId!, name, cancellationToken).ConfigureAwait(false),
                 NotFound error => error,
+                Conflict error => error,
                 Validation error => error,
                 Unavailable error => error,
             };

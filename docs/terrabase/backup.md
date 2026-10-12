@@ -281,11 +281,14 @@ expired under the plan.
 restores into a new database of the same project (`branchedFrom` set, like a backup restore). The restore:
 
 1. takes the newest snapshot at or before `pointInTime`;
-2. replays its generation's segments up to `pointInTime` in order, checking they are contiguous: one transaction per
+2. checks from object names that the history up to `pointInTime` can be complete (see
+   [Proven history](#proven-history)), before downloading anything;
+3. replays its generation's segments up to `pointInTime` in order, checking they are contiguous: one transaction per
    commit record, rows by rowid (`INSERT OR REPLACE`, `DELETE`), schema objects created from their SQL and dropped by
    name. A log that ends inside a transaction, a malformed record or a change the file refuses fails the restore.
-   Eight segments download at once, each retried up to three times if the stream drops;
-3. runs `PRAGMA integrity_check`, then imports the file as a copy, so its replication starts over from a baseline.
+   Eight segments download at once, each retried up to three times if the stream drops. Once they are replayed, the
+   history must be proven to reach `pointInTime`;
+4. runs `PRAGMA integrity_check`, then imports the file as a copy, so its replication starts over from a baseline.
 
 `pointInTime` must fall between `earliest` and `latest`, inclusive; requests outside those bounds return 400. A time after
 `latest` is refused even when it is before now, so a delayed shipper cannot silently restore older data for that time.
@@ -296,6 +299,38 @@ reference time before reading metadata.
 
 The result holds every transaction the shipper read by `pointInTime`. The shipper reads every second, so a transaction
 committed in the second before `pointInTime` may be missing.
+
+### Proven history
+
+A restore never returns a state that leaves out log the bucket cannot account for. It succeeds only when the chosen
+snapshot's generation proves its history complete up to `pointInTime`:
+
+- every replayed segment starts exactly where the previous one ends (the first at the snapshot's position); and
+- the history reaches `pointInTime`: the first segment of the generation read after `pointInTime` starts exactly where
+  the replayed ones end, or the generation's next snapshot holds exactly the replayed log (its position is where they
+  end), or the last replayed segment, or the snapshot when none applies, was read in the same millisecond as
+  `pointInTime` (object names carry milliseconds).
+
+Otherwise the restore answers `409` with code `backup_history_incomplete` and creates nothing. This covers:
+
+- a missing segment (a lost upload or a bucket-side deletion): every time after the last segment before it is refused,
+  because the missing segment's own time is gone with it, until the generation's next snapshot past the gap, from
+  which restores start again; times up to that segment still restore exactly;
+- a missing final segment: nothing follows it, so times after the last stored segment are refused, even while the
+  platform restore window, which comes from the shipper's acknowledged uploads, still shows the missing segment's time;
+- a generation that ended (a hole, a backlog over 256 MiB that was dropped, a shipper move or restart): the times
+  between its last segment and the next generation's snapshot are refused, since log read in between may never have
+  been stored; the next generation's snapshot time restores;
+- a snapshot or segment object that disappears between listing and download (retention racing the restore).
+
+Deliberate fail-closed trade-off: a quiet period after the last segment of a generation can no longer be selected
+unless a later snapshot of the same generation closes it (the daily snapshot does, so a database idle between two
+daily snapshots restores at any time in between). Nothing in the bucket shows that no write was read after that
+segment. The same state is restorable at that segment's time. Backups written before this rule restore under it too;
+times it cannot prove answer `409` instead of restoring a possibly incomplete state.
+
+Two segments with the same start (an upload stored but answered as failed, then sent again with more log) are not
+contiguous: the first one's own time still restores, and later times answer `409` until the generation's next snapshot.
 
 ### Restore preview (TS-493)
 
@@ -310,7 +345,8 @@ or changing databases. It returns:
   "pointInTime":"2026-10-07T12:00:13Z",
   "snapshotAt":"2026-10-07T12:00:10Z",
   "latestSegmentAt":null,
-  "segmentCount":0
+  "segmentCount":0,
+  "historyCheck":"metadata"
 }
 ```
 
@@ -320,18 +356,26 @@ restore. `segmentCount` and `latestSegmentAt` describe that snapshot generation'
 segments after its position and read by the requested time. The latter is null when
 none apply. No object keys or credentials are returned.
 
+The preview runs the restore's name-only check of [Proven history](#proven-history): the first segment starts at the
+snapshot's position, later ones start after it in order, and the history reaches `pointInTime`. When object names
+already show the history incomplete (a missing final segment, an ended generation, a later snapshot whose position no
+stored segment reaches), it answers `409` `backup_history_incomplete`, as the restore would. `historyCheck` is always
+`metadata`: segment names hold their start but not their length, so whether each segment begins exactly where the
+previous one ends (a missing middle segment) is checked only by an actual restore, which can still answer `409`.
+
 The request needs a ts-auth project token granting `databases:read`; `{database}` is its name.
 The hidden legacy management alias retains membership checks, including organization viewers. Access is checked
 before time validation: another tenant's database returns `404`. Missing time, a time
 outside the inclusive `window.earliest` and `window.latest` bounds returns `400`;
-disabled/empty backup, a wholly expired retention window or no applicable snapshot returns `404`.
+disabled/empty backup, a wholly expired retention window or no applicable snapshot returns `404`;
+a history the object names show incomplete returns `409` `backup_history_incomplete`.
 Preview uses the same restore-window bounds as restore. Metadata scanning is bounded to 10,000 items and 10 seconds;
 exhaustion returns `503` without a partial plan (`pitr_plan_limit` or
 `pitr_plan_timeout`). Object-store listing failures return `503`
 `pitr_plan_unavailable` without exposing provider details.
 
 This is an advisory preview. It does not reserve objects against retention, validate
-their encrypted contents, or prove WAL continuity. Restore still performs the download,
+their encrypted contents, or prove that segment lengths are contiguous. Restore still performs the download,
 authentication, continuity and integrity checks. The public project route and its hidden
 legacy alias follow [the HTTP API table](api.md).
 

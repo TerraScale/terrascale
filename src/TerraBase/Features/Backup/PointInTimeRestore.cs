@@ -11,19 +11,25 @@ namespace TerraBase.Features.Backup;
 /// <param name="Latest">The newest data in the bucket.</param>
 public sealed record RestoreWindow(DateTimeOffset Earliest, DateTimeOffset Latest);
 
-/// <summary>Advisory backup metadata; integrity and segment contiguity are checked only during restore.</summary>
+/// <summary>Advisory backup metadata, read from object names only; restore also checks contents and every segment's length.</summary>
 /// <param name="Window">The database's retention window and newest backed-up data.</param>
 /// <param name="PointInTime">The requested restore time.</param>
 /// <param name="SnapshotAt">When the selected snapshot was taken.</param>
 /// <param name="LatestSegmentAt">The newest applicable segment time, or null when only the snapshot applies.</param>
 /// <param name="SegmentCount">Segments of the selected snapshot's generation applicable to the requested time.</param>
-public sealed record PointInTimePlan(RestoreWindow Window, DateTimeOffset PointInTime, DateTimeOffset SnapshotAt, DateTimeOffset? LatestSegmentAt, int SegmentCount);
+/// <param name="HistoryCheck">
+/// How far the history up to the time was checked: always <c>metadata</c>, the first segment's start, the segments' order
+/// and the history's end, from object names. Whether each segment begins where the previous one ends needs their lengths,
+/// which only a restore reads, so a restore can still answer 409 <c>backup_history_incomplete</c>.
+/// </param>
+public sealed record PointInTimePlan(
+    RestoreWindow Window, DateTimeOffset PointInTime, DateTimeOffset SnapshotAt, DateTimeOffset? LatestSegmentAt, int SegmentCount, string HistoryCheck);
 
-/// <summary>A read-only restore plan, or why its metadata could not be read.</summary>
-public readonly union PointInTimePlanResult(PointInTimePlan, NotFound, Validation, Unavailable);
+/// <summary>A read-only restore plan, or why its metadata could not be read or shows the history incomplete.</summary>
+public readonly union PointInTimePlanResult(PointInTimePlan, NotFound, Conflict, Validation, Unavailable);
 
 /// <summary>A completed restore, or why its requested time could not be restored.</summary>
-public readonly union PointInTimeRestoreResult(Done, NotFound, Validation, Unavailable);
+public readonly union PointInTimeRestoreResult(Done, NotFound, Conflict, Validation, Unavailable);
 
 /// <summary>A restore window, no backup, or an unreadable plan.</summary>
 public readonly union RestoreWindowResult(RestoreWindow, NotFound, Unavailable);
@@ -40,8 +46,9 @@ public interface IPointInTimeRestore
     /// <summary>
     /// Creates <paramref name="target"/>, a new engine database, holding <paramref name="source"/> as of <paramref name="at"/>:
     /// every transaction the backup read by then. Validates its restore window at entry, before downloading or importing.
+    /// Answers <see cref="Conflict"/> <c>backup_history_incomplete</c> unless the backup proves the history complete up to the time.
     /// </summary>
-    /// <exception cref="InvalidDataException">The backup is incomplete or fails authentication or its integrity check.</exception>
+    /// <exception cref="InvalidDataException">The backup fails authentication or its integrity check.</exception>
     Task<PointInTimeRestoreResult> RestoreAsync(TenantContext source, DateTimeOffset at, TenantContext target, CancellationToken cancellationToken, string destination = BackupDestinationNames.Platform);
 }
 
@@ -93,7 +100,8 @@ internal sealed class PointInTimeRestore(
             SegmentScan? segments = null;
             if (latest is null)
             {
-                var newest = await ScanSegmentsAsync(backup.Store, file, last, at, remaining, stopAfterTarget: false, deadline.Token).ConfigureAwait(false);
+                // Its verdict counts only when the chosen snapshot is the last one, which has no next snapshot.
+                var newest = await ScanSegmentsAsync(backup.Store, file, last, snapshots.Next, at, remaining, stopAfterTarget: false, deadline.Token).ConfigureAwait(false);
                 if (newest is null)
                 {
                     return PlanLimit();
@@ -123,10 +131,13 @@ internal sealed class PointInTimeRestore(
                 return new NotFound("continuous backup holds nothing of this database");
             }
 
-            segments ??= await ScanSegmentsAsync(backup.Store, file, chosen, at, remaining, stopAfterTarget: true, deadline.Token).ConfigureAwait(false);
-            return segments is null
-                ? PlanLimit()
-                : new PointInTimePlan(new(earliest, storedLatest), at, chosen.At, segments.Latest, segments.Count);
+            segments ??= await ScanSegmentsAsync(backup.Store, file, chosen, snapshots.Next, at, remaining, stopAfterTarget: true, deadline.Token).ConfigureAwait(false);
+            return segments switch
+            {
+                null => PlanLimit(),
+                { Proven: false } => HistoryIncomplete(),
+                _ => new PointInTimePlan(new(earliest, storedLatest), at, chosen.At, segments.Latest, segments.Count, "metadata"),
+            };
         }
         catch (OperationCanceledException) when (timeout.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
         {
@@ -229,7 +240,24 @@ internal sealed class PointInTimeRestore(
             return new NotFound("continuous backup holds nothing of this database");
         }
 
-        var (restored, _) = await backup.Reader.BuildAsync(file, BackupLayout.KeyScope(source), chosen, at, until: null, cancellationToken).ConfigureAwait(false);
+        // Object names alone refuse most incomplete histories before anything downloads; the replay checks the rest.
+        if (await ScanSegmentsAsync(backup.Store, file, chosen, snapshots.Next, at, int.MaxValue, stopAfterTarget: true, cancellationToken)
+            .ConfigureAwait(false) is not { Proven: true })
+        {
+            return HistoryIncomplete();
+        }
+
+        string restored;
+        try
+        {
+            (restored, _) = await backup.Reader.BuildAsync(file, BackupLayout.KeyScope(source), chosen, at, until: null, snapshots.Next, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (BackupHistoryIncompleteException)
+        {
+            return HistoryIncomplete();
+        }
+
         try
         {
             await engine.ImportDatabaseAsync(target, restored, cancellationToken).ConfigureAwait(false);
@@ -242,6 +270,15 @@ internal sealed class PointInTimeRestore(
     }
 
     private static Unavailable PlanLimit() => new("the point-in-time plan metadata scan exceeds 10000 objects", "pitr_plan_limit");
+
+    private static Conflict HistoryIncomplete() =>
+        new("continuous backup cannot prove this database's history complete up to pointInTime", "backup_history_incomplete");
+
+    /// <summary>
+    /// Whether an object read at <paramref name="readAt"/> covers <paramref name="at"/>: the same millisecond or earlier,
+    /// the precision of object names.
+    /// </summary>
+    internal static bool Covers(DateTimeOffset readAt, DateTimeOffset at) => at.ToUnixTimeMilliseconds() <= readAt.ToUnixTimeMilliseconds();
 
     private readonly union EarliestResult(DateTimeOffset, Unavailable);
 
@@ -262,6 +299,7 @@ internal sealed class PointInTimeRestore(
         SnapshotKey? first = null;
         SnapshotKey? last = null;
         SnapshotKey? chosen = null;
+        SnapshotKey? next = null;
         var scanned = 0;
         await foreach (var item in store.ListAsync(BackupLayout.Snapshots(file), null, cancellationToken).ConfigureAwait(false))
         {
@@ -280,18 +318,30 @@ internal sealed class PointInTimeRestore(
             last = snapshot;
             if (snapshot.At <= at)
             {
-                chosen = snapshot;
+                (chosen, next) = (snapshot, null);
+            }
+            else if (next is null && snapshot.Generation == chosen?.Generation)
+            {
+                next = snapshot;
             }
         }
 
-        return new(first, last, chosen, scanned);
+        return new(first, last, chosen, next, scanned);
     }
 
-    private static async Task<SegmentScan?> ScanSegmentsAsync(IObjectStore store, string file, SnapshotKey snapshot, DateTimeOffset at, int limit, bool stopAfterTarget, CancellationToken cancellationToken)
+    // The selection restore makes, from object names: segments up to the time, stopping at the first later one even when
+    // subsequent wall-clock timestamps regress. Proven unless the names already show the history incomplete up to the time:
+    // the first segment must start at the snapshot's position and each later one after the previous; then either the first
+    // later segment follows them, the last one (or the snapshot) was read at the time, or the generation's next snapshot
+    // is past them.
+    private static async Task<SegmentScan?> ScanSegmentsAsync(
+        IObjectStore store, string file, SnapshotKey snapshot, SnapshotKey? next, DateTimeOffset at, int limit, bool stopAfterTarget, CancellationToken cancellationToken)
     {
         DateTimeOffset? latest = null;
         DateTimeOffset? newest = null;
-        var pastTarget = false;
+        SegmentKey? last = null;
+        bool? bounded = null;
+        var ordered = true;
         var count = 0;
         var scanned = 0;
         await foreach (var item in store.ListAsync(BackupLayout.Segments(file, snapshot.Generation),
@@ -309,9 +359,15 @@ internal sealed class PointInTimeRestore(
             }
 
             newest = newest is null || segment.At > newest ? segment.At : newest;
+            if (bounded is not null)
+            {
+                continue;
+            }
+
+            var follows = last is null ? segment.Start == snapshot.Position : segment.Start > last.Start;
             if (segment.At > at)
             {
-                pastTarget = true;
+                bounded = follows;
                 if (stopAfterTarget)
                 {
                     break;
@@ -320,20 +376,19 @@ internal sealed class PointInTimeRestore(
                 continue;
             }
 
-            // Restore stops at the first later segment even when subsequent wall-clock timestamps regress.
-            if (pastTarget)
-            {
-                continue;
-            }
-
+            ordered &= follows;
             count++;
             latest = latest is null || segment.At > latest ? segment.At : latest;
+            last = segment;
         }
 
-        return new(latest, newest, count, scanned);
+        var proven = ordered && (bounded == true || Covers(last?.At ?? snapshot.At, at)
+            || next is not null && (last is null ? next.Position == snapshot.Position : next.Position > last.Start));
+        return new(latest, newest, count, scanned, proven);
     }
 
-    private sealed record SnapshotScan(SnapshotKey? First, SnapshotKey? Last, SnapshotKey? Chosen, int Scanned);
+    // Next: the first snapshot after Chosen of the same generation.
+    private sealed record SnapshotScan(SnapshotKey? First, SnapshotKey? Last, SnapshotKey? Chosen, SnapshotKey? Next, int Scanned);
 
-    private sealed record SegmentScan(DateTimeOffset? Latest, DateTimeOffset? Newest, int Count, int Scanned);
+    private sealed record SegmentScan(DateTimeOffset? Latest, DateTimeOffset? Newest, int Count, int Scanned, bool Proven);
 }

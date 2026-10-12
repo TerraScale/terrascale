@@ -22,11 +22,12 @@ public sealed class PlanPointInTimeEndpoint(IManagementService management, IPoin
         Post(ProjectApiRoute.Database + "/point-in-time/plan");
         Name("planPointInTime");
         Summary("Previews a point-in-time restore without changing the database");
-        Description("destination selects platform (default) or customer. Read-only advisory metadata: the restore window, requested time, selected snapshot time and applicable segment count/latest time. pointInTime is required between the window's earliest and latest times, inclusive; 404 when no stored data remains within the plan's retention window. No backup objects are downloaded or decrypted. Integrity and segment contiguity are checked during actual restore. Scans at most 10000 objects within 10 seconds; exceeding either bound returns 503." + " " + ProjectApiRoute.IdentityDescription);
+        Description("destination selects platform (default) or customer. Read-only advisory metadata: the restore window, requested time, selected snapshot time and applicable segment count/latest time. pointInTime is required between the window's earliest and latest times, inclusive; 404 when no stored data remains within the plan's retention window. No backup objects are downloaded or decrypted. From object names alone it checks the history a restore needs: the first segment starts at the snapshot, segments follow in order, and the history reaches pointInTime (a later segment or snapshot of the generation follows, or the last segment was read at that millisecond); otherwise 409 backup_history_incomplete, as restore answers. historyCheck is metadata: whether each segment begins where the previous one ends needs segment lengths, so integrity and that contiguity are checked only by an actual restore, which can still answer 409. Scans at most 10000 objects within 10 seconds; exceeding either bound returns 503." + " " + ProjectApiRoute.IdentityDescription);
         Tags("Backups");
         Produces<PointInTimePlan>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
+        Produces<ErrorBody>(StatusCodes.Status409Conflict);
         Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         Produces<ErrorBody>(StatusCodes.Status401Unauthorized);
         Produces<ErrorBody>(StatusCodes.Status403Forbidden);
@@ -68,6 +69,7 @@ public sealed class PlanPointInTimeEndpoint(IManagementService management, IPoin
         {
             PointInTimePlan plan => TypedResults.Ok(plan),
             NotFound error => ErrorResponse.From(error),
+            Conflict error => ErrorResponse.From(error),
             Validation error => ErrorResponse.From(error),
             Unavailable error => ErrorResponse.From(error),
         };
