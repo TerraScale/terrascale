@@ -8,6 +8,7 @@
 #   morning-credentials.sh install e2e     the Fly e2e suite's key -> GitHub Actions secret TERRABASE_E2E_FLY_API_KEY
 #   morning-credentials.sh install bench   the Fly 1M benchmark's key -> Fly secret TS_BENCH_API_KEY on app ts-bench
 #   morning-credentials.sh revoke e2e|bench
+#   morning-credentials.sh cleanup e2e     revoke, then delete the e2e tenant (its key never expires: revoke ends it)
 #   morning-credentials.sh cleanup bench   drop the benchmark's documents (bench-* collections)
 #
 # e2e:   scripts/e2e/install-ci-credential.sh (owned here).
@@ -22,7 +23,7 @@ readonly bench="$root/benchmark/scripts/repl-fly-tenant.sh"
 readonly REPO=TerraScale/terrascale
 
 die() { echo "morning-credentials: $*" >&2; exit 1; }
-usage() { die "usage: morning-credentials.sh status | dry-run | install e2e|bench | revoke e2e|bench | cleanup bench"; }
+usage() { die "usage: morning-credentials.sh status | dry-run | install e2e|bench | revoke e2e|bench | cleanup e2e|bench"; }
 
 bench_script() {
   [[ -f $bench ]] || die "the benchmark credential script is not on this branch yet (benchmark/scripts/repl-fly-tenant.sh, terrascale#79)"
@@ -67,6 +68,7 @@ case "${1:-} ${2:-}" in
   "install bench") bash "$(bench_script)" install ;;
   "revoke e2e") bash "$e2e" revoke ;;
   "revoke bench") bash "$(bench_script)" revoke ;;
+  "cleanup e2e") bash "$e2e" cleanup ;;
   "cleanup bench") bash "$(bench_script)" cleanup ;;
   *) usage ;;
 esac

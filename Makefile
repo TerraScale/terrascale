@@ -166,7 +166,7 @@ terrabase-test-slow: terrabase-build
 # partitions, restarts, a region down, backlog and clock skew. Local by default (in-process nodes); tests/TerraBase.E2E/Gaps.cs
 # records which scenarios wait on which replication slice. With TERRABASE_E2E_FLY_URL, TERRABASE_E2E_FLY_API_KEY,
 # TERRABASE_E2E_FLY_PROJECT and TERRABASE_E2E_FLY_DATABASE set, the same scenarios run against Fly; the key is a TerraBase
-# API key of the e2e project (documents:read/write, 90-day expiry), installed by a human: scripts/handoff/morning-credentials.sh install e2e.
+# API key of the e2e project (documents:read/write, no expiry: revoked explicitly), installed by a human: scripts/handoff/morning-credentials.sh install e2e.
 # Not part of check: CI's e2e job runs it after the deploys.
 terrabase-e2e: terrabase-build
 	env -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_RESULTS_URL dotnet run --project tests/TerraBase.E2E --configuration $(CONFIGURATION) --no-build $(TEST_ARGS)

@@ -7,12 +7,14 @@
 #   dry-run   check prerequisites and print what install would do; changes nothing
 #   install   ensure the e2e org/project/database, mint the key, install it (re-running rotates: the new key replaces the
 #             secret, older ci-e2e keys are revoked)
-#   status    what exists: secret names in GitHub, the e2e tenant, its keys (ids and expiry only)
-#   revoke    revoke every ci-e2e key of the e2e project and delete the secret; the tenant stays
+#   status    what exists: the e2e tenant and its keys (ids only)
+#   revoke    revoke every ci-e2e key of the e2e project and delete the three TERRABASE_E2E_FLY_* secrets; the tenant stays
+#   cleanup   revoke, then delete the e2e database, project and organization
 #
 # Tenant: organization "TerraScale e2e" (enterprise plan; owner = a fixed synthetic user id, so reruns find it), project
 # "e2e", database "e2e" (home gru, replicas sjc and fra). Never the benchmark tenant.
-# Key: a TerraBase API key, documents:read + documents:write, narrowed to the e2e project, expiring after 90 days.
+# Key: a TerraBase API key, documents:read + documents:write, narrowed to the e2e project. It never expires (user decision
+# 2026-10-12): it stays valid until `revoke` or `cleanup`, so run one of them when the suite no longer needs it.
 set -euo pipefail
 shopt -s inherit_errexit
 set +x
@@ -26,7 +28,6 @@ readonly ORGANIZATION="TerraScale e2e"
 readonly PROJECT=e2e
 readonly DATABASE=e2e
 readonly KEY_NAME=ci-e2e
-readonly KEY_DAYS=90
 readonly SECRET=TERRABASE_E2E_FLY_API_KEY
 
 die() { echo "e2e-credential: $*" >&2; exit 1; }
@@ -51,14 +52,6 @@ open_proxy() {
   die "gru's TerraBase internal listener did not answer through flyctl proxy"
 }
 
-# The deployed TerraBase must know API-key expiry (terrascale#81). A past expiry on a non-existent organization creates
-# nothing: a build with expiry refuses the expiry, an older one refuses the organization.
-check_expiry() {
-  curl -s --http2-prior-knowledge -H 'content-type: application/json' \
-    -d '{"name":"probe","scopes":["documents:read"],"organizationId":"00000000000000000000000000","expiresAt":"2000-01-01T00:00:00Z"}' \
-    "$BASE/admin/api-keys" | grep -q expiresAt || die "the deployed TerraBase does not support API-key expiry yet (terrascale#81)"
-}
-
 management() { curl -sS --fail --http2-prior-knowledge -H "X-TerraBase-User-Id: $OWNER" -H 'content-type: application/json' "$@"; }
 
 find_ids() {
@@ -73,7 +66,7 @@ keys_path() { echo "$BASE/v1/management/organizations/$organization/projects/$pr
 dry_run() {
   prerequisites
   echo "tenant:   organization 'TerraScale e2e' (owner $OWNER, enterprise) / project 'e2e' / database 'e2e' (gru; sjc, fra)"
-  echo "key:      TerraBase API key '$KEY_NAME': documents:read documents:write, project e2e only, expires in $KEY_DAYS days"
+  echo "key:      TerraBase API key '$KEY_NAME': documents:read documents:write, project e2e only, never expires (revoke e2e / cleanup e2e end it)"
   echo "secret:   GitHub Actions secret $SECRET on $REPO (piped from TerraBase's response; never shown)"
   echo "ids:      GitHub Actions secrets TERRABASE_E2E_FLY_PROJECT, TERRABASE_E2E_FLY_DATABASE (not secret)"
   echo "rotation: install again; older '$KEY_NAME' keys are revoked after the new one is set"
@@ -83,8 +76,7 @@ dry_run() {
 install() {
   prerequisites
   open_proxy
-  check_expiry
-  local m="$BASE/v1/management/organizations" previous expires
+  local m="$BASE/v1/management/organizations" previous
   find_ids
   if [[ -z $organization ]]; then
     organization=$(management -d "$(jq -cn --arg n "$ORGANIZATION" '{name: $n}')" "$m" | jq -er .id)
@@ -97,11 +89,10 @@ install() {
     management -o /dev/null -d "$(jq -cn --arg n "$DATABASE" '{name: $n, replicaRegions: ["sjc", "fra"]}')" "$m/$organization/projects/$project/databases"
   fi
   previous=$(management "$(keys_path)" | jq -r --arg n "$KEY_NAME" '.items[] | select(.name == $n) | .id')
-  expires=$(date -u -d "+$KEY_DAYS days" +%Y-%m-%dT%H:%M:%SZ)
   # The key goes from TerraBase's response into GitHub through the pipe only.
   curl -sS --fail --http2-prior-knowledge -H 'content-type: application/json' \
-    -d "$(jq -cn --arg n "$KEY_NAME" --arg o "$organization" --arg p "$project" --arg e "$expires" \
-      '{name: $n, scopes: ["documents:read", "documents:write"], organizationId: $o, projectId: $p, expiresAt: $e}')" \
+    -d "$(jq -cn --arg n "$KEY_NAME" --arg o "$organization" --arg p "$project" \
+      '{name: $n, scopes: ["documents:read", "documents:write"], organizationId: $o, projectId: $p}')" \
     "$BASE/admin/api-keys" | jq -jer .secret | gh secret set "$SECRET" --repo "$REPO"
   gh secret set TERRABASE_E2E_FLY_PROJECT --repo "$REPO" --body "$project"
   gh secret set TERRABASE_E2E_FLY_DATABASE --repo "$REPO" --body "$DATABASE"
@@ -109,7 +100,7 @@ install() {
   for id in $previous; do
     management -X DELETE -o /dev/null "$(keys_path)/$id" || echo "revoke the previous key $id by hand" >&2
   done
-  echo "installed: $SECRET (key '$KEY_NAME', never shown, expires $expires); project $project, database $DATABASE"
+  echo "installed: $SECRET (key '$KEY_NAME', never shown, never expires: end it with revoke e2e); project $project, database $DATABASE"
 }
 
 status() {
@@ -118,7 +109,7 @@ status() {
   find_ids
   [[ -n $organization && -n $project ]] || { echo "tenant:   not created"; return 0; }
   echo "tenant:   organization $organization, project $project, database $DATABASE, owner $OWNER"
-  management "$(keys_path)" | jq -r --arg n "$KEY_NAME" '[.items[] | select(.name == $n)] | if length == 0 then "keys:     none" else (.[] | "key:      \(.id) created \(.createdAt)") end'
+  management "$(keys_path)" | jq -r --arg n "$KEY_NAME" '[.items[] | select(.name == $n)] | if length == 0 then "keys:     none" else (.[] | "key:      \(.id) created \(.createdAt), expires \(.expiresAt // "never")") end'
 }
 
 revoke() {
@@ -132,8 +123,25 @@ revoke() {
       echo "revoked key $id"
     done
   fi
-  gh secret delete "$SECRET" --repo "$REPO" 2> /dev/null || true
-  echo "revoked: $SECRET removed; the e2e job fails until a new key is installed (the tenant stays)"
+  local name
+  for name in "$SECRET" TERRABASE_E2E_FLY_PROJECT TERRABASE_E2E_FLY_DATABASE; do
+    gh secret delete "$name" --repo "$REPO" 2> /dev/null || true
+  done
+  echo "revoked: $SECRET (+ _PROJECT, _DATABASE) removed; the e2e job fails until a new key is installed (the tenant stays)"
+}
+
+cleanup() {
+  revoke
+  [[ -n $organization ]] || { echo "cleanup: no e2e tenant"; return 0; }
+  local m="$BASE/v1/management/organizations/$organization" id
+  if [[ -n $project ]]; then
+    for id in $(management "$m/projects/$project/databases" | jq -r '.items[].id'); do
+      management -X DELETE -o /dev/null "$m/projects/$project/databases/$id"
+    done
+    management -X DELETE -o /dev/null "$m/projects/$project"
+  fi
+  management -X DELETE -o /dev/null "$m"
+  echo "cleanup: e2e database, project and organization deleted"
 }
 
 case "${1:-}" in
@@ -141,5 +149,6 @@ case "${1:-}" in
   install) install ;;
   status) status ;;
   revoke) revoke ;;
-  *) die "usage: install-ci-credential.sh dry-run|install|status|revoke" ;;
+  cleanup) cleanup ;;
+  *) die "usage: install-ci-credential.sh dry-run|install|status|revoke|cleanup" ;;
 esac
