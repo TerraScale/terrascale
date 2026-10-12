@@ -1,9 +1,6 @@
 node_modules/
 examples/terrabase-dotnet/bin/
 examples/terrabase-dotnet/obj/
-scripts/qualification-dotnet/bin/
-scripts/qualification-dotnet/obj/
-/qualification-evidence/
 docs/.vitepress/cache/
 docs/.vitepress/.temp/
 docs/.vitepress/dist/
