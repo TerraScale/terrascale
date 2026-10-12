@@ -687,6 +687,7 @@
         "type": "Project",
         "dependencies": {
           "Microsoft.AspNetCore.OpenApi": "[11.0.0-rc.1.26425.128, )",
+          "Microsoft.IdentityModel.Protocols.OpenIdConnect": "[8.23.0, )",
           "OpenIddict.Core": "[7.7.1, )",
           "OpenIddict.Server.AspNetCore": "[7.7.1, )",
           "OpenTelemetry.Exporter.OpenTelemetryProtocol": "[1.19.1, )",
