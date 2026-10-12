@@ -1,3 +1,7 @@
-using TerraScale.Dashboard;
+using TerraScale.Dashboard.Features.Billing;
+using TerraScale.Dashboard.Platform.Persistence;
 
-await DashboardApplication.Build(args).RunAsync();
+if (args.FirstOrDefault() == "audit-stripe")
+    return await new StripeAuditCommand(new DashboardIdentity()).RunAsync(args[1..]);
+
+return await InternalBillingCommands.RunAsync(args);

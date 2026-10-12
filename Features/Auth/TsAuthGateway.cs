@@ -19,8 +19,8 @@ public interface IAuthGateway
 }
 
 // Headless grants are the owning ts-auth contract; ts-dotnet currently covers
-// OIDC/userinfo/introspection/revocation but has no headless-grant methods yet.
-public sealed class TsAuthGateway(IDashboardIdentity identity, IHttpClientFactory http, TimeProvider time) : IAuthGateway
+// OIDC/userinfo/revocation but has no headless-grant methods yet.
+public sealed partial class TsAuthGateway(IDashboardIdentity identity, IHttpClientFactory http, TimeProvider time) : IAuthGateway, IAuthEnrollmentGateway, IAuthOidcGateway, IAuthRefreshGateway, IAuthLogoutGateway
 {
     public Task<SessionRecord> PasswordAsync(string email, string password, string ip, CancellationToken cancellationToken) =>
         GrantAsync("urn:terrascale:params:oauth:grant-type:password", email, "password", password, ip, cancellationToken);
@@ -39,11 +39,22 @@ public sealed class TsAuthGateway(IDashboardIdentity identity, IHttpClientFactor
 
     public async Task<bool> IsActiveAsync(SessionRecord session, CancellationToken cancellationToken)
     {
+        if (session.ExpiresAt <= time.GetUtcNow()) return false;
         var credentials = await identity.ReadAsync(cancellationToken);
         var client = Client(credentials, await OriginAsync(cancellationToken));
-        var token = await client.Oidc.IntrospectTokenAsync(credentials.AuthClientId, credentials.AuthClientSecret, session.AccessToken, cancellationToken);
-        return token.Active && token.Subject == session.UserId && token.ClientId == credentials.AuthClientId &&
-            token.ExpiresAt > time.GetUtcNow().ToUnixTimeSeconds();
+        try
+        {
+            // The owning issuer's userinfo validates signature, access-token
+            // type, revocation, the current user epoch and MFA state. ts-auth
+            // does not serve an introspection endpoint.
+            var user = await client.Oidc.GetUserInfoAsync(session.AccessToken, cancellationToken);
+            return user.Subject == session.UserId && user.EmailVerified == true &&
+                user.Email?.Trim().ToLowerInvariant() == session.Email.Trim().ToLowerInvariant();
+        }
+        catch (TerraScaleAuthException error) when (error.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+        {
+            return false;
+        }
     }
 
     public async Task RevokeAsync(SessionRecord session, CancellationToken cancellationToken)
@@ -53,35 +64,31 @@ public sealed class TsAuthGateway(IDashboardIdentity identity, IHttpClientFactor
             credentials.AuthClientId, credentials.AuthClientSecret, session.RefreshToken ?? session.AccessToken, cancellationToken);
     }
 
-    private async Task<SessionRecord> GrantAsync(string grant, string email, string secretName, string secret, string ip, CancellationToken cancellationToken)
+    private async Task<SessionRecord> GrantAsync(string grant, string email, string secretName, string secret, string ip, CancellationToken cancellationToken, string? pendingToken = null)
     {
         if (string.IsNullOrWhiteSpace(ip)) throw new ArgumentException("Client address is required.", nameof(ip));
         var credentials = await identity.ReadAsync(cancellationToken);
         var origin = await OriginAsync(cancellationToken);
         using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(origin, $"/{Uri.EscapeDataString(credentials.AuthInstanceSlug)}/oauth/token"));
         Authenticate(request, credentials);
-        request.Content = new FormUrlEncodedContent(new Dictionary<string, string>
+        var fields = new Dictionary<string, string>
         {
             ["grant_type"] = grant,
             ["email"] = email,
             [secretName] = secret,
             ["ip_address"] = ip,
             ["scope"] = "openid email profile offline_access"
-        });
+        };
+        if (pendingToken is not null) fields["pending_token"] = pendingToken;
+        request.Content = new FormUrlEncodedContent(fields);
         using var response = await http.CreateClient("platform").SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-        if ((int)response.StatusCode is 400 or 401) throw new SignInRejectedException();
+        if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests) throw RateLimited(response);
+        if (response.StatusCode == System.Net.HttpStatusCode.BadRequest) throw new SignInRejectedException();
         response.EnsureSuccessStatusCode();
         using var document = await PlatformJson.ReadAsync(response.Content, cancellationToken);
         var tokens = document.RootElement.Deserialize<TerraScaleAuthTokenResponse>()
             ?? throw new HttpRequestException("ts-auth returned no tokens.");
-        var client = Client(credentials, origin);
-        var user = await client.Oidc.GetUserInfoAsync(tokens.AccessToken, cancellationToken);
-        if (string.IsNullOrWhiteSpace(user.Subject) || user.EmailVerified != true || string.IsNullOrWhiteSpace(user.Email) ||
-            tokens.ExpiresIn is <= 0 or > 86400 || !string.Equals(tokens.TokenType, "Bearer", StringComparison.OrdinalIgnoreCase)) throw new SignInRejectedException();
-        var session = new SessionRecord(user.Subject, user.Name ?? user.Email, user.Email,
-            tokens.AccessToken, tokens.RefreshToken, time.GetUtcNow().AddSeconds(tokens.ExpiresIn));
-        if (!await IsActiveAsync(session, cancellationToken)) throw new SignInRejectedException();
-        return session;
+        return await SessionAsync(tokens, credentials, origin, null, cancellationToken);
     }
 
     private async Task HeadlessAsync(string action, object body, string ip, CancellationToken cancellationToken)
@@ -95,7 +102,13 @@ public sealed class TsAuthGateway(IDashboardIdentity identity, IHttpClientFactor
         Authenticate(request, credentials);
         request.Content = JsonContent.Create(values);
         using var response = await http.CreateClient("platform").SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-        if ((int)response.StatusCode is 400 or 401) throw new SignInRejectedException();
+        if (response.StatusCode == System.Net.HttpStatusCode.TooManyRequests) throw RateLimited(response);
+        if (response.StatusCode == System.Net.HttpStatusCode.BadRequest)
+        {
+            using var error = await PlatformJson.ReadAsync(response.Content, cancellationToken);
+            if (action == "password-reset/complete") ThrowPasswordPolicy(error.RootElement);
+            throw new SignInRejectedException();
+        }
         response.EnsureSuccessStatusCode();
     }
 

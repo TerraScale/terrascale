@@ -16,6 +16,8 @@
     <script type="module" src="@Assets.Url("js/datastar.js")" integrity="@AssetUrls.DatastarIntegrity" crossorigin="anonymous" nonce="@Model.Nonce"></script>
 </head>
 <body class="@Model.BodyClass" data-signals="{_navPending: false}" data-class:ts-nav-pending="$_navPending"
+      data-on:click__window="$_navPending = $_navPending || !!(!evt.defaultPrevented &amp;&amp; evt.button === 0 &amp;&amp; !evt.metaKey &amp;&amp; !evt.ctrlKey &amp;&amp; !evt.shiftKey &amp;&amp; !evt.altKey &amp;&amp; evt.target.closest &amp;&amp; evt.target.closest('a[href]:not([target]):not([download])') &amp;&amp; evt.target.closest('a[href]').origin === location.origin &amp;&amp; (evt.target.closest('a[href]').pathname !== location.pathname || evt.target.closest('a[href]').search !== location.search))"
+      data-on:submit__window="evt.target.hasAttribute('data-submit-once') &amp;&amp; $_navPending ? evt.preventDefault() : ($_navPending = $_navPending || (!evt.defaultPrevented &amp;&amp; evt.target.method !== 'dialog' &amp;&amp; !evt.target.target))"
       data-on:pageshow__window="$_navPending = false" data-on:keydown__window="evt.key === 'Escape' &amp;&amp; ($_navPending = false)">
     <a class="ts-skip-link" href="#ts-auth-main">Skip to main content</a>
     <div id="ts-auth-main">@await RenderBodyAsync()</div>

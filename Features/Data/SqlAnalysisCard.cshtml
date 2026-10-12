@@ -1,0 +1,16 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.Data.DataPage>
+@using TerraScale.Dashboard.Features.Data
+@{ var analysis = Model.Analysis; }
+<section class="ts-card" id="sql-analysis" aria-labelledby="sql-analysis-title">
+<header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="sql-analysis-title">SQL check</h2></div></header>
+<div class="ts-card-body">
+<ul class="ts-data-checks">
+<li>@Icons.Render("CircleCheck",16)<span>Read-only statement accepted. @analysis.ParameterSlots parameter slot(s).</span></li>
+@if(analysis.HasLimit){<li>@Icons.Render("CircleCheck",16)<span>Bounded with LIMIT.</span></li>}else{<li class="ts-data-check-warn">@Icons.Render("CircleAlert",16)<span>Add LIMIT to bound results.</span></li>}
+@if(Model.SqlChecked){<li>@Icons.Render("CircleCheck",16)<span>Server check passed.</span></li>}
+@if(!string.IsNullOrEmpty(analysis.Collection)){<li>@Icons.Render("Table",16)<span>Statement collection: @analysis.Collection</span></li>}
+</ul>
+<div class="ts-stack-sm"><p class="ts-meta">EXPLAIN statement preview</p><pre class="ts-code">@analysis.Explain</pre></div>
+<div class="ts-card-section"><h3 class="ts-strong">Advisory index suggestions</h3>
+@if(analysis.Suggestions is not {Count:>0}){<p class="ts-meta">No index hints found in WHERE or ORDER BY.</p>}else{<ul class="ts-list">@foreach(var suggestion in analysis.Suggestions){<li class="ts-list-item"><strong class="ts-mono">@suggestion.Field</strong><span class="ts-meta">@suggestion.Reason</span></li>}</ul>}
+</div></div></section>

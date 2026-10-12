@@ -1,15 +1,10 @@
 import assert from 'node:assert/strict';
-import { readFile, readdir, writeFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { resolve } from 'node:path';
+import { readFile, writeFile } from 'node:fs/promises';
 import { chromium } from 'playwright-core';
 
 const base = process.argv[2];
 assert(base, 'Pass the running dotnet-watch host URL');
-const cache = process.env.PLAYWRIGHT_BROWSERS_PATH ?? resolve(homedir(), '.cache/ms-playwright');
-const revisions = (await readdir(cache)).filter(name => name.startsWith('chromium_headless_shell-'));
-revisions.sort((a, b) => Number(a.split('-').at(-1)) - Number(b.split('-').at(-1)));
-const browser = await chromium.launch({ executablePath: resolve(cache, revisions.at(-1), 'chrome-headless-shell-linux64/chrome-headless-shell') });
+const browser = await chromium.launch({ headless: true });
 const source = new URL('../../Features/Auth/AuthPage.cs', import.meta.url);
 const css = new URL('../../web/assets/Features/Auth/auth.css', import.meta.url);
 const originalSource = await readFile(source, 'utf8');

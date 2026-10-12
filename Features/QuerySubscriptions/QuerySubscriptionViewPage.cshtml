@@ -1,0 +1,22 @@
+@inherits RazorSlice<TerraScale.Dashboard.Features.QuerySubscriptions.QuerySubscriptionPage>
+@implements IUsesLayout<TerraScale.Dashboard.UI.Slices.ShellDocument, ShellModel>
+<main class="ts-page" data-project-id="@Model.Shell.Context.Project?.Id" data-organization-id="@Model.Shell.Context.Organization?.Id">
+    <h1 class="ts-sr-only">Query subscriptions</h1><div class="ts-page-actions"></div>
+    <div class="ts-alert ts-alert-info" role="status">Query subscriptions are not available yet: TerraBase does not deliver them.</div>
+    <div class="ts-split"><section class="ts-card" id="saved-configurations"><div class="ts-card-header"><h2 class="ts-card-title">Saved configurations</h2><p class="ts-meta">Shared views saved in this project.</p></div>
+        @if (Model.Configurations.Subscriptions.Count == 0)
+        {
+            <div class="ts-empty"><p class="ts-empty-title">No shared-result configurations yet.</p></div>
+        }
+        else
+        {
+            <div class="ts-table-wrap"><table class="ts-table"><thead><tr><th>View</th><th>Database</th><th>SQL</th><th>Preference</th><th>Status</th></tr></thead><tbody>
+                @foreach (var config in Model.Configurations.Subscriptions)
+                {
+                    <tr><td class="ts-strong">@config.Name</td><td>@config.DatabaseName</td><td><code>@config.Query</code></td><td>@(config.Transport == "websocket" ? "WebSocket" : "HTTP + CDN")</td><td><span class="ts-badge ts-badge-neutral">@config.Status</span></td></tr>
+                }
+            </tbody></table></div>
+        }
+    </section></div>
+</main>
+@functions { public ShellModel LayoutModel => Model.Shell; }

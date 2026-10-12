@@ -23,6 +23,8 @@ with zipfile.ZipFile(package) as archive:
     assert repository.get("url") == metadata["repository"]
     assert repository.get("commit") == metadata["sourceRevision"]
     assert f'lib/{metadata["targetFramework"]}/TerraScale.DotNet.dll' in archive.namelist()
+    if "assemblySha256" in metadata:
+        assert hashlib.sha256(archive.read(f'lib/{metadata["targetFramework"]}/TerraScale.DotNet.dll')).hexdigest() == metadata["assemblySha256"], "SDK assembly digest mismatch"
 project = ET.parse(root / "TerraScale.Dashboard.csproj")
 pins = project.findall('.//PackageReference[@Include="TerraScale.DotNet"]')
 assert len(pins) == 1 and pins[0].get("Version") == metadata["version"]

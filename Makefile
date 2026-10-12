@@ -2,26 +2,46 @@ GO ?= go
 NPM ?= npm
 PORT ?= 5481
 GOFLAGS ?= -mod=vendor
-GO_TEST_FLAGS ?= -race -count=1
 VERSION ?= $(shell git rev-parse HEAD 2>/dev/null || echo dev)
 export GOFLAGS
 
-.PHONY: build check-css check-generated check-modules check-e2e-shards css dev generate js serve lint perf test-fast test-slow test-unit test-browser test-stripe-audit
+.PHONY: build check-css check-generated check-modules check-e2e-shards css dev generate js serve lint perf test-fast test-slow test-browser
 
 # Migration checks are explicit until the full Go feature surface is ported.
-.PHONY: dotnet-build dotnet-lint dotnet-test-fast dotnet-dev
+.PHONY: dotnet-build dotnet-lint dotnet-test-fast dotnet-test-e2e dotnet-dev dotnet-demo dotnet-parity-reference dotnet-test-browser dotnet-parity dotnet-test-hot-reload dotnet-test-live-readiness
 dotnet-build:
 	dotnet build TerraScale.Dashboard.slnx --configuration Release -p:RestoreLockedMode=true
 
 dotnet-lint:
 	python3 scripts/dotnet/verify-sdk.py
+	python3 scripts/dotnet/verify-e2e.py
 	dotnet format TerraScale.Dashboard.slnx --verify-no-changes --no-restore
+	dotnet format tests/dotnet/e2e/TerraScale.Dashboard.E2E.csproj --verify-no-changes --no-restore
 
-dotnet-test-fast:
-	dotnet run --configuration Release --file tests/dotnet/AuthTests.cs -- "$(CURDIR)"
+dotnet-test-fast: dotnet-test-e2e
+
+dotnet-test-e2e:
+	dotnet run --configuration Release --project tests/dotnet/e2e/TerraScale.Dashboard.E2E.csproj -- --treenode-filter '/*/*/*/*[Category!=ReferenceCapture]' --report-trx --results-directory "$(CURDIR)/test-results/tunit"
+
+dotnet-test-browser: dotnet-test-e2e
+
+dotnet-parity:
+	dotnet run --configuration Release --project tests/dotnet/e2e/TerraScale.Dashboard.E2E.csproj -- --treenode-filter '/*/*/VisualParityJourneyTests/*' --report-trx --report-trx-filename visual-parity.trx --results-directory "$(CURDIR)/test-results/tunit"
+
+dotnet-test-hot-reload:
+	dotnet run --configuration Release --project tests/dotnet/e2e/TerraScale.Dashboard.E2E.csproj -- --treenode-filter '/*/*/HotReloadJourneyTests/*' --report-trx --report-trx-filename hot-reload.trx --results-directory "$(CURDIR)/test-results/tunit"
+
+dotnet-test-live-readiness:
+	dotnet run --configuration Release --project tests/dotnet/e2e/TerraScale.Dashboard.E2E.csproj -- --treenode-filter '/*/*/LiveProductionReadinessJourneyTests/*' --report-trx --report-trx-filename live-production-readiness.trx --results-directory "$(CURDIR)/test-results/tunit"
 
 dotnet-dev:
 	scripts/dotnet/dev.sh
+
+dotnet-demo:
+	scripts/dotnet/demo.sh
+
+dotnet-parity-reference: js
+	dotnet run --configuration Release --project tests/dotnet/e2e/TerraScale.Dashboard.E2E.csproj -- --treenode-filter '/*/*/GoReferenceCaptureJourneyTests/*' --report-trx --report-trx-filename go-reference-capture.trx --results-directory "$(CURDIR)/test-results/tunit"
 
 TEMPL_GENERATE_ARGS = -path internal -include-version=false -include-timestamp=false
 
@@ -73,39 +93,14 @@ lint: js check-generated
 	@test -z "$$(find cmd internal tests web -type f -name '*.go' -print0 | xargs -0 gofmt -l)"
 	$(GO) vet ./...
 
-# Package unit tests plus the browser suites, which drive Chromium through
-# playwright-go against an in-process dashboard, or DASHBOARD_E2E_BASE_URL
-# when set. Browser tests initialize Monaco and exercise dialogs; running
-# several at once can starve Chromium and time out otherwise-stable actions.
-# Serial browser runs take about 6–7 minutes, within CI's 30-minute budget;
-# keep internal unit tests parallel and fail fast if they fail. -p 1 prevents
-# future browser test packages from running alongside each other as well.
-test-stripe-audit:
-	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts -p 'test_stripe_audit.py'
+# Every dashboard test target runs application E2E journeys under TUnit.
+# Original Go browser fixtures remain available only for migration reference
+# capture; the application is not cut over to C# until qualification passes.
+test-fast test-slow test-browser: dotnet-test-e2e
 
-test-fast: js test-stripe-audit
-	$(GO) test $(GO_TEST_FLAGS) -short -parallel 8 ./cmd/... ./internal/...
-	$(GO) test $(GO_TEST_FLAGS) -short -p 1 -parallel 1 ./tests/...
+# Compatibility discovery target: the C# suite has one TUnit inventory.
+check-e2e-shards:
+	dotnet run --configuration Release --project tests/dotnet/e2e/TerraScale.Dashboard.E2E.csproj -- --list-tests --treenode-filter '/*/*/*/*[Category!=ReferenceCapture]'
 
-test-slow: test-unit test-browser
-
-# test-slow in parts, so CI runs the unit tests and the browser shards as
-# parallel jobs. E2E_SHARD=INDEX/TOTAL runs one round-robin share of the
-# browser tests in its own process, dashboard and Chromium (see
-# scripts/e2e-shard.sh); the default 1/1 runs them all.
-E2E_SHARD ?= 1/1
-E2E_SHARDS ?= $(shell scripts/e2e-shard-count.sh)
-
-check-e2e-shards: js
-	@GO="$(GO)" scripts/check-e2e-shards.sh "$(E2E_SHARDS)" $(GO_TEST_FLAGS)
-
-test-unit: js test-stripe-audit
-	$(GO) test $(GO_TEST_FLAGS) -parallel 8 ./cmd/... ./internal/...
-
-test-browser: js
-	@run=$$(GO="$(GO)" scripts/e2e-shard.sh "$(E2E_SHARD)" $(GO_TEST_FLAGS)) && \
-		printf 'test-browser %s: -run %s\n' "$(E2E_SHARD)" "$$run" >&2 && \
-		$(GO) test $(GO_TEST_FLAGS) -p 1 -parallel 1 -run "$$run" ./tests/...
-
-perf: js
-	DASHBOARD_E2E_PERF=1 $(GO) test -count=1 -run TestPerformance -v ./tests/e2e
+perf:
+	dotnet run --configuration Release --project tests/dotnet/e2e/TerraScale.Dashboard.E2E.csproj -- --treenode-filter '/*/*/PerformanceJourneyTests/*' --report-trx --report-trx-filename performance.trx --results-directory "$(CURDIR)/test-results/tunit"

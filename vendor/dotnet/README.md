@@ -17,11 +17,16 @@ The pack command, run from the extracted archive, was:
 ```sh
 dotnet pack src/TerraScale.DotNet/TerraScale.DotNet.csproj --configuration Release \
   -p:PackageOutputPath=/absolute/path/to/dashboard/vendor/dotnet \
-  -p:Version=0.1.0-dashboard.gdf852e3b4d3a4df324452d46792b20566eea5136 \
-  -p:RepositoryCommit=df852e3b4d3a4df324452d46792b20566eea5136 \
+  -p:TargetFrameworks=net10.0 \
+  -p:Version=0.1.0-dashboard.g130925898daf0207134d9582b7b672a5a1c3233b \
+  -p:RepositoryCommit=130925898daf0207134d9582b7b672a5a1c3233b \
   -p:RepositoryUrl=https://github.com/TerraScale/ts-dotnet
 ```
 
 Prefix local pack/build/test commands with `nice -n 19`.
 Run `python3 scripts/dotnet/verify-sdk.py` to verify the package hash, nuspec
 identity, repository metadata, assembly, and application package reference.
+
+The candidate fixes point-document requests to the current producer's
+`/documents/by-key?id=...` contract. The deployed producer still admits an older
+SDK revision; this pin is not a producer-admitted or live-qualified release.

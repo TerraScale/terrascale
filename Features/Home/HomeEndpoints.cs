@@ -1,0 +1,34 @@
+using TerraScale.Dashboard.Features.Accounts;
+using TerraScale.Dashboard.Features.Auth;
+using TerraScale.Dashboard.UI;
+
+namespace TerraScale.Dashboard.Features.Home;
+
+public sealed record HomePage(ShellModel Shell, string Tab, string Range, HomeMeasurement Measurement)
+{
+    public int Databases => Shell.Context.Project?.Databases.Count ?? 0;
+    public int Members => Shell.Context.Organization?.Members.Values.Count(item => item.Status == "active") ?? 0;
+    public int TotalNotifications => Shell.Context.Account.Notifications.Count(item => item.VisibleTo(Shell.Context));
+    public static string NormalizeRange(string? value) => value is "1h" or "24h" or "7d" or "30d" ? value : "24h";
+}
+
+public static class HomeEndpoints
+{
+    public static IServiceCollection AddHomeFeatures(this IServiceCollection services) => services.AddSingleton<IHomeMeasurements, TerraBaseHomeMeasurements>();
+    public static IEndpointRouteBuilder MapHome(this IEndpointRouteBuilder endpoints)
+    {
+        endpoints.MapGet("/", async (HttpContext http, DashboardSessions sessions, AccountService accounts, IHomeMeasurements measurements) =>
+        {
+            var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
+            if (context is null) return AccountEndpoints.LoginRedirect(http);
+            if (!context.Account.OnboardingCompleted) return Results.Redirect("/onboarding");
+            if (context.Organization is null) return Results.Problem("Selected organization is unavailable.", statusCode: 403);
+            if (context.Project is null) return Results.Redirect(context.Organization.Kind == "business" && !context.Organization.CanProvision(context.UserId) ? "/organization?newOrganization=payment" : "/organization?tab=projects&newProject=1");
+            var range = HomePage.NormalizeRange(http.Request.Query["range"]);
+            var tab = http.Request.Query["tab"] == "connect" ? "connect" : "overview";
+            var data = tab == "overview" ? await measurements.ReadAsync(context, range, http.RequestAborted) : new HomeMeasurement();
+            return HomeView.Create(new(ShellModel.For(http, context, "Overview"), tab, range, data));
+        });
+        return endpoints;
+    }
+}

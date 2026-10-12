@@ -1,0 +1,364 @@
+using System.Collections.Concurrent;
+using System.Globalization;
+using System.Net;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Hosting.Server;
+using Microsoft.AspNetCore.Hosting.Server.Features;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.WebUtilities;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Logging;
+using TerraScale.Dashboard.Features.Auth;
+using TerraScale.Dashboard.Platform.Persistence;
+using TerraScale.DotNet;
+
+namespace TerraScale.Dashboard.E2E;
+
+// An external, test-only HTTP producer for the production state adapter and
+// unmodified official Documents SDK. The prerequisite service project/key is
+// fixture-owned; this does not qualify Vault delivery or a live deployment.
+public sealed class StateSdkScenario : IAsyncDisposable
+{
+    private readonly string root;
+    private readonly DemoEnvironment environment = new();
+    private readonly StateProducer protocol = new();
+    private readonly List<StateTransport> transports = [];
+    private readonly Dictionary<HttpClient, CookieContainer> cookieJars = [];
+    private WebApplication? producer;
+    private WebApplication? first;
+    private WebApplication? second;
+    private DeliveredIdentity? identity;
+    public Uri ProviderOrigin { get; private set; } = null!;
+    public Uri Origin { get; private set; } = null!;
+    public Uri ReplicaOrigin { get; private set; } = null!;
+    public string? StartupError { get; private set; }
+
+    private StateSdkScenario(string root) => this.root = root;
+
+    public static async Task<StateSdkScenario> PrepareAsync(string root)
+    {
+        var scenario = new StateSdkScenario(root);
+        try
+        {
+            var builder = WebApplication.CreateBuilder();
+            builder.WebHost.UseUrls("http://127.0.0.1:0");
+            builder.Logging.ClearProviders();
+            scenario.producer = builder.Build();
+            scenario.producer.MapMethods("/{**path}", ["GET", "POST", "PUT", "DELETE"], (Func<HttpContext, Task<IResult>>)scenario.protocol.DispatchAsync);
+            await scenario.producer.StartAsync();
+            scenario.ProviderOrigin = Address(scenario.producer);
+            return scenario;
+        }
+        catch { await scenario.DisposeAsync(); throw; }
+    }
+
+    public HttpClient CreateClient(bool replica = false) => Client(replica ? ReplicaOrigin : Origin);
+    public HttpClient CreateProviderClient() => Client(ProviderOrigin);
+    public HttpClient CreateReplacementClient(HttpClient previous, bool replica = false) =>
+        Client(replica ? ReplicaOrigin : Origin, cookieJars[previous]);
+    private HttpClient Client(Uri origin, CookieContainer? cookies = null)
+    {
+        cookies ??= new();
+        var client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, CookieContainer = cookies })
+        { BaseAddress = origin, Timeout = TimeSpan.FromSeconds(30) };
+        cookieJars[client] = cookies;
+        return client;
+    }
+
+    public async Task<bool> StartHostsAsync(bool simultaneous = false)
+    {
+        first = Host(); second = Host(); StartupError = null;
+        try
+        {
+            if (simultaneous) await Task.WhenAll(first.StartAsync(), second.StartAsync());
+            else { await first.StartAsync(); await second.StartAsync(); }
+            Origin = Address(first); ReplicaOrigin = Address(second);
+            return true;
+        }
+        catch (Exception error) when (error is HttpRequestException or IOException or JsonException)
+        {
+            StartupError = error.GetType().Name;
+            await StopHostsAsync();
+            return false;
+        }
+    }
+
+    public async Task<bool> RestartAsync()
+    {
+        await StopHostsAsync();
+        return await StartHostsAsync();
+    }
+
+    private WebApplication Host() => environment.CreateHost(root, 0, "http://127.0.0.1", builder =>
+    {
+        var previousIdentity = (IDashboardIdentity)builder.Services.Last(service => service.ServiceType == typeof(IDashboardIdentity)).ImplementationInstance!;
+        identity ??= new(previousIdentity, protocol);
+        var fallback = (IHttpClientFactory)builder.Services.Last(service => service.ServiceType == typeof(IHttpClientFactory)).ImplementationInstance!;
+        var transport = new StateTransport(ProviderOrigin, fallback);
+        transports.Add(transport);
+        builder.Services.Replace(ServiceDescriptor.Singleton<IDashboardIdentity>(identity));
+        builder.Services.Replace(ServiceDescriptor.Singleton<IHttpClientFactory>(new StateFactory(transport)));
+        builder.Services.Replace(ServiceDescriptor.Singleton<IDashboardState, TerraBaseDashboardState>());
+        builder.Services.Replace(ServiceDescriptor.Singleton<IAuthAttemptBudget, AuthAttemptBudget>());
+    });
+
+    private async Task StopHostsAsync()
+    {
+        if (second is not null) { await second.StopAsync(); await second.DisposeAsync(); second = null; }
+        if (first is not null) { await first.StopAsync(); await first.DisposeAsync(); first = null; }
+    }
+
+    private static Uri Address(WebApplication app) => new(app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!
+        .Addresses.Single().Replace("0.0.0.0", "127.0.0.1", StringComparison.Ordinal));
+
+    public async ValueTask DisposeAsync()
+    {
+        protocol.Release();
+        await StopHostsAsync();
+        if (producer is not null) { await producer.StopAsync(); await producer.DisposeAsync(); producer = null; }
+        foreach (var transport in transports) transport.Dispose();
+        transports.Clear();
+    }
+
+    private sealed class StateFactory(StateTransport transport) : IHttpClientFactory
+    { public HttpClient CreateClient(string name) => new(transport, disposeHandler: false); }
+
+    private sealed class StateTransport(Uri origin, IHttpClientFactory fallback) : HttpMessageHandler
+    {
+        private readonly HttpClient local = new(new HttpClientHandler { AllowAutoRedirect = false });
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var uri = request.RequestUri!;
+            var stateRequest = uri.Host is "atlas.terrascale.tech" or "gru.api.terrascale.tech";
+            if (stateRequest && (uri.Scheme != "https" || !uri.IsDefaultPort || uri.UserInfo.Length != 0))
+                throw new HttpRequestException("Invalid origin in the state SDK protocol fixture.");
+            using var forwarded = new HttpRequestMessage(request.Method, stateRequest ? new Uri(origin, uri.PathAndQuery) : uri)
+            { Version = request.Version, VersionPolicy = request.VersionPolicy };
+            foreach (var header in request.Headers) forwarded.Headers.TryAddWithoutValidation(header.Key, header.Value);
+            foreach (var option in request.Options) forwarded.Options.Set(new HttpRequestOptionsKey<object?>(option.Key), option.Value);
+            if (stateRequest) forwarded.Headers.Host = uri.Authority;
+            if (request.Content is { } content)
+            {
+                forwarded.Content = new ByteArrayContent(await content.ReadAsByteArrayAsync(cancellationToken));
+                foreach (var header in content.Headers) forwarded.Content.Headers.TryAddWithoutValidation(header.Key, header.Value);
+            }
+            using var other = stateRequest ? null : fallback.CreateClient("platform");
+            var response = await (other ?? local).SendAsync(forwarded, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            response.RequestMessage = request;
+            return response;
+        }
+        protected override void Dispose(bool disposing) { if (disposing) local.Dispose(); base.Dispose(disposing); }
+    }
+
+    private sealed class DeliveredIdentity(IDashboardIdentity underlying, StateProducer protocol) : IDashboardIdentity
+    {
+        public async Task<DashboardCredentials> ReadAsync(CancellationToken cancellationToken)
+        {
+            var value = await underlying.ReadAsync(cancellationToken);
+            if (protocol.Mode == "vault-down") throw new IOException("The test-only Vault descriptor is unavailable.");
+            return value with
+            {
+                StateProjectId = protocol.Mode == "invalid-project" ? "invalid-project" : StateProducer.Project,
+                StateApiKey = protocol.Secret,
+                AuthManagementKey = "sk_test_state_auth"
+            };
+        }
+    }
+
+    private sealed class StateProducer
+    {
+        public const string Project = "01M4EQ2FRJ8S8B29E8TQVWNW41";
+        private readonly object gate = new();
+        private readonly TerraScaleIdGenerator ids = new();
+        private readonly Dictionary<string, Collection> collections = new(StringComparer.Ordinal);
+        private readonly ConcurrentQueue<string> failures = new();
+        private TaskCompletionSource? collectionGate;
+        private TaskCompletionSource? documentGate;
+        private int pausedCreates;
+        private int pausedWrites;
+        private int databasePuts;
+        private int databaseCreates;
+        private int collectionPosts;
+        private int collectionConflicts;
+        private int documentWrites;
+        private int preconditionFailures;
+        private int rotatedRequests;
+        private long offset;
+        private string? databaseId;
+        private string mode = "";
+        private string secret = NewSecret();
+        private bool rotated;
+        public string Mode { get { lock (gate) return mode; } }
+        public string Secret { get { lock (gate) return secret; } }
+        public void Release() { collectionGate?.TrySetResult(); documentGate?.TrySetResult(); }
+
+        public async Task<IResult> DispatchAsync(HttpContext http)
+        {
+            try
+            {
+                var path = http.Request.Path.Value!;
+                if (path == "/__test/observations") return Observe();
+                if (path == "/__test/control") return await ControlAsync(http);
+                if (http.Request.Host.Host == "atlas.terrascale.tech")
+                {
+                    Require(http.Request.Method == "GET" && path == "/v1/discovery" && http.Request.Headers.Authorization.Count == 0, "Atlas discovery must not receive state credentials.");
+                    if (Mode == "discovery-down") return Error(503, "unavailable");
+                    return Results.Json(new { regions = new[] { new { id = "gru", health = "healthy", api = "https://gru.api.terrascale.tech" } } });
+                }
+                Require(http.Request.Host.Host == "gru.api.terrascale.tech", "The SDK must preserve its discovered producer authority.");
+                if (Mode == "authorization") return Error(401, "unauthorized");
+                if (http.Request.Headers.Authorization != "Bearer " + Secret) return Error(401, "unauthorized");
+                if (rotated) Interlocked.Increment(ref rotatedRequests);
+                if (Mode == "forbidden" && http.Request.Method != "GET") return Error(403, "forbidden");
+                var parts = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+                Require(parts.Length >= 5 && parts[0] == "v1" && parts[1] == "projects" && parts[2] == Project &&
+                    parts[3] == "databases" && parts[4] == "dashboard", "State namespace must use only its delivered canonical project and fixed database.");
+                if (parts.Length == 5 && http.Request.Method == "PUT")
+                {
+                    Interlocked.Increment(ref databasePuts);
+                    if (Mode == "project-missing") return Error(404, "unknown_database");
+                    lock (gate)
+                    {
+                        var created = databaseId is null;
+                        if (created) { databaseId = ids.NewId(); databaseCreates++; }
+                        return Results.Json(new { id = databaseId, projectId = Mode == "wrong-database" ? ids.NewId() : Project, name = "dashboard" }, statusCode: created ? 201 : 200);
+                    }
+                }
+                lock (gate) if (databaseId is null) return Error(404, "unknown_database");
+                Require(parts.Length >= 6 && parts[5] == "collections", "Only genuine collection and by-key document routes are admitted.");
+                if (parts.Length == 6 && http.Request.Method == "POST") return await CreateCollectionAsync(http);
+                Require(parts.Length >= 7, "A collection name is required.");
+                if (parts.Length == 7 && http.Request.Method == "GET")
+                {
+                    if (Mode == "wrong-missing-code") return Error(404, "unknown_database");
+                    lock (gate) return collections.TryGetValue(parts[6], out var collection)
+                        ? Results.Json(CollectionBody(parts[6], collection)) : Error(404, "unknown_collection");
+                }
+                Require(parts.Length == 9 && parts[7] == "documents" && parts[8] == "by-key" && http.Request.Query.Keys.SequenceEqual(new[] { "id" }),
+                    "The official state SDK must use the genuine by-key point route and one opaque id parameter.");
+                var id = http.Request.Query["id"].ToString();
+                Require(id.Length > 0, "A state document id is required.");
+                if (http.Request.Method == "PUT" && parts[6] == "dashboard_accounts" && documentGate is { } held)
+                { Interlocked.Increment(ref pausedWrites); await held.Task.WaitAsync(http.RequestAborted); }
+                JsonElement? body = null;
+                if (http.Request.Method == "PUT")
+                {
+                    using var json = await JsonDocument.ParseAsync(http.Request.Body, cancellationToken: http.RequestAborted);
+                    Require(json.RootElement.ValueKind == JsonValueKind.Object, "A document write contains the actual JSON object.");
+                    body = json.RootElement.Clone();
+                }
+                lock (gate)
+                {
+                    if (!collections.TryGetValue(parts[6], out var collection)) return Error(404, "unknown_collection");
+                    var existing = collection.Documents.GetValueOrDefault(id);
+                    if (http.Request.Method == "GET")
+                    {
+                        if (existing is null || existing.Deleted) return Error(404, "not_found");
+                        http.Response.Headers.ETag = '"' + existing.Version + '"';
+                        return Results.Json(new { id, version = existing.Version, state = "value", document = existing.Value });
+                    }
+                    Require(http.Request.Method is "PUT" or "DELETE", "Only production state point read/write/delete operations are admitted.");
+                    var absent = http.Request.Headers.IfNoneMatch == "*";
+                    var match = http.Request.Headers.IfMatch.ToString();
+                    Require(absent != (match.Length > 0), "Every state mutation requires exactly one producer precondition.");
+                    if (absent && existing is { Deleted: false } || match.Length > 0 && (existing is null || match != '"' + existing.Version + '"'))
+                    { preconditionFailures++; return Error(412, "precondition_failed"); }
+                    if (http.Request.Method == "DELETE" && existing is null) return Error(404, "not_found");
+                    var version = "tbv2-" + WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(32));
+                    var deleted = http.Request.Method == "DELETE";
+                    collection.Documents[id] = new(version, body ?? existing!.Value, deleted);
+                    documentWrites++;
+                    http.Response.Headers.ETag = '"' + version + '"';
+                    return Results.Json(new { id, version, offset = (++offset).ToString(CultureInfo.InvariantCulture), durability = "local_durable" },
+                        statusCode: !deleted && (existing is null || existing.Deleted) ? 201 : 200);
+                }
+            }
+            catch (Exception error) when (error is InvalidOperationException or JsonException)
+            { failures.Enqueue(error.Message); return Error(500, "test_contract_failure"); }
+        }
+
+        private async Task<IResult> CreateCollectionAsync(HttpContext http)
+        {
+            using var json = await JsonDocument.ParseAsync(http.Request.Body, cancellationToken: http.RequestAborted);
+            Require(json.RootElement.EnumerateObject().Count() == 1 && json.RootElement.TryGetProperty("name", out _), "Collection creation accepts only name.");
+            var name = json.RootElement.GetProperty("name").GetString()!;
+            Require(name.Length is > 0 and <= 63 && name[0] is >= 'a' and <= 'z' && name.All(c => c is >= 'a' and <= 'z' or >= '0' and <= '9' or '_' or '-'), "Collection names obey the producer grammar.");
+            Interlocked.Increment(ref collectionPosts);
+            if (collectionGate is { } held && name == "sessions")
+            { Interlocked.Increment(ref pausedCreates); await held.Task.WaitAsync(http.RequestAborted); }
+            lock (gate)
+            {
+                if (Mode == "interrupted" && name == "auth-flows") return Error(503, "unavailable");
+                if (Mode == "other-conflict") return Error(409, "schema_requires_empty_collection");
+                if (collections.ContainsKey(name)) { collectionConflicts++; return Error(409, "name_taken"); }
+                var collection = new Collection(ids.NewId(), DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                collections[name] = collection;
+                if (Mode == "bad-conflict-reread") { collectionConflicts++; return Error(409, "name_taken"); }
+                return Results.Json(CollectionBody(name, collection), statusCode: 201);
+            }
+        }
+
+        private object CollectionBody(string name, Collection collection) => new
+        { id = collection.Id, name = Mode is "wrong-collection" or "bad-conflict-reread" ? "foreign_collection" : name, created_at = collection.CreatedAt.ToString(CultureInfo.InvariantCulture) };
+
+        private async Task<IResult> ControlAsync(HttpContext http)
+        {
+            using var document = await JsonDocument.ParseAsync(http.Request.Body, cancellationToken: http.RequestAborted);
+            var body = document.RootElement;
+            lock (gate)
+            {
+                switch (body.GetProperty("command").GetString())
+                {
+                    case "mode": mode = body.GetProperty("value").GetString()!; break;
+                    case "pause-collections": collectionGate = new(TaskCreationOptions.RunContinuationsAsynchronously); break;
+                    case "release-collections": collectionGate?.TrySetResult(); collectionGate = null; break;
+                    case "pause-account-writes": pausedWrites = 0; documentGate = new(TaskCreationOptions.RunContinuationsAsynchronously); break;
+                    case "release-account-writes": documentGate?.TrySetResult(); documentGate = null; break;
+                    case "drop-collection": collections.Remove(body.GetProperty("name").GetString()!); break;
+                    case "rotate-key": secret = NewSecret(); rotated = true; break;
+                    default: return Results.BadRequest();
+                }
+            }
+            return Results.NoContent();
+        }
+
+        private IResult Observe()
+        {
+            lock (gate) return Results.Json(new
+            {
+                databaseId,
+                databasePuts,
+                databaseCreates,
+                collectionPosts,
+                collectionConflicts,
+                documentWrites,
+                preconditionFailures,
+                pausedCreates,
+                pausedWrites,
+                rotatedRequests,
+                failures = failures.ToArray(),
+                collections = collections.OrderBy(item => item.Key, StringComparer.Ordinal).Select(item => new
+                { name = item.Key, id = item.Value.Id, createdAt = item.Value.CreatedAt, documents = item.Value.Documents.Count(entry => !entry.Value.Deleted) }).ToArray(),
+                documentDigest = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(string.Join('\n', collections.OrderBy(item => item.Key, StringComparer.Ordinal)
+                    .SelectMany(collection => collection.Value.Documents.OrderBy(document => document.Key, StringComparer.Ordinal)
+                        .Select(document => collection.Key + "/" + document.Key + ":" + document.Value.Version + ":" + document.Value.Deleted + ":" + document.Value.Value.GetRawText()))))))
+            });
+        }
+
+        private static string NewSecret() => "tb_" + WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(32));
+        private static IResult Error(int status, string code) => Results.Json(new { error = new { code, message = "Test-only state producer refusal.", op = (int?)null } }, statusCode: status);
+        private static void Require(bool condition, string message) { if (!condition) throw new InvalidOperationException(message); }
+        private sealed record Document(string Version, JsonElement Value, bool Deleted);
+        private sealed class Collection(string id, long createdAt)
+        {
+            public string Id { get; } = id;
+            public long CreatedAt { get; } = createdAt;
+            public Dictionary<string, Document> Documents { get; } = new(StringComparer.Ordinal);
+        }
+    }
+}

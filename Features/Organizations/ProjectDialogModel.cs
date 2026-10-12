@@ -1,0 +1,15 @@
+using TerraScale.Dashboard.Features.Accounts;
+namespace TerraScale.Dashboard.Features.Organizations;
+
+public sealed record ProjectDialogModel(OrganizationPage Page, ProjectRecord? Project = null)
+{
+    public string Id => Project is null ? "create-project" : "rename-project-" + Project.Id;
+    public string NameId => Project is null ? "project-name" : "rename-" + Project.Id;
+    public string RegionsId => "project-regions" + (Project is null ? "" : "-" + Project.Id);
+    public string PrimaryId => "project-region" + (Project is null ? "" : "-" + Project.Id);
+    public string BackupId => "project-backup" + (Project is null ? "" : "-" + Project.Id);
+    public string Title => Project is null ? "Create project" : "Edit " + Project.Name;
+    public string Action => Project is null ? "/api/v1/dashboard/organization/projects" : "/api/v1/dashboard/organization/projects/" + Project.Id + "/rename";
+    public bool Open => Project is null && Page.OpenCreateProject;
+    public IReadOnlyList<string> Selected => Project is null ? Page.Regions : Project.Regions;
+}

@@ -1,93 +1,58 @@
 # Stripe billing
 
-The dashboard owns plans, checkout, and subscription state. All Stripe code
-lives in `internal/features/payments`; the projection onto organizations lives
-in `internal/features/subscriptions`.
+The C# billing implementation uses the official Stripe.net 53 SDK through its `StripeClient.V1`
+resources. Stripe is the authority for Stripe customer, checkout, subscription,
+invoice and payment method facts. Dashboard state stores the organization
+binding and coordinates checkout and plan-change requests; reconciliation reads
+current Stripe state. Signed webhooks trigger reconciliation and do not grant
+entitlements from their payloads.
 
-## Sync model
+The shared canonical public origin is `https://dashboard.terrascale.tech`. Checkout
+return/cancel URLs, the billing portal return URL and the webhook audit all use
+this same origin. The webhook endpoint is
+`https://dashboard.terrascale.tech/api/v1/billing/stripe/webhook`; the older
+`/api/auth/stripe/webhook` path is also recognized for compatibility. Configure
+one matching enabled endpoint per Stripe account.
 
-Billing follows [t3dotgg/stripe-recommendations](https://github.com/t3dotgg/stripe-recommendations):
-Stripe is the source of truth, and one function, `(*payments.Stripe).SyncCustomer`,
-copies a customer's complete state out of it. Webhook payloads are never
-projected; an event only says which customer to sync.
+## Read-only Stripe audit
 
-1. Before the first checkout, the dashboard creates the Stripe customer (with
-   `organization_id` metadata) and stores the customer ↔ organization binding
-   create-only, so an organization has exactly one customer.
-2. Every checkout, portal session, and plan change uses that customer.
-3. `SyncCustomer` reads the customer, their subscriptions (with payment method
-   and schedule), recent invoices, and the pending Checkout Session. It saves
-   the result as one `CustomerState` and projects it onto the organization's
-   plan, status, renewal, scheduled or pending change, card, and invoices.
-4. It runs on every tracked webhook, eagerly on the checkout return (customers
-   usually come back before the webhooks), and after each plan change.
+Run the app's audit command in an environment where OCI Vault has delivered the
+Dashboard machine identity:
 
-The save is conditional on the version loaded before reading Stripe. When two
-syncs race, the loser re-reads Stripe, so the stored state always comes from a
-read that started after the previous save. Each successful save advances the
-customer's revision atomically with its snapshot. The organization applies
-revisions in order within its own conditional update; a stale projection
-re-reads Stripe and retries. Replica clock skew cannot discard newer saved
-billing. `SyncedAt` is diagnostic metadata only. Duplicate, late, and out-of-order
-events converge without an event ledger; exhausted retries return an error so
-Stripe can redeliver.
+```sh
+nice -n 19 dotnet run --project TerraScale.Dashboard.csproj -- audit-stripe
+```
 
-## State store
+The fixed identity path is a consumer contract. Automatic Vault delivery and
+the C# deployment remain unqualified; this command does not implement delivery.
+See [`csharp-migration.md`](csharp-migration.md) for the open runtime gates.
 
-Live mode stores synced state in the dashboard's own TerraBase database through
-ts-go. Local demos without a backend keep everything in memory and never contact
-Stripe or TerraBase.
+The command takes no options and reads the fixed DashboardIdentity document. It
+does not accept keys, webhook secrets, origins, API versions or mode settings on
+the command line or from manual audit-specific environment variables. It infers
+test or live mode from the delivered secret key prefix. The audit uses Stripe.net
+53 `V1` list/retrieve calls only; it does not create or modify Stripe objects,
+charge customers, or switch the running application's billing mode.
 
-| Collection | Document ID | Contents |
-| --- | --- | --- |
-| `stripe_organizations` | organization ID | `customerId` (unique), written create-only |
-| `stripe_customers` | Stripe customer ID | `organizationId` (unique) and the synced `CustomerState` |
+The JSON report checks the delivered key and webhook secret formats, the
+canonical HTTPS origin, the webhook URL/API version/required events, recent
+`invoice.created` events and their pending-delivery counts, the default portal
+features, subscription key-mode consistency, and subscription status counts.
+It also inventories active recurring USD prices and products. For each paid
+plan/interval pair it expects exactly one matching active price: Starter, Pro
+and Business, monthly and annual, for six unique prices total. Subscription
+counts are inventory only; the report does not infer a TerraScale organization
+from a Stripe customer. Check endpoint delivery attempts in Stripe Workbench;
+the public Events API cannot verify delivery success to a particular endpoint.
 
-The collections belong to the dashboard's provisioned TerraBase database.
-`payments.New` requires that database handle. A missing customer document is an
-unbound customer; its webhook returns `200` without contacting Stripe. State
-read/write errors, including missing collections or databases, return a retryable
-webhook failure instead of acknowledging an unsynced delivery.
+The audit reports current observations when run. No live or sandbox audit result
+is asserted here. A passing read-only inventory is not evidence that signed
+webhook delivery, checkout completion, payment, renewal or plan changes have
+been exercised.
 
-## Production billing contract and current gaps
+## Webhook events
 
-Billing is always available with persistent state. OCI Vault automatically
-provides service/database credentials and delivers vendor-issued Stripe keys
-stored once. The production account, webhook, catalog and limits have one
-correct setting; there is no demo or billing activation variable.
-
-Current runtime selection still depends on demo, mode and `STRIPE_*` inputs;
-plan changes are also gated by test mode. This documentation does not remove
-those paths or qualify live billing. Fakes/simulators belong only in test
-binaries. Automatic secret delivery and runtime gate removal remain pending.
-
-Provider account and object identity are security/integrity boundaries: live
-keys, prices, products, customer bindings and webhook signing secrets must
-match the same account and endpoint. Test references must never enter production.
-The existing TerraBase scope is retained; billing does not create a separate
-database. Preserve the [live acceptance safeguards](stripe-live-cutover.md)
-and sandbox evidence before any real financial operation.
-
-A restricted key needs write access to Customers, Checkout Sessions, Customer
-portal, Subscriptions, and Subscription schedules, and read access to Invoices
-(proration previews). The audit script also reads Prices, Products, Webhook
-endpoints, Events, and portal configurations.
-
-## Webhook endpoint
-
-The former `/api/auth/stripe/webhook` URL remains a compatibility alias with the
-same signature validation and customer sync. Keep only one Stripe endpoint
-configured per app, using either URL, to avoid duplicate deliveries.
-
-Create one endpoint per app at `<DASHBOARD_PUBLIC_ORIGIN>/api/v1/billing/stripe/webhook`
-with the API version stripe-go decodes (`stripe.APIVersion` in
-`vendor/github.com/stripe/stripe-go/v*/api_version.go`). Events rendered with
-an incompatible API release train are rejected with `400` and logged, because
-fields such as
-`invoice.parent` and per-item billing periods would otherwise be dropped.
-
-Subscribe to exactly the events in `payments.WebhookEvents`. Each one only
-triggers a sync of its customer:
+Subscribe to the events consumed by the dashboard reconciliation path:
 
 ```text
 checkout.session.completed
@@ -111,44 +76,16 @@ invoice.marked_uncollectible
 invoice.voided
 ```
 
-## Stripe dashboard checklist
+Webhook signatures are verified with the endpoint secret in the Vault-delivered
+machine identity. Delivery failures remain visible to Stripe for retry. Confirm
+successful delivery attempts in Stripe Workbench when validating an endpoint.
 
-- **Settings → Checkout → Subscriptions: enable "Limit customers to one
-  subscription".** Only this stops two open Checkout Sessions from creating two
-  subscriptions. A sync that finds more than one current subscription logs an
-  error.
-- Checkout offers only cards (including Apple Pay and Google Pay) and Link,
-  set in code with `payment_method_types`. Cash App Pay and similar methods
-  cause most abandoned and disputed payments.
-- In the customer portal enable payment method updates, invoice history, and
-  cancellation. Keep plan switching disabled there; the dashboard confirms
-  plan changes itself.
+## Internal billing
 
-## Reliability
+Internal billing is a separate report-only usage and spending-cap feature. It
+does not create Stripe customers, subscriptions, invoices or charges. Its
+estimates and alerts do not suspend service or settle payments. See
+[`internal-billing.md`](internal-billing.md).
 
-- Every mutating call sends an idempotency key. stripe-go retries connection
-  errors, lock timeouts (including lock-timeout `429`), and retryable `5xx`
-  responses up to three times with the same key. Ordinary rate-limit `429`
-  errors return to the caller. Each attempt has a 20-second timeout.
-- Webhooks are verified against the raw body, the signing secret, a
-  five-minute timestamp tolerance, the API version, and the configured mode.
-  A failed sync returns `5xx`, so Stripe redelivers; syncing is idempotent.
-  Events without a customer, for an unbound customer, or for a deleted
-  organization are acknowledged and skipped.
-- Checkout Sessions expire after one hour. The local pending checkout uses the
-  expiry Stripe returns and is released by the next sync after it expires.
-
-## Audit
-
-`scripts/audit-stripe.py --online --env-file <file>` checks a test-mode
-configuration read-only: prices and products, the webhook URL, events, and API
-version, and the portal features. Use `--mode live` to check live configuration;
-the default remains test. `--env-file -` accepts settings piped from OCI Vault.
-Explicit file/stdin settings are audited alone, without filling missing values
-from the environment. The default portal configuration must satisfy the feature
-checks, because portal sessions use it. Invalid
-local settings prevent online requests. It never prints credentials or customer
-IDs and never switches the running app's mode.
-
-Follow [`stripe-live-cutover.md`](stripe-live-cutover.md) for the production
-targets, Vault handoff, confirmation gate, and test-to-live checklist.
+For production readiness and explicit live financial acceptance boundaries,
+see [`stripe-live-cutover.md`](stripe-live-cutover.md).

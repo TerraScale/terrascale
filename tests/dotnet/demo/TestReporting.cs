@@ -1,0 +1,215 @@
+using System.Collections.Concurrent;
+using System.Globalization;
+using System.Net;
+using System.Net.Http.Headers;
+using System.Text.Json;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.WebUtilities;
+using TerraScale.Dashboard.Features.Accounts;
+using TerraScale.Dashboard.Features.Auth;
+
+// Test-only producer protocol. Real dashboard HTTP endpoints, reporting
+// adapters, SDK retention requests and persisted CAS writes remain in use.
+sealed class TestReportingTransport(TestState state, Func<string, (string UserId, string Email)?> resolveToken, HttpMessageHandler stripe,
+    Func<string, (string UserId, string OrganizationId, string ProjectId)?> resolveProjectToken) : HttpMessageHandler
+{
+    private readonly HttpMessageInvoker vendor = new(stripe, false);
+    private readonly ConcurrentDictionary<string, string> scenarios = new();
+    private readonly ConcurrentDictionary<string, int> policies = new();
+    private readonly ConcurrentQueue<(string UserId, string Path, string Query)> requests = new();
+    private readonly ConcurrentQueue<(string UserId, string Path, int Status, string Body)> responses = new();
+    public void MapRoutes(WebApplication app)
+    {
+        app.MapPost("/__test/reporting/scenario", async (HttpContext http, DashboardSessions sessions, AccountService accounts) =>
+        {
+            var session = await sessions.ReadAsync(http);
+            if (session is null) return Results.Unauthorized();
+            var context = await accounts.GetContextAsync(session, http.RequestAborted);
+            var form = await http.Request.ReadFormAsync(http.RequestAborted);
+            if (!Csrf.Validate(http, form)) return Results.BadRequest();
+            var id = form["project"].ToString(); var scenario = form["scenario"].ToString();
+            if (!context.CanManage || context.Organization?.Projects.ContainsKey(id) != true) return Results.StatusCode(403);
+            if (scenario is not ("valid" or "missing-latency" or "zero" or "foreign-project" or "foreign-database" or "foreign-region" or "negative" or "overflow" or "meter" or "repeat" or "oversized" or "offline" or "not-metered" or "no-period" or "unauthorized" or "empty" or "received-only")) return Results.BadRequest();
+            scenarios[id] = scenario;
+            return Results.NoContent();
+        });
+        app.MapGet("/__test/reporting/probe", async (HttpContext http, DashboardSessions sessions) =>
+        {
+            var session = await sessions.ReadAsync(http);
+            return session is null ? Results.Unauthorized() : Results.Json(new
+            {
+                requests = requests.Where(request => request.UserId == session.UserId).Select(request => new { request.Path, request.Query }).ToArray(),
+                responses = responses.Where(response => response.UserId == session.UserId).Select(response => new { response.Path, response.Status, response.Body }).ToArray()
+            });
+        });
+    }
+
+    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        var response = await SendProducerAsync(request, cancellationToken);
+        if (request.RequestUri is { Host: "gru.api.terrascale.tech" } uri &&
+            request.Headers.Authorization?.Parameter is { } token && ResolveUser(token) is { } actor)
+        {
+            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+            responses.Enqueue((actor.UserId, uri.AbsolutePath, (int)response.StatusCode, body[..Math.Min(body.Length, 4096)]));
+        }
+        return response;
+    }
+
+    private (string UserId, string Email)? ResolveUser(string token)
+    {
+        if (resolveToken(token) is { } session) return session;
+        return resolveProjectToken(token) is { } project ? (project.UserId, "") : null;
+    }
+
+    private async Task<HttpResponseMessage> SendProducerAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var uri = request.RequestUri!;
+        if (uri.Host == "api.stripe.com") return await vendor.SendAsync(request, cancellationToken);
+        if (uri.Host == "atlas.terrascale.tech")
+        {
+            if (uri.AbsolutePath != "/v1/discovery" || request.Headers.Authorization is not null) throw new HttpRequestException("Discovery must receive no customer credential.");
+            return Json(new
+            {
+                regions = new[] {
+                new { id = "gru-1", api = "https://gru.api.terrascale.tech/", health = "ok", name = "Sao Paulo", country = "BR" },
+                new { id = "sfo-1", api = "https://sfo.api.terrascale.tech/", health = "ok", name = "San Francisco", country = "US" }
+            }
+            });
+        }
+        if (uri.Host != "gru.api.terrascale.tech" || request.Headers.Authorization is not { Scheme: "Bearer", Parameter: { } token }) return Json(new { error = "unauthorized" }, HttpStatusCode.Unauthorized);
+        var sessionActor = resolveToken(token);
+        var scopedActor = resolveProjectToken(token);
+        if (sessionActor is null && scopedActor is null) return Json(new { error = "unauthorized" }, HttpStatusCode.Unauthorized);
+        var segments = uri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries).Select(Uri.UnescapeDataString).ToArray();
+        var projectIndex = Array.IndexOf(segments, "projects");
+        var organizationIndex = Array.IndexOf(segments, "organizations");
+        var id = projectIndex >= 0 && segments.Length > projectIndex + 1 ? segments[projectIndex + 1] : "";
+        var orgId = organizationIndex >= 0 && segments.Length > organizationIndex + 1 ? segments[organizationIndex + 1] : "";
+        OrganizationRecord? org;
+        ProjectRecord? project = null;
+        if (id.Length > 0)
+        {
+            org = state.Items.Where(item => item.Key.StartsWith(AccountService.OrganizationsCollection + "/", StringComparison.Ordinal)).Select(item => item.Value.Document.Deserialize<OrganizationRecord>())
+                .FirstOrDefault(item => item?.Projects.ContainsKey(id) == true);
+            project = org?.Projects.GetValueOrDefault(id);
+            if (org is null || project?.OrganizationId != org.Id || orgId.Length > 0 && orgId != org.Id) return Json(new { error = "not_found" }, HttpStatusCode.NotFound);
+        }
+        else org = state.Items.GetValueOrDefault(AccountService.OrganizationsCollection + "/" + orgId)?.Document.Deserialize<OrganizationRecord>();
+        var isScopedReporting = segments.Last() is "analytics" or "replication";
+        var actorUserId = sessionActor?.UserId ?? scopedActor!.Value.UserId;
+        if (isScopedReporting && (sessionActor is not null || scopedActor is null || scopedActor.Value.ProjectId != id || scopedActor.Value.OrganizationId != org?.Id) ||
+            !isScopedReporting && sessionActor is null) return Json(new { error = "unauthorized" }, HttpStatusCode.Unauthorized);
+        if (org is null || !org.ContainsMember(actorUserId) || TestWorkspace.ScopedRole(actorUserId, org.Id).Length == 0) return Json(new { error = "forbidden" }, HttpStatusCode.Forbidden);
+        if (request.Headers.TryGetValues("X-TerraBase-User-Id", out var users) && users.Single() != actorUserId ||
+            request.Headers.TryGetValues("X-TerraBase-Organization-Id", out var organizations) && organizations.Single() != org.Id) return Json(new { error = "forbidden" }, HttpStatusCode.Forbidden);
+        requests.Enqueue((actorUserId, uri.AbsolutePath, uri.Query));
+        if (segments.Last() == "audit-retention")
+        {
+            if (TestWorkspace.ScopedRole(actorUserId, org.Id) is not ("owner" or "admin")) return Json(new { error = "forbidden" }, HttpStatusCode.Forbidden);
+            if (request.Method == HttpMethod.Put)
+            {
+                using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellationToken));
+                var days = body.RootElement.GetProperty("days").GetInt32();
+                if (days is < 1 or > 90) return Json(new { error = "invalid_retention" }, HttpStatusCode.BadRequest);
+                policies[org.Id] = days;
+            }
+            return Json(new { days = policies.GetValueOrDefault(org.Id, 90) });
+        }
+        if (project is null || request.Method != HttpMethod.Get) throw new HttpRequestException("Unknown reporting fixture request.");
+        var scenario = scenarios.GetValueOrDefault(project.Id, "valid");
+        if (scenario == "offline") return Json(new { error = "unavailable" }, HttpStatusCode.ServiceUnavailable);
+        if (scenario == "not-metered") return Json(new { error = "not_metered" }, HttpStatusCode.NotFound);
+        if (scenario == "unauthorized") return Json(new { error = "unauthorized" }, HttpStatusCode.Unauthorized);
+        if (scenario == "oversized") return new(HttpStatusCode.OK) { Content = new StringContent(new string('x', 65537)) };
+        var query = QueryHelpers.ParseQuery(uri.Query);
+        if (segments.Last() == "usage") return Usage(project, segments, query, scenario);
+        if (segments.Last() is not ("analytics" or "replication")) throw new HttpRequestException("Unknown reporting fixture contract.");
+        var databaseId = query.GetValueOrDefault("database").ToString();
+        var regionId = query.GetValueOrDefault("region").ToString();
+        var selected = project.Databases.Values.Where(database => databaseId.Length == 0 || database.Id == databaseId).ToArray();
+        if (databaseId.Length > 0 && selected.Length == 0) return Json(new { error = "not_found" }, HttpStatusCode.NotFound);
+        var analyticsRange = query.GetValueOrDefault("range").ToString() is { Length: > 0 } requestedRange ? requestedRange : "24h";
+        var bucketSeconds = analyticsRange switch { "1h" => 60, "24h" => 3600, "7d" => 21600, "30d" => 86400, _ => 3600 };
+        var durationSeconds = analyticsRange switch { "1h" => 3600, "24h" => 86400, "7d" => 604800, "30d" => 2592000, _ => 86400 };
+        var nowSeconds = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var end = DateTimeOffset.FromUnixTimeSeconds((nowSeconds / bucketSeconds + 1) * bucketSeconds);
+        var first = end.AddSeconds(-durationSeconds);
+        var rows = new List<object>();
+        foreach (var database in selected)
+        {
+            var code = regionId.Length > 0 ? regionId switch { "gru-1" => "GRU", "sfo-1" => "SFO", _ => regionId } : database.Region;
+            if (!database.Regions.Prepend(database.Region).Contains(code)) return Json(new { error = "not_found" }, HttpStatusCode.NotFound);
+            if (segments.Last() == "analytics")
+                rows.Add(new
+                {
+                    databaseId = scenario == "foreign-database" ? "foreign" : database.Id,
+                    region = scenario == "foreign-region" ? "??" : RegionId(code),
+                    databaseName = database.Name,
+                    series = new[]
+                    {
+                        new
+                        {
+                            start = first,
+                            requests = new Dictionary<string, long> { ["GET"] = scenario == "negative" ? -3 : scenario == "zero" ? 0 : 10 },
+                            operations = new Dictionary<string, long> { ["document_read"] = scenario == "zero" ? 0 : 4 },
+                            errors = scenario == "zero" ? 0 : 1,
+                            latency = new { p50Ms = scenario == "zero" || scenario == "missing-latency" ? (double?)null : 0.5, p95Ms = scenario == "zero" || scenario == "missing-latency" ? (double?)null : 1.75, p99Ms = scenario == "zero" || scenario == "missing-latency" ? (double?)null : 9d },
+                            storageBytes = scenario == "missing-latency" ? (long?)null : 4096,
+                            clientBandwidth = new { bytesSent = 6L, bytesReceived = 7L },
+                            replicationBandwidth = new { bytesSent = scenario == "received-only" ? 0L : 8L, bytesReceived = 9L }
+                        }
+                    }
+                });
+            else
+                rows.Add(new
+                {
+                    databaseId = scenario == "foreign-database" ? "foreign" : database.Id,
+                    region = scenario == "foreign-region" ? "??" : RegionId(code),
+                    databaseName = database.Name,
+                    status = "healthy",
+                    replicatedOps = 12,
+                    lagMs = (double?)0,
+                    divergence = (bool?)null,
+                    convergenceMs = (double?)null,
+                    lastApplied = (DateTimeOffset?)null,
+                    bandwidth = database.Regions.Where(value => value != code).Select(destination => new { sourceRegion = RegionId(code), destinationRegion = RegionId(destination), kind = "replication", bytesSent = 8L, bytesReceived = 9L }).ToArray()
+                });
+        }
+        if (scenario == "empty") rows.Clear();
+        var providerId = scenario == "foreign-project" ? "foreign-project" : project.Id;
+        return segments.Last() == "analytics" ? Json(new { projectId = providerId, range = analyticsRange, from = first, to = end, bucketSeconds, items = rows })
+            : Json(new { projectId = providerId, range = analyticsRange, from = first, to = end, bucketSeconds, items = rows });
+    }
+    private static HttpResponseMessage Usage(ProjectRecord project, string[] segments, Dictionary<string, Microsoft.Extensions.Primitives.StringValues> query, string scenario)
+    {
+        var databaseIndex = Array.IndexOf(segments, "databases");
+        var databaseId = databaseIndex < 0 ? "" : segments[databaseIndex + 1];
+        if (databaseId.Length > 0 && !project.Databases.ContainsKey(databaseId)) return Json(new { error = "not_found" }, HttpStatusCode.NotFound);
+        var from = DateTimeOffset.Parse(query["from"].ToString(), CultureInfo.InvariantCulture).ToUniversalTime();
+        var granularity = query["granularity"].ToString();
+        var now = DateTimeOffset.UtcNow;
+        var buckets = Math.Max(1, (int)Math.Ceiling((now - from).TotalHours / (granularity == "day" ? 24 : 1)));
+        var rows = project.Databases.Values.Where(database => databaseId.Length == 0 || database.Id == databaseId).ToArray();
+        var factor = rows.Length;
+        var reads = scenario == "negative" ? -1 : scenario == "overflow" ? long.MaxValue : scenario == "zero" ? 0 : 12;
+        object Reading(string id, int count, bool child) => new
+        {
+            projectId = scenario == "foreign-project" ? "foreign-project" : project.Id,
+            databaseId = scenario == "foreign-database" ? "foreign" : id,
+            logicalBytes = 4096L * count,
+            storageBytes = 8192L * count,
+            documents = 2L * count,
+            reads = 999_999L,
+            writes = 888_888L,
+            period = scenario == "no-period" ? null : new { from, to = now, granularity, reads = reads == long.MaxValue ? reads : reads * count, writes = 7L * count },
+            series = child ? Array.Empty<object>() : Enumerable.Range(0, buckets).Select(index => (object)new { start = granularity == "day" ? from.AddDays(index) : from.AddHours(index), reads = index == 0 ? reads == long.MaxValue ? reads : reads * count : 0, writes = index == 0 ? 7L * count : 0 }).ToArray(),
+            items = child || databaseId.Length > 0 ? Array.Empty<object>() : rows.Select(database => Reading(database.Id, 1, true)).ToArray()
+        };
+        return Json(Reading(databaseId, factor, false));
+    }
+    private static HttpResponseMessage Json(object value, HttpStatusCode status = HttpStatusCode.OK) => new(status) { Content = new StringContent(JsonSerializer.Serialize(value), new MediaTypeHeaderValue("application/json")) };
+    private static string RegionId(string code) => code switch { "GRU" => "gru-1", "SFO" => "sfo-1", _ => code };
+}

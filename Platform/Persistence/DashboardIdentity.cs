@@ -31,7 +31,9 @@ public sealed record DashboardCredentials(
     string AuthInstanceSlug,
     string AuthClientId,
     string AuthClientSecret,
-    string SessionEncryptionKey)
+    string SessionEncryptionKey,
+    StripeCredentials? Stripe = null,
+    string AuthManagementKey = "")
 {
     public void Validate()
     {
@@ -47,7 +49,20 @@ public sealed record DashboardCredentials(
         {
             throw new IOException("Dashboard encryption key is invalid.");
         }
+        if (Stripe is null || string.IsNullOrWhiteSpace(Stripe.SecretKey) || string.IsNullOrWhiteSpace(Stripe.WebhookSecret) ||
+            !Stripe.SecretKey.StartsWith("sk_", StringComparison.Ordinal) || !Stripe.WebhookSecret.StartsWith("whsec_", StringComparison.Ordinal) ||
+            Stripe.SecretKey.Any(char.IsControl) || Stripe.WebhookSecret.Any(char.IsControl))
+            throw new IOException("Dashboard Stripe identity is invalid.");
+        if (string.IsNullOrWhiteSpace(AuthManagementKey) || !AuthManagementKey.StartsWith("sk_", StringComparison.Ordinal) || AuthManagementKey.Any(char.IsControl))
+            throw new IOException("Dashboard authentication management identity is invalid.");
     }
 
     public override string ToString() => "Dashboard credentials [REDACTED]";
+}
+
+// Vendor-issued credentials are delivered by OCI Vault in the same machine
+// identity as service credentials. There are no payment feature toggles.
+public sealed record StripeCredentials(string SecretKey, string WebhookSecret)
+{
+    public override string ToString() => "Stripe credentials [REDACTED]";
 }

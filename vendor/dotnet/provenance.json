@@ -1,10 +1,13 @@
 {
   "package": "TerraScale.DotNet",
-  "version": "0.1.0-dashboard.gdf852e3b4d3a4df324452d46792b20566eea5136",
+  "version": "0.1.0-dashboard.g130925898daf0207134d9582b7b672a5a1c3233b",
   "repository": "https://github.com/TerraScale/ts-dotnet",
-  "sourceRevision": "df852e3b4d3a4df324452d46792b20566eea5136",
-  "file": "TerraScale.DotNet.0.1.0-dashboard.gdf852e3b4d3a4df324452d46792b20566eea5136.nupkg",
-  "sha256": "78a29c917851480e42a2e27f7018e93a680ae3dc121ca561d2987dad120a49e1",
+  "sourceRevision": "130925898daf0207134d9582b7b672a5a1c3233b",
+  "sourceTree": "14ae69cc23f602439af39e48cff9eecb3f18be03",
+  "sourceArchiveSha256": "2fc28d734a63084d3d5535e348b412a6fae424c7b45f1f87ae0572fb633818e2",
+  "file": "TerraScale.DotNet.0.1.0-dashboard.g130925898daf0207134d9582b7b672a5a1c3233b.nupkg",
+  "sha256": "1d3517e6d7e5b868a4f67458b9c0d9f06736a38a9768750761733dca1501dcdd",
+  "assemblySha256": "4794676481b430eed2b2e0f68d289a4d6d7aade38f6a8d439b80f9d0fc52bd13",
   "targetFramework": "net10.0",
-  "qualification": "Locally packed from a clean source archive. Public release and producer qualification are outstanding."
+  "qualification": "Locally packed without source modifications from the exact fetched official origin/main source archive. Not the producer-admitted SDK revision, not a published release, and not live-service qualified."
 }

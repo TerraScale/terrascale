@@ -1,351 +1,138 @@
-# Go dashboard development
+# Dashboard development
 
-The repository pins Go 1.27.1 in `.mise.toml`. Use Node.js 24 with npm for the
-Lightning CSS bundle, the esbuild script bundle, and the Playwright driver used
-by the Go browser tests. At the repository root:
+The active migration uses .NET 10, RazorSlices, Datastar and the official
+ts-dotnet SDK in one production application, `TerraScale.Dashboard`.
+Node.js and npm build the Lightning CSS stylesheet and browser assets.
+The Go application still serves production until migration and producer
+qualification are complete. See [migration status](csharp-migration.md) for
+outstanding deployment and persistence gates.
 
-```sh
-mise install
-npm ci
-```
+The user accepted merging this additive implementation into GitHub `main`
+on 2026-10-12 with the known visual and live-service gaps documented. Merge
+acceptance does not change the production deployment or qualify a C# cutover.
 
-## Local server
+## Local development
 
-The current `make dev` launcher binds the dashboard to all interfaces, selects
-an in-memory demo backend, builds browser scripts and starts three watchers.
-This is legacy launcher inventory: production and shared previews must use
-real persistence/authentication, and fake backends must move to test binaries. Air watches Go
-and `.templ` source files. For each application build it runs the pinned
-templ generator against `internal/` with version and timestamp metadata
-disabled, then compiles the server. Generated `*_templ.go` files stay beside
-their `.templ` sources and are not edited by hand; Air excludes those generated
-files from its watch loop. Run `make generate` after editing components, or
-`make check-generated` to verify that generated output is current.
-With `stop_on_error = false`, Air keeps the last successfully built executable
-available if a temporary source error prevents a new build. It reports the
-compile error, restarts that previous binary, and tries again when watched
-files change.
-
-The independent `npm run watch:css` process bundles CSS sources with
-Lightning CSS into the single stylesheet at
-`web/static/css/terrascale.css`, and `npm run watch:js` rebuilds the browser
-scripts in `web/static/js/` when `web/assets/js/` changes. With `DASHBOARD_DEV=1` every page opens a
-Datastar stream on `/__dev/events`: the Go host patches the stylesheet link
-when the bundle changes and sends a boot ID, so pages reload after Air
-restarts the server. When Air is not installed,
-the script installs pinned Air v1.67.4 with `go install`; that development-tool
-bootstrap needs access to the Go module proxy. The dashboard and templ
-generator build from vendored modules. Stopping the foreground `make dev`
-process with Ctrl+C terminates Air, its app child, and both asset watchers.
-
-Page behavior uses the official Datastar v1.0.4 bundle, vendored with its
-source map and license under `web/assets/js/vendor/`. `scripts/build-js.mjs`
-checks the bundle and source map against the hashes in `internal/ui/datastar_pins.go`,
-rejects remote dynamic imports, and copies these files into `web/static/js/`.
-Pages load it from the dashboard using a content-hashed URL, without a CDN
-request. When upgrading, replace the official bundle, source map and license
-together and update both hashes in `internal/ui/datastar_pins.go` from the
-official release. Git
-preserves the bundle's bytes without normalizing line endings.
-Behavior lives in Go handlers, templ components, native HTML (`<details>`,
-`<dialog>` with `command`/`commandfor`) and Datastar attributes. The shared
-`web/assets/js/button-loading.js` script replaces action button icons with a
-spinner during native submissions, button-link navigations, and Datastar requests, blocks repeated
-submissions, and restores the controls after completion or navigation
-cancellation. The code editor (`web/assets/js/code-editor/`) upgrades the
-textarea rendered by `ui.CodeEditor` into Monaco (modern-monaco) once the page
-has loaded. Only pages that render an editor load its script and widen the
-Content-Security-Policy for its styles. `scripts/build-js.mjs` bundles it with
-esbuild into the generated, uncommitted `web/static/js/`, self-hosting every
-Monaco chunk, worker, grammar, and font; release builds (`--release`, used by
-the Dockerfile) add brotli siblings the asset handler serves in their place. Starbase informs the dashboard's visual direction; it is
-a design reference, and no Starbase framework code is copied into the app.
-
-Production CSRF and sign-in secrets must arrive automatically from OCI Vault;
-demos, seeded administrators and fake backends belong only in test binaries.
-The current development launcher still selects a demo runtime and accepts
-`DASHBOARD_*` overrides. That path is an implementation gap, not a production
-or shared-preview setup recommendation. Use the isolated test suites for fake
-accounts and stores.
-
-`DASHBOARD_E2E_BASE_URL` selects an already-running test target; it does not
-activate a product feature.
-
-## Build and tests
+Install the versions pinned in `global.json` and `.mise.toml`, then install
+browser/build dependencies with `npm ci`. Run local builds, lint, tests and
+watchers with low CPU priority:
 
 ```sh
-make lint       # gofmt check and go vet
-make check-modules # verify public dependency downloads and checksums
-make check-e2e-shards # verify every browser test runs in exactly one CI shard
-make generate   # regenerate Go components from internal/**/*.templ
-make check-generated # verify generated templ Go sources are current
-make css        # bundle web/assets into web/static/css/terrascale.css
-make js         # bundle web/assets/js into the generated web/static/js/
-make test-fast  # Go browser journeys with -race (skips the SDK journey)
-make test-slow  # full Go browser suite including the account-to-ts-go journey
-make test-unit  # test-slow's package unit tests only
-make test-browser E2E_SHARD=2/4  # one round-robin share of test-slow's browser tests
-make perf       # Core Web Vitals report in test-results/performance.json
-make build      # CSS and script bundles and optimized bin/dashboard-release
+nice -n 19 make dotnet-build
+nice -n 19 make dotnet-lint
+nice -n 19 make dotnet-dev
+nice -n 19 make dotnet-demo
 ```
 
-The component source is `.templ`; Go source files ending in `_templ.go` are
-generated by templ v0.3.1020, pinned as a Go tool dependency. The Makefile uses
-the local Go toolchain and vendored modules for generation. Both `make lint`
-and `make build` verify generated-source freshness before proceeding. The Go
-build embeds `web/static/js/`, so `lint`, `build`, `serve`, and the test targets
-bundle the scripts first; run `make js` before plain `go build` or `go test`.
+The production development host requires automatically delivered platform
+identity and persistent services. The demo launcher creates a temporary
+test host from sources under `tests/dotnet/demo`; demo stores, identities and
+vendor protocol fixtures are excluded from application compilation.
+Use the Tailscale URL and worktree-specific port printed by the launcher.
+Both launchers bind all interfaces and watch C#/Razor and browser assets.
+Same-origin Datastar SSE updates CSS and refreshes pages when source changes.
+Stopping the launcher stops its application and asset watchers.
 
-`make test-fast` and `make test-slow` run the package unit tests under
-`internal/` and the Go integration tests in `tests/e2e/`. The integration tests
-drive Chromium with [playwright-go](https://github.com/mxschmitt/playwright-go)
-using the `playwright-core` driver pinned in `package.json`; no driver is
-downloaded at test time. When the driver's own Chromium revision is not installed, the suite
-falls back to the newest headless shell under `PLAYWRIGHT_BROWSERS_PATH`
-(the CI image ships one). Each test uses its own browser context and account,
-but Chromium journeys run serially to avoid timeouts under the race detector.
-Use `-parallel 1` when running `go test ./tests/e2e` directly. The accessibility
-tests inject axe-core, pinned in `package.json`, into the signed-out,
-onboarding, member and admin pages and
-their dialogs and menus, and fail on any WCAG 2.2 level A or AA violation.
-Set `DASHBOARD_E2E_SCREENSHOTS=<dir>` to capture desktop and mobile
-screenshots.
+Demo login is `user@example.com` / `test-password`, and email codes are
+`123456`. Checkout and billing-portal pages are local test-only vendor pages.
+Their transports reject unknown external origins.
 
-`tests/e2e/page_weight_test.go` loads the main pages with a cold cache and
-fails when the compressed document, stylesheet, fonts, scripts, or images of a
-page exceed their budget; raise a budget only when the extra bytes are
-intended. `make perf` measures Core Web Vitals on desktop and throttled mobile
-profiles, each page once with a cold cache and once warm; set `PERF_BASELINE`
-to a previous report to fail on regressions.
+## E2E tests
 
-The SDK journey registers through the browser, creates databases and scoped
-API keys against an in-process public API fixture, then uses the vendored
-`ts-go` SDK to write, read, and delete a document. The fixture exists only
-inside the test binary.
+All dashboard tests use **TUnit**, and all tests exercise the running
+application through browser, HTTP, MCP or customer SDK boundaries. Do not
+create isolated service/component/unit tests or introduce another runner.
+Test providers and protocol controls belong under `tests/dotnet/demo`.
+Journey tests belong under `tests/dotnet/e2e`, in `*JourneyTests.cs` files.
 
-The app and Docker build use `GOFLAGS=-mod=vendor`. `vendor/PROVENANCE.md`
-records the source commit for the vendored `ts-go` package. Do not replace this
-with a sibling checkout path in `go.mod`; standalone CI and Docker builds must
-work from the repository contents.
+```sh
+nice -n 19 make dotnet-test-e2e
+nice -n 19 make dotnet-parity-reference
+nice -n 19 make dotnet-parity
+nice -n 19 make dotnet-test-hot-reload
+nice -n 19 make dotnet-test-live-readiness
+```
 
-The SDK declares the `terrascale.tech/sdk` module path, but that vanity domain
-does not yet serve Go module metadata. A versioned `replace` in `go.mod`
-resolves it through the [public ts-go repository](https://git.terrascale.tech/TerraScale/ts-go).
-The pin keeps the dashboard's current API contract; it does not track the
-SDK's main branch. Downloads use the public Go proxy with direct HTTPS fallback
-and the public checksum database, without credentials or a local module proxy.
-The repository's `go-import` metadata points to
-`https://git.terrascale.tech/TerraScale/ts-go.git`. The public replacement,
-including its pinned revision and checksum records, is intentionally part of
-the CI download check; it does not require a Codeberg mirror.
+`test-fast`, `test-slow`, `test-browser`, `dotnet-test-fast` and
+`dotnet-test-browser` all invoke the TUnit E2E executable. The solution
+contains one production application; the separate test executable owns
+TUnit discovery, assertions, fixtures and TRX reports. Fixtures start real
+Kestrel replicas on operating-system-assigned ports with common test-provider
+state and dispose them after execution. They drive Chromium using pinned Playwright dependencies and
+an installed headless browser. Reports and screenshots go under ignored
+`test-results/`; never commit screenshots.
 
-To upgrade the SDK, update both its `require` version and the public repository
-version in `replace`, then run `GOFLAGS=-mod=mod go mod tidy` and
-`GOFLAGS=-mod=mod go mod vendor`. Third-party module updates use those same
-commands. `go mod vendor` deletes `vendor/PROVENANCE.md`; restore it and update
-its source commit and checksums for SDK upgrades.
+For a focused journey, use the TUnit tree-node filter:
 
-The vendored SDK includes the regional API hostname correction documented in
-`vendor/PROVENANCE.md`. Reapply it after vendoring the current pin; for upgrades,
-check whether the chosen upstream revision already contains the correction.
-`make check-modules` verifies
-public dependency resolution in the `check` CI job, alongside lint; unit tests
-and browser shards. The workflow's consecutive shard matrix is the single
-source of truth for the total, read by `scripts/e2e-shard-count.sh` for both
-CI runs and local coverage checks. The check job verifies that the actual shard patterns
-cover every listed browser test exactly once, and that invalid shard inputs
-are rejected. Shard helpers respect `GO`, and browser jobs log their resolved
-test pattern. Public module verification needs no npm install or browser assets.
-It uses the installed Go toolchain and a temporary module cache, removed on
-exit, so a warm runner cache cannot hide download failures. The check downloads
-the full module graph, including tool and transitive module dependencies.
-It disables the saved Go environment file with `GOENV=off` and clears Go's [module privacy settings](https://go.dev/ref/mod#private-modules),
-`GOPRIVATE`, `GONOPROXY`, `GONOSUMDB`, and `GOINSECURE`, so inherited exclusions cannot
-bypass the public proxy or checksum database. Cleanup makes the throwaway
-cache writable and removes the directory directly, even if Go fails to start,
-while preserving the download exit status.
+```sh
+nice -n 19 dotnet run --configuration Release \
+  --project tests/dotnet/e2e/TerraScale.Dashboard.E2E.csproj -- \
+  --treenode-filter '/*/*/BillingBrowserJourneyTests/*' --report-trx \
+  --results-directory "$PWD/test-results/tunit"
+```
 
-The MCP endpoint and its tool conventions are described in [mcp.md](mcp.md).
+Use an absolute results directory because the test executable can resolve a
+relative path under its build output. Billing journeys capture current UTC
+time once and carry the independently calculated month into their assertions;
+fixed historical clocks can make real HTTP clients discard expired cookies.
 
-## Fly runtime
+The strict visual journey compares the original Go application's captured
+desktop/mobile states with C# using status, DOM, controls, geometry and every
+pixel. `dotnet-parity-reference` captures that original implementation;
+TUnit starts a plain Go reference executable and owns capture, comparison
+and failure reports. Reference capture is explicit and excluded from the
+normal E2E run, so a comparison never replaces its baseline. Capture also
+exports the actual source account and workspace IDs through authenticated
+HTTP/MCP, after screenshots. Missing reference artifacts
+fail the journey. Fixture and feature differences remain failures.
 
-Production must use persistent TerraBase state, native ts-auth sign-in and billing.
-All service endpoints and region identity must be discovered automatically;
-OCI Vault provisions and delivers service, CSRF and vendor Stripe credentials.
+The hot-reload journey starts the test-only watcher, opens its Tailscale
+origin, changes C# copy and CSS, verifies both in the browser, restores the
+files and verifies the original rendering. Run it with the worktree's demo
+port free and without concurrent edits to the auth copy or CSS fixtures.
 
-**Current gaps:** runtime backend selection still depends on `TERRABASE_*`
-inputs and can fall back to memory. Preview configuration still selects a demo.
-These paths must be removed from production binaries/configuration; this docs
-change does not change them. Readiness must fail closed on unavailable storage.
+Lint verifies SDK package provenance, the E2E-only test boundary and formatting
+of the application and test project. The live account-to-ts-typescript-SDK
+journey and persistent restart qualification remain required; a passing
+demo cannot substitute for either.
 
-Platform admin sign-in mirrors authorized inventory through ts-go Management.
-The temporary platform-admin grant remains a restricted authorization action,
-not automatic privilege elevation. See [terrabase-cutover.md](terrabase-cutover.md).
+The explicit `dotnet-test-live-readiness` journey launches the genuine
+production executable with no demo/provider overrides, then requires startup
+and HTTP readiness. Normal startup establishes the fixed state schema using
+the automatically delivered identity. Missing delivery or unavailable
+services fail this test. It covers state readiness; the live account-to-SDK
+flow, authentication and Stripe delivery need their own qualification.
 
-The health probes answer `{"status":"ok","version":"<commit>","backend":"memstore"}`
-(`terrabase` when configured; readiness then reads TerraBase and answers 503
-when it is unreachable); the status
-page records a deploy marker whenever the version changes. The deploy
-workflows pass the commit as the `VERSION` build argument, which the
-Dockerfile links into `internal/platform/buildinfo`; builds without it report
-Go's embedded VCS revision, or `dev`.
+`audit-stripe` runs the read-only Stripe.net report using the fixed machine
+identity descriptor at `/run/secrets/terrascale/dashboard.json`; it accepts no
+configuration options. Run it with:
 
-The signed-in shell shows a banner for unresolved incidents and for
-maintenance in progress or starting within 24 hours, read from the status
-page's Statuspage-compatible summary
-(`https://status.terrascale.tech/api/v1/summary.json`). An incident quotes
-the first paragraph of its latest update, cut to about 200 characters and
-two lines; "View status" opens the full update. The status source has one correct setting;
-the current URL/empty-value override is a runtime gap, not a banner kill switch. The summary is fetched server-side with a two-second
-timeout and cached for 30 seconds; when it cannot be read, no banner is shown.
+```sh
+nice -n 19 dotnet run --project TerraScale.Dashboard.csproj -- audit-stripe
+```
 
-### Error tracking
+The process/TLS-HTTP E2E journey is `StripeAuditJourneyTests`; its nineteen
+focused cases pass. `BillingWebhookJourneyTests` sends signed native HTTP
+requests to both webhook URLs, including retryable provider failures and
+request-size boundaries. Internal usage reports remain noncharging. These
+test-provider results do not qualify live Stripe delivery or payments; there
+is no separate unit-test runner.
 
-Errors go to GlitchTip through the official Sentry Go SDK
-(`internal/platform/errortracking`). With `SENTRY_DSN` set, the dashboard
-reports handler panics (then lets `net/http` abort the response as before),
-every 5xx response grouped by its route, and every `slog` record at error
-level, with an `error` attribute as the exception. Events carry the build
-version as the release and `SENTRY_ENVIRONMENT` as the environment, which
-defaults to `production` on Fly.io and `development` elsewhere. Request
-bodies, query strings, cookies and the signed-in user are never sent (the
-CLI approval URL carries its `user_code` in the query, also nested in
-`returnTo`), and request headers keep their values only for `Accept`,
-`Content-Type`, `Content-Length`, `Datastar-Request` and `User-Agent`;
-`Referer` would repeat such a URL. Without `SENTRY_DSN`, nothing is
-reported.
+## Assets and production integration
 
-`DASHBOARD_CSP_REPORT_URL` adds a `report-uri` directive to every page's
-Content-Security-Policy so browsers post violations to GlitchTip's security
-endpoint. There is no `report-to` directive: GlitchTip only accepts the
-legacy `application/csp-report` body, not the Reporting API's.
+Lightning CSS bundles `web/assets` into the single stylesheet
+`web/static/css/terrascale.css`. esbuild bundles the self-hosted Datastar and
+Monaco scripts under `web/static/js`. Datastar version, source map and license
+are pinned together; the build validates their recorded hashes. Monaco
+loads only on editor pages, and map code/data loads only where needed.
+Brand marks are file-backed SVG assets under `web/static/brand`.
 
-`fly.toml` and `fly.preview.toml` set both; previews report as the `preview`
-environment.
+The application consumes the locked ts-dotnet package, whose source revision
+and digest are recorded in [SDK provenance](../vendor/dotnet/README.md).
+Production state belongs in TerraBase, authorization belongs to ts-auth,
+and secrets must arrive automatically from OCI Vault. Feature flags,
+production demo selection and manual endpoint/secret overrides are prohibited.
 
-The ci workflow runs lint and the full Go browser and SDK suite on every pull
-request and push to `main`. The production and preview workflows build the
-image on Fly's remote builder (`fly deploy --remote-only`), so they need no Go
-or Node.js toolchain on the runner; the Dockerfile keeps the Go build and npm
-caches in BuildKit cache mounts. Production deploys one warm machine and the
-preview workflow deploys one machine per pull request. No live deployment is
-required for local development or tests.
-
-## Public device authorization origin
-
-Set `DASHBOARD_PUBLIC_URL` to the dashboard's public HTTP(S) origin, such as
-`https://dashboard.terrascale.tech`, when serving a custom domain. Paths,
-credentials, queries, and fragments are rejected at startup. CLI verification
-links use this configured origin regardless of the request's Host header.
-
-On Fly, an unset value defaults to `https://$FLY_APP_NAME.fly.dev`, which also
-keeps PR previews tied to their own app. Without either setting, device-code
-issuance accepts only a loopback Host for local development. Pending grants are
-limited to ten per client address (using the same trusted proxy header and IPv6
-/64 grouping as password throttling) and 1,000 per demo process. An approved
-grant remains available for retry when the account's access-token quota is full;
-revoke an existing token and poll again after the advertised interval.
-
-## Sign-in design (do not revert)
-
-A user decision (TS-582): users sign in on **ts-dashboard's own pages**, never
-on ts-auth's hosted page.
-
-- `/login` (password), `/login/code` (emailed code), `/onboarding` (sign-up)
-  and `/reset-password` are dashboard pages. The backend calls ts-auth's
-  headless API: the password and email-code grants, `email-code/start`,
-  `sign-up` and `password-reset/*`. Shipped in #180, fixed in #186.
-- Only single sign-on and social providers (`/login/sso`) redirect to ts-auth's
-  hosted authorize page.
-- With `TS_AUTH_ISSUER` set, `GET /login` renders the dashboard's form
-  (`type="password"`, links to `/login/code` and `/login/sso`). It never
-  answers 303 to `<region>.auth.terrascale.tech/.../oauth/authorize`, even
-  when discovery omits headless grants or ts-auth is unavailable. API failures
-  stay on the native pages; `/login/sso` remains the explicit redirect.
-- **Incidents: fix forward.** Never roll the dashboard back past native login
-  to "restore" sign-in, because that brings back the hosted page. The only
-  allowed rollback target is the newest image that still has working native
-  login (#186, `9c7d62c3`, or later).
-- Tests that cover sign-in must use the TerraBase-backed stores (throttle,
-  sessions) as production does, not only the in-memory ones (the #180 → #186
-  incident). `TestNativeSignInThrottlesWithTerraBase` in `internal/app` does.
-- After each production deploy, `scripts/smoke-native-login.sh` checks that
-  `https://dash.terrascale.tech/login` renders the form, and that a password
-  sign-in for an unknown email is refused by ts-auth (401), not throttled
-  (429). On failure the deploy job fails, and it rolls back only to a
-  previous image that has working native login.
-
-## Sign-in through ts-auth
-
-The dashboard is a confidential client. Its native pages redeem passwords and
-emailed codes through ts-auth's headless API; SSO uses authorization code with
-PKCE. Service discovery and OCI Vault must automatically provide the trusted
-issuer, client credential and exact callback bindings.
-
-**Current gap:** the runtime still needs `TS_AUTH_*` inputs and development
-cookie/issuer overrides. Automatic provisioning is not established here.
-Production requires HTTPS and secure cookies. Discovery must identify the
-exact regional issuer, advertise S256 and match registered redirect/logout URIs.
-The global auth proxy is not itself a regional issuer. Never weaken issuer
-verification, CSRF or redirect allowlists to make a missing binding work.
-
-The existing authenticated flow:
-
-With the variables set:
-
-- `POST /login` and `POST /login/code/verify` redeem ts-auth's password and
-  email-code grants at its token endpoint, with the end user's IP address as
-  `ip_address`. `/login/code` asks ts-auth to email a sign-in code,
-  `/reset-password` a reset code. Every step reads the same whether or not
-  the address has an account, and the dashboard's throttle limits attempts
-  and mails per client and per address before ts-auth's own limits.
-- Registration (`POST /onboarding`) asks ts-auth to email a code that
-  verifies the address; entering it, with the sign-up's pending token from
-  an HttpOnly cookie, opens the account. The local password JSON API
-  (`POST /api/v1/auth/password/login`) is disabled.
-- `/login`, `/login/code`, `/onboarding` and `/reset-password` always render
-  dashboard forms. Submissions use ts-auth's headless API through ts-go;
-  API failures stay on the native pages. Discovery advertising headless
-  grants does not control whether these forms appear. `/login/sso` is the
-  only explicit hosted sign-in redirect.
-- The verification page's outline **Resend code** button becomes available
-  after 60 seconds. A separate persisted throttle enforces the same limit
-  per address across dashboard replicas. Since ts-auth requires the original
-  password to issue another sign-up code, the request is held in an
-  authenticated AES-GCM encrypted HttpOnly cookie for up to one hour, bound
-  to the pending token. It is removed after successful verification. The
-  confidential client's secret derives the cookie key, so rotating that
-  secret expires pending resend requests. If the request exceeds the retry
-  cookie's size limit, the emailed code still verifies the account; the page
-  offers account creation again to request another code. Without JavaScript,
-  the native resend form stays usable and the server enforces the minute.
-- `/login/sso` redirects to ts-auth with the scopes `openid email profile
-  offline_access`, a PKCE S256 challenge, `state` and `nonce`. ts-auth returns
-  to `/login/callback`.
-- Signing out revokes the session's refresh token when discovery lists a
-  `revocation_endpoint`, and ends the ts-auth browser session through its
-  `end_session_endpoint`, with `post_logout_redirect_uri` set to the
-  dashboard's origin plus `/login`. Without that endpoint, or with ts-auth
-  unreachable, it goes to `/login?prompt=login`, whose single sign-on asks
-  ts-auth for credentials again.
-
-The account for a sign-in is found by ts-auth subject, else linked by verified
-email, else created. The ID token must carry `email_verified: true`. The
-subject is kept as `User.AuthSubject`; system database Management calls use
-the signed-in user's ts-auth access token.
-
-Sessions stay in the session store. Each is rechecked with its refresh token
-when ts-auth's access token expires, at most once every 5 minutes. A refused
-refresh token ends the session; while ts-auth is unreachable the session
-stays and the recheck is retried a minute later. A session ts-auth issued no
-refresh token for is not rechecked and lasts its full lifetime. A scope
-change rotates the session only while the old one is still live, carrying its
-refresh token over.
-
-Accounts created through ts-auth have no dashboard password, so actions that
-confirm one (approving a CLI device, creating a personal access token,
-changing the password or email) refuse them until step-up re-authentication
-through ts-auth is added.
-
-Without these variables nothing changes: local password sign-in and the demo
-backend work as before.
+The existing Go sources, deployment and browser fixtures are retained as
+migration references. Do not deploy C# or remove that reference until the
+feature, visual, live SDK, persistence and release gates are satisfied.

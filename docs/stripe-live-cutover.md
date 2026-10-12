@@ -28,9 +28,10 @@ Read-only inspection on 2026-10-09 at 07:10 UTC found Machine
 passing. Readiness, native password login and email-code pages returned `200`;
 the login pages retain CSRF controls. Actual authentication was not exercised.
 Fly has ten deployed `Payments__Stripe__*` secrets, but no current `STRIPE_*`
-or `DASHBOARD_PUBLIC_ORIGIN` settings. The Go application ignores those legacy
-names, so billing is unconfigured. Do not add compatibility aliases; provision
-the current names after confirmation.
+or `DASHBOARD_PUBLIC_ORIGIN` settings. The Go application ignored those legacy
+names, so that inspection found billing unconfigured. Do not add compatibility
+aliases or copy replacement keys by hand; automatic Vault delivery remains
+required and unqualified.
 
 Record Machine/release IDs and Vault secret OCIDs/version numbers in the
 ticket. Never record credential values. Reset obsolete application data and
@@ -72,8 +73,9 @@ Verified Stripe sandbox deliveries remain required before live approval.
 1. Complete [`stripe-sandbox-dsh207.md`](stripe-sandbox-dsh207.md), including
    signed deliveries, duplicate/out-of-order events, failed-payment recovery,
    checkout returns and invoice reconciliation. Local regression checks:
-   `nice -n 19 make test-stripe-audit` and
-   `nice -n 19 env GOMAXPROCS=2 GOFLAGS='-mod=vendor -p=1' go test -race -short -parallel 1 ./internal/features/payments`.
+   `nice -n 19 dotnet run --configuration Release --project tests/dotnet/e2e/TerraScale.Dashboard.E2E.csproj -- --treenode-filter '/*/*/(BillingBrowserJourneyTests|BillingPlanJourneyTests|BillingPlanMcpJourneyTests)/*' --report-trx`.
+   These TUnit journeys exercise native HTTP/browser and MCP payment flows;
+   protocol fixtures do not replace the required actual sandbox deliveries.
 2. Inventory dashboard billing through ts-go/public APIs, without publishing
    customer details. Test Stripe customers, subscriptions, invoices, checkout
    sessions and prices cannot be reused in live mode. Check both
