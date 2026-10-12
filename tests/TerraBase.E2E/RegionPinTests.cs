@@ -9,6 +9,7 @@ namespace TerraBase.E2E;
 public sealed class RegionPinTests
 {
     [Test]
+    [Scenario(Nodes.Harness)]
     public async Task Pinned_request_carries_the_preferred_region_and_is_accepted_when_that_region_serves_it()
     {
         using var client = Client(pinned: Cluster.Gru, served: Cluster.Gru);
@@ -20,6 +21,7 @@ public sealed class RegionPinTests
     }
 
     [Test]
+    [Scenario(Nodes.Harness)]
     public async Task Answer_served_from_another_region_is_refused()
     {
         using var client = Client(pinned: Cluster.Gru, served: Cluster.Sjc);
@@ -28,6 +30,7 @@ public sealed class RegionPinTests
     }
 
     [Test]
+    [Scenario(Nodes.Harness)]
     public async Task Answer_without_a_region_header_is_refused()
     {
         using var client = Client(pinned: Cluster.Sjc, served: null);
