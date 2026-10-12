@@ -343,6 +343,27 @@ A bucket retention rule refuses deleting objects younger than its duration
 failure, and deletes a generation's snapshots only once all its expired segments are gone. Objects therefore stay as long
 as the longer of the plan and the rule, and a pass costs at most one refused call while the rule holds.
 
+### Bucket snapshots
+
+Tigris snapshots the whole platform bucket, so a bad delete (by TerraBase, a person or a stolen key) can be undone by
+forking the bucket from a snapshot (`tigris buckets create <fork> --fork-of ts-terrabase --source-snapshot <version>`).
+Tigris has no snapshot schedule or retention, so TerraBase runs both. The member that ships `_system` checks once an
+hour, during `_system`'s retention:
+
+- It takes a snapshot when the newest one is a day old or more.
+- It deletes snapshots older than 14 days, but never the newest, so a failing take never leaves the bucket without one.
+- It logs every take and delete, and a failure as a warning ("retries next hour").
+
+Snapshots use the S3 API with Tigris headers: `X-Tigris-Snapshot: true` on CreateBucket takes one,
+`X-Tigris-Snapshot: <bucket>` on ListBuckets lists them, and `X-Tigris-Snapshot-Version: <version>` on DeleteBucket
+deletes one. TerraBase refuses to send a DeleteBucket without a numeric version. Because snapshots go through
+CreateBucket and ListBuckets, the bucket's key policy (`ts-terrabase-only`) allows those; Tigris cannot scope them to
+one bucket.
+
+Both buckets (`ts-terrabase`, `ts-terrabase-dev`) have snapshots and **soft delete** (14 days) enabled. A deleted bucket
+can be restored with `tigris buckets restore` within 14 days. Delete protection is off on purpose: it also refuses
+snapshot deletes, which would stop retention.
+
 ## Restore drills
 
 At least once a day, when it stores a snapshot, the shipper checks it: it rebuilds the file from the bucket alone (the
@@ -415,6 +436,8 @@ Checked against Litestream 0.5.17 (August 2026): its design and its bug fixes fr
   Also `terrabase_backup_uploaded_bytes_total{kind}`, `terrabase_backup_failures_total`, `terrabase_backup_holes_total`
   and `terrabase_backup_generations_total` (a rising count means snapshots too often), `terrabase_backup_drills_total{result}`
   and `terrabase_backup_stored_bytes` (bucket bytes of the files this member ships).
+  Bucket snapshots: `terrabase_backup_bucket_snapshots_total{result}` (taken, deleted, failed) and
+  `terrabase_backup_bucket_snapshot_seconds` (Unix time of the newest snapshot, on the member that takes them; 0 elsewhere).
 - `GET /v1/backup` also shows, per file, whether this member ships it.
 - Scratch files (frames waiting for upload, snapshots, sealed objects) live in `<data-directory>/.backup`, which is
   emptied at start.

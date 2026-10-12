@@ -203,6 +203,33 @@ internal sealed class S3ObjectStore : IObjectStore, IDisposable
         return rightRunes.MoveNext() ? -1 : 0;
     }
 
+    /// <summary>The Tigris snapshots of the bucket (<c>X-Tigris-Snapshot</c> on ListBuckets), by version.</summary>
+    public async Task<IReadOnlyList<(string Version, DateTimeOffset At)>> ListSnapshotsAsync(CancellationToken cancellationToken)
+    {
+        var response = await _s3.ListBucketsAsync(Tigris(new ListBucketsRequest(), "X-Tigris-Snapshot", _bucket), cancellationToken).ConfigureAwait(false);
+        // Each entry is named "<version>; name=<name>".
+        return [.. (response.Buckets ?? []).Select(bucket => (bucket.BucketName.Split(';')[0],
+            new DateTimeOffset(DateTime.SpecifyKind(bucket.CreationDate ?? DateTime.MinValue, DateTimeKind.Utc))))];
+    }
+
+    /// <summary>Takes a Tigris snapshot of the whole bucket (<c>X-Tigris-Snapshot: true</c> on CreateBucket).</summary>
+    public Task TakeSnapshotAsync(CancellationToken cancellationToken) =>
+        _s3.PutBucketAsync(Tigris(new PutBucketRequest { BucketName = _bucket }, "X-Tigris-Snapshot", "true"), cancellationToken);
+
+    /// <summary>Deletes one Tigris snapshot (<c>X-Tigris-Snapshot-Version</c> on DeleteBucket).</summary>
+    public Task DeleteSnapshotAsync(string version, CancellationToken cancellationToken) =>
+        // Without the version header this is a bucket delete: refuse anything but a version number.
+        version.Length > 0 && version.All(char.IsAsciiDigit)
+            ? _s3.DeleteBucketAsync(Tigris(new DeleteBucketRequest { BucketName = _bucket }, "X-Tigris-Snapshot-Version", version), cancellationToken)
+            : throw new InvalidDataException("snapshot version is not a number");
+
+    private static T Tigris<T>(T request, string header, string value) where T : AmazonWebServiceRequest
+    {
+        ((Amazon.Runtime.Internal.IAmazonWebServiceRequest)request).AddBeforeRequestHandler(
+            (_, args) => ((WebServiceRequestEventArgs)args).Headers[header] = value);
+        return request;
+    }
+
     private async Task<T> SafeAsync<T>(Task<T> request)
     {
         try

@@ -88,16 +88,19 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
     private readonly Counter<long> _holes;
     private readonly Counter<long> _generations;
     private readonly Counter<long> _drills;
+    private readonly Counter<long> _bucketSnapshots;
+    private readonly S3ObjectStore _bucket;
+    private DateTimeOffset? _newestBucketSnapshot;
     private DateTimeOffset _nextDiscovery = DateTimeOffset.MinValue;
 
     public ContinuousBackup(
         IWalBackup engine, IStorageEngine storage, BackupTargets targets, TerraBaseOptions options, TimeProvider time,
-        IMeterFactory meters, ILogger<ContinuousBackup> logger, IShipperLeases shippers, ITenantDirectory tenants, BackupSettings settings)
+        IMeterFactory meters, ILogger<ContinuousBackup> logger, IShipperLeases shippers, ITenantDirectory tenants, BackupSettings settings, S3ObjectStore bucket)
     {
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(meters);
         (_engine, _storage, _targets, _time, _logger, _shippers) = (engine, storage, targets, time, logger, shippers);
-        (_tenants, _settings, _node) = (tenants, settings, options.MachineId);
+        (_tenants, _settings, _node, _bucket) = (tenants, settings, options.MachineId, bucket);
         _scratch = Scratch(options);
         var meter = meters.Create(Telemetry.MeterName);
         _uploaded = meter.CreateCounter<long>("terrabase.backup.uploaded", "By", "Sealed backup bytes stored in the bucket, by kind (snapshot, segment).");
@@ -105,6 +108,9 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         _holes = meter.CreateCounter<long>("terrabase.backup.holes", description: "Logs found checkpointed or rewritten by someone else, each ending a generation.");
         _generations = meter.CreateCounter<long>("terrabase.backup.generations", description: "Generations started (each stores a snapshot).");
         _drills = meter.CreateCounter<long>("terrabase.backup.drills", description: "Restore drills, by result (passed, failed).");
+        _bucketSnapshots = meter.CreateCounter<long>("terrabase.backup.bucket_snapshots", description: "Tigris snapshots of the backup bucket, by result (taken, deleted, failed).");
+        meter.CreateObservableGauge("terrabase.backup.bucket_snapshot", () => _newestBucketSnapshot?.ToUnixTimeSeconds() ?? 0, "s",
+            "Unix time of the newest Tigris snapshot of the backup bucket, on the member that takes them (0 elsewhere).");
         meter.CreateObservableGauge("terrabase.backup.stored", () => Shipped().Sum(file => file.SizeBytes ?? 0), "By",
             "Bytes the backups of the files this member ships occupy in the bucket, measured daily.");
         meter.CreateObservableGauge("terrabase.backup.files", () => Shipped().Count(), description: "Storage files this node ships.");
