@@ -82,29 +82,40 @@ version said a document a machine held is never missing; that holds only without
 
 - **What M lacks:** every catalog entry M had joined after T, whoever wrote it: its own writes after T, and peers' writes
   it acknowledged after T (the peers do not send those again). Peers' writes M had not acknowledged still arrive by stream.
-- **What M then serves, until each entry is back:**
-  - A database, project, organization, member, invitation or API key removed after T reads live on M (its tombstone is
-    missing). M answers for it: a revoked API key or a removed member is accepted again on M. A deleted database placed on M
-    can get an empty local file and accept writes there; those writes are lost when the tombstone arrives and
-    `CatalogConvergence` deletes the file.
-  - An entry created or changed after T is missing on M, or reads its value at T (404, an old placement, an old name).
-  - An id removed after T can be created again through M (M's id check does not see the tombstone). That creation is newer
-    than the tombstone, so it wins everywhere: the id is reused. Clients always create with new ULIDs; reusing an old id
-    needs a client that sends it on purpose.
-- **What ends it:** anti-entropy. Every bucket that differs from a peer in two consecutive rounds (60 s apart) is joined
-  both ways, so about 1 to 2 minutes after M and one peer both run rounds. A peer's later write of a key, by stream, ends it
-  for that key earlier. After the repair, removals hold again (the tombstones won) and nothing M lacked is lost: peers
-  kept every state (nothing is collected).
+- **What M would serve without a gate:** removed entries read live (revoked API keys, removed members, deleted
+  databases and projects); entries created or changed after T missing or old; an id removed after T could be created again
+  through M, and that creation, newer than the tombstone, would win everywhere. Anti-entropy alone ends that window in
+  about 1 to 2 minutes (two differing rounds, 60 s apart), or a peer's later write of a key ends it for that key.
+- **The restore gate (`CatalogGate`, COS DECISION 2026-10-12: fail closed).** Nothing on M can tell a restored file from a
+  current one (a volume snapshot carries every local marker with it), so **every start is unverified**:
+  - **Closed** from the start until M has completed one forced anti-entropy pull of `_system` (every differing bucket, at
+    once) from **every other machine the member directory lists as started**, read successfully after this start (a static
+    cell: the members it lists). A pull joins the peer's whole catalog, so M then holds every entry any listed machine holds.
+  - **While closed:** every endpoint that authorizes (any endpoint that is not anonymous) answers 503 `catalog_unverified`
+    before authentication, so no API key, token, membership or creation is decided from the catalog; the operator's
+    `POST /admin/api-keys` answers the same; `/readyz` answers 503 (Fly Proxy routes nothing here); `CatalogConvergence`
+    decides nothing about files or names. Peer gRPC (streams, digests, bucket reads), probes, metrics and status run.
+  - **Unreachable listed machine or a failed directory read:** stays closed, however long; passes retry every second.
+    Never opens on its own.
+  - **Operator override:** `POST /admin/catalog-gate/open` with `{"reason": "…"}` (internal listener only). It opens the
+    gate and records a warning log and a catalog document `machines/<machine>/catalog_gate_overrides/<ULID>` (reason, time,
+    machines not verified). Gauge `terrabase.catalog.verified` is 1 once open.
+  - **Once open** it stays open until the next start; later differences go through streams and anti-entropy as before.
+- **What the gate does not cover:** a machine that is not started (stopped or destroyed) is not waited for, so an entry
+  that reached only such a machine stays missing on M until it starts and its own rounds bring it (its own start is gated
+  in turn). An entry that never left M before the copy was taken is lost everywhere (unreplicated writes). Every start of a
+  machine whose peers are listed but unreachable needs either the peers or the override.
+- **Tests:** `CatalogLatticeTests.A_restored_catalog_serves_nothing_until_it_pulled_from_every_machine_then_refuses_the_revoked_key_removed_member_and_deleted_id`
+  (restored sjc, gru unreachable both ways: sjc's catalog holds all three live, yet readyz, the revoked key, the removed
+  member and a commit creating the deleted id all answer 503; once gru is reachable, sjc pulls and answers 401, 404 and 409.
+  Without the middleware the revoked key answers 200: fails) and
+  `CatalogLatticeTests.An_unreachable_machine_keeps_the_gate_closed_until_an_operator_opens_it_with_a_recorded_reason`.
 - **Stale groups are joined (decision, this version):** a stale group (committed 24 h or more before it is read, whole
   states) from a peer can carry an entry M minted after T. R7's rule for client databases drops a stale state of a
   document missing locally that the machine held before (`HeldBefore`), because there it means a collected deletion; on M
   it means a restore, and dropping it would also drop the peer's own newer change until the repair. The catalog collects
   nothing, so `StorageChangeGroupSink` joins stale catalog groups like any other (`JoinStaleAsync` stays for client
   databases only).
-- **Not decided here:** keeping a restored machine out of service until its first repair with every peer (a readiness
-  gate) would close the window above, the revoked-key case included. That needs restore detection and a readiness
-  dependency on peers; it is a COS/user decision (recommended before any `_system` restore is part of an operator
-  procedure).
 - **Control test:** `CatalogTombstoneControlTests.A_restored_catalog_reads_its_lost_deletion_live_until_a_repair_and_joins_a_stale_change_of_its_lost_entry`.
 
 ## 3. Delayed and stale changes
