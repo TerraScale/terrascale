@@ -82,7 +82,12 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
 
                 if (frame.Frontier is { } frontier)
                 {
-                    await _sink.RecordFrontierAsync(Tenant(frontier.Database), origin, new Hlc(frontier.Hlc), stream.Token).ConfigureAwait(false);
+                    var at = Tenant(frontier.Database);
+                    await _sink.RecordFrontierAsync(at, origin, new Hlc(frontier.Hlc), stream.Token).ConfigureAwait(false);
+                    await responseStream.WriteAsync(new AckFrame
+                    {
+                        Stable = new StableReport { Database = frontier.Database, Stable = (await _states.StableAsync(at, stream.Token).ConfigureAwait(false)).Value },
+                    }, stream.Token).ConfigureAwait(false);
                     continue;
                 }
 

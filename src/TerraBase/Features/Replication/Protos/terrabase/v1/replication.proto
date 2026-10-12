@@ -98,7 +98,15 @@ message AckFrame {
   oneof kind {
     Welcome welcome = 1;
     Ack ack = 2;
+    StableReport stable = 3;
   }
+}
+
+// The answer to a Frontier: the receiver's stable stamp of the database (section 11), so a horizon moves while nothing is
+// written and no batch is acknowledged.
+message StableReport {
+  Database database = 1;
+  fixed64 stable = 2;
 }
 
 // The first answer: the receiving machine's replica id, under which the sender keeps its cursor.

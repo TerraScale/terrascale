@@ -99,6 +99,8 @@ internal sealed class FakeChangeGroupSource : IChangeGroupSource
         }
     }
 
+    public ValueTask RecordStableAsync(TenantContext database, ReplicaId peer, Hlc stable, CancellationToken cancellationToken) => ValueTask.CompletedTask;
+
     public ValueTask<bool> RetainsAsync(TenantContext database, long after, CancellationToken cancellationToken) => ValueTask.FromResult(true);
 
     public ValueTask<long> HeadAsync(TenantContext database, CancellationToken cancellationToken)

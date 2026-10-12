@@ -301,6 +301,7 @@ internal sealed class TursoChangeTap : IWalTap
             command.CommandText = SqliteStorageTransaction.Retention;
             command.Parameters.AddWithValue("$below", _anchor);
             command.Parameters.AddWithValue("$now", _time.GetUtcNow().ToUnixTimeSeconds());
+            command.Parameters.AddWithValue("$gone", _store.Member is { } member ? member.GoneBefore(_time.GetUtcNow().ToUnixTimeMilliseconds()) : long.MinValue);
         }
 
         command.ExecuteNonQuery();

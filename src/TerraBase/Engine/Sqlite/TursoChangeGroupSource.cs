@@ -112,6 +112,21 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
         }
     }
 
+    public async ValueTask RecordStableAsync(TenantContext database, ReplicaId peer, Hlc stable, CancellationToken cancellationToken)
+    {
+        if (await _engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not SqliteDatabaseStore store)
+        {
+            return;
+        }
+
+        var transaction = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: true, cancellationToken).ConfigureAwait(false);
+        await using (transaction.ConfigureAwait(false))
+        {
+            await transaction.RecordStableAsync(peer, stable, _engine.HostTime.GetUtcNow(), cancellationToken).ConfigureAwait(false);
+            _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        }
+    }
+
     public async ValueTask<Hlc> StableAsync(TenantContext database, CancellationToken cancellationToken) =>
         await ReadAsync(database, (transaction, now) => transaction.GetStableAsync(now, cancellationToken), cancellationToken).ConfigureAwait(false);
 

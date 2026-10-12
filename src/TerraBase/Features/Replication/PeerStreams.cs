@@ -228,7 +228,14 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus
                     throw new IOException("the peer ended the stream");
                 }
 
-                await AckedAsync(link, call.ResponseStream.Current.Ack, peer, cancellationToken).ConfigureAwait(false);
+                if (call.ResponseStream.Current.Stable is { } report)
+                {
+                    await _source.RecordStableAsync(ChangeGroups.Tenant(report.Database), peer, new Hlc(report.Stable), cancellationToken).ConfigureAwait(false);
+                }
+                else
+                {
+                    await AckedAsync(link, call.ResponseStream.Current.Ack, peer, cancellationToken).ConfigureAwait(false);
+                }
                 reading = call.ResponseStream.MoveNext(cancellationToken);
             }
         }

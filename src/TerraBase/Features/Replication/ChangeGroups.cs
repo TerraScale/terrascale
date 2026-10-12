@@ -50,6 +50,9 @@ public interface IChangeGroupSource
     /// <summary>Completes once a group may have committed after the call (or when the source cannot tell): a wake-up, not a guarantee.</summary>
     Task ChangedAsync(CancellationToken cancellationToken);
 
+    /// <summary>Records <paramref name="peer"/>'s stable stamp of the database, reported without an acknowledgement.</summary>
+    ValueTask RecordStableAsync(TenantContext database, ReplicaId peer, Hlc stable, CancellationToken cancellationToken);
+
     /// <summary>Whether every group after <paramref name="after"/> is still held; false once retention cut some, so the peer refills.</summary>
     ValueTask<bool> RetainsAsync(TenantContext database, long after, CancellationToken cancellationToken);
 
