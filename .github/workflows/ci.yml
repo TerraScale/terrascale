@@ -1,7 +1,7 @@
 name: CI
 
 # One required check: "test". It passes when every area job that ran passed. The area jobs run in parallel, each
-# building one Dockerfile stage on Blacksmith (format, Release build with analyzers as errors, the area's checks and Fast
+# building one Dockerfile stage on a GitHub-hosted runner (format, Release build with analyzers as errors, the area's checks and Fast
 # suite): test-libs, test-auth, test-terrabase. On pull requests an area runs only when its files or the shared files
 # changed (`changes`); libs changes run every area. Pushes to main run every area. `make docker-test` runs all three.
 # Next to it, without waiting for it:
@@ -40,7 +40,7 @@ env:
 jobs:
   # Runs on every event: a skipped job would skip everything downstream of "test" (deploy, slow).
   changes:
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       pull-requests: read
@@ -102,7 +102,7 @@ jobs:
   libs:
     needs: changes
     if: github.event_name != 'pull_request' || needs.changes.outputs.libs == 'true'
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - &checkout
@@ -127,13 +127,10 @@ jobs:
           persist-credentials: false
       - name: Verify CI path filters
         run: python3 terrascale/scripts/ci/path-filter-test.py terrascale/.github/workflows/ci.yml path-filter-action/dist/index.js
-      # One layer cache per job: concurrent jobs sharing a key would overwrite each other's cache.
       - &setup-builder
-        uses: useblacksmith/setup-docker-builder@v2
-        with:
-          cache-key: terrascale-${{ github.job }}
+        uses: docker/setup-buildx-action@v3
       - &build-area
-        uses: useblacksmith/build-push-action@v2
+        uses: docker/build-push-action@v6
         with:
           context: terrascale
           file: terrascale/Dockerfile
@@ -144,7 +141,7 @@ jobs:
   auth:
     needs: changes
     if: github.event_name != 'pull_request' || needs.changes.outputs.auth == 'true'
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - *checkout
@@ -155,7 +152,7 @@ jobs:
   terrabase:
     needs: changes
     if: github.event_name != 'pull_request' || needs.changes.outputs.terrabase == 'true'
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - *checkout
@@ -166,7 +163,7 @@ jobs:
   test:
     needs: [changes, libs, auth, terrabase]
     if: ${{ !cancelled() }}
-    runs-on: blacksmith-2vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
@@ -192,7 +189,7 @@ jobs:
     needs: test
     if: github.ref == 'refs/heads/main'
     continue-on-error: true
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
       contents: read
@@ -201,7 +198,7 @@ jobs:
       - *checkout
       - *checkout-ts-dotnet
       - *setup-builder
-      - uses: useblacksmith/build-push-action@v2
+      - uses: docker/build-push-action@v6
         with:
           context: terrascale
           file: terrascale/Dockerfile
@@ -244,7 +241,7 @@ jobs:
             case $target in *TerraBase.Slow*) target=terrabase-test-slow ;; *Authentication.Slow*) target=auth-test-slow ;; *) target=test-slow ;; esac
             body=$(printf '%s\n' \
               "Failed on \`$GITHUB_SHA\` in the Slow job: $RUN_URL" "" \
-              "Environment: \`slow\` job on blacksmith-4vcpu-ubuntu-2404, Dockerfile stage \`test-slow\`, Release build." \
+              "Environment: \`slow\` job on ubuntu-latest, Dockerfile stage \`test-slow\`, Release build." \
               "Reproduce: \`nice -n 19 make $target TEST_ARGS=\"--treenode-filter '/*/*/*/${test%%(*}'\"\`" \
               "Expected: the test passes. Actual:" "" '```' "${excerpt:-see the run log}" '```')
             number=$(jq -r --arg t "$title" 'first(.[] | select(.title == $t) | .number) // empty' <<< "$open")
@@ -260,7 +257,7 @@ jobs:
     # OFF 2026-10-12 by the user's order: no PR preview environments until previews work again (Fly previews org
     # hit its 20-machine limit). Re-enable by deleting `false &&` in a reviewed PR.
     if: false && github.event_name == 'pull_request'
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     concurrency:
       group: preview-${{ github.event.pull_request.number }}
@@ -277,22 +274,20 @@ jobs:
         uses: superfly/flyctl-actions/setup-flyctl@master
       - name: Create the preview app
         run: terrascale/scripts/fly/preview.sh app ${{ github.event.pull_request.number }}
-      - uses: useblacksmith/setup-docker-builder@v2
-        with:
-          cache-key: terrascale-images
+      - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
           registry: registry.fly.io
           username: x
           password: ${{ secrets.FLY_TOKEN_PREVIEWS }}
-      - uses: useblacksmith/build-push-action@v2
+      - uses: docker/build-push-action@v6
         with:
           context: terrascale
           file: terrascale/Dockerfile
           target: terrabase
           tags: registry.fly.io/${{ env.APP }}:terrabase-${{ github.sha }}
           push: true
-      - uses: useblacksmith/build-push-action@v2
+      - uses: docker/build-push-action@v6
         with:
           context: terrascale
           file: terrascale/Dockerfile
@@ -318,7 +313,7 @@ jobs:
     # PAUSED 2026-10-12 by the user's approval (containment 1C): merges to main must not deploy until the
     # three-region storage rebuild is done. Re-enable by deleting `false &&` in a reviewed PR.
     if: false && github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     concurrency:
       group: deploy
@@ -331,16 +326,14 @@ jobs:
       - *checkout
       - *checkout-ts-dotnet
       - *setup-flyctl
-      - uses: useblacksmith/setup-docker-builder@v2
-        with:
-          cache-key: terrascale-images
+      - uses: docker/setup-buildx-action@v3
       # One deploy token per app; each can push only to its own app's repository.
       - uses: docker/login-action@v3
         with:
           registry: registry.fly.io
           username: x
           password: ${{ secrets.FLY_TOKEN_TS_TERRABASE }}
-      - uses: useblacksmith/build-push-action@v2
+      - uses: docker/build-push-action@v6
         with:
           context: terrascale
           file: terrascale/Dockerfile
@@ -363,7 +356,7 @@ jobs:
           registry: registry.fly.io
           username: x
           password: ${{ secrets.FLY_TOKEN_TS_AUTH }}
-      - uses: useblacksmith/build-push-action@v2
+      - uses: docker/build-push-action@v6
         with:
           context: terrascale
           file: terrascale/Dockerfile
@@ -381,7 +374,7 @@ jobs:
   e2e:
     needs: deploy
     continue-on-error: true
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
       TERRABASE_E2E_FLY_URL: https://ts-terrabase.fly.dev
