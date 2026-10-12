@@ -131,6 +131,10 @@ public sealed class GitHubActionsGrantTests(TerraBaseFixture fixture)
             ["issuer with a path"] = github.Mint(OidcHarness.Issuer, issuer: GitHubActionsGrant.Issuer + "/terrascale"),
             ["no expiry"] = github.Mint(OidcHarness.Issuer, expires: false),
             ["not valid yet"] = github.Mint(OidcHarness.Issuer, notBeforeIn: TimeSpan.FromMinutes(5), expiresIn: TimeSpan.FromMinutes(10)),
+            ["issuer with a trailing slash"] = github.Mint(OidcHarness.Issuer, issuer: GitHubActionsGrant.Issuer + "/"),
+            // Just beyond the documented 30 s skew, on both edges.
+            ["not valid for another 45 s"] = github.Mint(OidcHarness.Issuer, notBeforeIn: TimeSpan.FromSeconds(45)),
+            ["expired 45 s ago"] = github.Mint(OidcHarness.Issuer, notBeforeIn: TimeSpan.FromMinutes(-2), expiresIn: TimeSpan.FromSeconds(-45)),
             ["no audience"] = github.Mint(audience: null),
             ["audience with a trailing slash"] = github.Mint(OidcHarness.Issuer + "/"),
         };
