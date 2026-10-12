@@ -1176,8 +1176,8 @@ internal sealed partial class SqliteStorageTransaction(
         {
             return call();
         }
-        // A failed statement, also one that surfaces as another exception (a stopped read as a QueryCapacityException).
-        catch (Exception error) when (SqliteSession.FailedStatement(error) && Ended())
+        // Whatever surfaced: a stopped read arrives as a QueryCapacityException or an OperationCanceledException.
+        catch (Exception) when (Ended())
         {
             Aborted = _faulted = true;
             throw;

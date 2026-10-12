@@ -65,20 +65,6 @@ internal sealed class SqliteSession(SqliteConnection connection) : IDisposable
         }
     }
 
-    /// <summary>Whether <paramref name="error"/> is, or was caused by, a failed statement.</summary>
-    public static bool FailedStatement(Exception? error)
-    {
-        for (; error is not null; error = error.InnerException)
-        {
-            if (error is SqliteException)
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
     /// <summary>Whether <paramref name="error"/> is a statement <see cref="ThrowIfStopped"/> failed.</summary>
     public static bool Stopped(SqliteException error) => error.Message.Contains(StoppedMessage, StringComparison.Ordinal);
 
