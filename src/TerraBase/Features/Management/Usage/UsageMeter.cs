@@ -28,8 +28,9 @@ internal sealed record UsageTotals(long Reads, long Writes)
 }
 
 /// <summary>
-/// Operation counts; persisted per managed database as document <c>ops</c> of its <c>usage</c> state collection (lifetime),
-/// and as one document per UTC hour and per UTC day of its <c>usage-hours</c> and <c>usage-days</c> collections.
+/// Operation counts; persisted per managed database and machine as document <c>ops@&lt;machine&gt;</c> of its <c>usage</c>
+/// state collection (lifetime), and as one document per UTC minute, hour and day (<c>&lt;bucket&gt;@&lt;machine&gt;</c>) of its
+/// <c>usage-minutes</c>, <c>usage-hours</c> and <c>usage-days</c> collections; reads sum every machine's.
 /// </summary>
 /// <param name="Reads">Document reads.</param>
 /// <param name="Writes">Document writes.</param>
