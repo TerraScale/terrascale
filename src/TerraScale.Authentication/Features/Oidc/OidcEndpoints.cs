@@ -380,12 +380,19 @@ internal static class OidcResults
     public static IResult Forbid(string error, string description) =>
         Results.Forbid(Error(error, description), [OpenIddictServerAspNetCoreDefaults.AuthenticationScheme]);
 
+    /// <summary>The access-token claim naming a platform role.</summary>
+    public const string PlatformRoleClaim = "platform_role";
+
+    /// <summary>The platform role of a platform admin.</summary>
+    public const string PlatformRoleAdmin = "admin";
+
     /// <summary>
     /// Signs <paramref name="user"/> in with fresh claims. The access token always carries the email claims (TerraBase
     /// decision 0007 reads them) and every configured audience; the identity token carries them only with the
     /// <c>email</c> scope. The authentication epoch rides in codes and refresh tokens, so later grants can check it, and
     /// in the access token, so the platform management API (TS-598) refuses it once the user signed out everywhere.
-    /// The server-issued authentication time also rides in user access tokens; refresh never renews it.
+    /// The server-issued authentication time also rides in user access tokens; refresh never renews it. A platform admin's
+    /// access token also carries <see cref="PlatformRoleClaim"/>, read from the stored user at every sign-in and refresh.
     /// </summary>
     public static IResult SignIn(UserRecord user, DateTimeOffset authenticatedAt, IEnumerable<string> scopes, IReadOnlyList<string> audiences)
     {
@@ -404,13 +411,19 @@ internal static class OidcResults
             .SetClaim(OidcIssuer.EpochClaim, user.AuthEpoch)
             .SetScopes(scopes)
             .SetResources(audiences);
+        // Only the platform's own tenant has platform admins; TerraBase's explore API reads the claim (platform-databases.md).
+        if (user.InstanceId == OidcIssuer.InstanceId && user.PlatformRole == PlatformRoleAdmin)
+        {
+            identity.SetClaim(PlatformRoleClaim, PlatformRoleAdmin);
+        }
+
         var email = identity.HasScope(Scopes.Email);
         identity.SetDestinations(claim => claim.Type switch
         {
             Claims.Subject => [Destinations.AccessToken, Destinations.IdentityToken],
             Claims.Email or Claims.EmailVerified => email ? [Destinations.AccessToken, Destinations.IdentityToken] : [Destinations.AccessToken],
             Claims.AuthenticationTime => [Destinations.AccessToken, Destinations.IdentityToken],
-            OidcIssuer.EpochClaim => [Destinations.AccessToken],
+            OidcIssuer.EpochClaim or PlatformRoleClaim => [Destinations.AccessToken],
             _ => [],
         });
         return Results.SignIn(new ClaimsPrincipal(identity), null, OpenIddictServerAspNetCoreDefaults.AuthenticationScheme);
