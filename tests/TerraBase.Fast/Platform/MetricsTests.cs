@@ -2,6 +2,7 @@ using System.Diagnostics.Metrics;
 using System.Globalization;
 using System.Net;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Diagnostics.Metrics;
 using OpenTelemetry.Metrics;
 using TerraBase.Features.Memory;
 using TerraBase.Hosting;
@@ -14,6 +15,14 @@ public sealed class MetricsTests
     [Test]
     public async Task Each_server_exports_only_its_own_http_and_feature_measurements()
     {
+        if (Environment.GetEnvironmentVariable(IsolationChildFlag) != "1")
+        {
+            // Its global meters reach every host in the process: one starting beside it can add an instrument twice
+            // (Microsoft.Extensions.Diagnostics race, see A_starting_host_never_sees_the_isolation_tests_global_instruments).
+            await IsolatedTestChild.RunAsync(typeof(MetricsTests), nameof(Each_server_exports_only_its_own_http_and_feature_measurements), IsolationChildFlag);
+            return;
+        }
+
         var name = "terrabase_test_isolation_" + Guid.NewGuid().ToString("N");
         var foreignPublished = 0;
         await using var first = await TerraBaseTestServer.StartAsync(services: services =>
@@ -67,6 +76,36 @@ public sealed class MetricsTests
         }
         await Assert.That(Sample(firstMetrics, "terrabase_memory_reserved_bytes")).IsEqualTo("7");
         await Assert.That(Sample(secondMetrics, "terrabase_memory_reserved_bytes")).IsEqualTo("11");
+    }
+
+    /// <summary>
+    /// A host's metrics subscription applies its rules through a temporary listener that adds instruments without its lock
+    /// (Microsoft.Extensions.Diagnostics ListenerSubscription.UpdateRules); a matching global instrument published then is
+    /// added again by Initialize, which throws "An item with the same key has already been added" (CI run 38259616461).
+    /// This holds a host inside that window while the global-meter test runs: none of its instruments may reach the host.
+    /// </summary>
+    [Test]
+    public async Task A_starting_host_never_sees_the_isolation_tests_global_instruments()
+    {
+        using var seedMeter = new Meter("TerraBase.Fast.MetricsGate." + Guid.NewGuid().ToString("N"));
+        seedMeter.CreateCounter<long>("seed").Add(1);
+        using var gate = new RulesWindowGate(seedMeter.Name);
+        var starting = Task.Run(() => TerraBaseTestServer.StartAsync(services: services => services.AddMetrics(metrics => metrics
+            .AddListener(gate)
+            .EnableMetrics(seedMeter.Name, listenerName: gate.Name)
+            .EnableMetrics(Telemetry.MeterName, listenerName: gate.Name)
+            .EnableMetrics("Microsoft.AspNetCore.Hosting", listenerName: gate.Name))));
+        try
+        {
+            await gate.Held.Task.WaitAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
+            await Each_server_exports_only_its_own_http_and_feature_measurements();
+            await Assert.That(gate.GlobalInstrumentsSeen).IsEqualTo(0);
+        }
+        finally
+        {
+            gate.Release.Set();
+            await using var server = await starting;
+        }
     }
 
     [Test]
@@ -161,6 +200,54 @@ public sealed class MetricsTests
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(response.Content.Headers.ContentType?.MediaType).IsEqualTo("text/plain");
         await Assert.That(text).Contains("http_server_request_duration_seconds");
+    }
+
+    private const string IsolationChildFlag = "TERRABASE_TEST_METRICS_ISOLATION_CHILD";
+
+    // Holds the host's rules pass on its first (seed) instrument and counts the global instruments it is offered meanwhile.
+    private sealed class RulesWindowGate(string seedMeter) : IMetricsListener, IDisposable
+    {
+        private int _globalInstruments;
+        private int _seeds;
+
+        public TaskCompletionSource Held { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public ManualResetEventSlim Release { get; } = new();
+
+        public int GlobalInstrumentsSeen => Volatile.Read(ref _globalInstruments);
+
+        public string Name => "rules-window-gate";
+
+        public void Initialize(IObservableInstrumentsSource source)
+        {
+        }
+
+        public bool InstrumentPublished(Instrument instrument, out object? userState)
+        {
+            userState = null;
+            if (instrument.Meter.Name == seedMeter)
+            {
+                if (Interlocked.Increment(ref _seeds) == 1)
+                {
+                    Held.SetResult();
+                    Release.Wait();
+                }
+            }
+            else if (instrument.Meter.Scope is null)
+            {
+                Interlocked.Increment(ref _globalInstruments);
+            }
+
+            return true;
+        }
+
+        public void MeasurementsCompleted(Instrument instrument, object? userState)
+        {
+        }
+
+        public MeasurementHandlers GetMeasurementHandlers() => new();
+
+        public void Dispose() => Release.Dispose();
     }
 
     private static string Sample(string metrics, string name, params string[] labels) =>

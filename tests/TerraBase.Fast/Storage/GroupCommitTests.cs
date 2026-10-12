@@ -266,6 +266,79 @@ public sealed class GroupCommitTests
     }
 
     [Test]
+    public async Task A_read_its_work_budget_stops_inside_a_batch_is_too_expensive_and_the_writer_keeps_working()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "pro");
+        foreach (var _ in Enumerable.Range(0, 4))
+        {
+            var creates = Enumerable.Range(0, 1000)
+                .Select(object (_) => new { op = "create", collection = DocumentApi.Collection, document = new { n = 1 } }).ToArray();
+            await Assert.That((await api.TransactAsync(creates)).Status).IsEqualTo(HttpStatusCode.OK);
+        }
+
+        // 248 conditions on 4000 documents cost more engine work than Pro's budget, though no document matches. Stopping
+        // the read makes Turso roll the whole batch transaction back, its savepoints included.
+        var expensive = new
+        {
+            or = Enumerable.Range(0, 4).Select(group => new { or = Enumerable.Range(0, 62).Select(i => new { eq = new object[] { "/n", -(62 * group) - i } }) }),
+        };
+        var stopped = await api.TransactAsync(new { op = "assert_count", collection = DocumentApi.Collection, filter = expensive, lte = 0 });
+        var error = stopped.Json.GetProperty("error");
+        await Assert.That((stopped.Status, error.GetProperty("code").GetString(), error.GetProperty("op").GetInt32()))
+            .IsEqualTo((HttpStatusCode.BadRequest, "invalid_query", 0));
+        var next = DocumentApi.NewId();
+        await Assert.That((await api.PutAsync(next, new { n = 2 })).Status).IsEqualTo(HttpStatusCode.Created);
+        await Assert.That((await api.GetAsync(next)).Json.GetProperty("document").GetProperty("n").GetInt32()).IsEqualTo(2);
+    }
+
+    [Test]
+    public async Task A_write_whose_failure_rolls_back_the_whole_batch_fails_alone_and_the_others_commit_again()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "enterprise");
+        var store = await StoreAsync(api);
+        var failingId = DocumentApi.NewId();
+        // Like a read the work budget stops, RAISE(ROLLBACK) ends the whole write transaction, every savepoint included.
+        await StorageFixture.ExecuteWhileWriterHeldAsync(api.Server, await api.TenantOfAsync(),
+            $"CREATE TRIGGER roll_back_batch BEFORE INSERT ON \"items\" WHEN NEW.id = '{failingId}' BEGIN SELECT RAISE(ROLLBACK, 'the test rolls the batch back'); END;");
+        var firstId = DocumentApi.NewId();
+        var lastId = DocumentApi.NewId();
+
+        var held = await store.BeginTransactionAsync(write: true, CancellationToken.None);
+        Task<ApiResponse> primer;
+        Task<ApiResponse> first;
+        Task<ApiResponse> failing;
+        Task<ApiResponse> last;
+        try
+        {
+            // A primer takes the batch that waits for the writer; the next three then queue, in this order, for one batch.
+            primer = api.PutAsync(DocumentApi.NewId(), new { n = 0 });
+            await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(store.BatchedWrites == 1));
+            first = api.PutAsync(firstId, new { n = 1 });
+            await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(store.QueuedWrites >= 1));
+            failing = api.PutAsync(failingId, new { n = 2 });
+            await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(store.QueuedWrites >= 2));
+            last = api.PutAsync(lastId, new { n = 3 });
+            await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(store.QueuedWrites >= 3));
+        }
+        finally
+        {
+            await held.DisposeAsync();
+        }
+
+        await Assert.That((await primer).Status).IsEqualTo(HttpStatusCode.Created);
+        await Assert.That((await failing).Status).IsEqualTo(HttpStatusCode.InternalServerError);
+        // The rollback took `first` with it: it ran again, with `last`, in the next batch.
+        await Assert.That((await first).Status).IsEqualTo(HttpStatusCode.Created);
+        await Assert.That((await last).Status).IsEqualTo(HttpStatusCode.Created);
+        await Assert.That((await first).Json.GetProperty("offset").GetString()).IsEqualTo((await last).Json.GetProperty("offset").GetString());
+        await Assert.That((await api.GetAsync(firstId)).Json.GetProperty("document").GetProperty("n").GetInt32()).IsEqualTo(1);
+        await Assert.That((await api.GetAsync(lastId)).Json.GetProperty("document").GetProperty("n").GetInt32()).IsEqualTo(3);
+        await Assert.That((await api.GetAsync(failingId)).Status).IsEqualTo(HttpStatusCode.NotFound);
+    }
+
+    [Test]
     public async Task A_storage_thread_busy_with_a_long_read_does_not_hold_up_writes()
     {
         await using var api = await DocumentApi.StartAsync(settings => settings["storage-threads"] = "1");

@@ -14,6 +14,7 @@ plan ceiling, but retain process-wide safety limits.
 | SQLite scheduling weight | 1 | 4 | 16 |
 | Per-organization memory/cache share | 1/16 | 1/4 | Process/cache ceiling |
 | Query SQLite execution time | 1 second | 5 seconds | No plan ceiling |
+| Query engine work (units scaled like SQLite VM instructions) | 1 million | 5 million | No plan ceiling |
 | Candidate document rows/JSON bytes | 10,000 / 16 MiB | 100,000 / 128 MiB | No plan ceiling |
 | Live document JSON storage | 1 GiB | 100 GiB | No plan ceiling |
 
@@ -56,8 +57,11 @@ the same group commit. Cancelling a request therefore waits for its current muta
 The scan guard counts candidate stored JSON sizes before evaluating residual document predicates.
 Indexes can reduce those candidates. This measures logical candidate rows and JSON bytes, not physical
 SQLite page reads, WAL traffic or operating-system I/O. The same per-row function stops a statement once its
-execution time is spent or the request is cancelled: Turso has no progress handler and counts no VM instructions, so
-time and candidates are the only bounds (the instruction limit is gone). Existing sort/page bounds still apply.
+execution time or engine work is spent, or the request is cancelled. Turso has no progress handler and counts no VM
+instructions, so the function charges the work: 8 units per candidate row plus 4 per `json_type`/`json_extract` the
+statement evaluates per row, about what SQLite's VM ran for it, so the former instruction limits keep their scale.
+Existing sort/page bounds still apply. A stopped read rolls back its whole write transaction (Turso), so a group commit
+answers only the write that read, and the writes of its batch run again in the next one.
 
 ## Storage scope
 

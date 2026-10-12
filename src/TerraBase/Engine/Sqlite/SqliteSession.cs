@@ -68,32 +68,6 @@ internal sealed class SqliteSession(SqliteConnection connection) : IDisposable
     /// <summary>Whether <paramref name="error"/> is a statement <see cref="ThrowIfStopped"/> failed.</summary>
     public static bool Stopped(SqliteException error) => error.Message.Contains(StoppedMessage, StringComparison.Ordinal);
 
-    /// <summary>
-    /// Whether the connection is inside a transaction. Unlike SQLite, Turso rolls the whole transaction back when a
-    /// statement fails while it steps through rows (a stopped read, for one); the statements after it would then commit
-    /// on their own. Run on the connection's worker.
-    /// </summary>
-    public bool InTransaction()
-    {
-        using var command = connection.CreateCommand();
-        command.CommandText = "BEGIN;";
-        try
-        {
-            command.ExecuteNonQuery();
-        }
-        catch (SqliteException error) when (error.Message.Contains("within a transaction", StringComparison.Ordinal))
-        {
-            return true;
-        }
-
-        command.CommandText = "ROLLBACK;";
-        command.ExecuteNonQuery();
-        return false;
-    }
-
-    /// <summary>Whether <paramref name="error"/> is a rollback or commit of a transaction Turso already rolled back.</summary>
-    public static bool NoTransaction(SqliteException error) => error.Message.Contains("no transaction is active", StringComparison.Ordinal);
-
     /// <summary>Whether <paramref name="error"/> is lock contention; Turso reports every local error with code 1.</summary>
     public static bool Busy(SqliteException error) => error.Message.Contains("database is locked", StringComparison.Ordinal);
 

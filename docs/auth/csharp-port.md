@@ -54,10 +54,10 @@ Run them at low CPU priority locally:
 ```sh
 nice -n 19 make check       # format, build (analyzers as errors), NuGet audit, OpenAPI lint, fast suite
 nice -n 19 make test-slow   # slow suite
-nice -n 19 make dev         # dotnet watch, published over HTTPS on the tailnet
+nice -n 19 make auth-dev    # dotnet watch, published over HTTPS on the tailnet (needs a local TerraBase on 8081)
 ```
 
-`make dev` picks a free loopback port and a free tailnet HTTPS port for this
+`make auth-dev` picks a free loopback port and a free tailnet HTTPS port for this
 worktree, prints the `https://<machine>.<tailnet>.ts.net:<port>` origin, and
 removes only its own `tailscale serve` mapping when it stops. Put local
 settings in `.env` (gitignored); without it, throwaway Development values are used.
@@ -76,7 +76,7 @@ Configuration retains the `TS_AUTH_*` convention, with these changes:
   signing key check, retrying after five seconds and backing off; `/readyz` answers 503 until both succeed, so ts-auth
   may start before TerraBase and recovers on its own once the issuer's key is provisioned
   ([signing-keys.md](signing-keys.md)). `TS_AUTH_DATABASE` is gone.
-- **Storage endpoint:** fixed in code (`App.TerraBaseOrigin`):
+- **Storage endpoint:** fixed in code (`App.TerraBaseOrigin`). Off Fly only Development uses the loopback TerraBase (`http://127.0.0.1:8081`); a Production ts-auth off Fly refuses to start (exit 2) rather than store there. On Fly:
   `http://gru.ts-terrabase.internal:8081`, TerraBase's internal listener on
   Fly's private network in gru, the home region of the platform databases,
   from every region: TerraBase does not replicate documents between regions
@@ -86,7 +86,9 @@ Configuration retains the `TS_AUTH_*` convention, with these changes:
   list, CA or failover setting. In a PR preview (`FLY_APP_NAME` is
   `ts-pr-<n>`, in the separate org `terrascale-previews`) the app's one machine
   runs TerraBase next to ts-auth, so the address is
-  `http://top1.nearest.of.ts-pr-<n>.internal:8081`: that same machine.
+  `http://top1.nearest.of.ts-pr-<n>.internal:8081`: that same machine. Off Fly
+  (`FLY_APP_NAME` unset, local development) it is `http://127.0.0.1:8081`, the
+  TerraBase on the same machine.
 - **Listeners.** The public API listens on `0.0.0.0:8090` (`TS_AUTH_LISTEN`)
   behind Fly Proxy, which terminates TLS. Prometheus `GET /metrics` is served
   only on a second listener, `0.0.0.0:9092` (`TS_AUTH_METRICS_LISTEN`), which

@@ -10,7 +10,7 @@ public static class DocumentFiles
 {
     /// <summary>
     /// Seeds a current-format database file at <paramref name="path"/> holding exactly these documents. A client database
-    /// holds them as one PUT each (<see cref="StoredStates"/>), in one commit at offset 1 with its shape history.
+    /// holds them as one PUT each (<see cref="StoredStates"/>), in one commit at offset 1.
     /// </summary>
     public static async Task WriteAsync(string path, params (string Collection, string Id, string Body)[] documents)
     {
@@ -28,12 +28,9 @@ public static class DocumentFiles
             return;
         }
 
-        await using var snapshot = connection.CreateCommand();
-        snapshot.CommandText = """
-            UPDATE commit_offset SET value = max(value, 1);
-            UPDATE shape_history SET floor = 1;
-            """;
-        await snapshot.ExecuteNonQueryAsync();
+        await using var offset = connection.CreateCommand();
+        offset.CommandText = "UPDATE commit_offset SET value = max(value, 1);";
+        await offset.ExecuteNonQueryAsync();
     }
 
     /// <summary>Replaces existing live document bodies in a closed database file without changing its schema.</summary>
@@ -86,7 +83,7 @@ public static class DocumentFiles
         foreach (var (collection, id, body) in documents)
         {
             await using var metadata = connection.CreateCommand();
-            metadata.CommandText = "INSERT INTO collections VALUES ($collection, 0, random(), $entityId) ON CONFLICT (name) DO NOTHING;";
+            metadata.CommandText = "INSERT INTO collections VALUES ($collection, 0, $entityId) ON CONFLICT (name) DO NOTHING;";
             metadata.Parameters.AddWithValue("$collection", collection);
             metadata.Parameters.AddWithValue("$entityId", EntityIds.New().ToString());
             await metadata.ExecuteNonQueryAsync();
@@ -108,18 +105,6 @@ public static class DocumentFiles
             }
 
             await StoredStates.WriteAsync(connection, collection, id, body);
-
-            await using var change = connection.CreateCommand();
-            change.CommandText = $"""
-                INSERT INTO change_log (collection, generation, id, version, body, document_version)
-                SELECT $collection, generation, $id, 1, (SELECT doc FROM {SqliteStorageTransaction.Table(collection)} WHERE id = $id),
-                    {StoredStates.Version} FROM collections WHERE name = $collection;
-                """;
-            change.Parameters.AddWithValue("$collection", collection);
-            change.Parameters.AddWithValue("$id", id);
-            change.Parameters.AddWithValue("$body", body);
-            await change.ExecuteNonQueryAsync();
-
         }
     }
 }

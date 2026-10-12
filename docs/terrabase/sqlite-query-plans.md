@@ -18,7 +18,7 @@ kind's own statements against that kind (plans depend on the schema, not on the 
 Schema version 1 bootstraps two shapes (`SqliteDatabaseStore`). A client database ([anna-core](design/anna-core.md)
 Stored state): `documents (collection, id, state, version, body)`, `PRIMARY KEY (collection, id)`, `WITHOUT ROWID`,
 where `state` is the document's encoded register, `version` the stamp of its last-writer-wins write and `body` that
-write's JSON (NULL for a tombstone or a hidden uniqueness loser); `collections (name PRIMARY KEY, created_at, generation,
+write's JSON (NULL for a tombstone or a hidden uniqueness loser); `collections (name PRIMARY KEY, created_at,
 entity_id)`, `WITHOUT ROWID`; the one-row `commit_offset (id, value, incarnation)`, whose ULID incarnation is renewed for
 newly created and copied databases. The primary keys are clustered B-trees, so every primary-key lookup is covering. The
 partial `documents_live (collection, id) WHERE body IS NOT NULL` index excludes tombstones from live listing and query
@@ -27,15 +27,13 @@ collection and 1024-byte id cursor limits, for anti-entropy pages. Point reads a
 primary key. The database's own stream is `changes (sequence, ordinal, collection, id, state)` (`WITHOUT ROWID`, primary
 key `(sequence, ordinal)`) and `journal (sequence, dependencies)`; `applied (origin, sequence)` keys every other origin's
 applied position, and the one-row `replication_state (id, replica, complete)` names the replica id the journal belongs
-to. `shape_history (id, floor)` records the history baseline; `change_log` retains every write with collection
-generation, document id, local history offset (`version`), document version (`document_version`) and sequence. Its
-`change_log_by_offset` index supports the feed seeks described below.
+to.
 
 `_system` keeps its catalog journal until TS-647 step 5: `documents (collection, id, version, body)` with `version` the
 commit offset of the last write, the same `collections`, `commit_offset` and `documents_live`, its journal in
 `changes (sequence, ordinal, collection, id, version, body)` with the partial `changes_deleted (collection, id, version)
-WHERE body IS NULL` index and prefix digests in `journal_prefixes`, and `applied`, `replication_state` and the shape
-tables unused. It retains no shape history. Both shapes include the uniqueness tables `_tb_unique_keys`, `_tb_unique_invalid` and
+WHERE body IS NULL` index and prefix digests in `journal_prefixes`, and `applied` and `replication_state`
+unused. Both shapes include the uniqueness tables `_tb_unique_keys`, `_tb_unique_invalid` and
 `_tb_unique_conflicts`.
 
 | Statement | Hot path | Plan before | Plan after |
@@ -55,8 +53,8 @@ tables unused. It retains no shape history. Both shapes include the uniqueness t
 | `Tombstone`: `UPDATE … SET body = NULL …` | `_system` tombstone | — | `SEARCH documents USING PRIMARY KEY (collection=? AND id=?)` |
 | `NextOffset`, `CurrentOffset` on `commit_offset WHERE id = 1` | first write of a transaction, commit without writes | — | `SEARCH commit_offset USING INTEGER PRIMARY KEY (rowid=?)` |
 | `Incarnation`, `RenewIncarnation` on `commit_offset WHERE id = 1` | store open, new database/copy publication | — | `SEARCH commit_offset USING INTEGER PRIMARY KEY (rowid=?)` |
-| `HasCollectionState` | fresh management catalog initialization (`_system`) | — | four `EXISTS` range seeks: `SEARCH documents USING PRIMARY KEY (collection>? AND collection<?)`, `SEARCH collections USING PRIMARY KEY (name>? AND name<?)`, `SEARCH changes USING INDEX changes_deleted (collection>? AND collection<?)` and `SEARCH change_log USING COVERING INDEX change_log_by_offset (collection>? AND collection<?)`; includes tombstones, retained replication deletions and shape history without reading bodies |
-| `HasCollectionStateFrom` | collection prefixes with no Unicode successor | — | the same four indexed `EXISTS` seeks using only `collection>?` or `name>?`; a prefix composed entirely of maximum Unicode scalars has no upper bound |
+| `HasCollectionState` | fresh management catalog initialization (`_system`) | — | three `EXISTS` range seeks: `SEARCH documents USING PRIMARY KEY (collection>? AND collection<?)`, `SEARCH collections USING PRIMARY KEY (name>? AND name<?)`, `SEARCH changes USING INDEX changes_deleted (collection>? AND collection<?)`; includes tombstones and retained replication deletions without reading bodies |
+| `HasCollectionStateFrom` | collection prefixes with no Unicode successor | — | the same three indexed `EXISTS` seeks using only `collection>?` or `name>?`; a prefix composed entirely of maximum Unicode scalars has no upper bound |
 | `CreateCollection`, `GetCollection`, `DropCollection` | collection routes, every document request (existence check) | — | insert: no plan rows; others `SEARCH collections USING PRIMARY KEY (name=?)` |
 | `ListCollectionsFirst`, `ListCollectionsAfter` | collection listing | — | `SCAN collections` (primary-key order, stops at the limit); `SEARCH collections USING PRIMARY KEY (name>?)` |
 | `DropDocuments`: `DELETE … WHERE collection = ?` | collection drop | — | `SEARCH documents USING PRIMARY KEY (collection=?)` |
@@ -64,7 +62,7 @@ tables unused. It retains no shape history. Both shapes include the uniqueness t
 | List, first page: `… WHERE collection = ? ORDER BY id LIMIT ?` | list without cursor | `SEARCH documents USING PRIMARY KEY (collection=?)` | `SEARCH documents USING INDEX documents_live (collection=?)` (`ListFirst`), skipping tombstones |
 | List, next page: `… WHERE collection = ? AND id > ? ORDER BY id LIMIT ?` | list with cursor | `SEARCH documents USING PRIMARY KEY (collection=?)` — one statement used `($after IS NULL OR id > $after)`, which kept SQLite from seeking to the cursor: every page walked the collection from its first id | `SEARCH documents USING INDEX documents_live (collection=? AND id>?)` (`ListAfter`) |
 | `ObserveOffset`, `Origin` | a catalog follower's offset, the `_system` stream identity | — | integer-primary-key search on `commit_offset` |
-| `ClientHasCollectionState`, `ClientHasCollectionStateFrom` | collection state checks on a client database | — | three `EXISTS` range seeks of `documents`, `collections` and `change_log_by_offset`: a client database keeps a drop's tombstones as registers, so it has no journal deletions to look at |
+| `ClientHasCollectionState`, `ClientHasCollectionStateFrom` | collection state checks on a client database | — | two `EXISTS` range seeks of `_tb_state` and `collections`: a client database keeps a drop's tombstones as registers, so it has no journal deletions to look at |
 | `LastSequence`, `AppendReplicationChange`, `GetChangeDigest`, `AppendChangeDigest` | `_system` journal append | — | journal primary-key search; inserts have no plan rows |
 | `PRAGMA user_version`, `PRAGMA journal_mode = WAL`, `CREATE TABLE` | once per database per process (bootstrap) | DDL, no plan | unchanged |
 | `VACUUM INTO $path` | database copy (Management API), rare | maintenance, `EXPLAIN QUERY PLAN` returns no rows | unchanged; runs on a pooled connection |
@@ -83,19 +81,6 @@ up to their limits; anti-entropy pages read the partial key index, so excluded e
 work, and the reader skips other inadmissible keys before decoding their registers. A copy clears its journal and applied
 positions in the same transaction that renews its incarnation; its baseline then carries every register, tombstones
 included, under its fresh origin.
-
-### Shape history (TS-474 schemas v5/v6, replication integration v7)
-
-
-Writes to client databases append to `change_log`; the per-collection change feed reads it (`change-feeds.md`).
-Shape reads and their snapshot and log-chunk statements were deleted in R2c-1; the `change_log_births` and
-`change_log_high` tables, their trigger and `change_log_by_document` have no readers and go in R2c-2. `Documents/QueryPlanTests.cs` asserts these plans.
-
-| Statement | Hot path | Plan |
-| --- | --- | --- |
-| `AppendChange`: `INSERT … SELECT … FROM collections WHERE name = ?` | every client-database write | `SEARCH collections USING PRIMARY KEY (name=?)` |
-| `HistoryFloor` | every shape read past the snapshot redirect | `SEARCH shape_history USING INTEGER PRIMARY KEY (rowid=?)` |
-| `DropHistory`: `UPDATE change_log SET body = NULL …` | collection drop | `SEARCH change_log USING INDEX change_log_by_offset (collection=? AND generation=?)` |
 
 Queries and counts (`SqliteQueryCompiler`) are compiled per request and are neither prepared on
 the session nor in `SqliteStatements.All`. Live queries read the collection's table (by its id key with an id-only
@@ -130,7 +115,7 @@ keys. Every setting that differs, and why:
 
 | Setting | Value | Turso default | Why |
 | --- | --- | --- | --- |
-| `synchronous` | `NORMAL` | `FULL` | A local write is acknowledged after one machine's commit (decision 0003, `multi-region-replication.md` section 6): a commit does not wait for an fsync, so acknowledged writes can be lost on power loss or an OS crash, never on a process crash, and the file is not corrupted. Durable write transactions and replicated applies set `FULL` for their transaction. The connection that creates a file uses `OFF`: the file is private until it is published and synced once then. |
+| `synchronous` | `NORMAL` | `FULL` | A local write is acknowledged after one machine's commit (decision 0003, `multi-region-replication.md` section 6): a commit does not wait for an fsync, so acknowledged writes can be lost on power loss or an OS crash, never on a process crash, and the file is not corrupted. Durable write transactions, replicated applies and every system database write (decision 0012) set `FULL` for their transaction. The connection that creates a file uses `OFF`: the file is private until it is published and synced once then. |
 | `cache_size` | ¼ of `memory-budget` ÷ `storage-threads`, at least 2 MiB | 2000 pages | Turso has no process-wide heap limit, so per-connection caches sized from the budget are the memory bound (`memory.md`). |
 | `query_only` | `1` in read transactions | `0` | Read-only transactions cannot write; reset to `0` before the session is pooled. |
 | `capture_data_changes_conn` | `after` on the writer | off | Design C's change capture and continuous backup (`backup.md`); a transaction may turn it off (`SuspendCaptureAsync`). |

@@ -75,8 +75,17 @@ public sealed partial record AuthOptions
     /// <summary>The ts-dashboard OpenID Connect client, registered at startup when configured.</summary>
     public DashboardClientOptions? DashboardClient { get; init; }
 
-    /// <summary>Exact <c>aud</c> values every access token carries, for example TerraBase's Management API audience.</summary>
-    public IReadOnlyList<string> AccessTokenAudiences { get; init; } = [];
+    /// <summary>
+    /// TerraBase's audience: every access token carries it, in every region, so TerraBase trusts exactly one
+    /// issuer/audience pair (<c>https://auth.terrascale.tech/terrascale</c>, this). Code, not configuration.
+    /// </summary>
+    public const string TerraBaseAudience = "https://api.terrascale.tech";
+
+    /// <summary>
+    /// Exact <c>aud</c> values every access token carries: <see cref="TerraBaseAudience"/> first, then any
+    /// <c>TS_AUTH_ACCESS_TOKEN_AUDIENCES</c> (tests and previews name their own TerraBase).
+    /// </summary>
+    public IReadOnlyList<string> AccessTokenAudiences { get; init; } = [TerraBaseAudience];
 
     /// <summary>Confidential service clients allowed the client-credentials grant, registered at startup.</summary>
     public IReadOnlyList<ServiceClientOptions> ServiceClients { get; init; } = [];
@@ -197,7 +206,7 @@ public sealed partial record AuthOptions
             CloudflareEmail = cloudflareAccountId is null || cloudflareEmailToken is null ? null : new CloudflareEmailOptions(cloudflareAccountId, cloudflareEmailToken),
             SentryDsn = Optional("sentry-dsn") is { } dsn ? ValidateDsn(dsn) : null,
             DashboardClient = ParseDashboardClient(Optional("dashboard-client-secret"), Optional("dashboard-redirect-uris"), Optional("dashboard-post-logout-redirect-uris")),
-            AccessTokenAudiences = ParseAudiences(Optional("access-token-audiences")),
+            AccessTokenAudiences = [.. ParseAudiences(Optional("access-token-audiences")).Prepend(TerraBaseAudience).Distinct(StringComparer.Ordinal)],
             ServiceClients = ParseServiceClients(Optional("service-clients")),
             InvitationUrl = Optional("invitation-url") is { } invitationUrl ? ParseInvitationUrl(invitationUrl, development) : null,
             Development = development,
