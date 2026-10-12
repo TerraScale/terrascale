@@ -4,8 +4,9 @@ Pages are server-rendered [RazorSlices](https://github.com/DamianEdwards/RazorSl
 `.cshtml` slices enhanced with Datastar. Paths below are relative to
 `src/TerraScale.Dashboard` unless they start with `scripts/`. Readable CSS
 lives in `web/assets/css/` (shared) and `web/assets/Features/<Feature>/`
-(page-specific); `npm run build:css` bundles it with Lightning CSS into the
-single stylesheet `web/static/css/terrascale.css`.
+(page-specific); `make css` (`npm run build:css` in `web/`, the asset build's
+npm project) bundles it with Lightning CSS into the single stylesheet
+`web/static/css/terrascale.css`.
 
 ## Principles
 
@@ -130,8 +131,8 @@ dashboard with a pinned SRI hash (`AssetUrls.DatastarIntegrity` in
 `Platform/Assets/AssetUrls.cs`). Every static file is linked with its content
 hash (`Assets.Url(...)` in slices adds `?v=` plus the first six bytes of its
 SHA-256; the CSS build hashes the stylesheet's `url()`s) and is cached as
-immutable when that version matches. `scripts/build-css.mjs --release` and
-`scripts/build-js.mjs --release` write maximum-quality brotli siblings, but the
+immutable when that version matches. `web/build/build-css.mjs --release` and
+`web/build/build-js.mjs --release` write maximum-quality brotli siblings, but the
 project build does not pass `--release` and the host does not negotiate
 precompressed files. The Go application's hover speculation rules and
 `Clear-Site-Data` prefetch clearing are not ported.

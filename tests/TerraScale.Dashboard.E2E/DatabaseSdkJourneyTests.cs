@@ -1,9 +1,11 @@
 using System.Net;
 using System.Net.Http.Json;
-using System.Diagnostics;
+using System.Reflection;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using TerraScale.DotNet;
+using TerraScale.DotNet.TerraBase;
 using TUnit.Core;
 
 namespace TerraScale.Dashboard.E2E;
@@ -13,7 +15,7 @@ namespace TerraScale.Dashboard.E2E;
 public sealed class DatabaseSdkJourneyTests(DashboardE2EFixture fixture)
 {
     [Test]
-    public async Task NativeSignupAndIssuedCustomerCredentialCompleteUnmodifiedPublishedTypeScriptSdkCrud()
+    public async Task NativeSignupAndIssuedCustomerCredentialCompleteUnmodifiedOfficialDotNetSdkCrud()
     {
         await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root);
         using var controls = scenario.CreateProviderClient();
@@ -45,7 +47,7 @@ public sealed class DatabaseSdkJourneyTests(DashboardE2EFixture fixture)
             secret = json.RootElement.GetProperty("secret").GetString()!;
         }
         await RunCustomerSdkAsync(fixture.Root, scenario, controls, projectId, "customer-sdk", secret);
-        Console.WriteLine("PROTOCOL E2E: native signup/database/collection/customer key and unchanged @terrascale/sdk0.0.3 CRUD succeeded against the test-only current producer compatibility contract; live project-JWT qualification remains outstanding.");
+        Console.WriteLine("PROTOCOL E2E: native signup/database/collection/customer key and unchanged official TerraScale.DotNet SDK CRUD succeeded in-process against the test-only current producer compatibility contract; live project-JWT qualification remains outstanding.");
         using (var revoked = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/credentials/" + keyId + "/revoke", new() { ["_csrf"] = csrf }))
             Check(revoked.StatusCode == HttpStatusCode.NoContent, "Native cleanup revokes the issued customer key at its producer");
         using (var deleted = await HttpJourney.PostFormAsync(client, "/api/v1/dashboard/databases/delete", new()
@@ -255,43 +257,85 @@ public sealed class DatabaseSdkJourneyTests(DashboardE2EFixture fixture)
 
     internal static async Task RunCustomerSdkAsync(string root, DatabaseSdkScenario scenario, HttpClient controls, string projectId, string databaseName, string secret)
     {
-        var start = new ProcessStartInfo("node")
-        { WorkingDirectory = root, RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true };
-        start.ArgumentList.Add(Path.Combine("tests", "TerraScale.Dashboard.E2E", "browser", "customer-sdk-flow.mjs"));
-        using var process = Process.Start(start) ?? throw new IOException("Could not start the pinned public customer SDK journey");
+        using (var provenance = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(root, "vendor", "dotnet", "provenance.json"))))
+        {
+            var pinned = provenance.RootElement.GetProperty("version").GetString()!;
+            var loaded = typeof(TerraBaseDocumentsClient).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()!.InformationalVersion;
+            Check(loaded == pinned || loaded.StartsWith(pinned + "+", StringComparison.Ordinal), "Use the exact official .NET SDK pinned by the checkout: " + loaded);
+            Check("net" + Environment.Version.ToString(2) == provenance.RootElement.GetProperty("targetFramework").GetString(),
+                "Run customer SDK qualification on the pinned SDK's supported .NET runtime");
+        }
+        Check(TerraScaleIds.IsValid(projectId), "Use the canonical ULID project returned by the current producer, without translating it");
         using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(5));
-        var output = process.StandardOutput.ReadToEndAsync(deadline.Token); var errors = process.StandardError.ReadToEndAsync(deadline.Token);
+        var transport = new CustomerTransport(scenario.ProviderOrigin);
+        using var http = new HttpClient(transport);
+        var database = new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions { BaseAddress = new Uri("https://gru.api.terrascale.tech"), ApiKey = secret })
+            .Database(projectId, databaseName);
+        var id = new TerraScaleIdGenerator().NewId();
         try
         {
-            await process.StandardInput.WriteLineAsync(JsonSerializer.Serialize(new { projectId, databaseName, secret, providerOrigin = scenario.ProviderOrigin }).AsMemory(), deadline.Token);
-            process.StandardInput.Close();
-            await process.WaitForExitAsync(deadline.Token);
+            var created = await database.PutDocumentAsync("users", id, JsonSerializer.SerializeToElement(new { title = "Customer SDK flow", done = false }), TerraBasePrecondition.Absent, deadline.Token);
+            Check(created.Id == id && created.Created && created.Offset >= 0, "A create-only write returns the new key, a create and a canonical offset");
+            var document = await database.GetDocumentAsync("users", id, deadline.Token) ?? throw new InvalidOperationException("The created document reads back");
+            Check(document.Version == created.Version, "The read returns the created version");
+            Check(JsonNode.DeepEquals(JsonNode.Parse(document.Document.GetRawText()), JsonNode.Parse("""{"title":"Customer SDK flow","done":false}""")), "The read returns the created document");
+            var patched = await database.PatchDocumentAsync("users", id, JsonSerializer.SerializeToElement(new { done = true }), TerraBasePrecondition.Matches(document.Version), deadline.Token);
+            var updated = await database.GetDocumentAsync("users", id, deadline.Token) ?? throw new InvalidOperationException("The patched document reads back");
+            Check(updated.Version == patched.Version && updated.Document.GetProperty("done").GetBoolean() &&
+                updated.Document.GetProperty("title").GetString() == "Customer SDK flow", "The merge patch sets done and keeps the title");
+            try
+            {
+                await database.PutDocumentAsync("users", id, JsonSerializer.SerializeToElement(new { title = "stale" }), TerraBasePrecondition.Matches(document.Version), deadline.Token);
+                throw new InvalidOperationException("A stale write must be rejected");
+            }
+            catch (TerraBasePreconditionFailedException error)
+            {
+                Check(error.StatusCode == HttpStatusCode.PreconditionFailed && error.ErrorCode == "precondition_failed", "A stale write fails with 412 precondition_failed");
+            }
+            var replaced = await database.PutDocumentAsync("users", id, JsonSerializer.SerializeToElement(new { title = "Customer SDK replaced", done = true }), TerraBasePrecondition.Matches(updated.Version), deadline.Token);
+            Check(!replaced.Created, "Replacing an existing document does not report a create");
+            var deleted = await database.DeleteDocumentAsync("users", id, TerraBasePrecondition.Matches(replaced.Version), deadline.Token);
+            Check(deleted.Id == id, "The delete returns the requested document key");
+            // The .NET SDK maps an absent read to null, so the 404 not_found wire response is checked at the transport.
+            Check(await database.GetDocumentAsync("users", id, deadline.Token) is null && transport.LastStatus == HttpStatusCode.NotFound &&
+                JsonDocument.Parse(transport.LastBody).RootElement.GetProperty("error").GetProperty("code").GetString() == "not_found",
+                "An absent read fails with 404 not_found");
         }
         catch (OperationCanceledException) when (deadline.IsCancellationRequested)
         {
-            throw new TimeoutException("The pinned public customer SDK journey exceeded its five-minute deadline.");
+            throw new TimeoutException("The pinned official customer SDK journey exceeded its five-minute deadline.");
         }
-        finally
+        catch (Exception error)
         {
-            if (!process.HasExited)
-            {
-                try { process.Kill(entireProcessTree: true); }
-                catch (InvalidOperationException) when (process.HasExited) { }
-            }
-            using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-            await process.WaitForExitAsync(cleanup.Token);
+            throw new InvalidOperationException("Unmodified official customer SDK CRUD: " + error.Message +
+                " Producer contract failures: " + (await ObservationsAsync(controls)).GetProperty("failures").GetRawText(), error);
         }
-        var result = await output; var errorText = await errors;
+        Check(transport.Requests == 8,
+            "The official .NET SDK performs customer CRUD, stale-write rejection and absent-read checks with the producer-owned project and native-issued customer key");
         var observed = await ObservationsAsync(controls);
-        Check(process.ExitCode == 0, "Unmodified published customer SDK CRUD: " + errorText +
-            " Producer contract failures: " + observed.GetProperty("failures").GetRawText());
-        using (var json = JsonDocument.Parse(result))
-            Check(json.RootElement.GetProperty("completed").GetBoolean() && json.RootElement.GetProperty("requests").GetInt32() == 8 &&
-                json.RootElement.GetProperty("projectId").GetString() == projectId,
-                "The actual public npm SDK performs customer CRUD, stale-write rejection and absent-read checks with the producer-owned project and native-issued customer key");
         var publicRequests = observed.GetProperty("requests").EnumerateArray().Where(request => request.GetProperty("authorization").GetString() == "Bearer " + secret).ToArray();
         Check(publicRequests.Length == 8 && publicRequests.All(request => request.GetProperty("path").GetString()!.EndsWith("/documents/by-key", StringComparison.Ordinal)),
             "Every customer SDK request reaches the current producer's point route using its actually issued customer credential");
+    }
+
+    // Only the physical destination changes for the local HTTP producer; project/document IDs, routes, headers and bodies remain SDK-owned.
+    private sealed class CustomerTransport(Uri origin) : DelegatingHandler(new HttpClientHandler { AllowAutoRedirect = false })
+    {
+        public int Requests;
+        public HttpStatusCode LastStatus;
+        public string LastBody = "";
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var original = request.RequestUri!;
+            Check(original.GetLeftPart(UriPartial.Authority) == "https://gru.api.terrascale.tech", "The SDK addresses the public GRU producer origin");
+            Requests++;
+            request.Headers.Host = original.Authority;
+            request.RequestUri = new(origin, original.PathAndQuery);
+            var response = await base.SendAsync(request, cancellationToken);
+            LastStatus = response.StatusCode;
+            LastBody = await response.Content.ReadAsStringAsync(cancellationToken);
+            return response;
+        }
     }
 
     private sealed class Journey(string secret, string organization, string project)

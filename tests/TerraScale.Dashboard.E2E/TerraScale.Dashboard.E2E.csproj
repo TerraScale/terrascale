@@ -7,6 +7,7 @@
     <ProjectReference Include="../../src/TerraScale.Dashboard/TerraScale.Dashboard.csproj" />
     <PackageReference Include="TUnit" />
     <PackageReference Include="Microsoft.Playwright" />
+    <PackageReference Include="Deque.AxeCore.Playwright" />
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
 </Project>

@@ -1,4 +1,4 @@
-/* Dashboard stylesheet entry point, bundled by scripts/build-css.mjs into the
+/* Dashboard stylesheet entry point, bundled by web/build/build-css.mjs into the
    single file served at /css/terrascale.css. Feature styles live next to
    their feature under web/assets/Features/. */
 

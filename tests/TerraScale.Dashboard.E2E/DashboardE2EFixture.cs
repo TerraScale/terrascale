@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Net;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting.Server;
@@ -56,34 +55,5 @@ public sealed class DashboardE2EFixture : IAsyncInitializer, IAsyncDisposable
         for (var directory = new DirectoryInfo(AppContext.BaseDirectory); directory is not null; directory = directory.Parent)
             if (File.Exists(Path.Combine(directory.FullName, "TerraScale.Dashboard.slnx"))) return directory.FullName;
         throw new DirectoryNotFoundException("The E2E executable must run from the dashboard checkout.");
-    }
-}
-
-public static class BrowserJourneys
-{
-    public static async Task RunAsync(DashboardE2EFixture fixture, string script)
-        => await RunAsync(fixture.Root, script, fixture.Origin);
-
-    public static async Task RunAsync(string root, string script, Uri origin)
-    {
-        var start = new ProcessStartInfo("node") { WorkingDirectory = root, RedirectStandardOutput = true, RedirectStandardError = true };
-        start.ArgumentList.Add(Path.Combine("tests", "TerraScale.Dashboard.E2E", "browser", script));
-        start.ArgumentList.Add(origin.ToString().TrimEnd('/'));
-        using var process = Process.Start(start) ?? throw new IOException("Could not start the E2E browser journey.");
-        var output = process.StandardOutput.ReadToEndAsync();
-        var errors = process.StandardError.ReadToEndAsync();
-        try
-        {
-            using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(5));
-            await process.WaitForExitAsync(deadline.Token);
-        }
-        finally
-        {
-            if (!process.HasExited) process.Kill(entireProcessTree: true);
-        }
-        var stdout = await output;
-        var stderr = await errors;
-        await Assert.That(process.ExitCode).IsEqualTo(0).Because(stdout + stderr);
-        Console.WriteLine(stdout);
     }
 }

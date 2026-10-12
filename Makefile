@@ -1,5 +1,7 @@
 DOTNET ?= dotnet
 NPM ?= npm
+# The asset build's npm project.
+WEB = src/TerraScale.Dashboard/web
 SOLUTION = TerraScale.Dashboard.slnx
 E2E = $(DOTNET) run --configuration Release --project tests/TerraScale.Dashboard.E2E/TerraScale.Dashboard.E2E.csproj --
 RESULTS = --report-trx --results-directory "$(CURDIR)/test-results/tunit"
@@ -15,14 +17,14 @@ lint: check-css
 	$(DOTNET) format $(SOLUTION) --verify-no-changes --no-restore
 
 css:
-	$(NPM) run build:css
+	$(NPM) --prefix $(WEB) run build:css
 
 # Tests serve the committed stylesheet, so it must match web/assets.
 check-css:
-	$(NPM) run build:css -- --check
+	$(NPM) --prefix $(WEB) run check:css
 
 js:
-	$(NPM) run build:js
+	$(NPM) --prefix $(WEB) run build:js
 
 dev:
 	scripts/dev.sh
