@@ -231,6 +231,9 @@ internal sealed class StampingStorageEngine(IStorageEngine inner, ISystemReplica
 
         public Guid Scope => inner.Scope;
 
+
+        public bool Materializes => inner.Materializes;
+
         public ValueTask<StoredDocument?> GetAsync(string collection, string id, CancellationToken cancellationToken) =>
             RunAsync(() => inner.GetAsync(collection, id, cancellationToken), cancellationToken);
 
@@ -248,6 +251,9 @@ internal sealed class StampingStorageEngine(IStorageEngine inner, ISystemReplica
 
         public ValueTask<long> PutAsync(string collection, string id, ReadOnlyMemory<byte> json, CancellationToken cancellationToken) =>
             WriteAsync(collection, id, () => inner.PutAsync(collection, id, json, cancellationToken), cancellationToken);
+
+        public ValueTask<long> PatchAsync(string collection, string id, ReadOnlyMemory<byte> json, CancellationToken cancellationToken) =>
+            WriteAsync(collection, id, () => inner.PatchAsync(collection, id, json, cancellationToken), cancellationToken);
 
         public ValueTask<bool> DeleteAsync(string collection, string id, CancellationToken cancellationToken) =>
             WriteAsync(collection, id, () => inner.DeleteAsync(collection, id, cancellationToken), cancellationToken);

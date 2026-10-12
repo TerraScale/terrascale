@@ -284,7 +284,7 @@ public sealed class TransactionApiTests
         var unchanged = await api.GetAsync(existing);
 
         await Assert.That(mismatches).IsEmpty();
-        await Assert.That(unchanged.Json.GetProperty("document").GetRawText()).IsEqualTo("""{"n":1,"a":[1]}""");
+        await Assert.That(unchanged.Json.GetProperty("document").GetRawText()).IsEqualTo("""{"a":[1],"n":1}""");
     }
 
     [Test]

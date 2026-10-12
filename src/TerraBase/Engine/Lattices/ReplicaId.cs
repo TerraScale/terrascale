@@ -1,9 +1,9 @@
 namespace TerraBase.Engine.Lattices;
 
 /// <summary>
-/// The writer of a <see cref="Dot"/>: one member of one region, in one epoch of its life, packed as region (16 bits),
+/// The writer of a document state entry: one member of one region, in one epoch of its life, packed as region (16 bits),
 /// member (32 bits) and epoch (16 bits). The epoch rises on every unclean start, so a member that lost writes it may
-/// already have shipped (an OS crash under <c>synchronous = NORMAL</c>, a restored disk) never mints a dot it minted
+/// already have shipped (an OS crash under <c>synchronous = NORMAL</c>, a restored disk) never mints a version it minted
 /// before: reusing one would silently drop a write on every replica that holds the first (the Riak kv679 class of
 /// bug). A member past epoch 65535 registers again under a new member number.
 /// </summary>

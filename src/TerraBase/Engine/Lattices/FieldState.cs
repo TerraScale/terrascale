@@ -112,7 +112,7 @@ public sealed class FieldState : IEquatable<FieldState>
             return 0;
         }
 
-        using var json = JsonDocument.Parse(value);
+        using var json = JsonDocument.Parse(value, DocumentState.JsonOptions);
         return json.RootElement.ValueKind == JsonValueKind.Number && json.RootElement.TryGetInt64(out var number) ? number : 0;
     }
 
@@ -124,7 +124,7 @@ public sealed class FieldState : IEquatable<FieldState>
             return [];
         }
 
-        using var json = JsonDocument.Parse(value);
+        using var json = JsonDocument.Parse(value, DocumentState.JsonOptions);
         return [.. json.RootElement.EnumerateArray().Select(element => element.GetRawText())];
     }
 

@@ -44,8 +44,10 @@ tables unused. It retains no shape history. Both shapes include the uniqueness t
 | `Version`: `SELECT version, typeof(body) = 'null' …` | write preconditions, delete, assert-absent | — | `SEARCH documents USING PRIMARY KEY (collection=? AND id=?)`; `typeof` reads the record header, not the body |
 | `DocumentBytes`: retained current JSON length | quota net-change accounting without JSON allocation | — | primary-key seeks of `documents` and `unique_conflicts`; `octet_length` reads visible or hidden current JSON length without materializing JSON |
 | `StoredDocumentBytes` | trusted storage-quota total, one scalar result | — | `SCAN collections`, then `CORRELATED SCALAR SUBQUERY 1` with `SEARCH d USING PRIMARY KEY (collection=?)` and a primary-key join of `unique_conflicts`; reads visible or hidden current sizes without JSON or collection-statistics allocation |
-| `GetState`: `SELECT state … WHERE collection = ? AND id = ?` | every client document write | — | `SEARCH documents USING PRIMARY KEY (collection=? AND id=?)` |
-| `PutState`: `INSERT … ON CONFLICT (collection, id) DO UPDATE SET state = …, version = …, body = …` | every client document write | — | no plan rows (conflict check is a primary-key probe) |
+| `GetState`: `_tb_state` row with its materialized document | every client document write | — | `SEARCH s USING INDEX sqlite_autoindex__tb_state_1 (collection=? AND id=?)`; primary-key `LEFT-JOIN`s of `documents` and `unique_conflicts` |
+| `PutDocument`: `INSERT … ON CONFLICT (collection, id) DO UPDATE SET version = …, body = …` | every client document write | — | no plan rows (conflict check is a primary-key probe) |
+| `UpdateState`, `InsertState`: one `_tb_state` row per document per request | the end of every client write | — | `SEARCH _tb_state USING INDEX sqlite_autoindex__tb_state_1 (collection=? AND id=?)`; the insert has no plan rows |
+| `DropStates` | client collection drop | — | `SEARCH _tb_state USING INDEX sqlite_autoindex__tb_state_1 (collection=?)` |
 | `Put`: `INSERT … ON CONFLICT (collection, id) DO UPDATE SET version = excluded.version, body = …` | every `_system` write | no plan rows (conflict check is a primary-key probe) | unchanged |
 | `Tombstone`: `UPDATE … SET body = NULL …` | `_system` tombstone | — | `SEARCH documents USING PRIMARY KEY (collection=? AND id=?)` |
 | `NextOffset`, `CurrentOffset` on `commit_offset WHERE id = 1` | first write of a transaction, commit without writes | — | `SEARCH commit_offset USING INTEGER PRIMARY KEY (rowid=?)` |
@@ -54,12 +56,11 @@ tables unused. It retains no shape history. Both shapes include the uniqueness t
 | `HasCollectionStateFrom` | collection prefixes with no Unicode successor | — | the same four indexed `EXISTS` seeks using only `collection>?` or `name>?`; a prefix composed entirely of maximum Unicode scalars has no upper bound |
 | `CreateCollection`, `GetCollection`, `DropCollection` | collection routes, every document request (existence check) | — | insert: no plan rows; others `SEARCH collections USING PRIMARY KEY (name=?)` |
 | `ListCollectionsFirst`, `ListCollectionsAfter` | collection listing | — | `SCAN collections` (primary-key order, stops at the limit); `SEARCH collections USING PRIMARY KEY (name>?)` |
-| `DropDocuments`: `DELETE … WHERE collection = ?` | `_system` collection drop | — | `SEARCH documents USING PRIMARY KEY (collection=?)` |
+| `DropDocuments`: `DELETE … WHERE collection = ?` | collection drop | — | `SEARCH documents USING PRIMARY KEY (collection=?)` |
 | `Delete`: `DELETE … WHERE collection = ? AND id = ?` | every `_system` delete | `SEARCH documents USING PRIMARY KEY (collection=? AND id=?)` | unchanged |
 | List, first page: `… WHERE collection = ? ORDER BY id LIMIT ?` | list without cursor | `SEARCH documents USING PRIMARY KEY (collection=?)` | `SEARCH documents USING INDEX documents_live (collection=?)` (`ListFirst`), skipping tombstones |
 | List, next page: `… WHERE collection = ? AND id > ? ORDER BY id LIMIT ?` | list with cursor | `SEARCH documents USING PRIMARY KEY (collection=?)` — one statement used `($after IS NULL OR id > $after)`, which kept SQLite from seeking to the cursor: every page walked the collection from its first id | `SEARCH documents USING INDEX documents_live (collection=? AND id>?)` (`ListAfter`) |
 | `ObserveOffset`, `Origin` | a catalog follower's offset, the `_system` stream identity | — | integer-primary-key search on `commit_offset` |
-| `LiveIds` | client collection drop (a tombstone over each live document) | — | `SEARCH documents USING INDEX documents_live (collection=?)` under a count limit; no JSON loaded |
 | `ClientHasCollectionState`, `ClientHasCollectionStateFrom` | collection state checks on a client database | — | three `EXISTS` range seeks of `documents`, `collections` and `change_log_by_offset`: a client database keeps a drop's tombstones as registers, so it has no journal deletions to look at |
 | `LastSequence`, `AppendReplicationChange`, `GetChangeDigest`, `AppendChangeDigest` | `_system` journal append | — | journal primary-key search; inserts have no plan rows |
 | `PRAGMA user_version`, `PRAGMA journal_mode = WAL`, `CREATE TABLE` | once per database per process (bootstrap) | DDL, no plan | unchanged |

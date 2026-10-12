@@ -108,19 +108,38 @@ internal sealed partial class SqliteDatabaseStore(
         ) WITHOUT ROWID;
         """;
 
-    // A client database (docs/design/anna-core.md, Stored state). A document row keeps its encoded register (state), the
-    // stamp of its last-writer-wins write (version) and that write's JSON (body), NULL when the write is a tombstone or
-    // loses a uniqueness conflict, so reads, queries, indexes and shapes never decode a register. Shape history: every
+    // A client database (docs/terrabase/multi-region-replication.md section 5). A document row keeps the stamp of its last
+    // write (version) and its materialized JSON (body), NULL when it is deleted or loses a uniqueness conflict, so reads,
+    // queries, indexes and shapes never decode a state. _tb_state keeps each document's replicated DocumentState in its
+    // stored form (base64url), with its anti-entropy bucket and digest; the other _tb_ tables belong to the change feed,
+    // the peer streams and anti-entropy, which later slices fill. Every new table is a rowid table. Shape history: every
     // write is retained in change_log so shape snapshots at an offset and closed log chunks never change
     // (docs/shape-reads.md); change_log_births holds each document's first write per collection generation, and
     // change_log_high the generation's highest id over time, so a snapshot finds the ids that existed at its offset
     // without reading later ones.
     private const string ClientSchemaSql = """
         CREATE TABLE documents (
-            collection TEXT NOT NULL, id TEXT NOT NULL, state BLOB NOT NULL, version INTEGER NOT NULL, body TEXT,
+            collection TEXT NOT NULL, id TEXT NOT NULL, version INTEGER NOT NULL, body TEXT,
             PRIMARY KEY (collection, id)
         ) WITHOUT ROWID;
         CREATE INDEX documents_live ON documents (collection, id) WHERE body IS NOT NULL;
+        CREATE TABLE _tb_state (
+            collection TEXT NOT NULL, id TEXT NOT NULL, bucket INTEGER NOT NULL, state TEXT NOT NULL,
+            stamp INTEGER NOT NULL, origin INTEGER NOT NULL, live INTEGER NOT NULL, h1 INTEGER NOT NULL, h2 INTEGER NOT NULL,
+            UNIQUE (collection, id)
+        );
+        CREATE INDEX _tb_state_bucket ON _tb_state (bucket, collection, id);
+        CREATE INDEX _tb_state_dead ON _tb_state (stamp) WHERE live = 0;
+        CREATE TABLE _tb_peers (
+            node INTEGER PRIMARY KEY, applied INTEGER NOT NULL, acked INTEGER NOT NULL, stable INTEGER NOT NULL, seen INTEGER NOT NULL
+        );
+        CREATE TABLE _tb_feed (
+            origin INTEGER NOT NULL, stamp INTEGER NOT NULL, collection TEXT NOT NULL, id TEXT NOT NULL, deleted INTEGER NOT NULL
+        );
+        CREATE INDEX _tb_feed_order ON _tb_feed (origin, stamp);
+        CREATE TABLE _tb_feed_floor (origin INTEGER PRIMARY KEY, stamp INTEGER NOT NULL);
+        CREATE TABLE _tb_merkle (bucket INTEGER PRIMARY KEY, h1 INTEGER NOT NULL, h2 INTEGER NOT NULL);
+        CREATE TABLE _tb_tail (id INTEGER PRIMARY KEY CHECK (id = 1), change_id INTEGER NOT NULL);
         CREATE TABLE collections (
             name TEXT PRIMARY KEY, created_at INTEGER NOT NULL, generation INTEGER NOT NULL,
             entity_id TEXT NOT NULL CHECK (length(entity_id) = 26)
@@ -583,6 +602,11 @@ internal sealed partial class SqliteDatabaseStore(
                     try
                     {
                         keeps = await write.RunAsync(transaction).ConfigureAwait(false);
+                        if (keeps)
+                        {
+                            // The write's documents get their one state row each before the next write can touch them.
+                            await transaction.FlushStatesAsync().ConfigureAwait(false);
+                        }
                     }
                     catch (Exception error)
                     {

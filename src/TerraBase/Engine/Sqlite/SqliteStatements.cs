@@ -36,14 +36,31 @@ internal static class SqliteStatements
     // typeof() reads the column's type from the record header, not its content: no body is loaded.
     public const string Version = "SELECT version, typeof(body) = 'null' FROM documents WHERE collection = $collection AND id = $id;";
 
-    // Client databases (docs/design/anna-core.md, Stored state): a document's register, and its row with the register's
-    // last-writer-wins write, written together.
-    public const string GetState = "SELECT state FROM documents WHERE collection = $collection AND id = $id;";
-
-    public const string PutState = """
-        INSERT INTO documents (collection, id, state, version, body) VALUES ($collection, $id, $state, $version, $body)
-        ON CONFLICT (collection, id) DO UPDATE SET state = excluded.state, version = excluded.version, body = excluded.body;
+    // Client databases (docs/terrabase/multi-region-replication.md section 5): a document's state, and the materialized
+    // JSON it is stored beside (a hidden uniqueness loser's is kept aside), which the stored form leaves its values to.
+    public const string GetState = """
+        SELECT s.state, coalesce(c.body, d.body) FROM _tb_state s
+        LEFT JOIN documents d ON d.collection = s.collection AND d.id = s.id
+        LEFT JOIN unique_conflicts c ON c.collection = s.collection AND c.id = s.id
+        WHERE s.collection = $collection AND s.id = $id;
         """;
+
+    public const string PutDocument = """
+        INSERT INTO documents (collection, id, version, body) VALUES ($collection, $id, $version, $body)
+        ON CONFLICT (collection, id) DO UPDATE SET version = excluded.version, body = excluded.body;
+        """;
+
+    public const string UpdateState = """
+        UPDATE _tb_state SET state = $state, stamp = $stamp, origin = $origin, live = $live, h1 = $h1, h2 = $h2
+        WHERE collection = $collection AND id = $id;
+        """;
+
+    public const string InsertState = """
+        INSERT INTO _tb_state (collection, id, bucket, state, stamp, origin, live, h1, h2)
+        VALUES ($collection, $id, $bucket, $state, $stamp, $origin, $live, $h1, $h2);
+        """;
+
+    public const string DropStates = "DELETE FROM _tb_state WHERE collection = $collection;";
 
     // The system database: the version is the commit offset of the writing transaction.
     public const string Put = """
@@ -98,7 +115,7 @@ internal static class SqliteStatements
             OR EXISTS(SELECT 1 FROM change_log INDEXED BY change_log_by_offset WHERE collection >= $from);
         """;
 
-    // A client database keeps a drop's tombstones as registers in documents: no journal deletions to look at.
+    // A client database keeps no journal deletions to look at.
     public const string ClientHasCollectionState = """
         SELECT EXISTS(SELECT 1 FROM documents WHERE collection >= $from AND collection < $to)
             OR EXISTS(SELECT 1 FROM collections WHERE name >= $from AND name < $to)
@@ -160,11 +177,6 @@ internal static class SqliteStatements
 
     // The system database: a catalog follower's commit offset reaches its primary's.
     public const string ObserveOffset = "UPDATE commit_offset SET value = max(value, $version) WHERE id = 1;";
-
-    // A client drop writes a tombstone over each live document: their ids, from the index alone.
-    public const string LiveIds = """
-        SELECT id FROM documents INDEXED BY documents_live WHERE collection = $collection AND body IS NOT NULL ORDER BY id LIMIT $limit;
-        """;
 
     // The system database's origin is its persisted incarnation, a ULID.
     public const string Origin = "SELECT incarnation FROM commit_offset WHERE id = 1;";
@@ -241,6 +253,7 @@ internal static class SqliteStatements
         [nameof(ListCollectionStats)] = ListCollectionStats,
         [nameof(ListIndexes)] = ListIndexes,
         [nameof(IndexExists)] = IndexExists,
+        [nameof(DropDocuments)] = DropDocuments,
     };
 
     /// <summary>Statements only client databases run, by name, for query-plan checks.</summary>
@@ -249,8 +262,10 @@ internal static class SqliteStatements
         [nameof(GetState)] = GetState,
         [nameof(ClientHasCollectionState)] = ClientHasCollectionState,
         [nameof(ClientHasCollectionStateFrom)] = ClientHasCollectionStateFrom,
-        [nameof(PutState)] = PutState,
-        [nameof(LiveIds)] = LiveIds,
+        [nameof(PutDocument)] = PutDocument,
+        [nameof(UpdateState)] = UpdateState,
+        [nameof(InsertState)] = InsertState,
+        [nameof(DropStates)] = DropStates,
     };
 
     /// <summary>Statements only the system database runs, by name, for query-plan checks (TS-647 step 5 removes them).</summary>
@@ -259,7 +274,6 @@ internal static class SqliteStatements
         [nameof(Put)] = Put,
         [nameof(Delete)] = Delete,
         [nameof(Tombstone)] = Tombstone,
-        [nameof(DropDocuments)] = DropDocuments,
         [nameof(DeleteCollectionDocuments)] = DeleteCollectionDocuments,
         [nameof(DeleteCollectionNames)] = DeleteCollectionNames,
         [nameof(ObserveOffset)] = ObserveOffset,

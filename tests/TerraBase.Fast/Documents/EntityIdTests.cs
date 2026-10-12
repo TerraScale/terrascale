@@ -151,11 +151,8 @@ public sealed class EntityIdTests
         await using (var connection = new SqliteConnection(DocumentApi.ConnectionString(await api.DatabaseFileAsync())))
         {
             await connection.OpenAsync();
-            await using var restore = connection.CreateCommand();
-            restore.CommandText = "UPDATE documents SET body = $body WHERE collection = 'items' AND id = $id;";
-            restore.Parameters.AddWithValue("$body", deep);
-            restore.Parameters.AddWithValue("$id", id);
-            await restore.ExecuteNonQueryAsync();
+            // Deeper than the API admits: written with its state, as an earlier write path could have stored it.
+            await StoredStates.WriteAsync(connection, "items", id, deep);
         }
 
         var rejected = await api.SendRawAsync(HttpMethod.Patch, api.Document(id), """{"value":1}""", "application/merge-patch+json");
