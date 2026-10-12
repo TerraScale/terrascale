@@ -53,6 +53,41 @@ public sealed class BackupBacklogRecoveryTests
     }
 
     [Test]
+    public async Task A_sustained_outage_during_a_backlog_drops_the_generation_counts_it_and_recovers_from_a_new_snapshot(CancellationToken cancellationToken)
+    {
+        await using var host = await BackupShippingHost.StartAsync();
+        await host.ShipAsync(TimeSpan.FromSeconds(10), cancellationToken);
+        var generation = host.Status().Generation!;
+        var texts = await WriteBacklogAsync(host, cancellationToken);
+
+        // Every retry fails, five minutes apart, until the backoff reaches its cap; the backlog stays in the change log.
+        host.S3.FailPut = key => key.StartsWith($"{host.File}/wal/", StringComparison.Ordinal);
+        for (var retry = 0; retry < 10; retry++)
+        {
+            await host.ShipAsync(TimeSpan.FromMinutes(5), cancellationToken);
+            await Assert.That(host.Status().Generation).IsEqualTo(generation);
+        }
+
+        await Assert.That(await host.MetricsAsync(cancellationToken)).DoesNotContain("terrabase_backup_abandoned");
+
+        // A sustained outage: the next pass drops the generation, so reads trim the change log again; it is counted.
+        await host.ShipAsync(TimeSpan.FromSeconds(1), cancellationToken);
+        host.Time.Advance(TimeSpan.FromSeconds(1));
+        var dropped = host.Status();
+        await Assert.That(dropped.Generation).IsNull();
+        await Assert.That(dropped.PendingBytes).IsEqualTo(0);
+        await Assert.That(dropped.LagSeconds).IsGreaterThan(0);
+        await Assert.That(await host.MetricsAsync(cancellationToken)).Contains("reason=\"outage\"");
+
+        host.S3.FailPut = _ => false;
+        await host.ShipAsync(TimeSpan.FromMinutes(5), cancellationToken);
+        var recovered = host.Status();
+        await Assert.That(recovered.Generation).IsNotNull();
+        await Assert.That(recovered.Generation).IsNotEqualTo(generation);
+        await AssertRestoredAsync(host, recovered.LastShippedAt!.Value, "after-sustained-outage", texts, cancellationToken);
+    }
+
+    [Test]
     public async Task Shutdown_ships_the_whole_backlog_not_one_read(CancellationToken cancellationToken)
     {
         await using var host = await BackupShippingHost.StartAsync(services =>

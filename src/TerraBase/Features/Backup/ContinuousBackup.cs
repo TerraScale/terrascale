@@ -59,9 +59,10 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
     private static readonly TimeSpan DiscoveryInterval = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan SnapshotInterval = TimeSpan.FromDays(1);
     private static readonly TimeSpan ConfigurationTimeout = TimeSpan.FromSeconds(1);
+    private static readonly TimeSpan MaxBackoff = TimeSpan.FromMinutes(5);
 
-    // Log read but not stored, per file, while its uploads fail, before its generation is dropped for a fresh snapshot
-    // (bounds scratch disk; a read adds at most the tap's budget and one transaction past it).
+    // Log read but not stored, per file, past which reads wait while uploads fail, leaving the rest in turso_cdc (bounds
+    // scratch disk; a read adds at most the tap's budget and one transaction past it).
     private const long MaxPendingBytes = 256L * 1024 * 1024;
     private const int MaxJobs = 4;
     private const int MaxCustomerJobs = 2;
@@ -94,6 +95,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
     private readonly Counter<long> _failures;
     private readonly Counter<long> _holes;
     private readonly Counter<long> _abandoned;
+    private readonly Counter<long> _deferred;
     private readonly Counter<long> _generations;
     private readonly Counter<long> _drills;
     private readonly Counter<long> _bucketSnapshots;
@@ -116,7 +118,9 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         _failures = meter.CreateCounter<long>("terrabase.backup.failures", description: "Backup passes of a file that failed.");
         _holes = meter.CreateCounter<long>("terrabase.backup.holes", description: "Logs found checkpointed or rewritten by someone else, each ending a generation.");
         _abandoned = meter.CreateCounter<long>("terrabase.backup.abandoned",
-            description: "Generations ended by a failure with log read but not stored, by reason (backlog, read, destination).");
+            description: "Generations ended by a failure with log read but not stored, by reason (outage, read, destination).");
+        _deferred = meter.CreateCounter<long>("terrabase.backup.snapshots_deferred",
+            description: "Passes that put off a due daily snapshot, by reason (backlog: unread log remains; busy: snapshot uploads in flight).");
         _generations = meter.CreateCounter<long>("terrabase.backup.generations", description: "Generations started (each stores a snapshot).");
         _drills = meter.CreateCounter<long>("terrabase.backup.drills", description: "Restore drills, by result (passed, failed).");
         _bucketSnapshots = meter.CreateCounter<long>("terrabase.backup.bucket_snapshots", description: "Tigris snapshots of the backup bucket, by result (taken, deleted, failed).");
@@ -476,7 +480,12 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
                         file.RetryAt = DateTimeOffset.MinValue;
                     }
 
-                    await ShipAsync(file, cancellationToken).ConfigureAwait(false);
+                    // Ship the whole backlog, not one read of it, while the shutdown budget lasts.
+                    do
+                    {
+                        await ShipAsync(file, cancellationToken).ConfigureAwait(false);
+                    }
+                    while (file.Behind && file.LastError is null && file.Generation is not null && !cancellationToken.IsCancellationRequested);
                 }
                 catch (Exception error)
                 {
@@ -621,6 +630,23 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
                 return;
             }
 
+            if (due && file.Unstored is not null)
+            {
+                // Retry the failed segment first: while the bucket still fails, reading on only moves log into scratch.
+                await PutUnstoredAsync(file, cancellationToken).ConfigureAwait(false);
+            }
+            else if (!due && (file.Behind || file.Buffered >= MaxPendingBytes))
+            {
+                // Uploads fail: leave the backlog in turso_cdc, where the backup anchor holds it. Once failures reach the longest
+                // backoff the outage is sustained: drop the generation, so reads trim the change log again.
+                if (Backoff(file.Failures) >= MaxBackoff)
+                {
+                    Drop(file, "outage");
+                }
+
+                return;
+            }
+
             WalRead read;
             var appended = file.Pending.Length;
             try
@@ -657,12 +683,6 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
             file.Behind = read.Remaining;
             if (!due)
             {
-                if (file.Buffered > MaxPendingBytes)
-                {
-                    // Uploads have failed too long: drop the log and start over with a snapshot once the bucket answers.
-                    Drop(file, "backlog");
-                }
-
                 return;
             }
 
@@ -676,10 +696,21 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
                 file.BehindSince = null;
             }
 
-            // A snapshot reads what is left while it holds writers: never with a backlog. One at a time per file.
-            if (!file.Behind && now - file.LastSnapshot >= SnapshotInterval && file.Side is not { Completion.IsCompleted: false } && !_stopped)
+            // A snapshot reads what is left while it holds writers: never with a backlog. Its upload holds a snapshot slot.
+            if (now - file.LastSnapshot >= SnapshotInterval && !_stopped)
             {
-                await SnapshotAsync(file, cancellationToken).ConfigureAwait(false);
+                if (file.Behind)
+                {
+                    _deferred.Add(1, new KeyValuePair<string, object?>("reason", "backlog"));
+                }
+                else if (file.Side is { Completion.IsCompleted: false } || !_snapshotSlots.Wait(0, cancellationToken))
+                {
+                    _deferred.Add(1, new KeyValuePair<string, object?>("reason", "busy"));
+                }
+                else
+                {
+                    await SnapshotAsync(file, cancellationToken).ConfigureAwait(false);
+                }
             }
 
             if (file.Generation is not null && now - file.RetainedAt >= RetentionInterval)
@@ -806,14 +837,9 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
     }
 
     // A later snapshot of the same generation: the log before it is stored first, so the next segment starts at it. Its upload
-    // and drill then run beside shipping, holding one of the snapshot slots and its scratch copy until it is stored.
+    // and drill then run beside shipping, holding the snapshot slot the caller took and its scratch copy until it is stored.
     private async Task SnapshotAsync(ShippedFile file, CancellationToken cancellationToken)
     {
-        if (!_snapshotSlots.Wait(0, cancellationToken))
-        {
-            return;
-        }
-
         var snapshot = ScratchFile(".db");
         var handedOff = false;
         try
@@ -1054,7 +1080,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
     }
 
     // 1 s after the first failure, doubling up to five minutes, like Litestream's sync backoff.
-    private static TimeSpan Backoff(int failures) => TimeSpan.FromSeconds(Math.Min(300, Math.Pow(2, Math.Min(failures - 1, 9))));
+    private static TimeSpan Backoff(int failures) => TimeSpan.FromSeconds(Math.Min(MaxBackoff.TotalSeconds, Math.Pow(2, Math.Min(failures - 1, 9))));
 
     // Ends the generation; on its own only where the file moves on on purpose (a new shipper or destination, shutdown).
     private static void Abandon(ShippedFile file)

@@ -112,9 +112,11 @@ internal sealed class TursoChangeTap : IWalTap
                     // A call that throws has not moved the tap (IWalTap.ReadAsync): the next one reads the same changes
                     // again, or finds a hole if the delete ran.
                     (_anchor, _schema) = (anchor, schema);
-                    _store.BackupAnchor = anchor;
                     throw;
                 }
+
+                // Only now may CDC retention for peer streams move past the old anchor.
+                _store.BackupAnchor = _anchor;
             }
 
             return read;
@@ -216,8 +218,8 @@ internal sealed class TursoChangeTap : IWalTap
             (after, spent) = (next, stop);
         }
 
+        // The caller publishes the anchor to CDC retention (BackupAnchor) once its cleanup is done.
         (_anchor, _schema) = (after, schema);
-        _store.BackupAnchor = after;
         return new(bytes, true, after < end);
     }
 

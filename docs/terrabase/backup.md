@@ -197,7 +197,8 @@ transaction. The backup's tap (`Engine/Sqlite/TursoChangeTap.cs`) reads that tab
 2. It then deletes, on the writer, the rows before its anchor, always keeping the newest: an empty `turso_cdc`
    restarts its ids at 1 after a reopen. Turso does not capture changes to `turso_cdc` itself. A read that fails,
    including this delete, puts its anchor back: the shipper drops what that read appended, and the next read appends
-   the same changes again (or finds a hole, if the delete ran).
+   the same changes again (or finds a hole, if the delete ran). The change retention of peer streams follows the new
+   anchor only once the delete has succeeded.
 3. Anything that moves the log under the tap is a **hole**: the file starts a new generation, and
    `terrabase_backup_holes_total` counts it. Two cases:
    - the anchor row is gone: something else deleted changes the tap had not read;
@@ -238,14 +239,19 @@ sends exactly those bytes under the same key before anything later is sealed, an
 next segment, starting where the failed one ends. So two segments never share a start, and an overwrite of a stored
 segment only repeats its own bytes.
 
-After a failed upload or snapshot, a file waits before the next attempt: 1 s, doubling to 5 minutes. Reads and
-trimming go on meanwhile, so `turso_cdc` stays small. The log read but not stored (the sealed segment and the reads
-after it) is bounded: once it passes 256 MiB while the file waits out a failure, it is **dropped**, the generation
-ends, and the file starts a new one with a snapshot once the bucket answers. A log is dropped only then, after a
-failed snapshot read, or after any failure on a customer destination (below). Every drop logs a warning and counts in
-`terrabase_backup_abandoned_total{reason}` (`backlog`, `read`, `destination`); a hole counts in
+After a failed upload or snapshot, a file waits before the next attempt: 1 s, doubling to 5 minutes. When the attempt
+is due, the failed segment is sent again before anything more is read. Between attempts reads and trimming go on, so
+`turso_cdc` stays small, but only while no backlog remains and less than 256 MiB waits in scratch; otherwise the rest
+stays in `turso_cdc`, where the backup's anchor keeps it, and a short outage costs nothing. Once failures reach the
+longest backoff (about eight and a half minutes into an outage) while log still waits there, the outage counts as
+sustained: the log is **dropped**, the generation ends, reads trim `turso_cdc` again, and the file starts a new
+generation with a snapshot once the bucket answers. A log is dropped only then, after a failed snapshot read, or after
+any failure on a customer destination (below). Every drop logs a warning and counts in
+`terrabase_backup_abandoned_total{reason}` (`outage`, `read`, `destination`); a hole counts in
 `terrabase_backup_holes_total`. A new shipper lease, a destination change and shutdown also end a generation, on
-purpose, without counting a drop.
+purpose, without counting a drop. At shutdown a file ships its whole backlog, read after read, while the shutdown
+budget lasts. A daily snapshot due while a backlog remains, or while snapshot uploads are busy, waits for a later pass;
+`terrabase_backup_snapshots_deferred_total{reason}` (`backlog`, `busy`) counts each such pass.
 
 Lag (`terrabase_backup_lag_seconds`, `lagSeconds`) is how long the oldest committed data not yet in the bucket has
 waited, as far as the shipper can tell: it starts when a read first finds unstored changes (or a snapshot is pinned,
@@ -508,6 +514,7 @@ its SQL), a segment is a change log, and replay applies rows instead of pages.
   loss bound), `terrabase_backup_last_success_seconds` (Unix time of the least recently shipped file) and
   `terrabase_backup_files`. Also `terrabase_backup_uploaded_bytes_total{kind}`, `terrabase_backup_failures_total`,
   `terrabase_backup_holes_total`, `terrabase_backup_abandoned_total{reason}` (unstored log dropped),
+  `terrabase_backup_snapshots_deferred_total{reason}` (passes that put off a due daily snapshot),
   `terrabase_backup_generations_total` (a rising count means snapshots too often), `terrabase_backup_drills_total{result}`
   and `terrabase_backup_stored_bytes` (bucket bytes of the files this member ships).
   Bucket snapshots: `terrabase_backup_bucket_snapshots_total{result}` (taken, deleted, failed) and
