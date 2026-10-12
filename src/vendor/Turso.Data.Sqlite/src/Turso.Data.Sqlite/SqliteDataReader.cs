@@ -765,13 +765,20 @@ public class SqliteDataReader : DbDataReader
                     return true;
                 }
 
-                while (TursoBindings.Read(statement))
+                try
                 {
-                }
+                    while (TursoBindings.Read(statement))
+                    {
+                    }
 
-                if (SqliteCommand.CountsRowsAffected(sql))
-                    _recordsAffected += TursoBindings.RowsAffected(statement);
-                statement.Dispose();
+                    if (SqliteCommand.CountsRowsAffected(sql))
+                        _recordsAffected += TursoBindings.RowsAffected(statement);
+                }
+                finally
+                {
+                    // TerraScale: also when it fails, or the finalizer thread would use the connection while its owner does.
+                    statement.Dispose();
+                }
             }
         }
         catch (TursoException ex)
