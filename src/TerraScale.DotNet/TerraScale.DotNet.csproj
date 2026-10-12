@@ -7,7 +7,7 @@
     <TargetFrameworks Condition="'$(TargetFrameworks)' == ''">net10.0</TargetFrameworks>
     <TargetFramework />
     <PackageId>TerraScale.DotNet</PackageId>
-    <Version>0.1.0</Version>
+    <Version>0.0.1</Version>
     <Description>Official .NET SDK for TerraBase, TerraScale native database and auth APIs.</Description>
     <PackageProjectUrl>https://github.com/TerraScale/ts-dotnet</PackageProjectUrl>
     <RepositoryUrl>https://github.com/TerraScale/ts-dotnet</RepositoryUrl>
