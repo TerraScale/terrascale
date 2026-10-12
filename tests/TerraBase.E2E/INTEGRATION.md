@@ -76,6 +76,8 @@ had no preview app. PRs that still have a preview app: #79, #88, #106, #108, #11
    likely fix.
 2. Then the other PRs, in manifest order.
 
+- **#115 at `787ebc57`** (contains `8dc69d14` and main `014c9928`; no `.github` change): `test` **failed**, run 38272693302. libs, auth and terrabase all fail in `make fmt-check`: `dotnet format whitespace` over the solution now covers the pristine vendored driver (`FINALNEWLINE`, `CHARSET`). Handed to T1: exclude `src/vendor` from the whitespace check without editing the pristine import. Not merged.
+
 **Every PR needs a fresh green `test` run on its exact head after main is green.** A rerun of a failed job while main is
 known flaky proves nothing. #79's 15:30Z rerun request (run 38268608663) does not count.
 
