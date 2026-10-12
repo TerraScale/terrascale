@@ -16,7 +16,7 @@ public sealed class LatticeE2ETests
 
     [Test]
     [Scenario(Nodes.InProcess)]
-    public async Task E8_concurrent_inc_in_both_regions_sums_and_set_0_resets_expected_to_fail()
+    public async Task E8_concurrent_inc_in_both_regions_sums_and_set_0_resets()
     {
         await Gaps.RunAsync("E8", async () =>
         {
@@ -36,7 +36,7 @@ public sealed class LatticeE2ETests
 
     [Test]
     [Scenario(Nodes.InProcess)]
-    public async Task E9_concurrent_add_and_remove_of_one_element_add_wins_expected_to_fail()
+    public async Task E9_concurrent_add_and_remove_of_one_element_add_wins()
     {
         await Gaps.RunAsync("E9", async () =>
         {
@@ -53,7 +53,7 @@ public sealed class LatticeE2ETests
 
     [Test]
     [Scenario(Nodes.InProcess)]
-    public async Task E10_feed_cursor_from_gru_resumes_in_sjc_with_no_missing_event_in_per_origin_order_expected_to_fail()
+    public async Task E10_feed_cursor_from_gru_resumes_in_sjc_with_no_missing_event_in_per_origin_order()
     {
         await Gaps.RunAsync("E10", async () =>
         {
@@ -83,7 +83,7 @@ public sealed class LatticeE2ETests
 
     [Test]
     [Scenario(Nodes.InProcess)]
-    public async Task E11_sql_update_in_gru_and_patch_in_sjc_both_survive_and_increments_add_expected_to_fail()
+    public async Task E11_sql_update_in_gru_and_patch_in_sjc_both_survive_and_increments_add()
     {
         await Gaps.RunAsync("E11", async () =>
         {
@@ -107,7 +107,7 @@ public sealed class LatticeE2ETests
     // integration test. Here: concurrent delete and patch leave no ghost fields, and GC rounds bring nothing back.
     [Test]
     [Scenario(Nodes.InProcess)]
-    public async Task E14_delete_then_gc_then_recreate_leaves_no_ghost_fields_expected_to_fail()
+    public async Task E14_delete_then_gc_then_recreate_leaves_no_ghost_fields()
     {
         await Gaps.RunAsync("E14", async () =>
         {
@@ -135,7 +135,7 @@ public sealed class LatticeE2ETests
     // feeds then show the token with two uses, which ts-auth's watcher revokes the family on. R12 adds the ts-auth half.
     [Test]
     [Scenario(Nodes.InProcess)]
-    public async Task E15_refresh_token_used_in_gru_and_sjc_shows_both_uses_on_both_feeds_expected_to_fail()
+    public async Task E15_refresh_token_used_in_gru_and_sjc_shows_both_uses_on_both_feeds()
     {
         await Gaps.RunAsync("E15", async () =>
         {
