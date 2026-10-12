@@ -9,7 +9,7 @@ included; at least 1 MiB) is the memory TerraBase plans for caches. `IMemoryBudg
 | Share | Used by |
 | --- | --- |
 | ¼ | Document and list-page cache (`Features/Documents/DocumentCache.cs`); every entry is also reserved from `IMemoryBudget` |
-| ¼ | SQLite page caches: `cache_size` per connection is this ÷ `storage-threads`, and `soft_heap_limit` requests this quarter as a process-wide soft limit (a second engine only raises it; this is not hard memory admission) (`docs/terrabase/sqlite-query-plans.md`) |
+| ¼ | Page caches: `cache_size` per connection is this ÷ `storage-threads`. Turso has no process-wide heap limit, so these per-connection caches are the bound; this is not hard memory admission (`docs/terrabase/sqlite-query-plans.md`) |
 | all | SQLite `mmap_size`: address space backed by the OS page cache, not the heap |
 | rest | Request buffers and everything not yet reserved |
 
@@ -64,7 +64,7 @@ Stamps live in 4 096 stripes: unrelated keys that share a stripe also invalidate
 
 ## Storage pool
 
-Microsoft.Data.Sqlite has no true async I/O, so every SQLite call runs on `storage-threads`
+The Turso provider has no true async I/O, so every storage call runs on `storage-threads`
 dedicated threads (`Engine/Sqlite/SqliteIoPool.cs`) and request threads only await it. At most
 `storage-queue` transactions (and maintenance calls) are admitted at once, each with at most one queued
 call; beyond that the request gets `503 Service Unavailable` with `Retry-After: 1`. Writers to one

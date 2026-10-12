@@ -30,6 +30,8 @@ first 12 hex digits of the schema digest. A directory records it in its lock fil
   delete the old volume), then the normal rollout and live checks run. A machine that does not answer rolls out normally;
   if it then fails, its logs are checked for the refusal (reset) and anything else stops the rollout. Resets only run
   while `ops/fly/greenfield-no-customer-data` exists; each one is listed in the deploy job summary with its snapshot ID.
+- Formats: 2 was SQLite (Microsoft.Data.Sqlite); 3 is Turso (T1). A format-3 build refuses a format-2 data directory at
+  start with `data directory has storage format 2-…; this build writes 3-…`; there is no conversion.
 - Storage train: a pull request that changes what is on disk bumps `StorageFormat.Version` and carries the label
   `storage-format`. One that touches a storage file without changing what is on disk carries `storage-format-unchanged`.
   The `test` job enforces this (`scripts/terrabase/storage-format-check.sh`, which also holds the storage file list kept by

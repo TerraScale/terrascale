@@ -280,3 +280,31 @@ None of these needs Turso changes except item 4. Items 1–3 are design changes 
    should not rely on it.
 6. **CDC costs a third of write throughput** (−37% `full`, −32% `after`), measured with capture verified.
 7. **Shared-CPU baseline.** Sustained throughput is a fraction of these burst numbers.
+
+## Found while swapping the engine (T1, 2026-10-12)
+
+TerraBase now runs on `Turso.Data.Sqlite.Provider` 0.8.2 (storage format 3). Behaviour the swap had to work around, each
+reproduced with the provider alone; the workaround is in the code next to it:
+
+| Behaviour | Workaround |
+| --- | --- |
+| `wal_autocheckpoint = 0` is ignored: Turso restarts its log by itself (11 times in 3000 commits) | Backup ships the change capture, not the log (`backup.md`) |
+| The last connection's close does not checkpoint: the `-wal` file stays | `wal_checkpoint(TRUNCATE)` before a file is moved (create, restore) or copied, when the writer closes, and an empty `-wal` is deleted at shutdown |
+| `Mode=ReadWrite` is ignored: opening a missing file creates it | `SqliteSession.OpenExisting` refuses a missing file and removes an empty one it created |
+| `VACUUM INTO` on any connection but the writer copies an older view; it renumbers `sqlite_schema` rowids; `BackupDatabase` fails with "database is locked" | Copies are row by row in one read transaction (`TursoCopy`) |
+| `wal_checkpoint(TRUNCATE)` waits for every reader on older frames; a read transaction stops Turso from checkpointing into the file (the log grows instead) | Neither is relied on for snapshots |
+| A runtime error while a SELECT steps (a function that throws) rolls the whole transaction back; later statements then run in autocommit. Constraint, parse and `RAISE(FAIL)` errors do not | A failed statement in a write transaction checks `BEGIN` (`SqliteSession.InTransaction`); if the transaction is gone it can only be disposed |
+| A write on a connection while one of its own SELECT readers is open fails with "database is locked" | Read the ids first, then write (`CaptureSystemDeletions`) |
+| Closing a reader steps the statement to its end | Every early-closed statement has a `LIMIT`, and the per-row `tb_qos_scan` stops a cancelled one |
+| No interrupt, progress handler or VM instruction count | `tb_qos_scan(octet_length(doc))` in every scan: it accounts candidates, checks the deadline every 32 rows and cancellation every row, and throws to stop the statement. The plan's instruction limit is gone |
+| A function without arguments is evaluated once per statement | `tb_query_scan(id)` takes the row's id |
+| A subquery in FROM is not flattened (it is materialized, then sorted) | Document queries and the history reads are single flat statements |
+| A row-value comparison `(a, b) > (?, ?)`, or the same as an `OR`, scans the whole index; `max(x)` scans | Two bounded seeks joined by `UNION ALL`; `ORDER BY x DESC LIMIT 1` |
+| An expression deeper than 100 is refused (SQLite allows 1000) | `AND`/`OR` chains are emitted as balanced trees |
+| Planner statistics are read only when a connection opens | An index build closes older connections when they are returned |
+| The planner ignores `LIMIT`: an unfiltered `ORDER BY` on an indexed, non-covered field scans and sorts | The SQL subset names the index (`INDEXED BY`) for an unfiltered sort on its leading field |
+| The stored index SQL has a space after a function name (`json_extract (doc, …)`) | The index parser accepts it |
+| EXPLAIN says `USE SORTER FOR ORDER BY` for SQLite's `USE TEMP B-TREE`, and `MULTI-INDEX OR` for an `IN` rewritten to `OR` | The sort budget and the used-index report read Turso's wording |
+| Change capture records the writer's TEMP tables as if they were in the file, records a DDL statement as a `sqlite_schema` row (a drop as its rowid only), and does not record `ANALYZE`'s `sqlite_stat1` | No TEMP tables on the writer (`_tb_unique_affected`); the backup log names dropped objects |
+| The provider splits command text at every `;` and cannot wrap a local `TursoConnection`, so it cannot create a trigger; it has no batches for local files | No triggers in the schema; tests that inject failures create triggers on a connection of their own while the writer is held |
+
