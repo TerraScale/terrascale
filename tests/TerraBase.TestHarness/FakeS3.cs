@@ -117,6 +117,9 @@ public sealed class FakeS3
     /// <summary>Runs after a part is stored; receives the key and part number.</summary>
     public Action<string, int>? PartStored { get; set; }
 
+    /// <summary>Multipart aborts answered 500 <c>InternalError</c>, leaving the upload pending; receives the key.</summary>
+    public Func<string, bool> FailAbort { get; set; } = _ => false;
+
     /// <summary>
     /// Answers a multipart completion with 200 and the returned XML body instead of completing it, such as an
     /// <c>&lt;Error&gt;</c> body (how some S3-compatible services report a failed completion) or a success result that stored
@@ -141,6 +144,9 @@ public sealed class FakeS3
 
     /// <summary>Multipart uploads neither completed nor aborted; their parts are not objects.</summary>
     public int PendingUploads => _uploads.Count;
+
+    /// <summary>The keys of <see cref="PendingUploads"/>.</summary>
+    public IReadOnlyList<string> PendingUploadKeys => [.. _uploads.Values.Select(upload => upload.Key)];
 
     /// <summary>Observes object requests without retaining an unbounded request history; true identifies the customer.</summary>
     public Action<bool, HttpMethod, string>? ObjectRequested { get; set; }
@@ -311,6 +317,11 @@ public sealed class FakeS3
         }
 
         ObjectRequested?.Invoke(customer, request.Method, key);
+
+        if (key.Length == 0 && request.Method == HttpMethod.Get && uri.Query.TrimStart('?').Split('&').Any(part => part is "uploads" or "uploads="))
+        {
+            return ListUploads(customer, bucket, System.Web.HttpUtility.ParseQueryString(uri.Query));
+        }
 
         if (key.Length == 0 && request.Method == HttpMethod.Get)
         {
@@ -490,7 +501,7 @@ public sealed class FakeS3
         if (query["uploadId"] is not { } id)
         {
             id = Guid.NewGuid().ToString("N");
-            _uploads[id] = new Upload(customer, key, [.. request.Headers
+            _uploads[id] = new Upload(customer, key, Time.GetUtcNow(), [.. request.Headers
                 .Where(header => header.Key.StartsWith("x-amz-meta-", StringComparison.OrdinalIgnoreCase))
                 .Select(header => KeyValuePair.Create(header.Key.ToLowerInvariant(), string.Join(",", header.Value)))]);
             Interlocked.Increment(ref _startedUploads);
@@ -526,6 +537,11 @@ public sealed class FakeS3
 
         if (method == HttpMethod.Delete)
         {
+            if (FailAbort(key))
+            {
+                return S3Error(HttpStatusCode.InternalServerError, "InternalError");
+            }
+
             if (_uploads.TryRemove(id, out _))
             {
                 Interlocked.Increment(ref _abortedUploads);
@@ -571,6 +587,35 @@ public sealed class FakeS3
         Interlocked.Increment(ref _completedUploads);
         return Xml(HttpStatusCode.OK, new XElement(S3 + "CompleteMultipartUploadResult",
             new XElement(S3 + "Bucket", bucket), new XElement(S3 + "Key", key), new XElement(S3 + "ETag", ETag(content))));
+    }
+
+    // ListMultipartUploads in S3's order (key, then upload id), resuming after key-marker and upload-id-marker. Like a store
+    // that pages early, one upload per page, so a caller must follow the markers.
+    private HttpResponseMessage ListUploads(bool customer, string bucket, NameValueCollection query)
+    {
+        var prefix = query["prefix"] ?? "";
+        var (keyMarker, idMarker) = (query["key-marker"] ?? "", query["upload-id-marker"] ?? "");
+        var markerBytes = Encoding.UTF8.GetBytes(keyMarker);
+        var listed = _uploads.Where(item => item.Value.Customer == customer && item.Value.Key.StartsWith(prefix, StringComparison.Ordinal))
+            .Select(item => (Id: item.Key, item.Value, Bytes: Encoding.UTF8.GetBytes(item.Value.Key)))
+            .Where(item => item.Bytes.AsSpan().SequenceCompareTo(markerBytes) is var order && (order > 0 || order == 0 && string.CompareOrdinal(item.Id, idMarker) > 0))
+            .OrderBy(item => item.Bytes, S3KeyOrder).ThenBy(item => item.Id, StringComparer.Ordinal).Take(2).ToList();
+        var page = listed.Take(1).ToList();
+        var truncated = listed.Count > 1;
+        return Xml(HttpStatusCode.OK, new XElement(S3 + "ListMultipartUploadsResult",
+            new XElement(S3 + "Bucket", bucket),
+            new XElement(S3 + "KeyMarker", keyMarker),
+            new XElement(S3 + "UploadIdMarker", idMarker),
+            truncated ? new XElement(S3 + "NextKeyMarker", page[0].Value.Key) : null,
+            truncated ? new XElement(S3 + "NextUploadIdMarker", page[0].Id) : null,
+            new XElement(S3 + "Prefix", prefix),
+            new XElement(S3 + "MaxUploads", 1),
+            new XElement(S3 + "IsTruncated", truncated ? "true" : "false"),
+            page.Select(item => new XElement(S3 + "Upload",
+                new XElement(S3 + "Key", item.Value.Key),
+                new XElement(S3 + "UploadId", item.Id),
+                new XElement(S3 + "Initiated", item.Value.Initiated.UtcDateTime.ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture)),
+                new XElement(S3 + "StorageClass", "STANDARD")))));
     }
 
     private static string Child(XElement element, string name) => element.Elements().Single(child => child.Name.LocalName == name).Value;
@@ -738,7 +783,7 @@ public sealed class FakeS3
         }
     }
 
-    private sealed record Upload(bool Customer, string Key, KeyValuePair<string, string>[] Metadata)
+    private sealed record Upload(bool Customer, string Key, DateTimeOffset Initiated, KeyValuePair<string, string>[] Metadata)
     {
         public ConcurrentDictionary<int, byte[]> Parts { get; } = new();
     }

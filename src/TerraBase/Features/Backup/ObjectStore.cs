@@ -62,6 +62,9 @@ internal sealed class S3ObjectStore : IObjectStore, IDisposable
     // Each attempt is one request under RequestTimeout, including the SDK's own retries of transient errors.
     private const int PartAttempts = 3;
     private static readonly TimeSpan AbortTimeout = TimeSpan.FromSeconds(5);
+    // No multipart upload outlives the deadline of the largest one (MaxParts parts, about seven days), so one initiated longer
+    // ago than that plus an hour (clock skew with the bucket, the owner's own abort) has no live owner on any node.
+    internal static readonly TimeSpan StaleUpload = UploadDeadline(MaxParts) + TimeSpan.FromHours(1);
     // User metadata naming the upload that created an object (x-amz-meta-terrabase-upload).
     private const string UploadMetadata = "terrabase-upload";
 
@@ -114,11 +117,12 @@ internal sealed class S3ObjectStore : IObjectStore, IDisposable
             throw new IOException("backup object exceeds the multipart upload limit");
         }
 
-        // A customer upload keeps one deadline: fifteen minutes, plus a minute for each further part (a sustained ~2 MiB/s).
-        using var deadline = _customer ? new CancellationTokenSource(RequestTimeout + TimeSpan.FromMinutes(parts - 1), _time) : null;
+        // A customer upload and every multipart upload keep one deadline for the whole object.
+        var file = parts > 1 ? content as FileStream : null;
+        using var deadline = _customer || file is not null ? new CancellationTokenSource(UploadDeadline(parts), _time) : null;
         using var stop = deadline is null ? null : CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
         cancellationToken = stop?.Token ?? cancellationToken;
-        if (parts > 1 && content is FileStream file)
+        if (file is not null)
         {
             await PutPartsAsync(key, file.SafeFileHandle, start, length, (int)parts, cancellationToken).ConfigureAwait(false);
             return;
@@ -134,6 +138,9 @@ internal sealed class S3ObjectStore : IObjectStore, IDisposable
             UseChunkEncoding = false,
         }, cancellationToken)).ConfigureAwait(false);
     }
+
+    // Fifteen minutes, plus a minute for each further part (a sustained ~2 MiB/s).
+    private static TimeSpan UploadDeadline(long parts) => RequestTimeout + TimeSpan.FromMinutes(parts - 1);
 
     private async Task PutPartsAsync(string key, SafeFileHandle file, long start, long length, int parts, CancellationToken cancellationToken)
     {
@@ -206,8 +213,45 @@ internal sealed class S3ObjectStore : IObjectStore, IDisposable
         }
     }
 
-    // Best effort under its own deadline, also after cancellation. An upload left behind is never visible as an object; it
-    // holds bucket storage until the bucket's lifecycle rule removes it.
+    /// <summary>
+    /// Aborts the multipart uploads under <paramref name="prefix"/> initiated more than <see cref="StaleUpload"/> ago: left
+    /// behind when their own abort failed or their node stopped. Best effort: a failure is logged and the next run retries.
+    /// </summary>
+    public async Task AbortStaleUploadsAsync(string prefix, CancellationToken cancellationToken)
+    {
+        var request = new ListMultipartUploadsRequest { BucketName = _bucket, Prefix = prefix };
+        try
+        {
+            while (true)
+            {
+                var page = await SafeAsync(_s3.ListMultipartUploadsAsync(request, cancellationToken)).ConfigureAwait(false);
+                foreach (var upload in page.MultipartUploads ?? [])
+                {
+                    if (upload.Key is { } key && key.StartsWith(prefix, StringComparison.Ordinal) && !string.IsNullOrEmpty(upload.UploadId)
+                        && upload.Initiated is { } initiated && _time.GetUtcNow() - new DateTimeOffset(DateTime.SpecifyKind(initiated, DateTimeKind.Utc)) > StaleUpload)
+                    {
+                        _logger.ZLogInformation($"Aborting the stale multipart upload of backup object {key:@Key} initiated {initiated:O}");
+                        await AbortAsync(key, upload.UploadId).ConfigureAwait(false);
+                    }
+                }
+
+                if (page.IsTruncated != true || page.NextKeyMarker is null
+                    || (page.NextKeyMarker, page.NextUploadIdMarker) == (request.KeyMarker, request.UploadIdMarker))
+                {
+                    return;
+                }
+
+                (request.KeyMarker, request.UploadIdMarker) = (page.NextKeyMarker, page.NextUploadIdMarker);
+            }
+        }
+        catch (Exception error) when (!cancellationToken.IsCancellationRequested)
+        {
+            _logger.ZLogWarning(error, $"Listing the stale multipart uploads under {prefix:@Prefix} failed; the next run retries");
+        }
+    }
+
+    // Best effort under its own deadline, also after cancellation. An upload left behind is never visible as an object; its
+    // parts hold bucket storage until AbortStaleUploadsAsync finds it past StaleUpload.
     private async Task AbortAsync(string key, string upload)
     {
         using var deadline = new CancellationTokenSource(AbortTimeout, _time);
@@ -218,7 +262,7 @@ internal sealed class S3ObjectStore : IObjectStore, IDisposable
         }
         catch (Exception error)
         {
-            _logger.ZLogWarning(error, $"Aborting the multipart upload of backup object {key:@Key} failed; its parts stay in the bucket");
+            _logger.ZLogWarning(error, $"Aborting the multipart upload of backup object {key:@Key} failed; its parts stay in the bucket until it is stale");
         }
     }
 

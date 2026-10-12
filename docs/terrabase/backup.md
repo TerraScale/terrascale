@@ -125,8 +125,8 @@ in batches of sixteen. Object locks may delay cleanup, and a bucket entirely out
 restore window. Customer-written junk keys inside the requested prefix are skipped; foreign or nonascending listing
 responses are rejected. Listing order follows S3's UTF-8 byte ordering, including unrelated Unicode objects.
 Customer object operations have a fifteen-minute deadline covering response headers, streamed body decoding and all
-pages of a listing. A multipart upload (see [Uploads](#uploads)) keeps one deadline for the whole object: fifteen
-minutes plus one minute per part after the first, which a customer bucket meets at a sustained ~2 MiB/s.
+pages of a listing. A multipart upload (see [Uploads](#uploads)), platform or customer, keeps one deadline for the
+whole object: fifteen minutes plus one minute per part after the first, which a bucket meets at a sustained ~2 MiB/s.
 Shipping admits at most four file jobs, with at most two customer jobs and one customer job per organization;
 platform-only files, including `_system`, can use the remaining capacity. A stalled customer job holds its organization's
 customer slot until completion or cancellation. Background ticks skip busy files and admit
@@ -244,10 +244,16 @@ through a multipart completion and returned by HEAD) is unverified until G1; if 
 fail visibly, never succeed falsely.
 
 After a part's last attempt fails, a failed or unproven completion or a cancellation, TerraBase aborts the upload (best
-effort, with its
-own five-second deadline, logged when it fails) and the file's normal backoff applies. An upload whose abort fails is
-never visible as an object, but its parts hold bucket storage until the bucket's lifecycle rule removes them. Platform
-uploads have no deadline for the whole object; customer uploads keep the one in [Customer buckets](#customer-buckets-ts-635).
+effort, with its own five-second deadline, logged when it fails) and the file's normal backoff applies. Every multipart
+upload keeps the whole-object deadline in [Customer buckets](#customer-buckets-ts-635), at most about seven days for
+10,000 parts. An upload whose abort fails, or whose node stops, is never visible as an object, but its parts hold bucket
+storage. No bucket lifecycle rule removes them. Instead, the member that ships a file lists the platform bucket's
+in-progress uploads under that file's directory (`ListMultipartUploads`, which
+[Tigris supports](https://www.tigrisdata.com/docs/objects/multipart-uploads/)) when it first retains the file after
+starting and then daily. It aborts those initiated more than the largest upload's deadline plus an hour ago, which no
+live upload on any member can still own. While its file is shipped and the bucket answers, an orphan therefore holds
+storage for about eight days at most. Uploads under directories that no member ships, such as a deleted database's, and
+orphans in customer buckets are not cleaned up.
 
 ### Data-key rotation
 

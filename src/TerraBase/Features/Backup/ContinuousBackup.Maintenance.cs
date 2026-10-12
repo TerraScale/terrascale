@@ -101,6 +101,12 @@ internal sealed partial class ContinuousBackup
             (file.SizeBytes, file.SizedAt) = (size, now);
         }
 
+        if (measure)
+        {
+            // At start and daily, like the size: the platform bucket's multipart uploads under this file left by failed aborts.
+            await _bucket.AbortStaleUploadsAsync(file.Prefix + "/", cancellationToken).ConfigureAwait(false);
+        }
+
         if (file.Database is null)
         {
             await SnapshotBucketAsync(cancellationToken).ConfigureAwait(false);
