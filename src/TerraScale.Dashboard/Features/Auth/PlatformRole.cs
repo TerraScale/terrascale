@@ -13,7 +13,7 @@ public sealed partial class TsAuthGateway : IPlatformRoleGateway
     {
         var credentials = await identity.ReadAsync(cancellationToken);
         if (credentials.AuthInstanceSlug != "terrascale") return null;
-        var origin = await OriginAsync(cancellationToken);
+        var origin = AuthOrigin;
         var client = Client(credentials, origin);
         var discovery = await client.Oidc.GetDiscoveryDocumentAsync(cancellationToken);
         try

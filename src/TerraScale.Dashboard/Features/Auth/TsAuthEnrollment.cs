@@ -14,7 +14,7 @@ public sealed partial class TsAuthGateway
         if (string.IsNullOrWhiteSpace(ip)) throw new ArgumentException("Client address is required.", nameof(ip));
         var credentials = await identity.ReadAsync(cancellationToken);
         using var request = new HttpRequestMessage(HttpMethod.Post,
-            new Uri(await OriginAsync(cancellationToken), $"/{Uri.EscapeDataString(credentials.AuthInstanceSlug)}/headless/v1/sign-up"));
+            new Uri(AuthOrigin, $"/{Uri.EscapeDataString(credentials.AuthInstanceSlug)}/headless/v1/sign-up"));
         Authenticate(request, credentials);
         request.Content = JsonContent.Create(new { email, password, ip_address = ip });
         using var response = await http.CreateClient("platform").SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
@@ -38,7 +38,7 @@ public sealed partial class TsAuthGateway
     public async Task<string> AuthorizationUrlAsync(OidcFlow flow, bool promptLogin, CancellationToken cancellationToken)
     {
         var credentials = await identity.ReadAsync(cancellationToken);
-        var origin = await OriginAsync(cancellationToken);
+        var origin = AuthOrigin;
         var metadata = await Client(credentials, origin).Oidc.GetDiscoveryDocumentAsync(cancellationToken);
         var endpoint = TrustedEndpoint(metadata.AuthorizationEndpoint, origin, credentials.AuthInstanceSlug);
         var fields = new Dictionary<string, string>
@@ -60,7 +60,7 @@ public sealed partial class TsAuthGateway
     {
         if (string.IsNullOrWhiteSpace(code) || code.Length > 4096) throw new SignInRejectedException();
         var credentials = await identity.ReadAsync(cancellationToken);
-        var origin = await OriginAsync(cancellationToken);
+        var origin = AuthOrigin;
         TerraScaleAuthTokenResponse tokens;
         try
         {
@@ -75,7 +75,7 @@ public sealed partial class TsAuthGateway
     {
         if (string.IsNullOrWhiteSpace(session.RefreshToken)) throw new SignInRejectedException();
         var credentials = await identity.ReadAsync(cancellationToken);
-        var origin = await OriginAsync(cancellationToken);
+        var origin = AuthOrigin;
         var client = Client(credentials, origin);
         TerraScaleAuthTokenResponse tokens;
         try
@@ -118,7 +118,7 @@ public sealed partial class TsAuthGateway
         try
         {
             var credentials = await identity.ReadAsync(cancellationToken);
-            var origin = await OriginAsync(cancellationToken);
+            var origin = AuthOrigin;
             var metadata = await Client(credentials, origin).Oidc.GetDiscoveryDocumentAsync(cancellationToken);
             if (string.IsNullOrWhiteSpace(metadata.EndSessionEndpoint)) return "/login?prompt=login";
             var endpoint = TrustedEndpoint(metadata.EndSessionEndpoint, origin, credentials.AuthInstanceSlug);
@@ -150,7 +150,7 @@ public sealed partial class TsAuthGateway
         var expected = new Uri(origin, "/" + Uri.EscapeDataString(slug));
         if (!Uri.TryCreate(issuer, UriKind.Absolute, out var uri) || uri.Scheme != "https" || !uri.IsDefaultPort ||
             uri.UserInfo.Length != 0 || uri.Query.Length != 0 || uri.Fragment.Length != 0 ||
-            (uri.AbsoluteUri != expected.AbsoluteUri && uri.AbsoluteUri != "https://auth.terrascale.tech/" + Uri.EscapeDataString(slug)))
+            uri.AbsoluteUri != expected.AbsoluteUri)
             throw new SignInRejectedException();
         return uri.AbsoluteUri;
     }
@@ -159,7 +159,7 @@ public sealed partial class TsAuthGateway
     {
         if (!Uri.TryCreate(endpoint, UriKind.Absolute, out var uri) || uri.Scheme != "https" || !uri.IsDefaultPort ||
             uri.UserInfo.Length != 0 || uri.Query.Length != 0 || uri.Fragment.Length != 0 ||
-            (uri.Host != origin.Host && uri.Host != "auth.terrascale.tech") ||
+            uri.Host != origin.Host ||
             (uri.AbsolutePath != "/" + Uri.EscapeDataString(slug) && !uri.AbsolutePath.StartsWith("/" + Uri.EscapeDataString(slug) + "/", StringComparison.Ordinal)))
             throw new HttpRequestException("ts-auth published an invalid OIDC endpoint.");
         return uri.AbsoluteUri.TrimEnd('/');

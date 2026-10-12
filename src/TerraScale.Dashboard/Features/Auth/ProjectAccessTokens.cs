@@ -24,7 +24,7 @@ public sealed partial class TsAuthGateway : IProjectAccessTokens
             throw new HttpRequestException("Project authorization is unavailable.");
         var credentials = await identity.ReadAsync(cancellationToken);
         if (credentials.AuthInstanceSlug != "terrascale") throw new HttpRequestException("Project authorization is unavailable.");
-        var origin = await OriginAsync(cancellationToken);
+        var origin = AuthOrigin;
         var client = Client(credentials, origin);
         var discovery = await client.Oidc.GetDiscoveryDocumentAsync(cancellationToken);
         try
