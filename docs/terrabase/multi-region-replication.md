@@ -735,7 +735,7 @@ reference behaviour, and `tests/TerraBase.Fast/Replication/PeerStreamTests.cs` p
 R2a was built on the Microsoft.Data.Sqlite engine and writes only SQL that Turso accepts (rowid tables for every new
 table, plain `INSERT`/`UPDATE`/`DELETE` on captured tables).
 
-**T1 as built** (2026-10-12, storage format 3): the engine is Turso (`Turso.Data.Sqlite.Provider` 0.8.2). Each database
+**T1 as built** (2026-10-12, storage format 3): the engine is Turso (`Turso.Data.Sqlite.Provider` 0.8.2; since vendored with fixes, `src/vendor/Turso.Data.Sqlite`). Each database
 file has one writer connection (`SqliteDatabaseStore`, opened by the first writer under the writer gate, kept until the
 store closes), with `PRAGMA capture_data_changes_conn('after')` on from its open. Continuous backup reads `turso_cdc`
 (`backup.md`); Turso's quirks are in `turso-spike.md` ("Found while swapping the engine"). Notes for R3:
@@ -747,6 +747,12 @@ store closes), with `PRAGMA capture_data_changes_conn('after')` on from its open
 - **Reading.** Read on a `TursoConnection` of your own, as `TursoChangeTap` does, never on the writer. Every visible row
   is committed. Read up to the last COMMIT row, so a page never ends inside a transaction. Bound every statement with a
   `LIMIT`: the provider steps a statement to its end when its reader closes.
+- **Decoding.** Two ways, both tested on 0.8.2. In SQL, `bin_record_json_object(table_columns_json_array(table_name),
+  after)` must sit behind `CASE WHEN change_type IN (0, 1) THEN … END`: a COMMIT row (`table_name` NULL) makes
+  `table_columns_json_array(NULL)` throw for the whole page, and it cannot format BLOB values (`_tb_state` and the
+  collection tables have none). Or read `after` raw and decode it in C# (`SqliteRecord.Decode`, used by the backup tap; it
+  handles every serial type, BLOBs included). For a rowid alias (`INTEGER PRIMARY KEY`) the record may hold NULL or the
+  value; take the rowid from `id`.
 - **Change-group bounds.** The R1/R2a 2 MiB per-group capture limit is gone: a group is a whole Turso transaction, as
   large as the batch that committed it (up to 256 writes of up to 1 MiB each, `MaxBatch`). Re-bound groups when reading:
   page by rows and bytes as the tap does (1024 rows, 4 MiB), and split a large transaction into several deltas batches

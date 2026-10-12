@@ -81,17 +81,28 @@ internal sealed class SqliteQueryCompiler(SqliteParameterCollection parameters, 
     /// tombstone test. A separate bounded index scan detects an overflow row without loading its body or
     /// evaluating its filter: only the first <paramref name="maxExamined"/> rows contribute matches.
     /// </summary>
-    public string CompileCount(DocumentFilter? filter, long maxExamined, bool observe = false) =>
-        $"""
+    public string CompileCount(DocumentFilter? filter, long maxExamined, bool observe = false) => rows == RowSource.System || rows == RowSource.Empty
+        ? $"""
         SELECT count(*) + EXISTS (
             SELECT 1 FROM {Counted} {(observe ? "AND tb_query_scan(id)" : "")} ORDER BY id LIMIT 1 OFFSET {Parameter(maxExamined)}
         ), coalesce(sum(matched), 0) FROM (
             SELECT {BudgetedFilter(filter, includeTombstones: true)} AS matched
             FROM {Counted} {(observe ? "AND tb_query_scan(id)" : "")} ORDER BY id LIMIT {Parameter(maxExamined)}
         );
+        """
+        // A client collection's table holds live documents only: its tombstones are _tb_state rows, so the count examines
+        // the collection's state rows, in id order, and looks each one's document up. The caller flushed pending states.
+        : $"""
+        SELECT count(*) + EXISTS (
+            SELECT 1 FROM _tb_state WHERE collection = $collection {(observe ? "AND tb_query_scan(id)" : "")} ORDER BY id LIMIT 1 OFFSET {Parameter(maxExamined)}
+        ), coalesce(sum(matched), 0) FROM (
+            SELECT {BudgetedFilter(filter, includeTombstones: true)} AS matched
+            FROM (SELECT id AS examined FROM _tb_state WHERE collection = $collection ORDER BY id LIMIT {Parameter(maxExamined)})
+            LEFT JOIN {rows.From} ON {rows.From}.id = examined {(observe ? "WHERE tb_query_scan(examined)" : "")}
+        );
         """;
 
-    // A count examines a system collection's tombstones too; a client collection's table holds live documents only.
+    // A count examines a system collection's tombstones too.
     private string Counted => rows == RowSource.System ? "documents WHERE collection = $collection" : $"{rows.From} WHERE 1";
 
     // A plain AND keeps the filter's terms visible to the planner, so an index can seek them; the guard still precedes

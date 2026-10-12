@@ -15,6 +15,7 @@ public sealed class ThreeRegionE2ETests
     private static readonly string[] All = [Cluster.Gru, Cluster.Sjc, Cluster.Fra];
 
     [Test]
+    [Scenario(Nodes.InProcess)]
     [Arguments(Cluster.Gru, Cluster.Sjc)]
     [Arguments(Cluster.Sjc, Cluster.Gru)]
     [Arguments(Cluster.Sjc, Cluster.Fra)]
@@ -38,6 +39,7 @@ public sealed class ThreeRegionE2ETests
     }
 
     [Test]
+    [Scenario(Nodes.InProcess)]
     public async Task Concurrent_writes_to_the_same_field_in_three_regions_converge_to_one_written_value()
     {
         await Gaps.RunAsync("three-way-same-field", async () =>
@@ -57,6 +59,7 @@ public sealed class ThreeRegionE2ETests
     }
 
     [Test]
+    [Scenario(Nodes.InProcess)]
     public async Task Concurrent_writes_to_different_fields_in_three_regions_all_survive()
     {
         await Gaps.RunAsync("three-way-different-fields", async () =>
@@ -74,6 +77,7 @@ public sealed class ThreeRegionE2ETests
     }
 
     [Test]
+    [Scenario(Nodes.InProcess)]
     public async Task Delete_in_one_region_and_edits_in_the_other_two_converge_and_stay_converged()
     {
         await Gaps.RunAsync("three-way-delete-versus-edit", async () =>
@@ -98,6 +102,7 @@ public sealed class ThreeRegionE2ETests
     }
 
     [Test]
+    [Scenario(Nodes.InProcess)]
     public async Task Bulk_3000_documents_written_across_three_regions_have_matching_counts_and_digests()
     {
         await Gaps.RunAsync("three-way-bulk", async () =>
@@ -122,6 +127,7 @@ public sealed class ThreeRegionE2ETests
     // Each region overwrites one document 40 times in a row while the others do the same. A region's own writes are
     // ordered, so the survivor must be some region's last write, never an older one.
     [Test]
+    [Scenario(Nodes.InProcess)]
     public async Task Burst_of_overwrites_from_three_regions_converges_to_a_last_write()
     {
         await Gaps.RunAsync("three-way-burst", async () =>
@@ -146,6 +152,7 @@ public sealed class ThreeRegionE2ETests
     }
 
     [Test]
+    [Scenario(Nodes.InProcess)]
     public async Task Documents_near_the_size_limit_and_with_many_fields_replicate_intact()
     {
         await Gaps.RunAsync("large-documents", async () =>
@@ -171,6 +178,7 @@ public sealed class ThreeRegionE2ETests
     }
 
     [Test]
+    [Scenario(Nodes.InProcess)]
     public async Task Concurrent_inc_in_three_regions_sums()
     {
         await Gaps.RunAsync("three-way-counters", async () =>
@@ -192,6 +200,7 @@ public sealed class ThreeRegionE2ETests
     }
 
     [Test]
+    [Scenario(Nodes.InProcess)]
     public async Task Concurrent_set_adds_in_three_regions_union_and_a_concurrent_add_beats_a_remove()
     {
         await Gaps.RunAsync("three-way-sets", async () =>

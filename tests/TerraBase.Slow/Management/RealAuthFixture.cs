@@ -105,7 +105,8 @@ internal sealed class RealAuthFixture : IAsyncDisposable
     private async Task StartCoreAsync(CancellationToken token)
     {
         // ts-auth's own storage, not the TerraBase under test: a project database on another TerraBase from this commit,
-        // reached through its internal listener as the platform operator. ts-auth creates its collections itself.
+        // reached through its internal listener as the platform operator. ts-auth creates its collections itself; its first
+        // signing key comes from the operator provisioning below.
         _storage = await TerraBaseTestServer.StartAsync(cancellationToken: token);
         var management = new TerraBaseManagementClient(_storage.Client, new TerraBaseManagementClientOptions { BaseAddress = _storage.BaseAddress });
         var owner = EntityIds.New().ToString();
@@ -134,6 +135,9 @@ internal sealed class RealAuthFixture : IAsyncDisposable
             // The public origin over TLS, after ts-auth's own listeners, for TerraBase's discovery and JWKS fetches.
             builder.WebHost.ConfigureKestrel(kestrel => kestrel.Listen(IPAddress.Loopback, 0, listen => listen.UseHttps(_certificate)));
         });
+        // As an operator does once per empty platform database (`ts-auth provision-signing-key`): ts-auth never creates the
+        // issuer's first signing key itself (docs/auth/signing-keys.md). The master key is this fixture's synthetic one.
+        await tsauth::TerraScale.Authentication.Features.SigningKeys.SigningKeyProvisioning.ProvisionAsync(_auth.Services, token);
         await _auth.StartAsync(token);
         // Bound in order: ts-auth's public listener, its metrics listener, then the TLS port.
         var addresses = _auth.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Select(address => new Uri(address)).ToArray();

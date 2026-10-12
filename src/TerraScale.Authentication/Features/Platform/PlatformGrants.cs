@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Security.Claims;
+using System.Text.Json;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.IdentityModel.JsonWebTokens;
 using Microsoft.IdentityModel.Tokens;
@@ -11,6 +12,8 @@ using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.RateLimiting;
+using TerraScale.Authentication.Store;
+using ZLogger;
 using static OpenIddict.Abstractions.OpenIddictConstants;
 
 namespace TerraScale.Authentication.Features.Platform;
@@ -21,7 +24,8 @@ namespace TerraScale.Authentication.Features.Platform;
 /// <c>at+jwt</c> for the configured audiences, live at most 15 minutes and carry <c>org_id</c>, <c>project_id</c>,
 /// <c>database</c> and <c>scope</c>; no refresh or identity token comes with them, and no token entry is stored.
 /// </summary>
-public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, Users users, TotpCredentials mfa, AttemptLimiter limiter, AuthOptions options, TimeProvider clock)
+public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, Users users, TotpCredentials mfa, AttemptLimiter limiter, AuthOptions options, TimeProvider clock,
+    AuthStore store, GitHubActionsKeys gitHubActions, ILogger<PlatformGrants> logger)
 {
     /// <summary>The organization a token acts in.</summary>
     public const string OrganizationClaim = "org_id";
@@ -150,6 +154,81 @@ public sealed class PlatformGrants(ApiKeys keys, PlatformDirectory directory, Us
             .SetClaim(Claims.AuthenticationTime, authenticatedAt);
         return SignIn(identity);
     }
+
+    /// <summary>
+    /// The GitHub Actions grant (<see cref="GitHubActionsGrant"/>): the bound workload's GitHub OIDC token, in
+    /// <c>subject_token</c>, for a project token of the bound e2e project. The token must be signed by GitHub's current
+    /// keys, name the platform issuer as its audience, be live, match every claim of the trust policy and carry a
+    /// <c>jti</c> never presented before. <paramref name="binding"/> is the properties of the client OpenIddict
+    /// authenticated; without the binding nothing is issued.
+    /// </summary>
+    public async Task<IResult> GitHubActionsAsync(OpenIddictRequest request, IReadOnlyDictionary<string, JsonElement>? binding, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (request.ClientId != GitHubActionsGrant.ClientId || binding is null
+            || !binding.TryGetValue(GitHubActionsGrant.OrganizationProperty, out var boundOrganization) || boundOrganization.GetString() is not { Length: > 0 } organization
+            || !binding.TryGetValue(GitHubActionsGrant.ProjectProperty, out var boundProject) || boundProject.GetString() is not { Length: > 0 } project)
+        {
+            return OidcResults.Forbid(Errors.InvalidClient, "The GitHub Actions workload is not bound.");
+        }
+
+        if (request.SubjectToken is not { Length: > 0 } encoded)
+        {
+            return OidcResults.Forbid(Errors.InvalidRequest, "The subject_token parameter is required.");
+        }
+
+        var validated = await new JsonWebTokenHandler().ValidateTokenAsync(encoded, new TokenValidationParameters
+        {
+            ConfigurationManager = gitHubActions.Configuration,
+            ValidIssuer = GitHubActionsGrant.Issuer,
+            ValidAudience = OidcIssuer.Issuer(options).AbsoluteUri,
+            ValidAlgorithms = [SecurityAlgorithms.RsaSha256],
+            RequireSignedTokens = true,
+            RequireExpirationTime = true,
+            ClockSkew = AuthenticationTimeClockSkew,
+        }).ConfigureAwait(false);
+        var token = validated.IsValid ? validated.SecurityToken as JsonWebToken : null;
+        // Only the name of the first claim that failed is logged, never the token.
+        var refused = token is null ? "signature, issuer, audience or lifetime"
+            : new (string Claim, string Expected)[]
+            {
+                ("repository_id", GitHubActionsGrant.RepositoryId),
+                ("repository_owner_id", GitHubActionsGrant.RepositoryOwnerId),
+                ("repository", GitHubActionsGrant.Repository),
+                ("ref", GitHubActionsGrant.Ref),
+                ("event_name", GitHubActionsGrant.EventName),
+                ("workflow_ref", GitHubActionsGrant.WorkflowRef),
+                ("job_workflow_ref", GitHubActionsGrant.WorkflowRef),
+            }.FirstOrDefault(pair => Claim(token, pair.Claim) != pair.Expected).Claim
+            ?? (Claim(token, "jti") is null ? "jti" : Claim(token, "run_id") is null ? "run_id" : null);
+        if (token is null || refused is not null)
+        {
+            logger.ZLogWarning($"GitHub Actions token refused: {refused}");
+            return OidcResults.Forbid(Errors.InvalidGrant, "The GitHub Actions token does not match the bound workload.");
+        }
+
+        var requested = request.GetScopes();
+        if (requested.Except(GitHubActionsGrant.Scopes).Any())
+        {
+            return OidcResults.Forbid(Errors.InvalidScope, "A requested scope exceeds the workload's.");
+        }
+
+        var runId = Claim(token, "run_id")!;
+        var tokenId = Claim(token, "jti")!;
+        // Single use on every replica: the claim is created only if absent.
+        if (!await store.ClaimUniqueAsync(PlatformDirectory.Instance, GitHubActionsGrant.TokenIdKind, tokenId, runId, cancellationToken).ConfigureAwait(false))
+        {
+            logger.ZLogWarning($"GitHub Actions token refused: jti already used");
+            return OidcResults.Forbid(Errors.InvalidGrant, "The GitHub Actions token was already used.");
+        }
+
+        var scopes = requested.IsEmpty ? GitHubActionsGrant.Scopes : [.. requested];
+        logger.ZLogWarning($"Audit: GitHub Actions project token for organization {organization}, project {project}: run {runId} attempt {Claim(token, "run_attempt")}, sha {Claim(token, "sha")}, jti {tokenId}, scopes {string.Join(' ', scopes)}");
+        return SignIn(Identity($"github-actions:{GitHubActionsGrant.RepositoryId}:{runId}", organization, project, scopes, Lifetime));
+    }
+
+    private static string? Claim(JsonWebToken token, string name) =>
+        token.TryGetPayloadValue<string>(name, out var value) && value is { Length: > 0 } ? value : null;
 
     private static bool Matches(string secret, IReadOnlyList<string> digests)
     {

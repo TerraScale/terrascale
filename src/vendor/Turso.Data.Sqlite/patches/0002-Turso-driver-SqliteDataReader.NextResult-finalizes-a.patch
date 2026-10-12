@@ -1,0 +1,46 @@
+From 7fbcd55b47832f86c8a997323abd2ce149a30493 Mon Sep 17 00:00:00 2001
+From: mariogk <mariogk@terrascale.tech>
+Date: Mon, 12 Oct 2026 09:56:56 -0300
+Subject: [PATCH] Turso driver: SqliteDataReader.NextResult finalizes a
+ statement that fails
+
+A statement without result columns after a result set (the second
+statement of 'SELECT 1; INSERT ...') that failed in NextResult was never
+disposed: the catch disposed the reader's current statement, already
+cleared, not this one, leaving it to the finalizer thread.
+
+Test: FailedStatementTests.AFailedStatementAfterAResultSetLeavesNothingForTheFinalizer.
+---
+ src/Turso.Data.Sqlite/SqliteDataReader.cs | 17 ++++++++++++-----
+ 1 file changed, 12 insertions(+), 5 deletions(-)
+
+diff --git a/src/Turso.Data.Sqlite/SqliteDataReader.cs b/src/Turso.Data.Sqlite/SqliteDataReader.cs
+index de69b664..0824e4c4 100644
+--- a/src/Turso.Data.Sqlite/SqliteDataReader.cs
++++ b/src/Turso.Data.Sqlite/SqliteDataReader.cs
+@@ -765,13 +765,20 @@ public class SqliteDataReader : DbDataReader
+                     return true;
+                 }
+ 
+-                while (TursoBindings.Read(statement))
++                try
+                 {
+-                }
++                    while (TursoBindings.Read(statement))
++                    {
++                    }
+ 
+-                if (SqliteCommand.CountsRowsAffected(sql))
+-                    _recordsAffected += TursoBindings.RowsAffected(statement);
+-                statement.Dispose();
++                    if (SqliteCommand.CountsRowsAffected(sql))
++                        _recordsAffected += TursoBindings.RowsAffected(statement);
++                }
++                finally
++                {
++                    // TerraScale: also when it fails, or the finalizer thread would use the connection while its owner does.
++                    statement.Dispose();
++                }
+             }
+         }
+         catch (TursoException ex)
