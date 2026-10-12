@@ -45,6 +45,8 @@ internal static class Gaps
         ["partition-heal"] = Streams,
         ["region-down-rejoin"] = Streams,
         ["restart-mid-replication"] = Streams,
+        ["ack-then-stop"] = Streams,
+        ["restarted-sender-backlog"] = Streams,
         ["backlog"] = Streams,
         ["skew-causal"] = Streams,
         ["skew-concurrent"] = Streams,

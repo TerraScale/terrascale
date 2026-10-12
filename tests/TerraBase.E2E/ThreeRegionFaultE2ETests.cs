@@ -122,6 +122,64 @@ public sealed class ThreeRegionFaultE2ETests
         });
     }
 
+    // Acknowledged writes survive their writer going down at once. Locally the node stops cleanly (disposal) and on Fly
+    // the machine is stopped: neither is a crash, so ack-then-crash durability stays a missing scenario (COVERAGE.md).
+    [Test]
+    public async Task Writes_acknowledged_just_before_their_region_stops_reach_every_region_after_it_returns()
+    {
+        SkipOnFlyUnlessOutageRun();
+        const int count = 200;
+        await Gaps.RunAsync("ack-then-stop", async () =>
+        {
+            await using var cluster = await Cluster.StartAsync(All);
+            var faker = new Faker();
+            var documents = Enumerable.Range(0, count).Select(_ => (Id: EntityIds.New().ToString(), Body: ThreeRegionE2ETests.Synthetic(faker))).ToArray();
+            await Parallel.ForEachAsync(documents, new ParallelOptions { MaxDegreeOfParallelism = 16 }, async (document, token) =>
+                await Docs.PutAsync(cluster[Cluster.Gru], cluster.Document(document.Id), document.Body, token));
+            await cluster.StopAsync(Cluster.Gru);
+            await cluster.StartAgainAsync(Cluster.Gru);
+            var back = Stopwatch.GetTimestamp();
+            _ = await Converge.ListedAsync(cluster, Docs.Digest(documents.Select(document => (document.Id, Docs.Canonical(document.Body)))), "acknowledged writes after their region stopped");
+            Converge.Report($"{count} writes acknowledged just before gru stopped", back);
+        });
+    }
+
+    // The writer restarts while a region is away, so its unsent changes must survive the restart and reach that region
+    // when it returns, with no new write to trigger a send (the old suite's hinted-handoff test).
+    [Test]
+    public async Task A_restarted_region_replays_its_backlog_to_a_region_that_returns()
+    {
+        SkipOnFlyUnlessOutageRun();
+        const int count = 300;
+        await Gaps.RunAsync("restarted-sender-backlog", async () =>
+        {
+            await using var cluster = await Cluster.StartAsync(All);
+            var faker = new Faker();
+            var documents = Enumerable.Range(0, count).Select(_ => (Id: EntityIds.New().ToString(), Body: ThreeRegionE2ETests.Synthetic(faker))).ToArray();
+            await cluster.StopAsync(Cluster.Fra);
+            var started = false;
+            try
+            {
+                await Parallel.ForEachAsync(documents, new ParallelOptions { MaxDegreeOfParallelism = 16 }, async (document, token) =>
+                    await Docs.PutAsync(cluster[Cluster.Gru], cluster.Document(document.Id), document.Body, token));
+                await cluster.StopAsync(Cluster.Gru);
+                await cluster.StartAgainAsync(Cluster.Gru);
+                await cluster.StartAgainAsync(Cluster.Fra);
+                started = true;
+                var back = Stopwatch.GetTimestamp();
+                _ = await Converge.ListedAsync(cluster, Docs.Digest(documents.Select(document => (document.Id, Docs.Canonical(document.Body)))), "backlog of a restarted region");
+                Converge.Report($"fra catch-up on {count} writes of a restarted gru", back);
+            }
+            finally
+            {
+                if (!started)
+                {
+                    await cluster.StartAgainAsync(Cluster.Fra);
+                }
+            }
+        });
+    }
+
     // fra is cut off while gru and sjc take 3000 writes, then the backlog drains.
     [Test]
     public async Task Replication_backlog_of_3000_writes_drains_after_the_region_returns()
