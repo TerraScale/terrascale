@@ -32,7 +32,7 @@ public sealed class StorageManagementMutationTests
                 switch (mutation)
                 {
                     case "delete-prefix":
-                        await reader.DeleteCollectionsAsync(DocumentApi.Collection, CancellationToken.None);
+                        await reader.DeleteCollectionsAsync(DocumentApi.Collection, 1, CancellationToken.None);
                         break;
                     case "create-index":
                         await reader.CreateIndexAsync(index with { Name = "another" }, CancellationToken.None);
@@ -52,8 +52,8 @@ public sealed class StorageManagementMutationTests
         await Assert.That((await after.ListIndexesAsync(CancellationToken.None)).Select(item => item.Name)).IsEquivalentTo([index.Name]);
     }
 
-    // Prefix deletes remove system database collections without a trace (a client database refuses them: its deletions
-    // are tombstones).
+    // A prefix delete of system database collections (a client database refuses it) tombstones their documents, then
+    // removes their names; a failure in between commits neither.
     [Test]
     public async Task A_failed_prefix_delete_cannot_commit_the_documents_deleted_before_its_collection_failure()
     {
@@ -74,7 +74,9 @@ public sealed class StorageManagementMutationTests
 
         await using (var writer = await store.BeginTransactionAsync(write: true, CancellationToken.None))
         {
-            await Assert.ThrowsAsync<SqliteException>(() => writer.DeleteCollectionsAsync(collection, CancellationToken.None).AsTask());
+            await Assert.That(await writer.DeleteCollectionsAsync(collection, 1, CancellationToken.None)).IsEqualTo(1L);
+            // The call that finds no live document left removes the collection names, which fails here.
+            await Assert.ThrowsAsync<SqliteException>(() => writer.DeleteCollectionsAsync(collection, 1, CancellationToken.None).AsTask());
             await Assert.That(await writer.GetAsync(collection, "a", CancellationToken.None)).IsNull();
             await Assert.ThrowsAsync<InvalidOperationException>(() => writer.CommitAsync(CancellationToken.None).AsTask());
         }

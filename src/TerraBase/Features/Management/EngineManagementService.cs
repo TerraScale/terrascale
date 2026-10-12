@@ -25,7 +25,7 @@ namespace TerraBase.Features.Management;
 /// and writes are atomic. Names are unique per parent through <c>*_names</c> collections keyed by the
 /// lowercased name; organization names are unique per creator, so they reveal nothing across tenants.
 /// State other slices keep under a database or project
-/// (<see cref="SystemCatalog.DatabaseState"/>, <see cref="SystemCatalog.ProjectState"/>) is deleted with it.
+/// (<see cref="SystemCatalog.DatabaseState"/>, <see cref="SystemCatalog.ProjectState"/>) is deleted after it, in bounded chunks (DrainPrefixDeletesAsync).
 /// </summary>
 /// <remarks>
 /// Membership is stored twice: <c>organizations/{id}/members</c> (who belongs, with its
@@ -54,6 +54,13 @@ internal sealed partial class EngineManagementService(
     // Each machine's own intents (docs/terrabase/multi-region-replication.md section 15): the catalog replicates them like
     // every document, but only the machine whose files they name acts on them.
     private string PendingDatabaseCleanup => $"machines/{options.MachineId}/pending_database_cleanup";
+
+    // Catalog state of a database or project this machine deleted (SystemCatalog.DatabaseState, ProjectState), by prefix:
+    // it goes after the record's deletion, a bounded chunk per transaction (DrainPrefixDeletesAsync).
+    private string PendingPrefixDeletes => $"machines/{options.MachineId}/pending_prefix_deletes";
+
+    // Tombstones per transaction when deleting a prefix: well inside one system change group.
+    private const int PrefixDeleteChunk = 1024;
 
     // Global: project id to its organization id, so a client-chosen project id is unique across organizations.
     private const string ProjectOrganizations = "project_organizations";
@@ -332,8 +339,9 @@ internal sealed partial class EngineManagementService(
         }, static error => error, cancellationToken).ConfigureAwait(false);
 
     public async ValueTask<DeleteProjectResult> DeleteProjectAsync(
-        string userId, string organizationId, string projectId, CancellationToken cancellationToken) =>
-        await WriteAsync<DeleteProjectResult>(async transaction =>
+        string userId, string organizationId, string projectId, CancellationToken cancellationToken)
+    {
+        var deleted = await WriteAsync<DeleteProjectResult>(async transaction =>
         {
             var access = await WritableAsync(transaction, userId, organizationId, cancellationToken).ConfigureAwait(false);
             if (access is not OrganizationMember)
@@ -362,9 +370,17 @@ internal sealed partial class EngineManagementService(
             await transaction.DeleteAsync(ProjectOrganizations, project.Id, cancellationToken).ConfigureAwait(false);
             await transaction.DeleteAsync(ProjectNames(organizationId), Key(project.Name), cancellationToken).ConfigureAwait(false);
             await transaction.DeleteAsync(Projects(organizationId), project.Id, cancellationToken).ConfigureAwait(false);
-            await transaction.DeleteCollectionsAsync(SystemCatalog.ProjectState(project.Id), cancellationToken).ConfigureAwait(false);
+            await PutAsync(transaction, PendingPrefixDeletes, SystemCatalog.ProjectState(project.Id), SystemCatalog.ProjectState(project.Id), Id, cancellationToken)
+                .ConfigureAwait(false);
             return new Done();
         }, static error => error, cancellationToken).ConfigureAwait(false);
+        if (deleted is Done)
+        {
+            await DrainPrefixDeletesAsync(CancellationToken.None).ConfigureAwait(false);
+        }
+
+        return deleted;
+    }
 
     public async ValueTask<CreateDatabaseResult> CreateDatabaseAsync(
         string userId, string organizationId, string projectId, string name, CancellationToken cancellationToken, IReadOnlyList<string>? replicaRegions = null) =>
@@ -589,6 +605,7 @@ internal sealed partial class EngineManagementService(
             return error;
         }
 
+        await DrainPrefixDeletesAsync(CancellationToken.None).ConfigureAwait(false);
         checkpoint("delete.finalized", storage);
         return true;
     }
@@ -663,7 +680,8 @@ internal sealed partial class EngineManagementService(
             _ = await transaction.TombstoneAsync(EngineManagedBackupService.BackedUpDatabases, database.Id, cancellationToken).ConfigureAwait(false);
         }
 
-        await transaction.DeleteCollectionsAsync(SystemCatalog.DatabaseState(database.Id), cancellationToken).ConfigureAwait(false);
+        await PutAsync(transaction, PendingPrefixDeletes, SystemCatalog.DatabaseState(database.Id), SystemCatalog.DatabaseState(database.Id), Id, cancellationToken)
+            .ConfigureAwait(false);
         await TouchOrganizationAsync(transaction, storage.OrganizationId, cancellationToken).ConfigureAwait(false);
         return storage;
     }

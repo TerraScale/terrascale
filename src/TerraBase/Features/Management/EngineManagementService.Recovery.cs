@@ -2,6 +2,7 @@ using System.Diagnostics.Metrics;
 using System.Text.Json;
 using TerraBase.Errors;
 using TerraBase.Features.Management.Backups;
+using TerraBase.Features.Replication;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using ZLogger;
@@ -48,6 +49,8 @@ internal sealed partial class EngineManagementService
                     }
                 }
             }
+
+            await DrainPrefixDeletesAsync(cancellationToken).ConfigureAwait(false);
         }
 
         await AuditFilesAsync(hasCatalog, version, cancellationToken).ConfigureAwait(false);
@@ -111,6 +114,52 @@ internal sealed partial class EngineManagementService
         ReadAsync<RecordedDeletion>(async transaction =>
             await GetAsync(transaction, Databases(storage.ProjectId!), storage.DatabaseId!, TerraBaseJsonContext.Default.ManagedDatabase, cancellationToken).ConfigureAwait(false) is not null,
             static error => error, cancellationToken);
+
+    // Tombstones the catalog state of the databases and projects this machine deleted, at most PrefixDeleteChunk documents per
+    // transaction. The intent goes in the transaction that finds nothing left, so a failure or restart between chunks resumes
+    // here (after a deletion, at startup, in each convergence pass) and every committed tombstone stays: the catalog never
+    // collects (docs/terrabase/system-catalog-invariants.md section 1). A commit drains after it commits.
+    internal async ValueTask DrainPrefixDeletesAsync(CancellationToken cancellationToken)
+    {
+        if (CommitTransaction.Value is not null)
+        {
+            return;
+        }
+
+        while (true)
+        {
+            var page = await ReadCatalogAsync(transaction => transaction.ListAsync(
+                PendingPrefixDeletes, afterId: null, MemberPage, MaxPageBytes, cancellationToken), cancellationToken).ConfigureAwait(false);
+            if (page.Documents.Count == 0)
+            {
+                return;
+            }
+
+            foreach (var document in page.Documents)
+            {
+                long deleted;
+                do
+                {
+                    checkpoint("prefix.chunk", ChangeGroups.System);
+                    deleted = await WriteAsync(async transaction =>
+                    {
+                        var count = await transaction.DeleteCollectionsAsync(document.Id, PrefixDeleteChunk, cancellationToken).ConfigureAwait(false);
+                        if (count == 0)
+                        {
+                            _ = await transaction.DeleteAsync(PendingPrefixDeletes, document.Id, cancellationToken).ConfigureAwait(false);
+                        }
+
+                        return count;
+                    }, static _ => -1L, cancellationToken).ConfigureAwait(false);
+                    if (deleted < 0)
+                    {
+                        return; // A catalog this build cannot use: the intent stays for a supported start.
+                    }
+                }
+                while (deleted > 0);
+            }
+        }
+    }
 
     private async ValueTask<CatalogCheck> FinishDatabaseCleanupAsync(TenantContext storage, CancellationToken cancellationToken)
     {
