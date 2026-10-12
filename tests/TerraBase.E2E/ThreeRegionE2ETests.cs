@@ -31,7 +31,7 @@ public sealed class ThreeRegionE2ETests
             await Docs.PutAsync(cluster[from], uri, body);
             var acknowledged = Stopwatch.GetTimestamp();
             _ = await Converge.UntilAsync(() => Docs.ReadAsync(cluster[to], uri), document => Docs.Canonical(document) == Docs.Canonical(body), $"{from} to {to}");
-            Converge.Report($"{from} to {to}", acknowledged);
+            Converge.Report($"{cluster.Identity(from)} to {cluster.Identity(to)}", acknowledged);
             var everywhere = await Converge.SettledAsync(cluster, uri, $"{from} to every region");
             Expected.Check(Docs.Canonical(everywhere.Value) == Docs.Canonical(body), $"every region holds the write; {everywhere}");
         });
