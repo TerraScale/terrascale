@@ -31,7 +31,8 @@ public sealed class CatalogLatticeTests
     private static readonly string[] SjcFra = ["sjc", "fra"];
 
     // Every mutating route not anchored before it acknowledges: grants, creations, renames, preferences, reads through POST,
-    // restores into new databases, the management commit (it anchors itself per operation) and tenant data.
+    // restores into new databases, tenant data, and two that anchor themselves: the management commit (per operation) and
+    // setting a backup destination (when it replaces one).
     private static readonly string[] NotAnchored =
     [
         "DELETE /v1/projects/{project}/databases/{database}/collections/{collection}",
@@ -71,6 +72,7 @@ public sealed class CatalogLatticeTests
         "PUT /v1/management/current-organization",
         "PUT /v1/management/organizations/{organization}/audit-retention",
         "PUT /v1/management/organizations/{organization}/members/{user}",
+        "PUT /v1/projects/{project}/backup-destination",
         "PUT /v1/projects/{project}/databases/{database}",
         "PUT /v1/projects/{project}/databases/{database}/auto-index/{collection}",
         "PUT /v1/projects/{project}/databases/{database}/collections/{collection}/documents/by-key",
@@ -874,8 +876,7 @@ public sealed class CatalogLatticeTests
             "DELETE /v1/management/organizations/{organization}/members/{user}", "PUT /v1/management/organizations/{organization}/members/{user}/role",
             "POST /v1/management/organizations/{organization}/leave", "DELETE /v1/management/organizations/{organization}/invitations/{invitation}",
             "POST /v1/management/organizations/{organization}/ownership-transfer/confirm",
-            "DELETE /v1/management/organizations/{organization}/ownership-transfer", "PUT /v1/projects/{project}/backup-destination",
-            "DELETE /v1/projects/{project}/backup-destination", "PUT /v1/projects/{project}/databases/{database}/backup-policy",
+            "DELETE /v1/management/organizations/{organization}/ownership-transfer", "DELETE /v1/projects/{project}/backup-destination", "PUT /v1/projects/{project}/databases/{database}/backup-policy",
             "DELETE /v1/projects/{project}/saved-queries/{query}", "PUT /v1/management/organizations/{organization}/plan",
         ];
         var unanchored = mutating.Where(endpoint => !endpoint.Anchored).Select(endpoint => endpoint.Key).Order(StringComparer.Ordinal).ToArray();
