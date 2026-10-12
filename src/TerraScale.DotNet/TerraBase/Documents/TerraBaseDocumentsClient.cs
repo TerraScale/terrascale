@@ -9,7 +9,7 @@ public sealed record TerraBaseDocumentsClientOptions
     /// <summary>
     /// HTTPS origin of the TerraBase client listener, for example <c>https://api.terrascale.tech</c>, or the plain-HTTP
     /// origin of its private listener on a <c>.internal</c> or loopback host, for example
-    /// <c>http://top1.nearest.of.ts-terrabase.internal:8081</c>.
+    /// <c>http://terrabase.example.internal:8080</c>.
     /// </summary>
     public Uri? BaseAddress { get; init; }
 

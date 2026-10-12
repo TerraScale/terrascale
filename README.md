@@ -111,7 +111,7 @@ atomically.
 // On Fly's private network: TerraBase's internal listener trusts the network and acts as the platform operator.
 var management = new TerraBaseManagementClient(httpClient, new TerraBaseManagementClientOptions
 {
-    BaseAddress = new Uri("http://top1.nearest.of.ts-terrabase.internal:8081"),
+    BaseAddress = new Uri("http://terrabase.example.internal:8080"),
 });
 
 TerraBaseOrganization organization = await management.CreateOrganizationAsync(
