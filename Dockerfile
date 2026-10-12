@@ -19,25 +19,40 @@ RUN apt-get update \
 RUN npx --yes playwright@1.63.0 install --with-deps chromium \
     && npx --yes @redocly/cli@2.57.0 --version \
     && rm -rf /var/lib/apt/lists/*
-COPY --from=ts-dotnet . /src/ts-dotnet
+# .git is excluded: its packs and index differ per clone and would invalidate every later cached layer.
+COPY --from=ts-dotnet --exclude=.git . /src/ts-dotnet
 WORKDIR /src/terrascale
 
 FROM base AS source
 COPY . .
 
-# One stage per area; CI runs them as parallel jobs. Each checks whitespace format, builds its projects in Release with
-# analyzers as errors (libs.slnf, auth.slnf, terrabase.slnf), runs its checks and its Fast suite.
-FROM source AS test-libs
+# One build and one test stage per area; CI runs the areas as parallel jobs. A build stage checks whitespace format,
+# builds its projects in Release with analyzers as errors (libs.slnf, auth.slnf, terrabase.slnf) and runs its static
+# checks: BuildKit reuses it only for byte-identical inputs. The test stage runs the area's tests on that build (its
+# `dotnet build` calls are incremental no-ops); CI passes no-cache-filters for test-<area>, so tests always execute.
+FROM source AS build-libs
 RUN --mount=type=cache,target=/root/.nuget/packages --mount=type=cache,target=/nuget-scratch,id=nuget-scratch \
-    make fmt-check libs-check libs-test CONFIGURATION=Release && touch /passed
+    make fmt-check libs-build CONFIGURATION=Release
 
-FROM source AS test-auth
+FROM build-libs AS test-libs
 RUN --mount=type=cache,target=/root/.nuget/packages --mount=type=cache,target=/nuget-scratch,id=nuget-scratch \
-    make fmt-check auth-check auth-test-fast CONFIGURATION=Release && touch /passed
+    make libs-check libs-test CONFIGURATION=Release && touch /passed
 
-FROM source AS test-terrabase
+FROM source AS build-auth
 RUN --mount=type=cache,target=/root/.nuget/packages --mount=type=cache,target=/nuget-scratch,id=nuget-scratch \
-    make fmt-check terrabase-check terrabase-test-fast CONFIGURATION=Release && touch /passed
+    make fmt-check auth-check auth-build CONFIGURATION=Release
+
+FROM build-auth AS test-auth
+RUN --mount=type=cache,target=/root/.nuget/packages --mount=type=cache,target=/nuget-scratch,id=nuget-scratch \
+    make auth-test-fast CONFIGURATION=Release && touch /passed
+
+FROM source AS build-terrabase
+RUN --mount=type=cache,target=/root/.nuget/packages --mount=type=cache,target=/nuget-scratch,id=nuget-scratch \
+    make fmt-check terrabase-check CONFIGURATION=Release
+
+FROM build-terrabase AS test-terrabase
+RUN --mount=type=cache,target=/root/.nuget/packages --mount=type=cache,target=/nuget-scratch,id=nuget-scratch \
+    make terrabase-test-fast CONFIGURATION=Release && touch /passed
 
 # All three areas (BuildKit runs them in parallel): `make docker-test`.
 FROM scratch AS test
@@ -68,7 +83,7 @@ RUN --mount=type=cache,target=/root/.nuget/packages --mount=type=cache,target=/n
 
 FROM mcr.microsoft.com/dotnet/sdk:11.0 AS publish-ts-auth
 ENV CI=true DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 NUGET_SCRATCH=/nuget-scratch
-COPY --from=ts-dotnet . /src/ts-dotnet
+COPY --from=ts-dotnet --exclude=.git . /src/ts-dotnet
 WORKDIR /src/terrascale
 COPY . .
 # Shown by ts-auth's /healthz as <version>+<revision>.

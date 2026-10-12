@@ -144,6 +144,8 @@ jobs:
           file: terrascale/Dockerfile
           build-contexts: ts-dotnet=ts-dotnet
           target: test-${{ github.job }}
+          # The build stage is reused for identical inputs; the tests always run on the current head.
+          no-cache-filters: test-${{ github.job }}
           push: false
           # Per-job layer cache: the base stage (apt, Playwright Chromium, ts-dotnet) is rebuilt only when it changes.
           cache-from: ${{ !vars.CI_RUNNER && format('type=gha,scope={0}', github.job) || '' }}
