@@ -94,7 +94,7 @@ jobs:
       - uses: actions/download-artifact@v7
         with:
           name: package
-      - run: echo "DOTNET_INSTALL_DIR=$RUNNER_TEMP/dotnet" >> "$GITHUB_ENV"
+      - run: printf 'DOTNET_INSTALL_DIR=%s/dotnet\nNUGET_HTTP_CACHE_PATH=%s/nuget-http\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 10.0.x
@@ -191,7 +191,7 @@ jobs:
       - uses: actions/download-artifact@v7
         with:
           name: restored-package
-      - run: echo "DOTNET_INSTALL_DIR=$RUNNER_TEMP/dotnet" >> "$GITHUB_ENV"
+      - run: printf 'DOTNET_INSTALL_DIR=%s/dotnet\nNUGET_HTTP_CACHE_PATH=%s/nuget-http\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 10.0.x
