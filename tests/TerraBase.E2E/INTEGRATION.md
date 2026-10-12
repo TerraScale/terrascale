@@ -33,11 +33,39 @@ Phase 1 is now merged to main in manifest order, and acceptance runs on main's h
 
 | PR | Head | `test` on that head | Reviews / findings | Method | Main after | Main push run | deploy / preview | Gates in ci.yml | Main run `test` |
 | --- | --- | --- | --- | --- | --- | --- | --- | ---: | --- |
-| #129 | `165295e0` | 38262406479 success | none open (0 threads; 0 reviews) | squash | `986d8f75` | 38267208680 | skipped / skipped | 2 | pending |
-| #128 | `a71c8f4b` | 38262350977 success | none open | squash | `84f85db5` | 38267257956 | skipped / skipped | 2 | pending |
-| #126 | `27fa4fff` | 38255314938 success | none open | squash | `f51024c1` | 38267295524 | skipped / skipped | 2 | pending |
-| #109 | `c4b15068` | 38212020311 success | none open | merge | `5713364d` | 38267358851 | skipped / skipped | 2 | pending |
-| #110 | `3cf9f3a5` | 38212037240 success | none open | merge | `daaa20f5` | 38267398256 | skipped / skipped | 2 | pending |
+| #129 | `165295e0` | 38262406479 success | none open (0 threads; 0 reviews) | squash | `986d8f75` | 38267208680 | skipped / skipped | 2 | success |
+| #128 | `a71c8f4b` | 38262350977 success | none open | squash | `84f85db5` | 38267257956 | skipped / skipped | 2 | success |
+| #126 | `27fa4fff` | 38255314938 success | none open | squash | `f51024c1` | 38267295524 | skipped / skipped | 2 | success |
+| #109 | `c4b15068` | 38212020311 success | none open | merge | `5713364d` | 38267358851 | skipped / skipped | 2 | **failure**: Fast `A_storage_thread_busy_with_a_long_read_does_not_hold_up_writes` |
+| #110 | `3cf9f3a5` | 38212037240 success | none open | merge | `daaa20f5` | 38267398256 | skipped / skipped | 2 | **failure**: Fast `Parallel_writers_cannot_claim_the_same_value_in_a_group_commit` |
+| #107 | `00390b11` | 38210892351 success | none open | squash | `fd98faf0` | 38267560646 | skipped / skipped | 2 | success (Slow success) |
+| #101 | `0fc542f5` | 38205238217 success | none open (docs) | squash | `5de6d0cc` | 38267600876 | skipped / skipped | 2 | success (Slow success) |
+| #124 | `350f6608` | 38253803713 success | none open | squash | `20afa8cd` | 38267640230 | skipped / skipped | 2 | success (Slow success) |
+| #105 | `4b85b32c` | 38253833012 success | none open | squash | `014c9928` | 38267752015 | skipped / skipped | 2 | **failure**: Fast `Parallel_writers_cannot_claim_the_same_value_in_a_group_commit` |
+
+**MAIN IS RED (COS stop, 15:20Z):** Fast fails intermittently on main and on PR runs over current main, with a
+different test each time:
+- `A_storage_thread_busy_with_a_long_read_does_not_hold_up_writes` (main 38267358851);
+- `Parallel_writers_cannot_claim_the_same_value_in_a_group_commit` (main 38267398256 and 38267752015);
+- `Schema_failures_name_the_transaction_operation_and_roll_back_every_write_and_offset(False)` (#130, 38267360406);
+- `Schemas_persist_across_restart_and_drop_recreate_removes_them` (#79, 38268608663).
+
+T1 (owner of #109) is fixing it. **No further product-code PR merges until main is green.** T1's fix may go in.
+Test-only and docs PRs may merge only with green exact-head runs, and their record notes main's state.
+
+**Preview apps destroyed by merges** (`previews.yml` runs on the close event; the user ordered all previews deleted, and
+the exact confirmation is pending):
+
+| PR | App | previews.yml run |
+| --- | --- | --- |
+| #109 | ts-pr-109 | 38267357958 |
+| #110 | ts-pr-110 | 38267399078 |
+| #107 | ts-pr-107 | 38267561035 |
+| #101 | ts-pr-101 | 38267601424 |
+| #105 | ts-pr-105 | 38267753104 |
+
+#129, #128, #126 and #124 also ran `previews.yml` on close (38267208978, 38267258398, 38267296565, 38267640482); they
+had no preview app. **COS is told before merging any PR that still has a preview app:** #79, #88, #106, #108, #111–#121.
 
 **Not merged until fixed and verified:**
 - **R10a's stack**, until the no-peer fail-open and the unprotected override are fixed and R3 verifies in writing;
