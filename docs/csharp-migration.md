@@ -379,7 +379,32 @@ journeys passed again in the focused follow-up.
 
 ## Runtime integration gates
 
-The final merge review inspected immutable producer main
+### Current blockers and direction (2026-10-12, 19:11 UTC, read-only)
+
+- **Discovery.** `atlas.terrascale.tech` is NXDOMAIN, and the producer
+  answers `/v1/discovery` with 404 `unknown_route`. The dashboard's
+  `Platform/Persistence/TerraBaseDiscovery.cs` therefore cannot resolve an
+  origin. The direction is the SDK's regional contract from ts-dotnet PR #5
+  (`Region` on the client options, `TerraBaseWrongRegionException` on 421),
+  adopted once a reviewed public `TerraScale.DotNet` 0.0.2 exists. The
+  dead endpoint is not revived. The app compiles unchanged against PR #5
+  `4827b03e` and ts-dotnet main `2d23b1be`; runtime behaviour against them is
+  untested. Exact producer region semantics are for the SDK and TerraBase
+  owners.
+- **ts-auth.** The deployed `0.1.0-alpha+55979ea3` answers `/readyz` 503 and
+  `/.well-known/jwks.json` 500. Its current source requires an operator to
+  provision the first signing key. `auth.terrascale.tech` is NXDOMAIN.
+- **Identity delivery.** The Fly app `ts-dashboard` has no secrets and no
+  machines. ts-auth already receives its production secrets as Fly secrets
+  (its zero-configuration contract). The smallest compatible delivery is one
+  Fly secret holding the base64 descriptor, materialized by a `fly.toml`
+  `[[files]]` entry at `/run/secrets/terrascale/dashboard.json`, readable by
+  the image's uid 1654. Its values need a ready ts-auth: a dashboard OIDC
+  client and instance, a TerraBase state project and API key, a generated
+  session key and the vendor Stripe keys. No `[[files]]` entry is committed
+  until the secret exists, because Fly would refuse to start a machine
+  without it.
+
 `c379cc3b2cf724d2c10c753397479b5cf2b4f44d` and SDK main
 `bcd20603f11f3aa54dc54cec6e410b4fe9e24151`. Producer CDC R3 has since
 landed as an internal replication tailer. It is not a public document-history
@@ -553,7 +578,7 @@ external client exists.
 
 | Interface | Consumers found | Disposition |
 | --- | --- | --- |
-| `GET /health/ready`, `GET /health/live` | ts-status `src/probe/deployments.ts:9` probes `https://ts-dashboard.fly.dev/health/ready` and reads the commit after `+` in `version` | Ported. Both return `{"status":"ok","version":"<version>+<commit>"}`; ready runs the same check as `/readyz`. The image takes the commit as `--build-arg SOURCE_REVISION`. |
+| `GET /health/ready`, `GET /health/live` | ts-status `src/probe/deployments.ts:9` probes `https://ts-dashboard.fly.dev/health/ready` and reads the commit after `+` in `version` | Ported for GET. Both return `{"status":"ok","version":"<version>+<commit>"}`; ready runs the same check as `/readyz`, and a failure is a 503 HTML page rather than Go's JSON `unavailable` body. HEAD and the `backend` field are not ported. The image build requires the commit as `--build-arg SOURCE_REVISION`. |
 | `GET /api/v1/status/live`, `/api/v1/status/ready` | none | Not ported. |
 | `GET /access` (redirect to members) | docs only (terrascale `docs/terrabase/management-api.md:862`) | Not ported. |
 | Platform REST API | docs only (terrascale `docs/auth/platform-contract.md:313`) | Not ported. Whether the contract is still required is a decision for its owner (ts-auth platform contract). |

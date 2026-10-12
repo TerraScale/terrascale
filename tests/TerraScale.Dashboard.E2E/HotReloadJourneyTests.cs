@@ -72,6 +72,7 @@ public sealed class HotReloadJourneyTests(DashboardE2EFixture fixture)
         using var process = Process.Start(start) ?? throw new IOException("Could not read this machine's Tailscale name.");
         using var status = JsonDocument.Parse(await process.StandardOutput.ReadToEndAsync());
         await process.WaitForExitAsync();
-        return status.RootElement.GetProperty("Self").GetProperty("DNSName").GetString()!.TrimEnd('.');
+        var name = status.RootElement.GetProperty("Self").GetProperty("DNSName").GetString()?.TrimEnd('.');
+        return string.IsNullOrEmpty(name) ? throw new IOException("Tailscale is not logged in on this machine.") : name;
     }
 }

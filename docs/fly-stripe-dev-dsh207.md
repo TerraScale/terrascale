@@ -54,7 +54,7 @@ arquivo de configuração do app dev que ainda não existe. A aplicação C# exp
 readiness em `/readyz`:
 
 ```sh
-nice -n 19 fly deploy -c fly.dev.toml -a terrascale-dashboard-dev --ha=false
+nice -n 19 fly deploy -c fly.dev.toml -a terrascale-dashboard-dev --ha=false --build-arg SOURCE_REVISION=$(git rev-parse HEAD)
 fly status -a terrascale-dashboard-dev
 fly machine list -a terrascale-dashboard-dev
 fly logs -a terrascale-dashboard-dev

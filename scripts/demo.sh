@@ -7,7 +7,7 @@ cd "$(dirname "$0")/.."
 # appear. Materialize the same test host outside the repo for a stable watch
 # graph; the solution still contains exactly one committed application project.
 # This machine's tailnet name, so the demo is reachable over Tailscale.
-dashboard_demo_host=$(tailscale status --json | python3 -c 'import json, sys; print(json.load(sys.stdin)["Self"]["DNSName"].rstrip("."))')
+dashboard_demo_host=$(tailscale status --json | python3 -c 'import json, sys; name = json.load(sys.stdin)["Self"]["DNSName"].rstrip("."); assert name, "tailscale is not logged in"; print(name)')
 dashboard_demo_dir=$(mktemp -d)
 python3 - "$PWD" "$dashboard_demo_dir" <<'PY'
 from pathlib import Path
@@ -41,7 +41,7 @@ node scripts/build-css.mjs --watch --minify &
 dashboard_demo_css_pid=$!
 node scripts/build-js.mjs --watch --minify &
 dashboard_demo_js_pid=$!
-setsid dotnet watch --project "$dashboard_demo_dir/DemoHost.csproj" --non-interactive --no-launch-profile -- "$PWD" "$dashboard_demo_host" --serve &
+setsid dotnet watch --project "$dashboard_demo_dir/DemoHost.csproj" --non-interactive --no-launch-profile -- "$PWD" "$dashboard_demo_host" &
 dashboard_demo_host_pid=$!
 cleanup() {
   trap - EXIT INT TERM

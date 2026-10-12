@@ -18,6 +18,7 @@ COPY --from=node-modules /src/node_modules ./node_modules
 COPY . .
 # The deployed commit (`--build-arg SOURCE_REVISION=$(git rev-parse HEAD)`): /health/ready reports it.
 ARG SOURCE_REVISION
+RUN test -n "$SOURCE_REVISION" || { echo 'Pass --build-arg SOURCE_REVISION=$(git rev-parse HEAD).' >&2; exit 1; }
 RUN --mount=type=cache,target=/root/.nuget/packages \
     dotnet publish src/TerraScale.Dashboard --configuration Release --output /app \
       -p:RestoreLockedMode=true -p:ContinuousIntegrationBuild=true -p:SourceRevisionId=$SOURCE_REVISION

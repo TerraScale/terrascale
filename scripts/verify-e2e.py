@@ -33,7 +33,8 @@ app = root / "src/TerraScale.Dashboard"
 assert not [path for path in app.rglob("*.cs") if not {"bin", "obj"}.intersection(path.relative_to(app).parts)
             and "TerraScale.Dashboard.E2E" in path.read_text()], "Test providers must stay out of the production application"
 assert not [item.get("Include") for item in ET.parse(app / "TerraScale.Dashboard.csproj").iter()
-            if ".." in (item.get("Include") or "")], "The application must not include files from outside its project"
+            if any(outside in (item.get("Include") or "") for outside in ("..", "$(RepositoryRoot)"))], \
+    "The application must not include files from outside its project"
 
 count = 0
 for source in root.rglob("*.cs"):
