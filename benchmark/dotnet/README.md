@@ -30,3 +30,14 @@ nice -n 19 bench/run-http.sh 10s 64 3
 Results go to `bench/results/` (git-ignored). Numbers from a shared or busy
 machine are noisy; compare allocations (deterministic) first, and re-run timings
 on an idle machine before drawing conclusions from small differences.
+
+`DrainBench` (standalone, not in the solution) measures what releasing abandoned Turso statements costs: it runs one
+`terrabase` process under a given wrapper, records the limits that process really has, and drives writes (a share of them
+failing) and reads against it. Results: `benchmark/bench/2026-10-12-statement-drain.md`.
+
+```sh
+dotnet build -c Release benchmark/dotnet/DrainBench
+taskset -c 6-9 nice -n 19 dotnet benchmark/dotnet/DrainBench/bin/Release/net11.0/DrainBench.dll \
+  --server "$PWD/src/TerraBase/bin/Release/net11.0/terrabase.dll" --label after --seconds 20 \
+  --wrap "systemd-run --user --scope --quiet -p CPUQuota=200% -p MemoryMax=512M taskset -c 2,4"
+```
