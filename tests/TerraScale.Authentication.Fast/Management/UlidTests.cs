@@ -13,7 +13,7 @@ public sealed class UlidTests(TerraBaseFixture fixture)
     [Test]
     public async Task Generated_entities_and_signed_claims_use_canonical_ulids()
     {
-        await using var oidc = await OidcHarness.StartAsync(fixture, values => values["access-token-audiences"] = "https://gru.api.terrascale.tech");
+        await using var oidc = await OidcHarness.StartAsync(fixture, values => values["access-token-audiences"] = "https://api.terrascale.tech");
         var (user, token) = await oidc.SignInUserAsync("ulid@example.test");
         var organization = await oidc.CreateOrganizationAsync(token);
         var project = await oidc.CreateProjectAsync(token, organization, "ULID project");
@@ -36,7 +36,7 @@ public sealed class UlidTests(TerraBaseFixture fixture)
 
         using var granted = await oidc.ApiKeyTokenAsync(created.GetProperty("key").GetString()!);
         await Assert.That(granted.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        var claims = await oidc.ValidateAsync((await OidcHarness.JsonAsync(granted)).GetProperty("access_token").GetString()!, "https://gru.api.terrascale.tech");
+        var claims = await oidc.ValidateAsync((await OidcHarness.JsonAsync(granted)).GetProperty("access_token").GetString()!, "https://api.terrascale.tech");
         await Assert.That(claims.GetClaim("sub").Value).IsEqualTo(keyId);
         await Assert.That(claims.GetClaim("org_id").Value).IsEqualTo(organization);
         await Assert.That(claims.GetClaim("project_id").Value).IsEqualTo(project);
