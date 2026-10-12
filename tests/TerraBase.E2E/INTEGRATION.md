@@ -148,6 +148,8 @@ workflow re-verified `disabled_manually` by the helper):
   - **Fix: #137** (test only, one line), 4/4 CountBoundTests on mariogk-dev.
   - No further product merges until Slow is green on main again.
 
+- **#137 MERGED** at its exact head `4187637d`: `test` 38281182568 success (terrabase). Squash → main `dab85174`; push run 38281713863, deploy and preview skipped. Main's Slow on `dab85174`: pending. It decides whether product merges resume.
+
 **Not merged until fixed and verified:**
 - **R10a's stack**, until the no-peer fail-open and the unprotected override are fixed and R3 verifies in writing;
 - **#125**, until its metrics race is fixed (#130) and a fresh `test` run on its exact head is green;
