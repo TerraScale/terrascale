@@ -143,6 +143,16 @@ coordinator).
 **T1's #144** (`46cb6806`, base main): "the system database syncs every commit (decision 0012)", the `_system`
 `synchronous=FULL` PR. It merges after #143, per the agreed order.
 
+**Merges after the resume (Fast green on each exact head; Slow unverifiable on main):**
+
+| PR | Head | `test` run | Method | Main after | Push run | deploy / preview | Slow |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| #112 | `99cb927b` | 38300110257 success | merge (stack base) | `79d30e8b` | 38302155744 | skipped / skipped | unverifiable |
+| #143 | `e3800ec7` | 38300119319 success | squash | `51341591` | 38302187019 | skipped / skipped | unverifiable |
+| #144 | `4a61561b` | 38300128698 success | squash | `1e421848` | 38302222222 | skipped / skipped | unverifiable |
+
+#113 is retargeted to main and merges cleanly; it is brought up to date for a fresh run.
+
 **Acceptance gaps, kept visible until each has a test and a fix:**
 - **R-A:** stale-machine retention after a SIGKILL.
 - **R-B:** a corrupt CDC entry stalls a region pair.
@@ -301,7 +311,7 @@ workflow re-verified `disabled_manually` by the helper):
 
 | Count since the baseline | Value |
 | --- | ---: |
-| merged | 7 baseline PRs (#115, #130, #133, #88, #106, #79, #111) + #137 (the new Slow fix) |
+| merged | 9 baseline PRs (#115, #130, #133, #88, #106, #79, #111, #127, #112) + new PRs #137, #141, #138, #143, #144 |
 | closed (proven superseded) | 1 (#132, by #133; 16:23:01Z, preview workflow `disabled_manually`) |
 
 The 9 merges before the baseline are in the merge-train table.
