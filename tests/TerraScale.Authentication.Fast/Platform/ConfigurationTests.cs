@@ -21,7 +21,6 @@ public sealed class ConfigurationTests
 
     [Test]
     [Arguments("master-key", "TS_AUTH_MASTER_KEY is required")]
-    [Arguments("database", "TS_AUTH_DATABASE is required")]
     public async Task Startup_refuses_missing_required_settings(string key, string message)
     {
         var exception = await Assert.ThrowsAsync<AuthConfigurationException>(() => AuthTestServer.StartAsync(settings: values => values.Remove(key)));
@@ -71,9 +70,6 @@ public sealed class ConfigurationTests
     }
 
     [Test]
-    [Arguments("database", "auth", "TS_AUTH_DATABASE must be project-uuid/database with a lowercase database name")]
-    [Arguments("database", "not-a-uuid/auth/other", "TS_AUTH_DATABASE must be project-uuid/database with a lowercase database name")]
-    [Arguments("database", "auth/../other", "TS_AUTH_DATABASE must be project-uuid/database with a lowercase database name")]
     [Arguments("master-key", "c2hvcnQ=", "TS_AUTH_MASTER_KEY must decode to 32 bytes")]
     [Arguments("master-key", "not base64!", "TS_AUTH_MASTER_KEY must be base64")]
     [Arguments("public-origin", "https://auth.example/?next=x", "TS_AUTH_PUBLIC_ORIGIN must be an absolute HTTP(S) URL")]
@@ -224,7 +220,6 @@ public sealed class ConfigurationTests
             var trusted = proxies == "127.0.0.1";
             var target = await SharedStateTarget.CreateAsync(fixture);
             var settings = AuthTestServer.DefaultSettings();
-            target.Bind(settings);
             settings["rate-limit"] = clientCapacity.ToString(System.Globalization.CultureInfo.InvariantCulture);
             settings["listen"] = listen;
             if (proxies is not null)

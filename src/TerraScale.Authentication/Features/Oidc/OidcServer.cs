@@ -78,7 +78,7 @@ public static class OidcIssuer
     public static IServiceCollection AddOidc(this IServiceCollection services, AuthOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
-        services.AddHostedService<ClientRegistration>();
+        services.AddSingleton<ClientRegistration>();
         services.AddOpenIddict()
             .AddCore(core =>
             {
@@ -349,13 +349,14 @@ public sealed class RevokeTheSignIn(IOpenIddictTokenManager tokens) : IOpenIddic
 
 /// <summary>
 /// Registers or updates the ts-dashboard client (<c>TS_AUTH_DASHBOARD_*</c>) and the service clients
-/// (<c>TS_AUTH_SERVICE_CLIENTS</c>) at startup. Concurrent replicas converge through conditional writes; a storage
-/// failure stops startup instead of serving without them. Clients removed from configuration stay registered.
+/// (<c>TS_AUTH_SERVICE_CLIENTS</c>). The storage bootstrap (<see cref="SigningKeys.SigningKeyRotation"/>) runs it and retries
+/// until storage answers, so ts-auth starts without TerraBase and stays not ready until they are registered. Concurrent
+/// replicas converge through conditional writes. Clients removed from configuration stay registered.
 /// </summary>
-public sealed class ClientRegistration(IServiceScopeFactory scopes, AuthOptions options) : IHostedService
+public sealed class ClientRegistration(IServiceScopeFactory scopes, AuthOptions options)
 {
-    /// <inheritdoc />
-    public async Task StartAsync(CancellationToken cancellationToken)
+    /// <summary>Registers every configured client; a storage failure throws for the bootstrap to retry.</summary>
+    public async Task RegisterAllAsync(CancellationToken cancellationToken)
     {
         var descriptors = options.ServiceClients.Select(Service).ToList();
         if (options.DashboardClient is { } dashboard)
@@ -373,9 +374,6 @@ public sealed class ClientRegistration(IServiceScopeFactory scopes, AuthOptions 
             await this.RegisterAsync(descriptor, cancellationToken).ConfigureAwait(false);
         }
     }
-
-    /// <inheritdoc />
-    public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
     private static OpenIddictApplicationDescriptor Dashboard(DashboardClientOptions dashboard)
     {

@@ -11,7 +11,6 @@ using TerraScale.Authentication.Features.RateLimiting;
 using TerraScale.Authentication.Security;
 using TerraScale.Authentication.Store;
 using TerraScale.Authentication.Tests;
-using TerraScale.DotNet.Testing;
 
 namespace TerraScale.Authentication.Fast.Identity;
 
@@ -275,7 +274,7 @@ public sealed class SessionTests(TerraBaseFixture fixture)
         var clock = new StoreTestClock();
         var pause = new PausingTransactions(request => request.Method == HttpMethod.Get
             && request.RequestUri!.AbsolutePath.Contains($"/collections/{AuthStore.MfaCollection}/documents/", StringComparison.Ordinal))
-        { InnerHandler = fixture.NewHandler() };
+        { InnerHandler = TerraBaseFixture.NewHandler() };
         using var http = new HttpClient(pause);
         await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock, services: services => services.AddSingleton(http));
         await using var replica = await oidc.StartReplicaAsync(clock: clock);
@@ -310,7 +309,7 @@ public sealed class SessionTests(TerraBaseFixture fixture)
     public async Task An_epoch_change_before_issuance_commit_prevents_creation_and_rotation(string change, bool rotate)
     {
         var clock = new StoreTestClock();
-        var pause = new PausingTransactions { InnerHandler = fixture.NewHandler() };
+        var pause = new PausingTransactions { InnerHandler = TerraBaseFixture.NewHandler() };
         using var http = new HttpClient(pause);
         await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock, services: services => services.AddSingleton(http));
         await using var replica = await oidc.StartReplicaAsync(clock: clock);

@@ -22,7 +22,6 @@ public sealed partial record AuthOptions
         "listen",
         "metrics-listen",
         "public-origin",
-        "database",
         "master-key",
         "audit-signing-key",
         "audit-verify-keys",
@@ -51,15 +50,6 @@ public sealed partial record AuthOptions
 
     /// <summary>The public origin browsers and clients use: <see cref="GlobalOrigin"/> unless a preview or test sets another.</summary>
     public required Uri PublicOrigin { get; init; }
-
-    /// <summary>TerraBase project/database selector holding all ts-auth state.</summary>
-    public required string Database { get; init; }
-
-    /// <summary>Project UUID selected by <c>TS_AUTH_DATABASE</c>.</summary>
-    public string StorageProject => this.Database.Split('/')[0];
-
-    /// <summary>Database name selected by <c>TS_AUTH_DATABASE</c>.</summary>
-    public string StorageDatabase => this.Database.Split('/')[1];
 
     /// <summary>32-byte key that encrypts recoverable secrets at rest.</summary>
     public required byte[] MasterKey { get; init; }
@@ -106,7 +96,7 @@ public sealed partial record AuthOptions
     /// </summary>
     public override string ToString() =>
         $"AuthOptions {{ Listen = {this.Listen}, MetricsListen = {this.MetricsListen}, PublicOrigin = {this.PublicOrigin}, "
-        + $"Database = {this.Database}, Development = {this.Development}, Email = {(this.CloudflareEmail is null ? "off" : "on")}, "
+        + $"Development = {this.Development}, Email = {(this.CloudflareEmail is null ? "off" : "on")}, "
         + $"ErrorReporting = {(this.SentryDsn is null ? "off" : "on")}, DashboardClient = {(this.DashboardClient is null ? "off" : "on")}, "
         + $"AccessTokenAudiences = {this.AccessTokenAudiences.Count}, ServiceClients = {this.ServiceClients.Count} }}";
 
@@ -173,13 +163,6 @@ public sealed partial record AuthOptions
             throw Invalid("TS_AUTH_PUBLIC_ORIGIN must be an origin without a path");
         }
 
-        var database = Required("database");
-        var selector = database.Split('/');
-        if (selector.Length != 2 || !StorageProjectName().IsMatch(selector[0]) || !StorageName().IsMatch(selector[1]))
-        {
-            throw Invalid("TS_AUTH_DATABASE must be project-uuid/database with a lowercase database name");
-        }
-
         var verifyValues = (Optional("audit-verify-keys") ?? string.Empty)
             .Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
         if (verifyValues.Length > 5)
@@ -206,7 +189,6 @@ public sealed partial record AuthOptions
             Listen = ParseListen("listen", Optional("listen") ?? "http://0.0.0.0:8090"),
             MetricsListen = ParseListen("metrics-listen", Optional("metrics-listen") ?? "http://0.0.0.0:9092"),
             PublicOrigin = publicOrigin,
-            Database = database,
             MasterKey = DecodeKey("master-key", Required("master-key")),
             AuditSigningKey = Optional("audit-signing-key") is { } signing ? DecodeKey("audit-signing-key", signing) : null,
             AuditVerificationKeys = [.. verifyValues.Select(raw => DecodeKey("audit-verify-keys", raw))],
@@ -449,12 +431,6 @@ public sealed partial record AuthOptions
 
     [GeneratedRegex(@"\A(?<host>\[[^\]]+\]|[^:\[\]]+):(?<port>[0-9]{1,5})\z")]
     private static partial Regex ListenAuthority();
-
-    [GeneratedRegex(@"\A[a-z][a-z0-9_-]{0,62}\z")]
-    private static partial Regex StorageName();
-
-    [GeneratedRegex(@"\A[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\z")]
-    private static partial Regex StorageProjectName();
 
     private static string EnvName(string key) => $"TS_AUTH_{key.Replace('-', '_').ToUpperInvariant()}";
 

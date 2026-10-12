@@ -98,8 +98,8 @@ public sealed class AuthStore(TerraBaseDatabase database, TimeProvider clock)
     private static readonly UTF8Encoding StrictUtf8 = new(false, true);
 
     /// <summary>
-    /// Explicit operator/test setup of <see cref="RequiredCollections"/> in an already provisioned database. Never
-    /// called automatically by the host or readiness probe; missing state fails closed.
+    /// Creates <see cref="RequiredCollections"/> in ts-auth's database, which TerraBase seeds. The host runs it at startup
+    /// before the signing key bootstrap; the readiness probe never does, so a collection lost later fails closed.
     /// </summary>
     public async Task ProvisionAsync(CancellationToken cancellationToken = default)
     {

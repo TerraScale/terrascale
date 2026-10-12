@@ -374,7 +374,7 @@ public sealed class MfaIssuanceTests(TerraBaseFixture fixture)
         var clock = new StoreTestClock { UtcNow = DateTimeOffset.UtcNow };
         using var pause = new PausingTransactions(request => request.Method == HttpMethod.Get
             && request.RequestUri!.AbsolutePath.Contains($"/collections/{AuthStore.MfaCollection}/documents/", StringComparison.Ordinal))
-        { InnerHandler = fixture.NewHandler() };
+        { InnerHandler = TerraBaseFixture.NewHandler() };
         using var http = new HttpClient(pause);
         await using var oidc = await StartAsync(clock, services => services.AddSingleton(http));
         var user = await CreateUserAsync(oidc);

@@ -36,7 +36,6 @@ public sealed class RateLimitTests(TerraBaseFixture fixture)
     private static Task<AuthTestServer> StartAsync(SharedStateTarget? target, TimeProvider clock, Func<IDocumentStore, IDocumentStore>? wrap = null) => AuthTestServer.StartAsync(
         settings: values =>
         {
-            target?.Bind(values);
             values["master-key"] = MasterKey;
         },
         services: services =>

@@ -8,7 +8,6 @@ using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.SigningKeys;
 using TerraScale.Authentication.Store;
 using TerraScale.Authentication.Tests;
-using TerraScale.DotNet.Testing;
 using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Authentication.Fast.Store;
@@ -124,15 +123,26 @@ public sealed class StorageReadinessTests(TerraBaseFixture fixture)
     [Arguments("email_configs")]
     [Arguments("email_config_versions")]
     [Arguments("mfa_credentials")]
-    public async Task Missing_required_collection_fails_closed_without_reprovisioning(string collection)
+    public async Task Collection_lost_after_startup_fails_closed_without_reprovisioning(string collection)
     {
         var (tenant, database) = await fixture.CreateDatabaseAsync();
+        await using var auth = await StartAuthAsync(tenant);
+        await Assert.That(await ReadyWithinAsync(auth, TimeSpan.FromSeconds(10))).IsTrue();
+
+        // Only the startup bootstrap creates collections; the readiness probe never repairs storage.
         await database.DropCollectionAsync(collection);
+        await Assert.That(await ReadinessWait.StatusWithinAsync(auth.Client, "not_ready", TimeSpan.FromSeconds(15))).IsTrue();
+        await Assert.That((await database.ListCollectionsAsync()).Items.Any(item => item.Name == collection)).IsFalse();
+    }
+
+    [Test]
+    public async Task Startup_creates_every_collection_in_an_empty_database()
+    {
+        var (tenant, database) = await fixture.CreateDatabaseAsync(provision: false);
         await using var auth = await StartAuthAsync(tenant);
 
-        using var response = await auth.Client.GetAsync("/readyz");
-        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
-        await Assert.That((await database.ListCollectionsAsync()).Items.Any(item => item.Name == collection)).IsFalse();
+        await Assert.That(await ReadyWithinAsync(auth, TimeSpan.FromSeconds(15))).IsTrue();
+        await Assert.That((await database.ListCollectionsAsync(limit: 200)).Items.Select(item => item.Name)).IsEquivalentTo(AuthStore.RequiredCollections);
     }
 
     private static Task<bool> ReadyWithinAsync(AuthTestServer auth, TimeSpan limit) => ReadinessWait.ReadyWithinAsync(auth.Client, limit);
@@ -140,7 +150,6 @@ public sealed class StorageReadinessTests(TerraBaseFixture fixture)
     private Task<AuthTestServer> StartAuthAsync(TerraBaseTestTenant tenant, string databaseName = "auth", string? apiKey = null, string? masterKey = null, TimeSpan? refresh = null) =>
         AuthTestServer.StartAsync(settings: values =>
         {
-            values["database"] = $"{tenant.Project.Id}/{databaseName}";
             if (masterKey is not null)
             {
                 values["master-key"] = masterKey;

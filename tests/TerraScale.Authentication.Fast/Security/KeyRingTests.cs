@@ -33,7 +33,6 @@ public sealed class KeyRingTests(TerraBaseFixture fixture)
     private static Task<AuthTestServer> StartAsync(SharedStateTarget? target, string? masterKey = null, TimeProvider? clock = null, TimeSpan? refresh = null) => AuthTestServer.StartAsync(
         settings: values =>
         {
-            target?.Bind(values);
             if (masterKey is not null)
             {
                 values["master-key"] = masterKey;

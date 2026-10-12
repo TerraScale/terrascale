@@ -389,7 +389,7 @@ public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
     public async Task Concurrent_positive_grace_rotations_across_replicas_have_one_winner_and_preserve_the_original_secret(bool projectKey)
     {
         var clock = new ManualClock(DateTimeOffset.UtcNow);
-        var pause = new PausingTransactions { InnerHandler = fixture.NewHandler() };
+        var pause = new PausingTransactions { InnerHandler = TerraBaseFixture.NewHandler() };
         await using var oidc = await OidcHarness.StartAsync(fixture, values => values["access-token-audiences"] = Audience, clock: clock,
             services: services => services.AddSingleton(new HttpClient(pause)));
         var (_, token) = await oidc.SignInUserAsync("alice@example.test");

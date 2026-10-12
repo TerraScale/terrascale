@@ -12,7 +12,7 @@ using TerraScale.Authentication.Tests;
 
 namespace TerraScale.Authentication.Fast.Oidc;
 
-/// <summary>Account lockout notices over real HTTP, with durable claims shared through the pinned TerraBase.</summary>
+/// <summary>Account lockout notices over real HTTP, with durable claims shared through the real TerraBase.</summary>
 [ClassDataSource<TerraBaseFixture>(Shared = SharedType.PerTestSession)]
 public sealed class LockoutTests(TerraBaseFixture fixture)
 {
@@ -242,7 +242,7 @@ public sealed class LockoutTests(TerraBaseFixture fixture)
     {
         var start = WindowStart();
         var clock = new ManualClock(start);
-        var advancing = new ExpiringEmailConfigHandler(clock) { InnerHandler = fixture.NewHandler() };
+        var advancing = new ExpiringEmailConfigHandler(clock) { InnerHandler = TerraBaseFixture.NewHandler() };
         await using var oidc = await OidcHarness.StartAsync(fixture, clock: clock,
             services: services => services.AddSingleton(new HttpClient(advancing)));
         var email = Address();

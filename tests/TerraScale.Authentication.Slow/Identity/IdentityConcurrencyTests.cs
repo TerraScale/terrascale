@@ -5,7 +5,6 @@ using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.RateLimiting;
 using TerraScale.Authentication.Store;
 using TerraScale.Authentication.Tests;
-using TerraScale.DotNet.Testing;
 
 namespace TerraScale.Authentication.Slow.Identity;
 

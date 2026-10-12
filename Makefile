@@ -15,7 +15,8 @@ TERRABASE_TEST_PARALLEL ?= 16
 TS_AUTH_REVISION ?=
 export TS_AUTH_REVISION
 TS_DOTNET_DIR ?= ../ts-dotnet
-TERRABASE_PINNED_DIR ?= $(HOME)/.cache/terrascale/terrabase/e07d173fc2bbab19dcb1fde8b121b0207b07d55452a5b19a406871d220e05e13
+# ts-auth's tests start the TerraBase built from this same commit (ts-dotnet's TerraBaseTestServer runs TERRABASE_BINARY).
+TERRABASE_BINARY ?= $(CURDIR)/src/TerraBase/bin/$(CONFIGURATION)/net11.0/terrabase
 REDOCLY := npx --yes @redocly/cli@2.57.0
 
 ANALYZER_CHECK_PROJECT := src/TerraBase.Analyzers.BuildCheck/TerraBase.Analyzers.BuildCheck.csproj
@@ -70,10 +71,9 @@ test: test-fast test-slow
 # Everything required before a push.
 check: lint libs-check auth-check terrabase-check benchmark-check test-fast
 
-# CI's three area stages (Dockerfile `test`, BuildKit runs them in parallel), run locally. Needs ts-dotnet next to this checkout and the pinned TerraBase binary in
-# the cache ts-dotnet's TerraBaseTestServer downloads it to.
+# CI's three area stages (Dockerfile `test`, BuildKit runs them in parallel), run locally. Needs ts-dotnet next to this checkout.
 docker-test:
-	docker build --build-context ts-dotnet=$(TS_DOTNET_DIR) --build-context terrabase-pinned=$(TERRABASE_PINNED_DIR) --target test .
+	docker build --build-context ts-dotnet=$(TS_DOTNET_DIR) --target test .
 
 clean:
 	dotnet clean $(SOLUTION) --configuration $(CONFIGURATION)
@@ -117,11 +117,13 @@ auth-openapi-check: auth-build
 # Builds only the Fast suite and its references; the Slow suite has its own target.
 # Cases share one TerraBase process; individual concurrency tests still run their own request races.
 auth-test-fast: restore
+	dotnet build src/TerraBase/TerraBase.csproj --configuration $(CONFIGURATION) --no-restore --nologo
 	dotnet build tests/TerraScale.Authentication.Fast/TerraScale.Authentication.Fast.csproj --configuration $(CONFIGURATION) --no-restore --nologo
-	dotnet run --project tests/TerraScale.Authentication.Fast --configuration $(CONFIGURATION) --no-build -- --maximum-parallel-tests $(AUTH_TEST_PARALLEL) $(TEST_ARGS)
+	TERRABASE_BINARY=$(TERRABASE_BINARY) dotnet run --project tests/TerraScale.Authentication.Fast --configuration $(CONFIGURATION) --no-build -- --maximum-parallel-tests $(AUTH_TEST_PARALLEL) $(TEST_ARGS)
 
 auth-test-slow: auth-build
-	dotnet run --project tests/TerraScale.Authentication.Slow --configuration $(CONFIGURATION) --no-build $(TEST_ARGS)
+	dotnet build src/TerraBase/TerraBase.csproj --configuration $(CONFIGURATION) --no-restore --nologo
+	TERRABASE_BINARY=$(TERRABASE_BINARY) dotnet run --project tests/TerraScale.Authentication.Slow --configuration $(CONFIGURATION) --no-build $(TEST_ARGS)
 
 auth-check: auth-audit auth-openapi-check
 

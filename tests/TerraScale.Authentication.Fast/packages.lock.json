@@ -375,12 +375,6 @@
           "NUlid": "[1.7.3, )"
         }
       },
-      "terrascale.dotnet.testing": {
-        "type": "Project",
-        "dependencies": {
-          "TerraScale.DotNet": "[0.1.0, )"
-        }
-      },
       "terrascale.endpoints": {
         "type": "Project",
         "dependencies": {

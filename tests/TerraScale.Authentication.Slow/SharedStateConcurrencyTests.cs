@@ -25,7 +25,6 @@ public sealed class SharedStateConcurrencyTests(TerraBaseFixture fixture)
     private static Task<AuthTestServer> StartReplicaAsync(SharedStateTarget target, string masterKey, TimeProvider clock) => AuthTestServer.StartAsync(
         settings: values =>
         {
-            target.Bind(values);
             values["master-key"] = masterKey;
         },
         services: services =>

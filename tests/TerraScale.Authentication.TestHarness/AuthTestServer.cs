@@ -11,12 +11,10 @@ namespace TerraScale.Authentication.Tests;
 
 /// <summary>
 /// Runs the real ts-auth application on an ephemeral loopback Kestrel port and talks to it
-/// over HTTP. Each instance has its own synthetic database name and secrets.
+/// over HTTP. Each instance has its own synthetic secrets; tests point its storage at their own database.
 /// </summary>
 public sealed class AuthTestServer : IAsyncDisposable
 {
-    private static int sequence;
-
     private AuthTestServer(WebApplication app, Uri baseAddress, Uri metricsAddress)
     {
         this.App = app;
@@ -43,7 +41,6 @@ public sealed class AuthTestServer : IAsyncDisposable
         ["listen"] = "http://127.0.0.1:0",
         ["metrics-listen"] = "http://127.0.0.1:0",
         ["public-origin"] = "https://auth.test.invalid",
-        ["database"] = $"{Guid.NewGuid():D}/ts-auth-test-{Environment.ProcessId}-{Interlocked.Increment(ref sequence)}",
         ["master-key"] = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)),
         ["audit-signing-key"] = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)),
         ["environment"] = "Development",

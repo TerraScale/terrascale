@@ -16,14 +16,14 @@ using TerraBase.Features.UserAuth;
 using TerraBase.Primitives;
 using TerraBase.Testing;
 using tsauth::TerraScale.Authentication.Configuration;
-using TerraScale.Authentication.Store;
-using AuthStorage = TerraScale.DotNet.Testing.TerraBaseTestServer;
+using TerraScale.DotNet.TerraBase;
 
 namespace TerraBase.Slow.Management;
 
 /// <summary>
-/// The real ts-auth application, built from this monorepo and run in process as its own tests run it: its storage is the
-/// TerraBase release ts-auth's own suite pins (ts-dotnet's test server, <c>TERRABASE_BINARY</c>), its public origin <see cref="PublicOrigin"/> is served over TLS on a
+/// The real ts-auth application, built from this monorepo and run in process as its own tests run it: its storage is a second
+/// in-process TerraBase from this commit, reached like on Fly (internal listener, no credential), its public origin
+/// <see cref="PublicOrigin"/> is served over TLS on a
 /// loopback port, and one service client gets client-credentials access tokens. Tokens, discovery and JWKS all come from
 /// ts-auth itself; the TerraBase under test reaches them through its production HTTP client, only connected to that port.
 /// </summary>
@@ -34,7 +34,7 @@ internal sealed class RealAuthFixture : IAsyncDisposable
 
     private readonly string _clientSecret = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
     private readonly X509Certificate2 _certificate = Certificate();
-    private AuthStorage? _storage;
+    private TerraBaseTestServer? _storage;
     private WebApplication? _auth;
     private HttpClient? _tokens;
     private int _tlsPort;
@@ -104,21 +104,23 @@ internal sealed class RealAuthFixture : IAsyncDisposable
 
     private async Task StartCoreAsync(CancellationToken token)
     {
-        // ts-auth's own storage, provisioned as ts-auth's tests provision it (TerraBaseFixture): the pinned TerraBase release
-        // speaks the Documents API of ts-auth's pinned ts-dotnet. It is not the TerraBase under test.
-        var (started, unavailable) = await AuthStorage.StartAsync(cancellationToken: token);
-        _storage = started ?? throw new InvalidOperationException($"the real ts-auth fixture needs the pinned TerraBase release: {unavailable}");
-        var tenant = await _storage.CreateTenantAsync(token);
-        var storage = _storage.Documents(tenant.ApiKey).Database(tenant.Project.Id, "auth");
+        // ts-auth's own storage, not the TerraBase under test: a project database on another TerraBase from this commit,
+        // reached through its internal listener as the platform operator. ts-auth creates its collections itself.
+        _storage = await TerraBaseTestServer.StartAsync(cancellationToken: token);
+        var management = new TerraBaseManagementClient(_storage.Client, new TerraBaseManagementClientOptions { BaseAddress = _storage.BaseAddress });
+        var owner = EntityIds.New().ToString();
+        var organization = await management.CreateOrganizationAsync(owner, "ts-auth storage", token);
+        await management.SetPlanAsync(owner, organization.Id, TerraBasePlan.Enterprise, token);
+        var project = await management.CreateProjectAsync(owner, organization.Id, "ts-auth", token);
+        var storage = new TerraBaseDocumentsClient(_storage.Client, new TerraBaseDocumentsClientOptions { BaseAddress = _storage.BaseAddress })
+            .Database(project.Id, "auth");
         await storage.CreateAsync(token);
-        await new AuthStore(storage, TimeProvider.System).ProvisionAsync(token);
 
         var options = AuthOptions.Load(new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["listen"] = "http://127.0.0.1:0",
             ["metrics-listen"] = "http://127.0.0.1:0",
             ["public-origin"] = PublicOrigin,
-            ["database"] = $"{tenant.Project.Id}/auth",
             ["master-key"] = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)),
             ["audit-signing-key"] = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)),
             ["environment"] = "Development",
@@ -127,7 +129,7 @@ internal sealed class RealAuthFixture : IAsyncDisposable
         });
         _auth = tsauth::TerraScale.Authentication.App.Build(options, builder =>
         {
-            builder.Services.AddSingleton(_storage.Http);
+            builder.Services.AddSingleton(_storage.Client);
             builder.Services.AddSingleton(storage);
             // The public origin over TLS, after ts-auth's own listeners, for TerraBase's discovery and JWKS fetches.
             builder.WebHost.ConfigureKestrel(kestrel => kestrel.Listen(IPAddress.Loopback, 0, listen => listen.UseHttps(_certificate)));
