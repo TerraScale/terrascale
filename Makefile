@@ -206,7 +206,8 @@ benchmark-repl-local:
 	$(MAKE) -C benchmark repl-bench-build
 	benchmark/scripts/repl-local.sh
 
-# The same benchmark on Fly: one temporary load machine per region (gru, sjc, fra) in a throwaway app, destroyed on exit.
-# Needs TS_BENCH_FLY_TARGETS (benchmark/scripts/repl-fly-tenant.sh writes it) and FLY_API_TOKEN. Flags come from REPL_ARGS.
+# The same benchmark on Fly: one temporary load machine per region (gru, sjc, fra) in app ts-bench, destroyed on exit.
+# Needs the benchmark credential (benchmark/scripts/repl-fly-tenant.sh install, run by a user) and FLY_API_TOKEN for
+# machine metrics. Flags come from REPL_ARGS.
 benchmark-repl-fly:
 	benchmark/scripts/repl-fly.sh $(REPL_ARGS)

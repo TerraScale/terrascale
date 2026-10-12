@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -40,7 +41,8 @@ func main() {
 		converge    = flag.Duration("converge", 30*time.Minute, "longest wait for every region to match after the load")
 		seed        = flag.Uint64("seed", uint64(time.Now().UnixNano()), "content seed")
 		notTested   = flag.String("not-tested", "", "extra not-tested lines, separated by ';'")
-		step        = flag.String("step", "all", "all, or one step of a multi-machine run: setup, load or verify")
+		step        = flag.String("step", "all", "all, or one step of a multi-machine run: setup, load, verify, or resources (adds Fly machine metrics to --report)")
+		reportPath  = flag.String("report", "", "resources step: the .json of a verify step's report")
 		statePath   = flag.String("state", "state.json", "setup's output and the load and verify steps' input")
 		only        = flag.String("only", "", "load step: the one region this machine writes to")
 		partialOut  = flag.String("partial", "", "load step: where this region's partial goes")
@@ -49,6 +51,10 @@ func main() {
 	)
 	flag.Parse()
 	logf := log.New(os.Stderr, "repl-bench ", log.LstdFlags|log.Lmsgprefix).Printf
+	if *step == "resources" {
+		addResources(*reportPath, logf)
+		return
+	}
 	if *targetsPath == "" {
 		log.Fatal("--targets is required")
 	}
@@ -79,6 +85,7 @@ func main() {
 
 	host, _ := os.Hostname()
 	res := replbench.Result{Name: *name, Kind: t.Kind, Commit: *commitFlag, Host: host, Start: time.Now(), Machines: t.Machines,
+		TerraBaseApp: t.App, TerraBaseOrg: t.Org,
 		Config: map[string]any{"docs": *docs, "sizes": *sizes, "batch": *batch, "concurrency_per_region": *conc, "delete_pct": *deletePct,
 			"conflict_docs": *conflicts, "conflict_rounds": *rounds, "probe_every": probeEvery.String(), "seed": *seed}}
 	r, err := replbench.NewRunner(cfg, t, logf)
@@ -178,11 +185,14 @@ func main() {
 	case sampler != nil:
 		res.Resources = sampler.Stop()
 	case t.Kind == "fly":
-		token := os.Getenv("FLY_API_TOKEN")
-		if token == "" {
-			fail("resources", fmt.Errorf("FLY_API_TOKEN is not set; machine metrics were not read"))
-		} else if res.Resources, err = replbench.FlyResources(context.WithoutCancel(ctx), t.Org, t.App, token, res.Start, res.End); err != nil {
-			fail("resources", err)
+		// On a Fly machine there is no Fly token: the operator adds the metrics afterwards with --step resources.
+		res.Resources = replbench.Resources{Source: "Fly Prometheus API", Note: "not read yet: repl-bench --step resources adds them"}
+		if token := os.Getenv("FLY_API_TOKEN"); token != "" {
+			if r, err := replbench.FlyResources(context.WithoutCancel(ctx), t.Org, t.App, token, res.Start, res.End); err == nil {
+				res.Resources = r
+			} else {
+				res.Resources.Note = "machine metrics could not be read: " + err.Error()
+			}
 		}
 	}
 	res.NotTested = notTestedLines(t, cfg, *notTested)
@@ -224,4 +234,28 @@ func notTestedLines(t replbench.Targets, cfg replbench.Config, extra string) []s
 		}
 	}
 	return lines
+}
+
+// addResources reads a report the verify step wrote on a Fly machine, adds every TerraBase machine's metrics for the run
+// from Fly's Prometheus API (FLY_API_TOKEN, read only) and writes the report again. It runs on the operator host, which
+// holds the Fly token, while the benchmark key stays on the Fly machines.
+func addResources(path string, logf func(string, ...any)) {
+	var res replbench.Result
+	if err := replbench.ReadJSON(path, &res); err != nil {
+		log.Fatal(err)
+	}
+	token := os.Getenv("FLY_API_TOKEN")
+	if token == "" {
+		log.Fatal("FLY_API_TOKEN is not set")
+	}
+	var err error
+	// Metrics are not part of the correctness verdict: a failure to read them is noted, not counted as an error.
+	if res.Resources, err = replbench.FlyResources(context.Background(), res.TerraBaseOrg, res.TerraBaseApp, token, res.Start, res.End); err != nil {
+		res.Resources = replbench.Resources{Source: "Fly Prometheus API", Note: "machine metrics could not be read: " + err.Error()}
+	}
+	out, err := res.Write(filepath.Dir(path))
+	if err != nil {
+		log.Fatal(err)
+	}
+	logf("report %s", out)
 }
