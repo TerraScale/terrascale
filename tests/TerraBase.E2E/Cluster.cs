@@ -6,7 +6,9 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
+using TerraBase.Engine.Sqlite;
 using TerraBase.Primitives;
+using TerraBase.Tenancy;
 using TerraBase.Testing;
 
 namespace TerraBase.E2E;
@@ -94,6 +96,13 @@ public sealed class Cluster : IAsyncDisposable
 
     /// <summary>Local nodes only: every region reaches every other again.</summary>
     public void Heal() => RequireLocal().Heal();
+
+    /// <summary>
+    /// Local nodes only: stalls <paramref name="region"/>'s storage for <paramref name="stall"/>. The database's single writer
+    /// is held, so its commits queue (and may time out) until it is released. Turso allows one writer per file, so a second
+    /// connection cannot stand in for a stalled disk.
+    /// </summary>
+    public Task StallStorageAsync(string region, TimeSpan stall) => RequireLocal().StallStorageAsync(region, stall);
 
     /// <summary>
     /// Takes <paramref name="region"/> down: the local node stops and keeps its data directory, or Fly stops the region's
@@ -353,6 +362,20 @@ public sealed class Cluster : IAsyncDisposable
         }
 
         private string? Region(string machine) => _regions.GetValueOrDefault(machine);
+
+        public async Task StallStorageAsync(string region, TimeSpan stall)
+        {
+            var api = _nodes[region].Api ?? throw new InvalidOperationException($"{region} is down");
+            var engine = api.Server.Services.GetRequiredService<SqliteStorageEngine>();
+            var database = new TenantContext(_organization, PlanTier.Hobby, _project, _database);
+            var store = await engine.OpenDatabaseAsync(database, CancellationToken.None) as SqliteDatabaseStore
+                ?? throw new InvalidOperationException($"{region} does not hold the database");
+            _ = await store.WithWritersHeldAsync(async () =>
+            {
+                await Task.Delay(stall);
+                return true;
+            }, CancellationToken.None, "an e2e storage stall");
+        }
 
         public string DataDirectory(string region) => _nodes[region].DataDirectory;
 
