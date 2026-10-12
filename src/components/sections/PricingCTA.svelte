@@ -2,17 +2,17 @@
   import Icon from '@/components/Icon.svelte'
   import ExternalLink from '@/components/ExternalLink.svelte'
   import { dict } from '@/lib/i18n'
-  import { launchPhase, registrationUrl } from '@/lib/site'
+  import { registrationUrl } from '@/lib/site'
 </script>
 
 <section class="pricing-cta">
   <div class="pricing-cta__inner">
-    <h2 class="pricing-cta__title">{$dict.pricing.finalCta.titleLead} <span class="ts-text-gradient">{$dict.pricing.finalCta.titleAccent}</span></h2>
+    <h2 class="pricing-cta__title">{$dict.pricing.finalCta.titleLead} <span class="ts-accent-text">{$dict.pricing.finalCta.titleAccent}</span></h2>
     <p class="pricing-cta__text">
       {$dict.pricing.finalCta.text}
     </p>
-    <ExternalLink href={registrationUrl} class="ts-btn ts-btn-primary cta-shine">
-      {launchPhase === 'public-alpha' ? $dict.pricing.finalCta.cta : $dict.hero.ctaPrelaunch}
+    <ExternalLink href={registrationUrl} class="ts-btn ts-btn-primary">
+      {$dict.pricing.finalCta.cta}
       <Icon name="arrowRight" className="pricing-cta__icon" />
     </ExternalLink>
   </div>
@@ -36,16 +36,16 @@
   .pricing-cta__title {
     font-size: clamp(2rem, 2.5vw + 1rem, 3rem);
     font-weight: 700;
-    color: var(--ts-text);
+    color: var(--ts-ink);
     letter-spacing: -0.025em;
     line-height: 1.12;
     margin: 0 0 14px;
   }
 
   .pricing-cta__text {
-    font-family: var(--ts-font-accent);
+    font-family: var(--ts-font-sans);
     font-size: 17px;
-    color: var(--ts-text-muted);
+    color: var(--ts-ink-2);
     margin: 0 0 28px;
   }
 

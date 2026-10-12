@@ -19,9 +19,9 @@ export const es: Messages = {
     docs: 'Docs',
     status: 'Estado',
     login: 'Iniciar sesión',
-    getStarted: 'Empezar',
-    prelaunch: 'Public Alpha',
+    getStarted: 'Empieza a construir',
     toggleNav: 'Abrir menú de navegación',
+    toggleTheme: 'Cambiar tema claro u oscuro',
     language: {
       trigger: 'Idioma',
       currentSuffix: 'Idioma: {label}',
@@ -71,14 +71,12 @@ export const es: Messages = {
   },
 
   hero: {
-    brandAlt: 'TerraScale',
-    headlineLead: 'TerraScale',
-    headlineAccent: 'Public Alpha',
+    headlineLead: 'Base de datos de documentos regional.',
+    headlineAccent: 'Ya en Public Alpha.',
     subtitle:
       'Una base de documentos tipada con replicación asíncrona en São Paulo y San Jose. El endpoint global dirige a la región seleccionada saludable más cercana. Public Alpha no tiene porcentaje de disponibilidad ni SLA.',
-    ctaPrimary: 'Registrarse en Public Alpha',
-    ctaPrelaunch: 'Public Alpha',
-    ctaSecondary: 'Ver documentación',
+    ctaPrimary: 'Empieza a construir',
+    ctaSecondary: 'Lee la documentación',
     highlightsAria: 'Capacidades principales',
     highlights: ['Enrutamiento por región seleccionada', 'Replicación asíncrona', 'SDK tipados'],
   },
@@ -135,7 +133,6 @@ export const es: Messages = {
     headlineAccent: 'TerraScale Public Alpha.',
     text: 'Starter y Pro ofrecen una prueba elegible de 30 días por método de pago verificado y organización.',
     ctaPrimary: 'Registrarse en Public Alpha',
-    ctaPrelaunch: 'Public Alpha',
     ctaSecondary: 'Hablar con ventas',
     perksAria: 'Detalles de planes',
     perks: ['Planes pagados mensuales', 'Sin excedentes pagados'],

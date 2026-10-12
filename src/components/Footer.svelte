@@ -30,7 +30,17 @@
       <div class="ts-footer__brand">
         <RouteLink href="/" class="ts-footer__logo" aria-label="TerraScale home">
           <img
+            class="brand-logo brand-logo--dark"
             src="/logo-white.svg"
+            alt="TerraScale"
+            width="1429"
+            height="345"
+            decoding="async"
+            loading="lazy"
+          />
+          <img
+            class="brand-logo brand-logo--light"
+            src="/logo-black.svg"
             alt="TerraScale"
             width="1429"
             height="345"
@@ -48,7 +58,6 @@
               target="_blank"
               aria-label={name}
               class="ts-footer__social"
-              style={`color: ${social.color}; background: ${social.bg}; border-color: ${social.border};`}
             >
               <Icon name={social.icon} className="ts-footer__social-icon" />
             </ExternalLink>
@@ -93,8 +102,8 @@
 
 <style>
   .ts-footer {
-    background: var(--ts-bg-surface);
-    border-top: 1px solid var(--ts-divider);
+    background: var(--ts-surface);
+    border-top: 1px solid var(--ts-line);
     padding: 36px 0 20px;
   }
 
@@ -124,7 +133,7 @@
 
   .ts-footer__tagline {
     font-size: 13px;
-    color: var(--ts-text-muted);
+    color: var(--ts-ink-2);
     line-height: 1.5;
     max-width: 320px;
     margin: 0 0 14px;
@@ -139,20 +148,29 @@
     width: 32px;
     height: 32px;
     border-radius: 7px;
-    border: 1px solid transparent;
+    border: 1px solid var(--ts-line);
+    color: var(--ts-ink-2);
     display: inline-flex;
     align-items: center;
     justify-content: center;
     text-decoration: none;
     transition:
-      transform 180ms ease,
-      box-shadow 180ms ease,
-      background 180ms ease;
+      color var(--ts-fast) ease,
+      background var(--ts-fast) ease;
   }
 
   :global(.ts-footer__social:hover) {
-    transform: translateY(-2px);
-    box-shadow: 0 6px 18px rgba(var(--ts-primary-rgb), 0.25);
+    color: var(--ts-ink);
+    background: var(--ts-surface-2);
+  }
+
+  .brand-logo--light,
+  :global([data-theme='light']) .brand-logo--dark {
+    display: none;
+  }
+
+  :global([data-theme='light']) .brand-logo--light {
+    display: block;
   }
 
   :global(.ts-footer__social-icon) {
@@ -162,10 +180,10 @@
   }
 
   .ts-footer__heading {
-    font-family: var(--ts-font-accent);
+    font-family: var(--ts-font-sans);
     font-size: 11px;
     font-weight: 700;
-    color: var(--ts-text);
+    color: var(--ts-ink);
     text-transform: uppercase;
     letter-spacing: 0.14em;
     margin-bottom: 10px;
@@ -183,33 +201,33 @@
 
   :global(.ts-footer__link) {
     font-size: 12.5px;
-    color: var(--ts-text-muted);
+    color: var(--ts-ink-2);
     text-decoration: none;
     display: inline-flex;
     align-items: center;
     gap: 6px;
     transition: color 150ms ease;
-    font-family: var(--ts-font-accent);
+    font-family: var(--ts-font-sans);
   }
 
   :global(.ts-footer__link:hover) {
-    color: var(--ts-text);
+    color: var(--ts-ink);
   }
 
   :global(.ts-footer__chevron) {
     width: 10px;
     height: 10px;
-    color: var(--ts-text-muted);
+    color: var(--ts-ink-2);
     transition: transform 150ms ease;
   }
 
   :global(.ts-footer__link:hover .ts-footer__chevron) {
     transform: translateX(2px);
-    color: var(--ts-primary-light);
+    color: var(--ts-accent);
   }
 
   .ts-footer__meta {
-    border-top: 1px solid var(--ts-divider);
+    border-top: 1px solid var(--ts-line);
     padding-top: 16px;
     display: flex;
     justify-content: space-between;
@@ -220,7 +238,7 @@
 
   .ts-footer__copy {
     font-size: 12px;
-    color: var(--ts-text-muted);
+    color: var(--ts-ink-2);
   }
 
   @media (max-width: 960px) {

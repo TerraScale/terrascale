@@ -8,7 +8,7 @@
   const channelMeta: Array<{ icon: AppIconName; label: string; href: string; kind: ChannelHrefKind }> = [
     { icon: 'mail', label: 'Email', href: 'mailto:support@terrascale.tech', kind: 'mailto' },
     { icon: 'brandDiscord', label: 'Discord', href: 'https://discord.gg/8Zr2Nw9g', kind: 'external' },
-    { icon: 'brandGithub', label: 'GitHub', href: 'https://git.terrascale.tech/TerraScale', kind: 'external' },
+    { icon: 'brandGithub', label: 'GitHub', href: 'https://github.com/TerraScale', kind: 'external' },
   ]
   $: channels = channelMeta.map((meta, i) => ({
     ...meta,
@@ -25,7 +25,7 @@
     </div>
     <h1 class="contact-hero__title">
       {$dict.contact.titleLead}<br />
-      <span class="ts-text-gradient">{$dict.contact.titleAccent}</span>
+      <span class="ts-accent-text">{$dict.contact.titleAccent}</span>
     </h1>
     <p class="contact-hero__subtitle">
       {$dict.contact.subtitle}
@@ -36,7 +36,7 @@
 <section class="contact-body">
   <div class="contact-body__inner">
     <div class="contact-body__grid">
-      <div class="contact-email ts-glass">
+      <div class="contact-email ts-card">
         <h2 class="contact-email__title">{$dict.contact.formTitle}</h2>
         <ExternalLink href={channelMeta[0].href} class="ts-btn ts-btn-primary">
           <Icon name="mail" />
@@ -52,7 +52,7 @@
               <ExternalLink
                 href={c.href}
                 target="_blank"
-                class="contact-channel ts-glass"
+                class="contact-channel ts-card"
               >
                 <div class="contact-channel__icon">
                   <Icon name={c.icon} className="contact-channel__icon-svg" />
@@ -64,7 +64,7 @@
                 <Icon name="chevronRight" className="contact-channel__chev" />
               </ExternalLink>
             {:else}
-              <ExternalLink href={c.href} class="contact-channel ts-glass">
+              <ExternalLink href={c.href} class="contact-channel ts-card">
                 <div class="contact-channel__icon">
                   <Icon name={c.icon} className="contact-channel__icon-svg" />
                 </div>
@@ -105,10 +105,10 @@
     padding: 5px 12px;
     border-radius: 4px;
     margin-bottom: 24px;
-    background: rgba(var(--ts-primary-rgb), 0.1);
-    border: 1px solid rgba(var(--ts-primary-rgb), 0.25);
-    color: var(--ts-primary-light);
-    font-family: var(--ts-font-accent);
+    background: color-mix(in srgb, var(--ts-accent) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--ts-accent) 25%, transparent);
+    color: var(--ts-accent);
+    font-family: var(--ts-font-sans);
     font-size: 11px;
     font-weight: 700;
     text-transform: uppercase;
@@ -123,16 +123,16 @@
   .contact-hero__title {
     font-size: clamp(2.2rem, 4vw + 1rem, 4rem);
     font-weight: 700;
-    color: var(--ts-text);
+    color: var(--ts-ink);
     letter-spacing: -0.025em;
     line-height: 1.1;
     margin: 0 0 20px;
   }
 
   .contact-hero__subtitle {
-    font-family: var(--ts-font-accent);
+    font-family: var(--ts-font-sans);
     font-size: 18px;
-    color: var(--ts-text-muted);
+    color: var(--ts-ink-2);
     line-height: 1.65;
     max-width: 600px;
     margin: 0 auto;
@@ -162,14 +162,14 @@
   .contact-email__title {
     font-size: 22px;
     font-weight: 700;
-    color: var(--ts-text);
+    color: var(--ts-ink);
     margin: 0 0 24px;
   }
 
   .contact-channels__title {
     font-size: 22px;
     font-weight: 700;
-    color: var(--ts-text);
+    color: var(--ts-ink);
     margin: 0 0 20px;
   }
 
@@ -185,16 +185,11 @@
     padding: 18px;
     border-radius: 8px;
     text-decoration: none;
-    transition:
-      transform 200ms ease,
-      border-color 200ms ease,
-      box-shadow 200ms ease;
+    transition: border-color var(--ts-base) ease;
   }
 
   :global(.contact-channel:hover) {
-    transform: translateX(3px);
-    border-color: rgba(var(--ts-primary-rgb), 0.4);
-    box-shadow: 0 6px 20px rgba(var(--ts-primary-rgb), 0.15);
+    border-color: var(--ts-line-strong);
   }
 
   .contact-channel__icon {
@@ -202,18 +197,18 @@
     height: 40px;
     border-radius: 6px;
     flex-shrink: 0;
-    background: rgba(var(--ts-primary-rgb), 0.14);
-    border: 1px solid rgba(var(--ts-primary-rgb), 0.3);
+    background: color-mix(in srgb, var(--ts-accent) 14%, transparent);
+    border: 1px solid color-mix(in srgb, var(--ts-accent) 30%, transparent);
     display: flex;
     align-items: center;
     justify-content: center;
-    color: var(--ts-primary-light);
+    color: var(--ts-accent);
   }
 
   :global(.contact-channel__icon-svg) {
     width: 18px;
     height: 18px;
-    color: var(--ts-primary-light);
+    color: var(--ts-accent);
   }
 
   .contact-channel__body {
@@ -221,9 +216,9 @@
   }
 
   .contact-channel__label {
-    font-family: var(--ts-font-accent);
+    font-family: var(--ts-font-sans);
     font-size: 10px;
-    color: var(--ts-text-muted);
+    color: var(--ts-ink-2);
     text-transform: uppercase;
     letter-spacing: 0.14em;
     font-weight: 700;
@@ -232,20 +227,20 @@
 
   .contact-channel__value {
     font-size: 14px;
-    color: var(--ts-text);
+    color: var(--ts-ink);
     font-weight: 600;
   }
 
   :global(.contact-channel__chev) {
     width: 14px;
     height: 14px;
-    color: var(--ts-text-muted);
+    color: var(--ts-ink-2);
     transition: transform 200ms ease;
   }
 
   :global(.contact-channel:hover .contact-channel__chev) {
     transform: translateX(2px);
-    color: var(--ts-primary-light);
+    color: var(--ts-accent);
   }
 
   @media (max-width: 960px) {

@@ -21,7 +21,7 @@
 <section class="faq">
   <div class="faq__inner">
     <div class="faq__head">
-      <h2 class="faq__title">{$dict.pricing.faq.titleLead} <span class="ts-text-gradient">{$dict.pricing.faq.titleAccent}</span></h2>
+      <h2 class="faq__title">{$dict.pricing.faq.titleLead} <span class="ts-accent-text">{$dict.pricing.faq.titleAccent}</span></h2>
       <p class="faq__subtitle">{$dict.pricing.faq.subtitle}</p>
     </div>
 
@@ -57,14 +57,14 @@
         {$dict.pricing.faq.footerText}
       </p>
       <div class="faq__footer-actions">
-        <RouteLink href="/contact" class="ts-btn ts-btn-primary ts-btn-compact cta-shine">
+        <RouteLink href="/contact" class="ts-btn ts-btn-primary ts-btn-compact">
           <Icon name="messageSquare" className="faq__footer-icon" />
           {$dict.pricing.faq.contactSales}
         </RouteLink>
         <ExternalLink
           href="https://docs.terrascale.tech"
           target="_blank"
-          class="ts-btn ts-btn-glass ts-btn-compact"
+          class="ts-btn ts-btn-secondary ts-btn-compact"
         >
           <Icon name="bookOpen" className="faq__footer-icon" />
           {$dict.pricing.faq.readDocs}
@@ -93,15 +93,15 @@
   .faq__title {
     font-size: 38px;
     font-weight: 700;
-    color: var(--ts-text);
+    color: var(--ts-ink);
     letter-spacing: -0.02em;
     margin: 0 0 12px;
   }
 
   .faq__subtitle {
-    font-family: var(--ts-font-accent);
+    font-family: var(--ts-font-sans);
     font-size: 16px;
-    color: var(--ts-text-muted);
+    color: var(--ts-ink-2);
     margin: 0;
   }
 
@@ -113,15 +113,13 @@
   .faq__item {
     border-radius: 8px;
     overflow: hidden;
-    border: 1px solid var(--ts-glass-border);
-    background: var(--ts-glass-bg);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid var(--ts-line);
+    background: var(--ts-surface);
     transition: border-color 200ms ease;
   }
 
   .faq__item.is-open {
-    border-color: rgba(var(--ts-primary-rgb), 0.35);
+    border-color: color-mix(in srgb, var(--ts-accent) 35%, transparent);
   }
 
   .faq__button {
@@ -135,15 +133,15 @@
     border: none;
     cursor: pointer;
     text-align: left;
-    color: var(--ts-text);
-    font-family: var(--ts-font-body);
+    color: var(--ts-ink);
+    font-family: var(--ts-font-display);
     font-size: 15px;
     font-weight: 600;
   }
 
   .faq__chev {
     flex-shrink: 0;
-    color: var(--ts-text-muted);
+    color: var(--ts-ink-2);
     transition:
       transform 220ms cubic-bezier(0.22, 1, 0.36, 1),
       color 220ms ease;
@@ -151,7 +149,7 @@
 
   .faq__chev.is-open {
     transform: rotate(180deg);
-    color: var(--ts-primary-light);
+    color: var(--ts-accent);
   }
 
   :global(.faq__chev-icon) {
@@ -171,9 +169,9 @@
 
   .faq__panel-inner {
     padding: 0 22px 20px;
-    font-family: var(--ts-font-accent);
+    font-family: var(--ts-font-sans);
     font-size: 14px;
-    color: var(--ts-text-muted);
+    color: var(--ts-ink-2);
     line-height: 1.65;
   }
 
@@ -182,25 +180,21 @@
     padding: 28px;
     border-radius: 10px;
     text-align: center;
-    background: linear-gradient(
-      135deg,
-      rgba(var(--ts-primary-rgb), 0.08) 0%,
-      transparent 100%
-    );
-    border: 1px solid rgba(var(--ts-primary-rgb), 0.2);
+    background: var(--ts-surface);
+    border: 1px solid var(--ts-line);
   }
 
   .faq__footer-title {
     font-size: 18px;
     font-weight: 700;
-    color: var(--ts-text);
+    color: var(--ts-ink);
     margin: 0 0 6px;
   }
 
   .faq__footer-text {
-    font-family: var(--ts-font-accent);
+    font-family: var(--ts-font-sans);
     font-size: 13px;
-    color: var(--ts-text-muted);
+    color: var(--ts-ink-2);
     margin: 0 0 18px;
   }
 

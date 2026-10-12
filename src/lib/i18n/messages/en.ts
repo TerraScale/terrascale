@@ -17,9 +17,9 @@ export const en = {
     docs: 'Docs',
     status: 'Status',
     login: 'Log in',
-    getStarted: 'Get Started',
-    prelaunch: 'Public Alpha',
+    getStarted: 'Start building',
     toggleNav: 'Toggle navigation menu',
+    toggleTheme: 'Switch light or dark theme',
     language: {
       trigger: 'Language',
       currentSuffix: 'Language: {label}',
@@ -69,14 +69,12 @@ export const en = {
   },
 
   hero: {
-    brandAlt: 'TerraScale',
-    headlineLead: 'TerraScale',
-    headlineAccent: 'Public Alpha',
+    headlineLead: 'Regional document database.',
+    headlineAccent: 'Now in Public Alpha.',
     subtitle:
       'A typed document database with asynchronous replication across São Paulo and San Jose. The global endpoint routes to the nearest healthy region selected by your project. Public Alpha has no uptime percentage or SLA.',
-    ctaPrimary: 'Register for Public Alpha',
-    ctaPrelaunch: 'Public Alpha',
-    ctaSecondary: 'View Docs',
+    ctaPrimary: 'Start building',
+    ctaSecondary: 'Read the docs',
     highlightsAria: 'Key capabilities',
     highlights: ['Selected-region routing', 'Asynchronous replication', 'Typed SDKs'],
   },
@@ -133,7 +131,6 @@ export const en = {
     headlineAccent: 'TerraScale Public Alpha.',
     text: 'Starter and Pro have one eligible 30-day trial per verified payment method and organization.',
     ctaPrimary: 'Register for Public Alpha',
-    ctaPrelaunch: 'Public Alpha',
     ctaSecondary: 'Talk to Sales',
     perksAria: 'Plan details',
     perks: ['Monthly paid plans', 'No paid overages'],

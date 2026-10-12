@@ -135,10 +135,10 @@
     gap: 7px;
     padding: 8px 12px;
     border-radius: 5px;
-    border: 1px solid var(--ts-divider);
+    border: 1px solid var(--ts-line);
     background: transparent;
-    color: var(--ts-text-muted);
-    font-family: var(--ts-font-accent);
+    color: var(--ts-ink-2);
+    font-family: var(--ts-font-sans);
     font-size: 12px;
     font-weight: 700;
     letter-spacing: 0.06em;
@@ -151,15 +151,15 @@
   }
 
   .lang__trigger:hover {
-    color: var(--ts-text);
-    border-color: rgba(var(--ts-primary-rgb), 0.4);
-    background: rgba(var(--ts-primary-rgb), 0.08);
+    color: var(--ts-ink);
+    border-color: color-mix(in srgb, var(--ts-accent) 40%, transparent);
+    background: color-mix(in srgb, var(--ts-accent) 8%, transparent);
   }
 
   :global(.lang__globe) {
     width: 15px;
     height: 15px;
-    color: var(--ts-primary-light);
+    color: var(--ts-accent);
   }
 
   .lang__code {
@@ -186,11 +186,17 @@
     padding: 6px;
     min-width: 188px;
     border-radius: 8px;
-    border: 1px solid var(--ts-glass-border);
-    background: rgba(var(--ts-bg-base-raw), 0.96);
-    backdrop-filter: blur(18px);
-    -webkit-backdrop-filter: blur(18px);
-    box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5);
+    border: 1px solid var(--ts-line);
+    background: var(--ts-glass-strong);
+    /* Write only the standard property: Lightning CSS adds -webkit-; writing both makes it drop the standard one. */
+    backdrop-filter: blur(var(--ts-blur)) saturate(var(--ts-saturate));
+    box-shadow: var(--ts-shadow-overlay);
+  }
+
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .lang__menu {
+      background: var(--ts-surface);
+    }
   }
 
   .lang__option {
@@ -203,8 +209,8 @@
     border: none;
     border-radius: 5px;
     background: transparent;
-    color: var(--ts-text-muted);
-    font-family: var(--ts-font-accent);
+    color: var(--ts-ink-2);
+    font-family: var(--ts-font-sans);
     font-size: 13px;
     font-weight: 600;
     text-align: left;
@@ -216,19 +222,19 @@
 
   .lang__option:hover,
   .lang__option:focus-visible {
-    background: rgba(var(--ts-primary-rgb), 0.12);
-    color: var(--ts-text);
+    background: color-mix(in srgb, var(--ts-accent) 12%, transparent);
+    color: var(--ts-ink);
     outline: none;
   }
 
   .lang__option.is-active {
-    color: var(--ts-primary-light);
+    color: var(--ts-accent);
   }
 
   :global(.lang__option-check) {
     width: 14px;
     height: 14px;
-    color: var(--ts-primary-light);
+    color: var(--ts-accent);
   }
 
   .lang--inline {
@@ -240,10 +246,10 @@
   .lang__inline-btn {
     padding: 8px 12px;
     border-radius: 5px;
-    border: 1px solid var(--ts-divider);
+    border: 1px solid var(--ts-line);
     background: transparent;
-    color: var(--ts-text-muted);
-    font-family: var(--ts-font-accent);
+    color: var(--ts-ink-2);
+    font-family: var(--ts-font-sans);
     font-size: 13px;
     font-weight: 600;
     cursor: pointer;
@@ -254,14 +260,14 @@
   }
 
   .lang__inline-btn:hover {
-    color: var(--ts-text);
-    border-color: rgba(var(--ts-primary-rgb), 0.4);
-    background: rgba(var(--ts-primary-rgb), 0.08);
+    color: var(--ts-ink);
+    border-color: color-mix(in srgb, var(--ts-accent) 40%, transparent);
+    background: color-mix(in srgb, var(--ts-accent) 8%, transparent);
   }
 
   .lang__inline-btn.is-active {
-    color: var(--ts-primary-light);
-    border-color: rgba(var(--ts-primary-rgb), 0.45);
-    background: rgba(var(--ts-primary-rgb), 0.14);
+    color: var(--ts-accent);
+    border-color: color-mix(in srgb, var(--ts-accent) 45%, transparent);
+    background: color-mix(in srgb, var(--ts-accent) 14%, transparent);
   }
 </style>

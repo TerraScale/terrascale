@@ -14,7 +14,7 @@
   <div class="triad__inner">
     <div class="triad__grid">
       {#each items as it (it.title)}
-        <div class="triad__card ts-glass">
+        <div class="triad__card ts-card">
           <div class="triad__icon">
             <Icon name={it.icon} className="triad__icon-svg" />
           </div>
@@ -58,31 +58,31 @@
     height: 40px;
     border-radius: 6px;
     flex-shrink: 0;
-    background: rgba(var(--ts-primary-rgb), 0.14);
-    border: 1px solid rgba(var(--ts-primary-rgb), 0.3);
+    background: color-mix(in srgb, var(--ts-accent) 14%, transparent);
+    border: 1px solid color-mix(in srgb, var(--ts-accent) 30%, transparent);
     display: flex;
     align-items: center;
     justify-content: center;
-    color: var(--ts-primary-light);
+    color: var(--ts-accent);
   }
 
   :global(.triad__icon-svg) {
     width: 18px;
     height: 18px;
-    color: var(--ts-primary-light);
+    color: var(--ts-accent);
   }
 
   .triad__title {
     font-size: 15px;
     font-weight: 700;
-    color: var(--ts-text);
+    color: var(--ts-ink);
     margin-bottom: 4px;
   }
 
   .triad__text {
-    font-family: var(--ts-font-accent);
+    font-family: var(--ts-font-sans);
     font-size: 13px;
-    color: var(--ts-text-muted);
+    color: var(--ts-ink-2);
     line-height: 1.5;
   }
 

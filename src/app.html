@@ -1,10 +1,10 @@
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <link rel="icon" type="image/svg+xml" href="/icon-blue.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="color-scheme" content="dark" />
+    <meta name="color-scheme" content="dark light" />
     <meta name="theme-color" content="#050508" />
     <meta name="darkreader-lock" />
     <link rel="preload" href="/fonts/quantico.woff2" as="font" type="font/woff2" crossorigin />
@@ -27,6 +27,13 @@
       data-website-id="f76c453a-382e-48ac-a3e4-c53a8d8a553a"
     ></script>
     <script>
+      // Apply the saved theme before first paint (no attribute = dark, the default in tokens.css).
+      (function () {
+        try {
+          var theme = localStorage.getItem('ts-theme');
+          if (theme === 'light' || theme === 'dark') document.documentElement.dataset.theme = theme;
+        } catch {}
+      })();
       (function () {
         try {
           var stored = localStorage.getItem('ts-locale');

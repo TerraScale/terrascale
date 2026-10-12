@@ -7,7 +7,7 @@
     WORLD_MAP_VIEWBOX,
     type Region,
   } from '@/lib/world-map.generated'
-  import { launchPhase, registrationUrl } from '@/lib/site'
+  import { registrationUrl } from '@/lib/site'
   import { dict } from '@/lib/i18n'
 
   const highlightIcons = ['globe', 'activity', 'clock'] as const
@@ -76,22 +76,9 @@
   </div>
 
   <div class="hero__inner">
-    <div class="hero__brand">
-      <span class="hero__brand-glow" aria-hidden="true"></span>
-      <img
-        src="/logo-principal.svg"
-        alt={$dict.hero.brandAlt}
-        class="hero__brand-mark"
-        width="1429"
-        height="345"
-        decoding="async"
-        fetchpriority="high"
-      />
-    </div>
-
     <h1 class="hero__headline">
       {$dict.hero.headlineLead}<br />
-      <span class="ts-text-gradient">{$dict.hero.headlineAccent}</span>
+      <span class="ts-accent-text">{$dict.hero.headlineAccent}</span>
     </h1>
 
     <p class="hero__subtitle">
@@ -99,14 +86,14 @@
     </p>
 
     <div class="hero__ctas">
-      <ExternalLink href={registrationUrl} class="ts-btn ts-btn-primary cta-shine">
-        {launchPhase === 'public-alpha' ? $dict.hero.ctaPrimary : $dict.hero.ctaPrelaunch}
+      <ExternalLink href={registrationUrl} class="ts-btn ts-btn-primary">
+        {$dict.hero.ctaPrimary}
         <Icon name="arrowRight" className="hero__cta-icon" />
       </ExternalLink>
       <ExternalLink
         href="https://docs.terrascale.tech"
         target="_blank"
-        class="ts-btn ts-btn-glass"
+        class="ts-btn ts-btn-secondary"
       >
         {$dict.hero.ctaSecondary}
       </ExternalLink>
@@ -137,20 +124,6 @@
     inset: 0;
     pointer-events: none;
     z-index: 0;
-    mask-image: radial-gradient(
-      ellipse 95% 92% at 50% 50%,
-      #000 0%,
-      #000 70%,
-      rgba(0, 0, 0, 0.35) 88%,
-      transparent 100%
-    );
-    -webkit-mask-image: radial-gradient(
-      ellipse 95% 92% at 50% 50%,
-      #000 0%,
-      #000 70%,
-      rgba(0, 0, 0, 0.35) 88%,
-      transparent 100%
-    );
   }
 
   .hero__globe-frame {
@@ -183,7 +156,7 @@
 
   .hero__line {
     fill: none;
-    stroke: rgba(var(--ts-primary-rgb), 0.5);
+    stroke: color-mix(in srgb, var(--ts-accent) 50%, transparent);
     stroke-width: 0.18;
     stroke-linecap: round;
     stroke-dasharray: 2 3;
@@ -211,11 +184,8 @@
     width: 7px;
     height: 7px;
     border-radius: 50%;
-    background: var(--ts-primary-light);
-    box-shadow:
-      0 0 0 2px rgba(5, 5, 8, 0.9),
-      0 0 14px rgba(var(--ts-primary-rgb), 0.9),
-      0 0 26px rgba(var(--ts-primary-rgb), 0.55);
+    background: var(--ts-accent);
+    box-shadow: 0 0 0 2px var(--ts-canvas);
     transform: translate(-50%, -50%);
   }
 
@@ -226,7 +196,7 @@
     width: 7px;
     height: 7px;
     border-radius: 50%;
-    border: 1.5px solid rgba(var(--ts-primary-rgb), 0.8);
+    border: 1.5px solid color-mix(in srgb, var(--ts-accent) 80%, transparent);
     transform: translate(-50%, -50%);
     animation: ts-pin-pulse 2.6s cubic-bezier(0.2, 0.8, 0.2, 1) infinite;
     animation-delay: var(--delay, 0s);
@@ -248,49 +218,19 @@
     text-align: center;
   }
 
-  .hero__brand {
-    position: relative;
-    display: inline-flex;
-    justify-content: center;
-    margin: 0 auto 22px;
-    isolation: isolate;
-  }
-
-  .hero__brand-glow {
-    position: absolute;
-    inset: -60% -30%;
-    z-index: -1;
-    background: radial-gradient(
-      ellipse at center,
-      rgba(var(--ts-primary-rgb), 0.22) 0%,
-      rgba(var(--ts-primary-rgb), 0.06) 42%,
-      transparent 72%
-    );
-    filter: blur(28px);
-    animation: ts-breathe 6s ease-in-out infinite;
-  }
-
-  .hero__brand-mark {
-    position: relative;
-    height: clamp(48px, 6vw, 78px);
-    width: auto;
-    display: block;
-    filter: drop-shadow(0 8px 22px rgba(var(--ts-primary-rgb), 0.28));
-  }
-
   .hero__headline {
     font-size: clamp(2.4rem, 4.2vw + 1rem, 5rem);
     font-weight: 700;
     line-height: 1.02;
-    margin: 0 0 10px;
-    color: var(--ts-text);
-    letter-spacing: -0.035em;
+    margin: 0 0 20px;
+    color: var(--ts-ink);
+    letter-spacing: var(--ts-display-tracking);
   }
 
   .hero__subtitle {
-    font-family: var(--ts-font-accent);
+    font-family: var(--ts-font-sans);
     font-size: clamp(1rem, 0.7vw + 0.75rem, 1.15rem);
-    color: var(--ts-text-muted);
+    color: var(--ts-ink-2);
     line-height: 1.55;
     max-width: 580px;
     margin: 0 auto 32px;
@@ -302,18 +242,6 @@
     gap: 12px;
     justify-content: center;
     flex-wrap: wrap;
-  }
-
-  .hero :global(.ts-btn-glass) {
-    background: var(--ts-bg-card);
-    border-color: rgba(148, 163, 184, 0.34);
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
-  }
-
-  .hero :global(.ts-btn-glass:hover) {
-    background: var(--ts-divider);
-    border-color: rgba(var(--ts-primary-rgb), 0.5);
   }
 
   :global(.hero__cta-icon) {
@@ -339,31 +267,20 @@
     gap: 10px;
     padding: 9px 16px;
     border-radius: 100px;
-    background: var(--ts-glass-bg);
-    border: 1px solid var(--ts-glass-border);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    font-family: var(--ts-font-accent);
+    background: var(--ts-glass);
+    border: 1px solid var(--ts-glass-line);
+    backdrop-filter: blur(var(--ts-blur)) saturate(var(--ts-saturate));
+    font-family: var(--ts-font-sans);
     font-size: 13px;
     font-weight: 600;
     letter-spacing: 0.04em;
-    color: var(--ts-text);
-    transition:
-      border-color 200ms ease,
-      transform 200ms ease,
-      background 200ms ease;
-  }
-
-  .hero__highlight:hover {
-    transform: translateY(-2px);
-    border-color: rgba(var(--ts-primary-rgb), 0.38);
-    background: rgba(var(--ts-primary-rgb), 0.06);
+    color: var(--ts-ink);
   }
 
   :global(.hero__highlight-icon) {
     width: 15px;
     height: 15px;
-    color: var(--ts-primary-light);
+    color: var(--ts-accent);
     display: inline-block;
   }
 
@@ -395,8 +312,7 @@
 
   @media (prefers-reduced-motion: reduce) {
     .hero__line,
-    .hero__pin-ring,
-    .hero__brand-glow {
+    .hero__pin-ring {
       animation: none !important;
     }
   }
