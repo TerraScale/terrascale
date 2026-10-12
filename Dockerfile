@@ -45,9 +45,13 @@ COPY --from=test-libs /passed /libs
 COPY --from=test-auth /passed /auth
 COPY --from=test-terrabase /passed /terrabase
 
-FROM source AS test-slow
+# The Slow suites never fail the build: their log and exit code are the `test-slow` output, which CI reports from.
+FROM source AS slow-run
 RUN --mount=type=cache,target=/root/.nuget/packages \
-    make test-slow CONFIGURATION=Release
+    mkdir /slow && { make test-slow CONFIGURATION=Release; echo $? > /slow/exit; } 2>&1 | tee /slow/log
+
+FROM scratch AS test-slow
+COPY --from=slow-run /slow /
 
 # Fly images: the self-contained release executables (`make terrabase-publish` / `auth-publish` flags) on the chiseled
 # runtime-deps base (6 MB: no shell, no package manager). These stages skip the test stages: CI deploys only a tree whose
