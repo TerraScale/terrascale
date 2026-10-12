@@ -1,12 +1,21 @@
-# Release TerraScale.DotNet when a vX.Y.Z tag on main is pushed (docs/package-release.md). One job builds, tests and
-# packs without write access; the jobs after it push those exact bytes: GitHub Packages first, then, once a clean consumer
-# restores it from there, nuget.org through Trusted Publishing (a nuget.org policy names this file, release.yml).
-# Registries refuse an existing version, so a release never replaces published bytes.
+# Release TerraScale.DotNet (docs/package-release.md). Pushing a vX.Y.Z tag on main builds, tests and packs once without
+# write access, pushes those bytes to GitHub Packages and restores them into a clean consumer. nuget.org is a separate,
+# manual run of this workflow on that tag: it restores the same bytes from GitHub Packages, checks their SHA-256 and pushes
+# them through Trusted Publishing (the nuget.org policy names this file, release.yml). Registries refuse an existing
+# version, so a release never replaces published bytes.
 name: Release
 
 on:
   push:
     tags: ['v[0-9]+.[0-9]+.[0-9]+']
+  workflow_dispatch:
+    inputs:
+      sha256:
+        description: SHA-256 of the .nupkg that the tag's release run pushed to GitHub Packages
+        required: true
+      nuget-user:
+        description: nuget.org profile name of the Trusted Publishing policy's creator
+        required: true
 
 permissions:
   contents: read
@@ -22,6 +31,7 @@ env:
 
 jobs:
   package:
+    if: github.event_name == 'push'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 20
     outputs:
@@ -85,12 +95,14 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           echo "$SHA256  TerraScale.DotNet.$VERSION.nupkg" | sha256sum --check
-          dotnet nuget push "TerraScale.DotNet.$VERSION.nupkg" --source "$GITHUB_FEED" --api-key "$GITHUB_TOKEN"
+          # A re-run after a push whose answer was lost finds the version present; restore then checks it holds these bytes.
+          dotnet nuget push "TerraScale.DotNet.$VERSION.nupkg" --source "$GITHUB_FEED" --api-key "$GITHUB_TOKEN" --skip-duplicate
 
-  # Restores the package from GitHub Packages into a clean consumer outside the repository, with fresh NuGet caches, and
-  # checks the restored bytes are the packed ones.
-  verify-github-packages:
+  # Restores the tag's package from GitHub Packages into a clean consumer outside the repository, with fresh NuGet caches,
+  # and checks the restored bytes are the released ones: after the push above, and alone before a nuget.org push.
+  restore:
     needs: [package, github-packages]
+    if: ${{ !cancelled() && !failure() }}
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 15
     permissions:
@@ -108,10 +120,13 @@ jobs:
             11.0.x
           dotnet-quality: preview
       - env:
-          VERSION: ${{ needs.package.outputs.version }}
-          SHA256: ${{ needs.package.outputs.sha256 }}
+          SHA256: ${{ needs.package.outputs.sha256 || inputs.sha256 }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          if [ "$GITHUB_REF_TYPE" != tag ] || ! [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || ! [[ "$SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::Run this on a vX.Y.Z tag, with the SHA-256 of its release."; exit 1
+          fi
+          VERSION="${GITHUB_REF_NAME#v}"
           export NUGET_PACKAGES="$RUNNER_TEMP/nuget-packages" NUGET_HTTP_CACHE_PATH="$RUNNER_TEMP/nuget-http"
           consumer="$RUNNER_TEMP/consumer"
           cp -r tests/TerraScale.DotNet.PackageConsumer "$consumer"
@@ -146,9 +161,17 @@ jobs:
         run: |
           gh api orgs/TerraScale/packages/nuget/TerraScale.DotNet --jq '{name, visibility, repository: .repository.full_name, html_url}' \
             || echo "::warning::GitHub Packages metadata is not readable with the job token."
+      - if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v6
+        with:
+          name: restored-package
+          path: ${{ runner.temp }}/nuget-packages/terrascale.dotnet/*/terrascale.dotnet.*.nupkg
+          if-no-files-found: error
 
   nuget-org:
-    needs: [package, verify-github-packages]
+    needs: restore
+    # Spelled out: the implicit success() would skip this job, as package and github-packages are skipped on dispatch.
+    if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && needs.restore.result == 'success' }}
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 10
     permissions:
@@ -157,20 +180,18 @@ jobs:
     steps:
       - uses: actions/download-artifact@v7
         with:
-          name: package
+          name: restored-package
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 10.0.x
       - env:
-          VERSION: ${{ needs.package.outputs.version }}
-          SHA256: ${{ needs.package.outputs.sha256 }}
-        run: echo "$SHA256  TerraScale.DotNet.$VERSION.nupkg" | sha256sum --check
+          SHA256: ${{ inputs.sha256 }}
+        run: echo "$SHA256  terrascale.dotnet.${GITHUB_REF_NAME#v}.nupkg" | sha256sum --check
       # Trades this job's GitHub OIDC token for a one-hour nuget.org key; no long-lived key exists.
       - id: login
         uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
         with:
-          user: MarioGK
+          user: ${{ inputs.nuget-user }}
       - env:
-          VERSION: ${{ needs.package.outputs.version }}
           NUGET_API_KEY: ${{ steps.login.outputs.NUGET_API_KEY }}
-        run: dotnet nuget push "TerraScale.DotNet.$VERSION.nupkg" --source https://api.nuget.org/v3/index.json --api-key "$NUGET_API_KEY"
+        run: dotnet nuget push "terrascale.dotnet.${GITHUB_REF_NAME#v}.nupkg" --source https://api.nuget.org/v3/index.json --api-key "$NUGET_API_KEY"

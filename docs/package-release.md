@@ -15,24 +15,37 @@ replaced or deleted.
 
 The tag starts [`release.yml`](../.github/workflows/release.yml). Its `package`
 job checks the tag equals `v` + `<Version>` and the commit is on `main`,
-builds, runs the tests on .NET 10 and 11 and packs once, without write access.
-The later jobs only push those bytes, checking their SHA-256 first:
+builds, runs the tests on .NET 10 and 11 and packs once, without write access,
+and logs the package SHA-256. Then:
 
-1. `github-packages` pushes with the job's `GITHUB_TOKEN`. The package is
-   linked to this repository through `RepositoryUrl`, so it inherits its
-   private visibility and access.
-2. `verify-github-packages` copies
+1. `github-packages` checks that hash and pushes with the job's
+   `GITHUB_TOKEN`. The package is linked to this repository through
+   `RepositoryUrl`, so it inherits its private visibility and access.
+2. `restore` copies
    [`tests/TerraScale.DotNet.PackageConsumer`](../tests/TerraScale.DotNet.PackageConsumer)
    out of the repository, restores the exact version from GitHub Packages with
    fresh NuGet caches, checks the restored `.nupkg` hash and runs the consumer
    on both frameworks. It fails unless the loaded assembly reports
    `<version>+<tagged commit>`.
-3. `nuget-org` exchanges the job's GitHub OIDC token for a one-hour nuget.org
-   key ([Trusted Publishing](https://learn.microsoft.com/nuget/nuget-org/trusted-publishing))
-   and pushes. The nuget.org policy names owner `TerraScale`, repository
-   `ts-dotnet`, workflow `release.yml` and no environment. No API key is
-   stored anywhere. If this job fails because the policy is missing, re-run
-   the failed job after adding it; it pushes the same artifact.
+
+nuget.org is never pushed automatically. After reviewing the GitHub Packages
+release, run the workflow by hand on the same tag:
+
+```bash
+gh workflow run release.yml --ref v0.0.X -f sha256=<package SHA-256> -f nuget-user=<nuget.org profile name>
+```
+
+That run repeats `restore` from GitHub Packages against the given hash, then
+`nuget-org` exchanges its GitHub OIDC token for a one-hour nuget.org key
+([Trusted Publishing](https://learn.microsoft.com/nuget/nuget-org/trusted-publishing))
+and pushes those bytes. No API key is stored anywhere. The nuget.org policy
+names repository owner `TerraScale`, repository `ts-dotnet`, workflow file
+`release.yml` and no environment; `nuget-user` is the profile name of the
+account that created it. A policy for this private repository is only
+temporarily active for 7 days until its first publish; restart that window on
+nuget.org if it lapses. The policy cannot check the ref (environment deployment
+rules need a paid plan for a private repository), so anyone who can push a
+workflow to this repository can publish; keep write access to its admins.
 
 nuget.org repository-signs packages, so its download adds
 `.signature.p7s`; every other entry is byte-identical to the GitHub Packages
