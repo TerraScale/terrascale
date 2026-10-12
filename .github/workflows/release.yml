@@ -186,7 +186,8 @@ jobs:
           dotnet-version: 10.0.x
       - env:
           SHA256: ${{ inputs.sha256 }}
-        run: echo "$SHA256  terrascale.dotnet.${GITHUB_REF_NAME#v}.nupkg" | sha256sum --check
+        # The artifact keeps the version folder of the NuGet packages folder.
+        run: echo "$SHA256  ${GITHUB_REF_NAME#v}/terrascale.dotnet.${GITHUB_REF_NAME#v}.nupkg" | sha256sum --check
       # Trades this job's GitHub OIDC token for a one-hour nuget.org key; no long-lived key exists.
       - id: login
         uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
@@ -194,4 +195,4 @@ jobs:
           user: ${{ inputs.nuget-user }}
       - env:
           NUGET_API_KEY: ${{ steps.login.outputs.NUGET_API_KEY }}
-        run: dotnet nuget push "terrascale.dotnet.${GITHUB_REF_NAME#v}.nupkg" --source https://api.nuget.org/v3/index.json --api-key "$NUGET_API_KEY"
+        run: dotnet nuget push "${GITHUB_REF_NAME#v}/terrascale.dotnet.${GITHUB_REF_NAME#v}.nupkg" --source https://api.nuget.org/v3/index.json --api-key "$NUGET_API_KEY"
