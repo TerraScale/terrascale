@@ -154,6 +154,17 @@ coordinator).
 
 #114 is retargeted to main, merges cleanly, and is updated to `980be395`; its run is in progress. #117 and then #120 follow (R3 pushes the R7 pin `24e138c0` to #120). Main's push runs after #112, #143 and #144: `test` success; Slow pending or unverifiable.
 
+**#134 (Dogfood) and #146 (ts-auth: off Fly, only Development stores in the loopback TerraBase).**
+- **Tester A's independent reviews:** #134 at `c1645986` and #146 at `2ef197fc`, **no blocking findings**. The fail-first
+  tests were verified with mutants, and local `make check` exited 0 on both.
+- **Their exact-head runs were green** (#134 38301093027, #146 38298854993). They ran on GitHub-hosted runners, and COS
+  decided that the exact-head `test` check counts whichever runner executed it.
+- **Fresh runs:** main had moved since (#112, #143, #144, #113), so both were brought up to date via update-branch after
+  the push check: #134 → `4b6b5093`, #146 → `d67259d7`. They merge on a fresh green run, marked Slow unverifiable.
+- **Nits are non-blocking.** Dogfood may fix the api.md "refuses any other pair" wording in a follow-up.
+- **#146 appears to be the follow-up** for #127's should-fix #1 (the loopback fallback limited to Development off Fly).
+  To be confirmed in its diff before it is recorded as closing that finding.
+
 **Acceptance gaps, kept visible until each has a test and a fix:**
 - **R-A:** stale-machine retention after a SIGKILL.
 - **R-B:** a corrupt CDC entry stalls a region pair.
