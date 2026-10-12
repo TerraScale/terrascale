@@ -141,6 +141,13 @@ auth-publish:
 auth-dev:
 	scripts/auth/dev.sh
 
+# Local development: TerraBase and ts-auth under Aspire (aspire/apphost.mts) with its dashboard, on loopback only. Each run
+# starts from an empty TerraBase; see README.md.
+.PHONY: dev
+dev:
+	dotnet tool restore
+	TsDotnetRoot=$(abspath $(TS_DOTNET_DIR)) dotnet aspire run --apphost aspire
+
 # TerraBase: the server, its analyzer and its integration suites.
 terrabase-build: restore
 	dotnet build terrabase.slnf --configuration $(CONFIGURATION) --no-restore
