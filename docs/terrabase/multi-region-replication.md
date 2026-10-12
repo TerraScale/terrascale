@@ -859,8 +859,25 @@ table, plain `INSERT`/`UPDATE`/`DELETE` on captured tables). The engine swap (1b
      and placed in every region: a receiver never refuses it. Its catalog paths and ids are checked by size only.
    - **Prefix deletes** (`DeleteCollectionsAsync`, a deleted database's or project's state) purge this machine's rows and
      states without tombstones; no live catalog document reaches that state any more, and CDC ships no deletes.
-   - Not yet: deletion and name races across regions, usage counters, per-region files of a database created elsewhere
-     (R10a-3).
+   - A database placed in this region gets its local file on its first request or first replicated group.
+3. R10a-3 applies what the replicated catalog decides elsewhere to each machine's files, every 2 s
+   (`CatalogConvergence`):
+   - **Deletion.** A local file whose database record is a tombstone is deleted here too, and the database's catalog
+     state purged. A tombstone never comes back, so neither does the database; a missing record never deletes anything
+     (a creation in progress). Files of a database still live but no longer placed here stay until R11's move drops them
+     after acks.
+   - **Name races.** A live record whose name the index gives to another live database of the same name: the smaller
+     ULID wins on every machine. The loser is deleted through the ordinary deletion (its creator sees it gone with the
+     reason `name_taken` in the log; R11's `/operations` reports it), and a winner whose index a later write gave away
+     writes it back.
+   - **Usage** is flushed into per-machine documents (`ops@<machine>`, `<bucket>@<machine>`, `flush@<machine>`): one
+     writer per document keeps the read-add-write flush exact, and reads sum every machine's documents. Query shape and
+     field statistics stay last-writer-wins (approximate analytics).
+   - **Cleanup intents** are per machine (`machines/<machine>/pending_database_cleanup`): they replicate, but only the
+     machine whose files they name acts on them.
+   - Known limits: organization sequences (audit, invitations, API-key and backup order) are read-add-write counters,
+     so concurrent writes in two regions can draw the same number; the backup status document is last-writer-wins
+     until backups ship from `home` (R11).
 
 **Order and parallelism:**
 

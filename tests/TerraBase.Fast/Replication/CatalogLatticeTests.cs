@@ -4,7 +4,12 @@ using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
 using TerraBase.Engine.Lattices;
+using TerraBase.Errors;
+using TerraBase.Features.Management;
+using TerraBase.Features.Management.Usage;
+using TerraBase.Features.Replication;
 using TerraBase.Primitives;
+using TerraBase.Tenancy;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Replication;
@@ -17,6 +22,8 @@ namespace TerraBase.Fast.Replication;
 public sealed class CatalogLatticeTests
 {
     private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(60);
+
+    private static readonly string[] Sjc = ["sjc"];
 
     [Test]
     public async Task An_organization_created_in_one_region_reaches_every_region_with_the_same_document_and_version()
@@ -91,6 +98,133 @@ public sealed class CatalogLatticeTests
         await Assert.That(await cluster.UntilConvergedAsync("organizations", organization)).IsTrue();
     }
 
+    [Test]
+    public async Task A_database_deleted_in_its_home_goes_from_its_former_replica_and_its_name_serves_a_new_database()
+    {
+        await using var cluster = await Cluster.StartAsync("gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var user = gru.Api.User;
+        var (organization, project, database) = (EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString());
+        await gru.CommitAsync(user,
+            new { op = "create_organization", id = organization, name = "Deleting" },
+            new { op = "create_project", organization, id = project, name = "p" },
+            new { op = "create_database", organization, project, name = "main", id = database, replica_regions = Sjc });
+        var tenant = new TenantContext(organization, PlanTier.Hobby, project, database);
+
+        // sjc holds the database gru created once its record replicated, and joins gru's documents into it.
+        await Assert.That(await sjc.UntilAsync($"projects/{project}/databases", database, json => json is not null)).IsTrue();
+        await Assert.That(await sjc.Tenants.EnsureLocalDatabaseAsync(tenant, CancellationToken.None) is Done).IsTrue();
+        await Assert.That(File.Exists(sjc.FileOf(tenant))).IsTrue();
+        await gru.WriteAsync(tenant, async transaction =>
+        {
+            _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
+            _ = await transaction.PutAsync("items", "one", Json("""{"n":1}"""), CancellationToken.None);
+        });
+        await Assert.That(await sjc.UntilDocumentAsync(tenant, "items", "one", json => json == """{"n":1}""")).IsTrue();
+
+        // Deleted at home (after its replicas were removed): sjc deletes its file, and the record stays a tombstone.
+        await gru.CommitAsync(user, new { op = "set_database_regions", organization, project, database, replica_regions = Array.Empty<string>() });
+        await gru.CommitAsync(user, new { op = "delete_database", organization, project, database });
+        await Assert.That(await Until(() => Task.FromResult(!File.Exists(sjc.FileOf(tenant))))).IsTrue();
+        await Assert.That(await sjc.VersionAsync($"projects/{project}/databases", database) is { Deleted: true }).IsTrue();
+        await Assert.That(await sjc.Tenants.RegisteredAsync(tenant, CancellationToken.None) is false).IsTrue();
+
+        // The name serves a new database, created in sjc; the deleted one does not come back anywhere.
+        var recreated = EntityIds.New().ToString();
+        await sjc.CommitAsync(user, new { op = "create_database", organization, project, name = "main", id = recreated });
+        foreach (var region in cluster.Regions)
+        {
+            await Assert.That(await region.UntilAsync($"projects/{project}/database_names", "main", json => json == $"\"{recreated}\"")).IsTrue().Because(region.Name);
+            await Assert.That(await region.VersionAsync($"projects/{project}/databases", database) is { Deleted: true }).IsTrue().Because(region.Name);
+        }
+
+        await Assert.That(File.Exists(gru.FileOf(tenant))).IsFalse();
+    }
+
+    [Test]
+    public async Task Two_regions_creating_one_name_at_once_keep_the_database_of_the_smaller_id_everywhere()
+    {
+        await using var cluster = await Cluster.StartAsync("gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var user = gru.Api.User;
+        var (organization, project) = (EntityIds.New().ToString(), EntityIds.New().ToString());
+        await gru.CommitAsync(user,
+            new { op = "create_organization", id = organization, name = "Racing" },
+            new { op = "create_project", organization, id = project, name = "p" });
+        await Assert.That(await sjc.UntilAsync($"organizations/{organization}/projects", project, json => json is not null)).IsTrue();
+
+        // Cut apart, each region creates a database named "twin"; the larger id is created last, so its name index write is
+        // the newer one, which the catalog's last-writer-wins alone would keep.
+        string[] ids = [EntityIds.New().ToString(), EntityIds.New().ToString()];
+        Array.Sort(ids, StringComparer.Ordinal);
+        var (winner, loser) = (ids[0], ids[1]);
+        var members = await cluster.SeparateAsync();
+        await sjc.CommitAsync(user, new { op = "create_database", organization, project, name = "twin", id = winner });
+        await gru.CommitAsync(user, new { op = "create_database", organization, project, name = "twin", id = loser });
+        cluster.Rejoin(members);
+
+        var lost = new TenantContext(organization, PlanTier.Hobby, project, loser);
+        foreach (var region in cluster.Regions)
+        {
+            await Assert.That(await region.UntilAsync($"projects/{project}/database_names", "twin", json => json == $"\"{winner}\"")).IsTrue().Because(region.Name);
+            await Assert.That(await Until(async () => await region.VersionAsync($"projects/{project}/databases", loser) is { Deleted: true })).IsTrue().Because(region.Name);
+            await Assert.That(await region.ReadAsync($"projects/{project}/databases", winner)).IsNotNull().Because(region.Name);
+        }
+
+        await Assert.That(await Until(() => Task.FromResult(!File.Exists(gru.FileOf(lost))))).IsTrue();
+        await Assert.That(File.Exists(sjc.FileOf(lost with { DatabaseId = winner }))).IsTrue();
+    }
+
+    [Test]
+    public async Task Usage_counted_in_two_regions_sums_in_both_and_no_concurrent_flush_loses_a_count()
+    {
+        await using var cluster = await Cluster.StartAsync("gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var (organization, project, database) = (EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString());
+        await gru.CommitAsync(gru.Api.User,
+            new { op = "create_organization", id = organization, name = "Metered" },
+            new { op = "create_project", organization, id = project, name = "p" },
+            new { op = "create_database", organization, project, name = "main", id = database, replica_regions = Sjc });
+        await Assert.That(await sjc.UntilAsync($"projects/{project}/databases", database, json => json is not null)).IsTrue();
+        var tenant = new TenantContext(organization, PlanTier.Hobby, project, database);
+
+        // Both regions serve and flush the same database's usage at the same time, three rounds each.
+        var hour = DateTimeOffset.UtcNow.ToUnixTimeSeconds() / 3600;
+        await Task.WhenAll(cluster.Regions.Select(async region =>
+        {
+            var meter = region.Api.Server.Services.GetRequiredService<UsageMeter>();
+            for (var round = 0; round < 3; round++)
+            {
+                meter.Add(new UsageKey(DatabaseOwner.Of(tenant), hour), new OpCounts(2, 1));
+                await meter.FlushAsync(CancellationToken.None);
+            }
+        }));
+
+        foreach (var region in cluster.Regions)
+        {
+            var meter = region.Api.Server.Services.GetRequiredService<UsageMeter>();
+            await Assert.That(await Until(async () => await meter.GetAsync(tenant, new UsageWindow(UsageWindow.Hour, hour, 1), CancellationToken.None)
+                is UsageCounts { Lifetime: { Reads: 12, Writes: 6 }, Series: [{ Reads: 12, Writes: 6 }] })).IsTrue().Because(region.Name);
+        }
+    }
+
+    // Whether `condition` holds within the deadline.
+    private static async Task<bool> Until(Func<Task<bool>> condition)
+    {
+        var deadline = DateTime.UtcNow + Deadline;
+        while (DateTime.UtcNow < deadline)
+        {
+            if (await condition())
+            {
+                return true;
+            }
+
+            await Task.Delay(100);
+        }
+
+        return false;
+    }
+
     private static byte[] Json(string json) => Encoding.UTF8.GetBytes(json);
 
     private sealed class Cluster : IAsyncDisposable
@@ -124,13 +258,17 @@ public sealed class CatalogLatticeTests
             }
         }
 
-        // Unlists every machine, so no machine streams to another; Rejoin lists them again.
+        // Unlists every machine and waits until no machine streams to another; Rejoin lists them again.
         public async Task<List<ClusterMember>> SeparateAsync()
         {
             var members = (await Members.ListAsync(CancellationToken.None)).ToList();
             members.ForEach(member => Members.Leave(member.Name));
-            // A heartbeat (1 s) for every stream to notice it lost its peer.
-            await Task.Delay(TimeSpan.FromSeconds(2));
+            foreach (var region in Regions)
+            {
+                await Assert.That(await Until(() => Task.FromResult(region.Api.Server.Services.GetRequiredService<IReplicationStatus>().Snapshot().Peers.Count == 0)))
+                    .IsTrue().Because(region.Name);
+            }
+
             return members;
         }
 
@@ -186,6 +324,43 @@ public sealed class CatalogLatticeTests
             await Api.DisposeAsync();
             _api = null;
         }
+
+        public ITenantDirectory Tenants => Api.Server.Services.GetRequiredService<ITenantDirectory>();
+
+        // The file a client database is stored in on this machine.
+        public string FileOf(TenantContext database) =>
+            Path.Combine(_directory, database.OrganizationId, database.ProjectId!, database.DatabaseId + ".db");
+
+        // Sends one management commit as `user`, through the platform operator.
+        public async Task CommitAsync(string user, params object[] ops)
+        {
+            using var service = Api.Service(user);
+            using var response = await service.PostAsJsonAsync(ManagementApi.Uri("/v1/management/commits"), new { id = EntityIds.New().ToString(), ops });
+            await Assert.That(response.IsSuccessStatusCode).IsTrue().Because(await response.Content.ReadAsStringAsync());
+        }
+
+        // Writes into this machine's copy of a client database.
+        public async Task WriteAsync(TenantContext database, Func<IStorageTransaction, Task> work)
+        {
+            var store = await Api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(database, CancellationToken.None)
+                ?? throw new InvalidOperationException($"{Name} does not hold the database");
+            await using var transaction = await store.BeginTransactionAsync(write: true, CancellationToken.None);
+            await work(transaction);
+            _ = await transaction.CommitAsync(CancellationToken.None);
+        }
+
+        // Whether a client document's JSON (null when there is none) satisfies `expected` within the deadline.
+        public Task<bool> UntilDocumentAsync(TenantContext database, string collection, string id, Func<string?, bool> expected) =>
+            Until(async () =>
+            {
+                if (await Api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(database, CancellationToken.None) is not { } store)
+                {
+                    return expected(null);
+                }
+
+                await using var transaction = await store.BeginTransactionAsync(write: false, CancellationToken.None);
+                return expected(await transaction.GetAsync(collection, id, CancellationToken.None) is { } document ? Encoding.UTF8.GetString(document.Json.Span) : null);
+            });
 
         private Task<IDatabaseStore> SystemAsync() =>
             Api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None).AsTask();
