@@ -1,46 +1,28 @@
 # syntax=docker/dockerfile:1
-FROM node:24-bookworm-slim AS assets
+# Fly builds this image (fly.toml). Tests run against the source tree, not in the image:
+# make build lint test-fast.
+
+FROM node:24-bookworm-slim AS node-modules
 WORKDIR /src
-COPY package.json package-lock.json .npmrc .browserslistrc ./
+COPY package.json package-lock.json .npmrc ./
 RUN --mount=type=cache,target=/root/.npm \
     npm ci --ignore-scripts --no-audit --no-fund --prefer-offline
-COPY scripts/build-css.mjs scripts/build-js.mjs ./scripts/
-COPY web/assets ./web/assets
-# The JS build checks Datastar against the pinned release hashes.
-COPY internal/ui/datastar_pins.go ./internal/ui/datastar_pins.go
-# The stylesheet links the fonts by content hash.
-COPY web/static/fonts ./web/static/fonts
-# Release bundles ship brotli-precompressed siblings served in their place.
-RUN npm run build:css -- --release && npm run build:js -- --release
 
-FROM golang:1.27.1-bookworm AS build
+# The SDK pinned by global.json.
+FROM mcr.microsoft.com/dotnet/sdk:10.0.401-noble AS publish
+# CI=true turns on locked-mode restore (Directory.Build.props).
+ENV CI=true DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
+# The project build bundles CSS and JS with node (BundleDashboardAssets).
+COPY --from=node-modules /usr/local/bin/node /usr/local/bin/node
 WORKDIR /src
-ENV CGO_ENABLED=0 \
-    GOFLAGS='-mod=vendor -trimpath' \
-    GOTOOLCHAIN=local
-COPY go.mod go.sum ./
-COPY vendor ./vendor
-COPY cmd ./cmd
-COPY internal ./internal
-COPY web ./web
-# Compile against the committed stylesheet and a throwaway script placeholder
-# while the assets stage runs, so only the embedding package and the link step
-# wait for the fresh bundles.
-RUN --mount=type=cache,target=/root/.cache/go-build \
-    --mount=type=tmpfs,target=/src/web/static/js \
-    touch web/static/js/placeholder && go build ./...
-COPY --from=assets /src/web/static/css ./web/static/css
-COPY --from=assets /src/web/static/js ./web/static/js
-# The deploy workflows pass the commit; health probes report it as the version.
-ARG VERSION=dev
-RUN --mount=type=cache,target=/root/.cache/go-build \
-    go build -buildvcs=false \
-      -ldflags="-s -w -X terrascale.tech/dashboard/internal/platform/buildinfo.version=${VERSION}" \
-      -o /out/dashboard ./cmd/dashboard
+COPY --from=node-modules /src/node_modules ./node_modules
+COPY . .
+RUN --mount=type=cache,target=/root/.nuget/packages \
+    dotnet publish src/TerraScale.Dashboard --configuration Release --output /app
 
-FROM gcr.io/distroless/static-debian12:nonroot
-WORKDIR /
-ENV DASHBOARD_ADDR=:8080
-COPY --from=build --chown=nonroot:nonroot /out/dashboard /dashboard
+# No shell or package manager; runs as the non-root app user and listens on 8080.
+FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble-chiseled
+WORKDIR /app
+COPY --from=publish /app .
 EXPOSE 8080
-ENTRYPOINT ["/dashboard"]
+ENTRYPOINT ["dotnet", "TerraScale.Dashboard.dll"]
