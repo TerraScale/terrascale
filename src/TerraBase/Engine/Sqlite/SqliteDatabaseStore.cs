@@ -284,7 +284,7 @@ internal sealed partial class SqliteDatabaseStore(
                 {
                     using var readOnly = connection.CreateCommand();
                     readOnly.CommandText = "PRAGMA query_only = 1;";
-                    readOnly.ExecuteNonQuery();
+                    readOnly.Run();
                 }
 
                 // SQLite refuses to change it inside a transaction; with FULL the commit syncs the WAL (decision 0010).
@@ -292,11 +292,11 @@ internal sealed partial class SqliteDatabaseStore(
                 {
                     using var full = connection.CreateCommand();
                     full.CommandText = "PRAGMA synchronous = FULL;";
-                    full.ExecuteNonQuery();
+                    full.Run();
                 }
 
                 // Writers take the lock up front (BEGIN IMMEDIATE) so they wait instead of failing on upgrade.
-                return connection.BeginTransaction(deferred: !write);
+                return TursoTransaction.Begin(connection, deferred: !write);
             }, cancellationToken).ConfigureAwait(false);
             return new SqliteStorageTransaction(
                 this, session, transaction, runner, write, durable, write ? Committed : null, write && capture ? changesCommitted : null, ownsAdmission);
@@ -398,12 +398,11 @@ internal sealed partial class SqliteDatabaseStore(
                 {
                     // Turso does not checkpoint when the last connection closes: leave the file whole when no reader
                     // stops it (CleanupAsync then deletes the empty log).
-                    Scalar(session.Connection, null, "PRAGMA wal_checkpoint(TRUNCATE);");
+                    Scalar(session.Connection, "PRAGMA wal_checkpoint(TRUNCATE);");
                 }
-                catch (SqliteException error)
+                catch (SqliteException)
                 {
                     // Best effort: the log stays and replays at the next open.
-                    SqliteSession.ReleaseAbandonedStatements(error);
                 }
 
                 pool.Discard(session);
@@ -455,7 +454,7 @@ internal sealed partial class SqliteDatabaseStore(
         try
         {
             // Takes the write lock without waiting on busy_timeout; ExecuteAsync retries it.
-            await session.ExecuteAsync(WriteLane, () => Scalar(session.Connection, null, SqliteSession.CaptureOn), cancellationToken).ConfigureAwait(false);
+            await session.ExecuteAsync(WriteLane, () => session.Connection.Run(SqliteSession.CaptureOn), cancellationToken).ConfigureAwait(false);
         }
         catch
         {
@@ -966,16 +965,16 @@ internal sealed partial class SqliteDatabaseStore(
                 connection.Open();
                 // The creating connection uses the same settings as every pooled one, except that it does not sync: the
                 // file is private until it is published, and synced once then. Turso's journal is WAL by default.
-                Scalar(connection, null, pragmas + "PRAGMA synchronous = OFF;");
+                connection.Run(pragmas + "PRAGMA synchronous = OFF;");
                 Bootstrap(name, connection, cancellationToken);
                 // Publish a fresh identity, on this file only.
-                using var transaction = connection.BeginTransaction(deferred: false);
-                RenewIncarnation(connection, transaction);
+                using var transaction = TursoTransaction.Begin(connection, deferred: false);
+                RenewIncarnation(connection);
                 cancellationToken.ThrowIfCancellationRequested();
                 transaction.Commit();
                 // Turso does not checkpoint when the last connection closes: copy the log into the file, which is moved
                 // without its sidecars.
-                Scalar(connection, null, "PRAGMA wal_checkpoint(TRUNCATE);");
+                Scalar(connection, "PRAGMA wal_checkpoint(TRUNCATE);");
             }
 
             // The file alone now holds the database: sync it once, before it can be published.
@@ -995,7 +994,7 @@ internal sealed partial class SqliteDatabaseStore(
                 // Bootstrap is atomic and rolls back before a lock error leaves this scope.
                 Bootstrap(name, session.Connection, cancellationToken);
                 _incarnation = new(Ulid.Parse(
-                    (string)(Scalar(session.Connection, null, SqliteStatements.Incarnation)
+                    (string)(Scalar(session.Connection, SqliteStatements.Incarnation)
                         ?? throw new InvalidOperationException("database incarnation is missing"))));
                 return true;
             }, cancellationToken).ConfigureAwait(false);
@@ -1011,29 +1010,29 @@ internal sealed partial class SqliteDatabaseStore(
 
     private static void Bootstrap(string name, SqliteConnection connection, CancellationToken cancellationToken)
     {
-        var version = Version(name, connection, transaction: null);
+        var version = Version(name, connection);
         if (version == SchemaVersion)
         {
             return;
         }
 
-        using var transaction = connection.BeginTransaction(deferred: false);
+        using var transaction = TursoTransaction.Begin(connection, deferred: false);
         // A concurrent initializer can finish while this connection waits for the writer lock.
-        version = Version(name, connection, transaction);
+        version = Version(name, connection);
         if (version == SchemaVersion)
         {
             return;
         }
 
-        if (version != 0 || Scalar(connection, transaction, "SELECT 1 FROM sqlite_schema WHERE type = 'table' LIMIT 1;") is not null)
+        if (version != 0 || Scalar(connection, "SELECT 1 FROM sqlite_schema WHERE type = 'table' LIMIT 1;") is not null)
         {
             throw new InvalidOperationException("data-directory contains an old database format; discard the affected data before starting");
         }
 
         cancellationToken.ThrowIfCancellationRequested();
         var schema = name == SqliteStorageEngine.SystemName ? SystemSchemaSql : ClientSchemaSql;
-        Scalar(connection, transaction, schema + UniqueSchemaSql + $"PRAGMA user_version = {SchemaVersion};");
-        RenewIncarnation(connection, transaction);
+        connection.Run(schema + UniqueSchemaSql + $"PRAGMA user_version = {SchemaVersion};");
+        RenewIncarnation(connection);
         cancellationToken.ThrowIfCancellationRequested();
         transaction.Commit();
     }
@@ -1041,10 +1040,10 @@ internal sealed partial class SqliteDatabaseStore(
     // Returns the schema version (0 for an empty file); throws for any other format. Versions never increase: a format
     // change wipes storage instead, so another number is always a format this build does not read. The first build's own
     // schema 1 predates the layout record: the engine refuses its flat data directories before opening any file.
-    private static int Version(string name, SqliteConnection connection, SqliteTransaction? transaction)
+    private static int Version(string name, SqliteConnection connection)
     {
         var version = Convert.ToInt32(
-            Scalar(connection, transaction, "PRAGMA user_version;"),
+            Scalar(connection, "PRAGMA user_version;"),
             System.Globalization.CultureInfo.InvariantCulture);
         return version is 0 or SchemaVersion
             ? version
@@ -1053,19 +1052,17 @@ internal sealed partial class SqliteDatabaseStore(
     }
 
     // Called only from the worker that owns this connection, including during bootstrap and copying.
-    private static void RenewIncarnation(SqliteConnection connection, SqliteTransaction? transaction)
+    private static void RenewIncarnation(SqliteConnection connection)
     {
         using var command = connection.CreateCommand();
-        command.Transaction = transaction;
         command.CommandText = SqliteStatements.RenewIncarnation;
         command.Parameters.AddWithValue("$incarnation", EntityIds.New().ToString());
-        command.ExecuteNonQuery();
+        command.Run();
     }
 
-    private static object? Scalar(SqliteConnection connection, SqliteTransaction? transaction, string sql)
+    private static object? Scalar(SqliteConnection connection, string sql)
     {
         using var command = connection.CreateCommand();
-        command.Transaction = transaction;
         command.CommandText = sql;
         return command.ExecuteScalar();
     }

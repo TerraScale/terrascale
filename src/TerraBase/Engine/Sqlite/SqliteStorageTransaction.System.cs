@@ -123,11 +123,11 @@ internal sealed partial class SqliteStorageTransaction
                 throw new InvalidDataException("a replica adopts a 16-byte origin");
             }
 
-            PlainCommand(SqliteStatements.ResetReplica).ExecuteNonQuery();
+            PlainCommand(SqliteStatements.ResetReplica).Run();
             var id = new Ulid(origin.Span);
             var incarnation = Command(SqliteStatements.RenewIncarnation);
             incarnation.Parameters.AddWithValue("$incarnation", id.ToString());
-            incarnation.ExecuteNonQuery();
+            incarnation.Run();
             _adoptedIncarnation = id;
             _replicaChanged = true;
             return true;
@@ -150,13 +150,13 @@ internal sealed partial class SqliteStorageTransaction
                 var replace = BodyCommand(SqliteStatements.ReplaceDocument, change.Collection, change.Id);
                 replace.Parameters.AddWithValue("$version", change.Version);
                 replace.Parameters.AddWithValue("$body", StrictUtf8.GetString(json.Span));
-                replace.ExecuteNonQuery();
+                replace.Run();
             }
             else
             {
                 var delete = Command(SqliteStatements.Delete, change.Collection);
                 delete.Parameters.AddWithValue("$id", change.Id);
-                delete.ExecuteNonQuery();
+                delete.Run();
             }
 
             ObserveOffset(change.Version);
@@ -183,7 +183,7 @@ internal sealed partial class SqliteStorageTransaction
                 var prefix = Command(SqliteStatements.AppendChangeDigest);
                 prefix.Parameters.AddWithValue("$sequence", head.Sequence);
                 prefix.Parameters.AddWithValue("$digest", head.Digest.ToArray());
-                prefix.ExecuteNonQuery();
+                prefix.Run();
             }
 
             ObserveOffset(offset);
@@ -203,7 +203,7 @@ internal sealed partial class SqliteStorageTransaction
         {
             var truncate = Command(sql);
             truncate.Parameters.AddWithValue("$floor", floor);
-            truncate.ExecuteNonQuery();
+            truncate.Run();
         }
     }
 
@@ -212,6 +212,6 @@ internal sealed partial class SqliteStorageTransaction
     {
         var offset = Command(SqliteStatements.ObserveOffset);
         offset.Parameters.AddWithValue("$version", version);
-        offset.ExecuteNonQuery();
+        offset.Run();
     }
 }

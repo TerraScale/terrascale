@@ -101,8 +101,6 @@ internal sealed class SqliteWriteLane(string database, SqliteIoPool io) : Sqlite
             }
             catch (Exception error)
             {
-                // Before the connection's next call, on this thread (SqliteSession.ReleaseAbandonedStatements).
-                SqliteSession.ReleaseAbandonedStatements(error);
                 failure = error;
             }
             finally

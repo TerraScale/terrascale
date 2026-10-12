@@ -287,7 +287,7 @@ internal sealed class TursoChangeTap : IWalTap
         using var command = writer.Connection.CreateCommand();
         command.CommandText = "DELETE FROM turso_cdc WHERE change_id < $anchor;";
         command.Parameters.AddWithValue("$anchor", _anchor);
-        command.ExecuteNonQuery();
+        command.Run();
         return true;
     }
 

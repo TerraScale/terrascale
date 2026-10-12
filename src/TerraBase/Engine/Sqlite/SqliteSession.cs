@@ -1,7 +1,5 @@
 using System.Diagnostics;
 using Turso.Data.Sqlite;
-using Turso.Raw.Public;
-using Turso.Raw.Public.Handles;
 
 namespace TerraBase.Engine.Sqlite;
 
@@ -67,29 +65,6 @@ internal sealed class SqliteSession(SqliteConnection connection) : IDisposable
         }
     }
 
-    /// <summary>
-    /// Finalizes, on the calling thread, the native statements Turso's provider abandoned when <paramref name="error"/>'s
-    /// statement failed. Turso.Data.Sqlite 0.8.2 (SqliteCommand.Execute) leaves a failed statement without result columns
-    /// (a write, a BEGIN, a ROLLBACK) to the garbage collector, and its finalizer thread would finalize it later: a second
-    /// user of the connection, which Turso refuses with "concurrent use forbidden" while the owner steps another statement.
-    /// Call on the connection's thread, after the failure and before the connection runs anything else. A blocking full
-    /// collection, but statements fail rarely: a stopped read, an aborted transaction, a failing trigger.
-    /// </summary>
-    public static void ReleaseAbandonedStatements(Exception error)
-    {
-        // A stopped statement is always a read (the per-row functions run only in SELECTs): its reader disposes it.
-        if (!FailedStatement(error) || Stopped(error) || error.Data.Contains(Released))
-        {
-            return;
-        }
-
-        GC.Collect();
-        GC.WaitForPendingFinalizers();
-        error.Data[Released] = true;
-    }
-
-    private const string Released = "terrabase.abandoned-statements-released";
-
     /// <summary>Whether <paramref name="error"/> is, or was caused by, a failed statement.</summary>
     public static bool FailedStatement(Exception? error)
     {
@@ -107,20 +82,6 @@ internal sealed class SqliteSession(SqliteConnection connection) : IDisposable
     /// <summary>Whether <paramref name="error"/> is a statement <see cref="ThrowIfStopped"/> failed.</summary>
     public static bool Stopped(SqliteException error) => error.Message.Contains(StoppedMessage, StringComparison.Ordinal);
 
-    // Whether the failed statement in error's chain is a stopped one.
-    private static bool Stopped(Exception? error)
-    {
-        for (; error is not null; error = error.InnerException)
-        {
-            if (error is SqliteException statement)
-            {
-                return Stopped(statement);
-            }
-        }
-
-        return false;
-    }
-
     /// <summary>
     /// Whether the connection is inside a transaction. Unlike SQLite, Turso rolls the whole transaction back when a
     /// statement fails while it steps through rows (a stopped read, for one); the statements after it would then commit
@@ -128,27 +89,16 @@ internal sealed class SqliteSession(SqliteConnection connection) : IDisposable
     /// </summary>
     public bool InTransaction()
     {
-        // The BEGIN runs on the native handle and is disposed even when it fails, as it does inside a transaction: the
-        // provider would abandon it (ReleaseAbandonedStatements).
-        var native = NativeHandle?.GetValue(connection) as TursoDatabaseHandle ?? throw new InvalidOperationException("the connection is closed");
-        using (var begin = TursoBindings.PrepareStatement(native, "BEGIN;"))
+        try
         {
-            try
-            {
-                while (TursoBindings.Read(begin))
-                {
-                }
-            }
-            catch (TursoException error) when (error.Message.Contains("within a transaction", StringComparison.Ordinal))
-            {
-                return true;
-            }
+            connection.Run("BEGIN;");
+        }
+        catch (SqliteException error) when (error.Message.Contains("within a transaction", StringComparison.Ordinal))
+        {
+            return true;
         }
 
-        // Through the provider, which then knows its transaction ended: disposing it rolls nothing back.
-        using var rollback = connection.CreateCommand();
-        rollback.CommandText = "ROLLBACK;";
-        rollback.ExecuteNonQuery();
+        connection.Run("ROLLBACK;");
         return false;
     }
 
@@ -205,7 +155,7 @@ internal sealed class SqliteSession(SqliteConnection connection) : IDisposable
             {
                 using var command = connection.CreateCommand();
                 command.CommandText = pragmas;
-                return command.ExecuteNonQuery();
+                return command.Run();
             }, cancellationToken).ConfigureAwait(false);
             return session;
         }
@@ -275,10 +225,10 @@ internal sealed class SqliteSession(SqliteConnection connection) : IDisposable
     }
 
     /// <summary>
-    /// Returns the prepared command for <paramref name="sql"/>, bound to <paramref name="transaction"/>
-    /// and without parameters. The provider keeps a command's statements prepared while its text is unchanged.
+    /// Returns the session's command for <paramref name="sql"/>, without parameters. It runs inside whatever transaction
+    /// the connection is in (<see cref="TursoTransaction"/>).
     /// </summary>
-    public SqliteCommand Command(string sql, SqliteTransaction transaction)
+    public SqliteCommand Command(string sql)
     {
         if (!_commands.TryGetValue(sql, out var command))
         {
@@ -286,8 +236,6 @@ internal sealed class SqliteSession(SqliteConnection connection) : IDisposable
             command.CommandText = sql;
             _commands.Add(sql, command);
         }
-
-        command.Transaction = transaction;
         command.Parameters.Clear();
         return command;
     }

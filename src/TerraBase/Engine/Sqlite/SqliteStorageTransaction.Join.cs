@@ -28,13 +28,13 @@ internal sealed partial class SqliteStorageTransaction
             update.Parameters.AddWithValue("$node", node);
             update.Parameters.AddWithValue("$applied", Version(applied));
             update.Parameters.AddWithValue("$seen", seen);
-            if (update.ExecuteNonQuery() == 0)
+            if (update.Run() == 0)
             {
                 var insert = Command(SqliteStatements.InsertApplied);
                 insert.Parameters.AddWithValue("$node", node);
                 insert.Parameters.AddWithValue("$applied", Version(applied));
                 insert.Parameters.AddWithValue("$seen", seen);
-                insert.ExecuteNonQuery();
+                insert.Run();
             }
 
             return true;
@@ -110,7 +110,7 @@ internal sealed partial class SqliteStorageTransaction
             if (exists)
             {
                 DropTable(name);
-                Command(SqliteStatements.DropCollection, name).ExecuteNonQuery();
+                Command(SqliteStatements.DropCollection, name).Run();
                 DropUniqueCollection(name, local: false);
                 _collectionsChanged = true;
             }
@@ -132,7 +132,7 @@ internal sealed partial class SqliteStorageTransaction
         var update = Command(SqliteStatements.UpdateCollection, name);
         update.Parameters.AddWithValue("$created", created);
         update.Parameters.AddWithValue("$entityId", entity);
-        update.ExecuteNonQuery();
+        update.Run();
         _collectionsChanged = true;
     }
 
@@ -142,10 +142,10 @@ internal sealed partial class SqliteStorageTransaction
         var command = Command(SqliteStatements.CreateCollection, name);
         command.Parameters.AddWithValue("$created", created);
         command.Parameters.AddWithValue("$entityId", entity);
-        command.ExecuteNonQuery();
+        command.Run();
         using (var table = PlainCommand(CreateTable(name)))
         {
-            table.ExecuteNonQuery();
+            table.Run();
         }
 
         _collectionsChanged = true;

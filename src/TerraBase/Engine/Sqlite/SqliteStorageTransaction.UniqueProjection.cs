@@ -15,10 +15,10 @@ internal sealed partial class SqliteStorageTransaction
     {
         var delete = Command(UniqueDeleteKeys, collection);
         delete.Parameters.AddWithValue("$id", id);
-        delete.ExecuteNonQuery();
+        delete.Run();
         delete = Command("DELETE FROM _tb_unique_invalid WHERE collection = $collection AND id = $id;", collection);
         delete.Parameters.AddWithValue("$id", id);
-        delete.ExecuteNonQuery();
+        delete.Run();
         if (body is null || constraints.Count == 0)
         {
             return;
@@ -51,7 +51,7 @@ internal sealed partial class SqliteStorageTransaction
         {
             var invalid = Command("INSERT INTO _tb_unique_invalid (collection, id) VALUES ($collection, $id);", collection);
             invalid.Parameters.AddWithValue("$id", id);
-            invalid.ExecuteNonQuery();
+            invalid.Run();
             return;
         }
 
@@ -61,7 +61,7 @@ internal sealed partial class SqliteStorageTransaction
             insert.Parameters.AddWithValue("$name", name);
             insert.Parameters.AddWithValue("$value", key);
             insert.Parameters.AddWithValue("$id", id);
-            insert.ExecuteNonQuery();
+            insert.Run();
         }
     }
 
@@ -80,7 +80,7 @@ internal sealed partial class SqliteStorageTransaction
             INSERT OR IGNORE INTO _tb_unique_affected (id) VALUES ($id);
             """, collection);
         command.Parameters.AddWithValue("$id", id);
-        command.ExecuteNonQuery();
+        command.Run();
     }
 
     // Only ids are paged (128 KiB maximum); each source body is read and released individually.
@@ -121,7 +121,7 @@ internal sealed partial class SqliteStorageTransaction
     {
         if (_uniqueAffected)
         {
-            Command("DELETE FROM _tb_unique_affected;").ExecuteNonQuery();
+            Command("DELETE FROM _tb_unique_affected;").Run();
         }
     }
 }

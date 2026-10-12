@@ -310,8 +310,6 @@ internal sealed class SqliteIoPool : SqliteRunner, IAsyncDisposable
             }
             catch (Exception error)
             {
-                // Before the connection's next call, on this thread (SqliteSession.ReleaseAbandonedStatements).
-                SqliteSession.ReleaseAbandonedStatements(error);
                 result.TrySetException(error);
             }
             finally

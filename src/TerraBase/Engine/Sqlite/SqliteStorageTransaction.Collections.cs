@@ -57,7 +57,6 @@ internal sealed partial class SqliteStorageTransaction
         if (!_bodyCommands.TryGetValue(text, out var command))
         {
             command = session.Connection.CreateCommand();
-            command.Transaction = transaction;
             command.CommandText = text;
             _bodyCommands.Add(text, command);
         }
