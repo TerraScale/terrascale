@@ -516,6 +516,82 @@ public sealed class PeerStreamTests
         await Assert.That(await sjc.UntilNoStateAsync("items", id)).IsTrue();
     }
 
+    [Test]
+    public async Task A_stale_queued_edit_of_a_document_deleted_and_collected_meanwhile_loses_to_the_deletion_everywhere()
+    {
+        var clock = new ShiftedTime();
+        await using var cluster = await Cluster.StartAsync(cdc: true, clock, "gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var (deleted, other) = (EntityIds.New().ToString(), EntityIds.New().ToString());
+        await gru.WriteAsync(async transaction =>
+        {
+            _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
+            _ = await transaction.PutAsync("items", deleted, Json("""{"a":"base"}"""), CancellationToken.None);
+            _ = await transaction.PutAsync("items", other, Json("""{"n":1}"""), CancellationToken.None);
+        });
+        await Assert.That(await sjc.UntilAsync(deleted, """{"a":"base"}""")).IsTrue();
+
+        // sjc edits the document while it cannot ship (gru is not in its list), then goes away with the edit queued in its CDC.
+        await sjc.StaleEditAsync(cluster, deleted);
+
+        // gru deletes the document, newer than sjc's edit; a day later it collects the tombstone.
+        await gru.WriteAsync(async transaction => await transaction.TombstoneAsync("items", deleted, CancellationToken.None));
+        clock.Offset = TimeSpan.FromHours(25);
+        await Assert.That(await gru.UntilNoStateAsync("items", deleted)).IsTrue();
+
+        // sjc restarts: its queued edit ships (stale: a whole state), and gru's refill copies to it. The newer deletion wins
+        // everywhere; nothing re-stamps the edit to win.
+        await sjc.StartAsync();
+        await Assert.That(await sjc.UntilAckedByAsync(cluster.Database, gru.Node)).IsTrue();
+        await Assert.That(await sjc.UntilAbsentAsync(deleted)).IsTrue();
+        await Assert.That(await gru.ReadAsync(deleted)).IsNull();
+        await Assert.That(await gru.HasStateAsync("items", deleted)).IsFalse();
+
+        // Still after gru restarts and both sides run repair rounds.
+        await gru.StopAsync();
+        await gru.StartAsync();
+        for (var round = 0; round < 3; round++)
+        {
+            await gru.AntiEntropy.RunRoundAsync(CancellationToken.None);
+            await sjc.AntiEntropy.RunRoundAsync(CancellationToken.None);
+        }
+
+        await Assert.That(await gru.ReadAsync(deleted)).IsNull();
+        await Assert.That(await sjc.ReadAsync(deleted)).IsNull();
+        await Assert.That(await gru.ReadAsync(other)).IsEqualTo("""{"n":1}""");
+        await Assert.That(await sjc.ReadAsync(other)).IsEqualTo("""{"n":1}""");
+    }
+
+    [Test]
+    public async Task A_stale_queued_create_of_a_document_no_peer_ever_held_reaches_every_region()
+    {
+        var clock = new ShiftedTime();
+        await using var cluster = await Cluster.StartAsync(cdc: true, clock, "gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var created = EntityIds.New().ToString();
+        await gru.WriteAsync(async transaction => await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None));
+        var deadline = DateTime.UtcNow + Deadline;
+        while (await sjc.CollectionIdAsync("items") is null && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(100);
+        }
+
+        // sjc creates a document while it cannot ship, and goes away a day; no other region ever held it, so it is not a
+        // deletion's loser: it ships and stays.
+        await sjc.StaleEditAsync(cluster, created, create: true);
+        clock.Offset = TimeSpan.FromHours(25);
+        await sjc.StartAsync();
+        await Assert.That(await gru.UntilAsync(created, """{"a":"stale"}""")).IsTrue();
+        for (var round = 0; round < 3; round++)
+        {
+            await gru.AntiEntropy.RunRoundAsync(CancellationToken.None);
+            await sjc.AntiEntropy.RunRoundAsync(CancellationToken.None);
+        }
+
+        await Assert.That(await sjc.UntilAsync(created, """{"a":"stale"}""")).IsTrue();
+        await Assert.That(await gru.ReadAsync(created)).IsEqualTo("""{"a":"stale"}""");
+    }
+
     // The first stamp of a test: now, so convergence lags stay meaningful; later operations add logical ticks.
     private static ulong Stamp() => (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() << 16;
 
@@ -798,6 +874,36 @@ public sealed class PeerStreamTests
             }
 
             return true;
+        }
+
+        // Writes {"a":"stale"} to the document (a create, or an edit of field a) while this machine is cut off from every
+        // peer (they leave its list, so no stream ships it), checks that no peer got it, then stops this machine and lists
+        // the peers again: the write stays queued in its CDC until it returns.
+        public async Task StaleEditAsync(Cluster cluster, string id, bool create = false)
+        {
+            var peers = (await cluster.Members.ListAsync(CancellationToken.None)).Where(member => member.Region != Region).ToList();
+            peers.ForEach(member => cluster.Members.Leave(member.Name));
+            await Assert.That(await UntilStreamsAsync([])).IsTrue();
+            using var value = JsonDocument.Parse("\"stale\"");
+            var stale = value.RootElement.Clone();
+            await WriteAsync(async transaction => _ = create
+                ? await transaction.PutAsync("items", id, Json("""{"a":"stale"}"""), CancellationToken.None)
+                : await transaction.PatchAsync("items", id, Json("{}"), [new FieldOperation(FieldOperationKind.Set, "a", stale)], CancellationToken.None));
+            await Task.Delay(TimeSpan.FromSeconds(2));
+            foreach (var other in cluster.Machines.Where(machine => machine != this))
+            {
+                await Assert.That((await other.ReadAsync(id))?.Contains("stale", StringComparison.Ordinal) ?? false).IsFalse();
+            }
+
+            await StopAsync();
+            peers.ForEach(cluster.Members.Join);
+        }
+
+        // Whether `peer` acknowledges every change group this machine has, within the deadline.
+        public async Task<bool> UntilAckedByAsync(TenantContext database, ReplicaId peer)
+        {
+            var head = await Groups.HeadAsync(database, CancellationToken.None);
+            return await UntilAckedAsync(database, peer, head);
         }
 
         // Whether the outbound streams that report connected become exactly `regions` within the deadline.

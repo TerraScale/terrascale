@@ -755,9 +755,27 @@ ts-dotnet until R12 makes ts-auth lattice-native.
   it or bringing it back. Rounds need two consecutive differing rounds (60 s apart), while the refill runs at once on
   reconnect, so peers do not pull the stale copy first. A receiver-side "drop repairs below my horizon that I lack" rule
   was tried and removed: it cannot tell a collected state from a lost apply (the R6 repair scenario).
+- **Stale writes** (a machine's own writes that stayed queued in its CDC while it was away). Conflicts resolve by last
+  writer wins on the **original** versions; nothing is re-stamped to win. Peers may have collected a newer deletion
+  meanwhile, and its tombstone is gone, so a stale edit joined into nothing would bring the document back. The sender
+  marks a group committed 24 h or more before it is read as `stale` (a peer can only have collected a newer deletion
+  after evicting the sender, which takes 24 h of silence) and ships each document's whole state as of that commit
+  instead of the delta. A receiver that lacks the document drops the state when it proves the receiver once held it: an
+  entry minted there, or one at or below what it applied from that entry's origin. Its state then went only through a
+  collected deletion, which is newer, so the edit loses to it. A state of entries the receiver never saw (a document
+  created during the absence) is joined as usual. Where the receiver still holds the document, the join decides as
+  always. The returning machine's copying refill drops its own copy for the same reason.
+  `A_stale_queued_edit_of_a_document_deleted_and_collected_meanwhile_loses_to_the_deletion_everywhere` covers it: it
+  fails on the commit before this rule, and passes with it.
+- **Open product decisions:**
+  - A stale write that lost to a collected deletion is dropped without a trace beyond the convergence itself; there is
+    no conflict record or notice to the writer. A conflict log would be a new table (a storage format change).
+  - The 24 h mark is the eviction period. A stale write that only reaches peers after more than 24 h but finds the
+    document still present is merged normally.
+  - A receiver whose own copy was lost (a lost apply) is indistinguishable from one that collected a deletion. A stale
+    state of such a document is dropped there, and anti-entropy brings the document back from the peers that hold it.
 - Not in R7: collection of tombstoned fields and removed set dots inside live documents (section 11), GC of databases
-  without peers (no stream reaches them, so nothing triggers collection), feed retention (R8), and re-stamping a
-  returning machine's own unsent writes from before its absence (section 10, refill step 1).
+  without peers (no stream reaches them, so nothing triggers collection), and feed retention (R8).
 
 **Contract for R3** (`Features/Replication/ChangeGroups.cs`). R4a registers `NoChangeGroupSource`. R3 replaces that
 registration with its tailer and implements `IChangeGroupSource`:

@@ -38,7 +38,9 @@ internal sealed class StorageChangeGroupSink(IStorageEngine engine, ITenantDirec
             {
                 foreach (var delta in groups[next].Deltas)
                 {
-                    _ = await transaction.JoinAsync(delta.Collection, delta.Id, delta.State, new EntryVersion(delta.Stamp, origin), cancellationToken).ConfigureAwait(false);
+                    _ = groups[next].Stale
+                        ? await transaction.JoinStaleAsync(delta.Collection, delta.Id, delta.State, new EntryVersion(delta.Stamp, origin), cancellationToken).ConfigureAwait(false)
+                        : await transaction.JoinAsync(delta.Collection, delta.Id, delta.State, new EntryVersion(delta.Stamp, origin), cancellationToken).ConfigureAwait(false);
                     applied = applied.Value < delta.Stamp.Value ? delta.Stamp : applied;
                 }
             }

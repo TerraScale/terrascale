@@ -84,6 +84,9 @@ message GroupList {
 message Group {
   uint64 change_id = 1;
   repeated Delta deltas = 2;
+  // Committed 24 h or more before it was read: each delta is the document's whole state as of that commit, so a receiver
+  // can tell whether it ever held the document (section 11, stale writes).
+  bool stale = 3;
 }
 
 // One document operation: the entries it wrote at (stamp, origin), in DocumentStateEncoding's full form.

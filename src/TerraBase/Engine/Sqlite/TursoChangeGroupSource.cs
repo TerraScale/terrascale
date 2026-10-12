@@ -63,7 +63,10 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
         var transaction = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
         await using (transaction.ConfigureAwait(false))
         {
-            var (groups, quiet, _) = await transaction.ReadChangeGroupsAsync(start, maxGroups, maxBytes, _engine.ReplicaId, cancellationToken).ConfigureAwait(false);
+            // A group older than a day may meet peers that collected a newer deletion of its documents (section 11).
+            var staleBefore = _engine.HostTime.GetUtcNow().ToUnixTimeSeconds() - (24 * 60 * 60);
+            var (groups, quiet, _) = await transaction.ReadChangeGroupsAsync(start, maxGroups, maxBytes, _engine.ReplicaId, staleBefore, cancellationToken)
+                .ConfigureAwait(false);
             if (quiet > after)
             {
                 lock (_gate)
@@ -290,7 +293,7 @@ internal sealed class TursoChangeGroupSource : BackgroundService, IChangeGroupSo
             var transaction = (SqliteStorageTransaction)await store.BeginTransactionAsync(write: false, cancellationToken).ConfigureAwait(false);
             await using (transaction.ConfigureAwait(false))
             {
-                (_, _, committed) = await transaction.ReadChangeGroupsAsync(after, 1, 1, _engine.ReplicaId, cancellationToken).ConfigureAwait(false);
+                (_, _, committed) = await transaction.ReadChangeGroupsAsync(after, 1, 1, _engine.ReplicaId, long.MinValue, cancellationToken).ConfigureAwait(false);
             }
         }
 
