@@ -16,8 +16,9 @@ There is no CI and no test suite.
 
 ## Deploy
 
-Cloudflare Pages builds `main` from Git: build command `npm run build`,
-output directory `docs/.vitepress/dist`, custom domain `docs.terrascale.tech`.
+Cloudflare Workers Builds builds `main` from Git (`npm run build`, then
+`npx wrangler deploy`). `wrangler.jsonc` serves `docs/.vitepress/dist` as static
+assets only on `docs.terrascale.tech`.
 
 ## Edit public content
 
