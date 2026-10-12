@@ -49,7 +49,6 @@ public sealed class CatalogLatticeTests
         "POST /v1/management/invitations/lookup",
         "POST /v1/management/organizations",
         "POST /v1/management/organizations/{organization}/invitations",
-        "POST /v1/management/organizations/{organization}/ownership-transfer",
         "POST /v1/management/organizations/{organization}/projects",
         "POST /v1/management/organizations/{organization}/projects/{project}/api-keys",
         "POST /v1/management/organizations/{organization}/projects/{project}/binding",
@@ -70,6 +69,7 @@ public sealed class CatalogLatticeTests
         "POST /v1/projects/{project}/databases/{database}/transactions",
         "POST /v1/projects/{project}/saved-queries",
         "PUT /v1/management/current-organization",
+        // Retention, not access: a shortened retention lost to a restore lists older audit events again and grants nothing.
         "PUT /v1/management/organizations/{organization}/audit-retention",
         "PUT /v1/management/organizations/{organization}/members/{user}",
         "PUT /v1/projects/{project}/backup-destination",
@@ -720,6 +720,15 @@ public sealed class CatalogLatticeTests
             mode = "customer",
         };
         await Assert.That((int)await gru.SendAsync(owner, HttpMethod.Put, $"{projectPath}/backup-destination", destination)).IsBetween(200, 299);
+        string first, second, removed;
+        using (var inviter = gru.Api.Service(owner))
+        {
+            (first, second, removed) = (await gru.Api.AddMemberAsync(inviter, organization, "viewer"), await gru.Api.AddMemberAsync(inviter, organization, "viewer"),
+                await gru.Api.AddMemberAsync(inviter, organization, "viewer"));
+        }
+
+        var transfer = $"/v1/management/organizations/{organization}/ownership-transfer";
+        await Assert.That(await gru.SendAsync(owner, HttpMethod.Post, transfer, new { userId = first })).IsEqualTo(HttpStatusCode.Created);
         // The bucket refuses the anchor only, so each request below fails on its anchor and nothing else.
         cluster.Bucket!.FailPut = key => key.StartsWith("catalog-anchor/", StringComparison.Ordinal);
         await Assert.That(await gru.SendAsync(owner, HttpMethod.Delete, $"{projectPath}/api-keys/{key}")).IsEqualTo(HttpStatusCode.InternalServerError);
@@ -740,6 +749,17 @@ public sealed class CatalogLatticeTests
         };
         await Assert.That(await gru.SendAsync(owner, HttpMethod.Post, "/v1/management/commits", deletion)).IsEqualTo(HttpStatusCode.InternalServerError);
         await Assert.That(await gru.SendAsync(owner, HttpMethod.Post, "/v1/management/commits", narrowing)).IsEqualTo(HttpStatusCode.InternalServerError);
+        // A new offer replaces the pending one: a restore losing it would bring the first member's offer back.
+        await Assert.That(await gru.SendAsync(owner, HttpMethod.Post, transfer, new { userId = second })).IsEqualTo(HttpStatusCode.InternalServerError);
+        var offer = new { id = EntityIds.New().ToString(), ops = new object[] { new { op = "start_transfer", organization, user = first } } };
+        await Assert.That(await gru.SendAsync(owner, HttpMethod.Post, "/v1/management/commits", offer)).IsEqualTo(HttpStatusCode.InternalServerError);
+        // One revoking operation anchors the whole commit, whatever else it carries.
+        var mixed = new
+        {
+            id = EntityIds.New().ToString(),
+            ops = new object[] { new { op = "limit", organization, members = 100 }, new { op = "remove_member", organization, user = removed } },
+        };
+        await Assert.That(await gru.SendAsync(owner, HttpMethod.Post, "/v1/management/commits", mixed)).IsEqualTo(HttpStatusCode.InternalServerError);
         await Assert.That(await gru.SendAsync(owner, HttpMethod.Post, $"/v1/management/organizations/{organization}/projects", new { name = "created" }))
             .IsEqualTo(HttpStatusCode.Created);
         var creation = new { id = EntityIds.New().ToString(), ops = new object[] { new { op = "create_database", organization, project, name = "more", id = EntityIds.New().ToString() } } };
@@ -752,6 +772,52 @@ public sealed class CatalogLatticeTests
         cluster.Bucket.FailPut = _ => false;
         var (another, _) = await gru.CreateKeyAsync(owner, projectPath);
         await Assert.That(await gru.SendAsync(owner, HttpMethod.Delete, $"{projectPath}/api-keys/{another}")).IsEqualTo(HttpStatusCode.NoContent);
+    }
+
+    /// <summary>
+    /// Whether setting a backup destination replaces one is decided in the transaction that writes it: gru starts a first
+    /// destination and is held in its bucket check while sjc sets one that replicates to gru. gru's save then replaces sjc's,
+    /// so it is anchored, and with the anchor refused it is not acknowledged.
+    /// </summary>
+    [Test]
+    public async Task A_destination_that_another_region_set_while_this_save_checked_its_bucket_is_replaced_only_once_anchored()
+    {
+        await using var cluster = await Cluster.StartWithAnchorsAsync("gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var owner = EntityIds.New().ToString();
+        var (organization, project) = (EntityIds.New().ToString(), EntityIds.New().ToString());
+        await gru.CommitAsync(owner,
+            new { op = "create_organization", id = organization, name = "Racing" },
+            new { op = "set_plan", organization, plan = "enterprise" },
+            new { op = "create_project", organization, id = project, name = "p" });
+        await Assert.That(await sjc.UntilAsync($"organizations/{organization}/projects", project, json => json is not null)).IsTrue();
+        var path = $"/v1/management/organizations/{organization}/projects/{project}/backup-destination";
+        var destination = new
+        {
+            endpoint = FakeS3.CustomerEndpoint,
+            region = "test-region-1",
+            bucket = FakeS3.CustomerBucket,
+            accessKeyId = FakeS3.CustomerAccessKey,
+            secretKey = FakeS3.CustomerSecretKey,
+            mode = "customer",
+        };
+        var (checking, release) = (new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously), new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously));
+        cluster.Bucket!.BeforeCustomerWrite = async (_, cancellationToken) =>
+        {
+            if (checking.TrySetResult())
+            {
+                await release.Task.WaitAsync(cancellationToken);
+            }
+        };
+        var racing = gru.SendAsync(owner, HttpMethod.Put, path, destination);
+        await checking.Task.WaitAsync(Deadline);
+        cluster.Bucket.BeforeCustomerWrite = null;
+
+        await Assert.That(await sjc.SendAsync(owner, HttpMethod.Put, path, destination)).IsEqualTo(HttpStatusCode.OK).Because("sjc's first destination");
+        await Assert.That(await gru.UntilAsync(Features.Management.Backups.ProjectBackupDestinations.Collection(project), "current", json => json is not null)).IsTrue();
+        cluster.Bucket.FailPut = key => key.StartsWith("catalog-anchor/", StringComparison.Ordinal);
+        release.SetResult();
+        await Assert.That(await racing).IsEqualTo(HttpStatusCode.InternalServerError);
     }
 
     /// <summary>
@@ -875,7 +941,7 @@ public sealed class CatalogLatticeTests
             "DELETE /v1/management/organizations/{organization}/projects/{project}/api-keys/{key}",
             "DELETE /v1/management/organizations/{organization}/members/{user}", "PUT /v1/management/organizations/{organization}/members/{user}/role",
             "POST /v1/management/organizations/{organization}/leave", "DELETE /v1/management/organizations/{organization}/invitations/{invitation}",
-            "POST /v1/management/organizations/{organization}/ownership-transfer/confirm",
+            "POST /v1/management/organizations/{organization}/ownership-transfer", "POST /v1/management/organizations/{organization}/ownership-transfer/confirm",
             "DELETE /v1/management/organizations/{organization}/ownership-transfer", "DELETE /v1/projects/{project}/backup-destination", "PUT /v1/projects/{project}/databases/{database}/backup-policy",
             "DELETE /v1/projects/{project}/saved-queries/{query}", "PUT /v1/management/organizations/{organization}/plan",
         ];
@@ -888,13 +954,16 @@ public sealed class CatalogLatticeTests
         string[] anchoredOps =
         [
             "delete_organization", "delete_project", "delete_database", "change_role", "remove_member", "leave", "revoke_invitation",
-            "decline_invitation", "confirm_transfer", "cancel_transfer", "set_plan", "set_database_regions",
+            "decline_invitation", "start_transfer", "confirm_transfer", "cancel_transfer", "set_plan", "set_database_regions",
         ];
         await Assert.That(Features.Management.CommitEndpoint.AnchoredOperations.ToArray()).IsEquivalentTo(anchoredOps);
+        // fence and limit write nothing; invite refuses while one is pending; resend_invitation kills the old token, but a
+        // restore bringing it back grants nothing (accepting needs the invitee's own verified email) and only restores the
+        // shorter expiry; set_audit_retention is retention, not access.
         await Assert.That(Features.Management.CommitEndpoint.Operations.Except(anchoredOps).Order(StringComparer.Ordinal).ToArray()).IsEquivalentTo(
         [
             "accept_invitation", "branch_database", "create_database", "create_organization", "create_project", "fence", "invite", "limit",
-            "rename_organization", "rename_project", "resend_invitation", "set_audit_retention", "set_current_organization", "start_transfer",
+            "rename_organization", "rename_project", "resend_invitation", "set_audit_retention", "set_current_organization",
         ]);
     }
 

@@ -105,17 +105,22 @@ version said a document a machine held is never missing; that holds only without
   - **Anchored before acknowledged.** Every endpoint a restore could undo to a tenant's harm carries the endpoint
     metadata `AnchoredRevocation`: `deleteOrganization`, `deleteProject`, `deleteDatabase` (the project API and its legacy
     management alias reach the same endpoint), `revokeProjectApiKey`, `removeMember`, `changeMemberRole`,
-    `leaveOrganization`, `revokeInvitation`, `confirmOwnershipTransfer`, `cancelOwnershipTransfer`,
+    `leaveOrganization`, `revokeInvitation`, `startOwnershipTransfer` (it replaces a pending offer: losing it would bring
+    the earlier nominee's offer back), `confirmOwnershipTransfer`, `cancelOwnershipTransfer`,
     `deleteBackupDestination` (losing a removal would resume shipping to a bucket the customer removed), `setBackupPolicy`, `updateDatabase` (a replica region removed: losing it
     would make that region serve and hold the data again), `setOrganizationPlan` (a downgrade or suspension) and
     `deleteSavedQuery`. The gate middleware reads the **routed endpoint's** metadata (never the request path, which the
     legacy routes rewrite) and, for a successful response, writes the anchor before the response starts
     (`Response.OnStarting`). A management commit (`POST /v1/management/commits`) anchors itself when it carries such an
     operation (`delete_organization`, `delete_project`, `delete_database`, `change_role`, `remove_member`, `leave`,
-    `revoke_invitation`, `decline_invitation`, `confirm_transfer`, `cancel_transfer`, `set_plan`, `set_database_regions`),
+    `revoke_invitation`, `decline_invitation`, `start_transfer`, `confirm_transfer`, `cancel_transfer`, `set_plan`,
+    `set_database_regions`),
     and setting a backup destination anchors itself when it **replaces** one (losing the replacement would resume shipping
     to the bucket the customer replaced; a first destination revokes nothing and does not wait for the bucket, whose key
-    publication may be what is failing). When the anchor cannot be written the
+    publication may be what is failing). Whether it replaces one is decided in the transaction that writes it: any stored
+    record counts, only a definite absence is a first destination. That absence is this machine's: a destination set in
+    another region that has not replicated here yet is replaced without an anchor (open, with the other DR gaps). When the
+    anchor cannot be written the
     request answers 500 instead of acknowledging (the change is committed here and replicates; a retry is idempotent). So no
     acknowledged revocation, removal or deletion is newer than its machine's anchor. Creations, other commits (the
     dashboard's document writes among them) and **every tenant data route** (documents, transactions, collections, indexes,
