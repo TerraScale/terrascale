@@ -806,6 +806,12 @@ store closes), with `PRAGMA capture_data_changes_conn('after')` on from its open
   commit is readable as a group at once.
 - **Peer leaves the machine list.** `PeerStreams` drops a link whose machine is no longer listed at its next membership
   refresh (5 s), ending the open stream (`PeerStreamTests`); the peer resumes from its ack once it is listed again.
+- **Replicated DDL** (the receive side R4a left out). A joined `_indexes` document builds its index where it is missing
+  (on a collection made without local metadata when absent) or drops it when deleted; a definition this build cannot
+  read changes nothing rather than stalling the stream. A joined `_unique` document re-projects its whole collection:
+  every live document and retained loser gets its keys again, then the smallest id wins, as everywhere. Before this, a
+  replica that took documents in before their constraints kept serving the larger id. Schemas already replicate inside
+  the `_collections` document.
 - Not in R3: `_tb_feed` (R8), Merkle folding (R6), the 1 GiB retention cut and per-database readiness (R6).
 
 R2a is built on the Microsoft.Data.Sqlite engine and writes only SQL that Turso accepts (rowid tables for every new

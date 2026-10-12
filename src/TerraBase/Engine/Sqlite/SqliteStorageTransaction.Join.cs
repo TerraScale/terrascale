@@ -86,6 +86,14 @@ internal sealed partial class SqliteStorageTransaction
             {
                 CollectionMetadata(id, materialized);
             }
+            else if (collection == DocumentDelta.Indexes)
+            {
+                IndexDefinitionMetadata(id, materialized, cancellationToken);
+            }
+            else if (collection == DocumentDelta.Unique)
+            {
+                ReprojectUnique(id, cancellationToken);
+            }
 
             return true;
         }
@@ -134,6 +142,80 @@ internal sealed partial class SqliteStorageTransaction
         update.Parameters.AddWithValue("$entityId", entity);
         update.ExecuteNonQuery();
         _collectionsChanged = true;
+    }
+
+    // Worker-only: the local DDL of an index's metadata document. A live one builds the index where it is missing, on its
+    // collection (made without a metadata document of this member's own when absent); a deleted one drops it. A definition
+    // this build cannot read changes nothing here: the document still replicates, and refusing it would stall the stream.
+    private void IndexDefinitionMetadata(string name, string? body, CancellationToken cancellationToken)
+    {
+        if (body is null)
+        {
+            _ = DropIndex(name, cancellationToken);
+            return;
+        }
+
+        using var parsed = JsonDocument.Parse(body, DocumentState.JsonOptions);
+        if (!parsed.RootElement.TryGetProperty("collection", out var named) || named.GetString() is not { } collection
+            || !DatabaseName.TryParse(collection, out _) || CollectionName.IsReserved(collection)
+            || !parsed.RootElement.TryGetProperty("fields", out var paths) || paths.ValueKind != JsonValueKind.Array)
+        {
+            return;
+        }
+
+        List<DocumentField> fields = [];
+        foreach (var path in paths.EnumerateArray())
+        {
+            if (path.ValueKind != JsonValueKind.String || !DocumentField.TryParse(path.GetString(), out var field))
+            {
+                return;
+            }
+
+            fields.Add(field);
+        }
+
+        if (!HasTable(collection))
+        {
+            AddCollection(collection, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), EntityIds.New().ToString());
+        }
+
+        try
+        {
+            _ = CreateIndex(new IndexDefinition(name, collection, fields), cancellationToken);
+        }
+        catch (ArgumentException)
+        {
+            // Not an index this build can make (its name or fields): see above.
+        }
+    }
+
+    // Worker-only: a replicated constraints document may arrive after documents it constrains, which this machine took in
+    // without it. So its join re-projects the whole collection under the constraints it now holds: every live document and
+    // retained loser gets its keys again, then visibility follows the deterministic rule (smallest id wins), as on every
+    // replica. Without constraints every loser comes back.
+    private void ReprojectUnique(string collection, CancellationToken cancellationToken)
+    {
+        if (!HasTable(collection))
+        {
+            return;
+        }
+
+        var constraints = ReadUniqueConstraints(collection);
+        Command("DELETE FROM _tb_unique_keys WHERE collection = $collection;", collection).ExecuteNonQuery();
+        Command("DELETE FROM _tb_unique_invalid WHERE collection = $collection;", collection).ExecuteNonQuery();
+        BeginUniqueAffected();
+        Command("DELETE FROM _tb_unique_affected;").ExecuteNonQuery();
+        TableCommand("INSERT OR IGNORE INTO _tb_unique_affected (id) SELECT id FROM {0};", collection).ExecuteNonQuery();
+        Command("INSERT OR IGNORE INTO _tb_unique_affected (id) SELECT id FROM _tb_unique_conflicts WHERE collection = $collection;", collection).ExecuteNonQuery();
+        foreach (var id in UniqueProjectionIds(cancellationToken))
+        {
+            if (ReadUniqueDocument(collection, id) is { } document)
+            {
+                IndexUniqueKeys(collection, id, StrictUtf8.GetString(document.Json.Span), constraints, local: false, cancellationToken);
+            }
+        }
+
+        ReconcileUnique(collection, UniqueProjectionIds(cancellationToken), null, cancellationToken);
     }
 
     // Worker-only: a client collection's row and table, without a metadata document of this member's own.
