@@ -338,19 +338,31 @@ public sealed class GroupCommitTests
         await Assert.That((await api.GetAsync(failingId)).Status).IsEqualTo(HttpStatusCode.NotFound);
     }
 
+    // insideCommit fails the work CommitAsync still does after the SQLite commit; otherwise the batch fails after CommitAsync.
     [Test]
-    public async Task A_failure_after_the_commit_answers_the_committed_writes_and_logs_it()
+    [Arguments(true)]
+    [Arguments(false)]
+    public async Task A_failure_after_the_commit_answers_the_committed_writes_and_logs_it(bool insideCommit)
     {
         var logs = new CapturedLogs();
         await using var api = await DocumentApi.StartAsync(services: services => services.AddSingleton<ILoggerProvider>(logs));
         await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "enterprise");
         var store = await StoreAsync(api);
         var failed = 0;
-        store.AfterGroupCommit = () =>
+        void Fail()
         {
             Interlocked.Increment(ref failed);
             throw new IOException("the test fails the work after the commit");
-        };
+        }
+
+        if (insideCommit)
+        {
+            store.AfterSqliteCommit = Fail;
+        }
+        else
+        {
+            store.AfterGroupCommit = Fail;
+        }
 
         var id = DocumentApi.NewId();
         var written = await api.PutAsync(id, new { n = 1 });
@@ -372,7 +384,7 @@ public sealed class GroupCommitTests
         await Assert.That(logs.Messages.Any(message => message.Contains("committed, but the work after its commit failed", StringComparison.Ordinal))).IsTrue();
 
         // The writer keeps working.
-        store.AfterGroupCommit = null;
+        store.AfterSqliteCommit = store.AfterGroupCommit = null;
         var next = DocumentApi.NewId();
         await Assert.That((await api.PutAsync(next, new { n = 2 })).Status).IsEqualTo(HttpStatusCode.Created);
         await Assert.That((await api.GetAsync(next)).Json.GetProperty("document").GetProperty("n").GetInt32()).IsEqualTo(2);

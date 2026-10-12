@@ -72,6 +72,9 @@ internal sealed partial class SqliteStorageTransaction(
     /// <summary>Whether a per-commit limit refused a write since the last savepoint: alone in a transaction, it could fit.</summary>
     internal bool LimitsReached { get; private set; }
 
+    /// <summary>The offset this transaction committed at, set as soon as its SQLite commit succeeded; null before.</summary>
+    internal long? Committed { get; private set; }
+
     // Taken when the transaction begins: a catalog follower adopting its primary's incarnation never mixes it into a
     // snapshot read before.
     public Guid Scope { get; } = store.Scope;
@@ -998,6 +1001,9 @@ internal sealed partial class SqliteStorageTransaction(
 
                 cancellationToken.ThrowIfCancellationRequested();
                 transaction.Commit();
+                // From here on the write is in the database: a failure below must not answer it as not committed.
+                Committed = offset;
+                store.AfterSqliteCommit?.Invoke();
                 if (_collectionsChanged)
                 {
                     store.ForgetCollections();

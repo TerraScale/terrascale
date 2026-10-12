@@ -216,8 +216,10 @@ answered. It does not mean the write is synced to disk or backed up:
 
 A document write ends in one of three outcomes:
 
-1. **Committed:** a `2xx` answer with `local_durable`, as above. A write whose commit succeeded is answered this way
-   even when cleanup after the commit fails; that failure is only logged.
+1. **Committed:** a `2xx` answer with `local_durable`, as above. Once the database's SQLite commit returned, a failure
+   of the storage engine's remaining work for that commit (the rest of the commit step, disposing the transaction,
+   releasing the writer) is only logged, and the write is still answered this way. Only that storage engine work is
+   covered: a failure later in the request is not, and its `5xx` is outcome 3.
 2. **Not committed:** a `4xx` answer. The write was refused (validation, precondition, quota, uniqueness) and rolled
    back.
 3. **Unknown:** a `5xx` answer, a lost connection or a proxy error. The write may or may not have committed. The
