@@ -1,4 +1,4 @@
-# Cost of releasing abandoned Turso statements (#115) and of not abandoning them (2026-10-12)
+# Cost of releasing abandoned Turso statements (#115), of not abandoning them, and of the fixed driver (2026-10-12)
 
 #115 makes the thread that owns a connection finalize the native statement Turso.Data.Sqlite 0.8.2 abandons when a
 statement without result columns fails (`SqliteSession.ReleaseAbandonedStatements`: a blocking `GC.Collect()` and
@@ -309,4 +309,125 @@ Session 3 (before, native; 3 interleaved runs, host load 4 to 5), medians:
 | native | 50 % | statement | 197 | 45.2 / 69.4 / 86.5 | 34.3 / 66.3 | 2.9 / 6.4 / 8.2 | 1249 | 35.3 | 88 % | 215 | 19 / 34 | 41.3 (0.30) | 58.5 | 0 |
 | native | 10 % | conflict 412 | 427 | 31.3 / 62.8 / 70.1 | 30.0 / 68.4 | 2.3 / 5.5 / 7.2 | 1519 | 35.7 | 89 % | 216 | 19 / 34 | 30.5 (0.00) | 46.3 | 0 |
 | native | 50 % | conflict 412 | 332 | 23.4 / 48.4 / 59.8 | 22.1 / 58.4 | 2.2 / 5.5 / 7.1 | 1550 | 35.8 | 89 % | 216 | 18 / 34 | 31.1 (0.00) | 47.7 | 0 |
+```
+
+## Session 4: the vendored, fixed driver (provider path) against the native runner
+
+After the user's decision to vendor the Turso .NET driver and fix it (`src/vendor/Turso.Data.Sqlite`, patches 0001-0003:
+a failed statement is disposed by the call that ran it, and a transaction it ended is marked rolled back), TerraBase can
+use the provider's own commands and transactions again. Builds: before `c4b15068` (#109, no fix), native `7d22d0d4`
+(the fixed driver, TerraBase still on its own native runner), provider `de7ed025` (the fixed driver, the provider path,
+the native runner removed).
+
+Standard configuration (COS): the server on the two SMT siblings of one core. Read from the server process in every run:
+
+```text
+# before server pid 450572: pid 450572's current affinity list: 2,3; Cpus_allowed_list 2-3; cgroup /user.slice/user-1000.slice/user@1000.service/app.slice/run-p450572-i458183.scope; cpu.max 200000 100000; cpuset.cpus.effective (no such file: controller not enabled here); memory.max 536870912; memory.swap.max max; runtime CPU count 2
+```
+
+`systemd-run --user --scope -p CPUQuota=200% -p MemoryMax=512M taskset -c 2,3` (CPUs 2 and 3 = core 1); load generator
+on CPUs 6-9, nice 19; host load 1 to 5; same method as above; 3 runs per build, medians. Runs 1 to 3 interleaved before,
+native, provider; run 3 of native and provider was re-run (same builds, same configuration) after I removed the
+benchmark directory under the first attempt of run 3 native.
+
+| failing writes | kind | variant | valid writes/s | write p50 / p95 / p99 ms | read p50 / p95 / p99 ms | reads/s | CPU % of allowed | peak RSS MB | max GC heap / committed MB | GC/s (gen2/s) | GC pause ms/s | unexpected (3 runs) |
+| ---: | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 0 % | none | before | 221 | 73.7 / 118.7 / 137.1 | 4.2 / 11.7 / 16.9 | 785 | 96 % | 190 | 13 / 28 | 16.8 (0.05) | 23.8 | 0 |
+| 0 % | none | native | 223 | 72.5 / 116.1 / 135.2 | 4.1 / 11.7 / 16.6 | 800 | 96 % | 187 | 13 / 28 | 16.4 (0.05) | 23.0 | 0 |
+| 0 % | none | provider | 216 | 74.4 / 115.9 / 145.3 | 4.3 / 11.8 / 16.9 | 776 | 96 % | 186 | 13 / 28 | 16.4 (0.05) | 25.0 | 0 |
+| 1 % | statement | before | 341 | 43.2 / 72.5 / 85.9 | 2.9 / 6.6 / 8.7 | 1215 | 95 % | 201 | 15 / 29 | 26.3 (0.00) | 36.6 | 17 |
+| 1 % | statement | native | 345 | 42.8 / 71.1 / 90.0 | 2.9 / 6.5 / 8.7 | 1217 | 95 % | 196 | 15 / 29 | 25.4 (0.00) | 34.2 | 0 |
+| 1 % | statement | provider | 340 | 43.0 / 72.7 / 87.3 | 2.9 / 6.7 / 8.9 | 1203 | 95 % | 195 | 15 / 29 | 26.2 (0.00) | 37.0 | 0 |
+| 10 % | statement | before | 300 | 46.4 / 76.9 / 87.2 | 3.0 / 6.7 / 8.9 | 1190 | 95 % | 214 | 15 / 30 | 28.1 (0.00) | 37.9 | 97 |
+| 10 % | statement | native | 299 | 46.1 / 77.6 / 89.3 | 3.0 / 6.6 / 8.7 | 1200 | 95 % | 214 | 16 / 29 | 27.0 (0.00) | 35.0 | 0 |
+| 10 % | statement | provider | 294 | 46.8 / 80.2 / 91.2 | 3.0 / 6.7 / 9.0 | 1184 | 95 % | 212 | 15 / 29 | 27.8 (0.00) | 37.6 | 0 |
+| 50 % | statement | before | 150 | 60.5 / 84.6 / 102.9 | 3.5 / 7.3 / 9.3 | 1047 | 95 % | 216 | 22 / 34 | 34.4 (0.35) | 46.0 | 184 |
+| 50 % | statement | native | 149 | 60.7 / 85.7 / 105.3 | 3.5 / 7.1 / 9.0 | 1066 | 95 % | 215 | 20 / 35 | 33.2 (0.20) | 43.1 | 0 |
+| 50 % | statement | provider | 148 | 61.2 / 85.2 / 105.5 | 3.6 / 7.2 / 9.2 | 1047 | 95 % | 212 | 21 / 34 | 34.1 (0.20) | 45.9 | 0 |
+| 10 % | conflict 412 | before | 331 | 40.6 / 76.5 / 83.6 | 2.8 / 6.4 / 8.2 | 1263 | 95 % | 217 | 20 / 35 | 26.3 (0.00) | 36.3 | 0 |
+| 10 % | conflict 412 | native | 332 | 40.6 / 75.4 / 84.3 | 2.8 / 6.3 / 8.1 | 1275 | 95 % | 215 | 19 / 34 | 25.4 (0.00) | 34.3 | 0 |
+| 10 % | conflict 412 | provider | 332 | 41.0 / 72.5 / 80.6 | 2.8 / 6.5 / 8.4 | 1244 | 95 % | 212 | 19 / 34 | 26.2 (0.00) | 37.2 | 0 |
+| 50 % | conflict 412 | before | 253 | 30.5 / 57.9 / 73.2 | 2.7 / 6.4 / 8.1 | 1299 | 95 % | 217 | 20 / 35 | 26.7 (0.00) | 37.4 | 0 |
+| 50 % | conflict 412 | native | 256 | 30.4 / 60.8 / 72.4 | 2.7 / 6.3 / 8.1 | 1308 | 95 % | 215 | 19 / 34 | 25.8 (0.00) | 34.8 | 0 |
+| 50 % | conflict 412 | provider | 254 | 30.9 / 57.9 / 69.5 | 2.7 / 6.5 / 8.3 | 1279 | 95 % | 212 | 19 / 34 | 26.5 (0.00) | 38.2 | 0 |
+
+- native and provider are the same in every mix (throughput, latency percentiles, reads, CPU, peak RSS, GC heap, GC
+  count and pause) and the same as before; neither forces a collection; neither gives a wrong answer, where before gave
+  17, 97, 184. TerraBase keeps the provider path: the same result with less code and no reflection into the driver.
+
+### Raw rows, session 4
+
+```text
+## run 1 before (host load 1.35 0.29 0.09)
+# before server pid 450572: pid 450572's current affinity list: 2,3; Cpus_allowed_list 2-3; cgroup /user.slice/user-1000.slice/user@1000.service/app.slice/run-p450572-i458183.scope; cpu.max 200000 100000; cpuset.cpus.effective (no such file: controller not enabled here); memory.max 536870912; memory.swap.max max; runtime CPU count 2
+| before | 0 % | none | 221 | 73.7 / 118.7 / 137.1 | - | 4.2 / 11.7 / 16.9 | 785 | 38.8 | 96 % | 190 | 13 / 28 | 16.8 (0.05) | 25.1 | 0 |
+| before | 1 % | statement | 345 | 42.7 / 71.8 / 87.9 | 35.4 / 58.3 | 2.9 / 6.6 / 8.8 | 1215 | 38.2 | 95 % | 201 | 15 / 29 | 26.4 (0.00) | 38.6 | 3 |
+| before | 10 % | statement | 300 | 46.3 / 76.9 / 87.2 | 38.5 / 77.8 | 2.9 / 6.6 / 8.6 | 1207 | 38.3 | 95 % | 213 | 15 / 30 | 28.3 (0.00) | 37.9 | 29 |
+| before | 50 % | statement | 150 | 60.5 / 84.6 / 97.9 | 46.0 / 77.2 | 3.5 / 7.3 / 9.3 | 1048 | 38.0 | 95 % | 216 | 22 / 34 | 34.4 (0.35) | 46.0 | 49 |
+| before | 10 % | conflict 412 | 331 | 40.5 / 76.5 / 84.8 | 38.9 / 80.3 | 2.8 / 6.3 / 8.2 | 1278 | 38.2 | 95 % | 217 | 20 / 35 | 26.5 (0.00) | 36.2 | 0 |
+| before | 50 % | conflict 412 | 257 | 30.2 / 56.2 / 73.3 | 28.5 / 72.0 | 2.7 / 6.4 / 8.0 | 1306 | 38.3 | 95 % | 217 | 20 / 35 | 26.9 (0.00) | 36.5 | 0 |
+## run 1 native (host load 3.79 1.89 0.73)
+# native server pid 450870: pid 450870's current affinity list: 2,3; Cpus_allowed_list 2-3; cgroup /user.slice/user-1000.slice/user@1000.service/app.slice/run-p450870-i444468.scope; cpu.max 200000 100000; cpuset.cpus.effective (no such file: controller not enabled here); memory.max 536870912; memory.swap.max max; runtime CPU count 2
+| native | 0 % | none | 226 | 72.5 / 121.3 / 139.3 | - | 4.1 / 11.7 / 16.6 | 800 | 38.8 | 96 % | 186 | 12 / 28 | 16.4 (0.05) | 24.3 | 0 |
+| native | 1 % | statement | 345 | 42.7 / 70.8 / 80.5 | 39.1 / 107.3 | 2.9 / 6.5 / 8.5 | 1234 | 38.3 | 95 % | 196 | 15 / 29 | 25.5 (0.00) | 34.2 | 0 |
+| native | 10 % | statement | 299 | 46.1 / 76.9 / 89.3 | 39.1 / 76.9 | 2.9 / 6.6 / 8.8 | 1200 | 38.3 | 95 % | 215 | 16 / 30 | 27.0 (0.00) | 35.4 | 0 |
+| native | 50 % | statement | 149 | 60.5 / 85.7 / 105.3 | 46.1 / 79.5 | 3.5 / 7.1 / 9.0 | 1069 | 38.1 | 95 % | 216 | 22 / 35 | 33.4 (0.30) | 43.9 | 0 |
+| native | 10 % | conflict 412 | 335 | 40.6 / 72.7 / 80.5 | 39.0 / 78.1 | 2.8 / 6.3 / 8.0 | 1275 | 38.3 | 95 % | 217 | 19 / 35 | 25.5 (0.00) | 35.0 | 0 |
+| native | 50 % | conflict 412 | 257 | 30.4 / 59.5 / 72.4 | 28.5 / 68.7 | 2.7 / 6.3 / 8.1 | 1300 | 38.3 | 95 % | 217 | 19 / 35 | 25.8 (0.00) | 34.8 | 0 |
+## run 1 provider (host load 4.50 3.01 1.32)
+# provider server pid 451176: pid 451176's current affinity list: 2,3; Cpus_allowed_list 2-3; cgroup /user.slice/user-1000.slice/user@1000.service/app.slice/run-p451176-i444493.scope; cpu.max 200000 100000; cpuset.cpus.effective (no such file: controller not enabled here); memory.max 536870912; memory.swap.max max; runtime CPU count 2
+| provider | 0 % | none | 222 | 74.4 / 115.0 / 145.3 | - | 4.1 / 11.4 / 16.2 | 808 | 38.7 | 96 % | 182 | 13 / 28 | 17.1 (0.05) | 25.0 | 0 |
+| provider | 1 % | statement | 340 | 42.9 / 74.0 / 95.0 | 37.3 / 96.2 | 2.9 / 6.7 / 8.9 | 1208 | 38.3 | 95 % | 192 | 14 / 29 | 26.2 (0.00) | 37.7 | 0 |
+| provider | 10 % | statement | 296 | 46.8 / 77.1 / 91.2 | 39.2 / 79.7 | 3.0 / 6.9 / 9.0 | 1179 | 38.2 | 95 % | 212 | 15 / 29 | 27.8 (0.00) | 39.7 | 0 |
+| provider | 50 % | statement | 149 | 61.2 / 85.2 / 105.5 | 46.2 / 78.5 | 3.6 / 7.2 / 9.3 | 1047 | 38.0 | 95 % | 212 | 21 / 34 | 34.1 (0.30) | 46.3 | 0 |
+| provider | 10 % | conflict 412 | 332 | 40.9 / 72.5 / 80.6 | 38.9 / 76.1 | 2.9 / 6.5 / 8.4 | 1236 | 38.2 | 95 % | 212 | 19 / 35 | 26.2 (0.00) | 37.2 | 0 |
+| provider | 50 % | conflict 412 | 254 | 30.9 / 60.0 / 71.8 | 29.1 / 70.0 | 2.7 / 6.5 / 8.3 | 1279 | 38.3 | 95 % | 212 | 19 / 35 | 26.5 (0.00) | 38.2 | 0 |
+## run 2 before (host load 4.48 3.61 1.79)
+# before server pid 451470: pid 451470's current affinity list: 2,3; Cpus_allowed_list 2-3; cgroup /user.slice/user-1000.slice/user@1000.service/app.slice/run-p451470-i444528.scope; cpu.max 200000 100000; cpuset.cpus.effective (no such file: controller not enabled here); memory.max 536870912; memory.swap.max max; runtime CPU count 2
+| before | 0 % | none | 223 | 73.6 / 114.8 / 131.5 | - | 4.2 / 11.4 / 16.7 | 785 | 38.8 | 96 % | 191 | 13 / 28 | 16.9 (0.05) | 23.8 | 0 |
+| before | 1 % | statement | 341 | 43.3 / 72.5 / 81.6 | 37.6 / 74.6 | 2.9 / 6.5 / 8.6 | 1221 | 38.3 | 95 % | 201 | 15 / 29 | 26.3 (0.00) | 35.8 | 4 |
+| before | 10 % | statement | 301 | 46.4 / 74.2 / 87.2 | 38.3 / 73.2 | 3.0 / 6.7 / 8.9 | 1181 | 38.1 | 95 % | 214 | 15 / 30 | 28.1 (0.00) | 37.2 | 41 |
+| before | 50 % | statement | 151 | 60.1 / 83.5 / 102.9 | 45.6 / 79.9 | 3.5 / 7.3 / 9.3 | 1047 | 38.1 | 95 % | 212 | 24 / 36 | 34.5 (0.35) | 46.0 | 72 |
+| before | 10 % | conflict 412 | 334 | 40.6 / 73.1 / 79.8 | 38.9 / 78.4 | 2.9 / 6.4 / 8.1 | 1244 | 38.3 | 95 % | 212 | 21 / 36 | 26.3 (0.00) | 36.6 | 0 |
+| before | 50 % | conflict 412 | 253 | 30.7 / 57.9 / 70.5 | 29.2 / 68.8 | 2.7 / 6.3 / 8.1 | 1298 | 38.3 | 95 % | 213 | 21 / 36 | 26.7 (0.00) | 37.6 | 0 |
+## run 2 native (host load 4.45 3.97 2.19)
+# native server pid 451836: pid 451836's current affinity list: 2,3; Cpus_allowed_list 2-3; cgroup /user.slice/user-1000.slice/user@1000.service/app.slice/run-p451836-i471360.scope; cpu.max 200000 100000; cpuset.cpus.effective (no such file: controller not enabled here); memory.max 536870912; memory.swap.max max; runtime CPU count 2
+| native | 0 % | none | 211 | 79.5 / 116.1 / 134.5 | - | 4.4 / 11.9 / 16.9 | 754 | 38.8 | 96 % | 187 | 13 / 28 | 15.4 (0.05) | 22.6 | 0 |
+| native | 1 % | statement | 341 | 42.9 / 73.0 / 90.0 | 39.5 / 83.8 | 2.9 / 6.6 / 8.7 | 1217 | 38.2 | 95 % | 196 | 15 / 29 | 25.1 (0.00) | 34.4 | 0 |
+| native | 10 % | statement | 295 | 46.8 / 80.3 / 92.3 | 39.4 / 75.7 | 3.0 / 6.7 / 8.7 | 1196 | 38.2 | 95 % | 214 | 16 / 29 | 26.8 (0.00) | 35.0 | 0 |
+| native | 50 % | statement | 148 | 60.7 / 86.8 / 105.8 | 46.2 / 80.1 | 3.5 / 7.1 / 9.1 | 1063 | 38.1 | 95 % | 215 | 20 / 35 | 33.2 (0.20) | 43.1 | 0 |
+| native | 10 % | conflict 412 | 331 | 40.9 / 75.4 / 84.3 | 39.6 / 80.1 | 2.8 / 6.3 / 8.2 | 1262 | 38.3 | 95 % | 215 | 19 / 34 | 25.2 (0.00) | 34.3 | 0 |
+| native | 50 % | conflict 412 | 254 | 30.8 / 60.8 / 73.4 | 28.9 / 72.2 | 2.7 / 6.3 / 8.0 | 1308 | 38.3 | 95 % | 215 | 19 / 34 | 25.6 (0.00) | 33.8 | 0 |
+## run 2 provider (host load 4.29 4.09 2.49)
+# provider server pid 452180: pid 452180's current affinity list: 2,3; Cpus_allowed_list 2-3; cgroup /user.slice/user-1000.slice/user@1000.service/app.slice/run-p452180-i435557.scope; cpu.max 200000 100000; cpuset.cpus.effective (no such file: controller not enabled here); memory.max 536870912; memory.swap.max max; runtime CPU count 2
+| provider | 0 % | none | 213 | 74.4 / 122.5 / 145.4 | - | 4.3 / 11.8 / 16.9 | 776 | 38.8 | 96 % | 188 | 12 / 28 | 16.3 (0.05) | 23.4 | 0 |
+| provider | 1 % | statement | 343 | 43.0 / 71.8 / 87.3 | 37.2 / 92.9 | 2.9 / 6.7 / 8.9 | 1203 | 38.3 | 95 % | 198 | 15 / 29 | 26.2 (0.00) | 34.4 | 0 |
+| provider | 10 % | statement | 294 | 46.8 / 80.2 / 90.2 | 39.7 / 80.2 | 2.9 / 6.6 / 8.8 | 1209 | 38.3 | 95 % | 212 | 15 / 29 | 28.0 (0.00) | 36.5 | 0 |
+| provider | 50 % | statement | 148 | 61.2 / 84.5 / 105.5 | 46.4 / 80.2 | 3.5 / 7.2 / 9.0 | 1066 | 38.1 | 95 % | 211 | 20 / 34 | 34.1 (0.20) | 44.4 | 0 |
+| provider | 10 % | conflict 412 | 332 | 41.0 / 72.3 / 81.4 | 38.9 / 80.4 | 2.8 / 6.5 / 8.3 | 1246 | 38.3 | 95 % | 211 | 19 / 34 | 26.3 (0.00) | 36.1 | 0 |
+| provider | 50 % | conflict 412 | 256 | 30.6 / 57.9 / 69.3 | 28.8 / 67.6 | 2.7 / 6.4 / 8.1 | 1279 | 38.2 | 95 % | 211 | 19 / 34 | 26.7 (0.00) | 36.9 | 0 |
+## run 3 before (host load 4.93 4.40 2.84)
+# before server pid 452438: pid 452438's current affinity list: 2,3; Cpus_allowed_list 2-3; cgroup /user.slice/user-1000.slice/user@1000.service/app.slice/run-p452438-i444634.scope; cpu.max 200000 100000; cpuset.cpus.effective (no such file: controller not enabled here); memory.max 536870912; memory.swap.max max; runtime CPU count 2
+| before | 0 % | none | 212 | 79.0 / 127.5 / 158.9 | - | 4.4 / 12.1 / 17.1 | 760 | 38.8 | 96 % | 187 | 13 / 28 | 16.2 (0.05) | 23.0 | 0 |
+| before | 1 % | statement | 341 | 43.2 / 72.8 / 85.9 | 40.6 / 86.7 | 2.9 / 6.6 / 8.7 | 1211 | 38.3 | 95 % | 198 | 15 / 29 | 26.2 (0.00) | 36.6 | 10 |
+| before | 10 % | statement | 295 | 47.1 / 79.4 / 86.5 | 38.8 / 74.7 | 3.0 / 6.8 / 9.1 | 1190 | 38.2 | 95 % | 216 | 17 / 30 | 27.9 (0.00) | 39.1 | 27 |
+| before | 50 % | statement | 149 | 61.0 / 85.9 / 104.1 | 46.1 / 81.8 | 3.5 / 7.3 / 9.4 | 1047 | 38.1 | 95 % | 217 | 21 / 34 | 34.1 (0.30) | 45.7 | 63 |
+| before | 10 % | conflict 412 | 327 | 41.3 / 77.1 / 83.6 | 39.7 / 82.5 | 2.8 / 6.4 / 8.4 | 1263 | 38.3 | 95 % | 218 | 20 / 35 | 26.2 (0.00) | 36.3 | 0 |
+| before | 50 % | conflict 412 | 253 | 30.5 / 59.6 / 73.2 | 29.1 / 70.2 | 2.7 / 6.5 / 8.1 | 1299 | 38.3 | 95 % | 218 | 20 / 35 | 26.7 (0.00) | 37.4 | 0 |
+## run 3 native, re-run (host load 2.77 4.19 3.25)
+# native server pid 454076: pid 454076's current affinity list: 2,3; Cpus_allowed_list 2-3; cgroup /user.slice/user-1000.slice/user@1000.service/app.slice/run-p454076-i458632.scope; cpu.max 200000 100000; cpuset.cpus.effective (no such file: controller not enabled here); memory.max 536870912; memory.swap.max max; runtime CPU count 2
+| native | 0 % | none | 223 | 72.5 / 116.0 / 135.2 | - | 4.0 / 11.1 / 16.2 | 812 | 38.7 | 96 % | 187 | 13 / 28 | 16.4 (0.05) | 23.0 | 0 |
+| native | 1 % | statement | 345 | 42.8 / 71.1 / 92.2 | 39.1 / 95.2 | 2.9 / 6.5 / 8.7 | 1216 | 38.3 | 95 % | 192 | 15 / 29 | 25.4 (0.00) | 33.5 | 0 |
+| native | 10 % | statement | 300 | 46.1 / 77.6 / 88.6 | 38.9 / 74.0 | 3.0 / 6.6 / 8.7 | 1205 | 38.3 | 95 % | 210 | 15 / 29 | 27.1 (0.00) | 34.6 | 0 |
+| native | 50 % | statement | 149 | 61.0 / 85.6 / 104.2 | 46.0 / 77.1 | 3.5 / 7.1 / 9.0 | 1066 | 38.1 | 95 % | 210 | 19 / 34 | 33.2 (0.05) | 42.5 | 0 |
+| native | 10 % | conflict 412 | 332 | 40.4 / 77.2 / 84.8 | 38.6 / 82.0 | 2.8 / 6.3 / 8.1 | 1278 | 38.3 | 95 % | 210 | 18 / 34 | 25.4 (0.00) | 33.9 | 0 |
+| native | 50 % | conflict 412 | 256 | 30.3 / 61.2 / 71.2 | 28.5 / 70.3 | 2.7 / 6.3 / 8.1 | 1308 | 38.3 | 95 % | 210 | 18 / 34 | 25.8 (0.00) | 35.0 | 0 |
+## run 3 provider, re-run (host load 4.42 4.36 3.45)
+# provider server pid 454416: pid 454416's current affinity list: 2,3; Cpus_allowed_list 2-3; cgroup /user.slice/user-1000.slice/user@1000.service/app.slice/run-p454416-i458678.scope; cpu.max 200000 100000; cpuset.cpus.effective (no such file: controller not enabled here); memory.max 536870912; memory.swap.max max; runtime CPU count 2
+| provider | 0 % | none | 216 | 78.4 / 115.9 / 143.9 | - | 4.3 / 12.1 / 17.5 | 765 | 38.8 | 96 % | 186 | 13 / 29 | 16.4 (0.05) | 25.1 | 0 |
+| provider | 1 % | statement | 340 | 43.3 / 72.7 / 86.0 | 39.7 / 80.0 | 3.0 / 6.7 / 8.9 | 1198 | 38.3 | 95 % | 195 | 15 / 29 | 26.1 (0.00) | 37.0 | 0 |
+| provider | 10 % | statement | 292 | 47.0 / 80.7 / 98.0 | 39.3 / 75.8 | 3.0 / 6.7 / 9.0 | 1184 | 38.2 | 95 % | 214 | 15 / 29 | 27.7 (0.00) | 37.6 | 0 |
+| provider | 50 % | statement | 148 | 60.9 / 86.5 / 104.7 | 46.4 / 80.7 | 3.6 / 7.3 / 9.2 | 1039 | 38.0 | 94 % | 212 | 21 / 34 | 33.8 (0.20) | 45.9 | 0 |
+| provider | 10 % | conflict 412 | 329 | 41.2 / 74.9 / 80.5 | 39.6 / 80.0 | 2.8 / 6.5 / 8.5 | 1244 | 38.2 | 95 % | 212 | 18 / 33 | 26.2 (0.00) | 38.7 | 0 |
+| provider | 50 % | conflict 412 | 253 | 30.9 / 53.1 / 69.5 | 29.2 / 68.4 | 2.8 / 6.5 / 8.3 | 1265 | 38.2 | 95 % | 212 | 18 / 33 | 26.4 (0.00) | 38.8 | 0 |
 ```
