@@ -8,13 +8,14 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/bin"
-# One started machine m-<region> per region, running $IMAGE.
+# One started machine m-<region> per region, running $IMAGE; a reset region's clone pins it by digest, as Fly does.
 cat >"$tmp/bin/flyctl" <<'FAKE'
 #!/usr/bin/env bash
 echo "$*" >>"$STATE/calls"
 case "$1 $2" in
   "machine list")
-    jq -cn --arg image "$IMAGE" '[("gru", "sjc", "fra") | {id: "m-\(.)", region: ., state: "started", config: {image: $image}}]' ;;
+    jq -cn --arg image "$IMAGE" --arg files "$(ls "$STATE")" '[("gru", "sjc", "fra") as $r | {id: "m-\($r)", region: $r,
+      state: "started", config: {image: (if any($files | split("\n")[]; . == "reset-" + $r) then "\($image)@sha256:0f" else $image end)}}]' ;;
   "deploy -a") ;;
   *) echo "fake flyctl: unexpected $*" >&2; exit 1 ;;
 esac

@@ -42,7 +42,8 @@ live() {
   # Records (and asserts) the commit the region's machine runs: the image tag is the commit SHA.
   local deployed
   deployed=$(flyctl machine list -a "$app" --json | jq -r --arg id "$id" '.[] | select(.id == $id) | .config.image')
-  [[ $deployed == "$image" ]] || { echo "$app $region ($id) runs $deployed, not $image" >&2; return 1; }
+  # A clone (volume reset) pins the image by digest: <image>@sha256:<digest>.
+  [[ ${deployed%@sha256:*} == "$image" ]] || { echo "$app $region ($id) runs $deployed, not $image" >&2; return 1; }
 }
 
 if [[ $app == ts-terrabase ]]; then
