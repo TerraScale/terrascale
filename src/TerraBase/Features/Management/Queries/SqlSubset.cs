@@ -14,7 +14,8 @@ namespace TerraBase.Features.Management.Queries;
 public sealed record SqlStatement(SqlQuery Query, IReadOnlyList<DocumentField>? Projection, bool HasLimit);
 
 /// <summary>
-/// Parses the read-only subset <c>SELECT * | field, … FROM collection [WHERE …] [ORDER BY …] [LIMIT n]</c> with
+/// Parses the read-only subset <c>SELECT * | field, … FROM collection [WHERE …] [ORDER BY …] [LIMIT n]</c> (<c>WHERE</c>:
+/// comparisons, <c>IN</c>, <c>IS [NOT] NULL</c>, prefix <c>LIKE 'text%'</c>, <c>AND</c>, <c>OR</c>, <c>NOT</c>) with
 /// SqlParserCS and translates its syntax tree, rejecting every node outside the subset.
 /// </summary>
 /// <remarks>
@@ -215,6 +216,10 @@ internal static class SqlSubset
 
                 var compare = new SqlCompareFilter(ComparableField(field), SqlOperator.In, [.. list.Select(Literal)]);
                 return negated ? new SqlNotFilter(compare) : compare;
+            case Expression.Like { Expression: { } field, Negated: var negated, Pattern: var pattern } like:
+                var prefix = Prefix(like, pattern);
+                var starts = new SqlCompareFilter(ComparableField(field), SqlOperator.Prefix, [prefix]);
+                return negated ? new SqlNotFilter(starts) : starts;
             case Expression.IsNull { Expression: var field }:
                 return new SqlCompareFilter(ComparableField(field), SqlOperator.IsNull, []);
             case Expression.IsNotNull { Expression: var field }:
@@ -223,6 +228,14 @@ internal static class SqlSubset
                 throw new FormatException($"{Describe(expression)} not supported in WHERE");
         }
     }
+
+    // Only a prefix pattern: it compiles to an index range. Unlike SQLite's LIKE (and like PostgreSQL's), it is case-sensitive.
+    private static string Prefix(Expression.Like like, Expression pattern) =>
+        like.EscapeChar is null
+            && pattern is Expression.LiteralValue { Value: Value.SingleQuotedString { Value: var text } }
+            && text.EndsWith('%') && text.AsSpan(0, text.Length - 1).IndexOfAny('%', '_') < 0
+            ? text[..^1]
+            : throw new FormatException("LIKE supports only a prefix pattern 'text%', without other % or _ and without ESCAPE");
 
     private static SqlOperator? Comparison(BinaryOperator op) => op switch
     {
@@ -291,7 +304,7 @@ internal static class SqlSubset
     {
         Expression.Function => "functions are",
         Expression.Subquery or Expression.InSubquery or Expression.Exists => "subqueries are",
-        Expression.Like or Expression.ILike => "LIKE is",
+        Expression.ILike => "ILIKE is",
         Expression.Between => "BETWEEN is",
         Expression.Case => "CASE is",
         Expression.Cast => "CAST is",

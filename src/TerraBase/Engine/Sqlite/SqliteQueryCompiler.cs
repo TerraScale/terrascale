@@ -9,14 +9,16 @@ namespace TerraBase.Engine.Sqlite;
 
 /// <summary>
 /// Compiles a <see cref="DocumentQuery"/> into one SQLite statement over the live rows of a <see cref="RowSource"/>,
-/// so filtering, ordering, keyset pagination and the limit all run inside SQLite (<c>json_type</c>,
-/// <c>json_extract</c>, <c>json_each</c>). Every client value, including paths, is a bound parameter.
+/// so filtering, ordering, keyset pagination and the limit all run inside SQLite. Every client value is a bound
+/// parameter; a path that is a valid <see cref="DocumentField"/> is embedded as the literal an index keys on.
 /// </summary>
 /// <remarks>
 /// Every predicate evaluates to 0 or 1, never NULL, so <c>NOT</c> stays a plain complement:
-/// type tests use <c>IS</c>, and value comparisons run only after a matching type test.
-/// ponytail: no secondary indexes yet, so filters and sorts scan the collection's primary-key range;
-/// expression indexes belong to the Indexing slice.
+/// type tests use <c>IS</c>, and value comparisons run only after a matching type test. Values are read with
+/// <c>json_extract(doc, '$.path')</c>, the expression an index keys on, never <c>-&gt;&gt;</c>; <c>json_type</c> only guards
+/// the JSON type, as a residual term. An <c>IN</c> list of up to 64 values becomes equalities joined by <c>OR</c>, and a prefix a half-open
+/// range, because the Turso planner uses an expression index for neither <c>IN</c> nor a prefix test
+/// (docs/terrabase/turso-spike.md). Sorts order by JSON type first, so an index serves filters, not sorts.
 /// </remarks>
 internal sealed class SqliteQueryCompiler(SqliteParameterCollection parameters, RowSource rows, bool budgetScans = false)
 {
@@ -55,7 +57,7 @@ internal sealed class SqliteQueryCompiler(SqliteParameterCollection parameters, 
                 FROM {6} WHERE {1}{7} AND {2}
             ) WHERE {3}
             ORDER BY
-            """, columns.ToString(), observe ? "tb_query_scan() AND " : "", BudgetedFilter(query.Filter), after, rows.Version, rows.Json, rows.From, rows.Live);
+            """, columns.ToString(), observe ? "tb_query_scan() AND " : "", ScanGuardedFilter(query.Filter), after, rows.Version, rows.Json, rows.From, rows.Live);
         if (leadingId)
         {
             // Ids are unique within a collection: later sort keys cannot break a tie. Ordering by the
@@ -144,6 +146,11 @@ internal sealed class SqliteQueryCompiler(SqliteParameterCollection parameters, 
     // A count examines a system collection's tombstones too; a client collection's table holds live documents only.
     private string Counted => rows == RowSource.System ? "documents WHERE collection = $collection" : $"{rows.From} WHERE 1";
 
+    // A plain AND keeps the filter's terms visible to the planner, so an index can seek them; the guard still precedes
+    // the residual JSON predicates in SQLite's WHERE evaluation.
+    private string ScanGuardedFilter(DocumentFilter? filter) =>
+        budgetScans ? $"tb_qos_scan(coalesce(octet_length({rows.Json}), 0)) AND {Filter(filter)}" : Filter(filter);
+
     // CASE fixes evaluation order: account a candidate before any JSON predicate parses its body.
     // This counts document candidates, not SQLite VM instructions, index entries or physical disk bytes.
     private string BudgetedFilter(DocumentFilter? filter, bool includeTombstones = false)
@@ -190,9 +197,19 @@ internal sealed class SqliteQueryCompiler(SqliteParameterCollection parameters, 
         };
     }
 
-    // One parameter for any number of values: a JSON array read with json_each, matched per JSON type.
+    // A list of at most this many values becomes equalities an index can seek. A filter has at most 256 nodes, so this
+    // bounds the statement to 16384 such parameters, within SQLite's 32766.
+    private const int MaxSeekValues = 64;
+
+    // One equality per value, as a balanced OR tree. A longer list is one parameter, a JSON array read with json_each
+    // and matched per JSON type, which no planner turns into index seeks.
     private string In(InFilter filter)
     {
+        if (filter.Values.Count <= MaxSeekValues)
+        {
+            return Balanced([.. filter.Values.Select(value => Compare(new CompareFilter(filter.Path, Comparison.Equal, value)))], " OR ");
+        }
+
         var values = Parameter(JsonArray(filter.Values));
         var path = filter.Path;
         var literals = $"coalesce({Type(path)} IN (SELECT type FROM json_each({values}) WHERE type IN ('null', 'true', 'false')), 0)";
@@ -203,11 +220,46 @@ internal sealed class SqliteQueryCompiler(SqliteParameterCollection parameters, 
             : $"({literals} OR {numbers} OR {texts})";
     }
 
-    // Byte-wise on BLOBs: text length() and substr() stop at an embedded NUL.
+    /// <summary>
+    /// Joins <paramref name="terms"/> with <paramref name="separator"/> as a balanced tree of parentheses, because
+    /// SQLite nests a flat <c>a OR b OR c</c> one level deeper per term.
+    /// </summary>
+    internal static string Balanced(IReadOnlyList<string> terms, string separator) => terms.Count == 1
+        ? terms[0]
+        : $"({Balanced([.. terms.Take(terms.Count / 2)], separator)}{separator}{Balanced([.. terms.Skip(terms.Count / 2)], separator)})";
+
+    // Strings with the prefix are exactly those in [prefix, successor): BINARY collation compares UTF-8 bytes, which order
+    // like code points. An empty prefix, or one of U+10FFFF only, has no upper bound.
     private string Prefix(PrefixFilter prefix)
     {
-        var parameter = Parameter(Encoding.UTF8.GetBytes(prefix.Prefix));
-        return $"({Type(prefix.Path)} IS 'text' AND substr(CAST({Extract(prefix.Path)} AS BLOB), 1, length({parameter})) = {parameter})";
+        var value = Extract(prefix.Path);
+        var range = $"{value} >= {Parameter(prefix.Prefix)}";
+        if (PrefixSuccessor(prefix.Prefix) is { } successor)
+        {
+            range += $" AND {value} < {Parameter(successor)}";
+        }
+
+        return $"({Type(prefix.Path)} IS 'text' AND {range})";
+    }
+
+    /// <summary>The least string greater than every string that starts with <paramref name="prefix"/>, if any.</summary>
+    internal static string? PrefixSuccessor(string prefix)
+    {
+        var runes = prefix.EnumerateRunes().ToList();
+        while (runes.Count > 0 && runes[^1].Value == 0x10FFFF)
+        {
+            runes.RemoveAt(runes.Count - 1);
+        }
+
+        if (runes.Count == 0)
+        {
+            return null;
+        }
+
+        // The next scalar value: surrogate code points are not runes.
+        var next = runes[^1].Value + 1;
+        runes[^1] = new Rune(next == 0xD800 ? 0xE000 : next);
+        return string.Concat(runes.Select(rune => rune.ToString()));
     }
 
     private static string JsonArray(IReadOnlyList<ScalarValue> values)
@@ -294,9 +346,16 @@ internal sealed class SqliteQueryCompiler(SqliteParameterCollection parameters, 
 
     private string Extract(DocumentPath path) => path.IsId ? "id" : $"json_extract({rows.Json}, {Path(path)})";
 
-    // Each segment is a quoted object label, so a numeric segment is a member name, never an array index.
+    // A path that is a valid field is the literal an index keys on ('$.a.b', as in CreateIndex); any other is a bound
+    // parameter. Each of its segments is a quoted object label, so a numeric segment is a member name, never an array index.
     private string Path(DocumentPath path)
     {
+        if (path.Segments!.All(static segment => !segment.Contains('.', StringComparison.Ordinal))
+            && DocumentField.TryParse(string.Join('.', path.Segments!), out var field))
+        {
+            return $"'$.{field.Path}'";
+        }
+
         using var text = ZString.CreateStringBuilder();
         text.Append('$');
         foreach (var segment in path.Segments!)

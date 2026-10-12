@@ -14,8 +14,8 @@ public sealed class QueryPlanTests
     // the index catalog reads, which scan the small schema table.
     private static readonly Dictionary<string, string> Expected = new(StringComparer.Ordinal)
     {
-        ["DocumentBytes"] = "SEARCH d USING PRIMARY KEY (collection=? AND id=?) | SEARCH c USING PRIMARY KEY (collection=? AND id=?) LEFT-JOIN",
-        ["StoredDocumentBytes"] = "SCAN collections | CORRELATED SCALAR SUBQUERY 1 | SEARCH d USING PRIMARY KEY (collection=?) | SEARCH c USING PRIMARY KEY (collection=? AND id=?) LEFT-JOIN",
+        ["DocumentBytes"] = "SEARCH d USING PRIMARY KEY (collection=? AND id=?) | SEARCH c USING INDEX sqlite_autoindex__tb_unique_conflicts_1 (collection=? AND id=?) LEFT-JOIN",
+        ["StoredDocumentBytes"] = "SCAN collections | CORRELATED SCALAR SUBQUERY 1 | SEARCH d USING PRIMARY KEY (collection=?) | SEARCH c USING INDEX sqlite_autoindex__tb_unique_conflicts_1 (collection=? AND id=?) LEFT-JOIN",
         ["Get"] = "SEARCH documents USING PRIMARY KEY (collection=? AND id=?)",
         ["Version"] = "SEARCH documents USING PRIMARY KEY (collection=? AND id=?)",
         // Inserts have no plan; the upsert's conflict check is a primary-key lookup.
@@ -49,7 +49,7 @@ public sealed class QueryPlanTests
         ["IndexExists"] = "SCAN sqlite_schema",
         ["ObserveOffset"] = "SEARCH commit_offset USING INTEGER PRIMARY KEY (rowid=?)",
         // Client databases (docs/terrabase/multi-region-replication.md): states and documents by key.
-        ["GetState"] = "SEARCH s USING INDEX sqlite_autoindex__tb_state_1 (collection=? AND id=?) | SEARCH d USING INDEX sqlite_autoindex_items_1 (id=?) LEFT-JOIN | SEARCH c USING PRIMARY KEY (collection=? AND id=?) LEFT-JOIN",
+        ["GetState"] = "SEARCH s USING INDEX sqlite_autoindex__tb_state_1 (collection=? AND id=?) | SEARCH d USING INDEX sqlite_autoindex_items_1 (id=?) LEFT-JOIN | SEARCH c USING INDEX sqlite_autoindex__tb_unique_conflicts_1 (collection=? AND id=?) LEFT-JOIN",
         ["ClientHasCollectionState"] = "SCAN CONSTANT ROW | SCALAR SUBQUERY 1 | SEARCH _tb_state USING COVERING INDEX sqlite_autoindex__tb_state_1 (collection>? AND collection<?) | SCALAR SUBQUERY 2 | SEARCH collections USING PRIMARY KEY (name>? AND name<?) | SCALAR SUBQUERY 3 | SEARCH change_log USING COVERING INDEX change_log_by_offset (collection>? AND collection<?)",
         ["ClientHasCollectionStateFrom"] = "SCAN CONSTANT ROW | SCALAR SUBQUERY 1 | SEARCH _tb_state USING COVERING INDEX sqlite_autoindex__tb_state_1 (collection>?) | SCALAR SUBQUERY 2 | SEARCH collections USING PRIMARY KEY (name>?) | SCALAR SUBQUERY 3 | SEARCH change_log USING COVERING INDEX change_log_by_offset (collection>?)",
         ["UpdateState"] = "SEARCH _tb_state USING INDEX sqlite_autoindex__tb_state_1 (collection=? AND id=?)",
@@ -68,11 +68,11 @@ public sealed class QueryPlanTests
         ["ReplaceDocument"] = "",
         ["SystemLastSequence"] = "SEARCH journal_prefixes USING PRIMARY KEY",
         ["TruncateChanges"] = "SEARCH changes USING PRIMARY KEY (sequence<?)",
-        ["ClientDocumentBytes"] = "SCAN CONSTANT ROW | SCALAR SUBQUERY 1 | SEARCH unique_conflicts USING PRIMARY KEY (collection=? AND id=?) | SCALAR SUBQUERY 2 | SEARCH items USING INDEX sqlite_autoindex_items_1 (id=?)",
+        ["ClientDocumentBytes"] = "SCAN CONSTANT ROW | SCALAR SUBQUERY 1 | SEARCH _tb_unique_conflicts USING INDEX sqlite_autoindex__tb_unique_conflicts_1 (collection=? AND id=?) | SCALAR SUBQUERY 2 | SEARCH items USING INDEX sqlite_autoindex_items_1 (id=?)",
         ["ClientListFirst"] = "SCAN d USING INDEX sqlite_autoindex_items_1 | CORRELATED SCALAR SUBQUERY 1 | SEARCH s USING INDEX sqlite_autoindex__tb_state_1 (collection=? AND id=?)",
         ["ClientListAfter"] = "SEARCH d USING INDEX sqlite_autoindex_items_1 (id>?) | CORRELATED SCALAR SUBQUERY 1 | SEARCH s USING INDEX sqlite_autoindex__tb_state_1 (collection=? AND id=?)",
         ["ClientCollectionStats"] = "SCAN items",
-        ["ClientConflictBytes"] = "SCAN unique_conflicts",
+        ["ClientConflictBytes"] = "SCAN _tb_unique_conflicts",
         ["ClientCollectionNames"] = "SCAN collections",
         ["UpdateRow"] = "SEARCH items USING INDEX sqlite_autoindex_items_1 (id=?)",
         ["InsertRow"] = "",

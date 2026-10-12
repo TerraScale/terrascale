@@ -76,12 +76,12 @@ the information needed to release a key later.
 Merkle digests and repair ranges use the registers, which hold hidden contenders' source states too; a visibility
 projection is never a source tombstone. Identical state repair preserves conflicts and performs no mutation.
 
-`unique_conflicts` stores the bodies excluded from the ordinary document view; `unique_keys` indexes every
+`_tb_unique_conflicts` stores the bodies excluded from the ordinary document view; `_tb_unique_keys` indexes every
 contender. Neither is a consumer-visible collection or a `kind=unique_claim` document. Both are part of the fresh
 on-disk schema. When a declaration and an incompatible state arrive from different origins, the receiver retains
 that body as a conflict regardless of delivery order. Arrays, objects and over-limit keys claim no keys and are
 excluded from queries; point GET returns 409 with the source ETag. A valid local replacement or removing the
-constraint restores visibility. `unique_invalid` records these states separately from duplicate-key contenders.
+constraint restores visibility. `_tb_unique_invalid` records these states separately from duplicate-key contenders.
 Local writes under the declared schema still reject incompatible values with 400. Baselines carry source bodies,
 so receivers recompute both kinds of conflict without losing data. A replicated collection drop tombstones the
 states its origin knew; a state or declaration its origin never received keeps the collection (TS-647 step 4c).

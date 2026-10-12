@@ -31,7 +31,8 @@ and aliases escaped slash spellings before route values are exposed. See [the ID
   per database never has siblings, so every document is `state:"value"`. The version hashes local metadata rather than the contract’s
   canonical causal-context encoding. This prevents token reuse when a database is deleted and
   recreated at the same name/offset. The closed-beta reset invalidates existing version tokens and credentials. Clients recreate their state and bindings.
-- **Queries** compile to one SQLite statement (`json_type`, `json_extract`, `json_each`), with
+- **Queries** compile to one SQLite statement (`json_extract` for values, `json_type` as a type guard; `json_each`
+  only for `contains` and `in` lists of more than 64 values), with
   keyset cursors bound to a digest of database, collection, filter, sort and projection. Cursor
   rank/value pairs are validated before they become query parameters. Projection paths are
   normalized once by case-sensitive decoded segments: duplicates and descendants covered by a

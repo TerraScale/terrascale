@@ -34,19 +34,19 @@ indexes support the shape seeks described below.
 commit offset of the last write, the same `collections`, `commit_offset` and `documents_live`, its journal in
 `changes (sequence, ordinal, collection, id, version, body)` with the partial `changes_deleted (collection, id, version)
 WHERE body IS NULL` index and prefix digests in `journal_prefixes`, and `applied`, `replication_state` and the shape
-tables unused. It retains no shape history. Both shapes include the uniqueness tables `unique_keys`, `unique_invalid` and
-`unique_conflicts`.
+tables unused. It retains no shape history. Both shapes include the uniqueness tables `_tb_unique_keys`, `_tb_unique_invalid` and
+`_tb_unique_conflicts`.
 
 | Statement | Hot path | Plan before | Plan after |
 | --- | --- | --- | --- |
 | `Get`: `SELECT … WHERE collection = ? AND id = ?` | system document reads, every API-key check | `SEARCH documents USING PRIMARY KEY (collection=? AND id=?)` | unchanged |
 | `UniqueRawDocument` | client document reads, query row materialization and uniqueness reconciliation; source body, version and conflict flag in one statement | — | `SEARCH d USING PRIMARY KEY (collection=? AND id=?)`; `SEARCH c USING PRIMARY KEY (collection=? AND id=?) LEFT-JOIN` |
 | `Version`: `SELECT version, typeof(body) = 'null' …` | write preconditions, delete, assert-absent | — | `SEARCH documents USING PRIMARY KEY (collection=? AND id=?)`; `typeof` reads the record header, not the body |
-| `DocumentBytes`: retained current JSON length | quota net-change accounting without JSON allocation | — | primary-key seeks of `documents` and `unique_conflicts`; `octet_length` reads visible or hidden current JSON length without materializing JSON |
-| `StoredDocumentBytes` | trusted storage-quota total, one scalar result | — | `SCAN collections`, then `CORRELATED SCALAR SUBQUERY 1` with `SEARCH d USING PRIMARY KEY (collection=?)` and a primary-key join of `unique_conflicts`; reads visible or hidden current sizes without JSON or collection-statistics allocation |
-| `GetState`: `_tb_state` row with its materialized document | every client document write | — | `SEARCH s USING INDEX sqlite_autoindex__tb_state_1 (collection=? AND id=?)`; `LEFT-JOIN`s on the collection table's id key and on `unique_conflicts` |
+| `DocumentBytes`: retained current JSON length | quota net-change accounting without JSON allocation | — | a primary-key seek of `documents` and a `UNIQUE`-key seek of `_tb_unique_conflicts`; `octet_length` reads visible or hidden current JSON length without materializing JSON |
+| `StoredDocumentBytes` | trusted storage-quota total, one scalar result | — | `SCAN collections`, then `CORRELATED SCALAR SUBQUERY 1` with `SEARCH d USING PRIMARY KEY (collection=?)` and a `UNIQUE`-key join of `_tb_unique_conflicts`; reads visible or hidden current sizes without JSON or collection-statistics allocation |
+| `GetState`: `_tb_state` row with its materialized document | every client document write | — | `SEARCH s USING INDEX sqlite_autoindex__tb_state_1 (collection=? AND id=?)`; `LEFT-JOIN`s on the collection table's id key and on `_tb_unique_conflicts` |
 | `ClientDocumentBytes`, `ClientListFirst`, `ClientListAfter` | client point sizes and listing over a collection table | — | id-key seeks or an in-order walk of `sqlite_autoindex_<collection>_1`; the version is one correlated `_tb_state` seek per row |
-| `ClientCollectionStats`, `ClientConflictBytes`, `ClientCollectionNames` | collection counts and sizes, storage quota | — | one scan per collection table (sizes from record headers); `SCAN unique_conflicts`; `SCAN collections` |
+| `ClientCollectionStats`, `ClientConflictBytes`, `ClientCollectionNames` | collection counts and sizes, storage quota | — | one scan per collection table (sizes from record headers); `SCAN _tb_unique_conflicts`; `SCAN collections` |
 | `UpdateRow`, `InsertRow`, `DeleteRow` | every client document write | — | id-key seek of the collection table; the insert has no plan rows |
 | `UpdateState`, `InsertState`: one `_tb_state` row per document per request | the end of every client write | — | `SEARCH _tb_state USING INDEX sqlite_autoindex__tb_state_1 (collection=? AND id=?)`; the insert has no plan rows |
 | `DropStates` | client collection drop | — | `SEARCH _tb_state USING INDEX sqlite_autoindex__tb_state_1 (collection=?)` |
@@ -102,10 +102,16 @@ the depth of each document's history (a single-statement form scanned every hist
 `INDEXED BY`, sorted all candidates in a temporary B-tree). The last-write lookup names `change_log_by_document`.
 
 Queries and counts (`SqliteQueryCompiler`) are compiled per request and are neither prepared on
-the session nor in `SqliteStatements.All`. Live queries read the collection's partial-index range
-(`SEARCH documents USING INDEX documents_live (collection=?)`, or `collection=? AND id>?` with an id-only
-cursor) and evaluate filters with `json_type`/`json_extract`/`json_each`; a sort on a document field
-sorts in a temporary B-tree. Document queries do not use the Management API's expression indexes (below). Queries/counts have cancellation,
+the session nor in `SqliteStatements.All`. Live queries read the collection's table (by its id key with an id-only
+cursor) and read values with `json_extract(doc, '$.path')` only, never `->>`; `json_type` guards the JSON type as a
+residual term. A path that is a valid field is embedded as that literal, so the Management API's expression indexes
+(below) serve equality, ranges, `in` of up to 64 values (equalities joined by a balanced `OR` tree, a
+`MULTI-INDEX OR` plan; a longer list is one JSON-array parameter read with `json_each`, which scans) and
+`prefix` (the range `>= prefix AND < successor`, UTF-8 byte order); the Turso planner uses an index for neither `IN`
+nor a prefix test (docs/terrabase/turso-spike.md). A scan budget is a plain `AND` term, so it does not hide the
+filter from the planner. A sort on a document field orders by JSON type first, so it sorts in a temporary B-tree.
+`IndexPlanTests` checks these plans, and the SQL subset's equality, range, `IN`, prefix `LIKE` and
+`ORDER BY … LIMIT`, against the real server database. Queries/counts have cancellation,
 VM-instruction and deadline budgets; field sorts also preflight
 10000 live candidates and 8 MiB of JSON metadata before admitting a temporary sorter. A leading `$id` sort emits only
 `ORDER BY id ASC|DESC`: the constant rank and redundant later terms would force a sorter. Its
