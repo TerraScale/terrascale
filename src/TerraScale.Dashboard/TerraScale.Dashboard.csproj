@@ -16,6 +16,7 @@
     <Content Include="web/static/**/*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Update="web/static/**/*" Watch="false" />
     <Watch Include="web/assets/**/*" />
+    <Watch Include="Features/**/*.css" />
   </ItemGroup>
   <Target Name="BundleDashboardAssets" BeforeTargets="PrepareForBuild">
     <!-- The asset build's npm project (package.json, node_modules, build/) is web/. -->

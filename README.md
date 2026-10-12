@@ -11,7 +11,7 @@ app is not deployed and exits at startup without its identity file. See the
 
 ## Layout
 - `src/TerraScale.Dashboard/`: the application (`Features/`, `Platform/`, `UI/`).
-  CSS/JS sources are in `web/assets/`; served files are in `web/static/`.
+  CSS/JS sources are in `web/assets/`, feature CSS sits beside its slice in `Features/`; served files are in `web/static/`.
 - `tests/TerraScale.Dashboard.E2E/`: TUnit E2E journeys, test-only providers in `Demo/`.
 - `scripts/`: dev/demo launchers, asset builds, SDK and E2E lint checks.
 - `vendor/dotnet/`: the pinned ts-dotnet package ([provenance](vendor/dotnet/README.md)).
