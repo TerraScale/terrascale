@@ -1,50 +1,16 @@
 ---
+title: Usage accounting
 ---
+
 <!-- i18n:fallback:hi -->
 > **अनुवाद लंबित।** इस पृष्ठ का मानव-समीक्षित हिंदी अनुवाद अभी उपलब्ध नहीं है, इसलिए मूल अंग्रेज़ी सामग्री दिखाई जा रही है।
 
-# Pricing philosophy
+<div lang="en" dir="ltr">
 
-**Two meters: operation units and storage across regions.** Every plan
-includes a monthly operation-unit allowance and a storage allowance. During
-Public Alpha those allowances are hard limits: there are no paid overages,
-and reaching one never creates a charge (see [pricing & limits](/hi/pricing/)).
+# Usage accounting
 
-Stated precisely, because honesty is the brand:
+The public catalog meters operation units and storage across selected regions. Each started 4 KiB successfully read or written counts as one operation unit. Writes count once per selected region; reads count only in the serving region. Denied and failed requests are not billed.
 
-- **Infrastructure is not free.** We pay for the edge, the regions, and the
-  hardware. The meters follow the work you ask for: the bytes you read and
-  write, and the bytes you keep.
-- **Replicated writes count once per region.** We never say "no per-region
-  cost". Multi-region durability is real work, and it is metered as exactly
-  what it is, shown up front when you select regions.
+Plan allowances are shared at the organization level. Check the [canonical pricing sheet](/hi/pricing) and [limits](/hi/limits) before enrollment. Pricing policy does not establish the deployed availability of a database workflow or an unqualified replication guarantee.
 
-## The operation unit
-
-One operation unit is each started 4 KiB (4,096 bytes) of a logical object
-successfully read or written. Lists, queries, and batches count each item
-independently. Writes count once per selected region; reads count only in the
-serving region. Failed, denied, invalid, throttled, and not-found requests are
-not billed. That is the entire metering rule.
-
-A write counts **once per selected region** regardless of how many shared
-views it affects or how many clients are attached to them.
-Authorization-equivalent subscribers share one view, one delta computation,
-and one log append, so fan-out does not multiply the write.
-
-## The gigabyte
-
-Stored bytes count once in every selected region: the canonical bytes of your
-current documents plus retained history, TTL-aware. Indexes, backups, and
-service-managed storage overhead do not count toward storage.
-
-## Prices require evidence
-
-Each plan price must be backed by measured unit costs, and guarded dimensions
-must have measured worst cases under their guards. Customer usage facts must
-reconcile with invoices.
-
-A stored card does not authorize charges beyond your plan. Databases and
-branches share normal organization allowances; there is no additional branch
-allowance. Review the [billing policy](/hi/pricing/) for allowance exhaustion,
-continuing storage costs, and retention policies.
+</div>

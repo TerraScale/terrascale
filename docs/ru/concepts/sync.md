@@ -1,52 +1,26 @@
 ---
+title: Live updates and checkpoints
 ---
+
 <!-- i18n:fallback:ru -->
 > **Перевод на проверке.** У этой страницы пока нет проверенного человеком перевода на русский, поэтому показан английский оригинал.
 
-# Live queries
+<div lang="en" dir="ltr">
 
-Subscribe to an authorized SQL result to receive its initial contents and
-later changes. A bounded query such as “the latest 20 posts” keeps the result
-manageable. Collection sync provides an authorized outer subset that the
-TanStack adapter can filter locally. No durable offline writes or full local
-replica ships at launch.
+# Live updates and checkpoints
 
-## Delivery and access
+The published JavaScript SDK includes collection `shape` reads for snapshots and change-log chunks. That surface is separate from the old SQL/reactive-view client and from proof of a deployed live-update journey.
 
-HTTP delivery is the default; WebSocket is optional. Subscribers with the
-same authorized query can share immutable responses. A subscription returns
-its view identifier, snapshot and log URLs, an opaque checkpoint, and a
-short-lived view capability. The SDK sends it in the canonical
-`X-TerraScale-Capability` request header; never place credentials in URLs or
-publish them. The capability is issued in ten-minute buckets and is accepted
-for at most 1,200 seconds from issuance while its view, generation, Region,
-and authorization scope remain valid. Attach a fresh view after it expires.
+## Current shape surface
 
-Use the SDK’s result view to apply ordered changes. Do not infer write success
-from an optimistic local update: wait for the document API acknowledgement.
-See the [quickstart](/ru/getting-started/) for document writes and live rendering.
+A shape bootstrap starts with an offset of `-1`. Responses carry a handle, next offset and continuation cursor; preserve those fields unchanged for the next read. A `must_refetch` response means the application must discard its previous shape state and obtain a fresh authorized snapshot. Do not interpret a handle or cursor as a replication vector.
 
-## Resume and resets
+The supported request and response contract must match the serving release. A collection query page is a point-in-time response, not a subscription. The CRUD quickstart does not qualify snapshot resume, reconnect, permission changes, slow consumers or WebSocket delivery.
 
-A checkpoint resumes retained changes when its view and authorization remain
-valid. Treat its bytes as opaque. Retention expiry or a change to schema,
-access rules, or branch state may require a typed reset and a fresh authorized
-snapshot. Let the SDK replace the old view; do not append a new snapshot onto
-stale rows. Two different views do not promise a mutually consistent cut.
+## Compatibility boundary
 
-Close subscriptions when their component or request ends. Reconnect and
-error handling must respect permission revocation and the current scope.
-Revoking an API key stops new authenticated API operations and future view
-attachments; an already issued reactive capability can remain usable until
-its expiry (at most 1,200 seconds), subject to the service's authorization
-checks. A disconnected client does not gain permission to keep reading new
-changes.
+Older `TerraScaleSyncV1Client`, shared reactive views and SQL subscription examples target a different SDK contract and an unpublished pin. They are retained only as local compatibility fixtures. Do not copy them into a new application using the current root entrypoint.
 
-## Billing and limits
+Keep durable writes on the authorized server path. A reversible optimistic UI does not prove a write committed or create an offline mutation contract. Confirm real-service live-update availability before implementing a browser integration.
 
-Fan-out to subscribers does not multiply a write: authorization-equivalent
-subscribers share one view. Shared-view and connection guards are disclosed
-safety limits; a guard never adds a charge. Reads and writes consume
-operation units, and logical storage counts in every selected Region, under
-the organization’s plan. See
-[pricing and limits](/ru/pricing/).
+</div>

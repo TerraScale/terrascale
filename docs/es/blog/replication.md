@@ -1,22 +1,14 @@
 ---
+title: Durability reference
 ---
+
 <!-- i18n:fallback:es -->
 > **Traducción pendiente.** Esta página aún no tiene revisión humana en español y muestra el contenido original en inglés.
 
-# Choosing durability across Regions (draft)
+<div lang="en" dir="ltr">
 
-> Draft. The required guarantees still need production qualification.
+# Durability reference
 
-Choose database Regions according to your users and residency requirements.
-The placement is immutable and applies to backups, restores, exports, and
-branches as well as ordinary database storage.
+Read [replication and durability](/es/concepts/replication) for current write acknowledgement semantics and the separate multi-region qualification boundary.
 
-RegionalDurable acknowledges durability within the accepting Region;
-GlobalDurable requires every selected Region and the write’s causal
-dependencies. A stronger acknowledgement may be unavailable during an outage.
-The [replication guide](/es/concepts/replication) explains sessions, uncertainty,
-and the limits of cross-Region conflict resolution. Neither option promises
-linearizable reads or global uniqueness.
-
-Writes count one operation unit per 4 KiB in every selected Region, and
-storage counts in every selected Region, before included allowances. Review [pricing](/es/pricing/) before choosing placement.
+</div>

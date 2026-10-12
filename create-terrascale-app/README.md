@@ -51,7 +51,7 @@ it writes posts through the published typed `client.documents.put` API. There is
 - There is nothing to install locally: TerraScale has no customer-run emulator
   or local database process. `terrascale dev` gives you a personal cloud branch
   of your project's database, and dev and prod run the same engine in the same
-  regions (D-18).
+  regions (legacy reference).
 - Open the app in two tabs to attach the same cloud-backed live result view.
   Add a post in either tab to exercise a real write and live delivery.
   Sign in separately in each tab.

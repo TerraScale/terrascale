@@ -1,35 +1,21 @@
 ---
-title: Legal
-description: Terms of Service, Privacy Policy, DPA, security disclosures, and support policy for TerraScale.
+title: Legal documents
 head: [['meta', { name: 'robots', content: 'noindex' }]]
 ---
 
 <!-- i18n:fallback:zh-cn -->
 > **翻译待审。** 此页面尚无经人工审校的中文译文，暂显示英文原文。
 
-# Legal
+<div lang="en" dir="ltr">
+
+# Legal documents
 
 ::: warning Draft — not yet in effect
-This document is an unpublished draft. It is not yet in effect and does not
-govern your use of TerraScale.
+This page is not an effective legal contract or service commitment.
 :::
 
-::: danger
-DRAFT — not legal advice, not published. Blocked on owner action O-5 (legal entity name + jurisdiction).
+Binding terms, a privacy policy and a data processing agreement are not published as effective contracts here. Obtain the approved documents before enrollment.
 
-Publication is also blocked on O-4 provider work. [PLACEHOLDER — written
-confirmation of the Stripe Tax account and configuration is not on file. Do not
-publish these drafts until that confirmation and the owner's legal review are
-complete.]
-:::
+See [authentication](/zh-cn/guides/authentication) and [service availability](/zh-cn/getting-started/).
 
-- [Terms of Service](./terms.md) — the rules of the service, pricing, billing, availability, and termination.
-- [Privacy Policy](./privacy.md) — what we store, residency, retention, and deletion.
-- [Data Processing Addendum](./dpa.md) — processing scope and security measures.
-- [Security](./security.md) — vulnerability disclosure and `security.txt`.
-- [Support policy](./support.md) — current support availability, self-service
-  diagnostics, and the absence of launch response commitments.
-
-These pages describe the intended public self-service launch. They are not an
-offer, contract, or notice until the placeholders are replaced and the pages
-are expressly approved for publication.
+</div>

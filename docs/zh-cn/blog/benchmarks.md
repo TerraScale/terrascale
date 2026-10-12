@@ -1,15 +1,14 @@
 ---
+title: Benchmark availability
 ---
+
 <!-- i18n:fallback:zh-cn -->
 > **翻译待审。** 此页面尚无经人工审校的中文译文，暂显示英文原文。
 
-# Benchmark publication policy
+<div lang="en" dir="ltr">
 
-No measured performance results are published yet. Latency, throughput,
-reader capacity, and comparisons must be supported by recorded runs before
-we advertise them.
+# Benchmark availability
 
-Each future result must identify source and artifact versions, hardware and
-resource limits, workload, durability, Region placement, and limitations.
-Comparisons must use equivalent conditions. A target is not a measured result;
-local unit tests and site builds do not establish production performance.
+No reproducible production benchmark is published here. Do not infer latency, capacity, concurrency or cost from a local example. Published measurements need their workload, versions and qualification boundary.
+
+</div>

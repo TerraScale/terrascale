@@ -1,25 +1,18 @@
 ---
+title: TerraBase concepts
 ---
+
 <!-- i18n:fallback:ja -->
 > **翻訳レビュー待ち。** このページはまだ日本語の人力レビューがなく、英語の原文を表示しています。
 
-# Concepts
+<div lang="en" dir="ltr">
 
-- **Documents and collections.** JSON documents with string IDs; schema JSON is
-  the source of truth (`terrascale push` applies it, codegen reads it).
-- **SQL is the only query language (D-78).** Read-only `SELECT` over extracted
-  columns, `body` JSON paths, and `_` metadata columns. Writes stay document
-  operations (create/update/patch/delete), never SQL DML.
-- **Live queries vs collection sync (D-38).** A live subset `SELECT` (one
-  collection, `WHERE` + `ORDER BY` + `LIMIT` + `MATCH`) is subscribable and
-  maintained incrementally; collection sync keeps an authorized outer subset
-  that a local store (e.g. TanStack DB) narrows client-side.
-- **Branches.** Database branching incl. `terrascale dev` cloud dev branches —
-  no customer-run emulator or local database process.
-- **Tenants.** Database-per-tenant is the intended model. Tenant provisioning
-  is awaiting its producer contract, so no public tenant provisioning API is
-  available yet.
-- **Placement.** A database's bytes at rest exist only in its selected Regions;
-  the placement lock cannot be widened (D-52).
+# TerraBase concepts
 
-See [Runnable snippets](./snippets.md) for executable versions of each idea.
+TerraBase stores your application's JSON documents in named collections within a project-scoped database. An SDK handle selects a resource; issuing an operation contacts its authorized endpoint.
+
+Documents carry opaque versions for conditional updates. Queries use JSON filters and opaque continuation cursors. See [queries and pagination](/ja/guides/queries).
+
+[Replication](/ja/concepts/replication) distinguishes current write results from multi-region product requirements. [Live updates](/ja/concepts/sync) and [SQL compatibility](/ja/concepts/sql) describe separate contracts and their availability boundaries.
+
+</div>

@@ -1,106 +1,66 @@
 ---
-title: SDK compatibility and qualification
+title: SDK reference
 ---
 
 <!-- i18n:fallback:pt-br -->
 > **Tradução pendente.** Esta página ainda não passou por revisão humana em português e mostra o conteúdo original em inglês.
 
-# SDK compatibility and qualification
+<div lang="en" dir="ltr">
 
-Use a candidate SDK matched to the project-scoped C# TerraBase Documents API:
-`/v1/projects/{project}/databases/{database}/…`. Start with the
-[C# quickstart](/pt-br/getting-started/csharp). Candidate source, a locally packaged
-SDK, a stub run and real-binary compatibility evidence establish different
-things; they do not establish public release availability or cross-SDK parity.
+# SDK reference
 
-## Candidate client surfaces
+Use the project-scoped TerraBase Documents API for new document applications. SDK installation, source implementation and deployed service compatibility are separate facts.
 
-| SDK | Project-scoped surface | Qualification boundary |
-| --- | --- | --- |
-| C# `TerraScale.DotNet` | `TerraBaseDocumentsClient`, `Database(projectId, databaseName)`, document CRUD, `QueryAsync`, `TransactAsync` | Exact locally packaged candidate passed real-binary CRUD, query, precondition, denial and cleanup checks; public NuGet installation and deployed JWT journey remain unqualified |
-| JavaScript `@terrascale/sdk` candidate | `createTerraBaseV1Client`, `database(name)`, collection CRUD, typed filters, cursor pages, transactions and shapes | Candidate package publication and real-runtime/customer journey remain unqualified |
-| Go `terrascale.tech/sdk/v1` candidate | `New(Config)`, `Database(projectId, name)`, collections, document CRUD, typed queries and transactions | Pin an immutable module version; source/test helpers do not establish the deployed journey or parity with C# |
-| Legacy Next.js and snippet fixtures | `createTerraScaleClient`, typed SQL and `TerraScaleSyncV1Client`, pinned to `@terrascale/sdk` 0.3.0 | Local stub references only; that pin is not publicly installable and targets a different contract |
+## Languages and installation
 
-Package availability was checked on October 7, 2026. The current candidates
-are not published on public NuGet/npm. The latest public `@terrascale/sdk` version
-on npm is `0.0.2`; its presence does not make the legacy `0.3.0` fixture or the current
-candidate installable. Do not silently replace an exact candidate artifact
-with another registry version.
+Availability checked **October 12, 2026 (UTC)** against the public registries and committed SDK source.
 
-The C# `NativeClient`/`NativeDiscoveryRouter` and the retired UUID/shard
-protocol are legacy. New examples use project/database names, named
-collections and JSON documents. A document identifier may still be a UUID;
-that does not turn the request into the retired tenant/shard protocol.
-C# query-v1 uses typed filters, sorting, projection and cursor pages; the
-legacy SQL/reactive API is not its query contract.
+| Language | Package / entrypoint | Runtime | Current evidence |
+| --- | --- | --- | --- |
+| JavaScript / TypeScript | `@terrascale/sdk@0.0.3`, `createTerraBaseV1Client` | Node 22 or 24; npm ≥11; bundled TypeScript declarations | Published npm artifact; [quickstart](/pt-br/getting-started/javascript) |
+| C# | `TerraScale.DotNet`, `TerraBaseDocumentsClient` | .NET 10; source also targets .NET 11 with that toolchain | Public NuGet package endpoint returns 404; exact candidate package required |
+| Go | `terrascale.tech/sdk/v1`, `New(Config)` | Go ≥1.25 | Source candidate; public immutable module availability and customer journey not established here |
 
-## Endpoints and safe writes
+The npm package declares the latest major Chrome, Firefox, Safari and Edge. Its React, Svelte and TanStack entrypoints have their own package requirements; they do not establish live-service parity with the Documents examples. No public Python, Java or Rust SDK release is verified for this contract.
 
-Configure exactly one explicit HTTPS endpoint or caller-supplied resolver:
-C# `BaseAddress`/`EndpointResolver`, JavaScript `baseUrl`/`endpointResolver`,
-or Go `BaseURL`/`Resolver`. These options do not promise regional fallback or
-proxy fallback.
+### JavaScript / TypeScript
 
-C# clients use a caller-owned `HttpClient`; use
-`TerraBaseHttp.CreateHandler()` to disable automatic redirects and cookies.
-The caller disposes the transport. Keep credentials out of source control,
-logs and browser bundles.
+```bash
+npm install --save-exact @terrascale/sdk@0.0.3
+```
 
-Document versions are opaque ETags. C# supports create-only
-`TerraBasePrecondition.Absent` and version-matched
-`TerraBasePrecondition.Matches(version)` writes. Pass returned `NextCursor`
-values unchanged when paging. The candidate supports database-scoped atomic
-transactions; qualification must cover the operations the application uses.
+Import from `@terrascale/sdk`. The root exposes `createTerraBaseV1Client`, `v1Filter` and typed errors. `client.database(name).collection(name)` selects a collection. It provides `create`, `get`, `put`, `patch`, `delete`, `query`, `pages` and `items`. See [the complete example](/pt-br/getting-started/javascript).
 
-C# sends requests once. The producer does not promise mutation deduplication
-and rejects `Idempotency-Key`; a timeout or lost response is not proof of an
-abort. Do not replay an uncertain mutation automatically. Go has its own
-bounded retry policy for safe operations; do not assume every SDK shares it.
+### C#
 
-## Credentials and service ownership
+Obtain a verified immutable package/feed containing `TerraBaseDocumentsClient` and its exact version. The [C# quickstart](/pt-br/getting-started/csharp) shows the package-only build command. Do not present the source project's `0.1.0` value as proof of a public release.
 
-The candidate C# Documents client accepts historical `tb_` API keys with
-`documents:read` and/or `documents:write` permissions. This is isolated
-compatibility evidence. The product design accepts ts-auth JWTs; deployed
-JWT validation, authorization and sign-in remain separate gates. A
-historical-key CRUD result cannot qualify that production journey.
+`Database(projectId, databaseName)` returns a handle with `CreateDocumentAsync`, `GetDocumentAsync`, `PutDocumentAsync`, `PatchDocumentAsync`, `DeleteDocumentAsync`, `QueryAsync` and `TransactAsync`. A caller-owned `HttpClient` must disable redirects and cookies; use `TerraBaseHttp.CreateHandler()` and dispose the transport yourself.
 
-Auth owns users, organizations, projects and identity lifecycle. Store all
-application data in TerraBase through its SDK. Do not build duplicate identity
-or project management models from retained SDK management methods. Dashboard
-sign-in stays on native dashboard pages.
+### Go
 
-## Qualification gates
+The source candidate uses module `terrascale.tech/sdk`, imported through `terrascale.tech/sdk/v1`. Its `New(Config)` client takes an explicit `BaseURL` or `Resolver`, plus `Token`. `Database(projectId, name)` and named collections scope document operations. Pin an immutable verified module version before integration; this page does not provide an unverified `go get ...@latest` command.
 
-1. **Package:** verify the exact artifact version and SHA-256; compile a fresh
-   consumer against the package, without a source project reference. A local
-   package is not a public NuGet/npm release.
-2. **Real producer:** run the same CRUD example against the independently
-   identified C# release binary using the SDK Testing helper and an isolated
-   allocation. Check persisted values, version preconditions and cleanup.
-   Missing inputs or a stub cannot pass this gate.
-3. **Endpoint and authorization:** qualify the configured endpoint or resolver,
-   direct regional dispatch and accepted ts-auth JWTs. A
-   configured endpoint with historical keys establishes only compatibility
-   for that lane.
-4. **Customer journey:** qualify supported provisioning, native dashboard
-   sign-in, application authorization and any live-update operations through
-   public SDKs/APIs. Check each SDK independently.
+## Contract and routing
 
-`npm run qualify:dotnet` is the exact-package C# lane; its current evidence and
-commands are described in the [C# quickstart](/pt-br/getting-started/csharp). The
-[sanitized receipt](https://github.com/TerraScale/ts-docs/src/branch/main/examples/terrabase-dotnet/qualification.json)
-records `PASS_REAL_TERRABASE_STARTER` for SDK source revision
-`13f795b661654b0d50453acf71b70a681d0458c0` against producer revision
-`ff256067015433c8c40b59879f1282d2a40480ce`. It verifies CRUD, a matching query,
-stale-version rejection, read-only write denial, invalid-credential rejection
-and cleanup. This is an exact locally packaged candidate, not a published release. A passing isolated CRUD receipt still leaves public package
-availability, product JWTs, other SDK runtimes and the deployed customer
-journey unqualified.
+The current public contract uses project IDs, database and collection names, JSON documents, opaque versions, JSON filter queries and database-scoped transactions. Older SQL, UUID/shard and reactive-view examples are separate contracts. Do not mix their methods or credentials with this API.
 
-`npm test` checks the legacy deterministic stub and documentation consistency.
-`npm run test:remote` is the explicit credential-gated legacy snippet lane;
-it does not import the new candidate C# package or prove the candidate
-Documents API. The [legacy Next.js guide](/pt-br/getting-started/) and
-[snippets](/pt-br/snippets) retain their version pins as historical references.
+For the current JavaScript artifact, collection routes are rooted at:
+
+```text
+/v1/projects/{project}/databases/{database}/collections/{collection}
+```
+
+`POST /documents` creates a server-generated document ID. `GET`, `PUT`, `PATCH` and `DELETE /documents/by-key?id={id}` address a document. `POST /query` returns one cursor page. Use the SDK's named operations to encode identifiers and validate responses.
+
+Configure exactly one HTTPS endpoint or resolver. A configured endpoint proves only that lane. Neither an API origin nor a published SDK establishes region failover, production readiness or automatic discovery.
+
+## Credentials, retries and compatibility
+
+The current SDKs carry bearer credentials. Authorization still depends on the serving API and the selected project/database. Historical API-key compatibility is not proof of deployed sign-in or JWT authorization. See [authentication](/pt-br/guides/authentication).
+
+JavaScript and C# send each request once. They do not provide mutation deduplication; `Idempotency-Key` is unsupported in this contract. Go has bounded retries for safe operations. Preserve versions and reconcile uncertain writes rather than blindly replaying them. See [errors](/pt-br/guides/errors).
+
+The retained C# starter has an isolated, package-only real-binary CRUD/query qualification receipt. It covers persisted values, preconditions, authorization denial and cleanup for that exact candidate. It does not qualify the latest source revision, other SDKs, public package releases, multi-region behavior or the hosted customer journey.
+
+</div>

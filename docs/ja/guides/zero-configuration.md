@@ -1,60 +1,33 @@
 ---
-title: How TerraScale runs with zero configuration
-description: Always-on regions, automatic node discovery and automatic production credentials.
+title: Zero-configuration contract
+description: Always-on platform behavior, customer authorization and automatic secret delivery.
 ---
 
 <!-- i18n:fallback:ja -->
 > **翻訳レビュー待ち。** このページはまだ日本語の人力レビューがなく、英語の原文を表示しています。
 
-# How TerraScale runs with zero configuration
+<div lang="en" dir="ltr">
 
-TerraScale's operating contract is that the platform works without feature
-activation, deployment switches or tuning settings. Every feature is always
-on. Infrastructure work still in progress is recorded in the
-[zero-configuration inventory](/ja/zero-config-inventory); this contract does not
-claim that every historical switch has already been removed.
+# Zero-configuration contract
 
-## Every region serves automatically
+TerraScale's operating contract is that platform features work without activation flags, deployment toggles or operator tuning. This contract states required behavior; it does not claim every current SDK or hosted workflow has completed release qualification.
 
-Every region runs all the time. A region does not need an enable step before
-it can serve requests. The platform discovers the available regions and a
-node learns its own region from where it runs. Clients discover regional
-endpoints automatically.
+## Features and regions are always on
 
-Database placement still defines where a customer's data may live. Automatic
-region discovery never widens that residency boundary. See
-[regions and placement](/ja/guides/).
+Every feature is always available within its authorization and service contract. Every region begins serving when it is ready, without a customer enable step. Availability does not bypass authentication, resource scope, residency or safety limits.
 
-## Network membership admits a node
-
-A node on the private network joins the cluster automatically,
-discovers every region and starts serving. Membership in that network is the
-admission boundary; there is no separate cluster-join or per-region feature
-switch. Existing serving nodes are updated in place. Every server has at least
-2 cores (vCPU).
+Customer-selected database placement determines where data may reside. Automatic platform operation does not widen that boundary. Check the serving release's supported placement and [replication semantics](/ja/concepts/replication) before relying on them.
 
 ## Production secrets arrive automatically
 
-The platform creates, delivers and configures first-party production secrets
-automatically. Services receive the credentials they need without an operator
-copying keys, writing environment files or toggling secret delivery.
+Production secrets come from the platform's secret store. Services receive their credentials automatically; secrets are not copied by hand, committed to this repository or delivered through browser assets. Vendor-issued keys use the same secret-store process.
 
-Third-party providers such as Stripe and Cloudflare issue their own keys.
-Those keys are stored once in the platform's secret store and picked up
-automatically. This
-vendor-issued input does not turn a TerraScale feature on or off.
+Customer applications still need authorized credentials. Store those in the application's secret manager and follow [authentication](/ja/guides/authentication).
 
-Customer sign-in and application credentials still authorize access to customer
-data. Automatic service credentials do not grant anonymous access or put
-production secrets in browser bundles.
+## Correct defaults belong in code
 
-## Correct behavior belongs in code
+The platform uses one correct setting for each behavior. Features do not depend on opt-in flags, demo stores or skip-auth production modes. Test fakes remain in test code.
 
-Each value has one correct setting in code. Production binaries contain no
-feature flags, demo stores, skip-auth modes or disable switches. Fakes and
-demo modes live only in test code and test binaries.
+The current SDK candidates require an explicit authorized endpoint or caller-supplied resolver. The platform operating contract does not manufacture automatic discovery support in a client that lacks it. See [SDK reference](/ja/guides/sdks) for implemented surfaces and availability.
 
-Every repository states this rule. A shared CI check rejects newly added
-switch-style configuration, and code review requests changes when a new
-switch violates the contract. Historical switches are inventoried for removal
-in their owning repositories.
+</div>

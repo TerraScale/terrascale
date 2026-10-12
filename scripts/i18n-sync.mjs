@@ -39,6 +39,7 @@ const markerFor = (loc) => `<!-- i18n:fallback:${loc} -->`;
 const rewriteLinks = (body, loc) => {
   const p = `/${loc}`;
   const rep = (m, open, path, close) => {
+    if (/^\/(?:examples|brand|fonts)\//.test(path) || path === '/favicon.svg' || path === '/llms.txt') return m;
     if (path === '/') return `${open}${p}/${close}`;
     if (path === p || path.startsWith(`${p}/`)) return m;
     return `${open}${p}${path}${close}`;
@@ -74,7 +75,7 @@ const buildFallback = (enText, loc, enRel) => {
     if (stack.length === 0 || stack[0] === '..') return full; // escapes docs: leave alone
     return `${open}@/${stack.join('/')}${rest}`;
   });
-  return `${fm}${markerFor(loc)}\n${FALLBACK_BANNERS[loc]}\n\n${body}`;
+  return `${fm}${markerFor(loc)}\n${FALLBACK_BANNERS[loc]}\n\n<div lang="en" dir="ltr">\n\n${body}\n</div>\n`;
 };
 
 let changed = [];

@@ -1,121 +1,37 @@
-# TerraScale docs — llms.txt (P-8)
+# TerraScale documentation
 
-> TerraScale is a multi-region document database-as-a-service. The current
-> C# TerraBase candidate exposes project-scoped JSON Documents APIs, typed
-> filter queries and transactions. Retained SQL, reactive, branching and
-> tenant guides describe separate legacy contracts and product targets;
-> they are not evidence of candidate runtime or launch qualification.
-> Usage is metered in operation units (each started 4 KiB read
-> or written; writes count once per selected region, reads only in the
-> serving region) and storage across regions. Plans use hard allowances with
-> no paid overages during Public Alpha.
-> SQL-only querying (D-78) belongs to the retained legacy design, not candidate
-> Documents query-v1. A write counts once per selected region regardless of
-> views/subscribers (D-22).
+> TerraBase stores project-scoped JSON documents. The JavaScript SDK
+> @terrascale/sdk@0.0.3 is published. C# and Go candidate availability and
+> hosted authorization must be verified independently. A package release
+> does not establish public self-service launch or multi-region guarantees.
 
-Base URL: https://docs.terrascale.tech
+## Documentation
 
-## Docs map
+- [Developer documentation](https://docs.terrascale.tech/)
+- [Current quickstarts and service availability](https://docs.terrascale.tech/getting-started/)
+- [Published JavaScript SDK 0.0.3 installation and CRUD/query example](https://docs.terrascale.tech/getting-started/javascript)
+- [C# candidate package-only quickstart; public NuGet release unavailable](https://docs.terrascale.tech/getting-started/csharp)
+- [Supported runtimes, public package availability and current SDK contracts](https://docs.terrascale.tech/guides/sdks)
+- [Scoped credentials, server/browser boundaries and authorization availability](https://docs.terrascale.tech/guides/authentication)
+- [JSON filters, projection, opaque pagination and version preconditions](https://docs.terrascale.tech/guides/queries)
+- [Typed errors, SDK retry behavior and uncertain mutation reconciliation](https://docs.terrascale.tech/guides/errors)
+- [Customer dashboard and application database workflow](https://docs.terrascale.tech/guides/dashboard)
+- [Public always-on operating contract and secret-store delivery](https://docs.terrascale.tech/guides/zero-configuration)
+- [Current write results and separate multi-region qualification boundary](https://docs.terrascale.tech/concepts/replication)
+- [Shape reads and legacy live-update compatibility](https://docs.terrascale.tech/concepts/sync)
+- [Separate SQL entrypoint and contract compatibility](https://docs.terrascale.tech/concepts/sql)
+- [Pricing overview](https://docs.terrascale.tech/pricing/)
+- [Generated canonical plan catalog](https://docs.terrascale.tech/pricing)
+- [Documents API limits and proposed plan safety policies](https://docs.terrascale.tech/limits)
+- [Current examples and legacy fixture boundaries](https://docs.terrascale.tech/snippets)
+- [Documentation changes, not service release announcements](https://docs.terrascale.tech/changelog)
 
-- TerraScale docs home: what TerraScale is, quickstart with an unqualified five-minute target.: https://docs.terrascale.tech/
-- Legacy Next.js starter: unpublished SDK pin; sign-in and live-update journey unqualified.: https://docs.terrascale.tech/getting-started
-- Legacy Next.js live-query guide: @terrascale/sdk 0.3.0 is not published; stub success does not qualify the browser journey.: https://docs.terrascale.tech/getting-started/
-- C# candidate quickstart: project-scoped TerraBase Documents CRUD through an exact SDK package; isolated real-binary qualification is separate from production JWTs.: https://docs.terrascale.tech/getting-started/csharp
-- Zero-configuration operating contract: all regions serve, nodes join automatically, the platform delivers production secrets; historical switch removal is tracked separately.: https://docs.terrascale.tech/guides/zero-configuration
-- SDK compatibility: project-scoped C#, JavaScript and Go candidates; public release, real-runtime and customer-journey gates are distinct.: https://docs.terrascale.tech/guides/sdks
-- Product concepts and legacy SQL/live-query design; candidate Documents query-v1 is a separate contract.: https://docs.terrascale.tech/concepts
-- Replication guarantees: causal sessions, conflict limits, RegionalDurable/GlobalDurable.: https://docs.terrascale.tech/concepts/replication
-- Sync model: shared views, immutable delta log, CDN delivery.: https://docs.terrascale.tech/concepts/sync
-- SQL: live subset, allow-list, typed builder, auto-indexing.: https://docs.terrascale.tech/concepts/sql
-- Pricing philosophy: operation units and storage across regions are the two meters.: https://docs.terrascale.tech/concepts/pricing-philosophy
-- Guides overview.: https://docs.terrascale.tech/guides/
-- Pricing (generated from the canonical https://terrascale.tech/pricing.json): plans, operation units, storage across regions.: https://docs.terrascale.tech/pricing
-- Pricing & limits: plans, quotas, guards, shared organization allowances.: https://docs.terrascale.tech/pricing/
-- Limits and unbilled abuse guards, generated from the same source as pricing.: https://docs.terrascale.tech/limits
-- Legacy CRUD, SQL and live-subscription fixtures use an unpublished 0.3.0 pin; database-scoped branch, backup, and export routes are published in the retained legacy contract only, not qualified by these fixtures. Candidate APIs require separate evidence.: https://docs.terrascale.tech/snippets
-- Superseded launch post draft: Reads are free — how.: https://docs.terrascale.tech/blog/reads-are-free
-- Benchmark publication policy: no measured results published.: https://docs.terrascale.tech/blog/benchmarks
-- Draft: choosing durability across Regions.: https://docs.terrascale.tech/blog/replication
-- Launch post draft: a database per customer.: https://docs.terrascale.tech/blog/database-per-customer
-- Changelog.: https://docs.terrascale.tech/changelog
+## Current contract
 
-## Pricing summary (canonical source: https://terrascale.tech/pricing.json; full tables in /pricing and /pricing/)
-
-- Plans: Hobby $0/month, Starter $5/month, Pro $50/month, Enterprise $500/month (unavailable during Public Alpha).
-- One operation unit is each started 4 KiB (4,096 bytes) of a logical object successfully read or written. Lists, queries, and batches count each item independently. Writes count once per selected region; reads count only in the serving region. Failed, denied, invalid, throttled, and not-found requests are not billed.
-- Storage across regions: Stored bytes count once in every selected region.
-- Plans use hard allowances during Public Alpha. New billable work stops at the allowance. Reads, exports, deletion, and usage reduction remain available.
-
-## Legacy snippet harness
-
-- Fixtures retain @terrascale/sdk 0.3.0, which is not published on npm.
-  Stub success does not establish candidate producer compatibility.
-- Snippet sources: docs/snippets/*.ts. Runnable snippets export `run(sandbox)`.
-- Local mode (the default): `npm test` runs the deterministic stub harness.
-- Remote qualification (explicit, fail-closed): set TERRASCALE_SANDBOX_URL,
-  TERRASCALE_SANDBOX_API_KEY, and TERRASCALE_SANDBOX_DATABASE_ID, then run
-  `npm run test:remote`. The local harness does not qualify the remote
-  contract.
-
-## API entry points
-
-Base domain terrascale.tech. Regions at launch: GRU (São Paulo), SJC (San Jose).
-
-- Current SDK candidates require an explicit HTTPS endpoint or caller-supplied
-  resolver. No catalog or proxy fallback is promised. A configured endpoint proves only its own lane.
-- API router: https://api.terrascale.tech. Configure the service endpoint explicitly;
-  the SDK candidates do not select it implicitly.
-- Regional API origins: https://gru.api.terrascale.tech,
-  https://sjc.api.terrascale.tech.
-  Use configured or verified resolved endpoints, not a hardcoded region default.
-- Candidate documents: GET/PUT/PATCH/DELETE
-  /v1/projects/{project}/databases/{database}/collections/{collection}/documents/{id};
-  POST to the collection's /documents route creates a document.
-- Candidate queries: POST
-  /v1/projects/{project}/databases/{database}/collections/{collection}/query
-  uses filter, sort, project, limit, cursor and count; cursors are opaque.
-- Candidate transactions: POST /v1/projects/{project}/databases/{database}/transactions.
-  Versions are opaque ETags. C# requests go once; mutation deduplication is not
-  promised and Idempotency-Key is rejected.
-
-## Retained legacy API references (not candidate qualification)
-
-- Reactive HTTP (live queries; CDN-backed long-polling, capability header):
-  https://sync.api.terrascale.tech
-- SQL (read-only; JSON or MessagePack):
-  POST /api/v1/databases/{id}/sql
-- Reactive views (create/attach; returns view id, snapshot chunk URLs, log
-  URL, checkpoint, view capability):
-  POST /api/v1/reactive/views
-- Reactive log (shared cache key; offset = revision):
-  GET /api/v1/reactive/views/{view}/{generation}/log?offset={revision}
-- Export (lossless bundle or JSONL):
-  POST /api/v1/databases/{id}/exports
-- Public status and metrics pages are deferred.
-
-## SDKs
-
-C# candidate: TerraScale.DotNet.TerraBase.TerraBaseDocumentsClient with
-Database(projectId, databaseName), document CRUD, QueryAsync and TransactAsync.
-JavaScript candidate: @terrascale/sdk createTerraBaseV1Client with explicit
-baseUrl or endpointResolver. Go candidate: terrascale.tech/sdk/v1 with an
-explicit Config.BaseURL or Config.Resolver. Retired NativeClient and UUID/shard
-admission are legacy and do not describe this project-scoped contract.
-
-Current NuGet/npm candidates are not publicly released. As checked October 7,
-2026, the latest public @terrascale/sdk version on npm is 0.0.2; it does not qualify the
-candidate or the legacy 0.3.0 pin. An exact locally packaged C# candidate passed
-real C# binary CRUD/query, stale-version, credential-denial and cleanup checks
-through the SDK Testing helper. Its source-bound receipt is checked in at
-examples/terrabase-dotnet/qualification.json.
-Compilation, isolated compatibility, public package availability and deployed
-customer qualification are separate gates. Follow /getting-started/csharp for
-the current qualification evidence; cross-SDK parity is not established.
-
-The candidate C# Documents client accepts historical tb_ keys in isolated
-compatibility tests. The product design accepts ts-auth JWTs; production JWT
-validation, deployed sign-in and authorization remain unqualified. A historical
-key receipt does not pass that gate. Auth owns users, organizations and projects;
-all application data belongs in TerraBase. Do not duplicate identity/management
-models. Dashboard sign-in stays on native pages. Other SDK/runtime and
-connected customer journeys need independent qualification.
+- Documents use JSON, opaque versions and conditional writes.
+- Queries use JSON filters and opaque continuation cursors, not legacy SQL.
+- JavaScript and C# send once. Mutation deduplication and Idempotency-Key
+  are unsupported. Reconcile a lost response before replaying a write.
+- Configure an authorized HTTPS endpoint or caller-supplied resolver.
+- Do not infer production JWT authorization, leaderless guarantees,
+  automatic endpoint discovery or hosted readiness from a local test.

@@ -30,10 +30,11 @@ const regionList = regions.map((r) => `${r.id.toUpperCase()} (${r.name})`).join(
 const pricingMd = `${header}
 # Pricing
 
-> **Public Alpha.** Prices and allowances come from the canonical catalog at
+> **Pre-launch policy.** Public Alpha prices and allowances come from the canonical catalog at
 > [terrascale.tech/pricing.json](https://terrascale.tech/pricing.json); the
 > [pricing page](https://terrascale.tech/pricing) renders the same catalog.
-> All prices are in ${catalog.currency}.
+> All prices are in ${catalog.currency}. Confirm approved enrollment terms and
+> serving-release availability; this catalog does not qualify a workflow.
 
 ## How usage is metered
 
@@ -76,6 +77,21 @@ const guardRow = (label, values) => row(label, (p) => (typeof values[p.id] === "
 
 const limitsMd = `${header}
 # Limits
+
+## Documents API
+
+The current project-scoped contract has a 4 MiB request-body limit, a query
+page limit of 1–1000 items (default 50), at most 4 sort keys and 64 projection
+paths. A query page also stops at 8 MiB of document JSON or its scan budget,
+so an empty page can still have a continuation cursor. Follow cursors until
+exhaustion; see [queries and pagination](/guides/queries).
+
+## Plan policies (pre-launch)
+
+The figures below come from the public pricing catalog and documentation
+policy. They do not establish deployed enforcement, live-update availability
+or qualified retention, recovery and deletion behavior. Confirm the serving
+release before depending on them.
 
 PITR retention (days): ${plans.map((p) => `${p.name} ${policy.pitrRetentionDays[p.id]}`).join(" / ")}.
 

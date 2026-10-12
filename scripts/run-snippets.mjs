@@ -210,7 +210,7 @@ export function createRemoteSandbox() {
     throw new Error(
       "launch gate not passed: the real cloud sandbox is unavailable. Set " +
         "TERRASCALE_SANDBOX_URL + TERRASCALE_SANDBOX_API_KEY + TERRASCALE_SANDBOX_DATABASE_ID " +
-        "for a cloud dev branch pre-filled with the reader's key (D-56); " +
+        "for a cloud dev branch pre-filled with the reader's key (legacy reference); " +
         "the local stub is never substituted automatically.",
     );
   }
