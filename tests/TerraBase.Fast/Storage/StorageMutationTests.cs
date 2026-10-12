@@ -265,18 +265,4 @@ public sealed class StorageMutationTests
         var engine = api.Server.Services.GetRequiredService<IStorageEngine>();
         return (await engine.OpenDatabaseAsync(await api.TenantOfAsync(), CancellationToken.None))!;
     }
-
-    private static async Task<object?> SqlAsync(DocumentApi api, string sql)
-    {
-        await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
-        {
-            DataSource = await api.DatabaseFileAsync(),
-            Pooling = false,
-        }.ToString());
-        await connection.OpenAsync();
-        await using var command = connection.CreateCommand();
-        command.CommandText = sql;
-        command.Parameters.AddWithValue("$collection", DocumentApi.Collection);
-        return await command.ExecuteScalarAsync();
-    }
 }
