@@ -151,7 +151,8 @@ internal sealed partial class SqliteStorageTransaction
     }
 
     // Worker-only: the _tb_state row of a document, stamped with the operation `at` that last changed it and that
-    // operation's node. A plain UPDATE, then an INSERT when no row exists: the change feed reads after-images only.
+    // operation's node, and its changes feed row. A plain UPDATE, then an INSERT when no row exists: the CDC tailer reads
+    // after-images only.
     private void WriteState(string collection, string id, DocumentState state, EntryVersion at, byte[]? stored = null)
     {
         var digest = DocumentStateEncoding.Digest(state);
@@ -164,6 +165,8 @@ internal sealed partial class SqliteStorageTransaction
             insert.Parameters.AddWithValue("$bucket", Bucket(collection, id));
             insert.ExecuteNonQuery();
         }
+
+        AppendFeed(collection, id, at, state.Exists);
 
         void Bind(SqliteCommand command)
         {
