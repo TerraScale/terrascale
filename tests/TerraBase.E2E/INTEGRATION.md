@@ -81,10 +81,11 @@ had no preview app. PRs that still have a preview app: #79, #88, #106, #108, #11
 **Every PR needs a fresh green `test` run on its exact head after main is green.** A rerun of a failed job while main is
 known flaky proves nothing. #79's 15:30Z rerun request (run 38268608663) does not count.
 
-**#132 before #133 (the integration owner's call).** #133 carries #132's change as its first commit, and PRs are never
-closed, so a superseded #132 would stay open for good. #132 therefore merges first; its contract tests already pass on
-main. #133 then merges main in, the duplicate commit's content is already present, and only R3's routing commit remains.
-Each gets its own fresh green `test` on its exact head.
+**#133 supersedes #132** (the integration owner's call, revised 16:00Z after the user's order to close genuinely
+replaced PRs). #133's first commit `97ed1d7c` is byte-identical in content to all of #132 (`833d21e2`, the three
+contract test files), so #133 contains everything #132 delivers.
+- #132 is closed **only after #133 has merged**, with comments linking both PRs and the preview-workflow check recorded.
+- If #133 stalls, #132 merges on its own instead.
 
 **Six distinct product Fast flakes** are seen so far, the five above plus
 `Declared_JSON_schema_and_native_uniqueness_coexist_without_changing_collection_identity` on #132's run 38270496291.
@@ -96,6 +97,43 @@ All are routed to T1.
 - anything whose Slow or metrics fix is still open.
 
 **No PR is closed.** Closing destroys its preview app, which is the user's pending cleanup decision.
+
+## Open PR overview (user order 15:51Z; baseline 15:59Z)
+
+**Baseline: 21 open in the monorepo, plus ts-dotnet #5.**
+
+| Count since the baseline | Value |
+| --- | ---: |
+| merged | 0 |
+| closed (proven superseded) | 0 |
+
+The 9 merges before the baseline are in the merge-train table.
+
+**Preview workflow check:** workflow 381612805 (`previews.yml`) is `disabled_manually`, re-verified at 15:59Z. It is
+checked again before every close or merge, because no preview deletion is approved.
+
+| PR | Owner | Base | Head | Class | `test` on head | Waits on |
+| --- | --- | --- | --- | --- | --- | --- |
+| #88 | (finished; T1 reviews) | main | `05bd4374` | ready | success (old base) | main green, a fresh run |
+| #106 | R3 | main | `4c32da5e` | ready | success (old base) | main green, a fresh run; the R3 stack's base |
+| #127 | Aspire owner | main | `c8424758` | ready | success | main green, a fresh run; COS check (another thread's PR) |
+| #133 | R3 | main | `79ebd2c2` | ready | success | main green, a fresh run; supersedes #132 |
+| ts-dotnet #5 | Dogfood | main (ts-dotnet) | `4827b03e` | ready | success | #133 (the SDK side of the regional contract) |
+| #79 | strict owner | main | `d9f56bf5` | failing | failure (product Fast flake) | main green, a fresh run |
+| #115 | T1 | main | `787ebc57` | failing | failure (`fmt-check` on vendored sources) | T1's fix; **goes first** |
+| #119 | R8 | stacked on #118 | `90847616` | failing | failure (backup flake, fixed by #128) | its stack, then a rerun |
+| #125 | CI optimizer | main (draft) | `6d384fab` | failing | failure | #130 merged, then a fresh run |
+| #130 | metrics owner | main | `ee4d132e` | failing | failure (old-base flake) | main green, a fresh run |
+| #132 | Tester C (via strict owner) | main | `833d21e2` | proven superseded by #133 | failure (product flake) | closed after #133 merges |
+| #134 | Dogfood | main | `29928db1` | pending | not run yet | its run, main green |
+| #108 | strict owner | stacked on #114 | `7dc901e9` | dependent | success | the R3 stack; then replaced by a base-main assertion-side PR |
+| #111, #112, #113, #114, #117 | R3 | stacked (→ #106) | as pinned | dependent | success (old bases) | #106 merged, then each retargeted bottom-up |
+| #118, #119 | R8 | stacked on #111 | `9277893f`, `90847616` | dependent | success / failure | #111 merged, then retarget |
+| #120 | R3 (R7) | stacked on #117 | `811dbf6e` (pin `24e138c0`) | dependent | success (old head) | #117 merged; R3 pushes `24e138c0` |
+| #116, #121 | R10a | stacked on #117 / #116 | `757ec6c4` / `de0a022f` (pin is the next R10a head) | dependent; **blocked** | success (stale heads) | R10a's catalog-open fix, R3's written verification, #120 merged |
+
+**Owner estimates:** requested 16:00Z from T1 (#115 and the Fast flakes), R10a (restore gate), R3 (the stacks, #133) and
+Dogfood (#134, ts-dotnet #5); recorded here as ranges when they answer.
 
 ## Integration phase 1: items, in combine order
 
