@@ -16,6 +16,9 @@ public sealed class RepairAndContractE2ETests
 {
     private static readonly string[] All = [Cluster.Gru, Cluster.Sjc, Cluster.Fra];
 
+    // The stream lags R4a-2 publishes and the CDC tail lag of design section 18, as Prometheus names them.
+    private static readonly string[] ReplicationSeries = ["terrabase_replication_send_lag", "terrabase_replication_ack_lag", "terrabase_replication_tail_lag"];
+
     // Anti-entropy rounds run every 60 s and repair a bucket that differs in two consecutive rounds (design section 10).
     private static readonly TimeSpan RepairWindow = TimeSpan.FromSeconds(200);
 
@@ -143,7 +146,8 @@ public sealed class RepairAndContractE2ETests
     }
 
     // Replication is observable: /health/replication in every region names the two others as peers with a lag of at most
-    // 5 s once a write converged, and the Prometheus listener exposes the tail lag (design section 18).
+    // 5 s once a write converged, and the Prometheus listener exposes the stream lags R4a-2 publishes and the CDC tail lag
+    // (design section 18).
     [Test]
     public async Task Every_region_reports_its_peers_and_replication_lag_on_health_and_metrics()
     {
@@ -164,7 +168,10 @@ public sealed class RepairAndContractE2ETests
                 {
                     using var metrics = new HttpClient { BaseAddress = cluster.MetricsAddress(region) };
                     var text = await metrics.GetStringAsync(new Uri("/metrics", UriKind.Relative));
-                    await Assert.That(text).Contains("terrabase_replication_tail_lag");
+                    foreach (var series in ReplicationSeries)
+                    {
+                        await Assert.That(text).Contains(series);
+                    }
                 }
             }
         });

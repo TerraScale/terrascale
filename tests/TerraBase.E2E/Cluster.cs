@@ -279,11 +279,11 @@ public sealed class Cluster : IAsyncDisposable
         private readonly string _project = EntityIds.New().ToString();
         private readonly string _database = EntityIds.New().ToString();
 
-        // R2a-1 deleted the region bus the local nodes replicated over, and peer streams (R4a) are not in yet, so there is
-        // no link between local nodes to cut. R4a cuts its peer streams here; until then the partition scenarios fail
-        // loudly and are listed in Gaps.cs.
+        // R4a-2's peer streams connect the local nodes through the shared machine directory, but nothing flows on them until
+        // the CDC source (R3), so a cut could not be checked yet. The cut lands with R3 (hide each side from the other's view
+        // of the directory); until then the partition scenarios fail loudly and are listed in Gaps.cs.
         public void Partition(string a, string b) =>
-            throw new NotSupportedException($"no local link between {a} and {b} to cut: the local nodes have no cross-region transport until peer streams (R4a)");
+            throw new NotSupportedException($"no local link between {a} and {b} to cut: no checkable local link before the CDC source (R3) feeds the peer streams");
 
         public string DataDirectory(string region) => _nodes[region].DataDirectory;
 
@@ -298,10 +298,10 @@ public sealed class Cluster : IAsyncDisposable
             (_nodes[region].Api ?? throw new InvalidOperationException($"{region} is down")).Server.MetricsAddress;
 
         public LossyLink RouteThrough(string a, string b, Func<IPEndPoint, LossyLink> link) =>
-            throw new NotSupportedException($"no local peer link between {a} and {b} to route through a lossy link: peer streams (R4a) publish the peer addresses");
+            throw new NotSupportedException($"no local peer link between {a} and {b} to route through a lossy link: the lossy link lands with the CDC source (R3), when traffic on the peer path can be checked");
 
         public void Heal() =>
-            throw new NotSupportedException("no local link to heal: the local nodes have no cross-region transport until peer streams (R4a)");
+            throw new NotSupportedException("no local link to heal: no checkable local link before the CDC source (R3) feeds the peer streams");
 
         public string ProjectPath => $"/v1/projects/{_project}";
 
