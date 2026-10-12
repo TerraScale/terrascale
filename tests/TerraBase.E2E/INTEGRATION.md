@@ -70,6 +70,17 @@ next; it is not opened yet.
   2. Then beta's candidates, rebased onto main, with T1's written acceptance (and R10a's for the backup-bucket anchor).
 - Beta's work enters this train only once it opens PRs.
 
+**Fixes for main's red go first** (like #115):
+- **#141** (ts-auth SafeLogging pooled-state bug; fail-first 3/3 → 5/5) fixes `c59bfcc5`'s auth logging failures.
+- **#138** (TerraBase binds its own ports) fixes the auth 0 ms fixture failures.
+- Both were brought up to date with main `4cfbf85d` at about 18:50Z via update-branch: #138 → `05ea346f`, #141 →
+  `95157ef7`. Push check passes. #138's earlier green run 38282945774 (17:15Z, old runners, old main) does not count.
+- They merge once green on their exact heads. Then main's push run must be green before the rest of the train.
+
+**Push-check fix (18:52Z):** `push-check.sh` printed PASS for a commit it could not resolve (an empty diff). It now
+fetches first and fails closed on an unknown commit. Every earlier check ran on a commit that was already present
+locally (fetched or built here), and #105's and #108's merge trees matched COS's independent verification.
+
 **Acceptance gaps, kept visible until each has a test and a fix:**
 - **R-A:** stale-machine retention after a SIGKILL.
 - **R-B:** a corrupt CDC entry stalls a region pair.
