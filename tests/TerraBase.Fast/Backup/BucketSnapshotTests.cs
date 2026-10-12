@@ -9,6 +9,50 @@ public sealed class BucketSnapshotTests
 {
     private static readonly DateTimeOffset Start = new(2026, 10, 7, 12, 0, 0, TimeSpan.Zero);
 
+    // The snapshot check reads a response header of its HeadBucket. The S3 client reads its response event twice per
+    // response (a null check, then the call): subscribing a reader per request made a request completing at the same
+    // time call a handler that was just removed (NullReferenceException in ProcessResponseHandlers), failing that pass.
+    [Test]
+    public async Task Checking_bucket_snapshots_does_not_break_requests_running_at_the_same_time()
+    {
+        var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
+        var s3 = new FakeS3();
+        var settings = new Dictionary<string, string>();
+        s3.Configure(settings);
+        var services = new ServiceCollection();
+        s3.Route(services);
+        await using var provider = services.BuildServiceProvider();
+        using var store = new S3ObjectStore(new Uri(settings["backup-endpoint"]), settings["backup-region"], FakeS3.Bucket,
+            settings["backup-access-key-id"], settings["backup-secret-key"], provider.GetRequiredService<IHttpClientFactory>(),
+            S3ObjectStore.HttpClientName, TimeProvider.System);
+        await store.PutAsync("v1/listed", new MemoryStream([1]), token);
+
+        using var stop = CancellationTokenSource.CreateLinkedTokenSource(token);
+        var listings = Enumerable.Range(0, 8).Select(_ => Task.Run(async () =>
+        {
+            while (!stop.IsCancellationRequested)
+            {
+                await foreach (var _ in store.ListAsync("v1/", null, token))
+                {
+                }
+            }
+        }, token)).ToArray();
+        try
+        {
+            for (var check = 0; check < 500; check++)
+            {
+                await Assert.That(await store.SnapshotsEnabledAsync(token)).IsTrue();
+            }
+        }
+        finally
+        {
+            await stop.CancelAsync();
+        }
+
+        // A failed listing surfaces here.
+        await Task.WhenAll(listings);
+    }
+
     [Test]
     public async Task The_system_shipper_keeps_one_bucket_snapshot_a_day_for_fourteen_days()
     {
