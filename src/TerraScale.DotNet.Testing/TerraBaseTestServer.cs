@@ -5,18 +5,20 @@ using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.DotNet.Testing;
 
 /// <summary>
-/// One real TerraBase process for integration tests: a <see cref="TerraBaseRelease"/> binary on free loopback ports,
-/// with a fresh data directory, a generated self-signed TLS certificate for <c>localhost</c> and a generated dashboard
-/// service credential. Test-framework neutral: share one instance per test session and dispose it at the end.
+/// One real TerraBase process for integration tests: the binary named by <c>TERRABASE_BINARY</c> (a build of the TerraBase
+/// commit under test) on free loopback ports, with a fresh data directory, a generated self-signed TLS certificate for
+/// <c>localhost</c> and a generated management service credential. Test-framework neutral: share one instance per test session and dispose it at the end.
 /// </summary>
-public sealed class TerraBaseTestServer : IAsyncDisposable
+public sealed partial class TerraBaseTestServer : IAsyncDisposable
 {
     private static readonly TimeSpan StartupTimeout = TimeSpan.FromSeconds(30);
+    private static readonly TerraScaleIdGenerator Ids = new();
 
     private readonly ConcurrentQueue<string> output = new();
     private readonly string directory;
@@ -65,7 +67,10 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
     /// <summary>HTTPS origin of the client listener (Documents and Management APIs).</summary>
     public Uri ClientAddress { get; private set; }
 
-    /// <summary>The dashboard service credential the server accepts on the Management API.</summary>
+    /// <summary>HTTP origin of the loopback administrative listener, the only one that accepts <see cref="ServiceCredential"/>.</summary>
+    public Uri AdminAddress => admin.BaseAddress!;
+
+    /// <summary>The management service credential the server accepts on the Management API.</summary>
     public string ServiceCredential { get; }
 
     /// <summary>A client that trusts only this server's certificate and never follows redirects. Owned by the server.</summary>
@@ -75,22 +80,20 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
     public X509Certificate2 Certificate => certificate;
 
     /// <summary>
-    /// Resolves <paramref name="release"/> (default <see cref="TerraBaseRelease.Pinned"/>) and starts it. Returns
-    /// <see langword="null"/> with the reason when the binary is unavailable here (see <see cref="TerraBaseRelease.ResolveAsync(CancellationToken)"/>);
-    /// callers usually skip their tests then, and fail them in CI.
+    /// Starts the TerraBase binary named by <c>TERRABASE_BINARY</c>. Returns <see langword="null"/> with the reason when it is
+    /// unset or names no file; callers usually skip their tests then, and fail them in CI.
     /// </summary>
     /// <remarks>
     /// If startup cleanup also fails, the original exception contains the cleanup failure in
     /// <c>Data["TerraBaseCleanupException"]</c> and the server, when allocated, in
     /// <c>Data[nameof(TerraBaseTestServer)]</c>. Call its <see cref="DisposeAsync"/> to retry cleanup.
     /// </remarks>
-    public static async Task<(TerraBaseTestServer? Server, string? Unavailable)> StartAsync(
-        TerraBaseRelease? release = null, CancellationToken cancellationToken = default)
+    public static async Task<(TerraBaseTestServer? Server, string? Unavailable)> StartAsync(CancellationToken cancellationToken = default)
     {
-        var (binary, unavailable) = await (release ?? TerraBaseRelease.Pinned).ResolveAsync(cancellationToken).ConfigureAwait(false);
-        if (binary is null)
+        var binary = Environment.GetEnvironmentVariable("TERRABASE_BINARY");
+        if (string.IsNullOrEmpty(binary) || !File.Exists(binary))
         {
-            return (null, unavailable);
+            return (null, "TERRABASE_BINARY must name a TerraBase binary");
         }
 
         var directory = Directory.CreateTempSubdirectory("terrabase-test-").FullName;
@@ -147,9 +150,12 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
         }
     }
 
-    /// <summary>A Management API client authenticated with <paramref name="credential"/> (default <see cref="ServiceCredential"/>).</summary>
+    /// <summary>
+    /// A Management API client on the loopback administrative listener, the only one that accepts the management service
+    /// credential, authenticated with <paramref name="credential"/> (default <see cref="ServiceCredential"/>).
+    /// </summary>
     public TerraBaseManagementClient Management(string? credential = null) =>
-        new(Http, new TerraBaseManagementClientOptions { BaseAddress = ClientAddress, ServiceCredential = credential ?? ServiceCredential });
+        new(admin, new TerraBaseManagementClientOptions { BaseAddress = AdminAddress, ServiceCredential = credential ?? ServiceCredential });
 
     /// <summary>A Documents API client authenticated with <paramref name="apiKey"/>.</summary>
     public TerraBaseDocumentsClient Documents(string apiKey) =>
@@ -177,7 +183,7 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
     /// <summary>A new organization and project owned by a fresh user id, and an API key for the organization.</summary>
     public async Task<TerraBaseTestTenant> CreateTenantAsync(CancellationToken cancellationToken = default)
     {
-        var user = "user-" + Guid.NewGuid().ToString("N");
+        var user = Ids.NewId();
         var management = Management();
         var organization = await management.CreateOrganizationAsync(user, "Org " + Guid.NewGuid().ToString("N")[..8], cancellationToken).ConfigureAwait(false);
         var project = await management.CreateProjectAsync(user, organization.Id, "Project", cancellationToken).ConfigureAwait(false);
@@ -257,7 +263,7 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
     {
         var certificatePath = Path.Combine(directory, "client.crt");
         var keyPath = Path.Combine(directory, "client.key");
-        var credentialPath = Path.Combine(directory, "dashboard-credential");
+        var credentialPath = Path.Combine(directory, "management-credential");
         await File.WriteAllTextAsync(certificatePath, certificate.ExportCertificatePem(), cancellationToken).ConfigureAwait(false);
         using (var key = certificate.GetECDsaPrivateKey()!)
         {
@@ -276,7 +282,7 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
         start.ArgumentList.Add($"--client-port={ClientAddress.Port}");
         start.ArgumentList.Add($"--client-certificate={certificatePath}");
         start.ArgumentList.Add($"--client-private-key={keyPath}");
-        start.ArgumentList.Add($"--dashboard-credential-file={credentialPath}");
+        start.ArgumentList.Add($"--management-credential-file={credentialPath}");
         start.ArgumentList.Add($"--data-directory={Path.Combine(directory, "data")}");
 
         process = Process.Start(start) ?? throw new InvalidOperationException("TerraBase did not start.");
@@ -353,11 +359,11 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
             return;
         }
 
-        // Retain startup metadata before bounded diagnostics can discard the announcement.
-        const string prefix = "Now listening on: ";
-        var text = line.Trim();
-        if (text.StartsWith(prefix, StringComparison.Ordinal)
-            && Uri.TryCreate(text[prefix.Length..], UriKind.Absolute, out var address) && address.Port > 0)
+        // Retain startup metadata before bounded diagnostics can discard the announcement. TerraBase logs it as one JSON
+        // event whose address field holds the listener's URL.
+        var announced = line.Contains("Now listening on", StringComparison.Ordinal) ? ListenAddress().Match(line) : null;
+        if (announced is { Success: true }
+            && Uri.TryCreate(announced.Value, UriKind.Absolute, out var address) && address.Port > 0)
         {
             if (address.Scheme == "http" && address.IsLoopback)
             {
@@ -393,6 +399,9 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
         ClientAddress = new Uri($"https://localhost:{clientPort}/");
         return true;
     }
+
+    [GeneratedRegex(@"https?://[^\s""]+")]
+    private static partial Regex ListenAddress();
 
     private static X509Certificate2 CreateCertificate()
     {

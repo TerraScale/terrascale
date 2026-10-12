@@ -6,7 +6,9 @@ namespace TerraScale.DotNet.Tests.TerraBase;
 [ClassDataSource<TerraBaseServer>(Shared = SharedType.PerTestSession)]
 public sealed class TerraBaseManagementTests(TerraBaseServer server)
 {
-    private static string NewUser() => "user-" + Guid.NewGuid().ToString("N");
+    private static readonly TerraScaleIdGenerator Ids = new();
+
+    private static string NewUser() => Ids.NewId();
 
     [Test]
     public async Task OrganizationsAreCreatedListedRenamedSwitchedAndDeleted()
@@ -20,7 +22,7 @@ public sealed class TerraBaseManagementTests(TerraBaseServer server)
         await Assert.That(organization.Plan).IsEqualTo(TerraBasePlan.Hobby);
         var taken = await Assert.ThrowsAsync<TerraBaseConflictException>(() => management.CreateOrganizationAsync(owner, "acme"));
         await Assert.That(taken!.Message).IsEqualTo("name is already taken");
-        await Assert.That(taken.ErrorCode).IsNull();
+        await Assert.That(taken.ErrorCode).IsEqualTo("name_taken");
 
         var second = await management.CreateOrganizationAsync(owner, "Beta");
         var page = await management.ListOrganizationsAsync(owner, limit: 1);
@@ -38,8 +40,8 @@ public sealed class TerraBaseManagementTests(TerraBaseServer server)
         await Assert.That((await management.GetCurrentOrganizationAsync(owner)).Id).IsEqualTo(second.Id);
 
         var stranger = await Assert.ThrowsAsync<TerraBaseNotFoundException>(() => management.GetOrganizationAsync(NewUser(), organization.Id));
-        await Assert.That(stranger!.ErrorCode).IsEqualTo("unknown_route");
-        await Assert.That(stranger.Message).IsEqualTo("TerraBase answered HTTP 404 (unknown_route).");
+        await Assert.That(stranger!.ErrorCode).IsEqualTo("not_found");
+        await Assert.That(stranger.Message).IsEqualTo("the resource does not exist");
         await management.DeleteOrganizationAsync(owner, second.Id);
         await Assert.ThrowsAsync<TerraBaseNotFoundException>(() => management.GetOrganizationAsync(owner, second.Id));
     }
@@ -102,15 +104,16 @@ public sealed class TerraBaseManagementTests(TerraBaseServer server)
         await Assert.ThrowsAsync<TerraBaseConflictException>(() => management.CreateInvitationAsync(owner, organization.Id, "ada@example.com"));
         await Assert.That((await management.ListInvitationsAsync(owner, organization.Id)).Items.Single().Id).IsEqualTo(invitation.Invitation.Id);
 
-        await Assert.ThrowsAsync<TerraBaseForbiddenException>(() => management.AcceptInvitationAsync(invitee, invitation.Token, "bob@example.com"));
-        var joined = await management.AcceptInvitationAsync(invitee, invitation.Token, "ADA@example.com");
-        await Assert.That(joined).IsEqualTo(joined with { UserId = invitee, Role = TerraBaseRole.Admin });
+        // The service credential carries no verified email, so it cannot accept; it adds members directly instead.
+        await Assert.ThrowsAsync<TerraBaseForbiddenException>(() => management.AcceptInvitationAsync(invitee, invitation.Token));
+        var joined = await management.AddMemberAsync(owner, organization.Id, invitee, "ada@example.com");
+        await Assert.That(joined).IsEqualTo(joined with { UserId = invitee, Role = TerraBaseRole.Member });
+        await Assert.That((await management.ChangeMemberRoleAsync(owner, organization.Id, invitee, TerraBaseRole.Admin)).Role).IsEqualTo(TerraBaseRole.Admin);
         await Assert.That((await management.ListMembersAsync(owner, organization.Id)).Items.Count).IsEqualTo(2);
 
         var revoked = await management.CreateInvitationAsync(owner, organization.Id, "eve@example.com");
         await Assert.That(revoked.Invitation.Role).IsEqualTo(TerraBaseRole.Member);
         await management.RevokeInvitationAsync(owner, organization.Id, revoked.Invitation.Id);
-        await Assert.ThrowsAsync<TerraBaseNotFoundException>(() => management.AcceptInvitationAsync(NewUser(), revoked.Token, "eve@example.com"));
 
         // An admin cannot touch owners; the last owner can neither leave nor be demoted.
         await Assert.ThrowsAsync<TerraBaseForbiddenException>(() => management.ChangeMemberRoleAsync(invitee, organization.Id, owner, TerraBaseRole.Member));
@@ -134,7 +137,7 @@ public sealed class TerraBaseManagementTests(TerraBaseServer server)
         await Assert.That(events.Items.Select(audit => audit.Action).SequenceEqual(["settings.audit_retention_updated", "ownership.transfer_confirmed"])).IsTrue();
         await Assert.That(events.Next).IsNotNull();
         var older = await management.ListAuditEventsAsync(invitee, organization.Id, after: events.Next);
-        await Assert.That(older.Items.Select(audit => audit.Action)).Contains("invitation.accepted");
+        await Assert.That(older.Items.Select(audit => audit.Action)).Contains("member.added");
 
         await management.RemoveMemberAsync(invitee, organization.Id, owner);
         await Assert.ThrowsAsync<TerraBaseNotFoundException>(() => management.GetOrganizationAsync(owner, organization.Id));
@@ -148,7 +151,7 @@ public sealed class TerraBaseManagementTests(TerraBaseServer server)
         var calls = 0;
         var management = new TerraBaseManagementClient(server.Running.Http, new TerraBaseManagementClientOptions
         {
-            BaseAddress = server.Running.ClientAddress,
+            BaseAddress = server.Running.AdminAddress,
             AccessTokenProvider = _ => { calls++; return ValueTask.FromResult(credential); },
         });
         await Assert.That(calls).IsEqualTo(0);

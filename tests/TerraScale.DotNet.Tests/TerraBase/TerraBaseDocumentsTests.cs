@@ -71,7 +71,7 @@ public sealed class TerraBaseDocumentsTests(TerraBaseServer server)
 
         var created = await database.CreateDocumentAsync("items", Json("""{"name":"a","count":1}"""));
         await Assert.That(created.Created).IsTrue();
-        await Assert.That(Guid.TryParse(created.Id, out _)).IsTrue();
+        await Assert.That(TerraScaleIds.IsValid(created.Id)).IsTrue();
         await Assert.That(created.Version.Length).IsGreaterThan(0);
         await Assert.That(created.Durability).IsEqualTo("local_durable");
 

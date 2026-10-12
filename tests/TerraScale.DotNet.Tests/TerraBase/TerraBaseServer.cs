@@ -5,8 +5,8 @@ using TUnit.Core.Interfaces;
 namespace TerraScale.DotNet.Tests.TerraBase;
 
 /// <summary>
-/// The TUnit session fixture over <see cref="TerraBaseTestServer"/>: the pinned real TerraBase release, downloaded and
-/// cached on first use. Tests are skipped when the binary is unavailable locally, and fail under <c>CI=true</c>.
+/// The TUnit session fixture over <see cref="TerraBaseTestServer"/>: the real TerraBase binary named by
+/// <c>TERRABASE_BINARY</c>. Tests are skipped when it is unavailable locally, and fail under <c>CI=true</c>.
 /// </summary>
 public sealed class TerraBaseServer : IAsyncInitializer, IAsyncDisposable
 {

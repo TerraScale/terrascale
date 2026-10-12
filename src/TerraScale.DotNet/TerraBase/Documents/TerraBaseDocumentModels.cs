@@ -5,7 +5,7 @@ using System.Text.Json.Serialization;
 namespace TerraScale.DotNet.TerraBase;
 
 /// <summary>A database as the Documents API returns it.</summary>
-/// <param name="Id">Database id, a lowercase hyphenated UUID.</param>
+/// <param name="Id">Database id, a canonical uppercase ULID.</param>
 /// <param name="ProjectId">Owning project.</param>
 /// <param name="Name">Database name, unique within the project.</param>
 public sealed record TerraBaseDatabaseInfo(string Id, string ProjectId, string Name);
@@ -237,7 +237,7 @@ public sealed record TerraBaseTransactionOperation
     /// <summary>Greatest count of <c>assert_count</c>.</summary>
     public long? Lte { get; private init; }
 
-    /// <summary>Creates a document that must be absent or deleted; TerraBase generates a UUIDv7 id when <paramref name="id"/> is null.</summary>
+    /// <summary>Creates a document that must be absent or deleted; TerraBase generates a ULID when <paramref name="id"/> is null.</summary>
     public static TerraBaseTransactionOperation Create(string collection, JsonElement document, string? id = null) =>
         new("create", collection) { Id = id, Document = document };
 

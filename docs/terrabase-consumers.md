@@ -35,25 +35,18 @@ The current consumption details below were checked against ts-auth revision
 2. Set `TS_DOTNET_REV` in both ts-auth workflows (`ci.yml` and `slow.yml`) to
    the full 40-hex SHA of that merge commit, so they never test different
    revisions.
-3. The TerraBase server pin comes with it: `TerraBaseRelease.Pinned` in
-   `src/TerraScale.DotNet.Testing/TerraBaseRelease.cs` names the release tag
-   and SHA-256 this SDK revision was verified against (today the CI build of
-   terrabase `ff256067015433c8c40b59879f1282d2a40480ce`). After adding the
-   helper reference and starting it in ts-auth's test harness, those tests
-   can run against that same binary. Pass `ORG_READ_TOKEN` to both test steps
-   so the helper can download it; currently the token is scoped to dependency
-   checkout, not the fast or slow test step.
+3. ts-auth's tests run against the TerraBase built from the same monorepo commit
+   (`TERRABASE_BINARY`), so an SDK/TerraBase contract mismatch fails there.
 4. Locally, clone ts-dotnet next to ts-auth, or pass
    `-p:TerraScaleRoot=<dir containing ts-dotnet and ts-libs>` to `dotnet build`.
 
-When TerraBase's contract changes, bump both pins together: first
-`TerraBaseRelease.Pinned` and the client in this repository, then
-`TS_DOTNET_REV` in ts-auth.
+When TerraBase's contract changes, update the client in this repository, then
+`TS_DOTNET_REV` in the monorepo.
 
 ## Testing against the real TerraBase
 
-This SDK's TerraBase tests run the pinned real release binary, never a fake
-server. ts-auth has not adopted this harness yet: its store only exposes a
+This SDK's TerraBase tests run a real TerraBase binary (`TERRABASE_BINARY`),
+never a fake server. ts-auth has not adopted this harness yet: its store only exposes a
 readiness probe that currently fails closed (`UnavailableStorageHealth`), and
 its tests use `FakeStorageHealth` for readiness behavior. Updating the SDK pin
 alone does not implement persistence or verify ts-auth against TerraBase.
@@ -66,7 +59,7 @@ using TerraScale.DotNet.TerraBase;
 var (server, unavailable) = await TerraBaseTestServer.StartAsync(cancellationToken: cancellationToken);
 if (server is null)
 {
-    // Skip locally; fail when CI=true. unavailable says why (no token, wrong platform).
+    // Skip locally; fail when CI=true. unavailable says why (TERRABASE_BINARY unset).
 }
 
 await using (server)
@@ -74,13 +67,10 @@ await using (server)
     TerraBaseTestTenant tenant = await server.CreateTenantAsync(cancellationToken);
     TerraBaseDatabase database = server.Documents(tenant.ApiKey).Database(tenant.Project.Id, "auth");
     await database.CreateAsync(cancellationToken);
-    // server.Management() acts with the generated service credential;
+    // server.Management() acts with the generated service credential on the admin listener;
     // server.Http trusts only the server's generated certificate.
 }
 ```
-
-The binary is Linux x64 only. It is downloaded once per cache and checked
-against its SHA-256 on every start.
 
 If startup and cleanup both fail, the original exception keeps its type and
 contains the server in `Data[nameof(TerraBaseTestServer)]`. Retain that owner and

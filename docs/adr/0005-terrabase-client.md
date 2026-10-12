@@ -27,12 +27,13 @@ publishes them.
 
 Tests never use a fake TerraBase (human decision, 2026-10-04): every TerraScale
 service persists in the same production TerraBase release end users use.
-`TerraScale.DotNet.Testing` starts the real release binary, pinned by tag and
-SHA-256 in `TerraBaseRelease.Pinned`, downloads and caches it, and is shared
-with other services' tests.
+`TerraScale.DotNet.Testing` starts the real TerraBase binary the consumer built
+from the commit under test (`TERRABASE_BINARY`), and is shared with other
+services' tests. (2026-10-11: the release pin was dropped; it hid contract drift
+between the SDK and the TerraBase that production runs.)
 
 ## Exit evidence
 
-Integration tests run against the pinned TerraBase release binary, verified
-by SHA-256, in CI. Consumers pin the ts-dotnet revision and the TerraBase
-release together.
+Integration tests run against a TerraBase binary built from the commit under
+test. Consumers pin the ts-dotnet revision and build TerraBase from their own
+commit.

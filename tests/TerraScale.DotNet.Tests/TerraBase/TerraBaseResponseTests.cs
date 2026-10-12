@@ -239,7 +239,7 @@ public sealed class TerraBaseResponseIntegrationTests(TerraBaseServer server)
         await database.CreateCollectionAsync("items");
         using var document = JsonDocument.Parse("{\"text\":\"" + new string('x', 64 * 1024) + "\"}");
         var created = await database.CreateDocumentAsync("items", document.RootElement);
-        var path = $"/v1/projects/{tenant.Project.Id}/databases/bounds/collections/items/documents/{created.Id}";
+        var path = $"/v1/projects/{tenant.Project.Id}/databases/bounds/collections/items/documents/by-key?id={created.Id}";
         using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(server.Running.ClientAddress, path));
         request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", tenant.ApiKey);
         using var measured = await server.Running.Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
@@ -310,9 +310,11 @@ public sealed class TerraBaseResponseIntegrationTests(TerraBaseServer server)
         server.Require();
         var tenant = await server.CreateTenantAsync();
         var resolver = new TerraBaseClientOptionsTests.CountingResolver(server.Running.ClientAddress);
+        // The service credential works on the administrative listener only, so management resolves that one.
+        var adminResolver = new TerraBaseClientOptionsTests.CountingResolver(server.Running.AdminAddress);
         var management = new TerraBaseManagementClient(server.Running.Http, new TerraBaseManagementClientOptions
         {
-            EndpointResolver = resolver, ServiceCredential = server.Running.ServiceCredential,
+            EndpointResolver = adminResolver, ServiceCredential = server.Running.ServiceCredential,
         });
         await management.GetOrganizationAsync(tenant.UserId, tenant.Organization.Id);
         var documents = new TerraBaseDocumentsClient(server.Running.Http, new TerraBaseDocumentsClientOptions
@@ -322,7 +324,8 @@ public sealed class TerraBaseResponseIntegrationTests(TerraBaseServer server)
         var database = documents.Database(tenant.Project.Id, "resolver");
         await database.CreateAsync();
         await database.CreateCollectionAsync("items");
-        await Assert.That(resolver.Calls).IsEqualTo(3);
+        await Assert.That(adminResolver.Calls).IsEqualTo(1);
+        await Assert.That(resolver.Calls).IsEqualTo(2);
     }
 
     [Test]

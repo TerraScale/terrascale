@@ -25,11 +25,11 @@ public sealed class TerraBaseSchemaHttpTests(TerraBaseServer server)
             ApiKey = tenant.ApiKey,
         }).Database(tenant.Project.Id, "app");
 
-        // ff2560 predates these routes. Its real 404 checks transport wiring, not schema10 qualification.
+        // Declaring and reading uniqueness needs a ts-auth project token; the real 401 for an API key proves the wiring.
         var declaration = new TerraBaseUniqueSchemaRequest(Indexes:
             [new("instance_email", ["instanceId", "email"], Unique: true, Normalization: "trim_lowercase")]);
-        var put = await Assert.ThrowsAsync<TerraBaseNotFoundException>(() => database.DeclareSchemaAsync("people", declaration));
-        await Assert.That(put!.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        var put = await Assert.ThrowsAsync<TerraBaseAuthenticationException>(() => database.DeclareSchemaAsync("people", declaration));
+        await Assert.That(put!.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         var sent = recorder.Last!;
         await Assert.That(sent.Method).IsEqualTo(HttpMethod.Put);
         await Assert.That(sent.Uri.AbsoluteUri).IsEqualTo(
@@ -44,8 +44,8 @@ public sealed class TerraBaseSchemaHttpTests(TerraBaseServer server)
             await Assert.That(index.GetProperty("normalization").GetString()).IsEqualTo("trim_lowercase");
         }
 
-        var get = await Assert.ThrowsAsync<TerraBaseNotFoundException>(() => database.GetSchemaAsync("people"));
-        await Assert.That(get!.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        var get = await Assert.ThrowsAsync<TerraBaseAuthenticationException>(() => database.GetSchemaAsync("people"));
+        await Assert.That(get!.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         var read = recorder.Last!;
         await Assert.That(read.Method).IsEqualTo(HttpMethod.Get);
         await Assert.That(read.Uri).IsEqualTo(sent.Uri);

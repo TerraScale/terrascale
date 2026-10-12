@@ -189,14 +189,24 @@ public sealed class TerraBaseManagementClient
         SendAsync(HttpMethod.Delete, Organization(organizationId) + "/invitations/" + TerraBaseConnection.Segment(invitationId, nameof(invitationId)), userId, organizationId, null, cancellationToken);
 
     /// <summary>
-    /// Makes the acting user a member through an invitation token. <paramref name="email"/> is the user's verified
-    /// address and must match the invitation.
+    /// Makes the acting user a member through an invitation token. TerraBase matches the invitation against the verified
+    /// email of the user's ts-auth access token, so the management service credential, which carries none, gets
+    /// <see cref="TerraBaseForbiddenException"/>; use <see cref="AddMemberAsync"/> there.
     /// </summary>
-    public Task<TerraBaseMember> AcceptInvitationAsync(string userId, string token, string email, CancellationToken cancellationToken = default)
+    public Task<TerraBaseMember> AcceptInvitationAsync(string userId, string token, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrEmpty(token);
-        return SendAsync(HttpMethod.Post, Root + "/invitations/accept", userId, null, new RequestBody { Token = token, Email = email }, Json.TerraBaseMember, cancellationToken);
+        return SendAsync(HttpMethod.Post, Root + "/invitations/accept", userId, null, new RequestBody { Token = token }, Json.TerraBaseMember, cancellationToken);
     }
+
+    /// <summary>
+    /// Adds <paramref name="memberUserId"/> as a member without an invitation; an existing member is returned unchanged.
+    /// Needs admin. Served only on TerraBase's loopback administrative listener with the management service credential;
+    /// <paramref name="email"/> is recorded in the audit log only.
+    /// </summary>
+    public Task<TerraBaseMember> AddMemberAsync(
+        string userId, string organizationId, string memberUserId, string email, CancellationToken cancellationToken = default) =>
+        SendAsync(HttpMethod.Put, Member(organizationId, memberUserId), userId, organizationId, new RequestBody { Email = email }, Json.TerraBaseMember, cancellationToken);
 
     // Ownership transfer
 

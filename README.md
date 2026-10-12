@@ -181,23 +181,15 @@ and cancellation token, and every returned origin is validated before credential
 are sent. Atlas discovery is deferred to TS-507; no production origin is hardcoded.
 
 Tests never use a fake TerraBase. `TerraScale.DotNet.Testing`
-(`src/TerraScale.DotNet.Testing`) starts the real release binary
-`terrabase-linux-amd64`, pinned by tag and SHA-256 in `TerraBaseRelease.Pinned`,
-with a fresh data directory, a generated self-signed localhost certificate and a
-generated service credential. TerraBase binds both listeners to OS-assigned ports;
-the helper discovers their addresses from the pinned release's startup logs.
-That release clears generic-host configuration sources, so inherited logging
-filters and console formatters do not change these announcements. CI verifies
-startup while its environment requests disabled logging and the JSON formatter;
-these inherited settings are ignored by the pinned server.
-It downloads the binary once into
-`~/.cache/terrascale/terrabase/<sha256>/` (or `TERRABASE_CACHE_DIRECTORY`) using
-`TERRABASE_DOWNLOAD_TOKEN` or `ORG_READ_TOKEN`, because terrabase is private, and
-checks the SHA-256 on every use. `TERRABASE_BINARY` points at a binary you
-already have; it must match the pinned digest too. Cached and explicit binaries
-must be executable by the effective user; resolution reports `chmod u+x` guidance if access is denied.
-Downloads have a ten-minute deadline and a 256 MiB size limit, checked against
-both the declared length and streamed bytes. Failed downloads remove partial files.
+(`src/TerraScale.DotNet.Testing`) starts the real TerraBase binary named by
+`TERRABASE_BINARY`, a build of the TerraBase commit under test (in the monorepo:
+`make terrabase-publish`, then `artifacts/publish/terrabase`), with a fresh data
+directory, a generated self-signed localhost certificate and a generated management
+service credential. TerraBase binds both listeners to OS-assigned ports; the helper
+discovers their addresses from TerraBase's JSON startup log. The Management client
+of the helper uses the loopback administrative listener, the only one that accepts
+the service credential. Without `TERRABASE_BINARY` the tests are skipped locally and
+fail under `CI=true`.
 If removal also fails, the primary exception retains the secondary error in
 `Data["TerraBaseCleanupException"]` for diagnosis and manual cleanup.
 Disposal waits up to five seconds for process exit and redirected output completion

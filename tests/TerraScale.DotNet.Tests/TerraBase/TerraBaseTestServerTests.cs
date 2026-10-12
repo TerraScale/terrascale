@@ -36,7 +36,7 @@ public sealed class TerraBaseTestServerTests
     {
         var (server, unavailable) = await TerraBaseTestServer.StartAsync();
         TerraBaseServer.VerifyCiAvailability(server is not null, unavailable, Environment.GetEnvironmentVariable("CI") == "true");
-        Skip.Unless(server is not null, unavailable ?? "Pinned TerraBase release unavailable");
+        Skip.Unless(server is not null, unavailable ?? "TERRABASE_BINARY is unset");
         await using var owned = server!;
         var admin = (HttpClient)typeof(TerraBaseTestServer).GetField("admin", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(owned)!;
         var process = (Process)typeof(TerraBaseTestServer).GetField("process", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(owned)!;
@@ -112,9 +112,10 @@ public sealed class TerraBaseTestServerTests
     [Arguments(true)]
     public async Task StartupCleanupFailurePreservesTheOriginalErrorAndRecoverableOwner(bool cancelled)
     {
-        var (binary, unavailable) = await TerraBaseRelease.Pinned.ResolveAsync();
-        TerraBaseServer.VerifyCiAvailability(binary is not null, unavailable, Environment.GetEnvironmentVariable("CI") == "true");
-        Skip.Unless(binary is not null, unavailable ?? "Pinned TerraBase release unavailable");
+        var binary = Environment.GetEnvironmentVariable("TERRABASE_BINARY");
+        var available = File.Exists(binary);
+        TerraBaseServer.VerifyCiAvailability(available, "TERRABASE_BINARY must name a TerraBase binary", Environment.GetEnvironmentVariable("CI") == "true");
+        Skip.Unless(available, "TERRABASE_BINARY must name a TerraBase binary");
         var directory = Directory.CreateTempSubdirectory("terrabase-startup-").FullName;
         using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
         using var certificate = new CertificateRequest("CN=localhost", key, HashAlgorithmName.SHA256)
@@ -168,7 +169,7 @@ public sealed class TerraBaseTestServerTests
     {
         var (server, unavailable) = await TerraBaseTestServer.StartAsync();
         TerraBaseServer.VerifyCiAvailability(server is not null, unavailable, Environment.GetEnvironmentVariable("CI") == "true");
-        Skip.Unless(server is not null, unavailable ?? "Pinned TerraBase release unavailable");
+        Skip.Unless(server is not null, unavailable ?? "TERRABASE_BINARY is unset");
         var process = (Process)typeof(TerraBaseTestServer).GetField("process", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(server)!;
         var directory = (string)typeof(TerraBaseTestServer).GetField("directory", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(server)!;
         try
@@ -198,7 +199,7 @@ public sealed class TerraBaseTestServerTests
     {
         var (server, unavailable) = await TerraBaseTestServer.StartAsync();
         TerraBaseServer.VerifyCiAvailability(server is not null, unavailable, Environment.GetEnvironmentVariable("CI") == "true");
-        Skip.Unless(server is not null, unavailable ?? "Pinned TerraBase release unavailable");
+        Skip.Unless(server is not null, unavailable ?? "TERRABASE_BINARY is unset");
         await using var owned = server!;
         var process = (Process)typeof(TerraBaseTestServer).GetField("process", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(owned)!;
         var directory = (string)typeof(TerraBaseTestServer).GetField("directory", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(owned)!;
@@ -270,7 +271,7 @@ public sealed class TerraBaseTestServerTests
         Skip.Unless(OperatingSystem.IsLinux(), "Holding another process's output pipes requires Linux /proc");
         var (server, unavailable) = await TerraBaseTestServer.StartAsync();
         TerraBaseServer.VerifyCiAvailability(server is not null, unavailable, Environment.GetEnvironmentVariable("CI") == "true");
-        Skip.Unless(server is not null, unavailable ?? "Pinned TerraBase release unavailable");
+        Skip.Unless(server is not null, unavailable ?? "TERRABASE_BINARY is unset");
         await using var owned = server!;
         var process = (Process)typeof(TerraBaseTestServer).GetField("process", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(owned)!;
         var directory = (string)typeof(TerraBaseTestServer).GetField("directory", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(owned)!;
@@ -336,7 +337,7 @@ public sealed class TerraBaseTestServerTests
     {
         var (server, unavailable) = await TerraBaseTestServer.StartAsync();
         TerraBaseServer.VerifyCiAvailability(server is not null, unavailable, Environment.GetEnvironmentVariable("CI") == "true");
-        Skip.Unless(server is not null, unavailable ?? "Pinned TerraBase release unavailable");
+        Skip.Unless(server is not null, unavailable ?? "TERRABASE_BINARY is unset");
         await using var owned = server!;
         var process = (Process)typeof(TerraBaseTestServer).GetField("process", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(owned)!;
         var directory = (string)typeof(TerraBaseTestServer).GetField("directory", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(owned)!;
@@ -404,7 +405,7 @@ public sealed class TerraBaseTestServerTests
     {
         var (server, unavailable) = await TerraBaseTestServer.StartAsync();
         TerraBaseServer.VerifyCiAvailability(server is not null, unavailable, Environment.GetEnvironmentVariable("CI") == "true");
-        Skip.Unless(server is not null, unavailable ?? "Pinned TerraBase release unavailable");
+        Skip.Unless(server is not null, unavailable ?? "TERRABASE_BINARY is unset");
         await using var owned = server!;
         var directory = (string)typeof(TerraBaseTestServer).GetField("directory", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(owned)!;
         if (concurrent)
@@ -429,7 +430,7 @@ public sealed class TerraBaseTestServerTests
     [Arguments(true, false)]
     public async Task CiAvailabilityRejectsOnlyMissingBinariesInCi(bool available, bool isCi)
     {
-        const string reason = "Pinned binary unavailable";
+        const string reason = "TERRABASE_BINARY is unset";
         if (!available && isCi)
         {
             var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
