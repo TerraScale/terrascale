@@ -91,6 +91,11 @@ contract test files), so #133 contains everything #132 delivers.
 `Declared_JSON_schema_and_native_uniqueness_coexist_without_changing_collection_identity` on #132's run 38270496291.
 All are routed to T1.
 
+- **#115 MERGED** at its exact head `93fe0a56`: `test` run 38274256511 success (libs, auth, terrabase); 0 open threads.
+  Merge commit → main `df790dbb`; push run 38274891319, deploy and preview skipped, both gates present; preview
+  workflow 381612805 re-verified `disabled_manually` at 16:04:49Z. Main's `test` on `df790dbb`: pending. It decides
+  whether main is green again.
+
 **Not merged until fixed and verified:**
 - **R10a's stack**, until the no-peer fail-open and the unprotected override are fixed and R3 verifies in writing;
 - **#125**, until its metrics race is fixed (#130) and a fresh `test` run on its exact head is green;
@@ -104,7 +109,7 @@ All are routed to T1.
 
 | Count since the baseline | Value |
 | --- | ---: |
-| merged | 0 |
+| merged | 1 (#115) |
 | closed (proven superseded) | 0 |
 
 The 9 merges before the baseline are in the merge-train table.
@@ -120,7 +125,7 @@ checked again before every close or merge, because no preview deletion is approv
 | #133 | R3 | main | `79ebd2c2` | ready | success | main green, a fresh run; supersedes #132 |
 | ts-dotnet #5 | Dogfood | main (ts-dotnet) | `4827b03e` | ready | success | #133 (the SDK side of the regional contract) |
 | #79 | strict owner | main | `d9f56bf5` | failing | failure (product Fast flake) | main green, a fresh run |
-| #115 | T1 | main | `787ebc57` | failing | failure (`fmt-check` on vendored sources) | T1's fix; **goes first** |
+| #115 | T1 | main | `93fe0a56` | **merged** → `df790dbb` | success (38274256511) | — |
 | #119 | R8 | stacked on #118 | `90847616` | failing | failure (backup flake, fixed by #128) | its stack, then a rerun |
 | #125 | CI optimizer | main (draft) | `6d384fab` | failing | failure | #130 merged, then a fresh run |
 | #130 | metrics owner | main | `ee4d132e` | failing | failure (old-base flake) | main green, a fresh run |
