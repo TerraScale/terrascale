@@ -539,6 +539,25 @@ described in [platform-api.md](platform-api.md)) is not ported. The C#
 application has no host routing for it, no `/v1/organizations/...` routes and
 no OpenAPI document.
 
+### Go-only interfaces: compatibility disposition (2026-10-12)
+
+A consumer search cloned the default branches of twelve TerraScale repositories
+(terrascale `4cfbf85d`, ts-status `d1d2ce8c`, ts-go `9637a299`, ts-js
+`8c8ded2c`, ts-dotnet `2d23b1be`, ts-docs `61eb6dfb`, ts-landing `bb3e6ccd`,
+ts-cos `20674fe9`, ku `a0f4b8a6`, ts-reviewer `e7e74ab7`, ts-resources
+`f3b54ea3`, ts-rust `8a5d9836`) and grepped them for each interface. "No
+consumer" means no code, CI or test call was found; it is not proof that no
+external client exists.
+
+| Interface | Consumers found | Disposition |
+| --- | --- | --- |
+| `GET /health/ready`, `GET /health/live` | ts-status `src/probe/deployments.ts:9` probes `https://ts-dashboard.fly.dev/health/ready` and reads the commit after `+` in `version` | Ported. Both return `{"status":"ok","version":"<version>+<commit>"}`; ready runs the same check as `/readyz`. The image takes the commit as `--build-arg SOURCE_REVISION`. |
+| `GET /api/v1/status/live`, `/api/v1/status/ready` | none | Not ported. |
+| `GET /access` (redirect to members) | docs only (terrascale `docs/terrabase/management-api.md:862`) | Not ported. |
+| Platform REST API | docs only (terrascale `docs/auth/platform-contract.md:313`) | Not ported. Whether the contract is still required is a decision for its owner (ts-auth platform contract). |
+| MCP `admin_*` tools | none | Not ported. They need producer administration APIs that do not exist yet (see the administrator audit below). |
+| Sentry/GlitchTip errors and CSP `report-uri` | not an interface; the Go app read `SENTRY_DSN` and `DASHBOARD_CSP_REPORT_URL` | Not ported. The C# app sends no error reports. |
+
 Before deployment, finish native browser journeys, official SDK distribution
 and live Vault/ts-auth/TerraBase checks, auth-budget contention qualification,
 persistent restart/cross-instance checks, and the whole

@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Security.Cryptography;
 using System.Text.Json;
 using TerraScale.Dashboard.Features.Auth;
@@ -26,6 +27,10 @@ namespace TerraScale.Dashboard;
 
 public static class DashboardApplication
 {
+    // <version>+<commit>; the image build passes the commit as SourceRevisionId.
+    private static readonly string BuildVersion = typeof(DashboardApplication).Assembly
+        .GetCustomAttribute<AssemblyInformationalVersionAttribute>()!.InformationalVersion;
+
     // The service override is for isolated test hosts; production has one service graph.
     public static WebApplication Build(string[] args, Action<WebApplicationBuilder>? configureTestHost = null)
     {
@@ -126,6 +131,13 @@ public static class DashboardApplication
         {
             await state.CheckReadyAsync(cancellationToken);
             return Results.Text("ok");
+        });
+        // The original probe URLs: ts-status reads the deployed commit from /health/ready's version.
+        app.MapGet("/health/live", () => Results.Json(new { status = "ok", version = BuildVersion }));
+        app.MapGet("/health/ready", async (IDashboardState state, CancellationToken cancellationToken) =>
+        {
+            await state.CheckReadyAsync(cancellationToken);
+            return Results.Json(new { status = "ok", version = BuildVersion });
         });
         app.MapAuth();
         app.MapAccountFeatures();
