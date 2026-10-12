@@ -150,8 +150,9 @@ coordinator).
 | #112 | `99cb927b` | 38300110257 success | merge (stack base) | `79d30e8b` | 38302155744 | skipped / skipped | unverifiable |
 | #143 | `e3800ec7` | 38300119319 success | squash | `51341591` | 38302187019 | skipped / skipped | unverifiable |
 | #144 | `4a61561b` | 38300128698 success | squash | `1e421848` | 38302222222 | skipped / skipped | unverifiable |
+| #113 | `1fa6a0c5` | 38302286695 success | merge (stack base) | `4afd7d9d` | 38304582048 | skipped / skipped | unverifiable |
 
-#113 is retargeted to main and merges cleanly; it is brought up to date for a fresh run.
+#114 is retargeted to main, merges cleanly, and is updated to `980be395`; its run is in progress. #117 and then #120 follow (R3 pushes the R7 pin `24e138c0` to #120). Main's push runs after #112, #143 and #144: `test` success; Slow pending or unverifiable.
 
 **Acceptance gaps, kept visible until each has a test and a fix:**
 - **R-A:** stale-machine retention after a SIGKILL.
@@ -311,7 +312,7 @@ workflow re-verified `disabled_manually` by the helper):
 
 | Count since the baseline | Value |
 | --- | ---: |
-| merged | 9 baseline PRs (#115, #130, #133, #88, #106, #79, #111, #127, #112) + new PRs #137, #141, #138, #143, #144 |
+| merged | 9 baseline PRs (#115, #130, #133, #88, #106, #79, #111, #127, #112) + #113 + new PRs #137, #141, #138, #143, #144 |
 | closed (proven superseded) | 1 (#132, by #133; 16:23:01Z, preview workflow `disabled_manually`) |
 
 The 9 merges before the baseline are in the merge-train table.
