@@ -7,11 +7,11 @@ namespace TerraScale.Authentication.Features.SigningKeys;
 /// <summary>
 /// Keeps the serving issuer's signing keys usable and rotated on every replica. At startup it creates ts-auth's collections
 /// in its seeded TerraBase database (<see cref="AuthStore.ProvisionAsync"/>, idempotent), registers the configured OIDC
-/// clients (<see cref="ClientRegistration"/>), then creates the first key when there is none, and checks that every stored
-/// key works under this master key (<see cref="KeyRing.EnsureAsync"/>), retrying until storage answers (after 5 s,
-/// doubling up to 5 min, so an unreachable store is not hammered); <see cref="Bootstrapped"/> then completes. Until then
-/// readiness reports 503, so ts-auth starts before TerraBase and recovers on its own. After that, and hourly, it runs the
-/// scheduled rotation.
+/// clients (<see cref="ClientRegistration"/>), then checks that the serving issuer has keys and that every stored key
+/// works under this master key (<see cref="KeyRing.VerifyAsync"/>), retrying (after 5 s, doubling up to 5 min, so an
+/// unreachable store is not hammered); <see cref="Bootstrapped"/> then completes. Until then readiness reports 503, so
+/// ts-auth starts before TerraBase and recovers on its own. It never creates a key: without one it stays not ready until
+/// an operator runs <see cref="SigningKeyProvisioning"/>. After that, and hourly, it runs the scheduled rotation.
 /// </summary>
 public sealed class SigningKeyRotation(AuthStore store, ClientRegistration clients, KeyRing ring, ILogger<SigningKeyRotation> logger) : BackgroundService
 {
@@ -64,11 +64,7 @@ public sealed class SigningKeyRotation(AuthStore store, ClientRegistration clien
         {
             await store.ProvisionAsync(stoppingToken).ConfigureAwait(false);
             await clients.RegisterAllAsync(stoppingToken).ConfigureAwait(false);
-            if (await ring.EnsureAsync(OidcIssuer.InstanceId, stoppingToken).ConfigureAwait(false))
-            {
-                this.Log(target => target.ZLogInformation($"Created the first signing key"));
-            }
-
+            await ring.VerifyAsync(OidcIssuer.InstanceId, stoppingToken).ConfigureAwait(false);
             return true;
         }
         // As above: while stopping, the retry delay ends the loop.

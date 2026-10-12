@@ -162,7 +162,10 @@ public sealed class OidcHarness : IAsyncDisposable
             settings?.Invoke(values);
         }, clock: clock);
 
-    /// <summary>Another replica bound to the same database, returned once its signing-ring bootstrap completed.</summary>
+    /// <summary>
+    /// Another replica bound to the same database, returned once its signing-ring bootstrap completed. The platform
+    /// issuer's keys are provisioned first, as an operator does (idempotent: replicas find the existing keys).
+    /// </summary>
     public static async Task<AuthTestServer> StartServerAsync(TerraBaseFixture fixture, TerraBaseTestTenant tenant, CapturingEmailSender email, Action<Dictionary<string, string>>? settings = null,
         CapturingLogs? logs = null, TimeProvider? clock = null, Action<IServiceCollection>? replace = null)
     {
@@ -187,7 +190,7 @@ public sealed class OidcHarness : IAsyncDisposable
             }
 
             replace?.Invoke(services);
-        });
+        }, beforeStart: services => SigningKeyProvisioning.ProvisionAsync(services, CancellationToken.None));
         try
         {
             await server.App.Services.GetRequiredService<SigningKeyRotation>().Bootstrapped.WaitAsync(TimeSpan.FromSeconds(30));

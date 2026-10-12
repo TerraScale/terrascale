@@ -49,13 +49,15 @@ public sealed class AuthTestServer : IAsyncDisposable
     /// <summary>
     /// Starts a server. <paramref name="settings"/> edits the defaults, <paramref name="services"/>
     /// replaces infrastructure, <paramref name="routes"/> adds test-only routes that exist
-    /// only inside this test process, and <paramref name="configure"/> edits the host builder.
+    /// only inside this test process, <paramref name="configure"/> edits the host builder, and
+    /// <paramref name="beforeStart"/> runs on the built services before the host starts (an operator step, say).
     /// </summary>
     public static async Task<AuthTestServer> StartAsync(
         Action<Dictionary<string, string>>? settings = null,
         Action<IServiceCollection>? services = null,
         Action<WebApplication>? routes = null,
-        Action<WebApplicationBuilder>? configure = null)
+        Action<WebApplicationBuilder>? configure = null,
+        Func<IServiceProvider, Task>? beforeStart = null)
     {
         var values = DefaultSettings();
         settings?.Invoke(values);
@@ -69,6 +71,11 @@ public sealed class AuthTestServer : IAsyncDisposable
         try
         {
             routes?.Invoke(app);
+            if (beforeStart is not null)
+            {
+                await beforeStart(app.Services);
+            }
+
             await app.StartAsync();
             // Bound in order: the public listener, then the metrics listener.
             var addresses = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses

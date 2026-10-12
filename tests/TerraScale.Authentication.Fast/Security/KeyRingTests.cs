@@ -159,23 +159,6 @@ public sealed class KeyRingTests(TerraBaseFixture fixture)
     }
 
     [Test]
-    public async Task Startup_creates_the_issuer_key_once_across_restarts()
-    {
-        var target = await SharedStateTarget.CreateAsync(fixture);
-        var masterKey = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
-        string first;
-        await using (var server = await StartAsync(target, masterKey))
-        {
-            await server.App.Services.GetRequiredService<SigningKeyRotation>().Bootstrapped.WaitAsync(TimeSpan.FromSeconds(30));
-            first = (await StoredAsync(target, OidcIssuer.InstanceId)).Single()["id"]!.GetValue<string>();
-        }
-
-        await using var restarted = await StartAsync(target, masterKey);
-        await restarted.App.Services.GetRequiredService<SigningKeyRotation>().Bootstrapped.WaitAsync(TimeSpan.FromSeconds(30));
-        await Assert.That((await StoredAsync(target, OidcIssuer.InstanceId)).Single()["id"]!.GetValue<string>()).IsEqualTo(first);
-    }
-
-    [Test]
     public async Task Scheduled_rotation_publishes_the_next_key_before_it_signs_and_retires_the_old_one_later()
     {
         var clock = new ManualClock(new DateTimeOffset(2026, 10, 4, 12, 0, 0, TimeSpan.Zero));

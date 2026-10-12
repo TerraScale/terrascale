@@ -1,3 +1,4 @@
+using TerraScale.Authentication.Contracts;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.SigningKeys;
 using TerraScale.Authentication.Store;
@@ -6,8 +7,9 @@ using ZLogger;
 namespace TerraScale.Authentication.Features.Observability;
 
 /// <summary>
-/// Checks storage access, this replica's signing-key bootstrap and the serving issuer's public signing metadata. The
-/// check itself never writes identity state.
+/// Checks storage access, the serving issuer's public signing metadata and this replica's signing-key bootstrap. The
+/// check itself never writes identity state. Missing keys fail at once with <see cref="KeyRing.NoSigningKeys"/>, before
+/// waiting on a bootstrap that cannot complete without them.
 /// </summary>
 public sealed class SigningKeyReadiness(TerraBaseStorageHealth storage, KeyRing ring, SigningKeyRotation rotation) : IStorageHealth
 {
@@ -17,16 +19,16 @@ public sealed class SigningKeyReadiness(TerraBaseStorageHealth storage, KeyRing 
         var result = await storage.CheckAsync(cancellationToken).ConfigureAwait(false);
         if (result.Healthy)
         {
-            await rotation.Bootstrapped.WaitAsync(cancellationToken).ConfigureAwait(false);
             await ring.CheckPublicMetadataAsync(OidcIssuer.InstanceId, cancellationToken).ConfigureAwait(false);
+            await rotation.Bootstrapped.WaitAsync(cancellationToken).ConfigureAwait(false);
         }
 
         return result;
     }
 }
 
-/// <summary>One completed readiness observation.</summary>
-public sealed record ReadinessObservation(bool Ready, string? Region);
+/// <summary>One completed readiness observation; <paramref name="Error"/> only names a failure an operator must act on.</summary>
+public sealed record ReadinessObservation(bool Ready, string? Region, string? Error = null);
 
 /// <summary>
 /// Evaluates readiness on a background loop every five seconds, bounds each evaluation to two
@@ -143,11 +145,13 @@ public sealed class ReadinessProbe(IStorageHealth health, TimeProvider clock, IL
         }
         catch (Exception exception) when (exception is not OutOfMemoryException)
         {
-            observation = new ReadinessObservation(false, null);
+            // Missing signing keys are reported as such: nothing recovers them but the operator command.
+            var operatorAction = exception is ApiException { Code: KeyRing.NoSigningKeysCode } ? exception.Message : null;
+            observation = new ReadinessObservation(false, null, operatorAction);
             // Our own deadline cancelling the wait is the expected not-ready answer, not a fault to trace.
             var timedOut = exception is OperationCanceledException && timeout.IsCancellationRequested;
-            cause = timedOut ? TimedOut : exception.GetType().FullName;
-            fault = timedOut ? null : exception;
+            cause = timedOut ? TimedOut : operatorAction ?? exception.GetType().FullName;
+            fault = timedOut || operatorAction is not null ? null : exception;
             // Observe a late failure so it is not reported as unobserved.
             _ = check?.ContinueWith(static task => task.Exception, TaskScheduler.Default);
         }
