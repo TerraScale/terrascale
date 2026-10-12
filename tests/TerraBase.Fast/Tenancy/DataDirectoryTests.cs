@@ -25,8 +25,8 @@ public sealed class DataDirectoryTests
     private const string ReplicaFileName = ".terrabase.replica";
     private const string InUse = "data-directory is in use by another TerraBase process; stop it, then start again";
     private const string PreTenancyLayout = "data directory uses the pre-tenancy layout; start with an empty data directory (no automatic migration)";
-    private const string OtherFormat =
-        "data directory was written by another TerraBase layout or storage format; start with an empty data directory (no automatic migration)";
+    // A format refusal case passes "format:" and the format the refusal names for the directory.
+    private const string Unversioned = "format:unversioned";
 
     [Test]
     public async Task A_held_directory_lock_stops_startup_before_any_store_opens_and_releasing_it_allows_startup()
@@ -350,10 +350,10 @@ public sealed class DataDirectoryTests
             await TerraBaseTestServer.InitializeDataDirectoryAsync(dataDirectory);
             var record = await File.ReadAllBytesAsync(Path.Combine(dataDirectory, LockFileName));
 
-            // The layout byte, then the 32-byte schema digest. Builds before the digest accept only the single layout byte
-            // and stop before opening a file, so a rollback to one cannot migrate this directory.
-            await Assert.That(record.Length).IsEqualTo(33);
-            await Assert.That(record[0]).IsEqualTo((byte)1);
+            // The format ID in ASCII. Builds before the version accept only their binary record and stop before opening a
+            // file, so a rollback to one cannot migrate this directory.
+            await Assert.That(Encoding.ASCII.GetString(record)).IsEqualTo(StorageFormat.Id);
+            await Assert.That(StorageFormat.Id).Matches($"^{StorageFormat.Version}-[0-9a-f]{{12}}$");
         }
         finally
         {
@@ -367,9 +367,10 @@ public sealed class DataDirectoryTests
     [Arguments("stray-database", PreTenancyLayout)]
     [Arguments("system-prefixed", PreTenancyLayout)]
     [Arguments("unrecorded-identity", PreTenancyLayout)]
-    [Arguments("unknown-layout", OtherFormat)]
-    [Arguments("previous-format", OtherFormat)]
-    [Arguments("other-format", OtherFormat)]
+    [Arguments("unknown-layout", Unversioned)]
+    [Arguments("previous-format", Unversioned)]
+    [Arguments("digest-format", Unversioned)]
+    [Arguments("other-format", "format:1-00000000000f")]
     public async Task A_data_directory_of_another_layout_or_format_is_refused_without_changing_a_byte(string layout, string message)
     {
         // ';' and a quote in the path: every connection string to these files is built, never interpolated.
@@ -410,12 +411,15 @@ public sealed class DataDirectoryTests
                     await File.WriteAllBytesAsync(lockFile, [1]);
                     await DocumentFiles.WriteAsync(Path.Combine(dataDirectory, "_system.db"), ("api_keys", "k", "{}"));
                     break;
-                case "other-format":
-                    // This layout, written by another storage format (its schema digest differs).
+                case "digest-format":
+                    // What production ran before the version: the layout byte and the 32-byte schema digest.
                     await TerraBaseTestServer.InitializeDataDirectoryAsync(dataDirectory);
-                    var record = await File.ReadAllBytesAsync(lockFile);
-                    record[^1] ^= 0xFF;
-                    await File.WriteAllBytesAsync(lockFile, record);
+                    await File.WriteAllBytesAsync(lockFile, [1, .. SHA256.HashData([1])]);
+                    break;
+                case "other-format":
+                    // This layout, written by another storage format: the refusal names both formats.
+                    await TerraBaseTestServer.InitializeDataDirectoryAsync(dataDirectory);
+                    await File.WriteAllTextAsync(lockFile, "1-00000000000f");
                     break;
                 default:
                     // A layout record this build does not know, from a newer build.
@@ -425,6 +429,10 @@ public sealed class DataDirectoryTests
 
             var before = Snapshot(dataDirectory);
             var recorded = File.Exists(lockFile) ? await File.ReadAllBytesAsync(lockFile) : [];
+            if (message.StartsWith("format:", StringComparison.Ordinal))
+            {
+                message = $"data directory has storage format {message[7..]}; this build writes {StorageFormat.Id}; start with an empty data directory (no automatic migration)";
+            }
 
             // Twice: the lock file a refused start leaves behind must not make the next start accept the directory.
             await AssertStartupRefusedAsync(dataDirectory, message);

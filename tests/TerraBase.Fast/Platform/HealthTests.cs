@@ -489,17 +489,18 @@ public sealed class HealthTests
         public void Advance(TimeSpan interval) => Interlocked.Add(ref _timestamp, (long)interval.TotalMilliseconds);
     }
 
-    // The whole body is node metadata: status, build version and region, with no tenant data.
+    // The whole body is node metadata: status, build version, region and storage format, with no tenant data.
     private static async Task AssertProbeAsync(HttpClient client, string path, HttpStatusCode status, string state)
     {
         using var response = await client.GetAsync(new Uri(path, UriKind.Relative));
         using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
 
         await Assert.That(response.StatusCode).IsEqualTo(status);
-        await Assert.That(body.RootElement.EnumerateObject().Select(property => property.Name).ToList()).IsEquivalentTo(["status", "version", "region"]);
+        await Assert.That(body.RootElement.EnumerateObject().Select(property => property.Name).ToList()).IsEquivalentTo(["status", "version", "region", "storageFormat"]);
         await Assert.That(body.RootElement.GetProperty("status").GetString()).IsEqualTo(state);
         await Assert.That(body.RootElement.GetProperty("version").GetString()).IsEqualTo("0.1.0");
         await Assert.That(body.RootElement.GetProperty("region").GetString()).IsEqualTo("test-region");
+        await Assert.That(body.RootElement.GetProperty("storageFormat").GetString()).IsEqualTo(StorageFormat.Id);
         if (client.BaseAddress?.Scheme == Uri.UriSchemeHttps)
         {
             await Assert.That(response.Headers.GetValues("X-TerraBase-Region").Single()).IsEqualTo("test-region");

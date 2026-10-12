@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Net;
 using System.Text.Json;
 using TerraBase.Configuration;
+using TerraBase.Engine.Sqlite;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Platform;
@@ -32,6 +33,8 @@ public sealed class RegionTests
 
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(body.GetProperty("region").GetString()).IsEqualTo(region);
+        // The deploy gate compares it with a new image's `terrabase --storage-format` before switching the region.
+        await Assert.That(body.GetProperty("storageFormat").GetString()).IsEqualTo(StorageFormat.Id);
         await Assert.That(response.Headers.Contains(RegionHeader)).IsFalse();
     }
 

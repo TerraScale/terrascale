@@ -1,4 +1,5 @@
 using TerraBase.Configuration;
+using TerraBase.Engine.Sqlite;
 using TerraBase.Features.Health;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
@@ -37,7 +38,7 @@ public sealed class BackupHealthEndpoint(IContinuousBackup backup, TerraBaseOpti
         var shipping = status.Shipping && status.Files.Count > 0
             && status.Files.Where(file => file.Shipping).All(file => file.LastShippedAt is not null && file.LagSeconds < MaxLagSeconds);
         return ValueTask.FromResult<IResult>(shipping
-            ? TypedResults.Ok(new StatusBody("shipping", ServiceVersion.Value, options.Region))
-            : TypedResults.Json(new StatusBody("unavailable", ServiceVersion.Value, options.Region), statusCode: StatusCodes.Status503ServiceUnavailable));
+            ? TypedResults.Ok(new StatusBody("shipping", ServiceVersion.Value, options.Region, StorageFormat.Id))
+            : TypedResults.Json(new StatusBody("unavailable", ServiceVersion.Value, options.Region, StorageFormat.Id), statusCode: StatusCodes.Status503ServiceUnavailable));
     }
 }
