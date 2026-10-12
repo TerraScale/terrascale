@@ -32,7 +32,7 @@ the SHA listed. A newer head means a new manifest entry, never a silent swap.
 | 5 | A count examines tombstones again (#68) | #110 | `3cf9f3a5` (pushed) | 3 | ready | |
 | 6 | Slow: provision the real ts-auth signing key (#102) | #107 | `00390b11` (pushed) | none (tests) | ready | Slow only, non-blocking suite. |
 | 7 | R3 CDC decode notes | #101 | `0fc542f5` (pushed) | none (docs) | ready | |
-| 8 | R2c-2: delete the per-collection change feed and history tables | #88 | `05bd4374` (pushed) | **4** | ready; **needs a rebase** onto `c691f947`; held so far | It shares the feed area with R8 (item 13), so conflicts are expected there. Its format 4 combines with R10a's (see "Storage format"). |
+| 8 | R2c-2: delete the per-collection change feed and history tables | #88 | `05bd4374` (pushed) | **4** | ready; the integration owner resolves it against `c691f947` during the combine, and **T1 reviews that resolution in writing before the freeze** (COS decision; #88's owner is finished, no separate rebase push) | It shares the feed area with R8 (item 13), so conflicts are expected there. Its format 4 combines with R10a's (see "Storage format"). |
 | 9 | R3: CDC change group source | #106 | `4c32da5e` (pushed) | 3 | ready | Head of `2328b8db`, `2ee8b148`, `b838729e`, `81fa4fcb`, `4c32da5e`. |
 | 10 | RegionProcesses (regions as OS processes) | #111 | `07f8d81f` (pushed) | none (tests) | ready | |
 | 11 | Replicated index DDL; unique re-projection | #112 | `8b8758ff` (pushed) | 3 | ready | |
@@ -105,4 +105,4 @@ the SHA listed. A newer head means a new manifest entry, never a silent swap.
    - bounded deletion;
    - the restore gate;
    - the catalog-invariants doc reviewed and acknowledged.
-3. **#88:** a rebase onto `c691f947` by its owner, or a conflict resolution during the combine with that owner's review.
+3. **#88:** no wait. The integration owner resolves it during the combine, and T1 (storage and engine writer) reviews that resolution in writing before the freeze (COS decision).
