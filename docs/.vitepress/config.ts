@@ -542,21 +542,19 @@ export default defineConfig({
   title: 'TerraScale',
   description:
     'TerraScale developer documentation: TerraBase SDK installation, document CRUD, queries, authentication and service limits.',
-  appearance: true,
+  appearance: 'dark',
   lastUpdated: true,
   srcDir: '.',
   head: [
     ['link', { rel: 'icon', href: '/favicon.svg', type: 'image/svg+xml' }],
-    ['link', { rel: 'preload', href: '/fonts/oxanium-latin-wght-normal.woff2', as: 'font', type: 'font/woff2', crossorigin: 'anonymous' }],
-    // Mirror VitePress's html.dark to html[data-theme] so the shared tokens file can use either selector.
-    ['script', {}, `(() => { const h = document.documentElement, sync = () => { h.dataset.theme = h.classList.contains('dark') ? 'dark' : 'light' }; sync(); new MutationObserver(sync).observe(h, { attributeFilter: ['class'] }) })()`],
+    ['link', { rel: 'preload', href: '/fonts/Geist-Variable.woff2', as: 'font', type: 'font/woff2', crossorigin: 'anonymous' }],
   ],
-  // Syntax colors come from --shiki-* variables, mapped to --ts-* tokens in theme/style.css.
+  // Syntax colors come from --shiki-* variables, mapped to --ts-syn-* tokens in theme/style.css.
   markdown: { theme: createCssVariablesTheme({ name: 'ts-tokens', variablePrefix: '--shiki-' }) },
   locales: localesConfig,
   themeConfig: {
     siteTitle: 'Docs',
-    logo: { light: '/brand/logo-terrascale-black.svg', dark: '/brand/logo-terrascale-white.svg', alt: 'TerraScale' },
+    logo: { light: '/brand/logo-terrascale-blue.svg', dark: '/brand/logo-terrascale-principal.svg', alt: 'TerraScale' },
     search: { provider: 'local' },
     notFound: { quote: 'This page does not exist or has moved.', linkText: 'Back to the docs home' },
   },
