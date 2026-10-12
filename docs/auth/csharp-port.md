@@ -76,9 +76,12 @@ Configuration retains the `TS_AUTH_*` convention, with these changes:
   signing key bootstrap, retrying every five seconds; `/readyz` answers 503 until both succeed, so ts-auth may start
   before TerraBase and recovers on its own. `TS_AUTH_DATABASE` is gone.
 - **Storage endpoint:** fixed in code (`App.TerraBaseOrigin`):
-  `http://top1.nearest.of.ts-terrabase.internal:8081`, TerraBase's internal
-  listener on Fly's private network, resolved by Fly DNS to the nearest
-  TerraBase machine. It needs no credential, so there is no API key, member
+  `http://gru.ts-terrabase.internal:8081`, TerraBase's internal listener on
+  Fly's private network in gru, the home region of the platform databases,
+  from every region: TerraBase does not replicate documents between regions
+  until replication slice R4a, and nearest-region storage gave each region its
+  own signing key (observed on Fly 2026-10-12). It returns to
+  `top1.nearest.of.ts-terrabase.internal` once R4a lands. It needs no credential, so there is no API key, member
   list, CA or failover setting. In a PR preview (`FLY_APP_NAME` is
   `ts-pr-<n>`, in the separate org `terrascale-previews`) the app's one machine
   runs TerraBase next to ts-auth, so the address is
