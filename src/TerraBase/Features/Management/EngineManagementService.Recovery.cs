@@ -1,12 +1,8 @@
-using System.Diagnostics.CodeAnalysis;
 using System.Diagnostics.Metrics;
-using System.Runtime.ExceptionServices;
 using System.Text.Json;
-using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Management.Backups;
 using TerraBase.Hosting;
-using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using ZLogger;
 
@@ -21,13 +17,6 @@ internal sealed partial class EngineManagementService
     {
         _recoveryMeter.CreateObservableGauge("terrabase.storage.unknown_files", () => _unknownDatabaseFiles,
             description: "Files found at startup without a registered database; preserved for operator recovery.");
-        if (options.CatalogFollower)
-        {
-            // A follower's intents are the primary's: it acts on them as it applies them (AppliedAsync) and before each stream
-            // (ResumeAsync). Its catalog may still be catching up, so it audits its files once it caught up (CaughtUpAsync).
-            return;
-        }
-
         // Only the current catalog owns cleanup intents; older formats are refused.
         var (hasCatalog, version) = await CatalogStateAsync(cancellationToken).ConfigureAwait(false);
         if (version == CatalogVersion)
@@ -65,115 +54,6 @@ internal sealed partial class EngineManagementService
     }
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
-
-    /// <summary>The catalog collection of database cleanup intents, which a catalog follower acts on.</summary>
-    public string Collection => PendingDatabaseCleanup;
-
-    /// <summary>
-    /// On a catalog follower: deletes the local files of each database whose cleanup intent the primary's catalog recorded and
-    /// that it no longer registers (a deleted database, or one whose creation was abandoned). An intent of a creation in
-    /// progress names a database no follower has files of yet. The primary clears the intents. A failed deletion fails the
-    /// call once every intent was tried: the follower then applies nothing more, so the intent stays in its catalog, until
-    /// <see cref="ResumeAsync"/> succeeds.
-    /// </summary>
-    public async ValueTask AppliedAsync(IReadOnlyList<DocumentChange> documents, CancellationToken cancellationToken)
-    {
-        ArgumentNullException.ThrowIfNull(documents);
-        // Rows of a catalog version this build does not read could be anywhere: never delete on their absence.
-        if (documents.Count == 0 || (await CatalogStateAsync(cancellationToken).ConfigureAwait(false)).Version != CatalogVersion)
-        {
-            return;
-        }
-
-        var cleanups = new List<TenantContext>(documents.Count);
-        foreach (var document in documents)
-        {
-            TenantContext? storage;
-            try
-            {
-                storage = JsonSerializer.Deserialize(document.Json!.Value.Span, TerraBaseJsonContext.Default.TenantContext);
-            }
-            catch (JsonException)
-            {
-                storage = null;
-            }
-
-            if (storage is null || document.Id != storage.DatabaseId || !IsId(storage.OrganizationId) || !IsId(storage.ProjectId) || !IsId(storage.DatabaseId))
-            {
-                // Inconsistent metadata cannot authorize deletion of registered data, and no retry would make it valid.
-                logger.ZLogError($"A replicated database cleanup intent is invalid; nothing was deleted for it");
-            }
-            else
-            {
-                cleanups.Add(storage);
-            }
-        }
-
-        Exception? failed = null;
-        foreach (var storage in cleanups)
-        {
-            try
-            {
-                if (await HasDatabaseRowAsync(storage, cancellationToken).ConfigureAwait(false) is bool registered && !registered)
-                {
-                    checkpoint("follower.cleanup", storage);
-                    _ = await engine.DeleteDatabaseAsync(storage, cancellationToken).ConfigureAwait(false);
-                }
-            }
-            catch (Exception error) when (!cancellationToken.IsCancellationRequested)
-            {
-                // One cleanup never holds back the others.
-                failed ??= error;
-            }
-        }
-
-        if (failed is not null)
-        {
-            ExceptionDispatchInfo.Throw(failed);
-        }
-    }
-
-    /// <summary>On a catalog follower, before each stream: acts on the cleanup intents its catalog holds (see <see cref="AppliedAsync"/>).</summary>
-    public async ValueTask ResumeAsync(CancellationToken cancellationToken)
-    {
-        if (!engine.SystemDatabaseExists)
-        {
-            return;
-        }
-
-        // Every page is acted on, so one failing cleanup holds back none of the others; the first failure is reported after.
-        string? after = null;
-        DocumentPage page;
-        Exception? failed = null;
-        do
-        {
-            page = await ReadCatalogAsync(transaction => transaction.ListAsync(PendingDatabaseCleanup, after, MemberPage, MaxPageBytes, cancellationToken),
-                cancellationToken).ConfigureAwait(false);
-            try
-            {
-                await AppliedAsync([.. page.Documents.Select(document => new DocumentChange(PendingDatabaseCleanup, document.Id, 1, document.Json))],
-                    cancellationToken).ConfigureAwait(false);
-            }
-            catch (Exception error) when (!cancellationToken.IsCancellationRequested)
-            {
-                failed ??= error;
-            }
-
-            after = page.Documents.Count > 0 ? page.Documents[^1].Id : after;
-        }
-        while (page.HasMore);
-        if (failed is not null)
-        {
-            ExceptionDispatchInfo.Throw(failed);
-        }
-    }
-
-    /// <summary>On a catalog follower that caught up with its primary: the startup file audit a primary runs.</summary>
-    public async ValueTask CaughtUpAsync(CancellationToken cancellationToken)
-    {
-        var (hasCatalog, version) = await CatalogStateAsync(cancellationToken).ConfigureAwait(false);
-        await AuditFilesAsync(hasCatalog, version, cancellationToken).ConfigureAwait(false);
-    }
 
     private async ValueTask<(bool HasCatalog, string? Version)> CatalogStateAsync(CancellationToken cancellationToken)
     {
@@ -234,7 +114,10 @@ internal sealed partial class EngineManagementService
 
     private async ValueTask<CatalogCheck> FinishDatabaseCleanupAsync(TenantContext storage, CancellationToken cancellationToken)
     {
-        // This also protects a create whose registration committed before a later error was reported.
+        // This also protects a create whose registration committed before a later error was reported. A registered database
+        // keeps its files: another region may have registered the same chosen id while this machine's own creation of it
+        // failed (the catalog replicates, docs/terrabase/multi-region-replication.md section 15), and the file here is then
+        // its local copy. Only the intent goes.
         var registered = await HasDatabaseRowAsync(storage, cancellationToken).ConfigureAwait(false);
         if (registered is Unavailable refused)
         {
@@ -243,7 +126,8 @@ internal sealed partial class EngineManagementService
 
         if (registered is bool exists && exists)
         {
-            throw new InvalidOperationException("a database cleanup intent conflicts with the catalog");
+            logger.ZLogInformation($"A cleanup intent names database {storage.DatabaseId:@Database}, which the catalog registers; its files are kept");
+            return await ClearDatabaseCleanupAsync(storage, cancellationToken).ConfigureAwait(false);
         }
 
         await engine.DeleteDatabaseAsync(storage, cancellationToken, retainIntentOwnership: true).ConfigureAwait(false);
@@ -290,8 +174,4 @@ internal sealed partial class EngineManagementService
             await engine.CompleteDatabaseIntentAsync(storage, CancellationToken.None).ConfigureAwait(false);
         }
     }
-
-    // The engine's tenant ids: canonical uppercase ULIDs.
-    private static bool IsId([NotNullWhen(true)] string? id) =>
-        EntityIds.IsValid(id);
 }

@@ -5,7 +5,6 @@ using TerraBase.Features.Management.Queries;
 using TerraBase.Features.Management.Schema;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Qos;
-using TerraBase.Features.Replication;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Management;
@@ -26,6 +25,7 @@ public static class ManagementExtensions
         services.AddSingleton(provider => new Lazy<IQueryShapeTracker>(provider.GetRequiredService<IQueryShapeTracker>));
         services.AddSingleton(provider => new Lazy<IStorageQuota>(provider.GetRequiredService<IStorageQuota>));
         services.AddHostedService(provider => provider.GetRequiredService<EngineManagementService>());
+        services.AddHostedService<CatalogConvergence>();
         services.AddSingleton<IManagementService>(provider => provider.GetRequiredService<EngineManagementService>());
         services.AddSingleton<IProjectCatalog>(provider => provider.GetRequiredService<EngineManagementService>());
         services.AddSingleton<IAccessService>(provider => provider.GetRequiredService<EngineManagementService>());
@@ -33,7 +33,6 @@ public static class ManagementExtensions
         services.AddSingleton<ITenantDirectory>(provider => provider.GetRequiredService<EngineManagementService>());
         services.AddSingleton<Platform.IPlatformCatalog>(provider => provider.GetRequiredService<EngineManagementService>());
         services.AddSingleton<ICatalogGuard>(provider => provider.GetRequiredService<EngineManagementService>());
-        services.AddSingleton<ICatalogApplyObserver>(provider => provider.GetRequiredService<EngineManagementService>());
         services.AddSingleton<SystemCatalog>();
         return services
             .AddTerraBaseManagementBackups()

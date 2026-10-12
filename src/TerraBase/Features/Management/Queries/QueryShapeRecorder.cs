@@ -3,7 +3,6 @@ using System.Diagnostics.Metrics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Memory;
@@ -16,10 +15,9 @@ namespace TerraBase.Features.Management.Queries;
 
 /// <summary>
 /// Bounded, memory-admitted query observations, flushed with usage every 10 seconds and at shutdown.
-/// Catalog followers forward immutable batches to the primary for durable retry deduplication.
-/// A crash loses observations not yet persisted or acknowledged.
+/// A crash loses observations not yet persisted.
 /// </summary>
-internal sealed partial class QueryShapeRecorder(SystemCatalog catalog, TimeProvider time, IMemoryBudget memory, IMeterFactory meters, TerraBaseOptions options) : IQueryShapeTracker, IAsyncDisposable
+internal sealed partial class QueryShapeRecorder(SystemCatalog catalog, TimeProvider time, IMemoryBudget memory, IMeterFactory meters) : IQueryShapeTracker, IAsyncDisposable
 {
     private const int MaxPending = 1024;
     private const int MaxRecords = 128;
@@ -151,7 +149,7 @@ internal sealed partial class QueryShapeRecorder(SystemCatalog catalog, TimeProv
                 }
 
                 var stats = saved.ToDictionary(stat => Key(stat.Collection, stat.Id), StringComparer.Ordinal);
-                foreach (var pending in !options.CatalogFollower ? Snapshot(owner) : [])
+                foreach (var pending in Snapshot(owner))
                 {
                     var key = Key(pending.Collection, pending.Id);
                     if (stats.TryGetValue(key, out var previous))
@@ -514,7 +512,6 @@ internal sealed partial class QueryShapeRecorder(SystemCatalog catalog, TimeProv
         }
 
         // The host can dispose DI while a shutdown flush is still finishing. Join it before releasing its entries.
-        await _send.WaitAsync().ConfigureAwait(false);
         await _flush.WaitAsync().ConfigureAwait(false);
         try
         {
@@ -528,15 +525,12 @@ internal sealed partial class QueryShapeRecorder(SystemCatalog catalog, TimeProv
                 _pending.Clear();
                 _entries = 0;
                 _inDoubt = null;
-                _outgoing = null;
-                _turns.Clear();
             }
         }
         finally
         {
             // No wait handle is created; leave the semaphore usable for late shutdown calls and repeated DI disposal.
             _flush.Release();
-            _send.Release();
         }
     }
 

@@ -12,7 +12,6 @@ using TerraBase.Errors;
 using TerraBase.Features.Management;
 using TerraBase.Features.Management.Queries;
 using TerraBase.Features.Management.Usage;
-using TerraBase.Features.Replication;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -23,12 +22,6 @@ namespace TerraBase.Fast.Management;
 public sealed class UsageApiTests
 {
     private static readonly Faker Faker = new();
-
-    private static UsageAccept Accepted(UsageAcceptResult result) => result switch
-    {
-        UsageAccept accepted => accepted,
-        Unavailable refused => throw new InvalidOperationException(refused.Message),
-    };
 
     [Test]
     public async Task Empty_usage_and_query_flushes_leave_the_catalog_uninitialized()
@@ -50,33 +43,6 @@ public sealed class UsageApiTests
 
         using var finalHealth = await server.Client.GetAsync(Uri("/healthz"), token);
         finalHealth.EnsureSuccessStatusCode();
-    }
-
-    [Test]
-    public async Task A_refused_sender_load_retries_before_accepting_a_previously_saved_batch()
-    {
-        var time = new FakeTimeProvider();
-        await using var api = await ManagementApi.StartAsync(time: time);
-        await api.CreateManagedDatabaseAsync();
-        var catalog = api.Server.Services.GetRequiredService<SystemCatalog>();
-        await catalog.WriteUncheckedAsync(async transaction =>
-        {
-            await SystemCatalog.PutAsync(transaction, "usage-senders", "node-a",
-                new UsageSender("node-a", [new UsageSenderEpoch("epoch", 1)], time.GetUtcNow()),
-                TerraBaseJsonContext.Default.UsageSender, CancellationToken.None);
-            return 0;
-        }, CancellationToken.None);
-        var supportedVersion = await ReplaceCatalogVersionAsync(catalog, Encoding.UTF8.GetBytes("\"99\""));
-        var meter = api.Server.Services.GetRequiredService<UsageMeter>();
-
-        await Assert.That(await meter.AcceptAsync("node-a", "epoch", 1, [], CancellationToken.None) is Unavailable).IsTrue();
-        await Assert.That(await CountSendersAsync(api.Server.DataDirectory)).IsEqualTo(1);
-        await ReplaceCatalogVersionAsync(catalog, supportedVersion);
-
-        await Assert.That(Accepted(await meter.AcceptAsync("node-a", "epoch", 1, [], CancellationToken.None))).IsEqualTo(UsageAccept.Duplicate);
-        await Assert.That(Accepted(await meter.AcceptAsync("node-b", "epoch", 1, [], CancellationToken.None))).IsEqualTo(UsageAccept.Added);
-        await meter.FlushAsync(CancellationToken.None);
-        await Assert.That(await CountSendersAsync(api.Server.DataDirectory)).IsEqualTo(2);
     }
 
     [Test]
@@ -353,119 +319,6 @@ public sealed class UsageApiTests
     }
 
     [Test]
-    public async Task Usage_reads_go_on_while_a_batch_waits_for_the_primary()
-    {
-        await using var api = await ManagementApi.StartAsync(time: new FakeTimeProvider(Instant("2026-11-11T11:30:00Z")));
-        var database = await api.CreateManagedDatabaseAsync();
-        var meter = api.Server.Services.GetRequiredService<UsageMeter>();
-        var tenant = new TenantContext(database.Organization, PlanTier.Hobby, database.Project, database.Id);
-        meter.Add(new UsageKey(new DatabaseOwner(database.Organization, database.Project, database.Id), Hour("2026-11-11T11:00:00Z")), new OpCounts(3, 0));
-        var sending = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var acknowledge = new TaskCompletionSource<AddUsageResult>(TaskCreationOptions.RunContinuationsAsynchronously);
-        Task<AddUsageResult> Send(long sequence, KeyValuePair<UsageKey, OpCounts>[] batch, CancellationToken cancellationToken)
-        {
-            sending.TrySetResult();
-            return acknowledge.Task;
-        }
-
-        // The primary is slow to answer; a usage read served here does not wait for it, and still sees the batch's counts.
-        var send = meter.SendAsync(Send, CancellationToken.None).AsTask();
-        await sending.Task.WaitAsync(TimeSpan.FromSeconds(10));
-        var during = await meter.GetAsync(tenant, new UsageWindow(UsageWindow.Hour, Hour("2026-11-11T11:00:00Z"), 1), CancellationToken.None)
-            .AsTask().WaitAsync(TimeSpan.FromSeconds(10)) switch
-        {
-            UsageCounts counts => counts.Lifetime,
-            Unavailable => throw new InvalidOperationException("usage counts must remain readable while sending"),
-        };
-        acknowledge.SetResult(new Done());
-        await Assert.That(await send.WaitAsync(TimeSpan.FromSeconds(10))).IsTrue();
-        var after = await meter.GetAsync(tenant, new UsageWindow(UsageWindow.Hour, Hour("2026-11-11T11:00:00Z"), 1), CancellationToken.None) switch
-        {
-            UsageCounts counts => counts.Lifetime,
-            Unavailable => throw new InvalidOperationException("usage counts must remain readable after sending"),
-        };
-
-        await Assert.That(during.Reads).IsEqualTo(3);
-        await Assert.That(after.Reads).IsEqualTo(0);
-    }
-
-    [Test]
-    public async Task Counting_while_batches_go_out_loses_nothing_and_frees_every_emptied_database()
-    {
-        await using var api = await ManagementApi.StartAsync(time: new FakeTimeProvider(Instant("2026-11-11T11:30:00Z")));
-        var meter = api.Server.Services.GetRequiredService<UsageMeter>();
-        var hour = Hour("2026-11-11T11:00:00Z");
-        var owners = Enumerable.Range(0, 50).Select(_ => new DatabaseOwner(EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString())).ToArray();
-        long sent = 0;
-        Task<AddUsageResult> Send(long sequence, KeyValuePair<UsageKey, OpCounts>[] batch, CancellationToken cancellationToken)
-        {
-            Interlocked.Add(ref sent, batch.Sum(entry => entry.Value.Reads));
-            return Task.FromResult<AddUsageResult>(new Done());
-        }
-
-        // Four writers count while batches keep going out and each acknowledged one empties, and drops, maps.
-        var writers = Enumerable.Range(0, 4).Select(writer => Task.Run(() =>
-        {
-            for (var i = 0; i < 5000; i++)
-            {
-                meter.Add(new UsageKey(owners[((writer * 5000) + i) % owners.Length], hour), new OpCounts(1, 0));
-            }
-        })).ToArray();
-        while (!writers.All(writer => writer.IsCompleted))
-        {
-            await meter.SendAsync(Send, CancellationToken.None);
-        }
-
-        await Task.WhenAll(writers);
-        while (await meter.SendAsync(Send, CancellationToken.None))
-        {
-        }
-
-        await Assert.That(Interlocked.Read(ref sent)).IsEqualTo(20_000);
-        await Assert.That(meter.PendingDatabases).IsEqualTo(0);
-    }
-
-    [Test]
-    public async Task Senders_silent_for_seven_days_retire_and_free_their_places()
-    {
-        var directory = Directory.CreateTempSubdirectory("terrabase-usage-retire-").FullName;
-        try
-        {
-            void Settings(Dictionary<string, string> settings)
-            {
-                settings["data-directory"] = directory;
-            }
-
-            // 1,024 followers fill every place; one more is refused while they are recent.
-            await using (var api = await ManagementApi.StartAsync(Settings, time: new FakeTimeProvider(Instant("2026-11-01T00:00:00Z"))))
-            {
-                var meter = api.Server.Services.GetRequiredService<UsageMeter>();
-                for (var i = 0; i < 1024; i++)
-                {
-                    await Assert.That(Accepted(await meter.AcceptAsync($"node-{i}", "epoch", 1, [], CancellationToken.None))).IsEqualTo(UsageAccept.Added);
-                }
-
-                await Assert.That(Accepted(await meter.AcceptAsync("node-new", "epoch", 1, [], CancellationToken.None))).IsEqualTo(UsageAccept.TooManySenders);
-                await meter.FlushAsync(CancellationToken.None);
-                await Assert.That(await CountSendersAsync(directory)).IsEqualTo(1024);
-            }
-
-            // Eight days later they have retired: the new follower gets a place, and the next flush deletes their records.
-            await using (var api = await ManagementApi.StartAsync(Settings, time: new FakeTimeProvider(Instant("2026-11-09T00:00:00Z"))))
-            {
-                var meter = api.Server.Services.GetRequiredService<UsageMeter>();
-                await Assert.That(Accepted(await meter.AcceptAsync("node-new", "epoch", 1, [], CancellationToken.None))).IsEqualTo(UsageAccept.Added);
-                await meter.FlushAsync(CancellationToken.None);
-                await Assert.That(await CountSendersAsync(directory)).IsEqualTo(1);
-            }
-        }
-        finally
-        {
-            Directory.Delete(directory, recursive: true);
-        }
-    }
-
-    [Test]
     public async Task Project_usage_whose_bucket_read_outlasts_its_deadline_reads_no_further_page()
     {
         var time = new FakeTimeProvider(Instant("2026-11-11T11:30:00Z"));
@@ -495,179 +348,6 @@ public sealed class UsageApiTests
 
         await ErrorAssert.ErrorAsync(response, HttpStatusCode.BadRequest, "invalid_query", "query too expensive");
         await Assert.That(pages).IsEqualTo(1);
-    }
-
-    [Test]
-    public async Task A_follower_that_keeps_retrying_a_batch_never_retires_so_its_retry_counts_once()
-    {
-        var directory = Directory.CreateTempSubdirectory("terrabase-usage-retry-").FullName;
-        try
-        {
-            void Settings(Dictionary<string, string> settings)
-            {
-                settings["data-directory"] = directory;
-            }
-
-            async Task<UsageAccept> AcceptAsync(string at, string sender, Func<UsageMeter, Task>? before = null)
-            {
-                await using var api = await ManagementApi.StartAsync(Settings, time: new FakeTimeProvider(Instant(at)));
-                var meter = api.Server.Services.GetRequiredService<UsageMeter>();
-                if (before is not null)
-                {
-                    await before(meter);
-                }
-
-                var accepted = await meter.AcceptAsync(sender, "epoch", 1, [], CancellationToken.None);
-                await meter.FlushAsync(CancellationToken.None);
-                return Accepted(accepted);
-            }
-
-            // The primary adds the batch, but its acknowledgement never reaches the follower, which keeps sending it.
-            await Assert.That(await AcceptAsync("2026-11-01T00:00:00Z", "node-a")).IsEqualTo(UsageAccept.Added);
-            await Assert.That(await AcceptAsync("2026-11-07T00:00:00Z", "node-a")).IsEqualTo(UsageAccept.Duplicate);
-            // 12 days after the batch was added, 6 after the last retry: another sender loads every record and a flush
-            // retires the silent ones. node-a's retry still finds its sequence.
-            await Assert.That(await AcceptAsync("2026-11-13T00:00:00Z", "node-a", async meter =>
-            {
-                await meter.AcceptAsync("node-b", "epoch", 1, [], CancellationToken.None);
-                await meter.FlushAsync(CancellationToken.None);
-            })).IsEqualTo(UsageAccept.Duplicate);
-        }
-        finally
-        {
-            Directory.Delete(directory, recursive: true);
-        }
-    }
-
-    [Test]
-    public async Task A_batch_unacknowledged_for_a_day_is_given_up_so_no_retry_outlives_its_senders_record()
-    {
-        var time = new FakeTimeProvider(Instant("2026-11-11T11:30:00Z"));
-        // The test sends itself: the background flush, which the day's advance would run, would drop these unknown databases.
-        await using var api = await ManagementApi.StartAsync(time: time, services: services =>
-            services.Remove(services.Single(service => service.ImplementationType == typeof(UsageFlushService))));
-        var meter = api.Server.Services.GetRequiredService<UsageMeter>();
-        var owner = new DatabaseOwner(EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString());
-        List<(long Sequence, KeyValuePair<UsageKey, OpCounts>[] Batch)> sent = [];
-        var reachable = false;
-        Task<AddUsageResult> Send(long sequence, KeyValuePair<UsageKey, OpCounts>[] batch, CancellationToken cancellationToken)
-        {
-            sent.Add((sequence, batch));
-            return reachable ? Task.FromResult<AddUsageResult>(new Done()) : Task.FromException<AddUsageResult>(new IOException("the primary is away"));
-        }
-
-        // The primary saved batch 1, but its acknowledgement was lost, and the primary stays out of reach for a day.
-        meter.Add(new UsageKey(owner, Hour("2026-11-11T11:00:00Z")), new OpCounts(1, 0));
-        await Assert.ThrowsAsync<IOException>(async () => await meter.SendAsync(Send, CancellationToken.None));
-        time.Advance(UsageMeter.UnsentLifetime - TimeSpan.FromSeconds(1));
-        await Assert.ThrowsAsync<IOException>(async () => await meter.SendAsync(Send, CancellationToken.None));
-        time.Advance(TimeSpan.FromSeconds(1));
-        meter.Add(new UsageKey(owner, Hour("2026-11-12T11:00:00Z")), new OpCounts(1, 0));
-        reachable = true;
-        await Assert.That(await meter.SendAsync(Send, CancellationToken.None)).IsTrue();
-        await Assert.That(await meter.SendAsync(Send, CancellationToken.None)).IsFalse();
-
-        // Batch 1 went twice, then was given up; batch 2 carries only the later counts.
-        await Assert.That(sent.Select(attempt => attempt.Sequence)).IsEquivalentTo([1L, 1L, 2L], TUnit.Assertions.Enums.CollectionOrdering.Matching);
-        await Assert.That(sent[2].Batch.Single()).IsEqualTo(KeyValuePair.Create(new UsageKey(owner, Hour("2026-11-12T11:00:00Z")), new OpCounts(1, 0)));
-    }
-
-    [Test]
-    public async Task A_batch_the_primary_refuses_is_dropped_and_later_counts_are_sent()
-    {
-        await using var api = await ManagementApi.StartAsync(time: new FakeTimeProvider(Instant("2026-11-11T11:30:00Z")));
-        var meter = api.Server.Services.GetRequiredService<UsageMeter>();
-        var owner = new DatabaseOwner(EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString());
-        List<(long Sequence, KeyValuePair<UsageKey, OpCounts>[] Batch)> sent = [];
-        Task<AddUsageResult> Send(long sequence, KeyValuePair<UsageKey, OpCounts>[] batch, CancellationToken cancellationToken)
-        {
-            sent.Add((sequence, batch));
-            // The first batch is refused for good, as one whose hours ran ahead of the primary's clock.
-            return Task.FromResult<AddUsageResult>(sent.Count > 1 ? new Done() : new Validation("ahead of the primary's clock"));
-        }
-
-        meter.Add(new UsageKey(owner, Hour("2026-11-13T00:00:00Z")), new OpCounts(5, 0));
-        await Assert.That(await meter.SendAsync(Send, CancellationToken.None)).IsTrue();
-        meter.Add(new UsageKey(owner, Hour("2026-11-11T11:00:00Z")), new OpCounts(1, 0));
-        await Assert.That(await meter.SendAsync(Send, CancellationToken.None)).IsTrue();
-        await Assert.That(await meter.SendAsync(Send, CancellationToken.None)).IsFalse();
-
-        await Assert.That(sent.Select(attempt => attempt.Sequence)).IsEquivalentTo([1L, 2L], TUnit.Assertions.Enums.CollectionOrdering.Matching);
-        await Assert.That(sent[1].Batch.Single()).IsEqualTo(KeyValuePair.Create(new UsageKey(owner, Hour("2026-11-11T11:00:00Z")), new OpCounts(1, 0)));
-    }
-
-    [Test]
-    public async Task Counts_held_while_a_batch_is_unacknowledged_still_fold_and_the_batch_keeps_its_counts()
-    {
-        var time = new FakeTimeProvider(Instant("2026-11-11T11:30:00Z"));
-        await using var api = await ManagementApi.StartAsync(time: time);
-        var database = await api.CreateManagedDatabaseAsync();
-        var meter = api.Server.Services.GetRequiredService<UsageMeter>();
-        var owner = new DatabaseOwner(database.Organization, database.Project, database.Id);
-        var now = time.GetUtcNow().ToUnixTimeSeconds() / 3600;
-        List<(long Sequence, KeyValuePair<UsageKey, OpCounts>[] Batch)> sent = [];
-        var fail = true;
-        Task<AddUsageResult> Send(long sequence, KeyValuePair<UsageKey, OpCounts>[] batch, CancellationToken cancellationToken)
-        {
-            sent.Add((sequence, batch));
-            return fail ? Task.FromException<AddUsageResult>(new IOException("the primary is away")) : Task.FromResult<AddUsageResult>(new Done());
-        }
-
-        // The first batch is not acknowledged. Meanwhile 24 hours of a day 40 days ago arrive; the next attempt still folds
-        // them into one entry of that day, without touching the unacknowledged batch.
-        meter.Add(new UsageKey(owner, now), new OpCounts(1, 0));
-        await Assert.ThrowsAsync<IOException>(async () => await meter.SendAsync(Send, CancellationToken.None));
-        var old = Instant("2026-10-02T00:00:00Z").ToUnixTimeSeconds() / 3600;
-        for (var hour = old; hour < old + 24; hour++)
-        {
-            meter.Add(new UsageKey(owner, hour), new OpCounts(1, 0));
-        }
-
-        meter.Add(new UsageKey(owner, now), new OpCounts(1, 0));
-        await Assert.ThrowsAsync<IOException>(async () => await meter.SendAsync(Send, CancellationToken.None));
-        fail = false;
-        await Assert.That(await meter.SendAsync(Send, CancellationToken.None)).IsTrue();
-        await Assert.That(await meter.SendAsync(Send, CancellationToken.None)).IsTrue();
-        await Assert.That(await meter.SendAsync(Send, CancellationToken.None)).IsFalse();
-
-        await Assert.That(sent.Select(attempt => attempt.Sequence)).IsEquivalentTo([1L, 1L, 1L, 2L], TUnit.Assertions.Enums.CollectionOrdering.Matching);
-        await Assert.That(sent[2].Batch.Single()).IsEqualTo(KeyValuePair.Create(new UsageKey(owner, now), new OpCounts(1, 0)));
-        await Assert.That(sent[3].Batch.Select(entry => (entry.Key.Hour, entry.Key.Scope, entry.Value.Reads)))
-            .IsEquivalentTo([(old, UsageScope.Day, 24L), (now, UsageScope.Hour, 1L)]);
-    }
-
-    [Test]
-    public async Task Every_pending_key_gets_into_a_batch_while_others_keep_counting()
-    {
-        await using var api = await ManagementApi.StartAsync(time: new FakeTimeProvider(Instant("2026-11-11T11:30:00Z")));
-        var meter = api.Server.Services.GetRequiredService<UsageMeter>();
-        var hour = Instant("2026-11-11T11:00:00Z").ToUnixTimeSeconds() / 3600;
-        var keys = Enumerable.Range(0, UsageMeter.MaxBatch + 904)
-            .Select(_ => new UsageKey(new DatabaseOwner(EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString()), hour))
-            .ToList();
-        foreach (var key in keys)
-        {
-            meter.Add(key, new OpCounts(1, 0));
-        }
-
-        List<KeyValuePair<UsageKey, OpCounts>[]> sent = [];
-        Task<AddUsageResult> Send(long sequence, KeyValuePair<UsageKey, OpCounts>[] batch, CancellationToken cancellationToken)
-        {
-            sent.Add(batch);
-            // The keys of this batch keep counting while it is in flight.
-            foreach (var (key, _) in batch)
-            {
-                meter.Add(key, new OpCounts(1, 0));
-            }
-
-            return Task.FromResult<AddUsageResult>(new Done());
-        }
-
-        await meter.SendAsync(Send, CancellationToken.None);
-        await meter.SendAsync(Send, CancellationToken.None);
-
-        await Assert.That(sent[0].Length).IsEqualTo(UsageMeter.MaxBatch);
-        await Assert.That(sent[0].Concat(sent[1]).Select(entry => entry.Key).ToHashSet().SetEquals(keys)).IsTrue();
     }
 
     [Test]
@@ -1355,29 +1035,21 @@ public sealed class UsageApiTests
         await Assert.That(period.GetProperty("writes").GetInt64()).IsEqualTo(writes);
     }
 
-    private static async Task<long> CountSendersAsync(string dataDirectory)
-    {
-        await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = Path.Combine(dataDirectory, "_system.db"), Mode = SqliteOpenMode.ReadOnly, Pooling = false }.ToString());
-        await connection.OpenAsync();
-        await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT count(*) FROM documents WHERE collection = 'usage-senders' AND body IS NOT NULL;";
-        return (long)(await command.ExecuteScalarAsync())!;
-    }
-
-    // The saved bucket ids of a database, straight from the catalog file, read-only.
+    // The saved bucket ids of a database, straight from the catalog file, read-only: this machine's ("local", off Fly), whose
+    // documents end with @local.
     private static async Task<List<string>> BucketsAsync(string dataDirectory, string databaseId, string granularity)
     {
         var path = Path.Combine(dataDirectory, "_system.db");
         await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadOnly, Pooling = false }.ToString());
         await connection.OpenAsync();
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT id FROM documents WHERE collection = $collection AND body IS NOT NULL ORDER BY id;";
+        command.CommandText = "SELECT id FROM documents WHERE collection = $collection AND id LIKE '%@local' ORDER BY id;";
         command.Parameters.AddWithValue("$collection", $"databases/{databaseId}/usage-{granularity}");
         List<string> ids = [];
         await using var reader = await command.ExecuteReaderAsync();
         while (await reader.ReadAsync())
         {
-            ids.Add(reader.GetString(0));
+            ids.Add(reader.GetString(0)[..^"@local".Length]);
         }
 
         return ids;
@@ -1392,14 +1064,14 @@ public sealed class UsageApiTests
         }
     }
 
-    // Reads the flushed counters straight from the catalog file, read-only.
+    // Reads this machine's flushed counters straight from the catalog file, read-only.
     private static async Task<string?> ReadSavedOpsAsync(string dataDirectory, string databaseId)
     {
         var path = Path.Combine(dataDirectory, "_system.db");
         await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadOnly, Pooling = false }.ToString());
         await connection.OpenAsync();
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT body FROM documents WHERE collection = $collection AND id = 'ops';";
+        command.CommandText = "SELECT body FROM documents WHERE collection = $collection AND id = 'ops@local';";
         command.Parameters.AddWithValue("$collection", $"databases/{databaseId}/usage");
         return await command.ExecuteScalarAsync() as string;
     }

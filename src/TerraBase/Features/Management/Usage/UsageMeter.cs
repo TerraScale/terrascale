@@ -6,7 +6,6 @@ using TerraBase.Configuration;
 using TerraBase.Engine;
 using TerraBase.Errors;
 using TerraBase.Features.Memory;
-using TerraBase.Features.Replication;
 using TerraBase.Features.Stats;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
@@ -50,37 +49,6 @@ internal sealed record OpCounts(long Reads, long Writes, IReadOnlyDictionary<str
     }
 }
 
-/// <summary>The highest batch sequence a catalog primary added for one follower process.</summary>
-/// <param name="Epoch">The process's epoch, base64.</param>
-/// <param name="Sequence">The highest sequence added.</param>
-internal sealed record UsageSenderEpoch(string Epoch, long Sequence);
-
-/// <summary>
-/// What a catalog primary added for one follower (by node name): its last epochs, oldest first. Saved as a document of the
-/// catalog's <c>usage-senders</c> collection in the flush that saves the counts, so a batch sent again after the primary
-/// restarted is recognized exactly when its counts were saved.
-/// </summary>
-/// <param name="Sender">The follower's node name.</param>
-/// <param name="Epochs">Its last epochs.</param>
-/// <param name="LastSeen">When the primary last received one of its batches, a retry included, by the primary's clock.</param>
-internal sealed record UsageSender(string Sender, IReadOnlyList<UsageSenderEpoch> Epochs, DateTimeOffset LastSeen);
-
-/// <summary>What a catalog primary did with a follower's batch.</summary>
-internal enum UsageAccept
-{
-    /// <summary>Its counts were added.</summary>
-    Added,
-
-    /// <summary>It was added before: a retry, or an attempt that arrived late.</summary>
-    Duplicate,
-
-    /// <summary>It comes from a sender past the bound.</summary>
-    TooManySenders,
-}
-
-/// <summary>Whether a follower batch was accepted, or why the catalog cannot be read now.</summary>
-internal readonly union UsageAcceptResult(UsageAccept, Unavailable);
-
 /// <summary>Which buckets counts belong in.</summary>
 internal enum UsageScope
 {
@@ -122,56 +90,33 @@ internal readonly union UsageCountsResult(UsageCounts, Unavailable);
 /// <summary>
 /// Counts operations in memory per database (organization, project and database: the request's tenant) and UTC hour, and
 /// adds them to the catalog on <see cref="FlushAsync"/>. Counts of a database the catalog no longer names are dropped at the
-/// flush. A catalog follower writes no catalog: it sends its counts to its primary instead (<see cref="SendAsync"/>).
+/// flush.
 /// </summary>
 /// <remarks>
-/// Memory holds one entry per database and hour with operations since the last flush. Before each flush or send, entries
-/// past the kept hours fold into a day-only entry, and those past the kept days into a lifetime-only one, so a backlog (a
-/// follower whose primary is away, a catalog that refuses writes) holds at most about 1,250 entries per database. A
-/// follower sends folded entries with their scope, so the primary never saves them in an hour.
-/// Entries are indexed by database; a flush or send drops the maps it emptied.
+/// Memory holds one entry per database and hour with operations since the last flush. Before each flush, entries past the
+/// kept hours fold into a day-only entry, and those past the kept days into a lifetime-only one, so a backlog (a catalog
+/// that refuses writes) holds at most about 1,250 entries per database. Entries are indexed by database; a flush drops the
+/// maps it emptied.
 /// </remarks>
 internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider time, TerraBaseOptions options, ILogger<UsageMeter> logger, IMemoryBudget memory, IMeterFactory meters,
     IDatabaseStats stats)
     : IUsageMeter, IDisposable
 {
-    // Senders are peer-authenticated members; a cell has a handful.
-    private const int MaxSenders = 1024;
-
-    // A sender silent this long retires, so replaced nodes free their places. A follower retries an unacknowledged batch
-    // every 10 seconds, each retry received keeps it from retiring, and it gives a batch up after UnsentLifetime: so no retry
-    // comes after its sender's record is gone, even across an outage. A restarted follower starts a new epoch.
-    private static readonly TimeSpan SenderRetirement = TimeSpan.FromDays(7);
-
-    // Epochs (follower processes) remembered per sender, so a delayed attempt of a restarted process is still recognized; an
-    // attempt lives at most its 10-second deadline, far less than 16 restarts take.
-    private const int SenderEpochs = 16;
-
-    private const string Senders = "usage-senders";
-
-    /// <summary>Entries one follower batch carries at most.</summary>
-    internal const int MaxBatch = 4096;
-
-    /// <summary>
-    /// How long a follower sends a batch again before it drops it: far less than a primary keeps the sequences of a silent
-    /// sender, so a retry never arrives after they are gone, whatever outage came between. Its counts may then be lost
-    /// (the primary may never have received them), but never counted twice.
-    /// </summary>
-    internal static readonly TimeSpan UnsentLifetime = TimeSpan.FromDays(1);
-
-    /// <summary>
-    /// Reads or writes one batch entry carries at most: 4,096 of them cannot overflow a total. A follower sends no more of an
-    /// entry, which no real hour reaches.
-    /// </summary>
-    internal const long MaxCount = 1_000_000_000_000;
-
-    // Byte meters aggregate past MaxCount (a day of storage samples, lifetime bandwidth); they are bounded only by long.
+    // Byte meters aggregate past every count limit (a day of storage samples, lifetime bandwidth); they are bounded only by long.
     internal static bool ByteMeter(string meter) => meter is "client_bytes" or "replication_bytes" or "storage_bytes";
 
     private const string Ops = "ops";
 
     // The id of the last flush that added to a database's counts, saved in the same write.
     private const string LastFlush = "flush";
+
+    // Every machine flushes the requests it served into documents of its own (lifetime totals, buckets, last flush), whose ids
+    // end with @ and its machine id: the catalog replicates to every region (docs/terrabase/multi-region-replication.md
+    // section 15), and only one writer per document keeps a read-add-write flush exact. Reads sum every machine's documents.
+    private string Own(string id) => $"{id}@{options.MachineId}";
+
+    // The bucket or name part of a per-machine id.
+    private static string Shared(string id) => id.IndexOf('@', StringComparison.Ordinal) is var at and >= 0 ? id[..at] : id;
 
     // Bucket documents are a few dozen bytes; this only bounds a page if one ever is not.
     private const long MaxPageBytes = 1024 * 1024;
@@ -185,37 +130,12 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
     // Adds hold it shared; dropping emptied databases' maps holds it exclusively, so no Add writes to a dropped map.
     private readonly ReaderWriterLockSlim _maps = new();
 
-    // On a primary: what each follower's batches added, and the senders whose state no flush saved yet. Accepting a batch
-    // (its counts and its sequence) and a flush's snapshot of both are atomic under _accept.
-    private readonly Lock _accept = new();
-    private readonly Dictionary<string, UsageSender> _senders = [with(StringComparer.Ordinal)];
-    private readonly HashSet<string> _unsavedSenders = [with(StringComparer.Ordinal)];
-
-    // Retired senders whose saved state no flush deleted yet.
-    private readonly HashSet<string> _retiredSenders = [with(StringComparer.Ordinal)];
-    private Task<CatalogCheck>? _sendersLoaded;
-
     // Makes a flush (catalog commit plus removal from memory) atomic for readers, so totals never count twice or miss.
     private readonly SemaphoreSlim _flush = new(1, 1);
-
-    // On a follower, one batch at a time goes to the primary, without holding _flush across the network.
-    private readonly SemaphoreSlim _send = new(1, 1);
 
     // A flush whose write threw may still have committed (the catalog commits before it disposes the transaction): its
     // counts stay pending until its id, saved with them, shows whether they were saved. Guarded by _flush.
     private (string Id, KeyValuePair<UsageKey, OpCounts>[] Batch)? _inDoubt;
-
-    // On a follower, the batch the primary has not acknowledged: sent again, with the same sequence, before any other. Kept
-    // apart from _inDoubt, which a local usage read settles against this member's catalog. Guarded by _flush, and only
-    // SendAsync (under _send) changes it.
-    private (long Sequence, KeyValuePair<UsageKey, OpCounts>[] Batch, DateTimeOffset FirstSent)? _unsent;
-
-    // The sequence of the last batch this follower process sent. Guarded by _send.
-    private long _sent;
-
-    // The pending keys still to send in turn, so every key gets into a batch even while others keep counting. Refilled
-    // with every pending key once empty. Guarded by _flush.
-    private readonly Queue<UsageKey> _turns = new();
 
     public void RecordRead(TenantContext database)
     {
@@ -260,70 +180,6 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
         finally
         {
             _maps.ExitReadLock();
-        }
-    }
-
-    /// <summary>
-    /// On a catalog primary: adds a follower's batch unless its sequence is at or below the highest added for its sender's
-    /// epoch (a retry, or an attempt that arrived late), also before this process started, once a flush saved it.
-    /// </summary>
-    public async ValueTask<UsageAcceptResult> AcceptAsync(
-        string sender, string epoch, long sequence, IReadOnlyList<KeyValuePair<UsageKey, OpCounts>> counts, CancellationToken cancellationToken)
-    {
-        ArgumentNullException.ThrowIfNull(counts);
-        if (await LoadSendersAsync(cancellationToken).ConfigureAwait(false) is Unavailable refused)
-        {
-            return refused;
-        }
-        lock (_accept)
-        {
-            var now = time.GetUtcNow();
-            if (!_senders.TryGetValue(sender, out var state))
-            {
-                if (_senders.Count >= MaxSenders)
-                {
-                    RetireSenders(now);
-                    if (_senders.Count >= MaxSenders)
-                    {
-                        return UsageAccept.TooManySenders;
-                    }
-                }
-
-                state = new UsageSender(sender, [], now);
-            }
-
-            List<UsageSenderEpoch> epochs = [.. state.Epochs];
-            var known = epochs.FindIndex(added => added.Epoch == epoch);
-            if (known >= 0 && sequence <= epochs[known].Sequence)
-            {
-                // A retry keeps the sender from retiring, so its sequence outlives every retry; the next flush saves that.
-                _senders[sender] = state with { LastSeen = now };
-                _unsavedSenders.Add(sender);
-                return UsageAccept.Duplicate;
-            }
-
-            foreach (var (key, count) in counts)
-            {
-                Add(key, count);
-            }
-
-            if (known >= 0)
-            {
-                epochs[known] = new(epoch, sequence);
-            }
-            else
-            {
-                epochs.Add(new(epoch, sequence));
-                if (epochs.Count > SenderEpochs)
-                {
-                    epochs.RemoveAt(0);
-                }
-            }
-
-            _senders[sender] = state with { Epochs = epochs, LastSeen = now };
-            _unsavedSenders.Add(sender);
-            _retiredSenders.Remove(sender);
-            return UsageAccept.Added;
         }
     }
 
@@ -384,7 +240,7 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
 
             var read = await catalog.ReadAsync<UsageCountsResult>(
                 async transaction => new UsageCounts(
-                    await transaction.GetAsync(UsageCollection(owner.DatabaseId), Ops, cancellationToken).ConfigureAwait(false) is { } document ? Parse(document) : OpCounts.Zero,
+                    await ReadLifetimeAsync(transaction, owner.DatabaseId, Parse, cancellationToken).ConfigureAwait(false),
                     await ReadSeriesAsync(transaction, owner.DatabaseId, window, Parse, proceed, cancellationToken).ConfigureAwait(false)),
                 static error => error, cancellationToken).ConfigureAwait(false);
             if (read is not UsageCounts saved)
@@ -397,9 +253,7 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
             }
 
             var (lifetime, series) = saved;
-            // A follower's own counts reach these totals once the primary saved them and they replicated here; adding the
-            // ones still pending could count a batch twice, the primary having saved it before its acknowledgement came.
-            foreach (var (key, entry) in !options.CatalogFollower && _pending.TryGetValue(owner, out var pending) ? pending : [])
+            foreach (var (key, entry) in _pending.TryGetValue(owner, out var pending) ? pending : [])
             {
                 var counts = Shape(entry);
                 lifetime += counts;
@@ -439,104 +293,6 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
         }
     }
 
-    /// <summary>
-    /// On a catalog follower: hands at most <see cref="MaxBatch"/> pending counts to <paramref name="send"/>, which delivers
-    /// them to the primary under the batch's sequence (one more than the last batch's), and forgets them once it returns
-    /// <see cref="Done"/> (the primary added them) or <see cref="Validation"/> (it refused them for good; they are dropped, so
-    /// they cannot hold back later counts). A batch whose send threw, or that the primary lacked the capacity to take
-    /// (<see cref="QuotaExceeded"/>), is sent again with the same sequence before any other, so the primary, which adds a
-    /// batch only past the highest sequence it added for this process, never counts it twice. Returns whether a batch was
-    /// sent and forgotten.
-    /// </summary>
-    public async ValueTask<bool> SendAsync(Func<long, KeyValuePair<UsageKey, OpCounts>[], CancellationToken, Task<AddUsageResult>> send, CancellationToken cancellationToken)
-    {
-        ArgumentNullException.ThrowIfNull(send);
-        await _send.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            long sequence;
-            KeyValuePair<UsageKey, OpCounts>[] batch;
-            await _flush.WaitAsync(cancellationToken).ConfigureAwait(false);
-            try
-            {
-                var now = time.GetUtcNow();
-                if (_unsent is { } stale && now - stale.FirstSent >= UnsentLifetime)
-                {
-                    foreach (var (key, counts) in stale.Batch)
-                    {
-                        Subtract(key, counts);
-                    }
-
-                    _unsent = null;
-                    logger.ZLogWarning($"A usage batch of {stale.Batch.Length:@Entries} database hours went unacknowledged for a day; its counts are dropped");
-                }
-
-                Compact();
-                (sequence, batch) = _unsent is { } unsent ? (unsent.Sequence, unsent.Batch) : (_sent + 1, NextBatch());
-                if (batch.Length == 0)
-                {
-                    return false;
-                }
-
-                (_unsent, _sent) = ((sequence, batch, _unsent?.FirstSent ?? now), sequence);
-            }
-            finally
-            {
-                _flush.Release();
-            }
-
-            // Usage reads go on while the primary answers. If this throws or is cancelled, the batch stays unsent and goes
-            // again with its sequence, which the primary adds once.
-            var result = await send(sequence, batch, cancellationToken).ConfigureAwait(false);
-            // Measurements are best effort; read and write totals are not. A primary that refuses the batch, for a measurement
-            // it rejects or a scope it predates, or lacks the memory to read its measurements, gets the totals alone once,
-            // under the same sequence it did not save.
-            KeyValuePair<UsageKey, OpCounts>[] totals = [.. batch.Where(entry => entry.Value.Reads != 0 || entry.Value.Writes != 0)
-                .Select(entry => KeyValuePair.Create(entry.Key, entry.Value with { Meters = null }))];
-            if (result is not Done && totals.Length > 0 && (totals.Length < batch.Length || batch.Any(entry => entry.Value.Meters is not null)))
-            {
-                result = await send(sequence, totals, cancellationToken).ConfigureAwait(false);
-                if (result is not QuotaExceeded)
-                {
-                    _measurementDrops.Add(1);
-                }
-            }
-
-            if (result is QuotaExceeded)
-            {
-                // The primary added none of it: the whole batch stays unsent, like one whose send threw.
-                return false;
-            }
-
-            await _flush.WaitAsync(cancellationToken).ConfigureAwait(false);
-            try
-            {
-                _unsent = null;
-                foreach (var (key, counts) in batch)
-                {
-                    Subtract(key, counts);
-                }
-
-                DropEmptied();
-            }
-            finally
-            {
-                _flush.Release();
-            }
-
-            if (result is Validation)
-            {
-                logger.ZLogWarning($"The catalog primary refused a usage batch of {batch.Length:@Entries} database hours; its counts are dropped");
-            }
-
-            return true;
-        }
-        finally
-        {
-            _send.Release();
-        }
-    }
-
     private async ValueTask FlushLockedAsync(CancellationToken cancellationToken)
     {
         Compact();
@@ -544,18 +300,8 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
         {
             return;
         }
-        KeyValuePair<UsageKey, OpCounts>[] batch;
-        UsageSender[] senders;
-        string[] retired;
-        lock (_accept)
-        {
-            RetireSenders(time.GetUtcNow());
-            batch = [.. Entries()];
-            senders = [.. _unsavedSenders.Select(sender => _senders[sender])];
-            retired = [.. _retiredSenders];
-        }
-
-        if (batch.Length == 0 && senders.Length == 0 && retired.Length == 0)
+        KeyValuePair<UsageKey, OpCounts>[] batch = [.. Entries()];
+        if (batch.Length == 0)
         {
             return;
         }
@@ -570,7 +316,7 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
         int dropped;
         try
         {
-            var written = await WriteAsync(id, batch, senders, retired, cancellationToken).ConfigureAwait(false);
+            var written = await WriteAsync(id, batch, cancellationToken).ConfigureAwait(false);
             if (written is not int saved)
             {
                 return;
@@ -580,7 +326,6 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
         }
         catch
         {
-            // The senders stay unsaved: the next flush saves their state again, whatever this one did.
             _inDoubt = (id, batch);
             throw;
         }
@@ -588,19 +333,6 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
         foreach (var (key, counts) in batch)
         {
             Subtract(key, counts);
-        }
-
-        lock (_accept)
-        {
-            foreach (var saved in senders)
-            {
-                if (_senders.TryGetValue(saved.Sender, out var current) && ReferenceEquals(current, saved))
-                {
-                    _unsavedSenders.Remove(saved.Sender);
-                }
-            }
-
-            _retiredSenders.ExceptWith(retired);
         }
 
         DropEmptied();
@@ -613,7 +345,7 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
 
     // Decides a flush that threw: it committed if any database it saved holds its id (one transaction saves all or none),
     // and then its counts leave memory; otherwise they stay pending for the next flush. A failed read leaves it in doubt.
-    // Only a flush on the primary, which accepted the catalog first, leaves one in doubt.
+    // Only a flush that accepted the catalog first leaves one in doubt.
     private async ValueTask<CatalogCheck> SettleAsync(CancellationToken cancellationToken)
     {
         if (_inDoubt is not { } doubt)
@@ -625,7 +357,7 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
         {
             foreach (var database in doubt.Batch.Select(entry => entry.Key.Database.DatabaseId).Distinct())
             {
-                if (await SystemCatalog.GetAsync(transaction, UsageCollection(database), LastFlush, TerraBaseJsonContext.Default.String, cancellationToken)
+                if (await SystemCatalog.GetAsync(transaction, UsageCollection(database), Own(LastFlush), TerraBaseJsonContext.Default.String, cancellationToken)
                     .ConfigureAwait(false) == doubt.Id)
                 {
                     return true;
@@ -657,21 +389,11 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
 
     // Returns how many databases of the batch no longer exist.
     private ValueTask<FlushResult> WriteAsync(
-        string id, KeyValuePair<UsageKey, OpCounts>[] batch, UsageSender[] senders, string[] retired, CancellationToken cancellationToken)
+        string id, KeyValuePair<UsageKey, OpCounts>[] batch, CancellationToken cancellationToken)
     {
         var minute = CurrentMinute();
         return catalog.WriteAsync<FlushResult>(async transaction =>
         {
-            foreach (var sender in senders)
-            {
-                await PutAsync(transaction, Senders, sender.Sender, sender, TerraBaseJsonContext.Default.UsageSender, cancellationToken).ConfigureAwait(false);
-            }
-
-            foreach (var sender in retired)
-            {
-                await transaction.DeleteAsync(Senders, sender, cancellationToken).ConfigureAwait(false);
-            }
-
             var dropped = 0;
             foreach (var entries in batch.GroupBy(entry => entry.Key.Database))
             {
@@ -687,8 +409,8 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
                 }
 
                 var usage = UsageCollection(database.DatabaseId);
-                await AddAsync(transaction, usage, Ops, entries.Aggregate(OpCounts.Zero, (sum, entry) => sum + entry.Value), cancellationToken).ConfigureAwait(false);
-                await PutAsync(transaction, usage, LastFlush, id, TerraBaseJsonContext.Default.String, cancellationToken).ConfigureAwait(false);
+                await AddAsync(transaction, usage, Own(Ops), entries.Aggregate(OpCounts.Zero, (sum, entry) => sum + entry.Value), cancellationToken).ConfigureAwait(false);
+                await PutAsync(transaction, usage, Own(LastFlush), id, TerraBaseJsonContext.Default.String, cancellationToken).ConfigureAwait(false);
                 foreach (var granularity in UsageWindow.Granularities)
                 {
                     var buckets = Collection(database.DatabaseId, granularity);
@@ -700,7 +422,7 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
                         .Where(bucket => bucket.Key >= oldestKept))
                     {
                         var counts = bucket.Aggregate(OpCounts.Zero, (sum, entry) => sum + entry.Value);
-                        await AddAsync(transaction, buckets, granularity.Id(bucket.Key), counts, cancellationToken).ConfigureAwait(false);
+                        await AddAsync(transaction, buckets, Own(granularity.Id(bucket.Key)), counts, cancellationToken).ConfigureAwait(false);
                     }
 
                     await PruneAsync(transaction, buckets, granularity.Id(oldestKept), cancellationToken).ConfigureAwait(false);
@@ -736,68 +458,17 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
         }
     }
 
-    // Up to MaxBatch pending entries, in turn: a key folded or sent meanwhile is skipped, and one added meanwhile waits for
-    // the next round. A round of only skipped keys starts the next one at once.
-    private KeyValuePair<UsageKey, OpCounts>[] NextBatch()
-    {
-        var batch = new List<KeyValuePair<UsageKey, OpCounts>>();
-        var measurementBytes = 0;
-        for (var round = 0; round < 2 && batch.Count == 0; round++)
-        {
-            if (_turns.Count == 0)
-            {
-                foreach (var (key, _) in Entries())
-                {
-                    _turns.Enqueue(key);
-                }
-            }
-
-            while (batch.Count < MaxBatch && _turns.TryDequeue(out var key))
-            {
-                if (_pending.TryGetValue(key.Database, out var pending) && pending.TryGetValue(key, out var counts))
-                {
-                    var bytes = counts.Meters is null ? 0 : JsonSerializer.SerializeToUtf8Bytes(new OpCounts(0, 0, counts.Meters), TerraBaseJsonContext.Default.OpCounts).Length;
-                    if (bytes > MaxEntryMeasurementBytes)
-                    {
-                        // Folding merged more meters than one entry carries: send its counts and drop the meters, counted, so it
-                        // neither waits forever nor makes the primary refuse the whole batch. A concurrent add retries next round.
-                        var trimmed = counts with { Meters = null };
-                        if (!pending.TryUpdate(key, trimmed, counts))
-                        {
-                            _turns.Enqueue(key);
-                            break;
-                        }
-
-                        _measurementDrops.Add(1);
-                        (counts, bytes) = (trimmed, 0);
-                    }
-
-                    if (measurementBytes + bytes > MaxBatchMeasurementBytes)
-                    {
-                        _turns.Enqueue(key);
-                        break;
-                    }
-
-                    measurementBytes += bytes;
-                    batch.Add(KeyValuePair.Create(key, counts));
-                }
-            }
-        }
-
-        return [.. batch];
-    }
-
     // The first bucket a flush still saves: the kept buckets end with the current one.
     private static long OldestKept(UsageGranularity granularity, long minute) => (minute / granularity.Minutes) - granularity.Kept + 1;
 
     // Folds entries past the kept hours into a day-only entry at their day's first hour, and those past the kept days into
     // a lifetime-only entry at hour 0; a concurrent Add leaves an entry for the next pass. Under _flush. The keys of a batch
-    // in doubt or unsent keep their counts, which settling or acknowledging it subtracts.
+    // in doubt keep their counts, which settling it subtracts.
     private void Compact()
     {
         var minute = CurrentMinute();
         var hour = minute / 60;
-        var held = (_inDoubt?.Batch ?? []).Concat(_unsent?.Batch ?? []).Select(entry => entry.Key).ToHashSet();
+        var held = (_inDoubt?.Batch ?? []).Select(entry => entry.Key).ToHashSet();
         foreach (var pending in _pending.Values)
         {
             foreach (var (key, counts) in pending)
@@ -838,74 +509,8 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
         }
     }
 
-    // Retires the senders silent for SenderRetirement; the next flush deletes their saved state. Under _accept.
-    private void RetireSenders(DateTimeOffset now)
-    {
-        foreach (var sender in _senders.Values.Where(sender => now - sender.LastSeen >= SenderRetirement).ToList())
-        {
-            _senders.Remove(sender.Sender);
-            _unsavedSenders.Remove(sender.Sender);
-            _retiredSenders.Add(sender.Sender);
-        }
-    }
-
-    // Loads what earlier processes saved of each sender once; a failed load is tried again by the next batch.
-    private async ValueTask<CatalogCheck> LoadSendersAsync(CancellationToken cancellationToken)
-    {
-        Task<CatalogCheck> loading;
-        lock (_accept)
-        {
-            if (_sendersLoaded is null or { IsFaulted: true } or { IsCanceled: true })
-            {
-                _sendersLoaded = LoadAsync();
-            }
-
-            loading = _sendersLoaded;
-        }
-
-        var result = await loading.WaitAsync(cancellationToken).ConfigureAwait(false);
-        if (result is Unavailable)
-        {
-            lock (_accept)
-            {
-                if (ReferenceEquals(_sendersLoaded, loading))
-                {
-                    _sendersLoaded = null;
-                }
-            }
-        }
-
-        return result;
-
-        async Task<CatalogCheck> LoadAsync()
-        {
-            var read = await catalog.ReadAsync<SendersResult>(
-                async transaction => await ListAllAsync(transaction, Senders, TerraBaseJsonContext.Default.UsageSender, CancellationToken.None).ConfigureAwait(false),
-                static error => error, CancellationToken.None).ConfigureAwait(false);
-            if (read is not List<UsageSender> saved)
-            {
-                return read switch
-                {
-                    Unavailable refused => refused,
-                    List<UsageSender> => throw new UnreachableException(),
-                };
-            }
-
-            lock (_accept)
-            {
-                foreach (var sender in saved)
-                {
-                    _senders.TryAdd(sender.Sender, sender);
-                }
-            }
-
-            return new Done();
-        }
-    }
-
     private readonly union SettleResult(bool, Unavailable);
     private readonly union FlushResult(int, Unavailable);
-    private readonly union SendersResult(List<UsageSender>, Unavailable);
 
     // proceed runs before each page, so a read that ends past a request's deadline starts no further one.
     private static OpCounts Strip(OpCounts counts, bool meters) => meters || counts.Meters is null ? counts : counts with { Meters = null };
@@ -920,6 +525,28 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
         var kept = counts.Meters.Where(entry => filter.Keep(entry.Value.Dimension)).ToDictionary(entry => entry.Key, entry => entry.Value, StringComparer.Ordinal);
         filter.Admit(kept.Count * MeasurementBytes);
         return counts with { Meters = kept.Count == 0 ? null : kept };
+    }
+
+    // The lifetime totals: the sum of every machine's.
+    private static async ValueTask<OpCounts> ReadLifetimeAsync(
+        IStorageTransaction transaction, string databaseId, Func<StoredDocument, OpCounts> parse, CancellationToken cancellationToken)
+    {
+        var lifetime = OpCounts.Zero;
+        string? after = null;
+        DocumentPage page;
+        do
+        {
+            page = await transaction.ListAsync(UsageCollection(databaseId), after, limit: 100, MaxPageBytes, cancellationToken).ConfigureAwait(false);
+            foreach (var document in page.Documents.Where(document => Shared(document.Id) == Ops))
+            {
+                lifetime += parse(document);
+            }
+
+            after = page.Documents.Count > 0 ? page.Documents[^1].Id : after;
+        }
+        while (page.HasMore);
+
+        return lifetime;
     }
 
     private static async ValueTask<OpCounts[]> ReadSeriesAsync(
@@ -941,7 +568,7 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
                     return series;
                 }
 
-                var index = window.Granularity.Parse(document.Id) - window.First;
+                var index = window.Granularity.Parse(Shared(document.Id)) - window.First;
                 // Coarser analytics buckets read finer persisted buckets after the preceding boundary.
                 if (index >= 0 && index < series.Length)
                 {
@@ -961,7 +588,6 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
     public void Dispose()
     {
         _flush.Dispose();
-        _send.Dispose();
         _maps.Dispose();
         DisposeMeasurements();
     }

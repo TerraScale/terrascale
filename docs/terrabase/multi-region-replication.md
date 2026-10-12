@@ -879,6 +879,46 @@ R2a is built on the Microsoft.Data.Sqlite engine and writes only SQL that Turso 
 table, plain `INSERT`/`UPDATE`/`DELETE` on captured tables). The engine swap (1b, PR #21) lands separately: on Turso,
 174 Fast tests fail, most of them in continuous backup, which reads SQLite's WAL directly.
 
+**R10a as built** (2026-10-12), in stacked PRs:
+
+1. R10a-1 deletes the catalog primary, its followers and the forwarding (decision 0009): every machine writes its own
+   `_system.db`. Usage and query shapes flush into the local catalog; `PRIMARY_REGION` is no longer read. Format unchanged.
+2. R10a-2 makes `_system` a lattice database (format 4):
+   - **Layout.** The client layout's `_tb_state`, `_tb_peers` and engine tables, but the live documents of every
+     collection share one `documents (collection, id, body)` table: catalog collections are paths
+     (`projects/<id>/databases`), a set per tenant, so a table per collection would grow the schema with every tenant.
+     The tailer pairs a `_tb_state` row with the last `documents` row of the same (collection, id) before it.
+   - **Writes** go through `DocumentState` like a client database's: HLC stamps are the versions (ETags scoped to the one
+     `_system`, the same on every machine), PUT, PATCH and DELETE are lattice operations, and every deletion is a
+     tombstone, so a deleted id stays taken (`GetVersionAsync` answers it deleted). The catalog also stores scalars
+     (name indexes, sequences): a scalar is stored as the object `{"\u0000": value}` and read back as the value.
+   - **Group bounds.** A management operation may change more documents than a client transaction (an organization's
+     deletion, a commit of 1024 operations): a `_system` group holds up to 16,384 deltas and 3 MiB, inside one 4 MiB batch.
+   - **Streams.** The system database is one more database of the CDC source, the sink, the peer streams and
+     anti-entropy, named on the wire by the reserved ids `_system` (no client database has them: client ids are ULIDs)
+     and placed in every region: a receiver never refuses it. Its catalog paths and ids are checked by size only.
+   - **Prefix deletes** (`DeleteCollectionsAsync`, a deleted database's or project's state) purge this machine's rows and
+     states without tombstones; no live catalog document reaches that state any more, and CDC ships no deletes.
+   - A database placed in this region gets its local file on its first request or first replicated group.
+3. R10a-3 applies what the replicated catalog decides elsewhere to each machine's files, every 2 s
+   (`CatalogConvergence`):
+   - **Deletion.** A local file whose database record is a tombstone is deleted here too, and the database's catalog
+     state purged. A tombstone never comes back, so neither does the database; a missing record never deletes anything
+     (a creation in progress). Files of a database still live but no longer placed here stay until R11's move drops them
+     after acks.
+   - **Name races.** A live record whose name the index gives to another live database of the same name: the smaller
+     ULID wins on every machine. The loser is deleted through the ordinary deletion (its creator sees it gone with the
+     reason `name_taken` in the log; R11's `/operations` reports it), and a winner whose index a later write gave away
+     writes it back.
+   - **Usage** is flushed into per-machine documents (`ops@<machine>`, `<bucket>@<machine>`, `flush@<machine>`): one
+     writer per document keeps the read-add-write flush exact, and reads sum every machine's documents. Query shape and
+     field statistics stay last-writer-wins (approximate analytics).
+   - **Cleanup intents** are per machine (`machines/<machine>/pending_database_cleanup`): they replicate, but only the
+     machine whose files they name acts on them.
+   - Known limits: organization sequences (audit, invitations, API-key and backup order) are read-add-write counters,
+     so concurrent writes in two regions can draw the same number; the backup status document is last-writer-wins
+     until backups ship from `home` (R11).
+
 **Order and parallelism:**
 
 1. R1 ∥ R0, starting now.

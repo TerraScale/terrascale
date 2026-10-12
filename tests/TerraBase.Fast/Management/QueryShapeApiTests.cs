@@ -338,8 +338,10 @@ public sealed class QueryShapeApiTests
                     TerraBaseJsonContext.Default.QueryShapeRecord, CancellationToken.None);
                 return (affectedSaved, healthySaved);
             }, static refused => throw new InvalidOperationException(refused.Message), CancellationToken.None);
-            await Assert.That(affectedRecords.Select(record => record.GetRawText())).Contains(original);
-            await Assert.That(affectedRecords.Single(record => record.GetRawText() != original)
+            // The catalog keeps the unreadable record as it is, in canonical JSON (fields in name order).
+            using var written = JsonDocument.Parse(original);
+            await Assert.That(affectedRecords.Count(record => JsonElement.DeepEquals(record, written.RootElement))).IsEqualTo(1);
+            await Assert.That(affectedRecords.Single(record => !JsonElement.DeepEquals(record, written.RootElement))
                 .GetProperty("stats").GetProperty("queries").GetInt64()).IsEqualTo(i + 1);
             await Assert.That(healthyRecords.Single().Stats.Queries).IsEqualTo(i + 1);
             await Assert.That((await ShapesAsync(api.Client, healthy))[0].GetProperty("queries").GetInt64()).IsEqualTo(i + 1);

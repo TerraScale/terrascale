@@ -91,22 +91,20 @@ internal sealed partial class SqliteStorageTransaction
                 throw new NotSupportedException("a client database drops collections one at a time, with tombstones");
             }
 
-            // The primary-key range covers every collection with this prefix.
+            // The key range covers every collection with this prefix. A purge, not tombstones: CDC ships no deletes, so it
+            // stays on this machine (see IStorageTransaction.DeleteCollectionsAsync).
             var to = prefix[..^1] + (char)(prefix[^1] + 1);
-            if (_changes is not null)
+            var deleted = 0;
+            foreach (var sql in (ReadOnlySpan<string>)[SqliteStatements.DeleteCollectionDocuments, SqliteStatements.DeleteCollectionStates, SqliteStatements.DeleteCollectionNames])
             {
-                CaptureSystemDeletions(prefix, to, cancellationToken);
+                cancellationToken.ThrowIfCancellationRequested();
+                var command = session.Command(sql, transaction);
+                command.Parameters.AddWithValue("$from", prefix);
+                command.Parameters.AddWithValue("$to", to);
+                var rows = command.ExecuteNonQuery();
+                deleted = sql == SqliteStatements.DeleteCollectionDocuments ? rows : deleted;
             }
 
-            var documents = session.Command(SqliteStatements.DeleteCollectionDocuments, transaction);
-            documents.Parameters.AddWithValue("$from", prefix);
-            documents.Parameters.AddWithValue("$to", to);
-            var deleted = documents.ExecuteNonQuery();
-            cancellationToken.ThrowIfCancellationRequested();
-            var names = session.Command(SqliteStatements.DeleteCollectionNames, transaction);
-            names.Parameters.AddWithValue("$from", prefix);
-            names.Parameters.AddWithValue("$to", to);
-            names.ExecuteNonQuery();
             return (long)deleted;
         }, cancellationToken, mutation: true);
 

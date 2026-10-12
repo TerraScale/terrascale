@@ -132,7 +132,7 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
     }
 
     private static bool IsUsage(string collection, string id, ReadOnlyMemory<byte> json) =>
-        collection.StartsWith("databases/", StringComparison.Ordinal) && collection.EndsWith("/usage", StringComparison.Ordinal) && id == "ops";
+        collection.StartsWith("databases/", StringComparison.Ordinal) && collection.EndsWith("/usage", StringComparison.Ordinal) && id.StartsWith("ops@", StringComparison.Ordinal);
 
     internal sealed class Gate(bool fail) : IDisposable
     {
@@ -319,7 +319,6 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
 
         public Guid Scope => inner.Scope;
 
-        public bool Materializes => inner.Materializes;
         public async ValueTask<StoredDocument?> GetAsync(string collection, string id, CancellationToken cancellationToken)
         {
             hook.BeforeGet?.Invoke(collection);
@@ -379,8 +378,6 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
         public ValueTask<bool> DropIndexAsync(string name, CancellationToken cancellationToken) => inner.DropIndexAsync(name, cancellationToken);
         public ValueTask<IReadOnlyList<UniqueConstraint>> GetUniqueConstraintsAsync(string collection, CancellationToken cancellationToken) => inner.GetUniqueConstraintsAsync(collection, cancellationToken);
         public ValueTask SetUniqueConstraintsAsync(string collection, IReadOnlyList<UniqueConstraint> constraints, CancellationToken cancellationToken) => inner.SetUniqueConstraintsAsync(collection, constraints, cancellationToken);
-        public ValueTask<ReadOnlyMemory<byte>> GetOriginAsync(CancellationToken cancellationToken) => inner.GetOriginAsync(cancellationToken);
-        public ValueTask<long> GetLastChangeSequenceAsync(CancellationToken cancellationToken) => inner.GetLastChangeSequenceAsync(cancellationToken);
         public ValueTask DisposeAsync() => inner.DisposeAsync();
 
         public ValueTask<long> PatchAsync(

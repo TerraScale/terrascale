@@ -38,15 +38,11 @@ public readonly record struct DocumentVersion(long Version, bool Deleted);
 /// </param>
 public sealed record CollectionInfo(string Name, long CreatedAt, long Generation = 0, string Id = "");
 
-/// <summary>
-/// One write of the system database, which its catalog followers replay in order (docs/decisions/0009): a JSON value, or a
-/// deletion, at the commit offset it was written at.
-/// </summary>
+/// <summary>A document's state at a version: a JSON value, or a deletion.</summary>
 /// <param name="Collection">Collection name.</param>
 /// <param name="Id">Document id.</param>
-/// <param name="Version">Commit offset written; a deletion carries the offset that removed the document.</param>
+/// <param name="Version">The version written; a deletion carries the version that removed the document.</param>
 /// <param name="Json">UTF-8 JSON text, or <see langword="null"/> for a deletion.</param>
-// TS-647 step 5 makes the system database a lattice database too, and this goes with the catalog primary.
 public sealed record DocumentChange(string Collection, string Id, long Version, ReadOnlyMemory<byte>? Json);
 
 /// <summary>The reserved collections a client database keeps its metadata in, as documents.</summary>
@@ -80,16 +76,20 @@ public interface IStorageTransaction : IAsyncDisposable
     const int MaxSingleChangeBytes = 3 * 1024 * 1024;
 
     /// <summary>
-    /// Identity that scopes document ETags: derived from a client database's organization, project and database ids, so
-    /// it is the same on every member and distinct after deletion/recreation or copying; the system database's incarnation.
+    /// Most document changes one system database transaction may commit: a management operation (an organization's
+    /// deletion, a commit of 1024 operations) changes more documents than a client transaction may, each a small delta.
     /// </summary>
-    Guid Scope { get; }
+    const int MaxSystemGroupChanges = 16_384;
+
+    /// <summary>Most bytes one system database transaction's change group may hold; it travels in one 4 MiB batch.</summary>
+    const int MaxSystemGroupBytes = 3 * 1024 * 1024;
 
     /// <summary>
-    /// Whether a write stores the materialized document, canonical JSON with fields in name order (a client database),
-    /// rather than the bytes written (the system database, until it becomes a lattice database too).
+    /// Identity that scopes document ETags: derived from a client database's organization, project and database ids, so
+    /// it is the same on every member and distinct after deletion/recreation or copying. The system database's is fixed: it
+    /// is one database on every member.
     /// </summary>
-    bool Materializes { get; }
+    Guid Scope { get; }
 
     /// <summary>Reads one live document, or <see langword="null"/> when it is absent or deleted.</summary>
     ValueTask<StoredDocument?> GetAsync(string collection, string id, CancellationToken cancellationToken);
@@ -281,8 +281,10 @@ public interface IStorageTransaction : IAsyncDisposable
     ValueTask<SqlQueryPlan> ExplainSqlAsync(SqlQuery query, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Drops every system database collection whose name starts with <paramref name="prefix"/>, with every document in
-    /// them; returns how many documents were removed. A client database refuses it with <see cref="NotSupportedException"/>.
+    /// Purges every system database collection whose name starts with <paramref name="prefix"/> from this machine: its
+    /// documents and their states, without tombstones, so nothing of it replicates. For state that no live catalog document
+    /// reaches any more (a deleted database's or project's), which every machine purges when it learns of the deletion.
+    /// Returns how many live documents were removed. A client database refuses it with <see cref="NotSupportedException"/>.
     /// </summary>
     ValueTask<long> DeleteCollectionsAsync(string prefix, CancellationToken cancellationToken);
 
@@ -306,13 +308,4 @@ public interface IStorageTransaction : IAsyncDisposable
     /// this transaction's when it wrote documents or created or dropped a collection, otherwise the latest committed one.
     /// </summary>
     ValueTask<long> CommitAsync(CancellationToken cancellationToken);
-
-    /// <summary>
-    /// The origin of the system database's journal, 16 bytes: its incarnation. Captured change groups are numbered 1, 2, …
-    /// under it. A client database keeps no journal and refuses it with <see cref="NotSupportedException"/>.
-    /// </summary>
-    ValueTask<ReadOnlyMemory<byte>> GetOriginAsync(CancellationToken cancellationToken);
-
-    /// <summary>The system database's last committed change group sequence, or 0 for an empty journal.</summary>
-    ValueTask<long> GetLastChangeSequenceAsync(CancellationToken cancellationToken);
 }

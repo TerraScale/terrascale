@@ -506,7 +506,6 @@ public sealed class ManagementApiTests
     [Arguments("organization-deletion-history")]
     [Arguments("dashboard_query_shapes")]
     [Arguments("dashboard_query_shapes_flush")]
-    [Arguments("query_shape_senders")]
     public async Task Unversioned_management_residuals_are_refused_without_stamping_the_catalog(string residual)
     {
         await using var api = await ManagementApi.StartAsync();
@@ -530,6 +529,7 @@ public sealed class ManagementApiTests
             await transaction.CommitAsync(CancellationToken.None);
         }
 
+        // A deletion leaves its tombstone, which counts as catalog state.
         if (residual == "organization-deletion-history")
         {
             await using var deleting = await system.BeginTransactionAsync(write: true, CancellationToken.None);
@@ -590,7 +590,10 @@ public sealed class ManagementApiTests
         await Assert.That(await transactionAfterInitialization.GetAsync("catalog", "version", CancellationToken.None)).IsNotNull();
         var preserved = await transactionAfterInitialization.GetAsync("api_keys", id, CancellationToken.None);
         await Assert.That(preserved).IsNotNull();
-        await Assert.That(preserved!.Json.Span.SequenceEqual(key)).IsTrue();
+        // The catalog stores canonical JSON (fields in name order), like every lattice database.
+        using var stored = JsonDocument.Parse(preserved!.Json);
+        using var written = JsonDocument.Parse(key);
+        await Assert.That(JsonElement.DeepEquals(stored.RootElement, written.RootElement)).IsTrue();
     }
 
     // Seeds current-format system documents after real-server bootstrap.

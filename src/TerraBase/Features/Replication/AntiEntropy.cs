@@ -1,7 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
 using Google.Protobuf;
-using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
 using TerraBase.Engine.Lattices;
 using TerraBase.Features.Replication.V1;
@@ -66,12 +65,16 @@ internal sealed class AntiEntropy : BackgroundService
         var peers = Peers(await _membership.RefreshAsync(cancellationToken).ConfigureAwait(false));
         await foreach (var database in _source.ListDatabasesAsync(cancellationToken).ConfigureAwait(false))
         {
-            if (await _tenants.DatabaseRecordAsync(database, cancellationToken).ConfigureAwait(false) is not TenantDatabaseRecord record)
+            // The system database is placed in every region.
+            var placement = database == ChangeGroups.System ? null
+                : await _tenants.DatabaseRecordAsync(database, cancellationToken).ConfigureAwait(false) is TenantDatabaseRecord record ? record.Placement
+                : null;
+            if (placement is null && database != ChangeGroups.System)
             {
                 continue;
             }
 
-            foreach (var peer in peers.Where(peer => record.Placement.Includes(peer.Region)))
+            foreach (var peer in peers.Where(peer => placement?.Includes(peer.Region) ?? true))
             {
                 try
                 {
@@ -139,7 +142,7 @@ internal sealed class AntiEntropy : BackgroundService
         var theirKeys = new HashSet<(string Collection, string Id)>();
         while (await call.ResponseStream.MoveNext(cancellationToken).ConfigureAwait(false))
         {
-            var states = Decode(call.ResponseStream.Current);
+            var states = Decode(database, call.ResponseStream.Current);
             theirKeys.UnionWith(states.Select(state => (state.Collection, state.Id)));
             changed += await _sink.RepairAsync(database, states, cancellationToken).ConfigureAwait(false) ?? 0;
         }
@@ -177,7 +180,7 @@ internal sealed class AntiEntropy : BackgroundService
     }
 
     // A page from a peer, checked: decoding is a trust boundary, as for change groups.
-    private static List<RepairState> Decode(StatePage page)
+    private static List<RepairState> Decode(TenantContext database, StatePage page)
     {
         StateList list;
         try
@@ -195,8 +198,7 @@ internal sealed class AntiEntropy : BackgroundService
         }
 
         return [.. list.States.Select(entry =>
-            (DatabaseName.TryParse(entry.Collection, out _) || entry.Collection is DocumentDelta.Collections or DocumentDelta.Indexes or DocumentDelta.Unique)
-            && entry.Id.Length is > 0 and <= 1024 && !entry.Id.Any(char.IsControl)
+            ChangeGroups.ValidKey(database, entry.Collection, entry.Id)
                 ? new RepairState(entry.Collection, entry.Id, DocumentStateEncoding.Decode(entry.State.Span))
                 : throw new InvalidDataException("a repaired state names a valid collection and an id of 1 to 1024 characters"))];
     }

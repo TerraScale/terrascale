@@ -20,20 +20,19 @@ namespace TerraBase.Engine.Sqlite;
 /// <param name="pragmas">Connection pragmas applied to each session.</param>
 /// <param name="tenant">The storage identity; null for the system database.</param>
 /// <param name="time">The clock of the query deadline.</param>
-/// <param name="changesCommitted">Receives the last captured sequence after a write commits.</param>
 /// <param name="committed">Optional engine notification after a successful commit that changed this database.</param>
 /// <param name="logger">Receives the warning about a long wait for this database's writer.</param>
 /// <param name="schemaMemory">Shared process admission for schema evaluation, when hosted.</param>
 /// <param name="schemaEvaluations">Host-owned counter of collection schema keyword evaluations.</param>
 internal sealed partial class SqliteDatabaseStore(
     string name, string path, SqliteSessionPool pool, SqliteIoPool io, string pragmas, TenantContext? tenant, TimeProvider? time,
-    Action<long>? changesCommitted, Action? committed, ILogger? logger = null, IMemoryBudget? schemaMemory = null, Counter<long>? schemaEvaluations = null) : IDatabaseStore, IDisposable
+    Action? committed, ILogger? logger = null, IMemoryBudget? schemaMemory = null, Counter<long>? schemaEvaluations = null) : IDatabaseStore, IDisposable
 {
     internal IMemoryBudget? SchemaMemory { get; } = schemaMemory;
     internal Counter<long>? SchemaEvaluations { get; } = schemaEvaluations;
 
     internal SqliteDatabaseStore(string name, string path, SqliteSessionPool pool, SqliteIoPool io, string pragmas, TimeProvider? time = null, Action? committed = null)
-        : this(name, path, pool, io, pragmas, null, time, null, committed) { }
+        : this(name, path, pool, io, pragmas, null, time, committed) { }
 
     /// <summary>
     /// On-disk schema version of client and system databases alike, stored in <c>PRAGMA user_version</c>. It never
@@ -51,14 +50,23 @@ internal sealed partial class SqliteDatabaseStore(
 
     // Greenfield bootstrap only: an older on-disk shape must be discarded, never upgraded. Turso stores only rowid tables
     // and its provider splits command text at every ';', so there are no WITHOUT ROWID tables and no triggers
-    // (docs/terrabase/turso-spike.md). The system database keeps its
-    // journal of whole writes with a SHA-256 prefix digest per group (docs/decisions/0009) until TS-647 step 5.
+    // (docs/terrabase/turso-spike.md). The system database is a lattice database like a client one (section 15 of
+    // docs/terrabase/multi-region-replication.md): each document's DocumentState in _tb_state and its materialized JSON
+    // beside it, captured and shipped by the same CDC tailer and peer streams. Its collections are paths
+    // (projects/<id>/databases), one set per tenant, so its live documents share one documents table instead of a table
+    // per collection. collections, commit_offset, shape_history and change_log are the engine tables both kinds share.
     private const string SystemSchemaSql = """
-        CREATE TABLE documents (
-            collection TEXT NOT NULL, id TEXT NOT NULL, version INTEGER NOT NULL, body TEXT,
-            PRIMARY KEY (collection, id)
+        CREATE TABLE documents (collection TEXT NOT NULL, id TEXT NOT NULL, body TEXT NOT NULL, UNIQUE (collection, id));
+        CREATE TABLE _tb_state (
+            collection TEXT NOT NULL, id TEXT NOT NULL, bucket INTEGER NOT NULL, state TEXT NOT NULL,
+            stamp INTEGER NOT NULL, origin INTEGER NOT NULL, live INTEGER NOT NULL, h1 INTEGER NOT NULL, h2 INTEGER NOT NULL,
+            UNIQUE (collection, id)
         );
-        CREATE INDEX documents_live ON documents (collection, id) WHERE body IS NOT NULL;
+        CREATE INDEX _tb_state_bucket ON _tb_state (bucket, collection, id);
+        CREATE INDEX _tb_state_dead ON _tb_state (stamp) WHERE live = 0;
+        CREATE TABLE _tb_peers (
+            node INTEGER PRIMARY KEY, applied INTEGER NOT NULL, acked INTEGER NOT NULL, stable INTEGER NOT NULL, seen INTEGER NOT NULL
+        );
         CREATE TABLE collections (
             name TEXT PRIMARY KEY, created_at INTEGER NOT NULL, generation INTEGER NOT NULL,
             entity_id TEXT NOT NULL CHECK (length(entity_id) = 26)
@@ -74,20 +82,6 @@ internal sealed partial class SqliteDatabaseStore(
             id TEXT NOT NULL, version INTEGER NOT NULL, body TEXT, document_version INTEGER NOT NULL
         );
         CREATE INDEX change_log_by_offset ON change_log (collection, generation, version, sequence);
-        CREATE TABLE changes (
-            sequence INTEGER NOT NULL, ordinal INTEGER NOT NULL, collection TEXT NOT NULL, id TEXT NOT NULL,
-            version INTEGER NOT NULL, body TEXT, PRIMARY KEY (sequence, ordinal)
-        );
-        CREATE INDEX changes_deleted ON changes (collection, id, version) WHERE body IS NULL;
-        CREATE TABLE replication_state (id INTEGER PRIMARY KEY CHECK (id = 1), complete INTEGER NOT NULL);
-        INSERT INTO replication_state (id, complete) VALUES (1, 1);
-        CREATE TABLE applied (
-            origin BLOB PRIMARY KEY, sequence INTEGER NOT NULL,
-            digest BLOB CHECK (digest IS NULL OR length(digest) = 32)
-        );
-        CREATE TABLE journal_prefixes (
-            sequence INTEGER PRIMARY KEY CHECK (sequence > 0), digest BLOB NOT NULL CHECK (length(digest) = 32)
-        );
         """;
 
     // A client database (docs/terrabase/multi-region-replication.md section 5). Each collection is a table of its own, created
@@ -195,22 +189,19 @@ internal sealed partial class SqliteDatabaseStore(
     /// <summary>The thread this database's write transactions run on, apart from the read pool.</summary>
     internal SqliteWriteLane WriteLane { get; } = new(name, io);
 
-    // Boxed so a catalog follower can adopt its primary's incarnation without torn reads.
+    // Boxed so a reader never sees a torn value.
     private volatile StrongBox<Ulid> _incarnation = new(Ulid.Empty);
 
     public Ulid Incarnation => _incarnation.Value;
 
-    /// <summary>Publishes the incarnation a catalog follower's committed snapshot adopted (docs/decisions/0009).</summary>
-    internal void AdoptIncarnation(Ulid incarnation) => _incarnation = new(incarnation);
-
     public TenantContext? Tenant { get; } = tenant;
 
-    // Client databases scope ETags by their ids, which every member shares, so a version read on one member matches on
-    // another (TS-574); _system uses its incarnation, which catalog followers adopt from their primary.
-    private readonly Guid? _scope = tenant?.VersionScope();
+    // ETags are scoped by the database's ids, which every member shares, so a version read on one member matches on
+    // another (TS-574); _system is the same database on every member.
+    private static readonly Guid SystemScope = new TenantContext(SqliteStorageEngine.SystemName, PlanTier.Hobby).VersionScope();
 
     /// <summary>The <see cref="IStorageTransaction.Scope"/> of this database's transactions.</summary>
-    internal Guid Scope => _scope ?? Incarnation.ToGuid();
+    internal Guid Scope { get; } = tenant?.VersionScope() ?? SystemScope;
 
     /// <summary>Set once the database is deleted or the engine shuts down; guarded by <see cref="SqliteSessionPool"/>.</summary>
     internal bool Closed
@@ -231,30 +222,18 @@ internal sealed partial class SqliteDatabaseStore(
     /// <summary>Idle sessions of this database, for tests.</summary>
     internal int IdleCount => pool.IdleCountOf(this);
 
-    /// <summary>What a client database's local writes mint with; the system database writes without it.</summary>
+    /// <summary>What this database's local writes mint their stamps with.</summary>
     internal LocalReplica? Member { get; init; }
 
-    /// <summary>
-    /// Whether this is a catalog follower's system database: it refuses write transactions except
-    /// <see cref="BeginReplicaAsync"/>'s (docs/decisions/0009).
-    /// </summary>
-    internal bool Replica { get; init; }
-
     public async ValueTask<IStorageTransaction> BeginTransactionAsync(bool write, CancellationToken cancellationToken) =>
-        write && Replica ? throw new CatalogFollowerException() : await BeginAsync(write, capture: true, durable: false, cancellationToken).ConfigureAwait(false);
+        await BeginAsync(write, durable: false, cancellationToken).ConfigureAwait(false);
 
     public async ValueTask<IStorageTransaction> BeginDurableTransactionAsync(CancellationToken cancellationToken) =>
-        Replica
-            ? throw new CatalogFollowerException()
-            : await BeginAsync(write: true, capture: true, durable: true, cancellationToken, "a durable write transaction").ConfigureAwait(false);
-
-    /// <summary>The write transaction of a follower's replication applier; it captures nothing.</summary>
-    internal ValueTask<SqliteStorageTransaction> BeginReplicaAsync(CancellationToken cancellationToken) =>
-        BeginAsync(write: true, capture: false, durable: false, cancellationToken, "a catalog replica transaction");
+        await BeginAsync(write: true, durable: true, cancellationToken, "a durable write transaction").ConfigureAwait(false);
 
     // writer names a write transaction in the warning about a long wait for the writer.
     private async ValueTask<SqliteStorageTransaction> BeginAsync(
-        bool write, bool capture, bool durable, CancellationToken cancellationToken, string writer = "a write transaction")
+        bool write, bool durable, CancellationToken cancellationToken, string writer = "a write transaction")
     {
         var ownsAdmission = !io.HasAdmission;
         if (ownsAdmission)
@@ -299,7 +278,7 @@ internal sealed partial class SqliteDatabaseStore(
                 return connection.BeginTransaction(deferred: !write);
             }, cancellationToken).ConfigureAwait(false);
             return new SqliteStorageTransaction(
-                this, session, transaction, runner, write, durable, write ? Committed : null, write && capture ? changesCommitted : null, ownsAdmission);
+                this, session, transaction, runner, write, durable, write ? Committed : null, ownsAdmission);
         }
         catch
         {
@@ -665,7 +644,7 @@ internal sealed partial class SqliteDatabaseStore(
         long offset = 0;
         try
         {
-            var transaction = await BeginAsync(write: true, capture: true, durable: false, CancellationToken.None, "a group commit batch").ConfigureAwait(false);
+            var transaction = await BeginAsync(write: true, durable: false, CancellationToken.None, "a group commit batch").ConfigureAwait(false);
             await using (transaction.ConfigureAwait(false))
             {
                 foreach (var write in batch)
@@ -785,7 +764,7 @@ internal sealed partial class SqliteDatabaseStore(
 
         var version = Interlocked.Read(ref _collectionsVersion);
         var names = new HashSet<string>(StringComparer.Ordinal);
-        var transaction = await BeginAsync(write: false, capture: false, durable: false, cancellationToken).ConfigureAwait(false);
+        var transaction = await BeginAsync(write: false, durable: false, cancellationToken).ConfigureAwait(false);
         await using (transaction.ConfigureAwait(false))
         {
             string? after = null;

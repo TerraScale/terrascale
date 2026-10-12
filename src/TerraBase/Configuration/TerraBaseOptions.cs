@@ -90,17 +90,6 @@ public sealed record TerraBaseOptions
     /// <summary>The Fly app this machine belongs to (<c>FLY_APP_NAME</c>), whose internal DNS lists the cell; <see langword="null"/> off Fly.</summary>
     public string? App { get; init; }
 
-    /// <summary>The app's primary region (<c>PRIMARY_REGION</c>), home of the catalog primary; this machine's region when unset.</summary>
-    public string PrimaryRegion { get; init; } = LocalIdentity;
-
-    /// <summary>
-    /// Whether this machine follows a catalog primary: it replicates the system database from it and writes none of it
-    /// (docs/decisions/0009). Machines outside the primary region follow; the primary is found through the membership.
-    /// </summary>
-    // shortcut: every machine of the primary region is a catalog primary, so it holds one TerraBase machine until anna-full
-    // (TS-647) removes the catalog primary.
-    public bool CatalogFollower { get; init; }
-
     private const string LocalIdentity = "local";
 
     internal static bool IsRegion([NotNullWhen(true)] string? region) => region is { Length: >= 1 and <= 63 } && region[0] is >= 'a' and <= 'z'
@@ -238,7 +227,7 @@ public sealed record TerraBaseOptions
             }
         }
 
-        var (region, machineId, app, primaryRegion) = FlyIdentity();
+        var (region, machineId, app) = FlyIdentity();
         var dataDirectory = values.GetValueOrDefault("data-directory", DefaultDataDirectory);
         if (string.IsNullOrWhiteSpace(dataDirectory))
         {
@@ -264,8 +253,6 @@ public sealed record TerraBaseOptions
             Region = region,
             MachineId = machineId,
             App = app,
-            PrimaryRegion = primaryRegion,
-            CatalogFollower = primaryRegion != region,
             MemoryBudget = ParseInteger(values, "memory-budget", MinMemoryBudget, long.MaxValue) ?? DefaultMemoryBudget(),
             StorageThreads = (int)(ParseInteger(values, "storage-threads", 1, 1024) ?? Math.Clamp(Environment.ProcessorCount, 1, 1024)),
             StorageQueue = (int)(ParseInteger(values, "storage-queue", 1, 1_000_000) ?? DefaultStorageQueue),
@@ -372,14 +359,14 @@ public sealed record TerraBaseOptions
     }
 
     // Fly sets these on every machine. A process elsewhere (development, tests) is a cell of its own, named local.
-    private static (string Region, string MachineId, string? App, string PrimaryRegion) FlyIdentity()
+    private static (string Region, string MachineId, string? App) FlyIdentity()
     {
         var region = Environment.GetEnvironmentVariable("FLY_REGION");
         var machineId = Environment.GetEnvironmentVariable("FLY_MACHINE_ID");
         var app = Environment.GetEnvironmentVariable("FLY_APP_NAME");
         if (string.IsNullOrEmpty(region) && string.IsNullOrEmpty(machineId) && string.IsNullOrEmpty(app))
         {
-            return (LocalIdentity, LocalIdentity, null, LocalIdentity);
+            return (LocalIdentity, LocalIdentity, null);
         }
 
         if (!IsRegion(region) || !IsMachineId(machineId) || !IsMachineId(app))
@@ -387,10 +374,7 @@ public sealed record TerraBaseOptions
             throw new TerraBaseConfigurationException("FLY_REGION, FLY_MACHINE_ID and FLY_APP_NAME must name a region, a machine and an app together");
         }
 
-        var primaryRegion = Environment.GetEnvironmentVariable("PRIMARY_REGION");
-        return string.IsNullOrEmpty(primaryRegion) ? (region, machineId, app, region)
-            : IsRegion(primaryRegion) ? (region, machineId, app, primaryRegion)
-            : throw new TerraBaseConfigurationException("PRIMARY_REGION must name a region");
+        return (region, machineId, app);
     }
 
     // An http://host:port origin of another member's internal listener.

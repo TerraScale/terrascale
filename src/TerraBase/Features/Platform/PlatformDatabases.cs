@@ -1,4 +1,3 @@
-using TerraBase.Configuration;
 using TerraBase.Errors;
 using TerraBase.Tenancy;
 using ZLogger;
@@ -72,19 +71,14 @@ public interface IPlatformCatalog
 
 /// <summary>
 /// Seeds the platform databases on every start, in the background so TerraBase serves at once: retries until the catalog
-/// takes the writes. A catalog follower seeds nothing; it replicates its primary's catalog.
+/// takes the writes.
 /// </summary>
-internal sealed class PlatformSeed(IPlatformCatalog catalog, TerraBaseOptions options, TimeProvider time, ILogger<PlatformSeed> logger) : BackgroundService
+internal sealed class PlatformSeed(IPlatformCatalog catalog, TimeProvider time, ILogger<PlatformSeed> logger) : BackgroundService
 {
     private static readonly TimeSpan Retry = TimeSpan.FromSeconds(5);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        if (options.CatalogFollower)
-        {
-            return;
-        }
-
         string? failure = null;
         while (!stoppingToken.IsCancellationRequested)
         {

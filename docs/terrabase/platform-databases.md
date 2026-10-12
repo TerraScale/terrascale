@@ -20,8 +20,8 @@ region only.
 - Every write is conditional on absence under the fixed ids and fixed timestamps, so restarts, concurrent runs on one
   node and independent nodes or regions all converge on identical records. An id or name that holds something else is
   never overwritten: the seed logs an error and stops.
-- Today a catalog follower (a region other than `PRIMARY_REGION`) seeds nothing: it replicates its primary's catalog.
-  Once the catalog is leaderless (replication slice R10a) every machine seeds, with the same result.
+- Every machine seeds its own local catalog. Catalogs are not replicated until R10a
+  ([multi-region-replication.md](multi-region-replication.md) section 15).
 - Collections belong to the service that owns the data: ts-auth creates its collections at startup (idempotent), and
   the dashboard creates its own. TerraBase does not keep a copy of either list.
 
@@ -73,7 +73,7 @@ ts-auth access token; TerraBase accepts it only when it is a user token (no `pro
   `pin`, reads `"[redacted]"`, at any depth. ts-auth's sealed signing keys (`secretBox`), private key parameters and
   password hashes never leave. Over-redaction is the intended failure.
 - **Audit.** Every read logs `Platform admin <user id> read <database>/<collection>/<document id>` (never the content).
-  A durable audit collection follows once the catalog is leaderless (R10a); today a catalog follower cannot write one.
+  A durable audit collection follows once the catalog is replicated (R10a).
 - **No writes.** There is no write route; changes go through the owning service.
 
 The ts-dotnet SDK client for these routes ships with the dashboard work (TerraScale/ts-dotnet); its routes join

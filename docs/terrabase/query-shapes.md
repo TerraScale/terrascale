@@ -17,10 +17,9 @@ internal listener and remains hidden from the public API reference. Both endpoin
 
 Each item contains `id` (SHA-256 of the canonical shape), `collection`, `shape`,
 `queries`, `totalLatencyMs`, `maxLatencyMs`, `rowsScanned`, and `lastSeenAt`.
-Average latency is `totalLatencyMs / queries`. Primary reads include persisted
-and pending observations without forcing a write. Follower reads include only
-replicated persisted statistics, so a lost forwarding acknowledgment cannot
-double count local pending observations; catalog replication can delay visibility.
+Average latency is `totalLatencyMs / queries`. Reads include persisted and pending
+observations without forcing a write. Statistics live in each machine's own catalog
+until R10a replicates it.
 
 ## Identity
 
@@ -65,7 +64,7 @@ when admission is full; existing admitted shapes continue accumulating. The
 
 ## Persistence
 
-On a catalog primary, the tracker flushes every 10 seconds and at clean shutdown
+The tracker flushes every 10 seconds and at clean shutdown
 to TerraBase JSON documents in `databases/{id}/query_shapes`; dashboard records
 live in `dashboard_query_shapes`. Each stored record declares `format: alpha`.
 Separate flush markers resolve a write that committed before throwing, avoiding
@@ -78,24 +77,3 @@ metric reason; other shapes and databases continue persisting.
 
 Statistics are best-effort: a crash loses observations since the last flush,
 and a full persisted set drops new shapes rather than evicting old ones.
-Catalog followers send query shapes independently of operation usage every 10
-seconds and drain both backlogs independently at clean shutdown. Forwarding uses
-the existing catalog-primary SDK over mutual TLS and LZ4 gRPC, with an explicit
-`alpha` payload. A batch contains at most 128 shapes and 1 MiB of encoded or
-decoded data. Send preparation reserves 8 MiB; the receiver admits at most four
-concurrent calls, reserving 8 MiB each before gRPC materializes the request.
-
-A follower retains each batch and its sequence unchanged until acknowledged.
-Observations arriving during a send accumulate separately for the next batch.
-The primary checks current database ownership and commits statistics together
-with the sender epoch/sequence watermark in a disk-synced TerraBase transaction.
-Retries, including after primary restart, do not recount a committed batch.
-Deleted databases are not recreated, and incompatible records remain intact.
-
-Unacknowledged batches expire after one day and record `send_expired`; permanently
-invalid batches record `send_invalid`. Sender watermarks in `query_shape_senders`
-are bounded to 1,024 epochs globally and 16 per sender. Only readable watermarks
-silent for seven days can be retired; new epochs receive ResourceExhausted at
-capacity. The retry window is shorter than retirement to prevent stale batches
-from recounting after their watermark is removed. Pending observations remain
-best-effort and are lost on follower crash before acknowledgment.
