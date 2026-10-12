@@ -304,6 +304,6 @@ commit keeps the guarantees of the database lifecycle recovery in [management-ap
 
 ## Crash and restart
 
-Commits use `synchronous = NORMAL` like every TerraBase write (decision 0003): a committed commit survives a
-TerraBase process crash; an operating-system crash or power loss may lose the latest commits, together with
-their commit records, never one without the other.
+Commits write the system database, whose every commit syncs the write-ahead log (`synchronous = FULL`, decision
+0012): a committed commit and its commit record survive a TerraBase process crash, an operating-system crash and a
+power loss on their node.

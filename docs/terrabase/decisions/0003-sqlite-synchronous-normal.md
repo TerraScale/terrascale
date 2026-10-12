@@ -1,6 +1,7 @@
 # 0003: SQLite `synchronous = NORMAL` in WAL mode
 
-- Status: accepted (human decision, 2026-10-04)
+- Status: accepted (human decision, 2026-10-04); amended by [0012](0012-system-database-synchronous-full.md): the
+  system database syncs every commit (`FULL`), tenant databases keep `NORMAL`
 - Scope: `src/TerraBase/Engine/Sqlite` (every connection: pooled sessions and the
   connection that creates a database)
 
