@@ -23,7 +23,7 @@ secrets and no machines, and the image exits at startup without the file.
 | --- | --- | --- | --- |
 | `StateProjectId` | TerraScale ID | Project of the state database `dashboard`; the app creates it and its 20 collections at startup | TerraBase (project owned by the dashboard service) |
 | `StateApiKey` | non-empty | Documents API key for that project: database PUT, collection create/read, document get/put/delete | TerraBase |
-| `AuthInstanceSlug` | non-empty | ts-auth tenant: issuer and endpoint paths `/{slug}/...`. Must be `terrascale`: any other value still starts and signs in, but platform roles and project tokens are refused | fixed value |
+| `AuthInstanceSlug` | non-empty | ts-auth tenant: issuer and endpoint paths `/{slug}/...`. Must be `terrascale`: other tenants serve only discovery and JWKS, so sign-in fails | fixed value |
 | `AuthClientId` | non-empty | ts-auth OAuth client of the dashboard (see below) | ts-auth |
 | `AuthClientSecret` | non-empty | `client_secret_basic` for that client | ts-auth |
 | `AuthManagementKey` | starts with `sk_` | ts-auth management API key for the `terrascale` tenant; the app uses it to update a signed-in user's password and revoke that user's sessions | ts-auth |
@@ -83,6 +83,11 @@ Contract differences to settle with the ts-auth owner before live sign-in:
 4. The deployed `55979ea3` predates #96 and `platform_role` in sign-in
    access tokens. Platform administrators are not recognized until ts-auth
    is redeployed from `6bb896bb` or later.
+5. Signed-in password change calls the ts-auth management API
+   (`PATCH /v1/terrascale/users/{id}` and revoke-all-sessions with
+   `AuthManagementKey`). ts-auth at `6bb896bb` serves no `/v1/{slug}/users`
+   routes, so live password change fails with a 503 page until ts-auth
+   serves them or the dashboard moves to the headless password reset.
 
 ## Delivery path (proposal, needs approval)
 
