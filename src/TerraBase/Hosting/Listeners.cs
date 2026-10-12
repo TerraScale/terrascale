@@ -86,6 +86,20 @@ public static class Listeners
         return context.Features.Get<AnsweringRegion>()?.Region ?? context.RequestServices.GetRequiredService<TerraBaseOptions>().Region;
     }
 
+    /// <summary>
+    /// Asks Fly Proxy to replay a client-listener request in <paramref name="region"/> (<c>fly-replay</c>), unless Fly replayed
+    /// it already: a replayed request is answered where it landed, so a disagreement between regions never loops. Callers
+    /// still write their 421, which a caller outside Fly Proxy receives.
+    /// </summary>
+    public static void ReplayIn(HttpContext context, string region)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        if (ArrivedOn(context) == TerraBaseListener.Client && !context.Request.Headers.ContainsKey("Fly-Replay-Src"))
+        {
+            context.Response.Headers["fly-replay"] = $"region={region}";
+        }
+    }
+
     /// <summary>Documents the client listener's region headers and pin rejection in OpenAPI.</summary>
     public static IServiceCollection AddTerraBaseRegionOpenApi(this IServiceCollection services)
     {
@@ -100,7 +114,7 @@ public static class Listeners
                 {
                     Name = "X-TerraScale-Region-Pin",
                     In = ParameterLocation.Header,
-                    Description = "Optional single raw region ID. An empty, duplicate or mismatched pin returns 421 before execution; re-resolve through Atlas.",
+                    Description = "Optional single raw region ID. An empty, duplicate or mismatched pin returns 421 before execution; behind Fly Proxy a mismatched pin also answers fly-replay: region=<pin>.",
                     Schema = new OpenApiSchema { Type = JsonSchemaType.String },
                 });
                 operation.Responses ??= [];
@@ -213,6 +227,11 @@ public static class Listeners
                 if (context.Request.Headers.TryGetValue("X-TerraScale-Region-Pin", out var pin)
                     && (pin.Count != 1 || !string.Equals(pin[0], region, StringComparison.Ordinal)))
                 {
+                    if (pin.Count == 1 && TerraBaseOptions.IsRegion(pin[0]))
+                    {
+                        ReplayIn(context, pin[0]!);
+                    }
+
                     context.Response.StatusCode = StatusCodes.Status421MisdirectedRequest;
                     return Task.CompletedTask;
                 }

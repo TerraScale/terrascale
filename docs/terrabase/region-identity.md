@@ -19,7 +19,9 @@ Clients may send `X-TerraScale-Region-Pin: <region-id>` with the raw region ID.
 The pin is optional; when present, it must contain exactly one nonempty value
 matching the configured node region. An empty, duplicate, or mismatched pin
 returns `421 Misdirected Request` with the correct `X-TerraBase-Region` header.
-TerraBase does not proxy or forward the rejected request.
+TerraBase does not proxy or forward the rejected request; behind Fly Proxy a
+mismatched pin naming a single well-formed region also answers
+`fly-replay: region=<pin>`, so Fly replays it there ([fly.md](fly.md#fly-replay)).
 
 The `/healthz` JSON body includes `status`, `version`, and `region`.
 Management API database JSON includes `region` on create, branch, get, and list

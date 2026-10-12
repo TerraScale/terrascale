@@ -141,6 +141,7 @@ public static class DatabaseRegions
             httpContext.Response.Headers.CacheControl = "no-store";
             httpContext.Response.Headers["X-TerraBase-Database-Home"] = home;
             httpContext.Response.Headers["X-TerraBase-Database-Regions"] = regions;
+            Listeners.ReplayIn(httpContext, home);
             return BadRequests.WriteAsync(httpContext, StatusCodes.Status421MisdirectedRequest, "wrong_region", $"the database is served in {home}", op: null);
         }
     }

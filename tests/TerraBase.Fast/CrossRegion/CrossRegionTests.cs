@@ -126,6 +126,43 @@ public sealed class CrossRegionTests
     }
 
     [Test]
+    public async Task Behind_fly_proxy_a_region_outside_a_databases_placement_replays_its_requests_to_the_home_once()
+    {
+        // Three regions in one directory, as Fly's DNS lists them: the canary is at home in gru with a replica in sjc, and fra
+        // keeps only its record.
+        using var peerTls = new PeerTls();
+        var dns = (peerTls, new FakeMemberStore());
+        var network = new FakeRegionNetwork();
+        var (organization, project, database) = (EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString());
+        await using var gru = await Regions.StartRegionAsync(network, "gru", "gru", dns: dns);
+        await using var sjc = await Regions.StartRegionAsync(network, "sjc", "sjc", dns: dns);
+        await using var fra = await Regions.StartRegionAsync(network, "fra", "fra", dns: dns);
+        foreach (var (api, commit) in new[]
+        {
+            (gru, Regions.Registration(organization, project, database, "canary", "sjc")),
+            (sjc, Regions.Registration(organization, project, null, "canary")),
+            (fra, Regions.Registration(organization, project, null, "canary")),
+        })
+        {
+            using var service = api.Service(api.User);
+            using var response = await service.PostAsync(new Uri("/v1/management/commits", UriKind.Relative), new StringContent(commit, Encoding.UTF8, "application/json"));
+            response.EnsureSuccessStatusCode();
+        }
+
+        using var data = await fra.CreateClientAsync(organization, Scopes);
+        var collections = new Uri($"/v1/projects/{project}/databases/canary/collections", UriKind.Relative);
+        await TerraBaseTestServer.EventuallyAsync(async token => (await data.GetAsync(collections, token)).StatusCode == HttpStatusCode.MisdirectedRequest);
+
+        await Regions.WrongRegionAsync(data.GetAsync(collections), "gru", "gru,sjc");
+        // A request Fly replayed already is answered where it landed, never replayed again.
+        using var replayed = new HttpRequestMessage(HttpMethod.Get, collections);
+        replayed.Headers.Add("Fly-Replay-Src", "instance=00000000000000;region=sjc;t=1");
+        using var answer = await data.SendAsync(replayed);
+        await Assert.That(answer.StatusCode).IsEqualTo(HttpStatusCode.MisdirectedRequest);
+        await Assert.That(answer.Headers.Contains("fly-replay")).IsFalse();
+    }
+
+    [Test]
     public async Task A_write_in_either_region_is_readable_in_the_other_with_the_same_version()
     {
         await using var regions = await Regions.StartAsync();
@@ -747,6 +784,8 @@ public sealed class CrossRegionTests
             await Assert.That((await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("error").GetProperty("code").GetString()).IsEqualTo("wrong_region");
             await Assert.That(response.Headers.GetValues("X-TerraBase-Database-Home").Single()).IsEqualTo(home);
             await Assert.That(response.Headers.GetValues("X-TerraBase-Database-Regions").Single()).IsEqualTo(regions);
+            // Fly Proxy replays it in the home region.
+            await Assert.That(response.Headers.GetValues("fly-replay").Single()).IsEqualTo($"region={home}");
         }
 
         // With dns, the regions find each other in that directory and talk over their peer listeners instead of the network.
@@ -852,7 +891,7 @@ public sealed class CrossRegionTests
             services.AddSingleton<IMemberDirectory>(members);
         }
 
-        private static Task<ManagementApi> StartRegionAsync(
+        public static Task<ManagementApi> StartRegionAsync(
             FakeRegionNetwork network, string region, string cell, Action<IServiceCollection>? configureServices = null, (PeerTls Tls, FakeMemberStore Members)? dns = null) =>
             ManagementApi.StartAsync(
                 settings =>
