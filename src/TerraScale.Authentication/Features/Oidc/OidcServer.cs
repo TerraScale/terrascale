@@ -11,6 +11,7 @@ using TerraScale.Authentication.Features.Headless;
 using TerraScale.Authentication.Features.Identity;
 using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.SigningKeys;
+using TerraScale.Authentication.Hosting;
 using TerraScale.Authentication.Security;
 using TerraScale.Authentication.Store;
 using TerraScale.DotNet;
@@ -147,6 +148,9 @@ public static class OidcIssuer
                         .SetType(OpenIddictServerHandlerType.Custom))
                     .AddEventHandler<HandleRevocationRequestContext>(handler => handler.UseScopedHandler<RevokeTheSignIn>()
                         .SetOrder(OpenIddictServerHandlers.Revocation.RevokeToken.Descriptor.Order - 1)
+                        .SetType(OpenIddictServerHandlerType.Custom))
+                    .AddEventHandler<ApplyTokenResponseContext>(handler => handler.UseSingletonHandler<CountTokenResponses>()
+                        .SetOrder(int.MinValue)
                         .SetType(OpenIddictServerHandlerType.Custom));
                 server.UseAspNetCore()
                     .EnableAuthorizationEndpointPassthrough()

@@ -10,6 +10,7 @@ using TerraScale.Authentication.Features.Mfa;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.RateLimiting;
 using TerraScale.Authentication.Features.SignIn;
+using TerraScale.Authentication.Hosting;
 using TerraScale.Authentication.Security;
 using ZLogger;
 using static OpenIddict.Abstractions.OpenIddictConstants;
@@ -95,18 +96,21 @@ public sealed class HeadlessAuth(Users users, Passcodes passcodes, TotpCredentia
             return OidcResults.Forbid(Errors.InvalidRequest, "email, ip_address and the grant's password or code are required; ip_address is the end user's IP address.");
         }
 
+        var method = request.GrantType == HeadlessGrants.Password ? "password" : "email-code";
+        var metric = request.GrantType == HeadlessGrants.Password ? "password" : "email_code";
         if (await this.LimitIpAsync(ip, mails: false, cancellationToken) is { } wait)
         {
+            AuthMetrics.SignIn(metric, "rate_limited");
             return TooMany(wait);
         }
 
         UserRecord? user;
-        var method = request.GrantType == HeadlessGrants.Password ? "password" : "email-code";
         if (request.GrantType == HeadlessGrants.Password)
         {
             var normalized = Users.NormalizeEmail(email);
             if (await this.LimitEmailAsync(email, "headless-password-email", PasswordPerEmail, PasswordWindow, notify: true, cancellationToken) is { } passwordWait)
             {
+                AuthMetrics.SignIn(metric, "rate_limited");
                 return TooMany(passwordWait);
             }
 
@@ -116,6 +120,7 @@ public sealed class HeadlessAuth(Users users, Passcodes passcodes, TotpCredentia
         {
             if (await this.LimitCodeAsync(email, PasscodePurpose.SignIn, issuing: false, cancellationToken) is { } codeWait)
             {
+                AuthMetrics.SignIn(metric, "rate_limited");
                 return TooMany(codeWait);
             }
 
@@ -131,10 +136,12 @@ public sealed class HeadlessAuth(Users users, Passcodes passcodes, TotpCredentia
         if (user is null || !await mfa.AllowsPrimaryAuthenticationAsync(user, cancellationToken))
         {
             logger.ZLogInformation($"Audit: headless {method:@Method} refused");
+            AuthMetrics.SignIn(metric, "refused");
             return OidcResults.Forbid(Errors.InvalidGrant, "The email, password or code is wrong, or the code has expired.");
         }
 
         logger.ZLogInformation($"Audit: headless {method:@Method} sign-in succeeded for user {user.Id:@UserId}");
+        AuthMetrics.SignIn(metric, "succeeded");
         return OidcResults.SignIn(user, clock.GetUtcNow(), request.GetScopes(), OidcIssuer.SignInAudiences(options));
     }
 

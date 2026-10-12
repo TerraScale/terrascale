@@ -189,7 +189,15 @@ Security requirements remain mandatory:
 
 Metrics are scraped from `/metrics` on port 9092 (Prometheus, Fly `[[metrics]]`); they never carry exception messages, headers, query strings,
 bodies or credentials. See [the current port inventory](csharp-port.md)
-for implementation details and remaining gates.
+for implementation details and remaining gates. Besides the HTTP, HTTP client and .NET runtime series, three outcome
+counters feed the Grafana dashboards (`ops/grafana`), each with fixed label values only:
+
+- `ts_auth_sign_ins_total{method, outcome}`: `method` is `password`, `email_code` (headless grants) or `hosted_code`
+  (the hosted page); `outcome` is `succeeded`, `refused` or `rate_limited`.
+- `ts_auth_tokens_total{grant_type, outcome}`: every token response OpenIddict writes; `outcome` is `issued` or the
+  OAuth error code (`other` for anything non-standard). 429 and 503 answers written outside OpenIddict show up only
+  in `http_server_request_duration_seconds`.
+- `ts_auth_emails_total{outcome}`: `sent`, `failed` or `not_configured`.
 
 ### Self-service authentication setup
 
