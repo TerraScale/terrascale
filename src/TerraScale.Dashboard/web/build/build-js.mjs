@@ -2,10 +2,10 @@
 // entry stays tiny; Monaco, its workers, and the codicon font are emitted as
 // content-hashed siblings that the entry downloads once the page has loaded.
 //
-//   node scripts/build-js.mjs             minified bundle
-//   node scripts/build-js.mjs --release   minified, plus maximum-quality .br
+//   node build/build-js.mjs             minified bundle
+//   node build/build-js.mjs --release   minified, plus maximum-quality .br
 //                                         siblings served in place of the files
-//   node scripts/build-js.mjs --watch     readable, rebuilt on every source change
+//   node build/build-js.mjs --watch     readable, rebuilt on every source change
 //
 // modern-monaco fetches its editor core, grammars, and themes from esm.sh by
 // default. The plugins below rewrite those loads so every byte is self-hosted
@@ -19,10 +19,11 @@ import { promisify } from 'node:util';
 import { brotliCompress, constants } from 'node:zlib';
 import * as esbuild from 'esbuild';
 
-const repository = fileURLToPath(new URL('../', import.meta.url));
-const source = resolve(repository, 'src/TerraScale.Dashboard/web/assets/js');
-const outdir = resolve(repository, 'src/TerraScale.Dashboard/web/static/js');
-const monacoDist = resolve(repository, 'node_modules/modern-monaco/dist');
+const web = fileURLToPath(new URL('../', import.meta.url));
+const assetUrls = resolve(web, '../Platform/Assets');
+const source = resolve(web, 'assets/js');
+const outdir = resolve(web, 'static/js');
+const monacoDist = resolve(web, 'node_modules/modern-monaco/dist');
 const watchMode = process.argv.includes('--watch');
 const minify = process.argv.includes('--minify') || !watchMode;
 const release = process.argv.includes('--release');
@@ -38,6 +39,9 @@ const shared = {
   outdir,
   write: false,
   metafile: true,
+  // Chunk [hash]es include input paths relative to this directory: pin it so
+  // every caller (MSBuild, npm, the watchers) emits the same file names.
+  absWorkingDir: web,
 };
 
 // Monaco runs its editor and JSON language services in module workers that it
@@ -163,7 +167,7 @@ async function build() {
   const datastarMap = await readVendor('datastar.js.map');
   const datastarLicense = await readVendor('LICENSE.datastar.md');
   const pins = (await readRequired(
-    resolve(repository, 'src/TerraScale.Dashboard/Platform/Assets/AssetUrls.cs'),
+    resolve(assetUrls, 'AssetUrls.cs'),
     'Missing Platform/Assets/AssetUrls.cs; the JS build reads its Datastar SRI pins',
   )).toString('utf8');
   const pinned = pins.match(/public const string DatastarIntegrity\s*=\s*"([^"]+)"/)?.[1];
@@ -277,7 +281,7 @@ if (watchMode) {
     }, 30);
   };
   watch(source, { recursive: true }, rebuild);
-  watch(resolve(repository, 'src/TerraScale.Dashboard/Platform/Assets'), (_, filename) => {
+  watch(assetUrls, (_, filename) => {
     if (!filename || filename === 'AssetUrls.cs') rebuild();
   });
   console.log('JS: watching web/assets/js/ and Platform/Assets/AssetUrls.cs');

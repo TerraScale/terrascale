@@ -3,8 +3,14 @@
 # browser journeys need Chromium's system libraries; `make test-fast` runs on the runner itself.
 
 FROM node:24-bookworm-slim AS node-modules
+# The asset build's npm project.
+WORKDIR /src/src/TerraScale.Dashboard/web
+COPY src/TerraScale.Dashboard/web/package.json src/TerraScale.Dashboard/web/package-lock.json src/TerraScale.Dashboard/web/.npmrc ./
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --ignore-scripts --no-audit --no-fund --prefer-offline
+# Temporary: packages for the tests/TerraScale.Dashboard.E2E/browser/*.mjs flows (root package.json).
 WORKDIR /src
-COPY package.json package-lock.json .npmrc ./
+COPY package.json package-lock.json ./
 RUN --mount=type=cache,target=/root/.npm \
     npm ci --ignore-scripts --no-audit --no-fund --prefer-offline
 
@@ -14,7 +20,7 @@ ENV DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
 # The project build bundles CSS and JS with node (BundleDashboardAssets).
 COPY --from=node-modules /usr/local/bin/node /usr/local/bin/node
 WORKDIR /src
-COPY --from=node-modules /src/node_modules ./node_modules
+COPY --from=node-modules /src/src/TerraScale.Dashboard/web/node_modules ./src/TerraScale.Dashboard/web/node_modules
 COPY . .
 # The deployed commit (`--build-arg SOURCE_REVISION=$(git rev-parse HEAD)`): /health/ready reports it.
 ARG SOURCE_REVISION
@@ -28,6 +34,7 @@ FROM mcr.microsoft.com/dotnet/sdk:10.0.401-noble AS test-browsers
 ENV DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
 COPY --from=node-modules /usr/local/bin/node /usr/local/bin/node
 WORKDIR /src
+COPY --from=node-modules /src/src/TerraScale.Dashboard/web/node_modules ./src/TerraScale.Dashboard/web/node_modules
 COPY --from=node-modules /src/node_modules ./node_modules
 # The browser revision matching Microsoft.Playwright and playwright-core 1.63.0.
 RUN apt-get update && apt-get install -y --no-install-recommends make \

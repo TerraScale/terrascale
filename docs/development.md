@@ -2,7 +2,11 @@
 
 The dashboard uses .NET 10, RazorSlices, Datastar and the official
 ts-dotnet SDK in one production application, `src/TerraScale.Dashboard`.
-Node.js and npm build the Lightning CSS stylesheet and browser assets.
+Node.js and npm build the Lightning CSS stylesheet and browser assets, and
+nothing else: the npm project is `src/TerraScale.Dashboard/web` (`package.json`,
+`.browserslistrc`, and the scripts in `web/build/`). The root `package.json`
+only holds packages for the `tests/TerraScale.Dashboard.E2E/browser/*.mjs`
+flows until they are ported to C#.
 It is the only implementation; the Go application was removed on 2026-10-12.
 Production is not deployed. See [migration status](csharp-migration.md) for
 outstanding deployment and persistence gates.
@@ -10,7 +14,9 @@ outstanding deployment and persistence gates.
 ## Local development
 
 Install the versions pinned in `global.json` and `.mise.toml`, then install
-browser/build dependencies with `npm ci`. Run local builds, lint, tests and
+the asset build's dependencies with `npm ci` in `src/TerraScale.Dashboard/web`
+(the project build also does this when they are missing) and the test flows'
+with `npm ci` at the repository root. Run local builds, lint, tests and
 watchers with low CPU priority:
 
 ```sh
@@ -19,6 +25,10 @@ nice -n 19 make lint
 nice -n 19 make dev
 nice -n 19 make demo
 ```
+
+The dotted region map, `web/static/brand/region-map.svg`, is committed. Only
+when its artwork changes, regenerate it with `npm run build:region-map` in
+`src/TerraScale.Dashboard/web`; the project build never runs it.
 
 The production development host requires automatically delivered platform
 identity and persistent services. The demo launcher creates a temporary
