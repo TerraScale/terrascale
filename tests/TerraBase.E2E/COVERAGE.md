@@ -32,10 +32,16 @@ in-process nodes, separate OS processes or no node (harness check), and whether 
 a TCP-proxy network fault. CI's `terrabase-check` rejects a block here or in `RUNS.md` that lacks a category, the commit,
 the working-tree patch identity, the stacked-on line or a test's nodes and faults, or whose counts do not add up.
 
-**Acceptance candidate:** the combined candidate `f929c623` (R3's #106 head `81fa4fcb` + these assertions; agreed with the R3 owner, who reproduced it over 3 runs) is recorded on
-branch `test/e2e-combined-candidate`: 37 actual pass / 4 harness check / 11 expected failure / 1 not supported / 2 skip /
-0 fail of 55, identical over 3 runs, all replicated passes on in-process nodes. That is where acceptance is judged; this
-file on main reports main, where nothing replicates until #106 merges.
+**Acceptance candidates** are published on #108 by the strict-test owner (one named candidate per batch, frozen branch).
+Each counts once the R3 owner acknowledges its exact SHA and both owners' 3 repeats are posted there.
+- **Recorded: candidate-3 `ab499d84`** (`test/candidate-3`, on #112 `8b8758ff`): 45 actual pass / 4 harness check /
+  8 expected failure / 0 not supported / 3 skip / 0 fail of 60, identical over 6 runs (3 per owner). 42 passes ran on
+  in-process nodes and 3 on separate OS processes with SIGKILL.
+- **Pending acknowledgement:** candidate-4 `4193f8fe` and candidate-5 `77f0072c`.
+- **Historical:** `f929c623` and `f1ddb954`, each under its own SHA.
+
+The row-by-row record is `COVERAGE.md` on #108's branch. This file on main reports main, where nothing replicates until
+#106 merges.
 
 Three repeat runs of main plus this PR on delta, 2026-10-12, identical test by test; every block is in `RUNS.md`:
 
