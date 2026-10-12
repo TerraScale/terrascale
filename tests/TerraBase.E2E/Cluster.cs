@@ -127,6 +127,12 @@ public sealed class Cluster : IAsyncDisposable
         await _release();
     }
 
+    /// <summary>
+    /// Local nodes only: how a client outside this process reaches <paramref name="region"/>'s node: its client listener,
+    /// the project token, the listener's certificate and the node's data directory.
+    /// </summary>
+    public (Uri Address, string Token, string CertificatePem, string DataDirectory) Endpoint(string region) => RequireLocal().Endpoint(region);
+
     private Local RequireLocal() => _local ?? throw new NotSupportedException("this fault needs local nodes");
 
     private static string FlyApp => Environment.GetEnvironmentVariable("TERRABASE_E2E_FLY_APP") ?? "ts-terrabase";
@@ -293,6 +299,13 @@ public sealed class Cluster : IAsyncDisposable
                 Timeout = Timeout.InfiniteTimeSpan,
             };
 
+        public (Uri Address, string Token, string CertificatePem, string DataDirectory) Endpoint(string region)
+        {
+            var node = _nodes[region];
+            var api = node.Api ?? throw new InvalidOperationException($"{region} is down");
+            return (api.Server.ClientAddress!, node.Token!, api.Tls.CertificatePem, node.DataDirectory);
+        }
+
         public async Task StopAsync(string region)
         {
             var node = _nodes[region];
@@ -382,13 +395,14 @@ public sealed class Cluster : IAsyncDisposable
                 await api.VerifyProjectBindingAsync(_organization, _project, owner);
             }
 
-            node.Project = api.WithToken(api.Issuer.Mint(node.User, token =>
+            node.Token = api.Issuer.Mint(node.User, token =>
             {
                 token.Claims["project_id"] = _project;
                 token.Claims["scope"] = Scopes;
                 // A benchmark host serves for hours; the e2e tests end well within the default five minutes.
                 token.Expires = DateTime.UtcNow.AddHours(12);
-            }));
+            });
+            node.Project = api.WithToken(node.Token);
         }
 
         private static async Task CommitAsync(ManagementApi api, string commit)
@@ -424,6 +438,9 @@ public sealed class Cluster : IAsyncDisposable
         public ManagementApi? Api { get; set; }
 
         public HttpClient? Project { get; set; }
+
+        /// <summary>The project token of the running node.</summary>
+        public string? Token { get; set; }
 
         /// <summary>The user who registered the organization on this node, kept across restarts.</summary>
         public string? User { get; set; }

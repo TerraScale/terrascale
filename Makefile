@@ -41,7 +41,7 @@ BENCHMARK_DOTNET_PROJECTS := benchmark/dotnet/TerraScale.Endpoints.Benchmarks/Te
 	libs-build libs-test libs-check libs-pack libs-nativeaot-check \
 	auth-build auth-audit auth-openapi-check auth-test-fast auth-test-slow auth-check auth-publish auth-dev \
 	terrabase-build terrabase-analyzer-check terrabase-test-fast terrabase-test-slow terrabase-e2e terrabase-e2e-fly-outage terrabase-check terrabase-run terrabase-publish \
-	benchmark-build benchmark-fmt-check benchmark-check benchmark-smoke
+	benchmark-build benchmark-fmt-check benchmark-check benchmark-smoke benchmark-repl-local
 
 # Global: the whole solution.
 restore:
@@ -191,3 +191,11 @@ benchmark-check:
 
 benchmark-smoke:
 	$(MAKE) -C benchmark smoke
+
+# Multi-region replication benchmark against three local regions in one host process (Release build): writes
+# REPL_ARGS' documents (default 1,000,000) across gru, sjc and fra, verifies every region and writes
+# benchmark/bench/<date>-repl-local-<docs>.md. Example: nice -n 19 make benchmark-repl-local REPL_ARGS='--docs 100000'.
+benchmark-repl-local:
+	$(MAKE) terrabase-build CONFIGURATION=Release
+	$(MAKE) -C benchmark repl-bench-build
+	benchmark/scripts/repl-local.sh
