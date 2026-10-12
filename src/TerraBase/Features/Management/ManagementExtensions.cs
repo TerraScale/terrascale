@@ -31,6 +31,7 @@ public static class ManagementExtensions
         services.AddSingleton<IAccessService>(provider => provider.GetRequiredService<EngineManagementService>());
         services.AddSingleton<IManagementCommits>(provider => provider.GetRequiredService<EngineManagementService>());
         services.AddSingleton<ITenantDirectory>(provider => provider.GetRequiredService<EngineManagementService>());
+        services.AddSingleton<Platform.IPlatformCatalog>(provider => provider.GetRequiredService<EngineManagementService>());
         services.AddSingleton<ICatalogGuard>(provider => provider.GetRequiredService<EngineManagementService>());
         services.AddSingleton<ICatalogApplyObserver>(provider => provider.GetRequiredService<EngineManagementService>());
         services.AddSingleton<SystemCatalog>();

@@ -77,6 +77,36 @@ public sealed class StorageRecoveryTests
         await Assert.That(keys.Items.Count).IsEqualTo(1);
     }
 
+    [Test]
+    public async Task Ts_auth_stores_in_the_platform_database_terrabase_seeds_with_no_configuration()
+    {
+        var (running, unavailable) = await TerraBaseTestServer.StartAsync();
+        await using var terrabase = running ?? throw new InvalidOperationException(unavailable);
+        // ts-auth's constants (App.StorageProject, App.StorageDatabase) name what TerraBase seeds on its own.
+        var database = terrabase.InternalDocuments().Database(App.StorageProject, App.StorageDatabase);
+        await Assert.That(await ReadinessWait.UntilAsync(async () =>
+        {
+            try
+            {
+                await database.ListCollectionsAsync();
+                return true;
+            }
+            catch (TerraBaseException)
+            {
+                return false;
+            }
+        }, Recovery)).IsTrue();
+
+        await using var auth = await AuthTestServer.StartAsync(services: services =>
+        {
+            services.AddSingleton(terrabase.Http);
+            services.AddSingleton(_ => terrabase.InternalDocuments().Database(App.StorageProject, App.StorageDatabase));
+        });
+
+        await Assert.That(await ReadinessWait.ReadyWithinAsync(auth.Client, Recovery)).IsTrue();
+        await Assert.That((await database.ListCollectionsAsync(limit: 200)).Items.Count).IsEqualTo(AuthStore.RequiredCollections.Count);
+    }
+
     private static async Task<string> KeyIdAsync(AuthTestServer auth)
     {
         var jwks = await auth.Client.GetFromJsonAsync<JsonElement>($"/{OidcIssuer.Slug}/.well-known/jwks.json");

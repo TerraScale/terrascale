@@ -715,7 +715,7 @@ internal sealed partial class EngineManagementService(
     // backup snapshot).
     private async ValueTask<AddDatabaseResult> AddDatabaseAsync(
         Func<IStorageTransaction, ValueTask<ProjectTenant>> project, string name, string? sourceId, string? branchedFrom, CancellationToken cancellationToken,
-        string? id = null, DatabasePlacement? placement = null)
+        string? id = null, DatabasePlacement? placement = null, DateTimeOffset? createdAt = null)
     {
         // Checked again when registering; this avoids creating storage for a request that cannot succeed.
         var precheck = await ReadAsync<AddDatabasePrecheck>(
@@ -751,7 +751,7 @@ internal sealed partial class EngineManagementService(
         using var admission = lease;
         placement ??= new DatabasePlacement(options.Region, [], 1);
         var database = new ManagedDatabase(
-            id ?? NewId(), tenant.ProjectId!, name, branchedFrom, time.GetUtcNow(), placement.Home, placement.Replicas.Count == 0 ? null : [.. placement.Replicas], placement.Version);
+            id ?? NewId(), tenant.ProjectId!, name, branchedFrom, createdAt ?? time.GetUtcNow(), placement.Home, placement.Replicas.Count == 0 ? null : [.. placement.Replicas], placement.Version);
         var storage = tenant with { DatabaseId = database.Id };
         var preparation = await PrepareDatabaseAsync(storage, sourceId is null ? null : tenant with { DatabaseId = sourceId }, cancellationToken).ConfigureAwait(false);
         if (preparation is not bool created || !created)
