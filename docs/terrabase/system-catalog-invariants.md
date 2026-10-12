@@ -92,9 +92,19 @@ version said a document a machine held is never missing; that holds only without
   - **Closed** from the start. **Open** only once M has completed a forced anti-entropy pull of `_system` (every
     differing bucket, at once) since this start from:
     - every other machine the member directory lists as started (read successfully after this start), and
-    - at least one machine of **every other region the catalog records** (`cluster_members`: each machine of a cluster
-      records `{region}` under its machine id at start; replicated). This covers a stopped machine that holds the only
-      copy of a revocation or deletion: its region is recorded, so M waits for that region.
+    - **every machine the catalog records** (`cluster_members`: each machine of a cluster records `{region}` under its
+      machine id at start; replicated), in any region, M's own included. This covers a stopped machine that holds the only
+      copy of a revocation or deletion: it is recorded, so M waits for it (per machine, not per region: COS, after R3's
+      verification of `60eae912`).
+  - **and only when M's catalog is not behind its restore anchor.** Each open machine writes
+    `catalog-anchor/<machine>` (`{"head", "at"}`: its `_system` change-log head) to its backup bucket when the gate opens
+    and every 15 s while the head moves, sealed like every backup object (format 1, AES-256-GCM with the `_system` data
+    key): an anchor edited or forged without the key fails authentication and reads as unreadable (closed). At start, before any pull, M compares its head with the anchor: behind means M's
+    catalog was put back to an older copy, which a volume snapshot cannot hide (the anchor lives outside the volume). A
+    restored M then never opens by pulling (its peers may be restored copies too); only the operator open does. No anchor
+    yet (a new machine) is not a restore. An unreadable anchor keeps M closed and is read again every pass. On Fly without
+    a backup bucket nothing can be compared: closed until the operator open. Off Fly without a bucket (dev servers, tests)
+    there is no anchor and no detection.
   - **No machine to pull from is unknown, not proof of a current catalog.** Nothing listed, nothing recorded: M stays
     closed (R3's first-node finding). The only exceptions:
     - **a single machine by configuration**: no member directory (off Fly), no static members, no other region recorded
@@ -105,7 +115,7 @@ version said a document a machine held is never missing; that holds only without
     `POST /admin/api-keys` answers the same; `/readyz` answers 503 (Fly Proxy routes nothing here); `CatalogConvergence`
     decides nothing about files or names. Peer gRPC (streams, digests, bucket reads), probes, metrics and status run: the
     other machines' gates pull from a closed machine, so machines restarting together open each other.
-  - **Unreachable listed machine, unreachable recorded region, failed directory read:** closed, however long; passes
+  - **Unreachable listed or recorded machine, unreadable anchor, failed directory read:** closed, however long; passes
     retry every second. Never opens on its own.
   - **No unauthenticated override.** `POST /admin/catalog-gate/open` (anonymous on the internal listener, `3ffc2713`) is
     removed: the private network is not an authorization. The operator open below goes through `fly ssh` instead.
@@ -125,7 +135,7 @@ version said a document a machine held is never missing; that holds only without
     to bootstrap something that is not a new cluster.
 - **Operator open (COS DECISION after R3's verification of `60eae912`, #108 comment 6127484692: option 1, fail
   closed, operator-authenticated).** A cluster down to one machine (a single region, before a second region exists, the
-  other recorded regions retired or lost) has nothing to pull from after a restart and is no longer genesis, so neither a
+  other recorded machines gone) has nothing to pull from after a restart and is no longer genesis, so neither a
   pull nor the bootstrap can open it. An operator opens it:
   - **Request:** the file `catalog-open` in the machine's data directory, `<operator>: <reason>` within 500 bytes, written
     through `fly ssh` (Fly org access is the authentication; the machine's shell is already the trust anchor):
@@ -146,38 +156,42 @@ version said a document a machine held is never missing; that holds only without
   | --- | --- | --- |
   | One machine restarts, the others run | pulls from them, opens in about a second | none |
   | All machines restart together | each pulls from the others (closed peers still serve the pull), all open | none |
-  | A machine restarts while a whole recorded region is stopped or unreachable | closed until a machine of that region is back | wait, or the operator open |
-  | A region is retired or lost for good | every later restart elsewhere stays closed: the region stays recorded | the operator open at every restart (region retirement: proposal below) |
+  | A machine restarts while a recorded machine is stopped or unreachable | closed until that machine is back | wait, or the operator open |
+  | A machine (or its region) is destroyed, replaced or retired for good | every later restart elsewhere stays closed: it stays recorded | the operator open at every restart (machine retirement: proposal below) |
+  | A machine's catalog is put back to an older copy (behind its anchor), alone or with every other machine | closed even after its pulls | the operator open (a whole-cluster restore is a decision) |
   | A new cluster's first machine | closed | the bootstrap request |
   | A cluster of one machine (single region, before a second region) restarts | closed: nothing to pull from is unknown | the operator open |
 
-  This is the cost of not failing open. The current deployment (gru, sjc) restarts without an operator step as long as one
-  machine of each region runs or restarts with it.
-- **Known limitations (R3, non-blocking):**
-  - **Verification is per region, not per machine.** One pulled machine satisfies a recorded region. With more than one
-    machine per region (autoscaling 3 to 12 per region is planned), a stopped machine that holds the only copy of a change,
-    in a region where another machine is started, is not waited for. Follow-up before multi-machine regions: record and
-    require machines (with retirement of replaced ones) instead of regions, or make a region's machines hold each other's
-    changes before acknowledging.
-  - **M's own region** is not required (a replaced machine's old id must not block its region forever), so a stopped
-    machine of M's region holding the only copy is not waited for; nor is a machine that joined after the copy was taken
-    and is stopped (the restored copy does not record it). An entry that never left M before the copy is lost everywhere.
-  - **Every machine restored from stale copies:** the gate pulls among stale copies and opens on them. No gate can see
-    that; a whole-cluster restore is a point-in-time restore of the cluster, by decision.
-- **Proposal, not code: region retirement.** An operator request through the same `fly ssh` channel (two-person
-  approval: two request files with different operators) that tombstones a region's `cluster_members` records, so later
-  restarts stop waiting for it; recorded like the open. Until then a gone region needs the operator open at every restart.
+  This is the cost of not failing open. The current deployment (gru, sjc; one machine each) restarts without an operator
+  step as long as every recorded machine runs or restarts with it, the backup bucket is attached and readable, and no
+  machine id has been replaced.
+- **Known limitations:**
+  - **Machines that left for good stay recorded.** A destroyed or replaced machine's id keeps every later restart closed
+    until the operator open (or, once it exists, retirement). Per-machine verification is what makes a stopped sole holder
+    count; the cost is that a gone machine counts too.
+  - **The anchor lags by up to 15 s** (and by a failed write): a copy taken within that window of the last anchor write is
+    not detected by the anchor (peers still verify it unless they are restored too). Also: a machine that joined after the
+    copy was taken and is stopped is not recorded by the restored copy; an entry that never left M before the copy is lost
+    everywhere.
+  - **Restoring a volume onto a new machine id:** the new id has no anchor; it still waits for every recorded machine,
+    the old id included, so it opens only by pulls from all of them or the operator open.
+- **Proposal, not code: machine retirement.** An operator request through the same `fly ssh` channel (two-person
+  approval: two request files with different operators) that tombstones a gone machine's `cluster_members` record, so later
+  restarts stop waiting for it; recorded like the open. Until then a gone machine needs the operator open at every restart.
 - **Tests (each with a mutation control that fails on the old behaviour):**
   `CatalogLatticeTests.A_restored_catalog_serves_nothing_until_it_pulled_from_every_machine_then_refuses_the_revoked_key_removed_member_and_deleted_id`
   (without the middleware the revoked key answers 200);
   `A_restored_first_node_with_no_machine_listed_stays_closed_until_it_pulled_from_a_returning_machine` (an empty list
-  opening the gate fails it); `A_restored_node_waits_for_the_region_of_a_stopped_machine_that_holds_the_only_revocation`
-  (ignoring recorded regions opens gru after pulling only from fra, which lacks the revocation);
+  opening the gate fails it); `A_restored_node_waits_for_a_stopped_machine_of_another_region_that_holds_the_only_revocation`
+  (ignoring recorded machines opens gru after pulling only from fra, which lacks the revocation);
   `Machines_restarting_together_pull_from_each_other_and_open_without_an_operator` (gating the peers' gRPC deadlocks
   them); `No_unauthenticated_call_opens_the_gate_of_a_machine_whose_peer_is_unreachable` (the old endpoint answers 200);
   `The_bootstrap_opens_only_a_genesis_catalog_on_a_reasoned_request_and_is_recorded` (skipping the genesis check opens a
   catalog with an organization); `A_lone_machine_restarted_stays_closed_until_an_operator_opens_it_for_that_start_only`
-  (opening without a request, not consuming it, or accepting a malformed one each fail it).
+  (opening without a request, not consuming it, or accepting a malformed one each fail it);
+  `A_restored_node_waits_for_a_stopped_machine_of_its_own_region_that_holds_the_only_revocation` (two machines in gru;
+  ignoring recorded machines opens gru after pulling only sjc); `Machines_all_restored_from_stale_copies_stay_closed_behind_their_anchors_until_an_operator_decides`
+  (ignoring the anchor opens both on their stale copies).
 - **Stale groups are joined (decision, this version):** a stale group (committed 24 h or more before it is read, whole
   states) from a peer can carry an entry M minted after T. R7's rule for client databases drops a stale state of a
   document missing locally that the machine held before (`HeldBefore`), because there it means a collected deletion; on M

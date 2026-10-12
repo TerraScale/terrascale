@@ -318,11 +318,11 @@ public sealed class CatalogLatticeTests
 
     /// <summary>
     /// The only machine holding a revocation is stopped (not listed as started): fra, listed and reachable, never got it. gru,
-    /// restored from a copy that records sjc, pulls from fra and still stays closed: sjc's region is recorded and none of its
-    /// machines was pulled from. Once sjc is back, gru pulls from it and refuses the key.
+    /// restored from a copy that records sjc, pulls from fra and still stays closed: sjc is recorded and was not pulled from.
+    /// Once sjc is back, gru pulls from it and refuses the key.
     /// </summary>
     [Test]
-    public async Task A_restored_node_waits_for_the_region_of_a_stopped_machine_that_holds_the_only_revocation()
+    public async Task A_restored_node_waits_for_a_stopped_machine_of_another_region_that_holds_the_only_revocation()
     {
         await using var cluster = await Cluster.StartAsync("gru", "sjc", "fra");
         var (gru, sjc, fra) = (cluster["gru"], cluster["sjc"], cluster["fra"]);
@@ -354,8 +354,8 @@ public sealed class CatalogLatticeTests
         await Assert.That(await fra.ReadAsync($"projects/{project}/api_keys", key)).IsNotNull().Because("fra never got the revocation");
         await Assert.That(await gru.IsOpenAsync()).IsFalse();
         await Assert.That(await gru.DataStatusAsync(secret, collections)).IsEqualTo(HttpStatusCode.ServiceUnavailable);
-        await Assert.That(await Until(() => Task.FromResult(gru.Pending.Contains("region:sjc") && !gru.Pending.Contains(fra.Machine)))).IsTrue();
-        await Assert.That(await gru.IsOpenAsync()).IsFalse().Because("pulled from fra, still waiting for sjc's region");
+        await Assert.That(await Until(() => Task.FromResult(gru.Pending.Contains(sjc.Machine) && !gru.Pending.Contains(fra.Machine)))).IsTrue();
+        await Assert.That(await gru.IsOpenAsync()).IsFalse().Because("pulled from fra, still waiting for sjc");
 
         await sjc.StartAsync();
         await Assert.That(await gru.UntilOpenAsync()).IsTrue();
@@ -473,6 +473,115 @@ public sealed class CatalogLatticeTests
         await Assert.That(await gru.PassAsync()).IsFalse().Because("the request was consumed");
     }
 
+    /// <summary>
+    /// Verification is per machine, not per region (COS, after R3's verification of 60eae912): two machines in gru; the stopped
+    /// one holds the only revocation. gru, restored from a copy, pulls from sjc (started, never got it) and still stays closed:
+    /// gru-b is recorded and was not pulled from. Once gru-b is back, gru pulls from it and refuses the key.
+    /// </summary>
+    [Test]
+    public async Task A_restored_node_waits_for_a_stopped_machine_of_its_own_region_that_holds_the_only_revocation()
+    {
+        await using var cluster = await Cluster.StartAsync("gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var gruB = await cluster.AddAsync("gru-b", "gru");
+        foreach (var region in cluster.Regions)
+        {
+            await Assert.That(await region.UntilOpenAsync()).IsTrue().Because(region.Name);
+        }
+
+        var owner = EntityIds.New().ToString();
+        var (organization, project) = (EntityIds.New().ToString(), EntityIds.New().ToString());
+        await gru.CommitAsync(owner,
+            new { op = "create_organization", id = organization, name = "Sibling" },
+            new { op = "create_project", organization, id = project, name = "p" },
+            new { op = "create_database", organization, project, name = "kept", id = EntityIds.New().ToString() });
+        var projectPath = $"/v1/management/organizations/{organization}/projects/{project}";
+        var (key, secret) = await gru.CreateKeyAsync(owner, projectPath);
+        var collections = $"/v1/projects/{project}/databases/kept/collections";
+        foreach (var region in new[] { sjc, gruB })
+        {
+            await Assert.That(await region.UntilAsync($"projects/{project}/api_keys", key, json => json is not null)).IsTrue().Because(region.Name);
+        }
+
+        var copy = await gru.CopyCatalogAsync();
+        await Assert.That(await gru.UntilOpenAsync()).IsTrue();
+
+        // sjc stops; gru revokes the key, which only gru-b receives; gru-b stops.
+        await sjc.StopAsync();
+        await Assert.That(await gru.SendAsync(owner, HttpMethod.Delete, $"{projectPath}/api-keys/{key}")).IsEqualTo(HttpStatusCode.NoContent);
+        await Assert.That(await gruB.UntilAsync($"projects/{project}/api_keys", key, json => json is null)).IsTrue();
+        await gruB.StopAsync();
+
+        // gru is restored from the copy while stopped; sjc starts again without the revocation; gru-b stays stopped.
+        await gru.RestoreCatalogAsync(copy, whileStopped: () => sjc.StartAsync().GetAwaiter().GetResult());
+        await Assert.That(await sjc.ReadAsync($"projects/{project}/api_keys", key)).IsNotNull().Because("sjc never got the revocation");
+        await Assert.That(await gru.IsOpenAsync()).IsFalse();
+        await Assert.That(await gru.DataStatusAsync(secret, collections)).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        await Assert.That(await Until(() => Task.FromResult(gru.Pending.Contains(gruB.Machine) && !gru.Pending.Contains(sjc.Machine)))).IsTrue();
+        await Assert.That(await gru.IsOpenAsync()).IsFalse().Because("pulled from sjc, still waiting for gru-b");
+
+        await gruB.StartAsync();
+        await Assert.That(await gru.UntilOpenAsync()).IsTrue();
+        await Assert.That(await gru.DataStatusAsync(secret, collections)).IsEqualTo(HttpStatusCode.Unauthorized);
+    }
+
+    /// <summary>
+    /// Every machine restored from stale copies (COS, after R3's verification of 60eae912): gru and sjc anchor their catalogs'
+    /// heads in the backup bucket; both are restored from copies taken before a revocation and restart together. They pull
+    /// from each other (the stale copies agree) and still stay closed: each catalog is behind its own anchor, which a snapshot
+    /// cannot roll back. Only an operator's decision opens one.
+    /// </summary>
+    [Test]
+    public async Task Machines_all_restored_from_stale_copies_stay_closed_behind_their_anchors_until_an_operator_decides()
+    {
+        await using var cluster = await Cluster.StartWithAnchorsAsync("gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var owner = EntityIds.New().ToString();
+        var (organization, project) = (EntityIds.New().ToString(), EntityIds.New().ToString());
+        await gru.CommitAsync(owner,
+            new { op = "create_organization", id = organization, name = "Stale" },
+            new { op = "create_project", organization, id = project, name = "p" },
+            new { op = "create_database", organization, project, name = "kept", id = EntityIds.New().ToString(), replica_regions = Sjc });
+        var projectPath = $"/v1/management/organizations/{organization}/projects/{project}";
+        var (key, secret) = await gru.CreateKeyAsync(owner, projectPath);
+        var collections = $"/v1/projects/{project}/databases/kept/collections";
+        await Assert.That(await sjc.UntilAsync($"projects/{project}/api_keys", key, json => json is not null)).IsTrue();
+        var copies = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var region in new[] { gru, sjc })
+        {
+            copies[region.Name] = await region.CopyCatalogAsync();
+            await Assert.That(await region.UntilOpenAsync()).IsTrue().Because(region.Name);
+        }
+
+        // The key is revoked everywhere, and each machine's anchor reaches its head.
+        await Assert.That(await gru.SendAsync(owner, HttpMethod.Delete, $"{projectPath}/api-keys/{key}")).IsEqualTo(HttpStatusCode.NoContent);
+        await Assert.That(await sjc.UntilAsync($"projects/{project}/api_keys", key, json => json is null)).IsTrue();
+        foreach (var region in new[] { gru, sjc })
+        {
+            var head = await region.HeadAsync();
+            await Assert.That(await Until(() => Task.FromResult(region.Anchored >= head))).IsTrue().Because(region.Name);
+        }
+
+        // Both stop, both catalogs are restored from the stale copies, both start together.
+        await Task.WhenAll(gru.StopAsync(), sjc.StopAsync());
+        gru.PutBackCatalog(copies["gru"]);
+        sjc.PutBackCatalog(copies["sjc"]);
+        await Task.WhenAll(gru.StartAsync(), sjc.StartAsync());
+        foreach (var region in new[] { gru, sjc })
+        {
+            var other = region == gru ? sjc : gru;
+            await Assert.That(await Until(() => Task.FromResult(!region.Pending.Contains(other.Machine) && region.Pending.Count == 1))).IsTrue().Because(region.Name);
+            await Assert.That(await region.IsOpenAsync()).IsFalse().Because($"{region.Name}: pulled from {other.Name}, still behind its anchor");
+            await Assert.That(await region.DataStatusAsync(secret, collections)).IsEqualTo(HttpStatusCode.ServiceUnavailable).Because(region.Name);
+        }
+
+        await gru.RequestAsync(CatalogGate.OpenFile, "alice: whole-cluster restore to the copy, ticket 9");
+        await Assert.That(await gru.UntilOpenAsync()).IsTrue();
+        var open = (await gru.RecordsAsync(CatalogGate.Opens)).Single();
+        await Assert.That(open.GetProperty("unverified").EnumerateArray().Single().GetString()!).Contains("restored");
+        await Assert.That(await sjc.IsOpenAsync()).IsFalse();
+    }
+
     // Whether `condition` holds within the deadline.
     private static async Task<bool> Until(Func<Task<bool>> condition)
     {
@@ -498,13 +607,19 @@ public sealed class CatalogLatticeTests
 
         public FakeMemberStore Members { get; } = new();
 
+        // The backup bucket holding each machine's restore anchor, when the test has one.
+        public FakeS3? Bucket { get; private init; }
+
         public IEnumerable<Region> Regions => _regions.Values;
 
         public Region this[string name] => _regions[name];
 
-        public static async Task<Cluster> StartAsync(params string[] regions)
+        public static Task<Cluster> StartAsync(params string[] regions) => StartAsync(new Cluster(), regions);
+
+        public static Task<Cluster> StartWithAnchorsAsync(params string[] regions) => StartAsync(new Cluster { Bucket = new FakeS3() }, regions);
+
+        private static async Task<Cluster> StartAsync(Cluster cluster, string[] regions)
         {
-            var cluster = new Cluster();
             try
             {
                 foreach (var name in regions)
@@ -529,9 +644,9 @@ public sealed class CatalogLatticeTests
             }
         }
 
-        public async Task<Region> AddAsync(string name)
+        public async Task<Region> AddAsync(string name, string? regionName = null)
         {
-            var region = new Region(this, name);
+            var region = new Region(this, name, regionName);
             _regions[name] = region;
             await region.StartAsync();
             return region;
@@ -580,7 +695,7 @@ public sealed class CatalogLatticeTests
         }
     }
 
-    private sealed class Region(Cluster cluster, string name) : IAsyncDisposable
+    private sealed class Region(Cluster cluster, string name, string? region = null) : IAsyncDisposable
     {
         private readonly string _directory = Directory.CreateTempSubdirectory("terrabase-catalog-lattice-").FullName;
         private ManagementApi? _api;
@@ -594,10 +709,15 @@ public sealed class CatalogLatticeTests
         public async Task StartAsync() =>
             _api = await ManagementApi.StartAsync(settings =>
             {
-                settings["region"] = Name;
+                settings["region"] = region ?? Name;
                 settings["node-name"] = Machine;
                 settings["data-directory"] = _directory;
-            }, services => services.AddSingleton<IMemberDirectory>(cluster.Members));
+                cluster.Bucket?.Configure(settings);
+            }, services =>
+            {
+                services.AddSingleton<IMemberDirectory>(cluster.Members);
+                cluster.Bucket?.Route(services);
+            });
 
         public async Task StopAsync()
         {
@@ -626,6 +746,13 @@ public sealed class CatalogLatticeTests
         {
             await StopAsync();
             whileStopped?.Invoke();
+            PutBackCatalog(copy);
+            await StartAsync();
+        }
+
+        // While stopped: the catalog files of `copy` in place of this machine's own.
+        public void PutBackCatalog(string copy)
+        {
             foreach (var file in Directory.EnumerateFiles(_directory, "_system*"))
             {
                 File.Delete(file);
@@ -637,12 +764,17 @@ public sealed class CatalogLatticeTests
             }
 
             Directory.Delete(copy, recursive: true);
-            await StartAsync();
         }
+
+        // The head of this machine's catalog change log.
+        public async Task<long> HeadAsync() =>
+            await Api.Server.Services.GetRequiredService<IChangeGroupSource>().HeadAsync(ChangeGroups.System, CancellationToken.None);
 
         private CatalogGate Gate => Api.Server.Services.GetRequiredService<CatalogGate>();
 
         public IReadOnlyList<string> Pending => Gate.Pending;
+
+        public long Anchored => Gate.Anchored;
 
         public Task<bool> IsOpenAsync() => Task.FromResult(Gate.IsOpen);
 
