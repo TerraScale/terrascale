@@ -213,6 +213,15 @@ gets priority right after main is green; its last run was cancelled.
 touches `ci.yml` and the `Dockerfile`; the push check keeps both gates; 0 threads) is the fix and **merges first** once
 its exact head is green.
 
+**Review gate (COS, 00:25Z; every PR, test-only included):** before a merge, every review and comment on the exact head
+is read.
+- Any CHANGES REQUESTED or must-fix from any reviewer blocks the merge until a re-review on a newer head approves.
+- Each merge records the reviewer's verdict and comment URL.
+- `train-merge.sh` refuses formal `CHANGES_REQUESTED` reviews; free-text must-fix comments are read by hand.
+- The independent Opus reviews COS commissioned: #166 (first), #165, #120 (R3's `24e138c0` against main), #152, #162,
+  #163, #164, and retro reviews of #106, #112 and #114.
+- **Retro fix-forward findings on #106, #112 or #114 become new PRs ahead of #152 in the queue.**
+
 **Exact order** (each step: exact-head Fast green on current main, all findings handled, Slow unverifiable; nothing is
 pushed to a PR whose base is not main):
 1. **#166.** Fixes main's red. Then main's push run must be green.
