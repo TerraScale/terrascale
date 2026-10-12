@@ -49,4 +49,31 @@ internal sealed class StorageChangeGroupSink(IStorageEngine engine, ITenantDirec
 
         return applied;
     }
+
+    public async ValueTask<int?> RepairAsync(TenantContext database, IReadOnlyList<RepairState> states, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(states);
+        if (await tenants.RegisteredAsync(database, cancellationToken).ConfigureAwait(false) is not true
+            || await tenants.EnsureLocalDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not Done
+            || await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
+        {
+            return null;
+        }
+
+        var changed = 0;
+        foreach (var chunk in states.Chunk(ChangeGroups.MaxDeltas))
+        {
+            await using var transaction = await store.BeginDurableTransactionAsync(cancellationToken).ConfigureAwait(false);
+            foreach (var state in chunk.Where(state => state.State.MaxStamp.Value != 0))
+            {
+                // Origin 0: a repair (section 9), so the tailer never ships it and it moves no origin's applied stamp.
+                changed += await transaction.JoinAsync(state.Collection, state.Id, state.State, new EntryVersion(state.State.MaxStamp, default), cancellationToken)
+                    .ConfigureAwait(false) ? 1 : 0;
+            }
+
+            _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        return changed;
+    }
 }

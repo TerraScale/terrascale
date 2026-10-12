@@ -76,7 +76,7 @@ Configuration retains the `TS_AUTH_*` convention, with these changes:
   signing key check, retrying after five seconds and backing off; `/readyz` answers 503 until both succeed, so ts-auth
   may start before TerraBase and recovers on its own once the issuer's key is provisioned
   ([signing-keys.md](signing-keys.md)). `TS_AUTH_DATABASE` is gone.
-- **Storage endpoint:** fixed in code (`App.TerraBaseOrigin`):
+- **Storage endpoint:** fixed in code (`App.TerraBaseOrigin`). Off Fly only Development uses the loopback TerraBase (`http://127.0.0.1:8081`); a Production ts-auth off Fly refuses to start (exit 2) rather than store there. On Fly:
   `http://gru.ts-terrabase.internal:8081`, TerraBase's internal listener on
   Fly's private network in gru, the home region of the platform databases,
   from every region: TerraBase does not replicate documents between regions

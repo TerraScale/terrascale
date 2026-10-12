@@ -83,6 +83,7 @@ public sealed class RegionTests
         {
             await Assert.That(response.StatusCode).IsEqualTo(status);
             await Assert.That(response.Headers.GetValues(RegionHeader)).IsEquivalentTo(["gru-1"]);
+            await Assert.That(response.Headers.GetValues("X-TerraBase-Machine")).IsEquivalentTo(["local"]);
         }
     }
 
@@ -161,6 +162,7 @@ public sealed class RegionTests
         foreach (var response in new[] { health, metrics, scraped })
         {
             await Assert.That(response.Headers.Contains(RegionHeader)).IsFalse();
+            await Assert.That(response.Headers.Contains("X-TerraBase-Machine")).IsFalse();
         }
     }
 
@@ -180,6 +182,7 @@ public sealed class RegionTests
         foreach (var response in responses.EnumerateObject())
         {
             await Assert.That(response.Value.GetProperty("headers").TryGetProperty(RegionHeader, out _)).IsTrue();
+            await Assert.That(response.Value.GetProperty("headers").TryGetProperty("X-TerraBase-Machine", out _)).IsTrue();
         }
 
         var schema = document.GetProperty("components").GetProperty("schemas").GetProperty("ManagedDatabaseBody");

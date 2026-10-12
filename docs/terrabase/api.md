@@ -40,7 +40,10 @@ service ownership decided by the user on 2026-10-06
    ts-dashboard after a token exchange, and API keys after the SDK exchanges them through client credentials.
    TerraBase validates each token offline:
    - `typ` is `at+jwt` or `application/at+jwt`, and the token is ES256-signed by a `kid` from the issuer's JWKS;
-   - `iss` is exactly the configured `auth-issuer` (`https://auth.terrascale.tech/terrascale`: ts-auth issues this one issuer in every region);
+   - `iss` is exactly the configured `auth-issuer` (`https://auth.terrascale.tech/terrascale`: ts-auth issues this one issuer in every region).
+     In production `auth-audience` must include `https://api.terrascale.tech`, and `ts-terrabase` refuses to start with any other
+     pair (`TerraBaseOptions.PlatformAuthIssuer`/`PlatformAuthAudience`). Setting the pair is still the user-approved activation
+     of ts-auth trust (not done on Fly);
      project tenants' issuers are never trusted: those customer end-user tokens authenticate customer
      applications, while a **project access token** for TerraBase uses the trusted platform issuer and carries `project_id`;
    - `aud` includes TerraBase's audience, and `exp` and `nbf` hold with 30 seconds of skew;

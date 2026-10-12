@@ -58,6 +58,7 @@ exists. TerraBase authorizes every request against the organizations the acting 
   - be signed with ES256/384/512, RS256/384/512 or PS256/384/512 (`none` and HS* are refused), by
     the cached key its `kid` names;
   - have `iss` equal to `auth-issuer` exactly and an `aud` that includes one of `auth-audience`, compared exactly (a trailing `/` makes another audience);
+    on `ts-terrabase` the pair can only be `https://auth.terrascale.tech/terrascale` and `https://api.terrascale.tech`, the same in every region;
   - have an `exp`. `exp` and `nbf` are checked with 30 seconds of clock skew;
   - have a `sub` of 1 to 256 characters without control characters;
   - not be a ts-auth guest's: `is_anonymous` `true` is refused.
