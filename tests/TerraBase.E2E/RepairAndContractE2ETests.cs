@@ -103,9 +103,10 @@ public sealed class RepairAndContractE2ETests
             cluster.Heal();
             foreach (var region in cluster.Regions)
             {
+                // The loser leaves the collection: a read answers 404, or 409 unique_violation naming the replicated conflict.
                 _ = await Converge.UntilAsync(
-                    async () => (Kept: await Docs.ReadAsync(cluster[region], cluster.Document(smaller)), Lost: await Docs.ReadAsync(cluster[region], cluster.Document(larger))),
-                    pair => pair.Kept?["from"]?.GetValue<string>() == "sjc" && pair.Lost is null, $"the unique key on {region}");
+                    async () => (Kept: Docs.Canonical(await Docs.ReadAsync(cluster[region], cluster.Document(smaller))), Lost: await LostAsync(cluster[region], cluster.Document(larger))),
+                    pair => pair.Kept.Contains("\"from\":\"sjc\"", StringComparison.Ordinal) && pair.Lost, $"the unique key on {region}");
             }
         });
     }
@@ -246,6 +247,13 @@ public sealed class RepairAndContractE2ETests
             _ = await Converge.UntilAsync(() => Docs.StatusAsync(sjc, new Uri($"{cluster.DatabasePath}/collections/{cluster.Collection}", UriKind.Relative)),
                 status => status == HttpStatusCode.NotFound, "the dropped collection on sjc");
         });
+    }
+
+    private static async Task<bool> LostAsync(HttpClient client, Uri uri)
+    {
+        using var response = await client.GetAsync(uri);
+        return response.StatusCode == HttpStatusCode.NotFound
+            || (response.StatusCode == HttpStatusCode.Conflict && (await response.Content.ReadAsStringAsync()).Contains("\"unique_violation\"", StringComparison.Ordinal));
     }
 
     private static async Task<List<(string Id, JsonObject Body)>> WriteAsync(Cluster cluster, int count)
