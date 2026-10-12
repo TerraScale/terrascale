@@ -47,7 +47,9 @@ public static class EngineExtensions
         services.AddSingleton<IWalBackup>(provider => provider.GetRequiredService<SqliteStorageEngine>());
         services.AddSingleton(provider => provider.GetRequiredService<SqliteStorageEngine>().Member);
         // The peer streams' source: the CDC tailer of every database file.
-        services.AddSingleton<IChangeGroupSource>(provider => new TursoChangeGroupSource(provider.GetRequiredService<SqliteStorageEngine>(), provider.GetRequiredService<IMeterFactory>()));
+        services.AddSingleton(provider => new TursoChangeGroupSource(provider.GetRequiredService<SqliteStorageEngine>(), provider.GetRequiredService<IMeterFactory>()));
+        services.AddSingleton<IChangeGroupSource>(provider => provider.GetRequiredService<TursoChangeGroupSource>());
+        services.AddHostedService(provider => provider.GetRequiredService<TursoChangeGroupSource>());
         services.AddSingleton(provider =>
         {
             var sqlite = provider.GetRequiredService<SqliteStorageEngine>();

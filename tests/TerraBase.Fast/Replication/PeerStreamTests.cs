@@ -257,6 +257,55 @@ public sealed class PeerStreamTests
         await Assert.That(await sjc.UntilAsync(id, """{"m":3,"n":2}""")).IsTrue();
     }
 
+    [Test]
+    public async Task A_peer_that_leaves_the_machine_list_loses_its_open_stream_until_it_is_listed_again()
+    {
+        await using var cluster = await Cluster.StartAsync(cdc: true, "gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var (first, second) = (EntityIds.New().ToString(), EntityIds.New().ToString());
+        await gru.WriteAsync(async transaction =>
+        {
+            _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
+            _ = await transaction.PutAsync("items", first, Json("""{"n":1}"""), CancellationToken.None);
+        });
+        await Assert.That(await sjc.UntilAsync(first, """{"n":1}""")).IsTrue();
+        await Assert.That(await gru.UntilStreamsAsync(["sjc"])).IsTrue();
+
+        // sjc leaves the list (as Fly's DNS drops a stopped machine): within a heartbeat gru closes its open stream to it.
+        var member = (await cluster.Members.ListAsync(CancellationToken.None)).Single(listed => listed.Region == "sjc");
+        cluster.Members.Leave(member.Name);
+        await Assert.That(await gru.UntilStreamsAsync([])).IsTrue();
+        await gru.WriteAsync(async transaction => await transaction.PutAsync("items", second, Json("""{"n":2}"""), CancellationToken.None));
+        await Task.Delay(TimeSpan.FromSeconds(2));
+        await Assert.That(await sjc.ReadAsync(second)).IsNull();
+
+        // Listed again, it gets a new stream, which resumes from its ack.
+        cluster.Members.Join(member);
+        await Assert.That(await sjc.UntilAsync(second, """{"n":2}""")).IsTrue();
+    }
+
+    [Test]
+    public async Task Tail_lag_grows_while_the_only_peer_is_away_and_returns_to_zero_once_it_acknowledged()
+    {
+        await using var cluster = await Cluster.StartAsync(cdc: true, "gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var id = EntityIds.New().ToString();
+        await gru.WriteAsync(async transaction =>
+        {
+            _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
+            _ = await transaction.PutAsync("items", id, Json("""{"n":1}"""), CancellationToken.None);
+        });
+        await Assert.That(await sjc.UntilAsync(id, """{"n":1}""")).IsTrue();
+
+        await sjc.StopAsync();
+        await gru.WriteAsync(async transaction => await transaction.PutAsync("items", id, Json("""{"n":2}"""), CancellationToken.None));
+        await Assert.That(await gru.UntilMetricAsync("terrabase_replication_tail_lag_seconds", value => value >= 1)).IsTrue();
+
+        await sjc.StartAsync();
+        await Assert.That(await sjc.UntilAsync(id, """{"n":2}""")).IsTrue();
+        await Assert.That(await gru.UntilMetricAsync("terrabase_replication_tail_lag_seconds", value => value == 0)).IsTrue();
+    }
+
     // The first stamp of a test: now, so convergence lags stay meaningful; later operations add logical ticks.
     private static ulong Stamp() => (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() << 16;
 
@@ -455,6 +504,46 @@ public sealed class PeerStreamTests
             return true;
         }
 
+        // Whether the outbound streams that report connected become exactly `regions` within the deadline.
+        public async Task<bool> UntilStreamsAsync(string[] regions)
+        {
+            var deadline = DateTime.UtcNow + Deadline;
+            while (DateTime.UtcNow < deadline)
+            {
+                using var response = await Api.Server.Client.GetAsync(new Uri("/replication", UriKind.Relative));
+                var peers = JsonElement.Parse(await response.Content.ReadAsStringAsync()).GetProperty("peers").EnumerateArray()
+                    .Select(peer => peer.GetProperty("region").GetString()!).Order(StringComparer.Ordinal).ToArray();
+                if (peers.SequenceEqual(regions.Order(StringComparer.Ordinal)))
+                {
+                    return true;
+                }
+
+                await Task.Delay(100);
+            }
+
+            return false;
+        }
+
+        // Whether the scraped gauge `name` satisfies `holds` within the deadline.
+        public async Task<bool> UntilMetricAsync(string name, Func<double, bool> holds)
+        {
+            using var metrics = new HttpClient { BaseAddress = Api.Server.MetricsAddress };
+            var deadline = DateTime.UtcNow + Deadline;
+            while (DateTime.UtcNow < deadline)
+            {
+                var line = (await metrics.GetStringAsync(new Uri("/metrics", UriKind.Relative))).Split('\n')
+                    .FirstOrDefault(line => line.StartsWith(name, StringComparison.Ordinal) && !line.StartsWith(name + "_", StringComparison.Ordinal));
+                if (line is not null && double.TryParse(line[(line.LastIndexOf(' ') + 1)..], System.Globalization.CultureInfo.InvariantCulture, out var value) && holds(value))
+                {
+                    return true;
+                }
+
+                await Task.Delay(200);
+            }
+
+            return false;
+        }
+
         // Whether the document is deleted, or never arrived, within the deadline.
         public async Task<bool> UntilAbsentAsync(string id)
         {
@@ -506,7 +595,7 @@ public sealed class PeerStreamTests
             Directory.Delete(_directory, recursive: true);
         }
 
-        private async Task<string?> ReadAsync(string id)
+        public async Task<string?> ReadAsync(string id)
         {
             if (await Engine.OpenDatabaseAsync(cluster.Database, CancellationToken.None) is not { } store)
             {

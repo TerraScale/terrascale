@@ -799,9 +799,13 @@ store closes), with `PRAGMA capture_data_changes_conn('after')` on from its open
   without local groups keeps a replica that mostly joins remote writes from rescanning them on every pass.
 - **PeerStreams** now reconnects after any stream failure, not only transport errors: a storage exception from the source
   (for example `StorageBusyException`) used to end that peer's loop until the process restarted.
-- Metric: `terrabase.replication.cdc_backlog` (CDC rows left after each database's last ack, summed). `tail_lag` is not
-  emitted and its alert is gone: without a tailer pass every commit is readable as a group at once; `send_lag` is the age
-  of what is not shipped.
+- Metrics: `terrabase.replication.cdc_backlog` (CDC rows left after each database's last ack, summed) and
+  `terrabase.replication.tail_lag`: the age of the oldest local commit that a peer heard from in the last 24 h has not
+  acknowledged, max over databases. It is looked at after acks (at most once a second per database) and every 5 s for
+  each database a peer stream reached, so it keeps growing while the only peer is away. There is no tailer pass: every
+  commit is readable as a group at once.
+- **Peer leaves the machine list.** `PeerStreams` drops a link whose machine is no longer listed at its next membership
+  refresh (5 s), ending the open stream (`PeerStreamTests`); the peer resumes from its ack once it is listed again.
 - Not in R3: `_tb_feed` (R8), Merkle folding (R6), the 1 GiB retention cut and per-database readiness (R6).
 
 R2a is built on the Microsoft.Data.Sqlite engine and writes only SQL that Turso accepts (rowid tables for every new

@@ -122,7 +122,7 @@ public static class Telemetry
                         or "terrabase.replication.sender.discovery.passes" or "terrabase.replication.sender.credit.waits"
                         or "terrabase.replication.sender.durable_lag" or "terrabase.replication.sender.initialized"
                         or "terrabase.replication.observability.omitted" or "terrabase.wan.served.groups"
-                        or "terrabase.replication.cdc_backlog"
+                        or "terrabase.replication.cdc_backlog" or "terrabase.replication.tail_lag"
                         => new MetricStreamConfiguration { CardinalityLimit = 1 },
                     "terrabase.auth.key_fetches" or "terrabase.stats.operations" => new MetricStreamConfiguration { CardinalityLimit = 2 },
                     "terrabase_pressure_listener_request_rate" or "terrabase_pressure_listener_p95_latency_ms"

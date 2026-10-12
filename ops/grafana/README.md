@@ -58,6 +58,7 @@ read from the file and never printed.
 | Rule | Fires when | For |
 | --- | --- | --- |
 | Replication send lag > 30 s | `terrabase_replication_send_lag_seconds` per region → peer | 5 min |
+| CDC tailer lag > 10 s | `terrabase_replication_tail_lag_seconds` per region | 5 min |
 | Backup shipping lag > 10 min | `terrabase_backup_lag_seconds` per region | 10 min |
 | 5xx ratio > 5% | 5xx / all requests per app and region, only above 0.05 req/s | 5 min |
 | Memory available < 10% | `fly_instance_memory_mem_available / mem_total` per app and region | 10 min |
@@ -98,7 +99,8 @@ list in `src/TerraBase/Hosting/Telemetry.cs` (`peer_region` has one value per re
 
 | Slice | Instrument | Kind, unit | Labels | Meaning |
 | --- | --- | --- | --- | --- |
-| R3 | `terrabase.replication.cdc_backlog` | gauge, no unit | — | CDC rows kept because some peer has not acked them, summed over databases as of each one's last ack. R3 builds groups from `turso_cdc` on demand, so there is no tailer pass and no tailer lag: `send_lag` is the age of what is not shipped |
+| R3 | `terrabase.replication.tail_lag` | gauge, `s` | — | Age of the oldest local commit that a peer heard from in the last 24 h has not acknowledged, max over databases (looked at after acks, at most once a second per database). R3 builds groups from `turso_cdc` on demand, so this is the age of what the slowest live peer still lacks |
+| R3 | `terrabase.replication.cdc_backlog` | gauge, no unit | — | CDC rows kept because some peer has not acked them, summed over databases as of each one's last ack |
 | R4a | `terrabase.replication.send_lag` | gauge, `s` | `peer_region` | Age of the oldest change group not yet sent to the peer |
 | R4a | `terrabase.replication.ack_lag` | gauge, `s` | `peer_region` | Age of the oldest change group sent but not acked |
 | R4a | `terrabase.replication.apply_delay` | histogram, `s`, buckets 0.05 … 300 | `peer_region` (origin) | Apply time minus the origin stamp's physical time: convergence lag |

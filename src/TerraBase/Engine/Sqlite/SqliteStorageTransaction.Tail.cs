@@ -31,32 +31,34 @@ internal sealed partial class SqliteStorageTransaction
         """;
 
     private const string TailPage = """
-        SELECT change_id, change_type, table_name, after FROM turso_cdc
+        SELECT change_id, change_type, table_name, after, change_time FROM turso_cdc
         WHERE change_id > $after ORDER BY change_id LIMIT $limit;
         """;
 
     /// <summary>
     /// The groups of this machine's own writes committed after change id <paramref name="after"/> (see
     /// <see cref="IChangeGroupSource.ReadAsync"/>), and the highest commit's change id up to which none was found past
-    /// <paramref name="after"/>: a later read from anywhere in between may start there.
+    /// <paramref name="after"/>: a later read from anywhere in between may start there; and when the first group committed
+    /// (Unix seconds).
     /// </summary>
-    internal ValueTask<(List<OriginGroup> Groups, long Quiet)> ReadChangeGroupsAsync(
+    internal ValueTask<(List<OriginGroup> Groups, long Quiet, long? FirstCommitted)> ReadChangeGroupsAsync(
         long after, int maxGroups, int maxBytes, ReplicaId self, CancellationToken cancellationToken) =>
         RunAsync(() => ReadChangeGroups(after, maxGroups, maxBytes, self, cancellationToken), cancellationToken);
 
     // Worker-only. Rows come in commit order: one writer per file, so a transaction's rows are contiguous and end with its
     // commit row (change_type 2), and a reader never sees part of one.
-    private (List<OriginGroup> Groups, long Quiet) ReadChangeGroups(long after, int maxGroups, int maxBytes, ReplicaId self, CancellationToken cancellationToken)
+    private (List<OriginGroup> Groups, long Quiet, long? FirstCommitted) ReadChangeGroups(long after, int maxGroups, int maxBytes, ReplicaId self, CancellationToken cancellationToken)
     {
         List<OriginGroup> groups = [];
         var quiet = after;
         // The writer creates turso_cdc when it first opens: a file this machine never wrote has captured nothing.
         if (Command("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'turso_cdc';").ExecuteScalar() is null)
         {
-            return (groups, quiet);
+            return (groups, quiet, null);
         }
 
         var bytes = 0;
+        long? first = null;
         var transaction = new TailTransaction();
         for (var from = after; ;)
         {
@@ -79,14 +81,15 @@ internal sealed partial class SqliteStorageTransaction
                             var size = transaction.Deltas.Sum(delta => DocumentStateEncoding.Encode(delta.State).Length);
                             if (groups.Count > 0 && bytes + size > maxBytes)
                             {
-                                return (groups, quiet);
+                                return (groups, quiet, first);
                             }
 
                             groups.Add(new OriginGroup(from, transaction.Deltas));
+                            first ??= reader.IsDBNull(4) ? null : reader.GetInt64(4);
                             bytes += size;
                             if (groups.Count == maxGroups)
                             {
-                                return (groups, quiet);
+                                return (groups, quiet, first);
                             }
                         }
                         else if (groups.Count == 0)
@@ -109,7 +112,7 @@ internal sealed partial class SqliteStorageTransaction
             if (rows < TailPageRows)
             {
                 // What is left after the last commit row is nothing: a reader sees whole transactions only.
-                return (groups, quiet);
+                return (groups, quiet, first);
             }
         }
     }
@@ -134,12 +137,22 @@ internal sealed partial class SqliteStorageTransaction
             return acked <= newest ? acked : (long?)null;
         }, cancellationToken);
 
+    /// <summary>The smallest change id a peer heard from since <c>now - 24 h</c> acknowledged, or null when there is none.</summary>
+    internal ValueTask<long?> GetFloorAsync(DateTimeOffset now, CancellationToken cancellationToken) =>
+        RunAsync(() =>
+        {
+            var floor = Command("SELECT min(acked) FROM _tb_peers WHERE seen >= $now * 1000 - 86400000;");
+            floor.Parameters.AddWithValue("$now", now.ToUnixTimeSeconds());
+            return floor.ExecuteScalar() is long acked ? acked : (long?)null;
+        }, cancellationToken);
+
     /// <summary>
     /// Raises <paramref name="peer"/>'s acknowledged change id, or sets it to 0 (a new or stale row), so its unshipped rows stay, and marks
     /// it heard from at <paramref name="now"/>; uncaptured: the tailer's own bookkeeping. Then deletes what
-    /// <see cref="Retention"/> allows, continuous backup's <paramref name="backupAnchor"/> included. Returns the CDC rows left.
+    /// <see cref="Retention"/> allows, continuous backup's <paramref name="backupAnchor"/> included. Returns the CDC rows left,
+    /// and the smallest change id a peer heard from in the last 24 h acknowledged (null when there is none).
     /// </summary>
-    internal async ValueTask<long> RecordAckedAsync(ReplicaId peer, long changeId, long? backupAnchor, DateTimeOffset now, CancellationToken cancellationToken)
+    internal async ValueTask<(long Left, long? Floor)> RecordAckedAsync(ReplicaId peer, long changeId, long? backupAnchor, DateTimeOffset now, CancellationToken cancellationToken)
     {
         await SuspendCaptureAsync(cancellationToken).ConfigureAwait(false);
         return await RunAsync(() =>
@@ -163,7 +176,10 @@ internal sealed partial class SqliteStorageTransaction
             delete.Parameters.AddWithValue("$now", now.ToUnixTimeSeconds());
             delete.ExecuteNonQuery();
             // change_id is turso_cdc's rowid alias: both ends are seeks, and deleted ids never come back between them.
-            return Command("SELECT coalesce(max(change_id) - min(change_id) + 1, 0) FROM turso_cdc;").ExecuteScalar() is long left ? left : 0;
+            var left = Command("SELECT coalesce(max(change_id) - min(change_id) + 1, 0) FROM turso_cdc;").ExecuteScalar() is long rows ? rows : 0;
+            var floor = Command("SELECT min(acked) FROM _tb_peers WHERE seen >= $now * 1000 - 86400000;");
+            floor.Parameters.AddWithValue("$now", now.ToUnixTimeSeconds());
+            return (left, floor.ExecuteScalar() is long acked ? acked : (long?)null);
         }, cancellationToken, mutation: true).ConfigureAwait(false);
     }
 
