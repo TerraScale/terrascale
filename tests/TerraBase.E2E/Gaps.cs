@@ -70,14 +70,18 @@ internal static class Gaps
     };
 
     // BLOCKED on Fly, not an expected failure there: the Fly suite's TerraBase API key holds documents:read/write on the e2e
-    // project only, so these scenarios' database creation is refused before the slice's gap is even reached; counting that
-    // 403 as the gap would be a fake pass. Unblocked by a ts-auth project token with databases:* (GitHub OIDC exchange).
+    // project only, so these scenarios' database, index or schema writes (databases:write) are refused before the slice's
+    // gap is even reached; counting that 403 as the gap would be a fake pass. Unblocked by a ts-auth project token with
+    // databases:* (GitHub OIDC exchange).
     private const string NoDatabaseScope = "no appropriately-scoped auth on Fly (API keys can't hold databases:*)";
 
     private static readonly Dictionary<string, string> BlockedOnFly = new(StringComparer.Ordinal)
     {
         ["E12"] = NoDatabaseScope,
         ["E13"] = NoDatabaseScope,
+        ["deleted-database-stays-deleted"] = NoDatabaseScope,
+        ["flow-control"] = NoDatabaseScope,
+        ["ddl-replication"] = NoDatabaseScope,
     };
 
     /// <summary>Runs <paramref name="scenario"/>: plainly, or as a strict expected failure while it is listed; skipped as BLOCKED on Fly when it is.</summary>
