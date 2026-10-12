@@ -713,6 +713,63 @@ public sealed class CatalogLatticeTests
         await Assert.That(await sjc.UntilOpenAsync()).IsTrue().Because("verified by gru, trusted again");
     }
 
+    /// <summary>
+    /// The first rollout of the restore anchor (docs/terrabase/catalog-anchor-adoption.md), in isolation: gru and sjc run
+    /// without a backup bucket (no anchors) and hold an organization. Both restart with a bucket: no anchor and not genesis,
+    /// so both stay closed and untrusted, and GET /catalog-gate shows why and the same catalog digest on both (the
+    /// operator's evidence that the catalogs converged). One reasoned operator open on gru opens and anchors it; sjc opens by
+    /// pulling from it; the open is recorded with what was not verified. A later restart of both needs no operator.
+    /// </summary>
+    [Test]
+    public async Task Adopting_anchors_on_a_running_cluster_takes_one_recorded_operator_open_and_later_restarts_take_none()
+    {
+        await using var cluster = await Cluster.StartAsync("gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var owner = EntityIds.New().ToString();
+        var organization = EntityIds.New().ToString();
+        await gru.CommitAsync(owner, new { op = "create_organization", id = organization, name = "Adopting" });
+        await Assert.That(await sjc.UntilAsync("organizations", organization, json => json is not null)).IsTrue();
+
+        await Task.WhenAll(gru.StopAsync(), sjc.StopAsync());
+        cluster.Bucket = new FakeS3();
+        await Task.WhenAll(gru.StartAsync(), sjc.StartAsync());
+        var digests = new List<string>();
+        foreach (var region in new[] { gru, sjc })
+        {
+            var other = region == gru ? sjc : gru;
+            _ = await Until(async () => await region.IsOpenAsync() || region.Pending.Contains(other.Machine));
+            var status = await region.GateStatusAsync();
+            await Assert.That(status.GetProperty("open").GetBoolean()).IsFalse().Because(region.Name);
+            await Assert.That(status.GetProperty("trusted").GetBoolean()).IsFalse().Because(region.Name);
+            await Assert.That(status.GetProperty("pending").EnumerateArray().Select(item => item.GetString()!).ToArray())
+                .Contains("restore anchor missing: a trusted peer or an operator's decision").Because(region.Name);
+            digests.Add(status.GetProperty("digest").GetString()!);
+        }
+
+        await Assert.That(digests.Distinct(StringComparer.Ordinal).Count()).IsEqualTo(1).Because("converged catalogs");
+
+        await gru.RequestAsync(CatalogGate.OpenFile, "alice: adopting restore anchors after the deploy, digests equal, ticket 12");
+        await Assert.That(await gru.UntilOpenAsync()).IsTrue();
+        await Assert.That(await sjc.UntilOpenAsync()).IsTrue().Because("verified by gru");
+        foreach (var region in new[] { gru, sjc })
+        {
+            await Assert.That(await Until(() => Task.FromResult(region.Anchored >= 0))).IsTrue().Because(region.Name);
+        }
+
+        var open = (await gru.RecordsAsync(CatalogGate.Opens)).Single();
+        await Assert.That(open.GetProperty("operator").GetString()).IsEqualTo("alice");
+        await Assert.That(open.GetProperty("unverified").EnumerateArray().Select(item => item.GetString()!).ToArray())
+            .Contains("restore anchor missing: a trusted peer or an operator's decision");
+        await Assert.That((await sjc.RecordsAsync(CatalogGate.Opens)).Count).IsEqualTo(0).Because("sjc opened by pulling, not by an open of its own");
+
+        await Task.WhenAll(gru.StopAsync(), sjc.StopAsync());
+        await Task.WhenAll(gru.StartAsync(), sjc.StartAsync());
+        foreach (var region in new[] { gru, sjc })
+        {
+            await Assert.That(await region.UntilOpenAsync()).IsTrue().Because($"{region.Name}: anchored, no operator");
+        }
+    }
+
     // Whether `condition` holds within the deadline.
     private static async Task<bool> Until(Func<Task<bool>> condition)
     {
@@ -739,7 +796,7 @@ public sealed class CatalogLatticeTests
         public FakeMemberStore Members { get; } = new();
 
         // The backup bucket holding each machine's restore anchor, when the test has one.
-        public FakeS3? Bucket { get; private init; }
+        public FakeS3? Bucket { get; set; }
 
         public IEnumerable<Region> Regions => _regions.Values;
 
@@ -957,6 +1014,10 @@ public sealed class CatalogLatticeTests
             using var response = await Api.Server.Client.PostAsJsonAsync(ManagementApi.Uri(path), body);
             return response.StatusCode;
         }
+
+        // This machine's GET /catalog-gate on its internal listener.
+        public async Task<JsonElement> GateStatusAsync() =>
+            await Api.Server.Client.GetFromJsonAsync<JsonElement>(ManagementApi.Uri(CatalogGateStatusEndpoint.Path));
 
         public async Task<HttpStatusCode> StatusAsync(string path)
         {
