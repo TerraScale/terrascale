@@ -21,7 +21,6 @@ export const es: Messages = {
     login: 'Iniciar sesión',
     getStarted: 'Empieza a construir',
     toggleNav: 'Abrir menú de navegación',
-    toggleTheme: 'Cambiar tema claro u oscuro',
     language: {
       trigger: 'Idioma',
       currentSuffix: 'Idioma: {label}',
@@ -71,14 +70,15 @@ export const es: Messages = {
   },
 
   hero: {
-    headlineLead: 'Base de datos de documentos regional.',
-    headlineAccent: 'Ya en Public Alpha.',
+    eyebrow: 'Public Alpha',
+    headlineLead: 'Base de datos de documentos tipada,',
+    headlineAccent: 'replicada entre regiones.',
     subtitle:
       'Una base de documentos tipada con replicación asíncrona en São Paulo y San Jose. El endpoint global dirige a la región seleccionada saludable más cercana. Public Alpha no tiene porcentaje de disponibilidad ni SLA.',
     ctaPrimary: 'Empieza a construir',
     ctaSecondary: 'Lee la documentación',
-    highlightsAria: 'Capacidades principales',
-    highlights: ['Enrutamiento por región seleccionada', 'Replicación asíncrona', 'SDK tipados'],
+    installCopy: 'Copiar comando de instalación',
+    installCopied: 'Copiado',
   },
 
   features: {

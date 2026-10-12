@@ -18,11 +18,11 @@
   }
 </script>
 
-<section class="faq">
-  <div class="faq__inner">
+<section class="ts-section faq">
+  <div class="ts-container faq__inner">
     <div class="faq__head">
-      <h2 class="faq__title">{$dict.pricing.faq.titleLead} <span class="ts-accent-text">{$dict.pricing.faq.titleAccent}</span></h2>
-      <p class="faq__subtitle">{$dict.pricing.faq.subtitle}</p>
+      <h2 class="faq__title">{$dict.pricing.faq.titleLead} <span class="ts-h-muted">{$dict.pricing.faq.titleAccent}</span></h2>
+      <p class="ts-lede faq__subtitle">{$dict.pricing.faq.subtitle}</p>
     </div>
 
     <div class="faq__list">
@@ -56,15 +56,15 @@
       <p class="faq__footer-text">
         {$dict.pricing.faq.footerText}
       </p>
-      <div class="faq__footer-actions">
-        <RouteLink href="/contact" class="ts-btn ts-btn-primary ts-btn-compact">
+      <div class="ts-actions">
+        <RouteLink href="/contact" class="ts-btn ts-btn-primary">
           <Icon name="messageSquare" className="faq__footer-icon" />
           {$dict.pricing.faq.contactSales}
         </RouteLink>
         <ExternalLink
           href="https://docs.terrascale.tech"
           target="_blank"
-          class="ts-btn ts-btn-secondary ts-btn-compact"
+          class="ts-btn ts-btn-secondary"
         >
           <Icon name="bookOpen" className="faq__footer-icon" />
           {$dict.pricing.faq.readDocs}
@@ -76,91 +76,76 @@
 
 <style>
   .faq {
-    padding: 100px 0;
+    border-top: 1px solid var(--ts-line);
   }
 
   .faq__inner {
-    max-width: 880px;
-    margin: 0 auto;
-    padding: 0 40px;
+    display: grid;
+    gap: var(--ts-s8);
   }
 
   .faq__head {
-    text-align: center;
-    margin-bottom: 48px;
+    display: grid;
+    gap: var(--ts-s4);
+    max-width: var(--ts-prose-max);
   }
 
   .faq__title {
-    font-size: 38px;
-    font-weight: 700;
-    color: var(--ts-ink);
-    letter-spacing: -0.02em;
-    margin: 0 0 12px;
+    font-size: var(--ts-fs-4xl);
   }
 
   .faq__subtitle {
-    font-family: var(--ts-font-sans);
-    font-size: 16px;
-    color: var(--ts-ink-2);
-    margin: 0;
+    margin-top: 0;
   }
 
+  /* Flat accordion: hairlines between questions, no boxes. */
   .faq__list {
-    display: grid;
-    gap: 10px;
+    border-top: 1px solid var(--ts-line);
   }
 
   .faq__item {
-    border-radius: 8px;
-    overflow: hidden;
-    border: 1px solid var(--ts-line);
-    background: var(--ts-surface);
-    transition: border-color 200ms ease;
-  }
-
-  .faq__item.is-open {
-    border-color: color-mix(in srgb, var(--ts-accent) 35%, transparent);
+    border-bottom: 1px solid var(--ts-line);
   }
 
   .faq__button {
     width: 100%;
-    padding: 18px 22px;
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 16px;
+    gap: var(--ts-s4);
+    min-height: 56px;
+    padding: var(--ts-s3) 0;
+    border: 0;
     background: transparent;
-    border: none;
-    cursor: pointer;
-    text-align: left;
     color: var(--ts-ink);
-    font-family: var(--ts-font-display);
-    font-size: 15px;
-    font-weight: 600;
+    font: 500 var(--ts-fs-lg) / var(--ts-lh) var(--ts-font-sans);
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .faq__button:hover {
+    color: var(--ts-accent);
   }
 
   .faq__chev {
-    flex-shrink: 0;
-    color: var(--ts-ink-2);
-    transition:
-      transform 220ms cubic-bezier(0.22, 1, 0.36, 1),
-      color 220ms ease;
+    display: inline-flex;
+    color: var(--ts-ink-3);
+    transition: transform var(--ts-base) var(--ts-ease);
   }
 
   .faq__chev.is-open {
     transform: rotate(180deg);
-    color: var(--ts-accent);
   }
 
-  :global(.faq__chev-icon) {
-    width: 16px;
-    height: 16px;
+  .faq__chev :global(.faq__chev-icon) {
+    width: var(--ts-icon);
+    height: var(--ts-icon);
   }
 
   .faq__panel {
     max-height: 0;
     overflow: hidden;
-    transition: max-height 220ms cubic-bezier(0.22, 1, 0.36, 1);
+    transition: max-height var(--ts-base) var(--ts-ease);
   }
 
   .faq__panel.is-open {
@@ -168,57 +153,34 @@
   }
 
   .faq__panel-inner {
-    padding: 0 22px 20px;
-    font-family: var(--ts-font-sans);
-    font-size: 14px;
+    padding: 0 0 var(--ts-s5);
+    max-width: var(--ts-prose-max);
     color: var(--ts-ink-2);
-    line-height: 1.65;
+    line-height: var(--ts-lh-prose);
   }
 
   .faq__footer {
-    margin-top: 40px;
-    padding: 28px;
-    border-radius: 10px;
-    text-align: center;
-    background: var(--ts-surface);
-    border: 1px solid var(--ts-line);
+    display: grid;
+    gap: var(--ts-s3);
+    justify-items: start;
   }
 
   .faq__footer-title {
-    font-size: 18px;
-    font-weight: 700;
-    color: var(--ts-ink);
-    margin: 0 0 6px;
+    font-size: var(--ts-fs-xl);
   }
 
   .faq__footer-text {
-    font-family: var(--ts-font-sans);
-    font-size: 13px;
     color: var(--ts-ink-2);
-    margin: 0 0 18px;
   }
 
-  .faq__footer-actions {
-    display: flex;
-    gap: 10px;
-    justify-content: center;
-    flex-wrap: wrap;
-  }
-
-  :global(.faq__footer-icon) {
-    width: 13px;
-    height: 13px;
+  .faq__footer :global(.faq__footer-icon) {
+    width: var(--ts-icon);
+    height: var(--ts-icon);
   }
 
   @media (max-width: 640px) {
-    .faq {
-      padding: 64px 0;
-    }
-    .faq__inner {
-      padding: 0 20px;
-    }
     .faq__title {
-      font-size: 28px;
+      font-size: var(--ts-fs-3xl);
     }
   }
 </style>

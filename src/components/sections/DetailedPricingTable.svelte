@@ -12,212 +12,108 @@
   }))
 </script>
 
-<section id="detailed-pricing" class="detailed">
-  <div class="detailed__inner">
+<section id="detailed-pricing" class="ts-section detailed">
+  <div class="ts-container detailed__inner">
     <div class="detailed__intro">
-      <div class="detailed__eyebrow">{$dict.pricing.detailed.eyebrow}</div>
-
-      <h2 class="detailed__title">{$dict.pricing.detailed.titleLead} <span class="ts-accent-text">{$dict.pricing.detailed.titleAccent}</span></h2>
-      <p class="detailed__text">
-        {$dict.pricing.detailed.text}
-      </p>
+      <span class="ts-eyebrow"><span class="ts-dot" aria-hidden="true"></span>{$dict.pricing.detailed.eyebrow}</span>
+      <h2 class="detailed__title">{$dict.pricing.detailed.titleLead} <span class="ts-h-muted">{$dict.pricing.detailed.titleAccent}</span></h2>
+      <p class="ts-lede">{$dict.pricing.detailed.text}</p>
     </div>
 
-    <div class="detailed__table ts-card">
-      <div class="detailed__head">
-        <div>{$dict.pricing.detailed.headItem}</div>
-        <div>{$dict.pricing.detailed.headPricing}</div>
-        <div>{$dict.pricing.detailed.headDetails}</div>
-      </div>
-      {#each rows as row, i (row.item)}
-        <div class="detailed__row" class:is-last={i === rows.length - 1}>
-          <div class="detailed__item">{row.item}</div>
-          <div class="detailed__price">
-            <span class="detailed__price-value ts-accent-text">{row.price}</span>
-            <span class="detailed__price-unit">{row.unit}</span>
-          </div>
-          <div class="detailed__details">{row.details}</div>
-        </div>
-      {/each}
+    <div class="ts-table-wrap">
+      <table class="ts-table detailed__table">
+        <thead>
+          <tr>
+            <th scope="col">{$dict.pricing.detailed.headItem}</th>
+            <th scope="col">{$dict.pricing.detailed.headPricing}</th>
+            <th scope="col">{$dict.pricing.detailed.headDetails}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {#each rows as row (row.item)}
+            <tr>
+              <td class="detailed__item">{row.item}</td>
+              <td class="detailed__price"><span class="ts-num">{row.price}</span> <span class="detailed__unit">{row.unit}</span></td>
+              <td class="detailed__details">{row.details}</td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
     </div>
 
-    <div class="detailed__docs-wrap">
-      <ExternalLink
-        href="https://docs.terrascale.tech/pricing/"
-        target="_blank"
-        class="detailed__docs"
-      >
-        <Icon name="bookOpen" className="detailed__docs-icon" />
-        {$dict.pricing.detailed.docsLink}
-        <Icon name="externalLink" className="detailed__docs-icon" />
-      </ExternalLink>
-    </div>
+    <ExternalLink href="https://docs.terrascale.tech/pricing/" target="_blank" class="ts-btn ts-btn-secondary">
+      <Icon name="bookOpen" className="detailed__icon" />
+      {$dict.pricing.detailed.docsLink}
+      <Icon name="externalLink" className="detailed__icon" />
+    </ExternalLink>
   </div>
 </section>
 
 <style>
   .detailed {
-    padding: 60px 0;
+    border-top: 1px solid var(--ts-line);
   }
 
   .detailed__inner {
-    max-width: 1120px;
-    margin: 0 auto;
-    padding: 0 40px;
+    display: grid;
+    gap: var(--ts-s8);
+    justify-items: start;
   }
 
   .detailed__intro {
-    text-align: center;
-    margin-bottom: 32px;
+    display: grid;
+    gap: var(--ts-s4);
+    max-width: var(--ts-prose-max);
   }
 
-  .detailed__eyebrow {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    padding: 5px 12px;
-    border-radius: 4px;
-    margin-bottom: 16px;
-    background: color-mix(in srgb, var(--ts-accent) 10%, transparent);
-    border: 1px solid color-mix(in srgb, var(--ts-accent) 25%, transparent);
-    color: var(--ts-accent);
-    font-family: var(--ts-font-sans);
-    font-size: 11px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.14em;
+  .detailed__intro :global(.ts-lede) {
+    margin-top: 0;
   }
 
   .detailed__title {
-    font-size: 34px;
-    font-weight: 700;
-    color: var(--ts-ink);
-    letter-spacing: -0.02em;
-    margin: 0 0 12px;
+    font-size: var(--ts-fs-4xl);
   }
 
-  .detailed__text {
-    font-family: var(--ts-font-sans);
-    font-size: 15px;
-    color: var(--ts-ink-2);
-    line-height: 1.65;
-    max-width: 720px;
-    margin: 0 auto;
+  .ts-table-wrap {
+    width: 100%;
   }
 
-  :global(.detailed__docs) {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    padding: 10px 18px;
-    border-radius: 6px;
-    background: var(--ts-surface-2);
-    border: 1px solid var(--ts-line);
-    color: var(--ts-ink);
-    font-family: var(--ts-font-sans);
-    font-size: 12px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    text-decoration: none;
-    transition:
-      border-color 150ms,
-      background 150ms;
-  }
-
-  .detailed__docs-wrap {
-    display: flex;
-    justify-content: flex-end;
-    margin-top: 24px;
-  }
-
-  :global(.detailed__docs:hover) {
-    background: color-mix(in srgb, var(--ts-accent) 8%, transparent);
-    border-color: color-mix(in srgb, var(--ts-accent) 35%, transparent);
-  }
-
-  :global(.detailed__docs-icon) {
-    width: 13px;
-    height: 13px;
-  }
-
-  .detailed__table {
-    border-radius: 10px;
-    overflow: hidden;
-    border: 1px solid var(--ts-line);
-  }
-
-  .detailed__head {
-    display: grid;
-    grid-template-columns: 1.2fr 0.8fr 2fr;
-    padding: 14px 24px;
-    background: color-mix(in srgb, var(--ts-accent) 8%, transparent);
-    border-bottom: 1px solid var(--ts-line);
-    font-family: var(--ts-font-sans);
-    font-size: 10px;
-    font-weight: 700;
-    color: var(--ts-accent);
-    text-transform: uppercase;
-    letter-spacing: 0.14em;
-  }
-
-  .detailed__row {
-    display: grid;
-    grid-template-columns: 1.2fr 0.8fr 2fr;
-    padding: 20px 24px;
-    border-bottom: 1px solid var(--ts-line);
-    align-items: center;
-  }
-
-  .detailed__row.is-last {
-    border-bottom: none;
+  .detailed__table td {
+    height: auto;
+    padding-block: var(--ts-s3);
+    white-space: normal;
+    vertical-align: top;
   }
 
   .detailed__item {
-    font-size: 15px;
-    font-weight: 600;
-    color: var(--ts-ink);
+    font-weight: 500;
   }
 
   .detailed__price {
-    display: flex;
-    align-items: baseline;
-    gap: 4px;
+    white-space: nowrap !important;
+    font-family: var(--ts-font-num);
+    color: var(--ts-ink);
   }
 
-  .detailed__price-value {
-    font-family: var(--ts-font-mono);
-    font-size: 22px;
-    font-weight: 700;
-  }
-
-  .detailed__price-unit {
+  .detailed__unit {
     font-family: var(--ts-font-sans);
-    font-size: 12px;
-    color: var(--ts-ink-2);
+    font-size: var(--ts-fs-sm);
+    color: var(--ts-ink-3);
   }
 
   .detailed__details {
-    font-family: var(--ts-font-sans);
-    font-size: 13px;
-    color: var(--ts-ink-2);
-    line-height: 1.55;
+    color: var(--ts-ink-2) !important;
+    font-size: var(--ts-fs-sm);
   }
 
-  @media (max-width: 760px) {
-    .detailed__inner {
-      padding: 0 20px;
-    }
+  .detailed :global(.detailed__icon) {
+    width: var(--ts-icon);
+    height: var(--ts-icon);
+  }
+
+  @media (max-width: 640px) {
     .detailed__title {
-      font-size: 26px;
-    }
-    .detailed__head {
-      display: none;
-    }
-    .detailed__row {
-      grid-template-columns: 1fr;
-      gap: 8px;
-      padding: 18px 16px;
+      font-size: var(--ts-fs-3xl);
     }
   }
 </style>

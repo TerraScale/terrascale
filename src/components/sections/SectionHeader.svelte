@@ -8,64 +8,36 @@
 </script>
 
 <div class="section-header">
-  <div class="section-header__eyebrow">
-    <span class="section-header__eyebrow-dot" aria-hidden="true"></span>
-    {eyebrow}
-  </div>
+  <span class="ts-eyebrow"><span class="ts-dot" aria-hidden="true"></span>{eyebrow}</span>
   <svelte:element this={headingTag} class="section-header__title">
     <slot name="title">{title}</slot>
   </svelte:element>
   {#if subtitle}
-    <p class="section-header__subtitle">{subtitle}</p>
+    <p class="ts-lede">{subtitle}</p>
   {/if}
 </div>
 
 <style>
   .section-header {
-    text-align: center;
-    max-width: 720px;
-    margin: 0 auto;
-  }
-
-  .section-header__eyebrow {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    padding: 5px 12px;
-    border-radius: 4px;
-    margin-bottom: 20px;
-    background: color-mix(in srgb, var(--ts-accent) 10%, transparent);
-    border: 1px solid color-mix(in srgb, var(--ts-accent) 25%, transparent);
-    color: var(--ts-accent);
-    font-family: var(--ts-font-sans);
-    font-size: 11px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.14em;
-    line-height: 1;
-  }
-
-  .section-header__eyebrow-dot {
-    width: 5px;
-    height: 5px;
-    border-radius: 3px;
-    background: var(--ts-accent);
+    display: grid;
+    gap: var(--ts-s4);
+    justify-items: start;
+    max-width: var(--ts-prose-max);
   }
 
   .section-header__title {
-    font-size: clamp(1.8rem, 2.5vw + 0.5rem, 3rem);
-    font-weight: 700;
-    color: var(--ts-ink);
-    letter-spacing: -0.02em;
-    line-height: 1.12;
-    margin: 0 0 16px;
+    font-size: var(--ts-fs-4xl);
+    font-weight: var(--ts-heading-weight);
+    letter-spacing: var(--ts-heading-tracking);
   }
 
-  .section-header__subtitle {
-    font-family: var(--ts-font-sans);
-    font-size: 18px;
-    color: var(--ts-ink-2);
-    line-height: 1.65;
-    margin: 0;
+  .section-header :global(.ts-lede) {
+    margin-top: 0;
+  }
+
+  @media (max-width: 640px) {
+    .section-header__title {
+      font-size: var(--ts-fs-3xl);
+    }
   }
 </style>

@@ -24,242 +24,147 @@
   }))
 </script>
 
-<footer class="ts-footer">
-  <div class="ts-footer__inner">
-    <div class="ts-footer__grid">
-      <div class="ts-footer__brand">
-        <RouteLink href="/" class="ts-footer__logo" aria-label="TerraScale home">
-          <img
-            class="brand-logo brand-logo--dark"
-            src="/logo-white.svg"
-            alt="TerraScale"
-            width="1429"
-            height="345"
-            decoding="async"
-            loading="lazy"
-          />
-          <img
-            class="brand-logo brand-logo--light"
-            src="/logo-black.svg"
-            alt="TerraScale"
-            width="1429"
-            height="345"
-            decoding="async"
-            loading="lazy"
-          />
-        </RouteLink>
-        <p class="ts-footer__tagline">
-          {$dict.footer.tagline}
-        </p>
-        <div class="ts-footer__socials">
-          {#each socials as { social, name } (social.key)}
-            <ExternalLink
-              href={social.href}
-              target="_blank"
-              aria-label={name}
-              class="ts-footer__social"
-            >
-              <Icon name={social.icon} className="ts-footer__social-icon" />
-            </ExternalLink>
-          {/each}
-        </div>
+<footer class="site-footer">
+  <div class="ts-container site-footer__grid">
+    <div class="site-footer__brand">
+      <RouteLink href="/" class="site-footer__logo" aria-label={$dict.chrome.brandHome}>
+        <img src="/logo-principal.svg" alt="TerraScale" width="1429" height="345" decoding="async" loading="lazy" />
+      </RouteLink>
+      <p class="site-footer__tagline">{$dict.footer.tagline}</p>
+      <div class="site-footer__socials">
+        {#each socials as { social, name } (social.key)}
+          <ExternalLink href={social.href} target="_blank" aria-label={name} class="ts-icon-btn">
+            <Icon name={social.icon} className="site-footer__social-icon" />
+          </ExternalLink>
+        {/each}
       </div>
-
-      {#each columns as { column, title, links } (column.key)}
-        <div class="ts-footer__column">
-          <div class="ts-footer__heading">{title}</div>
-          <ul class="ts-footer__list">
-            {#each links as { link, name } (link.key)}
-              <li>
-                {#if isExternal(link.href)}
-                  <ExternalLink
-                    href={link.href}
-                    target={link.href.startsWith('mailto:') ? undefined : '_blank'}
-                    class="ts-footer__link"
-                  >
-                    <Icon name="chevronRight" className="ts-footer__chevron" />
-                    {name}
-                  </ExternalLink>
-                {:else}
-                  <RouteLink href={link.href} class="ts-footer__link">
-                    <Icon name="chevronRight" className="ts-footer__chevron" />
-                    {name}
-                  </RouteLink>
-                {/if}
-              </li>
-            {/each}
-          </ul>
-        </div>
-      {/each}
     </div>
 
-    <div class="ts-footer__meta">
-      <div class="ts-footer__copy">© {year} TerraScale. {$dict.footer.rightsReserved}</div>
+    {#each columns as { column, title, links } (column.key)}
+      <div class="site-footer__column">
+        <div class="ts-label">{title}</div>
+        <ul class="site-footer__list">
+          {#each links as { link, name } (link.key)}
+            <li>
+              {#if isExternal(link.href)}
+                <ExternalLink href={link.href} target={link.href.startsWith('mailto:') ? undefined : '_blank'} class="site-footer__link">{name}</ExternalLink>
+              {:else}
+                <RouteLink href={link.href} class="site-footer__link">{name}</RouteLink>
+              {/if}
+            </li>
+          {/each}
+        </ul>
+      </div>
+    {/each}
+  </div>
+
+  <div class="ts-container site-footer__meta">
+    <span>© {year} TerraScale. {$dict.footer.rightsReserved}</span>
+    <ExternalLink href="https://status.terrascale.tech" target="_blank" class="ts-status-link">
+      <span class="ts-dot ts-dot-live site-footer__dot" aria-hidden="true"></span>
+      {$dict.chrome.status}
+    </ExternalLink>
+    <div class="site-footer__lang">
       <LanguageSelector variant="inline" />
     </div>
   </div>
 </footer>
 
 <style>
-  .ts-footer {
-    background: var(--ts-surface);
+  .site-footer {
     border-top: 1px solid var(--ts-line);
-    padding: 36px 0 20px;
+    color: var(--ts-ink-3);
+    font-size: var(--ts-fs-sm);
   }
 
-  .ts-footer__inner {
-    max-width: 1240px;
-    margin: 0 auto;
-    padding: 0 40px;
-  }
-
-  .ts-footer__grid {
+  .site-footer__grid {
     display: grid;
-    grid-template-columns: 1.6fr repeat(3, 1fr);
-    gap: 32px;
-    margin-bottom: 28px;
+    grid-template-columns: minmax(0, 2fr) repeat(3, minmax(0, 1fr));
+    gap: var(--ts-s8);
+    padding-block: var(--ts-s12);
   }
 
-  :global(.ts-footer__logo) {
-    display: inline-flex;
-    margin-bottom: 12px;
+  .site-footer__brand {
+    display: grid;
+    gap: var(--ts-s4);
+    align-content: start;
+    justify-items: start;
   }
 
-  :global(.ts-footer__logo img) {
-    height: 26px;
+  .site-footer :global(.site-footer__logo img) {
+    height: 18px;
     width: auto;
-    display: block;
   }
 
-  .ts-footer__tagline {
-    font-size: 13px;
+  .site-footer__tagline {
+    max-width: 340px;
     color: var(--ts-ink-2);
-    line-height: 1.5;
-    max-width: 320px;
-    margin: 0 0 14px;
   }
 
-  .ts-footer__socials {
+  .site-footer__socials {
     display: flex;
-    gap: 8px;
+    gap: var(--ts-s1);
+    margin-left: -6px;
   }
 
-  :global(.ts-footer__social) {
-    width: 32px;
-    height: 32px;
-    border-radius: 7px;
-    border: 1px solid var(--ts-line);
-    color: var(--ts-ink-2);
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    text-decoration: none;
-    transition:
-      color var(--ts-fast) ease,
-      background var(--ts-fast) ease;
+  .site-footer :global(.site-footer__social-icon) {
+    width: var(--ts-icon);
+    height: var(--ts-icon);
   }
 
-  :global(.ts-footer__social:hover) {
-    color: var(--ts-ink);
-    background: var(--ts-surface-2);
+  .site-footer__column {
+    display: grid;
+    gap: var(--ts-s3);
+    align-content: start;
   }
 
-  .brand-logo--light,
-  :global([data-theme='light']) .brand-logo--dark {
-    display: none;
-  }
-
-  :global([data-theme='light']) .brand-logo--light {
-    display: block;
-  }
-
-  :global(.ts-footer__social-icon) {
-    width: 14px;
-    height: 14px;
-    display: block;
-  }
-
-  .ts-footer__heading {
-    font-family: var(--ts-font-sans);
-    font-size: 11px;
-    font-weight: 700;
-    color: var(--ts-ink);
-    text-transform: uppercase;
-    letter-spacing: 0.14em;
-    margin-bottom: 10px;
-  }
-
-  .ts-footer__list {
+  .site-footer__list {
     list-style: none;
-    padding: 0;
     margin: 0;
+    padding: 0;
+    display: grid;
+    gap: var(--ts-s2);
   }
 
-  .ts-footer__list li {
-    margin-bottom: 6px;
-  }
-
-  :global(.ts-footer__link) {
-    font-size: 12.5px;
+  .site-footer :global(.site-footer__link) {
     color: var(--ts-ink-2);
-    text-decoration: none;
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    transition: color 150ms ease;
-    font-family: var(--ts-font-sans);
   }
 
-  :global(.ts-footer__link:hover) {
+  .site-footer :global(.site-footer__link:hover) {
     color: var(--ts-ink);
   }
 
-  :global(.ts-footer__chevron) {
-    width: 10px;
-    height: 10px;
-    color: var(--ts-ink-2);
-    transition: transform 150ms ease;
-  }
-
-  :global(.ts-footer__link:hover .ts-footer__chevron) {
-    transform: translateX(2px);
-    color: var(--ts-accent);
-  }
-
-  .ts-footer__meta {
-    border-top: 1px solid var(--ts-line);
-    padding-top: 16px;
+  /* Same width as the text above, so the hairline does not run into the gutters. */
+  .site-footer__meta {
+    width: calc(100% - 2 * var(--ts-gutter));
+    max-width: var(--ts-content-max);
+    padding-inline: 0;
     display: flex;
-    justify-content: space-between;
     align-items: center;
+    gap: var(--ts-s5);
     flex-wrap: wrap;
-    gap: 12px;
+    padding-block: var(--ts-s5);
+    border-top: 1px solid var(--ts-line);
   }
 
-  .ts-footer__copy {
-    font-size: 12px;
-    color: var(--ts-ink-2);
+  .site-footer__dot {
+    --state: var(--ts-accent);
   }
 
-  @media (max-width: 960px) {
-    .ts-footer__inner {
-      padding: 0 20px;
+  .site-footer__lang {
+    margin-left: auto;
+  }
+
+  @media (max-width: 860px) {
+    .site-footer__grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
     }
-    .ts-footer__grid {
-      grid-template-columns: 1fr 1fr;
-    }
-    .ts-footer__brand {
+    .site-footer__brand {
       grid-column: 1 / -1;
     }
-  }
-
-  @media (max-width: 560px) {
-    .ts-footer__grid {
-      grid-template-columns: 1fr;
-    }
-    .ts-footer__meta {
-      flex-direction: column;
-      align-items: flex-start;
+    .site-footer__lang {
+      margin-left: 0;
+      width: 100%;
     }
   }
 </style>
