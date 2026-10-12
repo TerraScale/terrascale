@@ -125,9 +125,20 @@ Every `slow` job ended "failure" about 17 minutes in, with the same pattern:
 - the job's log is gone (`BlobNotFound`), and no test result was reported;
 - the job runs on GitHub-hosted `ubuntu-latest` with `timeout-minutes: 60`, so it is not the job timeout.
 
-That fits a hosted runner lost mid-build (out of disk or memory, or lost communication). **Slow is unproven, neither
-passing nor failing**, so the release gate "Slow green on main" is still open. Routed to the CI owner (alpha). Fast is
-green on main, so the train may resume on exact-head green runs per COS's decision.
+**Cause (COS, from job 114973317488's runner annotation): "No space left on device"** during the Slow Docker build, on
+GitHub-hosted `ubuntu-latest`. Main's `ci.yml` has no `CI_RUNNER` yet, because #142 is unmerged. **Slow is unproven**,
+and the release gate "Slow green on main" stays open. The CI owner fixes the Slow runner's disk (relayed via the
+coordinator).
+
+**COS DECISION (19:5xZ):** the train **resumes** on exact-head green Fast checks.
+- Every merge made while Slow is unverifiable is marked "Slow unverifiable" in its record.
+- The final acceptance still requires a green Slow on main's head.
+
+**Order:** #112 → #118 → #134 → #125 → #143 → #144 …, each with a fresh run on current main.
+- #112 → `99cb927b`, #143 → `e3800ec7` and #144 → `4a61561b`, brought up to date via update-branch after the push
+  check; their runs are in progress.
+- #118 (R8) and #134 (Dogfood) still conflict, and their owners were nudged.
+- #125 is a draft with its owner.
 
 **T1's #144** (`46cb6806`, base main): "the system database syncs every commit (decision 0012)", the `_system`
 `synchronous=FULL` PR. It merges after #143, per the agreed order.
