@@ -215,10 +215,23 @@ the database's writer gate, so nothing commits, the tap reads what is left, move
 opens a read transaction; then writers go on, and the database is copied row by row, every rowid kept, as of that
 transaction (`Engine/Sqlite/TursoCopy.cs`). The copy leaves out the engine's own tables (`turso_cdc`, `sqlite_stat1`).
 A generation starts when shipping starts (every process start), when another member's lease or a new customer
-destination takes over, after a hole, or after unstored log was dropped (below). Within a generation a snapshot is taken
-daily, but not while a backlog remains, because the snapshot reads what is left while it holds writers. The log read in
-one pass becomes one **segment**. A backlog, such as the writes committed during a long snapshot upload, ships as one
-segment per read budget, one per pass, so a pass that keeps up with the bucket drains it at up to 32 MiB a second.
+destination takes over, after a hole, or after unstored log was dropped (below). Before a generation's snapshot holds
+writers, the tap reads any backlog to discard it, so the gate covers only what commits meanwhile. Within a generation a
+snapshot is taken daily, but not while a backlog remains, because the snapshot reads what is left while it holds
+writers. The log read in one pass becomes one **segment**. A backlog, such as the writes committed during a long
+snapshot upload, ships as one segment per read budget, one per pass, so a pass that keeps up with the bucket drains it
+at up to 32 MiB a second.
+
+Snapshots and segments are ordered so that every segment a generation stores has a base:
+
+- A generation's first snapshot is copied and uploaded in the file's shipping pass, because a segment is useless (and
+  in a customer bucket, WAL without a base) until the snapshot it starts from exists. The generation's segments ship
+  from the next pass on, right after that object is stored.
+- A daily snapshot is pinned and copied in the pass, and the log read up to its position is stored first, so the next
+  segment starts at that position. Its upload then runs beside shipping: segments after it keep shipping while it
+  uploads, and the snapshot becomes a new base once stored. At most four daily snapshot uploads run on a node at a
+  time, each holding its scratch copy until stored; a file whose turn has not come tries again next pass.
+- Restore drills run beside shipping too (see [Restore drills](#restore-drills)).
 
 A segment is sealed once. When its upload fails, even a PUT the bucket stored before the failure, the next attempt
 sends exactly those bytes under the same key before anything later is sealed, and the log read meanwhile becomes the
@@ -238,9 +251,9 @@ Lag (`terrabase_backup_lag_seconds`, `lagSeconds`) is how long the oldest commit
 waited, as far as the shipper can tell: it starts when a read first finds unstored changes (or a snapshot is pinned,
 or a read fails), stays above zero while a backlog remains, a failed upload is pending or the file has no generation
 after a drop or hole, and returns to 0 once a pass stores everything it read and nothing is left. It is not a bound on
-loss: data dropped or behind a hole is not in the bucket even after lag returns to 0. Snapshot uploads and restore
-drills run inside the file's shipping pass, so nothing of that file ships meanwhile; lag then counts from the
-snapshot's pin.
+loss: data dropped or behind a hole is not in the bucket even after lag returns to 0. While a generation's first
+snapshot is copied and uploaded nothing of that file ships, so lag counts from before the copy until the pass after the
+snapshot is stored.
 
 Each object is sealed before upload (`Features/Backup/BackupObject.cs`, format 1): chunks of up to 1 MiB, LZ4-compressed
 when smaller, AES-256-GCM. Each object's AES key is HKDF-SHA256 of its project's data key, a random salt and the object's
@@ -406,9 +419,13 @@ At least once a day, when it stores a snapshot, the shipper checks it: it rebuil
 generation's previous snapshot, or the new one at generation start, rolled forward through the segments up to the new
 snapshot's exact log position), then compares a SHA-256 of the schema and every row of every table with the local copy
 the snapshot was made from, which is the live file at that position. A drill exercises download, decryption, contiguity,
-roll-forward and `integrity_check`. Every start snapshots every file, so every start also drills each file. The drill
-runs inside the file's shipping pass: none of that file's changes ship until it ends, and its lag counts from the
-snapshot's time meanwhile.
+roll-forward and `integrity_check`. Every start snapshots every file, so every start also drills each file.
+
+The checksum of the local copy is taken before the snapshot is uploaded, so the copy is deleted with the pass and no
+copy waits for a drill. The drill itself then runs beside shipping: the file's segments keep shipping while it
+downloads and rebuilds. A node runs one platform drill and up to two customer drills at a time, each rebuilding one
+file in scratch, so a stalled customer bucket never holds a platform drill; the others wait their turn. Removal, a new
+destination and shutdown cancel a drill; a cancelled drill records no result.
 
 A failed drill is logged as an error and counted in `terrabase_backup_drills_total{result="failed"}`.
 

@@ -224,9 +224,9 @@ public sealed class BackupShippingRecoveryTests
             await drill.Entered.WaitAsync(TimeSpan.FromMinutes(1), cancellationToken);
 
             // The snapshot is stored and its drill is held: the write committed during the upload ships, and so does the next.
-            await host.ShipAsync(TimeSpan.FromSeconds(1), cancellationToken);
+            await ShipUntilAsync(host, segments: 1, cancellationToken);
             await host.PutAsync("people", "c", texts["c"], cancellationToken);
-            await host.ShipAsync(TimeSpan.FromSeconds(1), cancellationToken);
+            await ShipUntilAsync(host, segments: 2, cancellationToken);
             var status = host.Status();
             await Assert.That(status.LastDrill).IsNull();
             await Assert.That(status.LagSeconds).IsEqualTo(0);
@@ -273,7 +273,7 @@ public sealed class BackupShippingRecoveryTests
 
             // The daily snapshot's upload is held: a write committed meanwhile ships as a segment and restores exactly.
             await host.PutAsync("people", "b", texts["b"], cancellationToken);
-            await host.ShipAsync(TimeSpan.FromSeconds(1), cancellationToken);
+            await ShipUntilAsync(host, segments: 1, cancellationToken);
             var status = host.Status();
             await Assert.That(status.Generation).IsEqualTo(generation);
             await Assert.That(status.LagSeconds).IsEqualTo(0);
@@ -295,6 +295,22 @@ public sealed class BackupShippingRecoveryTests
         await Assert.That(stored.LastError).IsNull();
         await Assert.That(host.S3.Objects.Keys.Count(key => key.StartsWith($"{host.File}/snapshots/", StringComparison.Ordinal))).IsEqualTo(2);
         await Assert.That(stored.LastDrill!.Passed).IsTrue();
+    }
+
+    // Runs passes until the file's generation has `segments` segments, for up to 20 s: the job that started a held upload or
+    // drill can still be finishing when the test sees the hold, and a pass skips a busy file.
+    private static async Task ShipUntilAsync(BackupShippingHost host, int segments, CancellationToken cancellationToken)
+    {
+        for (var pass = 0; pass < 400; pass++)
+        {
+            await host.ShipAsync(TimeSpan.FromSeconds(1), cancellationToken);
+            if (host.Segments(host.Status().Generation!).Count >= segments)
+            {
+                return;
+            }
+
+            await Task.Delay(TimeSpan.FromMilliseconds(50), cancellationToken);
+        }
     }
 
     // Holds the first call under a prefix until released.
