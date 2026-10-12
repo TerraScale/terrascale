@@ -35,7 +35,7 @@ internal sealed partial class SqliteStorageTransaction
     private const string FeedDocument = "SELECT doc, octet_length(doc) FROM {0} WHERE id = $id;";
 
     public ValueTask<FeedPage> ReadFeedAsync(
-        IReadOnlyDictionary<ReplicaId, Hlc> cursor, IReadOnlySet<string>? collections, int maxEvents, long maxBytes, CancellationToken cancellationToken) =>
+        FeedCursor? cursor, IReadOnlySet<string>? collections, int maxEvents, long maxBytes, CancellationToken cancellationToken) =>
         RunAsync(() => ReadFeed(cursor, collections, maxEvents, maxBytes, cancellationToken), cancellationToken);
 
     public ValueTask<IReadOnlyDictionary<ReplicaId, Hlc>> GetFeedHeadAsync(CancellationToken cancellationToken) =>
@@ -101,6 +101,10 @@ internal sealed partial class SqliteStorageTransaction
                 }
             }
 
+            // An origin whose events all aged out leaves the feed and the cursors; see FeedCursor.Forget.
+            var forget = Command("DELETE FROM _tb_feed_floor WHERE stamp > 0 AND stamp < $forget AND NOT EXISTS (SELECT 1 FROM _tb_feed f WHERE f.origin = _tb_feed_floor.origin);");
+            forget.Parameters.AddWithValue("$forget", Version(Before(before, FeedCursor.Retention)));
+            forget.ExecuteNonQuery();
             return deleted;
         }, cancellationToken, mutation: true).ConfigureAwait(false);
     }
@@ -126,6 +130,9 @@ internal sealed partial class SqliteStorageTransaction
         insert.ExecuteNonQuery();
     }
 
+    // The stamp `age` before `stamp`'s instant (0 when that is before the epoch).
+    private static Hlc Before(Hlc stamp, TimeSpan age) => new((ulong)Math.Max(0, stamp.Milliseconds - (long)age.TotalMilliseconds) << 16);
+
     // Worker-only.
     private List<(ReplicaId Origin, Hlc Floor)> Floors()
     {
@@ -141,18 +148,32 @@ internal sealed partial class SqliteStorageTransaction
 
     // Worker-only. Reads each origin's next rows, merges them by (stamp, origin) up to the lowest last stamp of an origin
     // that has more, and stops between two stamps once a bound is reached; per origin, what it returns is always a prefix.
-    private FeedPage ReadFeed(IReadOnlyDictionary<ReplicaId, Hlc> cursor, IReadOnlySet<string>? collections, int maxEvents, long maxBytes, CancellationToken cancellationToken)
+    private FeedPage ReadFeed(FeedCursor? cursor, IReadOnlySet<string>? collections, int maxEvents, long maxBytes, CancellationToken cancellationToken)
     {
-        var scanned = new Dictionary<ReplicaId, Hlc>(cursor);
+        var stamps = cursor?.Stamps ?? new Dictionary<ReplicaId, Hlc>();
+        var floors = Floors();
+        var scanned = new Dictionary<ReplicaId, Hlc>(stamps);
+        if (cursor is not null)
+        {
+            // A named origin this machine forgot (all its events aged out long ago) leaves the cursor.
+            var forgotten = Before(cursor.Issued, FeedCursor.Forget);
+            foreach (var origin in stamps.Keys.Where(origin => stamps[origin].Value < forgotten.Value && !floors.Exists(floor => floor.Origin == origin)))
+            {
+                _ = scanned.Remove(origin);
+            }
+        }
+
         var rows = new List<(ReplicaId Origin, long Stamp, string Collection, string Id, bool Deleted)>();
         var more = false;
         var cap = long.MaxValue;
-        foreach (var (origin, floor) in Floors())
+        foreach (var (origin, floor) in floors)
         {
-            var known = cursor.TryGetValue(origin, out var after);
-            if (known && after.Value < floor.Value)
+            var known = stamps.TryGetValue(origin, out var after);
+            // Retention deleted an event the cursor promised: above a named origin's stamp, or of an origin the issuing
+            // machine had no event of, unless that event had already expired when the cursor was issued.
+            if (cursor is not null && (known ? after.Value < floor.Value : floor.Value > 0 && floor.Value >= Before(cursor.Issued, FeedCursor.Retention).Value))
             {
-                return new FeedPage([], cursor, More: false, Expired: true);
+                return new FeedPage([], stamps, More: false, Expired: true);
             }
 
             var read = OriginRows(unchecked((long)origin.Value), after, cancellationToken);

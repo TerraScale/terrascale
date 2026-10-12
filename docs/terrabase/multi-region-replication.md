@@ -465,15 +465,19 @@ decision).
   materialized value on the serving machine. `event: cursor` is a heartbeat every 15 s with the current cursor.
   `Last-Event-ID` resumes.
 - **Cursor** = an opaque base64url vector `{origin → highest stamp delivered}` over the origins in the serving
-  machine's `_tb_feed`. It holds about 10 bytes per origin with LEB128 deltas. Origins whose events all aged out of
-  retention drop out of the vector.
+  machine's `_tb_feed`, plus the instant it was issued. Origins whose events all aged out of retention drop out of the
+  vector (R8 as built: after twice the retention).
 - **Valid on any machine.** Each origin's events reach every replica in stamp order, on one ordered stream (sections 3
   and 9), and the tailer indexes them in apply order. So `cursor[o] = t` means "every event of `o` up to `t` was
   delivered". Any machine can resume by emitting, for each origin, `_tb_feed` rows with `stamp > cursor[o]`, merged
   across origins by `(stamp, origin)`.
-  - An origin missing from the cursor is emitted from the start of retention. This is at-least-once delivery, with
+  - An origin missing from the cursor is emitted from its first retained event. This is at-least-once delivery, with
     the dedupe key `(origin, stamp, collection, id)`.
   - When `cursor[o] < _tb_feed_floor[o]` (retention, or a refill on this machine), the answer is 410 `cursor_expired`.
+    So is an origin missing from the cursor whose floor is at or above the cursor's issue instant minus the retention:
+    retention deleted an event of it that the cursor's reader never got and that was still retained when the cursor was
+    issued (a replaced machine or a new epoch that wrote after it). A request without a cursor promises nothing about
+    deleted events and starts at what retention still holds.
 - **Start.** `cursor=now` returns the serving machine's current vector. A client takes it, lists or queries, then
   tails. Events that overlap the list are harmless.
 - **Repairs** (origin 0) write `_tb_feed` rows in their apply transaction, one per distinct `(node, stamp)` among the
@@ -843,12 +847,20 @@ store closes), with `PRAGMA capture_data_changes_conn('after')` on from its open
   document no longer exists on the serving machine (deleted since, dropped, or a hidden uniqueness loser).
 - **Reading.** Per origin listed in `_tb_feed_floor`, the rows above the cursor's stamp (index `_tb_feed_order`, at most
   512, completed to the end of the last stamp), merged by (stamp, origin) up to the lowest last stamp of an origin that
-  has more, cut only between two stamps at 256 events or 4 MiB of documents. A cursor stamp below the origin's floor is
-  410 `cursor_expired`; an origin the cursor lacks starts at its floor. Events the `collections` filter leaves out
-  still advance the cursor, which the next event or heartbeat carries, so a cursor is valid only with the same filter.
-- **Cursor.** base64url of a format byte (1) and, per origin in ascending order, node and stamp as 8-byte big-endian
-  integers (16 bytes per origin, not LEB128: simpler, and a cursor of 5 origins is still 107 characters). Decoding
-  accepts canonical bytes only (400 `invalid_cursor`), at most 256 origins.
+  has more, cut only between two stamps at 256 events or 4 MiB of documents. A resumed cursor is 410 `cursor_expired`
+  when a named origin's stamp is below its floor, when an origin it lacks has a floor at or above the cursor's issue
+  instant minus 7 days (an event retention deleted that the reader never got), or when it was issued more than 7 days
+  ago (it could lack an origin forgotten since). Without a cursor, every origin starts at its floor and nothing is
+  expired. An origin the cursor lacks starts at its first event. Events the `collections` filter leaves out still
+  advance the cursor, which the next event or heartbeat carries, so a cursor is valid only with the same filter. Only
+  the last event of an (origin, stamp) carries an `id:` (a stamp holds one document today, as stamps are minted per
+  document, but a reader that leaves inside one never skips the rest of it). These rules assume a machine receives an
+  origin's events within the retention (otherwise it refills, R6).
+- **Cursor.** base64url of a format byte (1), the issue instant as a stamp, then per origin in ascending order node and
+  stamp, all 8-byte big-endian integers (16 bytes per origin, not LEB128: simpler, and a cursor of 5 origins is still
+  118 characters). Every event and heartbeat re-issues it at the instant the read behind it began. Decoding accepts
+  canonical bytes only (400 `invalid_cursor`), at most 256 origins; encoding refuses more (it never issues a cursor the
+  API would reject). An issued cursor with no origin is not "no cursor": it is expired by the rules above.
 - **Stream.** One page at a time, no queue per connection: after a page that left nothing waiting, the stream waits for
   the database's next commit (`IDatabaseStore.WaitForCommitAsync`, joins included) or the 15 s heartbeat (`event:
   cursor`). A client that takes no bytes for 10 s is dropped. Limits: 32 streams per database and 1024 per machine
@@ -860,7 +872,10 @@ store closes), with `PRAGMA capture_data_changes_conn('after')` on from its open
   details; the feed keeps it.
 - **Retention.** `FeedRetention` deletes events stamped more than 7 days ago every hour, 1024 at a time with capture
   suspended (a restore keeps more history, never less), and raises each origin's floor to the highest stamp deleted.
-  Refill floors are R6's.
+  It then forgets origins with no event left whose floor is older than 14 days (`FeedCursor.Forget`), so the per-read
+  origin list and the cursors stay bounded; a resumed cursor drops an origin this machine forgot when its stamp is older
+  than its issue instant minus 14 days. A failing pass logs a warning. Refill floors are R6's; R6 must file a repair's
+  feed rows under the original node, never origin 0, which a cursor cannot name (requirement left on #114).
 - **Known limit: stamps more than 1 s ahead.** A request mints `max(clock, document's stamp + 1)`, and the clock moves at
   most `MaxSkew` (1 s) ahead (section 3). A document carrying a stamp further ahead therefore gets a stamp larger than
   this origin's next writes to other documents, so one origin's stamps no longer follow its commit order, and a cursor

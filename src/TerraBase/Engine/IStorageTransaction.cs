@@ -176,21 +176,26 @@ public interface IStorageTransaction : IAsyncDisposable
 
     /// <summary>
     /// A client database's changes feed after <paramref name="cursor"/> (docs/terrabase/multi-region-replication.md section
-    /// 14): per origin, the events with a stamp above the cursor's, an origin the cursor lacks from the start of retention.
+    /// 14): per origin, the events with a stamp above the cursor's. Without a cursor, every origin from the start of
+    /// retention. With one, an origin the cursor lacks starts at its first event, and the page is
+    /// <see cref="FeedPage.Expired"/> when retention deleted an event the cursor still promised: above a named origin's
+    /// stamp, or of an unnamed origin and not yet expired when the cursor was issued.
     /// At most about <paramref name="maxEvents"/> events and <paramref name="maxBytes"/> of documents: a page never ends
     /// inside one (origin, stamp). Only events of <paramref name="collections"/> when given; the others still advance
     /// <see cref="FeedPage.Scanned"/>.
     /// </summary>
     ValueTask<FeedPage> ReadFeedAsync(
-        IReadOnlyDictionary<ReplicaId, Hlc> cursor, IReadOnlySet<string>? collections, int maxEvents, long maxBytes, CancellationToken cancellationToken);
+        FeedCursor? cursor, IReadOnlySet<string>? collections, int maxEvents, long maxBytes, CancellationToken cancellationToken);
 
     /// <summary>The cursor at the feed's head: per origin, the highest stamp in the feed.</summary>
     ValueTask<IReadOnlyDictionary<ReplicaId, Hlc>> GetFeedHeadAsync(CancellationToken cancellationToken);
 
     /// <summary>
     /// Deletes feed events with a stamp below <paramref name="before"/>, at most <paramref name="limit"/>, and raises each
-    /// origin's floor to the highest stamp it deleted. Uncaptured: a restore keeps more history, never less. Returns how many
-    /// it deleted.
+    /// origin's floor to the highest stamp it deleted; then forgets the origins with no event left whose floor is more than
+    /// <see cref="FeedCursor.Retention"/> older than <paramref name="before"/> (<see cref="FeedCursor.Forget"/> old, for a
+    /// pass that deletes what is older than the retention).
+    /// Uncaptured: a restore keeps more history, never less. Returns how many events it deleted.
     /// </summary>
     ValueTask<int> TrimFeedAsync(Hlc before, int limit, CancellationToken cancellationToken);
 

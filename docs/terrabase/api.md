@@ -241,8 +241,8 @@ section 14). `change` events carry `{collection, id, op, version, origin, docume
 starts and every 15 s) carry `{cursor}`. Every event's `id` is the cursor after it, valid on any machine of any region.
 Query `cursor` (a cursor, or `now`; the start of retention when absent) and `collections` (comma-separated, at most
 64); `Last-Event-ID` takes precedence over `cursor`. Delivery is at least once per (origin, version, collection, id).
-Errors: `400 invalid_cursor`, `410 cursor_expired` (below the 7-day retention), `429 changes_busy` (32 streams per
-database per machine). Slice R2c deleted shape reads (`C/shape`), SSE subscriptions (`C/subscribe`) and the per-collection polling feed
+Errors: `400 invalid_cursor`, `410 cursor_expired` (retention deleted an event the cursor still promised, or the cursor
+was issued more than 7 days ago), `429 changes_busy` (32 streams per database per machine). Slice R2c deleted shape reads (`C/shape`), SSE subscriptions (`C/subscribe`) and the per-collection polling feed
 (`C/changes`); those routes return `404`.
 
 ## System

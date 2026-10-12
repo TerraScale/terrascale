@@ -2,6 +2,7 @@ using System.Net;
 using System.Text.Json;
 using Bogus;
 using Microsoft.Extensions.DependencyInjection;
+using Turso.Data.Sqlite;
 using TerraBase.Engine;
 using TerraBase.Engine.Lattices;
 using TerraBase.Features.Documents;
@@ -148,6 +149,86 @@ public sealed class DatabaseChangesTests
     }
 
     [Test]
+    public async Task A_cursor_that_never_saw_an_origin_is_410_once_retention_deleted_that_origins_events()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        var store = (await api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(await api.TenantOfAsync(), CancellationToken.None))!;
+        (await api.PutAsync(DocumentApi.NewId(), new { n = 1 })).Status.ShouldBe(HttpStatusCode.Created);
+        string resume;
+        using (var stream = await Sse.OpenAsync(api.Client, $"{api.DatabasePath()}/changes"))
+        {
+            _ = await stream.NextAsync();
+            resume = (await stream.ChangesAsync(1))[0].Id;
+        }
+
+        // A replaced machine (a new origin) writes after the cursor was issued, and retention deletes its event.
+        var joined = await JoinAsync(store, ReplicaId.Of(4518, 9, 1), DateTimeOffset.UtcNow);
+        await Assert.That(await TrimAsync(store, new Hlc(joined.Value + 1))).IsEqualTo(2);
+        await ErrorAssert.ErrorAsync(api.Client.GetAsync(new Uri($"{api.DatabasePath()}/changes?cursor={Uri.EscapeDataString(resume)}", UriKind.Relative)),
+            HttpStatusCode.Gone, "cursor_expired", "events after the cursor are no longer retained here; start again with cursor=now and re-read");
+    }
+
+    [Test]
+    public async Task An_issued_cursor_with_no_origin_is_410_after_retention_deleted_a_later_event_and_no_cursor_starts_at_retention()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        var store = (await api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(await api.TenantOfAsync(), CancellationToken.None))!;
+        string empty;
+        using (var stream = await Sse.OpenAsync(api.Client, $"{api.DatabasePath()}/changes?cursor=now"))
+        {
+            empty = (await stream.NextAsync()).Id;
+        }
+
+        var joined = await JoinAsync(store, ReplicaId.Of(4518, 10, 1), DateTimeOffset.UtcNow);
+        var kept = DocumentApi.NewId();
+        (await api.PutAsync(kept, new { n = 1 })).Status.ShouldBe(HttpStatusCode.Created);
+        await Assert.That(await TrimAsync(store, new Hlc(joined.Value + 1))).IsEqualTo(1);
+        await ErrorAssert.ErrorAsync(api.Client.GetAsync(new Uri($"{api.DatabasePath()}/changes?cursor={Uri.EscapeDataString(empty)}", UriKind.Relative)),
+            HttpStatusCode.Gone, "cursor_expired", "events after the cursor are no longer retained here; start again with cursor=now and re-read");
+        // Without a cursor the client asks for what retention still holds, so the same deletion is no gap.
+        using var fresh = await Sse.OpenAsync(api.Client, $"{api.DatabasePath()}/changes");
+        _ = await fresh.NextAsync();
+        await Assert.That((await fresh.NextAsync()).Data.GetProperty("id").GetString()).IsEqualTo(kept);
+    }
+
+    [Test]
+    public async Task An_origin_whose_events_all_aged_out_is_forgotten_and_leaves_resumed_cursors_and_an_old_cursor_is_410()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        var store = (await api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(await api.TenantOfAsync(), CancellationToken.None))!;
+        var now = DateTimeOffset.UtcNow;
+        var gone = ReplicaId.Of(4518, 11, 1);
+        var old = await JoinAsync(store, gone, now - FeedCursor.Forget - TimeSpan.FromDays(1));
+        var kept = DocumentApi.NewId();
+        (await api.PutAsync(kept, new { n = 1 })).Status.ShouldBe(HttpStatusCode.Created);
+        // One retention pass deletes the old event, and its origin's floor is older than the forget horizon.
+        await Assert.That(await TrimAsync(store, FeedCursor.At(now - FeedCursor.Retention))).IsEqualTo(1);
+        await using (var connection = new SqliteConnection(DocumentApi.ConnectionString(await api.DatabaseFileAsync(), readOnly: true)))
+        {
+            await connection.OpenAsync();
+            await using var floors = connection.CreateCommand();
+            floors.CommandText = "SELECT count(*) FROM _tb_feed_floor WHERE origin = $origin;";
+            floors.Parameters.AddWithValue("$origin", unchecked((long)gone.Value));
+            await Assert.That((long)(await floors.ExecuteScalarAsync())!).IsEqualTo(0);
+        }
+
+        // A client that still names the forgotten origin gets it dropped from the next cursor.
+        var named = ChangeCursor.Encode(new FeedCursor(new Dictionary<ReplicaId, Hlc> { [gone] = old }, FeedCursor.At(now)));
+        using (var stream = await Sse.OpenAsync(api.Client, $"{api.DatabasePath()}/changes?cursor={Uri.EscapeDataString(named)}"))
+        {
+            _ = await stream.NextAsync();
+            var change = await stream.NextAsync();
+            await Assert.That(change.Data.GetProperty("id").GetString()).IsEqualTo(kept);
+            await Assert.That(ChangeCursor.Decode(change.Id)!.Stamps.Keys).DoesNotContain(gone);
+        }
+
+        // A cursor issued longer ago than the retention could lack such an origin: expired.
+        var stale = ChangeCursor.Encode(new FeedCursor(new Dictionary<ReplicaId, Hlc>(), FeedCursor.At(now - FeedCursor.Retention - TimeSpan.FromMinutes(1))));
+        await ErrorAssert.ErrorAsync(api.Client.GetAsync(new Uri($"{api.DatabasePath()}/changes?cursor={Uri.EscapeDataString(stale)}", UriKind.Relative)),
+            HttpStatusCode.Gone, "cursor_expired", "events after the cursor are no longer retained here; start again with cursor=now and re-read");
+    }
+
+    [Test]
     public async Task Malformed_cursors_and_filters_are_400_a_missing_scope_403_and_an_unknown_database_404()
     {
         await using var api = await DocumentApi.StartAsync();
@@ -155,7 +236,8 @@ public sealed class DatabaseChangesTests
         await ErrorAssert.ErrorAsync(api.Client.GetAsync(new Uri($"{changes}?cursor=AQ-not-a-cursor", UriKind.Relative)),
             HttpStatusCode.BadRequest, "invalid_cursor", "the cursor is not one this API issued");
         // A canonical cursor names each origin once, in ascending order.
-        var unordered = Convert.ToBase64String([1, .. Origin(2, 5), .. Origin(1, 5)]).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+        var unordered = Convert.ToBase64String([1, .. Origin(0, (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() << 16)[8..], .. Origin(2, 5), .. Origin(1, 5)])
+            .TrimEnd('=').Replace('+', '-').Replace('/', '_');
         await ErrorAssert.ErrorAsync(api.Client.GetAsync(new Uri($"{changes}?cursor={unordered}", UriKind.Relative)),
             HttpStatusCode.BadRequest, "invalid_cursor", "the cursor is not one this API issued");
         using var lastEventId = new HttpRequestMessage(HttpMethod.Get, new Uri(changes, UriKind.Relative));
@@ -212,8 +294,29 @@ public sealed class DatabaseChangesTests
         var started = TimeProvider.System.GetTimestamp();
         var beat = await stream.NextAsync();
         await Assert.That(beat.Event).IsEqualTo("cursor");
-        await Assert.That(beat.Id).IsEqualTo(head.Id);
+        // The same position, issued again at the read before the heartbeat.
+        await Assert.That(ChangeCursor.Decode(beat.Id)!.Stamps).IsEquivalentTo(ChangeCursor.Decode(head.Id)!.Stamps);
         await Assert.That(TimeProvider.System.GetElapsedTime(started)).IsGreaterThan(DatabaseChanges.Heartbeat - TimeSpan.FromSeconds(1));
+    }
+
+    // Joins one document written by `origin` at `at` into the store, as a peer stream does; returns its stamp.
+    private static async Task<Hlc> JoinAsync(IDatabaseStore store, ReplicaId origin, DateTimeOffset at)
+    {
+        var version = new EntryVersion(new Hlc((ulong)at.ToUnixTimeMilliseconds() << 16), origin);
+        using var body = JsonDocument.Parse("""{"joined":true}""");
+        await using var transaction = await store.BeginTransactionAsync(write: true, CancellationToken.None);
+        _ = await transaction.JoinAsync(DocumentApi.Collection, DocumentApi.NewId(), DocumentState.Bottom.Put(version, body.RootElement).DeltaAt(version.Stamp), version, CancellationToken.None);
+        _ = await transaction.CommitAsync(CancellationToken.None);
+        return version.Stamp;
+    }
+
+    // One retention pass deleting the feed events stamped below `before`; returns how many it deleted.
+    private static async Task<int> TrimAsync(IDatabaseStore store, Hlc before)
+    {
+        await using var transaction = await store.BeginTransactionAsync(write: true, CancellationToken.None);
+        var deleted = await transaction.TrimFeedAsync(before, 1024, CancellationToken.None);
+        _ = await transaction.CommitAsync(CancellationToken.None);
+        return deleted;
     }
 
     private static byte[] Origin(ulong origin, ulong stamp)
