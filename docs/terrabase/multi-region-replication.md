@@ -666,6 +666,19 @@ dashboards and alerts already query those names.
 - `_rev` stays unindexable: versions live in `_tb_state`, not in the collection's table, so no expression index on
   the table can key them.
 
+**R2c as built** (2026-10-12), in two PRs:
+
+1. R2c-1 deletes shape reads and SSE subscriptions: the `GET …/collections/{c}/shape` and `…/subscribe` routes,
+   `IShapeService`, `IShapeSubscriptionService`, the `shapes:read` scope on the TerraBase side, the shape headers,
+   offsets and models, `UriTooLong` (414) and the `must_refetch` handle, the engine's snapshot and change-stream reads
+   (`SnapshotAsync`, `ChangesAsync`, `CompileSnapshot`, `CompileChanges`), and `shape-reads.md` and
+   `subscriptions.md`. It leaves the on-disk format unchanged. ts-auth still issues `shapes:read`; TerraBase ignores
+   scopes it does not know.
+
+Kept: `StampingStorageEngine`, which still drives the document read cache's invalidation (`IWriteStamps`), and the
+preconditions (`If-Match`, `If-None-Match: *`, transaction `assert`), which ts-auth's stores depend on through
+ts-dotnet until R12 makes ts-auth lattice-native.
+
 R2a is built on the Microsoft.Data.Sqlite engine and writes only SQL that Turso accepts (rowid tables for every new
 table, plain `INSERT`/`UPDATE`/`DELETE` on captured tables). The engine swap (1b, PR #21) lands separately: on Turso,
 174 Fast tests fail, most of them in continuous backup, which reads SQLite's WAL directly.

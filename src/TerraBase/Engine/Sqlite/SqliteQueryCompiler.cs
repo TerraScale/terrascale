@@ -90,59 +90,6 @@ internal sealed class SqliteQueryCompiler(SqliteParameterCollection parameters, 
         );
         """;
 
-    /// <summary>
-    /// A snapshot at commit <paramref name="offset"/>, streamed in id order after <c>$after</c>: one row per document id
-    /// of the collection's generation, from <c>change_log_births</c>. Columns: the id; whether it was first written at
-    /// or before the offset; for such an id, the version of its last write at or before the offset, and that write's
-    /// body and JSON byte length when it is a live document that matches <paramref name="filter"/> (NULL otherwise).
-    /// An id first written later costs its births entry only: its last-write lookup is skipped by a constant-false
-    /// term, so its revisions are never read and the filter never runs. The walk stops at the generation's highest
-    /// id at the offset (<c>change_log_high</c>), so ids appended later in id order are never visited. The caller
-    /// bounds rows read.
-    /// </summary>
-    public string CompileSnapshot(DocumentFilter? filter, long generation, long offset)
-    {
-        var at = Parameter(offset);
-        var lineage = Parameter(generation);
-        return $"""
-            SELECT b.id, b.version <= {at}, write.version, CASE WHEN write.matches THEN write.body END, write.size
-            FROM change_log_births b
-            LEFT JOIN (
-                SELECT sequence, document_version AS version, body, octet_length(body) AS size, body IS NOT NULL AND {BudgetedFilter(filter)} AS matches
-                FROM change_log
-            ) write ON write.sequence = (
-                SELECT last.sequence FROM change_log last INDEXED BY change_log_by_document
-                WHERE b.version <= {at} AND last.collection = $collection AND last.generation = {lineage} AND last.id = b.id
-                    AND last.version <= {at}
-                ORDER BY last.version DESC, last.sequence DESC LIMIT 1
-            )
-            WHERE b.collection = $collection AND b.generation = {lineage} AND b.id > $after
-                AND b.id <= (
-                    SELECT high.id FROM change_log_high high
-                    WHERE high.collection = $collection AND high.generation = {lineage} AND high.version <= {at}
-                    ORDER BY high.version DESC, high.id DESC LIMIT 1)
-            ORDER BY b.id;
-            """;
-    }
-
-    /// <summary>
-    /// Columns: id, document merge version, body, local history offset. Each document's last write in every commit of the
-    /// collection's current generation with a local history offset in
-    /// (<paramref name="after"/>, <paramref name="through"/>], in (history offset, write) order; the body is NULL for
-    /// tombstones and for documents <paramref name="filter"/> rejects.
-    /// </summary>
-    public string CompileChanges(DocumentFilter? filter, long after, long through) =>
-        $"""
-        SELECT id, document_version, CASE WHEN matches THEN body END, version, octet_length(body) FROM (
-            SELECT id, version, document_version, body, body IS NOT NULL AND {BudgetedFilter(filter)} AS matches, sequence FROM change_log c
-            WHERE collection = $collection AND generation = (SELECT generation FROM collections WHERE name = $collection)
-                AND version > {Parameter(after)} AND version <= {Parameter(through)}
-                AND sequence = (
-                    SELECT max(last.sequence) FROM change_log last INDEXED BY change_log_by_document
-                    WHERE last.collection = c.collection AND last.generation = c.generation AND last.id = c.id AND last.version = c.version)
-        ) ORDER BY version, sequence;
-        """;
-
     // A count examines a system collection's tombstones too; a client collection's table holds live documents only.
     private string Counted => rows == RowSource.System ? "documents WHERE collection = $collection" : $"{rows.From} WHERE 1";
 

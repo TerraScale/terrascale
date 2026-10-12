@@ -13,7 +13,7 @@ namespace TerraBase.Fast.Management;
 
 public sealed class ProjectBindingTests
 {
-    private const string Scopes = "databases:read databases:write documents:read documents:write shapes:read";
+    private const string Scopes = "databases:read databases:write documents:read documents:write";
 
     [Test]
     public async Task Verification_without_response_memory_is_refused_before_forwarding_the_sign_in_token()
@@ -83,16 +83,6 @@ public sealed class ProjectBindingTests
 
         using var jwt = api.WithToken(ProjectToken(api.Issuer, victim, project));
         await InaccessibleAsync(jwt, database);
-        using (var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken))
-        {
-            deadline.CancelAfter(TimeSpan.FromSeconds(30));
-            using var subscription = await jwt.GetAsync(Uri($"/v1/projects/{project}/databases/main/collections/people/subscribe"),
-                HttpCompletionOption.ResponseHeadersRead, deadline.Token);
-            await Assert.That(subscription.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-            await Assert.That(subscription.Headers.CacheControl?.NoStore).IsTrue();
-            var error = await subscription.Content.ReadFromJsonAsync<JsonElement>(deadline.Token);
-            await Assert.That(error.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("unknown_database");
-        }
         await StatusAsync(jwt.GetAsync(Uri(document)), HttpStatusCode.NotFound);
         await StatusAsync(jwt.PutAsJsonAsync(Uri(document), new { name = "captured" }), HttpStatusCode.NotFound);
         await Assert.That((await JsonAsync(legacy.GetAsync(Uri(document)))).GetProperty("document").GetProperty("name").GetString()).IsEqualTo(name);

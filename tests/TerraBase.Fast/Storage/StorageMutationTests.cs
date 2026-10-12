@@ -1,6 +1,5 @@
 using System.Net;
 using System.Text;
-using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
@@ -167,13 +166,11 @@ public sealed class StorageMutationTests
     public async Task A_failed_collection_or_offset_statement_prevents_committing_partial_changes(string mutation, string failure)
     {
         await using var api = await DocumentApi.StartAsync();
-        using var shapes = await api.ClientWithScopesAsync("shapes:read");
         var id = DocumentApi.NewId();
         var original = await api.PutAsync(id, new { n = 1 });
         var store = await StoreAsync(api);
         var sequence = store.CommitSequence;
         var rows = await HistoryRowsAsync(api);
-        var (_, snapshotUrl, snapshotText) = await SnapshotAsync(api, shapes);
         var trigger = failure == "offset"
             ? "CREATE TRIGGER reject_offset BEFORE UPDATE ON commit_offset BEGIN SELECT RAISE(FAIL, 'injected offset failure'); END;"
             // The row is already gone when an AFTER DELETE trigger fails: the transaction must still refuse to commit.
@@ -196,25 +193,20 @@ public sealed class StorageMutationTests
         await Assert.That(read.Json.GetProperty("document").GetProperty("n").GetInt32()).IsEqualTo(1);
         await Assert.That(store.CommitSequence).IsEqualTo(sequence);
         await Assert.That(await HistoryRowsAsync(api)).IsEqualTo(rows);
-        using var replay = await shapes.GetAsync(snapshotUrl);
-        replay.EnsureSuccessStatusCode();
-        await Assert.That(await replay.Content.ReadAsStringAsync()).IsEqualTo(snapshotText);
         await Assert.That((await api.SendAsync(HttpMethod.Get, $"{api.Collections}/extra")).Status)
             .IsEqualTo(HttpStatusCode.NotFound);
     }
 
     [Test]
-    public async Task Dropping_a_collection_removes_its_history_atomically_and_recreation_starts_a_fresh_shape()
+    public async Task Dropping_a_collection_removes_its_history_atomically()
     {
         await using var api = await DocumentApi.StartAsync();
-        using var shapes = await api.ClientWithScopesAsync("shapes:read");
         var id = DocumentApi.NewId();
         await api.PutAsync(id, new { n = 1 });
         await api.PutAsync(id, new { n = 2 });
         var store = await StoreAsync(api);
         var rows = await HistoryRowsAsync(api);
         await Assert.That(rows).IsEqualTo(2);
-        var (oldHandle, oldSnapshotUrl, oldSnapshotText) = await SnapshotAsync(api, shapes);
 
         await using (var rolledBack = await store.BeginTransactionAsync(write: true, CancellationToken.None))
         {
@@ -222,8 +214,6 @@ public sealed class StorageMutationTests
         }
 
         await Assert.That(await HistoryRowsAsync(api)).IsEqualTo(rows);
-        using var replay = await shapes.GetAsync(oldSnapshotUrl);
-        await Assert.That(await replay.Content.ReadAsStringAsync()).IsEqualTo(oldSnapshotText);
         await Assert.That((await api.GetAsync(id)).Json.GetProperty("document").GetProperty("n").GetInt32()).IsEqualTo(2);
 
         var collections = api.Collections;
@@ -235,14 +225,7 @@ public sealed class StorageMutationTests
             .IsEqualTo(0);
         await api.SendAsync(HttpMethod.Post, collections, new { name = DocumentApi.Collection });
         await api.PutAsync(id, new { n = 3 });
-        using var stale = await shapes.GetAsync(oldSnapshotUrl);
-        await Assert.That(stale.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
-        var (newHandle, _, newSnapshotText) = await SnapshotAsync(api, shapes);
-        await Assert.That(newHandle).IsNotEqualTo(oldHandle);
-        using var fresh = JsonDocument.Parse(newSnapshotText);
-        var operations = fresh.RootElement.GetProperty("changes")[0].GetProperty("ops");
-        await Assert.That(operations.GetArrayLength()).IsEqualTo(1);
-        await Assert.That(operations[0].GetProperty("document").GetProperty("n").GetInt32()).IsEqualTo(3);
+        await Assert.That((await api.GetAsync(id)).Json.GetProperty("document").GetProperty("n").GetInt32()).IsEqualTo(3);
         await Assert.That(await HistoryRowsAsync(api)).IsEqualTo(rows + 1);
     }
 
@@ -260,12 +243,6 @@ public sealed class StorageMutationTests
             var query = new DocumentQuery(DocumentApi.Collection, null, [], null, 10, 1 << 20);
             var page = await reader.QueryAsync(query, CancellationToken.None);
             await Assert.That(page.Rows[0].Document.Scope).IsEqualTo(reader.Scope);
-            var snapshot = await reader.SnapshotAsync(query, document.Version, CancellationToken.None);
-            await Assert.That(snapshot.Rows[0].Document.Scope).IsEqualTo(reader.Scope);
-            await foreach (var change in reader.ChangesAsync(DocumentApi.Collection, null, 0, document.Version, CancellationToken.None))
-            {
-                await Assert.That(change.Scope).IsEqualTo(reader.Scope);
-            }
         }
 
         await api.SendAsync(HttpMethod.Delete, api.Document(id));
@@ -273,11 +250,6 @@ public sealed class StorageMutationTests
         // GetAsync reads live documents only; the tombstone's version comes from its metadata.
         var tombstone = (await deleted.GetVersionAsync(DocumentApi.Collection, id, CancellationToken.None))!.Value;
         await Assert.That(tombstone.Deleted).IsTrue();
-        await foreach (var change in deleted.ChangesAsync(DocumentApi.Collection, null, tombstone.Version - 1, tombstone.Version, CancellationToken.None))
-        {
-            await Assert.That(change.Deleted).IsTrue();
-            await Assert.That(change.Scope).IsEqualTo(deleted.Scope);
-        }
     }
 
     private static async Task MutateAsync(IStorageTransaction transaction, string mutation, string id)
@@ -322,14 +294,5 @@ public sealed class StorageMutationTests
         command.CommandText = sql;
         command.Parameters.AddWithValue("$collection", DocumentApi.Collection);
         return await command.ExecuteScalarAsync();
-    }
-
-    private static async Task<(string Handle, Uri SnapshotUrl, string Text)> SnapshotAsync(DocumentApi api, HttpClient shapes)
-    {
-        using var start = await shapes.GetAsync(new Uri(api.Shape + "?offset=-1", UriKind.Relative));
-        await Assert.That(start.StatusCode).IsEqualTo(HttpStatusCode.TemporaryRedirect);
-        using var snapshot = await shapes.GetAsync(start.Headers.Location!);
-        snapshot.EnsureSuccessStatusCode();
-        return (start.Headers.GetValues("TB-Shape-Handle").Single(), start.Headers.Location!, await snapshot.Content.ReadAsStringAsync());
     }
 }

@@ -285,9 +285,6 @@ internal sealed class StampingStorageEngine(IStorageEngine inner, ISystemReplica
         public ValueTask<QueryPage> QueryAsync(DocumentQuery query, CancellationToken cancellationToken, QueryObservation? observation = null) =>
             RunAsync(() => inner.QueryAsync(query, cancellationToken, observation), cancellationToken);
 
-        public ValueTask<SnapshotPage> SnapshotAsync(DocumentQuery query, long offset, CancellationToken cancellationToken) =>
-            RunAsync(() => inner.SnapshotAsync(query, offset, cancellationToken), cancellationToken);
-
         public ValueTask<long> GetOffsetAsync(CancellationToken cancellationToken) =>
             RunAsync(() => inner.GetOffsetAsync(cancellationToken), cancellationToken);
 
@@ -297,27 +294,6 @@ internal sealed class StampingStorageEngine(IStorageEngine inner, ISystemReplica
         public ValueTask<CollectionChangePage> ReadCollectionChangesAsync(
             string collection, long afterOffset, long afterSequence, int limit, long maxBytes, CancellationToken cancellationToken) =>
             RunAsync(() => inner.ReadCollectionChangesAsync(collection, afterOffset, afterSequence, limit, maxBytes, cancellationToken), cancellationToken);
-
-        public async IAsyncEnumerable<StoredDocument> ChangesAsync(
-            string collection, DocumentFilter? filter, long after, long through, [EnumeratorCancellation] CancellationToken cancellationToken)
-        {
-            await EnterStreamAsync(cancellationToken).ConfigureAwait(false);
-            try
-            {
-                await foreach (var document in inner.ChangesAsync(collection, filter, after, through, cancellationToken).ConfigureAwait(false))
-                {
-                    yield return document;
-                }
-            }
-            finally
-            {
-                lock (_disposalGate)
-                {
-                    _streaming = false;
-                    _gate.Release();
-                }
-            }
-        }
 
         public ValueTask<(long Count, bool Complete)> CountAsync(string collection, DocumentFilter? filter, long maxExamined, CancellationToken cancellationToken, QueryObservation? observation = null) =>
             RunAsync(() => inner.CountAsync(collection, filter, maxExamined, cancellationToken, observation), cancellationToken);

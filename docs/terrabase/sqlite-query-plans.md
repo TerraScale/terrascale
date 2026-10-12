@@ -27,8 +27,8 @@ primary key. The database's own stream is `changes (sequence, ordinal, collectio
 key `(sequence, ordinal)`) and `journal (sequence, dependencies)`; `applied (origin, sequence)` keys every other origin's
 applied position, and the one-row `replication_state (id, replica, complete)` names the replica id the journal belongs
 to. `shape_history (id, floor)` records the history baseline; `change_log` retains every write with collection
-generation, document id, local history offset (`version`), document version (`document_version`) and sequence. Its two
-indexes support the shape seeks described below.
+generation, document id, local history offset (`version`), document version (`document_version`) and sequence. Its
+`change_log_by_offset` index supports the feed seeks described below.
 
 `_system` keeps its catalog journal until TS-647 step 5: `documents (collection, id, version, body)` with `version` the
 commit offset of the last write, the same `collections`, `commit_offset` and `documents_live`, its journal in
@@ -86,20 +86,15 @@ included, under its fresh origin.
 ### Shape history (TS-474 schemas v5/v6, replication integration v7)
 
 
-Writes to client databases append to `change_log`; shape reads replay it (`docs/terrabase/shape-reads.md`).
-`Documents/QueryPlanTests.cs` asserts these plans, including that neither shape read scans or sorts.
+Writes to client databases append to `change_log`; the per-collection change feed reads it (`change-feeds.md`).
+Shape reads and their snapshot and log-chunk statements were deleted in R2c-1; the `change_log_births` and
+`change_log_high` tables, their trigger and `change_log_by_document` have no readers and go in R2c-2. `Documents/QueryPlanTests.cs` asserts these plans.
 
 | Statement | Hot path | Plan |
 | --- | --- | --- |
 | `AppendChange`: `INSERT … SELECT … FROM collections WHERE name = ?` | every client-database write | `SEARCH collections USING PRIMARY KEY (name=?)` |
 | `HistoryFloor` | every shape read past the snapshot redirect | `SEARCH shape_history USING INTEGER PRIMARY KEY (rowid=?)` |
 | `DropHistory`: `UPDATE change_log SET body = NULL …` | collection drop | `SEARCH change_log USING INDEX change_log_by_offset (collection=? AND generation=?)` |
-| Snapshot at `S` (`CompileSnapshot`, one streamed statement per page) | every snapshot page | `SEARCH b USING PRIMARY KEY (collection=? AND generation=? AND id>? AND id<?)` on `change_log_births` in id order up to the highest id at `S` (`SEARCH high USING PRIMARY KEY (collection=? AND generation=? AND version<?)`, once per page), no sort (`version <= S` is tested on each key entry: an id first written later costs one entry, its revisions never read; the page reads at most 10000 such steps and 50000 later ids), per eligible id `SEARCH last USING COVERING INDEX change_log_by_document (collection=? AND generation=? AND id=? AND version<?)` for its last write at `S`, then `SEARCH change_log USING INTEGER PRIMARY KEY (rowid=?)` for that write |
-| Log chunk (`CompileChanges`) | every log chunk and live wake | `SEARCH c USING INDEX change_log_by_offset (collection=? AND generation=? AND version>? AND version<?)`, then per row `SEARCH last USING COVERING INDEX change_log_by_document (collection=? AND generation=? AND id=? AND version=?)`: only a document's last write of each commit is sent |
-
-A snapshot page walks document ids in order, so its cost follows the ids it reads, not
-the depth of each document's history (a single-statement form scanned every history row and, without
-`INDEXED BY`, sorted all candidates in a temporary B-tree). The last-write lookup names `change_log_by_document`.
 
 Queries and counts (`SqliteQueryCompiler`) are compiled per request and are neither prepared on
 the session nor in `SqliteStatements.All`. Live queries read the collection's table (by its id key with an id-only

@@ -74,15 +74,6 @@ internal static class ApiExamples
                 media.Example = error
                     ? new JsonObject { ["error"] = new JsonObject { ["code"] = codes.Split(", ", StringSplitOptions.None)[0], ["message"] = "The request cannot be served." } }
                     : JsonNode.Parse(Response(id, status));
-                if (id == "subscribeCollection" && status == "200")
-                {
-                    media.Example = JsonValue.Create($"event: shape\nid: h1-0000000000000000:1\ndata: {Response("getShape", status)}\n\n");
-                }
-
-                if (id == "getShape" && status == "409" && media.Example is JsonObject example)
-                {
-                    example["error"]!["handle"] = "h1-0000000000000000";
-                }
             }
         }
     }
@@ -156,7 +147,6 @@ internal static class ApiExamples
         "updateSavedQuery" => Saved.Replace("\"updatedAt\":null", "\"updatedAt\":\"2026-10-07T12:00:00Z\"", StringComparison.Ordinal),
         "listSavedQueries" => Page(Saved),
         "runTransaction" => """{"offset":"1","durability":"local_durable","results":[{"id":"01ARZ3NDEKTSV4RRFFQ69G5FA3","version":"opaque-version-from-server"}]}""",
-        "getShape" => """{"shape_id":"00000000000000000000000000000001","handle":"h1-0000000000000000","offset":"1","next_offset":"1","up_to_date":true,"changes":[]}""",
         _ => "{}",
     };
 
@@ -172,7 +162,6 @@ internal static class ApiExamples
         "400" when id == "listCollections" => "invalid_request, invalid_cursor",
         "400" when id == "listDocuments" => "invalid_request, invalid_cursor, invalid_query",
         "400" when id == "runTransaction" => "invalid_request, invalid_patch, nested_lattice_path, invalid_query, assert_requires_index, schema_validation_failed",
-        "400" when id is "getShape" or "subscribeCollection" => "invalid_request, invalid_query",
         "400" => "invalid_request",
         "401" => "invalid_key",
         "403" when id is "createDatabase" or "branchDatabase" or "updateDatabase" or "deleteDatabase" or "restoreBackup" or "setBackupPolicy" or "setAutoIndexPolicy" or "createIndex" or "dropIndex" or "applyIndexRecommendation" or "createSavedQuery" or "updateSavedQuery" or "deleteSavedQuery" or "declareCollectionSchema" => "forbidden_scope, forbidden_role",
@@ -180,11 +169,10 @@ internal static class ApiExamples
         "404" when id is "createCollection" or "listCollections" => "unknown_database",
         "404" when id is "getDocument" or "patchDocument" or "deleteDocument" or "runTransaction" => "unknown_database, unknown_collection, not_found",
         "404" when id is "getDeclaredCollectionSchema" or "putDeclaredCollectionSchema" or "deleteDeclaredCollectionSchema" => "unknown_database, unknown_collection",
-        "404" when id is "getCollection" or "dropCollection" or "getShape" or "subscribeCollection" or "listDocuments" or "createDocument" or "putDocument" or "queryDocuments" => "unknown_database, unknown_collection",
+        "404" when id is "getCollection" or "dropCollection" or "listDocuments" or "createDocument" or "putDocument" or "queryDocuments" => "unknown_database, unknown_collection",
         "404" when id is "createDatabase" or "getDatabase" or "listDatabases" or "updateDatabase" or "deleteDatabase" or "branchDatabase" or "getDatabaseUsage" or "getProjectUsage" => "unknown_database, unknown_route",
         "404" => "unknown_database, unknown_route, not_found",
         "408" => "request_timeout",
-        "409" when id is "getShape" or "subscribeCollection" => "must_refetch",
         "409" when id is "patchDocument" or "runTransaction" => "patch_conflict, unique_violation",
         "409" when id is "createDocument" or "putDocument" or "getDocument" => "unique_violation",
         "409" when id == "declareCollectionSchema" => "schema_requires_empty_collection",
@@ -194,15 +182,14 @@ internal static class ApiExamples
         "409" => "conflict",
         "412" => "precondition_failed",
         "413" => "payload_too_large",
-        "414" => "uri_too_long",
         "415" => "unsupported_media_type",
         "421" => "misdirected_request, wrong_region",
-        "429" when id == "subscribeCollection" => "subscription_busy",
-        "429" => "shape_busy",
+        "429" when id == "getCollectionChanges" => "change_feed_busy",
+        "429" => "tenant_busy, tenant_memory",
         "503" when id is "dropCollection" or "runTransaction" => "capacity, storage_busy, unavailable",
         "503" when id == "planPointInTime" => "pitr_plan_limit, pitr_plan_timeout, pitr_plan_unavailable, storage_busy, catalog_primary_unavailable",
         "503" when id is "createDocument" or "putDocument" or "patchDocument" or "deleteDocument" => "capacity, storage_busy, unavailable",
-        "503" when id is "queryDocuments" or "getShape" or "getDocument" or "listDocuments" or "createCollection" or "getCollection" or "listCollections" => "storage_busy, unavailable",
+        "503" when id is "queryDocuments" or "getDocument" or "listDocuments" or "createCollection" or "getCollection" or "listCollections" => "storage_busy, unavailable",
         "503" => "storage_busy, capacity, catalog_primary_unavailable, not_primary, unavailable",
         _ => "internal_error",
     };

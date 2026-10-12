@@ -61,9 +61,9 @@ public sealed class TenantIsolationTests
     public async Task A_tenant_reaches_nothing_of_another_tenant_through_any_client_route()
     {
         await using var api = await ManagementApi.StartAsync();
-        // Every client scope, shapes:read included, so each route answers past its scope check.
-        using var a = await api.CreateTenantAsync("documents:read", "documents:write", "shapes:read");
-        using var b = await api.CreateTenantAsync("documents:read", "documents:write", "shapes:read");
+        // Every client scope, so each route answers past its scope check.
+        using var a = await api.CreateTenantAsync("documents:read", "documents:write");
+        using var b = await api.CreateTenantAsync("documents:read", "documents:write");
         using var aDashboard = api.As(a.User);
         using var bDashboard = api.As(b.User);
         await api.VerifyProjectBindingAsync(a.OrganizationId, a.ProjectId, aDashboard);
@@ -73,7 +73,7 @@ public sealed class TenantIsolationTests
             return api.WithToken(api.Issuer.Mint(tenant.User, token =>
             {
                 token.Claims["project_id"] = tenant.ProjectId;
-                token.Claims["scope"] = "databases:read databases:write documents:read documents:write shapes:read";
+                token.Claims["scope"] = "databases:read databases:write documents:read documents:write";
             }));
         }
 
@@ -146,9 +146,9 @@ public sealed class TenantIsolationTests
     public async Task Two_organizations_each_have_their_own_database_of_the_same_name()
     {
         await using var api = await ManagementApi.StartAsync();
-        // Every client scope, shapes:read included, so each route answers past its scope check.
-        using var a = await api.CreateTenantAsync("documents:read", "documents:write", "shapes:read");
-        using var b = await api.CreateTenantAsync("documents:read", "documents:write", "shapes:read");
+        // Every client scope, so each route answers past its scope check.
+        using var a = await api.CreateTenantAsync("documents:read", "documents:write");
+        using var b = await api.CreateTenantAsync("documents:read", "documents:write");
         var document = $"/collections/people/documents/by-key?id={DocumentId}";
 
         var aApp = await CreateDatabaseAsync(a, "app");
@@ -322,7 +322,7 @@ public sealed class TenantIsolationTests
                 });
             }
 
-            var client = projectManagement || pattern.EndsWith("/subscribe", StringComparison.Ordinal) || pattern.EndsWith("/changes", StringComparison.Ordinal) ? projectToken : IsManagement(pattern) ? dashboard : data;
+            var client = projectManagement || pattern.EndsWith("/changes", StringComparison.Ordinal) ? projectToken : IsManagement(pattern) ? dashboard : data;
             using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead,
                 TUnit.Core.TestContext.Current!.Execution.CancellationToken);
             sent.Add(($"{method} {path}", response.StatusCode));

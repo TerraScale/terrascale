@@ -74,9 +74,6 @@ internal sealed class DocumentApi : IAsyncDisposable
 
     public string Transactions => $"{DatabasePath()}/transactions";
 
-    /// <summary>The shape route of <see cref="Collection"/> (TS-474).</summary>
-    public string Shape => $"{Collections}/{Collection}/shape";
-
     /// <summary>Starts a server and creates <c>db</c> and <c>items</c> in a new tenant, with a read and write key.</summary>
     public static async Task<DocumentApi> StartAsync(
         Action<Dictionary<string, string>>? configure = null, Action<IServiceCollection>? services = null,

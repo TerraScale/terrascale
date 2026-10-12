@@ -23,7 +23,7 @@ public sealed class GetDatabaseUsageEndpoint(IManagementService management, IUsa
         Get(ProjectApiRoute.Database + "/usage");
         Name("getDatabaseUsage");
         Summary("Reads the usage of a database");
-        Description("Bytes on disk, JSON bytes of the live documents (logicalBytes), collections, live documents, and document reads (gets, list, query and shape pages, SQL runs) and writes (committed puts, patches and deletes, each operation of a transaction), with one point per hour or day of the period. " + CountsDescription + " " + ProjectApiRoute.IdentityDescription);
+        Description("Bytes on disk, JSON bytes of the live documents (logicalBytes), collections, live documents, and document reads (gets, list and query pages, SQL runs) and writes (committed puts, patches and deletes, each operation of a transaction), with one point per hour or day of the period. " + CountsDescription + " " + ProjectApiRoute.IdentityDescription);
         Tags("Usage");
         Produces<DatabaseUsage>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);

@@ -93,7 +93,4 @@ internal sealed record RowSource(string From, string Live, string Json, string V
 
     /// <summary>A client collection that does not exist: no rows.</summary>
     public static RowSource Empty { get; } = new("(SELECT NULL AS id, NULL AS doc WHERE 0)", "1", "doc", "NULL");
-
-    /// <summary>The shape history of a client database's collection generation.</summary>
-    public static RowSource History { get; } = new("change_log", "1", "body", "version");
 }

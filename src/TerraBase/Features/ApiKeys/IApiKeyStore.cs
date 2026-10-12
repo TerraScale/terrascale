@@ -13,9 +13,6 @@ public static class ApiKeyScopes
     /// <summary>Create databases and write or delete documents.</summary>
     public const string DocumentsWrite = "documents:write";
 
-    /// <summary>Read shapes: CDN-cacheable snapshots and change logs of a collection and filter.</summary>
-    public const string ShapesRead = "shapes:read";
-
     /// <summary>Read databases and database tooling.</summary>
     public const string DatabasesRead = "databases:read";
 
@@ -23,7 +20,7 @@ public static class ApiKeyScopes
     public const string DatabasesWrite = "databases:write";
 
     /// <summary>Scopes a legacy API key can grant.</summary>
-    public static IReadOnlyList<string> All { get; } = [DocumentsRead, DocumentsWrite, ShapesRead];
+    public static IReadOnlyList<string> All { get; } = [DocumentsRead, DocumentsWrite];
 
     /// <summary>Additional scopes only ts-auth project access tokens carry, never legacy API keys.</summary>
     public static IReadOnlyList<string> ProjectTokenScopes { get; } = [DatabasesRead, DatabasesWrite];

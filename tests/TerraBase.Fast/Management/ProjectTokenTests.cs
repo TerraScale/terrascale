@@ -12,7 +12,7 @@ namespace TerraBase.Fast.Management;
 
 public sealed class ProjectTokenTests
 {
-    private const string AllScopes = "databases:read databases:write documents:read documents:write shapes:read";
+    private const string AllScopes = "databases:read databases:write documents:read documents:write";
 
     [Test]
     [Arguments("GET", "")]

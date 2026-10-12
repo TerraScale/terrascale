@@ -29,7 +29,7 @@ internal sealed partial class SqliteStorageTransaction(
     Action<long>? changesCommitted, bool ownsAdmission)
     : IStorageTransaction
 {
-    // One commit must fit one shape log chunk (8 MiB body), including every repeated write and its framing.
+    // Bounds one commit's written bytes, every repeated write and its framing included.
     private const long MaxWrittenBytes = 7 * 1024 * 1024;
     private const int MaxDocumentBytes = DocumentJson.MaxBytes;
     private const int MaxWrites = 1024;
@@ -483,9 +483,6 @@ internal sealed partial class SqliteStorageTransaction(
 
     private bool ScansLimited => !store.IsSystem && QosContext.Current is { } current && QosPolicy.For(current.Plan).ScanRows != long.MaxValue;
 
-    private const int MaxSnapshotSteps = 10_000;
-    private const int MaxSnapshotSkips = 50_000;
-
     // The handler and its removal run only on workers while this transaction owns the connection.
     private QueryBudget StartQueryBudget(CancellationToken cancellationToken)
     {
@@ -663,124 +660,15 @@ internal sealed partial class SqliteStorageTransaction(
         }, cancellationToken, observation), cancellationToken).ConfigureAwait(false);
     }
 
-    public async ValueTask<SnapshotPage> SnapshotAsync(DocumentQuery query, long offset, CancellationToken cancellationToken)
-    {
-        ArgumentNullException.ThrowIfNull(query);
-        return await RunAsync(() =>
-        {
-            long generation;
-            using (var collection = Command(SqliteStatements.GetCollection, query.Collection).ExecuteReader())
-            {
-                if (!collection.Read())
-                {
-                    return new SnapshotPage([], HasMore: false, ResumeAfter: null);
-                }
-
-                generation = collection.GetInt64(2);
-            }
-
-            using var command = Uncached(query.Collection);
-            // One streamed read of the births key in id order: each id that existed at the offset is a step with
-            // its last write at the offset, so the cost follows the ids read, never the depth of their history.
-            command.CommandText = new SqliteQueryCompiler(command.Parameters, RowSource.History, ScansLimited).CompileSnapshot(query.Filter, generation, offset);
-            command.Parameters.AddWithValue("$after", query.After?.Id ?? "");
-            var rows = new List<QueryRow>();
-            long bytes = 0;
-            // A row may run fewer instructions than the progress handler's interval, so the page also counts
-            // its rows and checks the deadline between them.
-            var budget = StartQueryBudget(cancellationToken);
-            try
-            {
-                using var reader = command.ExecuteReader();
-                // Steps count only ids that existed at the offset, so a replay examines the same ids and ends at
-                // the same boundary; ids first written later are skips, bounded separately.
-                string? examined = null;
-                for (int steps = 0, skips = 0; ;)
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    // A page at its step, row or byte limit ends before reading on: later ids past its boundary
-                    // are the next page's to pass over, so they can neither expire nor delay a complete page.
-                    if (steps == MaxSnapshotSteps)
-                    {
-                        return new SnapshotPage(rows, HasMore: true, ResumeAfter: examined);
-                    }
-
-                    if (rows.Count == query.Limit)
-                    {
-                        return new SnapshotPage(rows, HasMore: true, ResumeAfter: rows[^1].Document.Id);
-                    }
-
-                    if (!reader.Read())
-                    {
-                        return new SnapshotPage(rows, HasMore: false, ResumeAfter: null);
-                    }
-
-                    if (budget.Exceeded)
-                    {
-                        cancellationToken.ThrowIfCancellationRequested();
-                        throw new QueryCapacityException("query execution budget exceeded");
-                    }
-
-                    if (!reader.GetBoolean(1))
-                    {
-                        // Too many later ids to pass over within bounded work: the snapshot is too old to read.
-                        // Answering with other boundaries instead would depend on later writes.
-                        if (++skips > MaxSnapshotSkips)
-                        {
-                            return new SnapshotPage([], HasMore: false, ResumeAfter: null, Expired: true);
-                        }
-
-                        continue;
-                    }
-
-                    steps++;
-                    var id = reader.GetString(0);
-                    // A tombstone at the offset, or rejected by the filter.
-                    if (reader.IsDBNull(3))
-                    {
-                        examined = id;
-                        continue;
-                    }
-
-                    bytes += reader.GetInt64(4);
-                    rows.Add(new QueryRow(new StoredDocument(id, reader.GetInt64(2), ReadShapeJson(reader, 3, reader.GetInt64(4)), Scope), []));
-                    examined = id;
-                    // The last row may cross the byte limit; the caller trims the page to its serialized size.
-                    if (bytes >= query.MaxBytes)
-                    {
-                        return new SnapshotPage(rows, HasMore: true, ResumeAfter: id);
-                    }
-                }
-            }
-            catch (SqliteException error) when (error.SqliteErrorCode == raw.SQLITE_INTERRUPT)
-            {
-                throw Exhausted(error, cancellationToken);
-            }
-            finally
-            {
-                StopQueryBudget();
-            }
-        }, cancellationToken).ConfigureAwait(false);
-    }
-
     public ValueTask<long> GetOffsetAsync(CancellationToken cancellationToken) =>
         RunAsync(() => (long?)session.Command(SqliteStatements.CurrentOffset, transaction).ExecuteScalar() ?? 0, cancellationToken);
 
     public ValueTask<long> GetHistoryFloorAsync(CancellationToken cancellationToken) =>
         RunAsync(() => (long)session.Command(SqliteStatements.HistoryFloor, transaction).ExecuteScalar()!, cancellationToken);
 
-    public IAsyncEnumerable<StoredDocument> ChangesAsync(
-        string collection, DocumentFilter? filter, long after, long through, CancellationToken cancellationToken) =>
-        ReadBudgetedAsync(() =>
-        {
-            var command = Uncached(collection);
-            command.CommandText = new SqliteQueryCompiler(command.Parameters, RowSource.History, ScansLimited).CompileChanges(filter, after, through);
-            return command;
-        }, cancellationToken);
-
     private async IAsyncEnumerable<StoredDocument> ReadBudgetedAsync(
-        Func<SqliteCommand> createCommand, [EnumeratorCancellation] CancellationToken cancellationToken, SqlQuery? query = null,
-        QueryObservation? observation = null)
+        Func<SqliteCommand> createCommand, SqlQuery query, QueryObservation? observation,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         // The stream owns the operation gate until its reader is closed, including an early consumer break.
         await EnterStreamAsync(cancellationToken).ConfigureAwait(false);
@@ -798,7 +686,7 @@ internal sealed partial class SqliteStorageTransaction(
                 command = createCommand();
                 try
                 {
-                    if (query is { Order.Count: > 0 }
+                    if (query.Order.Count > 0
                         && ReadSqlPlan(query, cancellationToken).Steps.Any(step => step.Contains("TEMP B-TREE", StringComparison.Ordinal)))
                     {
                         CheckSortBudget(query.Collection, 8 * 1024 * 1024, cancellationToken, observation);
@@ -835,19 +723,7 @@ internal sealed partial class SqliteStorageTransaction(
                             throw new QueryCapacityException("query execution budget exceeded");
                         }
 
-                        if (read && query is null && changes.IsDBNull(2))
-                        {
-                            ReserveJson(0);
-                        }
-
-                        // ChangesAsync rows are (id, version, body, history offset).
-                        var document = !read ? null : query is not null
-                            ? ReadDocument(query.Collection, changes.GetString(0))
-                            : changes.IsDBNull(2)
-                                ? new StoredDocument(changes.GetString(0), changes.GetInt64(1), ReadOnlyMemory<byte>.Empty, Scope, Deleted: true,
-                                    HistoryOffset: changes.GetInt64(3))
-                                : new StoredDocument(changes.GetString(0), changes.GetInt64(1), ReadShapeJson(changes, 2, changes.GetInt64(4)), Scope,
-                                    HistoryOffset: changes.GetInt64(3));
+                        var document = read ? ReadDocument(query.Collection, changes.GetString(0)) : null;
                         if (queryBudget.Exceeded)
                         {
                             cancellationToken.ThrowIfCancellationRequested();

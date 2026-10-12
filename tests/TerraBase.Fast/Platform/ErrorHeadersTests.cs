@@ -1,8 +1,11 @@
 using System.Net;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
+using TerraBase.Engine;
+using TerraBase.Errors;
 using TerraBase.Fast.Documents;
 using TerraBase.Features.Documents;
+using TerraBase.Tenancy;
 
 namespace TerraBase.Fast.Platform;
 
@@ -11,9 +14,10 @@ public sealed class ErrorHeadersTests
     [Test]
     public async Task Independently_cancelled_work_returns_a_structured_uncached_error()
     {
-        await using var api = await DocumentApi.StartAsync(services: services => services.AddSingleton<IShapeService, CancelledShapes>());
-        using var reader = await api.ClientWithScopesAsync("shapes:read");
-        using var response = await reader.GetAsync(new Uri($"{api.Shape}?offset=-1", UriKind.Relative));
+        await using var api = await DocumentApi.StartAsync(services: services =>
+            services.AddSingleton<IDocumentService>(provider => new CancelledCollections(provider.GetRequiredService<DocumentService>())));
+        using var reader = await api.ClientWithScopesAsync("documents:read");
+        using var response = await reader.GetAsync(new Uri($"{api.Collections}/{DocumentApi.Collection}", UriKind.Relative));
 
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.InternalServerError);
         await Assert.That(response.Headers.CacheControl!.ToString()).IsEqualTo("no-store");
@@ -28,10 +32,10 @@ public sealed class ErrorHeadersTests
         await using var api = await DocumentApi.StartAsync();
         var server = api.Server;
         using var anonymous = api.Management.DataClient();
-        using var reader = await api.ClientWithScopesAsync("documents:read");
-        var shape = new Uri($"{api.Shape}?offset=-1", UriKind.Relative);
-        using var unauthenticated = await anonymous.GetAsync(shape);
-        using var forbidden = await reader.GetAsync(shape);
+        using var writer = await api.ClientWithScopesAsync("documents:write");
+        var collection = new Uri($"{api.Collections}/{DocumentApi.Collection}", UriKind.Relative);
+        using var unauthenticated = await anonymous.GetAsync(collection);
+        using var forbidden = await writer.GetAsync(collection);
         using var unknown = await server.Client.GetAsync(new Uri("/no-such-route", UriKind.Relative));
         using var wrongMethod = await server.Client.PostAsync(new Uri("/healthz", UriKind.Relative), null);
 
@@ -52,12 +56,44 @@ public sealed class ErrorHeadersTests
         await Assert.That(wrongMethod.Content.Headers.Allow).Contains("GET");
     }
 
-    private sealed class CancelledShapes : IShapeService
+    // Only GetCollectionAsync is cancelled independently of the request; everything else passes through.
+    private sealed class CancelledCollections(IDocumentService inner) : IDocumentService
     {
-        public ValueTask<ShapeReadResult> ReadAsync(ShapeRequest request, CancellationToken cancellationToken, bool drainOnCancellation = false)
+        public ValueTask<CollectionResult> GetCollectionAsync(TenantContext database, string name, CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            return ValueTask.FromCanceled<ShapeReadResult>(new CancellationToken(canceled: true));
+            return ValueTask.FromCanceled<CollectionResult>(new CancellationToken(canceled: true));
         }
+
+        public ValueTask<CollectionResult> CreateCollectionAsync(TenantContext database, string name, CancellationToken cancellationToken) =>
+            inner.CreateCollectionAsync(database, name, cancellationToken);
+
+        public ValueTask<Found<CollectionPage>> ListCollectionsAsync(TenantContext database, string? afterName, int limit, CancellationToken cancellationToken) =>
+            inner.ListCollectionsAsync(database, afterName, limit, cancellationToken);
+
+        public ValueTask<CollectionResult> DropCollectionAsync(TenantContext database, string name, CancellationToken cancellationToken) =>
+            inner.DropCollectionAsync(database, name, cancellationToken);
+
+        public ValueTask<DocumentRead> GetAsync(DocumentKey key, CancellationToken cancellationToken) => inner.GetAsync(key, cancellationToken);
+
+        public ValueTask<QueryResult> QueryAsync(TenantContext database, DocumentQuery query, long? countLimit, CancellationToken cancellationToken) =>
+            inner.QueryAsync(database, query, countLimit, cancellationToken);
+
+        public ValueTask<WriteOutcome> WriteAsync(
+            TenantContext database, IReadOnlyList<DocumentOperation> operations, bool indexErrors, CancellationToken cancellationToken) =>
+            inner.WriteAsync(database, operations, indexErrors, cancellationToken);
+
+        public ValueTask<ApplyOutcome> ApplyAsync(IStorageTransaction transaction, DocumentOperation operation, CancellationToken cancellationToken) =>
+            inner.ApplyAsync(transaction, operation, cancellationToken);
+
+        public ValueTask<QueryResult> QueryAsync(
+            IStorageTransaction transaction, DocumentQuery query, long? countLimit, CancellationToken cancellationToken, QueryObservation? observation = null) =>
+            inner.QueryAsync(transaction, query, countLimit, cancellationToken, observation);
+
+        public ValueTask<CollectionSchemaResult> GetCollectionSchemaAsync(TenantContext database, string name, CancellationToken cancellationToken) =>
+            inner.GetCollectionSchemaAsync(database, name, cancellationToken);
+
+        public ValueTask<CollectionSchemaResult> SetCollectionSchemaAsync(TenantContext database, string name, JsonElement? schema, CancellationToken cancellationToken) =>
+            inner.SetCollectionSchemaAsync(database, name, schema, cancellationToken);
     }
 }

@@ -190,7 +190,7 @@ public sealed class UsageApiTests
         await using var api = await ManagementApi.StartAsync(time: time);
         var first = await api.CreateManagedDatabaseAsync("first");
         var second = await api.CreateManagedDatabaseAsync(first.Organization, first.Project, "second");
-        using var data = await api.CreateClientAsync(first.Organization, "documents:read", "documents:write", "shapes:read");
+        using var data = await api.CreateClientAsync(first.Organization, "documents:read", "documents:write");
         var meter = api.Server.Services.GetRequiredService<UsageMeter>();
 
         // 10:30: N reads and M writes, saved by a flush.
@@ -203,7 +203,7 @@ public sealed class UsageApiTests
 
         await meter.FlushAsync(CancellationToken.None);
 
-        // 11:30: more, still in memory; a SQL run and a shape read are one read each, whatever they return.
+        // 11:30: more, still in memory; a SQL run is one read, whatever it returns.
         time.Advance(TimeSpan.FromHours(1));
         var (laterWrites, laterReads) = (Faker.Random.Int(1, 3), Faker.Random.Int(1, 3));
         await WriteAsync(data, first, "people", laterWrites);
@@ -213,13 +213,8 @@ public sealed class UsageApiTests
         }
 
         (await api.Client.PostAsJsonAsync(Uri(first.Path + "/sql"), new { sql = "SELECT * FROM people" })).EnsureSuccessStatusCode();
-        using (var shape = await data.GetAsync(Uri($"{first.Data}/collections/people/shape?offset=-1")))
-        {
-            await Assert.That(shape.StatusCode).IsEqualTo(HttpStatusCode.TemporaryRedirect);
-        }
-
         await WriteAsync(data, second, "people", 1);
-        laterReads += 2;
+        laterReads += 1;
 
         var hours = $"?granularity=hour&from=2026-10-06T10:00:00Z&to=2026-10-06T12:00:00Z";
         var database = await api.Client.GetFromJsonAsync<JsonElement>(Uri(first.Path + "/usage" + hours));

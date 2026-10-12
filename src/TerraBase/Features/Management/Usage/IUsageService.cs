@@ -23,7 +23,7 @@ public sealed record UsagePoint(DateTimeOffset Start, long Reads, long Writes);
 /// <param name="LogicalBytes">Metered logical storage: JSON bytes of the live documents.</param>
 /// <param name="Collections">Collections in the database.</param>
 /// <param name="Documents">Live documents stored.</param>
-/// <param name="Reads">Document reads since the database was created: gets, and list, query and shape pages, and SQL runs.</param>
+/// <param name="Reads">Document reads since the database was created: gets, and list and query pages, and SQL runs.</param>
 /// <param name="Writes">Document writes since the database was created: committed puts, patches and deletes, including each one of a transaction.</param>
 /// <param name="Period">Reads and writes over the requested period.</param>
 /// <param name="Series">One point per bucket of the period, oldest first; empty for an item of a project.</param>

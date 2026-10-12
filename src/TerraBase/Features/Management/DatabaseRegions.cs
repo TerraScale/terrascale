@@ -1,4 +1,3 @@
-using Microsoft.AspNetCore.Authorization;
 using TerraBase.Configuration;
 using TerraBase.Errors;
 using TerraBase.Features.ApiKeys;
@@ -94,14 +93,6 @@ public static class DatabaseRegions
     // for an API key that reaches it. Anything else is left to the endpoint, which answers 404.
     private static async ValueTask<FindDatabaseRecordResult> RecordAsync(HttpContext context, string project, string database)
     {
-        // Subscriptions end at signed expiration without authentication skew; their endpoint returns 401.
-        if (context.GetEndpoint()?.Metadata.GetMetadata<IAuthorizeData>()?.Policy == UserAuthExtensions.SubscriptionPolicy
-            && context.Features.Get<ProjectToken>() is { } token
-            && token.ExpiresAt <= context.RequestServices.GetRequiredService<TimeProvider>().GetUtcNow())
-        {
-            return new NotFound();
-        }
-
         var management = context.RequestServices.GetRequiredService<IManagementService>();
         if (context.Request.RouteValues.TryGetValue("organization", out var organization) && organization is string organizationId)
         {
