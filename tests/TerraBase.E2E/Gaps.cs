@@ -17,15 +17,10 @@ internal static class Gaps
         ["E13"] = "home region and live move (R11)",
         ["E15"] = "the changes feed (R8) over peer streams (R4a)",
 
-        // CrashAndStallE2ETests.
-        ["crash-replicated"] = "node processes as regions in the harness (region identity and peer addresses off Fly)",
-
         // RepairAndContractE2ETests.
         ["anti-entropy-repair"] = "anti-entropy (R6) over peer streams fed by the CDC source (R3)",
         ["restore-older-state"] = "refill and anti-entropy (R6) over peer streams fed by the CDC source (R3)",
-        ["unique-under-partition"] = "the unique-loser rule on replicated applies (design section 9): after the heal gru answers 409 for the larger id, sjc still serves it",
         ["deleted-database-stays-deleted"] = "the catalog as a lattice database (R10a) and garbage collection (R7)",
-        ["replication-metrics"] = "the CDC tail lag metric terrabase_replication_tail_lag (design section 18; R3 publishes send and ack lag only)",
         ["ddl-replication"] = "index, schema and drop replication through the metadata documents (design section 5): an index made in gru never reaches sjc",
     };
 
