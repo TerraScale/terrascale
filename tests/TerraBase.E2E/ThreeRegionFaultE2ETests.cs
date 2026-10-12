@@ -17,6 +17,7 @@ public sealed class ThreeRegionFaultE2ETests
     private static readonly string[] All = [Cluster.Gru, Cluster.Sjc, Cluster.Fra];
 
     [Test]
+    [Scenario(Nodes.InProcess, Faults.SimulatedPartition)]
     public async Task Partitioned_region_keeps_accepting_writes_and_converges_after_the_partition_heals()
     {
         Skip.When(Cluster.FlyRequested, "Fly has no way to cut 6PN between two machines; the partition runs on the local nodes only");
@@ -63,6 +64,7 @@ public sealed class ThreeRegionFaultE2ETests
     }
 
     [Test]
+    [Scenario(Nodes.InProcess, Faults.NodeStop)]
     public async Task Region_down_then_back_catches_up_on_every_write_made_while_it_was_down()
     {
         SkipOnFlyUnlessOutageRun();
@@ -95,6 +97,7 @@ public sealed class ThreeRegionFaultE2ETests
     }
 
     [Test]
+    [Scenario(Nodes.InProcess, Faults.NodeStop)]
     public async Task Restart_in_the_middle_of_replication_loses_no_write()
     {
         SkipOnFlyUnlessOutageRun();
@@ -125,6 +128,7 @@ public sealed class ThreeRegionFaultE2ETests
     // Acknowledged writes survive their writer going down at once. Locally the node stops cleanly (disposal) and on Fly
     // the machine is stopped: neither is a crash, so ack-then-crash durability stays a missing scenario (COVERAGE.md).
     [Test]
+    [Scenario(Nodes.InProcess, Faults.NodeStop)]
     public async Task Writes_acknowledged_just_before_their_region_stops_reach_every_region_after_it_returns()
     {
         SkipOnFlyUnlessOutageRun();
@@ -147,6 +151,7 @@ public sealed class ThreeRegionFaultE2ETests
     // The writer restarts while a region is away, so its unsent changes must survive the restart and reach that region
     // when it returns, with no new write to trigger a send (the old suite's hinted-handoff test).
     [Test]
+    [Scenario(Nodes.InProcess, Faults.NodeStop)]
     public async Task A_restarted_region_replays_its_backlog_to_a_region_that_returns()
     {
         SkipOnFlyUnlessOutageRun();
@@ -182,6 +187,7 @@ public sealed class ThreeRegionFaultE2ETests
 
     // fra is cut off while gru and sjc take 3000 writes, then the backlog drains.
     [Test]
+    [Scenario(Nodes.InProcess, Faults.SimulatedPartition)]
     public async Task Replication_backlog_of_3000_writes_drains_after_the_region_returns()
     {
         Skip.When(Cluster.FlyRequested, "the backlog builds behind a partition, which runs on the local nodes only");
@@ -206,6 +212,7 @@ public sealed class ThreeRegionFaultE2ETests
     // A causally later write must win however the two writers' clocks disagree: the stamp of a write is above every
     // stamp the document holds (design section 3), so a clock behind cannot lose a write made after seeing the newer one.
     [Test]
+    [Scenario(Nodes.InProcess, Faults.ClockSkew)]
     [Arguments(Cluster.Sjc, 2000)]
     [Arguments(Cluster.Fra, -2000)]
     public async Task Causally_later_write_wins_everywhere_despite_clock_skew(string skewed, int skewMilliseconds)
@@ -232,6 +239,7 @@ public sealed class ThreeRegionFaultE2ETests
     // last-writer-wins choice (design section 3, skew bound). Without the partition a region could see sjc's write
     // first and stamp after it, which is a causal overwrite, not a concurrent one.
     [Test]
+    [Scenario(Nodes.InProcess, Faults.ClockSkew | Faults.SimulatedPartition)]
     public async Task Concurrent_writes_with_a_clock_2_s_ahead_converge_and_the_writer_ahead_wins()
     {
         Skip.When(Cluster.FlyRequested, "clock skew and partitions are set on the local nodes only");

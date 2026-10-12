@@ -12,6 +12,7 @@ namespace TerraBase.E2E;
 public sealed class ReplicationE2ETests
 {
     [Test]
+    [Scenario(Nodes.InProcess)]
     public async Task Write_in_gru_is_readable_in_sjc_with_the_same_content()
     {
         await Gaps.RunAsync("E1", async () =>
@@ -28,6 +29,7 @@ public sealed class ReplicationE2ETests
     }
 
     [Test]
+    [Scenario(Nodes.InProcess)]
     public async Task Write_in_sjc_is_readable_in_gru_with_the_same_content()
     {
         await Gaps.RunAsync("E2", async () =>
@@ -44,6 +46,7 @@ public sealed class ReplicationE2ETests
     }
 
     [Test]
+    [Scenario(Nodes.InProcess)]
     public async Task Concurrent_writes_to_the_same_field_converge_to_one_identical_value()
     {
         await Gaps.RunAsync("E3", async () =>
@@ -65,6 +68,7 @@ public sealed class ReplicationE2ETests
     }
 
     [Test]
+    [Scenario(Nodes.InProcess)]
     public async Task Concurrent_writes_to_different_fields_both_survive_expected_to_fail_until_per_field_lattice()
     {
         await Gaps.RunAsync("E4", async () =>
@@ -90,6 +94,7 @@ public sealed class ReplicationE2ETests
     }
 
     [Test]
+    [Scenario(Nodes.InProcess)]
     public async Task Delete_in_one_region_and_edit_in_the_other_converge_to_the_same_state()
     {
         await Gaps.RunAsync("E5", async () =>
@@ -111,6 +116,7 @@ public sealed class ReplicationE2ETests
     }
 
     [Test]
+    [Scenario(Nodes.InProcess)]
     public async Task Bulk_1000_documents_split_across_regions_have_matching_counts_and_checksums()
     {
         await Gaps.RunAsync("E6", async () =>
