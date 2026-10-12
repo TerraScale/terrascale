@@ -42,6 +42,9 @@ func startProbes(ctx context.Context, r *Runner, every time.Duration) *probes {
 	}
 	coll := r.collection + "-probe"
 	for _, from := range r.regions {
+		if !r.cfg.writes(from.Name) {
+			continue
+		}
 		p.wg.Go(func() {
 			tick := time.NewTicker(every)
 			defer tick.Stop()

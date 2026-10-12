@@ -685,6 +685,13 @@ dashboards and alerts already query those names.
    (`SnapshotAsync`, `ChangesAsync`, `CompileSnapshot`, `CompileChanges`), and `shape-reads.md` and
    `subscriptions.md`. It leaves the on-disk format unchanged. ts-auth stopped issuing `shapes:read` afterwards; TerraBase
    ignores scopes it does not know.
+2. R2c-2 deletes the per-collection polling feed: `GET …/collections/{c}/changes`, `IChangeFeedService`,
+   `CollectionChangePage` and `ReadCollectionChangesAsync`, and the storage that only served the feed and shapes:
+   `change_log` (with every write's history append and the drop's history rewrite), `shape_history`,
+   the collections' `generation` column (T1 had already removed `change_log_births`, `change_log_high`, their trigger
+   and `change_log_by_document`) and `change-feeds.md`. This is an on-disk format change. `collections` and `commit_offset`
+   stay: collection metadata and the commit offset of write responses still read them, so both stay reserved
+   collection names.
 
 Kept: `StampingStorageEngine`, which still drives the document read cache's invalidation (`IWriteStamps`), and the
 preconditions (`If-Match`, `If-None-Match: *`, transaction `assert`), which ts-auth's stores depend on through
@@ -770,6 +777,53 @@ store closes), with `PRAGMA capture_data_changes_conn('after')` on from its open
   all consumers' positions (the tap's anchor, `_tb_tail`, the peers' `acked`); move that into one place on the store.
 - **Writes outside the writer.** None. A second connection that writes a file breaks Turso (the spike) and is invisible
   to change capture. Tests that need one hold the writer gate (`StorageFixture.ExecuteWhileWriterHeldAsync`).
+
+**R3 as built** (2026-10-12, on T1's Turso engine; no storage format change):
+
+- `TursoChangeGroupSource` (`Engine/Sqlite`, registered with the engine) replaces `NoChangeGroupSource`, which is deleted.
+  There is no tailer pass and no `_tb_tail`: `turso_cdc` is the outbox, and `ReadAsync` rebuilds groups from it on a
+  pooled read connection (never the writer), in pages of 4096 rows, up to the last COMMIT row. After-images are decoded
+  from SQLite's record format in C# (T1's `SqliteRecord`), so no `bin_record_json_object` and no `CASE` guard are needed.
+  A file this machine never wrote has no `turso_cdc` and yields nothing.
+- **Groups.** One group per Turso transaction holding at least one `_tb_state` row of this machine (same region and
+  member, any epoch: a write committed before an unclean restart is still unsent), `change_id` = the transaction's COMMIT
+  row. Each local state row pairs with the last insert or update of that document's collection row before it in the
+  transaction; a state with `live = 0` needs no image. The delta is `DecodeStored(state, doc).DeltaAt(stamp)`. Joined
+  rows (another node's origin) and repairs (origin 0) are skipped, so nothing echoes. Rows of other tables are ignored.
+- **Bounds at write time**, so a group stays one atomic transaction (instead of splitting at read time): a client write
+  transaction holds at most 1024 local state rows and 2 MiB of collections, ids, stored states and documents
+  (`IStorageTransaction.MaxChangeGroupChanges`/`MaxChangeGroupBytes`). Past that, a transaction alone fails with
+  `ChangeGroupCapacityException` (the existing 503 `capacity` answer); a group commit write that would push a
+  shared transaction past it moves to the next batch (`LimitsReached`). One document of up to 1 MiB always fits.
+- **Cursors.** `_tb_peers.acked`, written with capture suspended (the tailer's bookkeeping, in no backup). A peer's first
+  `AckedAsync` gives it a row at 0, so it holds retention from first contact. An `acked` above the file's newest change id
+  came from another file's `turso_cdc` (a restore or a copy) and resets to 0; peers then re-send what is retained, and the
+  joins are idempotent.
+- **Retention** (`SqliteStorageTransaction.Retention`, run after every ack and by the backup tap's trim): delete below the
+  newest COMMIT row that is at or below every peer's `acked` (peers heard from in the last 24 h), at or below the backup
+  tap's anchor, and, once the database has a `_tb_peers` row, at least 60 s old by the host clock (Turso's `change_time`
+  is Unix seconds). The hold covers a peer whose stream has not reached the database yet; a database without peers keeps
+  nothing back. A peer that never reached a new database before its first trim relies on refill (R6). Deleting below a
+  COMMIT row keeps whole transactions and the newest row.
+- **Clocks.** Stamps (`MemberClock`) and retention read the host clock (`SqliteStorageEngine.HostTime`), not the query
+  deadline's clock, which tests may freeze: until R3, the e2e harness's frozen deadline clock also froze every stamp, so its
+  clock-skew scenarios never skewed anything.
+- **Wake-up.** `ChangedAsync` completes at the engine's next committed write. A per-file cache of change id ranges
+  without local groups keeps a replica that mostly joins remote writes from rescanning them on every pass.
+- **PeerStreams** now reconnects after any stream failure, not only transport errors: a storage exception from the source
+  (for example `StorageBusyException`) used to end that peer's loop until the process restarted.
+- Metrics: `terrabase.replication.cdc_backlog` (CDC rows left after each database's last ack, summed) and
+  `terrabase.replication.tail_lag`: the age of the oldest local commit that a peer heard from in the last 24 h has not
+  acknowledged, max over databases. It is looked at after acks (at most once a second per database) and every 5 s for
+  each database a peer stream reached, so it keeps growing while the only peer is away. There is no tailer pass: every
+  commit is readable as a group at once.
+- **Peer leaves the machine list.** `PeerStreams` drops a link whose machine is no longer listed at its next membership
+  refresh (5 s), ending the open stream (`PeerStreamTests`); the peer resumes from its ack once it is listed again.
+- Not in R3: `_tb_feed` (R8), Merkle folding (R6), the 1 GiB retention cut and per-database readiness (R6).
+
+R2a is built on the Microsoft.Data.Sqlite engine and writes only SQL that Turso accepts (rowid tables for every new
+table, plain `INSERT`/`UPDATE`/`DELETE` on captured tables). The engine swap (1b, PR #21) lands separately: on Turso,
+174 Fast tests fail, most of them in continuous backup, which reads SQLite's WAL directly.
 
 **Order and parallelism:**
 

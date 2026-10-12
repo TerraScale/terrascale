@@ -40,10 +40,10 @@ service ownership decided by the user on 2026-10-06
    ts-dashboard after a token exchange, and API keys after the SDK exchanges them through client credentials.
    TerraBase validates each token offline:
    - `typ` is `at+jwt` or `application/at+jwt`, and the token is ES256-signed by a `kid` from the issuer's JWKS;
-   - `iss` is exactly the configured `auth-issuer`. In production that can only be `https://auth.terrascale.tech/terrascale`, the
-     one issuer ts-auth uses in every region (there is no regional issuer), with `auth-audience` including
-     `https://api.terrascale.tech`; `ts-terrabase` refuses to start with any other pair (`TerraBaseOptions.PlatformAuthIssuer`/`PlatformAuthAudience`).
-     Setting the pair is still the user-approved activation of ts-auth trust (not done on Fly);
+   - `iss` is exactly the configured `auth-issuer` (`https://auth.terrascale.tech/terrascale`: ts-auth issues this one issuer in every region).
+     In production `auth-audience` must include `https://api.terrascale.tech`, and `ts-terrabase` refuses to start with any other
+     pair (`TerraBaseOptions.PlatformAuthIssuer`/`PlatformAuthAudience`). Setting the pair is still the user-approved activation
+     of ts-auth trust (not done on Fly);
      project tenants' issuers are never trusted: those customer end-user tokens authenticate customer
      applications, while a **project access token** for TerraBase uses the trusted platform issuer and carries `project_id`;
    - `aud` includes TerraBase's audience, and `exp` and `nbf` hold with 30 seconds of skew;
@@ -235,8 +235,8 @@ rejects invalid SQL with `400 invalid_request`. It does not execute or meter the
 
 ### Live
 
-There are no live routes. Slice R2c deleted shape reads (`C/shape`), SSE subscriptions (`C/subscribe`) and the
-`shapes:read` scope; both routes now return `404`. The database change stream (`GET D/changes`, slice R8 of
+There are no live routes. Slice R2c deleted shape reads (`C/shape`), SSE subscriptions (`C/subscribe`), the
+per-collection polling feed (`C/changes`) and the `shapes:read` scope; those routes now return `404`. The database change stream (`GET D/changes`, slice R8 of
 [multi-region replication](multi-region-replication.md)) replaces them.
 
 ## System

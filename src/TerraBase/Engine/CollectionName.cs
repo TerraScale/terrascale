@@ -6,10 +6,9 @@ namespace TerraBase.Engine;
 /// </summary>
 public static class CollectionName
 {
-    // shortcut: the tables the shape history (R2c) still keeps under plain names; drop each name
-    // when its table goes or moves under _tb_.
-    private static readonly string[] Tables =
-        ["collections", "commit_offset", "shape_history", "change_log", "change_log_births", "change_log_high"];
+    // shortcut: collection metadata and commit offsets still live in plain-named engine tables; drop each name when its
+    // table goes or moves under _tb_.
+    private static readonly string[] Tables = ["collections", "commit_offset"];
 
     /// <summary>Whether <paramref name="name"/> is reserved.</summary>
     public static bool IsReserved(string name) =>

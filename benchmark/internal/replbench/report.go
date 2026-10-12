@@ -33,26 +33,28 @@ type Lag struct {
 
 // Result is everything one run recorded; it is written as JSON and as a markdown report.
 type Result struct {
-	Name        string                  `json:"name"`
-	Kind        string                  `json:"kind"`
-	Commit      string                  `json:"commit"`
-	WorkingTree string                  `json:"working_tree"` // "clean", or the SHA-256 of the uncommitted changes
-	Host        string                  `json:"host"`
-	Start       time.Time               `json:"start"`
-	End         time.Time               `json:"end"`
-	Regions     []string                `json:"regions"`
-	Machines    map[string]string       `json:"machines,omitempty"`
-	Config      map[string]any          `json:"config"`
-	Collection  string                  `json:"collection"`
-	LoadSeconds float64                 `json:"load_seconds"`
-	Writes      map[string]RegionWrites `json:"writes"`
-	Lag         map[string]Lag          `json:"lag"`
-	ProbeRead   Summary                 `json:"probe_read_latency"`
-	Convergence Convergence             `json:"convergence"`
-	Conflicts   ConflictOutcome         `json:"conflicts"`
-	Resources   Resources               `json:"resources"`
-	Errors      []string                `json:"errors,omitempty"`
-	NotTested   []string                `json:"not_tested"`
+	Name         string                  `json:"name"`
+	Kind         string                  `json:"kind"`
+	Commit       string                  `json:"commit"`
+	WorkingTree  string                  `json:"working_tree"` // "clean", or the SHA-256 of the uncommitted changes
+	Host         string                  `json:"host"`
+	Start        time.Time               `json:"start"`
+	End          time.Time               `json:"end"`
+	Regions      []string                `json:"regions"`
+	Machines     map[string]string       `json:"machines,omitempty"`
+	TerraBaseApp string                  `json:"terrabase_app,omitempty"`
+	TerraBaseOrg string                  `json:"terrabase_org,omitempty"`
+	Config       map[string]any          `json:"config"`
+	Collection   string                  `json:"collection"`
+	LoadSeconds  float64                 `json:"load_seconds"`
+	Writes       map[string]RegionWrites `json:"writes"`
+	Lag          map[string]Lag          `json:"lag"`
+	ProbeRead    Summary                 `json:"probe_read_latency"`
+	Convergence  Convergence             `json:"convergence"`
+	Conflicts    ConflictOutcome         `json:"conflicts"`
+	Resources    Resources               `json:"resources"`
+	Errors       []string                `json:"errors,omitempty"`
+	NotTested    []string                `json:"not_tested"`
 }
 
 // Collect fills the load's part of a result from the runner.

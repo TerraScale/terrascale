@@ -16,9 +16,10 @@ using TerraBase.Testing;
 namespace TerraBase.Fast.Replication;
 
 /// <summary>
-/// Peer streams between real machines over their internal listeners (docs/terrabase/multi-region-replication.md sections 8
-/// and 9). Each machine's change groups come from a <see cref="FakeChangeGroupSource"/> until the CDC tailer (R3) lands: a
-/// test commits deltas on a machine through the engine's join, as a local write would, and adds the same group to its source.
+/// Peer streams between real machines over their internal listeners (docs/terrabase/multi-region-replication.md sections 7
+/// to 9). A cluster either reads each machine's change groups from <c>turso_cdc</c> through the CDC tailer, as production
+/// does, or from a <see cref="FakeChangeGroupSource"/>: a test then commits deltas on a machine through the engine's join, as
+/// a local write would, and adds the same group to its source.
 /// </summary>
 public sealed class PeerStreamTests
 {
@@ -114,8 +115,211 @@ public sealed class PeerStreamTests
         await Assert.That(error!.StatusCode).IsEqualTo(StatusCode.InvalidArgument);
     }
 
+    [Test]
+    public async Task Three_regions_converge_from_local_writes_through_the_cdc_tailer()
+    {
+        await using var cluster = await Cluster.StartAsync(cdc: true, "gru", "sjc", "fra");
+        var (gru, sjc, fra) = (cluster["gru"], cluster["sjc"], cluster["fra"]);
+        var (shared, gone, sjcOwn) = (EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString());
+
+        // gru creates the collection and two documents in one transaction; once they reached every region, sjc and fra
+        // edit different fields of one of them at once, sjc writes a document of its own and fra deletes the other.
+        await gru.WriteAsync(async transaction =>
+        {
+            _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
+            _ = await transaction.PutAsync("items", shared, Json("""{"a":"gru","b":"gru"}"""), CancellationToken.None);
+            _ = await transaction.PutAsync("items", gone, Json("""{"n":1}"""), CancellationToken.None);
+        });
+        foreach (var machine in cluster.Machines)
+        {
+            await Assert.That(await machine.UntilAsync(gone, """{"n":1}""")).IsTrue().Because(machine.Region);
+        }
+
+        var stamp = Stamp();
+        await Task.WhenAll(
+            sjc.CommitAsync(Set(sjc, stamp, shared, "a", "\"sjc\"")),
+            fra.CommitAsync(Set(fra, stamp, shared, "b", "\"fra\"")),
+            sjc.WriteAsync(async transaction => await transaction.PutAsync("items", sjcOwn, Json("""{"s":1}"""), CancellationToken.None)),
+            fra.WriteAsync(async transaction => await transaction.TombstoneAsync("items", gone, CancellationToken.None)));
+
+        foreach (var machine in cluster.Machines)
+        {
+            await Assert.That(await machine.UntilAsync(shared, """{"a":"sjc","b":"fra"}""")).IsTrue().Because(machine.Region);
+            await Assert.That(await machine.UntilAsync(sjcOwn, """{"s":1}""")).IsTrue().Because(machine.Region);
+            await Assert.That(await machine.UntilAbsentAsync(gone)).IsTrue().Because(machine.Region);
+        }
+
+        const string Ok = """{"region":"gru","status":"ok","maxLagSeconds":0,"peers":[{"region":"fra","status":"ok","lagSeconds":0},{"region":"sjc","status":"ok","lagSeconds":0}]}""";
+        await Assert.That(await gru.HealthAsync(Ok)).IsEqualTo(Ok);
+    }
+
+    [Test]
+    public async Task The_cdc_tailer_ships_one_group_per_transaction_never_echoes_and_drops_what_every_peer_acked()
+    {
+        var clock = new ShiftedTime();
+        await using var cluster = await Cluster.StartAsync(cdc: true, clock, "gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var (first, second) = (EntityIds.New().ToString(), EntityIds.New().ToString());
+
+        // One transaction: a document rewritten three times, then a second one. Its group holds one delta per document,
+        // with the value of the last write, and the collection's metadata document.
+        var store = await gru.StoreAsync();
+        await using (var transaction = await store.BeginTransactionAsync(write: true, CancellationToken.None))
+        {
+            _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
+            _ = await transaction.PutAsync("items", first, Json("""{"n":1}"""), CancellationToken.None);
+            _ = await transaction.PutAsync("items", first, Json("""{"n":2}"""), CancellationToken.None);
+            _ = await transaction.PutAsync("items", second, Json("""{"m":1}"""), CancellationToken.None);
+            _ = await transaction.PutAsync("items", first, Json("""{"n":3}"""), CancellationToken.None);
+            _ = await transaction.CommitAsync(CancellationToken.None);
+        }
+
+        var groups = await gru.Groups.ReadAsync(cluster.Database, 0, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, CancellationToken.None);
+        await Assert.That(groups.Count).IsEqualTo(1);
+        await Assert.That(groups[0].Deltas.Select(delta => $"{delta.Collection}/{delta.Id}").Order(StringComparer.Ordinal))
+            .IsEquivalentTo(new[] { $"{DocumentDelta.Collections}/items", $"items/{first}", $"items/{second}" }.Order(StringComparer.Ordinal));
+        var delta = groups[0].Deltas.Single(delta => delta.Id == first);
+        await Assert.That(Encoding.UTF8.GetString(delta.State.Materialize()!)).IsEqualTo("""{"n":3}""");
+        await Assert.That(delta.State.MaxStamp).IsEqualTo(delta.Stamp);
+
+        // sjc joined both documents: its own tailer finds no group to send back, though its CDC holds the joined rows.
+        await Assert.That(await sjc.UntilAsync(first, """{"n":3}""")).IsTrue();
+        await Assert.That(await sjc.Groups.ReadAsync(cluster.Database, 0, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, CancellationToken.None)).IsEmpty();
+
+        // sjc acked the group, but gru keeps it for 60 s: a peer whose stream has not reached the database yet needs it.
+        await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjc.Node, groups[0].ChangeId)).IsTrue();
+        await Assert.That((await gru.Groups.ReadAsync(cluster.Database, 0, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, CancellationToken.None)).Count).IsEqualTo(1);
+
+        // Two minutes on, the next acknowledged group drops everything below its commit: nothing is left to send.
+        clock.Offset = TimeSpan.FromMinutes(2);
+        await gru.WriteAsync(async transaction => await transaction.PutAsync("items", second, Json("""{"m":2}"""), CancellationToken.None));
+        await Assert.That(await sjc.UntilAsync(second, """{"m":2}""")).IsTrue();
+        await Assert.That(await gru.UntilAckedAsync(cluster.Database, sjc.Node, groups[0].ChangeId + 1)).IsTrue();
+        await Assert.That(await gru.Groups.ReadAsync(cluster.Database, 0, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, CancellationToken.None)).IsEmpty();
+    }
+
+    [Test]
+    public async Task Group_commit_keeps_every_cdc_group_within_its_bounds()
+    {
+        await using var cluster = await Cluster.StartAsync(cdc: true, "gru");
+        var gru = cluster["gru"];
+        await gru.WriteAsync(async transaction => await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None));
+
+        // Eight queued writes of a 700 KiB document each: group commit batches them, and moves a write that would take its
+        // transaction's group past 2 MiB to the next batch instead of failing it.
+        var body = Json($$"""{"pad":"{{new string('x', 700 * 1024)}}"}""");
+        await Task.WhenAll(Enumerable.Range(0, 8).Select(_ =>
+            gru.WriteAsync(async transaction => await transaction.PutAsync("items", EntityIds.New().ToString(), body, CancellationToken.None))));
+
+        // Three 900 KiB documents in one transaction are refused: its group would pass 2 MiB.
+        var store = await gru.StoreAsync();
+        await using (var transaction = await store.BeginTransactionAsync(write: true, CancellationToken.None))
+        {
+            var large = Json($$"""{"pad":"{{new string('y', 900 * 1024)}}"}""");
+            for (var i = 0; i < 3; i++)
+            {
+                _ = await transaction.PutAsync("items", EntityIds.New().ToString(), large, CancellationToken.None);
+            }
+
+            await Assert.ThrowsAsync<ChangeGroupCapacityException>(() => transaction.CommitAsync(CancellationToken.None).AsTask());
+        }
+
+        List<OriginGroup> groups = [];
+        for (var after = 0L; ;)
+        {
+            var page = await gru.Groups.ReadAsync(cluster.Database, after, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, CancellationToken.None);
+            if (page.Count == 0)
+            {
+                break;
+            }
+
+            groups.AddRange(page);
+            after = page[^1].ChangeId;
+        }
+
+        await Assert.That(groups.Sum(group => group.Deltas.Count)).IsEqualTo(9);
+        await Assert.That(groups.Max(group => group.Deltas.Count)).IsLessThanOrEqualTo(2);
+        await Assert.That(groups.Select(group => group.ChangeId)).IsOrderedBy(id => id);
+    }
+
+    [Test]
+    public async Task A_restarted_sender_resumes_each_peer_from_its_persisted_ack()
+    {
+        await using var cluster = await Cluster.StartAsync(cdc: true, "gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var id = EntityIds.New().ToString();
+        await gru.WriteAsync(async transaction =>
+        {
+            _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
+            _ = await transaction.PutAsync("items", id, Json("""{"n":1}"""), CancellationToken.None);
+        });
+        await Assert.That(await sjc.UntilAsync(id, """{"n":1}""")).IsTrue();
+
+        // Written while sjc is down, then gru restarts too: gru reads sjc's ack back from the file and ships the rest.
+        await sjc.StopAsync();
+        var stamp = Stamp();
+        await gru.CommitAsync(Set(gru, stamp, id, "n", "2"));
+        await gru.CommitAsync(Set(gru, stamp + 1, id, "m", "3"));
+        await gru.StopAsync();
+        await gru.StartAsync();
+        await sjc.StartAsync();
+
+        await Assert.That(await sjc.UntilAsync(id, """{"m":3,"n":2}""")).IsTrue();
+    }
+
+    [Test]
+    public async Task A_peer_that_leaves_the_machine_list_loses_its_open_stream_until_it_is_listed_again()
+    {
+        await using var cluster = await Cluster.StartAsync(cdc: true, "gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var (first, second) = (EntityIds.New().ToString(), EntityIds.New().ToString());
+        await gru.WriteAsync(async transaction =>
+        {
+            _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
+            _ = await transaction.PutAsync("items", first, Json("""{"n":1}"""), CancellationToken.None);
+        });
+        await Assert.That(await sjc.UntilAsync(first, """{"n":1}""")).IsTrue();
+        await Assert.That(await gru.UntilStreamsAsync(["sjc"])).IsTrue();
+
+        // sjc leaves the list (as Fly's DNS drops a stopped machine): within a heartbeat gru closes its open stream to it.
+        var member = (await cluster.Members.ListAsync(CancellationToken.None)).Single(listed => listed.Region == "sjc");
+        cluster.Members.Leave(member.Name);
+        await Assert.That(await gru.UntilStreamsAsync([])).IsTrue();
+        await gru.WriteAsync(async transaction => await transaction.PutAsync("items", second, Json("""{"n":2}"""), CancellationToken.None));
+        await Task.Delay(TimeSpan.FromSeconds(2));
+        await Assert.That(await sjc.ReadAsync(second)).IsNull();
+
+        // Listed again, it gets a new stream, which resumes from its ack.
+        cluster.Members.Join(member);
+        await Assert.That(await sjc.UntilAsync(second, """{"n":2}""")).IsTrue();
+    }
+
+    [Test]
+    public async Task Tail_lag_grows_while_the_only_peer_is_away_and_returns_to_zero_once_it_acknowledged()
+    {
+        await using var cluster = await Cluster.StartAsync(cdc: true, "gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var id = EntityIds.New().ToString();
+        await gru.WriteAsync(async transaction =>
+        {
+            _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
+            _ = await transaction.PutAsync("items", id, Json("""{"n":1}"""), CancellationToken.None);
+        });
+        await Assert.That(await sjc.UntilAsync(id, """{"n":1}""")).IsTrue();
+
+        await sjc.StopAsync();
+        await gru.WriteAsync(async transaction => await transaction.PutAsync("items", id, Json("""{"n":2}"""), CancellationToken.None));
+        await Assert.That(await gru.UntilMetricAsync("terrabase_replication_tail_lag_seconds", value => value >= 1)).IsTrue();
+
+        await sjc.StartAsync();
+        await Assert.That(await sjc.UntilAsync(id, """{"n":2}""")).IsTrue();
+        await Assert.That(await gru.UntilMetricAsync("terrabase_replication_tail_lag_seconds", value => value == 0)).IsTrue();
+    }
+
     // The first stamp of a test: now, so convergence lags stay meaningful; later operations add logical ticks.
     private static ulong Stamp() => (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() << 16;
+
+    private static ReadOnlyMemory<byte> Json(string json) => Encoding.UTF8.GetBytes(json);
 
     private static ChangeDelta Put(Machine machine, ulong stamp, string id, string json) => Put(machine.Node, stamp, id, json);
 
@@ -150,13 +354,23 @@ public sealed class PeerStreamTests
 
         public TenantContext Database { get; } = new(EntityIds.New().ToString(), PlanTier.Hobby, EntityIds.New().ToString(), EntityIds.New().ToString());
 
+        // Whether the machines keep their CDC tailer as the change group source, instead of a fake.
+        public bool Cdc { get; private init; }
+
+        // The machines' host clock, which stamps and CDC retention read, when a test moves it forward.
+        public ShiftedTime? Clock { get; private init; }
+
         public IEnumerable<Machine> Machines => _machines.Values;
 
         public Machine this[string region] => _machines[region];
 
-        public static async Task<Cluster> StartAsync(params string[] regions)
+        public static Task<Cluster> StartAsync(params string[] regions) => StartAsync(cdc: false, regions);
+
+        public static Task<Cluster> StartAsync(bool cdc, params string[] regions) => StartAsync(cdc, clock: null, regions);
+
+        public static async Task<Cluster> StartAsync(bool cdc, ShiftedTime? clock, params string[] regions)
         {
-            var cluster = new Cluster();
+            var cluster = new Cluster { Cdc = cdc, Clock = clock };
             try
             {
                 foreach (var region in regions)
@@ -208,7 +422,14 @@ public sealed class PeerStreamTests
                 settings["region"] = Region;
                 settings["node-name"] = _name;
                 settings["data-directory"] = _directory;
-            }, services => services.AddSingleton<IMemberDirectory>(cluster.Members).AddSingleton<IChangeGroupSource>(Source));
+            }, services =>
+            {
+                services.AddSingleton<IMemberDirectory>(cluster.Members);
+                if (!cluster.Cdc)
+                {
+                    services.AddSingleton<IChangeGroupSource>(Source);
+                }
+            }, time: cluster.Clock);
             if (first)
             {
                 await RegisterAsync();
@@ -221,10 +442,17 @@ public sealed class PeerStreamTests
             _api = null;
         }
 
-        // Commits the deltas here, as a local write does, then hands them to the source as one group.
+        // The source the peer streams read: the CDC tailer, or the fake.
+        public IChangeGroupSource Groups => Api.Server.Services.GetRequiredService<IChangeGroupSource>();
+
+        public async Task<IDatabaseStore> StoreAsync() =>
+            await Engine.OpenDatabaseAsync(cluster.Database, CancellationToken.None) ?? throw new InvalidOperationException("the database is missing");
+
+        // Commits the deltas here, as a local write does, then hands them to the fake source as one group (the CDC tailer
+        // finds them itself).
         public async Task CommitAsync(params ChangeDelta[] deltas)
         {
-            var store = await Engine.OpenDatabaseAsync(cluster.Database, CancellationToken.None) ?? throw new InvalidOperationException("the database is missing");
+            var store = await StoreAsync();
             await using (var transaction = await store.BeginTransactionAsync(write: true, CancellationToken.None))
             {
                 foreach (var delta in deltas)
@@ -235,7 +463,21 @@ public sealed class PeerStreamTests
                 _ = await transaction.CommitAsync(CancellationToken.None);
             }
 
-            _ = Source.Add(cluster.Database, deltas);
+            if (!cluster.Cdc)
+            {
+                _ = Source.Add(cluster.Database, deltas);
+            }
+        }
+
+        // Runs `work` as one queued write of the database's group commit, as the document API does.
+        public async Task WriteAsync(Func<IStorageTransaction, Task> work)
+        {
+            var store = await StoreAsync();
+            _ = await store.WriteAsync(async (transaction, _) =>
+            {
+                await work(transaction);
+                return true;
+            }, static _ => true, CancellationToken.None);
         }
 
         // Whether the document's materialized JSON becomes `expected` within the deadline.
@@ -245,6 +487,80 @@ public sealed class PeerStreamTests
             while (DateTime.UtcNow < deadline)
             {
                 if (await ReadAsync(id) == expected)
+                {
+                    return true;
+                }
+
+                await Task.Delay(100);
+            }
+
+            return false;
+        }
+
+        // Whether `peer` acknowledges `changeId` within the deadline.
+        public async Task<bool> UntilAckedAsync(TenantContext database, ReplicaId peer, long changeId)
+        {
+            var deadline = DateTime.UtcNow + Deadline;
+            while (await Groups.AckedAsync(database, peer, CancellationToken.None) < changeId)
+            {
+                if (DateTime.UtcNow >= deadline)
+                {
+                    return false;
+                }
+
+                await Task.Delay(50);
+            }
+
+            return true;
+        }
+
+        // Whether the outbound streams that report connected become exactly `regions` within the deadline.
+        public async Task<bool> UntilStreamsAsync(string[] regions)
+        {
+            var deadline = DateTime.UtcNow + Deadline;
+            while (DateTime.UtcNow < deadline)
+            {
+                using var response = await Api.Server.Client.GetAsync(new Uri("/replication", UriKind.Relative));
+                var peers = JsonElement.Parse(await response.Content.ReadAsStringAsync()).GetProperty("peers").EnumerateArray()
+                    .Select(peer => peer.GetProperty("region").GetString()!).Order(StringComparer.Ordinal).ToArray();
+                if (peers.SequenceEqual(regions.Order(StringComparer.Ordinal)))
+                {
+                    return true;
+                }
+
+                await Task.Delay(100);
+            }
+
+            return false;
+        }
+
+        // Whether the scraped gauge `name` satisfies `holds` within the deadline.
+        public async Task<bool> UntilMetricAsync(string name, Func<double, bool> holds)
+        {
+            using var metrics = new HttpClient { BaseAddress = Api.Server.MetricsAddress };
+            var deadline = DateTime.UtcNow + Deadline;
+            while (DateTime.UtcNow < deadline)
+            {
+                var line = (await metrics.GetStringAsync(new Uri("/metrics", UriKind.Relative))).Split('\n')
+                    .FirstOrDefault(line => line.StartsWith(name, StringComparison.Ordinal) && !line.StartsWith(name + "_", StringComparison.Ordinal));
+                if (line is not null && double.TryParse(line[(line.LastIndexOf(' ') + 1)..], System.Globalization.CultureInfo.InvariantCulture, out var value) && holds(value))
+                {
+                    return true;
+                }
+
+                await Task.Delay(200);
+            }
+
+            return false;
+        }
+
+        // Whether the document is deleted, or never arrived, within the deadline.
+        public async Task<bool> UntilAbsentAsync(string id)
+        {
+            var deadline = DateTime.UtcNow + Deadline;
+            while (DateTime.UtcNow < deadline)
+            {
+                if (await ReadAsync(id) is null)
                 {
                     return true;
                 }
@@ -289,7 +605,7 @@ public sealed class PeerStreamTests
             Directory.Delete(_directory, recursive: true);
         }
 
-        private async Task<string?> ReadAsync(string id)
+        public async Task<string?> ReadAsync(string id)
         {
             if (await Engine.OpenDatabaseAsync(cluster.Database, CancellationToken.None) is not { } store)
             {
@@ -325,5 +641,19 @@ public sealed class PeerStreamTests
             using var response = await service.PostAsync(new Uri("/v1/management/commits", UriKind.Relative), new StringContent(commit, Encoding.UTF8, "application/json"));
             await Assert.That(response.IsSuccessStatusCode).IsTrue().Because(await response.Content.ReadAsStringAsync());
         }
+    }
+
+    /// <summary>The system clock moved forward by <see cref="Offset"/>; timers keep real time, so streams keep running.</summary>
+    private sealed class ShiftedTime : TimeProvider
+    {
+        private long _offset;
+
+        public TimeSpan Offset
+        {
+            get => TimeSpan.FromTicks(Interlocked.Read(ref _offset));
+            set => Interlocked.Exchange(ref _offset, value.Ticks);
+        }
+
+        public override DateTimeOffset GetUtcNow() => System.GetUtcNow() + Offset;
     }
 }

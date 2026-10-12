@@ -60,20 +60,13 @@ internal sealed partial class SqliteDatabaseStore(
         );
         CREATE INDEX documents_live ON documents (collection, id) WHERE body IS NOT NULL;
         CREATE TABLE collections (
-            name TEXT PRIMARY KEY, created_at INTEGER NOT NULL, generation INTEGER NOT NULL,
+            name TEXT PRIMARY KEY, created_at INTEGER NOT NULL,
             entity_id TEXT NOT NULL CHECK (length(entity_id) = 26)
         );
         CREATE TABLE commit_offset (
             id INTEGER PRIMARY KEY CHECK (id = 1), value INTEGER NOT NULL, incarnation TEXT NOT NULL
         );
         INSERT INTO commit_offset (id, value, incarnation) VALUES (1, 0, '');
-        CREATE TABLE shape_history (id INTEGER PRIMARY KEY CHECK (id = 1), floor INTEGER NOT NULL);
-        INSERT INTO shape_history (id, floor) VALUES (1, 0);
-        CREATE TABLE change_log (
-            sequence INTEGER PRIMARY KEY, collection TEXT NOT NULL, generation INTEGER NOT NULL,
-            id TEXT NOT NULL, version INTEGER NOT NULL, body TEXT, document_version INTEGER NOT NULL
-        );
-        CREATE INDEX change_log_by_offset ON change_log (collection, generation, version, sequence);
         CREATE TABLE changes (
             sequence INTEGER NOT NULL, ordinal INTEGER NOT NULL, collection TEXT NOT NULL, id TEXT NOT NULL,
             version INTEGER NOT NULL, body TEXT, PRIMARY KEY (sequence, ordinal)
@@ -92,10 +85,9 @@ internal sealed partial class SqliteDatabaseStore(
 
     // A client database (docs/terrabase/multi-region-replication.md section 5). Each collection is a table of its own, created
     // with it (the metadata collections here), holding the materialized JSON of its live documents (doc): reads, queries,
-    // indexes and shapes never decode a state. _tb_state keeps each document's replicated DocumentState in its
+    // and indexes never decode a state. _tb_state keeps each document's replicated DocumentState in its
     // stored form (base64url), with its anti-entropy bucket and digest; the other _tb_ tables belong to the change feed,
-    // the peer streams and anti-entropy, which later slices fill. Every new table is a rowid table. change_log retains
-    // every write for the per-collection change feed.
+    // the peer streams and anti-entropy, which later slices fill. Every new table is a rowid table.
     private const string ClientSchemaSql = """
         CREATE TABLE "_collections" (id TEXT NOT NULL UNIQUE, doc TEXT NOT NULL);
         CREATE TABLE "_indexes" (id TEXT NOT NULL UNIQUE, doc TEXT NOT NULL);
@@ -118,20 +110,13 @@ internal sealed partial class SqliteDatabaseStore(
         CREATE TABLE _tb_merkle (bucket INTEGER PRIMARY KEY, h1 INTEGER NOT NULL, h2 INTEGER NOT NULL);
         CREATE TABLE _tb_tail (id INTEGER PRIMARY KEY CHECK (id = 1), change_id INTEGER NOT NULL);
         CREATE TABLE collections (
-            name TEXT PRIMARY KEY, created_at INTEGER NOT NULL, generation INTEGER NOT NULL,
+            name TEXT PRIMARY KEY, created_at INTEGER NOT NULL,
             entity_id TEXT NOT NULL CHECK (length(entity_id) = 26)
         );
         CREATE TABLE commit_offset (
             id INTEGER PRIMARY KEY CHECK (id = 1), value INTEGER NOT NULL, incarnation TEXT NOT NULL
         );
         INSERT INTO commit_offset (id, value, incarnation) VALUES (1, 0, '');
-        CREATE TABLE shape_history (id INTEGER PRIMARY KEY CHECK (id = 1), floor INTEGER NOT NULL);
-        INSERT INTO shape_history (id, floor) VALUES (1, 0);
-        CREATE TABLE change_log (
-            sequence INTEGER PRIMARY KEY, collection TEXT NOT NULL, generation INTEGER NOT NULL,
-            id TEXT NOT NULL, version INTEGER NOT NULL, body TEXT, document_version INTEGER NOT NULL
-        );
-        CREATE INDEX change_log_by_offset ON change_log (collection, generation, version, sequence);
         """;
 
     private readonly string _connectionString = new SqliteConnectionStringBuilder
@@ -150,7 +135,7 @@ internal sealed partial class SqliteDatabaseStore(
     private long _sequence;
     private TaskCompletionSource _signal = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
-    /// <summary>Whether this is TerraBase's own database, which keeps no shape history.</summary>
+    /// <summary>Whether this is TerraBase's own database rather than a client database.</summary>
     internal bool IsSystem => name == SqliteStorageEngine.SystemName;
 
     public long CommitSequence
@@ -499,6 +484,18 @@ internal sealed partial class SqliteDatabaseStore(
 
     /// <summary>The database file.</summary>
     internal string FilePath => path;
+
+    private long _backupAnchor = -1;
+
+    /// <summary>
+    /// The change id continuous backup's tap read up to, or null while no tap reads this file: CDC retention keeps the rows
+    /// from it on (<see cref="SqliteStorageTransaction.RecordAckedAsync"/>).
+    /// </summary>
+    internal long? BackupAnchor
+    {
+        get => Volatile.Read(ref _backupAnchor) is >= 0 and var anchor ? anchor : null;
+        set => Volatile.Write(ref _backupAnchor, value ?? -1);
+    }
 
     /// <summary>
     /// Runs <paramref name="call"/> while no write transaction of this process is open on this database; writers queue

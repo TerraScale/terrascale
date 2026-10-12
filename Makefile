@@ -45,7 +45,7 @@ BENCHMARK_DOTNET_PROJECTS := benchmark/dotnet/TerraScale.Endpoints.Benchmarks/Te
 	libs-build libs-test handoff-test libs-check libs-pack libs-nativeaot-check \
 	auth-build auth-audit auth-openapi-check auth-test-fast auth-test-slow auth-check auth-publish auth-dev \
 	terrabase-build terrabase-analyzer-check terrabase-test-fast terrabase-test-slow terrabase-e2e terrabase-e2e-fly-outage terrabase-check terrabase-run terrabase-publish \
-	benchmark-build benchmark-fmt-check benchmark-check benchmark-smoke benchmark-repl-local
+	benchmark-build benchmark-fmt-check benchmark-check benchmark-smoke benchmark-repl-local benchmark-repl-fly
 
 # Global: the whole solution.
 restore:
@@ -141,6 +141,13 @@ auth-publish:
 auth-dev:
 	scripts/auth/dev.sh
 
+# Local development: TerraBase and ts-auth under Aspire (aspire/apphost.mts) with its dashboard, on loopback only. Each run
+# starts from an empty TerraBase; see README.md.
+.PHONY: dev
+dev:
+	dotnet tool restore
+	TsDotnetRoot=$(abspath $(TS_DOTNET_DIR)) dotnet aspire run --apphost aspire
+
 # TerraBase: the server, its analyzer and its integration suites.
 terrabase-build: restore
 	dotnet build terrabase.slnf --configuration $(CONFIGURATION) --no-restore
@@ -219,3 +226,9 @@ benchmark-repl-local:
 	$(MAKE) terrabase-build CONFIGURATION=Release
 	$(MAKE) -C benchmark repl-bench-build
 	benchmark/scripts/repl-local.sh
+
+# The same benchmark on Fly: one temporary load machine per region (gru, sjc, fra) in app ts-bench, destroyed on exit.
+# Needs the benchmark credential (benchmark/scripts/repl-fly-tenant.sh install, run by a user) and FLY_API_TOKEN for
+# machine metrics. Flags come from REPL_ARGS.
+benchmark-repl-fly:
+	benchmark/scripts/repl-fly.sh $(REPL_ARGS)
