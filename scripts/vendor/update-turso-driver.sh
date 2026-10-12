@@ -30,8 +30,9 @@ cp "$work/LICENSE.md" "$work/NOTICE.md" "$vendor/"
 cp -R "$work/bindings/dotnet/src/Turso.Raw" "$work/bindings/dotnet/src/Turso.Data" "$work/bindings/dotnet/src/Turso.Data.Sqlite" "$vendor/src/"
 sed -i -e "s|^- Tag: .*|- Tag: \`$tag\`|" -e "s|^- Commit: .*|- Commit: \`$commit\`|" "$vendor/UPSTREAM.md"
 
+# Staged, as git apply --3way requires the index to match the working tree.
+git add -A -- "$vendor"
 if [[ $mode == --commit ]]; then
-  git add -A -- "$vendor"
   git commit --quiet -m "vendor: Turso .NET driver $tag ($commit), pristine"
 fi
 
