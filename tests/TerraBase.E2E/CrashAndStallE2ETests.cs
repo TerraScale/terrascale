@@ -4,7 +4,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text.Json.Nodes;
 using Bogus;
-using Microsoft.Data.Sqlite;
+using Turso.Data.Sqlite;
 using TerraBase.Primitives;
 
 namespace TerraBase.E2E;
