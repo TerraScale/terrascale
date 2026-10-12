@@ -376,13 +376,14 @@ public sealed class CollectionSchemaTests
         {
             var unauthenticated = await DocumentApi.SendAsync(anonymous, method, schema, method == HttpMethod.Put ? JsonContent.Create(true) : null);
             await Assert.That(unauthenticated.Status).IsEqualTo(HttpStatusCode.Unauthorized);
-            using var adminRequest = new HttpRequestMessage(method, new Uri(schema, UriKind.Relative))
+            if (method == HttpMethod.Get)
             {
-                Content = method == HttpMethod.Put ? JsonContent.Create(true) : null,
-            };
-            adminRequest.Headers.Authorization = api.Client.DefaultRequestHeaders.Authorization;
-            using var onAdmin = await api.Server.Client.SendAsync(adminRequest);
-            await Assert.That(onAdmin.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+                // The internal listener serves the client API too; an API key reaches it as on the public listener.
+                using var adminRequest = new HttpRequestMessage(method, new Uri(schema, UriKind.Relative));
+                adminRequest.Headers.Authorization = api.Client.DefaultRequestHeaders.Authorization;
+                using var onAdmin = await api.Server.Client.SendAsync(adminRequest);
+                await Assert.That(onAdmin.IsSuccessStatusCode).IsTrue();
+            }
             foreach (var missing in new[]
             {
                 schema.Replace("/collections/items/", "/collections/missing/", StringComparison.Ordinal),

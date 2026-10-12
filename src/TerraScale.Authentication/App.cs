@@ -61,7 +61,7 @@ public static class App
         }
 
         builder.Services.AddSingleton(TimeProvider.System);
-        builder.Services.AddSingleton(_ => new HttpClient(TerraBaseHttp.CreateHandler()));
+        builder.Services.AddSingleton(_ => new HttpClient(new TerraBaseHttp2(TerraBaseHttp.CreateHandler())));
         // The nearest TerraBase machine's private listener: no credential, it trusts the private network.
         builder.Services.AddSingleton(services => new TerraBaseDocumentsClient(services.GetRequiredService<HttpClient>(), new TerraBaseDocumentsClientOptions
         {

@@ -63,8 +63,8 @@ while replacing them; missing authentication must never grant access.
 
 ### Health probes
 
-Both probes are unauthenticated, return no tenant data, and are served on the admin listener and,
-when `client-port` is set, on the client TLS listener.
+Both probes are unauthenticated, return no tenant data, and are served on the internal listener and on
+the public listener, where Fly's health checks read them.
 
 - `GET /healthz`: liveness, `200 {"status":"ok","version":"<version>","region":"<region>"}`.
 - `GET /readyz`: readiness. `200 {"status":"ready","version":"<version>","region":"<region>"}` only when the storage
@@ -84,7 +84,7 @@ Target replication design (Turso + CDC + lattices across gru and sjc, with its s
 [`multi-region-replication.md`](multi-region-replication.md). It replaces the replication described below.
 
 Replication setup, certificates, limits and metrics: [`docs/terrabase/replication.md`](replication.md).
-`GET /replication` on the loopback administrative listener reports outbound per-peer
+`GET /replication` on the internal listener reports outbound per-peer
 and per-database durable lag, detected journal conflicts and catch-up times; see
 [status and alert thresholds](replication.md#replication-status-and-alerts).
 
@@ -120,13 +120,13 @@ and Atlas compatibility.
 Requests authenticated with project JWTs or document credentials share their organization's
 [plan resource policy](qos.md): rate and concurrency admission, SQLite read scheduling,
 query costs, memory/cache shares and live-document storage quotas. The platform publishes the
-resource plan using the trusted management service credential; public user tokens cannot grant
+resource plan using the trusted platform operator; public user tokens cannot grant
 Enterprise admission. Rate, concurrency and memory refusals include `Retry-After`.
 
 ## Node pressure
 
-`GET /v1/admin/node/pressure` and pressure metrics are available only on the loopback
-administrative listener. Instance identity, local readiness, actual storage admissions
+`GET /v1/admin/node/pressure` is available only on the internal listener, and pressure metrics on the internal and
+metrics listeners. Instance identity, local readiness, actual storage admissions
 and outgoing durable ACK lag are sampled diagnostics. Certified membership, incoming
 catch-up and other unmeasured safety signals remain unknown, keeping autonomous scaling gated.
 See [signal definitions and follow-ups](node-pressure.md).

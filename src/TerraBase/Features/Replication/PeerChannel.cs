@@ -1,19 +1,13 @@
-using System.Net.Security;
-using System.Security.Cryptography.X509Certificates;
 using Grpc.Net.Client;
-using TerraBase.Configuration;
 using TerraBase.Engine.Cluster;
 
 namespace TerraBase.Features.Replication;
 
-/// <summary>gRPC channels to another member's peer listener over mutual TLS.</summary>
+/// <summary>gRPC channels to another member's internal listener: HTTP/2 without TLS over Fly's private network.</summary>
 internal static class PeerChannel
 {
-    /// <summary>
-    /// A channel to <paramref name="address"/> that presents <paramref name="snapshot"/>'s certificate chain and trusts only
-    /// its authorities, for server authentication with the address's host name.
-    /// </summary>
-    public static GrpcChannel Create(Uri address, PeerCredentials.Lease snapshot)
+    /// <summary>A channel to <paramref name="address"/> (<c>http://host:port</c>).</summary>
+    public static GrpcChannel Create(Uri address)
     {
         var handler = new SocketsHttpHandler
         {
@@ -22,14 +16,6 @@ internal static class PeerChannel
             KeepAlivePingDelay = TimeSpan.FromSeconds(10),
             KeepAlivePingTimeout = TimeSpan.FromSeconds(5),
             KeepAlivePingPolicy = HttpKeepAlivePingPolicy.Always,
-            SslOptions = new SslClientAuthenticationOptions
-            {
-                CertificateChainPolicy = snapshot.Policy(PeerTlsFiles.ServerAuthentication),
-                ClientCertificateContext = snapshot.CertificateContext,
-                RemoteCertificateValidationCallback = (_, certificate, chain, errors) =>
-                    (errors & ~SslPolicyErrors.RemoteCertificateChainErrors) == SslPolicyErrors.None
-                    && certificate is X509Certificate2 server && snapshot.IsTrusted(server, PeerTlsFiles.ServerAuthentication, chain),
-            },
         };
         return GrpcChannel.ForAddress(address, new GrpcChannelOptions
         {
@@ -40,7 +26,7 @@ internal static class PeerChannel
         });
     }
 
-    /// <summary>The peer listener of the catalog primary this member follows, or <see langword="null"/> while the membership names none.</summary>
+    /// <summary>The internal listener of the catalog primary this member follows, or <see langword="null"/> while the membership names none.</summary>
     public static async ValueTask<Uri?> CatalogPrimaryAsync(this IMembership membership, CancellationToken cancellationToken) =>
         (await membership.RefreshAsync(cancellationToken).ConfigureAwait(false)).CatalogPrimary is { PeerAddress.Length: > 0 } primary
             ? new Uri(primary.PeerAddress)

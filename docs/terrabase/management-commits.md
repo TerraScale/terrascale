@@ -11,16 +11,16 @@ and not in a tenant database. See [decision 0008](decisions/0008-management-comm
 
 All routes here use the Management API access rules ([management-api.md](management-api.md#access-and-authorization),
 [decision 0007](decisions/0007-ts-auth-user-tokens.md)): a ts-auth access token on the client listener, whose `sub`
-is the acting user, or the management service credential with `X-TerraBase-User-Id` on the loopback administrative
+is the acting user, or the platform operator with `X-TerraBase-User-Id` on the internal
 listener. Each operation names its organization.
 
-**The dashboard document space needs the management service credential.** A ts-auth user token reaches
+**The dashboard document space needs the platform operator.** A ts-auth user token reaches
 Management operations as that user, but never dashboard documents: `GET`/`query` on them and any commit with a
 document operation answer `403 forbidden`. Dashboard documents hold every user's state, so a signed-in user's
 own token must not read or write them. How a remote ts-dashboard authenticates as the trusted service for
 this space, while acting as the signed-in user for Management operations, is an open decision (see
-[decision 0008](decisions/0008-management-commits.md#open-question)); until it is made, only the loopback
-credential reaches the space.
+[decision 0008](decisions/0008-management-commits.md#open-question)); until it is made, only the internal
+listener's platform operator reaches the space.
 
 ## Commit
 
@@ -158,7 +158,7 @@ Members are snake_case. Names, emails and roles follow the REST rules in [manage
 `organization` and `project` are ids; `id` on a create is an optional canonical uppercase ULID chosen by the
 client (otherwise a ULID is generated), which lets later operations and dashboard documents in the same
 commit refer to the new resource. **Exception, COS decision 2026-10-07 (TS-589):** a client-chosen
-`create_project.id` requires the loopback management service credential. Ordinary members may still create
+`create_project.id` requires the internal listener's platform operator. Ordinary members may still create
 projects without `id`, using generated IDs. A legacy project mapping, including one created by the service,
 is never itself proof of ts-auth authority; JWT access requires a
 [verified project binding](decisions/0011-project-catalog-trust.md).
@@ -173,10 +173,10 @@ under the same ids ([cross-region replication](cross-region.md#which-databases-r
 | --- | --- | --- | --- |
 | `create_organization` | `name`, `id`? | | organization; the user becomes its owner |
 | `rename_organization` | `organization`, `name` | admin | organization |
-| `set_plan` | `organization`, `plan` | management service credential acting as owner | organization |
+| `set_plan` | `organization`, `plan` | platform operator acting as owner | organization |
 | `delete_organization` | `organization` | owner | none |
 | `set_current_organization` | `organization` | viewer | organization |
-| `create_project` | `organization`, `name`, `id`? | member; loopback service credential when `id` is supplied | project |
+| `create_project` | `organization`, `name`, `id`? | member; internal listener's platform operator when `id` is supplied | project |
 | `rename_project` | `organization`, `project`, `name` | member | project |
 | `delete_project` | `organization`, `project` | member | none |
 | `create_database` | `organization`, `project`, `name`, `id`?, `home_region`?, `replica_regions`? | member | database (with `region` and its placement) |
@@ -235,7 +235,7 @@ Exactly the operations of `POST /v1/projects/{project}/databases/{database}/tran
 `assert_count`, with the same members, rules and limits. Versions are strong ETags as in the Documents API.
 
 They address the **dashboard document space**, not a tenant database: one set of collections inside the
-system database, reachable only with the management service credential (never with an API key or a ts-auth user
+system database, reachable only with the platform operator (never with an API key or a ts-auth user
 token). Collections follow the
 data API naming rule and exist implicitly; there is nothing to create. The dashboard is trusted with this
 space: it decides which documents a user may touch, while Management operations are still authorized per user.

@@ -1,6 +1,5 @@
 using System.Collections.Concurrent;
 using System.Net;
-using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -35,15 +34,10 @@ public sealed class QueryShapeForwardingTests
     {
         using var peers = new PeerTls();
         var time = new ManualFlushClock();
-        var credential = string.Empty;
-        await using var primary = await ManagementApi.StartAsync(settings =>
-        {
-            peers.Apply(settings);
-            credential = settings["management-credential-file"];
-        }, time: time, managementCredential: true);
+        await using var primary = await ManagementApi.StartAsync(peers.Apply, time: time);
         var database = await primary.CreateManagedDatabaseAsync();
         var key = await primary.Server.IssueAsync(database.Organization, "documents:read", "documents:write");
-        TerraBaseTestServer? follower = await StartFollowerAsync(primary, peers, time, credential, services => services
+        TerraBaseTestServer? follower = await StartFollowerAsync(primary, peers, time, services => services
             .AddSingleton<CatalogPrimaryClient>()
             .AddSingleton<LostShapeAcknowledgement>()
             .AddSingleton<ICatalogPrimaryClient>(provider => provider.GetRequiredService<LostShapeAcknowledgement>()));
@@ -58,8 +52,7 @@ public sealed class QueryShapeForwardingTests
             await SeedAsync(data, database);
             await QueryAsync(data, database, 1);
             using var forwarded = primary.Tls.CreateClient(follower.ClientAddress!, primary.Issuer.Mint(primary.User));
-            using var local = new HttpClient { BaseAddress = follower.BaseAddress };
-            local.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", ManagementApi.ServiceCredential);
+            using var local = PeerTls.CreateClient(follower.BaseAddress);
             local.DefaultRequestHeaders.Add("X-TerraBase-User-Id", primary.User);
             await Assert.That((await ShapesAsync(forwarded, database)).Length).IsEqualTo(0);
             await Assert.That((await ShapesAsync(local, database)).Length).IsEqualTo(0);
@@ -475,17 +468,13 @@ public sealed class QueryShapeForwardingTests
     }
 
     private static Task<TerraBaseTestServer> StartFollowerAsync(
-        ManagementApi primary, PeerTls peers, TimeProvider time, string? credential = null, Action<IServiceCollection>? services = null) =>
+        ManagementApi primary, PeerTls peers, TimeProvider time, Action<IServiceCollection>? services = null) =>
         TerraBaseTestServer.StartAsync(settings =>
         {
             peers.Apply(settings);
             primary.Tls.Apply(settings);
             TestIssuer.Configure(settings);
             settings["catalog-primary"] = primary.Server.PeerAddress!.ToString();
-            if (credential is not null)
-            {
-                settings["management-credential-file"] = credential;
-            }
         }, collection =>
         {
             primary.Issuer.Route(collection);

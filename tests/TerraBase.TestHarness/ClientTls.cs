@@ -1,51 +1,21 @@
-using System.Security.Cryptography;
-using System.Security.Cryptography.X509Certificates;
-
 namespace TerraBase.Testing;
 
 /// <summary>
-/// A self-signed localhost certificate for the client listener, written as PEM files to a
-/// temporary directory that is deleted on dispose.
+/// Clients of a test server's public listener: plain HTTP, as Fly Proxy forwards it once TLS ends at Fly's edge. It owns
+/// nothing but its own lifetime: use it only before it is disposed.
 /// </summary>
 public sealed class ClientTls : IDisposable
 {
-    private readonly string _directory = Directory.CreateTempSubdirectory("terrabase-client-tls-").FullName;
-    private readonly X509Certificate2 _certificate;
+    private bool _disposed;
 
-    /// <summary>The public certificate PEM for clients that use their own TLS trust store.</summary>
-    public string CertificatePem => _certificate.ExportCertificatePem();
-
-    /// <summary>Creates the certificate.</summary>
-    public ClientTls()
-    {
-        using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
-        var request = new CertificateRequest("CN=localhost", key, HashAlgorithmName.SHA256);
-        var names = new SubjectAlternativeNameBuilder();
-        names.AddDnsName("localhost");
-        request.CertificateExtensions.Add(names.Build());
-        request.CertificateExtensions.Add(new X509EnhancedKeyUsageExtension([new Oid("1.3.6.1.5.5.7.3.1")], false));
-        _certificate = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-5), DateTimeOffset.UtcNow.AddDays(1));
-        File.WriteAllText(Path.Combine(_directory, "client.pem"), _certificate.ExportCertificatePem());
-        File.WriteAllText(Path.Combine(_directory, "client.key"), key.ExportPkcs8PrivateKeyPem());
-    }
-
-    /// <summary>This certificate with its private key, for a test's own HTTPS listener; the caller disposes it.</summary>
-    public X509Certificate2 LoadServerCertificate() =>
-        X509Certificate2.CreateFromPemFile(Path.Combine(_directory, "client.pem"), Path.Combine(_directory, "client.key"));
-
-    /// <summary>Enables the client listener on an ephemeral port with this certificate.</summary>
+    /// <summary>Nothing to set: every server listens publicly.</summary>
     public void Apply(Dictionary<string, string> settings)
     {
         ArgumentNullException.ThrowIfNull(settings);
-        settings["client-port"] = "0";
-        settings["client-certificate"] = Path.Combine(_directory, "client.pem");
-        settings["client-private-key"] = Path.Combine(_directory, "client.key");
+        ObjectDisposedException.ThrowIf(_disposed, this);
     }
 
-    /// <summary>
-    /// An HTTPS client for the client listener that trusts only this certificate and, when
-    /// <paramref name="apiKey"/> is set, sends it as a bearer token.
-    /// </summary>
+    /// <summary>A client of the public listener that, when <paramref name="apiKey"/> is set, sends it as a bearer token.</summary>
     public HttpClient CreateClient(Uri clientAddress, string? apiKey = null)
     {
         // The test timeout bounds a request: serialized durable commits can take longer than any fixed limit on a busy runner.
@@ -58,24 +28,18 @@ public sealed class ClientTls : IDisposable
         return client;
     }
 
-    /// <summary>A handler that trusts only this certificate, never follows redirects and never stores cookies.</summary>
+    /// <summary>A handler that never follows redirects and never stores cookies.</summary>
     public SocketsHttpHandler CreateHandler()
     {
-        var handler = new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false };
-        handler.SslOptions.RemoteCertificateValidationCallback = (_, presented, _, _) =>
-            presented is not null && presented.GetCertHash().AsSpan().SequenceEqual(_certificate.GetCertHash());
-        return handler;
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        return new() { AllowAutoRedirect = false, UseCookies = false };
     }
 
     /// <inheritdoc />
-    public void Dispose()
-    {
-        _certificate.Dispose();
-        Directory.Delete(_directory, recursive: true);
-    }
+    public void Dispose() => _disposed = true;
 }
 
-/// <summary>Issues API keys through the administrative listener.</summary>
+/// <summary>Issues API keys through the internal listener.</summary>
 public static class ApiKeyIssuer
 {
     /// <summary>Issues a key of <paramref name="organization"/> with <paramref name="scopes"/> and returns its secret.</summary>

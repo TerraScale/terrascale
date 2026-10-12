@@ -1,4 +1,3 @@
-using TerraBase.Configuration;
 using TerraBase.Errors;
 using TerraBase.Hosting;
 
@@ -25,15 +24,11 @@ public static class QueriesExtensions
             .AddSingleton<IQueryService, QueryService>();
     }
 
-    /// <summary>Maps follower query-shape forwarding onto the existing peer listener.</summary>
+    /// <summary>Maps follower query-shape forwarding onto the internal listener.</summary>
     public static WebApplication MapTerraBaseQueryShapes(this WebApplication app)
     {
         ArgumentNullException.ThrowIfNull(app);
-        if (app.Services.GetRequiredService<TerraBaseOptions>().PeerPort is not null)
-        {
-            app.MapGrpcService<QueryShapeReceiver>().WithMetadata(ListenerMetadata.Peer);
-        }
-
+        app.MapGrpcService<QueryShapeReceiver>().WithMetadata(ListenerMetadata.Internal);
         return app;
     }
 

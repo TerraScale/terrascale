@@ -14,7 +14,7 @@ namespace TerraBase.Features.Replication;
 // One maintenance exchange at a time; it cannot consume normal replication's credits.
 internal sealed class AntiEntropyWorker(
     IStorageEngine engine, ITenantDirectory tenants, IMembership membership, IAntiEntropyState state,
-    PeerCredentials credentials, TerraBaseOptions options, ILogger<AntiEntropyWorker> logger, TimeProvider time, IMemoryBudget memory,
+    TerraBaseOptions options, ILogger<AntiEntropyWorker> logger, TimeProvider time, IMemoryBudget memory,
     IUsageMeter usage) : BackgroundService
 {
     internal static readonly TimeSpan ReconcileInterval = TimeSpan.FromSeconds(5);
@@ -84,8 +84,7 @@ internal sealed class AntiEntropyWorker(
         {
             try
             {
-                using var lease = credentials.Capture();
-                using var channel = PeerChannel.Create(address, lease);
+                using var channel = PeerChannel.Create(address);
                 var client = new Alpha.AntiEntropy.AntiEntropyClient(channel);
                 await foreach (var database in engine.ListDatabasesAsync(stoppingToken).ConfigureAwait(false))
                 {

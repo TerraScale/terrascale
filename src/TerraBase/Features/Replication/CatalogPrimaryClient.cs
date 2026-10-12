@@ -5,7 +5,7 @@ using TerraBase.Features.Replication.V1;
 
 namespace TerraBase.Features.Replication;
 
-/// <summary>A catalog follower's calls to its catalog primary's peer services, over the peer listener's mutual TLS.</summary>
+/// <summary>A catalog follower's calls to its catalog primary's peer services, over its internal listener.</summary>
 public interface ICatalogPrimaryClient
 {
     /// <summary>
@@ -25,7 +25,7 @@ public interface ICatalogPrimaryClient
 /// <summary>What a catalog primary did with a usage batch: added it, refused it for good, or lacked the capacity to take it.</summary>
 public readonly union AddUsageResult(Done, Validation, QuotaExceeded);
 
-internal sealed class CatalogPrimaryClient(IMembership membership, PeerCredentials credentials) : ICatalogPrimaryClient
+internal sealed class CatalogPrimaryClient(IMembership membership) : ICatalogPrimaryClient
 {
     // Batches are bounded; query shapes are durably committed before acknowledgement.
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(10);
@@ -33,9 +33,8 @@ internal sealed class CatalogPrimaryClient(IMembership membership, PeerCredentia
     public async Task<AddUsageResult> AddUsageAsync(UsageBatch batch, CancellationToken cancellationToken)
     {
         var primary = await membership.CatalogPrimaryAsync(cancellationToken).ConfigureAwait(false) ?? throw new IOException("no catalog primary is known");
-        using var lease = credentials.Capture();
-        // ponytail: a channel (TLS handshake) per batch, one every 10 seconds; keep one per credential generation if that matters.
-        using var channel = PeerChannel.Create(primary, lease);
+        // ponytail: a channel per batch, one every 10 seconds; keep one if that matters.
+        using var channel = PeerChannel.Create(primary);
         try
         {
             // gRPC measures deadlines on the system clock, whatever clock the counts are kept on.
@@ -64,8 +63,7 @@ internal sealed class CatalogPrimaryClient(IMembership membership, PeerCredentia
     public async Task<bool> AddQueryShapesAsync(QueryShapesBatch batch, CancellationToken cancellationToken)
     {
         var primary = await membership.CatalogPrimaryAsync(cancellationToken).ConfigureAwait(false) ?? throw new IOException("no catalog primary is known");
-        using var lease = credentials.Capture();
-        using var channel = PeerChannel.Create(primary, lease);
+        using var channel = PeerChannel.Create(primary);
         try
         {
             await new CatalogQueryShapes.CatalogQueryShapesClient(channel)

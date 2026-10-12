@@ -15,7 +15,7 @@ public sealed class RootRedirectEndpoint : EndpointWithoutRequest<IResult>
         Get("/");
         Name("apiReference");
         AllowAnonymous();
-        Metadata(ListenerMetadata.Client, new ExcludeFromDescriptionAttribute());
+        Metadata(new ListenerMetadata(TerraBaseListener.Client), new ExcludeFromDescriptionAttribute());
     }
 
     /// <inheritdoc />

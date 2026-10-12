@@ -186,29 +186,10 @@ journal identity validation and secret-free startup errors during removal.
 Hello/Welcome validates bounded region metadata. Older peers may omit the field
 and remain `unknown`; it does not authorize placement or residency.
 
-## Certificates
+## Transport
 
-- One certificate per node is both the peer listener's server certificate and the sender's client
-  certificate, so it needs both TLS usages: server authentication (`1.3.6.1.5.5.7.3.1`) and
-  client authentication (`1.3.6.1.5.5.7.3.2`).
-- A name in the certificate must match the host other nodes use in `peer-addresses`.
-- Every certificate in `peer-client-ca` is a trust root, in both directions, so a CA rotation can
-  list the old and the new CA until every node has its new certificate. `peer-certificate` contains
-  the leaf first, followed by its intermediate chain. Both listeners and senders present the complete
-  chain using an offline TLS certificate context. Supplied intermediates aid chain building; only
-  configured CAs are trust roots. Revocation checks and certificate issuer downloads are disabled
-  during startup and TLS validation; certificates cannot direct the node to an issuer URL.
-- At startup the certificate must chain to `peer-client-ca` for both usages, or the process exits
-  with code 2.
-- Rotation: replace the files. TLS handshakes check SHA-256 content fingerprints at most once per monotonic
-  second and reload changed files; no restart. Certificate selection and trust validation use one captured pair
-  for the whole handshake. Open connections keep their certificates until they
-  reconnect. Until the new files can be read and the certificate chains to the new authorities
-  for both usages (files replaced one at a time), the node keeps the previous pair, logs a warning
-  and retries on the next eligible handshake. Concurrent handshakes bypass an in-progress
-  reload. Each PEM read is bounded to 1 MiB; at most 64 trust roots and 64 intermediates are imported. Connection leases
-  release native certificate handles after the host or replacement releases ownership and
-  the last connection closes.
+Members reach each other's internal listener over Fly's private network with HTTP/2 and no TLS (plan decision: no
+mTLS and no service authentication on 6PN; see [fly.md](fly.md#listeners)).
 
 ## Sync stream
 
@@ -343,7 +324,7 @@ through its own `IMeterFactory` plus process-wide ones (runtime), so several hos
 
 ## Replication status and alerts
 
-`GET /replication` is an unauthenticated **loopback administrative** endpoint with
+`GET /replication` is an unauthenticated **internal listener** endpoint with
 `Cache-Control: no-store`. The client and peer listeners return 404. It reports
 whether the peer listener is enabled, whether journal discovery is initialized,
 the number of tracked outbound database incarnations, omitted database detail, and each

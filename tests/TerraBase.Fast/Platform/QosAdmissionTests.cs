@@ -168,7 +168,7 @@ public sealed class QosAdmissionTests
     [Test]
     public async Task Leaving_an_unlimited_plan_starts_a_finite_bucket_without_lockout()
     {
-        await using var api = await ManagementApi.StartAsync(time: new AdmissionClock(), managementCredential: true);
+        await using var api = await ManagementApi.StartAsync(time: new AdmissionClock());
         using var tenant = await api.CreateTenantAsync("documents:read", "documents:write");
         _ = await tenant.ContextAsync(api.Server, "app");
         using var owner = api.Service(tenant.User);

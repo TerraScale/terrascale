@@ -11,8 +11,8 @@ public sealed record AddMemberRequest(string? Email);
 
 /// <summary>
 /// <c>PUT …/organizations/{organization}/members/{user}</c>: adds a user as a member without an invitation. Served only on the
-/// loopback administrative listener, where only the management service credential authenticates: the TS-529 bootstrap
-/// needs it because the credential carries no verified email and so cannot accept an invitation (TS-535).
+/// internal listener, where the platform operator acts as a user: the TS-529 bootstrap
+/// needs it because the operator carries no verified email and so cannot accept an invitation (TS-535).
 /// </summary>
 public sealed class AddMemberEndpoint(IAccessService access) : Endpoint<AddMemberRequest, IResult>
 {
@@ -22,7 +22,7 @@ public sealed class AddMemberEndpoint(IAccessService access) : Endpoint<AddMembe
         Put(ManagementRoute.Member);
         Name("addMember");
         Summary("Adds a user as a member (administrative listener only)");
-        Description("Loopback administrative listener only (404 on the client listener): the management service credential, with X-TerraBase-User-Id naming the acting user. user: the ts-auth user id to add; email: its address, recorded in the audit log only. Adds the user as a member. Needs admin. A user who is already a member is returned unchanged. Organizations the acting user is not a member of answer 404.");
+        Description("Internal listener only (404 on the public listener), as the platform operator, with X-TerraBase-User-Id naming the acting user. user: the ts-auth user id to add; email: its address, recorded in the audit log only. Adds the user as a member. Needs admin. A user who is already a member is returned unchanged. Organizations the acting user is not a member of answer 404.");
         Tags(ManagementRoute.AccessTag);
         Produces<OrganizationMember>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
@@ -30,7 +30,7 @@ public sealed class AddMemberEndpoint(IAccessService access) : Endpoint<AddMembe
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
         Produces<ErrorBody>(StatusCodes.Status503ServiceUnavailable);
         RequireAuthorization(UserAuthExtensions.PolicyName);
-        Metadata(ListenerMetadata.Admin);
+        Metadata(ListenerMetadata.Internal);
     }
 
     /// <inheritdoc />

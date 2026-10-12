@@ -415,7 +415,7 @@ public sealed class AccessApiTests
         await Assert.That(badToken.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         await Assert.That(apiKey.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         await Assert.That(missingUser.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
-        // The admin listener takes only the management service credential, never a ts-auth token.
+        // The internal listener takes only the platform operator, never a ts-auth token.
         await Assert.That(onAdmin.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
     }
 

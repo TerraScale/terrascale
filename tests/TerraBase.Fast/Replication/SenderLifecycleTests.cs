@@ -19,7 +19,7 @@ namespace TerraBase.Fast.Replication;
 public sealed class SenderLifecycleTests
 {
     [Test]
-    public async Task A_failed_TLS_attempt_invalidates_caught_up_progress_and_recovers_without_new_writes()
+    public async Task A_failed_attempt_invalidates_caught_up_progress_and_recovers_without_new_writes()
     {
         using var tls = new PeerTls();
         using var clientTls = new ClientTls();
@@ -30,6 +30,12 @@ public sealed class SenderLifecycleTests
         ulong applied = 0;
         await using var peer = await FakePeer.StartAsync(tls, async (requests, responses, context) =>
         {
+            if (Volatile.Read(ref reject) != 0)
+            {
+                refused.TrySetResult();
+                throw new RpcException(new Status(StatusCode.Unavailable, "the peer refuses the stream"));
+            }
+
             await requests.MoveNext(context.CancellationToken);
             connection = context.GetHttpContext().Features.Get<IConnectionLifetimeFeature>();
             await responses.WriteAsync(Welcome(requests.Current.Hello, applied, out var member), context.CancellationToken);
@@ -44,21 +50,6 @@ public sealed class SenderLifecycleTests
             {
                 completed.TrySetResult();
             }
-        }, https =>
-        {
-            https.SslProtocols = System.Security.Authentication.SslProtocols.Tls12;
-            // A resumed TLS session can skip certificate validation and never signal the forced rejection.
-            https.OnAuthenticate = (_, authentication) => authentication.AllowTlsResume = false;
-            https.ClientCertificateValidation = (_, _, _) =>
-            {
-                if (Volatile.Read(ref reject) == 0)
-                {
-                    return true;
-                }
-
-                refused.TrySetResult();
-                return false;
-            };
         });
         await using var sender = await TerraBaseTestServer.StartAsync(settings =>
         {
@@ -594,7 +585,7 @@ public sealed class SenderLifecycleTests
             settings["peer-addresses"] = peer.Address.ToString();
             // The backlog accumulates while the peer stalls; write-wait would hold each write on the stalled stream.
             settings["write-wait-ms"] = "0";
-        }, managementCredential: true);
+        });
         var sender = api.Server;
         var tenant = await ReplicationTenant.CreateAsync(sender, "backlog");
         await api.SetPlanAsync(tenant.UserId, tenant.OrganizationId, "enterprise");

@@ -46,7 +46,7 @@ internal sealed class UserAuthenticationHandler(
     {
         // The scheme name is case-insensitive (RFC 9110); the token is not.
         var header = Request.Headers.Authorization.ToString();
-        // Public calls only: the administrative listener takes the management service credential instead.
+        // Public calls only: the internal listener takes the platform operator instead.
         if (terraBase.AuthIssuer is null || Listeners.ArrivedOn(Context) != TerraBaseListener.Client
             || !header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
         {

@@ -68,10 +68,10 @@ service ownership decided by the user on 2026-10-06
    | `shapes:read` | Shape reads (Live) |
 
    The public contract advertises only project JWTs. Hidden compatibility paths still accept existing `tb_`
-   document keys and membership tokens. `/admin/api-keys`, the loopback management service credential and
+   document keys and membership tokens. `/admin/api-keys`, the internal listener's platform operator and
    `X-TerraBase-User-Id` remain available only for existing legacy workflows; they are absent from OpenAPI.
 4. **Listeners.** Every route in the Management, Data and System tables is served on the client listener (TLS).
-   Canonical management routes are client-only. The loopback admin listener retains the probes, `/metrics`,
+   Canonical management routes are client-only. The internal listener retains the probes, `/metrics`,
    `/admin/*` and hidden legacy management bootstrap paths. Administrative operations never appear in public OpenAPI.
 5. **Groups.** Every public route has exactly one tag. Scalar shows the tags under three `x-tagGroups`:
    **Management**, **Data** and **System**. Group and tag names are the table headings below.
@@ -264,7 +264,7 @@ Unchanged: ts-orchestrator, ts-router, ts-atlas, ts-status and ts-deploy probe t
 
 These are not operations in the document ([API reference](api-reference.md)). Unchanged.
 
-## Administrative listener (loopback only, not in the public document)
+## Internal listener (Fly private network only, not in the public document)
 
 | Method | Route | Old route | Use |
 | --- | --- | --- | --- |
@@ -287,13 +287,13 @@ from OpenAPI. This release neither resets production nor changes existing storag
 | `PUT …/organizations/{organization}/plan` | ts-dashboard (plans, subscriptions, billing) |
 | `…/audit-events`, `…/audit-retention` (organization audit) | ts-auth, with membership |
 | `/v1/management/commits…`, `/v1/management/versions`, `/v1/management/documents/{collection}…` | ts-dashboard stores its own state as ordinary TerraBase documents in its own project |
-| `PUT …/members/{user}` (admin listener, TS-529 bootstrap) and the management service credential | ts-auth bootstrap through the SDKs |
+| `PUT …/members/{user}` (admin listener, TS-529 bootstrap) and the platform operator | ts-auth bootstrap through the SDKs |
 | `PUT /v1/projects/{project}/databases/{database}` (data-plane create) | `createDatabase` above |
 
 ## Old routes
 
 Old management database, backup, index, schema, usage, SQL and saved-query paths are hidden aliases. They
-still address databases by catalog id and require their existing organization membership or loopback service
+still address databases by catalog id and require their existing organization membership or internal-listener operator
 credential. Canonical routes address database names and require project JWT scopes. Existing `tb_` keys still
 reach document routes and the hidden data-plane database `PUT` under their existing scope and tenant rules.
 
@@ -307,7 +307,7 @@ For existing legacy data, verify its project binding before switching credential
 `POST /v1/management/organizations/{legacyOrganization}/projects/{project}/binding` takes
 `{"organization":"<ts-auth organization id>"}` and the user's ts-auth **sign-in** token. The same user must own
 the legacy storage organization and be an effective admin of that project in ts-auth; TerraBase checks the
-latter through ts-auth's live management API. Project tokens, `tb_` keys and the loopback credential cannot
+latter through ts-auth's live management API. Project tokens, `tb_` keys and the internal listener's platform operator cannot
 perform this verification. Unverified legacy mappings are never automatically trusted, while non-project-JWT
 legacy callers keep working. See [the binding workflow](management-api.md#verified-project-bindings).
 

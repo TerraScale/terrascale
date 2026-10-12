@@ -13,7 +13,7 @@ public sealed class SqliteQosEnterpriseTests
     public async Task Enterprise_removes_plan_scan_limits_but_keeps_the_bounded_sorter()
     {
         await using var api = await ManagementApi.StartAsync(services: services =>
-            services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, new FakeTimeProvider()), managementCredential: true);
+            services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, new FakeTimeProvider()));
         using var plans = api.Service(api.User);
         var database = await api.CreateManagedDatabaseAsync();
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
@@ -42,7 +42,7 @@ public sealed class SqliteQosEnterpriseTests
     public async Task Enterprise_can_execute_beyond_the_pro_sqlite_instruction_limit()
     {
         await using var api = await ManagementApi.StartAsync(services: services =>
-            services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, new FakeTimeProvider()), managementCredential: true);
+            services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, new FakeTimeProvider()));
         using var plans = api.Service(api.User);
         var database = await api.CreateManagedDatabaseAsync();
         using var data = await api.CreateClientAsync(database.Organization, "documents:write");

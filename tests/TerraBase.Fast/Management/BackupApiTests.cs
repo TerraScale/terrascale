@@ -596,7 +596,7 @@ public sealed class BackupApiTests
     public async Task Retention_applies_the_policy_as_saved_when_the_pass_runs()
     {
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 4, 10, 30, 0, TimeSpan.Zero));
-        await using var api = await ManagementApi.StartAsync(time: time, managementCredential: true);
+        await using var api = await ManagementApi.StartAsync(time: time);
         var database = await api.CreateManagedDatabaseAsync();
         await api.SetPlanAsync(api.User, database.Organization, "enterprise");
         var backups = $"{database.Path}/backups";

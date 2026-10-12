@@ -1,3 +1,5 @@
+using System.Net;
+using System.Net.Sockets;
 using Microsoft.AspNetCore.Connections.Features;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.OpenApi;
@@ -7,47 +9,50 @@ using TerraBase.Features.Pressure;
 
 namespace TerraBase.Hosting;
 
-/// <summary>The listeners TerraBase serves; every endpoint belongs to exactly one.</summary>
+/// <summary>The listeners TerraBase serves.</summary>
 public enum TerraBaseListener
 {
-    /// <summary>Loopback-only administration: health, metrics and operator endpoints.</summary>
-    Admin,
+    /// <summary>
+    /// Fly's private network only (<c>fly-local-6pn</c>), HTTP/2 without TLS: inter-node gRPC, administration and the
+    /// platform operator's API. The network is the trust boundary; no service credential is presented.
+    /// </summary>
+    Internal,
 
-    /// <summary>Client-facing API over TLS, authorized by scoped API keys.</summary>
+    /// <summary>Public API, plain HTTP behind Fly Proxy (TLS ends at the edge), authorized by scoped API keys and ts-auth tokens.</summary>
     Client,
 
-    /// <summary>Inter-node gRPC over mutual TLS.</summary>
-    Peer,
+    /// <summary>The Prometheus scrape Fly's metrics collector reads (<c>[[metrics]]</c>); every interface, no Fly Proxy service.</summary>
+    Metrics,
 }
 
 /// <summary>
 /// Endpoint metadata naming the listeners that serve an endpoint. Endpoints without it belong to
-/// <see cref="TerraBaseListener.Admin"/>. Add it with <c>Metadata(ListenerMetadata.Client)</c>.
+/// <see cref="TerraBaseListener.Internal"/>. Add it with <c>Metadata(ListenerMetadata.Client)</c>.
 /// Requests on a connection that no TerraBase listener accepted are never served.
 /// </summary>
 /// <param name="Listeners">The serving listeners.</param>
 public sealed record ListenerMetadata(params IReadOnlyList<TerraBaseListener> Listeners)
 {
-    /// <summary>The listener of endpoints without metadata.</summary>
-    public static ListenerMetadata Admin { get; } = new(TerraBaseListener.Admin);
+    /// <summary>The listener of endpoints without metadata: inter-node services and administration.</summary>
+    public static ListenerMetadata Internal { get; } = new(TerraBaseListener.Internal);
 
-    /// <summary>Metadata for client-facing endpoints.</summary>
-    public static ListenerMetadata Client { get; } = new(TerraBaseListener.Client);
-
-    /// <summary>Metadata for inter-node endpoints.</summary>
-    public static ListenerMetadata Peer { get; } = new(TerraBaseListener.Peer);
+    /// <summary>Metadata for the client API: the public listener, and the internal listener for the platform operator.</summary>
+    public static ListenerMetadata Client { get; } = new(TerraBaseListener.Client, TerraBaseListener.Internal);
 
     /// <summary>
-    /// Metadata for unauthenticated health probes, served on the administrative listener and, for load balancers, on the
-    /// client listener. They never answer with tenant data.
+    /// Metadata for unauthenticated health probes, served on the internal listener and, for Fly's health checks, on the
+    /// public listener. They never answer with tenant data.
     /// </summary>
-    public static ListenerMetadata Probe { get; } = new(TerraBaseListener.Admin, TerraBaseListener.Client);
+    public static ListenerMetadata Probe { get; } = new(TerraBaseListener.Internal, TerraBaseListener.Client);
 
     /// <summary>
-    /// Metadata for the Management API: ts-auth access tokens on the client listener, and the management service credential
-    /// on the loopback administrative listener only (for bootstrap before ts-auth exists).
+    /// Metadata for the Management API: ts-auth access tokens on the public listener, and the platform operator on the
+    /// internal listener.
     /// </summary>
-    public static ListenerMetadata Management { get; } = new(TerraBaseListener.Admin, TerraBaseListener.Client);
+    public static ListenerMetadata Management { get; } = new(TerraBaseListener.Internal, TerraBaseListener.Client);
+
+    /// <summary>Metadata for the Prometheus scrape: the internal listener and the metrics listener.</summary>
+    public static ListenerMetadata Metrics { get; } = new(TerraBaseListener.Internal, TerraBaseListener.Metrics);
 }
 
 /// <summary>Request feature: the request is answered as a node of <paramref name="Region"/> (see <see cref="Listeners.RegionOf"/>).</summary>
@@ -142,21 +147,47 @@ public static class Listeners
         return listen;
     }
 
-    /// <summary>Adds the client-facing HTTPS listener on every interface when <c>client-port</c> is set.</summary>
-    public static void AddTerraBaseClientListener(this KestrelServerOptions kestrel, TerraBaseOptions options)
+    /// <summary>
+    /// The address of the internal listener: the machine's private address on Fly, which Fly lists as <c>fly-local-6pn</c>
+    /// in <c>/etc/hosts</c>; loopback off Fly.
+    /// </summary>
+    public static IPAddress InternalAddress(TerraBaseOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        try
+        {
+            return options.App is null ? IPAddress.Loopback
+                : Dns.GetHostAddresses("fly-local-6pn").First(address => address.AddressFamily == AddressFamily.InterNetworkV6);
+        }
+        catch (Exception error) when (error is SocketException or InvalidOperationException)
+        {
+            throw new TerraBaseConfigurationException("fly-local-6pn must resolve to the machine's private IPv6 address");
+        }
+    }
+
+    /// <summary>
+    /// Binds the internal listener on <paramref name="internalAddress"/>, then the public and the metrics listeners on every
+    /// interface, in that order.
+    /// </summary>
+    public static void AddTerraBaseListeners(this KestrelServerOptions kestrel, TerraBaseOptions options, IPAddress internalAddress)
     {
         ArgumentNullException.ThrowIfNull(kestrel);
         ArgumentNullException.ThrowIfNull(options);
-        if (options.ClientPort is not { } port)
+        // HTTP/2 only: without TLS there is no ALPN, and gRPC needs HTTP/2 prior knowledge.
+        kestrel.Listen(internalAddress, options.InternalPort, listen =>
         {
-            return;
-        }
-
-        kestrel.ListenAnyIP(port, listen =>
+            listen.Protocols = HttpProtocols.Http2;
+            listen.UseTerraBaseListener(TerraBaseListener.Internal);
+        });
+        kestrel.ListenAnyIP(options.Port, listen =>
         {
-            listen.Protocols = HttpProtocols.Http1AndHttp2;
+            listen.Protocols = HttpProtocols.Http1;
             listen.UseTerraBaseListener(TerraBaseListener.Client);
-            listen.UseHttps(options.ClientCertificate!);
+        });
+        kestrel.ListenAnyIP(options.MetricsPort, listen =>
+        {
+            listen.Protocols = HttpProtocols.Http1;
+            listen.UseTerraBaseListener(TerraBaseListener.Metrics);
         });
     }
 
@@ -187,8 +218,8 @@ public static class Listeners
                 }
             }
 
-            var servedBy = context.GetEndpoint()?.Metadata.GetMetadata<ListenerMetadata>()?.Listeners ?? ListenerMetadata.Admin.Listeners;
-            if (arrivedOn == TerraBaseListener.Admin
+            var servedBy = context.GetEndpoint()?.Metadata.GetMetadata<ListenerMetadata>()?.Listeners ?? ListenerMetadata.Internal.Listeners;
+            if (arrivedOn == TerraBaseListener.Internal
                 && context.GetEndpoint()?.Metadata.GetMetadata<ProjectManagementRoute>() is not null
                 && context.Features.Get<LegacyManagementRoute>() is null)
             {

@@ -39,14 +39,14 @@ establish completion of the cross-product cutover.
 Decided by a human on 2026-10-04: only the ts-dashboard backend calls this API, with a dashboard
 service credential and the acting user in headers. Superseded on 2026-10-05 (TS-519,
 [0007](decisions/0007-ts-auth-user-tokens.md)): public calls carry the user's ts-auth access token, and a
-management service credential works only on the loopback admin listener, for bootstrap before ts-auth
+platform operator works only on the internal listener, for bootstrap before ts-auth
 exists. TerraBase authorizes every request against the organizations the acting user belongs to.
 
 ### Access tokens
 
 - The endpoints are served on the **client listener** (TLS), which accepts only ts-auth access tokens,
-  and on the loopback **admin listener**, which accepts only the
-  [management service credential](#management-service-credential). A token on the admin listener, or
+  and on the **internal listener**, which accepts only the
+  [platform operator](#management-service-credential). A token on the admin listener, or
   the credential on the client listener, gets `401`.
 - The trusted issuer, audiences and TLS listener must be discovered/provisioned
   automatically. Their existing `TERRABASE_AUTH_*` inputs are a TS-773 gap.
@@ -85,7 +85,7 @@ organization. TerraBase forwards the same token only to
 redirects are not followed. ts-auth must answer with the exact project and
 organization IDs and effective `role: "admin"`. Its live management API checks
 membership, sign-in revocation and authentication epoch. Project/API-key tokens,
-document keys and the loopback service credential cannot establish this binding.
+document keys and the internal listener's platform operator cannot establish this binding.
 
 TerraBase rechecks legacy ownership inside the catalog transaction and records
 the binding's version, issuer, project, storage organization, ts-auth organization,
@@ -98,7 +98,7 @@ organization unset; project JWTs do not require `org_id`.
 
 This explicit verification replaces automatic JWT reuse of legacy mappings by
 COS's 2026-10-07 decision. Client-chosen project IDs in Management commits now
-require the loopback management service credential; generated-ID legacy creation
+require the internal listener's platform operator; generated-ID legacy creation
 remains available to ordinary members ([commit contract](management-commits.md#management-operations)).
 
 ### Signing keys
@@ -128,7 +128,7 @@ Decided by COS on 2026-10-05: the TS-529 bootstrap creates the `terrascale` orga
   contain at least 32 characters; only its SHA-256 is retained. Missing or
   invalid credentials must fail closed with secret-free diagnostics.
 
-- Accepted **only on the loopback admin listener**, never on the public client listener.
+- Accepted **only on the internal listener**, never on the public client listener.
 - Each request presents `Authorization: Bearer <secret>` and `X-TerraBase-User-Id: <user id>` (one value,
   1 to 256 characters, no control characters). TerraBase compares the two SHA-256 hashes with
   `CryptographicOperations.FixedTimeEquals`. A wrong secret or a missing or invalid user answers `401`.
@@ -143,7 +143,7 @@ Decided by COS on 2026-10-05: the TS-529 bootstrap creates the `terrascale` orga
 
 ### Acting user and organization
 
-- The acting user is the token's `sub`, or the user the management service credential names on the
+- The acting user is the token's `sub`, or the user the platform operator names on the
   admin listener: the ts-auth user id stored in memberships, `createdBy` and audit `actor`. On the
   client listener no request header names the user; `X-TerraBase-Organization-Id` is no longer read.
 - The organization comes from the route. TerraBase reads no organization or tenant claim: ts-auth
@@ -250,7 +250,7 @@ logged and counted as unknown while management requests keep returning `503`.
   with the database name from this API. The API key's organization selects the tenant.
 - Every organization has a trusted resource `plan`: `hobby` (default), `pro` or `enterprise`.
   [Organization QoS](qos.md) enforces request, query, memory/cache and live-document storage ceilings.
-  Only the management service credential acting as an owner can publish a plan; public user tokens cannot upgrade it.
+  Only the platform operator acting as an owner can publish a plan; public user tokens cannot upgrade it.
 
 ## Endpoints
 
@@ -262,7 +262,7 @@ Base path: `/v1/management`.
 | `GET` | `/organizations` | page of the acting user's organizations |
 | `GET` | `/organizations/{organization}` | organization |
 | `PATCH` | `/organizations/{organization}` | `{name}` → renamed organization, `409` name taken; needs `admin` |
-| `PUT` | `/organizations/{organization}/plan` | `{plan}` (`hobby`, `pro` or `enterprise`) → organization; `400` for any other value; needs the management service credential acting as an `owner` (`403` for public user tokens). Recorded in the audit log as `settings.plan_updated` |
+| `PUT` | `/organizations/{organization}/plan` | `{plan}` (`hobby`, `pro` or `enterprise`) → organization; `400` for any other value; needs the platform operator acting as an `owner` (`403` for public user tokens). Recorded in the audit log as `settings.plan_updated` |
 | `DELETE` | `/organizations/{organization}` | `204`; `409` while it has projects; needs `owner`. Also deletes its members, invitations, transfer and audit log |
 | `GET` | `/current-organization` | the organization the acting user last switched to; `404` if none or no longer a member |
 | `PUT` | `/current-organization` | `{organizationId}` → organization; `404` if the user is not a member |
@@ -393,12 +393,12 @@ Shapes:
 ### Adding a member on the administrative listener
 
 Decided by COS on 2026-10-05 (TS-535): the TS-529 bootstrap creates the `terrascale` organization as its own
-identity, then hands it to a person. The management service credential carries no verified email, so it cannot accept
+identity, then hands it to a person. The platform operator carries no verified email, so it cannot accept
 an invitation; this operation adds the member directly.
 
 `PUT /v1/management/organizations/{organization}/members/{user}` with `{email}`:
 
-- Served **only on the loopback admin listener**, with the management service credential and `X-TerraBase-User-Id`
+- Served **only on the internal listener**, with the platform operator and `X-TerraBase-User-Id`
   naming the acting user. On the client listener it answers `404` (or `421` for a mismatched region pin), whatever
   credential or token the request presents.
 - `{user}` is the ts-auth user id to add (1 to 256 characters, no control characters) and `email` its address (one
@@ -432,7 +432,7 @@ consumer contract; the legacy organization audit log is not their target.
 ## Database tooling endpoints
 
 These back the dashboard's database tooling pages (TS-463). Same access, conventions and errors as above: a
-ts-auth access token (or, on the administrative listener only, the management service credential) on every route,
+ts-auth access token (or, on the administrative listener only, the platform operator) on every route,
 and `404` for an organization the acting user is not a member of and everything under it. Like projects and databases, the
 tooling is open to every member whatever its role (see [Membership](#membership)); per-project roles are a follow-up.
 D = `/v1/management/organizations/{organization}/projects/{project}/databases/{database}`,
@@ -670,7 +670,7 @@ The schema is inferred and read-only: TerraBase has no declared schemas yet.
 accepts `{sql}` and returns `{ok, error, collection, hasLimit, plan, indexes, suggestions:[{field, reason}]}`.
 This v1 EXPLAIN endpoint requires a ts-auth project access token whose `project_id` equals the
 route's project, whose `scope` grants `databases:read`, and whose optional `database` claim matches the
-database name. It is served only on the client TLS listener. `plan` contains SQLite's plan steps and `indexes` contains only the
+database name. It is served only on the public listener. `plan` contains SQLite's plan steps and `indexes` contains only the
 names of the secondary indexes selected by that plan, not every index defined on the collection.
 The former unversioned EXPLAIN path returns `404`; no alias is registered.
 It prepares the plan without executing the query, metering a document read or recording recommendation

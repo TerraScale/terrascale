@@ -148,7 +148,7 @@ public static class Telemetry
     /// <summary>Maps the Prometheus scrape endpoint.</summary>
     public static IEndpointRouteBuilder MapTerraBaseMetrics(this IEndpointRouteBuilder endpoints)
     {
-        endpoints.MapPrometheusScrapingEndpoint(MetricsPath);
+        endpoints.MapPrometheusScrapingEndpoint(MetricsPath).WithMetadata(ListenerMetadata.Metrics);
         return endpoints;
     }
 }

@@ -108,7 +108,8 @@ public sealed class ExplainSqlApiTests
         using var onAdmin = await api.Server.Client.SendAsync(adminRequest);
         await Assert.That(noToken.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         await Assert.That(apiKey.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
-        await Assert.That(onAdmin.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        // The internal listener serves the route but never takes a ts-auth token.
+        await Assert.That(onAdmin.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         await ErrorAssert.ErrorAsync(api.Client.PostAsJsonAsync(ExplainPath(database), new { sql = Sql }), HttpStatusCode.NotFound, "unknown_database", "the database does not exist");
     }
 

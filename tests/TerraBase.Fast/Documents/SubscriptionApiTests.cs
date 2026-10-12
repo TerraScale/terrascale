@@ -375,7 +375,8 @@ public sealed class SubscriptionApiTests
         using var request = new HttpRequestMessage(HttpMethod.Get, ManagementApi.Uri(Route(database)));
         request.Headers.Authorization = new("Bearer", Token(api, database));
         using var response = await api.Server.Client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadline.Token);
-        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        // The internal listener serves the route but never takes a ts-auth token.
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         await Assert.That(response.Content.Headers.ContentType?.MediaType == "text/event-stream").IsFalse();
     }
 

@@ -18,7 +18,7 @@ public sealed class AcceptInvitationEndpoint(IAccessService access) : Endpoint<A
         Post(ManagementRoute.AcceptInvitation);
         Name("acceptInvitation");
         Summary("Accepts an invitation");
-        Description("Authorization: Bearer <ts-auth access token>; its sub is the accepting user and the invitation token names the organization. The access token's email, with email_verified true, must match the invitation (403 otherwise; the management service credential carries no verified email, so it cannot accept). 404 for an unknown token, 409 when expired or already a member.");
+        Description("Authorization: Bearer <ts-auth access token>; its sub is the accepting user and the invitation token names the organization. The access token's email, with email_verified true, must match the invitation (403 otherwise; the platform operator carries no verified email, so it cannot accept). 404 for an unknown token, 409 when expired or already a member.");
         Tags(ManagementRoute.AccessTag);
         Produces<OrganizationMember>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);

@@ -507,7 +507,7 @@ public sealed class UsageAnalyticsTests
         var lagging = new ReplicationDatabaseStatus(0, database.Organization, database.Project, database.Id,
             Ulid.NewUlid(), 3, 1, 2, true, 14, 0.25);
         var healthy = lagging with { Acknowledged = 3, DurableLag = 0, Diverged = false, CatchupSeconds = 0, ConvergenceSeconds = 1.5 };
-        peers.State = new(true, true, 1, 0, [new(0, 2, [lagging], "sfo-1"), new(1, 0, [healthy], "sfo-1")]);
+        peers.State = new(true, 1, 0, [new(0, 2, [lagging], "sfo-1"), new(1, 0, [healthy], "sfo-1")]);
         clock.Advance(TimeSpan.FromSeconds(10));
         var route = ManagementApi.Uri($"/v1/projects/{database.Project}/replication?range=1h&region=gru-1");
         await TerraBaseTestServer.EventuallyAsync(async token =>
@@ -519,7 +519,7 @@ public sealed class UsageAnalyticsTests
         await Assert.That(observed.GetProperty("lagMs").GetDouble()).IsEqualTo(14000);
         await Assert.That(observed.GetProperty("divergence").GetBoolean()).IsTrue();
         await Assert.That(observed.GetProperty("convergenceMs").GetDouble()).IsEqualTo(1500);
-        peers.State = new(true, true, 1, 0, [new(0, 0, [healthy], "sfo-1"), new(1, 0, [healthy], "sfo-1")]);
+        peers.State = new(true, 1, 0, [new(0, 0, [healthy], "sfo-1"), new(1, 0, [healthy], "sfo-1")]);
         clock.Advance(TimeSpan.FromSeconds(10));
         await TerraBaseTestServer.EventuallyAsync(async token =>
         {
@@ -542,11 +542,11 @@ public sealed class UsageAnalyticsTests
         var route = ManagementApi.Uri($"/v1/projects/{database.Project}/replication?range=1h&region=gru-1");
         var synced = new ReplicationDatabaseStatus(0, database.Organization, database.Project, database.Id, Ulid.NewUlid(), 3, 3, 0, false, 0, null);
 
-        peers.State = new(true, true, 1, 0, [new(0, 0, [synced], "sfo-1"), new(1, 0, [synced], "iad-1")]);
+        peers.State = new(true, 1, 0, [new(0, 0, [synced], "sfo-1"), new(1, 0, [synced], "iad-1")]);
         await Assert.That((await ObserveAsync(TimeSpan.FromSeconds(10))).GetProperty("status").GetString()).IsEqualTo("healthy");
 
         // iad-1 goes silent while sfo-1 keeps reporting: the fresh peer must not hide it.
-        peers.State = new(true, true, 1, 0, [new(0, 0, [synced], "sfo-1")]);
+        peers.State = new(true, 1, 0, [new(0, 0, [synced], "sfo-1")]);
         JsonElement mixed = default;
         for (var tick = 0; tick < 4; tick++)
         {
@@ -560,9 +560,9 @@ public sealed class UsageAnalyticsTests
         await Assert.That((await ObserveAsync(TimeSpan.FromMinutes(10))).GetProperty("status").GetString()).IsEqualTo("healthy");
 
         // A diverged peer goes silent beside a fresh healthy one: its old divergence is not current, so stopped, not diverged.
-        peers.State = new(true, true, 1, 0, [new(0, 0, [synced], "sfo-1"), new(1, 0, [synced with { Diverged = true }], "iad-1")]);
+        peers.State = new(true, 1, 0, [new(0, 0, [synced], "sfo-1"), new(1, 0, [synced with { Diverged = true }], "iad-1")]);
         await Assert.That((await ObserveAsync(TimeSpan.FromSeconds(10))).GetProperty("status").GetString()).IsEqualTo("diverged");
-        peers.State = new(true, true, 1, 0, [new(0, 0, [synced], "sfo-1")]);
+        peers.State = new(true, 1, 0, [new(0, 0, [synced], "sfo-1")]);
         JsonElement stale = default;
         for (var tick = 0; tick < 4; tick++)
         {
@@ -574,9 +574,9 @@ public sealed class UsageAnalyticsTests
         await Assert.That((await ObserveAsync(TimeSpan.FromMinutes(10))).GetProperty("status").GetString()).IsEqualTo("healthy");
 
         // Every peer silent, the last one having diverged: stopped, with neither current lag nor divergence.
-        peers.State = new(true, true, 1, 0, [new(0, 0, [synced with { Diverged = true }], "sfo-1")]);
+        peers.State = new(true, 1, 0, [new(0, 0, [synced with { Diverged = true }], "sfo-1")]);
         await Assert.That((await ObserveAsync(TimeSpan.FromSeconds(10))).GetProperty("status").GetString()).IsEqualTo("diverged");
-        peers.State = new(true, true, 1, 0, []);
+        peers.State = new(true, 1, 0, []);
         var silent = await ObserveAsync(TimeSpan.FromSeconds(40));
         await Assert.That(silent.GetProperty("status").GetString()).IsEqualTo("stopped");
         await Assert.That(silent.GetProperty("lagMs").ValueKind).IsEqualTo(JsonValueKind.Null);
@@ -701,7 +701,7 @@ public sealed class UsageAnalyticsTests
     {
         var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 8, 21, 30, 0, TimeSpan.Zero));
         var hook = new UsageCommitHook();
-        await using var api = await ManagementApi.StartAsync(settings => settings["region"] = "gru-1", hook.Install, clock, managementCredential: true);
+        await using var api = await ManagementApi.StartAsync(settings => settings["region"] = "gru-1", hook.Install, clock);
         // Registered databases: a flush keeps only the observations of databases the catalog names.
         var first = await api.CreateManagedDatabaseAsync("db0");
         // Hobby admission would throttle creating the databases below; the plan does not change sampling.
@@ -907,7 +907,7 @@ public sealed class UsageAnalyticsTests
 
     private sealed class ObservedPeers : IReplicationStatus
     {
-        public ReplicationStatus State { get; set; } = new(true, true, 0, 0, []);
+        public ReplicationStatus State { get; set; } = new(true, 0, 0, []);
         public ReplicationStatus Snapshot() => State;
     }
 

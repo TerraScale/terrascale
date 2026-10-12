@@ -786,7 +786,7 @@ public sealed partial class CrossRegionPagingProgressTests
                     return ActivatorUtilities.CreateInstance<WanPuller>(provider, clock);
                 });
             services.AddSingleton(provider => ActivatorUtilities.CreateInstance<WanMetrics>(provider, clock));
-        }, frozen, managementCredential: true);
+        }, frozen);
     }
 
     private sealed class OpeningJournal(IReplicationJournal inner, Func<IDatabaseStore, CancellationToken, ValueTask> afterOpened) : IReplicationJournal

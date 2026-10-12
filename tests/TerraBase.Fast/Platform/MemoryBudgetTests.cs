@@ -47,7 +47,6 @@ public sealed class MemoryBudgetTests
                         }
                         : new TerraBaseOptions
                         {
-                            AdminPort = options.AdminPort,
                             DataDirectory = options.DataDirectory,
                             StorageThreads = setting == "storage-threads" ? checked((int)value) : options.StorageThreads,
                             StorageQueue = setting == "storage-queue" ? checked((int)value) : options.StorageQueue,
@@ -368,7 +367,7 @@ public sealed class MemoryBudgetTests
     {
         // About 1 MiB: most of the cache's share, so its reservation shows in the budget.
         const int Padding = 768 * 1024;
-        var management = await ManagementApi.StartAsync(values => values["memory-budget"] = Budget.ToString(CultureInfo.InvariantCulture), managementCredential: true);
+        var management = await ManagementApi.StartAsync(values => values["memory-budget"] = Budget.ToString(CultureInfo.InvariantCulture));
         var server = management.Server;
         IMemoryBudget budget;
         try

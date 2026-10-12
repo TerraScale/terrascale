@@ -162,7 +162,7 @@ public sealed class BackupKeyCacheTests
             {
                 s3.Route(services);
                 ManualBackupHosting.Configure(services);
-            }, time, managementCredential: true);
+            }, time);
             return api;
         }
     }
@@ -296,7 +296,7 @@ public sealed class BackupKeyCacheTests
             {
                 s3.Route(services);
                 ManualBackupHosting.Configure(services);
-            }, time, managementCredential: true);
+            }, time);
             return api;
         }
     }

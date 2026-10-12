@@ -9,7 +9,7 @@ public sealed class SqlBudgetTests
     [Test]
     public async Task Statements_past_the_engine_work_budget_are_too_expensive_even_before_their_first_row()
     {
-        await using var api = await ManagementApi.StartAsync(managementCredential: true);
+        await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
         await api.SetPlanAsync(api.User, database.Organization, "enterprise");
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");

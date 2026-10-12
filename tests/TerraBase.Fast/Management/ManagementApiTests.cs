@@ -49,7 +49,7 @@ public sealed class ManagementApiTests
     [Test]
     public async Task An_organization_plan_defaults_to_hobby_and_needs_the_service_credential_acting_as_owner()
     {
-        await using var api = await ManagementApi.StartAsync(managementCredential: true);
+        await using var api = await ManagementApi.StartAsync();
         using var other = api.As(EntityIds.New().ToString());
         var organization = await api.CreateOrganizationAsync("Acme");
         var plan = $"/v1/management/organizations/{organization}/plan";
@@ -76,9 +76,9 @@ public sealed class ManagementApiTests
         await Assert.That(listed.RootElement.GetProperty("items")[0].GetProperty("plan").GetString()).IsEqualTo("enterprise");
         await Assert.That(nonMember.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         // User tokens cannot grant a resource entitlement, regardless of organization role.
-        await ErrorAssert.ErrorAsync(byOwner, HttpStatusCode.Forbidden, "forbidden", "plan changes need the management service credential");
-        await ErrorAssert.ErrorAsync(byAdmin, HttpStatusCode.Forbidden, "forbidden", "plan changes need the management service credential");
-        await ErrorAssert.ErrorAsync(byMember, HttpStatusCode.Forbidden, "forbidden", "plan changes need the management service credential");
+        await ErrorAssert.ErrorAsync(byOwner, HttpStatusCode.Forbidden, "forbidden", "plan changes need the platform operator");
+        await ErrorAssert.ErrorAsync(byAdmin, HttpStatusCode.Forbidden, "forbidden", "plan changes need the platform operator");
+        await ErrorAssert.ErrorAsync(byMember, HttpStatusCode.Forbidden, "forbidden", "plan changes need the platform operator");
         await Assert.That(afterRefused.GetProperty("plan").GetString()).IsEqualTo("enterprise");
     }
 
@@ -356,7 +356,7 @@ public sealed class ManagementApiTests
         await Assert.That(noToken.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         await Assert.That(notAToken.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         await Assert.That(withApiKey.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
-        // The admin listener takes only the management service credential, never a ts-auth token.
+        // The internal listener takes only the platform operator, never a ts-auth token.
         await Assert.That(onAdmin.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
         // A sign-in token without project_id does not reach a data project.
         await Assert.That(noDocumentAccess.StatusCode).IsEqualTo(HttpStatusCode.NotFound);

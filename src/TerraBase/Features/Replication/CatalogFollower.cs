@@ -61,7 +61,6 @@ internal sealed class CatalogFollower : BackgroundService, ICatalogReadiness
     private static readonly TimeSpan MaxBackoff = TimeSpan.FromSeconds(10);
 
     private readonly ISystemReplication _system;
-    private readonly PeerCredentials _credentials;
     private readonly TerraBaseOptions _options;
     private readonly IMembership _membership;
     private readonly ILogger<CatalogFollower> _logger;
@@ -83,11 +82,11 @@ internal sealed class CatalogFollower : BackgroundService, ICatalogReadiness
     private Progress _progress = new(Ulid.Empty, 0);
 
     public CatalogFollower(
-        ISystemReplication system, PeerCredentials credentials, TerraBaseOptions options, IMembership membership, ILogger<CatalogFollower> logger, TimeProvider time, IMeterFactory meters,
+        ISystemReplication system, TerraBaseOptions options, IMembership membership, ILogger<CatalogFollower> logger, TimeProvider time, IMeterFactory meters,
         IEnumerable<ICatalogApplyObserver> observers)
     {
         ArgumentNullException.ThrowIfNull(meters);
-        (_system, _credentials, _options, _membership, _logger, _time, _observers) = (system, credentials, options, membership, logger, time, observers.ToArray());
+        (_system, _options, _membership, _logger, _time, _observers) = (system, options, membership, logger, time, observers.ToArray());
         _observedCollections = new HashSet<string>(_observers.Select(observer => observer.Collection), StringComparer.Ordinal);
         var meter = meters.Create(Telemetry.MeterName);
         // A catalog primary registers the follower too, but follows no one: it reports none of a follower's gauges.
@@ -161,8 +160,7 @@ internal sealed class CatalogFollower : BackgroundService, ICatalogReadiness
                 }
 
                 var primary = await _membership.CatalogPrimaryAsync(stoppingToken).ConfigureAwait(false) ?? throw new IOException("no catalog primary is known");
-                using var credentials = _credentials.Capture();
-                using var channel = PeerChannel.Create(primary, credentials);
+                using var channel = PeerChannel.Create(primary);
                 await FollowAsync(new CatalogReplication.CatalogReplicationClient(channel), stoppingToken).ConfigureAwait(false);
             }
             catch (Exception) when (stoppingToken.IsCancellationRequested)

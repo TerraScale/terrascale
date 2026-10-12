@@ -15,7 +15,7 @@ public sealed class CountBoundTests
     [Arguments(false)]
     public async Task Public_count_excludes_the_overflow_row_whether_or_not_it_matches(bool overflowMatches)
     {
-        await using var api = await ManagementApi.StartAsync(managementCredential: true);
+        await using var api = await ManagementApi.StartAsync();
         using var tenant = await api.CreateTenantAsync("documents:read", "documents:write");
         await api.SetPlanAsync(tenant.User, tenant.OrganizationId, "enterprise");
         var client = tenant.Data;
@@ -56,7 +56,7 @@ public sealed class CountBoundTests
     [Test]
     public async Task Assert_count_examines_at_most_10000_rows_whatever_it_matches()
     {
-        await using var api = await ManagementApi.StartAsync(managementCredential: true);
+        await using var api = await ManagementApi.StartAsync();
         using var tenant = await api.CreateTenantAsync("documents:read", "documents:write");
         await api.SetPlanAsync(tenant.User, tenant.OrganizationId, "pro");
         var client = tenant.Data;
@@ -143,7 +143,7 @@ public sealed class CountBoundTests
     [Test]
     public async Task Query_count_is_exact_up_to_100000_documents_and_a_lower_bound_beyond()
     {
-        await using var api = await ManagementApi.StartAsync(managementCredential: true);
+        await using var api = await ManagementApi.StartAsync();
         using var tenant = await api.CreateTenantAsync("documents:read", "documents:write");
         await api.SetPlanAsync(tenant.User, tenant.OrganizationId, "enterprise");
         var client = tenant.Data;

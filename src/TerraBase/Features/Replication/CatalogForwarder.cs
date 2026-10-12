@@ -105,7 +105,6 @@ internal sealed class CatalogForwarder
 
     private readonly TerraBaseOptions _options;
     private readonly IMembership _membership;
-    private readonly PeerCredentials _credentials;
     private readonly CatalogFollower _follower;
     private readonly IMemoryBudget _budget;
     private readonly TimeProvider _time;
@@ -114,11 +113,11 @@ internal sealed class CatalogForwarder
     private int _inFlight;
 
     public CatalogForwarder(
-        TerraBaseOptions options, IMembership membership, PeerCredentials credentials, CatalogFollower follower, IMemoryBudget budget, TimeProvider time,
+        TerraBaseOptions options, IMembership membership, CatalogFollower follower, IMemoryBudget budget, TimeProvider time,
         ILogger<CatalogForwarder> logger, IMeterFactory meters)
     {
         ArgumentNullException.ThrowIfNull(meters);
-        (_options, _membership, _credentials, _follower, _budget, _time, _logger) = (options, membership, credentials, follower, budget, time, logger);
+        (_options, _membership, _follower, _budget, _time, _logger) = (options, membership, follower, budget, time, logger);
         _forwarded = meters.Create(Telemetry.MeterName).CreateCounter<long>("terrabase.catalog.forwarded", "{request}",
             "Requests a catalog follower forwarded to its primary, by result: answered, lagging (answered before this follower applied what it wrote) or unavailable (503, or a reset once the response started).");
     }
@@ -207,9 +206,8 @@ internal sealed class CatalogForwarder
                 return;
             }
 
-            using var lease = _credentials.Capture();
-            // ponytail: a channel (TLS handshake) per request; pool one per credential generation if forwarded traffic grows.
-            using var channel = PeerChannel.Create(primary, lease);
+            // ponytail: a channel per request; pool one if forwarded traffic grows.
+            using var channel = PeerChannel.Create(primary);
             using var call = new CatalogForwarding.CatalogForwardingClient(channel).Forward(request, deadline: deadline, cancellationToken: bounded.Token);
             ForwardHead head;
             try

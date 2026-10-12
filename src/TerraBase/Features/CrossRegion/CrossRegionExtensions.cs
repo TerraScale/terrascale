@@ -14,7 +14,7 @@ public static class CrossRegionExtensions
     public static IServiceCollection AddTerraBaseCrossRegion(this IServiceCollection services)
     {
         services.TryAddSingleton<IReplicationJournal, EngineReplicationJournal>();
-        services.TryAddSingleton<IRegionPeers>(provider => new GrpcRegionPeers(provider.GetRequiredService<IMembership>(), provider.GetService<PeerCredentials>()));
+        services.TryAddSingleton<IRegionPeers>(provider => new GrpcRegionPeers(provider.GetRequiredService<IMembership>()));
         return services
             .AddSingleton<WanMetrics>()
             .AddSingleton<WanResponder>()

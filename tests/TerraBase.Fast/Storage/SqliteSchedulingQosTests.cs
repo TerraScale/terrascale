@@ -19,7 +19,7 @@ public sealed class SqliteSchedulingQosTests
         {
             settings["storage-threads"] = "2";
             settings["storage-queue"] = "4";
-        }, services => services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, clock), managementCredential: true);
+        }, services => services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, clock));
         using var plans = api.Service(api.User);
         var hobby = await api.CreateManagedDatabaseAsync("hobby");
         var paid = await api.CreateManagedDatabaseAsync("paid");

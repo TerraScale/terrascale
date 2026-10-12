@@ -17,25 +17,19 @@ public sealed class ConfigurationTests
             return;
         }
 
-        using (var local = TerraBaseOptions.FromValues(new Dictionary<string, string>()))
-        {
-            await Assert.That((local.Region, local.MachineId, local.App, local.CatalogFollower)).IsEqualTo(("local", "local", (string?)null, false));
-        }
+        var local = TerraBaseOptions.FromValues(new Dictionary<string, string>());
+        await Assert.That((local.Region, local.MachineId, local.App, local.CatalogFollower)).IsEqualTo(("local", "local", (string?)null, false));
 
         Environment.SetEnvironmentVariable("FLY_REGION", "sjc");
         Environment.SetEnvironmentVariable("FLY_MACHINE_ID", "d894655b3ed118");
         Environment.SetEnvironmentVariable("FLY_APP_NAME", "ts-terrabase");
-        using (var primary = TerraBaseOptions.FromValues(new Dictionary<string, string>()))
-        {
-            await Assert.That((primary.Region, primary.MachineId, primary.App, primary.PrimaryRegion, primary.CatalogFollower))
-                .IsEqualTo(("sjc", "d894655b3ed118", (string?)"ts-terrabase", "sjc", false));
-        }
+        var primary = TerraBaseOptions.FromValues(new Dictionary<string, string>());
+        await Assert.That((primary.Region, primary.MachineId, primary.App, primary.PrimaryRegion, primary.CatalogFollower))
+            .IsEqualTo(("sjc", "d894655b3ed118", (string?)"ts-terrabase", "sjc", false));
 
         Environment.SetEnvironmentVariable("PRIMARY_REGION", "gru");
-        using (var follower = TerraBaseOptions.FromValues(new Dictionary<string, string>()))
-        {
-            await Assert.That((follower.PrimaryRegion, follower.CatalogFollower)).IsEqualTo(("gru", true));
-        }
+        var follower = TerraBaseOptions.FromValues(new Dictionary<string, string>());
+        await Assert.That((follower.PrimaryRegion, follower.CatalogFollower)).IsEqualTo(("gru", true));
 
         // Fly sets all three together; a partial or malformed identity never starts, and the error names no value.
         Environment.SetEnvironmentVariable("FLY_MACHINE_ID", "Not A Machine");
@@ -164,27 +158,22 @@ public sealed class ConfigurationTests
     [Test]
     public async Task An_empty_argument_clears_a_setting()
     {
-        var options = TerraBaseOptions.FromProcess(["--peer-port=", "--admin-port=0"]);
+        var options = TerraBaseOptions.FromProcess(["--internal-port=", "--port=0"]);
 
-        await Assert.That(options.PeerPort).IsNull();
-        await Assert.That(options.AdminPort).IsEqualTo(0);
+        await Assert.That(options.InternalPort).IsEqualTo(TerraBaseOptions.DefaultInternalPort);
+        await Assert.That(options.Port).IsEqualTo(0);
     }
 
     [Test]
-    public async Task The_auth_issuer_needs_an_audience_and_the_client_listener()
+    public async Task The_auth_issuer_needs_an_audience()
     {
-        using var tls = new ClientTls();
         var client = new Dictionary<string, string>();
-        tls.Apply(client);
         var configured = new Dictionary<string, string>(client);
         TestIssuer.Configure(configured);
 
         var issuerOnly = await Assert.That(() => TerraBaseOptions.FromValues(new Dictionary<string, string>(client) { ["auth-issuer"] = TestIssuer.Issuer }))
             .Throws<TerraBaseConfigurationException>();
         var audienceOnly = await Assert.That(() => TerraBaseOptions.FromValues(new Dictionary<string, string>(client) { ["auth-audience"] = TestIssuer.Audience }))
-            .Throws<TerraBaseConfigurationException>();
-        var withoutClient = await Assert.That(() => TerraBaseOptions.FromValues(
-                new Dictionary<string, string> { ["auth-issuer"] = TestIssuer.Issuer, ["auth-audience"] = TestIssuer.Audience }))
             .Throws<TerraBaseConfigurationException>();
         var removed = await Assert.That(() => TerraBaseOptions.FromValues(new Dictionary<string, string>(configured) { ["dashboard-credential-file"] = "credential" }))
             .Throws<TerraBaseConfigurationException>();
@@ -194,47 +183,13 @@ public sealed class ConfigurationTests
 
         await Assert.That(issuerOnly!.Message).Contains("auth-issuer and auth-audience must be set together");
         await Assert.That(audienceOnly!.Message).Contains("auth-issuer and auth-audience must be set together");
-        await Assert.That(withoutClient!.Message).Contains("auth-issuer requires client-port");
-        // The dashboard credential setting is gone (unknown); management-credential-file replaces it, admin listener only.
+        // The dashboard credential setting is gone (unknown): the internal listener trusts the platform operator instead.
         await Assert.That(removed!.Message).Contains("dashboard-credential-file");
         await Assert.That(options.AuthIssuer).IsEqualTo(TestIssuer.Issuer);
         await Assert.That(options.AuthAudiences).IsEquivalentTo([TestIssuer.Audience]);
         await Assert.That(several.AuthAudiences).IsEquivalentTo(["https://a.test", "b"]);
         await Assert.That(unset.AuthIssuer).IsNull();
         await Assert.That(unset.AuthAudiences).IsEmpty();
-    }
-
-    [Test]
-    public async Task The_management_credential_file_needs_a_long_secret_and_no_client_listener()
-    {
-        var directory = Directory.CreateTempSubdirectory("terrabase-credential-").FullName;
-        try
-        {
-            var secretFile = Path.Combine(directory, "secret");
-            await File.WriteAllTextAsync(secretFile, "  " + new string('s', 32) + "\n");
-            var shortFile = Path.Combine(directory, "short");
-            await File.WriteAllTextAsync(shortFile, new string('s', 31) + "\n");
-
-            var options = TerraBaseOptions.FromValues(new Dictionary<string, string> { ["management-credential-file"] = secretFile });
-            var unset = TerraBaseOptions.FromValues(new Dictionary<string, string>());
-            var tooShort = await Assert.That(() => TerraBaseOptions.FromValues(new Dictionary<string, string> { ["management-credential-file"] = shortFile }))
-                .Throws<TerraBaseConfigurationException>();
-            var missing = await Assert.That(() => TerraBaseOptions.FromValues(
-                    new Dictionary<string, string> { ["management-credential-file"] = Path.Combine(directory, "missing") }))
-                .Throws<TerraBaseConfigurationException>();
-
-            // Only the hash of the trimmed secret is kept.
-            await Assert.That(options.ManagementCredentialHash.ToArray())
-                .IsEquivalentTo(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(new string('s', 32))));
-            await Assert.That(unset.ManagementCredentialHash.IsEmpty).IsTrue();
-            await Assert.That(tooShort!.Message).Contains("management-credential-file must hold a secret of at least 32 characters");
-            await Assert.That(missing!.Message).Contains("management-credential-file must name a readable file");
-            await Assert.That(missing.Message).DoesNotContain(directory);
-        }
-        finally
-        {
-            Directory.Delete(directory, recursive: true);
-        }
     }
 
     [Test]

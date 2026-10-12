@@ -87,7 +87,7 @@ public sealed class QueryShapeMemoryTests
     [Test]
     public async Task Dashboard_queries_release_normalization_scratch_and_retain_shape_through_record()
     {
-        await using var api = await ManagementApi.StartAsync(time: new FakeTimeProvider(), services: InstallProbes, managementCredential: true);
+        await using var api = await ManagementApi.StartAsync(time: new FakeTimeProvider(), services: InstallProbes);
         using var service = api.Service(api.User);
         var text = new Faker().Lorem.Word();
         using (var seeded = await service.PostAsJsonAsync(ManagementApi.Uri("/v1/management/commits"), new

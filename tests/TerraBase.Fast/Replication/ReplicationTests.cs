@@ -19,16 +19,8 @@ public sealed class ReplicationTests
     private static readonly Faker Faker = new();
 
     [Test]
-    public async Task A_missing_metric_sample_is_not_a_zero_replication_lag()
+    public async Task Sender_samples_exist_from_startup_and_a_missing_sample_is_not_a_zero_replication_lag()
     {
-        // A node without a peer listener runs no sender.
-        await using (var solo = await TerraBaseTestServer.StartAsync())
-        {
-            await Assert.That(() => solo.MetricAsync("terrabase_replication_sender_durable_lag")).Throws<InvalidOperationException>();
-            await Assert.That(() => TerraBaseTestServer.ReplicatedAsync(solo)).Throws<InvalidOperationException>();
-            await TerraBaseTestServer.EventuallyAsync(async token => await ReplicationPressure.ReadAsync(solo, token) == 0);
-        }
-
         using var peerTls = new PeerTls();
         await using var receiver = await TerraBaseTestServer.StartAsync(peerTls.Apply);
 
@@ -553,11 +545,7 @@ public sealed class ReplicationTests
     {
         using var peerTls = new PeerTls();
         using var clientTls = new ClientTls();
-        var credential = Directory.CreateTempSubdirectory("terrabase-branch-").FullName;
-        try
         {
-            const string Secret = "replication-test-management-credential-01";
-            await File.WriteAllTextAsync(Path.Combine(credential, "credential"), Secret);
             await using var receiver = await TerraBaseTestServer.StartAsync(settings =>
             {
                 peerTls.Apply(settings);
@@ -567,13 +555,11 @@ public sealed class ReplicationTests
             {
                 peerTls.Apply(settings);
                 clientTls.Apply(settings);
-                settings["management-credential-file"] = Path.Combine(credential, "credential");
                 settings["peer-addresses"] = receiver.PeerAddress!.ToString();
             });
             var tenant = await ReplicationTenant.CreateAsync(sender, "main");
-            // The service credential is accepted on the loopback administrative listener only.
-            using var dashboard = new HttpClient { BaseAddress = sender.BaseAddress, Timeout = TimeSpan.FromSeconds(30) };
-            dashboard.DefaultRequestHeaders.Authorization = new("Bearer", Secret);
+            // The platform operator acts as a user on the internal listener only.
+            using var dashboard = PeerTls.CreateClient(sender.BaseAddress);
             dashboard.DefaultRequestHeaders.Add("X-TerraBase-User-Id", tenant.UserId);
             using var writer = clientTls.CreateClient(sender.ClientAddress!, await tenant.KeyAsync(sender, "documents:write"));
 
@@ -616,10 +602,6 @@ public sealed class ReplicationTests
             var remoteStore = (await receiver.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(tenant.Database("preview"), CancellationToken.None))!;
             await using var remote = await remoteStore.BeginTransactionAsync(write: false, CancellationToken.None);
             await Assert.That(System.Text.Encoding.UTF8.GetString((await remote.GetAsync("people", id, CancellationToken.None))!.Json.Span)).IsEqualTo(body);
-        }
-        finally
-        {
-            Directory.Delete(credential, recursive: true);
         }
     }
 
@@ -1273,8 +1255,8 @@ public sealed class ReplicationTests
     {
         peerTls.Apply(settings);
         clientTls.Apply(settings);
-        settings["peer-port"] = port.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        settings["peer-addresses"] = $"https://localhost:{peerPort}";
+        settings["internal-port"] = port.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        settings["peer-addresses"] = $"http://127.0.0.1:{peerPort}";
     }
 
     private static async Task PutAsync(ReplicationTenant tenant, HttpClient client, string id)

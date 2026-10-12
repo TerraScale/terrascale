@@ -14,7 +14,7 @@ public sealed class StorageShutdownTests
     [Test]
     public async Task Stopping_under_load_closes_every_database_file()
     {
-        var api = await ManagementApi.StartAsync(managementCredential: true);
+        var api = await ManagementApi.StartAsync();
         var dataDirectory = api.Server.DataDirectory;
         Task? serverShutdown = null;
         Tenant? tenant = null;

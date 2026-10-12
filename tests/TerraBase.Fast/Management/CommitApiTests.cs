@@ -29,7 +29,7 @@ public sealed class CommitApiTests
     public async Task Commit_document_creates_use_the_application_clock_for_monotonic_ULIDs()
     {
         var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 8, 12, 0, 0, TimeSpan.Zero));
-        await using var api = await ManagementApi.StartAsync(time: clock, managementCredential: true);
+        await using var api = await ManagementApi.StartAsync(time: clock);
         using var service = api.Service(api.User);
         var ids = new List<string>();
         for (var i = 0; i < 2; i++)
@@ -61,8 +61,8 @@ public sealed class CommitApiTests
     [Test]
     public async Task A_commit_creates_an_organization_a_project_and_a_document_naming_both()
     {
-        await using var api = await ManagementApi.StartAsync(managementCredential: true);
-        // Dashboard documents need the trusted service: the management service credential acting as the user.
+        await using var api = await ManagementApi.StartAsync();
+        // Dashboard documents need the trusted service: the platform operator acting as the user.
         using var service = api.Service(api.User);
         var (organization, project, document) = (NewId(), NewId(), NewId());
         var (organizationName, projectName) = (OrganizationName(), ProjectName());
@@ -108,7 +108,7 @@ public sealed class CommitApiTests
     [Arguments("00112233-4455-6677-8899-aabbccddeeff")]
     public async Task Dashboard_documents_keep_caller_supplied_keys_in_commits_and_reads(string key)
     {
-        await using var api = await ManagementApi.StartAsync(managementCredential: true);
+        await using var api = await ManagementApi.StartAsync();
         using var service = api.Service(api.User);
         var written = await CommitAsync(service, new { op = "put", collection = "settings", id = key, document = new { value = 1 } });
         await Assert.That(written.Status).IsEqualTo(HttpStatusCode.OK);
@@ -122,7 +122,7 @@ public sealed class CommitApiTests
     [Test]
     public async Task Dashboard_query_key_reads_preserve_raw_key_identity_without_path_aliases()
     {
-        await using var api = await ManagementApi.StartAsync(managementCredential: true);
+        await using var api = await ManagementApi.StartAsync();
         using var service = api.Service(api.User);
         string[] keys = ["a/b", "a%2Fb", ".", "%2E", "..", "%2E%2E", "%", "?", "#", "+", " ", "雪😀", "é", "e\u0301"];
         var written = await CommitAsync(service, [.. keys.Select(key => (object)new { op = "put", collection = "settings", id = key, document = new { value = key } })]);
@@ -149,8 +149,8 @@ public sealed class CommitApiTests
     [Test]
     public async Task A_failing_last_operation_publishes_nothing()
     {
-        await using var api = await ManagementApi.StartAsync(managementCredential: true);
-        // Dashboard documents need the trusted service: the management service credential acting as the user.
+        await using var api = await ManagementApi.StartAsync();
+        // Dashboard documents need the trusted service: the platform operator acting as the user.
         using var service = api.Service(api.User);
         var organization = await api.CreateOrganizationAsync(OrganizationName());
         var originalName = ProjectName();
@@ -204,7 +204,7 @@ public sealed class CommitApiTests
     [Test]
     public async Task A_document_operation_that_outgrows_the_document_limit_names_its_operation_and_writes_nothing()
     {
-        await using var api = await ManagementApi.StartAsync(managementCredential: true);
+        await using var api = await ManagementApi.StartAsync();
         using var service = api.Service(api.User);
         var (existing, added) = (NewId(), NewId());
         var half = new string('x', 600 * 1024);
@@ -227,8 +227,8 @@ public sealed class CommitApiTests
     [Test]
     public async Task A_rest_change_after_the_version_was_read_fails_the_fence_even_with_a_matching_document_version()
     {
-        await using var api = await ManagementApi.StartAsync(managementCredential: true);
-        // Dashboard documents need the trusted service: the management service credential acting as the user.
+        await using var api = await ManagementApi.StartAsync();
+        // Dashboard documents need the trusted service: the platform operator acting as the user.
         using var service = api.Service(api.User);
         var organization = await api.CreateOrganizationAsync(OrganizationName());
         var document = NewId();
@@ -257,8 +257,8 @@ public sealed class CommitApiTests
     [Test]
     public async Task Concurrent_commits_fencing_the_same_version_commit_exactly_once()
     {
-        await using var api = await ManagementApi.StartAsync(managementCredential: true);
-        // Dashboard documents need the trusted service: the management service credential acting as the user.
+        await using var api = await ManagementApi.StartAsync();
+        // Dashboard documents need the trusted service: the platform operator acting as the user.
         using var service = api.Service(api.User);
         var organization = await api.CreateOrganizationAsync(OrganizationName());
         await api.SetPlanAsync(api.User, organization, "enterprise");
@@ -282,8 +282,8 @@ public sealed class CommitApiTests
     [Test]
     public async Task A_commit_id_makes_a_lost_reply_observable_and_applies_once()
     {
-        await using var api = await ManagementApi.StartAsync(managementCredential: true);
-        // Dashboard documents need the trusted service: the management service credential acting as the user.
+        await using var api = await ManagementApi.StartAsync();
+        // Dashboard documents need the trusted service: the platform operator acting as the user.
         using var service = api.Service(api.User);
         var organization = await api.CreateOrganizationAsync(OrganizationName());
         using var stranger = api.As(User());
@@ -580,7 +580,7 @@ public sealed class CommitApiTests
     [Test]
     public async Task Branches_need_a_source_that_exists_where_the_operation_runs()
     {
-        await using var api = await ManagementApi.StartAsync(managementCredential: true);
+        await using var api = await ManagementApi.StartAsync();
         using var service = api.Service(api.User);
         var organization = await api.CreateOrganizationAsync(OrganizationName());
         var project = await api.CreateProjectAsync(organization, ProjectName());
@@ -708,7 +708,7 @@ public sealed class CommitApiTests
                 version = Encoding.UTF8.GetString(marker!.Json.Span);
             }
 
-            await using var restarted = await ManagementApi.StartAsync(settings => settings["data-directory"] = directory, managementCredential: true);
+            await using var restarted = await ManagementApi.StartAsync(settings => settings["data-directory"] = directory);
             using var stranger = restarted.Service(User());
             // Another user's organization cannot take the existing project's id.
             var created = await CommitAsync(stranger, new { op = "create_organization", name = OrganizationName() });

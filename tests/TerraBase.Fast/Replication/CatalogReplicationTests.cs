@@ -103,9 +103,9 @@ public sealed class CatalogReplicationTests
         {
             peers.Apply(settings);
             tls.Apply(settings);
-            settings["peer-port"] = own.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            settings["internal-port"] = own.ToString(System.Globalization.CultureInfo.InvariantCulture);
             var (a, b) = own < other ? (own, other) : (other, own);
-            settings["peers"] = $"member-a=localhost:{a},member-b=localhost:{b}";
+            settings["peers"] = $"member-a=127.0.0.1:{a},member-b=127.0.0.1:{b}";
             settings["node-name"] = own == a ? "member-a" : "member-b";
             settings["catalog-primary"] = "member-a";
         });
@@ -139,7 +139,7 @@ public sealed class CatalogReplicationTests
             return TerraBaseTestServer.StartAsync(settings =>
             {
                 peers.Apply(settings);
-                settings["peer-port"] = port.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                settings["internal-port"] = port.ToString(System.Globalization.CultureInfo.InvariantCulture);
             });
         }
 
@@ -147,7 +147,7 @@ public sealed class CatalogReplicationTests
         {
             peers.Apply(settings);
             tls.Apply(settings);
-            settings["catalog-primary"] = $"https://localhost:{port}";
+            settings["catalog-primary"] = $"http://127.0.0.1:{port}";
         });
         CatalogTenant tenant;
         await using (var primary = await StartPrimaryAsync())
@@ -189,7 +189,7 @@ public sealed class CatalogReplicationTests
             return TerraBaseTestServer.StartAsync(settings =>
             {
                 peers.Apply(settings);
-                settings["peer-port"] = port.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                settings["internal-port"] = port.ToString(System.Globalization.CultureInfo.InvariantCulture);
                 settings["data-directory"] = primaryDirectory;
             });
         }
@@ -201,7 +201,7 @@ public sealed class CatalogReplicationTests
                 peers.Apply(settings);
                 tls.Apply(settings);
                 settings["data-directory"] = followerDirectory;
-                settings["catalog-primary"] = $"https://localhost:{port}";
+                settings["catalog-primary"] = $"http://127.0.0.1:{port}";
             });
         }
 

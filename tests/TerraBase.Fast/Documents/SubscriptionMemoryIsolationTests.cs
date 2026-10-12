@@ -155,7 +155,7 @@ public sealed class SubscriptionMemoryIsolationTests
         {
             services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, new FakeTimeProvider());
             services.AddSingleton<IShapeService>(provider => gate = new ReadGate(ActivatorUtilities.CreateInstance<ShapeService>(provider)));
-        }, managementCredential: true);
+        });
         var database = await api.CreateManagedDatabaseAsync();
         // The authority verifier reserves 4 MiB; bootstrap the binding before testing Hobby's 4 MiB allowance.
         await api.SetPlanAsync(api.User, database.Organization, "enterprise", deadline.Token);
@@ -321,7 +321,7 @@ public sealed class SubscriptionMemoryIsolationTests
 
     private static Task<ManagementApi> StartAsync(TimeProvider? queryClock = null) =>
         ManagementApi.StartAsync(settings => settings["memory-budget"] = "67108864", services: services =>
-            services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, queryClock ?? new FakeTimeProvider()), managementCredential: true);
+            services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, queryClock ?? new FakeTimeProvider()));
 
     private static TenantContext Context(ManagedDatabaseRef database) => new(database.Organization, PlanTier.Hobby, database.Project, database.Id);
 

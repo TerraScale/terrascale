@@ -142,9 +142,9 @@ public sealed class BackupSnapshotReplicationTests
         {
             peers.Apply(settings);
             tls.Apply(settings);
-            settings["peer-port"] = own.ToString(CultureInfo.InvariantCulture);
+            settings["internal-port"] = own.ToString(CultureInfo.InvariantCulture);
             var (first, second) = own < other ? (own, other) : (other, own);
-            settings["peers"] = $"member-a=localhost:{first},member-b=localhost:{second}";
+            settings["peers"] = $"member-a=127.0.0.1:{first},member-b=127.0.0.1:{second}";
             settings["node-name"] = own == first ? "member-a" : "member-b";
             settings["catalog-primary"] = "member-a";
             settings["write-wait-ms"] = "30000";

@@ -27,12 +27,7 @@ public sealed class QueryShapeForwardingLifetimeTests
     {
         using var peers = new PeerTls();
         var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
-        var credential = string.Empty;
-        await using var primary = await ManagementApi.StartAsync(settings =>
-        {
-            peers.Apply(settings);
-            credential = settings["management-credential-file"];
-        }, time: time, managementCredential: true);
+        await using var primary = await ManagementApi.StartAsync(peers.Apply, time: time);
         var database = await primary.CreateManagedDatabaseAsync();
         var key = await primary.Server.IssueAsync(database.Organization, "documents:read", "documents:write");
         await using var follower = await TerraBaseTestServer.StartAsync(settings =>
@@ -41,7 +36,6 @@ public sealed class QueryShapeForwardingLifetimeTests
             primary.Tls.Apply(settings);
             TestIssuer.Configure(settings);
             settings["catalog-primary"] = primary.Server.PeerAddress!.ToString();
-            settings["management-credential-file"] = credential;
         }, services =>
         {
             primary.Issuer.Route(services);
@@ -98,7 +92,7 @@ public sealed class QueryShapeForwardingLifetimeTests
     {
         using var peers = new PeerTls();
         var time = new FakeTimeProvider(DateTimeOffset.UtcNow);
-        await using var api = await ManagementApi.StartAsync(peers.Apply, time: time, managementCredential: true);
+        await using var api = await ManagementApi.StartAsync(peers.Apply, time: time);
         var database = await api.CreateManagedDatabaseAsync();
         using (var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write"))
         {

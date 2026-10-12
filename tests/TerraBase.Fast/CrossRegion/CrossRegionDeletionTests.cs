@@ -144,7 +144,7 @@ public sealed class CrossRegionDeletionTests
         {
             services.AddSingleton(network.Join(cell));
             services.AddSingleton<IMemberDirectory>(members);
-        }, managementCredential: true);
+        });
 
     private static async Task RegisterAsync(
         ManagementApi api, string organization, string project, string organizationName, string projectName, CancellationToken token)

@@ -39,14 +39,10 @@ internal sealed class CrashableTerraBase : IAsyncDisposable
             throw new ArgumentException("data-directory must be supplied and owned by the test", nameof(settings));
         }
 
-        var adminPort = RequirePort("admin-port");
-        ClientAddress = new UriBuilder(Uri.UriSchemeHttps, "localhost", RequirePort("client-port")).Uri;
-        PeerAddress = new UriBuilder(Uri.UriSchemeHttps, "localhost", RequirePort("peer-port")).Uri;
-        Client = new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false })
-        {
-            BaseAddress = new UriBuilder(Uri.UriSchemeHttp, "127.0.0.1", adminPort).Uri,
-            Timeout = Timeout.InfiniteTimeSpan,
-        };
+        _ = RequirePort("metrics-port");
+        ClientAddress = new UriBuilder(Uri.UriSchemeHttp, "127.0.0.1", RequirePort("port")).Uri;
+        PeerAddress = new UriBuilder(Uri.UriSchemeHttp, "127.0.0.1", RequirePort("internal-port")).Uri;
+        Client = PeerTls.CreateClient(PeerAddress);
     }
 
     public HttpClient Client { get; }

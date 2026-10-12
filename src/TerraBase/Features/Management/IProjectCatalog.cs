@@ -14,6 +14,9 @@ public interface IProjectCatalog
     /// <summary>Finds a verified storage namespace, or registers one atomically for a signed project's first database.</summary>
     ValueTask<ResolveProjectResult> ResolveProjectAsync(string projectId, string actor, bool create, CancellationToken cancellationToken);
 
+    /// <summary>The organization that registered <paramref name="projectId"/>, whether or not ts-auth bound it yet.</summary>
+    ValueTask<ResolveProjectResult> ProjectOrganizationAsync(string projectId, CancellationToken cancellationToken);
+
     /// <summary>Verifies a legacy owner's sign-in token with ts-auth before binding existing storage to its project.</summary>
     ValueTask<VerifyProjectBindingResult> VerifyBindingAsync(
         string userId, string organizationId, string projectId, string authorityOrganizationId, string token, CancellationToken cancellationToken);

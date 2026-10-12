@@ -1,145 +1,11 @@
 using System.Collections.Frozen;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
-using System.Security.Cryptography;
-using System.Security.Cryptography.X509Certificates;
-using System.Text;
-using TerraBase.Features.Replication;
 
 namespace TerraBase.Configuration;
 
 /// <summary>An invalid or incomplete <c>TERRABASE_*</c> configuration. The process must not start.</summary>
 public sealed class TerraBaseConfigurationException(string message) : Exception(message);
-
-/// <summary>PEM files of the peer listener, read again whenever one of them changes.</summary>
-/// <param name="Certificate">This node's certificate. Peers use it both to serve and to connect, so it carries the server and client authentication usages.</param>
-/// <param name="PrivateKey">The private key of <paramref name="Certificate"/>.</param>
-/// <param name="Authority">The certificate authorities (one or more PEM certificates) every peer certificate must chain to.</param>
-public sealed record PeerTlsFiles(string Certificate, string PrivateKey, string Authority)
-{
-    internal const int MaxPemFileBytes = 1024 * 1024;
-    internal const int MaxAuthorities = 64;
-
-    /// <summary>TLS server authentication extended key usage.</summary>
-    public const string ServerAuthentication = "1.3.6.1.5.5.7.3.1";
-
-    /// <summary>TLS client authentication extended key usage.</summary>
-    public const string ClientAuthentication = "1.3.6.1.5.5.7.3.2";
-
-    /// <summary>
-    /// Reads the certificate with its key and every authority, and requires the certificate to chain to them
-    /// for both server and client authentication, as peers check it. The caller owns what this returns and
-    /// disposes it with <see cref="Dispose"/>; on failure nothing stays allocated.
-    /// </summary>
-    /// <exception cref="CryptographicException">A file holds no usable certificate or key, or the certificate does not chain.</exception>
-    /// <exception cref="IOException">A file cannot be read.</exception>
-    public (X509Certificate2 Certificate, X509Certificate2Collection Authorities, X509Certificate2Collection Intermediates) Load()
-    {
-        var authorities = new X509Certificate2Collection();
-        var intermediates = new X509Certificate2Collection();
-        X509Certificate2? certificate = null;
-        try
-        {
-            ImportCertificates(Authority, authorities, MaxAuthorities);
-            var certificatePem = ImportCertificates(Certificate, intermediates, MaxAuthorities + 1);
-            if (intermediates.Count == 0)
-            {
-                throw new CryptographicException("peer-certificate contains no certificate");
-            }
-
-            intermediates[0].Dispose();
-            intermediates.RemoveAt(0);
-            certificate = X509Certificate2.CreateFromPem(certificatePem, Encoding.UTF8.GetString(ReadPemBytes(PrivateKey)));
-            return Chains(certificate, authorities, ServerAuthentication, intermediates) && Chains(certificate, authorities, ClientAuthentication, intermediates)
-                ? (certificate, authorities, intermediates)
-                : throw new CryptographicException("the peer certificate does not chain to the peer authority for server and client authentication");
-        }
-        catch
-        {
-            Dispose(certificate, authorities, intermediates);
-            throw;
-        }
-    }
-
-    private static string ImportCertificates(string path, X509Certificate2Collection certificates, int maximum)
-    {
-        // ImportFromPem uses the complete bundle from the bounded reader, rather than an unbounded file read.
-        var pem = Encoding.UTF8.GetString(ReadPemBytes(path));
-        var remaining = pem.AsSpan();
-        var count = 0;
-        while (PemEncoding.TryFind(remaining, out var fields))
-        {
-            if (remaining[fields.Label].SequenceEqual("CERTIFICATE") && ++count > maximum)
-            {
-                throw new CryptographicException("peer-certificate or peer-client-ca contains too many certificates");
-            }
-
-            remaining = remaining[fields.Location.End..];
-        }
-
-        certificates.ImportFromPem(pem);
-        return pem;
-    }
-
-    // Both loading and SHA-256 checks cap actual reads, including a file that grows during the read.
-    internal static byte[] ReadPemBytes(string path)
-    {
-        using var file = File.OpenRead(path);
-        var length = file.Length;
-        if (length > MaxPemFileBytes)
-        {
-            throw new CryptographicException("peer-certificate, peer-private-key and peer-client-ca must each fit within 1 MiB");
-        }
-
-        var pem = new byte[(int)length];
-        file.ReadExactly(pem);
-        return file.ReadByte() < 0
-            ? pem
-            : throw new IOException("peer-certificate, peer-private-key or peer-client-ca changed while being read");
-    }
-
-    /// <summary>Disposes what <see cref="Load"/> returned.</summary>
-    public static void Dispose(X509Certificate2? certificate, X509Certificate2Collection authorities, X509Certificate2Collection? intermediates = null)
-    {
-        ArgumentNullException.ThrowIfNull(authorities);
-        certificate?.Dispose();
-        foreach (var intermediate in intermediates ?? [])
-        {
-            intermediate.Dispose();
-        }
-
-        foreach (var authority in authorities)
-        {
-            authority.Dispose();
-        }
-    }
-
-    /// <summary>Whether <paramref name="certificate"/> chains to one of <paramref name="authorities"/> and allows <paramref name="usage"/>.</summary>
-    public static bool Chains(X509Certificate2 certificate, X509Certificate2Collection authorities, string usage, X509Certificate2Collection? intermediates = null)
-    {
-        using var chain = new X509Chain();
-        chain.ChainPolicy = Policy(authorities, usage);
-        if (intermediates is not null)
-        {
-            chain.ChainPolicy.ExtraStore.AddRange(intermediates);
-        }
-        return chain.Build(certificate);
-    }
-
-    internal static X509ChainPolicy Policy(X509Certificate2Collection authorities, string usage)
-    {
-        var policy = new X509ChainPolicy
-        {
-            TrustMode = X509ChainTrustMode.CustomRootTrust,
-            RevocationMode = X509RevocationMode.NoCheck,
-            DisableCertificateDownloads = true,
-        };
-        policy.CustomTrustStore.AddRange(authorities);
-        policy.ApplicationPolicy.Add(new Oid(usage));
-        return policy;
-    }
-
-}
 
 /// <summary>
 /// Validated process configuration.
@@ -147,10 +13,16 @@ public sealed record PeerTlsFiles(string Certificate, string PrivateKey, string 
 /// an argument wins over the environment. An empty value means "not set", so <c>--name=</c>
 /// clears a setting inherited from the environment.
 /// </summary>
-public sealed record TerraBaseOptions : IDisposable
+public sealed record TerraBaseOptions
 {
-    /// <summary>Default port of the loopback administrative and metrics listener.</summary>
-    public const int DefaultAdminPort = 9464;
+    /// <summary>Port of the public listener, behind Fly Proxy.</summary>
+    public const int DefaultPort = 8080;
+
+    /// <summary>Port of the internal listener on Fly's private network.</summary>
+    public const int DefaultInternalPort = 8081;
+
+    /// <summary>Port of the metrics listener Fly scrapes (<c>[[metrics]]</c> in <c>fly.toml</c>).</summary>
+    public const int DefaultMetricsPort = 9091;
 
     /// <summary>Default seconds shutdown waits for transactions to return their database connections.</summary>
     public const int DefaultShutdownGraceSeconds = 10;
@@ -176,17 +48,12 @@ public sealed record TerraBaseOptions : IDisposable
     private const string EnvironmentPrefix = "TERRABASE_";
 
 
-    private const int MinManagementCredentialLength = 32;
     private const int DefaultStorageQueue = 1024;
     internal const long MinMemoryBudget = 1024 * 1024;
 
-    private static readonly string[] ClientTlsKeys = ["client-certificate", "client-private-key"];
-
-    private static readonly string[] PeerTlsKeys = ["peer-certificate", "peer-private-key", "peer-client-ca"];
-
     private static readonly FrozenSet<string> Keys = FrozenSet.Create(
         StringComparer.Ordinal,
-        ["admin-port", "data-directory", "memory-budget", "client-port", .. ClientTlsKeys, "auth-issuer", "auth-audience", "management-credential-file", "peer-port", .. PeerTlsKeys, "write-wait-ms", "shutdown-grace-seconds", "readiness-cache-seconds", "query-budget-seconds", "storage-threads", "storage-queue", .. BackupSettings.Keys]);
+        ["port", "internal-port", "metrics-port", "data-directory", "memory-budget", "auth-issuer", "auth-audience", "write-wait-ms", "shutdown-grace-seconds", "readiness-cache-seconds", "query-budget-seconds", "storage-threads", "storage-queue", .. BackupSettings.Keys]);
 
     /// <summary>Every setting name, in <c>--name=value</c> form without the dashes.</summary>
     public static IReadOnlySet<string> SettingNames => Keys;
@@ -196,8 +63,20 @@ public sealed record TerraBaseOptions : IDisposable
     private static readonly FrozenSet<string> HostArguments = FrozenSet.Create(
         StringComparer.Ordinal, "environment", "applicationName", "contentRoot");
 
-    /// <summary>Port of the loopback administrative listener; <c>0</c> picks a free port.</summary>
-    public required int AdminPort { get; init; }
+    /// <summary>
+    /// Port of the public listener: plain HTTP behind Fly Proxy, which terminates TLS. Only tests change it (<c>0</c> picks a
+    /// free port).
+    /// </summary>
+    public int Port { get; init; } = DefaultPort;
+
+    /// <summary>
+    /// Port of the internal listener: HTTP/2 without TLS on Fly's private network (<c>fly-local-6pn</c>), trusted as the
+    /// platform operator. Only tests change it (<c>0</c> picks a free port).
+    /// </summary>
+    public int InternalPort { get; init; } = DefaultInternalPort;
+
+    /// <summary>Port of the metrics listener; only tests change it (<c>0</c> picks a free port).</summary>
+    public int MetricsPort { get; init; } = DefaultMetricsPort;
 
     /// <summary>Directory holding one SQLite file per database.</summary>
     public required string DataDirectory { get; init; }
@@ -232,15 +111,6 @@ public sealed record TerraBaseOptions : IDisposable
         && id.All(character => character is >= 'a' and <= 'z' or >= '0' and <= '9' or '-');
 
     /// <summary>
-    /// Port of the client-facing HTTPS listener; <c>0</c> picks a free port.
-    /// <see langword="null"/> disables the listener.
-    /// </summary>
-    public int? ClientPort { get; init; }
-
-    /// <summary>Server certificate with its private key for the client listener.</summary>
-    public X509Certificate2? ClientCertificate { get; init; }
-
-    /// <summary>
     /// Issuer (<c>iss</c>) of the ts-auth access tokens that authenticate Management API users, an absolute HTTPS URL.
     /// Its signing keys come from <c>{issuer}/.well-known/openid-configuration</c>. <see langword="null"/> authenticates
     /// no user, so the Management API answers 401.
@@ -249,35 +119,6 @@ public sealed record TerraBaseOptions : IDisposable
 
     /// <summary>Accepted audiences (<c>aud</c>) of those tokens; a token must name at least one. Set with <see cref="AuthIssuer"/>.</summary>
     public IReadOnlyList<string> AuthAudiences { get; init; } = [];
-
-    /// <summary>
-    /// SHA-256 of the management service credential, read from <c>management-credential-file</c>. It authorizes the Management
-    /// API on the loopback administrative listener only, acting as the user named in <c>X-TerraBase-User-Id</c>. Empty
-    /// disables it. The secret itself is not kept.
-    /// </summary>
-    public ReadOnlyMemory<byte> ManagementCredentialHash { get; init; }
-
-    /// <summary>
-    /// Port of the inter-node gRPC listener (mutual TLS, HTTP/2); <c>0</c> picks a free port.
-    /// <see langword="null"/> disables the listener.
-    /// </summary>
-    public int? PeerPort { get; init; }
-
-    /// <summary>Certificate files of the peer listener, validated at startup; set exactly when <see cref="PeerPort"/> is.</summary>
-    public PeerTlsFiles? PeerTls { get; init; }
-
-    private PeerCredentials.Snapshot? _peerCredentialSnapshot;
-
-    internal PeerCredentials.Snapshot? PeerCredentialSnapshot { get => _peerCredentialSnapshot; init => _peerCredentialSnapshot = value; }
-
-    internal PeerCredentials.Snapshot? TakePeerCredentialSnapshot() => Interlocked.Exchange(ref _peerCredentialSnapshot, null);
-
-    /// <summary>Releases startup certificates, including a peer snapshot not consumed before startup failed.</summary>
-    public void Dispose()
-    {
-        TakePeerCredentialSnapshot()?.Dispose();
-        ClientCertificate?.Dispose();
-    }
 
     /// <summary>
     /// How long shutdown waits for transactions to return their database connections. When it expires, shutdown
@@ -412,68 +253,29 @@ public sealed record TerraBaseOptions : IDisposable
             throw new TerraBaseConfigurationException("data-directory must be a valid path");
         }
 
-        var clientPort = ParsePort(values, "client-port");
-        RequireGroup(values, "client-port", clientPort, ClientTlsKeys);
-        var (authIssuer, authAudiences) = ParseAuth(values, clientPort);
-
-        var peerPort = ParsePort(values, "peer-port");
-        RequireGroup(values, "peer-port", peerPort, PeerTlsKeys);
-        var peerTls = peerPort is null ? null : new PeerTlsFiles(values["peer-certificate"], values["peer-private-key"], values["peer-client-ca"]);
-        // Validate the remaining settings before allocating certificates.
-        var adminPort = ParsePort(values, "admin-port") ?? DefaultAdminPort;
-        var shutdownGrace = TimeSpan.FromSeconds(ParseShutdownGraceSeconds(values));
-        var readinessCacheTtl = TimeSpan.FromSeconds(ParseReadinessCacheSeconds(values));
-        var queryBudget = TimeSpan.FromSeconds(ParseInteger(values, "query-budget-seconds", 1, MaxQueryBudgetSeconds) ?? DefaultQueryBudgetSeconds);
-        var writeWait = TimeSpan.FromMilliseconds(ParseInteger(values, "write-wait-ms", 0, 60_000) ?? DefaultWriteWaitMilliseconds);
-        var backup = BackupSettings.Parse(values);
-        X509Certificate2? clientCertificate = null;
-        PeerCredentials.Snapshot? peerCredentialSnapshot = null;
-        try
+        var (authIssuer, authAudiences) = ParseAuth(values);
+        return new TerraBaseOptions
         {
-            clientCertificate = clientPort is null ? null : LoadPem(
-                () => X509Certificate2.CreateFromPemFile(values["client-certificate"], values["client-private-key"]),
-                "client-certificate and client-private-key must name a readable PEM certificate and its private key");
-            // Hand off this stable, validated pair; initialization must not reopen files already rotating.
-            peerCredentialSnapshot = peerTls is null ? null : LoadPem(
-                () => PeerCredentials.LoadStable(peerTls)
-                    ?? throw new IOException("peer-certificate, peer-private-key or peer-client-ca kept changing while they were read"),
-                "peer-certificate, peer-private-key and peer-client-ca must name readable, stable PEM files whose certificate chains to the authority for server and client authentication");
-
-            return new TerraBaseOptions
-            {
-                AdminPort = adminPort,
-                DataDirectory = dataDirectory,
-                Region = region,
-                MachineId = machineId,
-                App = app,
-                PrimaryRegion = primaryRegion,
-                CatalogFollower = primaryRegion != region,
-                MemoryBudget = ParseInteger(values, "memory-budget", MinMemoryBudget, long.MaxValue) ?? DefaultMemoryBudget(),
-                StorageThreads = (int)(ParseInteger(values, "storage-threads", 1, 1024) ?? Math.Clamp(Environment.ProcessorCount, 1, 1024)),
-                StorageQueue = (int)(ParseInteger(values, "storage-queue", 1, 1_000_000) ?? DefaultStorageQueue),
-                ClientPort = clientPort,
-                ClientCertificate = clientCertificate,
-                AuthIssuer = authIssuer,
-                AuthAudiences = authAudiences,
-                ManagementCredentialHash = values.TryGetValue("management-credential-file", out var credentialFile)
-                    ? ReadCredentialHash(credentialFile)
-                    : ReadOnlyMemory<byte>.Empty,
-                PeerPort = peerPort,
-                PeerTls = peerTls,
-                PeerCredentialSnapshot = peerCredentialSnapshot,
-                WriteWait = writeWait,
-                ShutdownGrace = shutdownGrace,
-                ReadinessCacheTtl = readinessCacheTtl,
-                QueryBudget = queryBudget,
-                Backup = backup,
-            };
-        }
-        catch
-        {
-            clientCertificate?.Dispose();
-            peerCredentialSnapshot?.Dispose();
-            throw;
-        }
+            Port = ParsePort(values, "port") ?? DefaultPort,
+            InternalPort = ParsePort(values, "internal-port") ?? DefaultInternalPort,
+            MetricsPort = ParsePort(values, "metrics-port") ?? DefaultMetricsPort,
+            DataDirectory = dataDirectory,
+            Region = region,
+            MachineId = machineId,
+            App = app,
+            PrimaryRegion = primaryRegion,
+            CatalogFollower = primaryRegion != region,
+            MemoryBudget = ParseInteger(values, "memory-budget", MinMemoryBudget, long.MaxValue) ?? DefaultMemoryBudget(),
+            StorageThreads = (int)(ParseInteger(values, "storage-threads", 1, 1024) ?? Math.Clamp(Environment.ProcessorCount, 1, 1024)),
+            StorageQueue = (int)(ParseInteger(values, "storage-queue", 1, 1_000_000) ?? DefaultStorageQueue),
+            AuthIssuer = authIssuer,
+            AuthAudiences = authAudiences,
+            WriteWait = TimeSpan.FromMilliseconds(ParseInteger(values, "write-wait-ms", 0, 60_000) ?? DefaultWriteWaitMilliseconds),
+            ShutdownGrace = TimeSpan.FromSeconds(ParseShutdownGraceSeconds(values)),
+            ReadinessCacheTtl = TimeSpan.FromSeconds(ParseReadinessCacheSeconds(values)),
+            QueryBudget = TimeSpan.FromSeconds(ParseInteger(values, "query-budget-seconds", 1, MaxQueryBudgetSeconds) ?? DefaultQueryBudgetSeconds),
+            Backup = BackupSettings.Parse(values),
+        };
     }
 
     private static long DefaultMemoryBudget() => Math.Max(MinMemoryBudget, GC.GetGCMemoryInfo().TotalAvailableMemoryBytes / 4);
@@ -497,21 +299,6 @@ public sealed record TerraBaseOptions : IDisposable
         value >= min && value <= max
             ? value
             : throw new TerraBaseConfigurationException($"{key} must be an integer between {min} and {max}");
-
-    // A listener port and its TLS settings are all set or all absent.
-    private static void RequireGroup(IReadOnlyDictionary<string, string> values, string portKey, int? port, string[] tlsKeys)
-    {
-        var tls = string.Join(", ", tlsKeys);
-        if (port is null && tlsKeys.Any(values.ContainsKey))
-        {
-            throw new TerraBaseConfigurationException($"{tls} require {portKey}");
-        }
-
-        if (port is not null && !tlsKeys.All(values.ContainsKey))
-        {
-            throw new TerraBaseConfigurationException($"{portKey} requires {tls}");
-        }
-    }
 
     private static int? ParsePort(IReadOnlyDictionary<string, string> values, string key)
     {
@@ -552,8 +339,8 @@ public sealed record TerraBaseOptions : IDisposable
             : throw new TerraBaseConfigurationException($"readiness-cache-seconds must be an integer between 1 and {MaxReadinessCacheSeconds}");
     }
 
-    // ts-auth tokens authenticate Management API users, which only the client listener serves.
-    private static (string? Issuer, string[] Audiences) ParseAuth(IReadOnlyDictionary<string, string> values, int? clientPort)
+    // ts-auth tokens authenticate Management API users.
+    private static (string? Issuer, string[] Audiences) ParseAuth(IReadOnlyDictionary<string, string> values)
     {
         var issuer = values.GetValueOrDefault("auth-issuer");
         var audience = values.GetValueOrDefault("auth-audience");
@@ -565,11 +352,6 @@ public sealed record TerraBaseOptions : IDisposable
         if (issuer is null || audience is null)
         {
             throw new TerraBaseConfigurationException("auth-issuer and auth-audience must be set together");
-        }
-
-        if (clientPort is null)
-        {
-            throw new TerraBaseConfigurationException("auth-issuer requires client-port");
         }
 
         // iss is compared exactly, so whitespace Uri parsing would forgive (" https://…") is refused, not trimmed.
@@ -586,24 +368,6 @@ public sealed record TerraBaseOptions : IDisposable
         return audience.Any(char.IsControl) || audiences.Any(value => value.Length == 0)
             ? throw new TerraBaseConfigurationException("auth-audience must be a comma-separated list of non-empty audiences without control characters")
             : (issuer, audiences);
-    }
-
-    // The file holds the secret alone; surrounding whitespace (a trailing newline) is ignored.
-    private static byte[] ReadCredentialHash(string path)
-    {
-        string secret;
-        try
-        {
-            secret = File.ReadAllText(path).Trim();
-        }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
-        {
-            throw new TerraBaseConfigurationException("management-credential-file must name a readable file");
-        }
-
-        return secret.Length < MinManagementCredentialLength
-            ? throw new TerraBaseConfigurationException("management-credential-file must hold a secret of at least 32 characters")
-            : SHA256.HashData(Encoding.UTF8.GetBytes(secret));
     }
 
     // Fly sets these on every machine. A process elsewhere (development, tests) is a cell of its own, named local.
@@ -628,25 +392,12 @@ public sealed record TerraBaseOptions : IDisposable
             : throw new TerraBaseConfigurationException("PRIMARY_REGION must name a region");
     }
 
-    // An https://host:port origin of a peer listener (the port defaults to 443).
+    // An http://host:port origin of another member's internal listener.
     internal static bool TryParsePeerAddress(string value, [NotNullWhen(true)] out Uri? address) =>
         Uri.TryCreate(value, UriKind.Absolute, out address)
-        && address.Scheme == Uri.UriSchemeHttps
+        && address.Scheme == Uri.UriSchemeHttp
         && address.Port != 0
         && address.PathAndQuery == "/"
         && address.Fragment.Length == 0
         && address.UserInfo.Length == 0;
-
-    // Messages name the settings, never the paths or file contents.
-    private static T LoadPem<T>(Func<T> load, string message)
-    {
-        try
-        {
-            return load();
-        }
-        catch (Exception error) when (error is IOException or UnauthorizedAccessException or CryptographicException or ArgumentException)
-        {
-            throw new TerraBaseConfigurationException(message);
-        }
-    }
 }

@@ -70,6 +70,12 @@ internal sealed partial class EngineManagementService : IProjectCatalog
         }, static error => error, cancellationToken).ConfigureAwait(false);
     }
 
+    public ValueTask<ResolveProjectResult> ProjectOrganizationAsync(string projectId, CancellationToken cancellationToken) =>
+        ReadAsync<ResolveProjectResult>(async transaction =>
+            await GetAsync(transaction, ProjectOrganizations, projectId, Id, cancellationToken).ConfigureAwait(false) is { } organization
+                ? organization
+                : ManagementErrors.NotFound, static error => error, cancellationToken);
+
     public async ValueTask<VerifyProjectBindingResult> VerifyBindingAsync(
         string userId, string organizationId, string projectId, string authorityOrganizationId, string token, CancellationToken cancellationToken)
     {

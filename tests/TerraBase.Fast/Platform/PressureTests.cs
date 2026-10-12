@@ -175,22 +175,17 @@ public sealed class PressureTests
     }
 
     [Test]
-    public async Task Pressure_and_metrics_are_hidden_from_authenticated_peer_connections()
+    public async Task The_metrics_listener_serves_metrics_and_nothing_else()
     {
-        using var tls = new PeerTls();
-        await using var server = await TerraBaseTestServer.StartAsync(tls.Apply);
-        using var peer = new HttpClient(tls.CreateHandler())
-        {
-            BaseAddress = server.PeerAddress,
-            DefaultRequestVersion = HttpVersion.Version20,
-            DefaultVersionPolicy = HttpVersionPolicy.RequestVersionExact,
-        };
+        await using var server = await TerraBaseTestServer.StartAsync();
+        using var scraper = new HttpClient { BaseAddress = server.MetricsAddress };
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
-        foreach (var path in new[] { Pressure, Metrics })
-        {
-            using var response = await peer.GetAsync(path, deadline.Token);
-            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-        }
+        using var pressure = await scraper.GetAsync(Pressure, deadline.Token);
+        using var metrics = await scraper.GetAsync(Metrics, deadline.Token);
+
+        await Assert.That(pressure.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        await Assert.That(metrics.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(await metrics.Content.ReadAsStringAsync(deadline.Token)).Contains("terrabase_pressure_available");
     }
 
     [Test]

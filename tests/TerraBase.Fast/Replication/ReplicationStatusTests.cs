@@ -11,17 +11,17 @@ namespace TerraBase.Fast.Replication;
 public sealed class ReplicationStatusTests
 {
     [Test]
-    public async Task Disabled_replication_status_is_uncached_and_hidden_from_clients()
+    public async Task Replication_status_without_peers_is_uncached_and_hidden_from_clients()
     {
         using var tls = new ClientTls();
         var token = TestContext.Current!.Execution.CancellationToken;
         await using var server = await TerraBaseTestServer.StartAsync(tls.Apply);
+        await TerraBaseTestServer.ReplicatedAsync(server);
         using var response = await server.Client.GetAsync(new Uri("/replication", UriKind.Relative), token);
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(response.Headers.CacheControl?.NoStore).IsTrue();
         var status = await response.Content.ReadFromJsonAsync<ReplicationStatus>(token);
-        await Assert.That(status!.Enabled).IsFalse();
-        await Assert.That(status.Initialized).IsTrue();
+        await Assert.That(status!.Initialized).IsTrue();
         await Assert.That(status.DatabaseCount).IsEqualTo(0);
         await Assert.That(status.OmittedDatabases).IsEqualTo(0);
         await Assert.That(status.Peers.Count).IsEqualTo(0);
@@ -70,7 +70,6 @@ public sealed class ReplicationStatusTests
         await PutAsync(tenant, writer, token);
 
         var status = await StatusAsync(sender, token);
-        await Assert.That(status.Enabled).IsTrue();
         await Assert.That(status.Initialized).IsTrue();
         await Assert.That(status.DatabaseCount).IsEqualTo(1);
         await Assert.That(status.OmittedDatabases).IsEqualTo(0);

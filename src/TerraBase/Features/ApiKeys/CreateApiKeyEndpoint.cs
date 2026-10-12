@@ -25,7 +25,7 @@ public sealed record CreatedApiKeyBody(
     string Id, string Name, IReadOnlyList<string> Scopes, string OrganizationId, string? ProjectId, string? DatabaseId, string Secret);
 
 /// <summary>
-/// <c>POST /admin/api-keys</c>: issues a scoped client API key for one organization. Served only on the loopback
+/// <c>POST /admin/api-keys</c>: issues a scoped client API key for one organization. Served only on the internal
 /// administrative listener, so it trusts the local operator.
 /// </summary>
 public sealed class CreateApiKeyEndpoint(IApiKeyStore keys) : Endpoint<CreateApiKeyRequest, IResult>

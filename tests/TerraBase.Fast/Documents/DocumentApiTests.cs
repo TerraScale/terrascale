@@ -757,7 +757,7 @@ public sealed class DocumentApiTests
     }
 
     [Test]
-    public async Task Client_and_admin_endpoints_stay_on_their_listeners()
+    public async Task Admin_endpoints_stay_internal_and_the_operator_reaches_client_routes_there()
     {
         await using var api = await DocumentApi.StartAsync();
         var client = api.Client;
@@ -768,7 +768,8 @@ public sealed class DocumentApiTests
         // Health probes are the only administrative routes the client listener also serves.
         using var metricsOnClient = await client.GetAsync(new Uri("/metrics", UriKind.Relative));
 
-        await Assert.That(documentsOnAdmin.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        // The internal listener serves the client API too, as the platform operator when nothing is presented.
+        await Assert.That(documentsOnAdmin.StatusCode).IsEqualTo(HttpStatusCode.Created);
         await Assert.That(keysOnClient.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(metricsOnClient.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
     }
@@ -816,8 +817,6 @@ public sealed class DocumentApiTests
             HttpMethod.Patch, api.Document(id), """{"ops":[{"op":"set","path":"/name","value":"after"}]}""",
             "application/vnd.terrabase.ops+json", request =>
             {
-                request.Version = HttpVersion.Version20;
-                request.VersionPolicy = HttpVersionPolicy.RequestVersionExact;
                 request.Content!.Headers.Remove("Content-Type");
                 request.Content.Headers.TryAddWithoutValidation("Content-Type", " application/vnd.terrabase.ops+json; charset=utf-8");
             });

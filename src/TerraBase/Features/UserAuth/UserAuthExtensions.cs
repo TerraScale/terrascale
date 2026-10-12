@@ -21,13 +21,13 @@ public static class UserAuthExtensions
     /// <summary>The scheme that validates ts-auth access tokens.</summary>
     public const string TokenScheme = "TsAuth";
 
-    /// <summary>The hidden, loopback-only compatibility scheme.</summary>
-    public const string LegacyServiceScheme = "ManagementCredential";
+    /// <summary>The platform operator's scheme: the internal listener, acting as a named user.</summary>
+    public const string OperatorScheme = "Operator";
 
     /// <summary>
     /// Registers <see cref="IIssuerKeys"/> with its background fetch, the <c>TsAuth</c> scheme (client listener), the
-    /// <c>ManagementCredential</c> scheme (administrative listener) and the <see cref="PolicyName"/> policy that accepts
-    /// either. Without <c>auth-issuer</c> or <c>management-credential-file</c> the matching scheme authenticates no one.
+    /// <c>Operator</c> scheme (internal listener) and the <see cref="PolicyName"/> policy that accepts
+    /// either. Without <c>auth-issuer</c> the token scheme authenticates no one.
     /// </summary>
     public static IServiceCollection AddTerraBaseUserAuth(this IServiceCollection services)
     {
@@ -46,9 +46,9 @@ public static class UserAuthExtensions
         services.AddHostedService(provider => provider.GetRequiredService<TsAuthKeys>());
         services.AddAuthentication()
             .AddScheme<AuthenticationSchemeOptions, UserAuthenticationHandler>(UserAuthenticationHandler.SchemeName, configureOptions: null)
-            .AddScheme<AuthenticationSchemeOptions, ManagementCredentialHandler>(ManagementCredentialHandler.SchemeName, configureOptions: null);
+            .AddScheme<AuthenticationSchemeOptions, OperatorHandler>(OperatorHandler.SchemeName, configureOptions: null);
         services.AddAuthorizationBuilder().AddPolicy(PolicyName, policy => policy
-            .AddAuthenticationSchemes(UserAuthenticationHandler.SchemeName, ManagementCredentialHandler.SchemeName)
+            .AddAuthenticationSchemes(UserAuthenticationHandler.SchemeName, OperatorHandler.SchemeName)
             .RequireAuthenticatedUser());
         services.AddAuthorizationBuilder().AddPolicy(SubscriptionPolicy, policy => policy
             .AddAuthenticationSchemes(UserAuthenticationHandler.SchemeName).RequireAuthenticatedUser()
@@ -58,18 +58,18 @@ public static class UserAuthExtensions
 
     /// <summary>
     /// The ts-auth user id of a request authorized by <see cref="PolicyName"/>: the token's <c>sub</c>, or the user the
-    /// management service credential names.
+    /// platform operator names.
     /// </summary>
     public static string UserId(this ClaimsPrincipal user) =>
-        (Identity(user, UserAuthenticationHandler.SchemeName) ?? Identity(user, ManagementCredentialHandler.SchemeName))
+        (Identity(user, UserAuthenticationHandler.SchemeName) ?? Identity(user, OperatorHandler.SchemeName))
             ?.FindFirst(ClaimTypes.NameIdentifier)?.Value
         ?? throw new InvalidOperationException("the request has no authenticated ts-auth user");
 
     /// <summary>
-    /// Whether the request authenticated with the management service credential (loopback administrative listener), which
+    /// Whether the request came from the platform operator (internal listener), which
     /// the dashboard document space of Management commits needs: a ts-auth user token never reaches it.
     /// </summary>
-    public static bool IsManagementService(this ClaimsPrincipal user) => Identity(user, ManagementCredentialHandler.SchemeName) is not null;
+    public static bool IsOperator(this ClaimsPrincipal user) => Identity(user, OperatorHandler.SchemeName) is not null;
 
     /// <summary>The user's email when its ts-auth token marks it verified; otherwise <see langword="null"/>.</summary>
     public static string? VerifiedEmail(this ClaimsPrincipal user) =>
@@ -95,7 +95,7 @@ public static class UserAuthExtensions
             }
 
             if (context.Features.Get<LegacyManagementRoute>() is not null && context.User.Identity?.IsAuthenticated == true
-                && Identity(context.User, UserAuthenticationHandler.SchemeName) is null && !context.User.IsManagementService())
+                && Identity(context.User, UserAuthenticationHandler.SchemeName) is null && !context.User.IsOperator())
             {
                 context.Response.StatusCode = StatusCodes.Status401Unauthorized;
                 return;

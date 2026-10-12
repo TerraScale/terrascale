@@ -2,9 +2,9 @@ using System.Collections.Immutable;
 
 namespace TerraBase.Engine.Cluster;
 
-/// <summary>A member of the cell: its machine, its peer listener and where it runs.</summary>
+/// <summary>A member of the cell: its machine, its internal listener and where it runs.</summary>
 /// <param name="Name">The member's machine ID (<c>FLY_MACHINE_ID</c>).</param>
-/// <param name="PeerAddress">Its peer listener (<c>https://host:port</c>), or empty when it has none.</param>
+/// <param name="PeerAddress">Its internal listener (<c>http://host:port</c>), or empty when it has none.</param>
 /// <param name="Region">Its region.</param>
 /// <param name="Zone">Its zone within the region, or empty.</param>
 internal sealed record ClusterMember(string Name, string PeerAddress, string Region, string Zone);

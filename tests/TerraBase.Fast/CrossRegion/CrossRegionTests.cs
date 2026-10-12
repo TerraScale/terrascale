@@ -635,11 +635,11 @@ public sealed class CrossRegionTests
             return ManagementApi.StartAsync(settings =>
             {
                 peerTls.Apply(settings);
-                settings["peer-port"] = port.ToString(System.Globalization.CultureInfo.InvariantCulture);
-                settings["peers"] = $"gru-a=localhost:{portA},gru-b=localhost:{portB}";
+                settings["internal-port"] = port.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                settings["peers"] = $"gru-a=127.0.0.1:{portA},gru-b=127.0.0.1:{portB}";
                 settings["catalog-primary"] = "gru-a";
                 Regions.Configure(settings, "gru-1", name);
-            }, services => Regions.Join(services, network, "gru", gruMembers, name), managementCredential: true);
+            }, services => Regions.Join(services, network, "gru", gruMembers, name));
         }
 
         try
@@ -648,7 +648,7 @@ public sealed class CrossRegionTests
             await using var gruB = await StartGruAsync("gru-b", portB);
             await using var sfo = await ManagementApi.StartAsync(
                 settings => Regions.Configure(settings, "sfo-1", "sfo-a"),
-                services => Regions.Join(services, network, "sfo", new FakeMemberStore()), managementCredential: true);
+                services => Regions.Join(services, network, "sfo", new FakeMemberStore()));
             var (organization, project, database) = (EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString());
             foreach (var (api, commit) in new[] { (gruA, Regions.Registration(organization, project, database, "canary", "sfo-1")), (sfo, Regions.Registration(organization, project, null, "canary")) })
             {
@@ -873,7 +873,7 @@ public sealed class CrossRegionTests
                     }
 
                     configureServices?.Invoke(services);
-                }, managementCredential: true);
+                });
 
         // Every document of "items" with its version and body, in id order.
         private async Task<string> ListAsync(HttpClient client, CancellationToken token)

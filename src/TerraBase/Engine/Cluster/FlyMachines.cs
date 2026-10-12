@@ -7,7 +7,7 @@ namespace TerraBase.Engine.Cluster;
 
 /// <summary>
 /// The started machines of this Fly app, from the TXT record <c>vms.&lt;app&gt;.internal</c> of Fly's internal DNS:
-/// comma-separated <c>&lt;machine id&gt; &lt;region&gt;</c> entries. Each member's peer listener is reached at
+/// comma-separated <c>&lt;machine id&gt; &lt;region&gt;</c> entries. Each member's internal listener is reached at
 /// <c>&lt;machine id&gt;.vm.&lt;app&gt;.internal</c>.
 /// </summary>
 internal sealed class FlyMachines(TerraBaseOptions options) : IMemberDirectory, IDisposable
@@ -31,9 +31,7 @@ internal sealed class FlyMachines(TerraBaseOptions options) : IMemberDirectory, 
             .DistinctBy(member => member.Name)];
     }
 
-    private string Address(string app, string id) => options.PeerPort is { } port
-        ? string.Create(CultureInfo.InvariantCulture, $"https://{id}.vm.{app}.internal:{port}/")
-        : string.Empty;
+    private string Address(string app, string id) => string.Create(CultureInfo.InvariantCulture, $"http://{id}.vm.{app}.internal:{options.InternalPort}/");
 
     public void Dispose() => _resolver.Dispose();
 }

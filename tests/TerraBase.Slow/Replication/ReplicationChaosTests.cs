@@ -121,9 +121,9 @@ public sealed class ReplicationChaosTests
             var settings = new Dictionary<string, string>(StringComparer.Ordinal)
             {
                 ["data-directory"] = directory,
-                ["admin-port"] = TerraBaseTestServer.FreePort().ToString(CultureInfo.InvariantCulture),
-                ["client-port"] = TerraBaseTestServer.FreePort().ToString(CultureInfo.InvariantCulture),
-                ["peer-port"] = TerraBaseTestServer.FreePort().ToString(CultureInfo.InvariantCulture),
+                ["metrics-port"] = TerraBaseTestServer.FreePort().ToString(CultureInfo.InvariantCulture),
+                ["port"] = TerraBaseTestServer.FreePort().ToString(CultureInfo.InvariantCulture),
+                ["internal-port"] = TerraBaseTestServer.FreePort().ToString(CultureInfo.InvariantCulture),
                 ["region"] = "INVALID-REGION",
             };
             var error = await Assert.That(async () =>
@@ -284,7 +284,7 @@ public sealed class ReplicationChaosTests
                     {
                         if (from != to)
                         {
-                            cluster._links[from, to] = await PartitionablePeer.StartAsync(cluster._peers, new Uri($"https://localhost:{ports[to]}"));
+                            cluster._links[from, to] = await PartitionablePeer.StartAsync(cluster._peers, new Uri($"http://127.0.0.1:{ports[to]}"));
                         }
                     }
                 }
@@ -292,8 +292,8 @@ public sealed class ReplicationChaosTests
                 var childSettings = cluster.Settings(2, ports[2]);
                 // The child is a separate Fly machine whose DNS lists no peers: it only receives, and anti-entropy repairs from it.
                 _ = childSettings.Remove("peer-addresses");
-                childSettings["admin-port"] = TerraBaseTestServer.FreePort().ToString(CultureInfo.InvariantCulture);
-                childSettings["client-port"] = TerraBaseTestServer.FreePort().ToString(CultureInfo.InvariantCulture);
+                childSettings["metrics-port"] = TerraBaseTestServer.FreePort().ToString(CultureInfo.InvariantCulture);
+                childSettings["port"] = TerraBaseTestServer.FreePort().ToString(CultureInfo.InvariantCulture);
                 string key;
                 // Provision the child's disk through the same real application harness before launching its process.
                 await using (var seed = await TerraBaseTestServer.StartAsync(settings =>
@@ -357,7 +357,7 @@ public sealed class ReplicationChaosTests
             settings["node-name"] = $"chaos-{index}";
             settings["storage-threads"] = "1";
             settings["write-wait-ms"] = "0";
-            settings["peer-port"] = port.ToString(CultureInfo.InvariantCulture);
+            settings["internal-port"] = port.ToString(CultureInfo.InvariantCulture);
             settings["peer-addresses"] = string.Join(',', Enumerable.Range(0, 3).Where(other => other != index).Select(other => _links[index, other]!.Address));
             return settings;
         }

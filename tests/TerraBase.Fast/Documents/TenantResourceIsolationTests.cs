@@ -21,7 +21,7 @@ public sealed class TenantResourceIsolationTests
     public async Task Dashboard_catalog_results_use_process_memory_and_release_after_rejection()
     {
         await using var management = await ManagementApi.StartAsync(settings =>
-            settings["memory-budget"] = Budget.ToString(CultureInfo.InvariantCulture), managementCredential: true);
+            settings["memory-budget"] = Budget.ToString(CultureInfo.InvariantCulture));
         using var tenant = await management.CreateTenantAsync("documents:read");
         using var owner = management.As(tenant.User);
         var route = new Uri("/v1/management/organizations", UriKind.Relative);
@@ -128,7 +128,7 @@ public sealed class TenantResourceIsolationTests
     public async Task Request_memory_rejection_is_scoped_to_the_organization_and_releases_after_retry()
     {
         await using var management = await ManagementApi.StartAsync(settings =>
-            settings["memory-budget"] = Budget.ToString(CultureInfo.InvariantCulture), managementCredential: true);
+            settings["memory-budget"] = Budget.ToString(CultureInfo.InvariantCulture));
         using var hobby = await management.CreateTenantAsync("documents:read", "documents:write");
         using var other = await management.CreateTenantAsync("documents:read", "documents:write");
         var database = await hobby.ContextAsync(management.Server, "shop");
@@ -156,7 +156,7 @@ public sealed class TenantResourceIsolationTests
     public async Task A_downgrade_releases_old_cache_before_request_admission(bool commit)
     {
         await using var management = await ManagementApi.StartAsync(settings =>
-            settings["memory-budget"] = Budget.ToString(CultureInfo.InvariantCulture), managementCredential: true);
+            settings["memory-budget"] = Budget.ToString(CultureInfo.InvariantCulture));
         using var tenant = await management.CreateTenantAsync("documents:read", "documents:write");
         using var owner = management.As(tenant.User);
         using var service = management.Service(tenant.User);
@@ -223,7 +223,7 @@ public sealed class TenantResourceIsolationTests
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         await using var management = await ManagementApi.StartAsync(settings =>
-            settings["memory-budget"] = Budget.ToString(CultureInfo.InvariantCulture), managementCredential: true);
+            settings["memory-budget"] = Budget.ToString(CultureInfo.InvariantCulture));
         using var hobby = await management.CreateTenantAsync("documents:read", "documents:write");
         using var paid = await management.CreateTenantAsync("documents:read", "documents:write");
         using (var service = management.Service(paid.User))
@@ -273,7 +273,7 @@ public sealed class TenantResourceIsolationTests
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         await using var management = await ManagementApi.StartAsync(settings =>
-            settings["memory-budget"] = Budget.ToString(CultureInfo.InvariantCulture), managementCredential: true);
+            settings["memory-budget"] = Budget.ToString(CultureInfo.InvariantCulture));
         using var hobby = await management.CreateTenantAsync("documents:read", "documents:write");
         using var paid = await management.CreateTenantAsync("documents:read", "documents:write");
         using (var service = management.Service(paid.User))

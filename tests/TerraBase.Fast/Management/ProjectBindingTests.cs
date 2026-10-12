@@ -34,7 +34,7 @@ public sealed class ProjectBindingTests
     public async Task A_legacy_project_registered_with_a_victims_UUID_cannot_capture_the_victims_JWT_data()
     {
         var faker = new Faker();
-        await using var api = await ManagementApi.StartAsync(managementCredential: true);
+        await using var api = await ManagementApi.StartAsync();
         var organization = await api.CreateOrganizationAsync(faker.Company.CompanyName());
         var project = EntityIds.New().ToString();
         var operation = new { op = "create_project", organization, id = project, name = faker.Company.CompanyName() };
@@ -253,7 +253,7 @@ public sealed class ProjectBindingTests
     public async Task Invalid_sign_in_tokens_and_restricted_project_tokens_cannot_verify_bindings(string failure, HttpStatusCode expected)
     {
         var faker = new Faker();
-        await using var api = await ManagementApi.StartAsync(managementCredential: true);
+        await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
         var authorityOrganization = EntityIds.New().ToString();
         var unpublished = api.Issuer.AddKey(Microsoft.IdentityModel.Tokens.SecurityAlgorithms.EcdsaSha256, publish: false);
@@ -275,10 +275,13 @@ public sealed class ProjectBindingTests
         api.Issuer.GrantProject(token, authorityOrganization, database.Project);
         using var caller = api.WithToken(token);
         await BindingStatusAsync(caller, database.Organization, database.Project, authorityOrganization, expected);
-        using var publicService = api.WithToken(ManagementApi.ServiceCredential);
+        // The operator's user header means nothing on the public listener.
+        using var publicService = api.WithToken(null);
+        publicService.DefaultRequestHeaders.Add("X-TerraBase-User-Id", api.User);
         await BindingStatusAsync(publicService, database.Organization, database.Project, authorityOrganization, HttpStatusCode.Unauthorized);
         using var adminService = api.Service(api.User);
-        await BindingStatusAsync(adminService, database.Organization, database.Project, authorityOrganization, HttpStatusCode.NotFound);
+        // Binding needs the user's own sign-in token; the operator cannot verify one.
+        await BindingStatusAsync(adminService, database.Organization, database.Project, authorityOrganization, HttpStatusCode.Unauthorized);
         await Assert.That(api.Issuer.ProjectFetches).IsEqualTo(0);
         using var jwt = api.WithToken(ProjectToken(api.Issuer, api.User, database.Project));
         await InaccessibleAsync(jwt, database);

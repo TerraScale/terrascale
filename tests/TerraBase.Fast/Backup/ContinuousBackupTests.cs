@@ -305,7 +305,7 @@ public sealed class ContinuousBackupTests
     {
         var s3 = new FakeS3();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
-        await using var api = await ManagementApi.StartAsync(s3.Configure, services => ManualShipping(s3, services), time, managementCredential: true);
+        await using var api = await ManagementApi.StartAsync(s3.Configure, services => ManualShipping(s3, services), time);
         var backup = api.Server.Services.GetRequiredService<IContinuousBackup>();
         var hobby = await api.CreateManagedDatabaseAsync("main");
         var pro = await api.CreateManagedDatabaseAsync("main");
@@ -353,7 +353,7 @@ public sealed class ContinuousBackupTests
     {
         var s3 = new FakeS3();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
-        await using var api = await ManagementApi.StartAsync(s3.Configure, services => ManualShipping(s3, services), time, managementCredential: true);
+        await using var api = await ManagementApi.StartAsync(s3.Configure, services => ManualShipping(s3, services), time);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var token = deadline.Token;
         var backup = api.Server.Services.GetRequiredService<IContinuousBackup>();

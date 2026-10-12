@@ -25,14 +25,15 @@ var environmentName = args.LastOrDefault(argument => argument.StartsWith("--envi
     ?? Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT")
     ?? Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT")
     ?? Environments.Production;
-TerraBaseOptions? options = null;
+TerraBaseOptions options;
+IPAddress internalAddress;
 try
 {
     options = TerraBaseOptions.FromProcess(args);
+    internalAddress = Listeners.InternalAddress(options);
 }
 catch (TerraBaseConfigurationException error)
 {
-    options?.Dispose();
     // Configuration messages name settings, never their values.
     await Console.Error.WriteLineAsync($"terrabase: {error.Message}");
     return 2;
@@ -41,25 +42,16 @@ catch (TerraBaseConfigurationException error)
 // Zero config: outside Development a node never runs without continuous backup (docs/terrabase/backup.md).
 if (options.Backup is null && environmentName != Environments.Development)
 {
-    options.Dispose();
     await Console.Error.WriteLineAsync($"terrabase: backup requires {string.Join(", ", BackupSettings.TigrisVariables.Select(variable => variable.Variable))} (attach the Tigris bucket) and TERRABASE_MASTER_KEY outside Development");
     return 2;
 }
-
-// The externally registered options owns any certificates not handed to a service, even if building fails.
-using var configuration = options;
 
 // Settings come only from TerraBaseOptions. The slim builder still adds environment variables
 // and appsettings files, and Kestrel would bind listeners from a "Kestrel" section in them
 // (for example Kestrel__Endpoints__X__Url): drop every configuration source.
 var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions { Args = [], EnvironmentName = environmentName });
 builder.Configuration.Sources.Clear();
-builder.WebHost.ConfigureKestrel(kestrel =>
-{
-    // The administrative listener is loopback-only by construction; it is never configurable.
-    kestrel.Listen(IPAddress.Loopback, options.AdminPort, listen => listen.UseTerraBaseListener(TerraBaseListener.Admin));
-    kestrel.AddTerraBaseClientListener(options);
-});
+builder.WebHost.ConfigureKestrel(kestrel => kestrel.AddTerraBaseListeners(options, internalAddress));
 // Per-request framework logs are metrics' job; keep the log stream for events. An unauthenticated request is answered 401
 // on purpose, so its challenge is not an event either.
 builder.Logging.AddTerraBaseLogging();
@@ -102,13 +94,11 @@ builder.Services.AddTerraBaseBackup(options);
 builder.Services.AddTerraBaseHealth();
 builder.Services.AddTerraBasePressure();
 builder.Services.AddTerraBaseStats();
-builder.AddTerraBaseReplication(options);
+builder.AddTerraBaseReplication();
 builder.Services.AddTerraBaseCrossRegion();
 
 try
 {
-    // Dispose startup certificates before publishing completion; the outer scope also covers setup failures.
-    using var runConfiguration = configuration;
     await using var app = builder.Build();
     try
     {
@@ -142,7 +132,7 @@ try
     app.UseTerraBaseManagementRouteValidation();
     app.MapTerraScaleEndpoints();
     // OpenAPI, Scalar and the GET / redirect are client-listener only and need no credentials.
-    app.MapTerraScaleOpenApi().WithMetadata(ListenerMetadata.Client);
+    app.MapTerraScaleOpenApi().WithMetadata(new ListenerMetadata(TerraBaseListener.Client));
     app.MapTerraBaseMetrics();
     app.MapTerraBaseReplication();
     app.MapTerraBaseUsage();

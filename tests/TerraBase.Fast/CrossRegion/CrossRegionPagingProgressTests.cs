@@ -346,7 +346,7 @@ public sealed partial class CrossRegionPagingProgressTests
                     provider => ActivatorUtilities.CreateInstance<WanPuller>(provider, clock));
                 services.AddSingleton(provider => ActivatorUtilities.CreateInstance<WanMetrics>(provider, clock));
             }
-        }, managementCredential: true, failedStartCleanup: failedStartCleanup);
+        }, failedStartCleanup: failedStartCleanup);
 
     private static async Task<ManagedDatabaseRef> CreatePlacedAsync(ManagementApi api, string organization, string project, string name, CancellationToken token)
     {
