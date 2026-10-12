@@ -432,6 +432,47 @@ public sealed class CatalogLatticeTests
         await Assert.That(refused.GetProperty("accepted").GetBoolean()).IsFalse();
     }
 
+    /// <summary>
+    /// A cluster down to one machine (a single region, before a second exists, the others retired): after a restart it has
+    /// nothing to pull from and its catalog is no longer genesis, so it stays closed (COS DECISION on R3's verification of
+    /// 60eae912) until an operator opens it through <c>fly ssh</c> with <c>&lt;operator&gt;: &lt;reason&gt;</c>. A malformed request
+    /// or one without a reason is refused; every request is recorded; the open holds for that start only.
+    /// </summary>
+    [Test]
+    public async Task A_lone_machine_restarted_stays_closed_until_an_operator_opens_it_for_that_start_only()
+    {
+        await using var cluster = await Cluster.StartAsync("gru");
+        var gru = cluster["gru"];
+        await gru.BootstrapAsync("a new test cluster");
+        await Assert.That(await gru.UntilOpenAsync()).IsTrue();
+        await gru.CommitAsync(EntityIds.New().ToString(), new { op = "create_organization", id = EntityIds.New().ToString(), name = "Lone" });
+
+        await gru.StopAsync();
+        await gru.StartAsync();
+        await Assert.That(await gru.PassAsync()).IsFalse().Because("nothing to pull from, not genesis, no request");
+        await Assert.That(await gru.StatusAsync("/readyz")).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+
+        foreach (var malformed in new[] { "no operator or reason", "alice:", ": no operator" })
+        {
+            await gru.RequestAsync(CatalogGate.OpenFile, malformed);
+            await Assert.That(await gru.UntilRequestReadAsync(CatalogGate.OpenFile)).IsTrue();
+            await Assert.That(await gru.IsOpenAsync()).IsFalse().Because(malformed);
+        }
+
+        await gru.RequestAsync(CatalogGate.OpenFile, "alice: gru is the only region, ticket 7");
+        await Assert.That(await gru.UntilOpenAsync()).IsTrue();
+        var opens = await gru.RecordsAsync(CatalogGate.Opens);
+        await Assert.That(opens.Select(open => open.GetProperty("accepted").GetBoolean()).ToArray()).IsEquivalentTo([false, false, false, true]);
+        var accepted = opens.Single(open => open.GetProperty("accepted").GetBoolean());
+        await Assert.That(accepted.GetProperty("operator").GetString()).IsEqualTo("alice");
+        await Assert.That(accepted.GetProperty("reason").GetString()).IsEqualTo("gru is the only region, ticket 7");
+
+        // The open was for that start: the next one is closed again.
+        await gru.StopAsync();
+        await gru.StartAsync();
+        await Assert.That(await gru.PassAsync()).IsFalse().Because("the request was consumed");
+    }
+
     // Whether `condition` holds within the deadline.
     private static async Task<bool> Until(Func<Task<bool>> condition)
     {
@@ -608,22 +649,33 @@ public sealed class CatalogLatticeTests
         public Task<bool> UntilOpenAsync() => Until(() => Task.FromResult(Gate.IsOpen));
 
         // The operator's bootstrap request, as `fly ssh` writes it into the data directory.
-        public Task BootstrapAsync(string reason) => File.WriteAllTextAsync(Path.Combine(_directory, CatalogGate.BootstrapFile), reason);
+        public Task BootstrapAsync(string reason) => RequestAsync(CatalogGate.BootstrapFile, reason);
 
-        // Whether the gate read (and consumed) the bootstrap request within the deadline, then finished that pass.
-        public async Task<bool> UntilBootstrapReadAsync()
+        public Task<bool> UntilBootstrapReadAsync() => UntilRequestReadAsync(CatalogGate.BootstrapFile);
+
+        // An operator request file (bootstrap or open), as `fly ssh` writes it into the data directory.
+        public Task RequestAsync(string file, string text) => File.WriteAllTextAsync(Path.Combine(_directory, file), text);
+
+        // Whether the gate read (and consumed) the request within the deadline, then finished that pass.
+        public async Task<bool> UntilRequestReadAsync(string file)
         {
-            var read = await Until(() => Task.FromResult(!File.Exists(Path.Combine(_directory, CatalogGate.BootstrapFile))));
+            var read = await Until(() => Task.FromResult(!File.Exists(Path.Combine(_directory, file))));
             _ = await Gate.VerifyAsync(CancellationToken.None);
             return read;
         }
 
+        // A pass of the gate now (the timer runs one a second), then whether it is open.
+        public async Task<bool> PassAsync() => await Gate.VerifyAsync(CancellationToken.None);
+
         // This machine's bootstrap requests as its gate recorded them, oldest first.
-        public async Task<List<JsonElement>> BootstrapsAsync()
+        public Task<List<JsonElement>> BootstrapsAsync() => RecordsAsync(CatalogGate.Bootstraps);
+
+        // This machine's operator requests in `collection` as its gate recorded them, oldest first.
+        public async Task<List<JsonElement>> RecordsAsync(string collection)
         {
             var store = await SystemAsync();
             await using var transaction = await store.BeginTransactionAsync(write: false, CancellationToken.None);
-            var page = await transaction.ListAsync(CatalogGate.Bootstraps, null, 100, 1024 * 1024, CancellationToken.None);
+            var page = await transaction.ListAsync(collection, null, 100, 1024 * 1024, CancellationToken.None);
             return [.. page.Documents.Select(document => JsonDocument.Parse(document.Json).RootElement).Where(request => request.GetProperty("machine").GetString() == Machine)];
         }
 

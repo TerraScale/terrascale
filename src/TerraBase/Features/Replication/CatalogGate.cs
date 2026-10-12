@@ -30,7 +30,8 @@ public interface ICatalogGate
 /// only copy of a change. No machine to pull from is unknown, not proof of a current catalog: the gate stays closed. Two
 /// ways out of that, and nothing else: the cell is a single machine by configuration (no member directory, nothing listed,
 /// no other region recorded), or an operator requests the bootstrap of a new cluster (<see cref="BootstrapFile"/>), which
-/// succeeds only on a genesis catalog. A failed directory read or an unreachable machine keeps it closed, however long.
+/// succeeds only on a genesis catalog. A failed directory read or an unreachable machine keeps it closed, however long,
+/// unless an operator opens it for one start (<see cref="OpenFile"/>, audited).
 /// </summary>
 internal sealed class CatalogGate : BackgroundService, ICatalogGate
 {
@@ -45,6 +46,16 @@ internal sealed class CatalogGate : BackgroundService, ICatalogGate
 
     /// <summary>Every bootstrap request a machine read: <c>{"machine", "reason", "at", "accepted", "refused"?}</c>; replicated.</summary>
     internal const string Bootstraps = "catalog_gate_bootstraps";
+
+    /// <summary>
+    /// The operator's open: a file of that name in the data directory, <c>&lt;operator&gt;: &lt;reason&gt;</c>, written through
+    /// <c>fly ssh</c>. It opens a closed gate without the missing verifications, for this start only (a cluster down to one
+    /// machine, a region gone for good); consumed by the next pass, accepted or not. Never written by TerraBase.
+    /// </summary>
+    internal const string OpenFile = "catalog-open";
+
+    /// <summary>Every operator open a machine read: <c>{"machine", "operator", "reason", "at", "accepted", "refused"?, "unverified"}</c>.</summary>
+    internal const string Opens = "catalog_gate_opens";
 
     private const int MaxReasonBytes = 500;
     private static readonly TimeSpan Pass = TimeSpan.FromSeconds(1);
@@ -168,6 +179,10 @@ internal sealed class CatalogGate : BackgroundService, ICatalogGate
             else
             {
                 await TryBootstrapAsync(listed.Count + regions.Count + _verified.Count == 0, cancellationToken).ConfigureAwait(false);
+                if (!_open)
+                {
+                    await TryOperatorOpenAsync(cancellationToken).ConfigureAwait(false);
+                }
             }
 
             return _open;
@@ -183,20 +198,16 @@ internal sealed class CatalogGate : BackgroundService, ICatalogGate
     // Records every request, accepted or refused.
     private async Task TryBootstrapAsync(bool alone, CancellationToken cancellationToken)
     {
-        var path = Path.Combine(_options.DataDirectory, BootstrapFile);
-        if (!File.Exists(path))
+        if (await ConsumeAsync(BootstrapFile, cancellationToken).ConfigureAwait(false) is not { } reason)
         {
             return;
         }
 
-        var bytes = await File.ReadAllBytesAsync(path, cancellationToken).ConfigureAwait(false);
-        File.Delete(path);
-        var reason = bytes.Length is > 0 and <= MaxReasonBytes ? Encoding.UTF8.GetString(bytes).Trim() : string.Empty;
         var refused = reason.Length == 0 ? "the request holds no reason of 1 to 500 bytes"
             : !alone ? "another machine is listed or recorded: this machine opens by pulling from it"
             : await GenesisAsync(cancellationToken).ConfigureAwait(false) ? null
             : "the catalog is not a new cluster's: it holds another machine's state or an organization";
-        await AuditAsync(reason, refused, cancellationToken).ConfigureAwait(false);
+        await AuditAsync(Bootstraps, null, reason, refused, null, cancellationToken).ConfigureAwait(false);
         if (refused is not null)
         {
             _logger.ZLogWarning($"A catalog bootstrap request was refused ({refused}); this machine stays closed");
@@ -228,13 +239,56 @@ internal sealed class CatalogGate : BackgroundService, ICatalogGate
 
     // A bootstrap request's record, in a collection of its own (a machines/ document would make a new catalog look like an
     // old format to the management catalog's first initialization).
-    private async Task AuditAsync(string reason, string? refused, CancellationToken cancellationToken)
+    // Opens a closed gate on an operator's request naming who and why, whatever the catalog holds, and records it with what
+    // was not verified. Not automatic: TerraBase never writes the file, and it is consumed.
+    private async Task TryOperatorOpenAsync(CancellationToken cancellationToken)
+    {
+        if (await ConsumeAsync(OpenFile, cancellationToken).ConfigureAwait(false) is not { } request)
+        {
+            return;
+        }
+
+        var separator = request.IndexOf(':', StringComparison.Ordinal);
+        var (who, reason) = separator > 0 ? (request[..separator].Trim(), request[(separator + 1)..].Trim()) : (string.Empty, string.Empty);
+        var refused = who.Length == 0 || reason.Length == 0 ? "the request is not \"<operator>: <reason>\" within 500 bytes" : null;
+        await AuditAsync(Opens, who, reason, refused, Pending, cancellationToken).ConfigureAwait(false);
+        if (refused is not null)
+        {
+            _logger.ZLogWarning($"An operator open of the catalog gate was refused ({refused}); this machine stays closed");
+            return;
+        }
+
+        _open = true;
+        _logger.ZLogWarning($"Operator {who:@Operator} opened the catalog gate without verifying [{string.Join(", ", Pending):@Unverified}] for this start: {reason:@Reason}");
+    }
+
+    // An operator request file's text, trimmed (empty when it is empty or over 500 bytes), deleted once read; null when absent.
+    private async Task<string?> ConsumeAsync(string file, CancellationToken cancellationToken)
+    {
+        var path = Path.Combine(_options.DataDirectory, file);
+        if (!File.Exists(path))
+        {
+            return null;
+        }
+
+        var bytes = await File.ReadAllBytesAsync(path, cancellationToken).ConfigureAwait(false);
+        File.Delete(path);
+        return bytes.Length is > 0 and <= MaxReasonBytes ? Encoding.UTF8.GetString(bytes).Trim() : string.Empty;
+    }
+
+    private async Task AuditAsync(
+        string collection, string? who, string reason, string? refused, IReadOnlyList<string>? unverified, CancellationToken cancellationToken)
     {
         using var body = new MemoryStream();
         await using (var json = new Utf8JsonWriter(body))
         {
             json.WriteStartObject();
             json.WriteString("machine", _options.MachineId);
+            if (who is not null)
+            {
+                json.WriteString("operator", who);
+            }
+
             json.WriteString("reason", reason);
             json.WriteString("at", _time.GetUtcNow());
             json.WriteBoolean("accepted", refused is null);
@@ -243,10 +297,21 @@ internal sealed class CatalogGate : BackgroundService, ICatalogGate
                 json.WriteString("refused", refused);
             }
 
+            if (unverified is not null)
+            {
+                json.WriteStartArray("unverified");
+                foreach (var pending in unverified)
+                {
+                    json.WriteStringValue(pending);
+                }
+
+                json.WriteEndArray();
+            }
+
             json.WriteEndObject();
         }
 
-        await WriteAsync(Bootstraps, EntityIds.New().ToString(), body.ToArray(), cancellationToken).ConfigureAwait(false);
+        await WriteAsync(collection, EntityIds.New().ToString(), body.ToArray(), cancellationToken).ConfigureAwait(false);
     }
 
     // This machine's member record, so every machine knows its region even while it is stopped.
