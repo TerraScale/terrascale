@@ -23,6 +23,7 @@ internal static class Outcomes
     {
         ["Region_processes_replicate_and_a_killed_region_catches_up_after_its_restart"] = new(Nodes.Processes, Faults.ProcessKill),
         ["Hosts_one_region_until_its_process_is_killed"] = new(Nodes.Processes),
+        ["Writes_a_region_acknowledged_before_it_could_ship_them_reach_every_region_after_a_SIGKILL"] = new(Nodes.Processes, Faults.ProcessKill),
     };
 
     /// <summary>Records why the current test passed when the reason is not its scenario holding.</summary>

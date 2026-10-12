@@ -18,8 +18,6 @@ internal static class Gaps
         ["E15"] = "the changes feed (R8) over peer streams (R4a)",
 
         // RepairAndContractE2ETests.
-        ["anti-entropy-repair"] = "anti-entropy (R6) over peer streams fed by the CDC source (R3)",
-        ["restore-older-state"] = "refill and anti-entropy (R6) over peer streams fed by the CDC source (R3)",
         ["deleted-database-stays-deleted"] = "the catalog as a lattice database (R10a) and garbage collection (R7)",
     };
 
