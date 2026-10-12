@@ -280,6 +280,8 @@ internal sealed class CatalogGate : BackgroundService, ICatalogGate
 
             if (_open)
             {
+                // It waits for nothing now; an operator open's record keeps what it did not verify.
+                Pending = [];
                 await WriteAnchorAsync(cancellationToken).ConfigureAwait(false);
             }
 

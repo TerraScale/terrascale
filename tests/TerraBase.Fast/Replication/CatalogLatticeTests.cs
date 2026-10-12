@@ -484,6 +484,31 @@ public sealed class CatalogLatticeTests
     }
 
     /// <summary>
+    /// A new cluster on Fly (COS, first live run): every machine has a backup bucket and seeds the platform databases. The
+    /// seed waits for the gate, so the first machine's catalog is still genesis when the operator requests the bootstrap; it
+    /// opens, anchors, seeds, and its status waits for nothing. A second new machine opens by pulling from it.
+    /// </summary>
+    [Test]
+    public async Task A_new_cluster_with_a_backup_bucket_and_the_platform_seed_bootstraps_and_seeds_once_open()
+    {
+        await using var cluster = await Cluster.StartSeededWithAnchorsAsync("gru");
+        var gru = cluster["gru"];
+        await Assert.That(await gru.IsOpenAsync()).IsFalse();
+
+        await gru.BootstrapAsync("a new cluster on Fly");
+        await Assert.That(await gru.UntilBootstrapReadAsync()).IsTrue();
+        await Assert.That((await gru.BootstrapsAsync()).Single().GetProperty("accepted").GetBoolean()).IsTrue();
+        await Assert.That(await gru.UntilOpenAsync()).IsTrue();
+        await Assert.That(await gru.UntilAsync("organizations", Features.Platform.PlatformDatabases.OrganizationId, json => json is not null)).IsTrue();
+        await Assert.That(await Until(() => Task.FromResult(gru.Anchored >= 0))).IsTrue();
+        await Assert.That((await gru.GateStatusAsync()).GetProperty("pending").GetArrayLength()).IsEqualTo(0);
+
+        var sjc = await cluster.AddAsync("sjc");
+        await Assert.That(await sjc.UntilOpenAsync()).IsTrue().Because("pulled from gru");
+        await Assert.That(await cluster.UntilConvergedAsync("organizations", Features.Platform.PlatformDatabases.OrganizationId)).IsTrue();
+    }
+
+    /// <summary>
     /// A cluster down to one machine (a single region, before a second exists, the others retired): after a restart it has
     /// nothing to pull from and its catalog is no longer genesis, so it stays closed (COS DECISION on R3's verification of
     /// 60eae912) until an operator opens it through <c>fly ssh</c> with <c>&lt;operator&gt;: &lt;reason&gt;</c>. A malformed request
@@ -896,6 +921,8 @@ public sealed class CatalogLatticeTests
 
         await gru.RequestAsync(CatalogGate.OpenFile, "alice: adopting restore anchors after the deploy, digests equal, ticket 12");
         await Assert.That(await gru.UntilOpenAsync()).IsTrue();
+        // Open, it waits for nothing; what the open did not verify is in its record.
+        await Assert.That((await gru.GateStatusAsync()).GetProperty("pending").GetArrayLength()).IsEqualTo(0);
         await Assert.That(await sjc.UntilOpenAsync()).IsTrue().Because("verified by gru");
         foreach (var region in new[] { gru, sjc })
         {
@@ -995,6 +1022,9 @@ public sealed class CatalogLatticeTests
         // The backup bucket holding each machine's restore anchor, when the test has one.
         public FakeS3? Bucket { get; set; }
 
+        // Whether the machines seed the platform databases (PlatformSeed), as production does.
+        public bool Seeds { get; init; }
+
         public IEnumerable<Region> Regions => _regions.Values;
 
         public Region this[string name] => _regions[name];
@@ -1002,6 +1032,9 @@ public sealed class CatalogLatticeTests
         public static Task<Cluster> StartAsync(params string[] regions) => StartAsync(new Cluster(), regions);
 
         public static Task<Cluster> StartWithAnchorsAsync(params string[] regions) => StartAsync(new Cluster { Bucket = new FakeS3() }, regions);
+
+        // As on Fly: a backup bucket (anchors) and the platform seed every production machine runs.
+        public static Task<Cluster> StartSeededWithAnchorsAsync(params string[] regions) => StartAsync(new Cluster { Bucket = new FakeS3(), Seeds = true }, regions);
 
         private static async Task<Cluster> StartAsync(Cluster cluster, string[] regions)
         {
@@ -1098,6 +1131,10 @@ public sealed class CatalogLatticeTests
                 settings["node-name"] = Machine;
                 settings["data-directory"] = _directory;
                 cluster.Bucket?.Configure(settings);
+                if (cluster.Seeds)
+                {
+                    settings[TerraBaseTestServer.PlatformSeedKey] = "true";
+                }
             }, services =>
             {
                 services.AddSingleton<IMemberDirectory>(cluster.Members);

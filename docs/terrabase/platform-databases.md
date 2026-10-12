@@ -15,8 +15,10 @@ region only.
 
 ## Seeding
 
-- A background service (`PlatformSeed`) creates whatever is missing, retrying every 5 seconds until the catalog takes
-  the writes. TerraBase serves before and while it runs; nothing waits for it.
+- A background service (`PlatformSeed`) creates whatever is missing once the catalog gate is open, retrying every 5
+  seconds until the catalog takes the writes. TerraBase serves before and while it runs; nothing waits for it. Before the
+  gate opens it writes nothing: an unverified catalog may be a restored copy, and a seeded one is no longer a new
+  cluster's, so the first machine's `catalog-bootstrap` would be refused.
 - Every write is conditional on absence under the fixed ids and fixed timestamps, so restarts, concurrent runs on one
   node and independent nodes or regions all converge on identical records. An id or name that holds something else is
   never overwritten: the seed logs an error and stops.
