@@ -52,13 +52,39 @@ not upgrade that toolchain. No exposed credential was identified by the scans;
 pattern scanning is not proof against every possible secret.
 
 Protected human-owned instructions and Git history remain untouched and are
-not site inputs. Dashboard and SDK source, hosting configuration, CI deployment
-conditions, DNS, access and credentials remain unchanged. Publication approval
-is still required.
+not site inputs. Dashboard and SDK source, live production routing, DNS, access
+and credentials remain unchanged. Publication approval is still required.
+
+## Pages deployment follow-up
+
+The previous successful main deployment (GitHub Actions run `38185016494`)
+used Blacksmith for both jobs, but published a static-assets Worker. The live
+production domain returned HTTP 200 during inspection. This branch now uses
+Pages configuration and upload commands, preserves the tested build as an
+artifact, and supports a manual feature-branch preview. Main publication still
+requires a reviewed merge; manual runs on main do not publish.
+
+Local validation passes: the build/public audit, 28 tests and 3 legacy fixture
+checks. Four new deployment tests reject a wrong environment/commit, unrelated
+URLs, Worker output, stale assets and an HTTP 200 fallback. The Pages local
+server serves all eight checked pages/assets byte-for-byte, with the generated
+404 shell at HTTP 404. Browser checks show the JavaScript quickstart hydrates
+without failed assets or overflow, and the missing route renders the error
+message after hydration. Actionlint passes with the known Blacksmith label
+allowlisted; its shellcheck integration is unavailable on this host.
+
+The local `cf` Pages project read failed with HTTP 403, code 10000,
+Authentication error. No credentials were printed or changed. The installed
+`cf` CLI reports that existing Pages asset uploads require Wrangler; it does
+not upload that format itself. CI uses `cf` for the project preflight and
+Wrangler for the upload. Hosted Pages verification and the production custom
+domain cutover remain unverified until the CI preview succeeds and the hosting
+change is approved. No Cloudflare object has been changed by this follow-up.
 
 ## Complete changed-file manifest
 
 ```text
+.github/workflows/ci.yml
 README.md
 create-terrascale-app/README.md
 create-terrascale-app/qualification/ownership-migration.md
@@ -418,6 +444,8 @@ examples/terrabase-js/quickstart.mjs
 examples/terrabase-js/quickstart.test.mjs
 package.json
 scripts/check-build.mjs
+scripts/check-pages.mjs
+scripts/check-pages.test.mjs
 scripts/check-public.mjs
 scripts/generate-llms.mjs
 scripts/generate-pricing.mjs
@@ -426,4 +454,5 @@ scripts/public-audit.mjs
 scripts/public-audit.test.mjs
 scripts/run-snippets.mjs
 scripts/stub-sandbox.mjs
+wrangler.jsonc
 ```
