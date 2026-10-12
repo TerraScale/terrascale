@@ -57,7 +57,7 @@ internal static class Gaps
         }
         else
         {
-            Outcomes.Mark("expected-failure", $"{gap.Waits}; failed as named: {Head(failure)}");
+            Outcomes.Mark("expected-failure", $"{gap.Waits}; failed as named: {failure.GetType().Name} with \"{gap.Fails}\"");
         }
     }
 
@@ -68,8 +68,6 @@ internal static class Gaps
         AggregateException aggregate => aggregate.InnerExceptions.Select(Unsupported).FirstOrDefault(found => found is not null),
         _ => Unsupported(error.InnerException),
     };
-
-    private static string Head(Exception failure) => $"{failure.GetType().Name}: {failure.Message.Split('\n')[0]}";
 }
 
 /// <summary>A gap: the slice the scenario waits on, and the text its own failure carries today (<see cref="Expected"/>).</summary>
