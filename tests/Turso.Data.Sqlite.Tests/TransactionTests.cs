@@ -35,6 +35,46 @@ public sealed class TransactionTests
         await Assert.That(Ids(connection)).IsEquivalentTo(["a"]);
     }
 
+    /// <summary>
+    /// When the transaction probe itself fails, while preparing its BEGIN or its ROLLBACK, the caller still gets the error
+    /// of its own statement, and a transaction the probe found ended still refuses later commands.
+    /// </summary>
+    [Test]
+    [Arguments("BEGIN;")]
+    [Arguments("ROLLBACK;")]
+    public async Task AFailingProbeNeverReplacesTheOriginalError(string failingProbe)
+    {
+        using var database = new TemporaryDatabase();
+        var connection = database.Connection;
+        connection.CreateFunction<object?, bool>("stop_here", _ => throw new InvalidOperationException("the test stops this read"));
+        connection.ProbeStatements = sql => sql == failingProbe
+            ? throw new InvalidOperationException("the test breaks the probe")
+            : Turso.Raw.Public.TursoBindings.PrepareStatement(connection.DatabaseHandle, sql);
+        var transaction = connection.BeginTransaction();
+        Execute(connection, transaction, "INSERT INTO t VALUES ('lost');");
+        using (var read = connection.CreateCommand())
+        {
+            read.Transaction = transaction;
+            read.CommandText = "SELECT id FROM t WHERE stop_here(id);";
+            var failure = Assert.Throws<SqliteException>(() =>
+            {
+                using var rows = read.ExecuteReader();
+                while (rows.Read())
+                {
+                }
+            });
+            await Assert.That(failure!.Message).Contains("the test stops this read");
+        }
+
+        if (failingProbe == "ROLLBACK;")
+        {
+            // The probe's BEGIN succeeded, so the transaction had ended: it is marked before the probe's ROLLBACK fails.
+            _ = Assert.Throws<InvalidOperationException>(() => Execute(connection, transaction, "INSERT INTO t VALUES ('after');"));
+        }
+
+        connection.ProbeStatements = null;
+    }
+
     /// <summary>A UNIQUE violation fails only its statement: the transaction and its savepoints go on.</summary>
     [Test]
     public async Task ATransactionOutlivesAFailedWrite()
