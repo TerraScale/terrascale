@@ -11,7 +11,7 @@ namespace TerraBase.E2E;
 /// <summary>
 /// A node killed with SIGKILL right after acknowledging writes, a storage stall (the database file locked by another
 /// writer, so commits cannot proceed), and the lossy link the peer traffic will run through. The single-node halves run
-/// on today's write path and must pass. The replicated halves wait on the slices <see cref="Gaps"/> names.
+/// on today's write path and must pass. The replicated halves run in three regions; <see cref="Gaps"/> names any that still fail.
 /// Local only: they kill processes and lock files of their own nodes.
 /// </summary>
 public sealed class CrashAndStallE2ETests
@@ -72,8 +72,8 @@ public sealed class CrashAndStallE2ETests
         Console.WriteLine($"SIGKILL after {acked.Length} acknowledged writes ({unacknowledged.Length} in flight): all acknowledged writes survived");
     }
 
-    // The replicated half: the writer is killed right after its acknowledgements, before it can have shipped them, and every
-    // region must still end with every acknowledged write once it is back.
+    // The replicated half: gru, a separate OS process, is killed right after its acknowledgements, before it can have
+    // shipped them all, and every region must still end with every acknowledged write once gru is back.
     [Test]
     [Scenario(Nodes.Processes, Faults.ProcessKill)]
     public async Task Writes_acknowledged_before_a_SIGKILL_reach_every_region_once_the_node_is_back()
@@ -81,9 +81,59 @@ public sealed class CrashAndStallE2ETests
         Skip.When(Cluster.FlyRequested, "kills a local node process");
         await Gaps.RunAsync("crash-replicated", async () =>
         {
-            await using var gru = await NodeProcess.StartAsync();
-            // Region identities and peer addresses for node processes come with peer streams (R4a).
-            throw new NotSupportedException($"node processes cannot form a three-region cluster before peer streams (R4a); {gru.DataDirectory} serves alone");
+            await using var regions = await RegionProcesses.StartAsync(All);
+            var gru = regions[Cluster.Gru];
+            var faker = new Faker();
+            var acknowledged = new ConcurrentDictionary<string, string>();
+            var attempted = new ConcurrentDictionary<string, string>();
+            using var stop = new CancellationTokenSource();
+            var writers = Enumerable.Range(0, 16).Select(_ => Task.Run(async () =>
+            {
+                while (!stop.IsCancellationRequested)
+                {
+                    var (id, body) = (EntityIds.New().ToString(), ThreeRegionE2ETests.Synthetic(faker));
+                    attempted[id] = Docs.Canonical(body);
+                    try
+                    {
+                        await Docs.PutAsync(gru, regions.Document(id), body);
+                        acknowledged[id] = Docs.Canonical(body);
+                    }
+                    catch (Exception error) when (error is HttpRequestException or TaskCanceledException or IOException or ObjectDisposedException)
+                    {
+                        return; // gru is gone
+                    }
+                }
+            })).ToArray();
+
+            _ = await Converge.UntilAsync(() => Task.FromResult(acknowledged.Count), count => count >= 500, "500 acknowledged writes");
+            await regions.KillAsync(Cluster.Gru);
+            await stop.CancelAsync();
+            await Task.WhenAll(writers);
+            var acked = acknowledged.ToArray();
+            await regions.StartAgainAsync(Cluster.Gru);
+
+            var started = Stopwatch.GetTimestamp();
+            foreach (var region in regions.Regions)
+            {
+                foreach (var (id, canonical) in acked)
+                {
+                    _ = await Converge.UntilAsync(() => Docs.ReadAsync(regions[region], regions.Document(id)),
+                        read => Docs.Canonical(read) == canonical, $"acknowledged write {id} on {region} after gru's SIGKILL");
+                }
+            }
+
+            Converge.Report($"every region holds gru's {acked.Length} acknowledged writes after its SIGKILL", started);
+            var unacknowledged = attempted.Where(pair => !acknowledged.ContainsKey(pair.Key)).ToArray();
+            foreach (var region in regions.Regions)
+            {
+                foreach (var (id, canonical) in unacknowledged)
+                {
+                    var read = await Docs.ReadAsync(regions[region], regions.Document(id));
+                    Expected.Check(read is null || Docs.Canonical(read) == canonical, $"unacknowledged write {id} on {region} is absent or exact");
+                }
+            }
+
+            Console.WriteLine($"replicated SIGKILL after {acked.Length} acknowledged writes ({unacknowledged.Length} in flight): every region holds every acknowledged write");
         });
     }
 
