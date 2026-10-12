@@ -509,6 +509,39 @@ public sealed class CatalogLatticeTests
     }
 
     /// <summary>
+    /// Three new machines on Fly verify each other, open together and seed the platform databases at once: every catalog holds
+    /// the same organization, project and databases, once each.
+    /// </summary>
+    [Test]
+    public async Task New_machines_opening_together_seed_the_platform_databases_once_and_identically()
+    {
+        await using var cluster = await Cluster.StartSeededWithAnchorsAsync("gru", "sjc", "fra");
+        var (organization, project) = (Features.Platform.PlatformDatabases.OrganizationId, Features.Platform.PlatformDatabases.ProjectId);
+        var databases = Features.Platform.PlatformDatabases.Databases.Values.Order(StringComparer.Ordinal).ToArray();
+        (string Collection, string Id)[] seeded =
+        [
+            ("organizations", organization), ("project_organizations", project), ($"organizations/{organization}/projects", project),
+            .. databases.Select(database => ($"projects/{project}/databases", database)),
+        ];
+        foreach (var (collection, id) in seeded)
+        {
+            foreach (var region in cluster.Regions)
+            {
+                await Assert.That(await region.UntilAsync(collection, id, json => json is not null)).IsTrue().Because($"{region.Name} {collection}");
+            }
+
+            await Assert.That(await cluster.UntilConvergedAsync(collection, id)).IsTrue().Because(collection);
+        }
+
+        foreach (var region in cluster.Regions)
+        {
+            await Assert.That(await region.IdsAsync($"organizations/{organization}/projects")).IsEquivalentTo([project]).Because(region.Name);
+            await Assert.That(await region.IdsAsync($"projects/{project}/databases")).IsEquivalentTo(databases).Because(region.Name);
+            await Assert.That((await region.GateStatusAsync()).GetProperty("pending").GetArrayLength()).IsEqualTo(0).Because(region.Name);
+        }
+    }
+
+    /// <summary>
     /// A cluster down to one machine (a single region, before a second exists, the others retired): after a restart it has
     /// nothing to pull from and its catalog is no longer genesis, so it stays closed (COS DECISION on R3's verification of
     /// 60eae912) until an operator opens it through <c>fly ssh</c> with <c>&lt;operator&gt;: &lt;reason&gt;</c>. A malformed request
@@ -1336,6 +1369,15 @@ public sealed class CatalogLatticeTests
             var store = await SystemAsync();
             await using var transaction = await store.BeginTransactionAsync(write: false, CancellationToken.None);
             return await transaction.GetAsync(collection, id, CancellationToken.None);
+        }
+
+        // The ids of a catalog collection's live documents on this machine.
+        public async Task<string[]> IdsAsync(string collection)
+        {
+            var store = await SystemAsync();
+            await using var transaction = await store.BeginTransactionAsync(write: false, CancellationToken.None);
+            var page = await transaction.ListAsync(collection, null, 100, 1024 * 1024, CancellationToken.None);
+            return [.. page.Documents.Select(document => document.Id).Order(StringComparer.Ordinal)];
         }
 
         public async Task<string?> ReadAsync(string collection, string id) =>

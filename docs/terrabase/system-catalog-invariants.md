@@ -106,7 +106,7 @@ version said a document a machine held is never missing; that holds only without
     metadata `AnchoredRevocation`: `deleteOrganization`, `deleteProject`, `deleteDatabase` (the project API and its legacy
     management alias reach the same endpoint), `revokeProjectApiKey`, `removeMember`, `changeMemberRole`,
     `leaveOrganization`, `revokeInvitation`, `startOwnershipTransfer` (it replaces a pending offer: losing it would bring
-    the earlier nominee's offer back), `confirmOwnershipTransfer`, `cancelOwnershipTransfer`,
+    the earlier nominee's offer back; every offer is anchored, so while the bucket is down even a first offer answers 500), `confirmOwnershipTransfer`, `cancelOwnershipTransfer`,
     `deleteBackupDestination` (losing a removal would resume shipping to a bucket the customer removed), `setBackupPolicy`, `updateDatabase` (a replica region removed: losing it
     would make that region serve and hold the data again), `setOrganizationPlan` (a downgrade or suspension) and
     `deleteSavedQuery`. The gate middleware reads the **routed endpoint's** metadata (never the request path, which the
