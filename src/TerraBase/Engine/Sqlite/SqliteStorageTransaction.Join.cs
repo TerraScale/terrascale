@@ -214,7 +214,7 @@ internal sealed partial class SqliteStorageTransaction
             }
         }
 
-        ReconcileUnique(collection, UniqueProjectionIds(cancellationToken), null, cancellationToken);
+        ReconcileUnique(collection, UniqueProjectionIds(cancellationToken), cancellationToken);
     }
 
     // Worker-only: a client collection's row and table, without a metadata document of this member's own.
