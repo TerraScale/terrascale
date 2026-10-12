@@ -12,6 +12,7 @@ Fly sets these variables on every machine; TerraBase reads them at startup (`Con
 | `FLY_REGION` | The machine's region; `X-TerraBase-Region`, `/healthz` and placement use it |
 | `FLY_MACHINE_ID` | The machine's ID, which names it in the cell (ring, metrics, usage batches) |
 | `FLY_APP_NAME` | The app whose internal DNS lists the cell |
+| `FLY_PRIVATE_IP` | The machine's 6PN address, which the internal listener binds |
 | `PRIMARY_REGION` | The app's primary region (`primary_region` in `fly.toml`), home of the catalog primary; the machine's own region when unset |
 
 `FLY_REGION`, `FLY_MACHINE_ID` and `FLY_APP_NAME` are set together or not at all; a partial or malformed identity stops
@@ -48,7 +49,7 @@ listed; there is no region list to maintain.
 | Listener | Port | Binds | Protocol | Serves |
 | --- | --- | --- | --- | --- |
 | Public | 8080 | every interface, behind Fly Proxy (`[http_service]`) | HTTP/1.1, TLS ends at Fly's edge | the client API, `/healthz`, `/readyz`, OpenAPI |
-| Internal | 8081 | `fly-local-6pn` (loopback off Fly) | HTTP/2 without TLS (h2c) | inter-node gRPC, the platform operator's Management API, administration, `/metrics` |
+| Internal | 8081 | the machine's 6PN address, `FLY_PRIVATE_IP` (`fly-local-6pn`; loopback off Fly) | HTTP/2 without TLS (h2c) | inter-node gRPC, the platform operator's Management API, administration, `/metrics` |
 | Metrics | 9091 | every interface, no Fly service (`[[metrics]]`) | HTTP/1.1 | `/metrics` only |
 
 - There is no mTLS and no service credential: Fly's private network is the trust boundary (plan decision). On the

@@ -1,5 +1,6 @@
 using Grpc.Core;
 using Grpc.Net.Client;
+using TerraBase.Features.Replication.Alpha;
 using TerraBase.Features.Replication.V1;
 
 namespace TerraBase.Testing;
@@ -41,7 +42,7 @@ internal sealed class PartitionablePeer : IAsyncDisposable
         var link = new PartitionablePeer(tls, target);
         try
         {
-            link._listener = await FakePeer.StartAsync(tls, link.ForwardAsync);
+            link._listener = await FakePeer.StartAsync(tls, link.ForwardAsync, new AntiEntropyRelay(link));
             return link;
         }
         catch
@@ -224,5 +225,26 @@ internal sealed class PartitionablePeer : IAsyncDisposable
                 }
             }
         }
+    }
+
+    // Anti-entropy calls across the link, refused while it is cut.
+    private sealed class AntiEntropyRelay(PartitionablePeer link) : AntiEntropy.AntiEntropyBase
+    {
+        private AntiEntropy.AntiEntropyClient Target()
+        {
+            lock (link._gate)
+            {
+                return link._cut ? throw new RpcException(new Status(StatusCode.Unavailable, "test partition")) : new(link._channel);
+            }
+        }
+
+        public override async Task<MerkleDigest> Digest(ShardIdentity request, ServerCallContext context) =>
+            await Target().DigestAsync(request, cancellationToken: context.CancellationToken);
+
+        public override async Task<StatePage> ReadRange(RangeRequest request, ServerCallContext context) =>
+            await Target().ReadRangeAsync(request, cancellationToken: context.CancellationToken);
+
+        public override async Task<MergeResult> Merge(StateRequest request, ServerCallContext context) =>
+            await Target().MergeAsync(request, cancellationToken: context.CancellationToken);
     }
 }

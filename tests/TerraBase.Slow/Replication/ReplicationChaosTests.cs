@@ -131,7 +131,7 @@ public sealed class ReplicationChaosTests
                 await CrashableTerraBase.StartAsync(settings, token, owner => cleanup = owner);
             }).Throws<InvalidOperationException>();
             await Assert.That(error!.InnerException!.Message).Contains("exited before readiness with code 2");
-            await Assert.That(error.Message).Contains("stderr:\nterrabase: region");
+            await Assert.That(error.Message).Contains("stderr:\nterrabase: FLY_REGION");
             await Assert.That(cleanup is not null).IsTrue();
             await cleanup!.WaitAsync(token);
         }
@@ -305,9 +305,6 @@ public sealed class ReplicationChaosTests
                     cluster._servers.Add(seed);
                     cluster.Tenant = await ReplicationTenant.CreateAsync(seed, ["chaos"], token);
                     key = await cluster.Tenant.KeyAsync(seed, ["documents:read", "documents:write"], token);
-                    using var client = cluster._tls.CreateClient(seed.ClientAddress!, key);
-                    using var collection = await client.PostAsJsonAsync(new Uri($"{cluster.Path}/collections", UriKind.Relative), new { name = "items" }, token);
-                    collection.EnsureSuccessStatusCode();
                 }
 
                 for (var index = 0; index < 2; index++)
@@ -329,6 +326,12 @@ public sealed class ReplicationChaosTests
 
                 cluster.Child = await CrashableTerraBase.StartAsync(childSettings, token, cluster._failedStarts.Add);
                 cluster.Clients.Add(cluster._tls.CreateClient(cluster.Child.ClientAddress, key));
+                // Created on a node whose sender lists the others: the child's DNS lists no peers, so it only receives.
+                using (var collection = await cluster.Clients[0].PostAsJsonAsync(new Uri($"{cluster.Path}/collections", UriKind.Relative), new { name = "items" }, token))
+                {
+                    collection.EnsureSuccessStatusCode();
+                }
+
                 await cluster.ReplicatedAsync(token);
                 return cluster;
             }

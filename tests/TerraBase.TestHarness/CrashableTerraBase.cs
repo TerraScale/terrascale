@@ -100,6 +100,7 @@ internal sealed class CrashableTerraBase : IAsyncDisposable
             start.Environment["FLY_REGION"] = region;
             start.Environment["FLY_MACHINE_ID"] = _settings.GetValueOrDefault("node-name", "crashable");
             start.Environment["FLY_APP_NAME"] = "terrabase-test";
+            start.Environment["FLY_PRIVATE_IP"] = "127.0.0.1";
         }
 
         start.ArgumentList.Add(Path.Combine(AppContext.BaseDirectory, typeof(Program).Assembly.GetName().Name + ".dll"));

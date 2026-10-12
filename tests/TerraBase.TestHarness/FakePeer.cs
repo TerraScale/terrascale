@@ -32,6 +32,20 @@ public sealed class FakePeer : IAsyncDisposable
         PeerTls tls, Func<IAsyncStreamReader<SyncRequest>, IServerStreamWriter<SyncResponse>, ServerCallContext, Task> serve) =>
         StartAsync(tls, services => services.AddSingleton(new Service(serve)), app => app.MapGrpcService<Service>());
 
+    /// <summary>Starts a fake peer that also answers <c>AntiEntropy</c> with <paramref name="antiEntropy"/>.</summary>
+    internal static Task<FakePeer> StartAsync(
+        PeerTls tls, Func<IAsyncStreamReader<SyncRequest>, IServerStreamWriter<SyncResponse>, ServerCallContext, Task> serve,
+        Features.Replication.Alpha.AntiEntropy.AntiEntropyBase antiEntropy) =>
+        StartAsync(tls, services =>
+        {
+            services.AddSingleton(new Service(serve));
+            services.AddSingleton(antiEntropy);
+        }, app =>
+        {
+            app.MapGrpcService<Service>();
+            app.MapGrpcService<Features.Replication.Alpha.AntiEntropy.AntiEntropyBase>();
+        });
+
     /// <summary>
     /// Starts a fake catalog primary (<c>CatalogReplication</c>); each
     /// Follow stream runs <paramref name="serve"/>, and each <c>CatalogForwarding.Forward</c> call <paramref name="forward"/>.
