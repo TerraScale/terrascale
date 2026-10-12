@@ -1,0 +1,6 @@
+{
+  "description": "The _tb_state row's after-image is cut in half: its record header promises more bytes than it holds.",
+  "row": "state",
+  "mutation": { "kind": "truncate" },
+  "expect": "refused"
+}

@@ -1,0 +1,6 @@
+{
+  "description": "The _tb_state row carries change type 7, which Turso never writes (1 insert, 0 update, -1 delete, 2 commit). Skipping it would leave an acknowledged local write unshipped without a word.",
+  "row": "state",
+  "mutation": { "kind": "change_type", "value": 7 },
+  "expect": "refused"
+}

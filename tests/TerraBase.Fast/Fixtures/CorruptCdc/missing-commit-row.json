@@ -1,0 +1,6 @@
+{
+  "description": "The transaction's COMMIT row is gone (a torn tail of turso_cdc). Its rows wait, never ship as a partial group, and ship whole with the next transaction's commit row.",
+  "row": "commit",
+  "mutation": { "kind": "delete" },
+  "expect": "shipped"
+}

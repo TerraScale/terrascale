@@ -1,0 +1,6 @@
+{
+  "description": "Four stray bytes follow a whole _tb_state record. Every column still decodes to what was written, so the write ships exactly as written.",
+  "row": "state",
+  "mutation": { "kind": "append", "hex": "DEADBEEF" },
+  "expect": "shipped"
+}

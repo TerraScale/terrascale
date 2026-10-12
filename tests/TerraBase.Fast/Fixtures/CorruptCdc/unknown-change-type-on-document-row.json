@@ -1,0 +1,6 @@
+{
+  "description": "The collection row carries change type 7: the live state that follows it has no document image to ship.",
+  "row": "document",
+  "mutation": { "kind": "change_type", "value": 7 },
+  "expect": "refused"
+}
