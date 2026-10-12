@@ -279,11 +279,80 @@ public sealed class Cluster : IAsyncDisposable
         private readonly string _project = EntityIds.New().ToString();
         private readonly string _database = EntityIds.New().ToString();
 
-        // R4a-2's peer streams connect the local nodes through the shared machine directory, but nothing flows on them until
-        // the CDC source (R3), so a cut could not be checked yet. The cut lands with R3 (hide each side from the other's view
-        // of the directory); until then the partition scenarios fail loudly and are listed in Gaps.cs.
-        public void Partition(string a, string b) =>
-            throw new NotSupportedException($"no local link between {a} and {b} to cut: no checkable local link before the CDC source (R3) feeds the peer streams");
+        // Every machine reaches each peer through a PeerLink of its own: its view of the shared directory names the link, not
+        // the peer's listener. A partition cuts the links between two regions both ways, on the real peer path, so the CDC
+        // groups and acks stop at once; links made later (a restart, a new view) start cut until the heal.
+        private readonly Lock _linksGate = new();
+        private readonly Dictionary<(string From, string To, string Address), PeerLink> _links = [];
+        private readonly HashSet<(string, string)> _cuts = [];
+
+        // Machine id -> region, for the directory views; filled before a node starts, read by running nodes.
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _regions = new(StringComparer.Ordinal);
+
+        public void Partition(string a, string b)
+        {
+            lock (_linksGate)
+            {
+                _cuts.Add((a, b));
+                _cuts.Add((b, a));
+                foreach (var ((from, to, _), link) in _links)
+                {
+                    if ((from, to) == (a, b) || (from, to) == (b, a))
+                    {
+                        link.Cut = true;
+                    }
+                }
+            }
+        }
+
+        public void Heal()
+        {
+            lock (_linksGate)
+            {
+                _cuts.Clear();
+                foreach (var link in _links.Values)
+                {
+                    link.Cut = false;
+                }
+            }
+        }
+
+        // a's connections to b go through the link `make` builds on b's listener; returns it.
+        public LossyLink RouteThrough(string a, string b, Func<IPEndPoint, LossyLink> make)
+        {
+            lock (_linksGate)
+            {
+                var link = _links.Where(entry => entry.Key.From == a && entry.Key.To == b).Select(entry => entry.Value).LastOrDefault()
+                    ?? throw new InvalidOperationException($"{a} has no route to {b} yet");
+                var lossy = make(link.Target);
+                link.Via = lossy.Endpoint;
+                link.Reset();
+                return lossy;
+            }
+        }
+
+        // How the machine `reader` sees `member`: through its own link to that member's current listener.
+        private ClusterMember Route(string reader, ClusterMember member)
+        {
+            if (Region(reader) is not { } from || !Uri.TryCreate(member.PeerAddress, UriKind.Absolute, out var address))
+            {
+                return member;
+            }
+
+            lock (_linksGate)
+            {
+                var key = (from, member.Region, member.PeerAddress);
+                if (!_links.TryGetValue(key, out var link))
+                {
+                    // The peer listens on every address of this host: its loopback reaches it.
+                    link = _links[key] = new PeerLink(new IPEndPoint(IPAddress.Loopback, address.Port)) { Cut = _cuts.Contains((from, member.Region)) };
+                }
+
+                return member with { PeerAddress = link.Address };
+            }
+        }
+
+        private string? Region(string machine) => _regions.GetValueOrDefault(machine);
 
         public string DataDirectory(string region) => _nodes[region].DataDirectory;
 
@@ -297,23 +366,19 @@ public sealed class Cluster : IAsyncDisposable
         public Uri MetricsAddress(string region) =>
             (_nodes[region].Api ?? throw new InvalidOperationException($"{region} is down")).Server.MetricsAddress;
 
-        public LossyLink RouteThrough(string a, string b, Func<IPEndPoint, LossyLink> link) =>
-            throw new NotSupportedException($"no local peer link between {a} and {b} to route through a lossy link: the lossy link lands with the CDC source (R3), when traffic on the peer path can be checked");
-
-        public void Heal() =>
-            throw new NotSupportedException("no local link to heal: no checkable local link before the CDC source (R3) feeds the peer streams");
-
         public string ProjectPath => $"/v1/projects/{_project}";
 
         public string DatabasePath => $"{ProjectPath}/databases/canary";
 
         public async Task StartAsync()
         {
+            _machines.Map = Route;
             foreach (var region in regions)
             {
                 var node = new Node(region, Convert.ToHexStringLower(Guid.NewGuid().ToByteArray())[..14],
                     Directory.CreateTempSubdirectory($"terrabase-e2e-{region}-").FullName, skews.GetValueOrDefault(region));
                 _nodes[region] = node;
+                _regions[node.MachineId] = region;
                 await StartNodeAsync(node);
             }
 
@@ -393,6 +458,11 @@ public sealed class Cluster : IAsyncDisposable
                 {
                     errors.Add(error);
                 }
+            }
+
+            foreach (var link in _links.Values)
+            {
+                await link.DisposeAsync();
             }
 
             if (errors.Count > 0)
