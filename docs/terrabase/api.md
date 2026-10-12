@@ -232,8 +232,8 @@ rejects invalid SQL with `400 invalid_request`. It does not execute or meter the
 
 ### Live
 
-There are no live routes. Slice R2c deleted shape reads (`C/shape`), SSE subscriptions (`C/subscribe`) and the
-`shapes:read` scope; both routes now return `404`. The database change stream (`GET D/changes`, slice R8 of
+There are no live routes. Slice R2c deleted shape reads (`C/shape`), SSE subscriptions (`C/subscribe`), the
+per-collection polling feed (`C/changes`) and the `shapes:read` scope; those routes now return `404`. The database change stream (`GET D/changes`, slice R8 of
 [multi-region replication](multi-region-replication.md)) replaces them.
 
 ## System

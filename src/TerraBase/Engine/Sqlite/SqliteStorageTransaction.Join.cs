@@ -77,7 +77,7 @@ internal sealed partial class SqliteStorageTransaction
         var affected = metadata ? [] : ReplaceUniqueKeys(collection, id, materialized, cancellationToken, local: false);
         ClearUniqueConflict(collection, id);
         cancellationToken.ThrowIfCancellationRequested();
-        var offset = Offset();
+        Offset();
         PutRow(collection, id, materialized);
         WriteState(collection, id, next, at);
         if (metadata)
@@ -90,8 +90,7 @@ internal sealed partial class SqliteStorageTransaction
             return true;
         }
 
-        ReconcileUnique(collection, affected, id, cancellationToken);
-        AppendChange(collection, id, offset, Version(at.Stamp), materialized, cancellationToken);
+        ReconcileUnique(collection, affected, cancellationToken);
         return true;
     }
 

@@ -38,7 +38,6 @@ public sealed class ApiReferenceTests
         GET /v1/projects/{project}/databases/{database}/backups TsAuth(databases:read) listBackups Backups
         GET /v1/projects/{project}/databases/{database}/collections TsAuth(documents:read) listCollections Collections
         GET /v1/projects/{project}/databases/{database}/collections/{collection} TsAuth(documents:read) getCollection Collections
-        GET /v1/projects/{project}/databases/{database}/collections/{collection}/changes TsAuth(documents:read) getCollectionChanges Documents
         GET /v1/projects/{project}/databases/{database}/collections/{collection}/documents TsAuth(documents:read) listDocuments Documents
         GET /v1/projects/{project}/databases/{database}/collections/{collection}/documents/by-key TsAuth(documents:read) getDocument Documents
         GET /v1/projects/{project}/databases/{database}/collections/{collection}/schema TsAuth(documents:read) getDeclaredCollectionSchema Collections
