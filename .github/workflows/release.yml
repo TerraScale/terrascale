@@ -32,7 +32,7 @@ env:
 jobs:
   package:
     if: github.event_name == 'push'
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: alpha
     timeout-minutes: 20
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -42,6 +42,14 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+      # alpha shares its .NET and NuGet caches with every job of every repository: release jobs install the SDK and
+      # restore packages into folders of their own.
+      - run: |
+          {
+            echo "DOTNET_INSTALL_DIR=$RUNNER_TEMP/dotnet"
+            echo "NUGET_PACKAGES=$RUNNER_TEMP/nuget-packages"
+            echo "NUGET_HTTP_CACHE_PATH=$RUNNER_TEMP/nuget-http"
+          } >> "$GITHUB_ENV"
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: |
@@ -77,7 +85,7 @@ jobs:
 
   github-packages:
     needs: package
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: alpha
     timeout-minutes: 10
     permissions:
       contents: read
@@ -86,6 +94,7 @@ jobs:
       - uses: actions/download-artifact@v7
         with:
           name: package
+      - run: printf 'DOTNET_INSTALL_DIR=%s/dotnet\nNUGET_HTTP_CACHE_PATH=%s/nuget-http\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 10.0.x
@@ -103,7 +112,7 @@ jobs:
   restore:
     needs: [package, github-packages]
     if: ${{ !cancelled() && !failure() }}
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: alpha
     timeout-minutes: 15
     permissions:
       contents: read
@@ -113,6 +122,7 @@ jobs:
         with:
           persist-credentials: false
           sparse-checkout: tests/TerraScale.DotNet.PackageConsumer
+      - run: echo "DOTNET_INSTALL_DIR=$RUNNER_TEMP/dotnet" >> "$GITHUB_ENV"
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: |
@@ -172,7 +182,7 @@ jobs:
     needs: restore
     # Spelled out: the implicit success() would skip this job, as package and github-packages are skipped on dispatch.
     if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && needs.restore.result == 'success' }}
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: alpha
     timeout-minutes: 10
     permissions:
       contents: read
@@ -181,6 +191,7 @@ jobs:
       - uses: actions/download-artifact@v7
         with:
           name: restored-package
+      - run: printf 'DOTNET_INSTALL_DIR=%s/dotnet\nNUGET_HTTP_CACHE_PATH=%s/nuget-http\n' "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 10.0.x
