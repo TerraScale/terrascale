@@ -8,6 +8,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using TerraScale.Authentication.Features.Email;
 using TerraScale.Authentication.Tests;
+using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Authentication.Fast.Platform;
 
@@ -42,10 +43,11 @@ public sealed class EmailTests
     public async Task Production_without_cloudflare_settings_warns_at_startup()
     {
         var logs = new CapturingLogs();
+        // Production off Fly needs storage of its own (App.TerraBaseOrigin); an unreachable one is enough for a startup warning.
         await using var server = await StartAsync(logs, cloudflare: null, settings: values =>
         {
             values.Remove("environment");
-        });
+        }, storage: true);
 
         await Assert.That(logs.Text).Contains("CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_EMAIL_TOKEN are not configured: email is logged, not delivered");
     }
@@ -150,7 +152,7 @@ public sealed class EmailTests
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Accepted);
     }
 
-    private static Task<AuthTestServer> StartAsync(ILoggerProvider logs, FakeCloudflare? cloudflare, Action<Dictionary<string, string>>? settings = null) => AuthTestServer.StartAsync(
+    private static Task<AuthTestServer> StartAsync(ILoggerProvider logs, FakeCloudflare? cloudflare, Action<Dictionary<string, string>>? settings = null, bool storage = false) => AuthTestServer.StartAsync(
         settings: values =>
         {
             settings?.Invoke(values);
@@ -163,6 +165,12 @@ public sealed class EmailTests
         services: collection =>
         {
             collection.AddSingleton<ILoggerProvider>(logs);
+            if (storage)
+            {
+                collection.AddSingleton(new TerraBaseDocumentsClient(new HttpClient(), new TerraBaseDocumentsClientOptions { BaseAddress = new Uri("http://127.0.0.1:9/") })
+                    .Database(App.StorageProject, App.StorageDatabase));
+            }
+
             if (cloudflare is not null)
             {
                 // The test replaces only the transport; the registration itself is App's.

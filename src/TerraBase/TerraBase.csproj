@@ -3,6 +3,8 @@
     <RootNamespace>TerraBase</RootNamespace>
     <AssemblyName>terrabase</AssemblyName>
     <Version>0.1.0</Version>
+    <!-- /healthz reports the source commit as revision; CI passes TERRABASE_REVISION (the image has no .git). -->
+    <SourceRevisionId Condition="'$(TERRABASE_REVISION)' != ''">$(TERRABASE_REVISION)</SourceRevisionId>
     <!-- Release artifact: one self-contained, single-file executable running on the
          JIT (no native AOT, no trimming). Native libraries are bundled into the file.
          Self-contained is set only for publish (make publish): the test suites

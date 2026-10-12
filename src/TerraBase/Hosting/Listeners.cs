@@ -164,6 +164,11 @@ public static class Listeners
                         Description = "Region of the serving TerraBase node (client listener only).",
                         Schema = new OpenApiSchema { Type = JsonSchemaType.String },
                     };
+                    response.Headers["X-TerraBase-Machine"] = new OpenApiHeader
+                    {
+                        Description = "Machine of the serving TerraBase node (FLY_MACHINE_ID; local off Fly; client listener only).",
+                        Schema = new OpenApiSchema { Type = JsonSchemaType.String },
+                    };
                 }
             }
         }));
@@ -261,10 +266,12 @@ public static class Listeners
             if (arrivedOn == TerraBaseListener.Client)
             {
                 var region = RegionOf(context);
+                var machine = context.RequestServices.GetRequiredService<TerraBaseOptions>().MachineId;
                 // OnStarting survives Response.Clear() in the error middleware.
                 context.Response.OnStarting(() =>
                 {
                     context.Response.Headers["X-TerraBase-Region"] = region;
+                    context.Response.Headers["X-TerraBase-Machine"] = machine;
                     return Task.CompletedTask;
                 });
                 var hasPin = context.Request.Headers.TryGetValue("X-TerraScale-Region-Pin", out var pin);

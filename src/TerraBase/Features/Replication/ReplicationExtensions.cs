@@ -22,6 +22,8 @@ public static class ReplicationExtensions
         // tailer, comes with the engine (AddTerraBaseEngine).
         builder.Services.AddSingleton<IChangeGroupSink, StorageChangeGroupSink>();
         builder.Services.AddSingleton<PeerStreamReceiver>();
+        builder.Services.AddSingleton<AntiEntropy>();
+        builder.Services.AddHostedService(provider => provider.GetRequiredService<AntiEntropy>());
         builder.Services.AddSingleton<PeerStreams>();
         builder.Services.AddSingleton<IReplicationStatus>(provider => provider.GetRequiredService<PeerStreams>());
         builder.Services.AddHostedService(provider => provider.GetRequiredService<PeerStreams>());
