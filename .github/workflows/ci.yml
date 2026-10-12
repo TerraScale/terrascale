@@ -16,9 +16,11 @@ concurrency:
 permissions:
   contents: read
 
+# Repo variable CI_RUNNER=alpha selects the self-hosted alpha runners (persistent local
+# caches, so GitHub cache steps are skipped there); unset = GitHub-hosted.
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
@@ -27,7 +29,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: stable
+          cache: ${{ !vars.CI_RUNNER }}
           cache-dependency-path: go.sum
       - run: test -z "$(gofmt -l .)"
       - run: go vet ./...
-      - run: go test -race ./...
+      # -count=1: the build cache stays warm, but tests always run on the current head (no cached passes).
+      - run: go test -race -count=1 ./...
