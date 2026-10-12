@@ -300,7 +300,14 @@ public sealed class PlatformRoleJourneyTests(DashboardE2EFixture fixture)
         var pending = browser.GetAsync("/admin/users");
         await WaitForRotation(producer);
         using (var signedOut = await HttpJourney.PostFormAsync(browser, "/api/v1/auth/logout", new() { ["_csrf"] = csrf }))
+        {
             Check(signedOut.StatusCode == HttpStatusCode.SeeOther, "Native logout revokes the same token family and deletes its persistent browser record");
+            // Browsers apply form-action to the redirect that follows the sign-out form.
+            var formAction = signedOut.Headers.GetValues("Content-Security-Policy").Single().Split(';')
+                .Select(directive => directive.Trim()).Single(directive => directive.StartsWith("form-action ", StringComparison.Ordinal)).Split(' ');
+            Check(signedOut.Headers.Location is { Scheme: "https", Host: "auth.terrascale.tech", AbsolutePath: "/terrascale/oauth/logout" } &&
+                formAction.Contains("https://auth.terrascale.tech"), "The sign-out form may follow its redirect to ts-auth's end-session endpoint");
+        }
         await Control(producer, new { command = "release-refresh" });
         using (var late = await pending)
             Check(late.StatusCode == HttpStatusCode.SeeOther, "The late operator response cannot resurrect a signed-out browser");
