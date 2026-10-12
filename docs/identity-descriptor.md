@@ -23,7 +23,7 @@ secrets and no machines, and the image exits at startup without the file.
 | --- | --- | --- | --- |
 | `StateProjectId` | TerraScale ID | Project of the state database `dashboard`; the app creates it and its 20 collections at startup | TerraBase (project owned by the dashboard service) |
 | `StateApiKey` | non-empty | Documents API key for that project: database PUT, collection create/read, document get/put/delete | TerraBase |
-| `AuthInstanceSlug` | non-empty | ts-auth tenant: issuer and endpoint paths `/{slug}/...`. Must be `terrascale`: other tenants serve only discovery and JWKS, so sign-in fails | fixed value |
+| `AuthInstanceSlug` | non-empty | ts-auth tenant: issuer and endpoint paths `/{slug}/...`. Must be `terrascale`: other slugs answer 404 or lack the dashboard client, so sign-in fails | fixed value |
 | `AuthClientId` | non-empty | ts-auth OAuth client of the dashboard (see below) | ts-auth |
 | `AuthClientSecret` | non-empty | `client_secret_basic` for that client | ts-auth |
 | `AuthManagementKey` | starts with `sk_` | ts-auth management API key for the `terrascale` tenant; the app uses it to update a signed-in user's password and revoke that user's sessions | ts-auth |

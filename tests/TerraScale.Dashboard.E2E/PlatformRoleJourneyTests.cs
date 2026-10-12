@@ -305,7 +305,7 @@ public sealed class PlatformRoleJourneyTests(DashboardE2EFixture fixture)
             // Browsers apply form-action to the redirect that follows the sign-out form.
             var formAction = signedOut.Headers.GetValues("Content-Security-Policy").Single().Split(';')
                 .Select(directive => directive.Trim()).Single(directive => directive.StartsWith("form-action ", StringComparison.Ordinal)).Split(' ');
-            Check(signedOut.Headers.Location is { Scheme: "https", Host: "auth.terrascale.tech", AbsolutePath: "/terrascale/oauth/logout" } &&
+            Check(signedOut.Headers.Location is { IsAbsoluteUri: true, Scheme: "https", Host: "auth.terrascale.tech", AbsolutePath: "/terrascale/oauth/logout" } &&
                 formAction.Contains("https://auth.terrascale.tech"), "The sign-out form may follow its redirect to ts-auth's end-session endpoint");
         }
         await Control(producer, new { command = "release-refresh" });
