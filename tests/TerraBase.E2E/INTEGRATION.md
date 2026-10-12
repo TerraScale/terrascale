@@ -53,8 +53,11 @@ different test each time:
 T1 (owner of #109) is fixing it. **No further product-code PR merges until main is green.** T1's fix may go in.
 Test-only and docs PRs may merge only with green exact-head runs, and their record notes main's state.
 
-**Preview apps destroyed by merges** (`previews.yml` runs on the close event; the user ordered all previews deleted, and
-the exact confirmation is pending):
+**Preview apps destroyed by merges.** The merges at 15:01–15:06Z ran `previews.yml` on their close events. That
+destroyed these preview apps **with their volumes and buckets**, before the user's exact deletion confirmation (the
+user had ordered all previews deleted). **`previews.yml` (workflow 381612805) is DISABLED since 15:24Z**
+(`disabled_manually`, verified by COS; no cleanup run was queued or running), so later merges no longer delete preview
+apps.
 
 | PR | App | previews.yml run |
 | --- | --- | --- |
@@ -65,7 +68,7 @@ the exact confirmation is pending):
 | #105 | ts-pr-105 | 38267753104 |
 
 #129, #128, #126 and #124 also ran `previews.yml` on close (38267208978, 38267258398, 38267296565, 38267640482); they
-had no preview app. **COS is told before merging any PR that still has a preview app:** #79, #88, #106, #108, #111–#121.
+had no preview app. PRs that still have a preview app: #79, #88, #106, #108, #111–#121. Since the workflow is disabled, merging them no longer destroys their apps.
 
 **Not merged until fixed and verified:**
 - **R10a's stack**, until the no-peer fail-open and the unprotected override are fixed and R3 verifies in writing;
@@ -101,7 +104,7 @@ the SHA listed. A newer head means a new manifest entry, never a silent swap.
 | 17 | **R7: garbage collection**, copying refill | #120 | `76cb23ff` (local `feat/r7-gc`; pushed head `811dbf6e`) | 3 (R7 changes no format, #120) | ready | `811dbf6e` → `e8b458e5` stale writes → `7d83cfbf` refill refused → `80c67345` PeerLink abort fix → `baa2e236` harness: nodes register as the first region's user → `76cb23ff` acknowledgement past CDC rows with nothing to ship. |
 | 18 | **R10a: catalog as a lattice database** | #116, #121 | R10a's own stack on R7: `a54beab4` (local; `49ec3496` R10a-1, `cdcd019d` R10a-2, `21d05c9c` R10a-3, `a54beab4` e2e) on `baa2e236` | **4** | **WAITING: R10a reports done** (R3's blocking findings resolved, bounded deletion, restore gate) | Not `de0a022f` (#121's pushed head): its registration 500 is known bad. Not R3's withdrawn `e9841c75`/`f82690b6`. Sibling of `76cb23ff` on `baa2e236`, so it merges with item 17. Catalog tombstones stay out of GC (COS decision). Brings `CatalogProcessesTests.cs`; its Gaps flips are the strict owner's. |
 | 19 | Assertion side and recorder | #105 + the candidate stack | #105 `4069da9f` (pushed) + local `94086cd6`/`4b85b32c`; the candidate-9 assertion commits on `dea6b364` + R3's `1b68b852` (writer outcomes) | none (tests) | ready | The final `Gaps.cs` follows the candidate stack: it keeps only gaps that still fail their own way. #105's main-only setup-blocked classification is kept only if a scenario still needs it. |
-| 19a | **Tester A: multi-writer convergence matrix** (`tests/TerraBase.E2E/MultiWriterMatrixTests.cs`, test only) | none | `cfda0499` (local; base `24e138c0`); the combine takes the file only | none (test only; no product or harness change) | ready | 1 test × 6 write orders (gru, sjc, fra as separate OS processes, isolated writers via SIGKILL windows, all-regions restart). Covers same and different field, delete vs edit both orders, counters (111, 555), add-wins sets, delete → re-create, counts and digests. Tester A: 48/48 runs exact, product mutants caught 6/6, evidence in `.worktrees/tester-a-runs/`. **The strict owner declares it `[Scenario(Nodes.Processes, Faults.ProcessKill)]`** in the combine; it then runs in the 3+3 acceptance. **Open caveat:** its barrier assumes per-origin, in-order apply; R3 is confirming. Until R3 confirms, the publication states the caveat next to its result. |
+| 19a | **Tester A: multi-writer convergence matrix** (`tests/TerraBase.E2E/MultiWriterMatrixTests.cs`, test only) | none | **`3ade7009`** (local, on `cfda0499`); the combine takes the file only | none (test only; no product or harness change) | ready; **needs #111 (`RegionProcesses`) on main first** | 1 test × 6 write orders over region processes (SIGKILL windows, all-regions restart): same and different field, delete vs edit both orders, counters, add-wins sets, delete → re-create, counts and **exact per-region digests**. **Ack-based barrier:** `/replication` Head advanced past the pre-sentinel snapshot, and Acknowledged ≥ Head per receiver. Tester A: 5 quiet repeats 30/30 pass, mutants M1 and M2 fail 6/6. Declared `[Scenario(Nodes.Processes, Faults.ProcessKill)]` by the strict owner. **Caveat to state with its result:** no route exposes the true CDC head, so "anti-entropy out of order and a stale Head at the same moment" is not formally excluded. Hook request to R3: expose the CDC head per database. It joins the test-only PR with Tester C's files only once #111 is on main; it uses `RegionProcesses`, which main does not have. |
 
 **Phase 2 (required, later).** These are not part of the phase-1 candidate, and phase 1 does not grow to take them:
 
