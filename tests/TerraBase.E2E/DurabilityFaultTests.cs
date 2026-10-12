@@ -33,6 +33,7 @@ public sealed class DurabilityFaultTests
     private static readonly string[] All = [Cluster.Gru, Cluster.Sjc, Cluster.Fra];
     private static readonly string[] GruPeers = [Cluster.Sjc, Cluster.Fra];
     private static readonly string[] Writers = [Cluster.Gru, Cluster.Sjc];
+    private const string SecondCounter = "second-counter";
 
     // strace: SIGKILL at the entry of the first sync of the traced file; every sync of it delayed by 20 s.
     private static readonly string[] KillAtFirstSync = ["-e", "trace=pwrite64,pwritev,fsync,fdatasync", "-e", "inject=fsync,fdatasync:signal=SIGKILL:when=1"];
@@ -122,7 +123,8 @@ public sealed class DurabilityFaultTests
     // batch of two groups, which sjc applies in two durable transactions (at most 1024 deltas each). sjc runs under strace,
     // which kills it with SIGKILL at the entry of its first sync of the database's write-ahead log: after the first
     // transaction's frames are written, before the second one and before any ack. Started again with no peer reaching it,
-    // sjc holds exactly the first group; once reached, it holds both, each inc counts once, and no stream stays behind.
+    // sjc holds exactly the first group; once reached, it holds both, each inc (one counter per transaction) counts once,
+    // and no stream stays behind.
     [Test]
     public async Task A_receiver_SIGKILLed_between_the_transactions_of_one_batch_keeps_the_first_whole_and_joins_the_resent_batch_once()
     {
@@ -131,17 +133,20 @@ public sealed class DurabilityFaultTests
         await using var regions = await Regions.StartAsync(All);
         var expected = new ConcurrentDictionary<string, string>(StringComparer.Ordinal);
         await regions.SeedCounterAsync(expected);
+        await regions.SeedCounterAsync(expected, SecondCounter);
         await regions.KillAsync(Cluster.Sjc);
 
+        // Each transaction counts on a counter of its own, so the first group joined twice would show on its counter.
         var first = new ConcurrentDictionary<string, string>(StringComparer.Ordinal);
         await regions.TransactAsync(Cluster.Gru, "first", 600, 1, first);
-        await regions.TransactAsync(Cluster.Gru, "second", 600, 1, expected);
+        await regions.TransactAsync(Cluster.Gru, "second", 600, 1, expected, SecondCounter);
         foreach (var (id, body) in first)
         {
             expected[id] = body;
         }
 
-        Regions.Add(expected, 2);
+        Regions.Add(expected, 1);
+        Regions.Add(expected, 1, SecondCounter);
         _ = await regions.UntilListedAsync(Cluster.Fra, expected, "both transactions on fra");
 
         // strace shows the injected kill as a sync that never returns ("= ?"), after the frames written before it.
@@ -163,6 +168,7 @@ public sealed class DurabilityFaultTests
         }
 
         halfway[Regions.Counter] = """{"n":1}""";
+        halfway[SecondCounter] = """{"n":0}""";
         var listing = await regions.ListAsync(Cluster.Sjc);
         await Assert.That(Docs.Digest(listing.Select(pair => (pair.Key, pair.Value)))).IsEqualTo(Docs.Digest(halfway.Select(pair => (pair.Key, pair.Value))))
             .Because($"sjc holds exactly the first group after the kill; it lists {listing.Count} documents, {listing.Keys.Count(id => id.StartsWith("second", StringComparison.Ordinal))} of the second");
@@ -497,12 +503,12 @@ public sealed class DurabilityFaultTests
             }
         }
 
-        /// <summary>The counter document at 0 everywhere; the seed every expectation starts from.</summary>
-        public async Task SeedCounterAsync(ConcurrentDictionary<string, string> expected)
+        /// <summary>A counter document (<see cref="Counter"/> unless named) at 0 everywhere; the seed every expectation starts from.</summary>
+        public async Task SeedCounterAsync(ConcurrentDictionary<string, string> expected, string counter = Counter)
         {
-            await Docs.PutAsync(this[Cluster.Gru], Document(Counter), new JsonObject { ["n"] = 0 });
+            await Docs.PutAsync(this[Cluster.Gru], Document(counter), new JsonObject { ["n"] = 0 });
             _lastWrite[Cluster.Gru] = Stopwatch.GetTimestamp();
-            expected[Counter] = """{"n":0}""";
+            expected[counter] = """{"n":0}""";
             _seeded = new Dictionary<string, string>(expected, StringComparer.Ordinal);
             foreach (var region in _nodes.Keys)
             {
@@ -512,11 +518,11 @@ public sealed class DurabilityFaultTests
 
         public Dictionary<string, string> Seeded() => _seeded;
 
-        /// <summary>Raises the expected counter by <paramref name="by"/>.</summary>
-        public static void Add(ConcurrentDictionary<string, string> expected, int by)
+        /// <summary>Raises the expected counter (<see cref="Counter"/> unless named) by <paramref name="by"/>.</summary>
+        public static void Add(ConcurrentDictionary<string, string> expected, int by, string counter = Counter)
         {
-            var current = JsonNode.Parse(expected[Counter])!["n"]!.GetValue<long>();
-            expected[Counter] = Docs.Canonical(new JsonObject { ["n"] = current + by });
+            var current = JsonNode.Parse(expected[counter])!["n"]!.GetValue<long>();
+            expected[counter] = Docs.Canonical(new JsonObject { ["n"] = current + by });
         }
 
         /// <summary>
@@ -545,8 +551,8 @@ public sealed class DurabilityFaultTests
             return [.. ids];
         }
 
-        /// <summary>One transaction on <paramref name="region"/>: <paramref name="documents"/> puts with ids starting with <paramref name="prefix"/> and an inc of the counter by <paramref name="by"/>.</summary>
-        public async Task TransactAsync(string region, string prefix, int documents, int by, ConcurrentDictionary<string, string> expected)
+        /// <summary>One transaction on <paramref name="region"/>: <paramref name="documents"/> puts with ids starting with <paramref name="prefix"/> and an inc of the counter (<see cref="Counter"/> unless named) by <paramref name="by"/>.</summary>
+        public async Task TransactAsync(string region, string prefix, int documents, int by, ConcurrentDictionary<string, string> expected, string counter = Counter)
         {
             var faker = new Faker();
             var written = Enumerable.Range(0, documents).Select(_ => (Id: $"{prefix}{EntityIds.New()}", Body: ThreeRegionE2ETests.Synthetic(faker))).ToList();
@@ -563,7 +569,7 @@ public sealed class DurabilityFaultTests
                 {
                     ["op"] = "patch",
                     ["collection"] = Collection,
-                    ["id"] = Counter,
+                    ["id"] = counter,
                     ["ops"] = new JsonArray(new JsonObject { ["op"] = "inc", ["path"] = "/n", ["by"] = by }),
                 },
             ];
@@ -684,9 +690,9 @@ public sealed class DurabilityFaultTests
         {
             var digest = Docs.Digest(expected.Select(pair => (pair.Key, pair.Value)));
             var count = expected.Count;
-            return await Converge.UntilAsync(() => ListAsync(region),
-                listing => listing.Count == count && Docs.Digest(listing.Select(pair => (pair.Key, pair.Value))) == digest,
+            var listed = await Converge.UntilAsync(async () => new Listed(await ListAsync(region)), listing => listing.Count == count && listing.Digest == digest,
                 $"{what} ({count} documents, counter {expected[Counter]})", deadline);
+            return listed.Documents;
         }
 
         private Process Start(Node node, string[]? strace)
@@ -836,6 +842,16 @@ public sealed class DurabilityFaultTests
             {
                 await Docs.EnsureSuccessAsync(response);
             }
+        }
+
+        // A region's listing as a failure names it: its count, counter and digest.
+        private sealed record Listed(SortedDictionary<string, string> Documents)
+        {
+            public int Count => Documents.Count;
+
+            public string Digest { get; } = Docs.Digest(Documents.Select(pair => (pair.Key, pair.Value)));
+
+            public override string ToString() => $"{Count} documents, counter {Documents.GetValueOrDefault(Counter, "absent")}, digest {Digest[..12]}";
         }
 
         private sealed class Node(string name, string machineId, string dataDirectory, string members)
