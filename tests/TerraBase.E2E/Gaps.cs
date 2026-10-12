@@ -50,6 +50,20 @@ internal static class Gaps
         ["restart-mid-replication"] = Streams,
         ["ack-then-stop"] = Streams,
         ["restarted-sender-backlog"] = Streams,
+
+        // CrashAndStallE2ETests. Node processes and lossy links need R4a's peer addresses.
+        ["crash-replicated"] = Streams,
+        ["storage-stall"] = Streams,
+        ["lossy-link"] = Streams,
+
+        // RepairAndContractE2ETests.
+        ["anti-entropy-repair"] = "anti-entropy (R6) over peer streams (R4a)",
+        ["restore-older-state"] = "refill and anti-entropy (R6) over peer streams (R4a)",
+        ["unique-under-partition"] = Streams,
+        ["deleted-database-stays-deleted"] = "the catalog as a lattice database (R10a) and garbage collection (R7)",
+        ["replication-metrics"] = "peer stream metrics (R4a)",
+        ["flow-control"] = "peer streams (R4a) and the catalog as a lattice database (R10a)",
+        ["ddl-replication"] = Streams,
         ["backlog"] = Streams,
         ["skew-causal"] = Streams,
         ["skew-concurrent"] = Streams,
