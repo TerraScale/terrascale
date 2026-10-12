@@ -26,7 +26,6 @@ internal static class Gaps
         ["E6"] = Streams,
         ["E8"] = Counters,
         ["E9"] = Counters,
-        ["E10"] = "the changes feed (R8) over peer streams (R4a)",
         ["E11"] = "SQL writes (R9) over peer streams (R4a)",
         ["E12"] = "the catalog as a lattice database (R10a)",
         ["E13"] = "home region and live move (R11)",
