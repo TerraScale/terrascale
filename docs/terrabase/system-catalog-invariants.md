@@ -101,7 +101,17 @@ version said a document a machine held is never missing; that holds only without
     and every 15 s while the head moves, sealed like every backup object (format 1, AES-256-GCM with the `_system` data
     key): an anchor edited or forged without the key fails authentication and reads as unreadable (closed). At start, before any pull, M compares its head with the anchor: behind means M's
     catalog was put back to an older copy, which a volume snapshot cannot hide (the anchor lives outside the volume). A
-    restored M then never opens by pulling (its peers may be restored copies too); only the operator open does. No anchor
+    restored M then never opens by pulling (its peers may be restored copies too); only the operator open does.
+  - **Anchored before acknowledged.** Every Management request a restore could undo to a tenant's harm (every DELETE
+    under `/v1/management`: API keys, members, invitations, databases, projects, organizations, transfers; a role change;
+    leaving; confirming a transfer; a commit, which may carry any of them) writes the anchor before its response starts
+    (`Response.OnStarting`); when the anchor cannot be written it answers 500 instead of acknowledging (the change is
+    committed here and replicates; a retry is idempotent). So no acknowledged revocation, removal or deletion is newer than
+    its machine's anchor. Creations do not wait for the bucket: one lost to a restore grants nothing.
+  - **Only trusted peers verify.** A pull counts only when the peer reports itself trusted (`GET /catalog-gate` on its
+    internal listener, anonymous like the probes: `open`, or its anchor read and not ahead of its catalog). A restored,
+    closed machine verifies nobody, so a peer whose own anchor had not caught a change it received by stream cannot open by
+    pulling the restored machine's older copy. No anchor
     yet (a new machine) is not a restore. An unreadable anchor keeps M closed and is read again every pass. On Fly without
     a backup bucket nothing can be compared: closed until the operator open. Off Fly without a bucket (dev servers, tests)
     there is no anchor and no detection.
@@ -158,7 +168,9 @@ version said a document a machine held is never missing; that holds only without
   | All machines restart together | each pulls from the others (closed peers still serve the pull), all open | none |
   | A machine restarts while a recorded machine is stopped or unreachable | closed until that machine is back | wait, or the operator open |
   | A machine (or its region) is destroyed, replaced or retired for good | every later restart elsewhere stays closed: it stays recorded | the operator open at every restart (machine retirement: proposal below) |
-  | A machine's catalog is put back to an older copy (behind its anchor), alone or with every other machine | closed even after its pulls | the operator open (a whole-cluster restore is a decision) |
+  | A machine's catalog is put back to an older copy (behind its anchor), alone or with every other machine | closed even after its pulls; it verifies nobody | the operator open (a whole-cluster restore is a decision) |
+  | The backup bucket cannot be written | revocations, removals, deletions and commits answer 500 instead of being acknowledged (creations still work) | fix the bucket |
+  | The backup bucket cannot be read at start (or none is attached on Fly) | closed | fix or attach the bucket, or the operator open |
   | A new cluster's first machine | closed | the bootstrap request |
   | A cluster of one machine (single region, before a second region) restarts | closed: nothing to pull from is unknown | the operator open |
 
@@ -169,8 +181,11 @@ version said a document a machine held is never missing; that holds only without
   - **Machines that left for good stay recorded.** A destroyed or replaced machine's id keeps every later restart closed
     until the operator open (or, once it exists, retirement). Per-machine verification is what makes a stopped sole holder
     count; the cost is that a gone machine counts too.
-  - **The anchor lags by up to 15 s** (and by a failed write): a copy taken within that window of the last anchor write is
-    not detected by the anchor (peers still verify it unless they are restored too). Also: a machine that joined after the
+  - **What the anchor can still miss, and its bound:** catalog changes no client was told about (background passes: the
+    prefix-delete drain, convergence's name and file decisions, usage flushes; changes received from peers) are anchored
+    within 15 s, as are creations (they grant nothing when lost). A copy from that window restores only such changes' absence: the background passes redo theirs, and a
+    received change is anchored by the machine that acknowledged it, which then reports itself untrusted if it is restored
+    too. Changes acknowledged to a client are never in the window. Also: a machine that joined after the
     copy was taken and is stopped is not recorded by the restored copy; an entry that never left M before the copy is lost
     everywhere.
   - **Restoring a volume onto a new machine id:** the new id has no anchor; it still waits for every recorded machine,
@@ -191,7 +206,9 @@ version said a document a machine held is never missing; that holds only without
   (opening without a request, not consuming it, or accepting a malformed one each fail it);
   `A_restored_node_waits_for_a_stopped_machine_of_its_own_region_that_holds_the_only_revocation` (two machines in gru;
   ignoring recorded machines opens gru after pulling only sjc); `Machines_all_restored_from_stale_copies_stay_closed_behind_their_anchors_until_an_operator_decides`
-  (ignoring the anchor opens both on their stale copies).
+  (ignoring the anchor opens both on their stale copies);
+  `A_revocation_is_anchored_before_its_acknowledgement_so_copies_from_just_before_it_stay_closed` (without the anchor at
+  the acknowledgement, the anchor is not past the revocation when it is acknowledged).
 - **Stale groups are joined (decision, this version):** a stale group (committed 24 h or more before it is read, whole
   states) from a peer can carry an entry M minted after T. R7's rule for client databases drops a stale state of a
   document missing locally that the machine held before (`HeldBefore`), because there it means a collected deletion; on M

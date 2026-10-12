@@ -527,9 +527,9 @@ public sealed class CatalogLatticeTests
 
     /// <summary>
     /// Every machine restored from stale copies (COS, after R3's verification of 60eae912): gru and sjc anchor their catalogs'
-    /// heads in the backup bucket; both are restored from copies taken before a revocation and restart together. They pull
-    /// from each other (the stale copies agree) and still stay closed: each catalog is behind its own anchor, which a snapshot
-    /// cannot roll back. Only an operator's decision opens one.
+    /// heads in the backup bucket; both are restored from copies taken before a revocation and restart together. Both stay
+    /// closed: each catalog is behind its own anchor, which a snapshot cannot roll back, and each reports itself untrusted, so
+    /// neither counts a pull from the other. Only an operator's decision opens one.
     /// </summary>
     [Test]
     public async Task Machines_all_restored_from_stale_copies_stay_closed_behind_their_anchors_until_an_operator_decides()
@@ -570,16 +570,92 @@ public sealed class CatalogLatticeTests
         foreach (var region in new[] { gru, sjc })
         {
             var other = region == gru ? sjc : gru;
-            await Assert.That(await Until(() => Task.FromResult(!region.Pending.Contains(other.Machine) && region.Pending.Count == 1))).IsTrue().Because(region.Name);
-            await Assert.That(await region.IsOpenAsync()).IsFalse().Because($"{region.Name}: pulled from {other.Name}, still behind its anchor");
+            // Behind its own anchor; and the other, restored too, reports itself untrusted, so a pull from it verifies nothing.
+            await Assert.That(await Until(() => Task.FromResult(region.Pending.Contains("restored to an older copy: an operator's decision")
+                && region.Pending.Contains(other.Machine)))).IsTrue().Because(region.Name);
+            await Assert.That(await region.IsOpenAsync()).IsFalse().Because($"{region.Name}: behind its anchor");
             await Assert.That(await region.DataStatusAsync(secret, collections)).IsEqualTo(HttpStatusCode.ServiceUnavailable).Because(region.Name);
         }
 
         await gru.RequestAsync(CatalogGate.OpenFile, "alice: whole-cluster restore to the copy, ticket 9");
         await Assert.That(await gru.UntilOpenAsync()).IsTrue();
         var open = (await gru.RecordsAsync(CatalogGate.Opens)).Single();
-        await Assert.That(open.GetProperty("unverified").EnumerateArray().Single().GetString()!).Contains("restored");
+        await Assert.That(open.GetProperty("unverified").EnumerateArray().Any(item => item.GetString()!.Contains("restored", StringComparison.Ordinal))).IsTrue();
         await Assert.That(await sjc.IsOpenAsync()).IsFalse();
+    }
+
+    /// <summary>
+    /// A revocation is anchored before it is acknowledged (COS, closing the 15 s window): copies of gru and sjc are taken, gru
+    /// revokes a key, and the moment the revocation is acknowledged gru's anchor is past it. Both machines are then stopped at
+    /// once and restored from the copies taken just before: neither opens. gru is behind its anchor; sjc, whether or not its
+    /// own anchor caught the revocation, does not count a pull from gru, which reports itself untrusted.
+    /// </summary>
+    [Test]
+    public async Task A_revocation_is_anchored_before_its_acknowledgement_so_copies_from_just_before_it_stay_closed()
+    {
+        await using var cluster = await Cluster.StartWithAnchorsAsync("gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var owner = EntityIds.New().ToString();
+        var (organization, project) = (EntityIds.New().ToString(), EntityIds.New().ToString());
+        await gru.CommitAsync(owner,
+            new { op = "create_organization", id = organization, name = "Window" },
+            new { op = "create_project", organization, id = project, name = "p" },
+            new { op = "create_database", organization, project, name = "kept", id = EntityIds.New().ToString(), replica_regions = Sjc });
+        var projectPath = $"/v1/management/organizations/{organization}/projects/{project}";
+        var (key, secret) = await gru.CreateKeyAsync(owner, projectPath);
+        var collections = $"/v1/projects/{project}/databases/kept/collections";
+        await Assert.That(await sjc.UntilAsync($"projects/{project}/api_keys", key, json => json is not null)).IsTrue();
+        var copies = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var region in new[] { gru, sjc })
+        {
+            copies[region.Name] = await region.CopyCatalogAsync();
+            await Assert.That(await region.UntilOpenAsync()).IsTrue().Because(region.Name);
+        }
+
+        var before = await gru.HeadAsync();
+        await Assert.That(await gru.SendAsync(owner, HttpMethod.Delete, $"{projectPath}/api-keys/{key}")).IsEqualTo(HttpStatusCode.NoContent);
+        await Assert.That(gru.Anchored).IsGreaterThan(before).Because("anchored before the acknowledgement");
+
+        await Task.WhenAll(gru.StopAsync(), sjc.StopAsync());
+        gru.PutBackCatalog(copies["gru"]);
+        sjc.PutBackCatalog(copies["sjc"]);
+        await Task.WhenAll(gru.StartAsync(), sjc.StartAsync());
+        await Assert.That(await Until(() => Task.FromResult(gru.Pending.Contains("restored to an older copy: an operator's decision")))).IsTrue();
+        foreach (var region in new[] { gru, sjc })
+        {
+            _ = await region.PassAsync();
+            await Assert.That(await region.IsOpenAsync()).IsFalse().Because(region.Name);
+            await Assert.That(await region.DataStatusAsync(secret, collections)).IsEqualTo(HttpStatusCode.ServiceUnavailable).Because(region.Name);
+        }
+
+        await Assert.That(sjc.Pending.Contains(gru.Machine) || sjc.Pending.Contains("restored to an older copy: an operator's decision")).IsTrue();
+    }
+
+    /// <summary>
+    /// When the backup bucket refuses the anchor, a revocation is not acknowledged (500; it is committed here and replicates,
+    /// and a retry is idempotent), while a creation, which grants nothing if a restore loses it, still is.
+    /// </summary>
+    [Test]
+    public async Task A_revocation_the_bucket_cannot_anchor_is_not_acknowledged_while_a_creation_still_is()
+    {
+        await using var cluster = await Cluster.StartWithAnchorsAsync("gru", "sjc");
+        var gru = cluster["gru"];
+        var owner = EntityIds.New().ToString();
+        var (organization, project) = (EntityIds.New().ToString(), EntityIds.New().ToString());
+        await gru.CommitAsync(owner,
+            new { op = "create_organization", id = organization, name = "Refused" },
+            new { op = "create_project", organization, id = project, name = "p" });
+        var projectPath = $"/v1/management/organizations/{organization}/projects/{project}";
+        var (key, _) = await gru.CreateKeyAsync(owner, projectPath);
+
+        cluster.Bucket!.FailPut = _ => true;
+        await Assert.That(await gru.SendAsync(owner, HttpMethod.Delete, $"{projectPath}/api-keys/{key}")).IsEqualTo(HttpStatusCode.InternalServerError);
+        await Assert.That(await gru.SendAsync(owner, HttpMethod.Post, $"/v1/management/organizations/{organization}/projects", new { name = "created" }))
+            .IsEqualTo(HttpStatusCode.Created);
+
+        cluster.Bucket.FailPut = _ => false;
+        var (another, _) = await gru.CreateKeyAsync(owner, projectPath);
+        await Assert.That(await gru.SendAsync(owner, HttpMethod.Delete, $"{projectPath}/api-keys/{another}")).IsEqualTo(HttpStatusCode.NoContent);
     }
 
     // Whether `condition` holds within the deadline.

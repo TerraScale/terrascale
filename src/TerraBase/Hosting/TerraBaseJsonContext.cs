@@ -44,6 +44,7 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(UniqueSchemaRequest))]
 [JsonSerializable(typeof(CreateApiKeyRequest))]
 [JsonSerializable(typeof(CreatedApiKeyBody))]
+[JsonSerializable(typeof(Features.Replication.CatalogGateStatus))]
 [JsonSerializable(typeof(CreatedInvitation))]
 [JsonSerializable(typeof(CreatedProjectApiKey))]
 [JsonSerializable(typeof(CreateIndexRequest))]
