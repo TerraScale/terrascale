@@ -21,11 +21,10 @@ namespace TerraBase.Engine.Sqlite;
 /// <param name="write">Whether mutations are allowed.</param>
 /// <param name="durable">Whether the session runs with <c>synchronous = FULL</c> until disposal resets it to <c>NORMAL</c>.</param>
 /// <param name="committed">Runs after a commit advances the local shape history or its head.</param>
-/// <param name="changesCommitted">When set, local mutations are captured and it receives the group's sequence after commit.</param>
 /// <param name="ownsAdmission">Whether disposal releases this transaction's I/O admission.</param>
 internal sealed partial class SqliteStorageTransaction(
     SqliteDatabaseStore store, SqliteSession session, SqliteTransaction transaction, SqliteRunner runner, bool write, bool durable, Action? committed,
-    Action<long>? changesCommitted, bool ownsAdmission)
+    bool ownsAdmission)
     : IStorageTransaction
 {
     // Bounds one commit's written bytes, every repeated write and its framing included.
@@ -41,9 +40,6 @@ internal sealed partial class SqliteStorageTransaction(
     private readonly Lock _disposalGate = new();
     private Task? _disposal;
     private bool _streaming;
-
-    // The system database's capture: every write, in order (docs/decisions/0009).
-    private readonly List<DocumentChange>? _changes = changesCommitted is not null && store.IsSystem ? [] : null;
 
     // Body statements live only for this transaction: idle sessions must not retain bound JSON.
     private readonly Dictionary<string, SqliteCommand> _bodyCommands = [with(StringComparer.Ordinal)];
@@ -66,7 +62,7 @@ internal sealed partial class SqliteStorageTransaction(
 
     // Group commit (SqliteDatabaseStore.WriteAsync): each queued write runs inside a savepoint, and this snapshot of the
     // in-memory capture and limits rolls back with it.
-    private (int Changes, long ChangeBytes, int Captured, int Writes, long WrittenBytes, long? Offset, bool CollectionsChanged)?
+    private (long ChangeBytes, int Captured, int Writes, long WrittenBytes, long? Offset, bool CollectionsChanged)?
         _savepoint;
 
     /// <summary>Whether a per-commit limit refused a write since the last savepoint: alone in a transaction, it could fit.</summary>
@@ -213,11 +209,6 @@ internal sealed partial class SqliteStorageTransaction(
         {
             return Write(offset =>
             {
-                if (_changes is not null)
-                {
-                    CaptureSystem(new DocumentChange(collection, id, offset, json));
-                }
-
                 var put = BodyCommand(SqliteStatements.Put, collection, id);
                 put.Parameters.AddWithValue("$version", offset);
                 put.Parameters.AddWithValue("$body", body);
@@ -268,18 +259,7 @@ internal sealed partial class SqliteStorageTransaction(
 
             var command = Command(SqliteStatements.Delete, collection);
             command.Parameters.AddWithValue("$id", id);
-            if (command.ExecuteNonQuery() == 0)
-            {
-                return false;
-            }
-
-            // Catalog followers still need the deletion.
-            if (_changes is not null)
-            {
-                Write(offset => CaptureSystem(new DocumentChange(collection, id, offset, null)), cancellationToken);
-            }
-
-            return true;
+            return command.ExecuteNonQuery() > 0;
         }, cancellationToken, mutation: true).ConfigureAwait(false);
     }
 
@@ -311,11 +291,6 @@ internal sealed partial class SqliteStorageTransaction(
 
             return Write(offset =>
             {
-                if (_changes is not null)
-                {
-                    CaptureSystem(new DocumentChange(collection, id, offset, null));
-                }
-
                 var command = Command(SqliteStatements.Tombstone, collection);
                 command.Parameters.AddWithValue("$id", id);
                 command.Parameters.AddWithValue("$version", offset);
@@ -946,12 +921,6 @@ internal sealed partial class SqliteStorageTransaction(
             ThrowIfReadOnly();
             if (store.IsSystem)
             {
-                if (_changes is not null)
-                {
-                    // A system group replays every mutation: each removed document.
-                    CaptureSystemDeletions(name, name + '\0', cancellationToken);
-                }
-
                 Command(SqliteStatements.DropHistory, name).ExecuteNonQuery();
                 cancellationToken.ThrowIfCancellationRequested();
                 Command(SqliteStatements.DropDocuments, name).ExecuteNonQuery();
@@ -999,7 +968,6 @@ internal sealed partial class SqliteStorageTransaction(
 
     public async ValueTask<long> CommitAsync(CancellationToken cancellationToken)
     {
-        long? sequence = null;
         var offset = await RunAsync(() =>
         {
             if (_faulted || _aborted)
@@ -1012,11 +980,6 @@ internal sealed partial class SqliteStorageTransaction(
                 FlushStates();
                 DropUniqueAffected();
                 var offset = _offset ?? GetOffset();
-                if (_changes is { Count: > 0 })
-                {
-                    sequence = AppendChanges(_changes, cancellationToken);
-                }
-
                 cancellationToken.ThrowIfCancellationRequested();
                 transaction.Commit();
                 if (_collectionsChanged)
@@ -1029,12 +992,6 @@ internal sealed partial class SqliteStorageTransaction(
                     store.StatisticsChanged();
                 }
 
-                if (_adoptedIncarnation is { } adopted)
-                {
-                    // Before the commit wakes waiters: readers see the adopted documents with their incarnation.
-                    store.AdoptIncarnation(adopted);
-                }
-
                 return offset;
             }
             catch
@@ -1044,14 +1001,9 @@ internal sealed partial class SqliteStorageTransaction(
             }
         }, cancellationToken).ConfigureAwait(false);
 
-        if (_offset is not null || _replicaChanged)
+        if (_offset is not null)
         {
             committed?.Invoke();
-        }
-
-        if (sequence is { } appended)
-        {
-            changesCommitted!(appended);
         }
 
         return offset;
@@ -1066,7 +1018,7 @@ internal sealed partial class SqliteStorageTransaction(
     internal void Savepoint()
     {
         ThrowIfReadOnly();
-        _savepoint = (_changes?.Count ?? 0, _changeBytes, _captured, _writes, _writtenBytes, _offset, _collectionsChanged);
+        _savepoint = (_changeBytes, _captured, _writes, _writtenBytes, _offset, _collectionsChanged);
         _savepointPending = true;
         LimitsReached = false;
     }
@@ -1109,9 +1061,8 @@ internal sealed partial class SqliteStorageTransaction(
     }
 
     private void Restore(
-        (int Changes, long ChangeBytes, int Captured, int Writes, long WrittenBytes, long? Offset, bool CollectionsChanged) saved)
+        (long ChangeBytes, int Captured, int Writes, long WrittenBytes, long? Offset, bool CollectionsChanged) saved)
     {
-        _changes?.RemoveRange(saved.Changes, _changes.Count - saved.Changes);
         _pending.Clear();
         (_changeBytes, _captured, _writes, _writtenBytes, _offset, _collectionsChanged) =
             (saved.ChangeBytes, saved.Captured, saved.Writes, saved.WrittenBytes, saved.Offset, saved.CollectionsChanged);
@@ -1164,42 +1115,6 @@ internal sealed partial class SqliteStorageTransaction(
         call();
         return true;
     }, CancellationToken.None).ConfigureAwait(false);
-
-    public ValueTask<ReadOnlyMemory<byte>> GetOriginAsync(CancellationToken cancellationToken) =>
-        RunAsync<ReadOnlyMemory<byte>>(() => GetOrigin(), cancellationToken, retry: true);
-
-    // The system database's origin is its incarnation; a client database keeps no journal.
-    private byte[] GetOrigin() =>
-        store.IsSystem ? Ulid.Parse((string)Command(SqliteStatements.Origin).ExecuteScalar()!).ToByteArray()
-            : throw new NotSupportedException("a client database keeps no journal");
-
-    public ValueTask<long> GetLastChangeSequenceAsync(CancellationToken cancellationToken) =>
-        RunAsync(LastSequence, cancellationToken, retry: true);
-
-    // The system journal may hold its head digest without the group (a truncated tail, a follower's snapshot).
-    private long LastSequence() =>
-        store.IsSystem ? (long)Command(SqliteStatements.SystemLastSequence).ExecuteScalar()! : throw new NotSupportedException("a client database keeps no journal");
-
-    /// <summary>See <see cref="ISystemReplication.GetDigestAsync"/>.</summary>
-    internal ValueTask<ReadOnlyMemory<byte>?> GetChangeDigestAsync(long sequence, CancellationToken cancellationToken)
-    {
-        ArgumentOutOfRangeException.ThrowIfNegative(sequence);
-        return RunAsync(() => GetChangeDigest(sequence), cancellationToken, retry: true);
-    }
-
-    private ReadOnlyMemory<byte>? GetChangeDigest(long sequence)
-    {
-        if (sequence == 0)
-        {
-            return JournalDigest.Initial(GetOrigin());
-        }
-
-        var command = Command(SqliteStatements.GetChangeDigest);
-        command.Parameters.AddWithValue("$sequence", sequence);
-        return command.ExecuteScalar() is byte[] digest
-            ? digest.Length == JournalDigest.Length ? digest : throw new InvalidDataException("the stored journal digest is invalid")
-            : null;
-    }
 
     private bool _captureSuspended;
 
@@ -1258,7 +1173,6 @@ internal sealed partial class SqliteStorageTransaction(
                         }
 
                         _bodyCommands.Clear();
-                        _changes?.Clear();
                     }
                     finally
                     {
@@ -1474,50 +1388,6 @@ internal sealed partial class SqliteStorageTransaction(
         var json = SqliteSession.Bytes(reader, ordinal);
         DocumentJson.ValidateStored(json);
         return json;
-    }
-
-    private static DocumentChange Change(SqliteDataReader reader) => new(
-        reader.GetString(0),
-        reader.GetString(1),
-        reader.GetInt64(2),
-        // Typed as the nullable memory itself: a null byte[] would convert to empty memory, not to a deletion.
-        reader.IsDBNull(3) ? null : (ReadOnlyMemory<byte>?)SqliteSession.Bytes(reader, 3));
-
-    private static long ContentBytes(DocumentChange change) =>
-        (long)Encoding.UTF8.GetByteCount(change.Collection) + Encoding.UTF8.GetByteCount(change.Id) + (change.Json?.Length ?? 0);
-
-    // Appends one system journal group and returns its sequence. The next sequence is read inside this write transaction,
-    // which the database's writer gate serializes.
-    private long AppendChanges(List<DocumentChange> changes, CancellationToken cancellationToken)
-    {
-        var sequence = checked(LastSequence() + 1);
-        var previous = GetChangeDigest(sequence - 1) ?? throw new InvalidDataException("the preceding journal digest is missing");
-        byte[] digest;
-        using (var group = new JournalDigest.Group(GetOrigin(), sequence, previous.Span, changes.Count))
-        {
-            changes.ForEach(group.Append);
-            digest = group.Complete();
-        }
-
-        var ordinal = 0;
-        foreach (var change in changes)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var append = BodyCommand(SqliteStatements.AppendReplicationChange, change.Collection, change.Id);
-            append.Parameters.AddWithValue("$sequence", sequence);
-            append.Parameters.AddWithValue("$ordinal", ordinal++);
-            append.Parameters.AddWithValue("$version", change.Version);
-            append.Parameters.AddWithValue("$body", change.Json is { } json ? Encoding.UTF8.GetString(json.Span) : DBNull.Value);
-            append.ExecuteNonQuery();
-        }
-
-        cancellationToken.ThrowIfCancellationRequested();
-        var prefix = Command(SqliteStatements.AppendChangeDigest);
-        prefix.Parameters.AddWithValue("$sequence", sequence);
-        prefix.Parameters.AddWithValue("$digest", digest);
-        prefix.ExecuteNonQuery();
-        TruncateSystemJournal(sequence - ISystemReplication.RetainedGroups);
-        return sequence;
     }
 
     private SqliteCommand Uncached(string collection)

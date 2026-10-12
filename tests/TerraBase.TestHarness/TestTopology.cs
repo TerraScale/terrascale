@@ -11,22 +11,17 @@ namespace TerraBase.Testing;
 /// <list type="bullet">
 /// <item><c>region</c> and <c>node-name</c>: the machine's region and ID.</item>
 /// <item><c>peers</c>: <c>name=host:port</c> members of the cell, this one included; <c>peer-addresses</c>: the other members' peer listeners.</item>
-/// <item><c>catalog-primary</c>: the catalog primary this server follows, a member of <c>peers</c> or a peer listener; naming this server makes it the primary.</item>
 /// </list>
 /// The harness applies the identity to the registered options and registers a static membership of the listed members,
 /// unless the test registered a <see cref="FakeMemberStore"/>: that one lists the server while it runs, as Fly's DNS does.
 /// </summary>
 internal sealed class TestTopology
 {
-    private static readonly string[] Keys = ["region", "node-name", "peers", "peer-addresses", "catalog-primary"];
-
-    // The region a catalog primary named only by its address is listed in, so a follower reading the DNS finds it there.
-    private const string PrimaryRegion = "catalog-primary";
+    private static readonly string[] Keys = ["region", "node-name", "peers", "peer-addresses"];
 
     private readonly string _region;
     private readonly string? _machineId;
     private readonly ImmutableArray<ClusterMember> _members;
-    private readonly ClusterMember? _catalogPrimary;
     private readonly string? _ownAddress;
     private readonly bool _static;
     private FakeMemberStore? _store;
@@ -53,15 +48,9 @@ internal sealed class TestTopology
                 .Select((address, index) => new ClusterMember($"peer-{index}", new Uri(address).ToString(), _region, string.Empty)));
         }
 
-        if (values.TryGetValue("catalog-primary", out var primary) && primary != self)
-        {
-            _catalogPrimary = members.FirstOrDefault(member => member.Name == primary)
-                ?? new ClusterMember("catalog-primary", new Uri(primary).ToString(), PrimaryRegion, string.Empty);
-        }
-
         _ownAddress = members.FirstOrDefault(member => member.Name == self)?.PeerAddress;
         _members = [.. members.Where(member => member.Name != self)];
-        _static = members.Count > 0 || values.ContainsKey("catalog-primary");
+        _static = members.Count > 0;
     }
 
     /// <summary>Takes the topology keys out of <paramref name="values"/>, leaving only settings.</summary>
@@ -85,8 +74,6 @@ internal sealed class TestTopology
         {
             Region = _region,
             MachineId = _machineId ?? options.MachineId,
-            PrimaryRegion = _catalogPrimary?.Region ?? _region,
-            CatalogFollower = _catalogPrimary is not null,
         };
         _self = identified.MachineId;
         services[services.IndexOf(registered)] = ServiceDescriptor.Singleton(identified);
@@ -99,14 +86,10 @@ internal sealed class TestTopology
         {
             _store = store;
             services[services.IndexOf(registered)] = ServiceDescriptor.Singleton(store.For(_self));
-            if (_catalogPrimary?.Region == PrimaryRegion)
-            {
-                store.Join(_catalogPrimary);
-            }
         }
         else if (_static)
         {
-            services.AddSingleton<IMembership>(provider => new StaticMembership(provider.GetRequiredService<TerraBaseOptions>(), _members, _catalogPrimary));
+            services.AddSingleton<IMembership>(provider => new StaticMembership(provider.GetRequiredService<TerraBaseOptions>(), _members));
         }
     }
 

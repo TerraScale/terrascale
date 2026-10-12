@@ -1,6 +1,6 @@
 # 0009: One catalog primary, log-shipping followers
 
-- Status: proposed (TS-561, 2026-10-06); needs human acceptance
+- Status: superseded by docs/terrabase/multi-region-replication.md section 15 (R10a): the catalog primary, followers and forwarding are deleted
 - Scope: `Engine` (system database capture, `ISystemReplication`), `Features/Replication` (catalog stream),
   `Features/Management` (followers write nothing), `Features/Health` (readiness), `docs/terrabase/replication.md`
 

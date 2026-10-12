@@ -27,10 +27,9 @@ The `/healthz` JSON body includes `status`, `version`, and `region`.
 Management API database JSON includes `region` on create, branch, get, and list
 responses. This value is the responding node's region at response time, including
 for existing database records; it is not persisted placement metadata and
-requires no storage migration. A catalog follower forwards Management requests to
-its catalog primary, which answers them as the follower's region: the follower
-responds. A Management commit records its response once, so its `region` names
-the member that applied it, the catalog primary.
+requires no storage migration. Each machine answers Management requests from its own
+catalog. A Management commit records its response once, so its `region` names the
+machine that applied it.
 
 ## Client routing and Atlas compatibility
 

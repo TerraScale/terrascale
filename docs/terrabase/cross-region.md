@@ -3,7 +3,7 @@
 > **Removed (2026-10-11, slice R2a).** Client databases no longer replicate this way: the sender, receiver,
 > anti-entropy and write-wait described here are deleted, and design C replaces them
 > ([multi-region-replication.md](multi-region-replication.md)). Until slice R4a ships, client databases do not
-> replicate between machines. The catalog (`_system`) sections still describe the running code until R10a.
+> replicate between machines. Catalogs (`_system`) are per machine until R10a.
 
 A write accepted in one region becomes readable in every other region of its replication group, with the same version
 token. This is stage 1 of [anna-core §10](design/anna-core.md#10-stage-2-later) on today's engine: the simpler route
@@ -117,7 +117,7 @@ How the regions learn it:
 - **Heads.** Every member's heads list every database it holds a file of, written to or not, with its name and
   placement. The home region numbers its placement changes; another region takes a placement with a higher number.
 - **Recording.** A region that registers the database's organization and project under the same ids records the
-  database. Its catalog primary does this from the heads, with the same id and name; its followers follow their catalog.
+  database. Each machine records it in its own catalog from the heads, with the same id and name.
   - A region in the placement also creates the file and pulls the database's origins.
   - Any other region keeps only the record, so its API can answer `421 wrong_region` with the regions that serve the
     database, and `fly-replay: region=<home>` behind Fly Proxy ([fly.md](fly.md#fly-replay)).
@@ -235,7 +235,7 @@ Alert on `terrabase_wan_staleness_seconds` above a minute, and on any `ahead` fa
   `CrossRegionPagingProgressTests.Preparation.cs` covers bounded independent cold preparation, inline admission with
   `storage-queue=1`, and deletion or placement removal between target preparation and its ordered pull.
 - **Slow** (`CrossRegion/CrossRegionPartitionTests.cs`) is the partition suite:
-  - two regions of two members each (a catalog primary and its follower);
+  - two regions of two members each;
   - a link that drops, delays, duplicates and corrupts replies, with a partition and a heal;
   - member restarts on both sides, while writers on every member put and delete;
   - checks that every member converges on the same state, that every acknowledged write nobody else wrote is
