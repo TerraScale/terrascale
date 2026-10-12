@@ -58,6 +58,9 @@ internal sealed class FakeChangeGroupSource : IChangeGroupSource
         await Task.CompletedTask;
     }
 
+    // Its groups are this machine's own only: nothing lies between them to acknowledge past.
+    public ValueTask<long> QuietAsync(TenantContext database, long after, CancellationToken cancellationToken) => ValueTask.FromResult(after);
+
     public ValueTask<IReadOnlyList<OriginGroup>> ReadAsync(TenantContext database, long after, int maxGroups, int maxBytes, CancellationToken cancellationToken)
     {
         lock (_gate)

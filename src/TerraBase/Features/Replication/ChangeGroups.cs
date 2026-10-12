@@ -41,6 +41,13 @@ public interface IChangeGroupSource
     /// </summary>
     ValueTask<IReadOnlyList<OriginGroup>> ReadAsync(TenantContext database, long after, int maxGroups, int maxBytes, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// The highest change id up to which the database holds none of its groups after <paramref name="after"/>, as the last
+    /// <see cref="ReadAsync"/> from there found (<paramref name="after"/> when it is not known): a peer acknowledged up to
+    /// <paramref name="after"/> may count as acknowledged up to it, since nothing in between is to be shipped.
+    /// </summary>
+    ValueTask<long> QuietAsync(TenantContext database, long after, CancellationToken cancellationToken);
+
     /// <summary>The last change id <paramref name="peer"/> acknowledged for the database (its <c>_tb_peers.acked</c>), or 0.</summary>
     ValueTask<long> AckedAsync(TenantContext database, ReplicaId peer, CancellationToken cancellationToken);
 

@@ -284,6 +284,27 @@ public sealed class PeerStreamTests
         await Assert.That(await sjc.UntilAsync(second, """{"n":2}""")).IsTrue();
     }
 
+    // The newest CDC rows of a machine that only received since its last own write hold nothing to ship; the peer's
+    // acknowledgement still moves past them, so retention can drop them (they would otherwise stay until the next own
+    // write, or until the peer is cut as 1 GiB behind and made to refill).
+    [Test]
+    public async Task A_peers_acknowledgement_moves_past_groups_this_machine_only_received()
+    {
+        await using var cluster = await Cluster.StartAsync(cdc: true, "gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var (mine, theirs) = (EntityIds.New().ToString(), EntityIds.New().ToString());
+        await gru.WriteAsync(async transaction =>
+        {
+            _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
+            _ = await transaction.PutAsync("items", mine, Json("""{"n":1}"""), CancellationToken.None);
+        });
+        await Assert.That(await sjc.UntilAsync(mine, """{"n":1}""")).IsTrue();
+
+        await sjc.WriteAsync(async transaction => _ = await transaction.PutAsync("items", theirs, Json("""{"m":2}"""), CancellationToken.None));
+        await Assert.That(await gru.UntilAsync(theirs, """{"m":2}""")).IsTrue();
+        await Assert.That(await gru.UntilAckedByAsync(cluster.Database, sjc.Node)).IsTrue();
+    }
+
     [Test]
     public async Task Tail_lag_grows_while_the_only_peer_is_away_and_returns_to_zero_once_it_acknowledged()
     {

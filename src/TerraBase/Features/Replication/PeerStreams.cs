@@ -230,7 +230,27 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus
 
                 if (call.ResponseStream.Current.Stable is { } report)
                 {
-                    await _source.RecordStableAsync(ChangeGroups.Tenant(report.Database), peer, new Hlc(report.Stable), cancellationToken).ConfigureAwait(false);
+                    // The answer to a frontier: the peer is there, and the rows up to the quiet point read with the frontier
+                    // hold nothing of this machine's to ship (received groups, bookkeeping), so it counts as acknowledged
+                    // past them; otherwise they would stay in the CDC until this machine's next own write.
+                    var database = ChangeGroups.Tenant(report.Database);
+                    long? past = null;
+                    lock (link.Gate)
+                    {
+                        if (link.Cursors.TryGetValue(database, out var cursor) && cursor.FrontierQuiet > (cursor.Acked ?? 0))
+                        {
+                            past = cursor.Acked = cursor.FrontierQuiet;
+                        }
+                    }
+
+                    if (past is { } through)
+                    {
+                        await _source.AckAsync(database, peer, through, new Hlc(report.Stable), cancellationToken).ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        await _source.RecordStableAsync(database, peer, new Hlc(report.Stable), cancellationToken).ConfigureAwait(false);
+                    }
                 }
                 else
                 {
@@ -296,9 +316,13 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus
             {
                 if (_time.GetElapsedTime(cursor.FrontierAt) >= FrontierEvery || cursor.FrontierAt == 0)
                 {
+                    var quiet = await _source.QuietAsync(database, acked, cancellationToken).ConfigureAwait(false);
                     await stream.WriteAsync(new PushFrame { Frontier = new Frontier { Database = ChangeGroups.Wire(database), Hlc = frontier.Value } }, cancellationToken)
                         .ConfigureAwait(false);
-                    cursor.FrontierAt = _time.GetTimestamp();
+                    lock (link.Gate)
+                    {
+                        (cursor.FrontierAt, cursor.FrontierQuiet) = (_time.GetTimestamp(), quiet);
+                    }
                 }
 
                 lock (link.Gate)
@@ -421,8 +445,10 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus
         // Whether the batch in flight is a refill.
         public bool Refilling { get; set; }
 
-        // When the last frontier went (a TimeProvider timestamp; 0 before the first).
+        // When the last frontier went (a TimeProvider timestamp; 0 before the first), and the source's quiet point read with it.
         public long FrontierAt { get; set; }
+
+        public long FrontierQuiet { get; set; }
 
         public int InFlightGroups { get; set; }
 
