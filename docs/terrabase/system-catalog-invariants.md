@@ -200,7 +200,8 @@ version said a document a machine held is never missing; that holds only without
     all of them, or the operator open.
   - **First rollout of the anchor:** machines already running hold non-genesis catalogs and no anchor, so after the deploy
     each is untrusted and none can verify another. One operator open (on one machine) is needed; that machine anchors, is
-    trusted again, and the others open by pulling from it.
+    trusted again, and the others open by pulling from it. Runbook, evidence and stop conditions:
+    [catalog-anchor-adoption.md](catalog-anchor-adoption.md) (release gate; not executed without the user's approval).
 - **Proposal, not code: machine retirement.** An operator request through the same `fly ssh` channel (two-person
   approval: two request files with different operators) that tombstones a gone machine's `cluster_members` record, so later
   restarts stop waiting for it; recorded like the open. Until then a gone machine needs the operator open at every restart.

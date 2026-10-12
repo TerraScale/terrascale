@@ -29,6 +29,15 @@ public interface ICatalogGate
     /// </summary>
     bool Trusted { get; }
 
+    /// <summary>What the gate still waits for, as of its last pass: machine ids and reasons (see <see cref="CatalogGate.Pending"/>).</summary>
+    IReadOnlyList<string> Waiting { get; }
+
+    /// <summary>
+    /// A digest of this machine's whole catalog (SHA-256 over its 4096 anti-entropy bucket digests, hex), or null before the
+    /// catalog exists: machines whose catalogs converged report the same value. Evidence for the operator, never a credential.
+    /// </summary>
+    Task<string?> DigestAsync(CancellationToken cancellationToken);
+
     /// <summary>
     /// Records the catalog's head in the restore anchor now (when it moved and the machine has a backup bucket), so a change
     /// about to be acknowledged cannot be lost to a restore unnoticed. Throws when the anchor cannot be written.
@@ -128,6 +137,13 @@ internal sealed class CatalogGate : BackgroundService, ICatalogGate
     public bool IsOpen => _open;
 
     public bool Trusted => _open || (_restored == false && !_anchorMissing);
+
+    public IReadOnlyList<string> Waiting => Pending;
+
+    public async Task<string?> DigestAsync(CancellationToken cancellationToken) =>
+        _engine.SystemDatabaseExists && await _states.DigestAsync(ChangeGroups.System, cancellationToken).ConfigureAwait(false) is { } buckets
+            ? Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(buckets))
+            : null;
 
     /// <summary>What the gate still waits for, as of the last pass: machine ids, and the restore anchor's verdict.</summary>
     public ImmutableArray<string> Pending { get; private set; } = [];
