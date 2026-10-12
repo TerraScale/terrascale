@@ -18,4 +18,10 @@ public interface IIssuerKeys
     /// the fetch failed or was skipped; <see cref="Unavailable"/> when no keys have been loaded.
     /// </summary>
     ValueTask<RefreshIssuerKeysResult> RefreshAsync(CancellationToken cancellationToken);
+
+    /// <summary>
+    /// The keys once a fetch already running (the first one, which starts with the host) finishes; the cached keys when
+    /// none runs. Never starts a fetch.
+    /// </summary>
+    ValueTask<IReadOnlyList<SecurityKey>?> JoinAsync(CancellationToken cancellationToken);
 }

@@ -11,9 +11,10 @@ namespace TerraBase.Features.UserAuth;
 /// <summary>
 /// ts-auth's signing keys, read through OIDC discovery (<c>{auth-issuer}/.well-known/openid-configuration</c>, then its
 /// <c>jwks_uri</c>) and cached in memory. Each fetch has one <see cref="FetchTimeout"/> deadline for both documents and stops
-/// at shutdown. Startup waits for the first fetch; a background
-/// loop then retries every <see cref="StartupRetry"/> until one succeeds, and refreshes every <see cref="RefreshInterval"/>.
-/// A failed fetch keeps the cached keys. Requests never fetch, except through <see cref="RefreshAsync"/>.
+/// at shutdown. The first fetch starts with the host without delaying it; a background loop then retries every
+/// <see cref="StartupRetry"/> until one succeeds, and refreshes every <see cref="RefreshInterval"/>. A failed fetch keeps the
+/// cached keys. Requests never fetch, except through <see cref="RefreshAsync"/> (an unknown key id); before the first keys
+/// load they join a running fetch (<see cref="JoinAsync"/>).
 /// </summary>
 internal sealed class TsAuthKeys : BackgroundService, IIssuerKeys
 {
@@ -86,15 +87,24 @@ internal sealed class TsAuthKeys : BackgroundService, IIssuerKeys
         return keys is not null ? keys : new Unavailable("ts-auth signing keys are not loaded");
     }
 
-    public override async Task StartAsync(CancellationToken cancellationToken)
+    /// <inheritdoc />
+    public async ValueTask<IReadOnlyList<SecurityKey>?> JoinAsync(CancellationToken cancellationToken)
     {
-        _firstFetch = _issuer is null ? null : JoinOrStartFetch();
-        await base.StartAsync(cancellationToken).ConfigureAwait(false);
-        if (_firstFetch is not null)
+        Task<IReadOnlyList<SecurityKey>?>? fetch;
+        lock (_gate)
         {
-            // Tokens validate from the first request when ts-auth answers; a slow ts-auth delays startup by at most FetchTimeout.
-            await _firstFetch.WaitAsync(cancellationToken).ConfigureAwait(false);
+            fetch = _fetch;
         }
+
+        return fetch is null || fetch.IsCompleted ? Keys : await fetch.WaitAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public override Task StartAsync(CancellationToken cancellationToken)
+    {
+        // Startup never waits for ts-auth (no circular startup dependency): the first fetch runs in the background, and a
+        // request that comes before it finishes joins it (UserAuthenticationHandler).
+        _firstFetch = _issuer is null ? null : JoinOrStartFetch();
+        return base.StartAsync(cancellationToken);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)

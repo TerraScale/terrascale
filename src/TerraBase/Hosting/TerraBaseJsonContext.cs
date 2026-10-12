@@ -13,6 +13,7 @@ using TerraBase.Features.Management.Indexes;
 using TerraBase.Features.Management.Queries;
 using TerraBase.Features.Management.Schema;
 using TerraBase.Features.Management.Usage;
+using TerraBase.Features.Platform;
 using TerraBase.Features.Pressure;
 using TerraBase.Features.Replication;
 using TerraBase.Features.UserAuth;
@@ -64,6 +65,7 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(CreateCollectionRequest))]
 [JsonSerializable(typeof(DocumentBody))]
 [JsonSerializable(typeof(DocumentPageBody))]
+[JsonSerializable(typeof(PlatformDatabaseListBody))]
 [JsonSerializable(typeof(IndexBody))]
 [JsonSerializable(typeof(IndexListBody))]
 [JsonSerializable(typeof(IndexRecommendationListBody))]

@@ -90,6 +90,7 @@ builder.Services.AddTerraBaseDocuments();
 builder.Services.AddTerraBaseUserAuth();
 builder.Services.AddTerraBaseManagement();
 builder.Services.AddTerraBasePlatform();
+builder.Services.AddTerraBasePlatformExplore();
 builder.Services.AddTerraBaseCluster(options);
 builder.Services.AddTerraBaseBackup(options);
 builder.Services.AddTerraBaseHealth();

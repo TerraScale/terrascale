@@ -53,9 +53,10 @@ internal sealed class UserAuthenticationHandler(
             return AuthenticateResult.NoResult();
         }
 
-        if (issuerKeys.Keys is not { } keys)
+        // TerraBase starts without waiting for ts-auth: a token that arrives before the keys load joins the running fetch,
+        // and fails closed while ts-auth does not answer. Requests never start a fetch here.
+        if ((issuerKeys.Keys ?? await issuerKeys.JoinAsync(Context.RequestAborted).ConfigureAwait(false)) is not { } keys)
         {
-            // Fail closed until the first fetch succeeds; requests never fetch the keys themselves.
             return AuthenticateResult.Fail("ts-auth signing keys are not loaded");
         }
 
@@ -128,6 +129,12 @@ internal sealed class UserAuthenticationHandler(
 
             claims.AddRange(scope.Split(' ', StringSplitOptions.RemoveEmptyEntries).Distinct(StringComparer.Ordinal)
                 .Select(value => new Claim("scope", value)));
+        }
+
+        // A platform role rides only on a user's own sign-in token, never on a project token.
+        if (project is null && jwt.TryGetPayloadValue<string>(Platform.PlatformExplore.RoleClaim, out var role) && role == Platform.PlatformExplore.AdminRole)
+        {
+            claims.Add(new Claim(Platform.PlatformExplore.RoleClaim, role));
         }
 
         if (jwt.TryGetPayloadValue<bool>("email_verified", out var verified) && verified

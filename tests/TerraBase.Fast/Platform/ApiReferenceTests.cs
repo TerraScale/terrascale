@@ -24,6 +24,10 @@ public sealed class ApiReferenceTests
         GET /health/replication anonymous replicationHealth Health
         GET /healthz anonymous healthz Health
         GET /readyz anonymous readyz Health
+        GET /v1/platform/databases TsAuth(platform_role=admin) listPlatformDatabases Platform
+        GET /v1/platform/databases/{database}/collections TsAuth(platform_role=admin) listPlatformCollections Platform
+        GET /v1/platform/databases/{database}/collections/{collection}/documents TsAuth(platform_role=admin) listPlatformDocuments Platform
+        GET /v1/platform/databases/{database}/collections/{collection}/documents/by-key TsAuth(platform_role=admin) getPlatformDocument Platform
         GET /v1/projects/{project}/analytics TsAuth(databases:read) getProjectAnalytics Analytics
         GET /v1/projects/{project}/backup-destination TsAuth(databases:read) getBackupDestination Backups
         GET /v1/projects/{project}/databases TsAuth(databases:read) listDatabases Databases
@@ -296,6 +300,14 @@ public sealed class ApiReferenceTests
                     await Assert.That(scheme.Value.GetArrayLength()).IsEqualTo(0).Because(line);
                 }
 
+                if (operation.TryGetProperty("x-required-claims", out var claims))
+                {
+                    // The platform explore API: a platform role, not a scope.
+                    await Assert.That(claims.EnumerateArray().Select(claim => claim.GetString()).Single()).IsEqualTo("platform_role=admin").Because(line);
+                    await Assert.That(operation.GetProperty("description").GetString()).Contains("platform_role claim is admin").Because(line);
+                    continue;
+                }
+
                 var scopes = operation.GetProperty("x-required-scopes").EnumerateArray().Select(scope => scope.GetString()).ToArray();
                 await Assert.That(scopes.Length).IsGreaterThan(0).Because(line);
                 await Assert.That(operation.GetProperty("description").GetString()).Contains($"Required JWT scopes: {string.Join(", ", scopes)}.").Because(line);
@@ -382,7 +394,7 @@ public sealed class ApiReferenceTests
     private static string Security(JsonElement operation) =>
         operation.TryGetProperty("security", out var security)
             ? string.Join(' ', security.EnumerateArray().SelectMany(requirement => requirement.EnumerateObject()).Select(scheme =>
-                $"{scheme.Name}({string.Join(',', operation.GetProperty("x-required-scopes").EnumerateArray().Select(scope => scope.GetString()))})"))
+                $"{scheme.Name}({string.Join(',', (operation.TryGetProperty("x-required-scopes", out var scopes) ? scopes : operation.GetProperty("x-required-claims")).EnumerateArray().Select(scope => scope.GetString()))})"))
             : "anonymous";
 
     private static Uri Uri(string path) => new(path, UriKind.Relative);

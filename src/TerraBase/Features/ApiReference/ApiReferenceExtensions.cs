@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.OpenApi;
 using TerraBase.Configuration;
 using TerraBase.Features.ApiKeys;
+using TerraBase.Features.Platform;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 
@@ -36,7 +37,7 @@ public static class ApiReferenceExtensions
                 document.Components ??= new OpenApiComponents();
                 document.Extensions ??= new Dictionary<string, IOpenApiExtension>(StringComparer.Ordinal);
                 document.Extensions["x-tagGroups"] = new JsonNodeExtension(JsonNode.Parse("""
-                    [{"name":"Management","tags":["Databases","Backups","Indexes","Schema","Usage"]},
+                    [{"name":"Management","tags":["Databases","Backups","Indexes","Schema","Usage","Platform"]},
                      {"name":"Data","tags":["Collections","Documents","Queries","Transactions","Live"]},
                      {"name":"System","tags":["Health"]}]
                     """)!);
@@ -66,6 +67,19 @@ public static class ApiReferenceExtensions
                     .Select(data => data.Policy).OfType<string>().ToList();
                 if (policies.Count == 0)
                 {
+                    return;
+                }
+
+                if (policies.Contains(PlatformExplore.PolicyName))
+                {
+                    operation.Security = [new OpenApiSecurityRequirement { [new OpenApiSecuritySchemeReference(TsAuthScheme, context.Document)] = [] }];
+                    operation.Extensions ??= new Dictionary<string, IOpenApiExtension>(StringComparer.Ordinal);
+                    operation.Extensions["x-required-claims"] = new JsonNodeExtension(new JsonArray(JsonValue.Create($"{PlatformExplore.RoleClaim}={PlatformExplore.AdminRole}")));
+                    operation.Description += $"\n\nRequires a ts-auth user access token whose {PlatformExplore.RoleClaim} claim is {PlatformExplore.AdminRole}.";
+                    operation.Responses ??= [];
+                    var refusal = await context.GetOrCreateSchemaAsync(typeof(ErrorBody), cancellationToken: cancellationToken);
+                    operation.Responses.TryAdd("401", Error("Unauthorized: missing, unknown or expired credential.", refusal));
+                    operation.Responses.TryAdd("403", Error("Forbidden: not a platform admin.", refusal));
                     return;
                 }
 
