@@ -26,9 +26,13 @@ public class TerraBaseException : HttpRequestException
     /// <summary>Zero-based index of the transaction operation that failed, when the request was a transaction.</summary>
     public int? OperationIndex { get; }
 
-    internal static async Task<TerraBaseException> FromResponseAsync(
-        HttpStatusCode status, HttpContent content, CancellationToken cancellationToken)
+    /// <summary>The region that answered (<c>X-TerraBase-Region</c>), when it said; TerraBase names it on every response.</summary>
+    public string? Region { get; private set; }
+
+    internal static async Task<TerraBaseException> FromResponseAsync(HttpResponseMessage response, CancellationToken cancellationToken)
     {
+        var status = response.StatusCode;
+        var content = response.Content;
         string? code = null;
         string? message = null;
         int? op = null;
@@ -59,7 +63,7 @@ public class TerraBaseException : HttpRequestException
 
         // A Management 404 has an empty body that TerraBase fills with the generic unknown_route code.
         var text = Clean(message) ?? $"TerraBase answered HTTP {(int)status}{(code is null ? null : $" ({Clean(code)})")}.";
-        return (int)status switch
+        TerraBaseException exception = (int)status switch
         {
             400 or 413 or 415 => new TerraBaseValidationException(status, text, code, op),
             401 => new TerraBaseAuthenticationException(status, text, code, op),
@@ -67,10 +71,23 @@ public class TerraBaseException : HttpRequestException
             404 => new TerraBaseNotFoundException(status, text, code, op),
             409 => new TerraBaseConflictException(status, text, code, op),
             412 => new TerraBasePreconditionFailedException(status, text, code, op),
+            421 => new TerraBaseWrongRegionException(status, text, code, op)
+            {
+                HomeRegion = RegionHeader(response, "X-TerraBase-Database-Home"),
+                Regions = [.. (RegionHeader(response, "X-TerraBase-Database-Regions", list: true) ?? string.Empty)
+                    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Where(TerraBaseRegion.IsValid)],
+            },
             503 => new TerraBaseUnavailableException(status, text, code, op),
             _ => new TerraBaseException(status, text, code, op),
         };
+        exception.Region = RegionHeader(response, "X-TerraBase-Region");
+        return exception;
     }
+
+    // A single header value that is a well-formed region id (or, for a list, a comma-separated value), else null.
+    private static string? RegionHeader(HttpResponseMessage response, string name, bool list = false) =>
+        response.Headers.TryGetValues(name, out var values) && values.ToArray() is [var value]
+            && (list ? value.Length <= 1024 : TerraBaseRegion.IsValid(value)) ? value : null;
 
     private static string? Clean(string? value)
     {
@@ -82,6 +99,26 @@ public class TerraBaseException : HttpRequestException
         var text = new string([.. value.Where(c => !char.IsControl(c))]);
         return text.Length > MaxMessageLength ? text[..MaxMessageLength] : text;
     }
+}
+
+/// <summary>
+/// 421: this region does not serve the request (<c>wrong_region</c>: the database is served elsewhere, or
+/// <c>misdirected_request</c>: the region pin names another region). TerraBase never forwards it, so nothing was done:
+/// send the request to <see cref="HomeRegion"/> or one of <see cref="Regions"/>, for example with
+/// <see cref="TerraBaseDocumentsClientOptions.Region"/>. <see cref="TerraBaseException.Region"/> is the region that answered.
+/// </summary>
+public sealed class TerraBaseWrongRegionException : TerraBaseException
+{
+    internal TerraBaseWrongRegionException(HttpStatusCode statusCode, string message, string? errorCode, int? operationIndex)
+        : base(statusCode, message, errorCode, operationIndex)
+    {
+    }
+
+    /// <summary>The database's home region (<c>X-TerraBase-Database-Home</c>), where it is created and managed; null for a pin mismatch.</summary>
+    public string? HomeRegion { get; internal init; }
+
+    /// <summary>Every region that serves the database, its home first (<c>X-TerraBase-Database-Regions</c>); empty for a pin mismatch.</summary>
+    public IReadOnlyList<string> Regions { get; internal init; } = [];
 }
 
 /// <summary>400, 413 or 415: the request broke a validation rule (<c>invalid_request</c>, <c>invalid_query</c>, <c>invalid_patch</c>, …).</summary>

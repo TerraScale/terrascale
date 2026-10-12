@@ -25,7 +25,6 @@ public sealed class TerraScaleAuthClient
 
     private readonly HttpClient httpClient;
     private readonly TerraScaleAuthClientOptions options;
-    private readonly TerraScaleAuthEndpointDiscovery? endpointDiscovery;
     private volatile AuthenticationHeaderValue? cachedApiKeyHeader;
 
     /// <summary>
@@ -57,12 +56,6 @@ public sealed class TerraScaleAuthClient
         this.httpClient = httpClient;
         this.options = optionSnapshot;
         this.httpClient.BaseAddress ??= optionSnapshot.BaseAddress;
-        if (!optionSnapshot.UseReverseProxy &&
-            optionSnapshot.BaseAddress!.Host.Equals("auth.terrascale.tech", StringComparison.OrdinalIgnoreCase))
-        {
-            endpointDiscovery = new TerraScaleAuthEndpointDiscovery(httpClient, optionSnapshot.DiscoveryBaseAddress);
-        }
-
         Users = new TerraScaleAuthUsersClient(this);
         Sessions = new TerraScaleAuthSessionsClient(this);
         ApiKeys = new TerraScaleAuthApiKeysClient(this);
@@ -377,16 +370,10 @@ public sealed class TerraScaleAuthClient
     {
         var token = cancellationToken;
         var attempt = 0;
-        var regionIndex = 0;
-        var endpoints = endpointDiscovery is null
-            ? null
-            : await endpointDiscovery.GetEndpointsAsync(token).ConfigureAwait(false);
-
         while (true)
         {
             // Every attempt rebuilds the request: content cannot be reused across sends.
-            var target = endpoints is null ? requestUri : new Uri(endpoints[regionIndex], requestUri).AbsoluteUri;
-            using var request = new HttpRequestMessage(method, target);
+            using var request = new HttpRequestMessage(method, requestUri);
             ApplyAuthentication(request, authentication);
             request.Headers.Accept.Add(AcceptJson);
             if (bodyFactory?.Invoke() is { } content)
@@ -397,14 +384,6 @@ public sealed class TerraScaleAuthClient
             try
             {
                 var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token).ConfigureAwait(false);
-                if (IsSafeRead(method) && endpoints is not null && regionIndex < endpoints.Count - 1 &&
-                    response.StatusCode is HttpStatusCode.BadGateway or HttpStatusCode.ServiceUnavailable or HttpStatusCode.GatewayTimeout)
-                {
-                    regionIndex++;
-                    response.Dispose();
-                    continue;
-                }
-
                 if (!ShouldRetry(response, method, attempt, options.MaxRetryAttempts))
                 {
                     return response;
@@ -420,11 +399,6 @@ public sealed class TerraScaleAuthClient
 
                 response.Dispose();
                 await Task.Delay(delay, token).ConfigureAwait(false);
-            }
-            catch (HttpRequestException) when (IsSafeRead(method) && endpoints is not null && regionIndex < endpoints.Count - 1)
-            {
-                regionIndex++;
-                continue;
             }
             catch (HttpRequestException) when (IsSafeRead(method) && attempt < options.MaxRetryAttempts)
             {

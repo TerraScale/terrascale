@@ -31,12 +31,25 @@ internal sealed class TerraBaseConnection
     private readonly bool anonymous;
     private readonly TimeSpan timeout;
     private readonly int maxResponseBytes;
+    private readonly string? regionPin;
 
     public TerraBaseConnection(HttpClient http, Uri? baseAddress, ITerraBaseEndpointResolver? endpointResolver, string? secret, string secretName, TimeSpan timeout, int maxResponseBytes,
-        Func<CancellationToken, ValueTask<string>>? accessTokenProvider = null, bool anonymousAllowed = false)
+        Func<CancellationToken, ValueTask<string>>? accessTokenProvider = null, bool anonymousAllowed = false, string? region = null)
     {
         ArgumentNullException.ThrowIfNull(http);
         this.http = http;
+        if (region is not null)
+        {
+            if (!TerraBaseRegion.IsValid(region))
+            {
+                throw new ArgumentException("Region must be a TerraBase region id: a lowercase letter, then lowercase letters, digits or hyphens, at most 63 characters, not ending in a hyphen (for example gru).", nameof(region));
+            }
+
+            // Without an explicit origin the region's own host serves it; with one, the pin still holds the request to it.
+            baseAddress ??= endpointResolver is null ? TerraBaseRegion.Origin(region) : null;
+            regionPin = region;
+        }
+
         if (baseAddress is not null && endpointResolver is not null)
         {
             throw new ArgumentException("Set either BaseAddress or EndpointResolver, not both.", nameof(endpointResolver));
@@ -141,6 +154,12 @@ internal sealed class TerraBaseConnection
         request.Headers.Authorization = authorization;
         request.Headers.Accept.Add(AcceptJson);
         headers?.Invoke(request.Headers);
+        if (regionPin is not null)
+        {
+            // TerraBase answers 421 instead of serving the request in any other region.
+            request.Headers.Add(TerraBaseRegion.PinHeader, regionPin);
+        }
+
         try
         {
             var origin = Origin(await endpointResolver.ResolveAsync(deadline.Token).ConfigureAwait(false));
@@ -172,7 +191,7 @@ internal sealed class TerraBaseConnection
             {
                 if (!response.IsSuccessStatusCode)
                 {
-                    throw await TerraBaseException.FromResponseAsync(response.StatusCode, response.Content, deadline.Token).ConfigureAwait(false);
+                    throw await TerraBaseException.FromResponseAsync(response, deadline.Token).ConfigureAwait(false);
                 }
 
                 await read(response, deadline.Token).ConfigureAwait(false);

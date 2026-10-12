@@ -1,1 +1,0 @@
-{"error":{"code":"discovery_forbidden","message":"native discovery admission is unavailable","fix":"retry with current authorized native scope metadata"}}

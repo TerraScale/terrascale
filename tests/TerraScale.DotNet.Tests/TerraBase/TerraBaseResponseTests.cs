@@ -1,4 +1,3 @@
-using TerraScale.DotNet.Tests.Native;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text;
@@ -34,7 +33,7 @@ public sealed class TerraBaseResponseTests
         })
         {
             using var content = new StreamContent(new MemoryStream(Encoding.UTF8.GetBytes(json)));
-            var error = await TerraBaseException.FromResponseAsync(status, content, CancellationToken.None);
+            var error = await TerraBaseException.FromResponseAsync(new HttpResponseMessage(status) { Content = content }, CancellationToken.None);
             await Assert.That(error.GetType()).IsEqualTo(type);
             await Assert.That(error.StatusCode).IsEqualTo(status);
             await Assert.That(error.ErrorCode).IsNull();
@@ -265,7 +264,7 @@ public sealed class TerraBaseResponseIntegrationTests
     [Arguments(true)]
     public async Task EarlierHttpClientTimeoutIsDistinctFromCallerCancellation(bool callerCancels)
     {
-        using var handler = new NativeClientTests.Handler(async (_, cancellationToken) =>
+        using var handler = new TerraBaseTestHandler(async (_, cancellationToken) =>
         {
             await Task.Delay(TimeSpan.FromSeconds(30), cancellationToken);
             return new HttpResponseMessage(HttpStatusCode.OK);
@@ -289,7 +288,7 @@ public sealed class TerraBaseResponseIntegrationTests
     [Test]
     public async Task BothClientsResolveTheConfiguredEndpointPerRequest()
     {
-        using var handler = new NativeClientTests.Handler((_, _) => throw new HttpRequestException("no TerraBase here"));
+        using var handler = new TerraBaseTestHandler((_, _) => throw new HttpRequestException("no TerraBase here"));
         using var http = new HttpClient(handler);
         var resolver = new TerraBaseClientOptionsTests.CountingResolver(Origin);
         var adminResolver = new TerraBaseClientOptionsTests.CountingResolver(Private);
@@ -353,7 +352,7 @@ public sealed class TerraBaseResponseIntegrationTests
         await Assert.That(parsed).IsTrue();
     }
 
-    private static NativeClientTests.Handler Answer(Func<HttpResponseMessage> response) => new((_, _) => Task.FromResult(response()));
+    private static TerraBaseTestHandler Answer(Func<HttpResponseMessage> response) => new((_, _) => Task.FromResult(response()));
 
     private sealed class ProcessingConverter(Action processed) : JsonConverter<TerraBaseCollection>
     {

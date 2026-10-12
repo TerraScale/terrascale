@@ -12,6 +12,13 @@ public sealed record TerraBasePlatformClientOptions
     public ITerraBaseEndpointResolver? EndpointResolver { get; init; }
 
     /// <summary>
+    /// A region id such as <c>gru</c>: every request is pinned to that region (<c>X-TerraScale-Region-Pin</c>) and, unless
+    /// BaseAddress or EndpointResolver is set, sent to <c>https://&lt;region&gt;.api.terrascale.tech</c>. Another region
+    /// answers <see cref="TerraBaseWrongRegionException"/> instead of serving it. Unset, Fly's anycast picks the region.
+    /// </summary>
+    public string? Region { get; init; }
+
+    /// <summary>
     /// Supplies the signed-in platform admin's ts-auth access token per request (it must carry <c>platform_role</c>
     /// <c>admin</c>). Required. The provider must be thread-safe and honor cancellation.
     /// </summary>
@@ -60,7 +67,7 @@ public sealed class TerraBasePlatformClient
         }
 
         connection = new TerraBaseConnection(httpClient, options.BaseAddress, options.EndpointResolver, null, nameof(options.AccessTokenProvider),
-            options.RequestTimeout, options.MaxResponseBytes, options.AccessTokenProvider);
+            options.RequestTimeout, options.MaxResponseBytes, options.AccessTokenProvider, region: options.Region);
     }
 
     /// <summary>Lists the platform databases.</summary>

@@ -17,6 +17,13 @@ public sealed record TerraBaseDocumentsClientOptions
     public ITerraBaseEndpointResolver? EndpointResolver { get; init; }
 
     /// <summary>
+    /// A region id such as <c>gru</c>: every request is pinned to that region (<c>X-TerraScale-Region-Pin</c>) and, unless
+    /// BaseAddress or EndpointResolver is set, sent to <c>https://&lt;region&gt;.api.terrascale.tech</c>. Another region
+    /// answers <see cref="TerraBaseWrongRegionException"/> instead of serving it. Unset, Fly's anycast picks the region.
+    /// </summary>
+    public string? Region { get; init; }
+
+    /// <summary>
     /// A TerraBase API key (<c>tb_…</c>) with <c>documents:read</c> and/or <c>documents:write</c>. Its organization
     /// selects the tenant; a key narrowed to a project or database reaches only that one. Leave it and
     /// <see cref="AccessTokenProvider"/> unset only for TerraBase's private listener, which needs no credential.
@@ -56,7 +63,7 @@ public sealed class TerraBaseDocumentsClient
     {
         ArgumentNullException.ThrowIfNull(options);
         connection = new TerraBaseConnection(httpClient, options.BaseAddress, options.EndpointResolver, options.ApiKey, nameof(options.ApiKey), options.RequestTimeout, options.MaxResponseBytes,
-            options.AccessTokenProvider, anonymousAllowed: true);
+            options.AccessTokenProvider, anonymousAllowed: true, region: options.Region);
     }
 
     /// <summary>Addresses one database: <paramref name="databaseName"/> in project <paramref name="projectId"/> of the key's organization.</summary>

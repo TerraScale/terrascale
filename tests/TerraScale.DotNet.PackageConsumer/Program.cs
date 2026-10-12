@@ -24,6 +24,30 @@ if (databases.Items is not [{ Name: "platform-dashboard", HomeRegion: "gru", Rep
     throw new InvalidOperationException("The platform client returned an unexpected database list.");
 }
 
+// TerraBase's regional contract: the region's own host, the pin on the request, and a typed 421.
+using var regionalHttp = new HttpClient(new WrongRegionStub());
+var regional = new TerraBaseDocumentsClient(regionalHttp, new TerraBaseDocumentsClientOptions { Region = "sjc", ApiKey = "tb_consumer" }).Database("project", "app");
+try
+{
+    _ = await regional.GetDocumentAsync("items", "a");
+    throw new InvalidOperationException("A 421 did not throw.");
+}
+catch (TerraBaseWrongRegionException wrong) when (wrong is { Region: "sjc", HomeRegion: "gru", Regions: ["gru", "fra"] })
+{
+}
+
+foreach (var invalid in new[] { "GRU", "Gru", "gru-" })
+{
+    try
+    {
+        _ = new TerraBaseDocumentsClient(regionalHttp, new TerraBaseDocumentsClientOptions { Region = invalid, ApiKey = "tb_consumer" });
+        throw new InvalidOperationException($"Region {invalid} was accepted.");
+    }
+    catch (ArgumentException)
+    {
+    }
+}
+
 Console.WriteLine($"PASS TerraScale.DotNet {loaded} on {RuntimeInformation.FrameworkDescription}");
 
 internal sealed class PlatformStub : HttpMessageHandler
@@ -41,5 +65,25 @@ internal sealed class PlatformStub : HttpMessageHandler
             Content = new StringContent(
                 """{"items":[{"name":"platform-dashboard","id":"db","homeRegion":"gru","replicaRegions":["iad"]}]}""", Encoding.UTF8, "application/json"),
         });
+    }
+}
+
+internal sealed class WrongRegionStub : HttpMessageHandler
+{
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        if (request.RequestUri?.Host != "sjc.api.terrascale.tech" || !request.Headers.TryGetValues(TerraBaseRegion.PinHeader, out var pin) || pin.Single() != "sjc")
+        {
+            throw new InvalidOperationException($"Unexpected request {request.RequestUri} without the sjc pin.");
+        }
+
+        var response = new HttpResponseMessage(HttpStatusCode.MisdirectedRequest)
+        {
+            Content = new StringContent("""{"error":{"code":"wrong_region","message":"the database is served in gru"}}""", Encoding.UTF8, "application/json"),
+        };
+        response.Headers.Add("X-TerraBase-Region", "sjc");
+        response.Headers.Add("X-TerraBase-Database-Home", "gru");
+        response.Headers.Add("X-TerraBase-Database-Regions", "gru,fra");
+        return Task.FromResult(response);
     }
 }

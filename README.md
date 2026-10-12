@@ -1,7 +1,6 @@
 # TerraScale.DotNet
 
-The official .NET SDK for TerraBase, the TerraScale native database APIs and
-ts-auth. The package supports .NET 10 LTS and .NET 11; a .NET 11 toolchain builds
+The official .NET SDK for TerraBase (its v1 HTTP API) and ts-auth. The package supports .NET 10 LTS and .NET 11; a .NET 11 toolchain builds
 both targets.
 
 ## Entity IDs (TS-754)
@@ -162,14 +161,23 @@ change a caller-owned handler's settings. Cookie handling should also be disable
 Every call takes a `CancellationToken`. The clients are thread-safe and never
 dispose the caller-owned `HttpClient`. The TerraBase slice uses
 System.Text.Json source generation and is trim- and native-AOT-safe; the build
-fails on any trimming or AOT warning in it. The legacy `Native` and
-`AuthService` slices still use reflection-based JSON and are not.
+fails on any trimming or AOT warning in it.
 
 Both clients resolve their endpoint per request through `ITerraBaseEndpointResolver`.
 `BaseAddress` creates a `TerraBaseStaticEndpointResolver`; alternatively, set
 `EndpointResolver` alone to supply a resolver. Resolution shares the request deadline
 and cancellation token, and every returned origin is validated before credentials
-are sent. Atlas discovery is deferred to TS-507; no production origin is hardcoded.
+are sent.
+
+Regions follow TerraBase's regional contract (monorepo `docs/terrabase/region-identity.md`). Without `Region`, a request
+goes to `BaseAddress` (for example `https://api.terrascale.tech`, where Fly's anycast picks the nearest region) and
+carries no routing header. With `Region = "gru"` (a lowercase region id), every request is sent to
+`https://gru.api.terrascale.tech` (unless `BaseAddress`/`EndpointResolver` is set) and pinned with
+`X-TerraScale-Region-Pin: gru`, so no other region serves it. A region that does not serve the request answers `421`,
+surfaced as `TerraBaseWrongRegionException`: `Region` is the region that answered, `HomeRegion` and `Regions` (from
+`X-TerraBase-Database-Home`/`-Regions`) say where to send it. Nothing is retried or redirected automatically: a write is
+sent once, and conditional writes (`TerraBasePrecondition`) are the duplicate guard. Every `TerraBaseException` carries
+the answering region (`X-TerraBase-Region`) when TerraBase named it.
 
 No TerraBase runs in this repository (user rule, 2026-10-11: no repository other
 than the monorepo depends on TerraBase). The clients are tested over HTTP fakes.
@@ -188,72 +196,6 @@ nice -n 19 dotnet run --project tests/TerraScale.DotNet.Tests/TerraScale.DotNet.
 `AccessTokenProvider` (it must carry `platform_role: admin`). It is read-only, and TerraBase redacts secret-looking fields.
 
 See [TerraBase consumers](docs/terrabase-consumers.md).
-
-## Native database client (legacy)
-
-`Native/` targets the retired Rust UUID/shard API; it is kept so existing
-consumers compile, and new code should use the TerraBase client.
-
-`TerraScale.DotNet.Native.NativeClient` exposes native v1 document reads,
-bounded typed queries, atomic commits, and original transaction status.
-Provisioned tenant, database, collection and document UUIDs, shard identifiers,
-numeric field identifiers, schema generation and schema digest are explicit.
-`NativePoint` preserves absent, deleted, value and conflict states with their
-complete causal context and siblings. Native integer values preserve all 64
-bits; bytes use canonical base64url.
-
-Database requests use authenticated Atlas admission followed by an eligible
-direct regional origin. `NativeDiscoveryRouter` calls Atlas with the current
-credential and exact tenant/database/shard scope and reuses the matching bounded lease. It checks
-scope, operation capabilities, observation monotonicity and lease freshness
-immediately before dispatch. Admission failure stops the request.
-`api.terrascale.tech` is a proxy and retired root regional hosts are
-rejected as native origins. There is no database proxy fallback.
-
-```csharp
-using TerraScale.DotNet.Native;
-
-var scope = new NativeScope(tenantUuid, databaseUuid, provisionedShard);
-using var admission = new NativeDiscoveryRouter(TimeSpan.FromSeconds(3));
-using var database = new NativeClient(
-    scope,
-    admission,
-    cancellationToken => ValueTask.FromResult(currentApiKey),
-    TimeSpan.FromSeconds(15));
-
-NativeResult<NativePoint> point = await database.ReadAsync(
-    collectionUuid, documentUuid, cancellationToken);
-```
-
-Normal native routing discovers eligible serving regions through Atlas;
-region catalog entries never grant tenant access. Direct-origin and loopback
-constructor paths are limited to reviewed isolated qualification/tests and
-remain implementation inventory. They require independent admission and
-cannot establish a grant. TerraScale-zone origins require canonical
-single-level nonreserved regional HTTPS hosts with the default port.
-`NativeOrigin.Validate` exposes validation without sending a request; no
-insecure development activation belongs in production setup.
-
-Prepare a commit with `PrepareCommit` before its first transmission. The
-prepared body, original expiry, nonce, authority and canonical SHA-256 effect
-digest remain fixed. `NativeOperationStore.SaveAsync` retains that original
-operation before dispatch; `LoadAsync` and `RestoreCommit` restore it for
-recovery. Lost responses leave the outcome uncertain. Use
-`TransactionStatusAsync` or bounded `NativeRecovery.ResolveAsync` with the
-original identity. Pending, unknown and expired states never establish abort.
-The transport sends each operation once; it does not automatically replay a
-mutation or change its identity.
-
-Owned native transports disable redirects, cookies and decompression.
-Caller-owned `HttpClient` instances must be configured the same way; the SDK
-never reconfigures or disposes them. Deadlines and cancellation are explicit.
-Failures expose fixed safe metadata instead of response bodies or credentials.
-
-The pinned producer OpenAPI with a documented status-description correction,
-atomic vectors, historical Atlas wire identity, derived production-origin success
-codec fixture and historical forbidden fixture are tracked under `contracts/native`, embedded in
-the SDK, and included in the package with their provenance. These inputs are
-contract evidence; local handler checks do not prove live-service behavior.
 
 ## ts-auth client
 
@@ -279,18 +221,13 @@ var auth = new TerraScaleAuthClient(
 var user = await auth.Users.CreateAsync(email: "user@example.com");
 ```
 
-The public auth origin uses Atlas' separate auth discovery contract and ranked
-regional `.auth` origins. Use normal healthy-region discovery without a proxy
-activation step. The current reverse-proxy/custom-origin selectors remain
-inventoried for owning implementation changes; reviewed isolated test overrides
-must preserve issuer trust and customer instance authorization. This does not
+The auth client calls its `BaseAddress` directly; there is no regional discovery or proxy switch. This does not
 route database requests. `AddTerraScaleAuthClient` supplies dependency-injection registration
 with redirects disabled. Only safe reads can retry; auth mutations are sent
 once. `TerraScaleAuthException` exposes typed status/retry metadata and only
 known fixed error codes. Messages are fixed safe diagnostics; arbitrary
 producer messages, codes and response bodies are never retained. Options
-formatting omits credentials. Auth discovery accepts the owner-published
-regional token grammar rather than only the three launch fallback regions.
+formatting omits credentials.
 
 ## Verification and package distribution
 
@@ -299,61 +236,13 @@ dotnet build TerraScale.DotNet.slnx --configuration Release
 dotnet format style TerraScale.DotNet.slnx --verify-no-changes --no-restore
 dotnet run --project tests/TerraScale.DotNet.Tests/TerraScale.DotNet.Tests.csproj \
   --framework net10.0 --configuration Release --no-build --no-restore -- \
-  --minimum-expected-tests 415
+  --minimum-expected-tests 231
 ```
 
-Run the suite for `net11.0` with a .NET 11 toolchain too. Tests use TUnit and
-cover native public semantics plus the retained ts-auth contract. CI builds and
-runs the suite on both frameworks for every pull request and push to `main`.
+Run the suite for `net11.0` with a .NET 11 toolchain too. Tests use TUnit over HTTP fakes and cover the TerraBase
+clients (route manifest, regional contract, responses) and the retained ts-auth contract.
 
 [Package release](docs/package-release.md) describes how a tagged version is
 packed once, pushed to GitHub Packages and restored into a clean installed-package
 consumer, and how the same bytes reach nuget.org. Live-service qualification is
 a separate gate; neither a source build nor a publication implies it.
-
-## Native client migration
-
-This native SDK release removes `TerraScaleClient`, `TerraScaleClientOptions`,
-`AddTerraScaleClient`, and the obsolete Entity Framework provider. Construct
-`NativeClient` with a provisioned `NativeScope`, current scoped-key provider,
-and `NativeDiscoveryRouter`, or register that client explicitly with DI.
-Auth consumers use `TerraScaleAuthClientOptions` and `AddTerraScaleAuthClient`.
-
-Regional database origins are `https://<region>.api.terrascale.tech`, for example
-`https://gru.api.terrascale.tech`. Direct-origin callers own prior provisioning
-and capability checks; accepting a canonical URL does not establish eligibility.
-Native clients and discovery routers use owned workers for direct SDK invocation
-and context-capturing continuations. Key/admission providers and custom HTTP
-handler/content callbacks must return tasks representing their complete work;
-detached or async-void work is unsupported. Callbacks that opt out of context
-capture with `ConfigureAwait(false)`, `Task.Run`, or similar APIs must keep
-shared-pool continuations nonblocking. Shared-pool starvation caused by such
-callback code is outside the finite-deadline guarantee.
-Extensions receive a separate token cancelled on distinct owned workers, so
-blocking cancellation registrations cannot delay the caller-facing deadline.
-Cancellation callbacks retain operation capacity until completion. Response
-disposal waits for actual body invocation completion, allowing captured read
-continuations to finish before synchronous cleanup runs.
-Owned transport disposal is deferred until all operations, cancellation callbacks
-and response cleanup drain, then runs on an owned worker. `Dispose` stops new
-calls without waiting for noncooperative outstanding work.
-Cancellation sources introduced by a caller-owned `HttpClient`, such as its
-`Timeout`, execute their own registrations; callbacks registered with those
-sources must remain nonblocking.
-Concrete framework `StreamContent` uses an isolated invocation for every stream
-read, including reads after an earlier suspension. Custom content (including
-`StreamContent` subclasses) serializes directly into a bounded destination.
-Custom callbacks invoked outside the captured context by framework helpers,
-such as connection callbacks or a custom serializer's own copy loop, must remain
-nonblocking.
-Discovery caches only authenticated leases for the same credential, coalesces
-scope requests, and retains at most 256 scope observation floors for its lifetime.
-Floors survive lease expiry: deployment or cell changes require explicit
-reprovisioning and a new router. The pinned contract rejects future publication
-timestamps and consumes fetch latency from the lease, so clocks must be synchronized.
-Recovery persistence flushes the file and synchronizes its rename before `SaveAsync`
-returns: Linux/macOS anchor temporary creation, no-replace publication, cleanup and fsync
-to one open directory descriptor; Windows uses a write-through move.
-Unix recovery loads open without following links and validate permissions on the
-opened file. Unix directories must have a trusted owner and deny group/other
-writes. Windows callers must secure the directory hierarchy with private ACLs.
