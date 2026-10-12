@@ -5,7 +5,7 @@ name: CI
 # Next to it, without waiting for it:
 # - preview (pull requests): TerraBase + ts-auth on one machine at https://ts-pr-<n>.fly.dev (scripts/fly/preview.sh);
 #   previews.yml deletes it when the PR closes or after 24 hours.
-# - deploy (main): the Dockerfile's chiseled images to Fly, TerraBase then ts-auth, each gru -> live check -> sjc
+# - deploy (main): the Dockerfile's chiseled images to Fly, TerraBase then ts-auth, each gru -> sjc -> fra with a live check after each region
 #   (scripts/fly/deploy.sh), one deploy at a time in push order. Before the rollout,
 #   scripts/fly/fast-gate.sh requires a passed `test` for this exact tree: the merged pull request's head when the merge
 #   kept its tree (rebased before merging), else main's own `test`.
@@ -197,12 +197,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: terrascale/scripts/fly/fast-gate.sh "$GITHUB_REPOSITORY" "$GITHUB_SHA"
-      - name: Deploy TerraBase (gru, check, sjc)
+      - name: Deploy TerraBase (gru, sjc, fra)
         working-directory: terrascale
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_TOKEN_TS_TERRABASE }}
         run: scripts/fly/deploy.sh ts-terrabase src/TerraBase/fly.toml registry.fly.io/ts-terrabase:${{ github.sha }}
-      - name: Deploy ts-auth (gru, check, sjc)
+      - name: Deploy ts-auth (gru, sjc, fra)
         working-directory: terrascale
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_TOKEN_TS_AUTH }}
