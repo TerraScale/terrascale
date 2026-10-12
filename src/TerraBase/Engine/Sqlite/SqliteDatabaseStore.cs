@@ -641,8 +641,9 @@ internal sealed partial class SqliteDatabaseStore(
             var transaction = await BeginAsync(write: true, capture: true, durable: false, CancellationToken.None, "a group commit batch").ConfigureAwait(false);
             await using (transaction.ConfigureAwait(false))
             {
-                foreach (var write in batch)
+                for (var index = 0; index < batch.Count; index++)
                 {
+                    var write = batch[index];
                     if (write.Cancelled)
                     {
                         write.Cancel();
@@ -650,7 +651,8 @@ internal sealed partial class SqliteDatabaseStore(
                     }
 
                     transaction.Savepoint();
-                    bool keeps;
+                    var keeps = false;
+                    Exception? failure = null;
                     try
                     {
                         keeps = await write.RunAsync(transaction).ConfigureAwait(false);
@@ -662,6 +664,31 @@ internal sealed partial class SqliteDatabaseStore(
                     }
                     catch (Exception error)
                     {
+                        failure = error;
+                    }
+
+                    if (transaction.Aborted)
+                    {
+                        // Turso rolled the whole transaction back with this write's failed statement (a stopped read,
+                        // even one the write answered itself): only this write is answered, and the writes the rollback
+                        // took with it lead the next batch.
+                        deferred = [.. kept, .. refused, .. deferred, .. batch.Skip(index + 1)];
+                        kept.Clear();
+                        refused.Clear();
+                        if (failure is null)
+                        {
+                            refused.Add(write);
+                        }
+                        else
+                        {
+                            write.Fail(failure);
+                        }
+
+                        break;
+                    }
+
+                    if (failure is not null)
+                    {
                         await transaction.RollbackToSavepointAsync().ConfigureAwait(false);
                         if (transaction.LimitsReached && kept.Count > 0)
                         {
@@ -669,7 +696,7 @@ internal sealed partial class SqliteDatabaseStore(
                         }
                         else
                         {
-                            write.Fail(error);
+                            write.Fail(failure);
                         }
 
                         continue;

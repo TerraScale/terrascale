@@ -100,7 +100,16 @@ public sealed class StorageHistoryTests
             }
         }
 
-        await Assert.That(await transaction.GetOffsetAsync(token)).IsEqualTo(offset);
+        if (ending == "cancel")
+        {
+            // Turso ended the transaction with the cancelled read: it refuses to read outside its snapshot.
+            await Assert.ThrowsAsync<InvalidOperationException>(() => transaction.GetOffsetAsync(token).AsTask());
+        }
+        else
+        {
+            await Assert.That(await transaction.GetOffsetAsync(token)).IsEqualTo(offset);
+        }
+
         await transaction.DisposeAsync();
         await using var reused = await store.BeginTransactionAsync(write: false, token);
         await Assert.That(await reused.GetAsync(DocumentApi.Collection, id, token)).IsNotNull();
