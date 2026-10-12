@@ -32,7 +32,7 @@ no_leak() {
 test_dry_run_touches_nothing() {
   setup
   local out; out=$(run dry-run)
-  contains "$out" "documents:read documents:write, project e2e only, expires in 90 days" dry-run
+  contains "$out" "documents:read documents:write, project e2e only, never expires" dry-run
   contains "$out" "GitHub Actions secret TERRABASE_E2E_FLY_API_KEY" dry-run
   contains "$out" "script not on this branch yet" dry-run
   contains "$out" "readiness gru: ts-auth /readyz 200" dry-run
@@ -49,26 +49,31 @@ test_install_status_rotate_revoke_e2e() {
   [[ $(cat "$FAKE_DIR/secrets/TERRABASE_E2E_FLY_API_KEY") == "$SECRET" ]] || fail "install: the secret store does not hold the key"
   [[ $(cat "$FAKE_DIR/secrets/TERRABASE_E2E_FLY_DATABASE") == e2e ]] || fail "install: database id secret"
   [[ $(jq '.orgs | length' "$FAKE_DIR/tb.json") == 1 && $(jq '.keys | length' "$FAKE_DIR/tb.json") == 1 ]] || fail "install: tenant or key not created once"
+  [[ $(jq -c '.keys[0] | [.expiresAt, .scopes]' "$FAKE_DIR/tb.json") == '[null,["documents:read","documents:write"]]' ]] || fail "install: key must be documents-only with no expiry"
   out=$(run install e2e); no_leak "$out" rotate
   [[ $(jq '.orgs | length' "$FAKE_DIR/tb.json") == 1 ]] || fail "rotate: created a second tenant"
   [[ $(jq '.keys | length' "$FAKE_DIR/tb.json") == 1 ]] || fail "rotate: the previous key was not revoked"
   out=$(run status); no_leak "$out" status
   contains "$out" "TERRABASE_E2E_FLY_API_KEY" status
   contains "$out" "key:      01FAKE" status
+  contains "$out" "expires never" status
   out=$(run revoke e2e)
-  contains "$out" "revoked: TERRABASE_E2E_FLY_API_KEY removed" revoke
-  [[ -e $FAKE_DIR/secrets/TERRABASE_E2E_FLY_API_KEY ]] && fail "revoke: secret still set"
+  contains "$out" "revoked: TERRABASE_E2E_FLY_API_KEY (+ _PROJECT, _DATABASE) removed" revoke
+  [[ -n $(ls "$FAKE_DIR/secrets") ]] && fail "revoke: secrets still set: $(ls "$FAKE_DIR/secrets")"
+  [[ $(jq '.orgs | length' "$FAKE_DIR/tb.json") == 1 ]] || fail "revoke: the tenant must stay"
   [[ $(jq '.keys | length' "$FAKE_DIR/tb.json") == 0 ]] || fail "revoke: key still active"
   rm -rf "$work"
 }
 
-test_install_refuses_a_terrabase_without_expiry() {
+test_cleanup_e2e_leaves_nothing() {
   setup
   local out
-  out=$(FAKE_NO_EXPIRY=1 run install e2e || true)
-  contains "$out" "does not support API-key expiry" no-expiry
-  grep -q 'gh secret set' "$FAKE_LOG" && fail "no-expiry: a secret was set"
-  [[ $(jq '.keys | length' "$FAKE_DIR/tb.json") == 0 ]] || fail "no-expiry: a key was minted"
+  run install e2e > /dev/null
+  out=$(run cleanup e2e); no_leak "$out" cleanup
+  contains "$out" "cleanup: e2e database, project and organization deleted" cleanup
+  [[ -n $(ls "$FAKE_DIR/secrets") ]] && fail "cleanup: secrets still set"
+  [[ $(jq '[.orgs, .projects, .dbs, .keys | length] | add' "$FAKE_DIR/tb.json") == 0 ]] || fail "cleanup: e2e state left: $(cat "$FAKE_DIR/tb.json")"
+  out=$(run cleanup e2e); contains "$out" "cleanup: no e2e tenant" cleanup-again
   rm -rf "$work"
 }
 
@@ -88,7 +93,7 @@ test_bench_is_delegated_and_isolated() {
 
 test_dry_run_touches_nothing
 test_install_status_rotate_revoke_e2e
-test_install_refuses_a_terrabase_without_expiry
+test_cleanup_e2e_leaves_nothing
 test_bench_is_delegated_and_isolated
 [[ $failures == 0 ]] || { echo "$failures failure(s)"; exit 1; }
 echo "morning-credentials: 4 tests passed"

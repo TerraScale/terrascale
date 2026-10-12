@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Fake curl: ts-auth/TerraBase readiness and gru's TerraBase internal listener (management, API keys) as JSON state in
-# $FAKE_DIR/tb.json. Logs method and URL only. FAKE_NO_EXPIRY=1 plays a TerraBase without API-key expiry.
+# $FAKE_DIR/tb.json. Logs method and URL only.
 set -euo pipefail
 method="" data="" out="" write="" fail=0 url=""
 while [[ $# -gt 0 ]]; do
@@ -26,15 +26,10 @@ case "$method $url" in
   "GET https://ts-auth.fly.dev/readyz") body='{"status":"ready"}' ;;
   "GET https://ts-terrabase.fly.dev/healthz" | "GET http://127.0.0.1:"*/healthz) body='{"status":"ok","region":"gru"}' ;;
   "POST http://127.0.0.1:"*/admin/api-keys)
-    if [[ $(jq -r .organizationId <<<"$data") == 00000000000000000000000000 ]]; then
-      code=400
-      [[ ${FAKE_NO_EXPIRY:-} == 1 ]] && body='{"error":{"message":"organizationId must name an organization"}}' || body='{"error":{"message":"expiresAt must be in the future"}}'
-    else
-      id=$(next)
-      jq --arg id "$id" --argjson k "$data" '.keys += [{id: $id, name: $k.name, project: $k.projectId}]' "$state" > "$state.t" && mv "$state.t" "$state"
-      body=$(jq -cn --arg id "$id" --arg s "$FAKE_SECRET" --argjson k "$data" '{id: $id, secret: $s, expiresAt: $k.expiresAt}')
-      code=201
-    fi ;;
+    id=$(next)
+    jq --arg id "$id" --argjson k "$data" '.keys += [{id: $id, name: $k.name, project: $k.projectId, scopes: $k.scopes, expiresAt: $k.expiresAt}]' "$state" > "$state.t" && mv "$state.t" "$state"
+    body=$(jq -cn --arg id "$id" --arg s "$FAKE_SECRET" --argjson k "$data" '{id: $id, secret: $s, expiresAt: $k.expiresAt}')
+    code=201 ;;
   *)
     case "$method $path" in
       "GET /v1/management/organizations") body=$(jq -c '{items: .orgs}' "$state") ;;
@@ -44,8 +39,11 @@ case "$method $url" in
       "POST /v1/management/organizations/"*/projects) id=$(next); jq --arg id "$id" --argjson b "$data" '.projects += [{id: $id, name: $b.name}]' "$state" > "$state.t" && mv "$state.t" "$state"; body="{\"id\":\"$id\"}" ;;
       "GET /v1/management/organizations/"*/databases) body=$(jq -c '{items: .dbs}' "$state") ;;
       "POST /v1/management/organizations/"*/databases) id=$(next); jq --arg id "$id" --argjson b "$data" '.dbs += [{id: $id, name: $b.name}]' "$state" > "$state.t" && mv "$state.t" "$state"; body="{\"id\":\"$id\"}" ;;
-      "GET /v1/management/organizations/"*/api-keys) body=$(jq -c '{items: [.keys[] | {id, name, createdAt: "2026-10-12T00:00:00Z"}]}' "$state") ;;
+      "GET /v1/management/organizations/"*/api-keys) body=$(jq -c '{items: [.keys[] | {id, name, expiresAt, createdAt: "2026-10-12T00:00:00Z"}]}' "$state") ;;
       "DELETE /v1/management/organizations/"*/api-keys/*) id=${path##*/}; jq --arg id "$id" '.keys |= map(select(.id != $id))' "$state" > "$state.t" && mv "$state.t" "$state"; code=204; body='' ;;
+      "DELETE /v1/management/organizations/"*/databases/*) id=${path##*/}; jq --arg id "$id" '.dbs |= map(select(.id != $id))' "$state" > "$state.t" && mv "$state.t" "$state"; code=204; body='' ;;
+      "DELETE /v1/management/organizations/"*/projects/*) id=${path##*/}; jq --arg id "$id" '.projects |= map(select(.id != $id))' "$state" > "$state.t" && mv "$state.t" "$state"; code=204; body='' ;;
+      "DELETE /v1/management/organizations/"*) id=${path##*/}; jq --arg id "$id" '.orgs |= map(select(.id != $id))' "$state" > "$state.t" && mv "$state.t" "$state"; code=204; body='' ;;
       *) echo "fake curl: unexpected $method $url" >&2; exit 2 ;;
     esac ;;
 esac

@@ -69,7 +69,25 @@ internal static class Gaps
         ["skew-concurrent"] = Streams,
     };
 
-    /// <summary>Runs <paramref name="scenario"/>: plainly, or as a strict expected failure while it is listed.</summary>
-    public static Task RunAsync(string id, Func<Task> scenario) =>
-        Waiting.TryGetValue(id, out var gap) ? Expected.FailureAsync(gap, scenario) : scenario();
+    // BLOCKED on Fly, not an expected failure there: the Fly suite's TerraBase API key holds documents:read/write on the e2e
+    // project only, so these scenarios' database creation is refused before the slice's gap is even reached; counting that
+    // 403 as the gap would be a fake pass. Unblocked by a ts-auth project token with databases:* (GitHub OIDC exchange).
+    private const string NoDatabaseScope = "no appropriately-scoped auth on Fly (API keys can't hold databases:*)";
+
+    private static readonly Dictionary<string, string> BlockedOnFly = new(StringComparer.Ordinal)
+    {
+        ["E12"] = NoDatabaseScope,
+        ["E13"] = NoDatabaseScope,
+    };
+
+    /// <summary>Runs <paramref name="scenario"/>: plainly, or as a strict expected failure while it is listed; skipped as BLOCKED on Fly when it is.</summary>
+    public static Task RunAsync(string id, Func<Task> scenario)
+    {
+        if (Cluster.FlyRequested && BlockedOnFly.TryGetValue(id, out var blocked))
+        {
+            Skip.Test($"BLOCKED on Fly: {blocked}");
+        }
+
+        return Waiting.TryGetValue(id, out var gap) ? Expected.FailureAsync(gap, scenario) : scenario();
+    }
 }

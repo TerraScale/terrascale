@@ -19,6 +19,9 @@ Status words:
 - **expected failure (slice)**: the replacement exists and is a strict expected failure in `Gaps.cs` until that slice
   lands. It fails as soon as it passes.
 - **missing**: no replacement yet.
+- **BLOCKED on Fly**: the scenario cannot run with the Fly suite's credential (a TerraBase API key, `documents:read/write`
+  on the e2e project only). It is skipped there with that reason, never counted as an expected failure, and blocks like a
+  missing row. E12 and E13 create databases, which needs `databases:*`; unblocked by the GitHub-OIDC → ts-auth project token.
 
 Last run, local: `11b85651ec38` on beta, 2026-10-12, `make terrabase-e2e`: 55 tests, 0 failed. That is 47 strict expected failures, 6 plain passes (3 RegionPin, the lossy-link proxy self-check, single-node SIGKILL durability and single-node storage stall) and 2 skips. Every replicated scenario failed because nothing replicates between R2a-1 and R4a. Fly: never run against design C. The CI `e2e` job was skipped on main (run 38197258776: deploy failed), and the Fly test credential handoff is still pending.
 
@@ -49,8 +52,8 @@ Last run, local: `11b85651ec38` on beta, 2026-10-12, `make terrabase-e2e`: 55 te
 | 21 | Unique constraints under partition | Fast/Replication/UniqueReplicationTests: `Partitioned_unique_writes_converge_and_a_deleted_winner_releases_its_key`; Slow/UniqueConstraintReplayTests | RepairAndContractE2ETests: `Unique_writes_made_on_both_sides_of_a_partition_converge_to_the_smaller_id` | expected failure (R3) | 11b85651: expected failure | Missing: a deleted winner releasing its key |
 | 22 | Collection, index and schema DDL replication | ReplicationTests: `Collections_and_indexes_created_and_dropped_on_one_member_follow_on_the_other`; CollectionSchemaReplicationTests (2) | RepairAndContractE2ETests: `Indexes_schemas_and_collection_drops_made_in_one_region_take_effect_in_another`; every cluster start (collection create) | expected failure (R3) | 11b85651: expected failure | |
 | 23 | Database deleted at home not brought back | CrossRegionTests: `A_database_deleted_in_its_home_is_not_brought_back…`; CrossRegionDeletionTests | RepairAndContractE2ETests: `A_database_deleted_while_a_region_is_down_does_not_come_back` (category fly-outage) | expected failure (R10a + R7) | 11b85651: expected failure | Missing: checking fra's file is removed from disk |
-| 24 | Catalog: database created in one region usable in another; same-name race | CrossRegionTests: `A_commit_registers_a_database_under_a_chosen_id_once` | CatalogE2ETests: E12 | expected failure (R10a) | 11b85651: expected failure | |
-| 25 | Placement and move | CrossRegionTests: placement tests (5) | CatalogE2ETests: E13 | expected failure (R11) | 11b85651: expected failure | `fly-replay` itself is covered by #50's Fast tests, not here |
+| 24 | Catalog: database created in one region usable in another; same-name race | CrossRegionTests: `A_commit_registers_a_database_under_a_chosen_id_once` | CatalogE2ETests: E12 | expected failure (R10a); **BLOCKED on Fly** | 11b85651: expected failure | Fly: skipped as BLOCKED, no appropriately-scoped auth (API keys can't hold `databases:*`) |
+| 25 | Placement and move | CrossRegionTests: placement tests (5) | CatalogE2ETests: E13 | expected failure (R11); **BLOCKED on Fly** | 11b85651: expected failure | Fly: skipped as BLOCKED, no appropriately-scoped auth (API keys can't hold `databases:*`). `fly-replay` itself is covered by #50's Fast tests, not here |
 | 26 | Changes feed across regions | (none: the per-collection feed and shapes were deleted in R2c) | LatticeE2ETests: E10 | expected failure (R8) | 11b85651: expected failure | |
 | 27 | SQL writes merge across regions | (none) | LatticeE2ETests: E11 | expected failure (R9) | 11b85651: expected failure | |
 | 28 | ts-auth refresh reuse across regions | (none) | LatticeE2ETests: E15 (storage half) | expected failure (R5 + R8); the ts-auth half is R12 | 11b85651: expected failure | |
