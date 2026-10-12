@@ -8,11 +8,12 @@ namespace TerraBase.E2E;
 /// </summary>
 internal static class Gaps
 {
-    // R2a-1 (#48) deleted the old replication; nothing crosses regions, locally or on Fly, until peer streams land.
-    private const string Streams = "peer streams (R4a): nothing replicates between R2a-1 and R4a";
+    // R2a-1 (#48) deleted the old replication. R4a's peer streams carry change groups, but only the CDC tailer (R3) produces
+    // them from real writes; until it lands nothing crosses regions, locally or on Fly.
+    private const string Streams = "the CDC change group source (R3) for the peer streams (R4a)";
     // R5 landed the counter and set ops; Fast proves they converge when three nodes' states join
-    // (CounterSetApiTests). Across regions they wait on the streams.
-    private const string Counters = "counters and sets over peer streams (R4a)";
+    // (CounterSetApiTests). Across regions they wait on the streams' source (R3).
+    private const string Counters = "counters and sets over peer streams (R4a) fed by the CDC source (R3)";
 
     private static readonly Dictionary<string, string> Waiting = new(StringComparer.Ordinal)
     {

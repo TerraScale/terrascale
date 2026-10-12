@@ -294,18 +294,29 @@ until the SDKs drop them). Create-only `If-None-Match: *` goes too. Client ULIDs
 ```proto
 service Replication {
   rpc Push(stream PushFrame) returns (stream AckFrame);        // one per (sender, receiver) machine pair
-  rpc Digest(DigestRequest) returns (DigestReply);             // 4096 bucket digests of one database
-  rpc ReadBucket(BucketRequest) returns (stream StatePage);    // states of one bucket, paged
+  rpc Digest(DigestRequest) returns (DigestReply);             // R6: 4096 bucket digests of one database
+  rpc ReadBucket(BucketRequest) returns (stream StatePage);    // R6: states of one bucket, paged
 }
 message PushFrame { oneof kind { Hello hello = 1; Batch batch = 2; Heartbeat heartbeat = 3; } }
-message Hello { fixed64 node = 1; fixed64 hlc = 2; repeated Resume databases = 3; }
-message Resume { bytes database_id = 1; }                       // receiver answers with its acked change_id
-message Batch { bytes database_id = 1; fixed64 origin = 2; uint64 last_change_id = 3;
-                bytes groups = 4; }                             // LZ4 envelope (decision 0007) of encoded groups
-message Heartbeat { fixed64 hlc = 1; }                          // every 1 s when idle: advances applied[origin]
-message AckFrame { bytes database_id = 1; uint64 change_id = 2; fixed64 applied = 3; fixed64 stable = 4;
-                   bool refill_required = 5; }
+message Hello { fixed64 node = 1; fixed64 hlc = 2; string region = 3; } // origin of every group on the stream
+message Database { string organization_id = 1; string project_id = 2; string database_id = 3; }
+message Batch { Database database = 1; uint64 last_change_id = 2;
+                bytes groups = 3; }                             // LZ4 envelope (decision 0007) of a GroupList
+message Heartbeat { fixed64 hlc = 1; }                          // every 1 s when idle
+message GroupList { repeated Group groups = 1; }
+message Group { uint64 change_id = 1; repeated Delta deltas = 2; }
+message Delta { string collection = 1; string id = 2; fixed64 stamp = 3; bytes state = 4; } // full-form DocumentState
+message AckFrame { oneof kind { Welcome welcome = 1; Ack ack = 2; } }
+message Welcome { fixed64 node = 1; }                           // the receiver's node: the sender's cursor key
+message Ack { Database database = 1; uint64 change_id = 2; fixed64 applied = 3; bool refused = 4; }
 ```
+
+As built in R4a (`Features/Replication/Protos/terrabase/v1/replication.proto`): a database is named by its three
+ULIDs, because storage is addressed by tenant. The **sender owns the cursor**: one `_tb_peers` row per node serves
+both directions of a pair, so the receiver cannot also keep the sender's change ids there. The receiver answers the
+`Hello` with a `Welcome` carrying its node. The sender then resumes each database from that peer's `acked` and records
+every `Ack` back. `refused` means the receiver does not hold the database yet (its catalog lags), and the sender
+retries 5 s later. R6 adds `Digest`, `ReadBucket` and `refill_required`; R7 adds `stable`.
 
 - **Sender.** One `Push` stream per peer machine carries every database the pair shares. It holds at most one batch
   (≤ 1024 groups, ≤ 2 MiB) in flight per database and resumes from the receiver's acked `change_id` after a
@@ -678,6 +689,48 @@ dashboards and alerts already query those names.
 Kept: `StampingStorageEngine`, which still drives the document read cache's invalidation (`IWriteStamps`), and the
 preconditions (`If-Match`, `If-None-Match: *`, transaction `assert`), which ts-auth's stores depend on through
 ts-dotnet until R12 makes ts-auth lattice-native.
+
+**R4a as built** (2026-10-12):
+
+- `PeerStreams` (sender) follows the membership every heartbeat and keeps one `Push` stream per other machine. For every
+  database whose placement includes the peer's region, it keeps at most one batch (≤ 1024 groups, ≤ 2 MiB) in flight.
+  It heartbeats every second when idle. A batch not acked within 15 s ends the stream, and the sender reconnects with a
+  backoff of 1 s, doubling to 30 s.
+- `PeerStreamReceiver` checks every batch (canonical ULIDs, growing change ids per database, at most 1024 groups and
+  1024 deltas per group, valid collections and ids, canonical states). A bad batch ends the stream with
+  `INVALID_ARGUMENT`. A newer stream from the same origin ends the older one, so one origin's groups apply in order.
+- `StorageChangeGroupSink` joins whole groups, at most 1024 documents per durable transaction (`synchronous = FULL`),
+  through `IStorageTransaction.JoinAsync`, and records `_tb_peers.applied`. An ack follows the last commit.
+- `JoinAsync` writes the document only when the join changed it, with `stamp = S` and `origin` = the delta's node,
+  and hides unique-constraint losers instead of failing. A `_collections` document runs its collection's DDL (create,
+  identity, drop) without writing metadata of its own. A delta of a collection this machine lacks creates the
+  collection, unless that collection's dropped metadata document dominates the delta.
+- The outbound status (`GET /replication`, `/health/replication`) lists connected streams. `CatchupSeconds` is the age
+  of the backlog since a read first returned groups, and `Diverged` is always false until anti-entropy (R6). The status
+  reports `Initialized = false` while no change group source exists, so `/health/replication` stays `degraded` for
+  every other region until R3.
+- Metrics: `terrabase.replication.send_lag` and `ack_lag` (gauges, `peer_region`), and `merged_groups` and
+  `apply_delay` (receiver, labelled with the origin's region from its `Hello`).
+- Not in R4a:
+  - persisting `applied` from heartbeats (R7 defines the heartbeat stamp as a frontier);
+  - DDL from replicated `_indexes` and `_unique` documents: those documents replicate, but indexes and constraints are
+    created only where they were defined;
+  - a replicated collection drop also deletes concurrent newer documents of that collection on the receiver (R6/R7).
+
+**Contract for R3** (`Features/Replication/ChangeGroups.cs`). R4a registers `NoChangeGroupSource`. R3 replaces that
+registration with its tailer and implements `IChangeGroupSource`:
+
+| Member | R3 implements |
+| --- | --- |
+| `ListDatabasesAsync` | every open client database that has, or may have, unshipped local groups |
+| `ReadAsync(database, after, maxGroups, maxBytes)` | groups with `change_id > after` in order, rebuilt from `turso_cdc`: only `_tb_state` rows with `origin = self`, one `OriginGroup` per Turso transaction (`change_id` = its last CDC row), one `ChangeDelta(collection, id, S, DeltaAt(S) with plain values from the paired doc image)` per state row; at most `maxGroups`, and at most `maxBytes` of encoded deltas unless the first group alone is larger |
+| `AckedAsync(database, peer)` | `_tb_peers.acked` of the peer's node, or 0 |
+| `AckAsync(database, peer, changeId)` | raise `_tb_peers.acked` (it drives CDC truncation) |
+| `ChangedAsync` | completes at the lane's next commit signal |
+
+The peer is the receiver's `ReplicaId`. A peer whose epoch rose is a new node and starts from 0, which only re-sends
+retained groups. Those joins are idempotent. The fake in `tests/TerraBase.TestHarness/FakeChangeGroupSource.cs` is the
+reference behaviour, and `tests/TerraBase.Fast/Replication/PeerStreamTests.cs` passes against it.
 
 R2a is built on the Microsoft.Data.Sqlite engine and writes only SQL that Turso accepts (rowid tables for every new
 table, plain `INSERT`/`UPDATE`/`DELETE` on captured tables). The engine swap (1b, PR #21) lands separately: on Turso,
