@@ -251,8 +251,28 @@ WebSocket delivery and plan entitlements remain subsequent slices.
 | --- | --- | --- | --- | --- |
 | GET | `/healthz` | `healthz` | anonymous | client, admin |
 | GET | `/readyz` | `readyz` | anonymous | client, admin |
+| GET | `/health/replication` | `replicationHealth` | anonymous | client, admin |
 
 Unchanged: ts-orchestrator, ts-router, ts-atlas, ts-status and ts-deploy probe these paths.
+
+`/health/replication` is the public replication summary ts-status checks per region (pick the region with Fly's
+`fly-prefer-region` header). It answers `Cache-Control: public, max-age=5` and carries region codes and lag seconds only:
+
+```json
+{"region":"gru","status":"degraded","maxLagSeconds":2.5,
+ "peers":[{"region":"fra","status":"degraded","lagSeconds":null},{"region":"sjc","status":"ok","lagSeconds":2.5}]}
+```
+
+- `peers` are the other regions this node sees in Fly's internal DNS (`vms.<app>.internal`), plus any region a
+  replication stream reports, in region order.
+- `lagSeconds` is the age of this node's oldest unreplicated change towards that region (the largest over its
+  databases); `null` means no replication stream to that region reports.
+- A peer is `degraded` without a stream, above 30 s of lag, or with a detected divergence. The node is `degraded` when
+  any peer is. `maxLagSeconds` is the largest lag over every stream, or `null` when none reports.
+- The status code is always 200: the body carries the state. A lone node (no other region) answers `ok` with no peers.
+- Lag comes from the outbound replication status (`IReplicationStatus`). Between R2a and R4a of design C
+  (multi-region-replication.md) client databases do not replicate, so every seen region reports `degraded` with
+  `lagSeconds: null` until R4a's peer streams implement that status.
 
 ### API reference
 

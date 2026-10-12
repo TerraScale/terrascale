@@ -43,6 +43,7 @@ public static class HealthExtensions
     public static IServiceCollection AddTerraBaseHealth(this IServiceCollection services)
     {
         services.AddSingleton<INodeReadiness, NodeReadiness>();
+        services.AddSingleton<IReplicationHealth, ReplicationHealth>();
         return services;
     }
 }

@@ -137,6 +137,7 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(QueryShapeSenderRecord))]
 [JsonSerializable(typeof(RestoreWindow))]
 [JsonSerializable(typeof(RoleRequest))]
+[JsonSerializable(typeof(ReplicationHealthBody))]
 [JsonSerializable(typeof(SavedQuery))]
 [JsonSerializable(typeof(SavedQueryEntry))]
 [JsonSerializable(typeof(SavedQueryRequest))]
