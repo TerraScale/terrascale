@@ -103,7 +103,7 @@ public sealed class FollowerQosAdmissionTests
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         deadline.CancelAfter(TimeSpan.FromSeconds(60));
         using var peers = new PeerTls();
-        await using var api = await ManagementApi.StartAsync(peers.Apply, managementCredential: true);
+        await using var api = await ManagementApi.StartAsync(peers.Apply);
         var hobby = await api.CreateManagedDatabaseAsync();
         var paid = await api.CreateManagedDatabaseAsync();
         await api.VerifyProjectBindingAsync(hobby.Organization, hobby.Project);

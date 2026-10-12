@@ -55,8 +55,8 @@ internal static class ManagementRoute
     public const string AuditEvents = Organization + "/audit-events";
 
     public const string IdentityDescription =
-        "Authorization: Bearer <ts-auth access token>; its sub is the acting user. On the loopback administrative listener only, the "
-        + "management service credential instead, with X-TerraBase-User-Id naming the acting user. Organizations the user is not a member of answer 404.";
+        "Authorization: Bearer <ts-auth access token>; its sub is the acting user. On the internal listener only, the "
+        + "platform operator instead, with X-TerraBase-User-Id naming the acting user. Organizations the user is not a member of answer 404.";
 
     public const string ApiKeys = Project + "/api-keys";
     public const string ApiKey = ApiKeys + "/{key}";

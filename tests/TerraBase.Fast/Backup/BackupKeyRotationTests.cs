@@ -520,7 +520,7 @@ public sealed class BackupKeyRotationTests
                 && service.ImplementationType == typeof(BackupScheduler));
             services[services.IndexOf(scheduler)] = ServiceDescriptor.Singleton<IHostedService>(provider =>
                 ActivatorUtilities.CreateInstance<BackupScheduler>(provider, new FakeTimeProvider(time.GetUtcNow())));
-        }, time, managementCredential: true);
+        }, time);
 
         return api;
     }

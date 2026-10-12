@@ -72,7 +72,7 @@ public sealed class CustomerBackupCatalogRefusalTests
             s3.Route(services);
             ManualBackupHosting.Configure(services);
             hook.Install(services);
-        }, time, managementCredential: true);
+        }, time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
         return api;
     }

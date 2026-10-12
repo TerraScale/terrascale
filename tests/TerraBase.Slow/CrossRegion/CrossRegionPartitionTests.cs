@@ -280,8 +280,8 @@ public sealed class CrossRegionPartitionTests
             {
                 peerTls.Apply(settings);
                 settings["data-directory"] = Data;
-                settings["peer-port"] = port.ToString(CultureInfo.InvariantCulture);
-                settings["peers"] = string.Join(',', peers.Select(member => $"{member.Name}=localhost:{member.PeerPort}"));
+                settings["internal-port"] = port.ToString(CultureInfo.InvariantCulture);
+                settings["peers"] = string.Join(',', peers.Select(member => $"{member.Name}=127.0.0.1:{member.PeerPort}"));
                 settings["catalog-primary"] = peers[0].Name;
                 settings["region"] = Region;
                 settings["node-name"] = Name;
@@ -290,7 +290,7 @@ public sealed class CrossRegionPartitionTests
             {
                 services.AddSingleton(network.Join(Cell, Name));
                 services.AddSingleton<IMemberDirectory>(store);
-            }, managementCredential: true);
+            });
         }
 
         public int PeerPort => port;

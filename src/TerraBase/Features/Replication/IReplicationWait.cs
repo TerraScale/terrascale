@@ -12,11 +12,3 @@ public interface IReplicationWait
     /// </summary>
     ValueTask WaitAsync(TenantContext database, CancellationToken cancellationToken);
 }
-
-/// <summary>A node that sends to no peer has nothing to wait for.</summary>
-internal sealed class NoReplicationWait : IReplicationWait, IReplicationPressure
-{
-    public long? SenderDurableLagSeq => 0;
-
-    public ValueTask WaitAsync(TenantContext database, CancellationToken cancellationToken) => ValueTask.CompletedTask;
-}

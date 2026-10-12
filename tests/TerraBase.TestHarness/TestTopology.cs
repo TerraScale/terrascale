@@ -17,7 +17,7 @@ namespace TerraBase.Testing;
 /// The harness applies the identity to the registered options and registers a static membership of the listed members,
 /// unless the test registered a <see cref="FakeMemberStore"/>: that one lists the server while it runs, as Fly's DNS does.
 /// </summary>
-internal sealed class TestTopology : IDisposable
+internal sealed class TestTopology
 {
     private static readonly string[] Keys = ["region", "node-name", "peers", "peer-addresses", "catalog-primary", "wan-regions"];
 
@@ -32,7 +32,6 @@ internal sealed class TestTopology : IDisposable
     private readonly bool _static;
     private readonly Dictionary<string, string> _cells = [with(StringComparer.Ordinal)];
     private FakeMemberStore? _store;
-    private TerraBaseOptions? _identified;
     private string _self = "local";
 
     private TestTopology(Dictionary<string, string> values)
@@ -46,7 +45,7 @@ internal sealed class TestTopology : IDisposable
             foreach (var entry in peers.Split(',', StringSplitOptions.TrimEntries))
             {
                 var separator = entry.IndexOf('=', StringComparison.Ordinal);
-                members.Add(new ClusterMember(entry[..separator], $"https://{entry[(separator + 1)..]}/", _region, string.Empty));
+                members.Add(new ClusterMember(entry[..separator], $"http://{entry[(separator + 1)..]}/", _region, string.Empty));
             }
         }
 
@@ -96,9 +95,6 @@ internal sealed class TestTopology : IDisposable
             PrimaryRegion = _catalogPrimary?.Region ?? _region,
             CatalogFollower = _catalogPrimary is not null,
         };
-        // The copy owns the startup peer certificates from now on: Program disposes only the original, the harness the copy.
-        _ = options.TakePeerCredentialSnapshot();
-        _identified = identified;
         _self = identified.MachineId;
         services[services.IndexOf(registered)] = ServiceDescriptor.Singleton(identified);
     }
@@ -128,7 +124,4 @@ internal sealed class TestTopology : IDisposable
 
     /// <summary>Drops the stopping server from the test's <see cref="FakeMemberStore"/>.</summary>
     public void Stopping() => _store?.Leave(_self);
-
-    /// <summary>Releases what the server did not take of the identified options (startup certificates of a failed start).</summary>
-    public void Dispose() => _identified?.Dispose();
 }

@@ -272,7 +272,7 @@ public sealed class BackupAdmissionTests
             services[services.IndexOf(scheduler)] = ServiceDescriptor.Singleton<IHostedService>(provider =>
                 ActivatorUtilities.CreateInstance<BackupScheduler>(provider, new FakeTimeProvider(time.GetUtcNow())));
             configure?.Invoke(services);
-        }, time, managementCredential: true);
+        }, time);
         Directory.CreateDirectory(Path.Combine(api.Server.DataDirectory, ".backup"));
         return api;
     }

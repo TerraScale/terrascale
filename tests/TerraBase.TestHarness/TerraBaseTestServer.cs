@@ -39,20 +39,11 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
         _factory = factory;
         _temporaryDirectory = temporaryDirectory;
         DataDirectory = Path.GetFullPath(settings["data-directory"]);
-        BaseAddress = listeners.Single(address => address.Scheme == Uri.UriSchemeHttp);
-        Client = new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false })
-        {
-            BaseAddress = BaseAddress,
-            // As in ClientTls: the test timeout bounds a request.
-            Timeout = Timeout.InfiniteTimeSpan,
-        };
-        // HTTPS listeners bind every interface; certificates in tests are issued for localhost.
-        var https = listeners.Where(address => address.Scheme == Uri.UriSchemeHttps)
-            .Select(address => new UriBuilder(address) { Host = "localhost" }.Uri)
-            .ToList();
-        // Kestrel reports listeners in bind order: admin, client, peer.
-        ClientAddress = settings.ContainsKey("client-port") ? https[0] : null;
-        PeerAddress = settings.ContainsKey("peer-port") ? https[^1] : null;
+        // Kestrel reports listeners in bind order: internal, public, metrics. The last two bind every interface.
+        BaseAddress = listeners[0];
+        ClientAddress = new UriBuilder(listeners[1]) { Host = "127.0.0.1" }.Uri;
+        MetricsAddress = new UriBuilder(listeners[2]) { Host = "127.0.0.1" }.Uri;
+        Client = PeerTls.CreateClient(BaseAddress);
     }
 
     /// <summary>
@@ -61,16 +52,19 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
     /// </summary>
     public string DataDirectory { get; }
 
-    /// <summary>The loopback origin of the administrative listener.</summary>
+    /// <summary>The loopback origin of the internal listener (HTTP/2 only).</summary>
     public Uri BaseAddress { get; }
 
-    /// <summary>The <c>https://localhost</c> origin of the client listener, when enabled (see <see cref="ClientTls"/>).</summary>
+    /// <summary>The loopback origin of the public listener.</summary>
     public Uri? ClientAddress { get; }
 
-    /// <summary>The <c>https://localhost</c> origin of the inter-node gRPC listener, when enabled (see <see cref="PeerTls"/>).</summary>
-    public Uri? PeerAddress { get; }
+    /// <summary>The internal listener, where other members reach this one (see <see cref="PeerTls"/>).</summary>
+    public Uri? PeerAddress => BaseAddress;
 
-    /// <summary>A client for the administrative listener that never follows redirects and never stores cookies.</summary>
+    /// <summary>The loopback origin of the metrics listener.</summary>
+    public Uri MetricsAddress { get; }
+
+    /// <summary>An HTTP/2 client for the internal listener that never follows redirects and never stores cookies.</summary>
     public HttpClient Client { get; }
 
     /// <summary>The running server's services, for checks no listener exposes (for example engine transactions or its endpoints).</summary>
@@ -132,7 +126,9 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
         {
             var values = new Dictionary<string, string>(StringComparer.Ordinal)
             {
-                ["admin-port"] = "0",
+                ["internal-port"] = "0",
+                ["port"] = "0",
+                ["metrics-port"] = "0",
                 ["data-directory"] = dataDirectory,
                 ["region"] = "test-region",
                 // Each server starts its read threads eagerly, one per core by default: on a 46-core host the parallel suite
@@ -543,11 +539,6 @@ public sealed class TerraBaseTestServer : IAsyncDisposable
                 return Task.CompletedTask;
             });
             _host?.Dispose();
-            await ObserveAsync(() =>
-            {
-                topology.Dispose();
-                return Task.CompletedTask;
-            });
 
             var failures = new AggregateException(errors).Flatten().InnerExceptions.Distinct<Exception>(ReferenceEqualityComparer.Instance).ToArray();
             if (failures.Length == 1)

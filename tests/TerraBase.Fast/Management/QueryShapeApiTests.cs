@@ -25,7 +25,7 @@ public sealed class QueryShapeApiTests
     [Test]
     public async Task Project_JWT_statistics_require_a_verified_binding_and_database_scope_while_legacy_aliases_keep_working()
     {
-        await using var api = await ManagementApi.StartAsync(managementCredential: true);
+        await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
         using var data = await SeedAsync(api, database);
         await PostAsync(data, Query(database), new { filter = Eq("/n", 1) });
@@ -163,7 +163,7 @@ public sealed class QueryShapeApiTests
     [Test]
     public async Task Dashboard_shapes_use_the_shared_tracker_but_require_the_management_service_credential()
     {
-        await using var api = await ManagementApi.StartAsync(managementCredential: true);
+        await using var api = await ManagementApi.StartAsync();
         using var service = api.Service(api.User);
         var document = EntityIds.New().ToString();
         await PostAsync(service, "/v1/management/commits", new
@@ -185,7 +185,7 @@ public sealed class QueryShapeApiTests
     [Test]
     public async Task Cardinality_is_bounded_in_pending_and_persisted_statistics()
     {
-        await using var api = await ManagementApi.StartAsync(time: new FakeTimeProvider(), managementCredential: true);
+        await using var api = await ManagementApi.StartAsync(time: new FakeTimeProvider());
         var database = await api.CreateManagedDatabaseAsync();
         await api.SetPlanAsync(api.User, database.Organization, "enterprise");
         using var data = await SeedAsync(api, database);
@@ -405,7 +405,7 @@ public sealed class QueryShapeApiTests
         var responseGate = new ResponseGate();
         await using var api = await ManagementApi.StartAsync(
             settings => settings["memory-budget"] = "8388608", services => services.AddSingleton<IStartupFilter>(responseGate),
-            time: new FakeTimeProvider(), managementCredential: true);
+            time: new FakeTimeProvider());
         var database = await api.CreateManagedDatabaseAsync();
         await api.SetPlanAsync(api.User, database.Organization, "enterprise");
         using var data = await SeedAsync(api, database);
@@ -434,7 +434,7 @@ public sealed class QueryShapeApiTests
     [Test]
     public async Task Concurrent_cache_hits_increment_frequency_once_each()
     {
-        await using var api = await ManagementApi.StartAsync(managementCredential: true);
+        await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
         await api.SetPlanAsync(api.User, database.Organization, "enterprise");
         using var data = await SeedAsync(api, database);

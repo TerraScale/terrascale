@@ -16,7 +16,7 @@ public sealed class GetDashboardDocumentEndpoint(IManagementCommits commits) : E
         Get(ManagementRoute.Documents + "/by-key");
         Name("getDashboardDocument");
         Summary("Reads a dashboard document");
-        Description($"A document of the dashboard document space, written only by commits (docs/management-commits.md); the ETag is its version for if_match. 404 not_found when absent or deleted. Management service credential only (loopback administrative listener): a ts-auth user token gets 403.");
+        Description($"A document of the dashboard document space, written only by commits (docs/management-commits.md); the ETag is its version for if_match. 404 not_found when absent or deleted. Internal listener only, as the platform operator: a ts-auth user token gets 403.");
         Tags(ManagementRoute.Tag);
         Produces<DocumentBody>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
@@ -30,9 +30,9 @@ public sealed class GetDashboardDocumentEndpoint(IManagementCommits commits) : E
     /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
-        if (!HttpContext.User.IsManagementService())
+        if (!HttpContext.User.IsOperator())
         {
-            return ErrorResponse.From(new Forbidden("the dashboard document space needs the management service credential"));
+            return ErrorResponse.From(new Forbidden("the dashboard document space needs the platform operator"));
         }
 
         return (DocumentRoute.CheckCollectionName(HttpContext), DocumentRoute.CheckDocumentParameter(HttpContext), DocumentRoute.CheckParameters(HttpContext, "id")) switch

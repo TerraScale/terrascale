@@ -92,7 +92,7 @@ to describe the process-wide ceilings.
 
 ## Plan authority
 
-Only the authenticated management service credential can publish an organization resource plan,
+Only the authenticated platform operator can publish an organization resource plan,
 through the plan endpoint or a Management commit. The acting user must still be an organization
 owner. Public user tokens cannot grant Enterprise admission. The platform owns billing and decides
 which resource plan to publish through its SDK; TerraBase enforces that policy without implementing

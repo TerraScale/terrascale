@@ -134,7 +134,7 @@ public sealed class ShapeBudgetTests
     [Test]
     public async Task A_snapshot_too_old_for_bounded_work_answers_must_refetch_and_a_restart_succeeds()
     {
-        await using var api = await ManagementApi.StartAsync(managementCredential: true);
+        await using var api = await ManagementApi.StartAsync();
         using var tenant = await api.CreateTenantAsync("documents:write", "shapes:read");
         await api.SetPlanAsync(tenant.User, tenant.OrganizationId, "enterprise");
         var client = tenant.Data;

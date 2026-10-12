@@ -16,7 +16,7 @@ public sealed class ListDashboardQueryShapesEndpoint(IQueryShapeTracker tracker)
         Summary("Lists observed dashboard query shapes and workload statistics");
         Description("At most 128 canonical shapes of the dashboard document space, with literal values removed, including pending observations on the primary. " +
             "Most queried first, then by collection and shape id. Statistics are best-effort; new shapes are dropped when bounds are full. " +
-            "Management service credential only (loopback administrative listener): a ts-auth user token gets 403. " +
+            "Internal listener only, as the platform operator: a ts-auth user token gets 403. " +
             "Catalog followers forward observations to the primary and return replicated persisted statistics only; replication can delay visibility. Pending observations are lost on crash.");
         Tags(ManagementRoute.Tag);
         Produces<QueryShapeListBody>();
@@ -29,9 +29,9 @@ public sealed class ListDashboardQueryShapesEndpoint(IQueryShapeTracker tracker)
     /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
-        if (!HttpContext.User.IsManagementService())
+        if (!HttpContext.User.IsOperator())
         {
-            return ErrorResponse.From(new Forbidden("the dashboard document space needs the management service credential"));
+            return ErrorResponse.From(new Forbidden("the dashboard document space needs the platform operator"));
         }
 
         return await tracker.ReadAsync(null, cancellationToken) switch

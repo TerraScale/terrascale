@@ -25,15 +25,14 @@ internal interface IRegionPeers
 }
 
 /// <summary>The other regions' members from the membership, asked over gRPC.</summary>
-internal sealed class GrpcRegionPeers(IMembership membership, PeerCredentials? credentials) : IRegionPeers
+internal sealed class GrpcRegionPeers(IMembership membership) : IRegionPeers
 {
     // gru to sjc is about 170 ms round trip; a member that has not answered the heads within this is skipped this round.
     private static readonly TimeSpan Many = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan One = TimeSpan.FromSeconds(10);
 
-    public async ValueTask<IReadOnlyList<string>> RegionsAsync(CancellationToken cancellationToken) => credentials is null
-        ? []
-        : [.. Elsewhere(await membership.RefreshAsync(cancellationToken).ConfigureAwait(false)).Select(member => member.Region).Distinct(StringComparer.Ordinal)];
+    public async ValueTask<IReadOnlyList<string>> RegionsAsync(CancellationToken cancellationToken) =>
+        [.. Elsewhere(await membership.RefreshAsync(cancellationToken).ConfigureAwait(false)).Select(member => member.Region).Distinct(StringComparer.Ordinal)];
 
     public async IAsyncEnumerable<ReadOnlyMemory<byte>> RequestManyAsync(string region, ReadOnlyMemory<byte> request, [EnumeratorCancellation] CancellationToken cancellationToken)
     {
@@ -66,11 +65,10 @@ internal sealed class GrpcRegionPeers(IMembership membership, PeerCredentials? c
     private static IEnumerable<ClusterMember> Elsewhere(ClusterView view) =>
         view.Elsewhere.IsDefault ? [] : view.Elsewhere.Where(member => member.PeerAddress.Length > 0);
 
-    private async Task<ReadOnlyMemory<byte>> AskAsync(ClusterMember member, ReadOnlyMemory<byte> request, TimeSpan timeout, CancellationToken cancellationToken)
+    private static async Task<ReadOnlyMemory<byte>> AskAsync(ClusterMember member, ReadOnlyMemory<byte> request, TimeSpan timeout, CancellationToken cancellationToken)
     {
-        using var lease = credentials!.Capture();
-        // ponytail: a channel (TLS handshake) per request; keep one per member if WAN rounds grow.
-        using var channel = PeerChannel.Create(new Uri(member.PeerAddress), lease);
+        // ponytail: a channel per request; keep one per member if WAN rounds grow.
+        using var channel = PeerChannel.Create(new Uri(member.PeerAddress));
         try
         {
             // gRPC measures deadlines on the system clock.

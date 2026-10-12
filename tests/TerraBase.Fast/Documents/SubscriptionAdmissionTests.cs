@@ -25,7 +25,7 @@ public sealed class SubscriptionAdmissionTests
         var writes = new BlockedWrites(128);
         // This is a logical reservation budget, not an allocation: each real snapshot contains one small document.
         await using var api = await ManagementApi.StartAsync(
-            settings => settings["memory-budget"] = "17179869184", services: writes.Install, time: clock, managementCredential: true);
+            settings => settings["memory-budget"] = "17179869184", services: writes.Install, time: clock);
         using var deadline = Deadline();
         using var resources = new SubscriptionResources(api);
         var (database, text) = await SeedAsync(api, deadline.Token);
@@ -33,8 +33,6 @@ public sealed class SubscriptionAdmissionTests
         await resources.WaitForCleanupAsync(null, deadline.Token);
         var baseline = resources.Reserved;
         using var client = Subscriber(api, database, clock);
-        client.DefaultRequestVersion = HttpVersion.Version20;
-        client.DefaultVersionPolicy = HttpVersionPolicy.RequestVersionExact;
         // Open the bounded set together instead of spending the deadline on 128 serial round trips.
         var opening = Enumerable.Range(0, 128)
             .Select(_ => SubscribeAsync(client, database, block: true, deadline.Token)).ToArray();
@@ -44,7 +42,6 @@ public sealed class SubscriptionAdmissionTests
             foreach (var response in connections)
             {
                 await AssertStreamAsync(response);
-                await Assert.That(response.Version).IsEqualTo(HttpVersion.Version20);
             }
 
             await writes.AllEntered.Task.WaitAsync(deadline.Token);

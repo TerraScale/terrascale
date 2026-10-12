@@ -64,11 +64,9 @@ public sealed class BackupEmptySegmentTests
         try
         {
             using var cancel = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            // A stream reset makes cancellation observable after the POST body has been consumed.
+            // Closing the connection makes cancellation observable after the POST body has been consumed.
             using var request = new HttpRequestMessage(HttpMethod.Post, ManagementApi.Uri(database.Path + "/point-in-time/restore"))
             {
-                Version = HttpVersion.Version20,
-                VersionPolicy = HttpVersionPolicy.RequestVersionExact,
                 Content = JsonContent.Create(new { pointInTime = at, name = "cancelled" }),
             };
             var pending = api.Client.SendAsync(request, cancel.Token);

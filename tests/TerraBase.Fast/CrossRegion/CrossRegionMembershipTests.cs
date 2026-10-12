@@ -148,7 +148,7 @@ public sealed class CrossRegionMembershipTests
         {
             services.AddSingleton(bus ?? network.Join(cell, node));
             services.AddSingleton<IMemberDirectory>(new FakeMemberStore());
-        }, managementCredential: true);
+        });
 
     private static Task EventuallyReadAsync(HttpClient client, Uri document, string value, string version) =>
         TerraBaseTestServer.EventuallyAsync(async token =>

@@ -409,7 +409,8 @@ public sealed class ChangeFeedApiTests
         using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(Route(api), UriKind.Relative));
         request.Headers.Authorization = feed.DefaultRequestHeaders.Authorization;
         using var wrongListener = await api.Server.Client.SendAsync(request);
-        await Assert.That(wrongListener.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        // The internal listener serves the feed but never takes a ts-auth token.
+        await Assert.That(wrongListener.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
     }
 
     [Test]

@@ -199,8 +199,8 @@ public sealed class CollectionSchemaReplicationTests
     {
         peers.Apply(settings);
         tls.Apply(settings);
-        settings["peer-port"] = own.ToString(CultureInfo.InvariantCulture);
-        settings["peer-addresses"] = $"https://localhost:{other}";
+        settings["internal-port"] = own.ToString(CultureInfo.InvariantCulture);
+        settings["peer-addresses"] = $"http://127.0.0.1:{other}";
         settings["write-wait-ms"] = "0";
     }
 

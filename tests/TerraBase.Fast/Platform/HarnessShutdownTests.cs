@@ -233,19 +233,12 @@ public sealed class HarnessShutdownTests
         SqliteStorageEngine? engine = null;
         Task? completion = null;
         Task? cleanup = null;
-        string? certificate = null;
-        string? credential = null;
-        var startup = ManagementApi.StartAsync(settings =>
-        {
-            settings["data-directory"] = directory;
-            certificate = settings["client-certificate"];
-            credential = settings["management-credential-file"];
-        }, services => services.AddSingleton<IHostedService>(provider =>
+        var startup = ManagementApi.StartAsync(settings => settings["data-directory"] = directory, services => services.AddSingleton<IHostedService>(provider =>
         {
             engine = provider.GetRequiredService<SqliteStorageEngine>();
             completion = provider.GetRequiredService<ApplicationRunCompletion>().Completion.Task;
             return new HeldStarting(entered, release, token);
-        }), managementCredential: true, cancellationToken: execution.Token,
+        }), cancellationToken: execution.Token,
             failedStartCleanup: observeCleanup ? task => cleanup = task : null);
         try
         {
@@ -253,8 +246,6 @@ public sealed class HarnessShutdownTests
             await execution.CancelAsync();
             var startupError = await Assert.That(async () => await startup.WaitAsync(token)).ThrowsException();
             await Assert.That(completion!.IsCompleted).IsFalse();
-            await Assert.That(File.Exists(certificate)).IsTrue();
-            await Assert.That(File.Exists(credential)).IsTrue();
             await Assert.That(TerraBaseTestServer.IsDataDirectoryOwned(directory)).IsTrue();
             if (observeCleanup)
             {
@@ -278,8 +269,6 @@ public sealed class HarnessShutdownTests
                 await deleted.Task.WaitAsync(token);
                 await Assert.That(Directory.Exists(directory)).IsFalse();
             }
-
-            await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(!File.Exists(certificate) && !File.Exists(credential)));
         }
         finally
         {
@@ -305,11 +294,6 @@ public sealed class HarnessShutdownTests
             if (cleanup is not null)
             {
                 await cleanup.WaitAsync(token);
-            }
-
-            if (certificate is not null && credential is not null)
-            {
-                await TerraBaseTestServer.EventuallyAsync(_ => Task.FromResult(!File.Exists(certificate) && !File.Exists(credential)));
             }
 
             if (Directory.Exists(directory))

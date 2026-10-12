@@ -488,7 +488,7 @@ public sealed class SqlApiTests
     [Test]
     public async Task Small_projections_of_documents_larger_in_total_than_the_budget_return_every_row()
     {
-        await using var api = await ManagementApi.StartAsync(managementCredential: true);
+        await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
         await api.SetPlanAsync(api.User, database.Organization, "enterprise");
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");

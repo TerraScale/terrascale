@@ -70,7 +70,7 @@ public sealed class CommitEndpoint(IManagementCommits commits, TimeProvider time
         Name("commit");
         Summary("Applies Management and dashboard document operations atomically");
         Description($$"""
-            {"id":"<ULID>","ops":[…]} with 1 to 1024 operations, all committed in one transaction or none (docs/management-commits.md). An operation with a collection member is a Documents API transaction operation on the dashboard document space; any other is a Management operation (snake_case members): create_organization, rename_organization, set_plan, delete_organization, set_current_organization, create_project, rename_project, delete_project, create_database, branch_database, delete_database, change_role, remove_member, leave, invite, resend_invitation, revoke_invitation, accept_invitation, decline_invitation, start_transfer, confirm_transfer, cancel_transfer, set_audit_retention, fence (compare-and-set of an organization's or the account's version) and limit (databases, members or active_members bound; at most 16). Fences and assertions see the state before the commit, other operations run in order, limits compare the counts after with their bound and fail only when the count grew past it. Failures write nothing and name the operation in error.op. A retry with the same id and byte-identical body answers the recorded response with {{ReplayedHeader}}: true; a different body under a committed id is 409 commit_id_reused. Document operations need the management service credential (403 with a ts-auth token). create_project with a client-chosen id also needs the loopback management service credential (403 with a ts-auth token); omit id for a server-generated project id. accept_invitation and decline_invitation use the access token's verified email (403 without one). {{ManagementRoute.IdentityDescription}}
+            {"id":"<ULID>","ops":[…]} with 1 to 1024 operations, all committed in one transaction or none (docs/management-commits.md). An operation with a collection member is a Documents API transaction operation on the dashboard document space; any other is a Management operation (snake_case members): create_organization, rename_organization, set_plan, delete_organization, set_current_organization, create_project, rename_project, delete_project, create_database, branch_database, delete_database, change_role, remove_member, leave, invite, resend_invitation, revoke_invitation, accept_invitation, decline_invitation, start_transfer, confirm_transfer, cancel_transfer, set_audit_retention, fence (compare-and-set of an organization's or the account's version) and limit (databases, members or active_members bound; at most 16). Fences and assertions see the state before the commit, other operations run in order, limits compare the counts after with their bound and fail only when the count grew past it. Failures write nothing and name the operation in error.op. A retry with the same id and byte-identical body answers the recorded response with {{ReplayedHeader}}: true; a different body under a committed id is 409 commit_id_reused. Document operations need the internal listener (403 with a ts-auth token). create_project with a client-chosen id also needs the internal listener (403 with a ts-auth token); omit id for a server-generated project id. accept_invitation and decline_invitation use the access token's verified email (403 without one). {{ManagementRoute.IdentityDescription}}
             """);
         Tags(ManagementRoute.Tag);
         Metadata(new RequestBodyMetadata(typeof(CommitRequest), DocumentRoute.JsonMediaType));
@@ -113,7 +113,7 @@ public sealed class CommitEndpoint(IManagementCommits commits, TimeProvider time
 
         using (envelope)
         {
-            return Parse(envelope.RootElement, HttpContext.User.IsManagementService(), time) switch
+            return Parse(envelope.RootElement, HttpContext.User.IsOperator(), time) switch
             {
                 CommitRejected rejected => ErrorResponse.From(rejected.Error, rejected.Op),
                 ParsedCommit commit => await ApplyAsync(userId, body, commit, cancellationToken),
@@ -257,11 +257,11 @@ public sealed class CommitEndpoint(IManagementCommits commits, TimeProvider time
         CommitOperation operation, bool service, HashSet<(string, string)> targets, ref int assertCounts, ref int databaseOps, ref int limits) =>
         operation switch
         {
-            DocumentCommitOperation when !service => new Forbidden("document operations need the management service credential"),
+            DocumentCommitOperation when !service => new Forbidden("document operations need the platform operator"),
             ManagementCommitOperation { Request.Op: "set_plan" } when !service =>
-                new Forbidden("plan changes need the management service credential"),
+                new Forbidden("plan changes need the platform operator"),
             ManagementCommitOperation { Request: { Op: "create_project", Id: not null } } when !service =>
-                new Forbidden("client-chosen project ids need the management service credential"),
+                new Forbidden("client-chosen project ids need the platform operator"),
             DocumentCommitOperation { Operation: AssertCountOperation } when ++assertCounts > MaxAssertCounts =>
                 new Validation("a commit has at most 16 assert_count operations"),
             DocumentCommitOperation { Operation: var document } when TransactionEndpoint.Target(document) is { } target && !targets.Add(target) =>

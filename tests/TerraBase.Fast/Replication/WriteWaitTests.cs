@@ -22,8 +22,8 @@ public sealed class WriteWaitTests
         // A generous bound: the test fails on a read that misses a write, not on a slow machine.
         var (a, b) = await TerraBaseTestServer.StartPairAsync((settings, port, peerPort) =>
         {
-            Configure(settings, peerTls, clientTls, $"https://localhost:{peerPort}");
-            settings["peer-port"] = port.ToString(CultureInfo.InvariantCulture);
+            Configure(settings, peerTls, clientTls, $"http://127.0.0.1:{peerPort}");
+            settings["internal-port"] = port.ToString(CultureInfo.InvariantCulture);
             settings["write-wait-ms"] = "30000";
         });
         await using var disposeA = a;
@@ -117,7 +117,7 @@ public sealed class WriteWaitTests
         var token = deadline.Token;
         await using var server = await TerraBaseTestServer.StartAsync(settings =>
         {
-            Configure(settings, peerTls, clientTls, $"https://localhost:{TerraBaseTestServer.FreePort()}");
+            Configure(settings, peerTls, clientTls, $"http://127.0.0.1:{TerraBaseTestServer.FreePort()}");
             settings["write-wait-ms"] = "60000";
         });
         var tenant = await ReplicationTenant.CreateAsync(server, "shop");

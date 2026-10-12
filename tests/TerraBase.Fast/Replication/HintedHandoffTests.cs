@@ -30,7 +30,7 @@ public sealed class HintedHandoffTests
                 peerTls.Apply(settings);
                 clientTls.Apply(settings);
                 settings["data-directory"] = receiverData;
-                settings["peer-port"] = receiverPort.ToString(CultureInfo.InvariantCulture);
+                settings["internal-port"] = receiverPort.ToString(CultureInfo.InvariantCulture);
             }
 
             var receiver = await StartAsync(Receiver);

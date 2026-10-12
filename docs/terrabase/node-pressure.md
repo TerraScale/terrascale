@@ -1,7 +1,7 @@
 # Node pressure (TS-478)
 
-`GET /v1/admin/node/pressure` returns a cached JSON sample on the loopback administrative
-listener, alongside `/metrics`. Both return 404 on client and peer listeners.
+`GET /v1/admin/node/pressure` returns a cached JSON sample on the internal
+listener, alongside `/metrics`. Both return 404 on the public listener.
 Responses have `Cache-Control: no-store`; fetching never refreshes measurements,
 scans documents/files, or changes `sampled_at`. Concurrent readers share an
 immutable sample. Access from another machine requires an operator-managed local

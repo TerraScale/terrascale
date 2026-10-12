@@ -21,7 +21,7 @@ public sealed class ReceiverRestoreTests
             peerTls.Apply(settings);
             clientTls.Apply(settings);
             settings["data-directory"] = data;
-            settings["peer-port"] = port.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            settings["internal-port"] = port.ToString(System.Globalization.CultureInfo.InvariantCulture);
         }
 
         try

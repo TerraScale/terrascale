@@ -21,7 +21,7 @@ public sealed class PointInTimePlanTests
         var s3 = new FakeS3();
         var time = Clock();
         var probe = new StorageProbe();
-        await using var api = await ManagementApi.StartAsync(s3.Configure, services => Route(s3, probe, services), time, managementCredential: true);
+        await using var api = await ManagementApi.StartAsync(s3.Configure, services => Route(s3, probe, services), time);
         await api.Server.Services.GetRequiredService<IContinuousBackup>().RunOnceAsync(CancellationToken.None);
         var database = await api.CreateManagedDatabaseAsync();
         await api.VerifyProjectBindingAsync(database.Organization, database.Project);
@@ -77,7 +77,7 @@ public sealed class PointInTimePlanTests
         var s3 = new FakeS3();
         var time = Clock();
         var probe = new StorageProbe();
-        await using var api = await ManagementApi.StartAsync(s3.Configure, services => Route(s3, probe, services), time, managementCredential: true);
+        await using var api = await ManagementApi.StartAsync(s3.Configure, services => Route(s3, probe, services), time);
         var database = await api.CreateManagedDatabaseAsync();
         await api.SetPlanAsync(api.User, database.Organization, "pro");
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
@@ -238,7 +238,7 @@ public sealed class PointInTimePlanTests
         var s3 = new FakeS3();
         var time = Clock();
         var probe = new StorageProbe();
-        await using var api = await ManagementApi.StartAsync(s3.Configure, services => Route(s3, probe, services), time, managementCredential: true);
+        await using var api = await ManagementApi.StartAsync(s3.Configure, services => Route(s3, probe, services), time);
         // Finish startup discovery before creating the database; its LastShipped stays null without another pass.
         await api.Server.Services.GetRequiredService<IContinuousBackup>().RunOnceAsync(CancellationToken.None);
         var database = await api.CreateManagedDatabaseAsync();
@@ -296,7 +296,7 @@ public sealed class PointInTimePlanTests
         var s3 = new FakeS3();
         var time = Clock();
         var probe = new StorageProbe();
-        await using var api = await ManagementApi.StartAsync(s3.Configure, services => Route(s3, probe, services), time, managementCredential: true);
+        await using var api = await ManagementApi.StartAsync(s3.Configure, services => Route(s3, probe, services), time);
         await api.Server.Services.GetRequiredService<IContinuousBackup>().RunOnceAsync(CancellationToken.None);
         var database = await api.CreateManagedDatabaseAsync();
         var first = time.GetUtcNow().AddSeconds(-4);
@@ -343,7 +343,7 @@ public sealed class PointInTimePlanTests
         var s3 = new FakeS3();
         var time = Clock();
         var probe = new StorageProbe { NetworkFailure = network };
-        await using var api = await ManagementApi.StartAsync(s3.Configure, services => Route(s3, probe, services), time, managementCredential: true);
+        await using var api = await ManagementApi.StartAsync(s3.Configure, services => Route(s3, probe, services), time);
         await api.Server.Services.GetRequiredService<IContinuousBackup>().RunOnceAsync(CancellationToken.None);
         var database = await api.CreateManagedDatabaseAsync();
         var at = time.GetUtcNow();
@@ -373,7 +373,7 @@ public sealed class PointInTimePlanTests
         var s3 = new FakeS3();
         var time = Clock();
         var probe = new StorageProbe();
-        await using var api = await ManagementApi.StartAsync(s3.Configure, services => Route(s3, probe, services), time, managementCredential: true);
+        await using var api = await ManagementApi.StartAsync(s3.Configure, services => Route(s3, probe, services), time);
         var database = await api.CreateManagedDatabaseAsync();
         var backup = api.Server.Services.GetRequiredService<IContinuousBackup>();
         time.Advance(TimeSpan.FromSeconds(10));
@@ -399,7 +399,7 @@ public sealed class PointInTimePlanTests
         var s3 = new FakeS3();
         var time = Clock();
         var probe = new StorageProbe();
-        await using var api = await ManagementApi.StartAsync(s3.Configure, services => Route(s3, probe, services), time, managementCredential: true);
+        await using var api = await ManagementApi.StartAsync(s3.Configure, services => Route(s3, probe, services), time);
         var database = await api.CreateManagedDatabaseAsync();
         await api.Server.Services.GetRequiredService<IContinuousBackup>().RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         probe.BlockPrefix = File(database) + "/snapshots/";

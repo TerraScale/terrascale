@@ -15,7 +15,7 @@ public sealed class QueryQosTests
     public async Task Filtered_scans_count_rejected_rows_and_follow_plan_changes_on_an_open_store(bool sql)
     {
         await using var api = await ManagementApi.StartAsync(services: services =>
-            services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, new FakeTimeProvider()), managementCredential: true);
+            services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, new FakeTimeProvider()));
         using var plans = api.Service(api.User);
         var database = await api.CreateManagedDatabaseAsync();
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
@@ -59,7 +59,7 @@ public sealed class QueryQosTests
     public async Task Query_deadlines_follow_the_authenticated_plan()
     {
         await using var api = await ManagementApi.StartAsync(services: services =>
-            services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, new QueryClock()), managementCredential: true);
+            services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, new QueryClock()));
         using var plans = api.Service(api.User);
         var database = await api.CreateManagedDatabaseAsync();
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
@@ -86,7 +86,7 @@ public sealed class QueryQosTests
     {
         var clock = new QueryClock(step: 0);
         await using var api = await ManagementApi.StartAsync(services: services =>
-            services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, clock), managementCredential: true);
+            services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, clock));
         var database = await api.CreateManagedDatabaseAsync();
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
         await ManagementApi.CreateCollectionAsync(data, database, "items");
@@ -117,7 +117,7 @@ public sealed class QueryQosTests
     public async Task A_filtered_scan_accounts_json_bytes_even_when_no_document_matches()
     {
         await using var api = await ManagementApi.StartAsync(services: services =>
-            services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, new FakeTimeProvider()), managementCredential: true);
+            services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, new FakeTimeProvider()));
         using var plans = api.Service(api.User);
         var database = await api.CreateManagedDatabaseAsync();
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");

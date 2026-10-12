@@ -217,18 +217,14 @@ public sealed class CatalogForwardingTests
         using var peers = new PeerTls();
         using var tls = new ClientTls();
         using var issuer = new TestIssuer();
-        var credentials = Directory.CreateTempSubdirectory("terrabase-service-").FullName;
         TerraBaseTestServer? primary = null;
         try
         {
-            var credential = Path.Combine(credentials, "credential");
-            await File.WriteAllTextAsync(credential, ManagementApi.ServiceCredential + "\n");
             void Configure(Dictionary<string, string> settings)
             {
                 peers.Apply(settings);
                 tls.Apply(settings);
                 TestIssuer.Configure(settings);
-                settings["management-credential-file"] = credential;
             }
 
             primary = await TerraBaseTestServer.StartAsync(settings =>
@@ -291,7 +287,7 @@ public sealed class CatalogForwardingTests
 
             // An existing database answers here, unforwarded; so do requests the follower refuses itself.
             await Assert.That(await PutDatabaseAsync(data, project, "orders")).IsEqualTo(HttpStatusCode.OK);
-            foreach (var token in new string?[] { null, TestIssuer.MintUnsigned(user), ManagementApi.ServiceCredential })
+            foreach (var token in new string?[] { null, TestIssuer.MintUnsigned(user) })
             {
                 using var client = tls.CreateClient(follower.ClientAddress!, token);
                 using var refused = await client.GetAsync(Relative("/v1/management/organizations"));
@@ -300,9 +296,8 @@ public sealed class CatalogForwardingTests
 
             await Assert.That(await follower.MetricAsync("terrabase_catalog_forwarded_total", "result=\"answered\"")).IsEqualTo(7);
 
-            // The loopback listener is never forwarded: its catalog writes stay the primary's own, with nothing written here.
-            using var service = new HttpClient { BaseAddress = follower.BaseAddress };
-            service.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", ManagementApi.ServiceCredential);
+            // The internal listener is never forwarded: its catalog writes stay the primary's own, with nothing written here.
+            using var service = PeerTls.CreateClient(follower.BaseAddress);
             service.DefaultRequestHeaders.Add("X-TerraBase-User-Id", user);
             using (var member = await service.PutAsJsonAsync(Relative($"/v1/management/organizations/{organization}/members/{EntityIds.New()}"), new { email = "m@example.com" }))
             {
@@ -345,8 +340,6 @@ public sealed class CatalogForwardingTests
             {
                 await primary.DisposeAsync();
             }
-
-            Directory.Delete(credentials, recursive: true);
         }
     }
 
@@ -402,9 +395,8 @@ public sealed class CatalogForwardingTests
             await Assert.That(JsonDocument.Parse(body).RootElement.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("unknown_route");
         }
 
-        // The Management API authenticates as on the client listener: no token, or the loopback listener's credential.
+        // The Management API authenticates as on the public listener: no token, or the internal listener's operator header.
         var service = Request("GET", "/v1/management/organizations");
-        service.Headers.Add(new ForwardedHeader { Name = "Authorization", Value = "Bearer " + ManagementApi.ServiceCredential });
         service.Headers.Add(new ForwardedHeader { Name = "X-TerraBase-User-Id", Value = user });
         foreach (var request in new[] { Request("GET", "/v1/management/organizations"), service })
         {
@@ -756,7 +748,7 @@ public sealed class CatalogForwardingTests
         using var peers = new PeerTls();
         using var tls = new ClientTls();
         using var issuer = new TestIssuer();
-        await using var follower = await StartFollowerAsync(peers, tls, issuer, new Uri($"https://localhost:{TerraBaseTestServer.FreePort()}"));
+        await using var follower = await StartFollowerAsync(peers, tls, issuer, new Uri($"http://127.0.0.1:{TerraBaseTestServer.FreePort()}"));
         using var client = tls.CreateClient(follower.ClientAddress!, issuer.Mint(EntityIds.New().ToString()));
 
         using (var unreachable = await client.PostAsJsonAsync(Relative("/v1/management/organizations"), new { name = "Partitioned" }))
@@ -1155,7 +1147,7 @@ public sealed class CatalogForwardingTests
         using var peers = new PeerTls();
         using var tls = new ClientTls();
         using var issuer = new TestIssuer();
-        await using var follower = await StartFollowerAsync(peers, tls, issuer, new Uri($"https://localhost:{TerraBaseTestServer.FreePort()}"));
+        await using var follower = await StartFollowerAsync(peers, tls, issuer, new Uri($"http://127.0.0.1:{TerraBaseTestServer.FreePort()}"));
         using var channel = peers.CreateChannel(follower.PeerAddress!);
 
         var notPrimary = await Assert.ThrowsAsync<RpcException>(async () => await new CatalogUsage.CatalogUsageClient(channel)

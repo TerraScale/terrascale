@@ -24,7 +24,7 @@ public sealed class QueryDashboardDocumentsEndpoint(IManagementCommits commits) 
         Post(ManagementRoute.Documents + "/query");
         Name("queryDashboardDocuments");
         Summary("Queries dashboard documents");
-        Description($"The query v1 body of POST …/collections/{{collection}}/query (filter, sort, project, limit, cursor, count) over a collection of the dashboard document space. Versions in items are the if_match values of commits. Management service credential only (loopback administrative listener): a ts-auth user token gets 403.");
+        Description($"The query v1 body of POST …/collections/{{collection}}/query (filter, sort, project, limit, cursor, count) over a collection of the dashboard document space. Versions in items are the if_match values of commits. Internal listener only, as the platform operator: a ts-auth user token gets 403.");
         Tags(ManagementRoute.Tag);
         Metadata(new RequestBodyMetadata(typeof(QueryRequest), DocumentRoute.JsonMediaType));
         Produces<DocumentPageBody>();
@@ -41,9 +41,9 @@ public sealed class QueryDashboardDocumentsEndpoint(IManagementCommits commits) 
     /// <inheritdoc />
     public override async ValueTask<IResult> HandleAsync(CancellationToken cancellationToken)
     {
-        if (!HttpContext.User.IsManagementService())
+        if (!HttpContext.User.IsOperator())
         {
-            return ErrorResponse.From(new Forbidden("the dashboard document space needs the management service credential"));
+            return ErrorResponse.From(new Forbidden("the dashboard document space needs the platform operator"));
         }
 
         return DocumentRoute.CheckCollectionName(HttpContext) switch

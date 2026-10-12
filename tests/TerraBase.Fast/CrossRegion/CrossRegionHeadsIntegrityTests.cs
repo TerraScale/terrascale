@@ -147,7 +147,7 @@ public sealed class CrossRegionHeadsIntegrityTests
                     provider => ActivatorUtilities.CreateInstance<WanPuller>(provider, clock));
                 services.AddSingleton(provider => ActivatorUtilities.CreateInstance<WanMetrics>(provider, clock));
             }
-        }, managementCredential: true);
+        });
 
     private static async Task<ManagedDatabaseRef> CreatePlacedAsync(
         ManagementApi api, string organization, string project, string name, CancellationToken token)

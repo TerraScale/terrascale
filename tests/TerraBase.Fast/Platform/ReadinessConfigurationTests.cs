@@ -54,7 +54,7 @@ public sealed class ReadinessConfigurationTests
 
                 var value = name switch
                 {
-                    "admin-port" => "0",
+                    "port" or "internal-port" or "metrics-port" => "0",
                     "data-directory" => directory,
                     "region" => "test-region",
                     "readiness-cache-seconds" => configured,

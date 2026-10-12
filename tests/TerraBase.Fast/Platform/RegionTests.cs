@@ -135,7 +135,7 @@ public sealed class RegionTests
     }
 
     [Test]
-    public async Task Admin_and_peer_listeners_ignore_client_region_pins_and_never_send_region_headers()
+    public async Task Internal_and_metrics_listeners_ignore_client_region_pins_and_never_send_region_headers()
     {
         using var peerTls = new PeerTls();
         await using var server = await TerraBaseTestServer.StartAsync(settings =>
@@ -146,20 +146,14 @@ public sealed class RegionTests
         server.Client.DefaultRequestHeaders.Add(PinHeader, "iad-1");
         using var health = await server.Client.GetAsync(new Uri("/healthz", UriKind.Relative));
         using var metrics = await server.Client.GetAsync(new Uri("/metrics", UriKind.Relative));
-        using var peer = new HttpClient(peerTls.CreateHandler())
-        {
-            BaseAddress = server.PeerAddress,
-            DefaultRequestVersion = HttpVersion.Version20,
-            DefaultVersionPolicy = HttpVersionPolicy.RequestVersionExact,
-            Timeout = TimeSpan.FromSeconds(30),
-        };
-        peer.DefaultRequestHeaders.Add(PinHeader, "iad-1");
-        using var wrongListener = await peer.GetAsync(new Uri("/healthz", UriKind.Relative));
+        using var scraper = new HttpClient { BaseAddress = server.MetricsAddress, Timeout = TimeSpan.FromSeconds(30) };
+        scraper.DefaultRequestHeaders.Add(PinHeader, "iad-1");
+        using var scraped = await scraper.GetAsync(new Uri("/metrics", UriKind.Relative));
 
         await Assert.That(health.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(metrics.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(wrongListener.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
-        foreach (var response in new[] { health, metrics, wrongListener })
+        await Assert.That(scraped.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        foreach (var response in new[] { health, metrics, scraped })
         {
             await Assert.That(response.Headers.Contains(RegionHeader)).IsFalse();
         }
@@ -233,7 +227,7 @@ public sealed class RegionTests
             {
                 var value = name switch
                 {
-                    "admin-port" => "0",
+                    "port" or "internal-port" or "metrics-port" => "0",
                     "data-directory" => directory,
                     _ => string.Empty,
                 };

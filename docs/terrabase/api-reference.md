@@ -11,7 +11,7 @@ TerraBase documents its public HTTP API with the built-in ASP.NET Core OpenAPI g
 | `GET /openapi/v1.json` | OpenAPI document |
 
 For example, `https://gru.api.terrascale.tech/` opens the reference of the `gru` region. All three are anonymous
-and served on the client listener only; the loopback admin listener answers `404`, like any route it does not serve.
+and served on the client listener only; the internal listener answers `404`, like any route it does not serve.
 
 ## Document contents
 

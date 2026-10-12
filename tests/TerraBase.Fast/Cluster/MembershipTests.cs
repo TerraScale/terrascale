@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
+using TerraBase.Features.CrossRegion;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
@@ -93,6 +94,49 @@ public sealed class MembershipTests
                 services.AddSingleton<TimeProvider>(time);
                 services.AddSingleton<IMemberDirectory>(store);
             });
+        }
+    }
+
+    [Test]
+    public async Task Three_regions_in_the_dns_each_see_their_own_members_and_the_other_two_regions()
+    {
+        var store = new FakeMemberStore();
+        var machines = new (string Name, string Region)[] { ("gru-a", "gru"), ("gru-b", "gru"), ("sjc-a", "sjc"), ("fra-a", "fra") };
+        var servers = new List<TerraBaseTestServer>();
+        try
+        {
+            foreach (var (name, region) in machines)
+            {
+                servers.Add(await TerraBaseTestServer.StartAsync(settings =>
+                {
+                    settings["node-name"] = name;
+                    settings["region"] = region;
+                }, services => services.AddSingleton<IMemberDirectory>(store)));
+            }
+
+            foreach (var (server, (name, region)) in servers.Zip(machines))
+            {
+                var membership = server.Services.GetRequiredService<IMembership>();
+                var peers = server.Services.GetRequiredService<IRegionPeers>();
+                string[] own = [.. machines.Where(machine => machine.Region == region).Select(machine => machine.Name).Order(StringComparer.Ordinal)];
+                string[] elsewhere = [.. machines.Where(machine => machine.Region != region).Select(machine => machine.Name).Order(StringComparer.Ordinal)];
+                string[] regions = [.. machines.Select(machine => machine.Region).Where(other => other != region).Distinct().Order(StringComparer.Ordinal)];
+                await TerraBaseTestServer.EventuallyAsync(async token =>
+                {
+                    var view = await membership.RefreshAsync(token);
+                    return view.Members.Select(member => member.Name).Order(StringComparer.Ordinal).SequenceEqual(own)
+                        && view.Elsewhere.Select(member => member.Name).Order(StringComparer.Ordinal).SequenceEqual(elsewhere)
+                        && (await peers.RegionsAsync(token)).Order(StringComparer.Ordinal).SequenceEqual(regions);
+                });
+                await Assert.That(membership.Self.Name).IsEqualTo(name);
+            }
+        }
+        finally
+        {
+            foreach (var server in servers)
+            {
+                await server.DisposeAsync();
+            }
         }
     }
 

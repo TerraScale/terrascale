@@ -181,7 +181,7 @@ public sealed class UniqueConstraintTests
     [Test]
     public async Task Parallel_writers_cannot_claim_the_same_value_in_a_group_commit()
     {
-        await using var api = await ManagementApi.StartAsync(managementCredential: true);
+        await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
         await api.SetPlanAsync(api.User, database.Organization, "enterprise");
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
@@ -205,7 +205,7 @@ public sealed class UniqueConstraintTests
     [Test]
     public async Task Failed_unique_admission_does_not_break_later_writes_in_the_same_group_commit()
     {
-        await using var api = await ManagementApi.StartAsync(managementCredential: true);
+        await using var api = await ManagementApi.StartAsync();
         var database = await api.CreateManagedDatabaseAsync();
         await api.SetPlanAsync(api.User, database.Organization, "enterprise");
         using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");

@@ -1,7 +1,6 @@
 using System.Diagnostics.Metrics;
 using System.Globalization;
 using System.Net;
-using System.Net.Security;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
@@ -143,7 +142,7 @@ public sealed class ExplainSqlBoundaryTests
     [Arguments(0)]
     [Arguments(1)]
     [Arguments(2)]
-    public async Task A_stalled_HTTP2_upload_or_catalog_lookup_times_out_and_releases_memory_before_the_client_finishes(int catalogLookup)
+    public async Task A_stalled_upload_or_catalog_lookup_times_out_and_releases_memory_before_the_client_finishes(int catalogLookup)
     {
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         var time = new FakeTimeProvider();
@@ -152,11 +151,13 @@ public sealed class ExplainSqlBoundaryTests
             settings => settings["memory-budget"] = Budget.ToString(CultureInfo.InvariantCulture), services =>
             {
                 hook.Install(services);
+                // Only the endpoint's own deadline on the test clock ends the stalled upload, not Kestrel's data rate.
+                services.Configure<KestrelServerOptions>(options => options.Limits.MinRequestBodyDataRate = null);
                 if (catalogLookup == 0)
                 {
                     InstallMemoryProbe(services);
                 }
-            }, time: time, managementCredential: true);
+            }, time: time);
         var database = await CreateDatabaseAsync(api);
         using var client = ProjectClient(api, database.Project);
         var reserved = ReservedBytes(api);
@@ -180,25 +181,23 @@ public sealed class ExplainSqlBoundaryTests
 
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
         deadline.CancelAfter(TimeSpan.FromSeconds(60));
-        var uploadFinished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var content = new StalledContent(uploadFinished.Task);
-        content.Headers.ContentType = new("application/json");
-        using var request = new HttpRequestMessage(HttpMethod.Post, Path(database))
-        {
-            Content = content,
-            Version = HttpVersion.Version20,
-            VersionPolicy = HttpVersionPolicy.RequestVersionExact,
-        };
+        // A chunked upload that sends "{" and stalls; HttpClient's HTTP/1.1 would not read a response before its body ends.
+        var address = api.Server.ClientAddress!;
+        using var socket = new TcpClient();
+        await socket.ConnectAsync(address.Host, address.Port, deadline.Token);
+        await using var upload = socket.GetStream();
+        var headers = $"POST {Path(database)} HTTP/1.1\r\nHost: {address.Authority}\r\nAuthorization: {client.DefaultRequestHeaders.Authorization}\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n1\r\n{{\r\n";
+        await upload.WriteAsync(Encoding.ASCII.GetBytes(headers), deadline.Token);
         try
         {
-            var pending = client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadline.Token);
+            var pending = ReadUntilClosedAsync(upload, deadline.Token);
             if (catalogLookup > 0)
             {
                 await Task.WhenAny(catalogEntered.Task, pending).WaitAsync(deadline.Token);
                 if (!catalogEntered.Task.IsCompleted)
                 {
-                    using var early = await pending;
-                    throw new InvalidOperationException($"Explain returned HTTP {(int)early.StatusCode} before catalog lookup {catalogLookup}; observed {catalogLookups} lookups.");
+                    var early = await pending;
+                    throw new InvalidOperationException($"Explain returned {early.Split('\r')[0]} before catalog lookup {catalogLookup}; observed {catalogLookups} lookups.");
                 }
 
                 if (catalogLookup == 2)
@@ -218,11 +217,9 @@ public sealed class ExplainSqlBoundaryTests
             }
 
             time.Advance(TimeSpan.FromSeconds(31));
-            using var response = await pending.WaitAsync(deadline.Token);
-            await Assert.That(response.Version).IsEqualTo(HttpVersion.Version20);
-            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.RequestTimeout);
-            var body = await response.Content.ReadFromJsonAsync<JsonElement>(deadline.Token);
-            await Assert.That(body.GetProperty("error").GetProperty("code").GetString()).IsEqualTo("request_timeout");
+            var response = await pending.WaitAsync(deadline.Token);
+            await Assert.That(response).StartsWith("HTTP/1.1 408 ");
+            await Assert.That(response).Contains("\"request_timeout\"");
             if (reservation is not null)
             {
                 await Assert.That(reservation.Active).IsFalse();
@@ -234,7 +231,6 @@ public sealed class ExplainSqlBoundaryTests
         finally
         {
             // The upload stays unfinished through the response, memory checks, and recovery request.
-            uploadFinished.TrySetResult();
             await deadline.CancelAsync();
         }
     }
@@ -249,17 +245,14 @@ public sealed class ExplainSqlBoundaryTests
         await using var api = await ManagementApi.StartAsync(
             settings => settings["memory-budget"] = Budget.ToString(CultureInfo.InvariantCulture),
             services => services.Configure<KestrelServerOptions>(options =>
-                options.Limits.MinRequestBodyDataRate = new MinDataRate(1024, TimeSpan.FromSeconds(2))), time, managementCredential: true);
+                options.Limits.MinRequestBodyDataRate = new MinDataRate(1024, TimeSpan.FromSeconds(2))), time);
         var database = await CreateDatabaseAsync(api);
         using var client = ProjectClient(api, database.Project);
         var reserved = ReservedBytes(api);
         var address = api.Server.ClientAddress!;
         using var socket = new TcpClient();
         await socket.ConnectAsync(address.Host, address.Port, deadline.Token);
-        using var handler = api.Tls.CreateHandler();
-        await using var tls = new SslStream(socket.GetStream());
-        handler.SslOptions.TargetHost = address.Host;
-        await tls.AuthenticateAsClientAsync(handler.SslOptions, deadline.Token);
+        await using var tls = socket.GetStream();
         var headers = $"POST {Path(database)} HTTP/1.1\r\nHost: {address.Authority}\r\nAuthorization: {client.DefaultRequestHeaders.Authorization}\r\nContent-Type: application/json\r\nContent-Length: 64\r\nConnection: close\r\n\r\n{{";
         await tls.WriteAsync(Encoding.ASCII.GetBytes(headers), deadline.Token);
         var buffer = new byte[4096];
@@ -311,7 +304,7 @@ public sealed class ExplainSqlBoundaryTests
     {
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         using var peers = new PeerTls();
-        await using var primary = await ManagementApi.StartAsync(peers.Apply, managementCredential: true);
+        await using var primary = await ManagementApi.StartAsync(peers.Apply);
         var database = await primary.CreateManagedDatabaseAsync();
         await primary.SetPlanAsync(primary.User, database.Organization, "enterprise");
         await primary.VerifyProjectBindingAsync(database.Organization, database.Project);
@@ -655,11 +648,11 @@ public sealed class ExplainSqlBoundaryTests
             services.AddSingleton(network.Join("gru"));
             services.AddSingleton<IMemberDirectory>(new FakeMemberStore());
             hook?.Install(services);
-        }, managementCredential: true);
+        });
     }
 
     private static Task<ManagementApi> StartAsync() =>
-        ManagementApi.StartAsync(settings => settings["memory-budget"] = Budget.ToString(CultureInfo.InvariantCulture), managementCredential: true);
+        ManagementApi.StartAsync(settings => settings["memory-budget"] = Budget.ToString(CultureInfo.InvariantCulture));
 
     private static async Task<ManagedDatabaseRef> CreateDatabaseAsync(ManagementApi api)
     {
@@ -695,24 +688,24 @@ public sealed class ExplainSqlBoundaryTests
     private static async Task AssertMemoryReleasedAsync(ManagementApi api, long baseline) =>
         await Assert.That(ReservedBytes(api)).IsEqualTo(baseline);
 
-    private sealed class StalledContent(Task finished) : HttpContent
+    // Everything the server sent before it closed the connection; Kestrel resets one whose request body it never read.
+    private static async Task<string> ReadUntilClosedAsync(Stream stream, CancellationToken cancellationToken)
     {
-        protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context) =>
-            SerializeToStreamAsync(stream, context, CancellationToken.None);
-
-        protected override async Task SerializeToStreamAsync(Stream stream, TransportContext? context, CancellationToken cancellationToken)
+        var received = new MemoryStream();
+        var buffer = new byte[4096];
+        try
         {
-            await stream.WriteAsync("{"u8.ToArray(), cancellationToken);
-            // StreamContent leaves this tiny HTTP/2 upload buffered until another frame flushes the connection.
-            await stream.FlushAsync(cancellationToken);
-            await finished.WaitAsync(cancellationToken);
+            int read;
+            while ((read = await stream.ReadAsync(buffer, cancellationToken)) > 0)
+            {
+                received.Write(buffer, 0, read);
+            }
+        }
+        catch (IOException) when (received.Length > 0)
+        {
         }
 
-        protected override bool TryComputeLength(out long length)
-        {
-            length = 0;
-            return false;
-        }
+        return Encoding.UTF8.GetString(received.ToArray());
     }
 
     private static void InstallMemoryProbe(IServiceCollection services)
@@ -819,10 +812,7 @@ public sealed class ExplainSqlBoundaryTests
         var address = api.Server.ClientAddress!;
         using var socket = new TcpClient();
         await socket.ConnectAsync(address.Host, address.Port, deadline.Token);
-        using var handler = api.Tls.CreateHandler();
-        await using var tls = new SslStream(socket.GetStream());
-        handler.SslOptions.TargetHost = address.Host;
-        await tls.AuthenticateAsClientAsync(handler.SslOptions, deadline.Token);
+        await using var tls = socket.GetStream();
         var headers = $"POST {Path(database)} HTTP/1.1\r\nHost: {address.Authority}\r\nAuthorization: {client.DefaultRequestHeaders.Authorization}\r\nContent-Type: application/json\r\nContent-Length: 1\r\nConnection: close\r\n\r\n";
         await tls.WriteAsync(Encoding.ASCII.GetBytes(headers), deadline.Token);
         using var reader = new StreamReader(tls, Encoding.ASCII, leaveOpen: true);

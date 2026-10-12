@@ -32,7 +32,7 @@ public sealed class SnapshotTimestampTests
             services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock,
                 new FakeTimeProvider(new DateTimeOffset(2000, 1, 1, 0, 0, 0, TimeSpan.Zero)));
             services.AddSingleton<IWalBackup>(provider => new PausedBackup(provider.GetRequiredService<SqliteStorageEngine>(), pause));
-        }, time, managementCredential: true);
+        }, time);
         var backup = api.Server.Services.GetRequiredService<IContinuousBackup>();
         // Discover the system file before creating the tenant; only explicit passes ship.
         await backup.RunOnceAsync(cancellationToken);

@@ -1,68 +1,27 @@
-using System.Net.Security;
-using System.Security.Cryptography.X509Certificates;
-using Microsoft.AspNetCore.Server.Kestrel.Core;
-using Microsoft.AspNetCore.Server.Kestrel.Https;
 using TerraBase.Configuration;
 using TerraBase.Hosting;
 
 namespace TerraBase.Features.Replication;
 
-/// <summary>Registers the inter-node gRPC listener, the <c>Replication</c> service and the sender.</summary>
+/// <summary>Registers the inter-node gRPC services on the internal listener, and the sender.</summary>
 public static class ReplicationExtensions
 {
     /// <summary>
-    /// Adds the peer listener (HTTP/2 over mutual TLS with certificates read again when their files change), the
-    /// <c>Replication</c> and <c>CatalogReplication</c> services, the sender to the other members of this region, and the
-    /// catalog follower and <see cref="ICatalogPrimaryClient"/>, which only a machine that follows a catalog primary runs.
-    /// Registers <see cref="ICatalogReadiness"/> and <see cref="IReplicationWait"/>; nothing else when the peer listener is
-    /// disabled. Payloads are LZ4 application envelopes; gRPC transport compression is not used.
+    /// Registers the <c>Replication</c> and <c>CatalogReplication</c> services, the sender to the other members of this
+    /// region, and the catalog follower and <see cref="ICatalogPrimaryClient"/>, which only a machine that follows a catalog
+    /// primary runs. Payloads are LZ4 application envelopes; gRPC transport compression is not used.
     /// </summary>
-    public static WebApplicationBuilder AddTerraBaseReplication(this WebApplicationBuilder builder, TerraBaseOptions options)
+    public static WebApplicationBuilder AddTerraBaseReplication(this WebApplicationBuilder builder)
     {
         ArgumentNullException.ThrowIfNull(builder);
-        ArgumentNullException.ThrowIfNull(options);
         // The role comes from the machine's identity, which the registered options carry.
         builder.Services.AddSingleton<ICatalogReadiness>(provider => provider.GetRequiredService<TerraBaseOptions>().CatalogFollower
             ? provider.GetRequiredService<CatalogFollower>()
             : new CatalogPrimaryReadiness());
-        if (options.PeerPort is not { } port)
-        {
-            builder.Services.AddSingleton<IReplicationWait, NoReplicationWait>();
-            builder.Services.AddSingleton<IReplicationStatus, NoReplicationStatus>();
-            builder.Services.AddSingleton<IReplicationPressure, NoReplicationWait>();
-            return builder;
-        }
-
         builder.Services.AddSingleton<CatalogFollower>();
         builder.Services.AddHostedService(provider => provider.GetRequiredService<CatalogFollower>());
         builder.Services.AddSingleton<CatalogForwarder>();
         builder.Services.AddSingleton<ICatalogPrimaryClient, CatalogPrimaryClient>();
-
-        builder.WebHost.ConfigureKestrel(kestrel => kestrel.ListenAnyIP(port, listen =>
-        {
-            var credentials = kestrel.ApplicationServices.GetRequiredService<PeerCredentials>();
-            listen.Protocols = HttpProtocols.Http2;
-            listen.UseHttps(new TlsHandshakeCallbackOptions
-            {
-                OnConnection = context =>
-                {
-                    var snapshot = credentials.Capture();
-                    context.Connection.ConnectionClosed.Register(static state => ((PeerCredentials.Lease)state!).Dispose(), snapshot);
-                    return ValueTask.FromResult(new SslServerAuthenticationOptions
-                    {
-                        ServerCertificateContext = snapshot.CertificateContext,
-                        CertificateChainPolicy = snapshot.Policy(PeerTlsFiles.ClientAuthentication),
-                        ClientCertificateRequired = true,
-                        ApplicationProtocols = [SslApplicationProtocol.Http2],
-                        RemoteCertificateValidationCallback = (_, certificate, chain, _) =>
-                            certificate is X509Certificate2 client && snapshot.IsTrusted(client, PeerTlsFiles.ClientAuthentication, chain),
-                    });
-                },
-            });
-            listen.UseTerraBaseListener(TerraBaseListener.Peer);
-        }));
-
-        builder.Services.AddSingleton<PeerCredentials>();
         builder.Services.AddSingleton<ReplicationMetrics>();
         builder.Services.AddSingleton<IReplicationJournal, EngineReplicationJournal>();
         builder.Services.AddSingleton<ReplicationService>();
@@ -84,19 +43,15 @@ public static class ReplicationExtensions
         return builder;
     }
 
-    /// <summary>Maps the <c>Replication</c> and <c>CatalogReplication</c> services onto the peer listener.</summary>
+    /// <summary>Maps the inter-node gRPC services onto the internal listener.</summary>
     public static WebApplication MapTerraBaseReplication(this WebApplication app)
     {
         ArgumentNullException.ThrowIfNull(app);
-        if (app.Services.GetRequiredService<TerraBaseOptions>().PeerPort is not null)
-        {
-            app.MapGrpcService<ReplicationService>().WithMetadata(ListenerMetadata.Peer);
-            app.MapGrpcService<AntiEntropyService>().WithMetadata(ListenerMetadata.Peer);
-            app.MapGrpcService<CatalogFeed>().WithMetadata(ListenerMetadata.Peer);
-            app.MapGrpcService<ForwardedRequests>().WithMetadata(ListenerMetadata.Peer);
-            app.MapGrpcService<CrossRegion.WanService>().WithMetadata(ListenerMetadata.Peer);
-        }
-
+        app.MapGrpcService<ReplicationService>().WithMetadata(ListenerMetadata.Internal);
+        app.MapGrpcService<AntiEntropyService>().WithMetadata(ListenerMetadata.Internal);
+        app.MapGrpcService<CatalogFeed>().WithMetadata(ListenerMetadata.Internal);
+        app.MapGrpcService<ForwardedRequests>().WithMetadata(ListenerMetadata.Internal);
+        app.MapGrpcService<CrossRegion.WanService>().WithMetadata(ListenerMetadata.Internal);
         return app;
     }
 
@@ -104,15 +59,11 @@ public static class ReplicationExtensions
     public static WebApplication UseTerraBaseAntiEntropyResponses(this WebApplication app)
     {
         ArgumentNullException.ThrowIfNull(app);
-        if (app.Services.GetRequiredService<TerraBaseOptions>().PeerPort is not null)
+        app.Use(async (context, next) =>
         {
-            app.Use(async (context, next) =>
-            {
-                await next(context).ConfigureAwait(false);
-                await AntiEntropyService.FlushResponseAsync(context).ConfigureAwait(false);
-            });
-        }
-
+            await next(context).ConfigureAwait(false);
+            await AntiEntropyService.FlushResponseAsync(context).ConfigureAwait(false);
+        });
         return app;
     }
 

@@ -80,7 +80,7 @@ public sealed class SubscriptionLifetimeTests
     [Test]
     public async Task Memory_admission_refuses_before_headers_and_a_retry_works_after_release()
     {
-        await using var api = await ManagementApi.StartAsync(settings => settings["memory-budget"] = "67108864", managementCredential: true);
+        await using var api = await ManagementApi.StartAsync(settings => settings["memory-budget"] = "67108864");
         var database = await api.CreateManagedDatabaseAsync();
         // The authority verifier needs 4 MiB plus request headroom; restore Hobby before memory admission is tested.
         await api.SetPlanAsync(api.User, database.Organization, "enterprise", TUnit.Core.TestContext.Current!.Execution.CancellationToken);

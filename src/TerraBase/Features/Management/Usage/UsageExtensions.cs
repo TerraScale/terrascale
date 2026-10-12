@@ -1,4 +1,3 @@
-using TerraBase.Configuration;
 using TerraBase.Hosting;
 
 namespace TerraBase.Features.Management.Usage;
@@ -16,15 +15,11 @@ public static class UsageExtensions
             .AddSingleton<UsageReceiver>()
             .AddHostedService<UsageFlushService>();
 
-    /// <summary>Maps the <c>CatalogUsage</c> service, which receives catalog followers' counts, onto the peer listener.</summary>
+    /// <summary>Maps the <c>CatalogUsage</c> service, which receives catalog followers' counts, onto the internal listener.</summary>
     public static WebApplication MapTerraBaseUsage(this WebApplication app)
     {
         ArgumentNullException.ThrowIfNull(app);
-        if (app.Services.GetRequiredService<TerraBaseOptions>().PeerPort is not null)
-        {
-            app.MapGrpcService<UsageReceiver>().WithMetadata(ListenerMetadata.Peer);
-        }
-
+        app.MapGrpcService<UsageReceiver>().WithMetadata(ListenerMetadata.Internal);
         return app;
     }
 }

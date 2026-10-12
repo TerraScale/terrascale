@@ -16,7 +16,7 @@ public sealed class DocumentKeyAddressTests
     public async Task Transaction_keys_remain_distinct_through_conditional_point_CRUD(string key, string other)
     {
         await using var api = await DocumentApi.StartAsync();
-        await Assert.That(api.Client.BaseAddress!.Scheme).IsEqualTo("https");
+        await Assert.That(api.Client.BaseAddress!.Scheme).IsEqualTo("http");
         var seeded = await api.TransactAsync(
             new { op = "put", collection = "items", id = key, document = new { value = "first" } },
             new { op = "put", collection = "items", id = other, document = new { value = "other" } });

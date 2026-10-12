@@ -978,8 +978,8 @@ public sealed class ReplicationSlowTests
     {
         peerTls.Apply(settings);
         clientTls.Apply(settings);
-        settings["peer-port"] = port.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        settings["peer-addresses"] = $"https://localhost:{peerPort}";
+        settings["internal-port"] = port.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        settings["peer-addresses"] = $"http://127.0.0.1:{peerPort}";
     }
 
     // Each live document as "id json", in id order; opaque HTTP versions differ by node incarnation.

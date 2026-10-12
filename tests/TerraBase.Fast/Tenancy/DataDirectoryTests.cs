@@ -696,7 +696,7 @@ public sealed class DataDirectoryTests
         {
             var value = name switch
             {
-                "admin-port" => "0",
+                "port" or "internal-port" or "metrics-port" => "0",
                 "data-directory" => dataDirectory,
                 "region" => "test-region",
                 _ => string.Empty,

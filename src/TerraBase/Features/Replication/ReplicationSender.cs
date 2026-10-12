@@ -26,7 +26,7 @@ namespace TerraBase.Features.Replication;
 /// ponytail: one database at a time per peer; run several streams per peer if many databases lag at once.
 /// </remarks>
 internal sealed class ReplicationSender(
-    IStorageEngine engine, ITenantDirectory tenants, PeerCredentials credentials, TerraBaseOptions options, IMembership membership, ReplicationMetrics metrics, ILogger<ReplicationSender> logger,
+    IStorageEngine engine, ITenantDirectory tenants, TerraBaseOptions options, IMembership membership, ReplicationMetrics metrics, ILogger<ReplicationSender> logger,
     TimeProvider time, IUsageMeter usage)
     : BackgroundService, IReplicationWait, IReplicationStatus, IReplicationPressure
 {
@@ -89,7 +89,7 @@ internal sealed class ReplicationSender(
     {
         lock (_state)
         {
-            return new(true, Volatile.Read(ref _initialized) == 1, _heads.Count, _heads.Count - _slots.Count,
+            return new(Volatile.Read(ref _initialized) == 1, _heads.Count, _heads.Count - _slots.Count,
                 [.. _peers.Select(peer => peer.Snapshot())]);
         }
     }
@@ -361,9 +361,8 @@ internal sealed class ReplicationSender(
             {
                 try
                 {
-                    // A new attempt must re-prove cached progress, even if credentials or the connection fail.
+                    // A new attempt must re-prove cached progress, even if the connection fails.
                     peer.Unverified(database);
-                    peer.Refresh(credentials.Capture());
                     var turn = await SyncAsync(peer, new V1.Replication.ReplicationClient(peer.Channel), database, stoppingToken).ConfigureAwait(false);
                     if (turn is Unavailable)
                     {
@@ -696,26 +695,7 @@ internal sealed class ReplicationSender(
         }
     }
 
-    private Peer CreatePeer(int number, Uri address)
-    {
-        // A channel pins one credential generation, including the full client chain. The single peer
-        // worker replaces it between streams when rotation publishes a new context.
-        GrpcChannel CreateChannel(PeerCredentials.Lease snapshot)
-        {
-            return PeerChannel.Create(address, snapshot);
-        }
-
-        var initial = credentials.Capture();
-        try
-        {
-            return new Peer(number, CreateChannel(initial), initial, CreateChannel, _state, _heads, _slots, time, metrics);
-        }
-        catch
-        {
-            initial.Dispose();
-            throw;
-        }
-    }
+    private Peer CreatePeer(int number, Uri address) => new(number, PeerChannel.Create(address), _state, _heads, _slots, time, metrics);
 
     // Logs the peer's position in peer-addresses, never its address.
     private static DatabaseIncarnation Identity(IDatabaseStore store)
@@ -764,7 +744,7 @@ internal sealed class ReplicationSender(
         }
     }
 
-    private sealed class Peer(int number, GrpcChannel channel, PeerCredentials.Lease credentials, Func<PeerCredentials.Lease, GrpcChannel> createChannel, Lock state, Dictionary<DatabaseIncarnation, long> heads, Dictionary<DatabaseIncarnation, int> slots, TimeProvider time, ReplicationMetrics metrics) : IDisposable
+    private sealed class Peer(int number, GrpcChannel channel, Lock state, Dictionary<DatabaseIncarnation, long> heads, Dictionary<DatabaseIncarnation, int> slots, TimeProvider time, ReplicationMetrics metrics) : IDisposable
     {
         private readonly HashSet<DatabaseIncarnation> _dirty = [];
         // Bounded by the sender's 128 slots; removed with the database incarnation.
@@ -904,44 +884,13 @@ internal sealed class ReplicationSender(
 
         public int Number => number;
 
-        private PeerCredentials.Lease _credentials = credentials;
-
-        public GrpcChannel Channel { get; private set; } = channel;
+        public GrpcChannel Channel { get; } = channel;
 
         // Holds at most one pending wake-up; incarnations accumulate in the dirty set.
         public Channel<bool> Signal { get; } = System.Threading.Channels.Channel.CreateBounded<bool>(
             new BoundedChannelOptions(1) { FullMode = BoundedChannelFullMode.DropWrite });
 
-        public void Dispose()
-        {
-            Channel.Dispose();
-            _credentials.Dispose();
-        }
-
-        public void Refresh(PeerCredentials.Lease next)
-        {
-            if (ReferenceEquals(next.CertificateContext, _credentials.CertificateContext))
-            {
-                next.Dispose();
-                return;
-            }
-
-            GrpcChannel replacement;
-            try
-            {
-                replacement = createChannel(next);
-            }
-            catch
-            {
-                next.Dispose();
-                throw;
-            }
-
-            Channel.Dispose();
-            _credentials.Dispose();
-            Channel = replacement;
-            _credentials = next;
-        }
+        public void Dispose() => Channel.Dispose();
 
         public void MarkDirty(DatabaseIncarnation database)
         {

@@ -14,23 +14,17 @@ namespace TerraBase.Testing;
 /// </summary>
 public sealed class ManagementApi : IAsyncDisposable
 {
-    /// <summary>The management service credential of servers started with one.</summary>
-    public const string ServiceCredential = "test-management-service-credential-0123456789";
-
     private static readonly HttpRequestOptionsKey<(string Organization, string Project)> BindingAuthority = new("test-project-binding-authority");
 
-    // Holds the credential file of a server started with the management service credential.
-    private readonly string? _credentialDirectory;
     private readonly Lazy<Task> _cleanup;
 
-    private ManagementApi(TerraBaseTestServer server, ClientTls tls, TestIssuer issuer, string user, string? credentialDirectory)
+    private ManagementApi(TerraBaseTestServer server, ClientTls tls, TestIssuer issuer, string user)
     {
         Server = server;
         Tls = tls;
         Issuer = issuer;
         User = user;
-        _credentialDirectory = credentialDirectory;
-        _cleanup = new(() => CleanupAssetsAsync(server.CleanupCompletion, tls, issuer, credentialDirectory));
+        _cleanup = new(() => CleanupAssetsAsync(server.CleanupCompletion, tls, issuer));
         Client = As(user);
     }
 
@@ -49,35 +43,22 @@ public sealed class ManagementApi : IAsyncDisposable
     internal Task CleanupCompletion => _cleanup.Value;
 
     /// <summary>
-    /// Starts a server; <paramref name="configure"/> edits its settings after the client listener and the credential are
-    /// configured, <paramref name="time"/> replaces its clock and <paramref name="services"/> its other services.
-    /// <paramref name="managementCredential"/> also enables the management service credential, for <see cref="Service"/>.
+    /// Starts a server; <paramref name="configure"/> edits its settings after the issuer is configured, <paramref name="time"/>
+    /// replaces its clock and <paramref name="services"/> its other services.
     /// </summary>
     public static async Task<ManagementApi> StartAsync(
         Action<Dictionary<string, string>>? configure = null, Action<IServiceCollection>? services = null, TimeProvider? time = null,
-        bool managementCredential = false, CancellationToken? cancellationToken = null, Action<Task>? failedStartCleanup = null)
+        CancellationToken? cancellationToken = null, Action<Task>? failedStartCleanup = null)
     {
         var tls = new ClientTls();
         var issuer = new TestIssuer();
-        var credentialDirectory = managementCredential ? Directory.CreateTempSubdirectory("terrabase-service-").FullName : null;
         TerraBaseTestServer? server = null;
         var failedCleanup = Task.CompletedTask;
         try
         {
-            if (credentialDirectory is not null)
-            {
-                await File.WriteAllTextAsync(Path.Combine(credentialDirectory, "credential"), ServiceCredential + "\n");
-            }
-
             server = await TerraBaseTestServer.StartAsync(settings =>
             {
-                tls.Apply(settings);
                 TestIssuer.Configure(settings);
-                if (credentialDirectory is not null)
-                {
-                    settings["management-credential-file"] = Path.Combine(credentialDirectory, "credential");
-                }
-
                 configure?.Invoke(settings);
             }, collection =>
             {
@@ -90,12 +71,12 @@ public sealed class ManagementApi : IAsyncDisposable
                 services?.Invoke(collection);
             }, cancellationToken: cancellationToken, failedStartCleanup: task => failedCleanup = task);
             // Startup waited for the issuer's keys, so tokens work from the first request.
-            return new ManagementApi(server, tls, issuer, EntityIds.New().ToString(), credentialDirectory);
+            return new ManagementApi(server, tls, issuer, EntityIds.New().ToString());
         }
         catch (Exception startupError)
         {
             server?.Client.Dispose();
-            var cleanup = CleanupAssetsAsync(server?.CleanupCompletion ?? failedCleanup, tls, issuer, credentialDirectory);
+            var cleanup = CleanupAssetsAsync(server?.CleanupCompletion ?? failedCleanup, tls, issuer);
             try
             {
                 failedStartCleanup?.Invoke(cleanup);
@@ -121,19 +102,10 @@ public sealed class ManagementApi : IAsyncDisposable
     public HttpClient As(string user, string? email = null) =>
         Authorized(() => email is null ? Issuer.Mint(user) : Issuer.MintWithEmail(user, email));
 
-    /// <summary>
-    /// A client acting as <paramref name="user"/> with the management service credential on the loopback administrative
-    /// listener, as a trusted service; needs a server started with <c>managementCredential</c>.
-    /// </summary>
+    /// <summary>A client acting as <paramref name="user"/> through the platform operator on the internal listener.</summary>
     public HttpClient Service(string user)
     {
-        if (_credentialDirectory is null)
-        {
-            throw new InvalidOperationException("start the server with managementCredential: true");
-        }
-
-        var client = new HttpClient { BaseAddress = Server.BaseAddress, Timeout = Timeout.InfiniteTimeSpan };
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", ServiceCredential);
+        var client = PeerTls.CreateClient(Server.BaseAddress);
         client.DefaultRequestHeaders.Add("X-TerraBase-User-Id", user);
         return client;
     }
@@ -324,7 +296,7 @@ public sealed class ManagementApi : IAsyncDisposable
         }
     }
 
-    private static async Task CleanupAssetsAsync(Task completion, ClientTls tls, TestIssuer issuer, string? credentialDirectory)
+    private static async Task CleanupAssetsAsync(Task completion, ClientTls tls, TestIssuer issuer)
     {
         try
         {
@@ -339,10 +311,6 @@ public sealed class ManagementApi : IAsyncDisposable
             finally
             {
                 issuer.Dispose();
-                if (credentialDirectory is not null)
-                {
-                    Directory.Delete(credentialDirectory, recursive: true);
-                }
             }
         }
     }

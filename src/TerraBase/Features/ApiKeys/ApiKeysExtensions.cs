@@ -24,12 +24,12 @@ public static class ApiKeysExtensions
             // Hidden legacy aliases accept sign-in/service identities without project scopes. Every alias target
             // must independently check the caller's real organization membership and role in its management service.
             authorization.AddPolicy(scope, policy => policy
-                .AddAuthenticationSchemes("TerraBaseBearer", UserAuth.UserAuthExtensions.LegacyServiceScheme)
+                .AddAuthenticationSchemes("TerraBaseBearer", UserAuth.UserAuthExtensions.OperatorScheme)
                 .RequireAuthenticatedUser()
                 .RequireAssertion(context => context.User.HasClaim(ApiKeyAuthenticationHandler.ScopeClaim, scope)
                     || context.Resource is HttpContext http && http.Features.Get<Management.LegacyManagementRoute>() is not null
                         && context.User.Identities.Any(identity => identity.IsAuthenticated
-                            && identity.AuthenticationType is UserAuth.UserAuthExtensions.TokenScheme or UserAuth.UserAuthExtensions.LegacyServiceScheme)));
+                            && identity.AuthenticationType is UserAuth.UserAuthExtensions.TokenScheme or UserAuth.UserAuthExtensions.OperatorScheme)));
         }
 
         return services;

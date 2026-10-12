@@ -14,7 +14,7 @@ public sealed class SetOrganizationPlanEndpoint(IManagementService management) :
         Put(ManagementRoute.Organization + "/plan");
         Name("setOrganizationPlan");
         Summary("Sets an organization's plan");
-        Description("Publishes a resource plan authorized by the platform: hobby (the default), pro or enterprise. Requires the management service credential acting as an organization owner. " + ManagementRoute.IdentityDescription);
+        Description("Publishes a resource plan authorized by the platform: hobby (the default), pro or enterprise. Requires the platform operator (internal listener) acting as an organization owner. " + ManagementRoute.IdentityDescription);
         Tags(ManagementRoute.Tag);
         Produces<Organization>();
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
@@ -48,9 +48,9 @@ public sealed class SetOrganizationPlanEndpoint(IManagementService management) :
             };
         }
 
-        if (!HttpContext.User.IsManagementService())
+        if (!HttpContext.User.IsOperator())
         {
-            return ErrorResponse.From(new Forbidden("plan changes need the management service credential"));
+            return ErrorResponse.From(new Forbidden("plan changes need the platform operator"));
         }
 
         return await management.SetPlanAsync(user, organization, plan, cancellationToken).ConfigureAwait(false) switch

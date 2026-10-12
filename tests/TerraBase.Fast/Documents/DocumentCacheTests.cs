@@ -28,7 +28,7 @@ public sealed class DocumentCacheTests
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         const long Budget = 4 * 1024 * 1024;
         await using var management = await ManagementApi.StartAsync(settings =>
-            settings["memory-budget"] = Budget.ToString(System.Globalization.CultureInfo.InvariantCulture), managementCredential: true);
+            settings["memory-budget"] = Budget.ToString(System.Globalization.CultureInfo.InvariantCulture));
         using var tenant = await CreateTenantAsync(management, "clock", enterprise: true, cancellationToken: deadline.Token);
         var padding = new string('x', 300 * 1024);
         foreach (var id in new[] { "a", "b", "c", "d", "e" })
@@ -68,7 +68,7 @@ public sealed class DocumentCacheTests
     public async Task An_old_snapshot_finishing_last_keeps_the_newer_cache_entry(bool page)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
-        await using var management = await ManagementApi.StartAsync(managementCredential: true);
+        await using var management = await ManagementApi.StartAsync();
         using var tenant = await CreateTenantAsync(management, "race", cancellationToken: deadline.Token);
         await PutAsync(tenant, "race", "items", "hot", "old", deadline.Token);
         var database = await tenant.ContextAsync(management.Server, "race", deadline.Token);
@@ -143,7 +143,7 @@ public sealed class DocumentCacheTests
     [Test]
     public async Task Identical_document_ids_and_pages_stay_cached_within_their_tenant()
     {
-        await using var management = await ManagementApi.StartAsync(managementCredential: true);
+        await using var management = await ManagementApi.StartAsync();
         using var first = await CreateTenantAsync(management, "shop");
         using var second = await CreateTenantAsync(management, "shop");
         var firstFile = await first.FileAsync(management.Server, "shop");
@@ -175,7 +175,7 @@ public sealed class DocumentCacheTests
     public async Task A_plan_change_keeps_old_store_writes_connected_to_current_cache_stamps()
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
-        await using var management = await ManagementApi.StartAsync(managementCredential: true);
+        await using var management = await ManagementApi.StartAsync();
         using var tenant = await CreateTenantAsync(management, "shop", cancellationToken: deadline.Token);
         await PutAsync(tenant, "shop", "items", "same", "first", deadline.Token);
         var database = await tenant.ContextAsync(management.Server, "shop", deadline.Token);
@@ -208,7 +208,7 @@ public sealed class DocumentCacheTests
     public async Task Deleting_a_warmed_system_api_key_invalidates_authentication()
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
-        await using var management = await ManagementApi.StartAsync(managementCredential: true);
+        await using var management = await ManagementApi.StartAsync();
         using var tenant = await CreateTenantAsync(management, "shop", cancellationToken: deadline.Token);
         await PutAsync(tenant, "shop", "items", "a", "first", deadline.Token);
         await GetAsync(tenant, "shop", "items", "a", deadline.Token);
@@ -236,7 +236,7 @@ public sealed class DocumentCacheTests
     public async Task Warm_cache_reads_observe_an_already_cancelled_token(bool list)
     {
         await using var management = await ManagementApi.StartAsync(services: services =>
-            services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, new FakeTimeProvider()), managementCredential: true);
+            services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, new FakeTimeProvider()));
         var server = management.Server;
         using var tenant = await CreateTenantAsync(management, "cancelled");
         var client = tenant.Data;
@@ -275,7 +275,7 @@ public sealed class DocumentCacheTests
         await using var management = await ManagementApi.StartAsync(settings =>
         {
             settings["memory-budget"] = Budget.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        }, managementCredential: true);
+        });
         var server = management.Server;
         using var tenant = await CreateTenantAsync(management, "closing", cancellationToken: operationTimeout.Token);
         var client = tenant.Data;
@@ -360,7 +360,7 @@ public sealed class DocumentCacheTests
     [Test]
     public async Task Point_reads_are_cached_until_a_write_or_delete()
     {
-        await using var management = await ManagementApi.StartAsync(managementCredential: true);
+        await using var management = await ManagementApi.StartAsync();
         var server = management.Server;
         using var tenant = await CreateTenantAsync(management, "shop");
         var client = tenant.Data;
@@ -394,7 +394,7 @@ public sealed class DocumentCacheTests
     [Test]
     public async Task List_pages_are_cached_until_the_collection_changes()
     {
-        await using var management = await ManagementApi.StartAsync(managementCredential: true);
+        await using var management = await ManagementApi.StartAsync();
         var server = management.Server;
         using var tenant = await CreateTenantAsync(management, "shop");
         var client = tenant.Data;
@@ -423,7 +423,7 @@ public sealed class DocumentCacheTests
     {
         using var operationTimeout = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         await using var management = await ManagementApi.StartAsync(services: services =>
-            services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, new FakeTimeProvider()), managementCredential: true);
+            services.AddKeyedSingleton<TimeProvider>(EngineExtensions.QueryDeadlineClock, new FakeTimeProvider()));
         var server = management.Server;
         using var tenant = await CreateTenantAsync(management, "shop", cancellationToken: operationTimeout.Token);
         var client = tenant.Data;
@@ -464,7 +464,7 @@ public sealed class DocumentCacheTests
     {
         using var operationTimeout = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         const int Writes = 1024;
-        await using var management = await ManagementApi.StartAsync(managementCredential: true);
+        await using var management = await ManagementApi.StartAsync();
         var server = management.Server;
         using var tenant = await CreateTenantAsync(management, "shop", cancellationToken: operationTimeout.Token);
         var initial = await PutAsync(tenant, "shop", "items", "hot", "first", operationTimeout.Token);
@@ -499,7 +499,7 @@ public sealed class DocumentCacheTests
     {
         using var operationTimeout = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         const int Documents = 32;
-        await using var management = await ManagementApi.StartAsync(managementCredential: true);
+        await using var management = await ManagementApi.StartAsync();
         var server = management.Server;
         using var tenant = await CreateTenantAsync(management, "shop", enterprise: true, cancellationToken: operationTimeout.Token);
         var ids = Enumerable.Range(0, Documents).Select(i => $"d{i}").ToList();
@@ -560,7 +560,7 @@ public sealed class DocumentCacheTests
         await using var management = await ManagementApi.StartAsync(settings =>
         {
             settings["memory-budget"] = Budget.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        }, managementCredential: true);
+        });
         var server = management.Server;
         using var tenant = await CreateTenantAsync(management, "big");
         using (var service = management.Service(tenant.User))
@@ -617,7 +617,7 @@ public sealed class DocumentCacheTests
                 provider.GetRequiredService<TerraBaseOptions>(),
                 observed = new ObservedMemoryBudget(provider.GetRequiredService<IMemoryBudget>(), CacheBytes),
                 provider.GetRequiredService<IWriteStamps>(), provider.GetRequiredService<IMeterFactory>()));
-        }, time: clock, managementCredential: true);
+        }, time: clock);
         var server = management.Server;
         using var tenant = await CreateTenantAsync(management, "oversized");
         using (var service = management.Service(tenant.User))
@@ -676,7 +676,7 @@ public sealed class DocumentCacheTests
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         const int Writes = 100;
-        await using var management = await ManagementApi.StartAsync(managementCredential: true);
+        await using var management = await ManagementApi.StartAsync();
         var server = management.Server;
         using var tenant = await CreateTenantAsync(management, "race", enterprise: true, cancellationToken: deadline.Token);
         var client = tenant.Data;
