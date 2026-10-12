@@ -10,7 +10,6 @@ included; at least 1 MiB) is the memory TerraBase plans for caches. `IMemoryBudg
 | --- | --- |
 | ¼ | Document and list-page cache (`Features/Documents/DocumentCache.cs`); every entry is also reserved from `IMemoryBudget` |
 | ¼ | Page caches: `cache_size` per connection is this ÷ `storage-threads`. Turso has no process-wide heap limit, so these per-connection caches are the bound; this is not hard memory admission (`docs/terrabase/sqlite-query-plans.md`) |
-| all | SQLite `mmap_size`: address space backed by the OS page cache, not the heap |
 | rest | Request buffers and everything not yet reserved |
 
 ## Document and list-page cache
@@ -69,7 +68,7 @@ dedicated threads (`Engine/Sqlite/SqliteIoPool.cs`) and request threads only awa
 `storage-queue` transactions (and maintenance calls) are admitted at once, each with at most one queued
 call; beyond that the request gets `503 Service Unavailable` with `Retry-After: 1`. Writers to one
 database queue asynchronously before `BEGIN IMMEDIATE`, so they never hold pool threads while waiting
-for the database's write lock (at most 30 s, the `busy_timeout`, then `503`).
+for the database's writer (at most 30 s, then `503`).
 
 An admission stays held through returning or closing its session, including WAL checkpoints on
 eviction. SQLite cleanup runs on the same dedicated threads. Shutdown refuses new admissions and

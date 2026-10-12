@@ -124,15 +124,17 @@ Most settings are applied once per connection (`SqliteSession`). Read transactio
 enable `query_only = ON` before BEGIN and reset it to OFF after the transaction ends; a reset
 failure closes the session instead of pooling it.
 
-| Setting | Value | Why |
-| --- | --- | --- |
-| `journal_mode` | `WAL` | Persistent in the file (set at bootstrap). Readers never block the writer. |
-| `synchronous` | `NORMAL` | Decision 0003 (`docs/terrabase/decisions/0003-sqlite-synchronous-normal.md`). A commit no longer waits for an fsync; SQLite syncs the WAL before each checkpoint. Committed transactions, including acknowledged writes, can be lost after a power loss or an OS crash, but not after a process crash, and the file is never corrupted. Accepted for write throughput. Every connection uses it, including the one that creates a database. |
-| `busy_timeout` | 100 ms | One writer connection per file waits in process for the writer gate, so lock waits are rare. Each attempt waits at most 100 ms; `SqliteSession.ExecuteAsync` retries busy attempts within the 30 s command timeout, checking cancellation between them. |
-| `mmap_size` | `memory-budget`, at least 256 MiB | Reads map pages instead of copying them through `read()`: about 5–10 % faster point reads and 25 % faster full listings in the benchmark below. Address space only; pages are the OS page cache, not the heap, so it can be as large as the budget. SQLite caps it at its compile-time maximum (2 GiB by default). |
-| `cache_size` | ¼ of `memory-budget` ÷ `storage-threads`, at least 2 MiB | The page cache holds pages that writes change and pages mmap does not cover. A quarter of the budget, split across the connections that run at once (one per storage thread). Idle pooled connections keep their cache; it grows only with pages actually read. |
-| `temp_store` | default | Repair state pages use two temporary B-tree sorts over bounded keys/metadata and materialize at most 129 evidence rows, without JSON bodies. Document-field query sorts also use temporary storage. The default does not guarantee that temporary storage stays in memory. |
-| `foreign_keys` | default | The schema has no foreign keys. |
+TerraBase keeps Turso's defaults (user guidance 2026-10-12: Turso defaults and best practices): WAL journal, 4 KiB
+pages, Turso's own checkpoints, busy timeout 0, no memory map (Turso has none), default temporary storage, no foreign
+keys. Every setting that differs, and why:
+
+| Setting | Value | Turso default | Why |
+| --- | --- | --- | --- |
+| `synchronous` | `NORMAL` | `FULL` | A local write is acknowledged after one machine's commit (decision 0003, `multi-region-replication.md` section 6): a commit does not wait for an fsync, so acknowledged writes can be lost on power loss or an OS crash, never on a process crash, and the file is not corrupted. Durable write transactions and replicated applies set `FULL` for their transaction. The connection that creates a file uses `OFF`: the file is private until it is published and synced once then. |
+| `cache_size` | ¼ of `memory-budget` ÷ `storage-threads`, at least 2 MiB | 2000 pages | Turso has no process-wide heap limit, so per-connection caches sized from the budget are the memory bound (`memory.md`). |
+| `query_only` | `1` in read transactions | `0` | Read-only transactions cannot write; reset to `0` before the session is pooled. |
+| `capture_data_changes_conn` | `after` on the writer | off | Design C's change capture and continuous backup (`backup.md`); a transaction may turn it off (`SuspendCaptureAsync`). |
+| `wal_checkpoint(TRUNCATE)` | when a file is created, restored, copied, and when its writer closes | not run | Turso does not checkpoint when the last connection closes, and these files are moved or copied without their `-wal`. |
 
 Read connections are pooled by the engine (`SqliteSessionPool`; provider pooling is off). Each database also has one
 writer connection, outside the pool, that every write transaction uses: Turso aborts the process when two connections
