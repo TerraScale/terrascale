@@ -18,14 +18,6 @@ internal static class Outcomes
     private static readonly ConcurrentDictionary<string, (string Category, string Detail)> Marked = new(StringComparer.Ordinal);
     private static readonly Lock FileGate = new();
 
-    // Tests in harness-owner files (RegionProcesses*.cs) declared here, so the recorder's owner does not edit those files.
-    private static readonly Dictionary<string, ScenarioAttribute> HarnessOwned = new(StringComparer.Ordinal)
-    {
-        ["Region_processes_replicate_and_a_killed_region_catches_up_after_its_restart"] = new(Nodes.Processes, Faults.ProcessKill),
-        ["Hosts_one_region_until_its_process_is_killed"] = new(Nodes.Processes),
-        ["Writes_a_region_acknowledged_before_it_could_ship_them_reach_every_region_after_a_SIGKILL"] = new(Nodes.Processes, Faults.ProcessKill),
-    };
-
     /// <summary>Records why the current test passed when the reason is not its scenario holding.</summary>
     public static void Mark(string category, string detail) => Marked[TestContext.Current!.Id] = (category, detail);
 
@@ -40,8 +32,7 @@ internal static class Outcomes
 
         _ = Marked.TryRemove(context.Id, out var marked);
         var details = context.Metadata.TestDetails;
-        var scenario = details.ClassType.GetMethod(details.MethodName)?.GetCustomAttributes(typeof(ScenarioAttribute), inherit: false).OfType<ScenarioAttribute>().FirstOrDefault()
-            ?? HarnessOwned.GetValueOrDefault(details.MethodName);
+        var scenario = details.ClassType.GetMethod(details.MethodName)?.GetCustomAttributes(typeof(ScenarioAttribute), inherit: false).OfType<ScenarioAttribute>().FirstOrDefault();
         var (category, detail) = context.Execution.Result?.State switch
         {
             TestState.Passed => marked.Category is not null ? marked : scenario?.Nodes == Nodes.Harness ? ("harness", "") : ("pass", ""),
