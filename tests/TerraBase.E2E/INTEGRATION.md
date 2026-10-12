@@ -41,6 +41,38 @@ those runs are evidence only and never replace the required CI `test` check on t
 (`Console_records_are_json_and_withhold_exception_messages`,
 `ZLogger_entries_keep_values_and_exception_messages_out_of_every_provider`). Routed to Dogfood.
 
+## CI runners, the backup program, and acceptance gaps (COS update, 2026-10-12 evening)
+
+**CI.** The old GitHub-hosted CI workflow (381575024) stays disabled.
+- The **alpha owner** (thread mcp:4c7de8fc…, owner of CI edits) runs five ephemeral self-hosted runners:
+  - **#142** (monorepo, `47ed19f7`) "ci: run on the alpha self-hosted runners";
+  - **ts-dotnet #9** (`4e561130`).
+- **No green proof yet:** the first cold run, 38291185189 on `ac98c679`, **failed** libs, auth and terrabase; alpha is
+  correcting it. There is no full-green or warm run yet.
+- **The train stays paused** until alpha's runners give a real green on main (now `4cfbf85d`) and then on each PR's
+  exact head. Current-head tests and reviews remain the merge gates. The deploy, preview and cleanup pauses are
+  unchanged.
+- **Finding for alpha and COS:** both PR titles say "**CI_RUNNER switch**". CLAUDE.md's zero-configuration rule forbids
+  switch-style configuration in CI unless an unavoidable third-party name has a narrow allowance with a one-line
+  reason. To be confirmed before #142 merges.
+
+**T1's #143** (`a67349bf`, base main): test-only write-ahead-log sync faults in E2E (H4). T1's `_system` FULL PR comes
+next; it is not opened yet.
+
+**Beta 100M backup program** (a user-authorized separate program; lead mcp:742c4b1c…).
+- It owns the **local** branch `fix/backup-recovery-integration`, from `4cfbf85d`: restore proof, shipper backlog and
+  retry, multipart snapshots, committed-write acknowledgement.
+- **Integration order:**
+  1. T1's #143 and the `_system` FULL PR first.
+  2. Then beta's candidates, rebased onto main, with T1's written acceptance (and R10a's for the backup-bucket anchor).
+- Beta's work enters this train only once it opens PRs.
+
+**Acceptance gaps, kept visible until each has a test and a fix:**
+- **R-A:** stale-machine retention after a SIGKILL.
+- **R-B:** a corrupt CDC entry stalls a region pair.
+- **R-C:** an unknown CDC entry is silently skipped.
+- **Unexplained `/metrics` first-scrape hangs.**
+
 ## Merge train (user order 2026-10-12 14:58Z: the merge hold is lifted; deploy pause #122 and previews off #123 stay)
 
 Phase 1 is now merged to main in manifest order, and acceptance runs on main's head. Each row is recorded at merge time:
