@@ -71,9 +71,7 @@ Each point contains:
   after a request resolves an authorized database; it excludes HTTP/TLS headers.
   Endpoints that resolve their database themselves, such as SQL EXPLAIN, attribute
   the request to it without counting a document operation.
-  A request a catalog follower relays is metered once, by the catalog primary that
-  resolves its database (latency there excludes the relay hop); requests naming an
-  unknown database record nothing.
+  Requests naming an unknown database record nothing.
 
 Failed writes do not become committed operation counts. Client request counts,
 errors and latency still include failed requests that resolved their database.
@@ -154,9 +152,9 @@ is the latest completed observed catch-up in milliseconds.
 The existing usage meter flushes observations into the database's catalog state
 every ten seconds and at clean shutdown. Minutes roll into the same lifetime,
 hourly and daily totals as existing usage. Minute buckets retain 120 minutes,
-hours 35 days, and days 400 days. Catalog followers send the observations through
-the existing sequenced `CatalogUsage.Add` RPC; retries remain deduplicated and
-the catalog feed replicates the saved observations within the region.
+hours 35 days, and days 400 days. Each machine saves its own observations in its
+local catalog. Catalogs are not replicated until R10a, so these totals are per machine
+([multi-region-replication.md](multi-region-replication.md) section 15).
 
 These are best-effort dashboard observations. A crash can lose counts since the
 last successful flush; memory pressure can omit observations. Pending records
@@ -164,22 +162,11 @@ admit at most 256 keys and 256 meter dimensions per key; open replication
 backlogs keep at most 256 database/peer pairs, evicting the least recently
 observed. Rolled-up hour, day and lifetime maps are not capped: they hold the
 deployed regions' dimensions, and capping them would break subtraction.
-Replication observations from a follower more than five minutes ahead of the
-primary's clock are refused. `terrabase.usage.observations.dropped` reports
+`terrabase.usage.observations.dropped` reports
 bounded admission drops. Usage
 totals skip the meters JSON when reading. Analytics reads keep only the requested
 region's dimensions of each entry as they read it and admit memory for what they
-keep; exhausted admission returns 400. A follower entry whose folded meters exceed
-the 256 KiB entry limit is sent with its counts only, and the dropped meters are
-counted. A follower batch carries at most 1 MiB of measurement JSON,
-256 KiB per entry, with validated meter names, dimensions and histogram sizes.
-Deploying this format is a whole-fleet cutover (verify, wipe, deploy, re-bootstrap),
-never a rolling mix. Measurements are best effort while read and write totals are
-not: when the primary refuses a follower batch, for a measurement it rejects or a
-minute scope it predates, or lacks the memory to read its measurements, the follower
-resends the totals alone once under the same sequence, and the dropped measurements
-are counted. A batch whose totals the primary still has no capacity for stays unsent
-and goes again with its sequence. Byte meters (client and
+keep; exhausted admission returns 400. Byte meters (client and
 replication bandwidth, storage) are bounded only by their 64-bit range, since
 their aggregates outgrow the 10^12 operation-count bound; merging and every
 analytics total saturate at that range instead of wrapping negative or failing.

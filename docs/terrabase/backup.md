@@ -152,7 +152,7 @@ member's lease on that file while it ships it, or null. `Engine/Cluster` impleme
 that member holds its member lease.
 
 - **Without `nats-url`** the members are the static `peers` list (one member when unset), whose leases never end. This
-  is for one member and tests: backup with `peers`, `peer-addresses` or `catalog-primary` but no `nats-url` stops the
+  is for one member and tests: backup with `peers` or `peer-addresses` but no `nats-url` stops the
   process with exit code 2.
 - **With `nats-url`** the members share ts-orchestrator's NATS (JetStream KV), the store TerraBase uses for external
   persistence. Each member keeps its key `member.<base64url node-name>` in the bucket
@@ -389,8 +389,8 @@ A failed drill is logged as an error and counted in `terrabase_backup_drills_tot
 After each hourly retention pass and each drill, the shipper writes the file's record into `_system`: collection
 `databases/<database id>/backup_status`, id `current` (`backup_status`/`_system` for `_system.db`). The record holds the
 shipping member, generation, last shipped time, lag, bucket size (measured daily), retention days and the last drill.
-The database's state is deleted with it. A catalog follower cannot write the catalog, so it keeps the record in memory
-only (`GET /v1/backup`) until TS-647 makes `_system` writable on every member.
+The database's state is deleted with it. Each machine writes these records to its own catalog; they are not replicated
+until R10a.
 
 ## Verify a rollout
 

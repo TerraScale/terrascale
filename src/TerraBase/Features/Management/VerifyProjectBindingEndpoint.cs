@@ -1,6 +1,5 @@
 using System.Text.Json;
 using TerraBase.Errors;
-using TerraBase.Features.Replication;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraBase.Primitives;
@@ -24,7 +23,7 @@ public sealed class VerifyProjectBindingEndpoint(IProjectCatalog catalog) : Endp
         Description("A sign-in token's user must own the legacy organization and currently administer the exact project in ts-auth. "
             + "organization is its ts-auth organization id. This explicit migration preserves database IDs and files.");
         RequireAuthorization(UserAuthExtensions.PolicyName);
-        Metadata(ListenerMetadata.Client, ServedByCatalogPrimary.BeforeHandling, new ProducesResponseTypeMetadata(StatusCodes.Status204NoContent, typeof(void)));
+        Metadata(ListenerMetadata.Client, new ProducesResponseTypeMetadata(StatusCodes.Status204NoContent, typeof(void)));
         Produces<ErrorBody>(StatusCodes.Status400BadRequest);
         Produces<ErrorBody>(StatusCodes.Status404NotFound);
         Produces<ErrorBody>(StatusCodes.Status409Conflict);

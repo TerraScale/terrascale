@@ -4,7 +4,7 @@
   the format number stays 1, decision 9) replace, for client databases, the `TBDCG001` change group, merge policy v1,
   the import clock admission and the journal digests below with register deltas joined on apply (`DeltaGroup`); the
   envelope, limits and handshake stay.
-  Catalog follower pages keep `TBDCG001` until step 5.
+  The catalog follower pages (`TBDCG001`) are deleted with the catalog primary (decision 0009, R10a).
 - Scope: `Features/Replication`, `Engine`
 
 ## Context

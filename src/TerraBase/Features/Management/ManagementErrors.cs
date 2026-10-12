@@ -53,6 +53,4 @@ internal static class ManagementErrors
     /// <summary>The management catalog has a version this build does not know; it is left unchanged.</summary>
     public static readonly Unavailable CatalogUnsupported = new("the management catalog has an old or unsupported format; discard the affected data");
 
-    /// <summary>A catalog follower received a catalog version this build does not read.</summary>
-    public static readonly Unavailable ReplicatedCatalogUnsupported = new("the replicated management catalog is not at a version this build supports");
 }

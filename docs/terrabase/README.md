@@ -71,8 +71,7 @@ the public listener, where Fly's health checks read them.
   seconds; see [api.md](api.md#health)).
 - `GET /readyz`: readiness. `200 {"status":"ready","version":"<version>","region":"<region>"}` only when the storage
   engine is open, the data directory is writable, ts-auth's signing keys have been fetched once (only when
-  `auth-issuer` is set), a catalog follower has applied its primary's head once and is not behind a head its primary
-  reported (only when `catalog-primary` is set) and the server is not shutting down; otherwise
+  `auth-issuer` is set) and the server is not shutting down; otherwise
   `503 {"status":"unavailable","version":"<version>","region":"<region>"}`. Writable means it can create and remove an
   empty probe file there, so a disk with free inodes but no free blocks still reads as writable.
   Completed filesystem results are cached for one second in the current implementation,
