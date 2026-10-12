@@ -49,10 +49,10 @@ public sealed class GroupCommitTests
             return ValueTask.CompletedTask;
         };
 
-        var session = engine.Pool.Rent(store) ?? throw new InvalidOperationException("the database has no idle session");
-        try
+        // The writes run on the database's writer connection: it gets the pausing function and the trigger.
+        await store.WithWriterAsync(writer =>
         {
-            session.Connection.CreateFunction<string, int>("qos_pause_insert", id =>
+            writer.Connection.CreateFunction<string, int>("qos_pause_insert", id =>
             {
                 if (id == cancelledId)
                 {
@@ -62,14 +62,10 @@ public sealed class GroupCommitTests
 
                 return 0;
             });
-            using var trigger = session.Connection.CreateCommand();
+            using var trigger = writer.Connection.CreateCommand();
             trigger.CommandText = "CREATE TEMP TRIGGER qos_pause_insert BEFORE INSERT ON main.\"items\" BEGIN SELECT qos_pause_insert(NEW.id); END;";
-            trigger.ExecuteNonQuery();
-        }
-        finally
-        {
-            engine.Pool.Return(store, session);
-        }
+            return trigger.ExecuteNonQuery();
+        }, "a test", deadline.Token);
 
         var pending = new List<Task<HttpResponseMessage>>();
         IStorageTransaction? held = await store.BeginTransactionAsync(write: true, deadline.Token);

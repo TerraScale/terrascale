@@ -209,7 +209,8 @@ internal static class SqliteStatements
     public const string Origin = "SELECT incarnation FROM commit_offset WHERE id = 1;";
 
     // The system database's journal: every write in order, with a SHA-256 prefix digest per group (docs/decisions/0009).
-    public const string LastSequence = "SELECT coalesce(max(sequence), 0) FROM changes;";
+    // ORDER BY ... LIMIT 1, not max(): Turso reads max() by a scan.
+    public const string LastSequence = "SELECT coalesce((SELECT sequence FROM changes ORDER BY sequence DESC LIMIT 1), 0);";
 
     public const string AppendReplicationChange = """
         INSERT INTO changes (sequence, ordinal, collection, id, version, body)
@@ -223,9 +224,16 @@ internal static class SqliteStatements
     // System database replication (docs/decisions/0009). A snapshot reads live documents in key order, any collection.
     public const string SystemDocumentsFirst = "SELECT collection, id, version, body FROM documents WHERE body IS NOT NULL ORDER BY collection, id LIMIT $limit;";
 
+    // Two bounded seeks: Turso scans the whole index for a row-value comparison or an OR of the two ranges.
     public const string SystemDocumentsAfter = """
-        SELECT collection, id, version, body FROM documents WHERE (collection, id) > ($collection, $id) AND body IS NOT NULL
-        ORDER BY collection, id LIMIT $limit;
+        SELECT * FROM (
+            SELECT collection, id, version, body FROM documents WHERE collection = $collection AND id > $id AND body IS NOT NULL
+            ORDER BY id LIMIT $limit)
+        UNION ALL
+        SELECT * FROM (
+            SELECT collection, id, version, body FROM documents WHERE collection > $collection AND body IS NOT NULL
+            ORDER BY collection, id LIMIT $limit)
+        ORDER BY 1, 2 LIMIT $limit;
         """;
 
     public const string GroupSize = "SELECT count(*) FROM changes WHERE sequence = $sequence;";
@@ -242,7 +250,7 @@ internal static class SqliteStatements
         """;
 
     // The system journal keeps a bounded tail (and a follower only its head), so its head is the last stored digest.
-    public const string SystemLastSequence = "SELECT coalesce(max(sequence), 0) FROM journal_prefixes;";
+    public const string SystemLastSequence = "SELECT coalesce((SELECT sequence FROM journal_prefixes ORDER BY sequence DESC LIMIT 1), 0);";
 
     public const string TruncateChanges = "DELETE FROM changes WHERE sequence <= $floor;";
 

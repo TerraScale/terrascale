@@ -37,11 +37,19 @@ internal sealed partial class SqliteStorageTransaction
         var ids = Command(SqliteStatements.CollectionRangeIds);
         ids.Parameters.AddWithValue("$from", from);
         ids.Parameters.AddWithValue("$to", to);
-        using var reader = ids.ExecuteReader();
-        while (reader.Read())
+        // Read every id before the first write: Turso refuses a write on a connection while one of its reads is open.
+        var documents = new List<(string Collection, string Id)>();
+        using (var reader = ids.ExecuteReader())
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            var (collection, id) = (reader.GetString(0), reader.GetString(1));
+            while (reader.Read())
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                documents.Add((reader.GetString(0), reader.GetString(1)));
+            }
+        }
+
+        foreach (var (collection, id) in documents)
+        {
             Write(offset => CaptureSystem(new DocumentChange(collection, id, offset, null)), cancellationToken);
         }
     }

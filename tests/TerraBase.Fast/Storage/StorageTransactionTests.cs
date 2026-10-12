@@ -57,9 +57,27 @@ public sealed class StorageTransactionTests
                 .IsEqualTo("{\"readOnly\":1}");
         }
 
-        await using var write = await store.BeginTransactionAsync(write: true, CancellationToken.None);
-        await Assert.That(Encoding.UTF8.GetString((await write.GetAsync("items", "a", CancellationToken.None))!.Json.Span))
-            .IsEqualTo("{\"readOnly\":0}");
+        // The read reset its session before pooling it.
+        var reused = ((SqliteStorageEngine)engine).Pool.Rent(store) ?? throw new InvalidOperationException("missing idle session");
+        try
+        {
+            using var flag = reused.Connection.CreateCommand();
+            flag.CommandText = "SELECT query_only FROM pragma_query_only;";
+            await Assert.That(await flag.ExecuteScalarAsync()).IsEqualTo(0L);
+        }
+        finally
+        {
+            store.Return(reused);
+        }
+
+        // Writes run on the store's own writer connection, which is never read-only.
+        var writer = await ((SqliteDatabaseStore)store).WithWriterAsync(session =>
+        {
+            using var flag = session.Connection.CreateCommand();
+            flag.CommandText = "SELECT query_only FROM pragma_query_only;";
+            return flag.ExecuteScalar();
+        }, "a test", CancellationToken.None);
+        await Assert.That(writer).IsEqualTo(0L);
     }
 
     [Test]
@@ -387,7 +405,7 @@ public sealed class StorageTransactionTests
         using var cancelled = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
         var scanned = 0;
         var observing = false;
-        var session = engine.Pool.Rent(store)!;
+        var session = await StorageFixture.RentReaderAsync(engine, store);
         try
         {
             // Cancel from real SQLite row evaluation, after the worker started (not by request timing).
@@ -451,7 +469,7 @@ public sealed class StorageTransactionTests
         // Hold the only worker inside real SQLite row evaluation until released, not by timing.
         using var release = new ManualResetEventSlim();
         var holding = 0;
-        var session = engine.Pool.Rent(store)!;
+        var session = await StorageFixture.RentReaderAsync(engine, store);
         try
         {
             session.Connection.CreateFunction<string, string>("held_body", body =>

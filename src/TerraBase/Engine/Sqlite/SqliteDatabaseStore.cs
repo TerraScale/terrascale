@@ -312,7 +312,7 @@ internal sealed partial class SqliteDatabaseStore(
                 writing = true;
             }
 
-            session = await RentAsync(runner, cancellationToken).ConfigureAwait(false);
+            session = write ? await WriterSessionAsync(cancellationToken).ConfigureAwait(false) : await RentAsync(runner, cancellationToken).ConfigureAwait(false);
             var connection = session.Connection;
             var transaction = await session.ExecuteAsync(runner, () =>
             {
@@ -344,7 +344,15 @@ internal sealed partial class SqliteDatabaseStore(
         {
             try
             {
-                if (session is not null && (beginStarted || !pool.TryReturn(this, session)))
+                if (session is not null && write)
+                {
+                    // An untouched writer stays the store's; one whose BEGIN started is reopened by the next writer.
+                    if (beginStarted)
+                    {
+                        await runner.RunAsync(() => Discard(session), CancellationToken.None).ConfigureAwait(false);
+                    }
+                }
+                else if (session is not null && (beginStarted || !pool.TryReturn(this, session)))
                 {
                     // A never-started BEGIN leaves the session untouched. If it cannot fit back in
                     // the idle pool, retain admission until its worker-owned close has finished.
@@ -410,12 +418,63 @@ internal sealed partial class SqliteDatabaseStore(
         Volatile.Write(ref _writerHolder, writer);
     }
 
+    // Releases _writer. Whoever releases it after the store closed closes the writer connection, so it is closed exactly
+    // once, never under a running writer.
+    private void ReleaseWriter()
+    {
+        try
+        {
+            if (Closed && _writerSession is { } session)
+            {
+                _writerSession = null;
+                pool.Discard(session);
+            }
+        }
+        finally
+        {
+            _writer.Release();
+        }
+    }
+
+    // The only connection that writes this file, ahead of the Turso engine, which aborts the process when two connections
+    // write one file (docs/terrabase/turso-spike.md). The first writer opens it on the write lane, and the store keeps it
+    // until it closes. Only the holder of _writer uses it.
+    private SqliteSession? _writerSession;
+
+    // The writer connection; the caller holds the writer.
+    private async Task<SqliteSession> WriterSessionAsync(CancellationToken cancellationToken)
+    {
+        if (_writerSession is { } open)
+        {
+            return open;
+        }
+
+        pool.OpenNew(this);
+        SqliteSession session;
+        try
+        {
+            session = await SqliteSession.OpenAsync(WriteLane, _connectionString, pragmas, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception error)
+        {
+            pool.OpenFailed();
+            if (Closed && !cancellationToken.IsCancellationRequested)
+            {
+                throw new ObjectDisposedException(GetType().FullName, error);
+            }
+
+            throw;
+        }
+
+        return _writerSession = await WriteLane.RunAsync(() => pool.Adopt(this, session), CancellationToken.None).ConfigureAwait(false);
+    }
+
     /// <summary>Releases what <see cref="BeginTransactionAsync"/> took; called once per transaction.</summary>
     internal void End(bool write, bool ownsAdmission)
     {
         if (write)
         {
-            _writer.Release();
+            ReleaseWriter();
         }
 
         if (ownsAdmission)
@@ -456,16 +515,39 @@ internal sealed partial class SqliteDatabaseStore(
     /// Runs <paramref name="call"/> while no write transaction of this process is open on this database; writers queue
     /// meanwhile. Continuous backup reads the log and checkpoints it under this (TS-633).
     /// </summary>
-    internal async Task<T> WithWritersHeldAsync<T>(Func<Task<T>> call, CancellationToken cancellationToken)
+    internal async Task<T> WithWritersHeldAsync<T>(Func<Task<T>> call, CancellationToken cancellationToken, string holder = "the continuous backup's checkpoint")
     {
-        await AcquireWriterAsync("the continuous backup's checkpoint", cancellationToken).ConfigureAwait(false);
+        await AcquireWriterAsync(holder, cancellationToken).ConfigureAwait(false);
         try
         {
             return await call().ConfigureAwait(false);
         }
         finally
         {
-            _writer.Release();
+            ReleaseWriter();
+        }
+    }
+
+    /// <summary>
+    /// Runs <paramref name="call"/> on the writer connection, on the write lane, while no write transaction is open; for
+    /// work that writes outside a transaction or must see every commit.
+    /// </summary>
+    internal Task<T> WithWriterAsync<T>(Func<SqliteSession, T> call, string holder, CancellationToken cancellationToken) =>
+        WithWritersHeldAsync(() => OnWriterAsync(call, cancellationToken), cancellationToken, holder);
+
+    /// <summary>Runs <paramref name="call"/> on the writer connection; the caller holds the writer (<see cref="WithWritersHeldAsync"/>).</summary>
+    internal async Task<T> OnWriterAsync<T>(Func<SqliteSession, T> call, CancellationToken cancellationToken)
+    {
+        var writer = await WriterSessionAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await writer.ExecuteAsync(WriteLane, () => call(writer), cancellationToken).ConfigureAwait(false);
+        }
+        catch (SqliteException)
+        {
+            // The connection may be left mid-statement: the next writer opens a fresh one.
+            await WriteLane.RunAsync(() => Discard(writer), CancellationToken.None).ConfigureAwait(false);
+            throw;
         }
     }
 
@@ -754,10 +836,25 @@ internal sealed partial class SqliteDatabaseStore(
 
     /// <summary>Takes back a session whose work has ended; the pool keeps it idle or closes it.</summary>
     /// <remarks>Call on an I/O thread: an eviction can checkpoint the WAL of another database.</remarks>
-    internal void Return(SqliteSession session) => pool.Return(this, session);
+    internal void Return(SqliteSession session)
+    {
+        // The writer connection stays the store's; ReleaseWriter closes it once the store closed.
+        if (session != _writerSession)
+        {
+            pool.Return(this, session);
+        }
+    }
 
-    /// <summary>Closes a failed rented session; call only on an I/O worker.</summary>
-    internal void Discard(SqliteSession session) => pool.Discard(session);
+    /// <summary>Closes a failed rented session, or the writer connection; call only on an I/O worker.</summary>
+    internal void Discard(SqliteSession session)
+    {
+        if (session == _writerSession)
+        {
+            _writerSession = null;
+        }
+
+        pool.Discard(session);
+    }
 
     private Task ReturnAsync(SqliteSession session) => io.RunAsync(() => Return(session), CancellationToken.None);
 
@@ -765,7 +862,15 @@ internal sealed partial class SqliteDatabaseStore(
     /// Closes idle sessions and refuses new ones; a rented session is closed when it is returned.
     /// The engine calls this when the database is deleted and at shutdown.
     /// </summary>
-    public void Dispose() => pool.Close(this);
+    public void Dispose()
+    {
+        pool.Close(this);
+        // A writer holding _writer now closes the connection itself when it releases it.
+        if (_writer.Wait(0))
+        {
+            ReleaseWriter();
+        }
+    }
 
     // The caller holds an admission.
     private Task<SqliteSession> RentAsync(CancellationToken cancellationToken) => RentAsync(io, cancellationToken);
