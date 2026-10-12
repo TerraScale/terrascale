@@ -32,7 +32,10 @@ for region in gru sjc fra; do
     curl -fsS --retry 45 --retry-delay 2 --retry-all-errors --max-time 5 -H "fly-force-instance-id: $id" \
       -o /dev/null -w "Backup check $app $region ($id): HTTP %{http_code}\n" "https://$app.fly.dev/backupz"
   fi
-  line="$app $region: live $((SECONDS - start)) s after its deploy started"
+  # Records (and asserts) the commit the region's machine runs: the image tag is the commit SHA.
+  deployed=$(flyctl machine list -a "$app" --json | jq -r --arg id "$id" '.[] | select(.id == $id) | .config.image')
+  [[ $deployed == "$image" ]] || { echo "$app $region ($id) runs $deployed, not $image" >&2; exit 1; }
+  line="$app $region ($id) runs ${image##*:}: live $((SECONDS - start)) s after its deploy started"
   echo "$line"
   if [[ -n ${GITHUB_STEP_SUMMARY:-} ]]; then echo "- $line" >>"$GITHUB_STEP_SUMMARY"; fi
 done
