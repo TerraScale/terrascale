@@ -7,6 +7,7 @@ using TerraBase.Engine.Lattices;
 using TerraBase.Features.Replication.V1;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
+using ZLogger;
 
 namespace TerraBase.Features.Replication;
 
@@ -26,10 +27,13 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
     private readonly Counter<long> _merged;
     private readonly Histogram<double> _delay;
     private readonly IHostApplicationLifetime _lifetime;
+    private readonly ILogger<PeerStreamReceiver> _logger;
 
     public PeerStreamReceiver(
-        IChangeGroupSink sink, IReplicaStates states, AntiEntropy antiEntropy, LocalReplica self, TimeProvider time, IMeterFactory meters, IHostApplicationLifetime lifetime)
+        IChangeGroupSink sink, IReplicaStates states, AntiEntropy antiEntropy, LocalReplica self, TimeProvider time, IMeterFactory meters, IHostApplicationLifetime lifetime,
+        ILogger<PeerStreamReceiver> logger)
     {
+        _logger = logger;
         _sink = sink;
         _states = states;
         _antiEntropy = antiEntropy;
@@ -94,7 +98,19 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
                 if (frame.Refill is { } refill)
                 {
                     // The sender no longer holds this machine's gap: join every bucket that differs from it, then go on from its head.
-                    var refilled = await _antiEntropy.RefillAsync(Tenant(refill.Database), hello.Machine, new Hlc(refill.Horizon), stream.Token).ConfigureAwait(false);
+                    // One database's failing refill answers refused (the sender retries it later) rather than ending the stream,
+                    // which every other database on it shares.
+                    int? refilled;
+                    try
+                    {
+                        refilled = await _antiEntropy.RefillAsync(Tenant(refill.Database), hello.Machine, new Hlc(refill.Horizon), stream.Token).ConfigureAwait(false);
+                    }
+                    catch (Exception error) when (!stream.IsCancellationRequested && error is not RpcException { StatusCode: StatusCode.InvalidArgument })
+                    {
+                        _logger.ZLogWarning(error, $"A refill from machine {hello.Machine:@Peer} failed; it is refused and tried again later");
+                        refilled = null;
+                    }
+
                     if (refilled is not null)
                     {
                         last[Tenant(refill.Database)] = refill.ChangeId;
