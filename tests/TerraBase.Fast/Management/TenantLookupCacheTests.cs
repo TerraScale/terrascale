@@ -40,6 +40,7 @@ public sealed class TenantLookupCacheTests
             {
                 services.AddSingleton<IMemberDirectory>(new FakeMemberStore());
             });
+            await CatalogBootstrap.OpenAsync(gru.Server);
             var tenants = gru.Server.Services.GetRequiredService<ITenantDirectory>();
             var organization = await gru.CreateOrganizationAsync(faker.Company.CompanyName());
             var project = await gru.CreateProjectAsync(organization, faker.Random.AlphaNumeric(12));

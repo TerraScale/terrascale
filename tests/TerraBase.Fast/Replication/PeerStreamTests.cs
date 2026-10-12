@@ -520,6 +520,23 @@ public sealed class PeerStreamTests
                     await machine.StartAsync();
                 }
 
+                // The catalog gates open once each machine pulled from the others (a lone machine is bootstrapped), then the
+                // first machine registers the tenant and the others see it.
+                if (regions.Length == 1)
+                {
+                    await CatalogBootstrap.OpenAsync(cluster._machines[regions[0]].Api.Server);
+                }
+
+                foreach (var machine in cluster._machines.Values)
+                {
+                    await CatalogBootstrap.WaitOpenAsync(machine.Api.Server);
+                }
+
+                foreach (var region in regions)
+                {
+                    await cluster._machines[region].RegisterAsync();
+                }
+
                 return cluster;
             }
             catch
@@ -556,7 +573,6 @@ public sealed class PeerStreamTests
 
         public async Task StartAsync()
         {
-            var first = !File.Exists(Path.Combine(_directory, "_system.db"));
             _api = await ManagementApi.StartAsync(settings =>
             {
                 settings["region"] = Region;
@@ -570,10 +586,6 @@ public sealed class PeerStreamTests
                     services.AddSingleton<IChangeGroupSource>(Source);
                 }
             }, time: cluster.Clock);
-            if (first)
-            {
-                await RegisterAsync();
-            }
         }
 
         public async Task StopAsync()
@@ -829,7 +841,7 @@ public sealed class PeerStreamTests
         }
 
         // The organization, project and database under the cluster's ids, placed in every region of the cluster.
-        private async Task RegisterAsync()
+        public async Task RegisterAsync()
         {
             var database = cluster.Database;
             var commit = JsonSerializer.Serialize(new

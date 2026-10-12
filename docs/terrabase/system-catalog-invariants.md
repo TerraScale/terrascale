@@ -86,30 +86,81 @@ version said a document a machine held is never missing; that holds only without
   databases and projects); entries created or changed after T missing or old; an id removed after T could be created again
   through M, and that creation, newer than the tombstone, would win everywhere. Anti-entropy alone ends that window in
   about 1 to 2 minutes (two differing rounds, 60 s apart), or a peer's later write of a key ends it for that key.
-- **The restore gate (`CatalogGate`, COS DECISION 2026-10-12: fail closed).** Nothing on M can tell a restored file from a
-  current one (a volume snapshot carries every local marker with it), so **every start is unverified**:
-  - **Closed** from the start until M has completed one forced anti-entropy pull of `_system` (every differing bucket, at
-    once) from **every other machine the member directory lists as started**, read successfully after this start (a static
-    cell: the members it lists). A pull joins the peer's whole catalog, so M then holds every entry any listed machine holds.
+- **The restore gate (`CatalogGate`, COS DECISION 2026-10-12: fail closed; tightened after R3's review of `3ffc2713`,
+  #108 comment 6125965915).** Nothing on M can tell a restored file from a current one (a volume snapshot carries every
+  local marker with it), so **every start is unverified**:
+  - **Closed** from the start. **Open** only once M has completed a forced anti-entropy pull of `_system` (every
+    differing bucket, at once) since this start from:
+    - every other machine the member directory lists as started (read successfully after this start), and
+    - at least one machine of **every other region the catalog records** (`cluster_members`: each machine of a cluster
+      records `{region}` under its machine id at start; replicated). This covers a stopped machine that holds the only
+      copy of a revocation or deletion: its region is recorded, so M waits for that region.
+  - **No machine to pull from is unknown, not proof of a current catalog.** Nothing listed, nothing recorded: M stays
+    closed (R3's first-node finding). The only exceptions:
+    - **a single machine by configuration**: no member directory (off Fly), no static members, no other region recorded
+      (dev servers and single-server tests; on Fly the directory is always present); and
+    - **the new-cluster bootstrap** below.
   - **While closed:** every endpoint that authorizes (any endpoint that is not anonymous) answers 503 `catalog_unverified`
     before authentication, so no API key, token, membership or creation is decided from the catalog; the operator's
     `POST /admin/api-keys` answers the same; `/readyz` answers 503 (Fly Proxy routes nothing here); `CatalogConvergence`
-    decides nothing about files or names. Peer gRPC (streams, digests, bucket reads), probes, metrics and status run.
-  - **Unreachable listed machine or a failed directory read:** stays closed, however long; passes retry every second.
-    Never opens on its own.
-  - **Operator override:** `POST /admin/catalog-gate/open` with `{"reason": "…"}` (internal listener only). It opens the
-    gate and records a warning log and a catalog document `machines/<machine>/catalog_gate_overrides/<ULID>` (reason, time,
-    machines not verified). Gauge `terrabase.catalog.verified` is 1 once open.
-  - **Once open** it stays open until the next start; later differences go through streams and anti-entropy as before.
-- **What the gate does not cover:** a machine that is not started (stopped or destroyed) is not waited for, so an entry
-  that reached only such a machine stays missing on M until it starts and its own rounds bring it (its own start is gated
-  in turn). An entry that never left M before the copy was taken is lost everywhere (unreplicated writes). Every start of a
-  machine whose peers are listed but unreachable needs either the peers or the override.
-- **Tests:** `CatalogLatticeTests.A_restored_catalog_serves_nothing_until_it_pulled_from_every_machine_then_refuses_the_revoked_key_removed_member_and_deleted_id`
-  (restored sjc, gru unreachable both ways: sjc's catalog holds all three live, yet readyz, the revoked key, the removed
-  member and a commit creating the deleted id all answer 503; once gru is reachable, sjc pulls and answers 401, 404 and 409.
-  Without the middleware the revoked key answers 200: fails) and
-  `CatalogLatticeTests.An_unreachable_machine_keeps_the_gate_closed_until_an_operator_opens_it_with_a_recorded_reason`.
+    decides nothing about files or names. Peer gRPC (streams, digests, bucket reads), probes, metrics and status run: the
+    other machines' gates pull from a closed machine, so machines restarting together open each other.
+  - **Unreachable listed machine, unreachable recorded region, failed directory read:** closed, however long; passes
+    retry every second. Never opens on its own.
+  - **No unauthenticated override.** `POST /admin/catalog-gate/open` (anonymous on the internal listener, `3ffc2713`) is
+    removed: the private network is not an authorization. The authenticated design is a proposal (below), not code.
+- **New-cluster bootstrap (explicit, validated, audited).** A new cluster's first machine has nothing to pull from, so it
+  stays closed until an operator requests the bootstrap:
+  - **Request:** the file `catalog-bootstrap` in the machine's data directory holding a reason of 1 to 500 bytes, written
+    through `fly ssh` (Fly's authenticated, org-scoped access to the machine), for example
+    `fly ssh console -s -C "sh -c 'printf %s \"new cluster, ticket N\" > <data-dir>/catalog-bootstrap'"`.
+  - **Accepted only when** no other machine is listed, recorded or pulled from, **and** the catalog is genesis: every
+    version of every `_system` state was minted by this machine (it never joined another machine's state) and no
+    `organizations` state (live or deleted) exists. A restored catalog of a real cluster holds other machines' states or
+    organizations, so its bootstrap is refused; an empty peer list or a local marker never opens anything.
+  - **Consumed** by the next pass whether accepted or refused; **recorded** in `catalog_gate_bootstraps/<ULID>`
+    (`machine`, `reason`, `at`, `accepted`, `refused`) and in a warning log.
+  - Not covered: a snapshot of a genesis catalog restored onto a cluster whose other machines are all stopped, with a fresh
+    bootstrap request: it opens an empty catalog, which can recreate an id deleted after the snapshot. Requires an operator
+    to bootstrap something that is not a new cluster.
+- **Availability trade-off (for the user):**
+
+  | Situation | Behaviour | Operator step |
+  | --- | --- | --- |
+  | One machine restarts, the others run | pulls from them, opens in about a second | none |
+  | All machines restart together | each pulls from the others (closed peers still serve the pull), all open | none |
+  | A machine restarts while a whole recorded region is stopped or unreachable | closed until a machine of that region is back | wait, or (proposal) the authenticated override |
+  | A region is removed for good | every later restart elsewhere stays closed: the region is recorded | (proposal) an authenticated "retire region" |
+  | A new cluster's first machine | closed | the bootstrap request |
+  | A single-region production cluster restarts alone | closed: nothing to pull from is unknown | (proposal) the authenticated override |
+
+  Until the authenticated override exists, the last three need either the missing machines back or a code change. This is
+  the cost of not failing open; the current deployment (gru, sjc) restarts without operator steps as long as one machine
+  of each region runs or restarts with it.
+- **What the gate does not cover:** a stopped machine of M's own region (only other regions are recorded as required: a
+  replaced machine's old id must not block its region forever); a machine that joined after the copy was taken and is
+  stopped (the restored copy does not record it); an entry that never left M before the copy (lost everywhere).
+- **Proposal, not code: an authenticated, authorized override and region retirement.**
+  - *Who:* a platform operator of the TerraScale Fly org, never a tenant, never a peer machine.
+  - *Authentication:* the same channel as the bootstrap, `fly ssh` (org membership, WireGuard and SSH certificates issued
+    by Fly), writing a request file `catalog-override` (reason, the machine ids or regions it waives); no network endpoint.
+    If an HTTP path is ever wanted: a ts-auth token carrying a platform-operator role, verified offline like every token,
+    on the internal listener, plus a second operator's approval token (two-person rule).
+  - *Effect:* waives named machines or regions for this start only (the next start is gated again); "retire region"
+    tombstones the region's `cluster_members` records after the same two-person approval.
+  - *Audit:* a replicated catalog record (who, reason, waived, when), a warning log, a counter metric.
+  - *Rate limit:* one request per machine per start; a refused or consumed request needs a new file.
+  - *Enabling:* nothing to switch on; the operator's access is the gate. No credentials are configured by this proposal.
+- **Tests (each with a mutation control that fails on the old behaviour):**
+  `CatalogLatticeTests.A_restored_catalog_serves_nothing_until_it_pulled_from_every_machine_then_refuses_the_revoked_key_removed_member_and_deleted_id`
+  (without the middleware the revoked key answers 200);
+  `A_restored_first_node_with_no_machine_listed_stays_closed_until_it_pulled_from_a_returning_machine` (an empty list
+  opening the gate fails it); `A_restored_node_waits_for_the_region_of_a_stopped_machine_that_holds_the_only_revocation`
+  (ignoring recorded regions opens gru after pulling only from fra, which lacks the revocation);
+  `Machines_restarting_together_pull_from_each_other_and_open_without_an_operator` (gating the peers' gRPC deadlocks
+  them); `No_unauthenticated_call_opens_the_gate_of_a_machine_whose_peer_is_unreachable` (the old endpoint answers 200);
+  `The_bootstrap_opens_only_a_genesis_catalog_on_a_reasoned_request_and_is_recorded` (skipping the genesis check opens a
+  catalog with an organization).
 - **Stale groups are joined (decision, this version):** a stale group (committed 24 h or more before it is read, whole
   states) from a peer can carry an entry M minted after T. R7's rule for client databases drops a stale state of a
   document missing locally that the machine held before (`HeldBefore`), because there it means a collected deletion; on M
