@@ -1,4 +1,4 @@
-# Cost of releasing abandoned Turso statements (#115), before and after (2026-10-12)
+# Cost of releasing abandoned Turso statements (#115) and of not abandoning them (2026-10-12)
 
 #115 makes the thread that owns a connection finalize the native statement Turso.Data.Sqlite 0.8.2 abandons when a
 statement without result columns fails (`SqliteSession.ReleaseAbandonedStatements`: a blocking `GC.Collect()` and
@@ -129,4 +129,184 @@ Columns as in `DrainBench`: variant, failing writes, kind, valid writes/s, write
 | after | 50 % | statement | 78 | 114.1 / 162.9 / 199.0 | 89.3 / 142.0 | 8.9 / 20.8 / 28.4 | 468 | 27.7 | 69 % | 208 | 15 / 21 | 151.8 (151.60) | 530.5 | 0 |
 | after | 10 % | conflict 412 | 440 | 30.8 / 56.3 / 63.6 | 29.4 / 61.0 | 2.4 / 5.6 / 7.1 | 1477 | 35.6 | 89 % | 211 | 15 / 27 | 32.3 (0.00) | 46.2 | 0 |
 | after | 50 % | conflict 412 | 333 | 23.4 / 47.0 / 58.7 | 22.0 / 55.8 | 2.2 / 5.3 / 6.8 | 1598 | 36.0 | 90 % | 211 | 15 / 27 | 33.2 (0.00) | 46.9 | 0 |
+```
+
+## Step 1 and step 2 (COS decision Q-DRAIN-MITIGATION)
+
+Same host, launch, limits (read from the server process in every run, identical to the table above) and method.
+
+- trim `9da71771`: no collection after a stopped read (its reader disposes it), and the abort probe's `BEGIN` on the native
+  handle, disposed when it fails: one forced collection per failing write instead of two.
+- native `3a988d91`: `TursoStatements.Run` runs every statement without result columns on the native handle and disposes
+  it in a `finally`, `TursoTransaction` replaces the provider's transaction: nothing is abandoned, no collection is forced.
+
+Session 2 (before, v1 = `16610428`, trim; 3 interleaved runs, host load 4 to 6), medians:
+
+| failing writes | kind | variant | valid writes/s | write p50 / p95 / p99 ms | read p50 / p95 / p99 ms | reads/s | CPU % of allowed | peak RSS MB | max GC heap / committed MB | GC/s (gen2/s) | GC pause ms/s | unexpected (3 runs) |
+| ---: | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 0 % | none | before | 332 | 40.7 / 83.7 / 99.1 | 3.0 / 8.4 / 12.3 | 1092 | 92 % | 189 | 13 / 28 | 23.6 (0.05) | 34.1 | 0 |
+| 0 % | none | v1 | 335 | 37.3 / 83.8 / 99.2 | 3.0 / 8.4 / 12.3 | 1091 | 92 % | 187 | 13 / 28 | 23.7 (0.05) | 34.1 | 0 |
+| 0 % | none | trim | 339 | 38.6 / 81.2 / 98.1 | 3.0 / 8.3 / 12.5 | 1103 | 92 % | 187 | 13 / 28 | 24.0 (0.05) | 35.0 | 0 |
+| 1 % | statement | before | 448 | 32.7 / 59.1 / 66.6 | 2.4 / 5.6 / 7.3 | 1472 | 89 % | 199 | 15 / 29 | 32.2 (0.00) | 45.0 | 23 |
+| 1 % | statement | v1 | 435 | 32.6 / 58.8 / 70.5 | 2.4 / 5.9 / 11.1 | 1418 | 88 % | 200 | 16 / 31 | 37.0 (7.96) | 77.3 | 0 |
+| 1 % | statement | trim | 442 | 32.6 / 59.5 / 68.5 | 2.4 / 5.8 / 9.0 | 1446 | 88 % | 198 | 15 / 30 | 33.8 (4.03) | 62.5 | 0 |
+| 10 % | statement | before | 387 | 35.4 / 65.8 / 73.8 | 2.4 / 5.8 / 7.6 | 1446 | 89 % | 215 | 16 / 30 | 34.4 (0.00) | 47.7 | 172 |
+| 10 % | statement | v1 | 283 | 48.4 / 80.8 / 97.0 | 2.7 / 12.8 / 16.5 | 992 | 79 % | 212 | 15 / 30 | 74.3 (64.01) | 271.4 | 0 |
+| 10 % | statement | trim | 320 | 42.7 / 71.8 / 85.4 | 2.6 / 10.2 / 13.0 | 1131 | 82 % | 208 | 15 / 29 | 47.5 (35.45) | 204.6 | 0 |
+| 50 % | statement | before | 199 | 45.3 / 68.1 / 85.2 | 2.9 / 6.3 / 8.2 | 1256 | 88 % | 215 | 21 / 34 | 42.6 (0.25) | 57.2 | 246 |
+| 50 % | statement | v1 | 79 | 113.7 / 161.6 / 186.2 | 9.0 / 20.7 / 27.4 | 467 | 69 % | 203 | 15 / 24 | 153.7 (153.34) | 538.3 | 0 |
+| 50 % | statement | trim | 103 | 86.6 / 122.6 / 139.2 | 6.2 / 14.9 / 18.9 | 612 | 71 % | 205 | 15 / 26 | 102.0 (101.83) | 439.6 | 0 |
+| 10 % | conflict 412 | before | 432 | 30.7 / 62.4 / 68.5 | 2.3 / 5.5 / 7.2 | 1520 | 89 % | 215 | 20 / 34 | 32.2 (0.00) | 44.4 | 0 |
+| 10 % | conflict 412 | v1 | 443 | 30.4 / 59.1 / 67.0 | 2.3 / 5.5 / 7.1 | 1509 | 88 % | 205 | 14 / 27 | 32.6 (0.00) | 46.7 | 0 |
+| 10 % | conflict 412 | trim | 434 | 30.6 / 60.7 / 69.0 | 2.3 / 5.4 / 7.0 | 1533 | 89 % | 211 | 14 / 30 | 32.4 (0.00) | 45.4 | 0 |
+| 50 % | conflict 412 | before | 330 | 23.4 / 50.2 / 61.3 | 2.2 / 5.4 / 6.9 | 1574 | 89 % | 215 | 19 / 34 | 32.8 (0.00) | 45.5 | 0 |
+| 50 % | conflict 412 | v1 | 334 | 23.3 / 47.5 / 58.7 | 2.2 / 5.3 / 6.9 | 1593 | 89 % | 206 | 14 / 27 | 33.1 (0.00) | 48.5 | 0 |
+| 50 % | conflict 412 | trim | 337 | 23.1 / 46.4 / 57.6 | 2.2 / 5.4 / 6.9 | 1586 | 89 % | 211 | 14 / 30 | 33.1 (0.00) | 47.1 | 0 |
+
+Session 3 (before, native; 3 interleaved runs, host load 4 to 5), medians:
+
+| failing writes | kind | variant | valid writes/s | write p50 / p95 / p99 ms | read p50 / p95 / p99 ms | reads/s | CPU % of allowed | peak RSS MB | max GC heap / committed MB | GC/s (gen2/s) | GC pause ms/s | unexpected (3 runs) |
+| ---: | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 0 % | none | before | 313 | 50.6 / 84.4 / 97.9 | 3.1 / 8.6 / 12.7 | 1063 | 92 % | 187 | 13 / 28 | 22.7 (0.05) | 32.3 | 0 |
+| 0 % | none | native | 319 | 46.5 / 82.2 / 96.2 | 3.2 / 8.7 / 12.6 | 1049 | 92 % | 186 | 13 / 28 | 21.7 (0.05) | 32.1 | 0 |
+| 1 % | statement | before | 448 | 32.5 / 59.3 / 68.1 | 2.4 / 5.6 / 7.5 | 1476 | 89 % | 198 | 16 / 29 | 32.3 (0.00) | 45.5 | 32 |
+| 1 % | statement | native | 447 | 32.6 / 59.6 / 66.7 | 2.3 / 5.5 / 7.3 | 1493 | 89 % | 197 | 15 / 29 | 31.1 (0.00) | 44.1 | 0 |
+| 10 % | statement | before | 387 | 35.5 / 63.6 / 73.6 | 2.4 / 5.7 / 7.6 | 1452 | 89 % | 214 | 16 / 31 | 34.3 (0.00) | 46.7 | 202 |
+| 10 % | statement | native | 392 | 35.1 / 64.2 / 72.9 | 2.4 / 5.7 / 7.5 | 1456 | 89 % | 214 | 15 / 29 | 33.2 (0.00) | 44.8 | 0 |
+| 50 % | statement | before | 199 | 45.2 / 69.2 / 85.3 | 2.9 / 6.4 / 8.3 | 1265 | 88 % | 212 | 21 / 35 | 42.8 (0.35) | 58.3 | 324 |
+| 50 % | statement | native | 201 | 44.8 / 66.2 / 82.4 | 2.9 / 6.4 / 8.2 | 1249 | 88 % | 214 | 20 / 34 | 41.7 (0.25) | 57.2 | 0 |
+| 10 % | conflict 412 | before | 434 | 30.6 / 61.3 / 68.6 | 2.3 / 5.5 / 7.0 | 1519 | 89 % | 213 | 20 / 35 | 32.1 (0.00) | 44.9 | 0 |
+| 10 % | conflict 412 | native | 435 | 30.7 / 59.6 / 67.9 | 2.3 / 5.5 / 7.1 | 1514 | 89 % | 214 | 19 / 34 | 30.9 (0.00) | 45.1 | 0 |
+| 50 % | conflict 412 | before | 331 | 23.5 / 46.5 / 61.8 | 2.2 / 5.4 / 6.9 | 1583 | 89 % | 213 | 20 / 35 | 32.8 (0.00) | 45.5 | 0 |
+| 50 % | conflict 412 | native | 333 | 23.2 / 47.4 / 59.2 | 2.2 / 5.4 / 7.0 | 1583 | 89 % | 214 | 18 / 34 | 31.4 (0.00) | 46.4 | 0 |
+
+- v1 reproduces session 1 within 1 % (10 %: 283 vs 282 writes/s; 50 %: 79 vs 78).
+- trim: forced gen2 collections 7.96 → 4.03/s (1 %), 64 → 35/s (10 %), 153 → 102/s (50 %); throughput 283 → 320 (10 %),
+  79 → 103 (50 %); still below the broken before.
+- native: the same as before in every mix (throughput, p50/p95/p99, reads, CPU, peak RSS, GC heap, GC count and pause),
+  no forced collections (gen2 0.00/s at 1 % and 10 %), and no wrong answers where before gave 32, 202 and 324.
+
+### Raw rows, sessions 2 and 3
+
+```text
+## run 1 before (host load 4.26 2.79 3.14)
+# before server pid 379473: pid 379473's current affinity list: 2,4; Cpus_allowed_list 2,4; cgroup /user.slice/user-1000.slice/user@1000.service/app.slice/run-p379473-i394890.scope; cpu.max 200000 100000; cpuset.cpus.effective (no such file: controller not enabled here); memory.max 536870912; memory.swap.max max; runtime CPU count 2
+| before | 0 % | none | 306 | 44.2 / 88.0 / 100.3 | - | 3.4 / 9.4 / 13.6 | 973 | 37.3 | 93 % | 189 | 13 / 28 | 21.5 (0.05) | 33.4 | 0 |
+| before | 1 % | statement | 432 | 34.1 / 58.6 / 66.1 | 30.7 / 62.2 | 2.5 / 5.9 / 7.8 | 1394 | 35.8 | 89 % | 200 | 15 / 29 | 30.9 (0.00) | 46.9 | 14 |
+| before | 10 % | statement | 366 | 37.6 / 65.8 / 73.8 | 31.2 / 61.8 | 2.6 / 6.1 / 8.1 | 1352 | 35.6 | 89 % | 219 | 16 / 30 | 32.4 (0.00) | 47.7 | 65 |
+| before | 50 % | statement | 184 | 49.2 / 68.1 / 85.3 | 37.0 / 65.5 | 3.1 / 6.9 / 8.8 | 1167 | 35.5 | 88 % | 217 | 22 / 35 | 39.8 (0.25) | 58.2 | 88 |
+| before | 10 % | conflict 412 | 412 | 32.6 / 58.5 / 67.0 | 31.3 / 66.3 | 2.5 / 5.8 / 7.5 | 1416 | 35.8 | 89 % | 217 | 20 / 35 | 30.4 (0.00) | 47.1 | 0 |
+| before | 50 % | conflict 412 | 317 | 24.6 / 46.1 / 59.6 | 23.4 / 58.3 | 2.4 / 5.7 / 7.3 | 1478 | 36.0 | 89 % | 217 | 20 / 35 | 31.2 (0.00) | 46.8 | 0 |
+## run 1 v1 (host load 6.26 4.21 3.63)
+# v1 server pid 380723: pid 380723's current affinity list: 2,4; Cpus_allowed_list 2,4; cgroup /user.slice/user-1000.slice/user@1000.service/app.slice/run-p380723-i330736.scope; cpu.max 200000 100000; cpuset.cpus.effective (no such file: controller not enabled here); memory.max 536870912; memory.swap.max max; runtime CPU count 2
+| v1 | 0 % | none | 331 | 37.3 / 83.8 / 99.2 | - | 3.0 / 8.4 / 12.3 | 1091 | 37.1 | 92 % | 187 | 12 / 28 | 23.6 (0.05) | 34.0 | 0 |
+| v1 | 1 % | statement | 435 | 32.6 / 58.8 / 70.5 | 37.3 / 72.2 | 2.4 / 5.9 / 11.1 | 1418 | 35.2 | 88 % | 200 | 16 / 34 | 37.0 (7.96) | 76.1 | 0 |
+| v1 | 10 % | statement | 281 | 48.6 / 80.8 / 97.0 | 46.5 / 95.3 | 2.7 / 13.2 / 16.5 | 992 | 31.9 | 79 % | 209 | 15 / 30 | 73.9 (63.71) | 277.2 | 0 |
+| v1 | 50 % | statement | 78 | 114.0 / 161.6 / 188.6 | 91.9 / 147.0 | 9.0 / 21.4 / 29.0 | 460 | 27.5 | 68 % | 202 | 15 / 27 | 150.6 (150.24) | 540.0 | 0 |
+| v1 | 10 % | conflict 412 | 438 | 30.5 / 60.5 / 67.8 | 29.1 / 66.4 | 2.3 / 5.5 / 7.1 | 1509 | 35.6 | 88 % | 202 | 14 / 27 | 32.4 (0.00) | 46.7 | 0 |
+| v1 | 50 % | conflict 412 | 332 | 23.5 / 47.5 / 58.6 | 22.0 / 57.7 | 2.2 / 5.3 / 6.9 | 1601 | 35.9 | 89 % | 203 | 14 / 27 | 33.1 (0.00) | 49.2 | 0 |
+## run 1 trim (host load 4.08 4.17 3.71)
+# trim server pid 381937: pid 381937's current affinity list: 2,4; Cpus_allowed_list 2,4; cgroup /user.slice/user-1000.slice/user@1000.service/app.slice/run-p381937-i395222.scope; cpu.max 200000 100000; cpuset.cpus.effective (no such file: controller not enabled here); memory.max 536870912; memory.swap.max max; runtime CPU count 2
+| trim | 0 % | none | 339 | 38.3 / 80.5 / 92.1 | - | 3.0 / 8.3 / 12.5 | 1103 | 37.0 | 92 % | 186 | 13 / 28 | 24.0 (0.05) | 34.9 | 0 |
+| trim | 1 % | statement | 445 | 32.3 / 59.5 / 69.6 | 34.0 / 74.4 | 2.4 / 5.8 / 9.1 | 1436 | 35.4 | 88 % | 196 | 14 / 30 | 33.8 (4.08) | 62.5 | 0 |
+| trim | 10 % | statement | 320 | 43.3 / 71.5 / 84.0 | 39.4 / 80.2 | 2.6 / 10.2 / 13.0 | 1140 | 32.9 | 82 % | 208 | 15 / 29 | 47.2 (35.42) | 206.5 | 0 |
+| trim | 50 % | statement | 103 | 86.6 / 122.6 / 142.3 | 68.3 / 105.5 | 6.5 / 14.9 / 18.9 | 604 | 28.9 | 71 % | 205 | 15 / 28 | 102.0 (101.83) | 447.8 | 0 |
+| trim | 10 % | conflict 412 | 438 | 30.6 / 58.4 / 65.2 | 29.5 / 64.0 | 2.3 / 5.4 / 7.0 | 1533 | 35.8 | 89 % | 211 | 15 / 34 | 32.5 (0.00) | 45.4 | 0 |
+| trim | 50 % | conflict 412 | 337 | 23.1 / 44.7 / 57.0 | 21.8 / 55.3 | 2.2 / 5.4 / 6.9 | 1586 | 35.8 | 89 % | 211 | 15 / 34 | 33.1 (0.00) | 47.8 | 0 |
+## run 2 before (host load 5.09 4.41 3.85)
+# before server pid 382656: pid 382656's current affinity list: 2,4; Cpus_allowed_list 2,4; cgroup /user.slice/user-1000.slice/user@1000.service/app.slice/run-p382656-i330808.scope; cpu.max 200000 100000; cpuset.cpus.effective (no such file: controller not enabled here); memory.max 536870912; memory.swap.max max; runtime CPU count 2
+| before | 0 % | none | 333 | 40.5 / 82.4 / 94.5 | - | 3.0 / 8.2 / 12.1 | 1105 | 37.0 | 92 % | 189 | 13 / 28 | 23.8 (0.05) | 34.1 | 0 |
+| before | 1 % | statement | 448 | 32.7 / 59.1 / 69.1 | 27.2 / 81.4 | 2.4 / 5.6 / 7.3 | 1489 | 35.8 | 89 % | 199 | 15 / 29 | 32.3 (0.00) | 45.0 | 6 |
+| before | 10 % | statement | 387 | 35.4 / 65.9 / 75.7 | 28.9 / 62.7 | 2.4 / 5.7 / 7.5 | 1471 | 35.6 | 89 % | 213 | 16 / 30 | 34.4 (0.00) | 48.5 | 62 |
+| before | 50 % | statement | 200 | 44.8 / 67.4 / 83.4 | 33.9 / 65.4 | 2.9 / 6.3 / 8.2 | 1258 | 35.4 | 88 % | 215 | 20 / 34 | 43.1 (0.30) | 57.2 | 75 |
+| before | 10 % | conflict 412 | 434 | 30.6 / 62.4 / 68.5 | 29.4 / 68.1 | 2.3 / 5.5 / 7.2 | 1520 | 35.7 | 89 % | 215 | 20 / 34 | 32.2 (0.00) | 44.4 | 0 |
+| before | 50 % | conflict 412 | 334 | 23.2 / 50.2 / 62.7 | 21.8 / 59.0 | 2.2 / 5.4 / 6.9 | 1574 | 35.9 | 89 % | 215 | 19 / 34 | 32.8 (0.00) | 45.5 | 0 |
+## run 2 v1 (host load 4.73 4.47 3.95)
+# v1 server pid 383370: pid 383370's current affinity list: 2,4; Cpus_allowed_list 2,4; cgroup /user.slice/user-1000.slice/user@1000.service/app.slice/run-p383370-i402236.scope; cpu.max 200000 100000; cpuset.cpus.effective (no such file: controller not enabled here); memory.max 536870912; memory.swap.max max; runtime CPU count 2
+| v1 | 0 % | none | 335 | 36.3 / 83.8 / 96.7 | - | 3.0 / 8.4 / 12.4 | 1088 | 37.1 | 92 % | 186 | 13 / 29 | 23.7 (0.05) | 35.1 | 0 |
+| v1 | 1 % | statement | 433 | 32.8 / 59.3 / 69.1 | 38.4 / 72.2 | 2.4 / 5.9 / 11.5 | 1411 | 35.1 | 87 % | 201 | 14 / 30 | 36.8 (7.95) | 79.0 | 0 |
+| v1 | 10 % | statement | 283 | 48.4 / 79.0 / 96.8 | 46.0 / 99.4 | 2.7 / 12.8 / 16.5 | 991 | 32.0 | 79 % | 212 | 16 / 30 | 74.3 (64.01) | 270.8 | 0 |
+| v1 | 50 % | statement | 79 | 110.5 / 161.8 / 184.9 | 90.5 / 134.3 | 9.0 / 20.7 / 26.9 | 467 | 27.7 | 69 % | 203 | 15 / 24 | 156.6 (156.30) | 538.3 | 0 |
+| v1 | 10 % | conflict 412 | 443 | 30.4 / 56.9 / 62.8 | 29.4 / 61.9 | 2.3 / 5.5 / 7.2 | 1508 | 35.7 | 89 % | 205 | 15 / 28 | 32.6 (0.00) | 46.4 | 0 |
+| v1 | 50 % | conflict 412 | 334 | 23.3 / 45.0 / 58.7 | 22.0 / 57.9 | 2.2 / 5.4 / 7.1 | 1584 | 35.8 | 89 % | 206 | 15 / 28 | 33.0 (0.00) | 48.5 | 0 |
+## run 2 trim (host load 3.82 4.21 3.94)
+# trim server pid 384130: pid 384130's current affinity list: 2,4; Cpus_allowed_list 2,4; cgroup /user.slice/user-1000.slice/user@1000.service/app.slice/run-p384130-i386016.scope; cpu.max 200000 100000; cpuset.cpus.effective (no such file: controller not enabled here); memory.max 536870912; memory.swap.max max; runtime CPU count 2
+| trim | 0 % | none | 326 | 42.9 / 81.3 / 100.1 | - | 3.1 / 8.6 / 12.5 | 1076 | 37.1 | 92 % | 189 | 13 / 28 | 23.2 (0.05) | 35.0 | 0 |
+| trim | 1 % | statement | 442 | 32.6 / 58.4 / 67.0 | 34.7 / 63.2 | 2.3 / 5.7 / 8.9 | 1469 | 35.4 | 88 % | 203 | 15 / 34 | 33.9 (4.03) | 63.5 | 0 |
+| trim | 10 % | statement | 322 | 42.3 / 71.8 / 86.0 | 38.8 / 77.8 | 2.6 / 10.2 / 13.0 | 1131 | 32.9 | 82 % | 212 | 15 / 30 | 47.5 (35.56) | 204.6 | 0 |
+| trim | 50 % | statement | 104 | 85.0 / 121.3 / 139.2 | 67.2 / 108.8 | 6.2 / 14.9 / 18.8 | 612 | 28.9 | 71 % | 210 | 15 / 25 | 102.4 (102.15) | 439.6 | 0 |
+| trim | 10 % | conflict 412 | 434 | 30.6 / 61.7 / 69.4 | 29.5 / 67.8 | 2.3 / 5.4 / 7.0 | 1542 | 35.7 | 89 % | 212 | 14 / 30 | 32.4 (0.00) | 45.4 | 0 |
+| trim | 50 % | conflict 412 | 338 | 23.1 / 46.4 / 57.6 | 21.7 / 56.8 | 2.2 / 5.3 / 6.9 | 1580 | 35.9 | 89 % | 212 | 14 / 30 | 33.1 (0.00) | 47.0 | 0 |
+## run 3 before (host load 3.73 3.98 3.89)
+# before server pid 384963: pid 384963's current affinity list: 2,4; Cpus_allowed_list 2,4; cgroup /user.slice/user-1000.slice/user@1000.service/app.slice/run-p384963-i402435.scope; cpu.max 200000 100000; cpuset.cpus.effective (no such file: controller not enabled here); memory.max 536870912; memory.swap.max max; runtime CPU count 2
+| before | 0 % | none | 332 | 40.7 / 83.7 / 99.1 | - | 3.0 / 8.4 / 12.3 | 1092 | 37.1 | 92 % | 185 | 13 / 28 | 23.6 (0.05) | 34.3 | 0 |
+| before | 1 % | statement | 452 | 32.3 / 59.9 / 66.6 | 29.5 / 60.2 | 2.4 / 5.6 / 7.3 | 1472 | 35.7 | 89 % | 198 | 15 / 29 | 32.2 (0.00) | 44.8 | 3 |
+| before | 10 % | statement | 391 | 35.0 / 65.8 / 73.5 | 28.9 / 61.8 | 2.4 / 5.8 / 7.6 | 1446 | 35.5 | 88 % | 215 | 16 / 30 | 34.4 (0.00) | 47.6 | 45 |
+| before | 50 % | statement | 199 | 45.3 / 68.3 / 85.2 | 34.0 / 66.3 | 2.9 / 6.3 / 8.2 | 1256 | 35.3 | 88 % | 215 | 21 / 34 | 42.6 (0.10) | 57.1 | 83 |
+| before | 10 % | conflict 412 | 432 | 30.7 / 63.2 / 68.9 | 29.5 / 68.9 | 2.3 / 5.4 / 7.1 | 1533 | 35.7 | 89 % | 214 | 18 / 33 | 32.2 (0.00) | 43.5 | 0 |
+| before | 50 % | conflict 412 | 330 | 23.4 / 50.3 / 61.3 | 22.1 / 59.3 | 2.2 / 5.3 / 6.9 | 1597 | 35.9 | 89 % | 214 | 18 / 33 | 32.9 (0.00) | 44.6 | 0 |
+## run 3 v1 (host load 4.87 4.32 4.03)
+# v1 server pid 385702: pid 385702's current affinity list: 2,4; Cpus_allowed_list 2,4; cgroup /user.slice/user-1000.slice/user@1000.service/app.slice/run-p385702-i386088.scope; cpu.max 200000 100000; cpuset.cpus.effective (no such file: controller not enabled here); memory.max 536870912; memory.swap.max max; runtime CPU count 2
+| v1 | 0 % | none | 341 | 40.2 / 79.0 / 99.8 | - | 3.0 / 8.5 / 12.3 | 1096 | 37.1 | 92 % | 188 | 13 / 28 | 24.0 (0.05) | 34.1 | 0 |
+| v1 | 1 % | statement | 439 | 32.2 / 58.5 / 70.9 | 37.0 / 64.1 | 2.4 / 5.9 / 10.9 | 1441 | 35.2 | 88 % | 199 | 17 / 31 | 37.2 (8.06) | 77.3 | 0 |
+| v1 | 10 % | statement | 285 | 47.4 / 81.7 / 97.9 | 45.4 / 93.1 | 2.7 / 12.8 / 15.7 | 1001 | 32.0 | 79 % | 212 | 15 / 30 | 75.5 (64.19) | 271.4 | 0 |
+| v1 | 50 % | statement | 79 | 113.7 / 161.2 / 186.2 | 90.1 / 136.7 | 8.5 / 20.6 / 27.4 | 477 | 27.6 | 69 % | 204 | 15 / 24 | 153.7 (153.34) | 530.3 | 0 |
+| v1 | 10 % | conflict 412 | 443 | 30.1 / 59.1 / 67.0 | 28.9 / 64.0 | 2.3 / 5.4 / 7.0 | 1522 | 35.6 | 88 % | 205 | 14 / 27 | 32.8 (0.00) | 47.0 | 0 |
+| v1 | 50 % | conflict 412 | 338 | 22.9 / 49.6 / 60.8 | 21.6 / 58.5 | 2.2 / 5.3 / 6.9 | 1593 | 35.7 | 89 % | 206 | 14 / 27 | 33.3 (0.00) | 48.2 | 0 |
+## run 3 trim (host load 4.00 4.16 4.02)
+# trim server pid 386568: pid 386568's current affinity list: 2,4; Cpus_allowed_list 2,4; cgroup /user.slice/user-1000.slice/user@1000.service/app.slice/run-p386568-i386117.scope; cpu.max 200000 100000; cpuset.cpus.effective (no such file: controller not enabled here); memory.max 536870912; memory.swap.max max; runtime CPU count 2
+| trim | 0 % | none | 339 | 38.6 / 81.2 / 98.1 | - | 3.0 / 8.2 / 11.9 | 1115 | 37.1 | 92 % | 187 | 15 / 28 | 24.1 (0.05) | 35.4 | 0 |
+| trim | 1 % | statement | 439 | 32.7 / 59.8 / 68.5 | 33.9 / 70.2 | 2.4 / 5.8 / 9.0 | 1446 | 35.4 | 88 % | 198 | 15 / 30 | 33.4 (4.03) | 62.4 | 0 |
+| trim | 10 % | statement | 320 | 42.7 / 72.0 / 85.4 | 40.0 / 82.2 | 2.6 / 10.0 / 12.9 | 1128 | 33.0 | 82 % | 208 | 15 / 27 | 48.3 (35.45) | 203.0 | 0 |
+| trim | 50 % | statement | 103 | 86.8 / 122.9 / 137.7 | 68.7 / 101.4 | 6.2 / 14.9 / 19.3 | 617 | 29.0 | 72 % | 201 | 15 / 26 | 101.8 (101.53) | 439.4 | 0 |
+| trim | 10 % | conflict 412 | 429 | 31.0 / 60.7 / 69.0 | 29.8 / 67.0 | 2.3 / 5.5 / 7.2 | 1522 | 35.7 | 89 % | 206 | 14 / 30 | 32.0 (0.00) | 45.3 | 0 |
+| trim | 50 % | conflict 412 | 328 | 23.6 / 49.6 / 61.1 | 22.3 / 59.7 | 2.2 / 5.4 / 6.9 | 1595 | 35.9 | 89 % | 206 | 14 / 30 | 32.7 (0.00) | 47.1 | 0 |
+## run 1 before (host load 3.15 3.68 3.88)
+# before server pid 388511: pid 388511's current affinity list: 2,4; Cpus_allowed_list 2,4; cgroup /user.slice/user-1000.slice/user@1000.service/app.slice/run-p388511-i386201.scope; cpu.max 200000 100000; cpuset.cpus.effective (no such file: controller not enabled here); memory.max 536870912; memory.swap.max max; runtime CPU count 2
+| before | 0 % | none | 291 | 50.9 / 93.4 / 105.8 | - | 3.5 / 9.9 / 14.5 | 929 | 37.4 | 93 % | 183 | 13 / 28 | 20.5 (0.05) | 32.3 | 0 |
+| before | 1 % | statement | 423 | 34.7 / 59.3 / 68.2 | 29.0 / 98.8 | 2.6 / 6.1 / 8.0 | 1345 | 35.8 | 89 % | 194 | 16 / 29 | 30.0 (0.00) | 46.3 | 7 |
+| before | 10 % | statement | 367 | 37.6 / 63.6 / 75.2 | 31.1 / 63.0 | 2.7 / 6.2 / 8.3 | 1324 | 35.7 | 89 % | 215 | 17 / 35 | 32.2 (0.00) | 50.1 | 80 |
+| before | 50 % | statement | 197 | 45.3 / 69.6 / 85.7 | 34.5 / 66.9 | 2.9 / 6.4 / 8.3 | 1265 | 35.3 | 88 % | 211 | 24 / 36 | 42.8 (0.35) | 58.8 | 107 |
+| before | 10 % | conflict 412 | 434 | 30.6 / 61.3 / 69.2 | 29.4 / 65.9 | 2.3 / 5.5 / 7.0 | 1530 | 35.7 | 89 % | 212 | 20 / 35 | 32.3 (0.00) | 44.9 | 0 |
+| before | 50 % | conflict 412 | 336 | 23.2 / 46.5 / 57.4 | 21.8 / 56.5 | 2.2 / 5.4 / 6.9 | 1575 | 35.9 | 89 % | 212 | 20 / 35 | 32.9 (0.00) | 46.5 | 0 |
+## run 1 native (host load 4.58 4.16 4.04)
+# native server pid 389356: pid 389356's current affinity list: 2,4; Cpus_allowed_list 2,4; cgroup /user.slice/user-1000.slice/user@1000.service/app.slice/run-p389356-i402973.scope; cpu.max 200000 100000; cpuset.cpus.effective (no such file: controller not enabled here); memory.max 536870912; memory.swap.max max; runtime CPU count 2
+| native | 0 % | none | 317 | 48.7 / 82.2 / 98.9 | - | 3.2 / 8.7 / 12.8 | 1049 | 37.2 | 92 % | 186 | 13 / 28 | 21.7 (0.05) | 31.5 | 0 |
+| native | 1 % | statement | 447 | 32.8 / 60.0 / 66.7 | 29.5 / 61.7 | 2.3 / 5.5 / 7.3 | 1504 | 35.8 | 89 % | 197 | 15 / 29 | 31.1 (0.00) | 45.6 | 0 |
+| native | 10 % | statement | 393 | 35.1 / 63.0 / 70.5 | 29.3 / 61.3 | 2.4 / 5.7 / 7.5 | 1456 | 35.7 | 89 % | 216 | 15 / 30 | 33.2 (0.00) | 47.1 | 0 |
+| native | 50 % | statement | 201 | 44.5 / 65.6 / 82.4 | 33.7 / 63.5 | 2.9 / 6.4 / 8.2 | 1242 | 35.3 | 88 % | 214 | 22 / 34 | 41.7 (0.25) | 57.2 | 0 |
+| native | 10 % | conflict 412 | 435 | 30.7 / 59.6 / 67.9 | 29.6 / 65.7 | 2.3 / 5.5 / 7.1 | 1514 | 35.7 | 89 % | 214 | 19 / 34 | 30.9 (0.00) | 45.1 | 0 |
+| native | 50 % | conflict 412 | 333 | 23.2 / 44.9 / 57.2 | 22.1 / 54.4 | 2.2 / 5.4 / 7.0 | 1583 | 35.9 | 89 % | 214 | 19 / 34 | 31.4 (0.00) | 46.4 | 0 |
+## run 2 before (host load 5.27 4.55 4.20)
+# before server pid 390221: pid 390221's current affinity list: 2,4; Cpus_allowed_list 2,4; cgroup /user.slice/user-1000.slice/user@1000.service/app.slice/run-p390221-i396280.scope; cpu.max 200000 100000; cpuset.cpus.effective (no such file: controller not enabled here); memory.max 536870912; memory.swap.max max; runtime CPU count 2
+| before | 0 % | none | 313 | 50.6 / 84.4 / 97.9 | - | 3.1 / 8.5 / 12.3 | 1063 | 37.3 | 92 % | 187 | 13 / 28 | 22.7 (0.05) | 32.0 | 0 |
+| before | 1 % | statement | 448 | 32.5 / 59.2 / 68.1 | 27.3 / 61.4 | 2.3 / 5.6 / 7.3 | 1492 | 35.9 | 89 % | 198 | 16 / 29 | 32.4 (0.00) | 43.8 | 5 |
+| before | 10 % | statement | 387 | 35.5 / 62.5 / 71.2 | 29.4 / 63.1 | 2.4 / 5.7 / 7.6 | 1455 | 35.6 | 89 % | 214 | 16 / 30 | 34.3 (0.00) | 46.7 | 62 |
+| before | 50 % | statement | 199 | 45.2 / 69.2 / 85.3 | 34.0 / 67.9 | 2.9 / 6.4 / 8.3 | 1251 | 35.4 | 88 % | 213 | 21 / 35 | 43.1 (0.55) | 58.3 | 90 |
+| before | 10 % | conflict 412 | 430 | 31.0 / 62.0 / 68.6 | 29.7 / 67.1 | 2.3 / 5.4 / 6.9 | 1519 | 35.7 | 89 % | 213 | 20 / 35 | 32.0 (0.00) | 45.4 | 0 |
+| before | 50 % | conflict 412 | 331 | 23.6 / 37.8 / 62.0 | 22.0 / 60.5 | 2.2 / 5.4 / 7.0 | 1583 | 35.8 | 89 % | 213 | 20 / 35 | 32.8 (0.00) | 45.5 | 0 |
+## run 2 native (host load 5.07 4.64 4.27)
+# native server pid 390836: pid 390836's current affinity list: 2,4; Cpus_allowed_list 2,4; cgroup /user.slice/user-1000.slice/user@1000.service/app.slice/run-p390836-i386300.scope; cpu.max 200000 100000; cpuset.cpus.effective (no such file: controller not enabled here); memory.max 536870912; memory.swap.max max; runtime CPU count 2
+| native | 0 % | none | 329 | 46.5 / 80.7 / 94.7 | - | 3.1 / 8.5 / 12.0 | 1077 | 37.1 | 92 % | 186 | 16 / 28 | 22.4 (0.05) | 32.1 | 0 |
+| native | 1 % | statement | 457 | 31.9 / 57.8 / 65.0 | 28.6 / 53.8 | 2.4 / 5.5 / 7.1 | 1491 | 35.8 | 89 % | 197 | 15 / 29 | 31.2 (0.00) | 42.8 | 0 |
+| native | 10 % | statement | 392 | 34.9 / 64.4 / 74.5 | 28.4 / 62.5 | 2.4 / 5.7 / 7.4 | 1465 | 35.7 | 89 % | 213 | 15 / 29 | 33.2 (0.00) | 44.0 | 0 |
+| native | 50 % | statement | 201 | 44.8 / 66.2 / 81.6 | 33.8 / 63.8 | 2.9 / 6.2 / 7.9 | 1272 | 35.4 | 88 % | 211 | 20 / 32 | 42.0 (0.05) | 54.8 | 0 |
+| native | 10 % | conflict 412 | 437 | 30.6 / 59.5 / 66.3 | 29.4 / 64.2 | 2.3 / 5.5 / 7.0 | 1510 | 35.7 | 89 % | 212 | 17 / 32 | 30.9 (0.00) | 44.0 | 0 |
+| native | 50 % | conflict 412 | 336 | 23.2 / 47.4 / 59.2 | 21.7 / 57.3 | 2.2 / 5.3 / 6.9 | 1591 | 36.0 | 89 % | 210 | 17 / 32 | 31.6 (0.00) | 44.9 | 0 |
+## run 3 before (host load 4.63 4.60 4.31)
+# before server pid 391564: pid 391564's current affinity list: 2,4; Cpus_allowed_list 2,4; cgroup /user.slice/user-1000.slice/user@1000.service/app.slice/run-p391564-i331175.scope; cpu.max 200000 100000; cpuset.cpus.effective (no such file: controller not enabled here); memory.max 536870912; memory.swap.max max; runtime CPU count 2
+| before | 0 % | none | 330 | 43.2 / 78.6 / 93.3 | - | 3.1 / 8.6 / 12.7 | 1077 | 37.1 | 92 % | 190 | 13 / 28 | 23.4 (0.05) | 32.8 | 0 |
+| before | 1 % | statement | 449 | 32.5 / 59.8 / 66.3 | 28.4 / 60.7 | 2.4 / 5.6 / 7.5 | 1476 | 35.6 | 89 % | 199 | 15 / 29 | 32.3 (0.00) | 45.5 | 20 |
+| before | 10 % | statement | 392 | 35.1 / 64.4 / 73.6 | 29.1 / 60.9 | 2.4 / 5.7 / 7.6 | 1452 | 35.6 | 89 % | 214 | 16 / 31 | 34.5 (0.00) | 46.2 | 60 |
+| before | 50 % | statement | 199 | 44.9 / 67.8 / 82.8 | 34.3 / 64.9 | 2.9 / 6.3 / 8.1 | 1272 | 35.3 | 88 % | 212 | 21 / 33 | 42.8 (0.05) | 56.9 | 127 |
+| before | 10 % | conflict 412 | 434 | 30.6 / 60.5 / 67.3 | 29.3 / 65.6 | 2.4 / 5.5 / 7.1 | 1501 | 35.7 | 89 % | 213 | 18 / 33 | 32.1 (0.00) | 44.7 | 0 |
+| before | 50 % | conflict 412 | 331 | 23.5 / 48.9 / 61.8 | 22.1 / 59.7 | 2.2 / 5.4 / 6.9 | 1596 | 35.9 | 89 % | 213 | 19 / 33 | 32.8 (0.00) | 45.4 | 0 |
+## run 3 native (host load 4.21 4.50 4.32)
+# native server pid 392705: pid 392705's current affinity list: 2,4; Cpus_allowed_list 2,4; cgroup /user.slice/user-1000.slice/user@1000.service/app.slice/run-p392705-i331210.scope; cpu.max 200000 100000; cpuset.cpus.effective (no such file: controller not enabled here); memory.max 536870912; memory.swap.max max; runtime CPU count 2
+| native | 0 % | none | 319 | 45.2 / 84.5 / 96.2 | - | 3.2 / 8.9 / 12.6 | 1035 | 37.2 | 92 % | 187 | 13 / 28 | 21.6 (0.05) | 33.0 | 0 |
+| native | 1 % | statement | 446 | 32.6 / 59.6 / 67.9 | 26.2 / 67.1 | 2.3 / 5.5 / 7.3 | 1493 | 35.8 | 89 % | 197 | 15 / 29 | 30.8 (0.00) | 44.1 | 0 |
+| native | 10 % | statement | 390 | 35.2 / 64.2 / 72.9 | 28.9 / 63.4 | 2.4 / 5.7 / 7.6 | 1456 | 35.6 | 89 % | 214 | 16 / 29 | 33.1 (0.00) | 44.8 | 0 |
+| native | 50 % | statement | 197 | 45.2 / 69.4 / 86.5 | 34.3 / 66.3 | 2.9 / 6.4 / 8.2 | 1249 | 35.3 | 88 % | 215 | 19 / 34 | 41.3 (0.30) | 58.5 | 0 |
+| native | 10 % | conflict 412 | 427 | 31.3 / 62.8 / 70.1 | 30.0 / 68.4 | 2.3 / 5.5 / 7.2 | 1519 | 35.7 | 89 % | 216 | 19 / 34 | 30.5 (0.00) | 46.3 | 0 |
+| native | 50 % | conflict 412 | 332 | 23.4 / 48.4 / 59.8 | 22.1 / 58.4 | 2.2 / 5.5 / 7.1 | 1550 | 35.8 | 89 % | 216 | 18 / 34 | 31.1 (0.00) | 47.7 | 0 |
 ```
