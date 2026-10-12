@@ -98,10 +98,13 @@ Configuration retains the `TS_AUTH_*` convention, with these changes:
   `http://top1.nearest.of.ts-terrabase.internal:8081`, TerraBase's internal
   listener on Fly's private network, resolved by Fly DNS to the nearest
   TerraBase machine. It needs no credential, so there is no API key, member
-  list, CA or failover setting.
-- **Listeners.** The public API listens on `0.0.0.0:8080` (`TS_AUTH_LISTEN`)
+  list, CA or failover setting. In a PR preview (`FLY_APP_NAME` is
+  `ts-pr-<n>`, in the separate org `terrascale-previews`) the app's one machine
+  runs TerraBase next to ts-auth, so the address is
+  `http://top1.nearest.of.ts-pr-<n>.internal:8081`: that same machine.
+- **Listeners.** The public API listens on `0.0.0.0:8090` (`TS_AUTH_LISTEN`)
   behind Fly Proxy, which terminates TLS. Prometheus `GET /metrics` is served
-  only on a second listener, `0.0.0.0:9091` (`TS_AUTH_METRICS_LISTEN`), which
+  only on a second listener, `0.0.0.0:9092` (`TS_AUTH_METRICS_LISTEN`), which
   answers 404 to anything else; the public listener never serves it. Fly's
   `[[metrics]]` scraper reaches that port over the machine's private IPv4 (a
   6PN-only bind is not scrapable, `docs/fly/spike-1a.md`), and no Fly service

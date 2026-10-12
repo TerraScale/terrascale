@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # PR previews in the Fly org terrascale-previews-515: app ts-pr-<n>, one multi-container machine (TerraBase + ts-auth) with
 # a 1 GB volume, stopped when idle and started by the next request. FLY_API_TOKEN is an org token for terrascale-previews-515.
+# The containers share one network namespace, so each service keeps its own ports: ts-auth at https://ts-pr-<n>.fly.dev
+# (8090), TerraBase's public API at https://ts-pr-<n>.fly.dev:8443 (8080). ts-auth reaches TerraBase's internal listener
+# at top1.nearest.of.ts-pr-<n>.internal:8081, its own machine (App.TerraBaseOrigin).
 #
 #   scripts/fly/preview.sh app <pr>                         create the app, its IPs and volume (before images are pushed)
 #   scripts/fly/preview.sh machine <pr> <terrabase-image> <auth-image>   create or update the machine
@@ -25,21 +28,33 @@ case ${1:-} in
     if [[ $(flyctl volumes list -a "$app" --json | jq length) == 0 ]]; then
       flyctl volumes create data -a "$app" -r gru -s 1 --yes
     fi
+    # Throwaway keys for this preview only, set once so updates keep reading what earlier pushes encrypted.
+    if ! flyctl secrets list -a "$app" --json | jq -e 'any(.[]; .name == "TS_AUTH_MASTER_KEY")' >/dev/null; then
+      flyctl secrets set -a "$app" --stage TS_AUTH_MASTER_KEY="$(openssl rand -base64 32)" \
+        TS_AUTH_AUDIT_SIGNING_KEY="$(openssl rand -base64 32)"
+    fi
     ;;
   machine)
     app=ts-pr-$2 terrabase=$3 auth=$4
     volume=$(flyctl volumes list -a "$app" --json | jq -r '.[0].id')
-    config=$(jq -n --arg terrabase "$terrabase" --arg auth "$auth" --arg volume "$volume" '{
+    config=$(jq -n --arg terrabase "$terrabase" --arg auth "$auth" --arg volume "$volume" --arg app "$app" '{
       guest: {cpu_kind: "shared", cpus: 1, memory_mb: 1024},
       mounts: [{volume: $volume, path: "/data"}],
       containers: [
         {name: "terrabase", image: $terrabase},
-        {name: "ts-auth", image: $auth, depends_on: [{name: "terrabase", condition: "started"}]}
+        {name: "ts-auth", image: $auth, env: {TS_AUTH_PUBLIC_ORIGIN: "https://\($app).fly.dev"},
+          depends_on: [{name: "terrabase", condition: "started"}]}
       ],
-      services: [{
-        protocol: "tcp", internal_port: 8080, autostop: "stop", autostart: true, min_machines_running: 0,
-        ports: [{port: 443, handlers: ["tls", "http"]}, {port: 80, handlers: ["http"], force_https: true}]
-      }]
+      services: [
+        {
+          protocol: "tcp", internal_port: 8090, autostop: "stop", autostart: true, min_machines_running: 0,
+          ports: [{port: 443, handlers: ["tls", "http"]}, {port: 80, handlers: ["http"], force_https: true}]
+        },
+        {
+          protocol: "tcp", internal_port: 8080, autostop: "stop", autostart: true, min_machines_running: 0,
+          ports: [{port: 8443, handlers: ["tls", "http"]}]
+        }
+      ]
     }')
     id=$(api "$machines/apps/$app/machines" | jq -r '.[0].id // empty')
     if [[ -z $id ]]; then

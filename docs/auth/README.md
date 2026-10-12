@@ -187,7 +187,7 @@ Security requirements remain mandatory:
 - Startup retains secret-free diagnostics and the Argon2id reference check;
   an unavailable crypto runtime must stop serving.
 
-Metrics are scraped from `/metrics` on port 9091 (Prometheus, Fly `[[metrics]]`); they never carry exception messages, headers, query strings,
+Metrics are scraped from `/metrics` on port 9092 (Prometheus, Fly `[[metrics]]`); they never carry exception messages, headers, query strings,
 bodies or credentials. See [the current port inventory](csharp-port.md)
 for implementation details and remaining gates.
 
@@ -500,7 +500,7 @@ rotation.
   answered from a background check per process, run every five seconds with a
   two-second deadline. Both JSON bodies include the .NET service `version`;
   readiness omits `region` when unknown. Prometheus `GET /metrics` is served
-  only on the metrics listener (port 9091), never on the public port 8080.
+  only on the metrics listener (port 9092), never on the public port 8090.
 
 ## CI
 
