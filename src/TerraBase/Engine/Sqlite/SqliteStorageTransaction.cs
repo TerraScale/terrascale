@@ -651,6 +651,8 @@ internal sealed partial class SqliteStorageTransaction(
     {
         return await RunAsync(() => WithQueryBudget(() =>
         {
+            // A client count examines the collection's state rows: this transaction's writes need theirs.
+            FlushStates();
             using var command = Uncached(collection);
             command.CommandText = new SqliteQueryCompiler(command.Parameters, Rows(collection)).CompileCount(filter, maxExamined, observation is not null);
             using var reader = command.ExecuteReader();
