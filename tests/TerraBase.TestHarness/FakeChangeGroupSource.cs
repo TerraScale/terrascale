@@ -12,8 +12,9 @@ internal sealed class FakeChangeGroupSource : IChangeGroupSource
 {
     private readonly Lock _gate = new();
     private readonly Dictionary<TenantContext, List<OriginGroup>> _groups = [];
-    private readonly Dictionary<(TenantContext Database, ReplicaId Peer), long> _acked = [];
+    private readonly Dictionary<(TenantContext Database, ReplicaId Peer), long> _ackedBy = [];
     private TaskCompletionSource _changed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private TaskCompletionSource _acked = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     /// <summary>Appends a group of <paramref name="deltas"/> with the next change id, and returns that id.</summary>
     public long Add(TenantContext database, params ChangeDelta[] deltas)
@@ -37,7 +38,7 @@ internal sealed class FakeChangeGroupSource : IChangeGroupSource
     {
         lock (_gate)
         {
-            return _acked.GetValueOrDefault((database, peer));
+            return _ackedBy.GetValueOrDefault((database, peer));
         }
     }
 
@@ -86,12 +87,38 @@ internal sealed class FakeChangeGroupSource : IChangeGroupSource
 
     public ValueTask AckAsync(TenantContext database, ReplicaId peer, long changeId, Hlc stable, CancellationToken cancellationToken)
     {
+        TaskCompletionSource acked;
         lock (_gate)
         {
-            _acked[(database, peer)] = Math.Max(_acked.GetValueOrDefault((database, peer)), changeId);
+            _ackedBy[(database, peer)] = Math.Max(_ackedBy.GetValueOrDefault((database, peer)), changeId);
+            (acked, _acked) = (_acked, new(TaskCreationOptions.RunContinuationsAsynchronously));
         }
 
+        acked.SetResult();
         return ValueTask.CompletedTask;
+    }
+
+    /// <summary>
+    /// Completes once <paramref name="peer"/> has acknowledged <paramref name="changeId"/> or more: the sender records an ack
+    /// only after the peer's commit, so a test that saw the peer apply a group waits here before it reads the ack.
+    /// </summary>
+    public async Task UntilAckedAsync(TenantContext database, ReplicaId peer, long changeId, CancellationToken cancellationToken)
+    {
+        while (true)
+        {
+            Task next;
+            lock (_gate)
+            {
+                if (_ackedBy.GetValueOrDefault((database, peer)) >= changeId)
+                {
+                    return;
+                }
+
+                next = _acked.Task;
+            }
+
+            await next.WaitAsync(cancellationToken);
+        }
     }
 
     public Task ChangedAsync(CancellationToken cancellationToken)
