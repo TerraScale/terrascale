@@ -7,7 +7,12 @@ namespace TerraScale.Authentication.Contracts;
 /// <param name="AuthEpoch">Advancing it invalidates every session and passcode issued before.</param>
 /// <param name="CreatedAt">Creation time.</param>
 /// <param name="PasswordHash">Argon2id PHC string, or <see langword="null"/> when the account has no password.</param>
-public sealed record UserRecord(string Id, string InstanceId, string Email, long AuthEpoch, DateTimeOffset CreatedAt, string? PasswordHash = null);
+/// <param name="PlatformRole">
+/// <c>admin</c> for a TerraScale platform admin of the <c>terrascale</c> instance, who may explore the platform databases
+/// in TerraBase; <see langword="null"/> otherwise. No API sets it: an operator writes it to the user's document through
+/// TerraBase's internal listener (Fly's private network).
+/// </param>
+public sealed record UserRecord(string Id, string InstanceId, string Email, long AuthEpoch, DateTimeOffset CreatedAt, string? PasswordHash = null, string? PlatformRole = null);
 
 /// <summary>A browser session (collection <c>sessions</c>). Only the SHA-256 of its bearer token is stored.</summary>
 /// <param name="InstanceId">The owning instance.</param>

@@ -501,3 +501,14 @@ user, for example a systemd `StateDirectory`: files planted in a shared
 extraction directory would be loaded.
 
 The `slow` job in `.github/workflows/ci.yml` runs the slow suite after pushes to main. It never blocks merges or releases; a failure shows as a failed job on the commit.
+
+## Platform admins
+
+A user of the `terrascale` instance whose stored user document has `"platformRole": "admin"` gets the claim
+`platform_role: admin` in every access token ts-auth issues them (sign-in and refresh read the stored user each time).
+TerraBase's explore API over the platform databases requires it (`docs/terrabase/platform-databases.md`). Any other value,
+or another instance, grants nothing.
+
+No API grants the role. An operator sets or clears the field on the user's document in `platform-auth`
+(collection `users`) through TerraBase's internal listener, which only Fly's private network reaches. Clearing it takes
+effect at the user's next refresh; access tokens already issued keep it until they expire.
