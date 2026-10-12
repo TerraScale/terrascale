@@ -188,13 +188,15 @@ internal sealed partial class SqliteStorageTransaction(
         }, cancellationToken, mutation: true).ConfigureAwait(false);
     }
 
-    public async ValueTask<long> PatchAsync(string collection, string id, ReadOnlyMemory<byte> json, CancellationToken cancellationToken)
+    public async ValueTask<long> PatchAsync(
+        string collection, string id, ReadOnlyMemory<byte> json, IReadOnlyList<FieldOperation> operations, CancellationToken cancellationToken)
     {
-        return await RunAsync(() => Put(collection, id, json, cancellationToken, patch: true), cancellationToken, mutation: true).ConfigureAwait(false);
+        ArgumentNullException.ThrowIfNull(operations);
+        return await RunAsync(() => Put(collection, id, json, cancellationToken, operations), cancellationToken, mutation: true).ConfigureAwait(false);
     }
 
-    // Worker-only, inside a mutation.
-    private long Put(string collection, string id, ReadOnlyMemory<byte> json, CancellationToken cancellationToken, bool patch = false)
+    // Worker-only, inside a mutation. A PATCH writes `patch` to a client document's state; `json` is what it leaves.
+    private long Put(string collection, string id, ReadOnlyMemory<byte> json, CancellationToken cancellationToken, IReadOnlyList<FieldOperation>? patch = null)
     {
         ThrowIfReadOnly();
         var body = Admit(json);
@@ -229,9 +231,14 @@ internal sealed partial class SqliteStorageTransaction(
 
         var (state, at) = Begin(collection, id);
         DocumentState next;
-        using (var parsed = JsonDocument.Parse(body, DocumentState.JsonOptions))
+        if (patch is not null)
         {
-            next = patch ? Patch(state, at, parsed.RootElement) : state.Put(at, parsed.RootElement);
+            next = patch.Aggregate(state, (current, operation) => operation.Apply(current, at));
+        }
+        else
+        {
+            using var parsed = JsonDocument.Parse(body, DocumentState.JsonOptions);
+            next = state.Put(at, parsed.RootElement);
         }
 
         // Reads, uniqueness and shape history see the materialized document: canonical JSON, fields in name order.

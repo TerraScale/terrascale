@@ -1,5 +1,6 @@
 using System.Buffers.Text;
 using System.Net;
+using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
@@ -47,8 +48,8 @@ public sealed class DocumentStateStorageTests
             versions =
             [
                 await write.PutAsync(DocumentApi.Collection, id, """{"n":1,"keep":true}"""u8.ToArray(), CancellationToken.None),
-                await write.PatchAsync(DocumentApi.Collection, id, """{"n":2,"keep":true}"""u8.ToArray(), CancellationToken.None),
-                await write.PatchAsync(DocumentApi.Collection, id, """{"n":2,"keep":true,"m":3}"""u8.ToArray(), CancellationToken.None),
+                await write.PatchAsync(DocumentApi.Collection, id, """{"n":2,"keep":true}"""u8.ToArray(), [Set("n", "2")], CancellationToken.None),
+                await write.PatchAsync(DocumentApi.Collection, id, """{"n":2,"keep":true,"m":3}"""u8.ToArray(), [Set("m", "3")], CancellationToken.None),
             ];
             await write.CommitAsync(CancellationToken.None);
         }
@@ -117,9 +118,18 @@ public sealed class DocumentStateStorageTests
         }
     }
 
-    private static async Task<Stored> ReadAsync(DocumentApi api, string id)
+    private static FieldOperation Set(string field, string json)
     {
-        await using var connection = new SqliteConnection(DocumentApi.ConnectionString(await api.DatabaseFileAsync(), readOnly: true));
+        using var value = JsonDocument.Parse(json);
+        return new FieldOperation(FieldOperationKind.Set, field, value.RootElement.Clone());
+    }
+
+    private static async Task<Stored> ReadAsync(DocumentApi api, string id) => await ReadAsync(await api.DatabaseFileAsync(), id);
+
+    // The state row of document `id` of `items` in the database file at `path`, with its materialized row.
+    internal static async Task<Stored> ReadAsync(string path, string id)
+    {
+        await using var connection = new SqliteConnection(DocumentApi.ConnectionString(path, readOnly: true));
         await connection.OpenAsync();
         await using var read = connection.CreateCommand();
         read.CommandText = """
@@ -141,5 +151,5 @@ public sealed class DocumentStateStorageTests
         return new Stored(state, body, reader.GetInt64(2), reader.GetInt64(3) == 1, reader.GetInt32(4), digest);
     }
 
-    private sealed record Stored(DocumentState State, string? Body, long Stamp, bool Live, int Bucket, UInt128 Digest);
+    internal sealed record Stored(DocumentState State, string? Body, long Stamp, bool Live, int Bucket, UInt128 Digest);
 }

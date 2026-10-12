@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
+using TerraBase.Engine.Lattices;
 using TerraBase.Features.Qos;
 using TerraBase.Tenancy;
 
@@ -376,10 +377,11 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
         public ValueTask<long> GetLastChangeSequenceAsync(CancellationToken cancellationToken) => inner.GetLastChangeSequenceAsync(cancellationToken);
         public ValueTask DisposeAsync() => inner.DisposeAsync();
 
-        public ValueTask<long> PatchAsync(string collection, string id, ReadOnlyMemory<byte> json, CancellationToken cancellationToken)
+        public ValueTask<long> PatchAsync(
+            string collection, string id, ReadOnlyMemory<byte> json, IReadOnlyList<FieldOperation> operations, CancellationToken cancellationToken)
         {
             _intercepted |= hook._intercepts(collection, id, json);
-            return inner.PatchAsync(collection, id, json, cancellationToken);
+            return inner.PatchAsync(collection, id, json, operations, cancellationToken);
         }
 
         public ValueTask<long> PutAsync(string collection, string id, ReadOnlyMemory<byte> json, CancellationToken cancellationToken)

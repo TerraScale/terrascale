@@ -79,7 +79,7 @@ public sealed class DocumentApiTests
             (await api.SendRawAsync(HttpMethod.Patch, api.Document(live), $$"""{"ops":[{"op":"unset","path":"{{deepPath}}"}]}""", Ops),
                 HttpStatusCode.BadRequest, "invalid_patch", "a path has at most 16 segments"),
             (await api.SendRawAsync(HttpMethod.Patch, api.Document(live), """{"ops":[{"op":"inc","path":"/a","by":"x"}]}""", Ops),
-                HttpStatusCode.BadRequest, "invalid_patch", "each op is set or append with value, unset, or inc with a number by"),
+                HttpStatusCode.BadRequest, "invalid_patch", "inc needs a non-zero 64-bit integer by"),
             (tombstone, HttpStatusCode.NotFound, "not_found", "the document does not exist"),
             (stale, HttpStatusCode.PreconditionFailed, "precondition_failed", "the document version does not match"),
         ];
@@ -420,14 +420,13 @@ public sealed class DocumentApiTests
     {
         await using var api = await DocumentApi.StartAsync();
         var id = DocumentApi.NewId();
-        await api.PutAsync(id, new { legacy = 1, total = 0.1, name = "x", tags = SingleTag });
+        await api.PutAsync(id, new { legacy = 1, name = "x", tags = SingleTag });
         const string ops = "application/vnd.terrabase.ops+json";
 
         var patched = await api.SendRawAsync(HttpMethod.Patch, api.Document(id), """
             {"ops":[{"op":"set","path":"/profile/name","value":"Ana"},
                     {"op":"unset","path":"/legacy"},
                     {"op":"unset","path":"/missing/deeper"},
-                    {"op":"inc","path":"/total","by":0.2},
                     {"op":"inc","path":"/count","by":2},
                     {"op":"append","path":"/tags","value":"b"},
                     {"op":"append","path":"/fresh","value":{"k":1}},
@@ -468,8 +467,6 @@ public sealed class DocumentApiTests
         await Assert.That(document.GetProperty("profile").GetProperty("name").GetString()).IsEqualTo("Ana");
         await Assert.That(document.TryGetProperty("legacy", out _)).IsFalse();
         await Assert.That(document.TryGetProperty("missing", out _)).IsFalse();
-        // Exact decimal arithmetic: 0.1 + 0.2 is 0.3, not 0.30000000000000004.
-        await Assert.That(document.GetProperty("total").GetRawText()).IsEqualTo("0.3");
         await Assert.That(document.GetProperty("count").GetInt32()).IsEqualTo(2);
         await Assert.That(document.GetProperty("tags").GetRawText()).IsEqualTo("""["a","b"]""");
         await Assert.That(document.GetProperty("fresh").GetRawText()).IsEqualTo("""[{"k":1}]""");
@@ -480,8 +477,9 @@ public sealed class DocumentApiTests
         await Assert.That((unsetThroughScalar.Status, unsetThroughScalar.Code)).IsEqualTo((HttpStatusCode.Conflict, "patch_conflict"));
         await Assert.That((unsetThroughNull.Status, unsetThroughNull.Code)).IsEqualTo((HttpStatusCode.Conflict, "patch_conflict"));
         await Assert.That((unsetThroughArray.Status, unsetThroughArray.Code)).IsEqualTo((HttpStatusCode.Conflict, "patch_conflict"));
-        await Assert.That((outOfRange.Status, outOfRange.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_request"));
-        await Assert.That((chainedInc.Status, chainedInc.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_request"));
+        // inc is integer-only: a by or a stored value that is not a 64-bit integer is refused.
+        await Assert.That((outOfRange.Status, outOfRange.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_patch"));
+        await Assert.That((chainedInc.Status, chainedInc.Code)).IsEqualTo((HttpStatusCode.Conflict, "patch_conflict"));
         await Assert.That((surrogateValue.Status, surrogateValue.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_patch"));
         await Assert.That((surrogateMerge.Status, surrogateMerge.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_patch"));
         await Assert.That((nullOp.Status, nullOp.Code)).IsEqualTo((HttpStatusCode.BadRequest, "invalid_patch"));
@@ -498,28 +496,25 @@ public sealed class DocumentApiTests
         await Assert.That(after.Version).IsEqualTo(patched.Version);
     }
 
-    // (stored number, by, exact sum as stored).
-    private static readonly (string Start, string By, string Expected)[] IncCases =
+    // (stored value or absent, by, integer sum as stored).
+    private static readonly (string? Start, string By, string Expected)[] IncCases =
     [
-        ("1", "1e-29", "1.00000000000000000000000000001"),
-        ("12345678901234567890123456789012345", "1", "12345678901234567890123456789012346"),
-        ("0.1", "0.2", "0.3"),
-        ("2.5", "-2.5", "0"),
-        ("1e3", "1", "1001"),
-        ("-1.50", "0.25", "-1.25"),
-        ("0.1234567890123456789012345678901234567890", "1", "1.123456789012345678901234567890123456789"),
-        ("1e300", "1e300", "2e300"),
+        (null, "3", "3"),
+        ("1", "1", "2"),
+        ("2", "-5", "-3"),
+        ("-9223372036854775807", "-1", "-9223372036854775808"),
+        ("9223372036854775806", "1", "9223372036854775807"),
     ];
 
     [Test]
-    public async Task Inc_adds_exactly()
+    public async Task Inc_adds_64_bit_integers()
     {
         await using var api = await DocumentApi.StartAsync();
         var mismatches = new List<string>();
         foreach (var (start, by, expected) in IncCases)
         {
             var id = DocumentApi.NewId();
-            await api.SendRawAsync(HttpMethod.Put, api.Document(id), $$"""{"n":{{start}}}""", "application/json");
+            await api.SendRawAsync(HttpMethod.Put, api.Document(id), start is null ? "{}" : $$"""{"n":{{start}}}""", "application/json");
             var patched = await api.SendRawAsync(
                 HttpMethod.Patch, api.Document(id), $$"""{"ops":[{"op":"inc","path":"/n","by":{{by}}}]}""", "application/vnd.terrabase.ops+json");
             var actual = (await api.GetAsync(id)).Json.GetProperty("document").GetProperty("n").GetRawText();

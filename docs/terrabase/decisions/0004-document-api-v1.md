@@ -54,8 +54,8 @@ and aliases escaped slash spellings before route values are exposed. See [the ID
    decision**: keep the label, return FULL-synced commits for this profile, or add a profile value.
 4. Number comparisons in queries use SQLite's 64-bit integer and double arithmetic, not exact
    decimals: integers outside the signed 64-bit range and decimals with more than about 15
-   significant digits may compare inexactly. Patch `inc` is exact (arbitrary-precision decimal,
-   result within the 128-digit document limit). Documents, patches and queries validate the decimal
+   significant digits may compare inexactly. Patch `inc` takes and keeps signed 64-bit integers
+   (it is a replicated counter, multi-region-replication.md section 13). Documents, patches and queries validate the decimal
    text before arithmetic: nonzero magnitudes below `1e-307` or at least `1e308` are rejected,
    including underflow and subnormal values. This is narrower than the named JSON contract's
    normalized scale range of ±1024.

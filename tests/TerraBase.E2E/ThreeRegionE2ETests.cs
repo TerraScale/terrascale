@@ -211,5 +211,5 @@ public sealed class ThreeRegionE2ETests
     internal static JsonObject Synthetic(Faker faker) => new() { ["value"] = faker.Lorem.Sentence(), ["count"] = faker.Random.Int(0, 1_000_000) };
 
     private static JsonObject Op(string op, string field, JsonNode value) =>
-        new() { ["op"] = op, ["field"] = field, [op == "inc" ? "by" : "value"] = value };
+        new() { ["op"] = op, ["path"] = "/" + field, [op == "inc" ? "by" : "value"] = value };
 }

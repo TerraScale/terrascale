@@ -2,6 +2,7 @@ using System.Buffers;
 using System.Diagnostics;
 using System.Globalization;
 using System.Text;
+using System.Text.Json;
 using System.Web;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.WebUtilities;
@@ -273,7 +274,19 @@ internal static class DocumentRoute
         var result = written.Results[0];
         var version = result.ETag!;
         ETags.Set(context, version);
-        return answer(new WriteBody(key.Id, version, Decimal(written.Offset), Durability), result.Created);
+        return answer(new WriteBody(key.Id, version, Decimal(written.Offset), Durability, Json(result.Document)), result.Created);
+    }
+
+    /// <summary>A stored document as a response value, or null when the operation returns none.</summary>
+    public static JsonElement? Json(ReadOnlyMemory<byte>? document)
+    {
+        if (document is not { } json)
+        {
+            return null;
+        }
+
+        using var parsed = JsonDocument.Parse(json, RequestJson.StoredDocumentOptions);
+        return parsed.RootElement.Clone();
     }
 
     public static string Decimal(long value) => value.ToString(CultureInfo.InvariantCulture);

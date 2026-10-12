@@ -10,7 +10,9 @@ internal static class Gaps
 {
     // R2a-1 (#48) deleted the old replication; nothing crosses regions, locally or on Fly, until peer streams land.
     private const string Streams = "peer streams (R4a): nothing replicates between R2a-1 and R4a";
-    private const string Counters = "counters and sets (R5) over peer streams (R4a)";
+    // R5 landed the counter and set ops; Fast proves they converge when three nodes' states join
+    // (CounterSetApiTests). Across regions they wait on the streams.
+    private const string Counters = "counters and sets over peer streams (R4a)";
 
     private static readonly Dictionary<string, string> Waiting = new(StringComparer.Ordinal)
     {
@@ -28,7 +30,7 @@ internal static class Gaps
         ["E12"] = "the catalog as a lattice database (R10a)",
         ["E13"] = "home region and live move (R11)",
         ["E14"] = "garbage collection (R7) over peer streams (R4a)",
-        ["E15"] = "counters and sets (R5) and the changes feed (R8)",
+        ["E15"] = "the changes feed (R8) over peer streams (R4a)",
 
         // ThreeRegionE2ETests.
         ["pair"] = Streams,

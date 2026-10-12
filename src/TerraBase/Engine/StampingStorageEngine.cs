@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using TerraBase.Engine.Lattices;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Engine;
@@ -252,8 +253,9 @@ internal sealed class StampingStorageEngine(IStorageEngine inner, ISystemReplica
         public ValueTask<long> PutAsync(string collection, string id, ReadOnlyMemory<byte> json, CancellationToken cancellationToken) =>
             WriteAsync(collection, id, () => inner.PutAsync(collection, id, json, cancellationToken), cancellationToken);
 
-        public ValueTask<long> PatchAsync(string collection, string id, ReadOnlyMemory<byte> json, CancellationToken cancellationToken) =>
-            WriteAsync(collection, id, () => inner.PatchAsync(collection, id, json, cancellationToken), cancellationToken);
+        public ValueTask<long> PatchAsync(
+            string collection, string id, ReadOnlyMemory<byte> json, IReadOnlyList<FieldOperation> operations, CancellationToken cancellationToken) =>
+            WriteAsync(collection, id, () => inner.PatchAsync(collection, id, json, operations, cancellationToken), cancellationToken);
 
         public ValueTask<bool> DeleteAsync(string collection, string id, CancellationToken cancellationToken) =>
             WriteAsync(collection, id, () => inner.DeleteAsync(collection, id, cancellationToken), cancellationToken);
