@@ -2,12 +2,11 @@ using System.Security.Cryptography;
 using System.Text;
 using TerraBase.Engine;
 using TerraBase.Errors;
-using TerraBase.Features.Replication;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Management.Schema;
 
-internal sealed class UniqueSchemaService(IStorageEngine engine, IReplicationWait replication) : IUniqueSchemaService
+internal sealed class UniqueSchemaService(IStorageEngine engine) : IUniqueSchemaService
 {
     public async ValueTask<DeclareUniqueSchemaResult> DeclareAsync(
         TenantContext database, string collection, UniqueSchemaRequest request, CancellationToken cancellationToken)
@@ -41,7 +40,6 @@ internal sealed class UniqueSchemaService(IStorageEngine engine, IReplicationWai
             }
         }
 
-        await replication.WaitAsync(database, cancellationToken).ConfigureAwait(false);
         return new UniqueSchema(constraints);
     }
 

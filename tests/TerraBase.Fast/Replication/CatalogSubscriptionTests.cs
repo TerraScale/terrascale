@@ -39,7 +39,6 @@ public sealed class CatalogSubscriptionTests
         var credentials = Path.Combine(primary.Server.DataDirectory, "user.creds");
         await File.WriteAllTextAsync(credentials,
             "-----BEGIN NATS USER JWT-----\neyJ0.e30.x\n------END NATS USER JWT------\n-----BEGIN USER NKEY SEED-----\nSUAEXAMPLE\n------END USER NKEY SEED------\n", deadline.Token);
-        var network = new FakeRegionNetwork();
         var creations = 0;
         await using var follower = await TerraBaseTestServer.StartAsync(settings =>
         {
@@ -49,11 +48,9 @@ public sealed class CatalogSubscriptionTests
             settings["region"] = "sfo-1";
             settings["node-name"] = "subscription-follower";
             settings["catalog-primary"] = primary.Server.PeerAddress!.ToString();
-            settings["wan-regions"] = "gru-1=gru,sfo-1=sfo";
         }, services =>
         {
             primary.Issuer.Route(services);
-            services.AddSingleton(network.Join("sfo"));
             services.AddSingleton<IMemberDirectory>(new FakeMemberStore());
             services.AddSingleton<DatabaseLifecycleCheckpoint>((step, tenant) =>
             {
@@ -133,7 +130,6 @@ public sealed class CatalogSubscriptionTests
         await File.WriteAllTextAsync(credentials,
             "-----BEGIN NATS USER JWT-----\neyJ0.e30.x\n------END NATS USER JWT------\n-----BEGIN USER NKEY SEED-----\nSUAEXAMPLE\n------END USER NKEY SEED------\n", deadline.Token);
         var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
-        var network = new FakeRegionNetwork();
         await using var follower = await TerraBaseTestServer.StartAsync(settings =>
         {
             peers.Apply(settings);
@@ -142,12 +138,10 @@ public sealed class CatalogSubscriptionTests
             settings["region"] = "sfo-1";
             settings["node-name"] = "subscription-follower";
             settings["catalog-primary"] = primary.Server.PeerAddress!.ToString();
-            settings["wan-regions"] = "gru-1=gru,sfo-1=sfo";
         }, services =>
         {
             primary.Issuer.Route(services);
             services.AddSingleton<TimeProvider>(clock);
-            services.AddSingleton(network.Join("sfo"));
             services.AddSingleton<IMemberDirectory>(new FakeMemberStore());
         });
         await TerraBaseTestServer.EventuallyAsync(async token =>

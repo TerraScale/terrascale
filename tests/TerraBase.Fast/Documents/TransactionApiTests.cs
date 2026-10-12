@@ -240,39 +240,6 @@ public sealed class TransactionApiTests
     }
 
     [Test]
-    public async Task Captured_change_bytes_return_an_indexed_503_and_roll_back_the_transaction()
-    {
-        await using var api = await DocumentApi.StartAsync();
-        var ids = Enumerable.Range(0, 7).Select(_ => DocumentApi.NewId()).ToArray();
-        var document = "{\"padding\":\"" + new string('x', (1024 * 1024) - "{\"padding\":\"\"}".Length) + "\"}";
-        ApiResponse? last = null;
-        string? firstVersion = null;
-        foreach (var id in ids)
-        {
-            last = await api.SendRawAsync(HttpMethod.Put, api.Document(id), document, "application/json");
-            last.Status.ShouldBe(HttpStatusCode.Created);
-            firstVersion ??= last.Version;
-        }
-
-        // Two 1 MiB documents plus their collection names and ids exceed capture's 2 MiB limit,
-        // before seven documents can reach the separate 7 MiB storage framing limit.
-        var failed = await api.TransactAsync([.. ids.Select(id => new { op = "patch", collection = "items", id, merge = new { } })]);
-        var unchanged = await api.GetAsync(ids[0]);
-        var next = await api.PutAsync(DocumentApi.NewId(), new { });
-
-        await Assert.That((failed.Status, failed.Code, failed.Op)).IsEqualTo((HttpStatusCode.ServiceUnavailable, "capacity", (int?)1));
-        await Assert.That(unchanged.Status).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(unchanged.Version).IsEqualTo(firstVersion);
-        await Assert.That(unchanged.Json.GetProperty("document").GetRawText()).IsEqualTo(document);
-        await Assert.That(Offset(next)).IsEqualTo(Offset(last!) + 1);
-
-        var bounded = await api.TransactAsync(new { op = "patch", collection = "items", id = ids[0], merge = new { } });
-        await Assert.That(bounded.Status).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(Offset(bounded)).IsEqualTo(Offset(next) + 1);
-        await Assert.That((await api.GetAsync(ids[0])).Version).IsEqualTo(bounded.Json.GetProperty("results")[0].GetProperty("version").GetString());
-    }
-
-    [Test]
     public async Task Every_transaction_failure_names_its_status_code_message_and_operation()
     {
         await using var api = await DocumentApi.StartAsync();
@@ -382,11 +349,6 @@ public sealed class TransactionApiTests
         {
             return $$"""{"op":"put","collection":"{{collection}}","id":"{{id}}","document":{{document}}}""";
         }
-        var large = "{\"padding\":\"" + new string('x', (1024 * 1024) - "{\"padding\":\"\"}".Length) + "\"}";
-
-        // Two 1 MiB documents exceed capture's 2 MiB inside one run; the unknown collection after them is never reached.
-        var capacity = await api.SendRawAsync(HttpMethod.Post, api.Transactions,
-            Ops(Put(existing, large), Put(first, large), Put(second, "{}", "nope")), "application/json");
         var unknown = await api.SendRawAsync(HttpMethod.Post, api.Transactions,
             Ops(Put(first, "{}"), Put(existing, """{"n":2}"""), Put(second, "{}", "nope")), "application/json");
         var invalid = await api.SendRawAsync(HttpMethod.Post, api.Transactions,
@@ -398,7 +360,6 @@ public sealed class TransactionApiTests
         var absent = await api.GetAsync(first);
         var next = await api.PutAsync(DocumentApi.NewId(), new { });
 
-        await Assert.That((capacity.Status, capacity.Code, capacity.Op)).IsEqualTo((HttpStatusCode.ServiceUnavailable, "capacity", (int?)1));
         await Assert.That((unknown.Status, unknown.Code, unknown.Op)).IsEqualTo((HttpStatusCode.NotFound, "unknown_collection", (int?)2));
         await Assert.That((invalid.Status, invalid.Message, invalid.Op))
             .IsEqualTo((HttpStatusCode.BadRequest, "id must be 1 to 256 characters without control characters", (int?)2));

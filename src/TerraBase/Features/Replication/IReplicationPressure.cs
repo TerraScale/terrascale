@@ -10,3 +10,9 @@ public interface IReplicationPressure
     /// </summary>
     long? SenderDurableLagSeq { get; }
 }
+
+/// <summary>A node that sends to no peer has no lag.</summary>
+internal sealed class NoReplicationPressure : IReplicationPressure
+{
+    public long? SenderDurableLagSeq => 0;
+}

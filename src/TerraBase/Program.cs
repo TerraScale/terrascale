@@ -5,7 +5,6 @@ using TerraBase.Engine.Cluster;
 using TerraBase.Features.ApiKeys;
 using TerraBase.Features.ApiReference;
 using TerraBase.Features.Backup;
-using TerraBase.Features.CrossRegion;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Health;
 using TerraBase.Features.Management;
@@ -95,7 +94,6 @@ builder.Services.AddTerraBaseHealth();
 builder.Services.AddTerraBasePressure();
 builder.Services.AddTerraBaseStats();
 builder.AddTerraBaseReplication();
-builder.Services.AddTerraBaseCrossRegion();
 
 try
 {
@@ -119,7 +117,6 @@ try
     app.UseTerraBaseLegacyRoutes();
     app.UseRouting();
     app.UseTerraBaseListeners();
-    app.UseTerraBaseAntiEntropyResponses();
     app.UseTerraBaseQosMemory();
     app.UseTerraBaseQueryShapeAdmission();
     app.UseAuthentication();

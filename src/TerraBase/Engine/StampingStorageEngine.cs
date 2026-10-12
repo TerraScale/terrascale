@@ -6,7 +6,7 @@ namespace TerraBase.Engine;
 
 /// <summary>
 /// Wraps any <see cref="IStorageEngine"/> and moves <see cref="IWriteStamps"/> on every write that goes
-/// through it: client writes, Management, and replication apply alike.
+/// through it: client writes and Management alike.
 /// </summary>
 /// <remarks>
 /// ponytail: stamps live in fixed stripes, so unrelated documents or collections that share a stripe
@@ -34,13 +34,6 @@ internal sealed class StampingStorageEngine(IStorageEngine inner, ISystemReplica
         inner.RefreshStoragePressureAsync(cancellationToken);
 
     public bool SystemDatabaseExists => inner.SystemDatabaseExists;
-
-    // Subscribers receive the inner store: notifications only lead to reads, which need no stamps.
-    public event EventHandler<ChangeGroupCommitted>? ChangesCommitted
-    {
-        add => inner.ChangesCommitted += value;
-        remove => inner.ChangesCommitted -= value;
-    }
 
     public event EventHandler<IDatabaseStore>? DatabaseDeleted
     {
@@ -433,34 +426,6 @@ internal sealed class StampingStorageEngine(IStorageEngine inner, ISystemReplica
 
         public ValueTask<long> GetLastChangeSequenceAsync(CancellationToken cancellationToken) =>
             RunAsync(() => inner.GetLastChangeSequenceAsync(cancellationToken), cancellationToken);
-
-        public ValueTask<CapturedGroup?> ReadChangesAsync(long sequence, CancellationToken cancellationToken) =>
-            RunAsync(() => inner.ReadChangesAsync(sequence, cancellationToken), cancellationToken);
-
-        public ValueTask<ReplicationStatePage> ReadReplicationStateAsync(string? afterCollection, string? afterId, CancellationToken cancellationToken) =>
-            RunAsync(() => inner.ReadReplicationStateAsync(afterCollection, afterId, cancellationToken), cancellationToken);
-
-        public ValueTask<bool> ApplyAsync(DocumentDelta change, CancellationToken cancellationToken)
-        {
-            ArgumentNullException.ThrowIfNull(change);
-            if (change.Collection is DocumentDelta.Collections or DocumentDelta.Indexes or DocumentDelta.Unique)
-            {
-                return WriteCollectionAsync(() => inner.ApplyAsync(change, cancellationToken), cancellationToken);
-            }
-
-            // A replicated delta may also create its collection; both stripes move like a local write.
-            return WriteAsync(change.Collection, change.Id, () => inner.ApplyAsync(change, cancellationToken), cancellationToken);
-        }
-
-        public ValueTask<long> GetAppliedSequenceAsync(ReadOnlyMemory<byte> origin, CancellationToken cancellationToken) =>
-            RunAsync(() => inner.GetAppliedSequenceAsync(origin, cancellationToken), cancellationToken);
-
-        public async ValueTask SetAppliedSequenceAsync(ReadOnlyMemory<byte> origin, long sequence, CancellationToken cancellationToken) =>
-            await RunAsync(async () =>
-            {
-                await inner.SetAppliedSequenceAsync(origin, sequence, cancellationToken).ConfigureAwait(false);
-                return true;
-            }, cancellationToken, mutation: true).ConfigureAwait(false);
 
         public ValueTask DisposeAsync()
         {

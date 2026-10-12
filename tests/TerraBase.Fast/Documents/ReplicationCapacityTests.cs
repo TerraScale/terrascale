@@ -1,59 +1,11 @@
 using System.Net;
-using Bogus;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
-using TerraBase.Testing;
 
 namespace TerraBase.Fast.Documents;
 
 public sealed class ReplicationCapacityTests
 {
-    [Test]
-    public async Task Change_content_admission_reports_the_failing_operation_and_rolls_back()
-    {
-        await using var api = await DocumentApi.StartAsync();
-        var ids = Enumerable.Range(0, 3).Select(_ => DocumentApi.NewId()).ToArray();
-        foreach (var id in ids)
-        {
-            (await api.PutAsync(id, new { n = 0 })).Status.ShouldBe(HttpStatusCode.Created);
-        }
-
-        // Each body grows to about 800 KiB in the file, not over HTTP: a multi-megabyte upload can stall for 20 s on
-        // loopback. A small patch captures its whole document, so the third patch passes the 2 MiB of change content.
-        var tenant = await api.TenantOfAsync();
-        var database = new ManagedDatabaseRef(tenant.OrganizationId, tenant.ProjectId!, tenant.DatabaseId!, DocumentApi.Database);
-        var body = $$"""{"n":0,"text":"{{new Faker().Random.String2(800 * 1024, "abcdef")}}"}""";
-        foreach (var id in ids)
-        {
-            var stored = await ManagementApi.ExecuteStoredAsync(
-                api.Server.DataDirectory, database, "UPDATE documents SET body = $body WHERE collection = $collection AND id = $id;",
-                ("$body", body), ("$collection", DocumentApi.Collection), ("$id", id));
-            await Assert.That(stored).IsEqualTo(1);
-        }
-
-        // The version covers the body, so read it after the body changed.
-        var versions = new List<string>();
-        foreach (var id in ids)
-        {
-            versions.Add((await api.GetAsync(id)).Version);
-        }
-
-        var operations = ids.Select(id => (object)new { op = "patch", collection = "items", id, merge = new { n = 1 } }).ToArray();
-        var result = await api.TransactAsync(operations);
-
-        await Assert.That((result.Status, result.Code, result.Op)).IsEqualTo((HttpStatusCode.ServiceUnavailable, "capacity", (int?)2));
-        for (var i = 0; i < ids.Length; i++)
-        {
-            var current = await api.GetAsync(ids[i]);
-            await Assert.That((current.Status, current.Version)).IsEqualTo((HttpStatusCode.OK, versions[i]));
-        }
-
-        // Group 1 created the collection.
-        await AssertStateAsync(api, 3, 4);
-        (await api.PutAsync(DocumentApi.NewId(), new { n = 1 })).Status.ShouldBe(HttpStatusCode.Created);
-        await AssertStateAsync(api, 4, 5);
-    }
-
     [Test]
     public async Task A_collection_drop_exceeding_capture_count_fails_atomically_with_capacity()
     {
@@ -67,12 +19,12 @@ public sealed class ReplicationCapacityTests
         await Assert.That((dropped.Status, dropped.Code, dropped.Op)).IsEqualTo((HttpStatusCode.ServiceUnavailable, "capacity", (int?)null));
         await Assert.That((await api.SendAsync(HttpMethod.Get, $"{api.Collections}/items")).Status).IsEqualTo(HttpStatusCode.OK);
         // Group 1 created the collection.
-        await AssertStateAsync(api, 1025, 3);
+        await AssertStateAsync(api, 1025);
         (await api.PutAsync(DocumentApi.NewId(), new { n = 3 })).Status.ShouldBe(HttpStatusCode.Created);
-        await AssertStateAsync(api, 1026, 4);
+        await AssertStateAsync(api, 1026);
     }
 
-    private static async Task AssertStateAsync(DocumentApi api, long count, long sequence)
+    private static async Task AssertStateAsync(DocumentApi api, long count)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var database = await api.TenantOfAsync();
@@ -80,12 +32,5 @@ public sealed class ReplicationCapacityTests
         await using var read = await store.BeginTransactionAsync(write: false, deadline.Token);
         var counted = await read.CountAsync("items", null, 2000, deadline.Token);
         await Assert.That(counted).IsEqualTo((count, true));
-        await Assert.That(await read.GetLastChangeSequenceAsync(deadline.Token)).IsEqualTo(sequence);
-        if (sequence > 0)
-        {
-            // One commit, one group: one delta per document it wrote.
-            var group = (await read.ReadChangesAsync(sequence, deadline.Token))!;
-            await Assert.That(group.Changes.Select(change => (change.Collection, change.Id)).Distinct().Count()).IsEqualTo(group.Changes.Count);
-        }
     }
 }

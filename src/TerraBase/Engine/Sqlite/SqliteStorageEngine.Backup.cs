@@ -97,7 +97,7 @@ internal sealed partial class SqliteStorageEngine
             await PublishAsync(key.Database, path, async temporary =>
             {
                 File.Move(file, temporary);
-                await SqliteDatabaseStore.InitializeAsync(key.Database, temporary, Io, _pragmas, SqliteDatabaseStore.CopyReset, cancellationToken).ConfigureAwait(false);
+                await SqliteDatabaseStore.InitializeAsync(key.Database, temporary, Io, _pragmas, cancellationToken).ConfigureAwait(false);
             }).ConfigureAwait(false);
             _checkpoint("create.published", database);
             initialization = GetInitializationLocked(key, path, cancellationToken, out _);

@@ -94,7 +94,7 @@ public sealed class CatalogReplicationTests
     }
 
     [Test]
-    public async Task Members_configured_by_one_shared_peers_list_follow_the_named_primary_and_replicate_documents()
+    public async Task Members_configured_by_one_shared_peers_list_follow_the_named_primary()
     {
         // The orchestrator's shape: every member gets the same peers and catalog-primary; only its node name differs.
         using var peers = new PeerTls();
@@ -119,12 +119,11 @@ public sealed class CatalogReplicationTests
             var tenant = await CatalogTenant.CreateAsync(catalog, "orders");
             await ReadyAsync(replica);
 
-            // A key and a document made on the primary are served by the other member.
-            using var writer = tls.CreateClient(catalog.ClientAddress!, tenant.Key);
-            await Assert.That(await PutAsync(writer, tenant, "orders", "shared")).IsEqualTo(HttpStatusCode.Created);
+            // A key and a database made on the primary are served by the other member; client documents do not replicate
+            // until the CDC peer streams (docs/terrabase/multi-region-replication.md), so the document is not found there.
             using var reader = tls.CreateClient(replica.ClientAddress!, tenant.Key);
             await TerraBaseTestServer.EventuallyAsync(
-                async token => await GetAsync(reader, tenant, "orders", "shared", token) == HttpStatusCode.OK, TimeSpan.FromSeconds(10));
+                async token => await GetAsync(reader, tenant, "orders", "shared", token) == HttpStatusCode.NotFound, TimeSpan.FromSeconds(10));
         }
     }
 

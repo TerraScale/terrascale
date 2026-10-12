@@ -1,6 +1,5 @@
 using System.Diagnostics.Metrics;
 using System.Text;
-using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -24,125 +23,6 @@ public sealed class StorageTransactionTests
 {
     // Every test runs its own server and data directory, so they can share the ids.
     private static readonly TenantContext Database = Tenant(EntityIds.New().ToString());
-
-    [Test]
-    [Arguments("put", false)]
-    [Arguments("put", true)]
-    [Arguments("tombstone", false)]
-    [Arguments("drop", false)]
-    [Arguments("missingTombstone", false)]
-    [Arguments("missingDrop", false)]
-    [Arguments("emptyDrop", false)]
-    public async Task Mixing_local_document_mutations_and_replication_is_rollback_only_in_either_order(string operation, bool duplicateApply)
-    {
-        using var tls = new ClientTls();
-        await using var server = await TerraBaseTestServer.StartAsync(tls.Apply);
-        var tenant = await ReplicationTenant.CreateAsync(server, "pool");
-        using var client = tls.CreateClient(server.ClientAddress!, await tenant.KeyAsync(server, "documents:read", "documents:write"));
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
-        var token = deadline.Token;
-        using (var response = await client.PutAsync(new Uri(tenant.Path("pool"), UriKind.Relative), null, token))
-        {
-            response.EnsureSuccessStatusCode();
-        }
-
-        var engine = server.Services.GetRequiredService<IStorageEngine>();
-        var id = EntityIds.New().ToString();
-        var json = "{\"n\":1}"u8.ToArray();
-        var origin = EntityIds.New().ToByteArray();
-        // The system database replicates from its catalog primary and applies no deltas.
-        foreach (var store in new[] { (await engine.OpenDatabaseAsync(tenant.Database("pool"), token))! })
-        {
-            long version;
-            long offset;
-            long sequence;
-            DocumentDelta captured;
-            CollectionInfo? items;
-            CollectionInfo? empty;
-            await using (var initial = await store.BeginTransactionAsync(write: true, token))
-            {
-                await initial.CreateCollectionAsync(new CollectionInfo("items", 0), token);
-                await initial.CreateCollectionAsync(new CollectionInfo("empty", 0), token);
-                version = await initial.PutAsync("items", id, json, token);
-                items = await initial.GetCollectionAsync("items", token);
-                empty = await initial.GetCollectionAsync("empty", token);
-                offset = await initial.CommitAsync(token);
-            }
-
-            await using (var read = await store.BeginTransactionAsync(write: false, token))
-            {
-                sequence = await read.GetLastChangeSequenceAsync(token);
-                captured = (await read.ReadChangesAsync(sequence, token))!.Changes.Single(change => change.Id == id);
-            }
-
-            foreach (var applyFirst in new[] { false, true })
-            {
-                await using (var transaction = await store.BeginTransactionAsync(write: true, token))
-                {
-                    await transaction.CreateCollectionAsync(new CollectionInfo("rolled-back", 0), token);
-                    await transaction.SetAppliedSequenceAsync(origin, 1, token);
-                    // A delta the store already holds changes nothing; a concurrent one does.
-                    var change = duplicateApply ? captured : Deltas.Write("items", id, "{}");
-                    if (applyFirst)
-                    {
-                        await Assert.That(await transaction.ApplyAsync(change, token)).IsEqualTo(!duplicateApply);
-                    }
-                    else
-                    {
-                        await LocalAsync();
-                    }
-
-                    var error = await Assert.That(async () =>
-                    {
-                        if (applyFirst)
-                        {
-                            await LocalAsync();
-                        }
-                        else
-                        {
-                            await transaction.ApplyAsync(change, token);
-                        }
-                    }).Throws<InvalidOperationException>();
-                    await Assert.That(error!.Message).IsEqualTo("a transaction cannot mix local document mutations and replicated changes");
-                    // Catching the mixed call cannot allow a subsequent put or a partial commit.
-                    await Assert.That(async () => { await transaction.PutAsync("items", id, "{}"u8.ToArray(), token); }).Throws<InvalidOperationException>();
-                    await Assert.That(async () => { await transaction.CommitAsync(token); }).Throws<InvalidOperationException>();
-
-                    async Task LocalAsync()
-                    {
-                        switch (operation)
-                        {
-                            case "put":
-                                await transaction.PutAsync("items", id, "{}"u8.ToArray(), token);
-                                break;
-                            case "tombstone":
-                            case "missingTombstone":
-                                await transaction.TombstoneAsync("items", operation == "tombstone" ? id : "missing", token);
-                                break;
-                            default:
-                                await transaction.DropCollectionAsync(operation == "drop" ? "items" : operation == "emptyDrop" ? "empty" : "missing", token);
-                                break;
-                        }
-                    }
-                }
-
-                await using var read = await store.BeginTransactionAsync(write: false, token);
-                var document = await read.GetAsync("items", id, token);
-                await Assert.That(document!.Version).IsEqualTo(version);
-                await Assert.That(document.Json.Span.SequenceEqual(json)).IsTrue();
-                await Assert.That(await read.GetCollectionAsync("items", token)).IsEqualTo(items);
-                await Assert.That(await read.GetCollectionAsync("empty", token)).IsEqualTo(empty);
-                await Assert.That(await read.GetCollectionAsync("rolled-back", token)).IsNull();
-                await Assert.That(await read.GetLastChangeSequenceAsync(token)).IsEqualTo(sequence);
-                await Assert.That(await read.GetAppliedSequenceAsync(origin, token)).IsEqualTo(0);
-                await Assert.That(await read.CommitAsync(token)).IsEqualTo(offset);
-            }
-        }
-
-        using var visible = await client.GetAsync(new Uri($"{tenant.Path("pool")}/collections/items/documents/by-key?id={id}", UriKind.Relative), token);
-        visible.EnsureSuccessStatusCode();
-        await Assert.That(await visible.Content.ReadAsStringAsync(token)).Contains("\"n\":1");
-    }
 
     [Test]
     public async Task SQLite_enforces_query_only_for_reads_and_resets_it_before_reusing_the_session()
@@ -181,12 +61,9 @@ public sealed class StorageTransactionTests
     [Arguments("put")]
     [Arguments("delete")]
     [Arguments("tombstone")]
-    [Arguments("applyPut")]
-    [Arguments("applyDelete")]
-    [Arguments("prefix")]
     [Arguments("createCollection")]
     [Arguments("dropCollection")]
-    public async Task A_read_transaction_refuses_local_and_replicated_mutations(string operation)
+    public async Task A_read_transaction_refuses_mutations(string operation)
     {
         await using var server = await TerraBaseTestServer.StartAsync();
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
@@ -200,16 +77,8 @@ public sealed class StorageTransactionTests
             await initial.CommitAsync(token);
         }
 
-        var notifications = 0;
-        void Observe(object? sender, ChangeGroupCommitted change)
+        await using (var reader = await store.BeginTransactionAsync(write: false, token))
         {
-            Interlocked.Increment(ref notifications);
-        }
-        engine.ChangesCommitted += Observe;
-        try
-        {
-            await using var reader = await store.BeginTransactionAsync(write: false, token);
-            var origin = await reader.GetOriginAsync(token);
             var error = await Assert.That(async () =>
             {
                 switch (operation)
@@ -223,119 +92,23 @@ public sealed class StorageTransactionTests
                     case "tombstone":
                         await reader.TombstoneAsync("items", "a", token);
                         break;
-                    case "applyPut":
-                        await reader.ApplyAsync(Deltas.Write("items", "a", "{}"), token);
-                        break;
-                    case "applyDelete":
-                        await reader.ApplyAsync(Deltas.Write("items", "a", null), token);
-                        break;
                     case "createCollection":
                         await reader.CreateCollectionAsync(new CollectionInfo("new", 0), token);
                         break;
-                    case "dropCollection":
-                        await reader.DropCollectionAsync("items", token);
-                        break;
                     default:
-                        await reader.SetAppliedSequenceAsync(origin, 42, token);
+                        await reader.DropCollectionAsync("items", token);
                         break;
                 }
             }).Throws<InvalidOperationException>();
             await Assert.That(error!.Message).IsEqualTo("a read transaction cannot mutate database state");
-            // A caller that catches the rejection cannot commit or change the frontier.
+            // A caller that catches the rejection cannot commit.
             await Assert.That(async () => { await reader.CommitAsync(token); }).Throws<InvalidOperationException>();
         }
-        finally
-        {
-            engine.ChangesCommitted -= Observe;
-        }
 
-        await Assert.That(notifications).IsEqualTo(0);
         await using var check = await store.BeginTransactionAsync(write: false, token);
         var document = await check.GetAsync("items", "a", token);
         await Assert.That(document!.Version).IsEqualTo(version);
         await Assert.That(document.Json.Span.SequenceEqual(json)).IsTrue();
-        await Assert.That(await check.GetLastChangeSequenceAsync(token)).IsEqualTo(1);
-        await Assert.That(await check.GetAppliedSequenceAsync(await check.GetOriginAsync(token), token)).IsEqualTo(0);
-    }
-
-    [Test]
-    [Arguments(false)]
-    [Arguments(true)]
-    public async Task A_failed_or_cancelled_baseline_closes_the_unpublished_store_and_its_sessions(bool cancel)
-    {
-        using var cancelled = new CancellationTokenSource();
-        SqliteStorageEngine? engine = null;
-        SqliteDatabaseStore? unpublished = null;
-        SqliteSession? bootstrappedSession = null;
-        var inserts = 0;
-        var inject = true;
-        var name = Tenant(EntityIds.New().ToString());
-        await using var server = await TerraBaseTestServer.StartAsync(services: services => services.AddSingleton(provider =>
-        {
-            var options = provider.GetRequiredService<TerraBaseOptions>();
-            engine = new SqliteStorageEngine(options.DataDirectory, options.StorageThreads, options.StorageQueue, options.MemoryBudget,
-                provider.GetRequiredService<IMeterFactory>().Create(Telemetry.MeterName),
-                provider.GetRequiredService<ILogger<SqliteStorageEngine>>(), options.ShutdownGrace, readinessCacheTtl: options.ReadinessCacheTtl,
-                checkpoint: provider.GetRequiredService<DatabaseLifecycleCheckpoint>(), afterBootstrap: store =>
-                {
-                    if (!inject || store.Tenant?.DatabaseId != name.DatabaseId)
-                    {
-                        return;
-                    }
-
-                    unpublished = store;
-                    bootstrappedSession = engine!.Pool.Rent(store) ?? throw new InvalidOperationException("bootstrap left no idle session");
-                    try
-                    {
-                        bootstrappedSession.Connection.CreateFunction("interrupt_seed", () =>
-                        {
-                            inserts++;
-                            if (cancel)
-                            {
-                                cancelled.Cancel();
-                                return 0;
-                            }
-
-                            throw new InvalidOperationException("seed insertion failed");
-                        });
-                        using var trigger = bootstrappedSession.Connection.CreateCommand();
-                        trigger.CommandText = "CREATE TEMP TRIGGER interrupt_seed AFTER INSERT ON changes BEGIN SELECT interrupt_seed(); END;";
-                        trigger.ExecuteNonQuery();
-                    }
-                    finally
-                    {
-                        store.Return(bootstrappedSession);
-                    }
-                });
-            return engine;
-        }));
-        var directory = Directory.CreateDirectory(Path.Combine(server.DataDirectory, name.OrganizationId, name.ProjectId!)).FullName;
-        var path = Path.Combine(directory, name.DatabaseId + ".db");
-        // Documents whose journal still needs its baseline, like a copy's.
-        await DocumentFiles.WriteAsync(path, ("items", StorageFixture.Id("a"), "{}"), ("items", StorageFixture.Id("b"), "{}"));
-
-        _ = server.Services.GetRequiredService<IStorageEngine>();
-        var idleBefore = engine!.Pool.IdleCount;
-        if (cancel)
-        {
-            await Assert.That(async () => { await engine.OpenDatabaseAsync(name, cancelled.Token); }).Throws<OperationCanceledException>();
-        }
-        else
-        {
-            await Assert.That(async () => { await engine.OpenDatabaseAsync(name, CancellationToken.None); }).Throws<SqliteException>();
-        }
-
-        await Assert.That(inserts).IsEqualTo(1);
-        await Assert.That(unpublished!.IsClosed).IsTrue();
-        await Assert.That(unpublished.IdleCount).IsEqualTo(0);
-        await Assert.That(engine.Pool.IdleCount).IsEqualTo(idleBefore);
-        await Assert.That(bootstrappedSession!.Connection.State).IsEqualTo(System.Data.ConnectionState.Closed);
-        // Retrying uses a new store, completes the baseline, and keeps the original documents intact.
-        inject = false;
-        var retry = await engine.OpenDatabaseAsync(name, CancellationToken.None);
-        await using var read = await retry!.BeginTransactionAsync(write: false, CancellationToken.None);
-        await Assert.That((await read.ListAsync("items", null, 10, 1024, CancellationToken.None)).Documents.Count).IsEqualTo(2);
-        await Assert.That(await read.GetLastChangeSequenceAsync(CancellationToken.None)).IsEqualTo(1);
     }
 
     [Test]
@@ -492,12 +265,9 @@ public sealed class StorageTransactionTests
             await exhaust.ExecuteNonQueryAsync(CancellationToken.None);
         }
 
-        var origin = EntityIds.New().ToByteArray();
-
-        // A caller that catches the failed write must not commit its partial state or other work.
+        // A caller that catches the failed write must not commit its partial state.
         await using (var writer = await store.BeginTransactionAsync(write: true, CancellationToken.None))
         {
-            await writer.SetAppliedSequenceAsync(origin, 1, CancellationToken.None);
             await Assert.ThrowsAsync<OverflowException>(async () =>
             {
                 if (put)
@@ -513,7 +283,6 @@ public sealed class StorageTransactionTests
         }
 
         await using var reader = await store.BeginTransactionAsync(write: false, CancellationToken.None);
-        await Assert.That(await reader.GetAppliedSequenceAsync(origin, CancellationToken.None)).IsEqualTo(0);
         await Assert.That(await reader.GetVersionAsync("items", "max", CancellationToken.None)).IsEqualTo(new DocumentVersion(version, tombstone));
         if (!tombstone)
         {
@@ -523,85 +292,7 @@ public sealed class StorageTransactionTests
     }
 
     [Test]
-    public async Task A_partially_appended_change_group_leaves_a_transaction_that_cannot_commit()
-    {
-        await using var server = await TerraBaseTestServer.StartAsync();
-        var (engine, store) = await OpenAsync(server);
-        long version;
-        await using (var initial = await store.BeginTransactionAsync(write: true, CancellationToken.None))
-        {
-            version = await initial.PutAsync("items", "a", Encoding.UTF8.GetBytes("""{"n":1}"""), CancellationToken.None);
-            await initial.CommitAsync(CancellationToken.None);
-        }
-
-        var session = ((SqliteStorageEngine)engine).Pool.Rent(store) ?? throw new InvalidOperationException("the store has no idle session");
-        using var cancelled = new CancellationTokenSource();
-        var appended = 0;
-        var returned = false;
-        try
-        {
-            // SQLite update hooks ignore WITHOUT ROWID tables; a connection-local AFTER INSERT trigger does not.
-            session.Connection.CreateFunction("cancel_change_append", () =>
-            {
-                if (++appended == 1)
-                {
-                    cancelled.Cancel();
-                }
-
-                return 0;
-            });
-            using (var install = session.Connection.CreateCommand())
-            {
-                install.CommandText = "CREATE TEMP TRIGGER cancel_change_append AFTER INSERT ON changes BEGIN SELECT cancel_change_append(); END;";
-                await install.ExecuteNonQueryAsync(CancellationToken.None);
-            }
-
-            store.Return(session);
-            returned = true;
-            await using var writer = await store.BeginTransactionAsync(write: true, CancellationToken.None);
-            await writer.PutAsync("items", "a", Encoding.UTF8.GetBytes("""{"n":2}"""), CancellationToken.None);
-            await writer.PutAsync("items", "b", Encoding.UTF8.GetBytes("{}"), CancellationToken.None);
-
-            await Assert.ThrowsAsync<OperationCanceledException>(() => writer.CommitAsync(cancelled.Token).AsTask());
-            await Assert.That(appended).IsEqualTo(1);
-            await Assert.That((await writer.ReadChangesAsync(2, CancellationToken.None))?.Changes.Count).IsEqualTo(1);
-            await Assert.ThrowsAsync<InvalidOperationException>(() => writer.CommitAsync(CancellationToken.None).AsTask());
-        }
-        finally
-        {
-            try
-            {
-                using var remove = session.Connection.CreateCommand();
-                remove.CommandText = "DROP TRIGGER IF EXISTS temp.cancel_change_append;";
-                await remove.ExecuteNonQueryAsync(CancellationToken.None);
-                session.Connection.CreateFunction("cancel_change_append", (Func<int>?)null);
-            }
-            finally
-            {
-                if (!returned)
-                {
-                    store.Return(session);
-                }
-            }
-        }
-
-        await using var reader = await store.BeginTransactionAsync(write: false, CancellationToken.None);
-        var document = await reader.GetAsync("items", "a", CancellationToken.None);
-        await Assert.That(document?.Version).IsEqualTo(version);
-        await Assert.That(Encoding.UTF8.GetString(document!.Json.Span)).IsEqualTo("""{"n":1}""");
-        await Assert.That(await reader.GetAsync("items", "b", CancellationToken.None)).IsNull();
-        var original = await reader.ReadChangesAsync(1, CancellationToken.None);
-        await Assert.That(original?.Changes.Count).IsEqualTo(2);
-        await Assert.That(Deltas.Json(original!.Changes[0])).IsEqualTo("""{"n":1}""");
-        await Assert.That((original.Changes[1].Collection, original.Changes[1].Id)).IsEqualTo((DocumentDelta.Collections, "items"));
-        using var metadata = JsonDocument.Parse(Deltas.Json(original.Changes[1])!);
-        await Assert.That(metadata.RootElement.GetProperty("entity_id").GetString())
-            .IsEqualTo((await reader.GetCollectionAsync("items", CancellationToken.None))!.Id);
-        await Assert.That(await reader.ReadChangesAsync(2, CancellationToken.None)).IsNull();
-    }
-
-    [Test]
-    public async Task Publication_and_retirement_subscribers_can_enter_an_unrelated_database_lifecycle()
+    public async Task Retirement_subscribers_can_enter_an_unrelated_database_lifecycle()
     {
         await using var api = await DocumentApi.StartAsync();
         var database = await api.TenantOfAsync();
@@ -611,12 +302,10 @@ public sealed class StorageTransactionTests
         await api.ReplaceFileAsync("db", path => DocumentFiles.WriteAsync(path, ("items", id, "{}")));
         var engine = api.Server.Services.GetRequiredService<IStorageEngine>();
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
-        var operations = new List<Task<bool>>(2);
-        var entries = new List<Task>(2);
+        var operations = new List<Task<bool>>(1);
+        var entries = new List<Task>(1);
         var enteredImmediately = true;
-        IDatabaseStore? published = null;
         IDatabaseStore? retired = null;
-        var publishedBeforeCallback = false;
         var retiredBeforeCallback = false;
         void EnterLifecycle()
         {
@@ -629,16 +318,6 @@ public sealed class StorageTransactionTests
             operations.Add(engine.DeleteDatabaseAsync(probe, deadline.Token).AsTask());
         }
 
-        void OnPublication(object? sender, ChangeGroupCommitted committed)
-        {
-            if (committed.Database.Tenant == database)
-            {
-                published = committed.Database;
-                publishedBeforeCallback = engine.OpenDatabaseAsync(database, deadline.Token).AsTask().IsCompletedSuccessfully;
-                EnterLifecycle();
-            }
-        }
-
         void OnRetirement(object? sender, IDatabaseStore store)
         {
             if (store.Tenant == database)
@@ -649,80 +328,29 @@ public sealed class StorageTransactionTests
             }
         }
 
-        static void ThrowOnPublication(object? sender, ChangeGroupCommitted committed)
-        {
-            throw new InvalidOperationException("subscriber failure");
-        }
-
         static void ThrowOnRetirement(object? sender, IDatabaseStore store)
         {
             throw new InvalidOperationException("subscriber failure");
         }
-        engine.ChangesCommitted += ThrowOnPublication;
-        engine.ChangesCommitted += OnPublication;
         engine.DatabaseDeleted += ThrowOnRetirement;
         engine.DatabaseDeleted += OnRetirement;
         try
         {
             (await api.GetAsync(id)).Status.ShouldBe(System.Net.HttpStatusCode.OK);
-            await Assert.That(published).IsNotNull();
-            await Assert.That(publishedBeforeCallback).IsTrue();
-            await Assert.That(await operations.Single()).IsTrue();
-            await engine.CreateDatabaseAsync(probe, deadline.Token);
             await api.DeleteDatabaseAsync();
-            await Assert.That(retired).IsSameReferenceAs(published);
+            await Assert.That(retired).IsNotNull();
             await Assert.That(retiredBeforeCallback).IsTrue();
-            await Assert.That(operations.Count).IsEqualTo(2);
-            await Assert.That(await operations[1]).IsTrue();
+            await Assert.That(await operations.Single()).IsTrue();
             await Assert.That(enteredImmediately).IsTrue();
             await Assert.That(await engine.OpenDatabaseAsync(database, deadline.Token)).IsNull();
         }
         finally
         {
-            engine.ChangesCommitted -= ThrowOnPublication;
-            engine.ChangesCommitted -= OnPublication;
             engine.DatabaseDeleted -= ThrowOnRetirement;
             engine.DatabaseDeleted -= OnRetirement;
             await Task.WhenAll(operations);
             await Task.WhenAll(entries);
         }
-    }
-
-    [Test]
-    public async Task A_failing_change_subscriber_does_not_fail_a_committed_write()
-    {
-        await using var server = await TerraBaseTestServer.StartAsync();
-        var (engine, store) = await OpenAsync(server);
-        long version;
-        static void Throw(object? sender, ChangeGroupCommitted committed)
-        {
-            throw new InvalidOperationException("subscriber failure");
-        }
-
-        var notifications = 0;
-        void Observe(object? sender, ChangeGroupCommitted committed)
-        {
-            notifications++;
-        }
-
-        engine.ChangesCommitted += Throw;
-        engine.ChangesCommitted += Observe;
-        try
-        {
-            await using var writer = await store.BeginTransactionAsync(write: true, CancellationToken.None);
-            version = await writer.PutAsync("items", "a", Encoding.UTF8.GetBytes("""{"n":1}"""), CancellationToken.None);
-
-            await writer.CommitAsync(CancellationToken.None);
-        }
-        finally
-        {
-            engine.ChangesCommitted -= Throw;
-            engine.ChangesCommitted -= Observe;
-        }
-
-        await Assert.That(notifications).IsEqualTo(1);
-        await using var reader = await store.BeginTransactionAsync(write: false, CancellationToken.None);
-        await Assert.That((await reader.GetAsync("items", "a", CancellationToken.None))?.Version).IsEqualTo(version);
     }
 
     [Test]

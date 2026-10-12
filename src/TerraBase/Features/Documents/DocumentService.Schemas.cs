@@ -86,7 +86,6 @@ internal sealed partial class DocumentService
             }
         }
 
-        await replication.WaitAsync(database, cancellationToken).ConfigureAwait(false);
         return SchemaBody(schema);
     }
 

@@ -13,7 +13,6 @@ using TerraBase.Features.Management;
 using TerraBase.Features.Management.Usage;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Replication;
-using TerraBase.Features.Replication.V1;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 using TerraBase.Testing;
@@ -58,18 +57,14 @@ public sealed class UsageAnalyticsTests
     }
 
     [Test]
-    [Arguments("analytics")]
-    [Arguments("replication")]
-    public async Task A_second_database_meter_catalog_refusal_returns_503_releases_memory_and_recovers_all_observations(string feature)
+    public async Task A_second_database_meter_catalog_refusal_returns_503_releases_memory_and_recovers_all_observations()
     {
         const long Budget = 512L * 1024 * 1024;
         var token = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
         var clock = new FakeTimeProvider(new DateTimeOffset(2026, 10, 8, 21, 30, 0, TimeSpan.Zero));
         var hook = new UsageCommitHook();
-        using var tls = new PeerTls();
         await using var api = await ManagementApi.StartAsync(settings =>
         {
-            tls.Apply(settings);
             settings["region"] = "gru-1";
             settings["memory-budget"] = Budget.ToString(CultureInfo.InvariantCulture);
         }, hook.Install, clock);
@@ -80,9 +75,6 @@ public sealed class UsageAnalyticsTests
         var second = databases[1];
         await api.VerifyProjectBindingAsync(first.Organization, first.Project);
         using var client = ProjectClient(api, first.Project);
-        using var channel = tls.CreateChannel(api.Server.PeerAddress!);
-        var peer = new Features.Replication.V1.Replication.ReplicationClient(channel);
-        var batchBytes = new long[databases.Length];
         for (var index = 0; index < databases.Length; index++)
         {
             var database = databases[index];
@@ -93,32 +85,11 @@ public sealed class UsageAnalyticsTests
                     new { name = new Faker().Name.FullName() }, token);
                 put.EnsureSuccessStatusCode();
             }
-
-            var tenant = new TenantContext(database.Organization, PlanTier.Hobby, database.Project, database.Id);
-            var origin = System.Security.Cryptography.RandomNumberGenerator.GetBytes(16);
-            var batch = new SyncRequest
-            {
-                TrafficKind = ReplicationTrafficKind.Handoff,
-                CommittedGroup = ReplicationProtocol.CreateBatch(tenant, origin, 1,
-                    Deltas.Group([.. Enumerable.Range(0, index + 1).Select(write => Deltas.Write("people", ManagementApi.DocumentId("remote-" + write),
-                        JsonSerializer.Serialize(new { name = new Faker().Name.FullName() })))])),
-            };
-            batchBytes[index] = batch.CalculateSize() + 5L;
-            using var stream = peer.Sync(cancellationToken: token);
-            await stream.RequestStream.WriteAsync(new SyncRequest { Hello = ReplicationProtocol.CreateHello(tenant, origin, "sfo-1") }, token);
-            await Assert.That(await stream.ResponseStream.MoveNext(token)).IsTrue();
-            await Assert.That(stream.ResponseStream.Current.Welcome.Frontiers[0].DurableSequence).IsEqualTo(0UL);
-            await stream.RequestStream.WriteAsync(batch, token);
-            await Assert.That(await stream.ResponseStream.MoveNext(token)).IsTrue();
-            await Assert.That(stream.ResponseStream.Current.Durable.DurablePrefix).IsEqualTo(1UL);
-            await Assert.That(await stream.ResponseStream.MoveNext(token)).IsTrue();
-            await stream.RequestStream.CompleteAsync();
-            await Assert.That(await stream.ResponseStream.MoveNext(token)).IsFalse();
         }
 
         var meter = api.Server.Services.GetRequiredService<UsageMeter>();
         await meter.FlushAsync(token);
-        var route = ManagementApi.Uri($"/v1/projects/{first.Project}/{feature}?range=1h&region=gru-1");
+        var route = ManagementApi.Uri($"/v1/projects/{first.Project}/analytics?range=1h&region=gru-1");
         var baseline = ReservedBytes(api);
         var before = await ReadAsync(client, route);
         await AssertMemoryReleasedAsync(api, baseline);
@@ -223,22 +194,10 @@ public sealed class UsageAnalyticsTests
             await Assert.That(item.GetProperty("region").GetString()).IsEqualTo("gru-1");
             var series = item.GetProperty("series");
             await Assert.That(series.GetArrayLength()).IsEqualTo(60);
-            if (feature == "analytics")
-            {
-                await Assert.That(series.EnumerateArray().Sum(point => point.GetProperty("operations").TryGetProperty("put", out var puts) ? puts.GetInt64() : 0))
-                    .IsEqualTo(index + 1L);
-                await Assert.That(series.EnumerateArray().Sum(point => point.GetProperty("requests").TryGetProperty("put", out var puts) ? puts.GetInt64() : 0))
-                    .IsEqualTo(index + 1L);
-            }
-            else
-            {
-                await Assert.That(item.GetProperty("replicatedOps").GetInt64()).IsEqualTo(index + 1L);
-                await Assert.That(series.EnumerateArray().Sum(point => point.GetProperty("replicatedOps").GetInt64())).IsEqualTo(index + 1L);
-                var traffic = item.GetProperty("bandwidth").EnumerateArray().Single(pair => pair.GetProperty("kind").GetString() == "handoff"
-                    && pair.GetProperty("sourceRegion").GetString() == "sfo-1" && pair.GetProperty("destinationRegion").GetString() == "gru-1");
-                await Assert.That(traffic.GetProperty("bytesReceived").GetInt64()).IsEqualTo(batchBytes[index]);
-                await Assert.That(traffic.GetProperty("bytesSent").GetInt64()).IsEqualTo(0);
-            }
+            await Assert.That(series.EnumerateArray().Sum(point => point.GetProperty("operations").TryGetProperty("put", out var puts) ? puts.GetInt64() : 0))
+                .IsEqualTo(index + 1L);
+            await Assert.That(series.EnumerateArray().Sum(point => point.GetProperty("requests").TryGetProperty("put", out var puts) ? puts.GetInt64() : 0))
+                .IsEqualTo(index + 1L);
         }
 
         await AssertMemoryReleasedAsync(api, baseline);
@@ -377,67 +336,6 @@ public sealed class UsageAnalyticsTests
             await Assert.That(oldProject.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
             await Assert.That(oldDatabase.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
         }
-    }
-
-    [Test]
-    public async Task Concurrent_duplicate_streams_count_every_frame_and_apply_one_operation()
-    {
-        using var tls = new PeerTls();
-        await using var api = await ManagementApi.StartAsync(settings =>
-        {
-            tls.Apply(settings);
-            settings["region"] = "gru-1";
-        });
-        var database = await api.CreateManagedDatabaseAsync();
-        await api.VerifyProjectBindingAsync(database.Organization, database.Project);
-        using var client = ProjectClient(api, database.Project);
-        await ManagementApi.CreateCollectionAsync(client, database, "people");
-        var tenant = new TerraBase.Tenancy.TenantContext(database.Organization, TerraBase.Tenancy.PlanTier.Hobby, database.Project, database.Id);
-        var origin = System.Security.Cryptography.RandomNumberGenerator.GetBytes(16);
-        var id = ManagementApi.DocumentId("duplicate");
-        var batch = new SyncRequest
-        {
-            TrafficKind = ReplicationTrafficKind.Handoff,
-            CommittedGroup = ReplicationProtocol.CreateBatch(tenant, origin, 1,
-                Deltas.Group(Deltas.Write("people", id, JsonSerializer.Serialize(new { name = new Faker().Name.FullName() })))),
-        };
-        using var channel = tls.CreateChannel(api.Server.PeerAddress!);
-        var peer = new Features.Replication.V1.Replication.ReplicationClient(channel);
-        using var first = peer.Sync();
-        using var second = peer.Sync();
-        foreach (var stream in new[] { first, second })
-        {
-            await stream.RequestStream.WriteAsync(new SyncRequest { Hello = ReplicationProtocol.CreateHello(tenant, origin, "sfo-1") });
-            await Assert.That(await stream.ResponseStream.MoveNext(CancellationToken.None)).IsTrue();
-            await Assert.That(stream.ResponseStream.Current.Welcome.Frontiers[0].DurableSequence).IsEqualTo(0UL);
-        }
-
-        await Task.WhenAll(first.RequestStream.WriteAsync(batch), second.RequestStream.WriteAsync(batch));
-        foreach (var stream in new[] { first, second })
-        {
-            await Assert.That(await stream.ResponseStream.MoveNext(CancellationToken.None)).IsTrue();
-            await Assert.That(stream.ResponseStream.Current.Durable.DurablePrefix).IsEqualTo(1UL);
-            await Assert.That(await stream.ResponseStream.MoveNext(CancellationToken.None)).IsTrue();
-            await stream.RequestStream.CompleteAsync();
-        }
-
-        using var retry = peer.Sync();
-        await retry.RequestStream.WriteAsync(new SyncRequest { Hello = ReplicationProtocol.CreateHello(tenant, origin, "sfo-1") });
-        await Assert.That(await retry.ResponseStream.MoveNext(CancellationToken.None)).IsTrue();
-        await retry.RequestStream.WriteAsync(batch);
-        await Assert.That(await retry.ResponseStream.MoveNext(CancellationToken.None)).IsTrue();
-        await Assert.That(await retry.ResponseStream.MoveNext(CancellationToken.None)).IsTrue();
-        await retry.RequestStream.CompleteAsync();
-        using var document = await client.GetAsync(ManagementApi.Uri(ManagementApi.DocumentPath(database, "people", "duplicate")));
-        document.EnsureSuccessStatusCode();
-        var usage = await ReadAsync(client, ManagementApi.Uri($"/v1/projects/{database.Project}/replication?range=1h&region=gru-1"));
-        var item = usage.GetProperty("items")[0];
-        await Assert.That(item.GetProperty("replicatedOps").GetInt64()).IsEqualTo(1);
-        var traffic = item.GetProperty("bandwidth").EnumerateArray().Single(pair =>
-            pair.GetProperty("kind").GetString() == "handoff" && pair.GetProperty("sourceRegion").GetString() == "sfo-1");
-        await Assert.That(traffic.GetProperty("bytesReceived").GetInt64()).IsEqualTo(3 * (batch.CalculateSize() + 5L));
-        await Assert.That(traffic.GetProperty("sourceRegion").GetString()).IsEqualTo("sfo-1");
-        await Assert.That(traffic.GetProperty("destinationRegion").GetString()).IsEqualTo("gru-1");
     }
 
     [Test]

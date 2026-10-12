@@ -1,5 +1,10 @@
 # Cross-region replication (TS-643)
 
+> **Removed (2026-10-11, slice R2a).** Client databases no longer replicate this way: the sender, receiver,
+> anti-entropy and write-wait described here are deleted, and design C replaces them
+> ([multi-region-replication.md](multi-region-replication.md)). Until slice R4a ships, client databases do not
+> replicate between machines. The catalog (`_system`) sections still describe the running code until R10a.
+
 A write accepted in one region becomes readable in every other region of its replication group, with the same version
 token. This is stage 1 of [anna-core §10](design/anna-core.md#10-stage-2-later) on today's engine: the simpler route
 now, with every simplification marked `anna-full (TS-643)` in the code.

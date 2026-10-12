@@ -360,62 +360,6 @@ public sealed class UniqueConstraintTests
         }
     }
 
-    [Test]
-    public async Task A_replicated_declaration_reprojects_cached_documents_and_shape_history()
-    {
-        await using var api = await ManagementApi.StartAsync();
-        var database = await api.CreateManagedDatabaseAsync();
-        using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
-        await ManagementApi.CreateCollectionAsync(data, database, "people");
-        var low = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
-        var high = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
-        var email = new Faker().Internet.Email();
-        foreach (var id in new[] { low, high })
-        {
-            using var put = await data.PutAsJsonAsync(Document(database, id), new { email });
-            put.EnsureSuccessStatusCode();
-        }
-
-        using (var cached = await data.GetAsync(Document(database, high)))
-        {
-            cached.EnsureSuccessStatusCode();
-        }
-
-        var tenant = new TenantContext(database.Organization, PlanTier.Hobby, database.Project, database.Id);
-        var store = (await api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(tenant, CancellationToken.None))!;
-        // Another member declares, then replaces its declaration.
-        var declarer = Deltas.NewReplica();
-        DocumentDelta? declared = null;
-        foreach (var hidden in new[] { true, false })
-        {
-            long previous;
-            long current;
-            await using (var transaction = await store.BeginTransactionAsync(write: true, CancellationToken.None))
-            {
-                previous = await transaction.GetOffsetAsync(CancellationToken.None);
-                var schema = hidden
-                    ? "{\"constraints\":[{\"name\":\"email\",\"fields\":[\"email\"],\"normalization\":\"none\"}]}"
-                    : "{\"constraints\":[]}";
-                declared = Deltas.Write("_unique", "people", schema, declarer, over: declared?.State);
-                await transaction.ApplyAsync(declared, CancellationToken.None);
-                current = await transaction.CommitAsync(CancellationToken.None);
-            }
-
-            using var projected = await data.GetAsync(Document(database, high));
-            await Assert.That(projected.StatusCode).IsEqualTo(hidden ? HttpStatusCode.Conflict : HttpStatusCode.OK);
-            await using var read = await store.BeginTransactionAsync(write: false, CancellationToken.None);
-            var changes = new List<StoredDocument>();
-            await foreach (var change in read.ChangesAsync("people", null, previous, current, CancellationToken.None))
-            {
-                changes.Add(change);
-            }
-
-            await Assert.That(changes.Count).IsEqualTo(1);
-            await Assert.That(changes[0].Id).IsEqualTo(high);
-            await Assert.That(changes[0].Deleted).IsEqualTo(hidden);
-        }
-    }
-
     internal static async Task DeclareAsync(ManagementApi api, HttpClient data, ManagedDatabaseRef database, object schema)
     {
         await ManagementApi.CreateCollectionAsync(data, database, "people");

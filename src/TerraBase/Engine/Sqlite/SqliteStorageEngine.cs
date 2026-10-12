@@ -308,8 +308,6 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
 
     public bool SystemDatabaseExists => File.Exists(LocateSystem());
 
-    public event EventHandler<ChangeGroupCommitted>? ChangesCommitted;
-
     public event EventHandler<IDatabaseStore>? DatabaseDeleted;
 
     /// <summary>
@@ -1224,9 +1222,7 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
 
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         await InitializeHeapAsync(cancellationToken).ConfigureAwait(false);
-        // A new client file's journal is this member's from the start: its first open needs no claim.
-        var claim = name == SystemName ? null : SqliteDatabaseStore.ClaimedBy(ReplicaId);
-        await PublishAsync(name, path, temporary => SqliteDatabaseStore.InitializeAsync(name, temporary, Io, _pragmas, claim, cancellationToken))
+        await PublishAsync(name, path, temporary => SqliteDatabaseStore.InitializeAsync(name, temporary, Io, _pragmas, cancellationToken))
             .ConfigureAwait(false);
         return true;
     }
@@ -1411,9 +1407,8 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
         (string Organization, string Project, string Database) key, string path, CancellationToken cancellationToken)
     {
         var tenant = new TenantContext(key.Organization, PlanTier.Hobby, key.Project, key.Database);
-        SqliteDatabaseStore? store = null;
-        store = new SqliteDatabaseStore(key.Database, path, Pool, Io, _pragmas, tenant, Time,
-            sequence => Notify(ChangesCommitted, new ChangeGroupCommitted(store!, sequence), key.Database), RecordCommittedWrite, _logger, _schemaMemory, _schemaEvaluations)
+        var store = new SqliteDatabaseStore(key.Database, path, Pool, Io, _pragmas, tenant, Time,
+            null, RecordCommittedWrite, _logger, _schemaMemory, _schemaEvaluations)
         {
             QueryBudget = QueryBudget,
             Member = _member,
@@ -1430,8 +1425,6 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
             await InitializeHeapAsync(lifetime.Token).ConfigureAwait(false);
             await store.BootstrapAsync(lifetime.Token).ConfigureAwait(false);
             _afterBootstrap?.Invoke(store);
-            var sequence = await store.SeedAsync(lifetime.Token).ConfigureAwait(false);
-
             await _creation.WaitAsync(lifetime.Token).ConfigureAwait(false);
             try
             {
@@ -1444,11 +1437,6 @@ internal sealed partial class SqliteStorageEngine : IStorageEngine, IWalBackup
             finally
             {
                 _creation.Release();
-            }
-
-            if (sequence > 0)
-            {
-                Notify(ChangesCommitted, new ChangeGroupCommitted(store, sequence), key.Database);
             }
 
             return store;

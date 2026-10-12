@@ -1,6 +1,6 @@
 # 0010: Write-wait, and a DurableAck synced to disk
 
-- Status: proposed (TS-575, 2026-10-06); write-wait chosen by COS under the user's grant of autonomy. Also decides the
+- Status: superseded (2026-10-11) by design C ([multi-region-replication.md](../multi-region-replication.md)): write-wait is deleted and a write answers after one local commit. Was: proposed (TS-575, 2026-10-06); write-wait chosen by COS under the user's grant of autonomy. Also decides the
   TS-561 follow-up "DurableAck after a WAL fsync". Needs human acceptance.
 - Scope: `Features/Replication` (the sender's wait, the receiver's apply), `Features/Documents` (client writes),
   `Engine` (`IDatabaseStore.BeginDurableTransactionAsync`), `Configuration` (`write-wait-ms`)

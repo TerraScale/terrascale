@@ -2,11 +2,6 @@ using TerraBase.Tenancy;
 
 namespace TerraBase.Engine;
 
-/// <summary>Change groups of <paramref name="Database"/> are committed up to <paramref name="Sequence"/>.</summary>
-/// <param name="Database">The database, including its creation-time incarnation and lifetime.</param>
-/// <param name="Sequence">The last committed change group.</param>
-public sealed record ChangeGroupCommitted(IDatabaseStore Database, long Sequence);
-
 /// <summary>
 /// The database engine TerraBase stores JSON documents in. Each database is isolated; one
 /// implementation per substrate (SQLite today, Turso or others later) lives under <c>Engine/&lt;Name&gt;/</c>.
@@ -85,13 +80,6 @@ public interface IStorageEngine : IAsyncDisposable
     /// seconds means a stalled volume: not ready. Engine closure is checked on every call.
     /// </summary>
     ValueTask<bool> IsReadyAsync(CancellationToken cancellationToken);
-
-    /// <summary>
-    /// Raised after a write transaction commits a change group, or baseline groups are appended (see
-    /// <see cref="IStorageTransaction.CommitAsync"/>), on the committing thread, with the last group's sequence.
-    /// Handlers must return quickly; a handler that throws is logged and does not fail the commit.
-    /// </summary>
-    event EventHandler<ChangeGroupCommitted>? ChangesCommitted;
 
     /// <summary>Raised after a database is closed for deletion, so consumers discard its incarnation.</summary>
     event EventHandler<IDatabaseStore>? DatabaseDeleted;

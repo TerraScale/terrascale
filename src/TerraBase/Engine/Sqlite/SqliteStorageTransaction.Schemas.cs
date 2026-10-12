@@ -54,7 +54,6 @@ internal sealed partial class SqliteStorageTransaction
         RunAsync(() =>
         {
             ThrowIfReadOnly();
-            DocumentMutation(replicated: false);
             long createdAt;
             using (var reader = Command(SqliteStatements.GetCollection, name).ExecuteReader())
             {
@@ -113,7 +112,7 @@ internal sealed partial class SqliteStorageTransaction
                 CountMember("schema_dialect", CollectionSchemaDialect.Length + 2);
             }
 
-            Reserve(DocumentDelta.Collections, name, bytes);
+            Reserve(name, bytes);
             var buffer = new ArrayBufferWriter<byte>(bytes);
             using (var writer = new Utf8JsonWriter(buffer))
             {

@@ -5,7 +5,6 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using SQLitePCL;
-using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
 using TerraBase.Primitives;
 
@@ -46,24 +45,10 @@ internal sealed partial class SqliteStorageTransaction(
     // The system database's capture: every write, in order (docs/decisions/0009).
     private readonly List<DocumentChange>? _changes = changesCommitted is not null && store.IsSystem ? [] : null;
 
-    // A client database's capture: one delta per document, the join of this transaction's writes to it, in first-write
-    // order (docs/design/anna-core.md, Per-origin streams).
-    private readonly List<CapturedDelta>? _deltas = changesCommitted is not null && !store.IsSystem ? [] : null;
-
-    // Where each captured document's delta sits in _deltas, so a capture finds its predecessor in O(1).
-    private readonly Dictionary<(string Collection, string Id), int> _changeIndex = [];
-
-    // Captured deltas a batched write replaced since its savepoint, to put back if it rolls back.
-    private readonly List<(int Index, CapturedDelta Previous)> _replacedSinceSavepoint = [];
-
     // Body statements live only for this transaction: idle sessions must not retain bound JSON.
     private readonly Dictionary<string, SqliteCommand> _bodyCommands = [with(StringComparer.Ordinal)];
 
-    private bool _metadataChanged;
-    private int _importedCount;
-    private long _importedBytes;
     private long _changeBytes;
-    private bool? _replicatedMutation;
 
     // A refused or failed write makes this transaction able only to roll back.
     private bool _faulted;
@@ -78,7 +63,7 @@ internal sealed partial class SqliteStorageTransaction(
 
     // Group commit (SqliteDatabaseStore.WriteAsync): each queued write runs inside a savepoint, and this snapshot of the
     // in-memory capture and limits rolls back with it.
-    private (int Changes, long ChangeBytes, int Writes, long WrittenBytes, long? Offset, bool? ReplicatedMutation, bool CollectionsChanged)?
+    private (int Changes, long ChangeBytes, int Writes, long WrittenBytes, long? Offset, bool CollectionsChanged)?
         _savepoint;
 
     /// <summary>Whether a per-commit limit refused a write since the last savepoint: alone in a transaction, it could fit.</summary>
@@ -172,7 +157,6 @@ internal sealed partial class SqliteStorageTransaction(
     private long Put(string collection, string id, ReadOnlyMemory<byte> json, CancellationToken cancellationToken)
     {
         ThrowIfReadOnly();
-        DocumentMutation(replicated: false);
         var body = Admit(json);
         using var schemaReservation = Shaped ? ReserveCollectionMetadata(collection) : null;
         if (Shaped && ReadCollectionSchema(collection) is { } schema)
@@ -180,7 +164,7 @@ internal sealed partial class SqliteStorageTransaction(
             CollectionSchemaValidation.Validate(schema, json, cancellationToken, store.SchemaMemory, store.SchemaEvaluations);
         }
 
-        Reserve(collection, id, json.Length);
+        Reserve(id, json.Length);
         if (store.IsSystem)
         {
             return Write(offset =>
@@ -212,7 +196,6 @@ internal sealed partial class SqliteStorageTransaction(
         return await RunAsync(() =>
         {
             ThrowIfReadOnly();
-            DocumentMutation(replicated: false);
             if (!store.IsSystem)
             {
                 // A register removed without a trace would come back with the next late delta: deletions are tombstones.
@@ -241,7 +224,6 @@ internal sealed partial class SqliteStorageTransaction(
         return await RunAsync<long?>(() =>
         {
             ThrowIfReadOnly();
-            DocumentMutation(replicated: false);
             // Check liveness from metadata without reading a body, within this serialized call.
             var version = Command(UniqueVersion, collection);
             version.Parameters.AddWithValue("$id", id);
@@ -253,7 +235,7 @@ internal sealed partial class SqliteStorageTransaction(
                 }
             }
 
-            Reserve(collection, id, 0);
+            Reserve(id, 0);
             // ponytail: tombstones stay until tombstone GC on applied vectors (TS-647 step 7).
             if (!store.IsSystem)
             {
@@ -264,13 +246,6 @@ internal sealed partial class SqliteStorageTransaction(
                 var written = WriteRegister(collection, id, default, tombstone: true);
                 ReconcileUnique(collection, affected, id, cancellationToken);
                 AppendChange(collection, id, offset, written, null, cancellationToken);
-                if (Command(DroppedCollection, collection).ExecuteScalar() is not null)
-                {
-                    // A concurrent drop won the collection while a write it never saw kept it alive: deleting that last
-                    // document completes the drop here, as applying this tombstone does on every other member.
-                    DropReplicatedCollection(collection, cancellationToken);
-                }
-
                 return written;
             }
 
@@ -333,21 +308,21 @@ internal sealed partial class SqliteStorageTransaction(
     }
 
     // Admits one write against the per-commit limits of a client database.
-    private void Reserve(string collection, string id, int documentBytes)
+    private void Reserve(string id, int documentBytes)
     {
         if (!Shaped)
         {
             return;
         }
 
-        if (_deltas is not null && !DocumentDelta.HasValidKey(collection, id))
+        // An empty id has no successor to resume after.
+        if (id.Length == 0)
         {
-            throw new InvalidDataException("a captured change has an invalid collection or id");
+            throw new InvalidDataException("a document id is empty");
         }
 
         var bytes = documentBytes + (long)JsonEncodedText.Encode(id).EncodedUtf8Bytes.Length + OpFramingBytes;
-        // An empty id has no successor to resume after; no writer ever produced one (schema 1 required 1 to 256 characters).
-        if (id.Length == 0 || documentBytes > MaxDocumentBytes || Encoding.UTF8.GetByteCount(id) > MaxIdBytes || _writes == MaxWrites
+        if (documentBytes > MaxDocumentBytes || Encoding.UTF8.GetByteCount(id) > MaxIdBytes || _writes == MaxWrites
             || _writtenBytes + bytes > MaxWrittenBytes)
         {
             LimitsReached = _writes > 0;
@@ -886,7 +861,7 @@ internal sealed partial class SqliteStorageTransaction(
     // local: the applied registers carry what it needs.
     private void WriteMetadata(string collection, string name, string? body)
     {
-        if (!Shaped || _imported)
+        if (!Shaped)
         {
             return;
         }
@@ -911,14 +886,9 @@ internal sealed partial class SqliteStorageTransaction(
             return false;
         }
 
-        _metadataChanged = true;
         _collectionsChanged = true;
-        // Local metadata allocates immediately, so a failed allocation faults this mutation too. Applied changes allocate
-        // their shared history offset at commit.
-        if (!_imported)
-        {
-            Offset();
-        }
+        // Local metadata allocates immediately, so a failed allocation faults this mutation too.
+        Offset();
 
         WriteMetadata(DocumentDelta.Collections, collection.Name, string.Create(CultureInfo.InvariantCulture, $$"""{"created_at":{{collection.CreatedAt}},"entity_id":"{{collection.Id}}"}"""));
         return true;
@@ -1013,7 +983,6 @@ internal sealed partial class SqliteStorageTransaction(
         return await RunAsync(() =>
         {
             ThrowIfReadOnly();
-            DocumentMutation(replicated: false);
             if (store.IsSystem)
             {
                 if (_changes is not null)
@@ -1058,14 +1027,12 @@ internal sealed partial class SqliteStorageTransaction(
 
                 if (ids.Count > IStorageTransaction.MaxChangeGroupChanges)
                 {
-                    LimitsReached = _deltas?.Count > 0;
+                    LimitsReached = _writes > 0;
                     throw new ChangeGroupCapacityException(
                         $"a replicated transaction holds at most {IStorageTransaction.MaxChangeGroupChanges} changes and {IStorageTransaction.MaxChangeGroupBytes} bytes");
                 }
 
-                // Documents this transaction already captured first: their tombstones replace their bodies, so the group
-                // has room for the others whatever order their ids sort in.
-                foreach (var id in ids.OrderBy(id => _changeIndex.ContainsKey((name, id)) ? 0 : 1))
+                foreach (var id in ids)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     WriteRegister(name, id, default, tombstone: true);
@@ -1103,21 +1070,11 @@ internal sealed partial class SqliteStorageTransaction(
 
             try
             {
-                if (_imported && (_importHistory || _metadataChanged))
-                {
-                    // One local history offset for every applied write a reader can see; their versions stay theirs.
-                    CommitImportHistory(Offset());
-                }
-
                 DropUniqueAffected();
                 var offset = _offset ?? GetOffset();
                 if (_changes is { Count: > 0 })
                 {
                     sequence = AppendChanges(_changes, cancellationToken);
-                }
-                else if (_deltas is { Count: > 0 })
-                {
-                    sequence = AppendGroup(_deltas, cancellationToken);
                 }
 
                 cancellationToken.ThrowIfCancellationRequested();
@@ -1164,8 +1121,7 @@ internal sealed partial class SqliteStorageTransaction(
     internal void Savepoint()
     {
         ThrowIfReadOnly();
-        _savepoint = (_changes?.Count ?? _deltas?.Count ?? 0, _changeBytes, _writes, _writtenBytes, _offset, _replicatedMutation, _collectionsChanged);
-        _replacedSinceSavepoint.Clear();
+        _savepoint = (_changes?.Count ?? 0, _changeBytes, _writes, _writtenBytes, _offset, _collectionsChanged);
         _savepointPending = true;
         LimitsReached = false;
     }
@@ -1185,7 +1141,6 @@ internal sealed partial class SqliteStorageTransaction(
         }
 
         _savepoint = null;
-        _replacedSinceSavepoint.Clear();
     }
 
     /// <summary>Undoes what the write since <see cref="Savepoint"/> did, including a failure that faulted the transaction.</summary>
@@ -1209,29 +1164,11 @@ internal sealed partial class SqliteStorageTransaction(
     }
 
     private void Restore(
-        (int Changes, long ChangeBytes, int Writes, long WrittenBytes, long? Offset, bool? ReplicatedMutation, bool CollectionsChanged) saved)
+        (int Changes, long ChangeBytes, int Writes, long WrittenBytes, long? Offset, bool CollectionsChanged) saved)
     {
         _changes?.RemoveRange(saved.Changes, _changes.Count - saved.Changes);
-        if (_deltas is not null)
-        {
-            for (var i = _replacedSinceSavepoint.Count - 1; i >= 0; i--)
-            {
-                var (index, previous) = _replacedSinceSavepoint[i];
-                _deltas[index] = previous;
-            }
-
-            for (var index = saved.Changes; index < _deltas.Count; index++)
-            {
-                _changeIndex.Remove((_deltas[index].Collection, _deltas[index].Id));
-            }
-
-            _deltas.RemoveRange(saved.Changes, _deltas.Count - saved.Changes);
-        }
-
-        _replacedSinceSavepoint.Clear();
-
-        (_changeBytes, _writes, _writtenBytes, _offset, _replicatedMutation, _collectionsChanged) =
-            (saved.ChangeBytes, saved.Writes, saved.WrittenBytes, saved.Offset, saved.ReplicatedMutation, saved.CollectionsChanged);
+        (_changeBytes, _writes, _writtenBytes, _offset, _collectionsChanged) =
+            (saved.ChangeBytes, saved.Writes, saved.WrittenBytes, saved.Offset, saved.CollectionsChanged);
         _savepoint = null;
         _faulted = false;
     }
@@ -1263,20 +1200,17 @@ internal sealed partial class SqliteStorageTransaction(
     public ValueTask<ReadOnlyMemory<byte>> GetOriginAsync(CancellationToken cancellationToken) =>
         RunAsync<ReadOnlyMemory<byte>>(() => GetOrigin(), cancellationToken, retry: true);
 
-    // The system database's origin is its incarnation; a client database's is its own stream's (ClientOrigin).
+    // The system database's origin is its incarnation; a client database keeps no journal.
     private byte[] GetOrigin() =>
-        store.IsSystem ? Ulid.Parse((string)Command(SqliteStatements.Origin).ExecuteScalar()!).ToByteArray() : ClientOrigin();
+        store.IsSystem ? Ulid.Parse((string)Command(SqliteStatements.Origin).ExecuteScalar()!).ToByteArray()
+            : throw new NotSupportedException("a client database keeps no journal");
 
     public ValueTask<long> GetLastChangeSequenceAsync(CancellationToken cancellationToken) =>
         RunAsync(LastSequence, cancellationToken, retry: true);
 
     // The system journal may hold its head digest without the group (a truncated tail, a follower's snapshot).
-    private long LastSequence() => (long)Command(store.IsSystem ? SqliteStatements.SystemLastSequence : SqliteStatements.LastGroup).ExecuteScalar()!;
-
-    public ValueTask<CapturedGroup?> ReadChangesAsync(long sequence, CancellationToken cancellationToken) =>
-        store.IsSystem
-            ? throw new NotSupportedException("the system database's groups are read through its catalog replication")
-            : RunAsync(() => ReadGroup(sequence), cancellationToken, retry: true);
+    private long LastSequence() =>
+        store.IsSystem ? (long)Command(SqliteStatements.SystemLastSequence).ExecuteScalar()! : throw new NotSupportedException("a client database keeps no journal");
 
     /// <summary>See <see cref="ISystemReplication.GetDigestAsync"/>.</summary>
     internal ValueTask<ReadOnlyMemory<byte>?> GetChangeDigestAsync(long sequence, CancellationToken cancellationToken)
@@ -1298,76 +1232,6 @@ internal sealed partial class SqliteStorageTransaction(
             ? digest.Length == JournalDigest.Length ? digest : throw new InvalidDataException("the stored journal digest is invalid")
             : null;
     }
-
-    public ValueTask<bool> ApplyAsync(DocumentDelta change, CancellationToken cancellationToken) =>
-        RunAsync(() =>
-        {
-            ThrowIfReadOnly();
-            DocumentMutation(replicated: true);
-            return ApplyDelta(change, cancellationToken);
-        }, cancellationToken, mutation: true);
-
-    // The documents WriteMetadata records; anything else fails the replicated group.
-    private object ReadMetadata(string name, string body, bool collection, CancellationToken cancellationToken)
-    {
-        try
-        {
-            using var reservation = ReserveSchemaMemory(8L * Encoding.UTF8.GetByteCount(body), MemoryLane.Replication);
-            using var json = JsonDocument.Parse(body);
-            var root = json.RootElement;
-            if (collection)
-            {
-                if (root.TryGetProperty("schema", out var schema)
-                    && (!root.TryGetProperty("schema_dialect", out var dialect) || dialect.GetString() != CollectionSchemaValidation.Dialect
-                        || CollectionSchemaValidation.Check(schema, store.SchemaMemory, MemoryLane.Replication, cancellationToken: cancellationToken) is not null))
-                {
-                    throw new InvalidDataException("replicated metadata contains an invalid collection schema");
-                }
-
-                var id = root.GetProperty("entity_id").GetString();
-                return EntityIds.IsValid(id)
-                    ? new CollectionInfo(name, root.GetProperty("created_at").GetInt64(), Id: id)
-                    : throw new InvalidDataException("invalid collection entity id");
-            }
-
-            var fields = root.GetProperty("fields").EnumerateArray()
-                .Select(field => DocumentField.TryParse(field.GetString(), out var parsed) ? parsed : throw new InvalidDataException("invalid index field"))
-                .ToList();
-            return DatabaseName.TryParse(root.GetProperty("collection").GetString(), out var indexed) && fields.Count is >= 1 and <= 4
-                ? new IndexDefinition(name, indexed.Value, fields)
-                : throw new InvalidDataException("invalid index definition");
-        }
-        catch (Exception error) when (error is JsonException or KeyNotFoundException or InvalidOperationException or FormatException)
-        {
-            throw new InvalidDataException("replicated metadata is not a collection or index definition", error);
-        }
-    }
-
-    public ValueTask<long> GetAppliedSequenceAsync(ReadOnlyMemory<byte> origin, CancellationToken cancellationToken) =>
-        RunAsync(() =>
-        {
-            var command = Command(SqliteStatements.GetApplied);
-            command.Parameters.AddWithValue("$origin", origin.ToArray());
-            return command.ExecuteScalar() as long? ?? 0;
-        }, cancellationToken);
-
-    public async ValueTask SetAppliedSequenceAsync(ReadOnlyMemory<byte> origin, long sequence, CancellationToken cancellationToken) =>
-        await RunAsync(() =>
-        {
-            ThrowIfReadOnly();
-            if (store.IsSystem || origin.Length != OriginPositions.OriginBytes || sequence <= 0)
-            {
-                throw new InvalidDataException("an applied position needs a client database, a 16-byte origin and a sequence");
-            }
-
-            var command = Command(SqliteStatements.SetApplied);
-            command.Parameters.AddWithValue("$origin", origin.ToArray());
-            command.Parameters.AddWithValue("$sequence", sequence);
-            command.ExecuteNonQuery();
-            var superseded = Command(SqliteStatements.DropSupersededApplied);
-            superseded.Parameters.AddWithValue("$origin", origin.ToArray());
-            return superseded.ExecuteNonQuery();
-        }, cancellationToken, mutation: true).ConfigureAwait(false);
 
     public ValueTask DisposeAsync()
     {
@@ -1401,9 +1265,6 @@ internal sealed partial class SqliteStorageTransaction(
 
                         _bodyCommands.Clear();
                         _changes?.Clear();
-                        _deltas?.Clear();
-                        _changeIndex.Clear();
-                        _replacedSinceSavepoint.Clear();
                     }
                     finally
                     {
@@ -1471,17 +1332,6 @@ internal sealed partial class SqliteStorageTransaction(
         {
             throw new InvalidOperationException("an operation of this transaction failed, so it can only be rolled back");
         }
-    }
-
-    // Check calls before no-op detection too, independently of whether this database captures changes.
-    private void DocumentMutation(bool replicated)
-    {
-        if (_replicatedMutation is { } previous && previous != replicated)
-        {
-            throw new InvalidOperationException("a transaction cannot mix local document mutations and replicated changes");
-        }
-
-        _replicatedMutation = replicated;
     }
 
     private Task EnterAsync(CancellationToken cancellationToken, bool stream = false, bool mutation = false)
@@ -1628,20 +1478,6 @@ internal sealed partial class SqliteStorageTransaction(
 
     private static long ContentBytes(DocumentChange change) =>
         (long)Encoding.UTF8.GetByteCount(change.Collection) + Encoding.UTF8.GetByteCount(change.Id) + (change.Json?.Length ?? 0);
-
-    // Capacity errors occur during the mutation, as well as at commit. The mutation marks the transaction rollback-only
-    // even when its caller catches the error. A client group of one change may be larger (a baseline's register).
-    private void CheckCaptureCapacity(long bytes, bool replacing = false)
-    {
-        var count = _deltas!.Count;
-        if ((!replacing && count >= IStorageTransaction.MaxChangeGroupChanges)
-            || bytes > IStorageTransaction.MaxChangeGroupBytes - _changeBytes)
-        {
-            LimitsReached = count > 0;
-            throw new ChangeGroupCapacityException(
-                $"a replicated transaction holds at most {IStorageTransaction.MaxChangeGroupChanges} changes and {IStorageTransaction.MaxChangeGroupBytes} bytes");
-        }
-    }
 
     // Appends one system journal group and returns its sequence. The next sequence is read inside this write transaction,
     // which the database's writer gate serializes.
