@@ -14,7 +14,7 @@ namespace TerraScale.Authentication.Fast.Oidc;
 [ClassDataSource<TerraBaseFixture>(Shared = SharedType.PerTestSession)]
 public sealed class TokenContractTests(TerraBaseFixture fixture)
 {
-    private const string Audience = "https://gru.api.terrascale.tech";
+    private const string Audience = "https://api.terrascale.tech";
     private const string ServiceId = "01M4EQ2FRJ8S8B29E8TQVWNW4K";
     private const string ServiceSecret = "service-test-secret-0123456789abcdefghij";
 
@@ -127,7 +127,8 @@ public sealed class TokenContractTests(TerraBaseFixture fixture)
     {
         var settings = AuthTestServer.DefaultSettings();
         settings["access-token-audiences"] = "https://auth.test.invalid/api";
-        await Assert.That(AuthOptions.Load(settings).AccessTokenAudiences).IsEquivalentTo(["https://auth.test.invalid/api"]);
+        // TerraBase's audience is always first; configured ones follow.
+        await Assert.That(AuthOptions.Load(settings).AccessTokenAudiences).IsEquivalentTo([AuthOptions.TerraBaseAudience, "https://auth.test.invalid/api"]);
     }
 
     [Test]
@@ -141,6 +142,32 @@ public sealed class TokenContractTests(TerraBaseFixture fixture)
         await Assert.That(options.AccessTokenAudiences.ToArray()).IsEquivalentTo([Audience, "https://eu.api.terrascale.tech/"]);
         await Assert.That(options.ServiceClients.Single().ClientId).IsEqualTo(ServiceId);
         await Assert.That(options.ToString()).DoesNotContain(ServiceSecret);
+    }
+
+    [Test]
+    public async Task Production_defaults_issue_the_one_issuer_and_audience_terrabase_trusts_in_every_region()
+    {
+        // No public-origin and no access-token-audiences: what every region of ts-auth runs with.
+        await using var oidc = await OidcHarness.StartAsync(fixture, values =>
+        {
+            values.Remove("public-origin");
+            values.Remove("access-token-audiences");
+            values["service-clients"] = $"{ServiceId}:{ServiceSecret}";
+        });
+
+        using var response = await ClientCredentialsAsync(oidc, ServiceId, ServiceSecret);
+        var token = JsonSerializer.Deserialize<JsonElement>(await response.Content.ReadAsStringAsync()).GetProperty("access_token").GetString()!;
+        // The pair production TerraBase pins (TerraBaseOptions.PlatformAuthIssuer, PlatformAuthAudience); no region in either.
+        var result = await new JsonWebTokenHandler().ValidateTokenAsync(token, new TokenValidationParameters
+        {
+            ValidIssuer = "https://auth.terrascale.tech/terrascale",
+            ValidAudience = "https://api.terrascale.tech",
+            IssuerSigningKeys = (await KeysAsync(oidc)).GetSigningKeys(),
+            ValidAlgorithms = [SecurityAlgorithms.EcdsaSha256],
+        });
+
+        await Assert.That(result.IsValid).IsTrue();
+        await Assert.That(((JsonWebToken)result.SecurityToken).Audiences.ToArray()).IsEquivalentTo([AuthOptions.TerraBaseAudience]);
     }
 
     private Task<OidcHarness> StartAsync() => OidcHarness.StartAsync(fixture, values =>

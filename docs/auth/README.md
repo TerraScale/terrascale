@@ -233,7 +233,7 @@ The TS-491 OAuth provider accepts `openid`, `email`, `profile` and
 `offline_access`; each client's scope permissions bound what it may request.
 `profile` adds no claims yet. Access tokens follow TerraBase decision 0007
 (TS-519): signed, unencrypted ES256 JWTs with `typ` `at+jwt`, `aud` holding
-every `TS_AUTH_ACCESS_TOKEN_AUDIENCES` value, and a user's `email` and
+`https://api.terrascale.tech` (TerraBase's audience, `AuthOptions.TerraBaseAudience`, in every region) and every `TS_AUTH_ACCESS_TOKEN_AUDIENCES` value, and a user's `email` and
 `email_verified` whatever the scopes. Identity tokens keep `typ` `JWT` and
 `aud` = the client id, and carry the email claims only with the `email` scope,
 as userinfo does. The user-facing client is the confidential `ts-dashboard`,
