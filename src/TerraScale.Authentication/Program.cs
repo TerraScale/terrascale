@@ -31,7 +31,17 @@ catch (Exception error) when (error is not OutOfMemoryException)
     return 3;
 }
 
-var app = App.Build(options);
+WebApplication app;
+try
+{
+    app = App.Build(options);
+}
+catch (AuthConfigurationException error)
+{
+    await Console.Error.WriteLineAsync($"ts-auth: {error.Message}");
+    return 2;
+}
+
 if (args is [GitHubActionsBinding.BindCommand or GitHubActionsBinding.UnbindCommand, ..])
 {
     // Operator commands: bind (activate) or unbind the GitHub Actions e2e workload, then exit without serving.

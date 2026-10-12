@@ -28,14 +28,17 @@ public static class App
     /// TerraBase's internal listener on Fly's private network: app <c>ts-terrabase</c> in gru, the home region of the
     /// platform databases, from every region; in a <c>ts-pr-&lt;n&gt;</c> preview, whose one machine (in another Fly org)
     /// runs TerraBase next to ts-auth, that machine. Off Fly (local development), the TerraBase on this machine, whose
-    /// internal listener is on loopback there.
+    /// internal listener is on loopback there, in Development only: a production ts-auth off Fly has no storage to fall
+    /// back on and refuses to start (<see cref="AuthConfigurationException"/>) instead of writing to whatever listens there.
     /// </summary>
     // shortcut: every region stores in gru's copy, because TerraBase does not replicate documents between regions yet (the
     // client replication paths were deleted in R2a; peer streams come with R4a). Nearest-region storage would give each
     // region its own signing keys and users. Switch back to top1.nearest.of.ts-terrabase.internal once R4a replicates.
-    public static readonly Uri TerraBaseOrigin = new(Environment.GetEnvironmentVariable("FLY_APP_NAME") switch
+    public static Uri TerraBaseOrigin(AuthOptions options) => new(Environment.GetEnvironmentVariable("FLY_APP_NAME") switch
     {
-        null or "" => "http://127.0.0.1:8081",
+        null or "" when options?.Development == true => "http://127.0.0.1:8081",
+        null or "" => throw new AuthConfigurationException(
+            "Off Fly (FLY_APP_NAME unset) ts-auth stores in the loopback TerraBase only in Development: set TS_AUTH_ENVIRONMENT=Development, or run it on Fly"),
         var app when app.StartsWith("ts-pr-", StringComparison.Ordinal) => $"http://top1.nearest.of.{app}.internal:8081",
         _ => "http://gru.ts-terrabase.internal:8081",
     });
@@ -84,7 +87,7 @@ public static class App
         // The nearest TerraBase machine's private listener: no credential, it trusts the private network.
         builder.Services.AddSingleton(services => new TerraBaseDocumentsClient(services.GetRequiredService<HttpClient>(), new TerraBaseDocumentsClientOptions
         {
-            BaseAddress = TerraBaseOrigin,
+            BaseAddress = TerraBaseOrigin(options),
         }).Database(StorageProject, StorageDatabase));
         builder.Services.AddSingleton<AuthStore>();
         builder.Services.AddSingleton<Users>();
@@ -140,6 +143,8 @@ public static class App
         builder.Configuration["ForwardedHeaders_Enabled"] = "false";
 
         var app = builder.Build();
+        // Resolved now, so a ts-auth without storage refuses to start (see TerraBaseOrigin); tests may register their own.
+        app.Services.GetRequiredService<TerraBaseDatabase>();
         // Hashes its timing equalizer now, so the first password check of an unknown account costs no more than any other.
         app.Services.GetRequiredService<PasswordHasher>();
         if (options.CloudflareEmail is null && !options.Development)

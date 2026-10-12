@@ -3,6 +3,7 @@ using System.Net;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Microsoft.Extensions.DependencyInjection;
 using TerraScale.Authentication.Configuration;
 using TerraScale.Authentication.Features.Oidc;
 using TerraScale.Authentication.Features.RateLimiting;
@@ -55,6 +56,32 @@ public sealed class ConfigurationTests
         await Assert.That(output).Contains("TS_AUTH_SENTRY_DSN must be a valid DSN");
         await Assert.That(output).DoesNotContain("secretvalue");
         await Assert.That(output).DoesNotContain("   at ");
+    }
+
+    [Test]
+    public async Task Production_off_fly_refuses_to_start_instead_of_storing_on_loopback()
+    {
+        // No FLY_APP_NAME (off Fly) and no storage of the test's own: only Development may use the loopback TerraBase.
+        var exception = await Assert.ThrowsAsync<AuthConfigurationException>(() => AuthTestServer.StartAsync(settings: values => values.Remove("environment")));
+        var settings = AuthTestServer.DefaultSettings();
+        settings.Remove("environment");
+        var (exitCode, output) = await RunBinaryAsync("--rate-limit=1000", settings);
+
+        await Assert.That(exception!.Message).IsEqualTo(StorageOffFly);
+        await Assert.That(exitCode).IsEqualTo(2);
+        await Assert.That(output).Contains(StorageOffFly);
+        await Assert.That(output).DoesNotContain("   at ");
+    }
+
+    [Test]
+    public async Task Development_off_fly_stores_in_the_loopback_terrabase()
+    {
+        var sent = new System.Collections.Concurrent.ConcurrentQueue<Uri>();
+        await using var server = await AuthTestServer.StartAsync(services: services =>
+            services.AddSingleton(new HttpClient(new RecordingTransport(sent))));
+
+        await Assert.That(await ReadinessWait.UntilAsync(() => Task.FromResult(!sent.IsEmpty), TimeSpan.FromSeconds(15))).IsTrue();
+        await Assert.That(sent.Select(uri => uri.GetLeftPart(UriPartial.Authority)).Distinct()).IsEquivalentTo(["http://127.0.0.1:8081"]);
     }
 
     [Test]
@@ -311,7 +338,9 @@ public sealed class ConfigurationTests
     {
         var settings = AuthTestServer.DefaultSettings();
         settings.Remove("environment");
-        await using var service = await RunningBinary.StartAsync(settings);
+        // On Fly: storage comes from the Fly identity alone (App.TerraBaseOrigin), with no setting. Off Fly a production
+        // ts-auth refuses to start (Production_off_fly_refuses_to_start_instead_of_storing_on_loopback).
+        await using var service = await RunningBinary.StartAsync(settings, new Dictionary<string, string> { ["FLY_APP_NAME"] = "ts-auth" });
 
         using var health = await service.Client.GetAsync("/healthz");
 
@@ -431,6 +460,19 @@ public sealed class ConfigurationTests
         }
     }
 
+    private const string StorageOffFly =
+        "Off Fly (FLY_APP_NAME unset) ts-auth stores in the loopback TerraBase only in Development: set TS_AUTH_ENVIRONMENT=Development, or run it on Fly";
+
+    // Answers every TerraBase request with 503 and records where it was sent; nothing leaves the process.
+    private sealed class RecordingTransport(System.Collections.Concurrent.ConcurrentQueue<Uri> sent) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            sent.Enqueue(request.RequestUri!);
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
+        }
+    }
+
     private static async Task<(int ExitCode, string Output)> RunBinaryAsync(string argument, Dictionary<string, string>? settings = null)
     {
         var binary = Path.Combine(AppContext.BaseDirectory, "ts-auth.dll");
@@ -439,8 +481,8 @@ public sealed class ConfigurationTests
             RedirectStandardError = true,
             RedirectStandardOutput = true,
         };
-        // A developer's own TS_AUTH_* settings must not change the outcome.
-        foreach (var name in start.Environment.Keys.Where(key => key.StartsWith("TS_AUTH_", StringComparison.Ordinal)).ToList())
+        // A developer's own TS_AUTH_* settings (and a Fly identity) must not change the outcome.
+        foreach (var name in start.Environment.Keys.Where(key => key.StartsWith("TS_AUTH_", StringComparison.Ordinal) || key == "FLY_APP_NAME").ToList())
         {
             start.Environment.Remove(name);
         }
