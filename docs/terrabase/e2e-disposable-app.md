@@ -14,17 +14,39 @@ faults something is listed with the approval it needs.
 | Crash and restart | `flyctl machine kill <id>` (SIGKILL, a crash) and `flyctl machine restart <id>` (a clean restart) of one region's machine while the others write, then convergence and per-region digests | yes |
 | Partition and rejoin | see "Partition" below: a real network partition between two regions' machines, applied inside those machines | yes, once the mechanism's approval is given; a local-process partition is supporting evidence only and is not reported as this |
 | Catalog and security state | `GET /catalog-gate` on each machine over 6PN (`open`, `trusted`, `pending`, `digest`): equal digests, every machine trusted | yes |
-| Backup (A7YES) | see "Backup" below | yes |
+| Backup (A7YES) | see "Backup" below | supported cuts that restore and match: yes; a typed refusal: safety only, never functional proof |
 
 Aliases (`api.`, `<region>.api.terrascale.tech`) are not used: an answer they route elsewhere proves nothing.
 
-## Target (refused before any flyctl call or request)
+## Target (explicit; checked before any write or fault)
 
-Pinned mode needs `TERRABASE_E2E_FLY_APP=<disposable app>`; it has no default. The harness (`DisposableTarget`) refuses,
-before it runs flyctl or sends a request: a missing app; `ts-terrabase`, `ts-auth`, `ts-dashboard` and any `ts-pr-*`
-preview app; and a `TERRABASE_E2E_FLY_URL` other than `https://<app>.fly.dev/` (so `api.terrascale.tech` and the regional
-aliases are refused too). `DisposableTargetTests` holds these negative controls. Run labels name the mode: `local:<region>`,
-`fly-unpinned:<region>` (the production e2e project's own collection, region-pinned only; never acceptance evidence and never machine faults) and `fly-pinned:<region>/<machine>@<revision>`.
+A pinned run (`TERRABASE_E2E_FLY_REVISION=<sha>`) needs every part of its target named; none has a default:
+
+| Variable | Value |
+| --- | --- |
+| `TERRABASE_E2E_FLY_APP` | the disposable app |
+| `TERRABASE_E2E_FLY_URL` | `https://<app>.fly.dev/`, exactly |
+| `TERRABASE_E2E_FLY_ORG` | the app's org |
+| `TERRABASE_E2E_FLY_NETWORK` | the app's custom private network; required under option A (org `terrascale`), empty otherwise |
+| `TERRABASE_E2E_FLY_MACHINES` | `gru=<id>,sjc=<id>,fra=<id>` |
+
+Checks, in order, each stopping the run (`DisposableTarget`, negative controls in `DisposableTargetTests`):
+
+1. **Configuration, before any flyctl call or request:** a missing variable; `ts-terrabase`, `ts-auth`, `ts-dashboard` or
+   any `ts-pr-*` app; a URL other than the app's own host (so production's `.fly.dev` hosts, `api.`, `auth.` and the
+   regional aliases are refused); the previews' org; org `terrascale` without a network; a region of the run without a
+   named machine.
+2. **Read-only, before any write or fault:** `flyctl apps list --org <org> --json` must show the app in that org on that
+   network (production's apps show network `""`, Fly's default 6PN, so an option-A app on the default network is refused);
+   `flyctl machine list --app <app> --json` must show exactly the named machine in each region.
+3. **Identity:** each machine's `/healthz` must report its region, machine and the revision, before the first write and
+   again when each test's cluster is released (every scenario), so a redeploy or machine change mid-run fails that test.
+4. **Only passing scenarios count:** a pinned run fails any scenario still listed in `Gaps` (a strict expected failure)
+   before its cluster starts, so no `region/machine@revision` line is printed for it. The rows a run relies on (for the
+   six edges, `pair`) must be removed on main first.
+
+Run labels name the mode: `local:<region>`, `fly-unpinned:<region>` (the production e2e project's own collection,
+region-pinned only; never acceptance evidence and never machine faults) and `fly-pinned:<region>/<machine>@<revision>`.
 
 ## Gates before any cloud start
 
@@ -34,6 +56,7 @@ aliases are refused too). `DisposableTargetTests` holds these negative controls.
 - It contains #149 (the `revision`/`machine` health fields and `X-TerraBase-Machine`), R3–R7, R10a's restore gate with
   its two remaining release fixes (`PUT …/backup-destination` and `PATCH …/databases/{d}` marked as revocations), and
   Tester B's fixes.
+- The `Gaps` rows of every scenario the run reports are removed on main (the pinned run refuses listed ones).
 - The user has approved the spend row and the credentials below.
 
 ## Resources and cost (estimate for Beta's aggregate testing ledger; not a separate budget)
