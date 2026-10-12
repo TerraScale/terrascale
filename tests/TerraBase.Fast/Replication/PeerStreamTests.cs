@@ -316,6 +316,54 @@ public sealed class PeerStreamTests
         await Assert.That(await gru.UntilMetricAsync("terrabase_replication_tail_lag_seconds", value => value == 0)).IsTrue();
     }
 
+    [Test]
+    public async Task An_index_made_or_dropped_in_one_region_is_made_or_dropped_in_the_other()
+    {
+        await using var cluster = await Cluster.StartAsync(cdc: true, "gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var index = new IndexDefinition("by_email", "items", [DocumentField.TryParse("email", out var email) ? email : throw new InvalidOperationException()]);
+        await gru.WriteAsync(async transaction =>
+        {
+            _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
+            _ = await transaction.CreateIndexAsync(index, CancellationToken.None);
+        });
+        await Assert.That(await sjc.UntilIndexesAsync(["by_email"])).IsTrue();
+
+        await gru.WriteAsync(async transaction => await transaction.DropIndexAsync("by_email", CancellationToken.None));
+        await Assert.That(await sjc.UntilIndexesAsync([])).IsTrue();
+    }
+
+    [Test]
+    public async Task Unique_constraints_that_arrive_after_the_documents_they_constrain_hide_the_same_loser_everywhere()
+    {
+        await using var cluster = await Cluster.StartAsync(cdc: true, "gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var (smaller, larger) = (EntityIds.New().ToString(), EntityIds.New().ToString());
+        await gru.WriteAsync(async transaction => await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None));
+        var deadline = DateTime.UtcNow + Deadline;
+        while (await sjc.CollectionIdAsync("items") is null && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(100);
+        }
+
+        await Assert.That(await sjc.CollectionIdAsync("items")).IsNotNull();
+
+        // gru stops sending to sjc. It declares email unique and writes the larger id; sjc, which has not heard of the
+        // constraint, writes the smaller id with the same email, and that reaches gru, where the smaller id wins.
+        var member = (await cluster.Members.ListAsync(CancellationToken.None)).Single(listed => listed.Region == "sjc");
+        cluster.Members.Leave(member.Name);
+        await Assert.That(await gru.UntilStreamsAsync([])).IsTrue();
+        await gru.WriteAsync(async transaction => await transaction.SetUniqueConstraintsAsync("items", [new UniqueConstraint("email", ["email"])], CancellationToken.None));
+        await gru.WriteAsync(async transaction => await transaction.PutAsync("items", larger, Json("""{"email":"same@example.test","from":"gru"}"""), CancellationToken.None));
+        await sjc.WriteAsync(async transaction => await transaction.PutAsync("items", smaller, Json("""{"email":"same@example.test","from":"sjc"}"""), CancellationToken.None));
+        await Assert.That(await gru.UntilUniqueLoserAsync(larger)).IsTrue();
+
+        // Listed again, sjc receives the constraint after both documents: it hides the same loser.
+        cluster.Members.Join(member);
+        await Assert.That(await sjc.UntilUniqueLoserAsync(larger)).IsTrue();
+        await Assert.That(await sjc.ReadAsync(smaller)).IsEqualTo("""{"email":"same@example.test","from":"sjc"}""");
+    }
+
     // The first stamp of a test: now, so convergence lags stay meaningful; later operations add logical ticks.
     private static ulong Stamp() => (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() << 16;
 
@@ -512,6 +560,48 @@ public sealed class PeerStreamTests
             }
 
             return true;
+        }
+
+        // Whether the database's index names become exactly `names` within the deadline.
+        public async Task<bool> UntilIndexesAsync(string[] names)
+        {
+            var deadline = DateTime.UtcNow + Deadline;
+            while (DateTime.UtcNow < deadline)
+            {
+                var store = await StoreAsync();
+                await using (var transaction = await store.BeginTransactionAsync(write: false, CancellationToken.None))
+                {
+                    if ((await transaction.ListIndexesAsync(CancellationToken.None)).Select(index => index.Name).SequenceEqual(names))
+                    {
+                        return true;
+                    }
+                }
+
+                await Task.Delay(100);
+            }
+
+            return false;
+        }
+
+        // Whether the document becomes a hidden uniqueness loser within the deadline.
+        public async Task<bool> UntilUniqueLoserAsync(string id)
+        {
+            var deadline = DateTime.UtcNow + Deadline;
+            while (DateTime.UtcNow < deadline)
+            {
+                var store = await StoreAsync();
+                await using (var transaction = await store.BeginTransactionAsync(write: false, CancellationToken.None))
+                {
+                    if (await transaction.GetAsync("items", id, CancellationToken.None) is { UniqueConflict: true })
+                    {
+                        return true;
+                    }
+                }
+
+                await Task.Delay(100);
+            }
+
+            return false;
         }
 
         // Whether the outbound streams that report connected become exactly `regions` within the deadline.
