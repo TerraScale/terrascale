@@ -81,6 +81,15 @@ had no preview app. PRs that still have a preview app: #79, #88, #106, #108, #11
 **Every PR needs a fresh green `test` run on its exact head after main is green.** A rerun of a failed job while main is
 known flaky proves nothing. #79's 15:30Z rerun request (run 38268608663) does not count.
 
+**#132 before #133 (the integration owner's call).** #133 carries #132's change as its first commit, and PRs are never
+closed, so a superseded #132 would stay open for good. #132 therefore merges first; its contract tests already pass on
+main. #133 then merges main in, the duplicate commit's content is already present, and only R3's routing commit remains.
+Each gets its own fresh green `test` on its exact head.
+
+**Six distinct product Fast flakes** are seen so far, the five above plus
+`Declared_JSON_schema_and_native_uniqueness_coexist_without_changing_collection_identity` on #132's run 38270496291.
+All are routed to T1.
+
 **Not merged until fixed and verified:**
 - **R10a's stack**, until the no-peer fail-open and the unprotected override are fixed and R3 verifies in writing;
 - **#125**, until its metrics race is fixed (#130) and a fresh `test` run on its exact head is green;
@@ -103,6 +112,8 @@ the SHA listed. A newer head means a new manifest entry, never a silent swap.
 | 6 | Slow: provision the real ts-auth signing key (#102) | #107 | `00390b11` (pushed) | none (tests) | ready | Slow only, non-blocking suite. |
 | 7 | R3 CDC decode notes | #101 | `0fc542f5` (pushed) | none (docs) | ready | |
 | 7a | Backup: one lifetime S3 response handler dispatching per request, replacing the per-call attach/detach race that threw a NullReferenceException in the AWS SDK (`BackupKeyRotationTests`) | #128 | `a71c8f4b` (pushed, base main) | 3 (`storage-format-unchanged`) | ready | Its regression fails 3/3 on main and passes 5/5 (T1). Product fix; push check passes (no .github change). |
+| 7b | Tester C: regional routing and ts-auth token contract tests (test only) | #132 | `833d21e2` | none | ready; merges after main is green, with a fresh green `test` | Tester C's `2b86f784` cherry-picked unchanged onto main `014c9928`. Local: auth Fast 593/593, terrabase Fast 1424/1425 (one product flake). First CI run 38270496291: auth success; terrabase failed on the product flake `Declared_JSON_schema_and_native_uniqueness_coexist_without_changing_collection_identity`, not a contract test. |
+| 7c | R3: `<region>.api.terrascale.tech` pins a region and fails closed | #133 | `79ebd2c2` | 3 | ready; merges after #132 and after main is green | Contains Tester C's commit (`97ed1d7c`, the same content as #132) plus R3's `79ebd2c2`. That commit changes `Listeners.cs`, the docs (issuer doc fixed) and +197 lines of routing contract tests. Behaviour: a regional host is answered only in its own region; an unavailable region answers 503 `region_unavailable` (never served locally, including replays to the wrong region and `fallback=prefer_self` failures); an unknown label answers 421; a host/pin mismatch answers 421 with no replay. R3's results: Fast 1431/1431, auth 578/578, host-parsing mutant fails 8/8. Push check passes. |
 | 8 | R2c-2: delete the per-collection change feed and history tables | #88 | `05bd4374` (pushed) | **4** | ready; the integration owner resolves it against `c691f947` during the combine, and **T1 reviews that resolution in writing before the freeze** (COS decision; #88's owner is finished, no separate rebase push) | It shares the feed area with R8 (item 13), so conflicts are expected there. Its format 4 combines with R10a's (see "Storage format"). |
 | 9 | R3: CDC change group source | #106 | `4c32da5e` (pushed) | 3 | ready | Head of `2328b8db`, `2ee8b148`, `b838729e`, `81fa4fcb`, `4c32da5e`. |
 | 10 | RegionProcesses (regions as OS processes) | #111 | `07f8d81f` (pushed) | none (tests) | ready | |
@@ -211,7 +222,7 @@ ts-dashboard is held by the user and is in neither phase.
 1. **T1:** done (`1c800e32`).
 1a. **CI optimizer:** #129 at `165295e0`, hosted run 38262406479 green. Required before the phase-1 merge, not before the combine.
 1b. **T1:** the dependency and security audit of the vendored driver. Required before acceptance counts.
-2. **R10a:** the gate-blocker fix is done at `60eae912`. It waits on R3's written verification of that exact SHA, with:
+2. **R10a:** R3 found one more blocker in `60eae912`: a single remaining machine never reopens the catalog. R10a is implementing an operator catalog-open request file. The stack waits on that fix and on R3's written verification of the new head, with:
    - R3's blocking findings resolved;
    - bounded deletion;
    - the restore gate;
