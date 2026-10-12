@@ -18,7 +18,7 @@ namespace TerraScale.Authentication.Fast.Management;
 [ClassDataSource<TerraBaseFixture>(Shared = SharedType.PerTestSession)]
 public sealed partial class ApiKeyTests(TerraBaseFixture fixture)
 {
-    private const string Audience = "https://gru.api.terrascale.tech";
+    private const string Audience = "https://api.terrascale.tech";
     private static readonly string[] ReadOnly = ["documents:read"];
     private static readonly string[] ReadWrite = ["documents:read", "documents:write"];
     private static readonly string[] WithShapes = ["documents:read", "shapes:read"];

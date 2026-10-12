@@ -111,6 +111,18 @@ public sealed record TerraBaseOptions
         && id.All(character => character is >= 'a' and <= 'z' or >= '0' and <= '9' or '-');
 
     /// <summary>
+    /// The issuer of every platform token ts-auth signs: its public origin plus <c>/terrascale</c>, the same in every region
+    /// (there is no regional issuer). On <c>ts-terrabase</c>, <see cref="AuthIssuer"/> may only be this.
+    /// </summary>
+    public const string PlatformAuthIssuer = "https://auth.terrascale.tech/terrascale";
+
+    /// <summary>
+    /// The audience ts-auth puts on every token meant for TerraBase, the same in every region. On <c>ts-terrabase</c>,
+    /// <see cref="AuthAudiences"/> must include it.
+    /// </summary>
+    public const string PlatformAuthAudience = "https://api.terrascale.tech";
+
+    /// <summary>
     /// Issuer (<c>iss</c>) of the ts-auth access tokens that authenticate Management API users, an absolute HTTPS URL.
     /// Its signing keys come from <c>{issuer}/.well-known/openid-configuration</c>. <see langword="null"/> authenticates
     /// no user, so the Management API answers 401.
@@ -255,6 +267,13 @@ public sealed record TerraBaseOptions
         }
 
         var (authIssuer, authAudiences) = ParseAuth(values);
+        // A regional issuer or audience would turn every platform token away with 401 in production; previews and tests run their own ts-auth.
+        if (app == ProductionApp && authIssuer is not null && (authIssuer != PlatformAuthIssuer || !authAudiences.Contains(PlatformAuthAudience)))
+        {
+            throw new TerraBaseConfigurationException(
+                $"on {ProductionApp}, auth-issuer must be {PlatformAuthIssuer} and auth-audience must include {PlatformAuthAudience}: ts-auth issues every region's platform tokens with that pair");
+        }
+
         return new TerraBaseOptions
         {
             Port = ParsePort(values, "port") ?? DefaultPort,
@@ -339,6 +358,9 @@ public sealed record TerraBaseOptions
             ? seconds
             : throw new TerraBaseConfigurationException($"readiness-cache-seconds must be an integer between 1 and {MaxReadinessCacheSeconds}");
     }
+
+    // The production app; previews are ts-pr-<n>.
+    private const string ProductionApp = "ts-terrabase";
 
     // ts-auth tokens authenticate Management API users.
     private static (string? Issuer, string[] Audiences) ParseAuth(IReadOnlyDictionary<string, string> values)
