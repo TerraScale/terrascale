@@ -34,14 +34,15 @@ internal sealed class EngineApiKeyStore(SystemCatalog catalog, TimeProvider time
     private static string ProjectKeyOrder(string projectId) => ProjectState(projectId) + "api_key_order";
 
     public async ValueTask<CreateApiKeyResult> CreateAsync(
-        string name, IReadOnlyList<string> scopes, string organizationId, string? projectId, string? databaseId, CancellationToken cancellationToken)
+        string name, IReadOnlyList<string> scopes, string organizationId, string? projectId, string? databaseId, CancellationToken cancellationToken,
+        DateTimeOffset? expiresAt = null)
     {
         var secret = NewSecret();
         // Checked against the catalog version, like the existence check the endpoint made before: a key's scope and a
         // project key's list entries are management state.
         return await catalog.WriteAsync<CreateApiKeyResult>(async transaction =>
             await EngineManagementService.ScopeExistsUncheckedAsync(transaction, organizationId, projectId, databaseId, cancellationToken).ConfigureAwait(false)
-                ? new IssuedApiKey((await StoreAsync(transaction, secret, name, scopes, organizationId, projectId, databaseId, cancellationToken).ConfigureAwait(false)).Key, secret)
+                ? new IssuedApiKey((await StoreAsync(transaction, secret, name, scopes, organizationId, projectId, databaseId, cancellationToken, expiresAt).ConfigureAwait(false)).Key, secret)
                 : new NotFound(),
             static error => error, cancellationToken).ConfigureAwait(false);
     }
@@ -68,6 +69,7 @@ internal sealed class EngineApiKeyStore(SystemCatalog catalog, TimeProvider time
         var document = await documents.GetSystemAsync(Collection, id, cancellationToken).ConfigureAwait(false);
         // A key without a tenant scope authenticates nothing; data-plane reads never initialize the catalog.
         return document is null || EntityPayload.Read(document, TerraBaseJsonContext.Default.ApiKey) is not { OrganizationId: not null } key
+            || key.ExpiresAt <= time.GetUtcNow()
             ? new NotFound()
             : key;
     }
@@ -158,10 +160,10 @@ internal sealed class EngineApiKeyStore(SystemCatalog catalog, TimeProvider time
     // and revoked through its project, and keeps the project from being deleted.
     private async ValueTask<(ApiKey Key, ProjectApiKey? Listed)> StoreAsync(
         IStorageTransaction transaction, string secret, string name, IReadOnlyList<string> scopes, string organizationId, string? projectId, string? databaseId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, DateTimeOffset? expiresAt = null)
     {
         var now = time.GetUtcNow();
-        var key = new ApiKey(EntityIds.New(time).ToString(), name, scopes, organizationId, projectId, databaseId);
+        var key = new ApiKey(EntityIds.New(time).ToString(), name, scopes, organizationId, projectId, databaseId, expiresAt);
         var hash = Hash(secret);
         await PutAsync(transaction, Collection, key.Id, key, TerraBaseJsonContext.Default.ApiKey, cancellationToken).ConfigureAwait(false);
         await PutAsync(transaction, Hashes, hash, key.Id, TerraBaseJsonContext.Default.String, cancellationToken).ConfigureAwait(false);
