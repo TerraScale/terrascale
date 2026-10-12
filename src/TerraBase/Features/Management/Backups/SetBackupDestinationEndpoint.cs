@@ -8,15 +8,14 @@ using TerraBase.Features.Replication;
 namespace TerraBase.Features.Management.Backups;
 
 /// <summary>PUT a project's customer backup destination.</summary>
-public sealed class SetBackupDestinationEndpoint(IManagementService management, IProjectBackupDestinations destinations) : Endpoint<ProjectBackupDestinationRequest, IResult>
+public sealed class SetBackupDestinationEndpoint(IManagementService management, IProjectBackupDestinations destinations, ICatalogGate gate)
+    : Endpoint<ProjectBackupDestinationRequest, IResult>
 {
     /// <inheritdoc />
     public override void Configure()
     {
         Put(BackupDestinationRoute.Path);
         Name("setBackupDestination");
-        // A restore could undo it to a tenant's harm: anchored before it is acknowledged (CatalogGate).
-        Metadata(AnchoredRevocation.Instance);
         Summary("Put a project's customer backup destination");
         Description(BackupDestinationRoute.Description);
         Tags("Backups");
@@ -43,14 +42,32 @@ public sealed class SetBackupDestinationEndpoint(IManagementService management, 
             NotFound error => ErrorResponse.From(error),
             Forbidden error => ErrorResponse.From(error),
             Unavailable error => ErrorResponse.From(error),
-            Project project => BackupDestinationRoute.Validate(request) is { } error ? ErrorResponse.From(error)
-                : await destinations.SaveAsync(ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), project.Id, request, cancellationToken) switch
-                {
-                    ProjectBackupDestination saved => TypedResults.Ok(saved),
-                    NotFound missing => ErrorResponse.From(missing),
-                    Forbidden refused => ErrorResponse.From(refused),
-                    Unavailable unavailable => ErrorResponse.From(unavailable),
-                },
+            Project project => BackupDestinationRoute.Validate(request) is { } error ? ErrorResponse.From(error) : await SaveAsync(project, request, cancellationToken),
         };
+    }
+
+    private async ValueTask<IResult> SaveAsync(Project project, ProjectBackupDestinationRequest request, CancellationToken cancellationToken)
+    {
+        // Replacing a destination revokes the old one: a restore that lost the replacement would resume shipping to the bucket
+        // the customer replaced, so it is anchored before it is acknowledged (CatalogGate). A first destination revokes nothing.
+        var replacing = await destinations.ReadAsync(ManagementRoute.OrganizationId(HttpContext), project.Id, cancellationToken) is ProjectBackupDestinationRecord;
+        switch (await destinations.SaveAsync(ManagementRoute.UserId(HttpContext), ManagementRoute.OrganizationId(HttpContext), project.Id, request, cancellationToken))
+        {
+            case ProjectBackupDestination saved:
+                if (replacing)
+                {
+                    await gate.AnchorAsync(cancellationToken);
+                }
+
+                return TypedResults.Ok(saved);
+            case NotFound missing:
+                return ErrorResponse.From(missing);
+            case Forbidden refused:
+                return ErrorResponse.From(refused);
+            case Unavailable unavailable:
+                return ErrorResponse.From(unavailable);
+            default:
+                throw new System.Diagnostics.UnreachableException();
+        }
     }
 }
