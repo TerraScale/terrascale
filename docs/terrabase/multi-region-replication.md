@@ -895,8 +895,11 @@ store closes), with `PRAGMA capture_data_changes_conn('after')` on from its open
   suspended (a restore keeps more history, never less), and raises each origin's floor to the highest stamp deleted.
   It then forgets origins with no event left whose floor is older than 14 days (`FeedCursor.Forget`), so the per-read
   origin list and the cursors stay bounded; a resumed cursor drops an origin this machine forgot when its stamp is older
-  than its issue instant minus 14 days. A failing pass logs a warning. Refill floors are R6's; R6 must file a repair's
-  feed rows under the original node, never origin 0, which a cursor cannot name (requirement left on #114).
+  than its issue instant minus 14 days. A failing pass logs a warning. Refill floors are R6's.
+- **Repairs.** An anti-entropy repair joins with origin 0 (R6), which no cursor can name. Its feed row is filed as this
+  machine's event at a fresh stamp from its clock, so this machine's events stay in commit order; repairs never ship,
+  so every machine files its own. Section 14's "one row per original (node, stamp)" is not built: a reader sees the
+  repaired document (its current value) under the repairing machine.
 - **Known limit: stamps more than 1 s ahead.** A request mints `max(clock, document's stamp + 1)`, and the clock moves at
   most `MaxSkew` (1 s) ahead (section 3). A document carrying a stamp further ahead therefore gets a stamp larger than
   this origin's next writes to other documents, so one origin's stamps no longer follow its commit order, and a cursor

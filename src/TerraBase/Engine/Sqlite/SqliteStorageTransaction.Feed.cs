@@ -118,6 +118,14 @@ internal sealed partial class SqliteStorageTransaction
             return;
         }
 
+        // An anti-entropy repair (origin 0, R6) is filed as this machine's event at a fresh stamp: no cursor can name
+        // origin 0, and a fresh stamp keeps this machine's events in commit order. Repairs never ship, so other machines
+        // file their own repairs the same way.
+        if (at.Node.Value == 0)
+        {
+            at = new EntryVersion(Member.Clock.Tick(), Member.Id);
+        }
+
         var origin = unchecked((long)at.Node.Value);
         var known = Command(InsertFeedOrigin);
         known.Parameters.AddWithValue("$origin", origin);

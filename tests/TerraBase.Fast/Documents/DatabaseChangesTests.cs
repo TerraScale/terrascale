@@ -229,6 +229,24 @@ public sealed class DatabaseChangesTests
     }
 
     [Test]
+    public async Task An_anti_entropy_repair_streams_under_this_machine_and_its_cursor_resumes()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        var store = (await api.Server.Services.GetRequiredService<IStorageEngine>().OpenDatabaseAsync(await api.TenantOfAsync(), CancellationToken.None))!;
+        // A repair joins with origin 0 (R6), which no cursor can name.
+        await JoinAsync(store, default, DateTimeOffset.UtcNow);
+        using var stream = await Sse.OpenAsync(api.Client, $"{api.DatabasePath()}/changes");
+        _ = await stream.NextAsync();
+        var repaired = await stream.NextAsync();
+        await Assert.That(repaired.Data.GetProperty("origin").GetString()).IsNotEqualTo(new string('0', 16));
+        var after = DocumentApi.NewId();
+        (await api.PutAsync(after, new { n = 1 })).Status.ShouldBe(HttpStatusCode.Created);
+        using var resumed = await Sse.OpenAsync(api.Client, $"{api.DatabasePath()}/changes?cursor={Uri.EscapeDataString(repaired.Id)}");
+        _ = await resumed.NextAsync();
+        await Assert.That((await resumed.NextAsync()).Data.GetProperty("id").GetString()).IsEqualTo(after);
+    }
+
+    [Test]
     public async Task Malformed_cursors_and_filters_are_400_a_missing_scope_403_and_an_unknown_database_404()
     {
         await using var api = await DocumentApi.StartAsync();
