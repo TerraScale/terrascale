@@ -69,6 +69,11 @@ jobs:
               - src/TerraScale.Logging/**
               - tests/TerraScale.Endpoints.Tests/**
               - tests/TerraScale.Logging.Tests/**
+              # TerraBase's vendored driver also backs auth integration tests and vendor audits.
+              - src/vendor/**
+              - tests/Turso.Data.Sqlite.Tests/**
+              - scripts/vendor/**
+              - scripts/ci/**
             libs:
               - *shared
               - libs.slnf
@@ -113,6 +118,15 @@ jobs:
           ssh-key: ${{ secrets.TS_DOTNET_DEPLOY_KEY }}
           path: ts-dotnet
           persist-credentials: false
+      - name: Check out the path-filter matcher for regression fixtures
+        uses: actions/checkout@v5
+        with:
+          repository: dorny/paths-filter
+          ref: v3
+          path: path-filter-action
+          persist-credentials: false
+      - name: Verify CI path filters
+        run: python3 terrascale/scripts/ci/path-filter-test.py terrascale/.github/workflows/ci.yml path-filter-action/dist/index.js
       # One layer cache per job: concurrent jobs sharing a key would overwrite each other's cache.
       - &setup-builder
         uses: useblacksmith/setup-docker-builder@v2
