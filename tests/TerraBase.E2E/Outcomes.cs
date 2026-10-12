@@ -6,9 +6,10 @@ namespace TerraBase.E2E;
 /// <summary>
 /// One line of JSON per test in the file named by <c>TERRABASE_E2E_RESULTS</c>, so summaries come from the run itself,
 /// never from a pass count: a test that passed because its scenario is a strict expected failure is not a feature
-/// passing. Categories: <c>pass</c> (the scenario ran and held), <c>expected-failure</c> (listed in <see cref="Gaps"/>,
-/// with the slice it waits on), <c>not-supported</c> (an expected failure that hit a test hook not wired yet),
-/// <c>skip</c> (with TUnit's reason) and <c>fail</c>. scripts/terrabase/e2e-summary.sh turns the file into the report.
+/// passing. Categories: <c>pass</c> (a feature scenario ran and held), <c>harness</c> (a check of the harness itself),
+/// <c>expected-failure</c> (listed in <see cref="Gaps"/>, with the slice it waits on), <c>not-supported</c> (an expected
+/// failure that hit a hook or feature not built yet), <c>skip</c> (with TUnit's reason) and <c>fail</c>. Each line also
+/// says where the nodes ran and which faults the test injected (<see cref="ScenarioAttribute"/>). scripts/terrabase/e2e-summary.sh turns the file into the report.
 /// </summary>
 internal static class Outcomes
 {
@@ -30,9 +31,10 @@ internal static class Outcomes
         }
 
         _ = Marked.TryRemove(context.Id, out var marked);
+        var scenario = context.Metadata.TestDetails.GetAttributes<ScenarioAttribute>().FirstOrDefault();
         var (category, detail) = context.Execution.Result?.State switch
         {
-            TestState.Passed => marked.Category is null ? ("pass", "") : marked,
+            TestState.Passed => marked.Category is not null ? marked : scenario?.Nodes == Nodes.Harness ? ("harness", "") : ("pass", ""),
             TestState.Skipped => ("skip", context.Execution.SkipReason ?? ""),
             var state => ("fail", $"{state}: {context.Execution.Result?.Exception?.Message}"),
         };
@@ -41,6 +43,13 @@ internal static class Outcomes
             ["test"] = context.Metadata.DisplayName,
             ["category"] = category,
             ["detail"] = detail,
+            ["nodes"] = scenario is null ? "undeclared" : Cluster.FlyRequested && scenario.Nodes != Nodes.Harness ? "Fly machines" : scenario.Nodes switch
+            {
+                Nodes.Harness => "no node (harness)",
+                Nodes.InProcess => "in-process nodes",
+                _ => "separate OS processes",
+            },
+            ["faults"] = scenario is null ? "undeclared" : scenario.Faults == Faults.None ? "none" : scenario.Faults.ToString(),
         });
         lock (FileGate)
         {

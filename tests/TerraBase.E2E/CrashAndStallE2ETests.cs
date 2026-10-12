@@ -22,6 +22,7 @@ public sealed class CrashAndStallE2ETests
     // Writers keep writing while the node is killed: every acknowledged write must be there after the restart, exactly.
     // An unacknowledged one may or may not be, but never as anything other than what was written.
     [Test]
+    [Scenario(Nodes.Processes, Faults.ProcessKill)]
     public async Task Writes_acknowledged_before_a_SIGKILL_survive_the_restart_of_their_node_process()
     {
         Skip.When(Cluster.FlyRequested, "kills a local node process");
@@ -75,6 +76,7 @@ public sealed class CrashAndStallE2ETests
     // The replicated half: the writer is killed right after its acknowledgements, before it can have shipped them, and every
     // region must still end with every acknowledged write once it is back.
     [Test]
+    [Scenario(Nodes.Processes, Faults.ProcessKill)]
     public async Task Writes_acknowledged_before_a_SIGKILL_reach_every_region_once_the_node_is_back()
     {
         Skip.When(Cluster.FlyRequested, "kills a local node process");
@@ -89,6 +91,7 @@ public sealed class CrashAndStallE2ETests
     // A storage stall on one node: its database file is held by another writer for five seconds while its clients write.
     // A request may wait out the stall or be refused, but an acknowledged write is never lost, and writes work again after.
     [Test]
+    [Scenario(Nodes.InProcess, Faults.StorageStall)]
     public async Task Writes_through_a_storage_stall_are_either_refused_or_kept_and_writing_resumes_after_it()
     {
         Skip.When(Cluster.FlyRequested, "locks a local node's database file");
@@ -109,6 +112,7 @@ public sealed class CrashAndStallE2ETests
     // The replicated half: sjc stalls for ten seconds while every region writes; afterwards every region holds exactly the
     // acknowledged writes.
     [Test]
+    [Scenario(Nodes.InProcess, Faults.StorageStall)]
     public async Task A_storage_stall_on_one_region_loses_no_acknowledged_write_and_the_regions_converge()
     {
         Skip.When(Cluster.FlyRequested, "locks a local node's database file");
@@ -124,6 +128,7 @@ public sealed class CrashAndStallE2ETests
     // Peer traffic through a lossy link (delays, a throughput cap, connection resets): every region ends with exactly the
     // writes, each applied once, however often a group was resent.
     [Test]
+    [Scenario(Nodes.InProcess, Faults.NetworkFault)]
     public async Task Writes_converge_exactly_over_lossy_peer_links()
     {
         Skip.When(Cluster.FlyRequested, "Fly has no way to make 6PN lossy; the lossy link runs on the local nodes only");
@@ -142,6 +147,7 @@ public sealed class CrashAndStallE2ETests
 
     // The lossy link itself, against an echo server: bytes arrive intact and in order through delays and the cap.
     [Test]
+    [Scenario(Nodes.Harness, Faults.NetworkFault)]
     public async Task The_lossy_link_delivers_bytes_intact_through_its_delays_and_throughput_cap()
     {
         using var echo = new TcpListener(IPAddress.Loopback, 0);
