@@ -242,7 +242,9 @@ jobs:
           exit "$code"
 
   preview:
-    if: github.event_name == 'pull_request'
+    # OFF 2026-10-12 by the user's order: no PR preview environments until previews work again (Fly previews org
+    # hit its 20-machine limit). Re-enable by deleting `false &&` in a reviewed PR.
+    if: false && github.event_name == 'pull_request'
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 20
     concurrency:
