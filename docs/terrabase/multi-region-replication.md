@@ -499,6 +499,8 @@ contract:
   goes).
 - **Management commits** ([0008](decisions/0008-management-commits.md)) stay atomic (one stamp) and idempotent by id.
   `fence` and `assert` ops are evaluated locally, with no global serializability.
+- **Durability:** every `_system` commit syncs its write-ahead log ([0012](decisions/0012-system-database-synchronous-full.md)),
+  so an acknowledged key, revocation or registration survives a power loss of its machine.
 
 Deleted: `CatalogFeed`, `CatalogFollower`, `CatalogForwarder`, `CatalogPrimaryClient`, `ForwardedRequests`,
 `catalog.proto`, `ISystemReplication`, `SqliteStorageTransaction.System*`, `SqliteStorageEngine.System`,
@@ -548,7 +550,8 @@ in the primary region" shortcut. Decision 0009 is superseded.
 | Failure | Effect | Handling |
 | --- | --- | --- |
 | Process crash mid-batch | uncommitted operations lost, not acknowledged | committed ones are in CDC and ship after restart |
-| OS crash or power loss (`NORMAL`) | the last acknowledged local commits may be lost | ones already shipped come back through anti-entropy. The epoch rises, so no version is reused |
+| OS crash or power loss, tenant database (`NORMAL`, [0003](decisions/0003-sqlite-synchronous-normal.md)) | the commits acknowledged since the database's WAL last synced (at the latest its next checkpoint) may be lost: documents, collections, indexes and schemas written there | ones already shipped come back through anti-entropy; unshipped ones are lost. The epoch rises, so no version is reused |
+| OS crash or power loss, `_system` (`FULL`, [0012](decisions/0012-system-database-synchronous-full.md)) | none: every acknowledged catalog write, API key and revocation was synced before its answer | `SystemDatabasePowerLossTests` |
 | Volume lost | the machine's databases are gone | new member number, refill from peers. Unshipped writes (< ~100 ms) are lost: "ack after one node" |
 | Region offline (partition or `machine stop`) | both sides keep accepting writes | streams resume from `acked`. Anti-entropy covers gaps. More than 24 h: evicted, refill on return |
 | Duplicate, reordered or replayed groups | none | joins are idempotent and commutative |
