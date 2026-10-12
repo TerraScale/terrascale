@@ -590,6 +590,8 @@ convergence deadline).
 
 Ordered PRs, each at most 1,500 changed lines. Pure deletion slices are listed separately so they stay reviewable.
 Model: **Opus** = Opus 5.5 (complex, correctness-critical); **Haiku** = Haiku 5.5 (mechanical against this spec).
+Metrics: R3, R4a and R6 emit the replication instruments named in `ops/grafana/README.md` (Metrics); the Grafana
+dashboards and alerts already query those names.
 
 | # | Slice | Contents | ≈ lines | Depends on | Model | Turns green |
 | --- | --- | --- | ---: | --- | --- | --- |
