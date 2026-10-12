@@ -1035,20 +1035,21 @@ public sealed class UsageApiTests
         await Assert.That(period.GetProperty("writes").GetInt64()).IsEqualTo(writes);
     }
 
-    // The saved bucket ids of a database, straight from the catalog file, read-only.
+    // The saved bucket ids of a database, straight from the catalog file, read-only: this machine's ("local", off Fly), whose
+    // documents end with @local.
     private static async Task<List<string>> BucketsAsync(string dataDirectory, string databaseId, string granularity)
     {
         var path = Path.Combine(dataDirectory, "_system.db");
         await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadOnly, Pooling = false }.ToString());
         await connection.OpenAsync();
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT id FROM documents WHERE collection = $collection AND body IS NOT NULL ORDER BY id;";
+        command.CommandText = "SELECT id FROM documents WHERE collection = $collection AND id LIKE '%@local' ORDER BY id;";
         command.Parameters.AddWithValue("$collection", $"databases/{databaseId}/usage-{granularity}");
         List<string> ids = [];
         await using var reader = await command.ExecuteReaderAsync();
         while (await reader.ReadAsync())
         {
-            ids.Add(reader.GetString(0));
+            ids.Add(reader.GetString(0)[..^"@local".Length]);
         }
 
         return ids;
@@ -1063,14 +1064,14 @@ public sealed class UsageApiTests
         }
     }
 
-    // Reads the flushed counters straight from the catalog file, read-only.
+    // Reads this machine's flushed counters straight from the catalog file, read-only.
     private static async Task<string?> ReadSavedOpsAsync(string dataDirectory, string databaseId)
     {
         var path = Path.Combine(dataDirectory, "_system.db");
         await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadOnly, Pooling = false }.ToString());
         await connection.OpenAsync();
         await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT body FROM documents WHERE collection = $collection AND id = 'ops';";
+        command.CommandText = "SELECT body FROM documents WHERE collection = $collection AND id = 'ops@local';";
         command.Parameters.AddWithValue("$collection", $"databases/{databaseId}/usage");
         return await command.ExecuteScalarAsync() as string;
     }
