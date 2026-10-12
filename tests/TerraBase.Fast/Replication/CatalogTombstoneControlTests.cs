@@ -71,7 +71,7 @@ public sealed class CatalogTombstoneControlTests
         // anti-entropy repair from sjc into gru: sjc still holds the removed database's catalog state as it was.
         gru.Advance(TimeSpan.FromHours(25));
         sjc.Advance(TimeSpan.FromHours(25));
-        await gru.RefillAsync(sjc);
+        await gru.RepairIntoAsync(sjc);
         await sjc.ShipToAsync(gru);
         await gru.ShipToAsync(sjc);
         await sjc.RepairIntoAsync(gru);
@@ -97,11 +97,69 @@ public sealed class CatalogTombstoneControlTests
         await gru.CommitAsync(user, HttpStatusCode.Conflict, new { op = "create_database", organization, project, name = "again", id = removed });
     }
 
+    /// <summary>
+    /// A restore of a machine's catalog file (section 2 of the invariants doc): gru's _system goes back to a copy taken before
+    /// it deleted one database and created another. Until a repair from a peer, gru reads the deleted database live again and
+    /// lacks the new one: the window the doc states. A stale group from sjc that carries gru's own lost entry (sjc's later
+    /// change of the new database's record) is joined, not dropped: the catalog never collects, so a document gru lacks was
+    /// never a collected deletion. The repair then brings back the deletion, and nothing removed comes back. With the
+    /// drop-stale-change rule applied to _system as well, sjc's change is lost until that repair.
+    /// </summary>
+    [Test]
+    public async Task A_restored_catalog_reads_its_lost_deletion_live_until_a_repair_and_joins_a_stale_change_of_its_lost_entry()
+    {
+        var start = DateTimeOffset.UtcNow;
+        await using var gru = await Machine.StartAsync("gru", start);
+        await using var sjc = await Machine.StartAsync("sjc", start);
+        var user = gru.Api.User;
+        var (organization, project) = (EntityIds.New().ToString(), EntityIds.New().ToString());
+        var (removed, created) = (EntityIds.New().ToString(), EntityIds.New().ToString());
+        await gru.CommitAsync(user, HttpStatusCode.OK,
+            new { op = "create_organization", id = organization, name = "Restore" },
+            new { op = "create_project", organization, id = project, name = "p" },
+            new { op = "create_database", organization, project, name = "removed", id = removed });
+        await gru.ShipToAsync(sjc);
+        var copy = await gru.CopyCatalogAsync();
+
+        // After the copy, gru deletes one database and creates another; sjc receives both and changes the new record (its own
+        // change, queued: sjc is away from here on).
+        gru.Advance(TimeSpan.FromSeconds(10));
+        await gru.CommitAsync(user, HttpStatusCode.OK, new { op = "delete_database", organization, project, database = removed });
+        await gru.CommitAsync(user, HttpStatusCode.OK, new { op = "create_database", organization, project, name = "created", id = created });
+        await gru.ShipToAsync(sjc);
+        sjc.Advance(TimeSpan.FromSeconds(20));
+        await sjc.PatchRecordAsync(project, created);
+
+        // A day later gru's catalog is restored from the copy; then sjc's queued group (stale now) reaches it.
+        gru.Advance(TimeSpan.FromHours(25));
+        sjc.Advance(TimeSpan.FromHours(25));
+        await gru.RestoreCatalogAsync(copy);
+        await Assert.That(await gru.ReadAsync($"projects/{project}/databases", removed)).IsNotNull().Because("the window: the restored copy holds the record live");
+        await sjc.ShipToAsync(gru);
+        await Assert.That(await gru.ReadAsync($"projects/{project}/databases", created)).Contains("\"placementVersion\":7").Because("sjc's stale change of gru's lost entry joined");
+        await Assert.That(await gru.ReadAsync($"projects/{project}/databases", removed)).IsNotNull().Because("still the window: nothing carried the deletion yet");
+
+        // The repair ends the window.
+        await sjc.RepairIntoAsync(gru);
+        await gru.ConvergeAsync();
+        foreach (var machine in new[] { gru, sjc })
+        {
+            await Assert.That(await machine.VersionAsync($"projects/{project}/databases", removed) is { Deleted: true }).IsTrue().Because(machine.Region);
+            await Assert.That(await machine.ReadAsync($"projects/{project}/database_names", "removed")).IsNull().Because(machine.Region);
+            await Assert.That(await machine.ReadAsync($"projects/{project}/databases", created)).Contains("\"placementVersion\":7").Because(machine.Region);
+            await Assert.That(await machine.ReadAsync($"projects/{project}/database_names", "created")).IsEqualTo($"\"{created}\"").Because(machine.Region);
+        }
+
+        await gru.CommitAsync(user, HttpStatusCode.Conflict, new { op = "create_database", organization, project, name = "again", id = removed });
+    }
+
     private sealed class Machine : IAsyncDisposable
     {
         private readonly FakeTimeProvider _time;
         private readonly string _directory = Directory.CreateTempSubdirectory("terrabase-catalog-control-").FullName;
         private readonly Dictionary<ReplicaId, long> _shipped = [];
+
+        private readonly string _nodeName = Convert.ToHexStringLower(Guid.NewGuid().ToByteArray())[..14];
 
         private Machine(string region, FakeTimeProvider time)
         {
@@ -126,13 +184,48 @@ public sealed class CatalogTombstoneControlTests
         public static async Task<Machine> StartAsync(string region, DateTimeOffset start)
         {
             var machine = new Machine(region, new FakeTimeProvider(start));
-            machine.Api = await ManagementApi.StartAsync(settings =>
-            {
-                settings["region"] = region;
-                settings["node-name"] = Convert.ToHexStringLower(Guid.NewGuid().ToByteArray())[..14];
-                settings["data-directory"] = machine._directory;
-            }, time: machine._time);
+            await machine.StartAsync();
             return machine;
+        }
+
+        private async Task StartAsync() =>
+            Api = await ManagementApi.StartAsync(settings =>
+            {
+                settings["region"] = Region;
+                settings["node-name"] = _nodeName;
+                settings["data-directory"] = _directory;
+            }, time: _time);
+
+        // A copy of this machine's catalog files (_system.db and its sidecars), taken while it is stopped.
+        public async Task<string> CopyCatalogAsync()
+        {
+            var copy = Directory.CreateTempSubdirectory("terrabase-catalog-copy-").FullName;
+            await Api.DisposeAsync();
+            foreach (var file in Directory.EnumerateFiles(_directory, "_system*"))
+            {
+                File.Copy(file, Path.Combine(copy, Path.GetFileName(file)));
+            }
+
+            await StartAsync();
+            return copy;
+        }
+
+        // Stops this machine, puts back the catalog files of `copy` in place of its own, and starts it again.
+        public async Task RestoreCatalogAsync(string copy)
+        {
+            await Api.DisposeAsync();
+            foreach (var file in Directory.EnumerateFiles(_directory, "_system*"))
+            {
+                File.Delete(file);
+            }
+
+            foreach (var file in Directory.EnumerateFiles(copy))
+            {
+                File.Copy(file, Path.Combine(_directory, Path.GetFileName(file)));
+            }
+
+            Directory.Delete(copy, recursive: true);
+            await StartAsync();
         }
 
         public void Advance(TimeSpan by) => _time.Advance(by);
@@ -159,8 +252,6 @@ public sealed class CatalogTombstoneControlTests
             _shipped[to.Node] = after;
         }
 
-        // The copying refill a returning peer gets (AntiEntropy.RefillAsync): every state of every bucket joined there, then
-        // what `to` holds and this machine lacks, below this machine's horizon, forgotten there.
         // An anti-entropy repair: every state of every bucket of this machine joined into `to`.
         public async Task RepairIntoAsync(Machine to)
         {
@@ -179,18 +270,6 @@ public sealed class CatalogTombstoneControlTests
             await using var transaction = await store.BeginTransactionAsync(write: true, CancellationToken.None);
             _ = await transaction.PutAsync(collection, id, Encoding.UTF8.GetBytes(json), CancellationToken.None);
             _ = await transaction.CommitAsync(CancellationToken.None);
-        }
-
-        // The refill a returning peer gets (AntiEntropy.RefillAsync): every state of every bucket joined there.
-        public async Task RefillAsync(Machine to)
-        {
-            BucketCursor? after = null;
-            do
-            {
-                (var states, after) = await States.ReadBucketsAsync(System, [.. Enumerable.Range(0, 4096)], after, 1024, ChangeGroups.MaxBatchBytes, CancellationToken.None);
-                _ = await to.Sink.RepairAsync(System, states, CancellationToken.None);
-            }
-            while (after is not null);
         }
 
         public async Task ConvergeAsync() =>

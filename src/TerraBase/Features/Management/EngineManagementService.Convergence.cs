@@ -34,6 +34,8 @@ internal sealed partial class EngineManagementService
                 logger.ZLogWarning(error, $"Applying the catalog to database {database.DatabaseId:@Database} failed; the next pass tries again");
             }
         }
+
+        await DrainPrefixDeletesAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private async ValueTask ConvergeDatabaseAsync(TenantContext database, CancellationToken cancellationToken)

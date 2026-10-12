@@ -372,7 +372,7 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
         public ValueTask<IReadOnlyList<CollectionStats>> ListCollectionStatsAsync(CancellationToken cancellationToken) => inner.ListCollectionStatsAsync(cancellationToken);
         public IAsyncEnumerable<StoredDocument> QuerySqlAsync(SqlQuery query, CancellationToken cancellationToken, QueryObservation? observation = null) => inner.QuerySqlAsync(query, cancellationToken, observation);
         public ValueTask<SqlQueryPlan> ExplainSqlAsync(SqlQuery query, CancellationToken cancellationToken) => inner.ExplainSqlAsync(query, cancellationToken);
-        public ValueTask<long> DeleteCollectionsAsync(string prefix, CancellationToken cancellationToken) => inner.DeleteCollectionsAsync(prefix, cancellationToken);
+        public ValueTask<long> DeleteCollectionsAsync(string prefix, int limit, CancellationToken cancellationToken) => inner.DeleteCollectionsAsync(prefix, limit, cancellationToken);
         public ValueTask<IReadOnlyList<IndexDefinition>> ListIndexesAsync(CancellationToken cancellationToken) => inner.ListIndexesAsync(cancellationToken);
         public ValueTask<bool> CreateIndexAsync(IndexDefinition index, CancellationToken cancellationToken) => inner.CreateIndexAsync(index, cancellationToken);
         public ValueTask<bool> DropIndexAsync(string name, CancellationToken cancellationToken) => inner.DropIndexAsync(name, cancellationToken);

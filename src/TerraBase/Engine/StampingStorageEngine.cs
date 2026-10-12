@@ -273,8 +273,8 @@ internal sealed class StampingStorageEngine(IStorageEngine inner) : IStorageEngi
         public ValueTask<SqlQueryPlan> ExplainSqlAsync(SqlQuery query, CancellationToken cancellationToken) =>
             RunAsync(() => inner.ExplainSqlAsync(query, cancellationToken), cancellationToken);
 
-        public ValueTask<long> DeleteCollectionsAsync(string prefix, CancellationToken cancellationToken) =>
-            WriteCollectionAsync(() => inner.DeleteCollectionsAsync(prefix, cancellationToken), cancellationToken);
+        public ValueTask<long> DeleteCollectionsAsync(string prefix, int limit, CancellationToken cancellationToken) =>
+            WriteCollectionAsync(() => inner.DeleteCollectionsAsync(prefix, limit, cancellationToken), cancellationToken);
 
         public ValueTask<IReadOnlyList<IndexDefinition>> ListIndexesAsync(CancellationToken cancellationToken) =>
             RunAsync(() => inner.ListIndexesAsync(cancellationToken), cancellationToken);

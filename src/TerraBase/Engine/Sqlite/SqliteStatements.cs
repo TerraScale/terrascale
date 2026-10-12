@@ -167,10 +167,8 @@ internal static class SqliteStatements
         GROUP BY collections.name ORDER BY collections.name;
         """;
 
-    // A prefix is the name range [$from, $to) of each key; documents and their states go with their collections.
-    public const string DeleteCollectionDocuments = "DELETE FROM documents WHERE collection >= $from AND collection < $to;";
-
-    public const string DeleteCollectionStates = "DELETE FROM _tb_state WHERE collection >= $from AND collection < $to;";
+    // A prefix is the name range [$from, $to) of each key: its live documents, which a prefix delete tombstones.
+    public const string PrefixDocuments = "SELECT collection, id FROM documents WHERE collection >= $from AND collection < $to LIMIT $limit;";
 
     public const string DeleteCollectionNames = "DELETE FROM collections WHERE name >= $from AND name < $to;";
 
@@ -230,9 +228,8 @@ internal static class SqliteStatements
         [nameof(CountDocuments)] = CountDocuments,
         [nameof(ListCollectionStats)] = ListCollectionStats,
         [nameof(DropDocuments)] = DropDocuments,
-        [nameof(DeleteCollectionDocuments)] = DeleteCollectionDocuments,
+        [nameof(PrefixDocuments)] = PrefixDocuments,
         [nameof(DeleteCollectionNames)] = DeleteCollectionNames,
-        [nameof(DeleteCollectionStates)] = DeleteCollectionStates,
         [nameof(SystemGetState)] = SystemGetState,
         [nameof(SystemUpdateRow)] = SystemUpdateRow,
         [nameof(SystemInsertRow)] = SystemInsertRow,

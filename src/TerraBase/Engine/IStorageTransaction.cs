@@ -268,12 +268,13 @@ public interface IStorageTransaction : IAsyncDisposable
     ValueTask<SqlQueryPlan> ExplainSqlAsync(SqlQuery query, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Purges every system database collection whose name starts with <paramref name="prefix"/> from this machine: its
-    /// documents and their states, without tombstones, so nothing of it replicates. For state that no live catalog document
-    /// reaches any more (a deleted database's or project's), which every machine purges when it learns of the deletion.
-    /// Returns how many live documents were removed. A client database refuses it with <see cref="NotSupportedException"/>.
+    /// Deletes up to <paramref name="limit"/> (at most <see cref="MaxSystemGroupChanges"/>) live documents of the system
+    /// database collections whose names start with <paramref name="prefix"/>, as tombstones that replicate like any deletion
+    /// (a deleted database's or project's state), few enough to fit one change group. Returns how many it deleted; once that
+    /// is 0, no live document is left and the collection names are removed too. A client database refuses it with
+    /// <see cref="NotSupportedException"/>.
     /// </summary>
-    ValueTask<long> DeleteCollectionsAsync(string prefix, CancellationToken cancellationToken);
+    ValueTask<long> DeleteCollectionsAsync(string prefix, int limit, CancellationToken cancellationToken);
 
     /// <summary>Lists the secondary indexes of this database in name order.</summary>
     ValueTask<IReadOnlyList<IndexDefinition>> ListIndexesAsync(CancellationToken cancellationToken);

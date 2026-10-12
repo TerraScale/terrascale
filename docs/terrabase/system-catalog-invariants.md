@@ -6,7 +6,8 @@
 - Scope: `_system` (the catalog) as a lattice database replicated to every region
   ([multi-region-replication.md](multi-region-replication.md) section 15, "R10a as built"). Client databases keep the
   R7 rules of section 11.
-- Control test: `tests/TerraBase.Fast/Replication/CatalogTombstoneControlTests.cs` (below).
+- Control tests: `tests/TerraBase.Fast/Replication/CatalogTombstoneControlTests.cs` and the chunked prefix delete's
+  restart test in `tests/TerraBase.Fast/Management/DatabaseRecoveryTests.cs` (below).
 
 ## The rule everything else follows
 
@@ -21,7 +22,7 @@ Nothing collects, forgets, purges or truncates a catalog state:
 | Horizon (`HorizonAsync`, sent with a refill) | from `_tb_peers` | 0, so a refill forgets nothing |
 | Forgetting after a copying refill (`ForgetAsync`) | below the sender's horizon | refused |
 | Stable stamps and frontiers received from peers (`RecordStableAsync`, `RecordFrontierAsync`) | recorded | recorded (bookkeeping only; nothing reads them for the catalog) |
-| Prefix delete (`DeleteCollectionsAsync`: a deleted database's or project's state) | refused | a tombstone per live document |
+| Prefix delete (`DeleteCollectionsAsync`: a deleted database's or project's state) | refused | a tombstone per live document, at most 1,024 per transaction (section 1) |
 | CDC retention (`turso_cdc` rows) | acks, 24 h, 1 GiB | the same: rows are not states; a peer past retention refills |
 
 "No horizon" means "never collect": every system-aware path of R7 opens the catalog, and the catalog answers 0 for
@@ -31,9 +32,20 @@ stable and horizon, so the same code collects nothing there.
 
 - **Database.** Deleting a database (in its home region, after its replicas are removed) writes, in one catalog
   transaction: a tombstone of its record (`projects/<p>/databases/<id>`), a tombstone of its name index entry
-  (`projects/<p>/database_names/<name>`), a tombstone of `backed_up_databases/<id>`, a tombstone of every live document
-  under `databases/<id>/` (usage, query statistics, backup policy and schedule), the storage sweep entry of its backups,
-  and this machine's cleanup intent. The record's tombstone is kept forever (catalog GC is off).
+  (`projects/<p>/database_names/<name>`), a tombstone of `backed_up_databases/<id>`, the storage sweep entry of its backups,
+  this machine's cleanup intent, and this machine's prefix-delete intent
+  (`machines/<machine>/pending_prefix_deletes/databases/<id>/`). The record's tombstone is kept forever (catalog GC is off).
+- **Its state** (every live document under `databases/<id>/`: usage per machine and granularity, query statistics and
+  shapes, backup policy and schedule) has no bound, so it does not go in that transaction (R3's objection 1: one catalog
+  transaction holds at most 16,384 documents and 3 MiB). After the commit, `DrainPrefixDeletesAsync` tombstones it in
+  transactions of at most 1,024 documents and 1 MiB of keys (a tombstone's state has a fixed size, so each transaction fits
+  one change group). The transaction that finds no live document left removes the collection names and the intent. A
+  failure or restart between chunks leaves the intent; the next drain resumes (after any deletion, at startup, and in each
+  `CatalogConvergence` pass, every 2 s), and every committed chunk's tombstones stay. Between chunks the record is already a
+  tombstone, so the rest of the state is unreachable: nothing reads a database's state without its live record. A project
+  deletion does the same for `projects/<id>/`.
+- **Limit:** the intent is this machine's. If the deleting machine never runs again, the untombstoned rest of the state
+  stays live (and unreachable) on every machine. Open, with R11's machine replacement.
 - **Id reuse: never.** Every id check (`create_database` with a chosen id, organization and project ids) reads the
   version, tombstones included, so a removed id stays taken: 409 `id_taken`.
 - **Name reuse: yes.** The name index entry is a tombstone, which reads as absent; a new database of that name gets a new
@@ -56,10 +68,44 @@ from an older copy of its data:
   anti-entropy repair in either direction. A copying refill forgets nothing on the catalog (horizon 0).
 - **No lost live entry.** Joins only add newer entries; nothing forgets or collects a catalog state; the returning
   machine's own writes ship from its CDC (stale or not), and anti-entropy compares every bucket both ways.
+- **Restored catalog** (a machine whose `_system` is put back from a copy taken at time T): this is not "no
+  resurrection, no lost entry" until a repair. Exactly what happens is in section 2a.
 - **Prefix state** (R3's point 1: purge vs anti-entropy): a purge removed the purging machine's states without a trace,
   so a rejoining machine still holding them had them repaired back into the region that purged them. Decision (R10a):
   no purge; the prefix delete writes tombstones, which a repair from the rejoining machine cannot undo. The control test
   repairs from the rejoining machine into the deleting one and fails with the purge.
+
+## 2a. A restored catalog, until its repair
+
+Restoring `_system` on machine M from a copy taken at time T (correction after R3's review of `30bbd3f8`: an earlier
+version said a document a machine held is never missing; that holds only without a restore).
+
+- **What M lacks:** every catalog entry M had joined after T, whoever wrote it: its own writes after T, and peers' writes
+  it acknowledged after T (the peers do not send those again). Peers' writes M had not acknowledged still arrive by stream.
+- **What M then serves, until each entry is back:**
+  - A database, project, organization, member, invitation or API key removed after T reads live on M (its tombstone is
+    missing). M answers for it: a revoked API key or a removed member is accepted again on M. A deleted database placed on M
+    can get an empty local file and accept writes there; those writes are lost when the tombstone arrives and
+    `CatalogConvergence` deletes the file.
+  - An entry created or changed after T is missing on M, or reads its value at T (404, an old placement, an old name).
+  - An id removed after T can be created again through M (M's id check does not see the tombstone). That creation is newer
+    than the tombstone, so it wins everywhere: the id is reused. Clients always create with new ULIDs; reusing an old id
+    needs a client that sends it on purpose.
+- **What ends it:** anti-entropy. Every bucket that differs from a peer in two consecutive rounds (60 s apart) is joined
+  both ways, so about 1 to 2 minutes after M and one peer both run rounds. A peer's later write of a key, by stream, ends it
+  for that key earlier. After the repair, removals hold again (the tombstones won) and nothing M lacked is lost: peers
+  kept every state (nothing is collected).
+- **Stale groups are joined (decision, this version):** a stale group (committed 24 h or more before it is read, whole
+  states) from a peer can carry an entry M minted after T. R7's rule for client databases drops a stale state of a
+  document missing locally that the machine held before (`HeldBefore`), because there it means a collected deletion; on M
+  it means a restore, and dropping it would also drop the peer's own newer change until the repair. The catalog collects
+  nothing, so `StorageChangeGroupSink` joins stale catalog groups like any other (`JoinStaleAsync` stays for client
+  databases only).
+- **Not decided here:** keeping a restored machine out of service until its first repair with every peer (a readiness
+  gate) would close the window above, the revoked-key case included. That needs restore detection and a readiness
+  dependency on peers; it is a COS/user decision (recommended before any `_system` restore is part of an operator
+  procedure).
+- **Control test:** `CatalogTombstoneControlTests.A_restored_catalog_reads_its_lost_deletion_live_until_a_repair_and_joins_a_stale_change_of_its_lost_entry`.
 
 ## 3. Delayed and stale changes
 
@@ -71,15 +117,17 @@ from an older copy of its data:
   serializes those writes, so a placement change cannot be newer than a removal it raced. A multi-machine region (or R11's
   move) must re-check this.
 - **R3's point 2** (the R7 rule that drops a stale change for a document missing locally that the machine held before):
-  intended for collected tombstones. On the catalog nothing is collected, forgotten or purged, so a document this machine
-  held is never missing: `HeldBefore` finds its state and the change joins normally. The rule stays uniform (no catalog
-  branch); it never drops a catalog change. If catalog GC is ever turned on, this rule is what keeps a stale change from
-  resurrecting a collected catalog entry, and it must be reviewed with that change.
+  intended for collected tombstones. On the catalog nothing is collected, forgotten or purged, so the only way a held
+  document goes missing is a restore (section 2a), and there dropping is wrong. The catalog therefore does not apply the
+  rule: stale catalog groups join like any other (a catalog branch in `StorageChangeGroupSink`). If catalog GC is ever
+  turned on, that branch must go with it, since the rule is what keeps a stale change from resurrecting a collected
+  catalog entry.
 
 ## 4. File deletion
 
-- **Home region:** `delete_database` records the cleanup intent and the tombstones in one catalog commit, then deletes the
-  file, then clears the intent; startup recovery finishes an interrupted one. It does not wait for peers' acks: a deletion
+- **Home region:** `delete_database` records the cleanup intent and the record's tombstones in one catalog commit, then
+  deletes the file, then clears the intent, then drains the state's prefix delete (section 1); startup recovery finishes
+  an interrupted one. It does not wait for peers' acks: a deletion
   wins over writes still unshipped anywhere (the database is gone).
 - **Every other region:** `CatalogConvergence` (every 2 s) deletes a local file whose record is a tombstone, as soon as the
   tombstone has arrived (stream, refill or repair). A missing record never deletes a file (a creation in progress, or the
@@ -91,7 +139,7 @@ from an older copy of its data:
   machine acts on them. An intent whose database the catalog registers (another region registered the same chosen id
   while this machine's creation failed) keeps the file and clears the intent.
 
-## Control test
+## Control tests
 
 `CatalogTombstoneControlTests.A_removed_database_stays_removed_after_garbage_collection_time_a_refill_and_a_stale_change_and_a_live_one_survives`:
 two machines without peer streams, fake clocks, every change shipped by the test through the production source, sink and
@@ -115,6 +163,34 @@ Broken variants, each run locally against the same test:
 | Catalog GC on (catalog reports stable and horizon, forgets, and the pass collects it) | fails: gru no longer holds the record's tombstone |
 | Prefix purge instead of tombstones | fails: the repair from sjc brings `removed`'s backup policy back into gru |
 
+`CatalogTombstoneControlTests.A_restored_catalog_reads_its_lost_deletion_live_until_a_repair_and_joins_a_stale_change_of_its_lost_entry`
+(section 2a), same two machines:
+
+1. gru creates database `removed`, ships to sjc, and is stopped while its `_system` files are copied.
+2. gru deletes `removed` and creates `created`; ships to sjc; sjc, now away, changes `created`'s record (queued).
+3. 25 h later gru's `_system` is restored from the copy. Asserted: `removed` reads live on gru (the window).
+4. sjc's queued group (stale) reaches gru. Asserted: `created` is on gru with sjc's change; `removed` still reads live.
+5. An anti-entropy repair from sjc into gru and gru's convergence pass. Both machines: `removed` is a tombstone, not named;
+   `created` is live with sjc's change and named; re-creating id `removed` on gru answers 409.
+
+| Variant | Result |
+| --- | --- |
+| This implementation | pass |
+| Stale catalog groups through `JoinStaleAsync` (no catalog branch in the sink) | fails at step 4: gru drops the group |
+
+`DatabaseRecoveryTests.A_deleted_databases_catalog_state_larger_than_one_change_group_goes_in_chunks_that_a_restart_resumes`
+(section 1): 17,000 documents under one database's state (more than one change group), the database deleted, a fault after
+the first chunk that fails every later chunk (the deletion's own drain and every convergence pass), then two restarts.
+Asserted: after the fault the record is unregistered, its file gone, the intent present, exactly 1,024 documents
+tombstoned and the rest live; after each restart every document is a tombstone, the intent is gone, the record stays
+unregistered and the other databases are intact.
+
+| Variant | Result |
+| --- | --- |
+| This implementation | pass |
+| The whole state in the deletion's transaction (before this version) | fails: the deletion hits the change-group capacity and the database is not deleted |
+| The intent cleared with the first chunk | fails: the intent is gone after the first chunk, so nothing would resume the rest |
+
 ## Disagreements and decisions
 
 - R3's `f82690b6` opened the catalog in every R7 path, and the R7-on-R10a merge `e9841c75` collected catalog tombstones.
@@ -124,4 +200,18 @@ Broken variants, each run locally against the same test:
 - R10a-2 first purged prefix state; R3's point 1 showed anti-entropy repairs it back. Changed to tombstones (this doc).
 - Open, for a later slice: when a removed catalog id may be released (catalog GC), which then needs the R7 stale-change
   rule reviewed for the catalog and a deletion-aware file audit.
-- R3 acknowledgement: _pending_ (to be recorded here in writing).
+- R3's objection 1 (prefix delete past one change group, blocking) and correction to section 3 (restore): answered in
+  this version (sections 1, 2a, 3); re-review requested.
+- Open, outside the catalog: R7's intermittent
+  `A_stale_queued_edit_of_a_document_deleted_and_collected_meanwhile_loses_to_the_deletion_everywhere` failure (stale
+  edit ack), seen on this branch and on its base. Not fixed here and not claimed green by reruns.
+
+## R3 acknowledgement
+
+> R3 (R3/R6/R7 owner), 2026-10-12: acknowledged at 30bbd3f8. The catalog keeps every tombstone. No horizon means never
+> collect (stable/horizon 0, forget refused, collection skipped), and every R7 path stays uniform. The prefix delete
+> writes tombstones, which anti-entropy cannot undo. The control test passes, and it fails with catalog GC on (verified
+> independently). Open: objection 1 (the prefix-delete capacity bound) and the restore caveat on the stale-change rule
+> (section 3).
+
+Re-review of objection 1 and the restore correction: _pending_.

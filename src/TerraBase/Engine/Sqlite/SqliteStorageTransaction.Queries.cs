@@ -81,31 +81,64 @@ internal sealed partial class SqliteStorageTransaction
         return new SqlQueryPlan(steps, indexes);
     }
 
-    public ValueTask<long> DeleteCollectionsAsync(string prefix, CancellationToken cancellationToken) =>
+    public ValueTask<long> DeleteCollectionsAsync(string prefix, int limit, CancellationToken cancellationToken) =>
         RunAsync(() =>
         {
             ThrowIfReadOnly();
             ArgumentException.ThrowIfNullOrEmpty(prefix);
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(limit);
+            ArgumentOutOfRangeException.ThrowIfGreaterThan(limit, IStorageTransaction.MaxSystemGroupChanges);
             if (!store.IsSystem)
             {
                 throw new NotSupportedException("a client database drops collections one at a time, with tombstones");
             }
 
-            // The key range covers every collection with this prefix. A purge, not tombstones: CDC ships no deletes, so it
-            // stays on this machine (see IStorageTransaction.DeleteCollectionsAsync).
+            // The key range covers every collection with this prefix. Every live document becomes a tombstone, which replicates
+            // and which anti-entropy cannot repair back: the catalog never collects (docs/terrabase/system-catalog-invariants.md).
+            // At most limit of them, and keys of at most a third of a system change group, so the tombstones (each a fixed-size
+            // state) fit one group. Read every key before the first write: Turso refuses a write on a connection while one of its
+            // reads is open.
             var to = prefix[..^1] + (char)(prefix[^1] + 1);
-            var deleted = 0;
-            foreach (var sql in (ReadOnlySpan<string>)[SqliteStatements.DeleteCollectionDocuments, SqliteStatements.DeleteCollectionStates, SqliteStatements.DeleteCollectionNames])
+            var range = session.Command(SqliteStatements.PrefixDocuments, transaction);
+            range.Parameters.AddWithValue("$from", prefix);
+            range.Parameters.AddWithValue("$to", to);
+            range.Parameters.AddWithValue("$limit", limit);
+            var documents = new List<(string Collection, string Id)>();
+            var bytes = 0L;
+            using (var reader = range.ExecuteReader())
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                var command = session.Command(sql, transaction);
-                command.Parameters.AddWithValue("$from", prefix);
-                command.Parameters.AddWithValue("$to", to);
-                var rows = command.ExecuteNonQuery();
-                deleted = sql == SqliteStatements.DeleteCollectionDocuments ? rows : deleted;
+                while (reader.Read())
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var (collection, id) = (reader.GetString(0), reader.GetString(1));
+                    bytes += StrictUtf8.GetByteCount(collection) + StrictUtf8.GetByteCount(id);
+                    if (documents.Count > 0 && bytes > IStorageTransaction.MaxSystemGroupBytes / 3)
+                    {
+                        break;
+                    }
+
+                    documents.Add((collection, id));
+                }
             }
 
-            return (long)deleted;
+            foreach (var (collection, id) in documents)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                Offset();
+                var (state, at) = Begin(collection, id);
+                _ = Store(collection, id, state.Delete(at), at, null);
+            }
+
+            // The names go once no live document is left under the prefix.
+            if (documents.Count == 0)
+            {
+                var names = session.Command(SqliteStatements.DeleteCollectionNames, transaction);
+                names.Parameters.AddWithValue("$from", prefix);
+                names.Parameters.AddWithValue("$to", to);
+                names.ExecuteNonQuery();
+            }
+
+            return (long)documents.Count;
         }, cancellationToken, mutation: true);
 
     public ValueTask<IReadOnlyList<IndexDefinition>> ListIndexesAsync(CancellationToken cancellationToken) =>
