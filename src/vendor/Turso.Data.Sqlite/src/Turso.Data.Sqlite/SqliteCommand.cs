@@ -301,19 +301,30 @@ public class SqliteCommand : DbCommand
                     continue;
 
                 var statement = PrepareSingleStatement(sql);
-                if (TursoBindings.GetFieldCount(statement) > 0)
+                try
                 {
-                    _hasOpenReader = true;
-                    Connection?.ReaderOpened();
-                    return new SqliteDataReader(this, statement, statements[i], statements.Skip(i + 1).ToList(), recordsAffected, behavior, CloseReader);
+                    if (TursoBindings.GetFieldCount(statement) > 0)
+                    {
+                        _hasOpenReader = true;
+                        Connection?.ReaderOpened();
+                        return new SqliteDataReader(this, statement, statements[i], statements.Skip(i + 1).ToList(), recordsAffected, behavior, CloseReader);
+                    }
+
+                    while (TursoBindings.Read(statement))
+                    {
+                    }
+
+                    if (CountsRowsAffected(statements[i]))
+                        recordsAffected += TursoBindings.RowsAffected(statement);
+                }
+                catch
+                {
+                    // TerraScale: finalize a failed statement here, not on the finalizer thread, which would use the
+                    // connection while its owner does ("concurrent use forbidden").
+                    statement.Dispose();
+                    throw;
                 }
 
-                while (TursoBindings.Read(statement))
-                {
-                }
-
-                if (CountsRowsAffected(statements[i]))
-                    recordsAffected += TursoBindings.RowsAffected(statement);
                 statement.Dispose();
             }
         }
