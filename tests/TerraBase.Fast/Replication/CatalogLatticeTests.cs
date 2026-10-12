@@ -1,3 +1,4 @@
+using System.Net;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
@@ -24,6 +25,8 @@ public sealed class CatalogLatticeTests
     private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(60);
 
     private static readonly string[] Sjc = ["sjc"];
+
+    private static readonly string[] ReadScope = ["documents:read"];
 
     [Test]
     public async Task An_organization_created_in_one_region_reaches_every_region_with_the_same_document_and_version()
@@ -208,6 +211,91 @@ public sealed class CatalogLatticeTests
         }
     }
 
+    /// <summary>
+    /// The restore gate (docs/terrabase/system-catalog-invariants.md section 2a). sjc's catalog is restored from a copy taken
+    /// before gru revoked an API key, removed a member and deleted a database, while sjc cannot reach gru: sjc's catalog still
+    /// holds all three live, yet sjc serves none of it (503 catalog_unverified, not ready) instead of accepting the key, the
+    /// member or a creation of the deleted id. Once gru is reachable, sjc pulls the catalog from it and then refuses all three.
+    /// </summary>
+    [Test]
+    public async Task A_restored_catalog_serves_nothing_until_it_pulled_from_every_machine_then_refuses_the_revoked_key_removed_member_and_deleted_id()
+    {
+        await using var cluster = await Cluster.StartAsync("gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var (owner, member) = (EntityIds.New().ToString(), EntityIds.New().ToString());
+        var (organization, project, removed, kept) = (EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString());
+        await gru.CommitAsync(owner,
+            new { op = "create_organization", id = organization, name = "Gated" },
+            new { op = "set_plan", organization, plan = "enterprise" },
+            new { op = "create_project", organization, id = project, name = "p" },
+            new { op = "create_database", organization, project, name = "removed", id = removed },
+            new { op = "create_database", organization, project, name = "kept", id = kept, replica_regions = Sjc });
+        var organizationPath = $"/v1/management/organizations/{organization}";
+        await Assert.That(await gru.SendAsync(owner, HttpMethod.Put, $"{organizationPath}/members/{member}", new { email = "member@example.com" })).IsEqualTo(HttpStatusCode.OK);
+        var (key, secret) = await gru.CreateKeyAsync(owner, $"{organizationPath}/projects/{project}");
+        var collections = $"/v1/projects/{project}/databases/kept/collections";
+
+        // sjc serves the key and the member; its catalog is copied while it is stopped.
+        await Assert.That(await Until(async () => await sjc.DataStatusAsync(secret, collections) == HttpStatusCode.OK)).IsTrue();
+        await Assert.That(await Until(async () => await sjc.SendAsync(member, HttpMethod.Get, organizationPath) == HttpStatusCode.OK)).IsTrue();
+        var copy = await sjc.CopyCatalogAsync();
+
+        // gru revokes the key, removes the member and deletes a database; sjc applies all three.
+        await Assert.That(await gru.SendAsync(owner, HttpMethod.Delete, $"{organizationPath}/projects/{project}/api-keys/{key}")).IsEqualTo(HttpStatusCode.NoContent);
+        await Assert.That(await gru.SendAsync(owner, HttpMethod.Delete, $"{organizationPath}/members/{member}")).IsEqualTo(HttpStatusCode.NoContent);
+        await gru.CommitAsync(owner, new { op = "delete_database", organization, project, database = removed });
+        await Assert.That(await Until(async () => await sjc.DataStatusAsync(secret, collections) == HttpStatusCode.Unauthorized)).IsTrue();
+        await Assert.That(await sjc.UntilAsync($"projects/{project}/databases", removed, json => json is null)).IsTrue();
+
+        // sjc's catalog is restored from the copy, and neither machine can reach the other.
+        cluster.Members.Map = (node, other) => (node == sjc.Machine && other.Name == gru.Machine) || (node == gru.Machine && other.Name == sjc.Machine)
+            ? other with { PeerAddress = "http://127.0.0.1:9" }
+            : other;
+        await sjc.RestoreCatalogAsync(copy);
+        await Assert.That(await sjc.ReadAsync($"projects/{project}/databases", removed)).IsNotNull().Because("the restored copy holds the deleted database live");
+        await Assert.That(await sjc.StatusAsync("/readyz")).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        await Assert.That(await sjc.DataStatusAsync(secret, collections)).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        await Assert.That(await sjc.SendAsync(member, HttpMethod.Get, organizationPath)).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        var again = new { id = EntityIds.New().ToString(), ops = new object[] { new { op = "create_database", organization, project, name = "again", id = removed } } };
+        await Assert.That(await sjc.SendAsync(owner, HttpMethod.Post, "/v1/management/commits", again)).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        await Assert.That(await sjc.ReadAsync($"projects/{project}/databases", removed)).IsNotNull().Because("nothing repaired sjc yet");
+
+        // gru is reachable again: sjc pulls the catalog from it, serves, and refuses all three.
+        cluster.Members.Map = null;
+        await Assert.That(await Until(async () => await sjc.StatusAsync("/readyz") == HttpStatusCode.OK)).IsTrue();
+        await Assert.That(await sjc.DataStatusAsync(secret, collections)).IsEqualTo(HttpStatusCode.Unauthorized);
+        await Assert.That(await sjc.SendAsync(member, HttpMethod.Get, organizationPath)).IsEqualTo(HttpStatusCode.NotFound);
+        await Assert.That(await sjc.SendAsync(owner, HttpMethod.Post, "/v1/management/commits", again)).IsEqualTo(HttpStatusCode.Conflict);
+        await Assert.That(await sjc.VersionAsync($"projects/{project}/databases", removed) is { Deleted: true }).IsTrue();
+    }
+
+    /// <summary>
+    /// A machine that cannot reach a started machine stays closed, however long; only an operator opens it, with a reason,
+    /// and the override is recorded in the catalog.
+    /// </summary>
+    [Test]
+    public async Task An_unreachable_machine_keeps_the_gate_closed_until_an_operator_opens_it_with_a_recorded_reason()
+    {
+        await using var cluster = await Cluster.StartAsync("gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        cluster.Members.Map = (node, other) => node == sjc.Machine && other.Name == gru.Machine ? other with { PeerAddress = "http://127.0.0.1:9" } : other;
+        await sjc.StopAsync();
+        await sjc.StartAsync();
+        await Assert.That(await sjc.StatusAsync("/readyz")).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        await Assert.That(await sjc.SendAsync(gru.Api.User, HttpMethod.Get, "/v1/management/organizations")).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+
+        await Assert.That(await sjc.AdminAsync("/admin/catalog-gate/open", new { reason = "" })).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That(await sjc.StatusAsync("/readyz")).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+        await Assert.That(await sjc.AdminAsync("/admin/catalog-gate/open", new { reason = "gru lost its volume; ticket 42" })).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(await sjc.StatusAsync("/readyz")).IsEqualTo(HttpStatusCode.OK);
+        var store = await sjc.Api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
+        await using var transaction = await store.BeginTransactionAsync(write: false, CancellationToken.None);
+        var overrides = await transaction.ListAsync($"machines/{sjc.Machine}/catalog_gate_overrides", null, 10, 1024 * 1024, CancellationToken.None);
+        var recorded = JsonDocument.Parse(overrides.Documents.Single().Json).RootElement;
+        await Assert.That(recorded.GetProperty("reason").GetString()).IsEqualTo("gru lost its volume; ticket 42");
+        await Assert.That(recorded.GetProperty("unverified").EnumerateArray().Select(item => item.GetString()!).ToArray()).IsEquivalentTo([gru.Machine]);
+    }
+
     // Whether `condition` holds within the deadline.
     private static async Task<bool> Until(Func<Task<bool>> condition)
     {
@@ -303,11 +391,12 @@ public sealed class CatalogLatticeTests
 
     private sealed class Region(Cluster cluster, string name) : IAsyncDisposable
     {
-        private readonly string _machine = Convert.ToHexStringLower(Guid.NewGuid().ToByteArray())[..14];
         private readonly string _directory = Directory.CreateTempSubdirectory("terrabase-catalog-lattice-").FullName;
         private ManagementApi? _api;
 
         public string Name { get; } = name;
+
+        public string Machine { get; } = Convert.ToHexStringLower(Guid.NewGuid().ToByteArray())[..14];
 
         public ManagementApi Api => _api ?? throw new InvalidOperationException($"{Name} is stopped");
 
@@ -315,7 +404,7 @@ public sealed class CatalogLatticeTests
             _api = await ManagementApi.StartAsync(settings =>
             {
                 settings["region"] = Name;
-                settings["node-name"] = _machine;
+                settings["node-name"] = Machine;
                 settings["data-directory"] = _directory;
             }, services => services.AddSingleton<IMemberDirectory>(cluster.Members));
 
@@ -326,6 +415,78 @@ public sealed class CatalogLatticeTests
         }
 
         public ITenantDirectory Tenants => Api.Server.Services.GetRequiredService<ITenantDirectory>();
+
+        // Stops this machine, copies its catalog files (_system.db and its sidecars) and starts it again.
+        public async Task<string> CopyCatalogAsync()
+        {
+            var copy = Directory.CreateTempSubdirectory("terrabase-catalog-copy-").FullName;
+            await StopAsync();
+            foreach (var file in Directory.EnumerateFiles(_directory, "_system*"))
+            {
+                File.Copy(file, Path.Combine(copy, Path.GetFileName(file)));
+            }
+
+            await StartAsync();
+            return copy;
+        }
+
+        // Stops this machine, puts the catalog files of `copy` in place of its own, and starts it again.
+        public async Task RestoreCatalogAsync(string copy)
+        {
+            await StopAsync();
+            foreach (var file in Directory.EnumerateFiles(_directory, "_system*"))
+            {
+                File.Delete(file);
+            }
+
+            foreach (var file in Directory.EnumerateFiles(copy))
+            {
+                File.Copy(file, Path.Combine(_directory, Path.GetFileName(file)));
+            }
+
+            Directory.Delete(copy, recursive: true);
+            await StartAsync();
+        }
+
+        // A request as `user` through the platform operator; its status.
+        public async Task<HttpStatusCode> SendAsync(string user, HttpMethod method, string path, object? body = null)
+        {
+            using var service = Api.Service(user);
+            using var request = new HttpRequestMessage(method, ManagementApi.Uri(path)) { Content = body is null ? null : JsonContent.Create(body) };
+            using var response = await service.SendAsync(request);
+            return response.StatusCode;
+        }
+
+        // An internal-listener request without a user (administration); its status.
+        public async Task<HttpStatusCode> AdminAsync(string path, object body)
+        {
+            using var response = await Api.Server.Client.PostAsJsonAsync(ManagementApi.Uri(path), body);
+            return response.StatusCode;
+        }
+
+        public async Task<HttpStatusCode> StatusAsync(string path)
+        {
+            using var response = await Api.Server.Client.GetAsync(ManagementApi.Uri(path));
+            return response.StatusCode;
+        }
+
+        // A data API GET with an API key on the client listener; its status.
+        public async Task<HttpStatusCode> DataStatusAsync(string secret, string path)
+        {
+            using var data = Api.DataClient(secret);
+            using var response = await data.GetAsync(ManagementApi.Uri(path));
+            return response.StatusCode;
+        }
+
+        // A project API key made by `user`: its id and secret.
+        public async Task<(string Id, string Secret)> CreateKeyAsync(string user, string projectPath)
+        {
+            using var service = Api.Service(user);
+            using var response = await service.PostAsJsonAsync(ManagementApi.Uri($"{projectPath}/api-keys"), new { name = "gated", scopes = ReadScope });
+            await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Created).Because(await response.Content.ReadAsStringAsync());
+            var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+            return (body.GetProperty("key").GetProperty("id").GetString()!, body.GetProperty("secret").GetString()!);
+        }
 
         // The file a client database is stored in on this machine.
         public string FileOf(TenantContext database) =>

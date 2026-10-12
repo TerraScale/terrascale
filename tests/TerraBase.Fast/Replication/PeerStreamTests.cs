@@ -7,6 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
 using TerraBase.Engine.Lattices;
+using TerraBase.Errors;
 using TerraBase.Features.Replication;
 using TerraBase.Features.Replication.V1;
 using TerraBase.Primitives;
@@ -843,7 +844,17 @@ public sealed class PeerStreamTests
             });
             using var service = Api.Service(Api.User);
             using var response = await service.PostAsync(new Uri("/v1/management/commits", UriKind.Relative), new StringContent(commit, Encoding.UTF8, "application/json"));
-            await Assert.That(response.IsSuccessStatusCode).IsTrue().Because(await response.Content.ReadAsStringAsync());
+            var body = await response.Content.ReadAsStringAsync();
+            if (response.StatusCode == HttpStatusCode.Conflict && body.Contains("\"id_taken\"", StringComparison.Ordinal))
+            {
+                // A machine started after another pulled its catalog before serving (CatalogGate): the registration is here
+                // already, and the database gets its local file as on a first request.
+                await Assert.That(await Api.Server.Services.GetRequiredService<ITenantDirectory>().EnsureLocalDatabaseAsync(database, CancellationToken.None) is Done).IsTrue();
+
+                return;
+            }
+
+            await Assert.That(response.IsSuccessStatusCode).IsTrue().Because(body);
         }
     }
 

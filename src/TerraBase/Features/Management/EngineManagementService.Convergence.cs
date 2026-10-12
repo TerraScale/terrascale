@@ -1,4 +1,5 @@
 using ZLogger;
+using TerraBase.Features.Replication;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
 
@@ -133,7 +134,7 @@ internal sealed partial class EngineManagementService
 }
 
 /// <summary>Applies the replicated catalog to this machine's database files every few seconds (see <see cref="EngineManagementService.ConvergeAsync"/>).</summary>
-internal sealed class CatalogConvergence(EngineManagementService catalog, TimeProvider time, ILogger<CatalogConvergence> logger) : BackgroundService
+internal sealed class CatalogConvergence(EngineManagementService catalog, ICatalogGate gate, TimeProvider time, ILogger<CatalogConvergence> logger) : BackgroundService
 {
     private static readonly TimeSpan Pass = TimeSpan.FromSeconds(2);
 
@@ -142,6 +143,12 @@ internal sealed class CatalogConvergence(EngineManagementService catalog, TimePr
         using var timer = new PeriodicTimer(Pass, time);
         while (await timer.WaitForNextTickAsync(stoppingToken).ConfigureAwait(false))
         {
+            // A catalog not verified since this start may be a restored copy: it decides nothing about files or names yet.
+            if (!gate.IsOpen)
+            {
+                continue;
+            }
+
             try
             {
                 await catalog.ConvergeAsync(stoppingToken).ConfigureAwait(false);

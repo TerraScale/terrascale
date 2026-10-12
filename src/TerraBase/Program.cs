@@ -126,6 +126,7 @@ try
     app.UseTerraBaseLegacyRoutes();
     app.UseRouting();
     app.UseTerraBaseListeners();
+    app.UseTerraBaseCatalogGate();
     app.UseTerraBaseQosMemory();
     app.UseAuthentication();
     app.UseTerraBaseProjectCheck();

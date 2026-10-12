@@ -17,6 +17,9 @@ public static class ReplicationExtensions
         builder.Services.AddSingleton<PeerStreamReceiver>();
         builder.Services.AddSingleton<AntiEntropy>();
         builder.Services.AddHostedService(provider => provider.GetRequiredService<AntiEntropy>());
+        builder.Services.AddSingleton<CatalogGate>();
+        builder.Services.AddSingleton<ICatalogGate>(provider => provider.GetRequiredService<CatalogGate>());
+        builder.Services.AddHostedService(provider => provider.GetRequiredService<CatalogGate>());
         builder.Services.AddSingleton<PeerStreams>();
         builder.Services.AddSingleton<IReplicationStatus>(provider => provider.GetRequiredService<PeerStreams>());
         builder.Services.AddHostedService(provider => provider.GetRequiredService<PeerStreams>());
