@@ -249,10 +249,11 @@ public sealed class UserAuthTests
                 issuer.Route(services);
                 services.AddSingleton<TimeProvider>(timers);
             });
-        var attempts = issuer.DiscoveryFetches;
         issuer.Rotate();
         using var client = tls.CreateClient(server.ClientAddress!, issuer.Mint(EntityIds.New().ToString()));
 
+        // The startup fetch runs in the background; it is started before the server answers, and every request joins it
+        // instead of starting another, so once the requests are answered it has finished and is the only fetch.
         var statuses = await Task.WhenAll(Enumerable.Range(0, 10).Select(_ => StatusAsync(client)));
         var fetchesWhileRejecting = issuer.DiscoveryFetches;
         using var adminReady = await server.Client.GetAsync(Uri("/readyz"));
@@ -264,9 +265,8 @@ public sealed class UserAuthTests
         await timers.ScheduledAsync(TsAuthKeys.RefreshInterval);
         var accepted = await StatusAsync(client);
 
-        await Assert.That(attempts).IsEqualTo(1);
         await Assert.That(statuses).All().Satisfy(status => status.IsEqualTo(HttpStatusCode.Unauthorized));
-        await Assert.That(fetchesWhileRejecting).IsEqualTo(attempts);
+        await Assert.That(fetchesWhileRejecting).IsEqualTo(1);
         await Assert.That(adminReady.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(clientReady.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(accepted).IsEqualTo(HttpStatusCode.OK);
