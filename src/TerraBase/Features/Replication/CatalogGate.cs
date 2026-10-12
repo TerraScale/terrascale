@@ -22,6 +22,18 @@ public interface ICatalogGate
 {
     /// <summary>Whether the catalog is verified (or bootstrapped as a new cluster's): requests that read it for authorization run.</summary>
     bool IsOpen { get; }
+
+    /// <summary>
+    /// Whether this catalog is known not to be a restored older copy: open, or its restore anchor read and not ahead of it.
+    /// Another machine's gate counts a pull from this one only then (a closed, restored machine verifies nobody).
+    /// </summary>
+    bool Trusted { get; }
+
+    /// <summary>
+    /// Records the catalog's head in the restore anchor now (when it moved and the machine has a backup bucket), so a change
+    /// about to be acknowledged cannot be lost to a restore unnoticed. Throws when the anchor cannot be written.
+    /// </summary>
+    Task AnchorAsync(CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -81,6 +93,7 @@ internal sealed class CatalogGate : BackgroundService, ICatalogGate
     private readonly IObjectStore? _anchors;
     private readonly DataKeys? _keys;
     private readonly SemaphoreSlim _pass = new(1, 1);
+    private readonly SemaphoreSlim _anchoring = new(1, 1);
     private volatile bool _open;
 
     // The catalog's change log head at this start, before any pull: what the restore anchor is compared with.
@@ -109,6 +122,8 @@ internal sealed class CatalogGate : BackgroundService, ICatalogGate
     }
 
     public bool IsOpen => _open;
+
+    public bool Trusted => _open || _restored == false;
 
     /// <summary>What the gate still waits for, as of the last pass: machine ids, and the restore anchor's verdict.</summary>
     public ImmutableArray<string> Pending { get; private set; } = [];
@@ -192,7 +207,10 @@ internal sealed class CatalogGate : BackgroundService, ICatalogGate
                 try
                 {
                     _ = await _antiEntropy.PullAsync(ChangeGroups.System, peer, cancellationToken).ConfigureAwait(false);
-                    _ = _verified.Add(peer.Name);
+                    if (await PeerTrustedAsync(peer, cancellationToken).ConfigureAwait(false))
+                    {
+                        _ = _verified.Add(peer.Name);
+                    }
                 }
                 catch (Exception error) when (!cancellationToken.IsCancellationRequested)
                 {
@@ -383,6 +401,28 @@ internal sealed class CatalogGate : BackgroundService, ICatalogGate
         _ = await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
     }
 
+    // Whether the peer's catalog is known not to be a restored older copy (its gate's Trusted, GET /catalog-gate on its
+    // internal listener); a pull from it verifies nothing otherwise.
+    private static async Task<bool> PeerTrustedAsync(ClusterMember peer, CancellationToken cancellationToken)
+    {
+        using var client = new HttpClient
+        {
+            BaseAddress = new Uri(peer.PeerAddress),
+            DefaultRequestVersion = System.Net.HttpVersion.Version20,
+            DefaultVersionPolicy = HttpVersionPolicy.RequestVersionExact,
+            Timeout = TimeSpan.FromSeconds(10),
+        };
+        using var response = await client.GetAsync(new Uri(CatalogGateStatusEndpoint.Path, UriKind.Relative), cancellationToken).ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode)
+        {
+            return false;
+        }
+
+        using var document = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false),
+            cancellationToken: cancellationToken).ConfigureAwait(false);
+        return document.RootElement.TryGetProperty("trusted", out var trusted) && trusted.ValueKind == JsonValueKind.True;
+    }
+
     // Every other machine the catalog records.
     private async Task<HashSet<string>> RecordedMachinesAsync(CancellationToken cancellationToken)
     {
@@ -446,15 +486,29 @@ internal sealed class CatalogGate : BackgroundService, ICatalogGate
     // Records the catalog's head outside the volume, when it moved. A failure leaves the last anchor; the next write catches up.
     private async Task WriteAnchorAsync(CancellationToken cancellationToken)
     {
+        try
+        {
+            await AnchorAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception error) when (!cancellationToken.IsCancellationRequested)
+        {
+            _logger.ZLogWarning(error, $"This machine's catalog anchor could not be written; it is tried again");
+        }
+    }
+
+    public async Task AnchorAsync(CancellationToken cancellationToken)
+    {
         if (_anchors is null)
         {
             return;
         }
 
+        // One writer at a time, and the head read inside: the anchor never moves back.
+        await _anchoring.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             var head = await _source.HeadAsync(ChangeGroups.System, cancellationToken).ConfigureAwait(false);
-            if (head == _anchored)
+            if (head <= Anchored)
             {
                 return;
             }
@@ -476,9 +530,9 @@ internal sealed class CatalogGate : BackgroundService, ICatalogGate
             await _anchors.PutAsync(AnchorKey, sealedAnchor, cancellationToken).ConfigureAwait(false);
             Interlocked.Exchange(ref _anchored, head);
         }
-        catch (Exception error) when (!cancellationToken.IsCancellationRequested)
+        finally
         {
-            _logger.ZLogWarning(error, $"This machine's catalog anchor could not be written; it is tried again");
+            _anchoring.Release();
         }
     }
 
@@ -521,6 +575,7 @@ internal sealed class CatalogGate : BackgroundService, ICatalogGate
     public override void Dispose()
     {
         _pass.Dispose();
+        _anchoring.Dispose();
         base.Dispose();
     }
 }
@@ -538,13 +593,41 @@ internal static class CatalogGateExtensions
         ArgumentNullException.ThrowIfNull(app);
         var gate = app.Services.GetRequiredService<ICatalogGate>();
         app.Use((context, next) =>
-            gate.IsOpen || context.GetEndpoint() is not { } endpoint
-            || endpoint.Metadata.GetMetadata<Microsoft.AspNetCore.Authorization.IAuthorizeData>() is null
-            || endpoint.Metadata.GetMetadata<Microsoft.AspNetCore.Authorization.IAllowAnonymous>() is not null
-                ? next(context)
-                : Closed(context));
+        {
+            if (gate.IsOpen && RevokesAccess(context.Request))
+            {
+                // A revocation, removal or deletion is anchored before it is acknowledged; when the anchor cannot be written the
+                // response fails instead (creations do not wait for the bucket).
+                context.Response.OnStarting(() => gate.AnchorAsync(context.RequestAborted));
+            }
+
+            return gate.IsOpen || context.GetEndpoint() is not { } endpoint
+                || endpoint.Metadata.GetMetadata<Microsoft.AspNetCore.Authorization.IAuthorizeData>() is null
+                || endpoint.Metadata.GetMetadata<Microsoft.AspNetCore.Authorization.IAllowAnonymous>() is not null
+                    ? next(context)
+                    : Closed(context);
+        });
         return app;
     }
+
+    // The Management requests a restore could undo to a tenant's harm: every deletion (API keys, members, invitations,
+    // databases, projects, organizations, transfers), a role change, leaving, confirming a transfer, and a commit (it may
+    // carry any of them).
+    private static bool RevokesAccess(HttpRequest request)
+    {
+        if (!request.Path.StartsWithSegments(ManagementPrefix, StringComparison.Ordinal, out var rest))
+        {
+            return false;
+        }
+
+        var path = rest.Value ?? string.Empty;
+        return HttpMethods.IsDelete(request.Method)
+            || (HttpMethods.IsPut(request.Method) && path.EndsWith("/role", StringComparison.Ordinal))
+            || (HttpMethods.IsPost(request.Method) && (path is "/commits" || path.EndsWith("/leave", StringComparison.Ordinal)
+                || path.EndsWith("/ownership-transfer/confirm", StringComparison.Ordinal)));
+    }
+
+    private const string ManagementPrefix = "/v1/management";
 
     public static Task Closed(HttpContext context)
     {
