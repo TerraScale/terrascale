@@ -735,7 +735,7 @@ reference behaviour, and `tests/TerraBase.Fast/Replication/PeerStreamTests.cs` p
 R2a was built on the Microsoft.Data.Sqlite engine and writes only SQL that Turso accepts (rowid tables for every new
 table, plain `INSERT`/`UPDATE`/`DELETE` on captured tables).
 
-**T1 as built** (2026-10-12, storage format 3): the engine is Turso (`Turso.Data.Sqlite.Provider` 0.8.2). Each database
+**T1 as built** (2026-10-12, storage format 3): the engine is Turso (`Turso.Data.Sqlite.Provider` 0.8.2; since vendored with fixes, `src/vendor/Turso.Data.Sqlite`). Each database
 file has one writer connection (`SqliteDatabaseStore`, opened by the first writer under the writer gate, kept until the
 store closes), with `PRAGMA capture_data_changes_conn('after')` on from its open. Continuous backup reads `turso_cdc`
 (`backup.md`); Turso's quirks are in `turso-spike.md` ("Found while swapping the engine"). Notes for R3:
