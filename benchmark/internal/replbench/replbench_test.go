@@ -51,17 +51,21 @@ func TestParseSizes(t *testing.T) {
 	}
 }
 
-// fakeCluster is regions replicating every write at once, in order; drop names a document one region never gets.
+// fakeCluster is regions replicating every write at once, in order; drop names a write (nil document: a delete) one region never gets.
 type fakeCluster struct {
 	mu   sync.Mutex
 	docs map[string]map[string]map[string]json.RawMessage // region -> collection -> id -> document
-	drop func(region, collection, id string) bool
+	drop func(region, collection, id string, doc json.RawMessage) bool
 }
 
 func (f *fakeCluster) apply(from, coll, id string, doc json.RawMessage) {
-	set := func(region string) {
-		f.mu.Lock()
-		defer f.mu.Unlock()
+	// One lock for the whole fan-out, so concurrent writes reach every region in the same order.
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for region := range f.docs {
+		if region != from && f.drop != nil && f.drop(region, coll, id, doc) {
+			continue
+		}
 		if f.docs[region][coll] == nil {
 			f.docs[region][coll] = map[string]json.RawMessage{}
 		}
@@ -69,12 +73,6 @@ func (f *fakeCluster) apply(from, coll, id string, doc json.RawMessage) {
 			delete(f.docs[region][coll], id)
 		} else {
 			f.docs[region][coll][id] = doc
-		}
-	}
-	set(from)
-	for region := range f.docs {
-		if region != from && (f.drop == nil || !f.drop(region, coll, id)) {
-			set(region)
 		}
 	}
 }
@@ -157,7 +155,7 @@ type fakeRun struct {
 	lag       Summary
 }
 
-func fakeTargets(t *testing.T, drop func(region, collection, id string) bool) Targets {
+func fakeTargets(t *testing.T, drop func(region, collection, id string, doc json.RawMessage) bool) Targets {
 	t.Helper()
 	f := &fakeCluster{docs: map[string]map[string]map[string]json.RawMessage{}, drop: drop}
 	tg := Targets{Kind: "test", Project: "p", Database: "d", Regions: map[string]RegionTarget{}}
@@ -173,7 +171,7 @@ func fakeTargets(t *testing.T, drop func(region, collection, id string) bool) Ta
 var fakeConfig = Config{Docs: 600, Sizes: []SizeWeight{{128, 1}, {512, 1}}, Batch: 4, Concurrency: 3, DeletePct: 10, ConflictDocs: 5, ConflictRounds: 3,
 	ProbeEvery: 20 * time.Millisecond, Converge: 5 * time.Second, Seed: 1}
 
-func runFake(t *testing.T, drop func(region, collection, id string) bool) fakeRun {
+func runFake(t *testing.T, drop func(region, collection, id string, doc json.RawMessage) bool) fakeRun {
 	t.Helper()
 	r, err := NewRunner(fakeConfig, fakeTargets(t, drop), t.Logf)
 	if err != nil {
@@ -214,13 +212,16 @@ func TestRunnerVerifiesEveryRegionExactly(t *testing.T) {
 }
 
 func TestRunnerReportsADocumentARegionNeverGot(t *testing.T) {
-	var once sync.Once
 	var lost string
-	res := runFake(t, func(region, collection, id string) bool {
+	res := runFake(t, func(region, collection, id string, doc json.RawMessage) bool {
 		if region != "fra" || strings.HasSuffix(collection, "-probe") || strings.HasSuffix(collection, "-conflict") {
 			return false
 		}
-		once.Do(func() { lost = id })
+		// The first created document the load keeps: a deleted one would leave nothing missing.
+		var body struct{ I int }
+		if lost == "" && doc != nil && json.Unmarshal(doc, &body) == nil && !fakeConfig.deletes(body.I) {
+			lost = id
+		}
 		return id == lost
 	})
 	if fra := res.conv.Regions["fra"]; res.conv.Converged || fra.Missing != 1 || !slices.Contains(fra.Examples, "missing "+lost) {
