@@ -5,7 +5,7 @@ Owner: the strict-test owner, the single integration owner and the single publis
 **Status:** local only. Nothing is pushed, merged or deployed: the COS global merge hold and preview push freeze apply,
 and the production deploy and previews stay paused.
 
-**Status 2026-10-12:** manifest written; nothing combined yet. T1 reported done (item 4 pinned at `af69cd57`), so combining waits only on R10a (see "Waiting on").
+**Status 2026-10-12:** manifest written; nothing combined yet. T1 reported done (item 4 pinned at `1c800e32`). Combining waits on R10a (its gate-blocker fix and R3's verification) and on the CI optimizer's vendor-filter PR (see "Waiting on").
 
 ## Base
 
@@ -28,10 +28,11 @@ the SHA listed. A newer head means a new manifest entry, never a silent swap.
 | 1 | Turso plan budget; a stopped read fails only its own batched write | #109 | `c4b15068` (pushed) | 3 (unchanged) | done | Inside item 4's pin. |
 | 2 | Finalize failed Turso statements on their connection's thread; no collection for a stopped read | #115 | `9da71771` (local; pushed head `51a363e1`) | 3 | done | Inside item 4's pin. |
 | 3 | Native statement runner | none | `78795796` (local) | 3 | done | Inside item 4's pin, which **removes** the native runner again (`de7ed025`: the provider path, measured equal). |
-| 4 | **T1 vendored Turso driver** | none (local only) | **`af69cd57`** (local `fix/turso-vendored-driver`; 19 commits past #109) | **3** (`3-2a5ee125ee78`, unchanged) | **done** (T1, reported to COS) | Contains items 1, 2, 3 and 5. The pristine upstream import `b3e9812e` (tursodatabase/turso v0.8.2 `5c168be5`), 3 driver patches (`39f687aa`, `17e02b3d`, `f4dcaa3a`) each with a fail-first test, `UPSTREAM.md` and `scripts/vendor/update-turso-driver.sh`, and the DrainBench cleanup `b6ea82c2`. Behaviour change accepted by COS: a stopped or cancelled read ends its read transaction (`225713f0`). T1's results: Fast 1420/1420, plus 1 known R4a ack race; Slow #103, #104 and #68 pass 3/3. **`ci.yml`:** `8915e6d2` adds the path filters `src/vendor/**`, `tests/Turso.Data.Sqlite.Tests/**` and `scripts/vendor/**`. That is more than main's pause lines (see "CI file"). |
+| 4 | **T1 vendored Turso driver** | none (local only) | **`1c800e32`** (local `fix/turso-vendored-driver`; supersedes `af69cd57`) | **3** (`3-2a5ee125ee78`, unchanged) | **done** (T1, reported to COS) | Contains items 1, 2, 3 and 5. The pristine upstream import `b3e9812e` (tursodatabase/turso v0.8.2 `5c168be5`), 3 driver patches (`39f687aa`, `17e02b3d`, `f4dcaa3a`) each with a fail-first test, `UPSTREAM.md` and `scripts/vendor/update-turso-driver.sh`, and the DrainBench cleanup `b6ea82c2`. `make terrabase-test-fast` now runs the 4 driver tests before Fast. Behaviour change accepted by COS: a stopped or cancelled read ends its read transaction (`225713f0`). **No `.github` change**: the path-filter commit is gone, and the COS push check passes. |
 | 5 | A count examines tombstones again (#68) | #110 | `3cf9f3a5` (pushed) | 3 | done | Inside item 4's pin (merged at `b5805f13`). |
 | 6 | Slow: provision the real ts-auth signing key (#102) | #107 | `00390b11` (pushed) | none (tests) | ready | Slow only, non-blocking suite. |
 | 7 | R3 CDC decode notes | #101 | `0fc542f5` (pushed) | none (docs) | ready | |
+| 7a | Backup: one lifetime S3 response handler dispatching per request, replacing the per-call attach/detach race that threw a NullReferenceException in the AWS SDK (`BackupKeyRotationTests`) | #128 | `a71c8f4b` (pushed, base main) | 3 (`storage-format-unchanged`) | ready | Its regression fails 3/3 on main and passes 5/5 (T1). Product fix; push check passes (no .github change). |
 | 8 | R2c-2: delete the per-collection change feed and history tables | #88 | `05bd4374` (pushed) | **4** | ready; the integration owner resolves it against `c691f947` during the combine, and **T1 reviews that resolution in writing before the freeze** (COS decision; #88's owner is finished, no separate rebase push) | It shares the feed area with R8 (item 13), so conflicts are expected there. Its format 4 combines with R10a's (see "Storage format"). |
 | 9 | R3: CDC change group source | #106 | `4c32da5e` (pushed) | 3 | ready | Head of `2328b8db`, `2ee8b148`, `b838729e`, `81fa4fcb`, `4c32da5e`. |
 | 10 | RegionProcesses (regions as OS processes) | #111 | `07f8d81f` (pushed) | none (tests) | ready | |
@@ -59,11 +60,8 @@ ts-dashboard is held by the user and is in neither phase.
 ## CI file
 
 `.github/workflows/ci.yml` resolves to main's version at `c691f947`, keeping its preview and deploy pause lines.
-- **Finding in item 4:** T1's `8915e6d2` adds three path filters to the change-detection job (`src/vendor/**`,
-  `tests/Turso.Data.Sqlite.Tests/**`, `scripts/vendor/**`). Without them, a change only under those paths does not run
-  the terrabase jobs.
-- **Resolution in the combine (COS decision):** take main's `ci.yml` exactly, so `8915e6d2`'s three filters are
-  dropped.
+- **Item 4 no longer touches CI.** T1 removed `8915e6d2`'s three vendor path filters from the chain (`1c800e32`).
+- **Resolution in the combine (COS decision):** take main's `ci.yml` exactly.
 - **Required before the phase-1 merge:** the CI optimizer, who owns CI files, adds `src/vendor/**`,
   `tests/Turso.Data.Sqlite.Tests/**` and `scripts/vendor/**` to the terrabase filter in its own PR based on main.
   Until that lands, a vendor-only change could skip the terrabase tests, so phase 1 does not merge before it.
@@ -129,8 +127,9 @@ ts-dashboard is held by the user and is in neither phase.
 
 ## Waiting on
 
-1. **T1:** done (`af69cd57`).
-2. **R10a:** the stack on R7 reported done, with:
+1. **T1:** done (`1c800e32`).
+1a. **CI optimizer:** its base-main PR adding the vendor paths to the terrabase filter. Required before the phase-1 merge, not before the combine.
+2. **R10a:** the stack on R7 reported done, after its gate-blocker fix and R3's verification, with:
    - R3's blocking findings resolved;
    - bounded deletion;
    - the restore gate;
