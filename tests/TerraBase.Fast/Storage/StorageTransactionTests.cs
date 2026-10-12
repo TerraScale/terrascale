@@ -1,6 +1,6 @@
 using System.Diagnostics.Metrics;
 using System.Text;
-using Microsoft.Data.Sqlite;
+using Turso.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Time.Testing;
@@ -423,13 +423,14 @@ public sealed class StorageTransactionTests
 
                 return body;
             }, isDeterministic: true);
-            StorageFixture.ObserveBodies(session.Connection, "observed_body");
             observing = true;
         }
         finally
         {
             engine.Pool.Return(store, session);
         }
+
+        await StorageFixture.ObserveBodiesAsync(store, "observed_body");
 
         // The generated body observes actual row evaluation while preserving indexed id order.
         var transaction = await store.BeginTransactionAsync(write: false, deadline.Token);
@@ -481,12 +482,13 @@ public sealed class StorageTransactionTests
 
                 return body;
             }, isDeterministic: true);
-            StorageFixture.ObserveBodies(session.Connection, "held_body");
         }
         finally
         {
             engine.Pool.Return(store, session);
         }
+
+        await StorageFixture.ObserveBodiesAsync(store, "held_body");
 
         // The active transaction takes the observed session; the other one opens a second connection.
         var active = await store.BeginTransactionAsync(write: false, deadline.Token);

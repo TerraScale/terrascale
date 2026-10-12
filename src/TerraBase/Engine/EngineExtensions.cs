@@ -40,7 +40,7 @@ public static class EngineExtensions
                 checkpoint: provider.GetRequiredService<DatabaseLifecycleCheckpoint>(),
                 time: provider.GetKeyedService<TimeProvider>(QueryDeadlineClock), queryBudget: configured.QueryBudget,
                 systemReplica: configured.CatalogFollower,
-                walTaps: configured.Backup is not null, backupTime: provider.GetService<TimeProvider>(),
+                backupTime: provider.GetService<TimeProvider>(),
                 schemaMemory: provider.GetRequiredService<IMemoryBudget>());
         });
         services.AddSingleton<IWalBackup>(provider => provider.GetRequiredService<SqliteStorageEngine>());

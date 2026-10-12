@@ -7,8 +7,6 @@ using TerraBase.Engine;
 using TerraBase.Fast.Storage;
 using TerraBase.Features.Memory;
 using TerraBase.Hosting;
-using TerraBase.Primitives;
-using TerraBase.Tenancy;
 using TerraBase.Testing;
 
 namespace TerraBase.Fast.Platform;
@@ -276,90 +274,6 @@ public sealed class MemoryBudgetTests
         await Assert.That(all).IsNotNull();
         using var excess = budget.TryReserve(MemoryLane.Foreground, 1);
         await Assert.That(excess).IsNull();
-    }
-
-    [Test]
-    public async Task Engines_starting_together_never_lower_the_process_heap_limit()
-    {
-        const string ChildFlag = "TERRABASE_TEST_ENGINES_HEAP_LIMIT_CHILD";
-        if (Environment.GetEnvironmentVariable(ChildFlag) != "1")
-        {
-            // SQLite's limit cannot be restored safely while other tests are using it.
-            await IsolatedTestChild.RunAsync(typeof(MemoryBudgetTests), nameof(Engines_starting_together_never_lower_the_process_heap_limit), ChildFlag);
-
-            return;
-        }
-
-        // This process runs only this test, so ordinary 8-20 MiB budgets are enough.
-        var budgets = Enumerable.Range(1, 4).Select(i => Budget * (i + 1)).ToArray();
-        // Load the native library before reading its global state, without opening a database.
-        using (new Microsoft.Data.Sqlite.SqliteConnection())
-        {
-        }
-
-        // This isolated process owns its heap limit; process exit restores isolation without racing background work.
-        await InitializeTogetherAsync(initialLimit: 0, expectedLimit: budgets.Max() / 4);
-        var earlierLimit = budgets.Max() / 2;
-        await InitializeTogetherAsync(initialLimit: earlierLimit, expectedLimit: earlierLimit);
-
-        async Task InitializeTogetherAsync(long initialLimit, long expectedLimit)
-        {
-            SQLitePCL.raw.sqlite3_soft_heap_limit64(initialLimit);
-            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
-            var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            var database = new TenantContext(EntityIds.New().ToString(), PlanTier.Hobby, EntityIds.New().ToString(), EntityIds.New().ToString());
-            var ready = 0;
-            var initializations = Task.WhenAll(budgets.Select(InitializeAsync));
-            Exception? primaryFailure = null;
-            try
-            {
-                await initializations.WaitAsync(deadline.Token);
-                await Assert.That(SQLitePCL.raw.sqlite3_soft_heap_limit64(-1)).IsEqualTo(expectedLimit);
-
-                // A later smaller engine must preserve the largest earlier limit too.
-                await using var smaller = await TerraBaseTestServer.StartAsync(settings =>
-                    settings["memory-budget"] = budgets.Min().ToString(CultureInfo.InvariantCulture));
-                using var response = await smaller.Client.GetAsync(new Uri("/healthz", UriKind.Relative), deadline.Token);
-                response.EnsureSuccessStatusCode();
-                await smaller.Services.GetRequiredService<IStorageEngine>().CreateDatabaseAsync(database, deadline.Token);
-                await Assert.That(SQLitePCL.raw.sqlite3_soft_heap_limit64(-1)).IsEqualTo(expectedLimit);
-            }
-            catch (Exception error)
-            {
-                primaryFailure = error;
-                throw;
-            }
-            finally
-            {
-                deadline.Cancel();
-                release.TrySetCanceled(deadline.Token);
-                await StoragePoolTests.JoinCleanupAsync([initializations], primaryFailure);
-            }
-
-            async Task InitializeAsync(long bytes)
-            {
-                try
-                {
-                    // Every start owns its returned server, including a completion after caller cancellation.
-                    await using var server = await TerraBaseTestServer.StartAsync(settings =>
-                        settings["memory-budget"] = bytes.ToString(CultureInfo.InvariantCulture));
-                    var engine = server.Services.GetRequiredService<IStorageEngine>();
-                    if (Interlocked.Increment(ref ready) == budgets.Length)
-                    {
-                        // DI construction does not call SQLite; all hosts are started before the first database work.
-                        await Assert.That(SQLitePCL.raw.sqlite3_soft_heap_limit64(-1)).IsEqualTo(initialLimit);
-                        release.TrySetResult();
-                    }
-                    await release.Task.WaitAsync(deadline.Token);
-                    await engine.CreateDatabaseAsync(database, deadline.Token);
-                }
-                catch (Exception error)
-                {
-                    release.TrySetException(error);
-                    throw;
-                }
-            }
-        }
     }
 
     [Test]

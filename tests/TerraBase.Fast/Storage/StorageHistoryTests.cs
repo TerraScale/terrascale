@@ -223,7 +223,7 @@ public sealed class StorageHistoryTests
 
     private static async Task<long> HistoryRowsAsync(string path, CancellationToken cancellationToken)
     {
-        await using var connection = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={path};Pooling=False;Mode=ReadOnly");
+        await using var connection = new Turso.Data.Sqlite.SqliteConnection($"Data Source={path};Pooling=False;Mode=ReadOnly");
         await connection.OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = "SELECT count(*) FROM change_log;";

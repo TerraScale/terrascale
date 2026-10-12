@@ -315,8 +315,7 @@ public sealed class StoragePoolTests
         }
 
         await Assert.That(await closed.Task.WaitAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken)).IsEqualTo("terrabase-sqlite");
-        // The data is available again through the real listener after eviction. The writer connection stays open, so an
-        // evicted reader is not the file's last connection and its log stays.
+        // The data is available again through the real listener after eviction.
         using var read = await client.GetAsync(new Uri($"/v1/projects/{tenant.ProjectId}/databases/victim/collections/items/documents/by-key?id={StorageFixture.Id("a")}", UriKind.Relative), operationTimeout.Token);
         await Assert.That(read.StatusCode).IsEqualTo(HttpStatusCode.OK);
     }

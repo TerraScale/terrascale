@@ -12,16 +12,16 @@ namespace TerraBase.Features.Backup;
 /// <summary>Where one storage file's backup stands on this node.</summary>
 /// <param name="File">The file's directory in the bucket (<see cref="BackupLayout.File"/>).</param>
 /// <param name="Generation">The generation being shipped; null until its first snapshot is stored.</param>
-/// <param name="Frames">Frames of the generation read so far.</param>
+/// <param name="LogBytes">Bytes of the generation's change log read so far.</param>
 /// <param name="LastShippedAt">When the newest data in the bucket was read from the file.</param>
 /// <param name="LagSeconds">Seconds the oldest data not yet in the bucket has waited; 0 when none waits.</param>
-/// <param name="PendingBytes">Frames read and not yet stored.</param>
+/// <param name="PendingBytes">Log bytes read and not yet stored.</param>
 /// <param name="LastError">The kind of the last failure, cleared by the next successful pass.</param>
 /// <param name="Shipping">Whether this node ships the file now (<see cref="IShipperLeases"/>).</param>
 /// <param name="SizeBytes">Bytes the file's backup occupies in the bucket, measured daily by its shipper.</param>
 /// <param name="LastDrill">The last restore drill this member ran on the file.</param>
 public sealed record BackupFileStatus(
-    string File, string? Generation, long Frames, DateTimeOffset? LastShippedAt, double LagSeconds, long PendingBytes, string? LastError, bool Shipping,
+    string File, string? Generation, long LogBytes, DateTimeOffset? LastShippedAt, double LagSeconds, long PendingBytes, string? LastError, bool Shipping,
     long? SizeBytes, BackupDrill? LastDrill);
 
 /// <summary>Continuous backup on this node: what it ships.</summary>
@@ -59,7 +59,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
     private static readonly TimeSpan SnapshotInterval = TimeSpan.FromDays(1);
     private static readonly TimeSpan ConfigurationTimeout = TimeSpan.FromSeconds(1);
 
-    // Frames read but not stored, per file, before its generation is abandoned for a fresh snapshot (bounds scratch disk).
+    // Log read but not stored, per file, before its generation is abandoned for a fresh snapshot (bounds scratch disk).
     private const long MaxPendingBytes = 256L * 1024 * 1024;
     private const int MaxJobs = 4;
     private const int MaxCustomerJobs = 2;
@@ -611,9 +611,9 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
             }
 
             var now = _time.GetUtcNow();
-            if (read.Frames > 0)
+            if (read.Bytes > 0)
             {
-                file.Position += read.Frames;
+                file.Position += read.Bytes;
                 file.PendingAt = now;
                 file.BehindSince ??= now;
             }
@@ -773,8 +773,8 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
             }
 
             var at = captured.At;
-            file.Position += read.Frames;
-            if (read.Frames > 0)
+            file.Position += read.Bytes;
+            if (read.Bytes > 0)
             {
                 file.PendingAt = at;
                 file.BehindSince ??= at;
@@ -909,7 +909,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         public string Scope { get; } = scope;
         public IWalTap Tap { get; } = tap;
 
-        /// <summary>Frames read and not yet stored, from <see cref="PendingStart"/>.</summary>
+        /// <summary>Log bytes read and not yet stored, from <see cref="PendingStart"/>.</summary>
         public FileStream Pending { get; } = pending;
 
         public Ulid? Generation { get; set; }

@@ -1,6 +1,5 @@
 using System.Diagnostics;
-using Microsoft.Data.Sqlite;
-using SQLitePCL;
+using Turso.Data.Sqlite;
 
 namespace TerraBase.Engine.Sqlite;
 
@@ -10,15 +9,26 @@ namespace TerraBase.Engine.Sqlite;
 /// </summary>
 internal sealed class SqliteSession(SqliteConnection connection) : IDisposable
 {
-    private static readonly Lock HeapLimitGate = new();
-
     // Keyed by statement text; the statements are constants, so this holds a handful of entries.
     private readonly Dictionary<string, SqliteCommand> _commands = [with(StringComparer.Ordinal)];
 
     private QueryObservation? _queryObservation;
     private bool _scanRegistered;
+    private Func<bool>? _stop;
 
     public SqliteConnection Connection => connection;
+
+    /// <summary>The store's statistics generation when this connection opened (<see cref="SqliteDatabaseStore.StatisticsChanged"/>).</summary>
+    public int Statistics { get; set; }
+
+    /// <summary>Turns change capture on for this connection: every later commit lands in <c>turso_cdc</c>, after-images only.</summary>
+    internal const string CaptureOn = "PRAGMA capture_data_changes_conn('after');";
+
+    /// <summary>Turns change capture off for this connection.</summary>
+    internal const string CaptureOff = "PRAGMA capture_data_changes_conn('off');";
+
+    /// <summary>The message of the error <see cref="ThrowIfStopped"/> aborts a statement with.</summary>
+    internal const string StoppedMessage = "terrabase: statement stopped";
 
     // Transactions serialize access to a session. Keep the function registered while pooled, but release the
     // execution's observation on completion. Non-deterministic prevents SQLite from evaluating it once per query.
@@ -26,8 +36,10 @@ internal sealed class SqliteSession(SqliteConnection connection) : IDisposable
     {
         if (observation is not null && !_scanRegistered)
         {
-            connection.CreateFunction("tb_query_scan", () =>
+            // The row's id argument makes Turso call it per row: it evaluates a function without arguments once.
+            connection.CreateFunction<object?, bool>("tb_query_scan", _ =>
             {
+                ThrowIfStopped();
                 _queryObservation?.AddRow();
                 return true;
             }, isDeterministic: false);
@@ -38,15 +50,70 @@ internal sealed class SqliteSession(SqliteConnection connection) : IDisposable
     }
 
     /// <summary>
+    /// Sets what the per-row functions (<c>tb_query_scan</c>, <c>tb_qos_scan</c>) check: once it returns true they fail
+    /// the running statement. Turso has no <c>sqlite3_interrupt</c> or progress handler, so this is the only way to stop a
+    /// statement before it finishes (docs/terrabase/turso-spike.md).
+    /// </summary>
+    public void StopWhen(Func<bool>? stop) => _stop = stop;
+
+    /// <summary>Fails the running statement once <see cref="StopWhen"/>'s condition holds; call from a per-row function.</summary>
+    public void ThrowIfStopped()
+    {
+        if (_stop?.Invoke() == true)
+        {
+            throw new OperationCanceledException(StoppedMessage);
+        }
+    }
+
+    /// <summary>Whether <paramref name="error"/> is a statement <see cref="ThrowIfStopped"/> failed.</summary>
+    public static bool Stopped(SqliteException error) => error.Message.Contains(StoppedMessage, StringComparison.Ordinal);
+
+    /// <summary>
+    /// Whether the connection is inside a transaction. Unlike SQLite, Turso rolls the whole transaction back when a
+    /// statement fails while it steps through rows (a stopped read, for one); the statements after it would then commit
+    /// on their own. Run on the connection's worker.
+    /// </summary>
+    public bool InTransaction()
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = "BEGIN;";
+        try
+        {
+            command.ExecuteNonQuery();
+        }
+        catch (SqliteException error) when (error.Message.Contains("within a transaction", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        command.CommandText = "ROLLBACK;";
+        command.ExecuteNonQuery();
+        return false;
+    }
+
+    /// <summary>Whether <paramref name="error"/> is a rollback or commit of a transaction Turso already rolled back.</summary>
+    public static bool NoTransaction(SqliteException error) => error.Message.Contains("no transaction is active", StringComparison.Ordinal);
+
+    /// <summary>Whether <paramref name="error"/> is lock contention; Turso reports every local error with code 1.</summary>
+    public static bool Busy(SqliteException error) => error.Message.Contains("database is locked", StringComparison.Ordinal);
+
+    /// <summary>The bytes of a TEXT or BLOB column: Turso's reader refuses <c>GetFieldValue&lt;byte[]&gt;</c> on TEXT.</summary>
+    public static byte[] Bytes(SqliteDataReader reader, int ordinal) => reader.GetValue(ordinal) switch
+    {
+        byte[] bytes => bytes,
+        string text => System.Text.Encoding.UTF8.GetBytes(text),
+        var other => throw new InvalidCastException($"column {ordinal} holds {other.GetType().Name}, not TEXT or BLOB"),
+    };
+
+    /// <summary>
     /// Per-connection settings, applied once when a connection opens (pooled sessions and the connection that
     /// creates a database). The reasons, and how the page cache and the memory map are sized from
     /// <c>memory-budget</c>, are in <c>docs/sqlite-query-plans.md</c>; <c>synchronous = NORMAL</c> is decision 0003.
-    /// With <paramref name="walTaps"/> continuous backup checkpoints the log instead of SQLite (<see cref="SqliteWalTap"/>).
     /// </summary>
-    public static string Pragmas(long memoryBudget, int threads, bool walTaps = false)
+    public static string Pragmas(long memoryBudget, int threads)
     {
-        // A quarter of the budget for page caches, split across the connections that run at once. Idle
-        // connections keep theirs, so LimitHeap holds SQLite's whole heap to that quarter.
+        // A quarter of the budget for page caches, split across the connections that run at once. Turso has no
+        // process-wide heap limit, so these caches are the bound.
         var pageCacheBytes = memoryBudget / 4;
         var cacheKib = Math.Max(2048, pageCacheBytes / threads / 1024);
         // Address space backed by the OS page cache, not the heap; SQLite caps it at its compile-time maximum.
@@ -57,33 +124,8 @@ internal sealed class SqliteSession(SqliteConnection connection) : IDisposable
             PRAGMA temp.cache_size = -1024;
             PRAGMA mmap_size = {mmapBytes};
             PRAGMA cache_size = -{cacheKib};
-            {(walTaps ? "PRAGMA wal_autocheckpoint = 0;" : "")}
+            PRAGMA busy_timeout = 100;
             """);
-    }
-
-    /// <summary>
-    /// Holds SQLite's heap, process-wide, to a quarter of <paramref name="memoryBudget"/> (<c>soft_heap_limit</c>):
-    /// SQLite frees page cache to stay under it. The limit is global to the process, so another engine in it
-    /// (tests run several) only ever raises it, never lowers it below what an engine already set.
-    /// </summary>
-    public static void LimitHeap(long memoryBudget)
-    {
-        // Loads SQLite's native library, as the first connection would.
-        using (new SqliteConnection())
-        {
-        }
-
-        var limit = memoryBudget / 4;
-        // Engines starting at once must not interleave the read and the write and lower the limit.
-        lock (HeapLimitGate)
-        {
-            // A negative argument reads the current limit; 0 means none.
-            var current = raw.sqlite3_soft_heap_limit64(-1);
-            if (current == 0 || current < limit)
-            {
-                raw.sqlite3_soft_heap_limit64(limit);
-            }
-        }
     }
 
     /// <summary>
@@ -99,7 +141,7 @@ internal sealed class SqliteSession(SqliteConnection connection) : IDisposable
             await io.RunAsync(() =>
             {
                 opening = true;
-                connection.Open();
+                OpenExisting(connection, new SqliteConnectionStringBuilder(connectionString).DataSource);
             }, cancellationToken).ConfigureAwait(false);
             var session = new SqliteSession(connection);
             await session.ExecuteAsync(io, () =>
@@ -126,11 +168,33 @@ internal sealed class SqliteSession(SqliteConnection connection) : IDisposable
         }
     }
 
-    // Microsoft.Data.Sqlite has no true async I/O, so each attempt runs on a pool worker. The provider retries
-    // lock contention for at most one second per attempt with short native busy backoff; between attempts the
-    // worker is free and cancellation is checked, within the original overall timeout. Cancellation interrupts
-    // only the attempt it owns, and never abandons it while SQLite still uses the connection. Retried
-    // operations must be reads or atomic work that rolls back before propagating a busy error.
+    /// <summary>
+    /// Opens <paramref name="connection"/> on the existing database file <paramref name="path"/>. Turso ignores
+    /// <c>Mode=ReadWrite</c> and creates a missing file, but only <c>InitializeAsync</c> may create one: a store opened
+    /// as its database is deleted must not leave an empty file behind. Every database file holds at least its schema, so
+    /// an empty one is such a file.
+    /// </summary>
+    public static void OpenExisting(System.Data.Common.DbConnection connection, string path)
+    {
+        if (!File.Exists(path))
+        {
+            throw new SqliteException("unable to open database file: it does not exist", 14);
+        }
+
+        connection.Open();
+        if (new FileInfo(path).Length == 0)
+        {
+            connection.Dispose();
+            File.Delete(path);
+            File.Delete(path + "-wal");
+            throw new SqliteException("unable to open database file: it does not exist", 14);
+        }
+    }
+
+    // The provider has no true async I/O, so each attempt runs on a pool worker. Each attempt waits on lock contention
+    // for at most the session's 100 ms busy timeout; between attempts the worker is free and cancellation is checked,
+    // within the original overall timeout. Turso cannot interrupt a running statement, so cancellation is checked only
+    // between attempts. Retried operations must be reads or atomic work that rolls back before propagating a busy error.
     public async Task<T> ExecuteAsync<T>(SqliteRunner io, Func<T> execute, CancellationToken cancellationToken)
     {
         var timeout = connection.DefaultTimeout;
@@ -141,27 +205,11 @@ internal sealed class SqliteSession(SqliteConnection connection) : IDisposable
             {
                 return await io.RunAsync(() =>
                 {
-                    connection.DefaultTimeout = 1;
-                    raw.sqlite3_busy_timeout(connection.Handle, 100);
-                    try
-                    {
-                        cancellationToken.ThrowIfCancellationRequested();
-                        using var interrupt = cancellationToken.Register(() => raw.sqlite3_interrupt(connection.Handle));
-                        return execute();
-                    }
-                    finally
-                    {
-                        connection.DefaultTimeout = timeout;
-                        raw.sqlite3_busy_timeout(connection.Handle, 30000);
-                    }
+                    cancellationToken.ThrowIfCancellationRequested();
+                    return execute();
                 }, cancellationToken).ConfigureAwait(false);
             }
-            catch (SqliteException error) when (error.SqliteErrorCode == raw.SQLITE_INTERRUPT && cancellationToken.IsCancellationRequested)
-            {
-                throw new OperationCanceledException("the storage operation was cancelled", error, cancellationToken);
-            }
-            catch (SqliteException error) when (error.SqliteErrorCode is raw.SQLITE_BUSY or raw.SQLITE_LOCKED
-                && (timeout == 0 || Stopwatch.GetElapsedTime(started).TotalSeconds < timeout))
+            catch (SqliteException error) when (Busy(error) && (timeout == 0 || Stopwatch.GetElapsedTime(started).TotalSeconds < timeout))
             {
                 await Task.Delay(50, cancellationToken).ConfigureAwait(false);
             }
@@ -170,7 +218,7 @@ internal sealed class SqliteSession(SqliteConnection connection) : IDisposable
 
     /// <summary>
     /// Returns the prepared command for <paramref name="sql"/>, bound to <paramref name="transaction"/>
-    /// and without parameters. Microsoft.Data.Sqlite keeps a command's statements prepared while its text is unchanged.
+    /// and without parameters. The provider keeps a command's statements prepared while its text is unchanged.
     /// </summary>
     public SqliteCommand Command(string sql, SqliteTransaction transaction)
     {
@@ -186,13 +234,17 @@ internal sealed class SqliteSession(SqliteConnection connection) : IDisposable
         return command;
     }
 
+    // Turso's provider keeps its native connection handle private; Dispose closes it even when the provider's close throws.
+    private static readonly System.Reflection.FieldInfo? NativeHandle =
+        typeof(SqliteConnection).GetField("_database", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+
     /// <summary>
-    /// Closes the connection. The native database handle is closed even when disposing a command or the provider's
-    /// own close throws, so once this returns, or throws, the session holds no file open.
+    /// Closes the connection. The native handle is closed even when disposing a command or the provider's own close
+    /// throws, so once this returns, or throws, the session holds no file open.
     /// </summary>
     public void Dispose()
     {
-        var handle = connection.Handle;
+        var handle = NativeHandle?.GetValue(connection) as System.Runtime.InteropServices.SafeHandle;
         try
         {
             foreach (var command in _commands.Values)

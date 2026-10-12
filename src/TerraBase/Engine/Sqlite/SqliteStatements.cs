@@ -37,14 +37,16 @@ internal static class SqliteStatements
         """;
 
     // The version is a correlated lookup, so the page walks the table's id key in order and stops at the limit.
+    // tb_qos_scan stops the statement once it is cancelled: Turso's provider reads a statement to its end when its reader
+    // closes, so a page left early still steps through the rest of its LIMIT.
     public const string ClientListFirst = """
         SELECT d.id, (SELECT s.stamp FROM _tb_state s WHERE s.collection = $collection AND s.id = d.id), d.doc, octet_length(d.doc)
-        FROM {0} d ORDER BY d.id LIMIT $limit;
+        FROM {0} d WHERE tb_qos_scan(octet_length(d.doc)) ORDER BY d.id LIMIT $limit;
         """;
 
     public const string ClientListAfter = """
         SELECT d.id, (SELECT s.stamp FROM _tb_state s WHERE s.collection = $collection AND s.id = d.id), d.doc, octet_length(d.doc)
-        FROM {0} d WHERE d.id > $after ORDER BY d.id LIMIT $limit;
+        FROM {0} d WHERE d.id > $after AND tb_qos_scan(octet_length(d.doc)) ORDER BY d.id LIMIT $limit;
         """;
 
     public const string ClientCollectionStats = "SELECT count(*), coalesce(sum(octet_length(doc)), 0) FROM {0};";
@@ -103,13 +105,13 @@ internal static class SqliteStatements
     // cursor, so every page would walk the collection from its first id. Tombstones are not listed.
     public const string ListFirst = """
         SELECT id, version, body, octet_length(body) FROM documents INDEXED BY documents_live
-        WHERE collection = $collection AND body IS NOT NULL
+        WHERE collection = $collection AND body IS NOT NULL AND tb_qos_scan(octet_length(body))
         ORDER BY id LIMIT $limit;
         """;
 
     public const string ListAfter = """
         SELECT id, version, body, octet_length(body) FROM documents INDEXED BY documents_live
-        WHERE collection = $collection AND id > $after AND body IS NOT NULL
+        WHERE collection = $collection AND id > $after AND body IS NOT NULL AND tb_qos_scan(octet_length(body))
         ORDER BY id LIMIT $limit;
         """;
 

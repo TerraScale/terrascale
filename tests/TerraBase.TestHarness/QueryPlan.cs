@@ -1,5 +1,5 @@
 using System.Text.RegularExpressions;
-using Microsoft.Data.Sqlite;
+using Turso.Data.Sqlite;
 
 namespace TerraBase.Testing;
 
@@ -22,6 +22,8 @@ public static partial class QueryPlan
         }.ToString();
         await using var connection = new SqliteConnection(connectionString);
         await connection.OpenAsync();
+        // Compiled scans call the engine's per-row budget function, which a plan only needs to resolve.
+        connection.CreateFunction<long, long>("tb_qos_scan", _ => 1);
         await using var command = connection.CreateCommand();
         command.CommandText = "EXPLAIN QUERY PLAN " + sql;
         // Plans do not depend on parameter values, but every parameter must be bound.
