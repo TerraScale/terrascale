@@ -32,7 +32,7 @@ in-process nodes, separate OS processes or no node (harness check), and whether 
 a TCP-proxy network fault. CI's `terrabase-check` rejects a block here or in `RUNS.md` that lacks a category, the commit,
 the working-tree patch identity, the stacked-on line or a test's nodes and faults, or whose counts do not add up.
 
-**Acceptance candidate:** the combined candidate `f929c623` (R3's #106 head `81fa4fcb` + these assertions) is recorded on
+**Acceptance candidate:** the combined candidate `f929c623` (R3's #106 head `81fa4fcb` + these assertions; agreed with the R3 owner, who reproduced it over 3 runs) is recorded on
 branch `test/e2e-combined-candidate`: 37 actual pass / 4 harness check / 11 expected failure / 1 not supported / 2 skip /
 0 fail of 55, identical over 3 runs, all replicated passes on in-process nodes. That is where acceptance is judged; this
 file on main reports main, where nothing replicates until #106 merges.
