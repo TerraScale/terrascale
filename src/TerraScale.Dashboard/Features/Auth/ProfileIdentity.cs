@@ -37,7 +37,8 @@ public sealed partial class TsAuthGateway : IProfileIdentityGateway
                 throw new IOException("Dashboard authentication management identity is unavailable.");
             var client = new TerraScaleAuthClient(http.CreateClient("platform"), new TerraScaleAuthClientOptions
             {
-                BaseAddress = await OriginAsync(cancellationToken),
+                BaseAddress = AuthOrigin,
+                UseReverseProxy = true,
                 InstanceSlug = credentials.AuthInstanceSlug,
                 ApiKey = credentials.AuthManagementKey
             });
