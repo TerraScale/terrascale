@@ -382,16 +382,14 @@ journeys passed again in the focused follow-up.
 
 ### Current blockers and direction (2026-10-12, 19:11 UTC, read-only)
 
-- **Discovery.** `atlas.terrascale.tech` is NXDOMAIN, and the producer
-  answers `/v1/discovery` with 404 `unknown_route`. The dashboard's
-  `Platform/Persistence/TerraBaseDiscovery.cs` therefore cannot resolve an
-  origin. The direction is the SDK's regional contract from ts-dotnet PR #5
-  (`Region` on the client options, `TerraBaseWrongRegionException` on 421),
-  adopted once a reviewed public `TerraScale.DotNet` 0.0.2 exists. The
-  dead endpoint is not revived. The app compiles unchanged against PR #5
-  `4827b03e` and ts-dotnet main `2d23b1be`; runtime behaviour against them is
-  untested. Exact producer region semantics are for the SDK and TerraBase
-  owners.
+- **Discovery.** `atlas.terrascale.tech` is NXDOMAIN and no producer
+  serves `/v1/discovery`. The dashboard no longer calls it: TerraBase is
+  `https://api.terrascale.tech/`, and the region list is the answering
+  region from `/healthz` (see `docs/identity-descriptor.md`, "TerraBase
+  origin and regions"). Requests to a database's region use its regional
+  host; the dashboard's direct HTTP calls add ts-dotnet 0.0.2's
+  `X-TerraScale-Region-Pin` and typed 421 handling, which the vendored
+  0.1.0-dashboard package predates. A TerraBase region catalog remains an upstream dependency.
 - **ts-auth.** The deployed `0.1.0-alpha+55979ea3` answers `/readyz` 503 and
   `/.well-known/jwks.json` 500. Its current source requires an operator to
   provision the first signing key. `auth.terrascale.tech` is NXDOMAIN.
@@ -542,10 +540,8 @@ collections through the official SDK after receiving an admitted state-project
 identity. Automatic tenant/project authority, Vault delivery, live bootstrap
 qualification and import of existing Go persistent state are still required.
 
-Endpoints resolve through Atlas without region switches. The existing
-`/v1/discovery` region catalog supplies the Documents origin while SDK-owned
-Documents discovery (TS-507) is outstanding; this adapter needs producer
-qualification. A catalog entry is not proof that a Documents API serves there.
+Endpoints use TerraBase's global origin `https://api.terrascale.tech/`
+without region switches; Atlas is not called.
 
 Initial live validation could not resolve `atlas.terrascale.tech`; the pinned
 TerraBase release URL in the SDK testing helper returned HTTP 404, and no
