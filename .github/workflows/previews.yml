@@ -1,7 +1,8 @@
 name: Previews
 
-# Deletes PR previews (scripts/fly/preview.sh): a PR's app when the PR closes, and hourly every preview created more
-# than 24 hours ago. ci.yml creates and updates them.
+# Deletes PR previews (scripts/fly/preview.sh): a PR's app when the PR closes, and hourly every preview of a closed PR
+# or created more than 24 hours ago. ci.yml creates and updates them, and runs the same reap after each preview update
+# (GitHub's hourly schedule is best effort).
 
 on:
   pull_request:
@@ -12,6 +13,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
   cleanup:
@@ -19,6 +21,8 @@ jobs:
     timeout-minutes: 10
     env:
       FLY_API_TOKEN: ${{ secrets.FLY_TOKEN_PREVIEWS }}
+      # The reaper asks each preview's PR state.
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v5
         with:

@@ -8,7 +8,8 @@
 #   scripts/fly/preview.sh app <pr>                         create the app, its IPs and volume (before images are pushed)
 #   scripts/fly/preview.sh machine <pr> <terrabase-image> <auth-image>   create or update the machine
 #   scripts/fly/preview.sh destroy <pr>                     delete the app and everything in it
-#   scripts/fly/preview.sh reap                             destroy previews created more than 24 hours ago
+#   scripts/fly/preview.sh reap                             destroy previews of closed PRs and those created more than 24 hours
+#                                                            ago (needs gh with pull-requests:read)
 set -euo pipefail
 
 org=terrascale-previews-515
@@ -56,6 +57,7 @@ case ${1:-} in
           "AWS_ENDPOINT_URL_S3", "AWS_REGION", "BUCKET_NAME", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "TERRABASE_MASTER_KEY"
         ] | map({env_var: ., name: .}))},
         {name: "ts-auth", image: $auth, env: {TS_AUTH_PUBLIC_ORIGIN: "https://\($app).fly.dev"},
+          secrets: (["TS_AUTH_MASTER_KEY", "TS_AUTH_AUDIT_SIGNING_KEY"] | map({env_var: ., name: .})),
           depends_on: [{name: "terrabase", condition: "started"}]}
       ],
       services: [
@@ -86,8 +88,14 @@ case ${1:-} in
   reap)
     cutoff=$(date -u -d '24 hours ago' +%s)
     for app in $(flyctl apps list -o "$org" --json | jq -r '.[].Name | select(startswith("ts-pr-"))'); do
+      # A closed PR's preview can outlive its close event (no close run happened for #94 and #97). Only an answer of
+      # CLOSED or MERGED counts: a failed lookup keeps the preview.
+      state=$(gh pr view "${app#ts-pr-}" --json state --jq .state 2>/dev/null || true)
       created=$(api "$machines/apps/$app/machines" | jq -r '[.[].created_at] | min // empty')
-      if [[ -n $created ]] && (( $(date -u -d "$created" +%s) < cutoff )); then
+      if [[ $state == CLOSED || $state == MERGED ]]; then
+        echo "Reaping $app (PR $state)"
+        destroy_app "$app"
+      elif [[ -n $created ]] && (( $(date -u -d "$created" +%s) < cutoff )); then
         echo "Reaping $app (machine created $created)"
         destroy_app "$app"
       fi

@@ -161,10 +161,11 @@ jobs:
       - name: Every area that ran passed
         run: '! grep -qE "failure|cancelled" <<< "${{ join(needs.*.result, '' '') }}"'
       - *checkout
-      - name: Fly deploy, volume reset and storage train self-checks
+      - name: Fly deploy, volume reset, preview and storage train self-checks
         run: |
           bash terrascale/scripts/fly/deploy-test.sh
           bash terrascale/scripts/fly/volume-reset-test.sh
+          bash terrascale/scripts/fly/preview-test.sh
           bash terrascale/scripts/terrabase/storage-format-check-test.sh
       # Reads the labels live: after labelling, re-run this job (docs/terrabase/ci.md, storage train).
       - name: Storage train
@@ -294,6 +295,13 @@ jobs:
         run: >-
           gh pr comment ${{ github.event.pull_request.number }} -R "$GITHUB_REPOSITORY" --edit-last --create-if-none
           --body "Preview: https://$APP.fly.dev (TerraBase + ts-auth at ${{ github.sha }}; stops when idle, deleted on close or after 24 h)"
+      # GitHub's hourly schedule (previews.yml) is best effort: every preview update also reaps closed and old previews.
+      - name: Reap closed and old previews
+        if: ${{ !cancelled() }}
+        working-directory: terrascale
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/fly/preview.sh reap
 
   # One job, no `needs`: it joins the `deploy` queue when the run starts, so queued deploys keep push order and a newer
   # pending deploy replaces an older one (never the reverse). ts-auth keeps its data in TerraBase, so it rolls out after.
