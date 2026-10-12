@@ -164,14 +164,8 @@ public sealed class MultipartBackupTests
         var faker = new Faker();
         var (older, newer) = (faker.Random.Byte(0, 127), faker.Random.Byte(128, 255));
         var s3 = new FakeS3();
-        var settings = new Dictionary<string, string>();
-        s3.Configure(settings);
-        var services = new ServiceCollection();
-        s3.Route(services);
-        await using var provider = services.BuildServiceProvider();
-        using var store = new S3ObjectStore(new Uri(settings["backup-endpoint"]), settings["backup-region"], FakeS3.Bucket,
-            settings["backup-access-key-id"], settings["backup-secret-key"], provider.GetRequiredService<IHttpClientFactory>(),
-            S3ObjectStore.HttpClientName, TimeProvider.System);
+        await using var provider = Routed(s3);
+        using var store = PlatformStore(s3, provider);
         var key = $"v1/{Ulid.NewUlid()}/snapshots/object";
         var failing = 1;
         s3.FailPart = (_, part) => part == 2 && Volatile.Read(ref failing) == 1;
@@ -197,6 +191,92 @@ public sealed class MultipartBackupTests
         await Assert.That(s3.AbortedUploads).IsEqualTo(1);
         await Assert.That(s3.CompletedUploads).IsEqualTo(1);
         await Assert.That(s3.PendingUploads).IsEqualTo(0);
+    }
+
+    // A completion counts only when the key holds this upload's object, whole. An older object of exactly the same length at
+    // the key passes a length-only check (the control) yet fails the upload, whether the completion was answered with 200
+    // and an error body or with a success that stored nothing; so does this upload's own object reported at another length.
+    [Test]
+    public async Task A_multipart_upload_counts_only_when_the_key_holds_this_upload_whole()
+    {
+        var cancellationToken = TUnit.Core.TestContext.Current!.Execution.CancellationToken;
+        var faker = new Faker();
+        var (older, newer) = (faker.Random.Byte(0, 127), faker.Random.Byte(128, 255));
+        var s3 = new FakeS3();
+        await using var provider = Routed(s3);
+        using var store = PlatformStore(s3, provider);
+        var key = $"v1/{Ulid.NewUlid()}/snapshots/object";
+        var old = new byte[PartSize + (1 << 20)];
+        Array.Fill(old, older);
+        s3.StoreObject(key, old);
+        string[] answers =
+        [
+            "<Error><Code>InternalError</Code><Message>We encountered an internal error. Please try again.</Message></Error>",
+            $"<CompleteMultipartUploadResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Bucket>{FakeS3.Bucket}</Bucket><Key>{key}</Key>"
+                + "<ETag>\"3858f62230ac3c915f300c664312c11f-2\"</ETag></CompleteMultipartUploadResult>",
+        ];
+        var failures = new List<Exception>();
+        var controlLengths = new List<long?>();
+        foreach (var answer in answers)
+        {
+            s3.CompleteAnswer = _ => answer;
+            await using (var content = await FileAsync(newer, cancellationToken))
+            {
+                failures.Add((await Assert.ThrowsAsync<Exception>(() => store.PutAsync(key, content, cancellationToken)))!);
+            }
+
+            controlLengths.Add(await HeadLengthAsync(s3, provider, key, cancellationToken));
+        }
+
+        s3.CompleteAnswer = null;
+        var truncated = $"v1/{Ulid.NewUlid()}/snapshots/truncated";
+        s3.HeadLengthOverride = item => item == truncated ? PartSize : null;
+        await using (var content = await FileAsync(newer, cancellationToken))
+        {
+            failures.Add((await Assert.ThrowsAsync<Exception>(() => store.PutAsync(truncated, content, cancellationToken)))!);
+        }
+
+        // A length-only check would have accepted both answers: the key holds the old object at exactly the uploaded length.
+        await Assert.That(controlLengths).IsEquivalentTo(new long?[] { old.LongLength, old.LongLength });
+        // An error body may already fail in the SDK; a success answer passes the SDK and fails only on this upload's evidence.
+        await Assert.That(failures[0] is Amazon.S3.AmazonS3Exception or IOException).IsTrue();
+        await Assert.That(failures[1]).IsTypeOf<IOException>();
+        await Assert.That(failures[2]).IsTypeOf<IOException>();
+        await Assert.That(ReferenceEquals(s3.Objects[key], old)).IsTrue();
+        // Both unanswered uploads were aborted; the truncated one completed before its HEAD, so its abort found nothing.
+        await Assert.That(s3.StartedUploads).IsEqualTo(3);
+        await Assert.That(s3.AbortedUploads).IsEqualTo(2);
+        await Assert.That(s3.CompletedUploads).IsEqualTo(1);
+        await Assert.That(s3.PendingUploads).IsEqualTo(0);
+    }
+
+    // The Content-Length a plain HEAD of the key reports, as a length-only completion check would read it.
+    private static async Task<long?> HeadLengthAsync(FakeS3 s3, ServiceProvider provider, string key, CancellationToken cancellationToken)
+    {
+        var settings = new Dictionary<string, string>();
+        s3.Configure(settings);
+        using var client = provider.GetRequiredService<IHttpClientFactory>().CreateClient(S3ObjectStore.HttpClientName);
+        using var head = new HttpRequestMessage(HttpMethod.Head, new Uri($"{settings["backup-endpoint"]}/{FakeS3.Bucket}/{key}"));
+        using var response = await client.SendAsync(head, cancellationToken);
+        return response.IsSuccessStatusCode ? response.Content.Headers.ContentLength : null;
+    }
+
+    // The fake's transports, without a server.
+    private static ServiceProvider Routed(FakeS3 s3)
+    {
+        var services = new ServiceCollection();
+        s3.Route(services);
+        return services.BuildServiceProvider();
+    }
+
+    // The platform bucket's store over the fake's transport.
+    private static S3ObjectStore PlatformStore(FakeS3 s3, ServiceProvider provider)
+    {
+        var settings = new Dictionary<string, string>();
+        s3.Configure(settings);
+        return new S3ObjectStore(new Uri(settings["backup-endpoint"]), settings["backup-region"], FakeS3.Bucket,
+            settings["backup-access-key-id"], settings["backup-secret-key"], provider.GetRequiredService<IHttpClientFactory>(),
+            S3ObjectStore.HttpClientName, TimeProvider.System);
     }
 
     // A scratch file of two parts (128 MiB and 1 MiB) filled with one byte, deleted when closed.
