@@ -2,6 +2,7 @@ using TerraBase.Errors;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
+using TerraBase.Features.Replication;
 
 namespace TerraBase.Features.Management;
 
@@ -13,6 +14,8 @@ public sealed class DeleteProjectEndpoint(IManagementService management) : Endpo
     {
         Delete(ManagementRoute.Project);
         Name("deleteProject");
+        // A restore could undo it to a tenant's harm: anchored before it is acknowledged (CatalogGate).
+        Metadata(AnchoredRevocation.Instance);
         Summary("Deletes a project");
         Description("Fails with 409 while the project still has databases, API keys or a customer backup destination. Detach the backup destination before deleting its project." + " " + ManagementRoute.IdentityDescription);
         Tags(ManagementRoute.Tag);

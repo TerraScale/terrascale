@@ -2,8 +2,11 @@
 
 - Status: **prepared, not executed.** Needs the user's explicit approval at the time of the rollout. Nothing in this
   document is to be run against live machines until then. No credentials are configured or handed out by it.
-- Applies to: the first deploy of a TerraBase build with the restore anchor (R10a `f2c32f99` and later) onto machines that
-  already serve a catalog. Rules: [system-catalog-invariants.md](system-catalog-invariants.md), section 2a.
+- Applies to: catalogs that are **not genesis and have no anchor**: a bucket swapped or emptied, anchors deleted by a
+  lifecycle rule or an operator, or a build with anchors deployed onto machines that already serve a catalog. It does
+  **not** apply to the first deploy of storage format 4 (R10a), which starts every catalog fresh (genesis): those machines
+  open and anchor without an operator (R3, #108 comment 6131106787). Rules:
+  [system-catalog-invariants.md](system-catalog-invariants.md), section 2a.
 - Validation (isolated, no live system):
   `CatalogLatticeTests.Adopting_anchors_on_a_running_cluster_takes_one_recorded_operator_open_and_later_restarts_take_none`.
 

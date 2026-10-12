@@ -2,6 +2,7 @@ using TerraBase.Errors;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraScale.Endpoints;
+using TerraBase.Features.Replication;
 
 namespace TerraBase.Features.Management;
 
@@ -13,6 +14,8 @@ public sealed class RemoveMemberEndpoint(IAccessService access) : EndpointWithou
     {
         Delete(ManagementRoute.Member);
         Name("removeMember");
+        // A restore could undo it to a tenant's harm: anchored before it is acknowledged (CatalogGate).
+        Metadata(AnchoredRevocation.Instance);
         Summary("Removes a member from an organization");
         Description($"Needs admin, and owner to remove an owner. 409 for the last owner. {ManagementRoute.IdentityDescription}");
         Tags(ManagementRoute.AccessTag);
