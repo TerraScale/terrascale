@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using TerraBase.Features.Replication;
 using TerraBase.Features.UserAuth;
 using TerraBase.Hosting;
 using TerraBase.Tenancy;
@@ -145,16 +144,10 @@ public static class UsageRequestMetering
             }
         }
 
-        // The authorized database, once resolved; a follower that relayed the request to the catalog primary leaves it to the
-        // primary, which resolved its database.
+        // The authorized database, once resolved.
         private void Resolve()
         {
             if (_resolved)
-            {
-                return;
-            }
-
-            if (_context.Features.Get<CatalogForwarder.Relayed>() is not null)
             {
                 return;
             }

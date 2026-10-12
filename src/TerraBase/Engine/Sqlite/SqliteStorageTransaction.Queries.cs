@@ -93,11 +93,6 @@ internal sealed partial class SqliteStorageTransaction
 
             // The primary-key range covers every collection with this prefix.
             var to = prefix[..^1] + (char)(prefix[^1] + 1);
-            if (_changes is not null)
-            {
-                CaptureSystemDeletions(prefix, to, cancellationToken);
-            }
-
             var documents = session.Command(SqliteStatements.DeleteCollectionDocuments, transaction);
             documents.Parameters.AddWithValue("$from", prefix);
             documents.Parameters.AddWithValue("$to", to);

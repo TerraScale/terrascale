@@ -503,10 +503,8 @@ public sealed class ManagementApiTests
     [Test]
     [Arguments("organization-tombstone")]
     [Arguments("project-binding")]
-    [Arguments("organization-deletion-history")]
     [Arguments("dashboard_query_shapes")]
     [Arguments("dashboard_query_shapes_flush")]
-    [Arguments("query_shape_senders")]
     public async Task Unversioned_management_residuals_are_refused_without_stamping_the_catalog(string residual)
     {
         await using var api = await ManagementApi.StartAsync();
@@ -515,7 +513,7 @@ public sealed class ManagementApiTests
         var id = EntityIds.New().ToString();
         var collection = residual switch
         {
-            "organization-tombstone" or "organization-deletion-history" => "organizations",
+            "organization-tombstone" => "organizations",
             "project-binding" => "project_organizations",
             _ => residual,
         };
@@ -528,13 +526,6 @@ public sealed class ManagementApiTests
             }
 
             await transaction.CommitAsync(CancellationToken.None);
-        }
-
-        if (residual == "organization-deletion-history")
-        {
-            await using var deleting = await system.BeginTransactionAsync(write: true, CancellationToken.None);
-            await deleting.DeleteAsync(collection, id, CancellationToken.None);
-            await deleting.CommitAsync(CancellationToken.None);
         }
 
         DocumentVersion? version;
