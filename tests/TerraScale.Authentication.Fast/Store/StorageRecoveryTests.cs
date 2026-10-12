@@ -1,5 +1,8 @@
 using System.Net;
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using TerraScale.Authentication.Features.Oidc;
@@ -27,7 +30,10 @@ public sealed class StorageRecoveryTests
         await terrabase.Documents(tenant.ApiKey).Database(tenant.Project.Id, "auth").CreateAsync();
         await terrabase.StopAsync();
 
-        await using var auth = await StartAuthAsync(terrabase, tenant);
+        // A configured client is registered by the storage bootstrap too, so it cannot stop startup either.
+        var client = AuthStore.NewId();
+        var secret = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
+        await using var auth = await StartAuthAsync(terrabase, tenant, $"{client}:{secret}");
         await Task.Delay(ReadinessWait.NextPass);
         using (var down = await auth.Client.GetAsync("/readyz"))
         {
@@ -40,6 +46,14 @@ public sealed class StorageRecoveryTests
         var database = terrabase.Documents(tenant.ApiKey).Database(tenant.Project.Id, "auth");
         await Assert.That((await database.ListCollectionsAsync(limit: 200)).Items.Count).IsEqualTo(AuthStore.RequiredCollections.Count);
         await Assert.That((await database.ListDocumentsAsync(AuthStore.SigningKeyCollection)).Items.Count).IsEqualTo(1);
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"/{OidcIssuer.Slug}/oauth/token")
+        {
+            Content = new FormUrlEncodedContent(new Dictionary<string, string> { ["grant_type"] = "client_credentials" }),
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Basic", Convert.ToBase64String(Encoding.UTF8.GetBytes($"{client}:{secret}")));
+        using var token = await auth.Client.SendAsync(request);
+        await Assert.That(token.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That((await token.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("access_token").GetString()).IsNotNull();
     }
 
     [Test]
@@ -69,8 +83,14 @@ public sealed class StorageRecoveryTests
         return jwks.GetProperty("keys").EnumerateArray().Single().GetProperty("kid").GetString()!;
     }
 
-    private static Task<AuthTestServer> StartAuthAsync(TerraBaseTestServer terrabase, TerraBaseTestTenant tenant) =>
-        AuthTestServer.StartAsync(services: services =>
+    private static Task<AuthTestServer> StartAuthAsync(TerraBaseTestServer terrabase, TerraBaseTestTenant tenant, string? serviceClients = null) =>
+        AuthTestServer.StartAsync(settings: values =>
+        {
+            if (serviceClients is not null)
+            {
+                values["service-clients"] = serviceClients;
+            }
+        }, services: services =>
         {
             services.AddSingleton(terrabase.Http);
             services.AddSingleton(_ => terrabase.InternalDocuments().Database(tenant.Project.Id, "auth"));
