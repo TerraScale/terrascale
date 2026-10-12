@@ -1,0 +1,100 @@
+/* TerraScale design tokens: the ONE swappable file. Every component reads only these --ts-* names.
+   Names match the shared design system (ts-dashboard tokens.css), so a direction's tokens file replaces this one as-is.
+   This file holds the current landing palette, made flat (no gradients, no glows).
+   Every colour is light-dark(LIGHT, DARK); the mode comes from color-scheme:
+     <html>                     -> dark (default)
+     <html data-theme="light">  -> light
+     <html data-theme="system"> -> follows prefers-color-scheme */
+
+:root {
+  color-scheme: dark;
+
+  /* ---- Colour ---- */
+  --ts-canvas: light-dark(#ffffff, #050508);
+  --ts-sidebar: light-dark(#f7f8fa, #050508);
+  --ts-surface: light-dark(#f7f8fa, #0a0a12);
+  --ts-surface-2: light-dark(#eff2f6, #10101a);
+  --ts-surface-3: light-dark(#e3e8ef, #181824);
+  --ts-line: light-dark(rgb(15 23 42 / 0.10), rgb(148 163 184 / 0.16));
+  --ts-line-strong: light-dark(rgb(15 23 42 / 0.18), rgb(148 163 184 / 0.30));
+  --ts-control-line: light-dark(#8a94a6, #5b6478);
+  --ts-control-line-hover: light-dark(#5b6478, #8a94a6);
+  --ts-ink: light-dark(#0b1220, #f1f5f9);
+  --ts-ink-2: light-dark(#475569, #9baccb);
+  --ts-ink-3: light-dark(#5f6b7f, #7c8ba8);
+  --ts-accent: light-dark(#2158e8, #60a5fa);
+  --ts-accent-soft: light-dark(rgb(33 88 232 / 0.10), rgb(37 99 235 / 0.14));
+  --ts-accent-fill: #2563eb;
+  --ts-accent-fill-hover: #1d4ed8;
+  --ts-on-accent: #ffffff;
+  --ts-link: light-dark(#1f52d9, #60a5fa);
+  --ts-primary: #2563eb;
+  --ts-primary-hover: #1d4ed8;
+  --ts-on-primary: #ffffff;
+  --ts-glass: light-dark(rgb(255 255 255 / 0.72), rgb(5 5 8 / 0.72));
+  --ts-glass-strong: light-dark(rgb(255 255 255 / 0.86), rgb(10 10 18 / 0.86));
+  --ts-glass-line: light-dark(rgb(15 23 42 / 0.10), rgb(148 163 184 / 0.16));
+  --ts-scrim: light-dark(rgb(11 18 32 / 0.32), rgb(0 0 0 / 0.50));
+  --ts-shadow: light-dark(rgb(15 23 42 / 0.14), rgb(0 0 0 / 0.60));
+  --ts-syn-keyword: light-dark(#1f52d9, #60a5fa);
+  --ts-syn-string: light-dark(#15803d, #86efac);
+  --ts-syn-number: light-dark(#a21caf, #f0abfc);
+  --ts-syn-comment: light-dark(#5f6b7f, #7c8ba8);
+  --ts-syn-fn: light-dark(#b45309, #fcd34d);
+  --ts-syn-punct: light-dark(#334155, #cbd5e1);
+  --ts-chart-1: light-dark(#2158e8, #60a5fa);
+  --ts-chart-2: light-dark(#64748b, #9baccb);
+  --ts-cat-3: light-dark(#94a3b8, #475569);
+  --ts-success: light-dark(#047857, #34d399);
+  --ts-warning: light-dark(#875200, #fbbf24);
+  --ts-severe: light-dark(#a6390e, #fb923c);
+  --ts-danger: light-dark(#b91c1c, #f87171);
+  --ts-info: light-dark(#1d4ed8, #60a5fa);
+
+  /* ---- Type families and voice ---- */
+  --ts-font-sans: "Roboto", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --ts-font-display: "Quantico", var(--ts-font-sans);
+  --ts-font-mono: "Roboto Mono", "JetBrains Mono", ui-monospace, "SF Mono", monospace;
+  --ts-font-num: var(--ts-font-mono);
+  --ts-heading-weight: 700;
+  --ts-display-weight: 700;
+  --ts-heading-tracking: -0.02em;
+  --ts-display-tracking: -0.035em;
+  --ts-label-font: var(--ts-font-sans);
+  --ts-label-weight: 700;
+  --ts-label-case: uppercase;
+  --ts-label-tracking: 0.12em;
+
+  /* ---- Shared foundation (identical in every direction) ---- */
+  --ts-cat-1: var(--ts-chart-1);
+  --ts-cat-2: var(--ts-chart-2);
+  --ts-focus: var(--ts-accent);
+
+  --ts-fs-xs: 12px; --ts-fs-sm: 13px; --ts-fs-md: 14px; --ts-fs-lg: 16px; --ts-fs-xl: 20px;
+  --ts-fs-2xl: 24px; --ts-fs-3xl: 32px; --ts-fs-4xl: 40px; --ts-fs-5xl: 56px;
+  --ts-lh-tight: 1.2; --ts-lh: 1.5; --ts-lh-prose: 1.7;
+  --ts-label-size: var(--ts-fs-xs);
+
+  --ts-s1: 4px; --ts-s2: 8px; --ts-s3: 12px; --ts-s4: 16px; --ts-s5: 20px; --ts-s6: 24px;
+  --ts-s8: 32px; --ts-s10: 40px; --ts-s12: 48px; --ts-s16: 64px; --ts-s20: 80px; --ts-s24: 96px;
+
+  --ts-radius-sm: 4px; --ts-radius: 6px; --ts-radius-lg: 10px; --ts-radius-xl: 14px; --ts-radius-pill: 999px;
+  --ts-control-h-sm: 32px; --ts-control-h: 36px; --ts-control-h-lg: 40px;
+
+  --ts-icon-sm: 14px; --ts-icon: 16px; --ts-icon-lg: 20px; --ts-icon-stroke: 1.5;
+
+  --ts-blur: 16px; --ts-blur-lg: 24px; --ts-saturate: 1.5;
+  --ts-shadow-overlay: 0 0 0 1px var(--ts-line-strong), 0 16px 40px -16px var(--ts-shadow);
+  --ts-tint-badge: 14%; --ts-tint-alert: 8%;
+
+  --ts-fast: 150ms; --ts-base: 200ms; --ts-loop: 1.4s; --ts-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+
+  --ts-z-sticky: 10; --ts-z-dropdown: 20; --ts-z-overlay: 30; --ts-z-modal: 40; --ts-z-progress: 50; --ts-z-tooltip: 60;
+
+  --ts-header-h: 64px; --ts-sidebar-width: 264px; --ts-page-max: 1440px; --ts-content-max: 1200px;
+  --ts-prose-max: 720px; --ts-form-max: 400px; --ts-gutter: 24px;
+}
+
+[data-theme="light"] { color-scheme: light; }
+[data-theme="dark"] { color-scheme: dark; }
+[data-theme="system"] { color-scheme: light dark; }

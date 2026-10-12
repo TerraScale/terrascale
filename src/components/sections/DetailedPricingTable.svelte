@@ -17,13 +17,13 @@
     <div class="detailed__intro">
       <div class="detailed__eyebrow">{$dict.pricing.detailed.eyebrow}</div>
 
-      <h2 class="detailed__title">{$dict.pricing.detailed.titleLead} <span class="ts-text-gradient">{$dict.pricing.detailed.titleAccent}</span></h2>
+      <h2 class="detailed__title">{$dict.pricing.detailed.titleLead} <span class="ts-accent-text">{$dict.pricing.detailed.titleAccent}</span></h2>
       <p class="detailed__text">
         {$dict.pricing.detailed.text}
       </p>
     </div>
 
-    <div class="detailed__table ts-glass">
+    <div class="detailed__table ts-card">
       <div class="detailed__head">
         <div>{$dict.pricing.detailed.headItem}</div>
         <div>{$dict.pricing.detailed.headPricing}</div>
@@ -33,7 +33,7 @@
         <div class="detailed__row" class:is-last={i === rows.length - 1}>
           <div class="detailed__item">{row.item}</div>
           <div class="detailed__price">
-            <span class="detailed__price-value ts-text-gradient">{row.price}</span>
+            <span class="detailed__price-value ts-accent-text">{row.price}</span>
             <span class="detailed__price-unit">{row.unit}</span>
           </div>
           <div class="detailed__details">{row.details}</div>
@@ -78,10 +78,10 @@
     padding: 5px 12px;
     border-radius: 4px;
     margin-bottom: 16px;
-    background: rgba(var(--ts-primary-rgb), 0.1);
-    border: 1px solid rgba(var(--ts-primary-rgb), 0.25);
-    color: var(--ts-primary-light);
-    font-family: var(--ts-font-accent);
+    background: color-mix(in srgb, var(--ts-accent) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--ts-accent) 25%, transparent);
+    color: var(--ts-accent);
+    font-family: var(--ts-font-sans);
     font-size: 11px;
     font-weight: 700;
     text-transform: uppercase;
@@ -91,15 +91,15 @@
   .detailed__title {
     font-size: 34px;
     font-weight: 700;
-    color: var(--ts-text);
+    color: var(--ts-ink);
     letter-spacing: -0.02em;
     margin: 0 0 12px;
   }
 
   .detailed__text {
-    font-family: var(--ts-font-accent);
+    font-family: var(--ts-font-sans);
     font-size: 15px;
-    color: var(--ts-text-muted);
+    color: var(--ts-ink-2);
     line-height: 1.65;
     max-width: 720px;
     margin: 0 auto;
@@ -111,10 +111,10 @@
     gap: 8px;
     padding: 10px 18px;
     border-radius: 6px;
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid var(--ts-glass-border);
-    color: var(--ts-text);
-    font-family: var(--ts-font-accent);
+    background: var(--ts-surface-2);
+    border: 1px solid var(--ts-line);
+    color: var(--ts-ink);
+    font-family: var(--ts-font-sans);
     font-size: 12px;
     font-weight: 700;
     text-transform: uppercase;
@@ -132,8 +132,8 @@
   }
 
   :global(.detailed__docs:hover) {
-    background: rgba(var(--ts-primary-rgb), 0.08);
-    border-color: rgba(var(--ts-primary-rgb), 0.35);
+    background: color-mix(in srgb, var(--ts-accent) 8%, transparent);
+    border-color: color-mix(in srgb, var(--ts-accent) 35%, transparent);
   }
 
   :global(.detailed__docs-icon) {
@@ -144,19 +144,19 @@
   .detailed__table {
     border-radius: 10px;
     overflow: hidden;
-    border: 1px solid var(--ts-glass-border);
+    border: 1px solid var(--ts-line);
   }
 
   .detailed__head {
     display: grid;
     grid-template-columns: 1.2fr 0.8fr 2fr;
     padding: 14px 24px;
-    background: rgba(var(--ts-primary-rgb), 0.08);
-    border-bottom: 1px solid var(--ts-glass-border);
-    font-family: var(--ts-font-accent);
+    background: color-mix(in srgb, var(--ts-accent) 8%, transparent);
+    border-bottom: 1px solid var(--ts-line);
+    font-family: var(--ts-font-sans);
     font-size: 10px;
     font-weight: 700;
-    color: var(--ts-primary-light);
+    color: var(--ts-accent);
     text-transform: uppercase;
     letter-spacing: 0.14em;
   }
@@ -165,7 +165,7 @@
     display: grid;
     grid-template-columns: 1.2fr 0.8fr 2fr;
     padding: 20px 24px;
-    border-bottom: 1px solid var(--ts-glass-border);
+    border-bottom: 1px solid var(--ts-line);
     align-items: center;
   }
 
@@ -176,7 +176,7 @@
   .detailed__item {
     font-size: 15px;
     font-weight: 600;
-    color: var(--ts-text);
+    color: var(--ts-ink);
   }
 
   .detailed__price {
@@ -192,15 +192,15 @@
   }
 
   .detailed__price-unit {
-    font-family: var(--ts-font-accent);
+    font-family: var(--ts-font-sans);
     font-size: 12px;
-    color: var(--ts-text-muted);
+    color: var(--ts-ink-2);
   }
 
   .detailed__details {
-    font-family: var(--ts-font-accent);
+    font-family: var(--ts-font-sans);
     font-size: 13px;
-    color: var(--ts-text-muted);
+    color: var(--ts-ink-2);
     line-height: 1.55;
   }
 

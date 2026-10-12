@@ -3,27 +3,27 @@
   import ExternalLink from '@/components/ExternalLink.svelte'
   import RouteLink from '@/components/RouteLink.svelte'
   import { dict } from '@/lib/i18n'
-  import { launchPhase, registrationUrl } from '@/lib/site'
+  import { registrationUrl } from '@/lib/site'
 
   $: perks = $dict.cta.perks
 </script>
 
 <section class="cta">
   <div class="cta__inner">
-    <div class="cta__card ts-glass">
+    <div class="cta__card ts-card">
       <h2 class="cta__headline">
-        {$dict.cta.headlineLead} <span class="ts-text-gradient">{$dict.cta.headlineAccent}</span>
+        {$dict.cta.headlineLead} <span class="ts-accent-text">{$dict.cta.headlineAccent}</span>
       </h2>
       <p class="cta__text">
         {$dict.cta.text}
       </p>
 
       <div class="cta__actions">
-        <ExternalLink href={registrationUrl} class="ts-btn ts-btn-primary cta-shine cta__primary">
-          {launchPhase === 'public-alpha' ? $dict.cta.ctaPrimary : $dict.cta.ctaPrelaunch}
+        <ExternalLink href={registrationUrl} class="ts-btn ts-btn-primary cta__primary">
+          {$dict.cta.ctaPrimary}
           <Icon name="arrowRight" className="cta__icon" />
         </ExternalLink>
-        <RouteLink href="/contact" class="ts-btn ts-btn-glass cta__secondary">
+        <RouteLink href="/contact" class="ts-btn ts-btn-secondary cta__secondary">
           <Icon name="messageSquare" className="cta__icon" />
           {$dict.cta.ctaSecondary}
         </RouteLink>
@@ -57,36 +57,25 @@
 
   .cta__card {
     position: relative;
-    border-radius: 16px;
+    border-radius: var(--ts-radius-xl);
     padding: 48px 40px 40px;
     text-align: center;
     overflow: hidden;
-    background:
-      radial-gradient(
-        ellipse 60% 100% at 50% 0%,
-        rgba(var(--ts-primary-rgb), 0.18),
-        transparent 70%
-      ),
-      var(--ts-glass-bg);
-    border: 1px solid rgba(var(--ts-primary-rgb), 0.28);
-    box-shadow:
-      0 18px 48px rgba(var(--ts-primary-rgb), 0.16),
-      inset 0 1px 0 rgba(255, 255, 255, 0.05);
   }
 
   .cta__headline {
     font-size: clamp(2rem, 3vw + 0.5rem, 3.2rem);
     font-weight: 700;
-    color: var(--ts-text);
+    color: var(--ts-ink);
     line-height: 1.12;
     letter-spacing: -0.025em;
     margin: 0 0 16px;
   }
 
   .cta__text {
-    font-family: var(--ts-font-accent);
+    font-family: var(--ts-font-sans);
     font-size: 16px;
-    color: var(--ts-text-muted);
+    color: var(--ts-ink-2);
     line-height: 1.6;
     max-width: 560px;
     margin: 0 auto 28px;
@@ -102,7 +91,6 @@
 
   :global(.cta__primary) {
     padding: 15px 30px;
-    box-shadow: 0 8px 24px rgba(var(--ts-primary-rgb), 0.48);
   }
 
   :global(.cta__secondary) {
@@ -122,9 +110,9 @@
     justify-content: center;
     gap: 22px;
     flex-wrap: wrap;
-    font-family: var(--ts-font-accent);
+    font-family: var(--ts-font-sans);
     font-size: 12px;
-    color: var(--ts-text-muted);
+    color: var(--ts-ink-2);
   }
 
   .cta__perks li {
@@ -138,7 +126,7 @@
   :global(.cta__perk-icon) {
     width: 14px;
     height: 14px;
-    color: var(--ts-secondary);
+    color: var(--ts-success);
   }
 
   @media (max-width: 640px) {

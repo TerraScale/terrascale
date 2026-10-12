@@ -20,7 +20,6 @@
 </script>
 
 <section class="about-hero">
-  <div class="about-hero__grid" aria-hidden="true"></div>
   <div class="about-hero__inner">
     <div class="about-hero__eyebrow">
       <Icon name="globe" className="about-hero__eyebrow-icon" />
@@ -28,17 +27,17 @@
     </div>
     <h1 class="about-hero__title">
       {$dict.about.titleLead}<br />
-      <span class="ts-text-gradient">{$dict.about.titleAccent}</span>
+      <span class="ts-accent-text">{$dict.about.titleAccent}</span>
     </h1>
     <p class="about-hero__subtitle">
       {$dict.about.subtitle}
     </p>
     <div class="about-hero__actions">
-      <RouteLink href="/pricing" class="ts-btn ts-btn-primary cta-shine">
+      <RouteLink href="/pricing" class="ts-btn ts-btn-primary">
         {$dict.about.ctaPricing}
         <Icon name="arrowRight" className="about-hero__action-icon" />
       </RouteLink>
-      <RouteLink href="/contact" class="ts-btn ts-btn-glass">
+      <RouteLink href="/contact" class="ts-btn ts-btn-secondary">
         {$dict.about.ctaContact}
         <Icon name="messageSquare" className="about-hero__action-icon" />
       </RouteLink>
@@ -58,7 +57,7 @@
 
     <div class="about-pillars">
       {#each pillars as pillar (pillar.title)}
-        <article class="about-pillar ts-glass">
+        <article class="about-pillar ts-card">
           <div class="about-pillar__icon">
             <Icon name={pillar.icon} className="about-pillar__icon-svg" />
           </div>
@@ -71,7 +70,7 @@
 </section>
 
 <section class="about-band">
-  <div class="about-band__inner ts-glass">
+  <div class="about-band__inner ts-card">
     <div>
       <div class="about-section__eyebrow">{$dict.about.pricingPrincipleEyebrow}</div>
       <h2 class="about-band__title">{$dict.about.bandTitle}</h2>
@@ -97,17 +96,6 @@
     padding: 112px 0 88px;
   }
 
-  .about-hero__grid {
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    opacity: 0.55;
-    background-image:
-      linear-gradient(var(--ts-grid-color) 1px, transparent 1px),
-      linear-gradient(90deg, var(--ts-grid-color) 1px, transparent 1px);
-    background-size: 32px 32px;
-  }
-
   .about-hero__inner,
   .about-section__inner,
   .about-band__inner {
@@ -128,10 +116,10 @@
     gap: 8px;
     padding: 5px 12px;
     border-radius: 4px;
-    background: rgba(var(--ts-primary-rgb), 0.1);
-    border: 1px solid rgba(var(--ts-primary-rgb), 0.25);
-    color: var(--ts-primary-light);
-    font-family: var(--ts-font-accent);
+    background: color-mix(in srgb, var(--ts-accent) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--ts-accent) 25%, transparent);
+    color: var(--ts-accent);
+    font-family: var(--ts-font-sans);
     font-size: 11px;
     font-weight: 700;
     text-transform: uppercase;
@@ -146,7 +134,7 @@
   .about-hero__title {
     font-size: clamp(2.8rem, 6vw + 0.5rem, 5.6rem);
     font-weight: 700;
-    color: var(--ts-text);
+    color: var(--ts-ink);
     line-height: 0.98;
     letter-spacing: -0.035em;
     margin: 24px 0 24px;
@@ -155,8 +143,8 @@
   .about-hero__subtitle,
   .about-section__text,
   .about-band__text {
-    font-family: var(--ts-font-accent);
-    color: var(--ts-text-muted);
+    font-family: var(--ts-font-sans);
+    color: var(--ts-ink-2);
     line-height: 1.7;
   }
 
@@ -191,7 +179,7 @@
 
   .about-section__title,
   .about-band__title {
-    color: var(--ts-text);
+    color: var(--ts-ink);
     font-weight: 700;
     letter-spacing: -0.02em;
     line-height: 1.12;
@@ -226,9 +214,9 @@
     width: 42px;
     height: 42px;
     border-radius: 8px;
-    background: rgba(var(--ts-primary-rgb), 0.14);
-    border: 1px solid rgba(var(--ts-primary-rgb), 0.3);
-    color: var(--ts-primary-light);
+    background: color-mix(in srgb, var(--ts-accent) 14%, transparent);
+    border: 1px solid color-mix(in srgb, var(--ts-accent) 30%, transparent);
+    color: var(--ts-accent);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -241,7 +229,7 @@
 
   .about-pillar__title {
     margin: 0 0 8px;
-    color: var(--ts-text);
+    color: var(--ts-ink);
     font-size: 19px;
     font-weight: 700;
   }
@@ -249,7 +237,7 @@
   .about-pillar__text {
     grid-column: 2;
     margin: 0;
-    color: var(--ts-text-muted);
+    color: var(--ts-ink-2);
     font-size: 14.5px;
     line-height: 1.65;
   }
@@ -265,9 +253,7 @@
     grid-template-columns: minmax(0, 1fr) auto;
     gap: 36px;
     align-items: center;
-    background:
-      radial-gradient(ellipse 70% 120% at 0% 0%, rgba(var(--ts-primary-rgb), 0.14), transparent 65%),
-      var(--ts-glass-bg);
+    background: var(--ts-surface);
   }
 
   .about-band__title {
@@ -286,10 +272,10 @@
     gap: 9px;
     padding: 9px 12px;
     border-radius: 6px;
-    border: 1px solid rgba(var(--ts-primary-rgb), 0.22);
-    background: rgba(var(--ts-primary-rgb), 0.08);
-    color: var(--ts-text);
-    font-family: var(--ts-font-accent);
+    border: 1px solid color-mix(in srgb, var(--ts-accent) 22%, transparent);
+    background: color-mix(in srgb, var(--ts-accent) 8%, transparent);
+    color: var(--ts-ink);
+    font-family: var(--ts-font-sans);
     font-size: 13px;
     font-weight: 700;
   }
@@ -298,8 +284,7 @@
     width: 7px;
     height: 7px;
     border-radius: 4px;
-    background: var(--ts-secondary);
-    box-shadow: 0 0 10px rgba(var(--ts-secondary-rgb), 0.7);
+    background: var(--ts-success);
   }
 
   @media (max-width: 860px) {

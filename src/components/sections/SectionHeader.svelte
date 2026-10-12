@@ -34,10 +34,10 @@
     padding: 5px 12px;
     border-radius: 4px;
     margin-bottom: 20px;
-    background: rgba(var(--ts-primary-rgb), 0.1);
-    border: 1px solid rgba(var(--ts-primary-rgb), 0.25);
-    color: var(--ts-primary-light);
-    font-family: var(--ts-font-accent);
+    background: color-mix(in srgb, var(--ts-accent) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--ts-accent) 25%, transparent);
+    color: var(--ts-accent);
+    font-family: var(--ts-font-sans);
     font-size: 11px;
     font-weight: 700;
     text-transform: uppercase;
@@ -49,22 +49,22 @@
     width: 5px;
     height: 5px;
     border-radius: 3px;
-    background: var(--ts-primary);
+    background: var(--ts-accent);
   }
 
   .section-header__title {
     font-size: clamp(1.8rem, 2.5vw + 0.5rem, 3rem);
     font-weight: 700;
-    color: var(--ts-text);
+    color: var(--ts-ink);
     letter-spacing: -0.02em;
     line-height: 1.12;
     margin: 0 0 16px;
   }
 
   .section-header__subtitle {
-    font-family: var(--ts-font-accent);
+    font-family: var(--ts-font-sans);
     font-size: 18px;
-    color: var(--ts-text-muted);
+    color: var(--ts-ink-2);
     line-height: 1.65;
     margin: 0;
   }

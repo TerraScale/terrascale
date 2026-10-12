@@ -36,7 +36,7 @@
         </div>
         <h2 class="code__headline">
           {$dict.code.headlineLead}<br />
-          <span class="ts-text-gradient">{$dict.code.headlineAccent}</span>
+          <span class="ts-accent-text">{$dict.code.headlineAccent}</span>
         </h2>
         <p class="code__text">
           {$dict.code.text}
@@ -121,10 +121,10 @@
     padding: 5px 12px;
     border-radius: 4px;
     margin-bottom: 20px;
-    background: rgba(var(--ts-primary-rgb), 0.1);
-    border: 1px solid rgba(var(--ts-primary-rgb), 0.25);
-    color: var(--ts-primary-light);
-    font-family: var(--ts-font-accent);
+    background: color-mix(in srgb, var(--ts-accent) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--ts-accent) 25%, transparent);
+    color: var(--ts-accent);
+    font-family: var(--ts-font-sans);
     font-size: 11px;
     font-weight: 700;
     text-transform: uppercase;
@@ -140,7 +140,7 @@
   .code__headline {
     font-size: clamp(1.8rem, 2.5vw + 0.5rem, 2.8rem);
     font-weight: 700;
-    color: var(--ts-text);
+    color: var(--ts-ink);
     line-height: 1.14;
     letter-spacing: -0.02em;
     margin: 0 0 20px;
@@ -153,9 +153,9 @@
   }
 
   .code__text {
-    font-family: var(--ts-font-accent);
+    font-family: var(--ts-font-sans);
     font-size: 17px;
-    color: var(--ts-text-muted);
+    color: var(--ts-ink-2);
     line-height: 1.7;
     margin: 0 0 32px;
   }
@@ -173,7 +173,7 @@
     display: flex;
     align-items: center;
     gap: 12px;
-    color: var(--ts-text);
+    color: var(--ts-ink);
     font-size: 15px;
   }
 
@@ -181,8 +181,8 @@
     width: 20px;
     height: 20px;
     border-radius: 4px;
-    background: var(--ts-secondary);
-    color: var(--ts-bg-base);
+    background: var(--ts-success);
+    color: var(--ts-canvas);
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -196,13 +196,10 @@
 
   .code__terminal {
     position: relative;
-    background: var(--ts-code-bg);
-    border: 1px solid var(--ts-glass-border);
+    background: var(--ts-surface);
+    border: 1px solid var(--ts-line);
     border-radius: 10px;
     overflow: hidden;
-    box-shadow:
-      0 20px 60px rgba(0, 0, 0, 0.5),
-      0 0 80px rgba(var(--ts-primary-rgb), 0.08);
   }
 
   .code__chrome {
@@ -210,8 +207,8 @@
     align-items: center;
     justify-content: space-between;
     padding: 12px 16px;
-    background: rgba(0, 0, 0, 0.3);
-    border-bottom: 1px solid var(--ts-glass-border);
+    background: var(--ts-surface-2);
+    border-bottom: 1px solid var(--ts-line);
   }
 
   .code__chrome-left {
@@ -226,21 +223,15 @@
     border-radius: 6px;
     display: inline-block;
   }
-  .code__dot--red {
-    background: #ff5f57;
-  }
-  .code__dot--yellow {
-    background: #febc2e;
-  }
-  .code__dot--green {
-    background: #28c840;
+  .code__dot {
+    background: var(--ts-surface-3);
   }
 
   .code__filename {
     margin-left: 12px;
     font-family: var(--ts-font-mono);
     font-size: 11px;
-    color: var(--ts-text-muted);
+    color: var(--ts-ink-2);
   }
 
   .code__copy-btn {
@@ -249,9 +240,9 @@
     gap: 6px;
     padding: 4px 10px;
     border-radius: 4px;
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    color: var(--ts-text-muted);
+    background: var(--ts-surface);
+    border: 1px solid var(--ts-line);
+    color: var(--ts-ink-2);
     font-size: 11px;
     font-weight: 600;
     cursor: pointer;
@@ -260,14 +251,14 @@
   }
 
   .code__copy-btn:hover {
-    background: rgba(255, 255, 255, 0.08);
-    color: var(--ts-text);
+    background: var(--ts-surface-3);
+    color: var(--ts-ink);
   }
 
   .code__copy-btn.is-copied {
-    background: rgba(16, 185, 129, 0.15);
-    border-color: rgba(16, 185, 129, 0.35);
-    color: #34d399;
+    background: color-mix(in srgb, var(--ts-success) 14%, transparent);
+    border-color: color-mix(in srgb, var(--ts-success) 35%, transparent);
+    color: var(--ts-success);
   }
 
   :global(.code__copy-icon) {
@@ -279,8 +270,8 @@
     display: flex;
     gap: 2px;
     padding: 10px 12px 0;
-    background: rgba(0, 0, 0, 0.15);
-    border-bottom: 1px solid var(--ts-glass-border);
+    background: var(--ts-surface-2);
+    border-bottom: 1px solid var(--ts-line);
     overflow-x: auto;
   }
 
@@ -294,7 +285,7 @@
     border-bottom: 2px solid transparent;
     border-top-left-radius: 5px;
     border-top-right-radius: 5px;
-    color: var(--ts-text-muted);
+    color: var(--ts-ink-2);
     font-size: 12px;
     font-weight: 600;
     cursor: pointer;
@@ -308,13 +299,13 @@
   }
 
   .code__tab:hover {
-    color: var(--ts-text);
+    color: var(--ts-ink);
   }
 
   .code__tab.is-active {
-    background: var(--ts-code-bg);
-    border-bottom-color: var(--ts-primary);
-    color: var(--ts-text);
+    background: var(--ts-surface);
+    border-bottom-color: var(--ts-accent);
+    color: var(--ts-ink);
   }
 
   .code__tab-icon {
@@ -334,7 +325,7 @@
     font-family: var(--ts-font-mono);
     font-size: 13.5px;
     line-height: 1.75;
-    color: #cbd5e1;
+    color: var(--ts-ink);
     overflow: auto;
     max-height: 480px;
     white-space: pre;

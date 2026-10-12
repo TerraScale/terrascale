@@ -19,13 +19,13 @@
     >
       <svelte:fragment slot="title">
         {$dict.features.titleLead}<br />
-        <span class="ts-text-gradient">{$dict.features.titleAccent}</span>
+        <span class="ts-accent-text">{$dict.features.titleAccent}</span>
       </svelte:fragment>
     </SectionHeader>
 
     <div class="features__grid">
       {#each features as feature (feature.title)}
-        <article class="feature-card ts-glass">
+        <article class="feature-card ts-card">
           <div class="feature-card__head">
             <div class="feature-card__icon">
               <Icon name={feature.icon} className="feature-card__icon-svg" />
@@ -73,18 +73,11 @@
     overflow: hidden;
     border-radius: 12px;
     padding: 28px;
-    transition:
-      transform 250ms ease,
-      box-shadow 250ms ease,
-      border-color 250ms ease;
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    transition: border-color var(--ts-base) ease;
   }
 
   .feature-card:hover {
-    transform: translateY(-2px);
-    box-shadow:
-      0 10px 28px rgba(var(--ts-primary-rgb), 0.18),
-      inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    border-color: var(--ts-line-strong);
   }
 
   .feature-card__head {
@@ -99,43 +92,31 @@
     width: 42px;
     height: 42px;
     border-radius: 8px;
-    background: rgba(var(--ts-primary-rgb), 0.14);
-    border: 1px solid rgba(var(--ts-primary-rgb), 0.3);
+    background: color-mix(in srgb, var(--ts-accent) 14%, transparent);
+    border: 1px solid color-mix(in srgb, var(--ts-accent) 30%, transparent);
     display: flex;
     align-items: center;
     justify-content: center;
-    transition:
-      background 260ms ease,
-      border-color 260ms ease,
-      box-shadow 260ms ease;
-    color: var(--ts-primary-light);
-  }
-
-  .feature-card:hover .feature-card__icon {
-    background: rgba(var(--ts-primary-rgb), 0.22);
-    border-color: rgba(var(--ts-primary-rgb), 0.55);
-    box-shadow:
-      0 0 0 3px rgba(var(--ts-primary-rgb), 0.12),
-      0 6px 16px rgba(var(--ts-primary-rgb), 0.25);
+    color: var(--ts-accent);
   }
 
   :global(.feature-card__icon-svg) {
     width: 20px;
     height: 20px;
-    color: var(--ts-primary-light);
+    color: var(--ts-accent);
   }
 
   .feature-card__title {
     font-size: 19px;
     font-weight: 700;
-    color: var(--ts-text);
+    color: var(--ts-ink);
     margin: 0;
     letter-spacing: -0.01em;
   }
 
   .feature-card__text {
     font-size: 14.5px;
-    color: var(--ts-text-muted);
+    color: var(--ts-ink-2);
     line-height: 1.6;
     margin: 0 0 18px;
   }
@@ -152,9 +133,9 @@
     gap: 5px;
     padding: 3px 8px;
     border-radius: 4px;
-    background: rgba(var(--ts-primary-rgb), 0.08);
-    border: 1px solid rgba(var(--ts-primary-rgb), 0.18);
-    color: var(--ts-primary-light);
+    background: color-mix(in srgb, var(--ts-accent) 8%, transparent);
+    border: 1px solid color-mix(in srgb, var(--ts-accent) 18%, transparent);
+    color: var(--ts-accent);
     font-family: var(--ts-font-mono);
     font-size: 10.5px;
     font-weight: 600;
@@ -164,7 +145,7 @@
     width: 4px;
     height: 4px;
     border-radius: 2px;
-    background: var(--ts-primary);
+    background: var(--ts-accent);
   }
 
   @media (max-width: 640px) {

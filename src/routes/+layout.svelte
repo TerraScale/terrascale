@@ -53,7 +53,7 @@
   <meta property="og:url" content={canonicalUrl} />
 </svelte:head>
 
-<div class="min-h-screen bg-[#050508] text-[#F8FAFC] dark">
+<div class="min-h-screen">
   <Header />
 
   <main>
