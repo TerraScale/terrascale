@@ -46,6 +46,7 @@ type Result struct {
 	LoadSeconds float64                 `json:"load_seconds"`
 	Writes      map[string]RegionWrites `json:"writes"`
 	Lag         map[string]Lag          `json:"lag"`
+	ProbeRead   Summary                 `json:"probe_read_latency"`
 	Convergence Convergence             `json:"convergence"`
 	Conflicts   ConflictOutcome         `json:"conflicts"`
 	Resources   Resources               `json:"resources"`
@@ -75,6 +76,7 @@ func (r *Runner) Collect(res *Result, loadSeconds float64) {
 		}
 	}
 	if r.probes != nil {
+		res.ProbeRead = r.probes.read.Summary()
 		for key, l := range r.probes.lag {
 			res.Lag[key] = Lag{Summary: l.Summary(), Missing: r.probes.missing[key].Load()}
 		}
@@ -144,6 +146,9 @@ func (res Result) Markdown() string {
 		l := res.Lag[key]
 		p("| %s | %d | %.1f | %.1f | %.1f | %.1f | %d |", key, l.Count, l.P50, l.P95, l.P99, l.Max, l.Missing)
 	}
+	p("")
+	p("One probe in flight per origin, polled every 10 ms. Poll read latency (the lag's resolution): p50 %.1f ms, p99 %.1f ms, max %.1f ms over %d reads.",
+		res.ProbeRead.P50, res.ProbeRead.P99, res.ProbeRead.Max, res.ProbeRead.Count)
 	c := res.Convergence
 	p("")
 	p("## Convergence and correctness")

@@ -52,8 +52,8 @@ func LoadTargets(path string) (Targets, error) {
 	if err := json.Unmarshal(b, &t); err != nil {
 		return Targets{}, fmt.Errorf("%s: %w", path, err)
 	}
-	if t.Project == "" || t.Database == "" || len(t.Regions) < 2 {
-		return Targets{}, fmt.Errorf("%s: needs project, database and at least two regions", path)
+	if t.Project == "" || t.Database == "" || len(t.Regions) == 0 {
+		return Targets{}, fmt.Errorf("%s: needs project, database and at least one region", path)
 	}
 	for name, r := range t.Regions {
 		if r.URL == "" || r.Token == "" {

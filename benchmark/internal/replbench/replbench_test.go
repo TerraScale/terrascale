@@ -149,7 +149,15 @@ func (f *fakeCluster) handler(region string) http.Handler {
 	})
 }
 
-func runFake(t *testing.T, drop func(region, collection, id string) bool) Result {
+// fakeRun is what the runner recorded against the fake cluster.
+type fakeRun struct {
+	conv      Convergence
+	conflicts ConflictOutcome
+	created   int64
+	lag       Summary
+}
+
+func runFake(t *testing.T, drop func(region, collection, id string) bool) fakeRun {
 	t.Helper()
 	f := &fakeCluster{docs: map[string]map[string]map[string]json.RawMessage{}, drop: drop}
 	tg := Targets{Kind: "test", Project: "p", Database: "d", Regions: map[string]RegionTarget{}}
@@ -166,41 +174,36 @@ func runFake(t *testing.T, drop func(region, collection, id string) bool) Result
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	var res Result
+	var res fakeRun
 	if err := r.Setup(ctx); err != nil {
 		t.Fatal(err)
 	}
-	elapsed, err := r.Load(ctx)
-	if err != nil {
+	if _, err := r.Load(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if res.Convergence, err = r.Converge(ctx, time.Now()); err != nil {
+	if res.conv, err = r.Converge(ctx, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if res.Conflicts, err = r.CheckConflicts(ctx); err != nil {
+	if res.conflicts, err = r.CheckConflicts(ctx); err != nil {
 		t.Fatal(err)
 	}
-	r.Collect(&res, elapsed.Seconds())
-	if !strings.Contains(res.Markdown(), "## Convergence and correctness") {
-		t.Fatal("report lacks its sections")
+	for _, n := range r.created {
+		res.created += n.Load()
 	}
+	res.lag = r.probes.lag["gru->sjc"].Summary()
 	return res
 }
 
 func TestRunnerVerifiesEveryRegionExactly(t *testing.T) {
 	res := runFake(t, nil)
-	if !res.Passed() {
-		t.Fatalf("want a pass: %+v", res.Convergence)
+	if !res.conv.Converged || res.conv.Unknown != 0 {
+		t.Fatalf("want every region exact: %+v", res.conv)
 	}
-	created := int64(0)
-	for _, w := range res.Writes {
-		created += w.Created
+	if res.created != 600 || res.conv.Expected+res.conv.Deleted != 600 || res.conv.Deleted == 0 {
+		t.Fatalf("created %d, expected %d, deleted %d", res.created, res.conv.Expected, res.conv.Deleted)
 	}
-	if created != 600 || res.Convergence.Expected+res.Convergence.Deleted != 600 || res.Convergence.Deleted == 0 {
-		t.Fatalf("created %d, expected %d, deleted %d", created, res.Convergence.Expected, res.Convergence.Deleted)
-	}
-	if res.Lag["gru->sjc"].Count == 0 || res.Conflicts.Identical != 5 || res.Conflicts.SameField["invalid"] != 0 {
-		t.Fatalf("lag %+v conflicts %+v", res.Lag["gru->sjc"], res.Conflicts)
+	if res.lag.Count == 0 || res.conflicts.Identical != 5 || res.conflicts.SameField["invalid"] != 0 {
+		t.Fatalf("lag %+v conflicts %+v", res.lag, res.conflicts)
 	}
 }
 
@@ -214,7 +217,7 @@ func TestRunnerReportsADocumentARegionNeverGot(t *testing.T) {
 		once.Do(func() { lost = id })
 		return id == lost
 	})
-	if fra := res.Convergence.Regions["fra"]; res.Passed() || res.Convergence.Converged || fra.Missing != 1 || !slices.Contains(fra.Examples, "missing "+lost) {
+	if fra := res.conv.Regions["fra"]; res.conv.Converged || fra.Missing != 1 || !slices.Contains(fra.Examples, "missing "+lost) {
 		t.Fatalf("the document %s fra never got went unnoticed: %+v", lost, fra)
 	}
 }
