@@ -87,7 +87,7 @@ Choose the machine in the first region the deploy reaches (gru in today's order)
 
 - Catalog document `catalog_gate_opens/<ULID>`, replicated to every machine: `machine`, `operator`, `reason`, `at`,
   `accepted: true`, `unverified` (what the gate still waited for: the anchor-missing reason and the ids of machines not
-  yet verified).
+  yet verified). Once open, `GET /catalog-gate` shows an empty `pending`; this record keeps what was not verified.
 - Warning log on the machine: `Operator <operator> opened the catalog gate without verifying [...] for this start: <reason>`.
 - A refused request (malformed, no reason) is recorded the same way with `accepted: false` and `refused`.
 - Metric: `terrabase.catalog.verified` = 1 on the machine from the open on.
