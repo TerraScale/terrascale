@@ -54,6 +54,9 @@ nice -n 19 make perf
 `test-fast` runs the HTTP, MCP, CLI and customer-SDK journeys; `test-slow` runs the
 browser journeys and the internal-billing policy suites (`[Category("Slow")]`);
 `test-e2e` runs both and is the merge gate.
+CI does not run the explicit hot-reload journey. Run `nice -n 19 make test-hot-reload`
+on a tailnet machine before pushing changes to `scripts/demo.sh`, `scripts/dev.sh`,
+the asset scripts or the demo host.
 `check-e2e-shards` lists the discovered tests. The solution contains one
 production application and its E2E project; the test executable owns
 TUnit discovery, assertions, fixtures and TRX reports. Fixtures start real

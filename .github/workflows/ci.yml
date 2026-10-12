@@ -14,14 +14,16 @@ permissions:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # A newer push supersedes a pull request's run; every main commit keeps its complete result.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   DOTNET_CLI_TELEMETRY_OPTOUT: "1"
   DOTNET_NOLOGO: "1"
 
-# Self-hosted alpha runners only: no hosted fallback. `check` installs its own toolchains and keeps its NuGet
-# packages under its runner temp directory; `slow` builds in a Dockerfile stage and shares no mutable cache.
+# Self-hosted alpha runners only: no hosted fallback. Toolchains come from alpha's tool cache; `check` keeps its
+# NuGet packages under its own runner temp directory, and `slow` builds in a Dockerfile stage on alpha's
+# BuildKit daemon. This workflow has no write permission and releases nothing.
 jobs:
   check:
     runs-on: alpha
