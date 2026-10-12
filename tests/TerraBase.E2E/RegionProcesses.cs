@@ -264,6 +264,7 @@ public sealed class RegionProcessHost
 
     [Test]
     [Timeout(6 * 3600 * 1000)]
+    [Scenario(Nodes.Processes)]
     public async Task Hosts_one_region_until_its_process_is_killed(CancellationToken cancellationToken)
     {
         var info = Environment.GetEnvironmentVariable(InfoVariable);

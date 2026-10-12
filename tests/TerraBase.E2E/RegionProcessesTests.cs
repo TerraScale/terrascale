@@ -7,6 +7,7 @@ namespace TerraBase.E2E;
 public sealed class RegionProcessesTests
 {
     [Test]
+    [Scenario(Nodes.Processes, Faults.ProcessKill)]
     public async Task Region_processes_replicate_and_a_killed_region_catches_up_after_its_restart()
     {
         Skip.When(Cluster.FlyRequested, "runs local node processes");
