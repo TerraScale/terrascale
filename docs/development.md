@@ -4,9 +4,7 @@ The dashboard uses .NET 10, RazorSlices, Datastar and the official
 ts-dotnet SDK in one production application, `src/TerraScale.Dashboard`.
 Node.js and npm build the Lightning CSS stylesheet and browser assets, and
 nothing else: the npm project is `src/TerraScale.Dashboard/web` (`package.json`,
-`.browserslistrc`, and the scripts in `web/build/`). The root `package.json`
-only holds packages for the `tests/TerraScale.Dashboard.E2E/browser/*.mjs`
-flows until they are ported to C#.
+`.browserslistrc`, and the scripts in `web/build/`). Tests are C# only.
 It is the only implementation; the Go application was removed on 2026-10-12.
 Production is not deployed. See [migration status](csharp-migration.md) for
 outstanding deployment and persistence gates.
@@ -15,8 +13,7 @@ outstanding deployment and persistence gates.
 
 Install the versions pinned in `global.json` and `.mise.toml`, then install
 the asset build's dependencies with `npm ci` in `src/TerraScale.Dashboard/web`
-(the project build also does this when they are missing) and the test flows'
-with `npm ci` at the repository root. Run local builds, lint, tests and
+(the project build also does this when they are missing). Run local builds, lint, tests and
 watchers with low CPU priority:
 
 ```sh

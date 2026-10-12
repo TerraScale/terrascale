@@ -4,7 +4,7 @@ using Microsoft.Playwright;
 
 namespace TerraScale.Dashboard.E2E;
 
-// Shared helpers for the C# browser journeys (formerly node + playwright-core + axe-core).
+// Shared helpers for the C# browser journeys.
 public static class BrowserAudit
 {
     private static readonly AxeRunOptions Wcag22AA = new()

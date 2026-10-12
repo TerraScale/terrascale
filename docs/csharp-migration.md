@@ -368,8 +368,9 @@ replication, live SDK interoperability or persistence across deployed restarts.
 
 The native TUnit account-to-customer-SDK journey verified against the
 test producer: signup, organization/project/database creation, native API-key
-issuance and eight point-document operations with the unchanged published
-`@terrascale/sdk` 0.0.3. The test transport changes the TCP destination while
+issuance and eight point-document operations with the unchanged official
+`TerraScale.DotNet` SDK, in process (formerly `@terrascale/sdk` 0.0.3 under
+node; both send the same wire requests). The test transport changes the TCP destination while
 preserving the SDK's request host, path, authorization and body. The three
 official .NET SDK credential/scope journeys previously passed with the unmodified
 `130925898daf0207134d9582b7b672a5a1c3233b` candidate. These protocol results do

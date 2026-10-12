@@ -4,7 +4,6 @@ This source guard cannot prove that a journey crosses the running application;
 runtime discovery and review of the exercised boundaries are also required.
 """
 from pathlib import Path
-import json
 import re
 import xml.etree.ElementTree as ET
 
@@ -13,10 +12,6 @@ suite = root / "tests/TerraScale.Dashboard.E2E"
 project = ET.parse(suite / "TerraScale.Dashboard.E2E.csproj")
 packages = {item.get("Include") for item in project.findall(".//PackageReference")}
 assert "TUnit" in packages, "Dashboard E2E tests must use TUnit"
-browser_package = next(item.get("Version") for item in ET.parse(root / "Directory.Packages.props").findall(".//PackageVersion")
-                       if item.get("Include") == "Microsoft.Playwright")
-assert json.loads((root / "package.json").read_text())["devDependencies"]["playwright-core"] == browser_package, \
-    "Native TUnit browsers and JavaScript journeys must use the same pinned Playwright version"
 for project_file in root.rglob("*.csproj"):
     if {"bin", "obj", "vendor", "node_modules", "test-results", ".git"}.intersection(project_file.relative_to(root).parts):
         continue
