@@ -3,7 +3,7 @@ using System.Diagnostics.Metrics;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
-using Microsoft.Data.Sqlite;
+using Turso.Data.Sqlite;
 using TerraBase.Configuration;
 using TerraBase.Features.Memory;
 using TerraBase.Features.Qos;
@@ -49,18 +49,20 @@ internal sealed partial class SqliteDatabaseStore(
     internal static readonly byte[] FormatDigest =
         SHA256.HashData(Encoding.UTF8.GetBytes(SystemSchemaSql + ClientSchemaSql + UniqueSchemaSql));
 
-    // Greenfield bootstrap only: an older on-disk shape must be discarded, never upgraded. The system database keeps its
+    // Greenfield bootstrap only: an older on-disk shape must be discarded, never upgraded. Turso stores only rowid tables
+    // and its provider splits command text at every ';', so there are no WITHOUT ROWID tables and no triggers
+    // (docs/terrabase/turso-spike.md). The system database keeps its
     // journal of whole writes with a SHA-256 prefix digest per group (docs/decisions/0009) until TS-647 step 5.
     private const string SystemSchemaSql = """
         CREATE TABLE documents (
             collection TEXT NOT NULL, id TEXT NOT NULL, version INTEGER NOT NULL, body TEXT,
             PRIMARY KEY (collection, id)
-        ) WITHOUT ROWID;
+        );
         CREATE INDEX documents_live ON documents (collection, id) WHERE body IS NOT NULL;
         CREATE TABLE collections (
             name TEXT PRIMARY KEY, created_at INTEGER NOT NULL, generation INTEGER NOT NULL,
             entity_id TEXT NOT NULL CHECK (length(entity_id) = 26)
-        ) WITHOUT ROWID;
+        );
         CREATE TABLE commit_offset (
             id INTEGER PRIMARY KEY CHECK (id = 1), value INTEGER NOT NULL, incarnation TEXT NOT NULL
         );
@@ -72,40 +74,20 @@ internal sealed partial class SqliteDatabaseStore(
             id TEXT NOT NULL, version INTEGER NOT NULL, body TEXT, document_version INTEGER NOT NULL
         );
         CREATE INDEX change_log_by_offset ON change_log (collection, generation, version, sequence);
-        CREATE INDEX change_log_by_document ON change_log (collection, generation, id, version, sequence);
-        CREATE TABLE change_log_births (
-            collection TEXT NOT NULL, generation INTEGER NOT NULL, id TEXT NOT NULL, version INTEGER NOT NULL,
-            PRIMARY KEY (collection, generation, id, version)
-        ) WITHOUT ROWID;
-        CREATE TABLE change_log_high (
-            collection TEXT NOT NULL, generation INTEGER NOT NULL, version INTEGER NOT NULL, id TEXT NOT NULL,
-            PRIMARY KEY (collection, generation, version, id)
-        ) WITHOUT ROWID;
-        CREATE TRIGGER change_log_birth AFTER INSERT ON change_log
-        WHEN NOT EXISTS (
-            SELECT 1 FROM change_log_births b WHERE b.collection = NEW.collection AND b.generation = NEW.generation AND b.id = NEW.id)
-        BEGIN
-            INSERT INTO change_log_births (collection, generation, id, version) VALUES (NEW.collection, NEW.generation, NEW.id, NEW.version);
-            INSERT INTO change_log_high (collection, generation, version, id)
-                SELECT NEW.collection, NEW.generation, NEW.version, NEW.id
-                WHERE NEW.id > coalesce((
-                    SELECT h.id FROM change_log_high h WHERE h.collection = NEW.collection AND h.generation = NEW.generation
-                    ORDER BY h.version DESC, h.id DESC LIMIT 1), '');
-        END;
         CREATE TABLE changes (
             sequence INTEGER NOT NULL, ordinal INTEGER NOT NULL, collection TEXT NOT NULL, id TEXT NOT NULL,
             version INTEGER NOT NULL, body TEXT, PRIMARY KEY (sequence, ordinal)
-        ) WITHOUT ROWID;
+        );
         CREATE INDEX changes_deleted ON changes (collection, id, version) WHERE body IS NULL;
         CREATE TABLE replication_state (id INTEGER PRIMARY KEY CHECK (id = 1), complete INTEGER NOT NULL);
         INSERT INTO replication_state (id, complete) VALUES (1, 1);
         CREATE TABLE applied (
             origin BLOB PRIMARY KEY, sequence INTEGER NOT NULL,
             digest BLOB CHECK (digest IS NULL OR length(digest) = 32)
-        ) WITHOUT ROWID;
+        );
         CREATE TABLE journal_prefixes (
             sequence INTEGER PRIMARY KEY CHECK (sequence > 0), digest BLOB NOT NULL CHECK (length(digest) = 32)
-        ) WITHOUT ROWID;
+        );
         """;
 
     // A client database (docs/terrabase/multi-region-replication.md section 5). Each collection is a table of its own, created
@@ -113,8 +95,7 @@ internal sealed partial class SqliteDatabaseStore(
     // indexes and shapes never decode a state. _tb_state keeps each document's replicated DocumentState in its
     // stored form (base64url), with its anti-entropy bucket and digest; the other _tb_ tables belong to the change feed,
     // the peer streams and anti-entropy, which later slices fill. Every new table is a rowid table. change_log retains
-    // every write for the per-collection change feed; change_log_births, change_log_high, their trigger and
-    // change_log_by_document no longer have readers (shape reads are gone) and leave with the R2c-2 format change.
+    // every write for the per-collection change feed.
     private const string ClientSchemaSql = """
         CREATE TABLE "_collections" (id TEXT NOT NULL UNIQUE, doc TEXT NOT NULL);
         CREATE TABLE "_indexes" (id TEXT NOT NULL UNIQUE, doc TEXT NOT NULL);
@@ -139,7 +120,7 @@ internal sealed partial class SqliteDatabaseStore(
         CREATE TABLE collections (
             name TEXT PRIMARY KEY, created_at INTEGER NOT NULL, generation INTEGER NOT NULL,
             entity_id TEXT NOT NULL CHECK (length(entity_id) = 26)
-        ) WITHOUT ROWID;
+        );
         CREATE TABLE commit_offset (
             id INTEGER PRIMARY KEY CHECK (id = 1), value INTEGER NOT NULL, incarnation TEXT NOT NULL
         );
@@ -151,26 +132,6 @@ internal sealed partial class SqliteDatabaseStore(
             id TEXT NOT NULL, version INTEGER NOT NULL, body TEXT, document_version INTEGER NOT NULL
         );
         CREATE INDEX change_log_by_offset ON change_log (collection, generation, version, sequence);
-        CREATE INDEX change_log_by_document ON change_log (collection, generation, id, version, sequence);
-        CREATE TABLE change_log_births (
-            collection TEXT NOT NULL, generation INTEGER NOT NULL, id TEXT NOT NULL, version INTEGER NOT NULL,
-            PRIMARY KEY (collection, generation, id, version)
-        ) WITHOUT ROWID;
-        CREATE TABLE change_log_high (
-            collection TEXT NOT NULL, generation INTEGER NOT NULL, version INTEGER NOT NULL, id TEXT NOT NULL,
-            PRIMARY KEY (collection, generation, version, id)
-        ) WITHOUT ROWID;
-        CREATE TRIGGER change_log_birth AFTER INSERT ON change_log
-        WHEN NOT EXISTS (
-            SELECT 1 FROM change_log_births b WHERE b.collection = NEW.collection AND b.generation = NEW.generation AND b.id = NEW.id)
-        BEGIN
-            INSERT INTO change_log_births (collection, generation, id, version) VALUES (NEW.collection, NEW.generation, NEW.id, NEW.version);
-            INSERT INTO change_log_high (collection, generation, version, id)
-                SELECT NEW.collection, NEW.generation, NEW.version, NEW.id
-                WHERE NEW.id > coalesce((
-                    SELECT h.id FROM change_log_high h WHERE h.collection = NEW.collection AND h.generation = NEW.generation
-                    ORDER BY h.version DESC, h.id DESC LIMIT 1), '');
-        END;
         """;
 
     private readonly string _connectionString = new SqliteConnectionStringBuilder
@@ -322,7 +283,7 @@ internal sealed partial class SqliteDatabaseStore(
                 if (!write)
                 {
                     using var readOnly = connection.CreateCommand();
-                    readOnly.CommandText = "PRAGMA query_only = ON;";
+                    readOnly.CommandText = "PRAGMA query_only = 1;";
                     readOnly.ExecuteNonQuery();
                 }
 
@@ -424,9 +385,26 @@ internal sealed partial class SqliteDatabaseStore(
     {
         try
         {
+            if (_writerSession is { } stale && !Closed && stale.Statistics != Volatile.Read(ref _statistics))
+            {
+                _writerSession = null;
+                pool.Discard(stale);
+            }
+
             if (Closed && _writerSession is { } session)
             {
                 _writerSession = null;
+                try
+                {
+                    // Turso does not checkpoint when the last connection closes: leave the file whole when no reader
+                    // stops it (CleanupAsync then deletes the empty log).
+                    Scalar(session.Connection, null, "PRAGMA wal_checkpoint(TRUNCATE);");
+                }
+                catch (SqliteException)
+                {
+                    // Best effort: the log stays and replays at the next open.
+                }
+
                 pool.Discard(session);
             }
         }
@@ -436,12 +414,16 @@ internal sealed partial class SqliteDatabaseStore(
         }
     }
 
-    // The only connection that writes this file, ahead of the Turso engine, which aborts the process when two connections
-    // write one file (docs/terrabase/turso-spike.md). The first writer opens it on the write lane, and the store keeps it
-    // until it closes. Only the holder of _writer uses it.
+    // The only connection that writes this file: Turso aborts the process when two connections write one file
+    // (docs/terrabase/turso-spike.md). The first writer opens it on the write lane, with change capture on, and the store
+    // keeps it until it closes. Only the holder of _writer uses it.
     private SqliteSession? _writerSession;
 
-    // The writer connection; the caller holds the writer.
+    /// <summary>
+    /// The writer connection; the caller holds the writer. Every change it commits is captured in <c>turso_cdc</c>, mode
+    /// <c>after</c> (docs/terrabase/multi-region-replication.md section 7), unless a transaction turns capture off with
+    /// <see cref="SqliteStorageTransaction.SuspendCaptureAsync"/>.
+    /// </summary>
     private async Task<SqliteSession> WriterSessionAsync(CancellationToken cancellationToken)
     {
         if (_writerSession is { } open)
@@ -453,7 +435,9 @@ internal sealed partial class SqliteDatabaseStore(
         SqliteSession session;
         try
         {
+            var statistics = Volatile.Read(ref _statistics);
             session = await SqliteSession.OpenAsync(WriteLane, _connectionString, pragmas, cancellationToken).ConfigureAwait(false);
+            session.Statistics = statistics;
         }
         catch (Exception error)
         {
@@ -466,7 +450,19 @@ internal sealed partial class SqliteDatabaseStore(
             throw;
         }
 
-        return _writerSession = await WriteLane.RunAsync(() => pool.Adopt(this, session), CancellationToken.None).ConfigureAwait(false);
+        session = await WriteLane.RunAsync(() => pool.Adopt(this, session), CancellationToken.None).ConfigureAwait(false);
+        try
+        {
+            // Takes the write lock without waiting on busy_timeout; ExecuteAsync retries it.
+            await session.ExecuteAsync(WriteLane, () => Scalar(session.Connection, null, SqliteSession.CaptureOn), cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            await WriteLane.RunAsync(() => pool.Discard(session), CancellationToken.None).ConfigureAwait(false);
+            throw;
+        }
+
+        return _writerSession = session;
     }
 
     /// <summary>Releases what <see cref="BeginTransactionAsync"/> took; called once per transaction.</summary>
@@ -486,24 +482,17 @@ internal sealed partial class SqliteDatabaseStore(
     /// <summary>Writes a consistent snapshot of this database to a new file at <paramref name="path"/>; the caller holds an admission.</summary>
     internal async Task CopyToAsync(string path, CancellationToken cancellationToken)
     {
-        var session = await RentAsync(cancellationToken).ConfigureAwait(false);
-        try
+        // Row by row in one read transaction (TursoCopy): writes go on meanwhile.
+        await io.RunAsync(() =>
         {
-            await io.RunAsync(() =>
-            {
-                using var command = session.Connection.CreateCommand();
-                command.CommandText = "VACUUM INTO $path;";
-                command.Parameters.AddWithValue("$path", path);
-                command.ExecuteNonQuery();
-            }, cancellationToken).ConfigureAwait(false);
-        }
-        catch
-        {
-            await io.RunAsync(() => pool.Discard(session), CancellationToken.None).ConfigureAwait(false);
-            throw;
-        }
+            using var source = new Turso.TursoConnection($"Data Source={FilePath}");
+            SqliteSession.OpenExisting(source, FilePath);
+            using var begin = source.CreateCommand();
+            begin.CommandText = "BEGIN;";
+            begin.ExecuteNonQuery();
+            TursoCopy.Write(source, path, cancellationToken);
+        }, cancellationToken).ConfigureAwait(false);
 
-        await ReturnAsync(session).ConfigureAwait(false);
         // InitializeAsync switches the copy to WAL and refuses an unsupported schema version.
         await InitializeAsync(name, path, io, pragmas, cancellationToken).ConfigureAwait(false);
     }
@@ -515,7 +504,7 @@ internal sealed partial class SqliteDatabaseStore(
     /// Runs <paramref name="call"/> while no write transaction of this process is open on this database; writers queue
     /// meanwhile. Continuous backup reads the log and checkpoints it under this (TS-633).
     /// </summary>
-    internal async Task<T> WithWritersHeldAsync<T>(Func<Task<T>> call, CancellationToken cancellationToken, string holder = "the continuous backup's checkpoint")
+    internal async Task<T> WithWritersHeldAsync<T>(Func<Task<T>> call, CancellationToken cancellationToken, string holder = "the continuous backup")
     {
         await AcquireWriterAsync(holder, cancellationToken).ConfigureAwait(false);
         try
@@ -530,7 +519,7 @@ internal sealed partial class SqliteDatabaseStore(
 
     /// <summary>
     /// Runs <paramref name="call"/> on the writer connection, on the write lane, while no write transaction is open; for
-    /// work that writes outside a transaction or must see every commit.
+    /// work that writes outside a transaction or must see every commit (a snapshot, a copy, change-capture cleanup).
     /// </summary>
     internal Task<T> WithWriterAsync<T>(Func<SqliteSession, T> call, string holder, CancellationToken cancellationToken) =>
         WithWritersHeldAsync(() => OnWriterAsync(call, cancellationToken), cancellationToken, holder);
@@ -839,11 +828,26 @@ internal sealed partial class SqliteDatabaseStore(
     internal void Return(SqliteSession session)
     {
         // The writer connection stays the store's; ReleaseWriter closes it once the store closed.
-        if (session != _writerSession)
+        if (session == _writerSession)
         {
-            pool.Return(this, session);
+            return;
         }
+
+        if (session.Statistics != Volatile.Read(ref _statistics))
+        {
+            pool.Discard(session);
+            return;
+        }
+
+        pool.Return(this, session);
     }
+
+    // Counts index builds: Turso reads the planner's statistics (sqlite_stat1) only when a connection opens, so a session
+    // opened before the last ANALYZE plans without its index's statistics and is closed instead of pooled.
+    private int _statistics;
+
+    /// <summary>Called by a commit that built an index; older sessions, the writer included, are closed when they end.</summary>
+    internal void StatisticsChanged() => Interlocked.Increment(ref _statistics);
 
     /// <summary>Closes a failed rented session, or the writer connection; call only on an I/O worker.</summary>
     internal void Discard(SqliteSession session)
@@ -888,7 +892,9 @@ internal sealed partial class SqliteDatabaseStore(
         SqliteSession session;
         try
         {
+            var statistics = Volatile.Read(ref _statistics);
             session = await SqliteSession.OpenAsync(runner, _connectionString, pragmas, cancellationToken).ConfigureAwait(false);
+            session.Statistics = statistics;
         }
         catch (Exception error)
         {
@@ -930,19 +936,21 @@ internal sealed partial class SqliteDatabaseStore(
             using (var connection = new SqliteConnection(connectionString))
             {
                 connection.Open();
-                // A copy made by VACUUM INTO may already be current, so set WAL here and not only during bootstrap.
-                // The creating connection uses the same settings as every pooled one, except that it does not sync.
-                Scalar(connection, null, pragmas + "PRAGMA synchronous = OFF; PRAGMA journal_mode = WAL;");
+                // The creating connection uses the same settings as every pooled one, except that it does not sync: the
+                // file is private until it is published, and synced once then. Turso's journal is WAL by default.
+                Scalar(connection, null, pragmas + "PRAGMA synchronous = OFF;");
                 Bootstrap(name, connection, cancellationToken);
                 // Publish a fresh identity, on this file only.
                 using var transaction = connection.BeginTransaction(deferred: false);
                 RenewIncarnation(connection, transaction);
                 cancellationToken.ThrowIfCancellationRequested();
                 transaction.Commit();
+                // Turso does not checkpoint when the last connection closes: copy the log into the file, which is moved
+                // without its sidecars.
+                Scalar(connection, null, "PRAGMA wal_checkpoint(TRUNCATE);");
             }
 
-            // Closing the only connection checkpointed the log into the file and removed it: sync the file once, before
-            // it can be published.
+            // The file alone now holds the database: sync it once, before it can be published.
             using var file = File.OpenHandle(path, FileMode.Open, FileAccess.ReadWrite);
             RandomAccess.FlushToDisk(file);
             return true;
@@ -981,7 +989,6 @@ internal sealed partial class SqliteDatabaseStore(
             return;
         }
 
-        Scalar(connection, null, "PRAGMA journal_mode = WAL;");
         using var transaction = connection.BeginTransaction(deferred: false);
         // A concurrent initializer can finish while this connection waits for the writer lock.
         version = Version(name, connection, transaction);

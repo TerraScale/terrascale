@@ -1,7 +1,7 @@
 namespace TerraBase.Engine.Sqlite;
 
 /// <summary>
-/// Runs SQLite calls on dedicated threads: Microsoft.Data.Sqlite has no true async I/O, so request threads hand calls
+/// Runs SQLite calls on dedicated threads: The provider has no true async I/O, so request threads hand calls
 /// to a runner instead. A call cancelled before it starts never runs; once it runs, it completes.
 /// </summary>
 internal abstract class SqliteRunner

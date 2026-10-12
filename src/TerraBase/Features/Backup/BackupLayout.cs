@@ -7,12 +7,12 @@ namespace TerraBase.Features.Backup;
 /// <param name="Key">The object key.</param>
 /// <param name="At">When it was taken.</param>
 /// <param name="Generation">Its generation.</param>
-/// <param name="Position">Frames of the generation it contains.</param>
+/// <param name="Position">Bytes of the generation's log it contains.</param>
 internal sealed record SnapshotKey(string Key, DateTimeOffset At, Ulid Generation, long Position);
 
 /// <summary>A log segment object: frames <paramref name="Start"/> onwards of its generation, read by <paramref name="At"/>.</summary>
 /// <param name="Key">The object key.</param>
-/// <param name="Start">Frames of the generation before it.</param>
+/// <param name="Start">Bytes of the generation's log before it.</param>
 /// <param name="At">When its last frame was read.</param>
 internal sealed record SegmentKey(string Key, long Start, DateTimeOffset At);
 

@@ -10,8 +10,9 @@ public static class StorageFormat
     /// <summary>
     /// Bumped by hand for every change the schema digest cannot see (value encodings, file layout); the digest changes with
     /// every schema change by itself. CI requires a bump when a storage file changes (docs/terrabase/ci.md, storage train).
+    /// 3: the Turso engine (one writer connection with change capture, rowid tables only).
     /// </summary>
-    public const int Version = 2;
+    public const int Version = 3;
 
     /// <summary>The format this build writes, for example <c>2-3f1a09c4e7b2</c>.</summary>
     public static string Id { get; } = $"{Version}-{Convert.ToHexStringLower(SqliteDatabaseStore.FormatDigest)[..12]}";

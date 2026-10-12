@@ -65,22 +65,19 @@ internal sealed partial class SqliteStorageTransaction
         }
     }
 
-    private void BeginUniqueAffected()
-    {
-        // A group-commit savepoint can roll back table creation; do not cache its existence in managed state.
-        Command("CREATE TEMP TABLE IF NOT EXISTS unique_affected (id TEXT PRIMARY KEY) WITHOUT ROWID;").ExecuteNonQuery();
-        _uniqueAffected = true;
-    }
+    // _tb_unique_affected is an ordinary table emptied before commit, not a TEMP one: change capture records a TEMP
+    // table of the writer connection as if it were in the file, and a restore would replay it there.
+    private void BeginUniqueAffected() => _uniqueAffected = true;
 
     private void QueueUniqueContenders(string collection, string id)
     {
         BeginUniqueAffected();
         var command = Command("""
-            INSERT OR IGNORE INTO temp.unique_affected (id)
+            INSERT OR IGNORE INTO _tb_unique_affected (id)
             SELECT other.id FROM _tb_unique_keys mine JOIN _tb_unique_keys other
             ON other.collection = mine.collection AND other.constraint_name = mine.constraint_name AND other.value = mine.value
             WHERE mine.collection = $collection AND mine.id = $id;
-            INSERT OR IGNORE INTO temp.unique_affected (id) VALUES ($id);
+            INSERT OR IGNORE INTO _tb_unique_affected (id) VALUES ($id);
             """, collection);
         command.Parameters.AddWithValue("$id", id);
         command.ExecuteNonQuery();
@@ -93,7 +90,7 @@ internal sealed partial class SqliteStorageTransaction
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var command = Command("SELECT id FROM temp.unique_affected WHERE id > $after ORDER BY id LIMIT 128;");
+            var command = Command("SELECT id FROM _tb_unique_affected WHERE id > $after ORDER BY id LIMIT 128;");
             command.Parameters.AddWithValue("$after", after);
 
             var ids = new List<string>(128);
@@ -124,7 +121,7 @@ internal sealed partial class SqliteStorageTransaction
     {
         if (_uniqueAffected)
         {
-            Command("DROP TABLE IF EXISTS temp.unique_affected;").ExecuteNonQuery();
+            Command("DELETE FROM _tb_unique_affected;").ExecuteNonQuery();
         }
     }
 }

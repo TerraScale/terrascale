@@ -2,7 +2,7 @@ using System.Buffers.Binary;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
-using Microsoft.Data.Sqlite;
+using Turso.Data.Sqlite;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Engine.Sqlite;
@@ -31,7 +31,7 @@ internal sealed partial class SqliteStorageEngine
         Io.Admit();
         try
         {
-            return new SqliteWalTap(store, Io, await store.RentSessionAsync(cancellationToken).ConfigureAwait(false), _backupTime);
+            return await TursoChangeTap.OpenAsync(store, Io, _backupTime, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -41,14 +41,14 @@ internal sealed partial class SqliteStorageEngine
 
     public async ValueTask<bool> RollForwardAsync(string file, IAsyncEnumerable<Stream> segments, CancellationToken cancellationToken)
     {
-        if (!await SqliteWalTap.ApplyAsync(file, segments, cancellationToken).ConfigureAwait(false))
-        {
-            return false;
-        }
-
         Io.Admit();
         try
         {
+            if (!await ChangeLog.ApplyAsync(file, segments, Io, cancellationToken).ConfigureAwait(false))
+            {
+                return false;
+            }
+
             return await Io.RunAsync(() =>
             {
                 try
@@ -135,7 +135,8 @@ internal sealed partial class SqliteStorageEngine
                     while (rows.Read())
                     {
                         Append(hash, rows);
-                        if (rows.GetString(0) == "table" && !rows.GetString(1).StartsWith("sqlite_", StringComparison.Ordinal))
+                        // The engine's own tables (change capture, statistics) differ between a file and its restore.
+                        if (rows.GetString(0) == "table" && !ChangeLog.EngineTable(rows.GetString(1)))
                         {
                             tables.Add(rows.GetString(1));
                         }

@@ -17,7 +17,7 @@ namespace TerraBase.Fast.Storage;
 public sealed class GroupCommitTests
 {
     [Test]
-    public async Task Cancelling_a_native_mutation_rolls_back_only_its_grouped_write_and_reuses_admission()
+    public async Task Cancelling_a_running_mutation_rolls_back_only_its_grouped_write_and_reuses_admission()
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         deadline.CancelAfter(TimeSpan.FromSeconds(60));
@@ -41,15 +41,16 @@ public sealed class GroupCommitTests
         {
             if (context.HttpContext!.Request.Query["id"] == cancelledId)
             {
-                // Registered before the mutation's native cancellation callback: LIFO cancellation means
-                // the signal arrives only after that callback has finished calling sqlite3_interrupt.
+                // Turso cannot interrupt a running statement: the cancellation lands after the paused insert, before the
+                // write's next statement, and its savepoint rolls back.
                 cancellationObserved = token.Register(() => aborted.TrySetResult());
             }
 
             return ValueTask.CompletedTask;
         };
 
-        // The writes run on the database's writer connection: it gets the pausing function and the trigger.
+        // The writes run on the database's writer connection: it gets the pausing function, and a trigger (created on a
+        // connection of its own, as the provider cannot run a trigger body) calls it before each insert.
         await store.WithWriterAsync(writer =>
         {
             writer.Connection.CreateFunction<string, int>("qos_pause_insert", id =>
@@ -62,10 +63,10 @@ public sealed class GroupCommitTests
 
                 return 0;
             });
-            using var trigger = writer.Connection.CreateCommand();
-            trigger.CommandText = "CREATE TEMP TRIGGER qos_pause_insert BEFORE INSERT ON main.\"items\" BEGIN SELECT qos_pause_insert(NEW.id); END;";
-            return trigger.ExecuteNonQuery();
+            return true;
         }, "a test", deadline.Token);
+        await StorageFixture.ExecuteWhileWriterHeldAsync(api.Server, await api.TenantOfAsync(),
+            "CREATE TRIGGER qos_pause_insert BEFORE INSERT ON \"items\" BEGIN SELECT qos_pause_insert(NEW.id); END;");
 
         var pending = new List<Task<HttpResponseMessage>>();
         IStorageTransaction? held = await store.BeginTransactionAsync(write: true, deadline.Token);

@@ -3,7 +3,7 @@ using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using Cysharp.Text;
-using Microsoft.Data.Sqlite;
+using Turso.Data.Sqlite;
 
 namespace TerraBase.Engine.Sqlite;
 
@@ -20,7 +20,7 @@ namespace TerraBase.Engine.Sqlite;
 /// range, because the Turso planner uses an expression index for neither <c>IN</c> nor a prefix test
 /// (docs/terrabase/turso-spike.md). Sorts order by JSON type first, so an index serves filters, not sorts.
 /// </remarks>
-internal sealed class SqliteQueryCompiler(SqliteParameterCollection parameters, RowSource rows, bool budgetScans = false)
+internal sealed class SqliteQueryCompiler(SqliteParameterCollection parameters, RowSource rows)
 {
     // Sort rank by JSON type: missing < null < false < true < numbers < strings < arrays/objects.
     private const string RankCases =
@@ -58,7 +58,7 @@ internal sealed class SqliteQueryCompiler(SqliteParameterCollection parameters, 
             SELECT id, {4} AS version, octet_length({5}) AS size{0}
             FROM {6} WHERE {1}{7} AND {2} AND {3}
             ORDER BY
-            """, columns.ToString(), observe ? "tb_query_scan() AND " : "", ScanGuardedFilter(query.Filter), after, rows.Version, rows.Json, rows.From, rows.Live);
+            """, columns.ToString(), observe ? "tb_query_scan(id) AND " : "", ScanGuardedFilter(query.Filter), after, rows.Version, rows.Json, rows.From, rows.Live);
         if (leadingId)
         {
             // Ids are unique within a collection: later sort keys cannot break a tie. Ordering by the
@@ -84,10 +84,10 @@ internal sealed class SqliteQueryCompiler(SqliteParameterCollection parameters, 
     public string CompileCount(DocumentFilter? filter, long maxExamined, bool observe = false) =>
         $"""
         SELECT count(*) + EXISTS (
-            SELECT 1 FROM {Counted} {(observe ? "AND tb_query_scan()" : "")} ORDER BY id LIMIT 1 OFFSET {Parameter(maxExamined)}
+            SELECT 1 FROM {Counted} {(observe ? "AND tb_query_scan(id)" : "")} ORDER BY id LIMIT 1 OFFSET {Parameter(maxExamined)}
         ), coalesce(sum(matched), 0) FROM (
             SELECT {BudgetedFilter(filter, includeTombstones: true)} AS matched
-            FROM {Counted} {(observe ? "AND tb_query_scan()" : "")} ORDER BY id LIMIT {Parameter(maxExamined)}
+            FROM {Counted} {(observe ? "AND tb_query_scan(id)" : "")} ORDER BY id LIMIT {Parameter(maxExamined)}
         );
         """;
 
@@ -95,16 +95,16 @@ internal sealed class SqliteQueryCompiler(SqliteParameterCollection parameters, 
     private string Counted => rows == RowSource.System ? "documents WHERE collection = $collection" : $"{rows.From} WHERE 1";
 
     // A plain AND keeps the filter's terms visible to the planner, so an index can seek them; the guard still precedes
-    // the residual JSON predicates in SQLite's WHERE evaluation.
-    private string ScanGuardedFilter(DocumentFilter? filter) =>
-        budgetScans ? $"tb_qos_scan(coalesce(octet_length({rows.Json}), 0)) AND {Filter(filter)}" : Filter(filter);
+    // the residual JSON predicates in SQLite's WHERE evaluation. tb_qos_scan also stops the statement once its budget is
+    // spent or it is cancelled: Turso has no progress handler.
+    private string ScanGuardedFilter(DocumentFilter? filter) => $"tb_qos_scan(coalesce(octet_length({rows.Json}), 0)) AND {Filter(filter)}";
 
     // CASE fixes evaluation order: account a candidate before any JSON predicate parses its body.
     // This counts document candidates, not SQLite VM instructions, index entries or physical disk bytes.
     private string BudgetedFilter(DocumentFilter? filter, bool includeTombstones = false)
     {
         var predicate = includeTombstones ? $"CASE WHEN {rows.Json} IS NOT NULL THEN {Filter(filter)} ELSE 0 END" : Filter(filter);
-        return budgetScans ? $"CASE WHEN tb_qos_scan(coalesce(octet_length({rows.Json}), 0)) THEN {predicate} ELSE 0 END" : predicate;
+        return $"CASE WHEN tb_qos_scan(coalesce(octet_length({rows.Json}), 0)) THEN {predicate} ELSE 0 END";
     }
 
     private string Filter(DocumentFilter? filter) => filter switch
@@ -329,7 +329,7 @@ internal sealed class SqliteQueryCompiler(SqliteParameterCollection parameters, 
     private string Parameter(object value)
     {
         var name = "$p" + parameters.Count.ToString(CultureInfo.InvariantCulture);
-        // SQLitePCL binds long strings through a NUL-terminated representation. Blob binding
+        // The native binding passes long strings NUL-terminated. Blob binding
         // carries an explicit length; cast it back to TEXT for the same comparison semantics.
         if (value is string text && text.Contains('\0', StringComparison.Ordinal))
         {

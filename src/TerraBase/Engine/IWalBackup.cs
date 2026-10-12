@@ -3,32 +3,31 @@ using TerraBase.Tenancy;
 namespace TerraBase.Engine;
 
 /// <summary>What one <see cref="IWalTap"/> call appended to its destination.</summary>
-/// <param name="Frames">Committed log frames appended, ending at a commit; 0 when nothing new committed.</param>
+/// <param name="Bytes">Bytes of committed changes appended, ending at a commit; 0 when nothing new committed.</param>
 /// <param name="Continuous">
-/// <see langword="false"/> when frames were lost since the previous call: the stream has a hole, so its backup
+/// <see langword="false"/> when changes were lost since the previous call: the log has a hole, so its backup
 /// generation must end.
 /// </param>
-public readonly record struct WalRead(long Frames, bool Continuous);
+public readonly record struct WalRead(long Bytes, bool Continuous);
 
-/// <summary>A consistent snapshot and the log frames read before it was pinned.</summary>
-/// <param name="Read">Committed frames appended before the snapshot, including whether they remain continuous.</param>
+/// <summary>A consistent snapshot and the log read before it was pinned.</summary>
+/// <param name="Read">Committed changes appended before the snapshot, including whether they remain continuous.</param>
 /// <param name="At">UTC time when the snapshot's state was pinned, before copying it.</param>
 public readonly record struct WalSnapshot(WalRead Read, DateTimeOffset At);
 
 /// <summary>
-/// The committed write-ahead log of one open storage file, for continuous backup (TS-633). While a tap is open the log
-/// is checkpointed only by the tap, after it has read every committed frame, so no frame is lost between two reads.
-/// Calls must not overlap. Each appended frame is the log's own: a 24-byte header (page number, then the database size
-/// in pages on a commit) and one page.
+/// The committed changes of one open storage file, in commit order, for continuous backup (TS-633): a log that
+/// <see cref="IWalBackup.RollForwardAsync"/> replays on a snapshot. Calls must not overlap. Positions in a backup
+/// generation count bytes of this log.
 /// </summary>
 public interface IWalTap : IAsyncDisposable
 {
-    /// <summary>Appends the frames committed since the previous call, or since the tap opened, to <paramref name="destination"/>.</summary>
+    /// <summary>Appends the changes committed since the previous call, or since the tap opened, to <paramref name="destination"/>.</summary>
     ValueTask<WalRead> ReadAsync(Stream destination, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Appends frames like <see cref="ReadAsync"/>, then writes a consistent copy of the file, exactly as of the last frame
-    /// appended, to a new file at <paramref name="snapshotPath"/>. Frames appended later apply on top of it.
+    /// Appends changes like <see cref="ReadAsync"/>, then writes a consistent copy of the file, exactly as of the last change
+    /// appended, to a new file at <paramref name="snapshotPath"/>. Changes appended later apply on top of it.
     /// </summary>
     ValueTask<WalSnapshot> SnapshotAsync(Stream destination, string snapshotPath, CancellationToken cancellationToken);
 }
@@ -40,8 +39,8 @@ public interface IWalBackup
     ValueTask<IWalTap?> OpenTapAsync(TenantContext? database, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Rolls <paramref name="file"/>, a snapshot a tap wrote, forward through <paramref name="segments"/> (frames as taps
-    /// appended them, in order), then checks its integrity. <see langword="false"/> when the result is not a sound database.
+    /// Rolls <paramref name="file"/>, a snapshot a tap wrote, forward through <paramref name="segments"/> (the log as taps
+    /// appended it, in order), then checks its integrity. <see langword="false"/> when the result is not a sound database.
     /// </summary>
     ValueTask<bool> RollForwardAsync(string file, IAsyncEnumerable<Stream> segments, CancellationToken cancellationToken);
 

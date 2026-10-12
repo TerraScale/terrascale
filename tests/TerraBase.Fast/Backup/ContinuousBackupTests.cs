@@ -3,11 +3,11 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using Bogus;
-using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
+using TerraBase.Engine.Sqlite;
 using TerraBase.Errors;
 using TerraBase.Features.Backup;
 using TerraBase.Primitives;
@@ -100,7 +100,7 @@ public sealed class ContinuousBackupTests
     }
 
     [Test]
-    public async Task The_shipper_checkpoints_the_log_and_keeps_one_generation_across_its_restarts()
+    public async Task The_shipper_trims_the_change_log_and_keeps_one_generation_across_large_writes()
     {
         var s3 = new FakeS3();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
@@ -114,7 +114,7 @@ public sealed class ContinuousBackupTests
         await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         var generation = Generation(backup, database);
 
-        // Over a thousand pages: the next read checkpoints, so the write after it restarts the log.
+        // Over a thousand pages and several read pages of the captured changes (each read stops after 4 MiB).
         var texts = Enumerable.Range(0, 6).Select(_ => new string(Faker.Random.Chars('a', 'z', 900_000))).ToList();
         for (var i = 0; i < 5; i++)
         {
@@ -123,7 +123,6 @@ public sealed class ContinuousBackupTests
 
         time.Advance(TimeSpan.FromSeconds(1));
         await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
-        var log = new FileInfo(Path.Combine(api.Server.DataDirectory, database.Organization, database.Project, database.Id + ".db-wal")).Length;
         (await data.PutAsJsonAsync(Uri(ManagementApi.DocumentPath(database, "people", "large-5")), new { text = texts[5] })).EnsureSuccessStatusCode();
         time.Advance(TimeSpan.FromSeconds(1));
         await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
@@ -140,8 +139,13 @@ public sealed class ContinuousBackupTests
         await Assert.That(restored.StatusCode).IsEqualTo(HttpStatusCode.Created);
         await Assert.That(documents).IsEquivalentTo(texts);
         await Assert.That(Generation(backup, database)).IsEqualTo(generation);
-        // The last write went to the start of a restarted log, so the file did not grow past the checkpointed size.
-        await Assert.That(new FileInfo(Path.Combine(api.Server.DataDirectory, database.Organization, database.Project, database.Id + ".db-wal")).Length).IsEqualTo(log);
+        await Assert.That(backup.Status.Files.Single(file => file.File == File(database)).LogBytes).IsGreaterThan(6 * 900_000);
+        // Every change read was trimmed from the capture table but its newest row, so a reopen keeps counting ids.
+        await using var capture = new Turso.TursoConnection($"Data Source={Path.Combine(api.Server.DataDirectory, database.Organization, database.Project, database.Id + ".db")}");
+        await capture.OpenAsync();
+        await using var rows = capture.CreateCommand();
+        rows.CommandText = "SELECT count(*) FROM turso_cdc;";
+        await Assert.That(await rows.ExecuteScalarAsync()).IsEqualTo(1L);
     }
 
     [Test]
@@ -186,7 +190,7 @@ public sealed class ContinuousBackupTests
     }
 
     [Test]
-    public async Task A_log_checkpointed_by_another_process_ends_the_generation_and_loses_nothing()
+    public async Task Changes_deleted_before_the_shipper_read_them_end_the_generation_and_lose_nothing()
     {
         var s3 = new FakeS3();
         var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 7, 12, 0, 0, TimeSpan.Zero));
@@ -202,15 +206,15 @@ public sealed class ContinuousBackupTests
         var text = Faker.Lorem.Sentence(12);
         (await data.PutAsJsonAsync(Uri(ManagementApi.DocumentPath(database, "people", "outside")), new { text })).EnsureSuccessStatusCode();
 
-        // Another process copies the log back and truncates it before the shipper read the write.
-        var file = Path.Combine(api.Server.DataDirectory, database.Organization, database.Project, database.Id + ".db");
-        await using (var outside = new SqliteConnection($"Data Source={file};Pooling=False"))
+        // Something else empties the capture table on the file's writer before the shipper read the write.
+        var tenant = new TenantContext(database.Organization, PlanTier.Hobby, database.Project, database.Id);
+        var store = (SqliteDatabaseStore)(await api.Server.Services.GetRequiredService<SqliteStorageEngine>().OpenDatabaseAsync(tenant, CancellationToken.None))!;
+        await store.WithWriterAsync(writer =>
         {
-            await outside.OpenAsync();
-            await using var checkpoint = outside.CreateCommand();
-            checkpoint.CommandText = "PRAGMA wal_checkpoint(TRUNCATE);";
-            await checkpoint.ExecuteNonQueryAsync();
-        }
+            using var delete = writer.Connection.CreateCommand();
+            delete.CommandText = "DELETE FROM turso_cdc;";
+            return delete.ExecuteNonQuery();
+        }, "a test", CancellationToken.None);
 
         time.Advance(TimeSpan.FromSeconds(1));
         await backup.RunOnceAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);

@@ -4,7 +4,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Cysharp.Text;
-using Microsoft.Data.Sqlite;
+using Turso.Data.Sqlite;
 
 namespace TerraBase.Engine.Sqlite;
 
@@ -24,7 +24,8 @@ internal sealed partial class SqliteStorageTransaction
         {
             var rows = Rows(collection);
             using var command = Uncached(collection);
-            command.CommandText = $"SELECT count(*) FROM {rows.From} WHERE {rows.Live}{(ScansLimited ? $" AND tb_qos_scan(octet_length({rows.Json}))" : "")};";
+            // tb_qos_scan accounts each row against the plan and stops the count once its budget is spent.
+            command.CommandText = $"SELECT count(*) FROM {rows.From} WHERE {rows.Live} AND tb_qos_scan(octet_length({rows.Json}));";
             return (long)command.ExecuteScalar()!;
         }, cancellationToken), cancellationToken);
 
@@ -37,9 +38,8 @@ internal sealed partial class SqliteStorageTransaction
                 foreach (var name in CollectionNames(cancellationToken))
                 {
                     using var stats = Uncached(name);
-                    stats.CommandText = string.Format(CultureInfo.InvariantCulture, ScansLimited
-                        ? "SELECT count(*), coalesce(sum(octet_length(doc)), 0) FROM {0} WHERE tb_qos_scan(octet_length(doc));"
-                        : SqliteStatements.ClientCollectionStats, Table(name));
+                    stats.CommandText = string.Format(CultureInfo.InvariantCulture,
+                        "SELECT count(*), coalesce(sum(octet_length(doc)), 0) FROM {0} WHERE tb_qos_scan(octet_length(doc));", Table(name));
                     using var row = stats.ExecuteReader();
                     row.Read();
                     collections.Add(new CollectionStats(name, row.GetInt64(0), row.GetInt64(1)));
@@ -48,9 +48,8 @@ internal sealed partial class SqliteStorageTransaction
                 return collections;
             }
 
-            using var command = PlainCommand(ScansLimited
-                ? SqliteStatements.ListCollectionStats.Replace("documents.body IS NOT NULL", "documents.body IS NOT NULL AND tb_qos_scan(octet_length(documents.body))", StringComparison.Ordinal)
-                : SqliteStatements.ListCollectionStats);
+            using var command = PlainCommand(SqliteStatements.ListCollectionStats.Replace(
+                "documents.body IS NOT NULL", "documents.body IS NOT NULL AND tb_qos_scan(octet_length(documents.body))", StringComparison.Ordinal));
             using var reader = command.ExecuteReader();
             while (reader.Read())
             {
@@ -198,6 +197,7 @@ internal sealed partial class SqliteStorageTransaction
             }
         }
 
+        _statisticsChanged = true;
         return true;
     }
 
@@ -312,13 +312,10 @@ internal sealed partial class SqliteStorageTransaction
                 sql.AppendFormat(" INDEXED BY \"{0}{1}\"", IndexPrefix, sorted.Name);
             }
 
-            sql.AppendFormat(" WHERE {0}{1}", observe ? "tb_query_scan() AND " : "", rows.Live);
-            if (ScansLimited)
-            {
-                // Keep indexable predicates visible to the planner. Index seeks narrow the candidates;
-                // the scan guard precedes residual JSON predicates in SQLite's WHERE evaluation.
-                sql.AppendFormat(" AND tb_qos_scan(octet_length({0}))", rows.Json);
-            }
+            sql.AppendFormat(" WHERE {0}{1}", observe ? "tb_query_scan(id) AND " : "", rows.Live);
+            // Keep indexable predicates visible to the planner. Index seeks narrow the candidates;
+            // the scan guard precedes residual JSON predicates in SQLite's WHERE evaluation.
+            sql.AppendFormat(" AND tb_qos_scan(octet_length({0}))", rows.Json);
 
             if (query.Filter is not null)
             {

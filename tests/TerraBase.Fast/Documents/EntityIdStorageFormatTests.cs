@@ -1,5 +1,5 @@
 using System.Net;
-using Microsoft.Data.Sqlite;
+using Turso.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 
@@ -35,23 +35,26 @@ public sealed class EntityIdStorageFormatTests
                 var collectionIdentity = schemaVersion == 9 ? "" : $", '{DocumentApi.NewId()}'";
                 command.CommandText = $$"""
                     CREATE TABLE documents (collection TEXT NOT NULL, id TEXT NOT NULL, version INTEGER NOT NULL, body TEXT,
-                        PRIMARY KEY (collection, id)) WITHOUT ROWID;
+                        PRIMARY KEY (collection, id));
                     INSERT INTO documents VALUES ('items', '{{identity}}', 1, '{"value":"preserved"}');
-                    CREATE TABLE collections (name TEXT PRIMARY KEY, created_at INTEGER NOT NULL, generation INTEGER NOT NULL{{identityColumn}}) WITHOUT ROWID;
+                    CREATE TABLE collections (name TEXT PRIMARY KEY, created_at INTEGER NOT NULL, generation INTEGER NOT NULL{{identityColumn}});
                     INSERT INTO collections VALUES ('items', 0, 1{{collectionIdentity}});
                     CREATE TABLE commit_offset (id INTEGER PRIMARY KEY, value INTEGER NOT NULL, incarnation TEXT NOT NULL);
                     INSERT INTO commit_offset VALUES (1, 0, '{{identity}}');
                     CREATE TABLE changes (sequence INTEGER NOT NULL, ordinal INTEGER NOT NULL, collection TEXT NOT NULL,
-                        id TEXT NOT NULL, version INTEGER NOT NULL, body TEXT, PRIMARY KEY (sequence, ordinal)) WITHOUT ROWID;
+                        id TEXT NOT NULL, version INTEGER NOT NULL, body TEXT, PRIMARY KEY (sequence, ordinal));
                     CREATE INDEX changes_deleted ON changes (collection, id, version) WHERE body IS NULL;
                     CREATE INDEX documents_replication_keys ON documents (collection, id);
                     CREATE INDEX changes_replication_deleted ON changes (collection, id, version);
                     CREATE TABLE replication_state (id INTEGER PRIMARY KEY, complete INTEGER NOT NULL);
                     INSERT INTO replication_state VALUES (1, 1);
-                    CREATE TABLE journal_prefixes (sequence INTEGER PRIMARY KEY, digest BLOB NOT NULL) WITHOUT ROWID;
-                    CREATE TABLE applied (origin BLOB PRIMARY KEY, sequence INTEGER NOT NULL, digest BLOB) WITHOUT ROWID;
+                    CREATE TABLE journal_prefixes (sequence INTEGER PRIMARY KEY, digest BLOB NOT NULL);
+                    CREATE TABLE applied (origin BLOB PRIMARY KEY, sequence INTEGER NOT NULL, digest BLOB);
                     PRAGMA user_version = {{schemaVersion}};
                     """;
+                await command.ExecuteNonQueryAsync(token);
+                // Turso does not checkpoint on close, and the snapshot is copied without its log.
+                command.CommandText = "PRAGMA wal_checkpoint(TRUNCATE);";
                 await command.ExecuteNonQueryAsync(token);
             }
 

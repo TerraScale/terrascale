@@ -3,7 +3,7 @@ using System.Buffers.Text;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using Microsoft.Data.Sqlite;
+using Turso.Data.Sqlite;
 using TerraBase.Engine.Lattices;
 
 namespace TerraBase.Engine.Sqlite;
@@ -79,7 +79,7 @@ internal sealed partial class SqliteStorageTransaction
 
         try
         {
-            var document = reader.IsDBNull(1) ? [] : reader.GetFieldValue<byte[]>(1);
+            var document = reader.IsDBNull(1) ? [] : SqliteSession.Bytes(reader, 1);
             return DocumentStateEncoding.DecodeStored(Base64Url.DecodeFromChars(reader.GetString(0)), document);
         }
         catch (FormatException error)

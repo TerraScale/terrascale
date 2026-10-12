@@ -1,6 +1,6 @@
 using System.Net;
 using System.Text;
-using Microsoft.Data.Sqlite;
+using Turso.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Engine.Sqlite;
@@ -179,7 +179,7 @@ public sealed class StorageMutationTests
             : mutation == "create"
                 ? "CREATE TRIGGER reject_collection AFTER INSERT ON collections BEGIN SELECT RAISE(FAIL, 'injected collection failure'); END;"
                 : "CREATE TRIGGER reject_collection BEFORE DELETE ON collections BEGIN SELECT RAISE(FAIL, 'injected collection failure'); END;";
-        await SqlAsync(api, trigger);
+        await StorageFixture.ExecuteWhileWriterHeldAsync(api.Server, await api.TenantOfAsync(), trigger);
 
         await using (var writer = await store.BeginTransactionAsync(write: true, CancellationToken.None))
         {
