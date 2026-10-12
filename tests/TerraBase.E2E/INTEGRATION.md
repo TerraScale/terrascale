@@ -110,8 +110,24 @@ Tester A's review at `f0b58ec4` and what happened to each point:
   ESLint", and its diff shrinks `aspire/package.json`. Point 2 (no local token flow) is a README note. Not
   re-verified line by line.
 
-**Main push runs** after #141, #138 and #127 (`2cfd1df2` 38295445221, `1721bff1` 38295480962, `6bb896bb` 38296187467)
-are in progress on alpha. **Nothing else merges until they are reported.**
+**Main push runs after #141, #138 and #127. Fast is GREEN; Slow has NO RESULT (infrastructure):**
+
+| Main | Run | libs | auth | terrabase | test | slow |
+| --- | --- | --- | --- | --- | --- | --- |
+| `2cfd1df2` (#141) | 38295445221 | success | success | success | success | failure, no result |
+| `1721bff1` (#138) | 38295480962 | success | success | success | success | failure, no result |
+| `6bb896bb` (#127) | 38296187467 | success | success | success | success | failure, no result |
+
+Main's auth red (`c59bfcc5`) is fixed: auth passes in all three runs.
+
+Every `slow` job ended "failure" about 17 minutes in, with the same pattern:
+- the `docker/build-push-action` step **never concluded** and no step failed;
+- the job's log is gone (`BlobNotFound`), and no test result was reported;
+- the job runs on GitHub-hosted `ubuntu-latest` with `timeout-minutes: 60`, so it is not the job timeout.
+
+That fits a hosted runner lost mid-build (out of disk or memory, or lost communication). **Slow is unproven, neither
+passing nor failing**, so the release gate "Slow green on main" is still open. Routed to the CI owner (alpha). Fast is
+green on main, so the train may resume on exact-head green runs per COS's decision.
 
 **T1's #144** (`46cb6806`, base main): "the system database syncs every commit (decision 0012)", the `_system`
 `synchronous=FULL` PR. It merges after #143, per the agreed order.
