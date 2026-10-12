@@ -5,7 +5,7 @@ R2a-1 (#48, merged 2026-10-12) deleted the old replication tests: about 200 Fast
 scenarios for design C. This table maps each scenario to the test that replaces it and records whether the replacement
 runs against the new replicated path.
 
-**Combined test candidate `f929c623`** (branch `test/e2e-combined-candidate`): R3's PR #106 head `81fa4fcb` (CDC change group
+**Combined test candidate `f929c623`**, agreed by the R3 owner, who reproduced the same counts over 3 runs on #106 (branch `test/e2e-combined-candidate`): R3's PR #106 head `81fa4fcb` (CDC change group
 source, per-node peer links with Partition/Heal and lossy routing, the in-process storage stall; R3 owns those harness
 files) plus the assertion-side commits (outcome recorder, scenario declarations, `Gaps.cs`, counter settle). Every result
 below is from runs at exactly that commit with a clean working tree. R3 is not merged (held by the T1 format freeze), so
