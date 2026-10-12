@@ -171,7 +171,9 @@ public sealed class DataDirectoryTests
         await engine.DisposeAsync();
 
         // It said so, closed nothing and kept the directory: the transaction still commits.
-        await Assert.That(logs.Messages).Contains(message => message.StartsWith("Warning: Shutdown waited 0 s and stopped waiting with 1 database connections still open", StringComparison.Ordinal));
+        // At least this transaction's writer connection; a background write of the system database may still hold its own.
+        await Assert.That(logs.Messages).Contains(message => message.StartsWith("Warning: Shutdown waited 0 s and stopped waiting with ", StringComparison.Ordinal)
+            && message.Contains(" database connections still open", StringComparison.Ordinal) && !message.Contains("with 0 database", StringComparison.Ordinal));
         await Assert.That(TerraBaseTestServer.IsDataDirectoryOwned(server.DataDirectory)).IsTrue();
         await transaction.CommitAsync(CancellationToken.None);
         await transaction.DisposeAsync();
