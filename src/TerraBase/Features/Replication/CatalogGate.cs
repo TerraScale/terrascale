@@ -102,6 +102,10 @@ internal sealed class CatalogGate : BackgroundService, ICatalogGate
     // Whether the anchor shows this catalog restored to an older copy: null until it was read.
     private bool? _restored;
 
+    // No anchor for a catalog that is not genesis (another machine's state, an organization, other recorded machines): it may
+    // be a restore whose anchor went missing, so it opens only by verified pulls from trusted peers, or the operator open.
+    private bool _anchorMissing;
+
     // The head last written to the anchor.
     private long _anchored = -1;
 
@@ -123,7 +127,7 @@ internal sealed class CatalogGate : BackgroundService, ICatalogGate
 
     public bool IsOpen => _open;
 
-    public bool Trusted => _open || _restored == false;
+    public bool Trusted => _open || (_restored == false && !_anchorMissing);
 
     /// <summary>What the gate still waits for, as of the last pass: machine ids, and the restore anchor's verdict.</summary>
     public ImmutableArray<string> Pending { get; private set; } = [];
@@ -225,9 +229,10 @@ internal sealed class CatalogGate : BackgroundService, ICatalogGate
                 {
                     null => ["restore anchor unread"],
                     true => ["restored to an older copy: an operator's decision"],
+                    false when _anchorMissing && _verified.Count == 0 => ["restore anchor missing: a trusted peer or an operator's decision"],
                     false => Array.Empty<string>(),
                 }];
-            if (Pending.IsEmpty && (_verified.Count > 0 || _directory is null))
+            if (Pending.IsEmpty && (_verified.Count > 0 || (_directory is null && !_anchorMissing)))
             {
                 // Pulled from every machine needed, at least one of them, and not restored; or a single machine by configuration.
                 _open = true;
@@ -460,7 +465,7 @@ internal sealed class CatalogGate : BackgroundService, ICatalogGate
         try
         {
             long? anchored = null;
-            _ = await _anchors.ReadAsync(AnchorKey, async (stream, token) =>
+            var found = await _anchors.ReadAsync(AnchorKey, async (stream, token) =>
             {
                 // Authenticated: an anchor edited or forged without the key fails here, and the gate stays closed.
                 using var plain = new MemoryStream();
@@ -468,6 +473,19 @@ internal sealed class CatalogGate : BackgroundService, ICatalogGate
                 using var document = JsonDocument.Parse(plain.ToArray());
                 anchored = document.RootElement.GetProperty("head").GetInt64();
             }, cancellationToken).ConfigureAwait(false);
+            if (!found)
+            {
+                // No anchor yet is fine only for a new cluster's catalog; any other may be a restore whose anchor went missing.
+                _anchorMissing = !await GenesisAsync(cancellationToken).ConfigureAwait(false)
+                    || (_engine.SystemDatabaseExists && (await RecordedMachinesAsync(cancellationToken).ConfigureAwait(false)).Count > 0);
+                if (_anchorMissing)
+                {
+                    _logger.ZLogWarning($"This machine's catalog anchor is missing and its catalog is not a new cluster's: the catalog gate opens only by pulls from trusted peers or an operator's decision");
+                }
+
+                return false;
+            }
+
             if (anchored is { } head && head > _startHead)
             {
                 _logger.ZLogWarning($"This machine's catalog (head {_startHead}) is behind its anchor (head {head}): it was restored to an older copy; the catalog gate stays closed until an operator decides");

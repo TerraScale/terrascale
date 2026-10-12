@@ -115,8 +115,11 @@ version said a document a machine held is never missing; that holds only without
   - **Only trusted peers verify.** A pull counts only when the peer reports itself trusted (`GET /catalog-gate` on its
     internal listener, anonymous like the probes: `open`, or its anchor read and not ahead of its catalog). A restored,
     closed machine verifies nobody, so a peer whose own anchor had not caught a change it received by stream cannot open by
-    pulling the restored machine's older copy. No anchor
-    yet (a new machine) is not a restore. An unreadable anchor keeps M closed and is read again every pass. On Fly without
+    pulling the restored machine's older copy. A
+    **missing anchor** is fine only for a genesis catalog (every version minted by M, no organization ever, no other machine
+    recorded). On any other catalog it is unknown (a restore whose anchor went missing to a lifecycle rule or an operator):
+    M then reports itself untrusted and opens only by verified pulls from trusted peers, or by the operator open; a static
+    single-machine cell no longer opens without peers in that case. An unreadable anchor keeps M closed and is read again every pass. On Fly without
     a backup bucket nothing can be compared: closed until the operator open. Off Fly without a bucket (dev servers, tests)
     there is no anchor and no detection.
   - **No machine to pull from is unknown, not proof of a current catalog.** Nothing listed, nothing recorded: M stays
@@ -192,8 +195,12 @@ version said a document a machine held is never missing; that holds only without
     too. Changes acknowledged to a client are never in the window. Also: a machine that joined after the
     copy was taken and is stopped is not recorded by the restored copy; an entry that never left M before the copy is lost
     everywhere.
-  - **Restoring a volume onto a new machine id:** the new id has no anchor; it still waits for every recorded machine,
-    the old id included, so it opens only by pulls from all of them or the operator open.
+  - **Restoring a volume onto a new machine id:** the new id has no anchor and its catalog is not genesis, so it is
+    untrusted and waits for every recorded machine, the old id included: it opens only by pulls from trusted peers covering
+    all of them, or the operator open.
+  - **First rollout of the anchor:** machines already running hold non-genesis catalogs and no anchor, so after the deploy
+    each is untrusted and none can verify another. One operator open (on one machine) is needed; that machine anchors, is
+    trusted again, and the others open by pulling from it.
 - **Proposal, not code: machine retirement.** An operator request through the same `fly ssh` channel (two-person
   approval: two request files with different operators) that tombstones a gone machine's `cluster_members` record, so later
   restarts stop waiting for it; recorded like the open. Until then a gone machine needs the operator open at every restart.
@@ -215,7 +222,8 @@ version said a document a machine held is never missing; that holds only without
   the acknowledgement, the anchor is not past the revocation when it is acknowledged; ignoring peer trust opens sjc);
   `A_revocation_the_bucket_cannot_anchor_is_not_acknowledged_while_creations_and_tenant_writes_still_are` (swallowing the
   anchor failure acknowledges the revocation; anchoring every commit refuses a creation commit; anchoring tenant writes
-  refuses a document write).
+  refuses a document write); `A_missing_anchor_keeps_a_non_genesis_catalog_closed_until_a_trusted_peer_or_an_operator_decides`
+  (treating a missing anchor as fine opens gru on an anchorless catalog with an organization).
 - **Stale groups are joined (decision, this version):** a stale group (committed 24 h or more before it is read, whole
   states) from a peer can carry an entry M minted after T. R7's rule for client databases drops a stale state of a
   document missing locally that the machine held before (`HeldBefore`), because there it means a collected deletion; on M

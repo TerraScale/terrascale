@@ -674,6 +674,45 @@ public sealed class CatalogLatticeTests
         await Assert.That(await gru.SendAsync(owner, HttpMethod.Delete, $"{projectPath}/api-keys/{another}")).IsEqualTo(HttpStatusCode.NoContent);
     }
 
+    /// <summary>
+    /// A missing anchor is fine only for a new cluster's catalog (COS): gru and sjc start genesis catalogs with no anchor,
+    /// open and anchor them. Once the catalog holds an organization, both stop and lose their anchors (a lifecycle rule, an
+    /// operator): started together, each is untrusted (no anchor, not genesis), so neither verifies the other and both stay
+    /// closed. An operator opens gru; anchored and trusted again, it verifies sjc, which opens by pulling from it.
+    /// </summary>
+    [Test]
+    public async Task A_missing_anchor_keeps_a_non_genesis_catalog_closed_until_a_trusted_peer_or_an_operator_decides()
+    {
+        await using var cluster = await Cluster.StartWithAnchorsAsync("gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        foreach (var region in new[] { gru, sjc })
+        {
+            await Assert.That(await Until(() => Task.FromResult(region.Anchored >= 0))).IsTrue().Because($"{region.Name}: genesis, no anchor yet, opened and anchored");
+        }
+
+        await gru.CommitAsync(EntityIds.New().ToString(), new { op = "create_organization", id = EntityIds.New().ToString(), name = "Anchorless" });
+        await Task.WhenAll(gru.StopAsync(), sjc.StopAsync());
+        foreach (var region in new[] { gru, sjc })
+        {
+            await Assert.That(cluster.Bucket!.RemoveObject($"catalog-anchor/{region.Machine}")).IsTrue().Because(region.Name);
+        }
+
+        await Task.WhenAll(gru.StartAsync(), sjc.StartAsync());
+        foreach (var region in new[] { gru, sjc })
+        {
+            var other = region == gru ? sjc : gru;
+            // Either it pulled from the other and found it untrusted, or (on the old rule) it opened.
+            _ = await Until(async () => await region.IsOpenAsync() || (region.Pending.Contains(other.Machine) && !await other.IsOpenAsync() && region.Pending.Count > 1));
+            await Assert.That(await region.IsOpenAsync()).IsFalse().Because(region.Name);
+            await Assert.That(region.Pending.Contains("restore anchor missing: a trusted peer or an operator's decision")).IsTrue().Because(region.Name);
+        }
+
+        await gru.RequestAsync(CatalogGate.OpenFile, "alice: anchors lost to a lifecycle rule, ticket 11");
+        await Assert.That(await gru.UntilOpenAsync()).IsTrue();
+        await Assert.That(await Until(() => Task.FromResult(gru.Anchored >= 0))).IsTrue();
+        await Assert.That(await sjc.UntilOpenAsync()).IsTrue().Because("verified by gru, trusted again");
+    }
+
     // Whether `condition` holds within the deadline.
     private static async Task<bool> Until(Func<Task<bool>> condition)
     {
