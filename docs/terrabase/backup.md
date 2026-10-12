@@ -116,7 +116,8 @@ the new database and `Location: /v1/projects/{project}/databases/{restored-name}
 organization route and restored database ID in `Location`.
 Encryption and `TBK1` objects are unchanged; restoring either source still requires the master key (`TERRABASE_MASTER_KEY`).
 In `both` mode, shipping succeeds only when both uploads succeed; a failed destination delays this project's progress
-and starts a fresh generation after backoff to avoid overlapping WAL segments after a partial upload. Platform files
+and starts a fresh generation after backoff to avoid overlapping WAL segments after a partial upload (a drop with
+reason `destination`, see [How shipping works](#how-shipping-works)). Platform files
 and eligible customer jobs in other organizations continue shipping. Retention scans both configured buckets
 independently, including earlier platform backups in customer-only mode; drills exercise the customer copy.
 Retention processes at most 10,000 expired snapshots per file
@@ -189,11 +190,15 @@ every change it commits in the table `turso_cdc`, mode `after`: one row per inse
 after-image (SQLite's record format), a row for each schema change (`sqlite_schema`), and a COMMIT row ending each
 transaction. The backup's tap (`Engine/Sqlite/TursoChangeTap.cs`) reads that table:
 
-1. Each second it reads, on a connection of its own, the rows after the last one it read (its anchor), up to the last
-   COMMIT row, in pages of at most 1024 rows or 4 MiB, and appends them to the log as records (`ChangeLog`, format 1):
-   upsert (table, rowid, record), delete (table, rowid), commit, create (the object's SQL), drop (type, name).
+1. Each second it reads, on a connection of its own, the rows after the last one it read (its anchor), in pages of at
+   most 1024 rows or 4 MiB, and appends them to the log as records (`ChangeLog`, format 1): upsert (table, rowid,
+   record), delete (table, rowid), commit, create (the object's SQL), drop (type, name). A read stops at the last COMMIT
+   row, or at the first COMMIT row once it has appended 32 MiB, so it always ends between transactions; the rest waits
+   for the next read. One transaction is never split, so a read can exceed 32 MiB by one transaction.
 2. It then deletes, on the writer, the rows before its anchor, always keeping the newest: an empty `turso_cdc`
-   restarts its ids at 1 after a reopen. Turso does not capture changes to `turso_cdc` itself.
+   restarts its ids at 1 after a reopen. Turso does not capture changes to `turso_cdc` itself. A read that fails,
+   including this delete, puts its anchor back: the shipper drops what that read appended, and the next read appends
+   the same changes again (or finds a hole, if the delete ran).
 3. Anything that moves the log under the tap is a **hole**: the file starts a new generation, and
    `terrabase_backup_holes_total` counts it. Two cases:
    - the anchor row is gone: something else deleted changes the tap had not read;
@@ -210,12 +215,33 @@ A **generation** is one unbroken run of the log from one file on one member. It 
 the database's writer gate, so nothing commits, the tap reads what is left, moves its anchor to the newest change and
 opens a read transaction; then writers go on, and the database is copied row by row, every rowid kept, as of that
 transaction (`Engine/Sqlite/TursoCopy.cs`). The copy leaves out the engine's own tables (`turso_cdc`, `sqlite_stat1`).
-A generation starts when shipping starts (every process start), after a hole, or after 256 MiB of log could not be
-stored. Within a generation a snapshot is taken daily. The log read in one pass becomes one **segment**.
+A generation starts when shipping starts (every process start), when another member's lease or a new customer
+destination takes over, after a hole, or after unstored log was dropped (below). Within a generation a snapshot is taken
+daily, but not while a backlog remains, because the snapshot reads what is left while it holds writers. The log read in
+one pass becomes one **segment**. A backlog, such as the writes committed during a long snapshot upload, ships as one
+segment per read budget, one per pass, so a pass that keeps up with the bucket drains it at up to 32 MiB a second.
+
+A segment is sealed once. When its upload fails, even a PUT the bucket stored before the failure, the next attempt
+sends exactly those bytes under the same key before anything later is sealed, and the log read meanwhile becomes the
+next segment, starting where the failed one ends. So two segments never share a start, and an overwrite of a stored
+segment only repeats its own bytes.
 
 After a failed upload or snapshot, a file waits before the next attempt: 1 s, doubling to 5 minutes. Reads and
-trimming go on meanwhile, so `turso_cdc` stays small. Log that cannot be stored past 256 MiB is dropped, and the file
-starts a new generation once the bucket answers.
+trimming go on meanwhile, so `turso_cdc` stays small. The log read but not stored (the sealed segment and the reads
+after it) is bounded: once it passes 256 MiB while the file waits out a failure, it is **dropped**, the generation
+ends, and the file starts a new one with a snapshot once the bucket answers. A log is dropped only then, after a
+failed snapshot read, or after any failure on a customer destination (below). Every drop logs a warning and counts in
+`terrabase_backup_abandoned_total{reason}` (`backlog`, `read`, `destination`); a hole counts in
+`terrabase_backup_holes_total`. A new shipper lease, a destination change and shutdown also end a generation, on
+purpose, without counting a drop.
+
+Lag (`terrabase_backup_lag_seconds`, `lagSeconds`) is how long the oldest committed data not yet in the bucket has
+waited, as far as the shipper can tell: it starts when a read first finds unstored changes (or a snapshot is pinned,
+or a read fails), stays above zero while a backlog remains, a failed upload is pending or the file has no generation
+after a drop or hole, and returns to 0 once a pass stores everything it read and nothing is left. It is not a bound on
+loss: data dropped or behind a hole is not in the bucket even after lag returns to 0. Snapshot uploads and restore
+drills run inside the file's shipping pass, so nothing of that file ships meanwhile; lag then counts from the
+snapshot's pin.
 
 Each object is sealed before upload (`Features/Backup/BackupObject.cs`, format 1): chunks of up to 1 MiB, LZ4-compressed
 when smaller, AES-256-GCM. Each object's AES key is HKDF-SHA256 of its project's data key, a random salt and the object's
@@ -451,7 +477,9 @@ At least once a day, when it stores a snapshot, the shipper checks it: it rebuil
 generation's previous snapshot, or the new one at generation start, rolled forward through the segments up to the new
 snapshot's exact log position), then compares a SHA-256 of the schema and every row of every table with the local copy
 the snapshot was made from, which is the live file at that position. A drill exercises download, decryption, contiguity,
-roll-forward and `integrity_check`.
+roll-forward and `integrity_check`. Every start snapshots every file, so every start also drills each file. The drill
+runs inside the file's shipping pass: none of that file's changes ship until it ends, and its lag counts from the
+snapshot's time meanwhile.
 
 A failed drill is logged as an error and counted in `terrabase_backup_drills_total{result="failed"}`.
 
@@ -473,10 +501,11 @@ service, it only shows on `/backupz` and in the metrics.
 
 After a rollout, also check:
 
-1. Grafana (fly-metrics.net): `terrabase_backup_lag_seconds` (the RPO) stays under 2 s under writes,
-   `terrabase_backup_last_success_seconds` keeps moving, and `terrabase_backup_failures_total` and
-   `terrabase_backup_holes_total` do not rise. `/v1/backup` is on the loopback admin listener and the image has no
-   shell, so the metrics are the way in.
+1. Grafana (fly-metrics.net): `terrabase_backup_lag_seconds` stays under 2 s under writes,
+   `terrabase_backup_last_success_seconds` keeps moving, and `terrabase_backup_failures_total`,
+   `terrabase_backup_holes_total` and `terrabase_backup_abandoned_total` do not rise. Lag approximates the recovery
+   point only while holes and drops stay at zero (see [How shipping works](#how-shipping-works)). `/v1/backup` is on
+   the loopback admin listener and the image has no shell, so the metrics are the way in.
 2. Restore: `POST …/point-in-time/restore` of a scratch database to a second between two writes; check that the first
    write is in the new database and the second is not; delete the restored database.
 
@@ -528,11 +557,12 @@ its SQL), a segment is a change log, and replay applies rows instead of pages.
 ## Operations
 
 - `GET /v1/backup` on the loopback admin listener lists each shipped file: generation, log bytes read, last shipped time, lag,
-  pending bytes and the kind of the last error.
-- Metrics, over the files this member ships: `terrabase_backup_lag_seconds` (oldest data not yet in the bucket),
-  `terrabase_backup_last_success_seconds` (Unix time of the least recently shipped file) and `terrabase_backup_files`.
-  Also `terrabase_backup_uploaded_bytes_total{kind}`, `terrabase_backup_failures_total`, `terrabase_backup_holes_total`
-  and `terrabase_backup_generations_total` (a rising count means snapshots too often), `terrabase_backup_drills_total{result}`
+  pending bytes (read and not yet stored, sealed or not) and the kind of the last error.
+- Metrics, over the files this member ships: `terrabase_backup_lag_seconds` (oldest data not yet in the bucket, not a
+  loss bound), `terrabase_backup_last_success_seconds` (Unix time of the least recently shipped file) and
+  `terrabase_backup_files`. Also `terrabase_backup_uploaded_bytes_total{kind}`, `terrabase_backup_failures_total`,
+  `terrabase_backup_holes_total`, `terrabase_backup_abandoned_total{reason}` (unstored log dropped),
+  `terrabase_backup_generations_total` (a rising count means snapshots too often), `terrabase_backup_drills_total{result}`
   and `terrabase_backup_stored_bytes` (bucket bytes of the files this member ships).
   Bucket snapshots: `terrabase_backup_bucket_snapshots_total{result}` (taken, deleted, failed) and
   `terrabase_backup_bucket_snapshot_seconds` (Unix time of the newest snapshot, on the member that takes them; 0 elsewhere).
