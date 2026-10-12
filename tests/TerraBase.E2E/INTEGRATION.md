@@ -62,9 +62,15 @@ ts-dashboard is held by the user and is in neither phase.
 `.github/workflows/ci.yml` resolves to main's version at `c691f947`, keeping its preview and deploy pause lines.
 - **Item 4 no longer touches CI.** T1 removed `8915e6d2`'s three vendor path filters from the chain (`1c800e32`).
 - **Resolution in the combine (COS decision):** take main's `ci.yml` exactly.
-- **Required before the phase-1 merge:** the CI optimizer, who owns CI files, adds `src/vendor/**`,
-  `tests/Turso.Data.Sqlite.Tests/**` and `scripts/vendor/**` to the terrabase filter in its own PR based on main.
-  Until that lands, a vendor-only change could skip the terrabase tests, so phase 1 does not merge before it.
+- **Required before the phase-1 merge: #129** ("ci: run area checks for vendored Turso changes"), the CI optimizer's own
+  base-main PR, at exactly `165295e00edea4ccc8374068ce4b5a75a41acae3`.
+  - It adds the vendored paths to the area filters (`ci.yml` +14) plus `scripts/ci/path-filter-test.py`, with 13 matcher
+    fixtures, passing locally per the CI optimizer. It makes no Makefile, Dockerfile or result-check change.
+  - **Hosted checks:** run 38262406479 on `165295e0` **completed with success** (checked 2026-10-12): changes, libs,
+    auth, terrabase and test passed; preview, deploy, e2e and slow were skipped.
+  - The COS push check passes: the merge tree with main (`d9804dbb`) keeps both gates and adds no workflow file.
+  - Until it lands, a vendor-only change could skip the terrabase tests, so phase 1 does not merge before it. It is
+    separate from #125 (performance).
 - **Pre-push check:** every pushed head still runs the COS check (both `if: false && …` gates kept, no new workflow
   file).
 
@@ -121,6 +127,10 @@ ts-dashboard is held by the user and is in neither phase.
 
   The release is not green until Slow passes on main. Acceptance of the frozen candidate also runs
   `make terrabase-test-slow` and records it.
+- **Before acceptance counts (vendored driver, item 4):**
+  - an actual driver build plus the driver tests (`tests/Turso.Data.Sqlite.Tests`, run first by
+    `make terrabase-test-fast`) in the **combined tree** at the frozen SHA, recorded in the publication;
+  - T1's dependency and security audit of the vendored driver (requested by COS), recorded with its result.
 - **Still blocked after acceptance:**
   - the open 500 ops/s write-floor gate (`benchmark/bench/2026-10-12-write-floor-open-gate.md`, #79 branch, local);
   - the Fly runs (credential handoff, holds).
@@ -128,7 +138,8 @@ ts-dashboard is held by the user and is in neither phase.
 ## Waiting on
 
 1. **T1:** done (`1c800e32`).
-1a. **CI optimizer:** its base-main PR adding the vendor paths to the terrabase filter. Required before the phase-1 merge, not before the combine.
+1a. **CI optimizer:** #129 at `165295e0`, hosted run 38262406479 green. Required before the phase-1 merge, not before the combine.
+1b. **T1:** the dependency and security audit of the vendored driver. Required before acceptance counts.
 2. **R10a:** the stack on R7 reported done, after its gate-blocker fix and R3's verification, with:
    - R3's blocking findings resolved;
    - bounded deletion;
