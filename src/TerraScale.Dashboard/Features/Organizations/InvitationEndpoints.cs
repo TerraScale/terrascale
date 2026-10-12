@@ -1,5 +1,5 @@
 using TerraScale.Dashboard.Features.Auth;
-using TerraScale.Dashboard.UI;
+using TerraScale.Dashboard.Shared.UI;
 
 namespace TerraScale.Dashboard.Features.Organizations;
 
@@ -21,12 +21,12 @@ public static class InvitationEndpoints
             var form = await http.Request.ReadFormAsync(http.RequestAborted);
             if (!Csrf.Validate(http, form)) return Results.StatusCode(403);
             var session = await sessions.ReadAsync(http);
-            if (session is null) return AuthEndpoints.SeeOther("/login?returnTo=" + Uri.EscapeDataString("/invitations/" + Uri.EscapeDataString(token)));
+            if (session is null) return HttpRedirects.SeeOther("/login?returnTo=" + Uri.EscapeDataString("/invitations/" + Uri.EscapeDataString(token)));
             try
             {
                 var action = form["action"].ToString().Trim().ToLowerInvariant();
                 await invitations.RespondAsync(session, token, action, http.RequestAborted);
-                return AuthEndpoints.SeeOther(action == "accept" ? "/organization?tab=members&invitation=accepted" : "/organization?invitation=declined");
+                return HttpRedirects.SeeOther(action == "accept" ? "/organization?tab=members&invitation=accepted" : "/organization?invitation=declined");
             }
             catch (TerraScale.Dashboard.Features.Accounts.AccountAccessException error)
             { return await PageAsync(http, sessions, invitations, token, error.Message, error.StatusCode); }
@@ -36,7 +36,7 @@ public static class InvitationEndpoints
             var form = await http.Request.ReadFormAsync(http.RequestAborted);
             if (!Csrf.Validate(http, form)) return Results.StatusCode(403);
             await sessions.EndAsync(http);
-            return AuthEndpoints.SeeOther("/login?returnTo=" + Uri.EscapeDataString("/invitations/" + Uri.EscapeDataString(token)) + "&prompt=login");
+            return HttpRedirects.SeeOther("/login?returnTo=" + Uri.EscapeDataString("/invitations/" + Uri.EscapeDataString(token)) + "&prompt=login");
         });
         return endpoints;
     }

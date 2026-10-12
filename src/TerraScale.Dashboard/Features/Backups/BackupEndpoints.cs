@@ -3,7 +3,7 @@ using System.Text.Json;
 using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Databases;
-using TerraScale.Dashboard.UI;
+using TerraScale.Dashboard.Shared.UI;
 
 namespace TerraScale.Dashboard.Features.Backups;
 
@@ -36,18 +36,18 @@ public static class BackupEndpoints
                         if (action == "create")
                         {
                             var backup = await backups.CreateAsync(context, databaseId, http.RequestAborted);
-                            return DatabaseEndpoints.WantsHtml(http) ? AuthEndpoints.SeeOther(DatabaseService.Path(databaseId, "backups")) : Results.Json(backup, statusCode: 201);
+                            return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(databaseId, "backups")) : Results.Json(backup, statusCode: 201);
                         }
                         if (action == "policy")
                         {
                             var days = int.TryParse(form["retentionDays"], NumberStyles.None, CultureInfo.InvariantCulture, out var parsed) ? parsed : 0;
                             var policy = await backups.SetPolicyAsync(context, databaseId, form["fullBackupCron"].ToString(),
                                 form["incrementalBackupCron"].ToString(), days, form["disabled"] == "1", http.RequestAborted);
-                            return DatabaseEndpoints.WantsHtml(http) ? AuthEndpoints.SeeOther(DatabaseService.Path(databaseId, "backups")) : Results.Json(policy);
+                            return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(databaseId, "backups")) : Results.Json(policy);
                         }
                         if (form["replace"] == "1") BackupService.RejectOverwrite();
                         var restored = await backups.RestoreAsync(context, databaseId, form["backupId"].ToString(), form["name"].ToString(), http.RequestAborted);
-                        return DatabaseEndpoints.WantsHtml(http) ? AuthEndpoints.SeeOther(DatabaseService.Path(restored.DatabaseId)) :
+                        return DatabaseEndpoints.WantsHtml(http) ? HttpRedirects.SeeOther(DatabaseService.Path(restored.DatabaseId)) :
                             Results.Json(new { id = restored.DatabaseId, restored.Name }, statusCode: 201);
                     }
                     catch (Exception error) when (KnownFailure(error) &&

@@ -1,4 +1,4 @@
-using TerraScale.Dashboard.UI;
+using TerraScale.Dashboard.Shared.UI;
 namespace TerraScale.Dashboard.Features.Auth;
 
 public sealed record DevicePage(DocumentModel Document, string CsrfToken, string Code = "", string Email = "", string Error = "", string Result = "", bool Pending = false, bool Authenticated = false)

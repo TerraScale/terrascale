@@ -4,7 +4,7 @@ using System.Text.Json;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.DotNet.TerraBase;
 
-namespace TerraScale.Dashboard.Features.Auth;
+namespace TerraScale.Dashboard.Platform.Identity;
 
 public sealed class DashboardSessions(IDashboardState state, IDashboardIdentity identity, IAuthGateway auth, IAuthRefreshGateway refresh, TimeProvider time)
 {

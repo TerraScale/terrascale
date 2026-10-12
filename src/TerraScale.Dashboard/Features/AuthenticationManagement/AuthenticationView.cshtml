@@ -1,5 +1,5 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.AuthenticationManagement.AuthenticationPage>
-@implements IUsesLayout<TerraScale.Dashboard.UI.Slices.ShellDocument, ShellModel>
+@implements IUsesLayout<TerraScale.Dashboard.Shared.UI.Slices.ShellDocument, ShellModel>
 @{ var current = Model.Section; }
 <main class="ts-page ts-idp" data-tone="@current.Tone" data-auth-section="@current.Key">
 <h1 class="ts-sr-only">@Model.Heading</h1><div class="ts-page-actions"></div>

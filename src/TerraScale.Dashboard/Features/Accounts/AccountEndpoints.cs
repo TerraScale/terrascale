@@ -34,7 +34,7 @@ public static class AccountEndpoints
             if (!Csrf.Validate(http, form)) return Results.BadRequest("Invalid form token.");
             try { await accounts.SwitchOrganizationAsync(session, form["organizationId"].ToString(), http.RequestAborted); }
             catch (AccountAccessException error) { return Results.Problem(error.Message, statusCode: error.StatusCode); }
-            return AuthEndpoints.SeeOther(Csrf.LocalRedirect(form["returnUrl"]));
+            return HttpRedirects.SeeOther(Csrf.LocalRedirect(form["returnUrl"]));
         });
         endpoints.MapPost("/api/v1/dashboard/switch-project", async (HttpContext http, DashboardSessions sessions, AccountService accounts) =>
         {
@@ -44,7 +44,7 @@ public static class AccountEndpoints
             if (!Csrf.Validate(http, form)) return Results.BadRequest("Invalid form token.");
             try { await accounts.SwitchProjectAsync(session, form["projectId"].ToString(), http.RequestAborted); }
             catch (AccountAccessException error) { return Results.Problem(error.Message, statusCode: error.StatusCode); }
-            return AuthEndpoints.SeeOther(Csrf.LocalRedirect(form["returnUrl"]));
+            return HttpRedirects.SeeOther(Csrf.LocalRedirect(form["returnUrl"]));
         });
         return endpoints;
     }

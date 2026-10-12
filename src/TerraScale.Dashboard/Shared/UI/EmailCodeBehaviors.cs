@@ -1,4 +1,4 @@
-namespace TerraScale.Dashboard.UI;
+namespace TerraScale.Dashboard.Shared.UI;
 
 // Preserve native editing and Datastar behavior from the established auth control.
 public static class EmailCodeBehaviors

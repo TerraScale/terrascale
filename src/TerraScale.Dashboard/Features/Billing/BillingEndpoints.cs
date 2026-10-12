@@ -6,7 +6,7 @@ using TerraScale.Dashboard.Features.Onboarding;
 using AccountService = TerraScale.Dashboard.Features.Accounts.AccountService;
 using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Usage;
-using TerraScale.Dashboard.UI;
+using TerraScale.Dashboard.Shared.UI;
 
 namespace TerraScale.Dashboard.Features.Billing;
 
@@ -69,7 +69,7 @@ public static class BillingEndpoints
             if (context is null) return Results.Unauthorized();
             var form = await http.Request.ReadFormAsync(http.RequestAborted);
             if (!Csrf.Validate(http, form)) return Results.StatusCode(403);
-            try { return AuthEndpoints.SeeOther(await billing.StartCheckoutAsync(context, form["plan"].ToString(), form["interval"].ToString(), form["return"].ToString(), http.RequestAborted)); }
+            try { return HttpRedirects.SeeOther(await billing.StartCheckoutAsync(context, form["plan"].ToString(), form["interval"].ToString(), form["return"].ToString(), http.RequestAborted)); }
             catch (Exception error) when (error is AccountAccessException or OnboardingValidationException)
             { return Results.Problem(error.Message, statusCode: error is AccountAccessException access ? access.StatusCode : 422); }
         });
@@ -77,7 +77,7 @@ public static class BillingEndpoints
         {
             var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
             if (context is null) return AccountEndpoints.LoginRedirect(http);
-            try { return AuthEndpoints.SeeOther(await billing.PortalAsync(context, http.RequestAborted)); }
+            try { return HttpRedirects.SeeOther(await billing.PortalAsync(context, http.RequestAborted)); }
             catch (AccountAccessException error) { return Results.Problem(error.Message, statusCode: error.StatusCode); }
         });
         endpoints.MapPost("/api/v1/billing/stripe/webhook", HandleStripeWebhookAsync);

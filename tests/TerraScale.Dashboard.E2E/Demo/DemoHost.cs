@@ -116,7 +116,7 @@ public sealed class DemoEnvironment
             await DatastarEvents.PatchSignalsAsync(context, new { count = 1 });
             await DatastarEvents.PatchSignalsAsync(context, new { count = 2 });
         });
-        app.MapGet("/__test/elements", (HttpContext context) => DatastarEvents.PatchElementsAsync(context, TerraScale.Dashboard.UI.Slices.RegionMap.Create()));
+        app.MapGet("/__test/elements", (HttpContext context) => DatastarEvents.PatchElementsAsync(context, TerraScale.Dashboard.Shared.UI.Slices.RegionMap.Create()));
         app.MapGet("/__test/checkout", (string id) => Results.Redirect(stripe.Complete(id)));
         app.MapGet("/__test/oidc", (string? state) => state is { Length: 64 } && state.All(char.IsAsciiHexDigitLower)
             ? (IResult)Results.Redirect("/login/callback?state=" + Uri.EscapeDataString(state) + "&code=test-code")

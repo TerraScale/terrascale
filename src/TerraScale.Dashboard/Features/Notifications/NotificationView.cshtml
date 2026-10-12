@@ -1,5 +1,5 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Notifications.NotificationPage>
-@implements IUsesLayout<TerraScale.Dashboard.UI.Slices.ShellDocument, ShellModel>
+@implements IUsesLayout<TerraScale.Dashboard.Shared.UI.Slices.ShellDocument, ShellModel>
 <main class="ts-page ts-notifications-page"><h1 class="ts-sr-only">Notifications</h1><div class="ts-page-actions"></div>
     @(await RenderPartialAsync<TerraScale.Dashboard.Features.Notifications.NotificationInbox, TerraScale.Dashboard.Features.Notifications.NotificationPage>(Model))
 </main>

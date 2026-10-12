@@ -67,7 +67,7 @@ public sealed class ApiKeyService(IDatabaseBackend backend, DatabaseService data
     }
 }
 
-public sealed record ApiKeysPage(TerraScale.Dashboard.UI.ShellModel Shell, IReadOnlyList<ProjectCredential> Keys, string Kind = "", string Search = "", string DatabaseId = "", string Error = "", string Create = "", string Name = "", CreatedProjectCredential? Revealed = null, string Status = "", string DraftScopes = "", string DraftDatabaseId = "", string DialogKind = "")
+public sealed record ApiKeysPage(TerraScale.Dashboard.Shared.UI.ShellModel Shell, IReadOnlyList<ProjectCredential> Keys, string Kind = "", string Search = "", string DatabaseId = "", string Error = "", string Create = "", string Name = "", CreatedProjectCredential? Revealed = null, string Status = "", string DraftScopes = "", string DraftDatabaseId = "", string DialogKind = "")
 {
     public AccountContext Context => Shell.Context;
     public IReadOnlyList<ProjectCredential> Filtered => Keys.Where(key => Status != "inactive" && (Kind.Length == 0 || Kind == "key" || Kind == "api-key") && (DatabaseId.Length == 0 || key.DatabaseId == DatabaseId) && (Search.Length == 0 || key.Name.Contains(Search, StringComparison.OrdinalIgnoreCase) || key.LastFour.Contains(Search, StringComparison.OrdinalIgnoreCase))).ToArray();

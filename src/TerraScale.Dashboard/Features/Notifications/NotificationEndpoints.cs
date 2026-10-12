@@ -1,7 +1,7 @@
 using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Platform.Datastar;
-using TerraScale.Dashboard.UI;
+using TerraScale.Dashboard.Shared.UI;
 
 namespace TerraScale.Dashboard.Features.Notifications;
 
@@ -67,6 +67,6 @@ public static class NotificationEndpoints
             await DatastarEvents.PatchElementsAsync(http, NotificationPatch.Create(page));
             return Results.Empty;
         }
-        return AuthEndpoints.SeeOther(page.Href(page.Page));
+        return HttpRedirects.SeeOther(page.Href(page.Page));
     }
 }

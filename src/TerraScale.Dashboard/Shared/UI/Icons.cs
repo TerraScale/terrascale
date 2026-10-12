@@ -1,7 +1,7 @@
 using System.Collections.Frozen;
 using Microsoft.AspNetCore.Html;
 
-namespace TerraScale.Dashboard.UI;
+namespace TerraScale.Dashboard.Shared.UI;
 
 // Exact lucide paths from the established Go UI; these are decorative icons,
 // never TerraScale product marks. Brand graphics remain file-backed assets.

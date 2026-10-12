@@ -1,5 +1,5 @@
 @inherits RazorSlice<TerraScale.Dashboard.Features.Home.HomePage>
-@implements IUsesLayout<TerraScale.Dashboard.UI.Slices.ShellDocument, ShellModel>
+@implements IUsesLayout<TerraScale.Dashboard.Shared.UI.Slices.ShellDocument, ShellModel>
 <main class="ts-page ts-home"><h1 class="ts-sr-only">@(Model.Tab == "connect" ? "Connect your AI or platform" : "Overview")</h1>
     <div class="ts-toolbar ts-home-toolbar"><nav class="ts-tabs" aria-label="Overview sections"><a class="ts-tab" href="/" aria-current="@(Model.Tab != "connect" ? "page" : null)"><span>Overview</span></a><a class="ts-tab" href="/?tab=connect" aria-current="@(Model.Tab == "connect" ? "page" : null)"><span>Connect</span></a></nav><div class="ts-page-actions"><a class="ts-btn ts-btn-secondary" href="/api-keys">@Icons.Render("KeyRound", 16)<span>API keys</span></a><a class="ts-btn ts-btn-primary" href="/databases">@Icons.Render("Plus", 16)<span>New database</span></a></div></div>
     @if (Model.Tab == "connect")

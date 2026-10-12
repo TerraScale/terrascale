@@ -68,7 +68,7 @@ public static class ProfileAuthEndpoints
         var form = await context.Request.ReadFormAsync(context.RequestAborted);
         if (!Csrf.Validate(context, form)) return Results.StatusCode(StatusCodes.Status403Forbidden);
         var session = await sessions.ReadAsync(context);
-        if (session is null) return AuthEndpoints.SeeOther("/login");
+        if (session is null) return HttpRedirects.SeeOther("/login");
         try
         {
             var budget = context.RequestServices.GetRequiredService<IAuthAttemptBudget>();
@@ -80,12 +80,12 @@ public static class ProfileAuthEndpoints
         catch (AuthRequestRejectedException error)
         {
             if (error.RetryAfter > 0) context.Response.Headers.RetryAfter = error.RetryAfter.ToString(System.Globalization.CultureInfo.InvariantCulture);
-            return AuthEndpoints.SeeOther("/profile?tab=security&error=" + Uri.EscapeDataString(error.Message));
+            return HttpRedirects.SeeOther("/profile?tab=security&error=" + Uri.EscapeDataString(error.Message));
         }
         // Provider revocation is authoritative for every dashboard replica and
         // PAT; remove persistent browser records as well as the current cookie.
         await sessions.RevokeUserAsync(session.UserId, context.RequestAborted);
         await sessions.EndAsync(context);
-        return AuthEndpoints.SeeOther("/login");
+        return HttpRedirects.SeeOther("/login");
     }
 }

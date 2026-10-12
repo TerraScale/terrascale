@@ -20,7 +20,7 @@ using TerraScale.Dashboard.Platform.Assets;
 using TerraScale.Dashboard.Platform.Development;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.Dashboard.Platform.Mcp;
-using TerraScale.Dashboard.UI;
+using TerraScale.Dashboard.Shared.UI;
 using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.Dashboard;
@@ -109,7 +109,7 @@ public static class DashboardApplication
                 // Platform failures never select a demo store or leak response bodies/secrets.
                 app.Logger.LogWarning("Dashboard dependency failed ({ErrorType})", error.GetType().Name);
                 if (context.Response.HasStarted) throw;
-                var view = UI.Slices.ServiceUnavailable.Create(new DocumentModel("Service unavailable", nonce));
+                var view = Shared.UI.Slices.ServiceUnavailable.Create(new DocumentModel("Service unavailable", nonce));
                 view.StatusCode = StatusCodes.Status503ServiceUnavailable;
                 await ((IResult)view).ExecuteAsync(context);
             }
