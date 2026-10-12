@@ -236,6 +236,13 @@ public sealed class TokenEndpoint(Users users, TotpCredentials mfa, HeadlessAuth
             return Results.SignIn(new ClaimsPrincipal(service), null, OpenIddictServerAspNetCoreDefaults.AuthenticationScheme);
         }
 
+        if (request.GrantType == GitHubActionsGrant.GrantType)
+        {
+            // OpenIddict has authenticated the public client and checked its permission for this grant.
+            var binding = await applications.FindByClientIdAsync(request.ClientId!, cancellationToken);
+            return await platform.GitHubActionsAsync(request, binding?.Properties, cancellationToken);
+        }
+
         if (request.IsTokenExchangeGrantType())
         {
             // OpenIddict has validated the subject token and the client's token-exchange permission.

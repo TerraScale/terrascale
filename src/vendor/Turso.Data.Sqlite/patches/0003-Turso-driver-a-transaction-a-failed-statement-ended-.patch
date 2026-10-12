@@ -1,0 +1,113 @@
+From 6fe5903e0df6d8bb1f3a41a8c07e46ce191ae0fe Mon Sep 17 00:00:00 2001
+From: mariogk <mariogk@terrascale.tech>
+Date: Mon, 12 Oct 2026 09:58:41 -0300
+Subject: [PATCH] Turso driver: a transaction a failed statement ended knows it
+ ended
+
+Unlike SQLite, Turso rolls the whole transaction back when a statement
+fails while it steps (a read whose function throws, for one). The
+provider kept treating the transaction as open: its later commands ran
+outside any transaction and committed on their own, and disposing it ran
+a ROLLBACK that threw 'no transaction is active' from Dispose.
+
+After a failed statement inside a transaction (Execute, and the reader's
+Read, NextResult and Close), the connection probes with a BEGIN that it
+disposes either way: when that succeeds the transaction is gone, so the
+probe is rolled back and the transaction is marked rolled back
+(MarkCompletedExternally), which makes its later commands fail and its
+Rollback and Dispose skip the ROLLBACK. A failed write that leaves the
+transaction open (a constraint) only costs the failed BEGIN.
+
+Test: TransactionTests.ATransactionAFailedReadEndedIsRolledBackAndRefusesLaterCommands;
+ATransactionOutlivesAFailedWrite checks a constraint error keeps it.
+---
+ src/Turso.Data.Sqlite/SqliteCommand.cs    |  1 +
+ src/Turso.Data.Sqlite/SqliteConnection.cs | 34 +++++++++++++++++++++++
+ src/Turso.Data.Sqlite/SqliteDataReader.cs |  3 ++
+ 3 files changed, 38 insertions(+)
+
+diff --git a/src/Turso.Data.Sqlite/SqliteCommand.cs b/src/Turso.Data.Sqlite/SqliteCommand.cs
+index 4cfe70f0..0a30867e 100644
+--- a/src/Turso.Data.Sqlite/SqliteCommand.cs
++++ b/src/Turso.Data.Sqlite/SqliteCommand.cs
+@@ -330,6 +330,7 @@ public class SqliteCommand : DbCommand
+         }
+         catch (TursoException ex)
+         {
++            Connection?.CheckTransactionAfterFailure();
+             throw ToSqliteException(ex);
+         }
+ 
+diff --git a/src/Turso.Data.Sqlite/SqliteConnection.cs b/src/Turso.Data.Sqlite/SqliteConnection.cs
+index 71e0b5b2..c156d9ba 100644
+--- a/src/Turso.Data.Sqlite/SqliteConnection.cs
++++ b/src/Turso.Data.Sqlite/SqliteConnection.cs
+@@ -646,6 +646,40 @@ public partial class SqliteConnection : DbConnection
+         failure?.Throw();
+     }
+ 
++    // TerraScale: unlike SQLite, Turso rolls the whole transaction back when a statement fails while it steps (a read
++    // whose function throws, for one). After a failed statement, find out whether the transaction is still open; if
++    // not, mark it rolled back, so its later commands fail instead of committing on their own and disposing it does
++    // not try a ROLLBACK. The probe statements are disposed even when they fail.
++    internal void CheckTransactionAfterFailure()
++    {
++        if (IsManagedConnection || Transaction is not { IsCompleted: false, WasRolledBackExternally: false } transaction)
++            return;
++
++        using (var begin = TursoBindings.PrepareStatement(DatabaseHandle, "BEGIN;"))
++        {
++            try
++            {
++                while (TursoBindings.Read(begin))
++                {
++                }
++            }
++            catch (TursoException)
++            {
++                // Still inside the transaction ("cannot start a transaction within a transaction").
++                return;
++            }
++        }
++
++        using (var rollback = TursoBindings.PrepareStatement(DatabaseHandle, "ROLLBACK;"))
++        {
++            while (TursoBindings.Read(rollback))
++            {
++            }
++        }
++
++        transaction.MarkCompletedExternally(rolledBack: true);
++    }
++
+     internal TursoDatabaseHandle DatabaseHandle
+     {
+         get
+diff --git a/src/Turso.Data.Sqlite/SqliteDataReader.cs b/src/Turso.Data.Sqlite/SqliteDataReader.cs
+index 0824e4c4..48942430 100644
+--- a/src/Turso.Data.Sqlite/SqliteDataReader.cs
++++ b/src/Turso.Data.Sqlite/SqliteDataReader.cs
+@@ -787,6 +787,7 @@ public class SqliteDataReader : DbDataReader
+             _statement = null;
+             _hasPrefetchedRow = false;
+             _remainingSql.Clear();
++            _command.Connection?.CheckTransactionAfterFailure();
+             throw SqliteCommand.ToSqliteException(ex);
+         }
+ 
+@@ -828,6 +829,7 @@ public class SqliteDataReader : DbDataReader
+         }
+         catch (TursoException ex)
+         {
++            _command.Connection?.CheckTransactionAfterFailure();
+             throw SqliteCommand.ToSqliteException(ex);
+         }
+     }
+@@ -901,6 +903,7 @@ public class SqliteDataReader : DbDataReader
+             _statement = null;
+             _remainingSql.Clear();
+             FinishClose();
++            _command.Connection?.CheckTransactionAfterFailure();
+             if (throwOnError)
+                 throw SqliteCommand.ToSqliteException(ex);
+             return;

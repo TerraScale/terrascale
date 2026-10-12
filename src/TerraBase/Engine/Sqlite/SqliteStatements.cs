@@ -123,9 +123,8 @@ internal static class SqliteStatements
 
     public const string RenewIncarnation = "UPDATE commit_offset SET incarnation = $incarnation WHERE id = 1;";
 
-    // Every creation draws a new generation, so a recreated collection starts a new shape lineage.
     public const string CreateCollection = """
-        INSERT INTO collections (name, created_at, generation, entity_id) VALUES ($collection, $created, random(), $entityId)
+        INSERT INTO collections (name, created_at, entity_id) VALUES ($collection, $created, $entityId)
         ON CONFLICT (name) DO NOTHING;
         """;
 
@@ -133,51 +132,32 @@ internal static class SqliteStatements
     public const string HasCollectionState = """
         SELECT EXISTS(SELECT 1 FROM documents WHERE collection >= $from AND collection < $to)
             OR EXISTS(SELECT 1 FROM collections WHERE name >= $from AND name < $to)
-            OR EXISTS(SELECT 1 FROM changes WHERE collection >= $from AND collection < $to AND body IS NULL)
-            OR EXISTS(SELECT 1 FROM change_log INDEXED BY change_log_by_offset WHERE collection >= $from AND collection < $to);
+            OR EXISTS(SELECT 1 FROM changes WHERE collection >= $from AND collection < $to AND body IS NULL);
         """;
 
     public const string HasCollectionStateFrom = """
         SELECT EXISTS(SELECT 1 FROM documents WHERE collection >= $from)
             OR EXISTS(SELECT 1 FROM collections WHERE name >= $from)
-            OR EXISTS(SELECT 1 FROM changes WHERE collection >= $from AND body IS NULL)
-            OR EXISTS(SELECT 1 FROM change_log INDEXED BY change_log_by_offset WHERE collection >= $from);
+            OR EXISTS(SELECT 1 FROM changes WHERE collection >= $from AND body IS NULL);
         """;
 
     // A client database keeps no journal deletions to look at.
     public const string ClientHasCollectionState = """
         SELECT EXISTS(SELECT 1 FROM _tb_state WHERE collection >= $from AND collection < $to)
-            OR EXISTS(SELECT 1 FROM collections WHERE name >= $from AND name < $to)
-            OR EXISTS(SELECT 1 FROM change_log INDEXED BY change_log_by_offset WHERE collection >= $from AND collection < $to);
+            OR EXISTS(SELECT 1 FROM collections WHERE name >= $from AND name < $to);
         """;
 
     public const string ClientHasCollectionStateFrom = """
         SELECT EXISTS(SELECT 1 FROM _tb_state WHERE collection >= $from)
-            OR EXISTS(SELECT 1 FROM collections WHERE name >= $from)
-            OR EXISTS(SELECT 1 FROM change_log INDEXED BY change_log_by_offset WHERE collection >= $from);
+            OR EXISTS(SELECT 1 FROM collections WHERE name >= $from);
         """;
 
-    public const string GetCollection = "SELECT name, created_at, generation, entity_id FROM collections WHERE name = $collection;";
+    public const string GetCollection = "SELECT name, created_at, entity_id FROM collections WHERE name = $collection;";
 
     // The first page walks the primary key in order and stops at the limit.
-    public const string ListCollectionsFirst = "SELECT name, created_at, generation, entity_id FROM collections ORDER BY name LIMIT $limit;";
+    public const string ListCollectionsFirst = "SELECT name, created_at, entity_id FROM collections ORDER BY name LIMIT $limit;";
 
-    public const string ListCollectionsAfter = "SELECT name, created_at, generation, entity_id FROM collections WHERE name > $after ORDER BY name LIMIT $limit;";
-
-    // Shape history: every write of a client database, a NULL body for a tombstone. No row is
-    // inserted when the collection has no metadata, which the writer refuses.
-    public const string AppendChange = """
-        INSERT INTO change_log (collection, generation, id, version, document_version, body)
-        SELECT name, generation, $id, $version, $documentVersion, $body FROM collections WHERE name = $collection;
-        """;
-
-    public const string HistoryFloor = "SELECT floor FROM shape_history WHERE id = 1;";
-
-    // A dropped collection keeps only tombstones of its history: no body outlives the drop.
-    public const string DropHistory = """
-        UPDATE change_log SET body = NULL
-        WHERE collection = $collection AND generation = (SELECT generation FROM collections WHERE name = $collection) AND body IS NOT NULL;
-        """;
+    public const string ListCollectionsAfter = "SELECT name, created_at, entity_id FROM collections WHERE name > $after ORDER BY name LIMIT $limit;";
 
     public const string DropDocuments = "DELETE FROM documents WHERE collection = $collection;";
 
@@ -259,8 +239,8 @@ internal static class SqliteStatements
     public const string TruncatePrefixes = "DELETE FROM journal_prefixes WHERE sequence <= $floor;";
 
     // A follower's snapshot replaces its documents and journal: whole-table deletes, once per snapshot, so not in All (no
-    // plan to check). commit_offset keeps its value (its incarnation is renewed separately); change_log, its births and
-    // highs, shape_history and replication_state hold nothing for _system, which keeps no shape history.
+    // plan to check). commit_offset keeps its value (its incarnation is renewed separately); replication_state holds
+    // nothing for _system.
     public const string ResetReplica =
         "DELETE FROM documents; DELETE FROM collections; DELETE FROM changes; DELETE FROM journal_prefixes; DELETE FROM applied;";
 
@@ -276,9 +256,6 @@ internal static class SqliteStatements
         [nameof(ListCollectionsFirst)] = ListCollectionsFirst,
         [nameof(ListCollectionsAfter)] = ListCollectionsAfter,
         [nameof(DropCollection)] = DropCollection,
-        [nameof(AppendChange)] = AppendChange,
-        [nameof(HistoryFloor)] = HistoryFloor,
-        [nameof(DropHistory)] = DropHistory,
         [nameof(ListIndexes)] = ListIndexes,
         [nameof(IndexExists)] = IndexExists,
     };

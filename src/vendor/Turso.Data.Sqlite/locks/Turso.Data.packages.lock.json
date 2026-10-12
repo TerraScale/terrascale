@@ -1,0 +1,35 @@
+{
+  "version": 2,
+  "dependencies": {
+    "net11.0": {
+      "turso.raw": {
+        "type": "Project",
+        "dependencies": {
+          "Turso.Data.Native": "[0.8.2, )"
+        }
+      },
+      "Turso.Data.Native": {
+        "type": "CentralTransitive",
+        "requested": "[0.8.2, )",
+        "resolved": "0.8.2",
+        "contentHash": "3ReOw1hTID2OmhQ3PNO3Vyk5DQ7iyPoXSLy8VeMgiaqTefUiTUFNmz7WpMyKTbno9y859nFXy0DBV0suPnaVbg=="
+      }
+    },
+    "net11.0/linux-arm64": {
+      "Turso.Data.Native": {
+        "type": "CentralTransitive",
+        "requested": "[0.8.2, )",
+        "resolved": "0.8.2",
+        "contentHash": "3ReOw1hTID2OmhQ3PNO3Vyk5DQ7iyPoXSLy8VeMgiaqTefUiTUFNmz7WpMyKTbno9y859nFXy0DBV0suPnaVbg=="
+      }
+    },
+    "net11.0/linux-x64": {
+      "Turso.Data.Native": {
+        "type": "CentralTransitive",
+        "requested": "[0.8.2, )",
+        "resolved": "0.8.2",
+        "contentHash": "3ReOw1hTID2OmhQ3PNO3Vyk5DQ7iyPoXSLy8VeMgiaqTefUiTUFNmz7WpMyKTbno9y859nFXy0DBV0suPnaVbg=="
+      }
+    }
+  }
+}

@@ -29,8 +29,10 @@ can only start after peer streams (R4a) bring replication back.
 1. Replication lag under load is 10 to 43 s, but end markers written after the load are visible everywhere 2 to 3 s
    later. The old puller falls behind while writes arrive and catches up when they stop.
 2. The process is not CPU-bound: 3.9 of 46 cores at 1,773 docs/s. Commit latency and replication rounds bound throughput.
-3. Memory peaks at 10.5 GB RSS while the three regions are listed in parallel (1M documents, pages of 1,000). This is a
-   follow-up for the list path.
+3. RSS peaks at 10.5 GB while the three regions are listed in parallel, but that is mostly the databases' memory map,
+   not the heap. SQLite's `mmap_size` is the memory budget (`SqliteSession.Pragmas`), so a full scan maps the file into
+   RSS as page cache the kernel can reclaim. A follow-up run on main (beta, one region, 297k documents listed in 9 s)
+   showed working set going from 0.56 to 1.84 GB while the GC's committed memory stayed at or below 0.49 GB.
 4. Disk is 4.5 GB per node for 990k documents averaging about 0.9 KB: about 5× amplification from the history and
    change-log tables. Design C removes those tables.
 5. The first version of the lag probe (one poller per probe) loaded the cluster it measured: it halved throughput and

@@ -14,9 +14,8 @@ namespace TerraBase.Engine;
 /// <param name="Json">UTF-8 JSON text; empty for a tombstone.</param>
 /// <param name="Scope">Identity that scopes the document's ETag: the same on every member serving its database.</param>
 /// <param name="Deleted">Whether this is a tombstone left by a delete.</param>
-/// <param name="HistoryOffset">Local commit offset when read from shape history; separate from the merge version.</param>
 /// <param name="UniqueConflict">The retained state lost a replicated uniqueness conflict and is excluded from queries.</param>
-public sealed record StoredDocument(string Id, long Version, ReadOnlyMemory<byte> Json, Guid Scope, bool Deleted = false, long? HistoryOffset = null, bool UniqueConflict = false);
+public sealed record StoredDocument(string Id, long Version, ReadOnlyMemory<byte> Json, Guid Scope, bool Deleted = false, bool UniqueConflict = false);
 
 /// <summary>One page of documents in id order.</summary>
 /// <param name="Documents">The documents of this page.</param>
@@ -32,11 +31,7 @@ public readonly record struct DocumentVersion(long Version, bool Deleted);
 /// <param name="Name">Collection name.</param>
 /// <param name="CreatedAt">Creation time in Unix milliseconds.</param>
 /// <param name="Id">Canonical uppercase ULID of this collection creation.</param>
-/// <param name="Generation">
-/// Random 64-bit value the engine draws on every creation, so a dropped and recreated collection is a
-/// different lineage; set by the engine, ignored on create.
-/// </param>
-public sealed record CollectionInfo(string Name, long CreatedAt, long Generation = 0, string Id = "");
+public sealed record CollectionInfo(string Name, long CreatedAt, string Id = "");
 
 /// <summary>
 /// One write of the system database, which its catalog followers replay in order (docs/decisions/0009): a JSON value, or a
@@ -190,28 +185,8 @@ public interface IStorageTransaction : IAsyncDisposable
     /// <remarks><paramref name="observation"/> accumulates candidate visits, including sort admission, even when execution fails.</remarks>
     ValueTask<QueryPage> QueryAsync(DocumentQuery query, CancellationToken cancellationToken, QueryObservation? observation = null);
 
-    /// <summary>Oldest offset for which a complete snapshot and every later change are retained.</summary>
-    ValueTask<long> GetHistoryFloorAsync(CancellationToken cancellationToken);
-
     /// <summary>The latest committed offset this transaction sees, without committing it.</summary>
     ValueTask<long> GetOffsetAsync(CancellationToken cancellationToken);
-
-    /// <summary>
-    /// Reads every retained write and tombstone of the current collection generation, including repeated writes,
-    /// in local (history offset, append sequence) order strictly after
-    /// (<paramref name="afterOffset"/>, <paramref name="afterSequence"/>). Both cursor parts are nonnegative;
-    /// resume with the last returned change's offset and sequence. This order is local to this database instance.
-    /// </summary>
-    /// <remarks>
-    /// <paramref name="limit"/> is 1 to 1000 and <paramref name="maxBytes"/> is 2 to 8 MiB, inclusive.
-    /// The page stays within both bounds, charging each row 2048 framing bytes plus its UTF-8 id and body bytes.
-    /// Sizes are checked before materializing ids or bodies; an oversized first row throws
-    /// <see cref="InvalidDataException"/>. Live JSON is validated without rewriting its stored bytes.
-    /// The caller reserves memory and validates database scope, incarnation, collection generation, head and
-    /// history floor. No history is pruned. A missing collection returns an empty page.
-    /// </remarks>
-    ValueTask<CollectionChangePage> ReadCollectionChangesAsync(
-        string collection, long afterOffset, long afterSequence, int limit, long maxBytes, CancellationToken cancellationToken);
 
     /// <summary>
     /// Counts live documents matching <paramref name="filter"/> while reading at most <paramref name="maxExamined"/> + 1
@@ -221,7 +196,7 @@ public interface IStorageTransaction : IAsyncDisposable
     /// <remarks><paramref name="observation"/> includes repeated visits in the separate overflow walk.</remarks>
     ValueTask<(long Count, bool Complete)> CountAsync(string collection, DocumentFilter? filter, long maxExamined, CancellationToken cancellationToken, QueryObservation? observation = null);
 
-    /// <summary>Whether a collection (or name prefix) has documents, tombstones, collection metadata or retained replication deletions or shape history.</summary>
+    /// <summary>Whether a collection (or name prefix) has documents, tombstones, collection metadata or retained replication deletions.</summary>
     ValueTask<bool> HasCollectionStateAsync(string name, bool prefix, CancellationToken cancellationToken);
 
     /// <summary>Creates a collection, a commit of its own offset; <see langword="false"/> when it already exists.</summary>
@@ -235,7 +210,7 @@ public interface IStorageTransaction : IAsyncDisposable
 
     /// <summary>
     /// Attaches a schema of at most 64 KiB of UTF-8 JSON, or detaches it with <see langword="null"/>;
-    /// <see langword="false"/> when the collection is absent. Preserves collection creation time and generation.
+    /// <see langword="false"/> when the collection is absent. Preserves collection creation time.
     /// </summary>
     ValueTask<bool> SetCollectionSchemaAsync(string name, JsonElement? schema, CancellationToken cancellationToken);
 

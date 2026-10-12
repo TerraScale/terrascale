@@ -4,7 +4,6 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text.Json.Nodes;
 using Bogus;
-using Turso.Data.Sqlite;
 using TerraBase.Primitives;
 
 namespace TerraBase.E2E;
@@ -22,6 +21,7 @@ public sealed class CrashAndStallE2ETests
     // Writers keep writing while the node is killed: every acknowledged write must be there after the restart, exactly.
     // An unacknowledged one may or may not be, but never as anything other than what was written.
     [Test]
+    [Scenario(Nodes.Processes, Faults.ProcessKill)]
     public async Task Writes_acknowledged_before_a_SIGKILL_survive_the_restart_of_their_node_process()
     {
         Skip.When(Cluster.FlyRequested, "kills a local node process");
@@ -75,6 +75,7 @@ public sealed class CrashAndStallE2ETests
     // The replicated half: the writer is killed right after its acknowledgements, before it can have shipped them, and every
     // region must still end with every acknowledged write once it is back.
     [Test]
+    [Scenario(Nodes.Processes, Faults.ProcessKill)]
     public async Task Writes_acknowledged_before_a_SIGKILL_reach_every_region_once_the_node_is_back()
     {
         Skip.When(Cluster.FlyRequested, "kills a local node process");
@@ -82,37 +83,42 @@ public sealed class CrashAndStallE2ETests
         {
             await using var gru = await NodeProcess.StartAsync();
             // Region identities and peer addresses for node processes come with peer streams (R4a).
-            throw new NotSupportedException($"node processes cannot form a three-region cluster before peer streams (R4a); {gru.DataDirectory} serves alone");
+            throw new NotSupportedException($"node processes cannot form a three-region cluster before peer streams (R4a); a single node process serves alone");
         });
     }
 
     // A storage stall on one node: its database file is held by another writer for five seconds while its clients write.
     // A request may wait out the stall or be refused, but an acknowledged write is never lost, and writes work again after.
     [Test]
+    [Scenario(Nodes.InProcess, Faults.StorageStall)]
     public async Task Writes_through_a_storage_stall_are_either_refused_or_kept_and_writing_resumes_after_it()
     {
         Skip.When(Cluster.FlyRequested, "locks a local node's database file");
-        await using var cluster = await Cluster.StartAsync(Cluster.Gru);
-        var outcome = await StallAsync(cluster, Cluster.Gru, [Cluster.Gru], TimeSpan.FromSeconds(5));
-        foreach (var (id, canonical) in outcome.Acknowledged)
+        await Gaps.RunAsync("storage-stall-single", async () =>
         {
-            await Assert.That(Docs.Canonical(await Docs.ReadAsync(cluster[Cluster.Gru], cluster.Document(id)))).IsEqualTo(canonical);
-        }
+            await using var cluster = await Cluster.StartAsync(Cluster.Gru);
+            var outcome = await StallAsync(Cluster.Gru, [Cluster.Gru], TimeSpan.FromSeconds(5));
+            foreach (var (id, canonical) in outcome.Acknowledged)
+            {
+                Expected.Check(Docs.Canonical(await Docs.ReadAsync(cluster[Cluster.Gru], cluster.Document(id))) == canonical, $"acknowledged write {id} after the stall");
+            }
 
-        await Assert.That(outcome.AfterStall).IsGreaterThan(0).Because("writes resume once the stall ends");
-        Console.WriteLine($"storage stall: {outcome.Acknowledged.Count} acknowledged, {outcome.Refused} refused, {outcome.AfterStall} acknowledged after the stall");
+            Expected.Check(outcome.AfterStall > 0, "writes resume once the stall ends");
+            Console.WriteLine($"storage stall: {outcome.Acknowledged.Count} acknowledged, {outcome.Refused} refused, {outcome.AfterStall} acknowledged after the stall");
+        });
     }
 
     // The replicated half: sjc stalls for ten seconds while every region writes; afterwards every region holds exactly the
     // acknowledged writes.
     [Test]
+    [Scenario(Nodes.InProcess, Faults.StorageStall)]
     public async Task A_storage_stall_on_one_region_loses_no_acknowledged_write_and_the_regions_converge()
     {
         Skip.When(Cluster.FlyRequested, "locks a local node's database file");
         await Gaps.RunAsync("storage-stall", async () =>
         {
             await using var cluster = await Cluster.StartAsync(All);
-            var outcome = await StallAsync(cluster, Cluster.Sjc, All, TimeSpan.FromSeconds(10));
+            var outcome = await StallAsync(Cluster.Sjc, All, TimeSpan.FromSeconds(10));
             var expected = Docs.Digest(outcome.Acknowledged.Select(pair => (pair.Key, pair.Value)));
             _ = await Converge.ListedAsync(cluster, expected, "every region after sjc's storage stall");
         });
@@ -121,6 +127,7 @@ public sealed class CrashAndStallE2ETests
     // Peer traffic through a lossy link (delays, a throughput cap, connection resets): every region ends with exactly the
     // writes, each applied once, however often a group was resent.
     [Test]
+    [Scenario(Nodes.InProcess, Faults.NetworkFault)]
     public async Task Writes_converge_exactly_over_lossy_peer_links()
     {
         Skip.When(Cluster.FlyRequested, "Fly has no way to make 6PN lossy; the lossy link runs on the local nodes only");
@@ -139,6 +146,7 @@ public sealed class CrashAndStallE2ETests
 
     // The lossy link itself, against an echo server: bytes arrive intact and in order through delays and the cap.
     [Test]
+    [Scenario(Nodes.Harness, Faults.NetworkFault)]
     public async Task The_lossy_link_delivers_bytes_intact_through_its_delays_and_throughput_cap()
     {
         using var echo = new TcpListener(IPAddress.Loopback, 0);
@@ -166,59 +174,12 @@ public sealed class CrashAndStallE2ETests
 
     private sealed record StallOutcome(IReadOnlyDictionary<string, string> Acknowledged, int Refused, int AfterStall);
 
-    // Writers on writing write through the whole window; region's database file is locked (BEGIN EXCLUSIVE from another
-    // connection) for stall in the middle; answers which writes were acknowledged.
-    private static async Task<StallOutcome> StallAsync(Cluster cluster, string region, string[] writing, TimeSpan stall)
-    {
-        var faker = new Faker();
-        var acknowledged = new ConcurrentDictionary<string, string>();
-        var refused = 0;
-        var afterStall = 0;
-        var released = false;
-        using var stop = new CancellationTokenSource();
-        var writers = Enumerable.Range(0, 8).Select(index => Task.Run(async () =>
-        {
-            while (!stop.IsCancellationRequested)
-            {
-                var (id, body) = (EntityIds.New().ToString(), ThreeRegionE2ETests.Synthetic(faker));
-                try
-                {
-                    await Docs.PutAsync(cluster[writing[index % writing.Length]], cluster.Document(id), body);
-                    acknowledged[id] = Docs.Canonical(body);
-                    if (Volatile.Read(ref released))
-                    {
-                        _ = Interlocked.Increment(ref afterStall);
-                    }
-                }
-                catch (HttpRequestException error) when (error.StatusCode is >= HttpStatusCode.InternalServerError)
-                {
-                    _ = Interlocked.Increment(ref refused);
-                }
-            }
-        })).ToArray();
-        await Task.Delay(TimeSpan.FromSeconds(1));
-        await using (var locker = new SqliteConnection($"Data Source={cluster.DatabaseFile(region)};Pooling=False"))
-        {
-            await locker.OpenAsync();
-            await using var transaction = (SqliteTransaction)await locker.BeginTransactionAsync();
-            using (var exclusive = locker.CreateCommand())
-            {
-                // Takes the write lock now, so the node's commits wait or fail until it is released.
-                exclusive.CommandText = "CREATE TABLE IF NOT EXISTS _e2e_stall (x INTEGER); INSERT INTO _e2e_stall VALUES (1); DELETE FROM _e2e_stall;";
-                exclusive.Transaction = transaction;
-                _ = await exclusive.ExecuteNonQueryAsync();
-            }
-
-            await Task.Delay(stall);
-            await transaction.RollbackAsync();
-        }
-
-        Volatile.Write(ref released, true);
-        await Task.Delay(TimeSpan.FromSeconds(2));
-        await stop.CancelAsync();
-        await Task.WhenAll(writers);
-        return new StallOutcome(acknowledged, refused, afterStall);
-    }
+    // The Turso engine (#98) holds the database file's write lock for its single writer, so no outside writer can stall it
+    // (it used to, or got "database is locked", depending on timing). The stall needs the harness's in-process hook
+    // (Cluster.StallStorageAsync, R3's #106), so until then the scenario reports itself not supported, every run.
+    private static Task<StallOutcome> StallAsync(string region, string[] writing, TimeSpan stall) =>
+        throw new NotSupportedException(
+            $"no storage stall hook: cannot stall {region}'s database file for {stall.TotalSeconds:F0} s while {string.Join(", ", writing)} write; it needs Cluster.StallStorageAsync (#106)");
 
     private static Uri Document(string database, string id) =>
         new($"{database}/collections/crash/documents/by-key?id={Uri.EscapeDataString(id)}", UriKind.Relative);
