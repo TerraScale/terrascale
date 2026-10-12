@@ -1,7 +1,8 @@
 # SQLite statements, query plans and connection settings
 
 Scope: `src/TerraBase/Engine/Sqlite`. Plans are from `EXPLAIN QUERY PLAN` on the
-SQLite that Microsoft.Data.Sqlite bundles (3.53.4). The Fast suite
+Turso engine (`Turso.Data.Sqlite.Provider` 0.8.2; it labels a seek through a primary key's unique index
+`USING INDEX sqlite_autoindex_…`, as every table is a rowid table). The Fast suite
 (`Documents/QueryPlanTests.cs`) asserts the "after" plans for every statement in
 `SqliteStatements.Shared`, `ClientOnly` and `SystemOnly`, so a statement that loses its index fails the build.
 
@@ -107,7 +108,7 @@ nor a prefix test (docs/terrabase/turso-spike.md). A scan budget is a plain `AND
 filter from the planner. A sort on a document field orders by JSON type first, so it sorts in a temporary B-tree.
 `IndexPlanTests` checks these plans, and the SQL subset's equality, range, `IN`, prefix `LIKE` and
 `ORDER BY … LIMIT`, against the real server database. Queries/counts have cancellation,
-VM-instruction and deadline budgets; field sorts also preflight
+deadline and candidate budgets; field sorts also preflight
 10000 live candidates and 8 MiB of JSON metadata before admitting a temporary sorter. A leading `$id` sort emits only
 `ORDER BY id ASC|DESC`: the constant rank and redundant later terms would force a sorter. Its
 ascending/descending and duplicate-key/cursor plans are checked against the real server database.
@@ -123,24 +124,28 @@ Most settings are applied once per connection (`SqliteSession`). Read transactio
 enable `query_only = ON` before BEGIN and reset it to OFF after the transaction ends; a reset
 failure closes the session instead of pooling it.
 
-| Setting | Value | Why |
-| --- | --- | --- |
-| `journal_mode` | `WAL` | Persistent in the file (set at bootstrap). Readers never block the writer. |
-| `synchronous` | `NORMAL` | Decision 0003 (`docs/terrabase/decisions/0003-sqlite-synchronous-normal.md`). A commit no longer waits for an fsync; SQLite syncs the WAL before each checkpoint. Committed transactions, including acknowledged writes, can be lost after a power loss or an OS crash, but not after a process crash, and the file is never corrupted. Accepted for write throughput. Every connection uses it, including the one that creates a database. |
-| `busy_timeout` | 30 s | SQLite's own busy handler (1–100 ms back-off) instead of Microsoft.Data.Sqlite's retry loop, which sleeps 150 ms between attempts: a writer behind a 20 ms write lock waited 150 ms before, 34 ms after. Same 30 s bound as the command timeout. Cancellable session setup, bootstrap, transaction acquisition and journal reads temporarily use 100 ms native busy backoff and the provider retry loop in 1 s slices, checking cancellation between retries and interrupting active VM work, so native busy waits cannot outlast the replication attempt. |
-| `mmap_size` | `memory-budget`, at least 256 MiB | Reads map pages instead of copying them through `read()`: about 5–10 % faster point reads and 25 % faster full listings in the benchmark below. Address space only; pages are the OS page cache, not the heap, so it can be as large as the budget. SQLite caps it at its compile-time maximum (2 GiB by default). |
-| `cache_size` | ¼ of `memory-budget` ÷ `storage-threads`, at least 2 MiB | The page cache holds pages that writes change and pages mmap does not cover. A quarter of the budget, split across the connections that run at once (one per storage thread). Idle pooled connections keep their cache; it grows only with pages actually read. |
-| `soft_heap_limit` | ¼ of `memory-budget` | Process-wide (`sqlite3_soft_heap_limit64`, set once per engine): SQLite frees page cache to keep its whole heap under the page-cache quarter, so idle connections cannot add up past it. Soft: allocations never fail because of it. Another engine in the same process (tests run several) only raises it. |
-| `temp_store` | default | Repair state pages use two temporary B-tree sorts over bounded keys/metadata and materialize at most 129 evidence rows, without JSON bodies. Document-field query sorts also use temporary storage. The default does not guarantee that temporary storage stays in memory. |
-| `foreign_keys` | default | The schema has no foreign keys. |
+TerraBase keeps Turso's defaults (user guidance 2026-10-12: Turso defaults and best practices): WAL journal, 4 KiB
+pages, Turso's own checkpoints, busy timeout 0, no memory map (Turso has none), default temporary storage, no foreign
+keys. Every setting that differs, and why:
 
-Connections are pooled by the engine (`SqliteSessionPool`; Microsoft.Data.Sqlite pooling is off).
+| Setting | Value | Turso default | Why |
+| --- | --- | --- | --- |
+| `synchronous` | `NORMAL` | `FULL` | A local write is acknowledged after one machine's commit (decision 0003, `multi-region-replication.md` section 6): a commit does not wait for an fsync, so acknowledged writes can be lost on power loss or an OS crash, never on a process crash, and the file is not corrupted. Durable write transactions and replicated applies set `FULL` for their transaction. The connection that creates a file uses `OFF`: the file is private until it is published and synced once then. |
+| `cache_size` | ¼ of `memory-budget` ÷ `storage-threads`, at least 2 MiB | 2000 pages | Turso has no process-wide heap limit, so per-connection caches sized from the budget are the memory bound (`memory.md`). |
+| `query_only` | `1` in read transactions | `0` | Read-only transactions cannot write; reset to `0` before the session is pooled. |
+| `capture_data_changes_conn` | `after` on the writer | off | Design C's change capture and continuous backup (`backup.md`); a transaction may turn it off (`SuspendCaptureAsync`). |
+| `wal_checkpoint(TRUNCATE)` | when a file is created, restored, copied, and when its writer closes | not run | Turso does not checkpoint when the last connection closes, and these files are moved or copied without their `-wal`. |
+
+Read connections are pooled by the engine (`SqliteSessionPool`; provider pooling is off). Each database also has one
+writer connection, outside the pool, that every write transaction uses: Turso aborts the process when two connections
+write one file. Turso reads planner statistics only when a connection opens, so after an index build every older
+connection, the writer too, is closed when it is next returned instead of pooled.
 Each idle connection keeps its prepared statements, so a statement is compiled once per connection,
 not once per request. At most `ProcessorCount` connections stay idle per database and
 `4 × ProcessorCount` in total, across every database. When the total is reached, pooling a
 connection closes the least recently pooled one, whichever database it belongs to. A node with many
-databases therefore keeps file handles and page caches (`cache_size` each, all of them together under
-`soft_heap_limit`) only for the databases in use. An extra connection opened under load is closed when it is returned.
+databases therefore keeps file handles and page caches (`cache_size` each; Turso has no process-wide heap limit) only
+for the databases in use. An extra connection opened under load is closed when it is returned.
 
 One lock guards the idle connections, so a connection is idle, rented by one transaction, or
 closed, never two at once. A deleted or shut-down database closes its idle connections, hands out
@@ -198,7 +203,7 @@ indexes; neither is in `SqliteStatements.All`. Both read live documents only.
 - After a build, `ANALYZE` of the new index alone and a seeded or raised `sqlite_stat1` row for the primary key and
   `documents_live` (`"<rows> <rows> 1"`) keep the planner from preferring either collection-leading index over it. Plans
   are reported by `POST …/sql/check` and asserted by the Fast `SqlApiTests` and `IndexApiTests`.
-- SQL-subset queries share the document query work budget (`QueryBudget` in `SqliteStorageTransaction`: 5 million VM instructions or 5 seconds,
+- SQL-subset queries share the document query work budget (`QueryBudget` in `SqliteStorageTransaction`: 5 seconds,
   or cancellation). The seconds are `query-budget-seconds` (default 5); the test harness raises them so that a loaded runner's
   descheduling or GC pauses do not fail tiny queries, and tests of the time budget pin the default.
 

@@ -565,11 +565,11 @@ through the data API), in name order: `{"items":[{"name":"people","documents":3,
 documents (a deleted document's tombstone is not counted) and `bytes` is their JSON size. An empty collection is listed
 with `0` and `0`.
 
-Collection statistics, document counts and usage scans use the same engine read budget as SQL: 5 million SQLite
-instructions or 5 seconds of execution. Exhausting it lists collections with `400` `invalid_query`,
+Collection statistics, document counts and usage scans use the same engine read budget as SQL: 5 seconds of
+execution. Exhausting it lists collections with `400` `invalid_query`,
 `query too expensive`, and infers a schema with `400` `invalid_query`, `schema too expensive`; usage still answers a
-plain `400` `"query too expensive"`. Cancellation interrupts scans and the progress handler is removed before session
-reuse.
+plain `400` `"query too expensive"`. Cancellation stops scans at their next row (a per-row function; Turso has no
+interrupt), and the function's stop condition is removed before session reuse.
 
 `GET …/databases/{database}/collections/{collection}/schema` infers the fields of a collection:
 `{"collection":"people","documents":3,"sampledDocuments":3,"fields":[{"path":"address.city","present":2,"types":{"string":2}}]}`.
