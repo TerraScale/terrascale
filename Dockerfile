@@ -26,36 +26,37 @@ WORKDIR /src/terrascale
 FROM base AS source
 COPY . .
 
+# Packages are restored into this layer, shared by every area (and deduplicated across concurrent CI jobs): a BuildKit
+# cache mount is best-effort and may come up empty in a later stage, so it only holds NuGet's download cache.
+FROM source AS restored
+RUN --mount=type=cache,target=/root/.local/share/NuGet/http-cache,id=nuget-http \
+    --mount=type=cache,target=/nuget-scratch,id=nuget-scratch \
+    make restore
+
 # One build and one test stage per area; CI runs the areas as parallel jobs. A build stage checks whitespace format,
 # builds its projects in Release with analyzers as errors (libs.slnf, auth.slnf, terrabase.slnf) and runs its static
 # checks: BuildKit reuses it only for byte-identical inputs. The test stage runs the area's tests on that build (its
 # `dotnet build` calls are incremental no-ops; `-o restore` keeps restore from rewriting project.assets.json, which
 # would force a recompile). CI passes no-cache-filters for test-<area>, so tests always execute. build-auth also builds
 # the TerraBase that ts-auth's tests start (auth.slnf does not include it).
-FROM source AS build-libs
-RUN --mount=type=cache,target=/root/.nuget/packages --mount=type=cache,target=/nuget-scratch,id=nuget-scratch \
-    make fmt-check libs-build CONFIGURATION=Release
+FROM restored AS build-libs
+RUN make -o restore fmt-check libs-build CONFIGURATION=Release
 
 FROM build-libs AS test-libs
-RUN --mount=type=cache,target=/root/.nuget/packages --mount=type=cache,target=/nuget-scratch,id=nuget-scratch \
-    make -o restore libs-check libs-test CONFIGURATION=Release && touch /passed
+RUN make -o restore libs-check libs-test CONFIGURATION=Release && touch /passed
 
-FROM source AS build-auth
-RUN --mount=type=cache,target=/root/.nuget/packages --mount=type=cache,target=/nuget-scratch,id=nuget-scratch \
-    make fmt-check auth-check auth-build CONFIGURATION=Release \
+FROM restored AS build-auth
+RUN make -o restore fmt-check auth-check auth-build CONFIGURATION=Release \
     && dotnet build src/TerraBase/TerraBase.csproj --configuration Release --no-restore --nologo
 
 FROM build-auth AS test-auth
-RUN --mount=type=cache,target=/root/.nuget/packages --mount=type=cache,target=/nuget-scratch,id=nuget-scratch \
-    make -o restore auth-test-fast CONFIGURATION=Release && touch /passed
+RUN make -o restore auth-test-fast CONFIGURATION=Release && touch /passed
 
-FROM source AS build-terrabase
-RUN --mount=type=cache,target=/root/.nuget/packages --mount=type=cache,target=/nuget-scratch,id=nuget-scratch \
-    make fmt-check terrabase-check CONFIGURATION=Release
+FROM restored AS build-terrabase
+RUN make -o restore fmt-check terrabase-check CONFIGURATION=Release
 
 FROM build-terrabase AS test-terrabase
-RUN --mount=type=cache,target=/root/.nuget/packages --mount=type=cache,target=/nuget-scratch,id=nuget-scratch \
-    make -o restore terrabase-test-fast CONFIGURATION=Release && touch /passed
+RUN make -o restore terrabase-test-fast CONFIGURATION=Release && touch /passed
 
 # All three areas (BuildKit runs them in parallel): `make docker-test`.
 FROM scratch AS test
@@ -65,9 +66,8 @@ COPY --from=test-terrabase /passed /terrabase
 
 # The Slow suites never fail the build: their log and exit code are the `test-slow` output, which CI reports from.
 # Plain text: TUnit colours its output here, and the report parses lines like "failed <test> (<duration>)".
-FROM source AS slow-run
-RUN --mount=type=cache,target=/root/.nuget/packages --mount=type=cache,target=/nuget-scratch,id=nuget-scratch \
-    mkdir /slow && { make test-slow CONFIGURATION=Release TEST_ARGS=--no-ansi; echo $? > /slow/exit; } 2>&1 | tee /slow/log
+FROM restored AS slow-run
+RUN mkdir /slow && { make -o restore test-slow CONFIGURATION=Release TEST_ARGS=--no-ansi; echo $? > /slow/exit; } 2>&1 | tee /slow/log
 
 FROM scratch AS test-slow
 COPY --from=slow-run /slow /
