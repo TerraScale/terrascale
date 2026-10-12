@@ -213,6 +213,15 @@ gets priority right after main is green; its last run was cancelled.
 touches `ci.yml` and the `Dockerfile`; the push check keeps both gates; 0 threads) is the fix and **merges first** once
 its exact head is green.
 
+**#166 is red on its exact head** `48429edc` (run 38323041647). The #149 Healthz/Readyz tests now pass, but 3 terrabase
+Fast tests fail out of 1433:
+- `Output_budget_includes_escaped_ids_row_wrappers_and_envelope(_id, padding)`;
+- `Deleted_documents_are_not_selected_counted_or_indexed`;
+- `A_catalog_change_between_flush_admission_and_write_keeps_the_batch_for_retry(fields)`.
+
+Not merged. The owner is asked to name the cause: this change, or pre-existing failures that main's runs could not show
+while Healthz failed first. Main stays red.
+
 **Review gate (COS, 00:25Z; every PR, test-only included):** before a merge, every review and comment on the exact head
 is read.
 - Any CHANGES REQUESTED or must-fix from any reviewer blocks the merge until a re-review on a newer head approves.
