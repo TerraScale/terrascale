@@ -187,7 +187,7 @@ internal static class SqliteStatements
         """;
 
     // A prefix is the name range [$from, $to) of each key: its live documents, which a prefix delete tombstones.
-    public const string PrefixDocuments = "SELECT collection, id FROM documents WHERE collection >= $from AND collection < $to;";
+    public const string PrefixDocuments = "SELECT collection, id FROM documents WHERE collection >= $from AND collection < $to LIMIT $limit;";
 
     public const string DeleteCollectionNames = "DELETE FROM collections WHERE name >= $from AND name < $to;";
 

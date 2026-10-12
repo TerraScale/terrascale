@@ -64,7 +64,7 @@ shape history. Both shapes include the uniqueness tables `_tb_unique_keys`, `_tb
 | `VACUUM INTO $path` | database copy (Management API), rare | maintenance, `EXPLAIN QUERY PLAN` returns no rows | unchanged; runs on a pooled connection |
 | `CountDocuments`: `SELECT count(*) … WHERE collection = ?` | schema inference, query-field records in `_system` (Management API) | — | `SEARCH documents USING COVERING INDEX sqlite_autoindex_documents_1 (collection=?)`; every row is a live document |
 | `ListCollectionStats` | usage, collection list (Management API) | — | `SCAN collections` in key order, then per collection `SEARCH documents USING PRIMARY KEY (collection=?)` (a `LEFT-JOIN` summing `octet_length(body)`, which reads the size from the record header) |
-| `PrefixDocuments`, `DeleteCollectionNames` | deletion of a deleted database's or project's `_system` state (Management API), which tombstones each live document | — | covering range seeks of `sqlite_autoindex_documents_1` and `sqlite_autoindex_collections_1` |
+| `PrefixDocuments`, `DeleteCollectionNames` | deletion of a deleted database's or project's `_system` state (Management API), which tombstones up to 1,024 live documents per transaction | — | covering range seeks of `sqlite_autoindex_documents_1` and `sqlite_autoindex_collections_1` |
 | `ListIndexes`, `IndexExists` on `sqlite_schema` | index list, create and drop (Management API) | — | `SCAN sqlite_schema` (a handful of rows); the list is sorted in memory, not in a temporary B-tree |
 
 No fixed statement sorts in a temporary B-tree. The first collections, baseline and anti-entropy pages scan in key order
