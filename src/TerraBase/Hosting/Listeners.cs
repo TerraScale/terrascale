@@ -210,29 +210,42 @@ public static class Listeners
     }
 
     /// <summary>
-    /// Binds the internal listener on <paramref name="internalAddress"/>, then the public and the metrics listeners on every
-    /// interface, in that order.
+    /// Binds the internal listener on <paramref name="internalAddress"/>, then the public and the metrics listeners, in that
+    /// order. Those two bind every interface, except in local development (Development off Fly), where nothing but this
+    /// machine may reach them: loopback only.
     /// </summary>
-    public static void AddTerraBaseListeners(this KestrelServerOptions kestrel, TerraBaseOptions options, IPAddress internalAddress)
+    public static void AddTerraBaseListeners(this KestrelServerOptions kestrel, TerraBaseOptions options, IPAddress internalAddress, string environmentName)
     {
         ArgumentNullException.ThrowIfNull(kestrel);
         ArgumentNullException.ThrowIfNull(options);
+        var local = options.App is null && environmentName == Environments.Development;
         // HTTP/2 only: without TLS there is no ALPN, and gRPC needs HTTP/2 prior knowledge.
         kestrel.Listen(internalAddress, options.InternalPort, listen =>
         {
             listen.Protocols = HttpProtocols.Http2;
             listen.UseTerraBaseListener(TerraBaseListener.Internal);
         });
-        kestrel.ListenAnyIP(options.Port, listen =>
+        Bind(options.Port, TerraBaseListener.Client);
+        Bind(options.MetricsPort, TerraBaseListener.Metrics);
+
+        void Bind(int port, TerraBaseListener listener)
         {
-            listen.Protocols = HttpProtocols.Http1;
-            listen.UseTerraBaseListener(TerraBaseListener.Client);
-        });
-        kestrel.ListenAnyIP(options.MetricsPort, listen =>
-        {
-            listen.Protocols = HttpProtocols.Http1;
-            listen.UseTerraBaseListener(TerraBaseListener.Metrics);
-        });
+            void Configure(ListenOptions listen)
+            {
+                listen.Protocols = HttpProtocols.Http1;
+                listen.UseTerraBaseListener(listener);
+            }
+
+            // Not ListenLocalhost: it refuses port 0, which tests use.
+            if (local)
+            {
+                kestrel.Listen(IPAddress.Loopback, port, Configure);
+            }
+            else
+            {
+                kestrel.ListenAnyIP(port, Configure);
+            }
+        }
     }
 
     /// <summary>
