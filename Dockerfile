@@ -46,9 +46,10 @@ COPY --from=test-auth /passed /auth
 COPY --from=test-terrabase /passed /terrabase
 
 # The Slow suites never fail the build: their log and exit code are the `test-slow` output, which CI reports from.
+# Plain text: TUnit colours its output here, and the report parses lines like "failed <test> (<duration>)".
 FROM source AS slow-run
 RUN --mount=type=cache,target=/root/.nuget/packages \
-    mkdir /slow && { make test-slow CONFIGURATION=Release; echo $? > /slow/exit; } 2>&1 | tee /slow/log
+    mkdir /slow && { make test-slow CONFIGURATION=Release TEST_ARGS=--no-ansi; echo $? > /slow/exit; } 2>&1 | tee /slow/log
 
 FROM scratch AS test-slow
 COPY --from=slow-run /slow /
