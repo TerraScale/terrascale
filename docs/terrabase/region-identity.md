@@ -13,7 +13,8 @@ database or journal identity.
 
 ## HTTP contract
 
-Every response on the client listener includes `X-TerraBase-Region: <region-id>`,
+Every response on the client listener includes `X-TerraBase-Region: <region-id>` and `X-TerraBase-Machine: <machine-id>`
+(`FLY_MACHINE_ID`, `local` off Fly),
 including authentication failures, missing routes, and pin rejection responses.
 Clients may send `X-TerraScale-Region-Pin: <region-id>` with the raw region ID.
 The pin is optional; when present, it must contain exactly one nonempty value
