@@ -206,13 +206,14 @@ public sealed class RepairAndContractE2ETests
             var hotPath = $"{cluster.ProjectPath}/databases/{hot}";
             _ = await Docs.PostAsync(cluster[Cluster.Gru], new Uri($"{hotPath}/collections", UriKind.Relative), new JsonObject { ["name"] = "burst" });
             var faker = new Faker();
-            var burst = Parallel.ForEachAsync(Enumerable.Range(0, 3000), new ParallelOptions { MaxDegreeOfParallelism = 32 }, async (_, token) =>
-                await Docs.PutAsync(cluster[Cluster.Gru], new Uri($"{hotPath}/collections/burst/documents/by-key?id={EntityIds.New()}", UriKind.Relative), ThreeRegionE2ETests.Synthetic(faker), token));
+            var ids = Enumerable.Range(0, 3000).Select(_ => EntityIds.New().ToString()).ToArray();
+            var burst = Writes.Start(ids, 32, (index, token) =>
+                Docs.PutAsync(cluster[Cluster.Gru], new Uri($"{hotPath}/collections/burst/documents/by-key?id={ids[index]}", UriKind.Relative), ThreeRegionE2ETests.Synthetic(faker), token));
             await Task.Delay(TimeSpan.FromSeconds(1));
             var uri = cluster.Document(EntityIds.New().ToString());
             await Docs.PutAsync(cluster[Cluster.Gru], uri, new JsonObject { ["value"] = "quiet" });
             _ = await Converge.UntilAsync(() => Docs.ReadAsync(cluster[Cluster.Sjc], uri), read => read is not null, "the quiet database's write on sjc", TimeSpan.FromSeconds(5));
-            await burst;
+            await burst.CompletedAsync();
         });
     }
 
