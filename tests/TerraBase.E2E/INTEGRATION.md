@@ -151,6 +151,8 @@ coordinator).
 | #143 | `e3800ec7` | 38300119319 success | squash | `51341591` | 38302187019 | skipped / skipped | unverifiable |
 | #144 | `4a61561b` | 38300128698 success | squash | `1e421848` | 38302222222 | skipped / skipped | unverifiable |
 | #113 | `1fa6a0c5` | 38302286695 success | merge (stack base) | `4afd7d9d` | 38304582048 | skipped / skipped | unverifiable |
+| #114 | `2e01953e` | 38312656763 success | merge (stack base) | `afb82f95` | 38314496504 | skipped / skipped | unverifiable |
+| #146 | `b5fe4d4a` | 38312666751 success | squash (closes #127's should-fix #1) | `62d7448a` | 38314532241 | skipped / skipped | unverifiable |
 
 #114 is retargeted to main, merges cleanly, and is updated to `980be395`; its run is in progress. #117 and then #120 follow (R3 pushes the R7 pin `24e138c0` to #120). Main's push runs after #112, #143 and #144: `test` success; Slow pending or unverifiable.
 
@@ -173,6 +175,8 @@ coordinator).
 - **#146 verified to close #127's should-fix #1.** Off Fly, ts-auth uses `127.0.0.1:8081` only in Development; any other
   environment throws `AuthConfigurationException` and refuses to start (fail closed), and the storage client is resolved
   at build time.
+
+**#117** is retargeted to main, merges cleanly, and is updated to `e161a139`; its run is in progress. Then R7's #120 follows (R3 pushes `24e138c0`).
 
 **Acceptance gaps, kept visible until each has a test and a fix:**
 - **R-A:** stale-machine retention after a SIGKILL.
@@ -332,7 +336,7 @@ workflow re-verified `disabled_manually` by the helper):
 
 | Count since the baseline | Value |
 | --- | ---: |
-| merged | 9 baseline PRs (#115, #130, #133, #88, #106, #79, #111, #127, #112) + #113 + new PRs #137, #141, #138, #143, #144 |
+| merged | 9 baseline PRs (#115, #130, #133, #88, #106, #79, #111, #127, #112) + #113, #134 (merged by MarioGK), #114 + new PRs #137, #141, #138, #143, #144, #146 |
 | closed (proven superseded) | 1 (#132, by #133; 16:23:01Z, preview workflow `disabled_manually`) |
 
 The 9 merges before the baseline are in the merge-train table.
