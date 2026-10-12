@@ -28,28 +28,39 @@ Aliases (`api.`, `<region>.api.terrascale.tech`) are not used: an answer they ro
   Tester B's fixes.
 - The user has approved the spend row and the credentials below.
 
-## Resources and cost (reconciled with `.cos/spend-ledger.md`, Pot B experiments)
+## Resources and cost (estimate for Beta's aggregate testing ledger; not a separate budget)
 
-Prices: Fly's official list (docs.fly.io/about/pricing, read 2026-10-12): shared-cpu-1x 512 MB **$3.69/month** in
-iad, billed per second while started; stopped machine $0.15/GB-month of rootfs; volume **$0.15/GB-month** (also while
-stopped or detached); private cross-region transfer $0.006/GB (NA/EU) and $0.015/GB (SA); inbound free. Regional
-multipliers from the ledger's fact-check: gru ×1.615, sjc ×1.192, fra ×1.154. Tigris $0.02/GB-month.
+Beta owns the single aggregate testing ledger (`.cos/spend-ledger.md`, experiments pot). This section is the estimate to
+reconcile there before anything is allocated; it is not an allocation.
 
-| Item | Qty | If started 24/7 | Per run (machines started ~3 h) |
+Official list prices (docs.fly.io/about/pricing, read 2026-10-12): shared-cpu-1x 512 MB **$3.69/month** in iad, billed
+per second while started; stopped machine $0.15/GB-month of rootfs; volume **$0.15/GB-month** (also while stopped or
+detached); private cross-region transfer $0.006/GB in North America and Europe, $0.015/GB in South America; inbound free;
+Tigris $0.02/GB-month. Regional machine multipliers from the ledger's 2026-10-11 fact-check (re-check against Fly's
+per-region list before allocation): gru ×1.615, sjc ×1.192, fra ×1.154.
+
+| Region | Machine started (per month / per hour) | 1 GB volume (per month) | Cross-region private traffic out |
 | --- | --- | --- | --- |
-| shared-cpu-1x 512 MB, one per region (gru, sjc, fra) | 3 | 3.69 × (1.615 + 1.192 + 1.154) = **$14.62/month** | ≈ $0.06 |
-| 1 GB volume per machine | 3 | $0.45/month | ≈ $0.002 |
-| Stopped rootfs between runs (≈ 1 GB each, estimate) | 3 | ≈ $0.45/month | — |
-| Test Tigris bucket (< 1 GB) | 1 | < $0.02/month | ≈ $0 |
-| Cross-region private traffic (≈ 1 GB per run, estimate) | — | — | ≈ $0.02 |
+| gru | $5.96 / $0.0083 | $0.15 | $0.015/GB |
+| sjc | $4.40 / $0.0061 | $0.15 | $0.006/GB |
+| fra | $4.26 / $0.0059 | $0.15 | $0.006/GB |
+| **all three** | **$14.62 / $0.0203** | **$0.45** | ≈ $0.02 per run (≈ 1 GB, estimate) |
 
-Allocation asked: **one Pot B row, $5 reserve** for the whole proof (several runs, machines stopped between runs, the
-app destroyed at the end), well under the $150 stop. Pot A (recurring) is not touched: nothing runs past the proof.
+Plus a test Tigris bucket (< 1 GB, < $0.02/month) and stopped rootfs between runs (≈ 3 GB, ≈ $0.45/month, estimate).
+A run with the three machines started ≈ 3 h costs ≈ $0.06 plus traffic. The ledger entry to propose: the three
+machines, volumes and bucket for the duration of the proof, machines stopped between runs, with this per-hour basis.
 
-Org: **`terrascale-previews-515` is at its 20-machine limit** (Fly 422 since 08:16Z, `.cos/morning-release-matrix.md`),
-so the app cannot be created there until previews are cleaned. Options, for the user: clean stale previews (#94, #97
-and others, the deploy steward's Q-PREVIEW-CLEANUP), or a new dedicated org (user-only). The production org
-`terrascale` is not used: it shares production's private network.
+## Account and isolation (choice for the user; no existing resource is deleted for quota)
+
+- **`terrascale-previews-515` is not usable**: it is at its 20-machine limit (Fly 422 since 08:16Z), and freeing quota
+  by deleting existing resources is excluded.
+- **Option A (existing, non-preview account): org `terrascale` with a custom private network.** `flyctl apps create
+  <app> --org terrascale --network <app>-net` places the app on its own 6PN: Fly documents that apps on separate 6PNs can
+  never communicate unless configured to, so it cannot reach production's apps and they cannot reach it. Current use
+  (read-only, 21:58Z): 7 machines (ts-terrabase 3, ts-auth 3, one builder). The org's machine limit is not readable with
+  existing access: whether +3 fits must be confirmed before creation. Shared with production: the org itself (billing,
+  members, tokens with org scope).
+- **Option B: a new dedicated org** (user-only to create), on unified billing: full separation, no shared org.
 
 ## Credentials (user-executed handoff only)
 
@@ -83,14 +94,25 @@ restarted machine's `/catalog-gate` (it opens by pulling from its trusted peers)
 
 ## Backup (A7YES)
 
-Selected invariant: a backup at time T contains every write acknowledged before T, or the restore answers a typed
-refusal; never a silent partial result. Run: write N documents and record each acknowledgement; take T after the last
-one; restore the database to T into a **new** database of the same app (point-in-time restore); require either all N
-documents (equal per-document canonical bodies and the listing digest) or a typed refusal naming why T is not
-restorable. A restore that returns some but not all of them fails the run. Test bucket only.
+Invariant: a backup at time T contains every write acknowledged before T, or the restore answers a typed refusal; never
+a silent partial result. A typed refusal passes the **safety** assertion only; it is **not** a successful restore.
 
-## Teardown (scoped)
+Qualification needs both, reported separately:
 
-Only the disposable app and its own test bucket: `flyctl apps destroy <app>` and `flyctl storage destroy <bucket>` after
-the evidence is written to `benchmark/bench/`, each logged in the ledger row. Nothing else is deleted; no production
-volume is reset.
+1. **Supported cuts (functional; must be a frozen, non-empty set):** before the run, fix the cuts that must restore,
+   including known fully durable points: a transaction boundary right after an acknowledged commit, and a backup
+   checkpoint the backup reports as shipped. Write N documents (recording each acknowledgement and its version), then
+   restore each cut into a **new** database. Each must succeed and match: per-document canonical bodies and versions,
+   the listing count and digest, and the identity (database id, regions) of what was restored. Any cut that refuses or
+   differs fails the run.
+2. **Fault and refusal outcomes (safety):** cuts outside the supported set (before the first shipped segment, during an
+   injected backup stall). Each either restores exactly the writes acknowledged before it or answers a typed refusal
+   naming why. Any partial result fails.
+
+A run in which every cut is refused is **not** green. Test bucket only.
+
+## Teardown (scoped, confirmed per step)
+
+Only the disposable app and its own test bucket, after the evidence is written to `benchmark/bench/`: `flyctl apps
+destroy <app>` and `flyctl storage destroy <bucket>`, each confirmed at the time and logged in the ledger row. No other
+resource is touched; no production volume is reset; nothing is deleted to make room.
