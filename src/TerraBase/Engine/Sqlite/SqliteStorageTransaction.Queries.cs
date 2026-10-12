@@ -451,6 +451,10 @@ internal sealed partial class SqliteStorageTransaction
     [GeneratedRegex(@"json_extract\s*\(doc, '\$\.([^']*)'\)|\bid\b|\bversion\b", RegexOptions.CultureInvariant)]
     private static partial Regex IndexKey();
 
+    // The JSON reads a statement may evaluate per candidate row, which the query work budget charges.
+    [GeneratedRegex(@"\bjson_(?:type|extract)\(", RegexOptions.CultureInvariant)]
+    private static partial Regex JsonRead();
+
     // Also inside Turso's "MULTI-INDEX OR people (tb_index_a, tb_index_a)", its plan for an IN list rewritten to OR.
     [GeneratedRegex(@"\btb_index_([a-z0-9_]+)", RegexOptions.CultureInvariant)]
     private static partial Regex UsedIndex();

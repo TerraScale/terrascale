@@ -484,6 +484,7 @@ internal sealed partial class SqliteStorageTransaction(
     }
 
     private bool _qosScanRegistered;
+    private QueryBudget? _queryBudget;
 
     // The handler and its removal run only on workers while this transaction owns the connection.
     private QueryBudget StartQueryBudget(CancellationToken cancellationToken)
@@ -497,7 +498,7 @@ internal sealed partial class SqliteStorageTransaction(
         // octet_length reads the stored byte size without decoding or copying the JSON body.
         session.Connection.CreateFunction<long, long>("tb_qos_scan", size =>
         {
-            if (budget.ScansLimited && budget.Scan(size))
+            if (budget.Limited && budget.Scan(size))
             {
                 throw new OperationCanceledException(SqliteSession.StoppedMessage);
             }
@@ -506,11 +507,12 @@ internal sealed partial class SqliteStorageTransaction(
             return 1;
         });
         _qosScanRegistered = true;
-        return budget;
+        return _queryBudget = budget;
     }
 
     private void StopQueryBudget()
     {
+        _queryBudget = null;
         session.StopWhen(null);
         if (_qosScanRegistered)
         {
@@ -533,19 +535,33 @@ internal sealed partial class SqliteStorageTransaction(
         private long _started = time.GetTimestamp();
         private TimeSpan _paused;
 
+        // Turso counts no VM instructions, so a candidate row charges about what SQLite ran for it: 8 for the row
+        // and 4 per JSON read. This keeps the plans' former instruction limits (1M Hobby, 5M Pro) at their scale.
+        private const long RowWork = 8;
+        private const long ReadWork = 4;
+
+        private readonly long _workLimit = policy?.QueryWork ?? 5_000_000;
         private long _rows;
         private long _bytes;
+        private long _work;
         private bool ScanExceeded { get; set; }
 
-        public bool ScansLimited => policy is not null && (policy.ScanRows != long.MaxValue || policy.ScanBytes != long.MaxValue);
+        private int _jsonReads;
 
-        // Turso counts no VM instructions: execution time and scanned candidates bound a statement.
+        /// <summary>Charges each later candidate row the JSON reads (filter and sort keys) of the statement about to run.</summary>
+        public void Charge(string sql) => _jsonReads = JsonRead().Count(sql);
+
+        public bool Limited => _workLimit != long.MaxValue
+            || policy is not null && (policy.ScanRows != long.MaxValue || policy.ScanBytes != long.MaxValue);
+
+        // Execution time, engine work and scanned candidates bound a statement.
         public bool Exceeded => ScanExceeded
             || (policy?.QueryTimeout ?? defaultDeadline) is var deadline && deadline != Timeout.InfiniteTimeSpan && Spent >= deadline;
 
         public bool Scan(long size)
         {
-            if (_rows >= policy!.ScanRows || size > policy.ScanBytes - _bytes)
+            _work += RowWork + ReadWork * _jsonReads;
+            if (_work > _workLimit || policy is not null && (_rows >= policy.ScanRows || size > policy.ScanBytes - _bytes))
             {
                 ScanExceeded = true;
                 return true;
@@ -610,6 +626,7 @@ internal sealed partial class SqliteStorageTransaction(
         // Compiled per request so every new filter shape does not grow the session's command cache.
         using var command = Uncached(query.Collection);
         command.CommandText = new SqliteQueryCompiler(command.Parameters, Rows(query.Collection)).Compile(query, observation is not null);
+        _queryBudget!.Charge(command.CommandText);
         var rows = new List<QueryRow>();
         long bytes = 0;
         using var reader = command.ExecuteReader();
@@ -653,6 +670,7 @@ internal sealed partial class SqliteStorageTransaction(
         {
             using var command = Uncached(collection);
             command.CommandText = new SqliteQueryCompiler(command.Parameters, Rows(collection)).CompileCount(filter, maxExamined, observation is not null);
+            _queryBudget!.Charge(command.CommandText);
             using var reader = command.ExecuteReader();
             cancellationToken.ThrowIfCancellationRequested();
             reader.Read();
@@ -691,6 +709,7 @@ internal sealed partial class SqliteStorageTransaction(
                         CheckSortBudget(query.Collection, 8 * 1024 * 1024, cancellationToken, observation);
                     }
 
+                    budget.Charge(command.CommandText);
                     reader = command.ExecuteReader();
                 }
                 catch (SqliteException error) when (SqliteSession.Stopped(error))
@@ -1002,7 +1021,7 @@ internal sealed partial class SqliteStorageTransaction(
         long? sequence = null;
         var offset = await RunAsync(() =>
         {
-            if (_faulted || _aborted)
+            if (_faulted || Aborted)
             {
                 throw new InvalidOperationException("an operation of this transaction failed, so it can only be rolled back");
             }
@@ -1137,13 +1156,16 @@ internal sealed partial class SqliteStorageTransaction(
 
     private const string GroupSavepoint = "batched";
 
-    // Set once Turso rolled the whole write transaction back after a failed statement: it can only be disposed.
-    private bool _aborted;
+    /// <summary>
+    /// Set once Turso rolled the whole write transaction back after a failed statement, every savepoint included:
+    /// it can only be disposed.
+    /// </summary>
+    internal bool Aborted { get; private set; }
 
     // Worker-only: runs a call of this transaction, and notices when a failure ended a write transaction.
     private T Guarded<T>(Func<T> call)
     {
-        if (_aborted)
+        if (Aborted)
         {
             throw new InvalidOperationException("a failed statement rolled this transaction back, so it can only be disposed");
         }
@@ -1152,9 +1174,10 @@ internal sealed partial class SqliteStorageTransaction(
         {
             return call();
         }
-        catch (SqliteException) when (write && !session.InTransaction())
+        // Any failure: a stopped read surfaces as a QueryCapacityException, not the SqliteException it started as.
+        catch (Exception) when (write && !session.InTransaction())
         {
-            _aborted = _faulted = true;
+            Aborted = _faulted = true;
             throw;
         }
     }

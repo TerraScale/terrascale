@@ -266,6 +266,33 @@ public sealed class GroupCommitTests
     }
 
     [Test]
+    public async Task A_read_its_work_budget_stops_inside_a_batch_is_too_expensive_and_the_writer_keeps_working()
+    {
+        await using var api = await DocumentApi.StartAsync();
+        await api.Management.SetPlanAsync(api.Tenant.User, api.Tenant.OrganizationId, "pro");
+        foreach (var _ in Enumerable.Range(0, 4))
+        {
+            var creates = Enumerable.Range(0, 1000)
+                .Select(object (_) => new { op = "create", collection = DocumentApi.Collection, document = new { n = 1 } }).ToArray();
+            await Assert.That((await api.TransactAsync(creates)).Status).IsEqualTo(HttpStatusCode.OK);
+        }
+
+        // 248 conditions on 4000 documents cost more engine work than Pro's budget, though no document matches. Stopping
+        // the read makes Turso roll the whole batch transaction back, its savepoints included.
+        var expensive = new
+        {
+            or = Enumerable.Range(0, 4).Select(group => new { or = Enumerable.Range(0, 62).Select(i => new { eq = new object[] { "/n", -(62 * group) - i } }) }),
+        };
+        var stopped = await api.TransactAsync(new { op = "assert_count", collection = DocumentApi.Collection, filter = expensive, lte = 0 });
+        var error = stopped.Json.GetProperty("error");
+        await Assert.That((stopped.Status, error.GetProperty("code").GetString(), error.GetProperty("op").GetInt32()))
+            .IsEqualTo((HttpStatusCode.BadRequest, "invalid_query", 0));
+        var next = DocumentApi.NewId();
+        await Assert.That((await api.PutAsync(next, new { n = 2 })).Status).IsEqualTo(HttpStatusCode.Created);
+        await Assert.That((await api.GetAsync(next)).Json.GetProperty("document").GetProperty("n").GetInt32()).IsEqualTo(2);
+    }
+
+    [Test]
     public async Task A_storage_thread_busy_with_a_long_read_does_not_hold_up_writes()
     {
         await using var api = await DocumentApi.StartAsync(settings => settings["storage-threads"] = "1");
