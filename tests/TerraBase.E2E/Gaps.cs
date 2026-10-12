@@ -11,11 +11,10 @@ internal static class Gaps
     private static readonly Dictionary<string, string> Waiting = new(StringComparer.Ordinal)
     {
         // ReplicationE2ETests, LatticeE2ETests, CatalogE2ETests (design section 20).
-        ["E10"] = "the changes feed (R8) over peer streams (R4a)",
         ["E11"] = "SQL writes (R9) over peer streams (R4a)",
         ["E12"] = "the catalog as a lattice database (R10a)",
         ["E13"] = "home region and live move (R11)",
-        ["E15"] = "the changes feed (R8) over peer streams (R4a)",
+        ["E15"] = "ts-auth refresh-token reuse across regions (R12) on the changes feed (R8)",
 
         // RepairAndContractE2ETests.
         ["deleted-database-stays-deleted"] = "the catalog as a lattice database (R10a) and garbage collection (R7)",
