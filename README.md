@@ -101,41 +101,32 @@ TerraBaseDocument? current = await database.GetDocumentAsync("users", userId, ca
 `DeleteAsync` deletes the database and its data; it throws `TerraBaseConflictException` (`database_replicated`) while replica regions exist.
 
 `GetDocumentAsync` returns `null` for an absent document. `CreateDocumentAsync`
-posts a document and TerraBase generates a UUIDv7 id. Lists and queries return
+posts a document and TerraBase generates a ULID. Lists and queries return
 pages with `NextCursor`. Patches take an RFC 7396 merge patch `JsonElement` or a
 list of `TerraBasePatchOperation`. `TransactAsync` applies `Create`, `Put`,
 `Patch`, `Delete`, `Assert`, `AssertAbsent` and `AssertCount` operations
 atomically.
 
 ```csharp
+// On Fly's private network: TerraBase's internal listener trusts the network and acts as the platform operator.
 var management = new TerraBaseManagementClient(httpClient, new TerraBaseManagementClientOptions
 {
-    BaseAddress = discoveredOrigin,
-    ServiceCredential = dashboardServiceCredential
+    BaseAddress = new Uri("http://top1.nearest.of.ts-terrabase.internal:8081"),
 });
 
 TerraBaseOrganization organization = await management.CreateOrganizationAsync(
     authenticatedUserId, "Acme", cancellationToken);
-TerraBaseProject project = await management.CreateProjectAsync(
-    authenticatedUserId, organization.Id, "web", cancellationToken);
-TerraBasePage<TerraBaseProject> page = await management.ListProjectsAsync(
-    authenticatedUserId, organization.Id, cancellationToken: cancellationToken);
 ```
 
-The service credential is sent as a bearer token. Every management call takes
-the acting `userId` first and sends it as `X-TerraBase-User-Id`; organization
-routes also send `X-TerraBase-Organization-Id`. Take the user id from an
-authenticated session, never from browser input. Pages are
+Every management call takes the acting `userId` first and sends it as `X-TerraBase-User-Id`; organization routes also
+send `X-TerraBase-Organization-Id`. Take the user id from an authenticated session, never from browser input. On the
+public HTTPS listener, pass the user's ts-auth access token through `AccessTokenProvider` instead. Requests without a
+credential (private listener only) go out as HTTP/2 with prior knowledge (TerraBase's internal listener is h2c only). Pages are
 `TerraBasePage<T>(Items, Next)`; pass `Next` as `after` with an optional `limit`.
 
-First-party service credentials must be created and delivered automatically
-under the operating contract. Static credential inputs in these examples
-represent the current API boundary; they do not instruct operators to copy
-production secrets. Customer credentials still authorize consumer access.
-
-Both clients also accept `AccessTokenProvider`
-(`Func<CancellationToken, ValueTask<string>>`) instead of their static `ApiKey`
-or `ServiceCredential`. Supply exactly one credential source. The provider runs
+Both clients accept `AccessTokenProvider`
+(`Func<CancellationToken, ValueTask<string>>`); the Documents client also takes a static `ApiKey`. Supply at most one
+credential source, and none only for a private plain-HTTP origin. The provider runs
 once per request after origin validation, shares the request deadline, and must
 be thread-safe and honor cancellation. It supplies the credential accepted by
 the deployed server; the SDK performs no exchange, background refresh, or retry.
@@ -180,43 +171,19 @@ Both clients resolve their endpoint per request through `ITerraBaseEndpointResol
 and cancellation token, and every returned origin is validated before credentials
 are sent. Atlas discovery is deferred to TS-507; no production origin is hardcoded.
 
-Tests never use a fake TerraBase. `TerraScale.DotNet.Testing`
-(`src/TerraScale.DotNet.Testing`) starts the real release binary
-`terrabase-linux-amd64`, pinned by tag and SHA-256 in `TerraBaseRelease.Pinned`,
-with a fresh data directory, a generated self-signed localhost certificate and a
-generated service credential. TerraBase binds both listeners to OS-assigned ports;
-the helper discovers their addresses from the pinned release's startup logs.
-That release clears generic-host configuration sources, so inherited logging
-filters and console formatters do not change these announcements. CI verifies
-startup while its environment requests disabled logging and the JSON formatter;
-these inherited settings are ignored by the pinned server.
-It downloads the binary once into
-`~/.cache/terrascale/terrabase/<sha256>/` (or `TERRABASE_CACHE_DIRECTORY`) using
-`TERRABASE_DOWNLOAD_TOKEN` or `ORG_READ_TOKEN`, because terrabase is private, and
-checks the SHA-256 on every use. `TERRABASE_BINARY` points at a binary you
-already have; it must match the pinned digest too. Cached and explicit binaries
-must be executable by the effective user; resolution reports `chmod u+x` guidance if access is denied.
-Downloads have a ten-minute deadline and a 256 MiB size limit, checked against
-both the declared length and streamed bytes. Failed downloads remove partial files.
-If removal also fails, the primary exception retains the secondary error in
-`Data["TerraBaseCleanupException"]` for diagnosis and manual cleanup.
-Disposal waits up to five seconds for process exit and redirected output completion
-before releasing resources and deleting data. A failed termination or timeout retains
-those resources so a later disposal call can retry.
-Failed directory deletion can also be retried, without reusing disposed resources.
-If startup cleanup fails, the original exception retains the server in
-`Data[nameof(TerraBaseTestServer)]` so its cleanup can be retried.
+No TerraBase runs in this repository (user rule, 2026-10-11: no repository other
+than the monorepo depends on TerraBase). The clients are tested over HTTP fakes.
+`contracts/terrabase/routes.json` records every TerraBase route the clients call;
+`TerraBaseContractTests` checks the clients send exactly those, and the monorepo's
+ts-auth Fast suite checks that the TerraBase built from the same commit serves each
+one, so the SDK and TerraBase cannot drift apart silently. ts-auth's suites exercise
+these clients end to end against that same TerraBase.
 
 ```bash
-ORG_READ_TOKEN=<forgejo read token> nice -n 19 dotnet run \
-  --project tests/TerraScale.DotNet.Tests/TerraScale.DotNet.Tests.csproj \
-  --framework net10.0 --configuration Release
+nice -n 19 dotnet run --project tests/TerraScale.DotNet.Tests/TerraScale.DotNet.Tests.csproj --framework net10.0 --configuration Release
 ```
 
-When the binary is neither cached nor downloadable, the TerraBase tests are
-skipped, except under `CI=true`, where they fail. Other services, such as
-ts-auth, start the same binary through the same helper:
-[TerraBase consumers](docs/terrabase-consumers.md).
+See [TerraBase consumers](docs/terrabase-consumers.md).
 
 ## Native database client (legacy)
 

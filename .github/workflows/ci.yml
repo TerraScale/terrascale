@@ -1,0 +1,37 @@
+# Build and test on every pull request and push to main. The tests use HTTP fakes only: no TerraBase runs here (the
+# monorepo checks TerraBase serves contracts/terrabase/routes.json).
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 20
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+      DOTNET_NOLOGO: "1"
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      # net10.0 and net11.0, as the test project targets both; global.json rolls forward to the newest SDK.
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: |
+            10.0.x
+            11.0.x
+          dotnet-quality: preview
+      - run: dotnet build TerraScale.DotNet.slnx --configuration Release
+      - run: dotnet run --project tests/TerraScale.DotNet.Tests --configuration Release --no-build --framework net10.0
+      - run: dotnet run --project tests/TerraScale.DotNet.Tests --configuration Release --no-build --framework net11.0

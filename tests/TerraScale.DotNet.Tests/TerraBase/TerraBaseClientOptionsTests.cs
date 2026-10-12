@@ -6,6 +6,7 @@ namespace TerraScale.DotNet.Tests.TerraBase;
 public sealed class TerraBaseClientOptionsTests
 {
     private static readonly Uri Origin = new("https://terrabase.example.test:8443/");
+    private static readonly Uri Private = new("http://top1.nearest.of.ts-terrabase.internal:8081/");
 
     [Test]
     public async Task RecommendedHandlerDisablesRedirectsAndCookies()
@@ -47,7 +48,7 @@ public sealed class TerraBaseClientOptionsTests
     public async Task SecretsMustBePrintableTokens(string? secret)
     {
         using var http = new HttpClient();
-        await Assert.That(() => new TerraBaseManagementClient(http, new TerraBaseManagementClientOptions { BaseAddress = Origin, ServiceCredential = secret }))
+        await Assert.That(() => new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions { BaseAddress = Origin, ApiKey = secret }))
             .Throws<ArgumentException>();
     }
 
@@ -59,7 +60,7 @@ public sealed class TerraBaseClientOptionsTests
             .Throws<ArgumentOutOfRangeException>();
         await Assert.That(() => new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions { BaseAddress = Origin, ApiKey = "tb_key", RequestTimeout = TimeSpan.FromHours(1) }))
             .Throws<ArgumentOutOfRangeException>();
-        await Assert.That(() => new TerraBaseManagementClient(http, new TerraBaseManagementClientOptions { BaseAddress = Origin, ServiceCredential = "secret", MaxResponseBytes = 1024 }))
+        await Assert.That(() => new TerraBaseManagementClient(http, new TerraBaseManagementClientOptions { BaseAddress = Private, MaxResponseBytes = 1024 }))
             .Throws<ArgumentOutOfRangeException>();
     }
 
@@ -67,12 +68,10 @@ public sealed class TerraBaseClientOptionsTests
     public async Task OptionsAndInvitationsNeverPrintSecrets()
     {
         var documents = new TerraBaseDocumentsClientOptions { BaseAddress = Origin, ApiKey = "tb_secretvalue" };
-        var management = new TerraBaseManagementClientOptions { BaseAddress = Origin, ServiceCredential = "dashboard_secretvalue" };
         var invitation = new TerraBaseCreatedInvitation(
             new TerraBaseInvitation("i", "a@example.com", TerraBaseRole.Member, "u", DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch), "org.inv.secretvalue");
 
         await Assert.That(documents.ToString()).DoesNotContain("secretvalue");
-        await Assert.That(management.ToString()).DoesNotContain("secretvalue");
         await Assert.That(invitation.ToString()).DoesNotContain("secretvalue");
     }
 
@@ -96,7 +95,7 @@ public sealed class TerraBaseClientOptionsTests
     {
         using var http = new HttpClient();
         var resolver = new CountingResolver(Origin);
-        var management = new TerraBaseManagementClient(http, new TerraBaseManagementClientOptions { EndpointResolver = resolver, ServiceCredential = "secret" });
+        var management = new TerraBaseManagementClient(http, new TerraBaseManagementClientOptions { EndpointResolver = resolver, AccessTokenProvider = _ => ValueTask.FromResult("token") });
 
         await Assert.That(async () => { await management.GetOrganizationAsync("user", organizationId); }).Throws<ArgumentException>();
         await Assert.That(() => management.DeleteOrganizationAsync("user", organizationId)).Throws<ArgumentException>();
@@ -113,10 +112,6 @@ public sealed class TerraBaseClientOptionsTests
             await Assert.That(() => new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions
             {
                 BaseAddress = Origin, ApiKey = secret, AccessTokenProvider = provider,
-            })).Throws<ArgumentException>();
-            await Assert.That(() => new TerraBaseManagementClient(http, new TerraBaseManagementClientOptions
-            {
-                BaseAddress = Origin, ServiceCredential = secret, AccessTokenProvider = provider,
             })).Throws<ArgumentException>();
         }
 
@@ -230,7 +225,7 @@ public sealed class TerraBaseClientOptionsTests
         await Assert.That(() => new TerraBaseStaticEndpointResolver(new Uri("http://terrabase.example.test/"))).Throws<ArgumentException>();
         await Assert.That(() => new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions { BaseAddress = Origin, EndpointResolver = resolver, ApiKey = "tb_key" }))
             .Throws<ArgumentException>();
-        await Assert.That(() => new TerraBaseManagementClient(http, new TerraBaseManagementClientOptions { BaseAddress = Origin, EndpointResolver = resolver, ServiceCredential = "secret" }))
+        await Assert.That(() => new TerraBaseManagementClient(http, new TerraBaseManagementClientOptions { BaseAddress = Origin, EndpointResolver = resolver, AccessTokenProvider = _ => ValueTask.FromResult("token") }))
             .Throws<ArgumentException>();
         using var canceled = new CancellationTokenSource();
         canceled.Cancel();

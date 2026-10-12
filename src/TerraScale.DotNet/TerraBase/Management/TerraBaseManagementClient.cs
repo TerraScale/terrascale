@@ -6,20 +6,18 @@ namespace TerraScale.DotNet.TerraBase;
 /// <summary>Configures a <see cref="TerraBaseManagementClient"/>.</summary>
 public sealed record TerraBaseManagementClientOptions
 {
-    /// <summary>HTTPS origin of the TerraBase client listener; the Management API is not served on the admin listener.</summary>
+    /// <summary>
+    /// TerraBase origin: the public HTTPS listener (with <see cref="AccessTokenProvider"/>) or the private plain-HTTP listener
+    /// on Fly's network (<c>http://top1.nearest.of.ts-terrabase.internal:8081</c>, no credential).
+    /// </summary>
     public Uri? BaseAddress { get; init; }
 
-    /// <summary>Resolves the HTTPS client origin per request. Set this or BaseAddress, exclusively.</summary>
+    /// <summary>Resolves the origin per request. Set this or BaseAddress, exclusively.</summary>
     public ITerraBaseEndpointResolver? EndpointResolver { get; init; }
 
     /// <summary>
-    /// The dashboard service credential (the secret in TerraBase's <c>dashboard-credential-file</c>), sent as
-    /// <c>Authorization: Bearer</c>. It grants no document access.
-    /// </summary>
-    public string? ServiceCredential { get; init; }
-
-    /// <summary>
-    /// Supplies the current bearer credential per request. Set this or ServiceCredential, exclusively.
+    /// Supplies the acting user's ts-auth access token per request, for TerraBase's public HTTPS listener. Leave it unset
+    /// for TerraBase's private plain-HTTP (6PN) listener, which trusts its network and acts as the platform operator.
     /// The provider must be thread-safe and honor cancellation; acquisition shares the request deadline.
     /// </summary>
     public Func<CancellationToken, ValueTask<string>>? AccessTokenProvider { get; init; }
@@ -59,8 +57,8 @@ public sealed class TerraBaseManagementClient
     public TerraBaseManagementClient(HttpClient httpClient, TerraBaseManagementClientOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
-        connection = new TerraBaseConnection(httpClient, options.BaseAddress, options.EndpointResolver, options.ServiceCredential, nameof(options.ServiceCredential), options.RequestTimeout, options.MaxResponseBytes,
-            options.AccessTokenProvider);
+        connection = new TerraBaseConnection(httpClient, options.BaseAddress, options.EndpointResolver, null, nameof(options.AccessTokenProvider), options.RequestTimeout, options.MaxResponseBytes,
+            options.AccessTokenProvider, anonymousAllowed: true);
     }
 
     // Organizations
@@ -189,14 +187,24 @@ public sealed class TerraBaseManagementClient
         SendAsync(HttpMethod.Delete, Organization(organizationId) + "/invitations/" + TerraBaseConnection.Segment(invitationId, nameof(invitationId)), userId, organizationId, null, cancellationToken);
 
     /// <summary>
-    /// Makes the acting user a member through an invitation token. <paramref name="email"/> is the user's verified
-    /// address and must match the invitation.
+    /// Makes the acting user a member through an invitation token. TerraBase matches the invitation against the verified
+    /// email of the user's ts-auth access token, so the management service credential, which carries none, gets
+    /// <see cref="TerraBaseForbiddenException"/>; use <see cref="AddMemberAsync"/> there.
     /// </summary>
-    public Task<TerraBaseMember> AcceptInvitationAsync(string userId, string token, string email, CancellationToken cancellationToken = default)
+    public Task<TerraBaseMember> AcceptInvitationAsync(string userId, string token, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrEmpty(token);
-        return SendAsync(HttpMethod.Post, Root + "/invitations/accept", userId, null, new RequestBody { Token = token, Email = email }, Json.TerraBaseMember, cancellationToken);
+        return SendAsync(HttpMethod.Post, Root + "/invitations/accept", userId, null, new RequestBody { Token = token }, Json.TerraBaseMember, cancellationToken);
     }
+
+    /// <summary>
+    /// Adds <paramref name="memberUserId"/> as a member without an invitation; an existing member is returned unchanged.
+    /// Needs admin. Served only on TerraBase's loopback administrative listener with the management service credential;
+    /// <paramref name="email"/> is recorded in the audit log only.
+    /// </summary>
+    public Task<TerraBaseMember> AddMemberAsync(
+        string userId, string organizationId, string memberUserId, string email, CancellationToken cancellationToken = default) =>
+        SendAsync(HttpMethod.Put, Member(organizationId, memberUserId), userId, organizationId, new RequestBody { Email = email }, Json.TerraBaseMember, cancellationToken);
 
     // Ownership transfer
 

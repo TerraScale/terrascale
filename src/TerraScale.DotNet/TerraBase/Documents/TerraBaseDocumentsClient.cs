@@ -162,7 +162,7 @@ public sealed class TerraBaseDatabase
             HttpMethod.Get, CollectionPath(collection) + "/documents" + TerraBaseConnection.Query(("limit", TerraBaseConnection.Number(limit)), ("cursor", cursor)),
             null, Json.TerraBaseDocumentPage, null, cancellationToken).ConfigureAwait(false)).Value;
 
-    /// <summary>Creates a document with a TerraBase-generated UUIDv7 id (<c>POST</c>).</summary>
+    /// <summary>Creates a document with a TerraBase-generated ULID (<c>POST</c>).</summary>
     public async Task<TerraBaseWriteResult> CreateDocumentAsync(string collection, JsonElement document, CancellationToken cancellationToken = default)
     {
         var body = TerraBaseConnection.Json(document, Json.JsonElement);
@@ -231,5 +231,10 @@ public sealed class TerraBaseDatabase
 
     private string SchemaPath(string collection) => $"{path}/schema/{TerraBaseConnection.Segment(collection, nameof(collection))}";
 
-    private string DocumentPath(string collection, string id) => $"{CollectionPath(collection)}/documents/{TerraBaseConnection.Segment(id, nameof(id))}";
+    // The key travels in the query, so any id (slashes included) addresses exactly one document.
+    private string DocumentPath(string collection, string id)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(id);
+        return CollectionPath(collection) + "/documents/by-key" + TerraBaseConnection.Query(("id", id));
+    }
 }

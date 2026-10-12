@@ -4,7 +4,7 @@ using TerraScale.DotNet.TerraBase;
 
 namespace TerraScale.DotNet.Tests.TerraBase;
 
-/// <summary>DeleteAsync over a fake handler: the pinned TerraBase release predates <c>DELETE …/databases/{database}</c>.</summary>
+/// <summary>DeleteAsync over a fake handler.</summary>
 public sealed class TerraBaseDatabaseDeleteTests
 {
     private static readonly TerraBaseDocumentsClientOptions Options = new()

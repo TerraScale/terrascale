@@ -1,0 +1,305 @@
+{
+  "description": "Every TerraBase route this SDK calls. tests/TerraScale.DotNet.Tests checks the clients send exactly these; the monorepo (ts-auth Fast, TerraBaseSdkContractTests) checks the TerraBase built from the same commit serves each one. documents routes are served on the client listener, management routes on the administrative listener (management service credential) and the client listener (ts-auth access token).",
+  "operations": [
+    {
+      "client": "documents",
+      "operation": "createDatabase",
+      "method": "PUT",
+      "path": "/v1/projects/{project}/databases/{database}"
+    },
+    {
+      "client": "documents",
+      "operation": "deleteDatabase",
+      "method": "DELETE",
+      "path": "/v1/projects/{project}/databases/{database}"
+    },
+    {
+      "client": "documents",
+      "operation": "listCollections",
+      "method": "GET",
+      "path": "/v1/projects/{project}/databases/{database}/collections"
+    },
+    {
+      "client": "documents",
+      "operation": "createCollection",
+      "method": "POST",
+      "path": "/v1/projects/{project}/databases/{database}/collections"
+    },
+    {
+      "client": "documents",
+      "operation": "getCollection",
+      "method": "GET",
+      "path": "/v1/projects/{project}/databases/{database}/collections/{collection}"
+    },
+    {
+      "client": "documents",
+      "operation": "dropCollection",
+      "method": "DELETE",
+      "path": "/v1/projects/{project}/databases/{database}/collections/{collection}"
+    },
+    {
+      "client": "documents",
+      "operation": "declareCollectionSchema",
+      "method": "PUT",
+      "path": "/v1/projects/{project}/databases/{database}/schema/{collection}"
+    },
+    {
+      "client": "documents",
+      "operation": "getCollectionSchema",
+      "method": "GET",
+      "path": "/v1/projects/{project}/databases/{database}/schema/{collection}"
+    },
+    {
+      "client": "documents",
+      "operation": "getDocument",
+      "method": "GET",
+      "path": "/v1/projects/{project}/databases/{database}/collections/{collection}/documents/by-key"
+    },
+    {
+      "client": "documents",
+      "operation": "listDocuments",
+      "method": "GET",
+      "path": "/v1/projects/{project}/databases/{database}/collections/{collection}/documents"
+    },
+    {
+      "client": "documents",
+      "operation": "createDocument",
+      "method": "POST",
+      "path": "/v1/projects/{project}/databases/{database}/collections/{collection}/documents"
+    },
+    {
+      "client": "documents",
+      "operation": "putDocument",
+      "method": "PUT",
+      "path": "/v1/projects/{project}/databases/{database}/collections/{collection}/documents/by-key"
+    },
+    {
+      "client": "documents",
+      "operation": "patchDocument",
+      "method": "PATCH",
+      "path": "/v1/projects/{project}/databases/{database}/collections/{collection}/documents/by-key"
+    },
+    {
+      "client": "documents",
+      "operation": "deleteDocument",
+      "method": "DELETE",
+      "path": "/v1/projects/{project}/databases/{database}/collections/{collection}/documents/by-key"
+    },
+    {
+      "client": "documents",
+      "operation": "queryDocuments",
+      "method": "POST",
+      "path": "/v1/projects/{project}/databases/{database}/collections/{collection}/query"
+    },
+    {
+      "client": "documents",
+      "operation": "runTransaction",
+      "method": "POST",
+      "path": "/v1/projects/{project}/databases/{database}/transactions"
+    },
+    {
+      "client": "management",
+      "operation": "createOrganization",
+      "method": "POST",
+      "path": "/v1/management/organizations"
+    },
+    {
+      "client": "management",
+      "operation": "listOrganizations",
+      "method": "GET",
+      "path": "/v1/management/organizations"
+    },
+    {
+      "client": "management",
+      "operation": "getOrganization",
+      "method": "GET",
+      "path": "/v1/management/organizations/{organization}"
+    },
+    {
+      "client": "management",
+      "operation": "renameOrganization",
+      "method": "PATCH",
+      "path": "/v1/management/organizations/{organization}"
+    },
+    {
+      "client": "management",
+      "operation": "setOrganizationPlan",
+      "method": "PUT",
+      "path": "/v1/management/organizations/{organization}/plan"
+    },
+    {
+      "client": "management",
+      "operation": "deleteOrganization",
+      "method": "DELETE",
+      "path": "/v1/management/organizations/{organization}"
+    },
+    {
+      "client": "management",
+      "operation": "getCurrentOrganization",
+      "method": "GET",
+      "path": "/v1/management/current-organization"
+    },
+    {
+      "client": "management",
+      "operation": "setCurrentOrganization",
+      "method": "PUT",
+      "path": "/v1/management/current-organization"
+    },
+    {
+      "client": "management",
+      "operation": "createProject",
+      "method": "POST",
+      "path": "/v1/management/organizations/{organization}/projects"
+    },
+    {
+      "client": "management",
+      "operation": "listProjects",
+      "method": "GET",
+      "path": "/v1/management/organizations/{organization}/projects"
+    },
+    {
+      "client": "management",
+      "operation": "getProject",
+      "method": "GET",
+      "path": "/v1/management/organizations/{organization}/projects/{project}"
+    },
+    {
+      "client": "management",
+      "operation": "renameProject",
+      "method": "PATCH",
+      "path": "/v1/management/organizations/{organization}/projects/{project}"
+    },
+    {
+      "client": "management",
+      "operation": "deleteProject",
+      "method": "DELETE",
+      "path": "/v1/management/organizations/{organization}/projects/{project}"
+    },
+    {
+      "client": "management",
+      "operation": "createManagedDatabase",
+      "method": "POST",
+      "path": "/v1/management/organizations/{organization}/projects/{project}/databases"
+    },
+    {
+      "client": "management",
+      "operation": "listDatabases",
+      "method": "GET",
+      "path": "/v1/management/organizations/{organization}/projects/{project}/databases"
+    },
+    {
+      "client": "management",
+      "operation": "getDatabase",
+      "method": "GET",
+      "path": "/v1/management/organizations/{organization}/projects/{project}/databases/{database}"
+    },
+    {
+      "client": "management",
+      "operation": "deleteManagedDatabase",
+      "method": "DELETE",
+      "path": "/v1/management/organizations/{organization}/projects/{project}/databases/{database}"
+    },
+    {
+      "client": "management",
+      "operation": "branchDatabase",
+      "method": "POST",
+      "path": "/v1/management/organizations/{organization}/projects/{project}/databases/{database}/branches"
+    },
+    {
+      "client": "management",
+      "operation": "listMembers",
+      "method": "GET",
+      "path": "/v1/management/organizations/{organization}/members"
+    },
+    {
+      "client": "management",
+      "operation": "changeMemberRole",
+      "method": "PUT",
+      "path": "/v1/management/organizations/{organization}/members/{user}/role"
+    },
+    {
+      "client": "management",
+      "operation": "removeMember",
+      "method": "DELETE",
+      "path": "/v1/management/organizations/{organization}/members/{user}"
+    },
+    {
+      "client": "management",
+      "operation": "addMember",
+      "method": "PUT",
+      "path": "/v1/management/organizations/{organization}/members/{user}"
+    },
+    {
+      "client": "management",
+      "operation": "leaveOrganization",
+      "method": "POST",
+      "path": "/v1/management/organizations/{organization}/leave"
+    },
+    {
+      "client": "management",
+      "operation": "createInvitation",
+      "method": "POST",
+      "path": "/v1/management/organizations/{organization}/invitations"
+    },
+    {
+      "client": "management",
+      "operation": "listInvitations",
+      "method": "GET",
+      "path": "/v1/management/organizations/{organization}/invitations"
+    },
+    {
+      "client": "management",
+      "operation": "revokeInvitation",
+      "method": "DELETE",
+      "path": "/v1/management/organizations/{organization}/invitations/{invitation}"
+    },
+    {
+      "client": "management",
+      "operation": "acceptInvitation",
+      "method": "POST",
+      "path": "/v1/management/invitations/accept"
+    },
+    {
+      "client": "management",
+      "operation": "getOwnershipTransfer",
+      "method": "GET",
+      "path": "/v1/management/organizations/{organization}/ownership-transfer"
+    },
+    {
+      "client": "management",
+      "operation": "startOwnershipTransfer",
+      "method": "POST",
+      "path": "/v1/management/organizations/{organization}/ownership-transfer"
+    },
+    {
+      "client": "management",
+      "operation": "confirmOwnershipTransfer",
+      "method": "POST",
+      "path": "/v1/management/organizations/{organization}/ownership-transfer/confirm"
+    },
+    {
+      "client": "management",
+      "operation": "cancelOwnershipTransfer",
+      "method": "DELETE",
+      "path": "/v1/management/organizations/{organization}/ownership-transfer"
+    },
+    {
+      "client": "management",
+      "operation": "getAuditRetention",
+      "method": "GET",
+      "path": "/v1/management/organizations/{organization}/audit-retention"
+    },
+    {
+      "client": "management",
+      "operation": "setAuditRetention",
+      "method": "PUT",
+      "path": "/v1/management/organizations/{organization}/audit-retention"
+    },
+    {
+      "client": "management",
+      "operation": "listAuditEvents",
+      "method": "GET",
+      "path": "/v1/management/organizations/{organization}/audit-events"
+    }
+  ]
+}

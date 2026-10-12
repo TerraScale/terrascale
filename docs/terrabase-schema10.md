@@ -3,8 +3,7 @@
 This SDK source prepares the schema operations against TerraBase PR [#118](https://git.terrascale.tech/TerraScale/terrabase/pulls/118),
 exact revision `1c2a7e082829bcebf816691537001f6aba168d9a`, which includes the TS-754 ULID prerequisite.
 The owning contract has not landed. This is a prepared source API, not a qualified schema10 release.
-`TerraBaseRelease.Pinned` still names the old `ff256067015433c8c40b59879f1282d2a40480ce` release;
-passing that release's existing tests does not qualify these schema operations.
+Against TerraBase main (2026-10-11) these routes exist and need a ts-auth project token; an API key gets 401.
 
 ## API and wire contract
 
