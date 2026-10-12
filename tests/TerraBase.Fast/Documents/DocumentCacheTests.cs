@@ -286,7 +286,7 @@ public sealed class DocumentCacheTests
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var release = new ManualResetEventSlim();
         var observing = false;
-        var session = engine.Pool.Rent(store)!;
+        var session = await StorageFixture.RentReaderAsync(engine, store);
         try
         {
             session.Connection.CreateFunction<string, string>("paused_body", body =>

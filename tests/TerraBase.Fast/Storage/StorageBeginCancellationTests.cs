@@ -68,7 +68,8 @@ public sealed class StorageBeginCancellationTests
                     try
                     {
                         await WaitUntilAsync(() => engine.Io.Admitted == 1 && Queued() == 1, deadline.Token);
-                        await Assert.That(store.IdleCount).IsEqualTo(0);
+                        // A read takes the idle session; a write uses the database's own writer connection instead.
+                        await Assert.That(store.IdleCount).IsEqualTo(write ? 1 : 0);
                         await cancellation.CancelAsync();
                         await Assert.ThrowsAsync<OperationCanceledException>(() => begin.WaitAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken));
                         await Assert.That(engine.Io.Admitted).IsEqualTo(0);

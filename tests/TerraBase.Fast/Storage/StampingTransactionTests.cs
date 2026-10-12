@@ -179,7 +179,6 @@ public sealed class StampingTransactionTests
 
             await Assert.That(read.IsCompleted).IsFalse();
             await Assert.That(native.Io.Admitted).IsEqualTo(2);
-            await Assert.That(nativeStore.IdleCount).IsEqualTo(0);
 
             release.Set();
             await Task.WhenAll(pending).WaitAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
@@ -192,12 +191,11 @@ public sealed class StampingTransactionTests
             using var body = JsonDocument.Parse(document!.Json);
             await Assert.That(body.RootElement.GetProperty("n").GetInt32()).IsEqualTo(2);
             await Assert.That(native.Io.Admitted).IsEqualTo(0);
-            await Assert.That(nativeStore.IdleCount).IsEqualTo(1);
+            // The disposal released the database's writer: the next write transaction begins on it at once.
             var next = await store.BeginTransactionAsync(write: true, deadline.Token);
             await using var nextCleanup = next;
             await transaction.DisposeAsync();
             await Assert.That(native.Io.Admitted).IsEqualTo(1);
-            await Assert.That(nativeStore.IdleCount).IsEqualTo(0);
             await Assert.That((await next.GetAsync("items", idA, deadline.Token))?.Id).IsEqualTo(idA);
             await Assert.That((await next.GetAsync("items", idB, deadline.Token))?.Id).IsEqualTo(idB);
         }

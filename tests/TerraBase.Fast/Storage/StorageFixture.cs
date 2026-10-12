@@ -53,6 +53,19 @@ internal static class StorageFixture
         command.ExecuteNonQuery();
     }
 
+    /// <summary>
+    /// Rents an idle read session of <paramref name="store"/>, opening one first if none is idle: writes use the store's
+    /// own writer connection, so earlier writes leave no idle session.
+    /// </summary>
+    public static async Task<SqliteSession> RentReaderAsync(SqliteStorageEngine engine, SqliteDatabaseStore store)
+    {
+        await using (await store.BeginTransactionAsync(write: false, CancellationToken.None))
+        {
+        }
+
+        return engine.Pool.Rent(store)!;
+    }
+
     /// <summary>Takes the file's write lock (<c>BEGIN IMMEDIATE</c>) until the result is disposed.</summary>
     public static async Task<IAsyncDisposable> LockAsync(string path)
     {
@@ -108,8 +121,7 @@ internal static class StorageFixture
         var release = new ManualResetEventSlim();
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var armed = false;
-        // The seed returned the only session; the held read rents it back.
-        var session = engine.Pool.Rent(store)!;
+        var session = await RentReaderAsync(engine, store);
         try
         {
             session.Connection.CreateFunction<string, string>("held_body", body =>

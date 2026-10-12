@@ -35,14 +35,17 @@ internal sealed class SqliteQueryCompiler(SqliteParameterCollection parameters, 
     /// </summary>
     public string Compile(DocumentQuery query, bool observe = false)
     {
+        // The keyset condition repeats the key expressions: it sits in the same WHERE as the scan, not in an outer query,
+        // because Turso does not flatten a subquery in FROM and would read the whole collection for every page.
         var keys = new List<(string Expression, bool Descending)>();
         using var columns = ZString.CreateStringBuilder();
         foreach (var (key, index) in query.Sort.Select((key, index) => (key, index)))
         {
             var ordinal = index.ToString(CultureInfo.InvariantCulture);
-            columns.AppendFormat(", {0} AS k{1}r, {2} AS k{1}v", Rank(key.Path), ordinal, Scalar(key.Path));
-            keys.Add(($"k{ordinal}r", key.Descending));
-            keys.Add(($"k{ordinal}v", key.Descending));
+            var (rank, value) = (Rank(key.Path), Scalar(key.Path));
+            columns.AppendFormat(", {0} AS k{1}r, {2} AS k{1}v", rank, ordinal, value);
+            keys.Add((rank, key.Descending));
+            keys.Add((value, key.Descending));
         }
 
         var leadingId = query.Sort.Count > 0 && query.Sort[0].Path.IsId;
@@ -52,10 +55,8 @@ internal sealed class SqliteQueryCompiler(SqliteParameterCollection parameters, 
         using var sql = ZString.CreateStringBuilder();
         // Keep the non-deterministic visit before residual predicates; seek constraints still bound the scan.
         sql.AppendFormat("""
-            SELECT * FROM (
-                SELECT id, {4} AS version, octet_length({5}) AS size{0}
-                FROM {6} WHERE {1}{7} AND {2}
-            ) WHERE {3}
+            SELECT id, {4} AS version, octet_length({5}) AS size{0}
+            FROM {6} WHERE {1}{7} AND {2} AND {3}
             ORDER BY
             """, columns.ToString(), observe ? "tb_query_scan() AND " : "", ScanGuardedFilter(query.Filter), after, rows.Version, rows.Json, rows.From, rows.Live);
         if (leadingId)
@@ -66,9 +67,9 @@ internal sealed class SqliteQueryCompiler(SqliteParameterCollection parameters, 
             return sql.ToString();
         }
 
-        foreach (var (expression, descending) in keys)
+        for (var i = 0; i < keys.Count; i++)
         {
-            sql.AppendFormat(" {0} {1},", expression, descending ? "DESC" : "ASC");
+            sql.AppendFormat(" k{0}{1} {2},", (i / 2).ToString(CultureInfo.InvariantCulture), i % 2 == 0 ? "r" : "v", keys[i].Descending ? "DESC" : "ASC");
         }
 
         sql.AppendFormat(" id ASC LIMIT {0};", Parameter((long)query.Limit + 1));
@@ -109,8 +110,9 @@ internal sealed class SqliteQueryCompiler(SqliteParameterCollection parameters, 
     private string Filter(DocumentFilter? filter) => filter switch
     {
         null => "1",
-        AndFilter and => "(" + string.Join(" AND ", and.Children.Select(Filter)) + ")",
-        OrFilter or => "(" + string.Join(" OR ", or.Children.Select(Filter)) + ")",
+        // Balanced: Turso refuses an expression deeper than 100, and a flat chain of 256 terms parses 256 deep.
+        AndFilter and => Balanced([.. and.Children.Select(Filter)], " AND "),
+        OrFilter or => Balanced([.. or.Children.Select(Filter)], " OR "),
         NotFilter not => $"NOT {Filter(not.Child)}",
         CompareFilter compare => Compare(compare),
         InFilter @in => In(@in),

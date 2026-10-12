@@ -112,20 +112,25 @@ internal sealed partial class SqliteStorageTransaction
         }, cancellationToken, mutation: true);
 
     public ValueTask<IReadOnlyList<IndexDefinition>> ListIndexesAsync(CancellationToken cancellationToken) =>
-        RunAsync<IReadOnlyList<IndexDefinition>>(() =>
+        RunAsync<IReadOnlyList<IndexDefinition>>(() => ReadIndexes(cancellationToken), cancellationToken);
+
+    // Worker-only.
+    private List<IndexDefinition> ReadIndexes(CancellationToken cancellationToken)
+    {
+        var indexes = new List<IndexDefinition>();
+        using (var reader = session.Command(SqliteStatements.ListIndexes, transaction).ExecuteReader())
         {
-            var indexes = new List<IndexDefinition>();
-            using var reader = session.Command(SqliteStatements.ListIndexes, transaction).ExecuteReader();
             while (reader.Read())
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 indexes.Add(ParseIndex(reader.GetString(0), reader.GetString(1)));
             }
+        }
 
-            // The schema table has no name index; sort here instead of a temporary B-tree.
-            indexes.Sort((left, right) => string.CompareOrdinal(left.Name, right.Name));
-            return indexes;
-        }, cancellationToken);
+        // The schema table has no name index; sort here instead of a temporary B-tree.
+        indexes.Sort((left, right) => string.CompareOrdinal(left.Name, right.Name));
+        return indexes;
+    }
 
     /// <remarks>ponytail: builds synchronously inside the write transaction, so writers wait for the build; build in the background if collections get large.</remarks>
     public ValueTask<bool> CreateIndexAsync(IndexDefinition index, CancellationToken cancellationToken)
@@ -299,6 +304,14 @@ internal sealed partial class SqliteStorageTransaction
         try
         {
             sql.AppendFormat("{0}SELECT id, {1} AS version FROM {2}", explain ? "EXPLAIN QUERY PLAN " : "", rows.Version, rows.From);
+            // Turso's planner ignores LIMIT: an unfiltered sort on an indexed field reads every row and sorts them instead
+            // of walking that index. Name the index then; with a filter the planner chooses.
+            if (query.Filter is null && query.Order is [{ Field: var first }, ..] && !first.IsMetadata && !store.IsSystem
+                && ReadIndexes(CancellationToken.None).FirstOrDefault(index => index.Collection == query.Collection && index.Fields[0] == first) is { } sorted)
+            {
+                sql.AppendFormat(" INDEXED BY \"{0}{1}\"", IndexPrefix, sorted.Name);
+            }
+
             sql.AppendFormat(" WHERE {0}{1}", observe ? "tb_query_scan() AND " : "", rows.Live);
             if (ScansLimited)
             {
@@ -391,15 +404,19 @@ internal sealed partial class SqliteStorageTransaction
         }
     }
 
+    // A balanced tree of terms: Turso refuses an expression deeper than 100, and a flat chain of 256 parses 256 deep.
     private static void AppendGroup(ref Utf16ValueStringBuilder sql, SqliteCommand command, IReadOnlyList<SqlFilter> filters, string separator, string json)
     {
-        sql.Append('(');
-        for (var i = 0; i < filters.Count; i++)
+        if (filters.Count == 1)
         {
-            sql.Append(i == 0 ? string.Empty : separator);
-            AppendFilter(ref sql, command, filters[i], json);
+            AppendFilter(ref sql, command, filters[0], json);
+            return;
         }
 
+        sql.Append('(');
+        AppendGroup(ref sql, command, [.. filters.Take(filters.Count / 2)], separator, json);
+        sql.Append(separator);
+        AppendGroup(ref sql, command, [.. filters.Skip(filters.Count / 2)], separator, json);
         sql.Append(')');
     }
 
@@ -433,9 +450,11 @@ internal sealed partial class SqliteStorageTransaction
     [GeneratedRegex(@"\bON ""([^""]*)"" \(", RegexOptions.CultureInvariant)]
     private static partial Regex IndexCollection();
 
-    [GeneratedRegex(@"json_extract\(doc, '\$\.([^']*)'\)|\bid\b|\bversion\b", RegexOptions.CultureInvariant)]
+    // Turso stores the SQL it parsed, with a space after a function name.
+    [GeneratedRegex(@"json_extract\s*\(doc, '\$\.([^']*)'\)|\bid\b|\bversion\b", RegexOptions.CultureInvariant)]
     private static partial Regex IndexKey();
 
-    [GeneratedRegex(@"INDEX tb_index_([a-z0-9_]+)", RegexOptions.CultureInvariant)]
+    // Also inside Turso's "MULTI-INDEX OR people (tb_index_a, tb_index_a)", its plan for an IN list rewritten to OR.
+    [GeneratedRegex(@"\btb_index_([a-z0-9_]+)", RegexOptions.CultureInvariant)]
     private static partial Regex UsedIndex();
 }

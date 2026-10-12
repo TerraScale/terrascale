@@ -91,6 +91,19 @@ internal sealed class SqliteSessionPool(int maxIdle, int maxIdlePerDatabase)
     }
 
     /// <summary>
+    /// Counts an opening for a session that must be new, never an idle one: the store's writer
+    /// (<see cref="SqliteDatabaseStore"/>). The caller then calls <see cref="Adopt"/> or <see cref="OpenFailed"/>.
+    /// </summary>
+    public void OpenNew(SqliteDatabaseStore store)
+    {
+        lock (_gate)
+        {
+            ObjectDisposedException.ThrowIf(_stopped || store.Closed, store);
+            _opening++;
+        }
+    }
+
+    /// <summary>
     /// Hands a newly opened <paramref name="session"/> to its renter, or closes it and throws when
     /// <paramref name="store"/> was closed, or the pool stopped, while it opened.
     /// </summary>

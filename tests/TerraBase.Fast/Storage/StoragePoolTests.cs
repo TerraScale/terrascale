@@ -279,7 +279,7 @@ public sealed class StoragePoolTests
     }
 
     [Test]
-    public async Task Evicting_the_last_connection_checkpoints_its_wal_on_a_storage_thread()
+    public async Task Evicting_an_idle_connection_closes_it_on_a_storage_thread_and_keeps_its_data()
     {
         using var operationTimeout = CancellationTokenSource.CreateLinkedTokenSource(TUnit.Core.TestContext.Current!.Execution.CancellationToken);
         // Keep periodic catalog writes from returning a session between the fixture's controlled evictions.
@@ -308,8 +308,6 @@ public sealed class StoragePoolTests
         };
         // Observe the existing session, then put it back without opening or closing anything.
         engine.Pool.Return(store, session);
-        var wal = (await tenant.FileAsync(server, "victim", operationTimeout.Token)) + "-wal";
-        await Assert.That(new FileInfo(wal).Length).IsGreaterThan(0);
         for (var i = 0; i < engine.Pool.MaxIdle; i++)
         {
             using var next = await client.PutAsync(new Uri($"/v1/projects/{tenant.ProjectId}/databases/eviction-{i}", UriKind.Relative), null, operationTimeout.Token);
@@ -317,8 +315,8 @@ public sealed class StoragePoolTests
         }
 
         await Assert.That(await closed.Task.WaitAsync(TUnit.Core.TestContext.Current!.Execution.CancellationToken)).IsEqualTo("terrabase-sqlite");
-        await Assert.That(File.Exists(wal)).IsFalse();
-        // Checkpointed data is available again through the real listener after eviction.
+        // The data is available again through the real listener after eviction. The writer connection stays open, so an
+        // evicted reader is not the file's last connection and its log stays.
         using var read = await client.GetAsync(new Uri($"/v1/projects/{tenant.ProjectId}/databases/victim/collections/items/documents/by-key?id={StorageFixture.Id("a")}", UriKind.Relative), operationTimeout.Token);
         await Assert.That(read.StatusCode).IsEqualTo(HttpStatusCode.OK);
     }

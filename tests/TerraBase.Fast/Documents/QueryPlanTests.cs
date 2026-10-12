@@ -11,7 +11,8 @@ public sealed class QueryPlanTests
 
     // The plans recorded in docs/sqlite-query-plans.md. Every statement seeks a primary key, except the
     // first page of collections and the collection counts and sizes, which walk the collections key in order, and
-    // the index catalog reads, which scan the small schema table.
+    // the index catalog reads, which scan the small schema table; the journal tails read the last
+    // key entry (ORDER BY ... DESC LIMIT 1, reported as a SCAN), and a system document page is two bounded seeks.
     private static readonly Dictionary<string, string> Expected = new(StringComparer.Ordinal)
     {
         ["DocumentBytes"] = "SEARCH d USING PRIMARY KEY (collection=? AND id=?) | SEARCH c USING INDEX sqlite_autoindex__tb_unique_conflicts_1 (collection=? AND id=?) LEFT-JOIN",
@@ -58,18 +59,18 @@ public sealed class QueryPlanTests
         ["InsertApplied"] = "",
         ["UpdateCollection"] = "SEARCH collections USING PRIMARY KEY (name=?)",
         ["Origin"] = "SEARCH commit_offset USING INTEGER PRIMARY KEY (rowid=?)",
-        ["LastSequence"] = "SEARCH changes USING PRIMARY KEY",
+        ["LastSequence"] = "SCAN CONSTANT ROW | SCALAR SUBQUERY 1 | SCAN changes",
         ["AppendReplicationChange"] = "",
         ["GetChangeDigest"] = "SEARCH journal_prefixes USING PRIMARY KEY (sequence=?)",
         ["AppendChangeDigest"] = "",
         // System database replication: snapshot pages, group pages, prefix drops, replica writes, journal tail.
         ["SystemDocumentsFirst"] = "SCAN documents USING INDEX documents_live",
-        ["SystemDocumentsAfter"] = "SEARCH documents USING INDEX documents_live ((collection,id)>(?,?))",
+        ["SystemDocumentsAfter"] = "MERGE (UNION ALL) | LEFT | CO-ROUTINE (subquery-1) | SEARCH documents USING PRIMARY KEY (collection=? AND id>?) | SCAN (subquery-1) | USE TEMP B-TREE FOR ORDER BY | RIGHT | CO-ROUTINE (subquery-3) | SEARCH documents USING INDEX documents_live (collection>?) | SCAN (subquery-3) | USE TEMP B-TREE FOR ORDER BY",
         ["GroupSize"] = "SEARCH changes USING PRIMARY KEY (sequence=?)",
         ["ReadGroupPage"] = "SEARCH changes USING PRIMARY KEY (sequence=? AND ordinal>?)",
         ["CollectionRangeIds"] = "SEARCH documents USING PRIMARY KEY (collection>? AND collection<?)",
         ["ReplaceDocument"] = "",
-        ["SystemLastSequence"] = "SEARCH journal_prefixes USING PRIMARY KEY",
+        ["SystemLastSequence"] = "SCAN CONSTANT ROW | SCALAR SUBQUERY 1 | SCAN journal_prefixes",
         ["TruncateChanges"] = "SEARCH changes USING PRIMARY KEY (sequence<?)",
         ["ClientDocumentBytes"] = "SCAN CONSTANT ROW | SCALAR SUBQUERY 1 | SEARCH _tb_unique_conflicts USING INDEX sqlite_autoindex__tb_unique_conflicts_1 (collection=? AND id=?) | SCALAR SUBQUERY 2 | SEARCH items USING INDEX sqlite_autoindex_items_1 (id=?)",
         ["ClientListFirst"] = "SCAN d USING INDEX sqlite_autoindex_items_1 | CORRELATED SCALAR SUBQUERY 1 | SEARCH s USING INDEX sqlite_autoindex__tb_state_1 (collection=? AND id=?)",
