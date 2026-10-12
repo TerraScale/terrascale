@@ -111,7 +111,7 @@ atomically.
 // On Fly's private network: TerraBase's internal listener trusts the network and acts as the platform operator.
 var management = new TerraBaseManagementClient(httpClient, new TerraBaseManagementClientOptions
 {
-    BaseAddress = new Uri("http://top1.nearest.of.ts-terrabase.internal:8081"),
+    BaseAddress = new Uri("http://terrabase.example.internal:8080"),
 });
 
 TerraBaseOrganization organization = await management.CreateOrganizationAsync(
@@ -299,21 +299,17 @@ dotnet build TerraScale.DotNet.slnx --configuration Release
 dotnet format style TerraScale.DotNet.slnx --verify-no-changes --no-restore
 dotnet run --project tests/TerraScale.DotNet.Tests/TerraScale.DotNet.Tests.csproj \
   --framework net10.0 --configuration Release --no-build --no-restore -- \
-  --minimum-expected-tests 487
+  --minimum-expected-tests 415
 ```
 
 Run the suite for `net11.0` with a .NET 11 toolchain too. Tests use TUnit and
-cover native public semantics plus the retained ts-auth contract. CI also
-checks dependency audit failure handling, fails closed on vulnerable packages,
-and checks installed native package consumers for both frameworks.
+cover native public semantics plus the retained ts-auth contract. CI builds and
+runs the suite on both frameworks for every pull request and push to `main`.
 
-CI prepares a source-revision-bound `.nupkg` and verifies its native inputs,
-framework assemblies and repository identity before exporting its artifact.
-[Package distribution](docs/native-package-distribution.md) describes the
-exact-byte handoff and its publication boundary.
-[Package qualification](scripts/qualification/README.md) describes the bounded
-package-only consumer. Publishing and live-service qualification are separate
-gates; neither is implied by a source build or artifact export.
+[Package release](docs/package-release.md) describes how a tagged version is
+packed once, pushed to GitHub Packages and restored into a clean installed-package
+consumer, and how the same bytes reach nuget.org. Live-service qualification is
+a separate gate; neither a source build nor a publication implies it.
 
 ## Native client migration
 

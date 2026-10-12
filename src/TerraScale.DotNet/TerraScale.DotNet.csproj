@@ -7,7 +7,7 @@
     <TargetFrameworks Condition="'$(TargetFrameworks)' == ''">net10.0</TargetFrameworks>
     <TargetFramework />
     <PackageId>TerraScale.DotNet</PackageId>
-    <Version>0.1.0</Version>
+    <Version>0.0.1</Version>
     <Description>Official .NET SDK for TerraBase, TerraScale native database and auth APIs.</Description>
     <PackageProjectUrl>https://github.com/TerraScale/ts-dotnet</PackageProjectUrl>
     <RepositoryUrl>https://github.com/TerraScale/ts-dotnet</RepositoryUrl>
@@ -16,7 +16,7 @@
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageTags>terrascale;terrabase;database;documents;native;auth;sdk</PackageTags>
-    <PackageReleaseNotes>Native v1 client replaces TerraScaleClient, its options, AddTerraScaleClient, and the obsolete EF provider; use NativeClient and AddTerraScaleAuthClient. Supports .NET 10 and .NET 11. Producer and release qualification remain external gates recorded against immutable package bytes.</PackageReleaseNotes>
+    <PackageReleaseNotes>Limited legacy baseline. TerraBase v1 clients (documents, management, platform explore) and the ts-auth client, without TerraBase's regional contract: no Region option or region pin, and a 421 surfaces as a plain TerraBaseException. TerraScale.DotNet.Native targets the retired Rust UUID/shard API. Supports .NET 10 and .NET 11.</PackageReleaseNotes>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <Deterministic>true</Deterministic>
     <!-- Required only by source-generated platform file-persistence interop. -->
