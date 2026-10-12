@@ -6,13 +6,14 @@ namespace TerraScale.Authentication.Features.SigningKeys;
 /// <summary>
 /// Keeps the serving issuer's signing keys usable and rotated on every replica. At startup it creates the first key when
 /// there is none and checks that every stored key works under this master key (<see cref="KeyRing.EnsureAsync"/>),
-/// retrying until storage answers; <see cref="Bootstrapped"/> then completes. After that, and hourly, it runs the
+/// retrying until storage answers (after 5 s, doubling up to 5 min, so an unreachable store is not hammered); <see cref="Bootstrapped"/> then completes. After that, and hourly, it runs the
 /// scheduled rotation.
 /// </summary>
 public sealed class SigningKeyRotation(KeyRing ring, ILogger<SigningKeyRotation> logger) : BackgroundService
 {
     private static readonly TimeSpan Interval = TimeSpan.FromHours(1);
-    private static readonly TimeSpan BootstrapRetry = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan FirstBootstrapRetry = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan MaxBootstrapRetry = TimeSpan.FromMinutes(5);
 
     private readonly TaskCompletionSource bootstrapped = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -22,9 +23,11 @@ public sealed class SigningKeyRotation(KeyRing ring, ILogger<SigningKeyRotation>
     /// <inheritdoc />
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        var retry = FirstBootstrapRetry;
         while (!await this.TryBootstrapAsync(stoppingToken).ConfigureAwait(false))
         {
-            await Task.Delay(BootstrapRetry, stoppingToken).ConfigureAwait(false);
+            await Task.Delay(retry, stoppingToken).ConfigureAwait(false);
+            retry = TimeSpan.FromTicks(Math.Min(retry.Ticks * 2, MaxBootstrapRetry.Ticks));
         }
 
         this.bootstrapped.SetResult();
