@@ -38,11 +38,13 @@ public sealed class Cluster : IAsyncDisposable
     private readonly Local? _local;
     private readonly Dictionary<string, string>? _identities;
     private readonly Func<Task> _release;
+    private string? FlyApp { get; }
 
     private Cluster(
         string projectPath, string databasePath, string collection, Dictionary<string, HttpClient> clients, Local? local, Dictionary<string, string>? identities,
-        Func<Task> release)
+        Func<Task> release, string? flyApp = null)
     {
+        FlyApp = flyApp;
         ProjectPath = projectPath;
         DatabasePath = databasePath;
         Collection = collection;
@@ -53,10 +55,11 @@ public sealed class Cluster : IAsyncDisposable
     }
 
     /// <summary>
-    /// The region's verified identity for a run's record: <c>region/machine@revision</c> when every request is pinned to
-    /// one machine (<see cref="FlyRevisionVariable"/>), otherwise the region alone.
+    /// The region's identity for a run's record, labelled with how it was reached: <c>local:gru</c> (a node of this
+    /// process), <c>fly-unpinned:gru</c> (Fly, pinned by region only) or <c>fly-pinned:gru/&lt;machine&gt;@&lt;revision&gt;</c>
+    /// (one machine, its identity checked before the first write and after the last).
     /// </summary>
-    public string Identity(string region) => _identities?.GetValueOrDefault(region) ?? region;
+    public string Identity(string region) => _identities?.GetValueOrDefault(region) ?? $"local:{region}";
 
     /// <summary>The project's path, <c>/v1/projects/{project}</c>.</summary>
     public string ProjectPath { get; }
@@ -72,6 +75,13 @@ public sealed class Cluster : IAsyncDisposable
 
     /// <summary>Whether <c>TERRABASE_E2E_FLY_URL</c> is set, so the regions are Fly's.</summary>
     public static bool FlyRequested => Environment.GetEnvironmentVariable(FlyUrlVariable) is { Length: > 0 };
+
+    /// <summary>
+    /// Whether a test may stop Fly machines: only in a pinned disposable app's outage run (<c>TERRABASE_E2E_FLY_OUTAGE=1</c>
+    /// with <c>TERRABASE_E2E_FLY_REVISION</c>), never against production.
+    /// </summary>
+    public static bool FlyMachineFaults => Environment.GetEnvironmentVariable("TERRABASE_E2E_FLY_OUTAGE") == "1"
+        && Environment.GetEnvironmentVariable(FlyRevisionVariable) is { Length: > 0 };
 
     /// <summary>The client of <paramref name="region"/>: pinned on Fly, the node itself locally.</summary>
     public HttpClient this[string region] => _clients.TryGetValue(region, out var client)
@@ -125,19 +135,23 @@ public sealed class Cluster : IAsyncDisposable
     {
         if (_local is null)
         {
-            await Flyctl.RunAsync("machine", "stop", await FlyMachineAsync(region), "--app", FlyApp);
+            await Flyctl.RunAsync("machine", "stop", await Flyctl.MachineInRegionAsync(DisposableApp, region), "--app", DisposableApp);
             return;
         }
 
         await _local.StopAsync(region);
     }
 
+    // Machine faults run only on a pinned disposable app: an unpinned run has no app to stop machines of.
+    private string DisposableApp => FlyApp ?? throw new InvalidOperationException(
+        $"machine faults on Fly need a pinned disposable app ({FlyRevisionVariable} and {DisposableTarget.AppVariable})");
+
     /// <summary>Brings <paramref name="region"/> back on the same data (the same volume on Fly) after <see cref="StopAsync"/>.</summary>
     public async Task StartAgainAsync(string region)
     {
         if (_local is null)
         {
-            await Flyctl.RunAsync("machine", "start", await FlyMachineAsync(region), "--app", FlyApp);
+            await Flyctl.RunAsync("machine", "start", await Flyctl.MachineInRegionAsync(DisposableApp, region), "--app", DisposableApp);
             return;
         }
 
@@ -173,9 +187,8 @@ public sealed class Cluster : IAsyncDisposable
 
     private Local RequireLocal() => _local ?? throw new NotSupportedException("this fault needs local nodes");
 
-    private static string FlyApp => Environment.GetEnvironmentVariable("TERRABASE_E2E_FLY_APP") ?? "ts-terrabase";
-
-    private static Task<string> FlyMachineAsync(string region) => Flyctl.MachineInRegionAsync(FlyApp, region);
+    // Unpinned Fly runs (production's read-only suite and its outage test) keep their default app; a machine-pinned run
+    // names its disposable app explicitly (DisposableTarget).
 
     private static async Task<Cluster> StartLocalAsync(string[] regions, IReadOnlyDictionary<string, TimeSpan> skews)
     {
@@ -206,19 +219,21 @@ public sealed class Cluster : IAsyncDisposable
     // The Fly database is shared: this test creates and deletes only its own collection.
     private static async Task<Cluster> StartFlyAsync(string[] regions)
     {
+        // With TERRABASE_E2E_FLY_REVISION (a disposable app's run) every request goes to the region's one machine, and each
+        // machine must answer as itself, in its region, running exactly that commit, before the first write and after the
+        // last. The target is checked first: no flyctl call or request happens with a missing or production target.
+        var revision = Environment.GetEnvironmentVariable(FlyRevisionVariable) is { Length: > 0 } expected ? expected : null;
+        var app = revision is null ? null : DisposableTarget.Resolve(Environment.GetEnvironmentVariable);
         var url = new Uri(Required(FlyUrlVariable), UriKind.Absolute);
         // A TerraBase API key of the dedicated e2e project (documents:read and documents:write, with an expiry):
         // .cos/e2e-credential-plan.md.
         var key = Required("TERRABASE_E2E_FLY_API_KEY");
         var projectPath = $"/v1/projects/{Required("TERRABASE_E2E_FLY_PROJECT")}";
         var path = $"{projectPath}/databases/{Required("TERRABASE_E2E_FLY_DATABASE")}";
-        // With TERRABASE_E2E_FLY_REVISION (a disposable app's run) every request goes to the region's one machine, and each
-        // machine must first answer as itself, in its region, running exactly that commit.
-        var revision = Environment.GetEnvironmentVariable(FlyRevisionVariable) is { Length: > 0 } expected ? expected : null;
         var machines = new Dictionary<string, string?>(StringComparer.Ordinal);
         foreach (var region in regions)
         {
-            machines[region] = revision is null ? null : await FlyMachineAsync(region);
+            machines[region] = app is null ? null : await Flyctl.MachineInRegionAsync(app, region);
         }
 
         var clients = regions.ToDictionary(region => region, region => FlyClient(url, key, region, machines[region]), StringComparer.Ordinal);
@@ -253,12 +268,23 @@ public sealed class Cluster : IAsyncDisposable
             throw;
         }
 
-        return new Cluster(projectPath, path, collection, clients, null, revision is null ? null : regions.ToDictionary(
-            region => region, region => $"{region}/{machines[region]}@{revision}", StringComparer.Ordinal), async () =>
+        return new Cluster(projectPath, path, collection, clients, null, regions.ToDictionary(
+            region => region, region => revision is null ? $"fly-unpinned:{region}" : $"fly-pinned:{region}/{machines[region]}@{revision}", StringComparer.Ordinal), async () =>
         {
             try
             {
-                await DeleteCollectionAsync(clients[Gru], path, collection);
+                try
+                {
+                    // Every edge recorded as region/machine@revision held for the whole run: no machine was redeployed during it.
+                    if (revision is not null)
+                    {
+                        await CheckIdentitiesAsync(clients, machines!, revision);
+                    }
+                }
+                finally
+                {
+                    await DeleteCollectionAsync(clients[Gru], path, collection);
+                }
             }
             finally
             {
@@ -267,7 +293,7 @@ public sealed class Cluster : IAsyncDisposable
                     client.Dispose();
                 }
             }
-        });
+        }, app);
     }
 
     // Creates the collection in gru and waits until every other region serves it, so every test starts from a replicated database.
@@ -296,7 +322,7 @@ public sealed class Cluster : IAsyncDisposable
 
     // Each region's machine answers /healthz as itself (machine, region) running the commit under test, or the run stops
     // before any write: an answer from another machine, region or build proves nothing about this one.
-    private static async Task CheckIdentitiesAsync(Dictionary<string, HttpClient> clients, Dictionary<string, string> machines, string revision)
+    internal static async Task CheckIdentitiesAsync(Dictionary<string, HttpClient> clients, Dictionary<string, string> machines, string revision)
     {
         foreach (var (region, client) in clients)
         {
@@ -307,7 +333,7 @@ public sealed class Cluster : IAsyncDisposable
             if (served != region || machine != machines[region] || built != revision)
             {
                 throw new InvalidOperationException(
-                    $"{region}'s machine {machines[region]} must run {revision}; /healthz answered region {served}, machine {machine}, revision {built}");
+                    $"{region}'s machine {machines[region]} must run {revision}; /healthz answered region {served ?? "(none)"}, machine {machine ?? "(none)"}, revision {built ?? "(none)"}");
             }
         }
 

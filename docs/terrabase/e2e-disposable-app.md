@@ -9,7 +9,7 @@ faults something is listed with the approval it needs.
 | Requirement | How | Counts as actual-region proof |
 | --- | --- | --- |
 | All six directed edges (SJC→GRU, SJC→FRA, GRU→SJC, GRU→FRA, FRA→SJC, FRA→GRU) | `ThreeRegionE2ETests.Write_in_one_region_is_readable_in_the_other_two`, six cases | yes: each edge's writer and reader are named `region/machine@revision` in the run's latency lines |
-| Exact machine, region and commit per edge | `TERRABASE_E2E_FLY_REVISION=<sha>`: every request carries `fly-force-instance-id` (Fly routes to that machine or fails, never to another), and every answer must carry the expected `X-TerraBase-Machine` and `X-TerraBase-Region` (`MachinePin`); before any write each machine's `/healthz` must report that machine, region and revision | yes |
+| Exact machine, region and commit per edge | `TERRABASE_E2E_FLY_REVISION=<sha>` (pinned mode): every request carries `fly-force-instance-id`, and every answer must carry the expected `X-TerraBase-Machine` and `X-TerraBase-Region` (`MachinePin`), so an answer from any other machine fails the request. Before any write and again when the run ends, each machine's `/healthz` must report that machine, region and revision. Fly documents that a forced instance has no fallback; that is recorded as unverified until the first disposable run observes it, and `MachinePin` does not rely on it | yes |
 | Concurrent writes, convergence, counts and checksums | the rest of `ThreeRegionE2ETests` and `LatticeE2ETests` (concurrent fields, increments, set adds, bursts, 3,000 documents with per-region counts and digests) | yes |
 | Crash and restart | `flyctl machine kill <id>` (SIGKILL, a crash) and `flyctl machine restart <id>` (a clean restart) of one region's machine while the others write, then convergence and per-region digests | yes |
 | Partition and rejoin | see "Partition" below: a real network partition between two regions' machines, applied inside those machines | yes, once the mechanism's approval is given; a local-process partition is supporting evidence only and is not reported as this |
@@ -17,6 +17,14 @@ faults something is listed with the approval it needs.
 | Backup (A7YES) | see "Backup" below | yes |
 
 Aliases (`api.`, `<region>.api.terrascale.tech`) are not used: an answer they route elsewhere proves nothing.
+
+## Target (refused before any flyctl call or request)
+
+Pinned mode needs `TERRABASE_E2E_FLY_APP=<disposable app>`; it has no default. The harness (`DisposableTarget`) refuses,
+before it runs flyctl or sends a request: a missing app; `ts-terrabase`, `ts-auth`, `ts-dashboard` and any `ts-pr-*`
+preview app; and a `TERRABASE_E2E_FLY_URL` other than `https://<app>.fly.dev/` (so `api.terrascale.tech` and the regional
+aliases are refused too). `DisposableTargetTests` holds these negative controls. Run labels name the mode: `local:<region>`,
+`fly-unpinned:<region>` (the production e2e project's own collection, region-pinned only; never acceptance evidence and never machine faults) and `fly-pinned:<region>/<machine>@<revision>`.
 
 ## Gates before any cloud start
 
@@ -109,7 +117,10 @@ Qualification needs both, reported separately:
    injected backup stall). Each either restores exactly the writes acknowledged before it or answers a typed refusal
    naming why. Any partial result fails.
 
-A run in which every cut is refused is **not** green. Test bucket only.
+A run in which every cut is refused is **not** green. `BackupQualification.Failures` enforces these rules on the run's
+frozen plan and outcomes: no supported cut in the plan, a supported cut that refuses, any restore that differs from the
+acknowledged writes (count, digest, a version, source database or regions), an untyped answer, and a missing, repeated or
+unplanned cut each fail the run (`BackupQualificationTests`). Test bucket only.
 
 ## Teardown (scoped, confirmed per step)
 
