@@ -41,7 +41,9 @@ public sealed class BackupRequiredTests
     }
 
     [Test]
-    public async Task Outside_development_a_node_without_the_tigris_bucket_and_master_key_refuses_to_start()
+    [Arguments(false)]
+    [Arguments(true)]
+    public async Task Outside_development_a_node_without_the_tigris_bucket_and_master_key_refuses_to_start(bool unrelatedAwsVariables)
     {
         var directory = Directory.CreateTempSubdirectory("terrabase-backup-required-").FullName;
         try
@@ -53,6 +55,13 @@ public sealed class BackupRequiredTests
             foreach (var name in new[] { "AWS_ENDPOINT_URL_S3", "AWS_REGION", "BUCKET_NAME", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "TERRABASE_MASTER_KEY" })
             {
                 start.Environment.Remove(name);
+            }
+
+            if (unrelatedAwsVariables)
+            {
+                // Other tooling's AWS variables are not an attached bucket: still "no backup", not a partial backup setting.
+                start.Environment["AWS_REGION"] = "us-east-1";
+                start.Environment["AWS_ACCESS_KEY_ID"] = "unrelated";
             }
 
             start.ArgumentList.Add(Path.Combine(AppContext.BaseDirectory, typeof(Program).Assembly.GetName().Name + ".dll"));
@@ -73,6 +82,7 @@ public sealed class BackupRequiredTests
                 await Assert.That(await output).IsEmpty();
                 await Assert.That(await error).Contains("AWS_ENDPOINT_URL_S3");
                 await Assert.That(await error).Contains("TERRABASE_MASTER_KEY");
+                await Assert.That(await error).DoesNotContain("must be set together");
                 await Assert.That(Directory.EnumerateFileSystemEntries(directory)).IsEmpty();
             }
             finally

@@ -189,11 +189,12 @@ public sealed record TerraBaseOptions
             }
         }
 
-        foreach (var (variable, key) in BackupSettings.TigrisVariables)
+        // Only the whole set Fly sets for an attached bucket: a lone AWS_REGION from unrelated tooling is not a backup bucket.
+        if (BackupSettings.TigrisVariables.All(variable => !string.IsNullOrEmpty(Environment.GetEnvironmentVariable(variable.Variable))))
         {
-            if (Environment.GetEnvironmentVariable(variable) is { Length: > 0 } value)
+            foreach (var (variable, key) in BackupSettings.TigrisVariables)
             {
-                values[key] = value;
+                values[key] = Environment.GetEnvironmentVariable(variable)!;
             }
         }
 
