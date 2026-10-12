@@ -27,6 +27,13 @@ public static class DashboardMcp
                 }
             }))
             .WithTools<DashboardMcpTools>()
+            .WithTools<TerraScale.Dashboard.Features.Databases.DatabaseMcpTools>()
+            .WithTools<TerraScale.Dashboard.Features.Data.DataMcpTools>()
+            .WithTools<TerraScale.Dashboard.Features.ApiKeys.ApiKeyMcpTools>()
+            .WithTools<TerraScale.Dashboard.Features.Backups.BackupMcpTools>()
+            .WithTools<TerraScale.Dashboard.Features.Home.HomeMcpTools>()
+            .WithTools<TerraScale.Dashboard.Features.Notifications.NotificationMcpTools>()
+            .WithTools<TerraScale.Dashboard.Features.Profile.ProfileMcpTools>()
             .WithTools<TerraScale.Dashboard.Features.Usage.UsageMcpTools>()
             .WithTools<TerraScale.Dashboard.Features.Settings.SettingsMcpTools>()
             .WithTools<TerraScale.Dashboard.Features.Billing.BillingMcpTools>()
@@ -65,7 +72,7 @@ public static class DashboardMcp
 
     internal static AccountContext Scope(HttpContext? http, string? organizationId, string? projectId)
     {
-        var context = http?.Items[ContextKey] as AccountContext ?? throw new AccountAccessException("Authentication is required.", 401);
+        var context = McpScope.Account(http);
         var organization = string.IsNullOrEmpty(organizationId) ? context.Organization : context.Organizations.SingleOrDefault(item => item.Id == organizationId);
         if (organization is null || organization.RoleFor(context.UserId).Length == 0) throw new AccountAccessException("Organization is unavailable.", 404);
         var project = string.IsNullOrEmpty(projectId)

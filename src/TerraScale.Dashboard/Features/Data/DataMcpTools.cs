@@ -3,134 +3,16 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using ModelContextProtocol.Server;
 using TerraScale.Dashboard.Features.Accounts;
-using TerraScale.Dashboard.Features.ApiKeys;
-using TerraScale.Dashboard.Features.Backups;
-using TerraScale.Dashboard.Features.Data;
 using TerraScale.Dashboard.Features.Databases;
+using TerraScale.Dashboard.Platform.Mcp;
 using TerraScale.DotNet.TerraBase;
+using static TerraScale.Dashboard.Platform.Mcp.McpScope;
 
-namespace TerraScale.Dashboard.Platform.Mcp;
+namespace TerraScale.Dashboard.Features.Data;
 
-public record McpDatabase(string Id, string Name, string Status, string Region, IReadOnlyList<string> Placement, DateTimeOffset CreatedAt);
-public sealed record McpDatabaseList(IReadOnlyList<McpDatabase> Databases);
-public sealed record McpDatabaseDetail(string Id, string Name, string Status, string Region, IReadOnlyList<string> Placement, DateTimeOffset CreatedAt,
-    string Endpoint, IReadOnlyList<string> Regions,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? Collections,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? Documents,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? Bytes,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Unavailable, [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? BackupsEnabled, bool CanManage, bool CanBranch);
-public sealed record McpDeleted(bool Deleted);
-public sealed record McpCollectionList(IReadOnlyList<string> Collections);
-public sealed record McpDocument(string Id, JsonElement Value, [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Version = null);
-public sealed record McpDocumentList(IReadOnlyList<McpDocument> Documents);
-public sealed record McpDocumentWrite(string Id, string Operation);
-public sealed record McpHistoryVersion(string Revision, bool Deleted, [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] JsonElement? Value);
-public sealed record McpDocumentHistory(IReadOnlyList<McpHistoryVersion> Versions);
-public sealed record McpCollectionSchema(string Collection, TerraBaseCollectionSchema Schema);
-public sealed record McpSchemaApplied(string Collection, string Status);
-public sealed record McpSqlRows(IReadOnlyList<DatabaseSqlRow> Rows);
-public sealed record McpSqlResponse(McpSqlRows Result);
-public sealed record McpIndex(string Field, string State);
-public sealed record McpIndexResponse(string Collection, IReadOnlyList<McpIndex> Indexes);
-public sealed record McpIndexCreated(string Collection, string Field, string Status);
-public sealed record McpRecommendation(string Id, string Collection, IReadOnlyList<string> Fields, string Reason, string State);
-public sealed record McpRecommendations(IReadOnlyList<McpRecommendation> Recommendations);
-public sealed record McpRecommendationApplied(string RecommendationId, string DatabaseId, string Collection, string Status);
-public sealed record McpMigration(string State, int Completed, int Total, int Percent, string Watermark);
-public sealed record McpIndexMigration([property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] McpMigration? Migration);
-public sealed record McpSavedQuery(string Id, string Name, string Sql, DateTimeOffset CreatedAt);
-public sealed record McpSavedQueries(IReadOnlyList<McpSavedQuery> Queries);
-public sealed record McpCredentialList(IReadOnlyList<ProjectCredentialMetadata> Credentials);
-public sealed record McpCredentialRevoked(string KeyId, bool Revoked);
-
-public sealed partial class DashboardMcpTools
+[McpServerToolType]
+public sealed class DataMcpTools(IHttpContextAccessor http, DataService data, SavedQueryService saved)
 {
-    [McpServerTool(Name = "list_databases", Title = "List databases", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("List the databases in a project with their status and region.")]
-    public Task<McpDatabaseList> ListDatabases(string? organizationId = null, string? projectId = null)
-    {
-        var context = Scope(organizationId, projectId);
-        DatabaseService.Scope(context);
-        return Task.FromResult(new McpDatabaseList(context.Project!.Databases.Values.OrderBy(db => db.Name, StringComparer.Ordinal).Select(DatabaseOutput).ToArray()));
-    }
-
-    [McpServerTool(Name = "get_database", Title = "Get database", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Show one database's status, regions, storage totals, and backup state.")]
-    public async Task<McpDatabaseDetail> GetDatabase(string databaseId, string? organizationId = null, string? projectId = null)
-    {
-        var context = Scope(organizationId, projectId);
-        var db = DatabaseService.Database(context, databaseId);
-        var placement = await databases.PlacementAsync(DatabaseService.Regions(db), Cancellation);
-        IReadOnlyList<CollectionStats>? contents = null;
-        string? unavailable = null;
-        try
-        {
-            var reported = await backend.CollectionsAsync(DatabaseService.Scope(context), await databases.HomeAsync(context, db, Cancellation), db.Id, Cancellation);
-            DatabaseService.ValidateContents(reported);
-            contents = reported;
-        }
-        catch (Exception error) when ((DatabaseEndpoints.KnownFailure(error) || error is HttpRequestException or JsonException or OverflowException or OperationCanceledException) &&
-            (error is not OperationCanceledException || !Cancellation.IsCancellationRequested))
-        { unavailable = "Database storage measurements are unavailable."; }
-        bool? backupsEnabled = null;
-        try
-        {
-            var listing = await backups.ListAsync(context, db.Id, Cancellation);
-            if (listing.Policy is { } policy) backupsEnabled = !policy.Disabled && policy.FullBackupCron.Length > 0;
-            else unavailable = unavailable is null ? "Backup scheduling measurements are unavailable." : unavailable + " Backup scheduling measurements are unavailable.";
-        }
-        catch (Exception error) when (BackupEndpoints.KnownFailure(error) &&
-            (error is not OperationCanceledException || !Cancellation.IsCancellationRequested))
-        { unavailable = unavailable is null ? "Backup measurements are unavailable." : unavailable + " Backup measurements are unavailable."; }
-        return new(db.Id, db.Name, db.Status, db.Region, DatabaseService.Regions(db), db.CreatedAt, db.Endpoint,
-            placement.Select(region => DatabasesPage.RegionDisplay(region.Code)).ToArray(), contents?.Count, contents?.Sum(item => item.Documents), contents?.Sum(item => item.Bytes),
-            unavailable, backupsEnabled, context.CanManage, db.Status == "ready" && context.CanManage && context.Organization!.CanProvision(context.UserId));
-    }
-
-    [McpServerTool(Name = "create_database", Title = "Create database", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Provision a new database in a project. Requires an owner or admin role and a plan with database capacity.")]
-    public async Task<McpDatabase> CreateDatabase(string name, string? region = null, string[]? regions = null, string? organizationId = null, string? projectId = null)
-    {
-        var context = Scope(organizationId, projectId);
-        var placement = regions is { Length: > 0 } ? regions : [string.IsNullOrEmpty(region) ? context.Project!.Region : region];
-        return DatabaseOutput(await databases.CreateAsync(context, name, placement, Cancellation));
-    }
-
-    [McpServerTool(Name = "branch_database", Title = "Branch database", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Create a new database that copies a ready database's documents, schemas, and indexes.")]
-    public async Task<McpDatabase> BranchDatabase(string databaseId, string name = "", string? organizationId = null, string? projectId = null) =>
-        DatabaseOutput(await databases.BranchAsync(Scope(organizationId, projectId), databaseId, name, Cancellation));
-
-    [McpServerTool(Name = "set_database_regions", Title = "Set database regions", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Choose where a database lives: its home region alone, or with replica regions that replicate it. The home region never changes. Requires an owner or admin role.")]
-    public async Task<McpDatabase> SetRegions(string databaseId, string[] regions, string? organizationId = null, string? projectId = null)
-    {
-        var context = Scope(organizationId, projectId);
-        await databases.SetRegionsAsync(context, databaseId, regions, Cancellation);
-        var fresh = await accounts.GetContextAsync(context.Session, Cancellation);
-        var db = fresh.Organizations.First(org => org.Id == context.Organization!.Id).Projects[context.Project!.Id].Databases[databaseId];
-        return DatabaseOutput(db);
-    }
-
-    [McpServerTool(Name = "delete_database", Title = "Delete database", Destructive = true, OpenWorld = false, UseStructuredContent = true), Description("Permanently delete a database and all of its data. Requires confirmName to equal the database name.")]
-    public async Task<McpDeleted> DeleteDatabase(string databaseId, string confirmName = "", string? organizationId = null, string? projectId = null, string? confirmation = null)
-    {
-        await databases.DeleteAsync(Scope(organizationId, projectId), databaseId, Alias(confirmName, confirmation, "confirmName"), Cancellation);
-        return new(true);
-    }
-
-    [McpServerTool(Name = "list_backups", Title = "List backups", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("List a database's backups and its backup policy.")]
-    public Task<BackupListing> ListBackups(string databaseId, string? organizationId = null, string? projectId = null) =>
-        backups.ListAsync(Scope(organizationId, projectId), databaseId, Cancellation);
-
-    [McpServerTool(Name = "create_backup", Title = "Create backup", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Take an on-demand backup of a database's documents, schemas, and indexes. Requires an owner or admin role.")]
-    public Task<BackupView> CreateBackup(string databaseId, string? organizationId = null, string? projectId = null) =>
-        backups.CreateAsync(Scope(organizationId, projectId), databaseId, Cancellation);
-
-    [McpServerTool(Name = "set_backup_policy", Title = "Set backup policy", Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Save a database's full-backup schedule and retention. Incremental schedules are unavailable. Requires an owner or admin role.")]
-    public Task<BackupPolicyView> SetBackupPolicy(string databaseId, string fullBackupCron, string incrementalBackupCron, int retentionDays, bool disabled = false,
-        string? organizationId = null, string? projectId = null) =>
-        backups.SetPolicyAsync(Scope(organizationId, projectId), databaseId, fullBackupCron, incrementalBackupCron, retentionDays, disabled, Cancellation);
-
-    [McpServerTool(Name = "restore_backup", Title = "Restore backup", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Restore a database backup into a new database; the source database is unchanged. Requires an owner or admin role and provisioning rights.")]
-    public Task<BackupRestoreResult> RestoreBackup(string databaseId, string name = "", string backupId = "", string? organizationId = null, string? projectId = null) =>
-        backups.RestoreAsync(Scope(organizationId, projectId), databaseId, backupId, name, Cancellation);
-
     [McpServerTool(Name = "list_collections", Title = "List collections", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("List the collection names in a database.")]
     public async Task<McpCollectionList> Collections(string databaseId, string? organizationId = null, string? projectId = null) =>
         new((await data.CollectionsAsync(Scope(organizationId, projectId), databaseId, Cancellation)).Select(collection => collection.Name).ToArray());
@@ -263,50 +145,11 @@ public sealed partial class DashboardMcpTools
         return new(true);
     }
 
-    [McpServerTool(Name = "list_api_keys", Title = "List API keys", ReadOnly = true, Destructive = false, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("List a project's API keys and machine-to-machine (M2M) clients without their secrets.")]
-    public async Task<McpCredentialList> ListApiKeys(string kind = "", string status = "", string databaseId = "", string search = "", string? organizationId = null, string? projectId = null)
-    {
-        if (kind is not ("" or "api-key" or "m2m")) throw new AccountAccessException("Kind must be api-key or m2m.", 422);
-        if (status is not ("" or "active" or "inactive")) throw new AccountAccessException("Status must be active or inactive.", 422);
-        var context = Scope(organizationId, projectId);
-        if (databaseId.Length > 0) DatabaseService.Database(context, databaseId);
-        search = search.Trim();
-        var list = await keys.ListAsync(context, Cancellation);
-        return new(list.Where(key => kind != "m2m" && status != "inactive" && (databaseId.Length == 0 || databaseId == key.DatabaseId)
-            && (search.Length == 0 || (key.Name + " tb_").Contains(search, StringComparison.OrdinalIgnoreCase))).Select(ApiKeyService.CredentialMetadata).ToArray());
-    }
+    private AccountContext Scope(string? organizationId, string? projectId) => DashboardMcp.Scope(http.HttpContext, organizationId, projectId);
+    private CancellationToken Cancellation => http.HttpContext?.RequestAborted ?? default;
 
-    [McpServerTool(Name = "create_api_key", Title = "Create API key", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Issue a project API key for the TerraScale SDKs. Returns the secret once; store it securely. Requires an owner or admin role.")]
-    public Task<ProjectApiKeySecret> CreateApiKey(string name, string[] scopes, string databaseId = "", string? organizationId = null, string? projectId = null) =>
-        CreateCredentialAsync(Scope(organizationId, projectId), "api-key", name, scopes, databaseId);
-
-    [McpServerTool(Name = "create_m2m_client", Title = "Create M2M client", Destructive = false, OpenWorld = false, UseStructuredContent = true), Description("Issue a machine-to-machine client credential for a project. Requires an owner or admin role and a producer M2M contract.")]
-    public Task<ProjectApiKeySecret> CreateM2mClient(string name, string[] scopes, string databaseId = "", string? organizationId = null, string? projectId = null) =>
-        CreateCredentialAsync(Scope(organizationId, projectId), "m2m", name, scopes, databaseId);
-
-    [McpServerTool(Name = "rotate_api_key", Title = "Rotate API key", Destructive = true, OpenWorld = false, UseStructuredContent = true), Description("Replace an API key's secret. Requires an owner or admin role and a producer rotation contract.")]
-    public async Task<ProjectApiKeySecret> RotateApiKey(string keyId, string? organizationId = null, string? projectId = null)
-    {
-        var context = Scope(organizationId, projectId);
-        DemandManagement(context);
-        if (!(await keys.ListAsync(context, Cancellation)).Any(key => key.Id == keyId)) throw new AccountAccessException("Credential is unavailable.", 404);
-        throw new AccountAccessException("The data plane does not expose credential rotation.", 503);
-    }
-
-    [McpServerTool(Name = "revoke_api_key", Title = "Revoke API key", Destructive = true, OpenWorld = false, Idempotent = true, UseStructuredContent = true), Description("Permanently revoke an API key or M2M client so its secret no longer authenticates.")]
-    public async Task<McpCredentialRevoked> RevokeApiKey(string keyId, string? organizationId = null, string? projectId = null)
-    {
-        await keys.RevokeAsync(Scope(organizationId, projectId), keyId, Cancellation);
-        return new(keyId, true);
-    }
-
-    private static McpDatabase DatabaseOutput(DatabaseRecord db) => new(db.Id, db.Name, db.Status, db.Region, DatabaseService.Regions(db), db.CreatedAt);
+    private static string RequiredVersion(string version) => string.IsNullOrWhiteSpace(version) ? throw new AccountAccessException("A document version is required.", 422) : version;
     private static McpSavedQuery SavedQueryOutput(SavedQuery query) => new(query.Id, query.Name, query.Sql, query.CreatedAt);
-    private async Task<ProjectApiKeySecret> CreateCredentialAsync(AccountContext context, string kind, string name, string[] scopes, string databaseId)
-    {
-        var result = await keys.CreateAsync(context, kind, name, databaseId, scopes, Cancellation);
-        return new(ApiKeyService.Metadata(result.Key), result.Secret);
-    }
     private async Task<McpDocumentWrite> WriteDocumentAsync(AccountContext context, string databaseId, string collection, string operation, string id, JsonElement body, string? version)
     {
         if (!context.CanWrite) throw new AccountAccessException("Write access is required.");
@@ -330,15 +173,27 @@ public sealed partial class DashboardMcpTools
         if (body.ValueKind != JsonValueKind.Object) throw new AccountAccessException("Document must be a JSON object.", 422);
         return body;
     }
-    private static string Alias(string primary, string? alias, string name, bool required = true)
-    {
-        if (primary.Length > 0 && !string.IsNullOrEmpty(alias) && primary != alias) throw new AccountAccessException("Conflicting " + name + " values were provided.", 422);
-        var result = primary.Length > 0 ? primary : alias ?? "";
-        if (required && result.Length == 0) throw new AccountAccessException(name + " is required.", 422);
-        return result;
-    }
     private static void ValidateCollection(AccountContext context, string databaseId, string collection)
     { DatabaseService.Database(context, databaseId); DataService.ValidCollection(collection); }
-    private static void DemandManagement(AccountContext context)
-    { if (!context.CanManage) throw new AccountAccessException("Organization management access is required."); }
 }
+
+public sealed record McpCollectionList(IReadOnlyList<string> Collections);
+public sealed record McpDocument(string Id, JsonElement Value, [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Version = null);
+public sealed record McpDocumentList(IReadOnlyList<McpDocument> Documents);
+public sealed record McpDocumentWrite(string Id, string Operation);
+public sealed record McpHistoryVersion(string Revision, bool Deleted, [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] JsonElement? Value);
+public sealed record McpDocumentHistory(IReadOnlyList<McpHistoryVersion> Versions);
+public sealed record McpCollectionSchema(string Collection, TerraBaseCollectionSchema Schema);
+public sealed record McpSchemaApplied(string Collection, string Status);
+public sealed record McpSqlRows(IReadOnlyList<DatabaseSqlRow> Rows);
+public sealed record McpSqlResponse(McpSqlRows Result);
+public sealed record McpIndex(string Field, string State);
+public sealed record McpIndexResponse(string Collection, IReadOnlyList<McpIndex> Indexes);
+public sealed record McpIndexCreated(string Collection, string Field, string Status);
+public sealed record McpRecommendation(string Id, string Collection, IReadOnlyList<string> Fields, string Reason, string State);
+public sealed record McpRecommendations(IReadOnlyList<McpRecommendation> Recommendations);
+public sealed record McpRecommendationApplied(string RecommendationId, string DatabaseId, string Collection, string Status);
+public sealed record McpMigration(string State, int Completed, int Total, int Percent, string Watermark);
+public sealed record McpIndexMigration([property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] McpMigration? Migration);
+public sealed record McpSavedQuery(string Id, string Name, string Sql, DateTimeOffset CreatedAt);
+public sealed record McpSavedQueries(IReadOnlyList<McpSavedQuery> Queries);

@@ -1,0 +1,56 @@
+using System.ComponentModel;
+using ModelContextProtocol.Server;
+using TerraScale.Dashboard.Features.Accounts;
+using TerraScale.Dashboard.Platform.Mcp;
+
+namespace TerraScale.Dashboard.Features.Profile;
+
+[McpServerToolType]
+public sealed class ProfileMcpTools(IHttpContextAccessor http, AccountService accounts, AccessTokens tokens)
+{
+    [McpServerTool(Name = "get_profile", ReadOnly = true, UseStructuredContent = true, Destructive = false, OpenWorld = false, Idempotent = true), Description("Read your profile and interface language.")]
+    public async Task<DashboardMcpProfile> Profile(string? organizationId = null, string? projectId = null)
+    {
+        var current = Account();
+        var context = current.Organization is null && string.IsNullOrEmpty(organizationId) && string.IsNullOrEmpty(projectId)
+            ? await accounts.GetContextAsync(current.Session, Cancellation)
+            : await AccountScope.RefreshAsync(accounts, Scope(organizationId, projectId), Cancellation);
+        var permissions = new List<string>();
+        if (context.Project is not null)
+        {
+            permissions.Add("Access selected project");
+            if (context.CanWrite) permissions.Add("Write selected project data");
+        }
+        if (context.CanManage) permissions.Add("Manage organization resources");
+        if (context.Organization?.CanProvision(context.UserId) == true) permissions.Add("Provision organization resources");
+        return new(context.UserId, context.Account.Id, context.Account.Name, context.Account.Email, context.Account.Phone,
+            context.Account.Locale, context.Account.ActiveOrganizationId, context.Account.ActiveProjectId,
+            context.Organization?.Id ?? "", context.Project?.Id ?? "", context.Organization?.Name ?? "", context.Role,
+            permissions, null, null, await tokens.ListAsync(context, Cancellation));
+    }
+
+    [McpServerTool(Name = "update_profile", UseStructuredContent = true, Idempotent = true, Destructive = false, OpenWorld = false), Description("Update your display name and optional phone number.")]
+    public async Task<DashboardMcpSaved> UpdateProfile(string name = "", string? phone = null)
+    {
+        await ProfileChanges.SaveAsync(accounts, Account().Session, name, phone, Cancellation);
+        return new(true);
+    }
+
+    [McpServerTool(Name = "set_language", UseStructuredContent = true, Idempotent = true, Destructive = false, OpenWorld = false), Description("Set your interface language to en or pt-BR.")]
+    public async Task<DashboardMcpSaved> Language(string locale)
+    {
+        if (locale is not ("en" or "pt-BR")) throw new AccountAccessException("Choose an available language.", 422);
+        await accounts.UpdateAccountAsync(Account().Session, account => account.Locale = locale, Cancellation);
+        return new(true);
+    }
+
+    [McpServerTool(Name = "list_access_tokens", ReadOnly = true, UseStructuredContent = true, Destructive = false, OpenWorld = false, Idempotent = true), Description("List live personal access token metadata without secrets.")]
+    public async Task<DashboardMcpAccessTokens> ListAccessTokens() => new(await tokens.ListAsync(Account(), Cancellation));
+
+    [McpServerTool(Name = "revoke_access_token", UseStructuredContent = true, Destructive = true, OpenWorld = false), Description("Revoke one of your personal access tokens immediately.")]
+    public async Task<DashboardMcpRevoked> RevokeAccessToken(string tokenId) { await tokens.RevokeAsync(Account(), tokenId, Cancellation); return new(true); }
+
+    private AccountContext Account() => McpScope.Account(http.HttpContext);
+    private AccountContext Scope(string? organizationId, string? projectId) => DashboardMcp.Scope(http.HttpContext, organizationId, projectId);
+    private CancellationToken Cancellation => http.HttpContext?.RequestAborted ?? default;
+}
