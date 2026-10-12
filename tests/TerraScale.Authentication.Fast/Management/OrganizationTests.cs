@@ -24,7 +24,7 @@ public sealed class OrganizationTests(TerraBaseFixture fixture)
     {
         await using var oidc = await OidcHarness.StartAsync(fixture, values =>
         {
-            values["access-token-audiences"] = "https://gru.api.terrascale.tech";
+            values["access-token-audiences"] = "https://api.terrascale.tech";
             values["service-clients"] = $"{ServiceId}:{ServiceSecret}";
         });
         var (_, _, tokens) = await oidc.SignInAndRedeemAsync("alice@example.test");

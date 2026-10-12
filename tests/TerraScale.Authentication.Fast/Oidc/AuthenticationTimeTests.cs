@@ -22,7 +22,7 @@ public sealed class AuthenticationTimeTests(TerraBaseFixture fixture)
     private const string Email = "alice@example.test";
     private const string Password = "correct horse battery";
     private const string Ip = "203.0.113.7";
-    private const string Audience = "https://gru.api.terrascale.tech";
+    private const string Audience = "https://api.terrascale.tech";
     private const string ServiceId = "01M4EQ2FRJ8S8B29E8TQVWNW4K";
     private const string ServiceSecret = "service-test-secret-0123456789abcdefghij";
     private const string SignIn = $"/ui/{OidcIssuer.Slug}/sign-in";
