@@ -133,6 +133,22 @@ public sealed class Cluster : IAsyncDisposable
     /// </summary>
     public (Uri Address, string Token, string DataDirectory) Endpoint(string region) => RequireLocal().Endpoint(region);
 
+    /// <summary>Local nodes only: <paramref name="region"/>'s data directory, also while the node is stopped.</summary>
+    public string DataDirectory(string region) => RequireLocal().DataDirectory(region);
+
+    /// <summary>Local nodes only: the SQLite file of this cluster's database on <paramref name="region"/>'s node.</summary>
+    public string DatabaseFile(string region) => RequireLocal().DatabaseFile(region);
+
+    /// <summary>Local nodes only: the Prometheus listener of <paramref name="region"/>'s node.</summary>
+    public Uri MetricsAddress(string region) => RequireLocal().MetricsAddress(region);
+
+    /// <summary>
+    /// Local nodes only: sends the peer traffic between <paramref name="a"/> and <paramref name="b"/> through the link
+    /// <paramref name="link"/> builds for <paramref name="b"/>'s peer endpoint, and answers it. Peer streams (R4a) publish
+    /// the peer addresses this needs; until then it throws.
+    /// </summary>
+    public LossyLink RouteThrough(string a, string b, Func<IPEndPoint, LossyLink> link) => RequireLocal().RouteThrough(a, b, link);
+
     private Local RequireLocal() => _local ?? throw new NotSupportedException("this fault needs local nodes");
 
     private static string FlyApp => Environment.GetEnvironmentVariable("TERRABASE_E2E_FLY_APP") ?? "ts-terrabase";
@@ -261,15 +277,31 @@ public sealed class Cluster : IAsyncDisposable
         private readonly Dictionary<string, Node> _nodes = [with(StringComparer.Ordinal)];
         private readonly string _organization = EntityIds.New().ToString();
         private readonly string _project = EntityIds.New().ToString();
+        private readonly string _database = EntityIds.New().ToString();
 
-        // R2a-1 deleted the region bus the local nodes replicated over, and peer streams (R4a) are not in yet, so there is
-        // no link between local nodes to cut. R4a cuts its peer streams here; until then the partition scenarios fail
-        // loudly and are listed in Gaps.cs.
+        // R4a-2's peer streams connect the local nodes through the shared machine directory, but nothing flows on them until
+        // the CDC source (R3), so a cut could not be checked yet. The cut lands with R3 (hide each side from the other's view
+        // of the directory); until then the partition scenarios fail loudly and are listed in Gaps.cs.
         public void Partition(string a, string b) =>
-            throw new NotSupportedException($"no local link between {a} and {b} to cut: the local nodes have no cross-region transport until peer streams (R4a)");
+            throw new NotSupportedException($"no local link between {a} and {b} to cut: no checkable local link before the CDC source (R3) feeds the peer streams");
+
+        public string DataDirectory(string region) => _nodes[region].DataDirectory;
+
+        public string DatabaseFile(string region)
+        {
+            var files = Directory.EnumerateFiles(_nodes[region].DataDirectory, "*.db", SearchOption.AllDirectories)
+                .Where(path => path.Contains(_database, StringComparison.Ordinal)).ToList();
+            return files is [var file] ? file : throw new InvalidOperationException($"{region} holds {files.Count} files of database {_database}");
+        }
+
+        public Uri MetricsAddress(string region) =>
+            (_nodes[region].Api ?? throw new InvalidOperationException($"{region} is down")).Server.MetricsAddress;
+
+        public LossyLink RouteThrough(string a, string b, Func<IPEndPoint, LossyLink> link) =>
+            throw new NotSupportedException($"no local peer link between {a} and {b} to route through a lossy link: the lossy link lands with the CDC source (R3), when traffic on the peer path can be checked");
 
         public void Heal() =>
-            throw new NotSupportedException("no local link to heal: the local nodes have no cross-region transport until peer streams (R4a)");
+            throw new NotSupportedException("no local link to heal: no checkable local link before the CDC source (R3) feeds the peer streams");
 
         public string ProjectPath => $"/v1/projects/{_project}";
 
@@ -287,10 +319,9 @@ public sealed class Cluster : IAsyncDisposable
 
             // Each node keeps its own catalog until the catalog replicates (R10a): every node registers the database under
             // the same id, placed in every region, so the peer streams find it on each of them.
-            var database = EntityIds.New().ToString();
             foreach (var node in _nodes.Values)
             {
-                await CommitAsync(node.Api!, Registration(_organization, _project, database, "canary", [.. regions.Where(region => region != node.Region)]));
+                await CommitAsync(node.Api!, Registration(_organization, _project, _database, "canary", [.. regions.Where(region => region != node.Region)]));
             }
 
             foreach (var node in _nodes.Values)

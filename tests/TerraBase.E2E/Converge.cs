@@ -11,7 +11,10 @@ internal static class Converge
     private static readonly TimeSpan Interval = TimeSpan.FromMilliseconds(20);
 
     // Reads again until done accepts the latest read. Past the deadline it fails and names that read.
-    public static async Task<T> UntilAsync<T>(Func<Task<T>> read, Func<T, bool> done, string what)
+    public static Task<T> UntilAsync<T>(Func<Task<T>> read, Func<T, bool> done, string what) => UntilAsync(read, done, what, Deadline);
+
+    // The same with its own deadline: anti-entropy repairs within rounds of 60 s, not one replication delay.
+    public static async Task<T> UntilAsync<T>(Func<Task<T>> read, Func<T, bool> done, string what, TimeSpan deadline)
     {
         var clock = Stopwatch.StartNew();
         while (true)
@@ -22,9 +25,9 @@ internal static class Converge
                 return latest;
             }
 
-            if (clock.Elapsed > Deadline)
+            if (clock.Elapsed > deadline)
             {
-                throw new TimeoutException($"{what} did not converge within {Deadline.TotalSeconds:F0} s; last read: {(object?)latest ?? "nothing"}");
+                throw new TimeoutException($"{what} did not converge within {deadline.TotalSeconds:F0} s; last read: {(object?)latest ?? "nothing"}");
             }
 
             await Task.Delay(Interval);

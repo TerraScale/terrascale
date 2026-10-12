@@ -50,6 +50,20 @@ internal static class Gaps
         ["restart-mid-replication"] = Streams,
         ["ack-then-stop"] = Streams,
         ["restarted-sender-backlog"] = Streams,
+
+        // CrashAndStallE2ETests. Node processes and lossy links also need test hooks on the peer path (COVERAGE.md).
+        ["crash-replicated"] = Streams,
+        ["storage-stall"] = Streams,
+        ["lossy-link"] = Streams,
+
+        // RepairAndContractE2ETests.
+        ["anti-entropy-repair"] = "anti-entropy (R6) over peer streams fed by the CDC source (R3)",
+        ["restore-older-state"] = "refill and anti-entropy (R6) over peer streams fed by the CDC source (R3)",
+        ["unique-under-partition"] = Streams,
+        ["deleted-database-stays-deleted"] = "the catalog as a lattice database (R10a) and garbage collection (R7)",
+        ["replication-metrics"] = "replication metrics with the CDC source (R3): tail lag, and stream lags that move",
+        ["flow-control"] = "peer streams fed by the CDC source (R3) and the catalog as a lattice database (R10a)",
+        ["ddl-replication"] = Streams,
         ["backlog"] = Streams,
         ["skew-causal"] = Streams,
         ["skew-concurrent"] = Streams,

@@ -68,6 +68,13 @@ internal static class Docs
         return JsonNode.Parse(json.RootElement.GetProperty("document").GetRawText());
     }
 
+    // A JSON body read with GET, or null when the answer is 404.
+    public static async Task<JsonNode?> GetJsonAsync(HttpClient client, Uri uri, CancellationToken token = default)
+    {
+        using var response = await AdmittedAsync(() => client.GetAsync(uri, token));
+        return response.StatusCode == HttpStatusCode.NotFound ? null : await BodyAsync(response, token);
+    }
+
     public static async Task<HttpStatusCode> StatusAsync(HttpClient client, Uri uri, CancellationToken token = default)
     {
         using var response = await AdmittedAsync(() => client.GetAsync(uri, token));
