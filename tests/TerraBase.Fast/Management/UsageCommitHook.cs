@@ -132,7 +132,7 @@ internal sealed class UsageCommitHook(Func<string, string, ReadOnlyMemory<byte>,
     }
 
     private static bool IsUsage(string collection, string id, ReadOnlyMemory<byte> json) =>
-        collection.StartsWith("databases/", StringComparison.Ordinal) && collection.EndsWith("/usage", StringComparison.Ordinal) && id == "ops";
+        collection.StartsWith("databases/", StringComparison.Ordinal) && collection.EndsWith("/usage", StringComparison.Ordinal) && id.StartsWith("ops@", StringComparison.Ordinal);
 
     internal sealed class Gate(bool fail) : IDisposable
     {
