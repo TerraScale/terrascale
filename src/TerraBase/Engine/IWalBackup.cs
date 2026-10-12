@@ -8,7 +8,10 @@ namespace TerraBase.Engine;
 /// <see langword="false"/> when changes were lost since the previous call: the log has a hole, so its backup
 /// generation must end.
 /// </param>
-public readonly record struct WalRead(long Bytes, bool Continuous);
+/// <param name="Remaining">
+/// <see langword="true"/> when the read stopped at its byte budget and later commits wait for the next call.
+/// </param>
+public readonly record struct WalRead(long Bytes, bool Continuous, bool Remaining);
 
 /// <summary>A consistent snapshot and the log read before it was pinned.</summary>
 /// <param name="Read">Committed changes appended before the snapshot, including whether they remain continuous.</param>
@@ -22,12 +25,17 @@ public readonly record struct WalSnapshot(WalRead Read, DateTimeOffset At);
 /// </summary>
 public interface IWalTap : IAsyncDisposable
 {
-    /// <summary>Appends the changes committed since the previous call, or since the tap opened, to <paramref name="destination"/>.</summary>
+    /// <summary>
+    /// Appends the changes committed since the previous call, or since the tap opened, to <paramref name="destination"/>,
+    /// stopping at the first commit past a fixed byte budget, so a backlog takes several calls
+    /// (<see cref="WalRead.Remaining"/>). A call that throws has not moved the tap: the caller drops what it appended,
+    /// and the next call appends the same changes again (or reports a hole).
+    /// </summary>
     ValueTask<WalRead> ReadAsync(Stream destination, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Appends changes like <see cref="ReadAsync"/>, then writes a consistent copy of the file, exactly as of the last change
-    /// appended, to a new file at <paramref name="snapshotPath"/>. Changes appended later apply on top of it.
+    /// Appends every change committed so far, with no byte budget, then writes a consistent copy of the file, exactly as of
+    /// the last change appended, to a new file at <paramref name="snapshotPath"/>. Changes appended later apply on top of it.
     /// </summary>
     ValueTask<WalSnapshot> SnapshotAsync(Stream destination, string snapshotPath, CancellationToken cancellationToken);
 }

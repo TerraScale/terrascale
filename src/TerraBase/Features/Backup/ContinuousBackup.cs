@@ -43,10 +43,11 @@ public interface IContinuousBackup
 }
 
 /// <summary>
-/// Litestream-style continuous backup (<c>docs/backup.md</c>). Once a second each file's newly committed log frames are
-/// sealed and stored as one segment; each file starts a generation with a snapshot when this member starts shipping it,
-/// after a hole, and daily. Restoring a time takes the newest snapshot at or before it and its generation's segments up to
-/// it. Every member taps every file and checkpoints it; one ships it, chosen by <see cref="IShipperLeases"/>.
+/// Litestream-style continuous backup (<c>docs/backup.md</c>). Once a second each file's newly committed log (up to the
+/// tap's read budget) is sealed and stored as one segment; a segment whose upload failed is stored again, unchanged under
+/// the same key, before anything later. Each file starts a generation with a snapshot when this member starts shipping it,
+/// after a hole or dropped log, and daily. Restoring a time takes the newest snapshot at or before it and its generation's
+/// segments up to it. Every member taps every file and checkpoints it; one ships it, chosen by <see cref="IShipperLeases"/>.
 /// </summary>
 /// <remarks>
 /// ponytail: every start opens every database and stores a fresh snapshot of each; resume generations across restarts when
@@ -59,7 +60,8 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
     private static readonly TimeSpan SnapshotInterval = TimeSpan.FromDays(1);
     private static readonly TimeSpan ConfigurationTimeout = TimeSpan.FromSeconds(1);
 
-    // Log read but not stored, per file, before its generation is abandoned for a fresh snapshot (bounds scratch disk).
+    // Log read but not stored, per file, while its uploads fail, before its generation is dropped for a fresh snapshot
+    // (bounds scratch disk; a read adds at most the tap's budget and one transaction past it).
     private const long MaxPendingBytes = 256L * 1024 * 1024;
     private const int MaxJobs = 4;
     private const int MaxCustomerJobs = 2;
@@ -86,6 +88,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
     private readonly Counter<long> _uploaded;
     private readonly Counter<long> _failures;
     private readonly Counter<long> _holes;
+    private readonly Counter<long> _abandoned;
     private readonly Counter<long> _generations;
     private readonly Counter<long> _drills;
     private readonly Counter<long> _bucketSnapshots;
@@ -107,6 +110,8 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         _uploaded = meter.CreateCounter<long>("terrabase.backup.uploaded", "By", "Sealed backup bytes stored in the bucket, by kind (snapshot, segment).");
         _failures = meter.CreateCounter<long>("terrabase.backup.failures", description: "Backup passes of a file that failed.");
         _holes = meter.CreateCounter<long>("terrabase.backup.holes", description: "Logs found checkpointed or rewritten by someone else, each ending a generation.");
+        _abandoned = meter.CreateCounter<long>("terrabase.backup.abandoned",
+            description: "Generations ended by a failure with log read but not stored, by reason (backlog, read, destination).");
         _generations = meter.CreateCounter<long>("terrabase.backup.generations", description: "Generations started (each stores a snapshot).");
         _drills = meter.CreateCounter<long>("terrabase.backup.drills", description: "Restore drills, by result (passed, failed).");
         _bucketSnapshots = meter.CreateCounter<long>("terrabase.backup.bucket_snapshots", description: "Tigris snapshots of the backup bucket, by result (taken, deleted, failed).");
@@ -247,7 +252,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
                 catch (Exception error) when (!schedulingToken.IsCancellationRequested)
                 {
                     Failed(next, error);
-                    next.PendingBytes = next.Pending.Length;
+                    next.PendingBytes = next.Buffered;
                     continue;
                 }
 
@@ -554,7 +559,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
             if (!await HoldAsync(file, cancellationToken).ConfigureAwait(false))
             {
                 // Another member ships this file: read only to checkpoint it.
-                await file.Tap.ReadAsync(Stream.Null, cancellationToken).ConfigureAwait(false);
+                await DiscardAsync(file, cancellationToken).ConfigureAwait(false);
                 file.LastError = null;
                 return;
             }
@@ -581,21 +586,23 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
                 }
                 else
                 {
-                    await file.Tap.ReadAsync(Stream.Null, cancellationToken).ConfigureAwait(false);
+                    await DiscardAsync(file, cancellationToken).ConfigureAwait(false);
                 }
 
                 return;
             }
 
             WalRead read;
+            var appended = file.Pending.Length;
             try
             {
                 read = await file.Tap.ReadAsync(file.Pending, cancellationToken).ConfigureAwait(false);
             }
             catch
             {
-                // The tap may have moved past frames that are now only partly in Pending: start over from a snapshot.
-                Abandon(file);
+                // The tap did not move: drop the part this read appended, and a later pass reads the same changes again.
+                file.Pending.SetLength(appended);
+                file.BehindSince ??= _time.GetUtcNow();
                 throw;
             }
 
@@ -618,24 +625,35 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
                 file.BehindSince ??= now;
             }
 
-            if (file.Pending.Length > MaxPendingBytes)
+            file.Behind = read.Remaining;
+            if (!due)
             {
-                // The bucket has been unreachable too long: drop the frames and start over with a snapshot once it answers.
-                Abandon(file);
+                if (file.Buffered > MaxPendingBytes)
+                {
+                    // Uploads have failed too long: drop the log and start over with a snapshot once the bucket answers.
+                    Drop(file, "backlog");
+                }
+
                 return;
             }
 
-            if (due && file.Pending.Length > 0)
+            if (file.Buffered > 0)
             {
                 await UploadPendingAsync(file, cancellationToken).ConfigureAwait(false);
             }
 
-            if (due && now - file.LastSnapshot >= SnapshotInterval)
+            if (!file.Behind)
+            {
+                file.BehindSince = null;
+            }
+
+            // A snapshot reads what is left while it holds writers: never with a backlog.
+            if (!file.Behind && now - file.LastSnapshot >= SnapshotInterval)
             {
                 await SnapshotAsync(file, cancellationToken).ConfigureAwait(false);
             }
 
-            if (due && file.Generation is not null && now - file.RetainedAt >= RetentionInterval)
+            if (file.Generation is not null && now - file.RetainedAt >= RetentionInterval)
             {
                 try
                 {
@@ -648,10 +666,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
                 }
             }
 
-            if (due)
-            {
-                (file.LastError, file.Failures) = (null, 0);
-            }
+            (file.LastError, file.Failures) = (null, 0);
         }
         catch (Exception error) when (!cancellationToken.IsCancellationRequested)
         {
@@ -665,18 +680,12 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
                 Abandon(file);
             }
 
-            file.PendingBytes = file.Pending.Length;
+            file.PendingBytes = file.Buffered;
         }
     }
 
     private void Failed(ShippedFile file, Exception error)
     {
-        // A partial mirror acknowledgement must not be retried as an expanding, overlapping segment.
-        if (file.Target.Revision != BackupDestinationNames.Platform)
-        {
-            Abandon(file);
-        }
-
         if (error is ObjectDisposedException)
         {
             // The store closed under this read: its database was deleted or the engine stops. The job ends the file, so the
@@ -684,6 +693,12 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
             file.Removed = true;
             _logger.ZLogDebug($"Continuous backup of {file.Prefix:@File} stopped: its database closed while it was read; the next discovery reopens it if it exists");
             return;
+        }
+
+        // A customer destination starts over with a snapshot after any failure (BackupTargets' mirror), never a retry.
+        if (file.Target.Revision != BackupDestinationNames.Platform && file.Generation is not null)
+        {
+            Drop(file, "destination");
         }
 
         _failures.Add(1);
@@ -728,14 +743,18 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         try
         {
             file.BehindSince ??= _time.GetUtcNow();
-            file.Pending.SetLength(0);
+            file.Clear();
             var captured = await file.Tap.SnapshotAsync(Stream.Null, snapshot, cancellationToken).ConfigureAwait(false);
             var at = captured.At;
             var key = BackupLayout.Snapshot(file.Prefix, at, generation, 0);
             await StoreAsync(file, key, snapshot, "snapshot", cancellationToken).ConfigureAwait(false);
-            (file.Generation, file.Position, file.PendingStart, file.LastSnapshot, file.LastShipped, file.BehindSince) = (generation, 0, 0, at, at, null);
+            // What committed after the pin waits for the next read; until then lag counts from the pin.
+            (file.Generation, file.Position, file.PendingStart, file.LastSnapshot, file.LastShipped, file.BehindSince, file.Behind) =
+                (generation, 0, 0, at, at, at, false);
             AcknowledgePlatform(file, at);
             _generations.Add(1);
+            // The generation is stored: an earlier failure no longer stands (lag still shows what waits).
+            (file.LastError, file.Failures) = (null, 0);
             if (at - file.DrilledAt >= DrillInterval)
             {
                 await DrillAsync(file, new SnapshotKey(key, at, generation, 0), snapshot, cancellationToken).ConfigureAwait(false);
@@ -760,7 +779,16 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
             }
             catch
             {
-                Abandon(file);
+                // The tap may have moved past changes now only partly in Pending: this generation ends.
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    Abandon(file);
+                }
+                else
+                {
+                    Drop(file, "read");
+                }
+
                 throw;
             }
 
@@ -777,10 +805,11 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
             if (read.Bytes > 0)
             {
                 file.PendingAt = at;
-                file.BehindSince ??= at;
             }
 
-            if (file.Pending.Length > 0)
+            // What commits after the pin waits until this snapshot's upload and drill end; lag counts from the pin.
+            file.BehindSince ??= at;
+            if (file.Buffered > 0)
             {
                 await UploadPendingAsync(file, cancellationToken).ConfigureAwait(false);
             }
@@ -800,21 +829,58 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         }
     }
 
+    // A segment is sealed once. A PUT that failed, even one the bucket stored, is sent again with exactly those bytes under the
+    // same key before anything later is sealed; the log read meanwhile becomes the next segment, so no two segments overlap.
     private async Task UploadPendingAsync(ShippedFile file, CancellationToken cancellationToken)
     {
+        await PutUnstoredAsync(file, cancellationToken).ConfigureAwait(false);
+        if (file.Pending.Length == 0)
+        {
+            return;
+        }
+
+        var key = BackupLayout.Segment(file.Prefix, file.Generation!.Value, file.PendingStart, file.PendingAt);
         file.Pending.Position = 0;
+        FileStream sealedObject;
         try
         {
-            await StoreAsync(file, BackupLayout.Segment(file.Prefix, file.Generation!.Value, file.PendingStart, file.PendingAt), file.Pending, "segment",
-                cancellationToken).ConfigureAwait(false);
-            file.Pending.SetLength(0);
-            (file.PendingStart, file.LastShipped, file.BehindSince) = (file.Position, file.PendingAt, null);
-            AcknowledgePlatform(file, file.PendingAt);
+            sealedObject = await SealAsync(file, key, file.Pending, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
             file.Pending.Seek(0, SeekOrigin.End);
         }
+
+        // Nothing was sent under this key yet, so a failure up to here leaves the log to the next pass's segment.
+        file.Unstored = new(key, sealedObject, file.PendingAt);
+        file.Pending.SetLength(0);
+        file.PendingStart = file.Position;
+        await PutUnstoredAsync(file, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task PutUnstoredAsync(ShippedFile file, CancellationToken cancellationToken)
+    {
+        if (file.Unstored is not { } segment)
+        {
+            return;
+        }
+
+        await PutAsync(file, segment.Key, segment.Sealed, "segment", cancellationToken).ConfigureAwait(false);
+        file.Unstored = null;
+        await segment.Sealed.DisposeAsync().ConfigureAwait(false);
+        file.LastShipped = segment.At;
+        AcknowledgePlatform(file, segment.At);
+    }
+
+    // Reads what this member does not store, only to trim the change log: the whole backlog, not one read's budget.
+    private static async Task DiscardAsync(ShippedFile file, CancellationToken cancellationToken)
+    {
+        WalRead read;
+        do
+        {
+            read = await file.Tap.ReadAsync(Stream.Null, cancellationToken).ConfigureAwait(false);
+        }
+        while (read.Remaining);
     }
 
     private Task StoreAsync(ShippedFile file, string key, string path, string kind, CancellationToken cancellationToken) =>
@@ -823,10 +889,30 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
 
     private async Task StoreAsync(ShippedFile file, string key, Stream content, string kind, CancellationToken cancellationToken)
     {
+        await using var sealedObject = await SealAsync(file, key, content, cancellationToken).ConfigureAwait(false);
+        await PutAsync(file, key, sealedObject, kind, cancellationToken).ConfigureAwait(false);
+    }
+
+    // Seals content into a scratch file deleted when it closes.
+    private async Task<FileStream> SealAsync(ShippedFile file, string key, Stream content, CancellationToken cancellationToken)
+    {
         var (keyId, dataKey) = await file.Target.Keys.CurrentAsync(file.Scope, cancellationToken).ConfigureAwait(false);
-        await using var sealedObject = new FileStream(ScratchFile(".sealed"), FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None, 1 << 16,
+        var sealedObject = new FileStream(ScratchFile(".sealed"), FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None, 1 << 16,
             FileOptions.Asynchronous | FileOptions.DeleteOnClose);
-        await BackupObject.WriteAsync(content, sealedObject, key, keyId, dataKey, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await BackupObject.WriteAsync(content, sealedObject, key, keyId, dataKey, cancellationToken).ConfigureAwait(false);
+            return sealedObject;
+        }
+        catch
+        {
+            await sealedObject.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    private async Task PutAsync(ShippedFile file, string key, FileStream sealedObject, string kind, CancellationToken cancellationToken)
+    {
         sealedObject.Position = 0;
         await file.Target.Store.PutAsync(key, sealedObject, cancellationToken).ConfigureAwait(false);
         _uploaded.Add(sealedObject.Length, new KeyValuePair<string, object?>("kind", kind));
@@ -836,17 +922,30 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
     {
         _holes.Add(1);
         _logger.ZLogWarning($"The log of {file.Prefix:@File} has a hole; its backup starts a new generation");
+        file.BehindSince ??= _time.GetUtcNow();
+        Abandon(file);
+    }
+
+    // Ends the generation after a failure, dropping log read but not stored: until the next snapshot that history is in no
+    // backup, so it is logged and counted, and lag stays above zero until a new generation is stored.
+    private void Drop(ShippedFile file, string reason)
+    {
+        var bytes = file.Buffered;
+        _abandoned.Add(1, new KeyValuePair<string, object?>("reason", reason));
+        _logger.ZLogWarning($"Continuous backup of {file.Prefix:@File} dropped {bytes:@Bytes} bytes of log it had not stored ({reason:@Reason}); it starts a new generation");
+        file.BehindSince ??= _time.GetUtcNow();
         Abandon(file);
     }
 
     // 1 s after the first failure, doubling up to five minutes, like Litestream's sync backoff.
     private static TimeSpan Backoff(int failures) => TimeSpan.FromSeconds(Math.Min(300, Math.Pow(2, Math.Min(failures - 1, 9))));
 
+    // Ends the generation; on its own only where the file moves on on purpose (a new shipper or destination, shutdown).
     private static void Abandon(ShippedFile file)
     {
         file.PlatformProgress = null;
         file.Generation = null;
-        file.Pending.SetLength(0);
+        file.Clear();
     }
 
     // Publish generation and time together only after the fixed target acknowledges all its destinations.
@@ -886,6 +985,9 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
 
     private sealed record ShippingProgress(Ulid Generation, DateTimeOffset At);
 
+    /// <summary>A sealed segment not yet acknowledged: its key, its sealed bytes (a scratch file) and its time.</summary>
+    private sealed record Segment(string Key, FileStream Sealed, DateTimeOffset At);
+
     /// <summary>One shipped file. The scheduler owns admission fields; its single job owns shipping state.</summary>
     private sealed class ShippedFile(TenantContext? database, string prefix, string scope, IWalTap tap, FileStream pending, DateTimeOffset opened, BackupTarget target)
         : IAsyncDisposable
@@ -909,8 +1011,17 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         public string Scope { get; } = scope;
         public IWalTap Tap { get; } = tap;
 
-        /// <summary>Log bytes read and not yet stored, from <see cref="PendingStart"/>.</summary>
+        /// <summary>Log bytes read and not yet sealed, from <see cref="PendingStart"/>, after <see cref="Unstored"/>.</summary>
         public FileStream Pending { get; } = pending;
+
+        /// <summary>The sealed segment being stored: after a failure it is sent again, the same bytes under the same key.</summary>
+        public Segment? Unstored { get; set; }
+
+        /// <summary>Scratch bytes of log read and not yet stored, sealed or not.</summary>
+        public long Buffered => Pending.Length + (Unstored?.Sealed.Length ?? 0);
+
+        /// <summary>Whether the last read stopped at the tap's budget, leaving committed changes to read.</summary>
+        public bool Behind { get; set; }
 
         public Ulid? Generation { get; set; }
         public long Position { get; set; }
@@ -930,7 +1041,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
 
         public DateTimeOffset RetryAt { get; set; } = DateTimeOffset.MinValue;
 
-        /// <summary><see cref="Pending"/>'s length after the last pass, for status readers on other threads.</summary>
+        /// <summary><see cref="Buffered"/> after the last pass, for status readers on other threads.</summary>
         public long PendingBytes { get; set; }
 
         /// <summary>Maintenance: last retention pass, measured bucket size, plan retention and last restore drill.</summary>
@@ -946,6 +1057,14 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
 
         public DateTimeOffset DrilledAt { get; set; } = DateTimeOffset.MinValue;
 
+        /// <summary>Drops every log byte read and not stored.</summary>
+        public void Clear()
+        {
+            Unstored?.Sealed.Dispose();
+            Unstored = null;
+            Pending.SetLength(0);
+        }
+
         public async ValueTask DisposeAsync()
         {
             try
@@ -956,6 +1075,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
             {
                 try
                 {
+                    Clear();
                     await Pending.DisposeAsync().ConfigureAwait(false);
                 }
                 finally
