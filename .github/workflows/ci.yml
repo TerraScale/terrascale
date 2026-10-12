@@ -87,12 +87,17 @@ jobs:
               - scripts/auth/**
               # ts-auth's tests run against the TerraBase built from the same commit and check the SDK's routes on it.
               - src/TerraBase/**
+              - src/vendor/**
             terrabase:
               - *shared
               - terrabase.slnf
               - src/TerraBase*/**
               - tests/TerraBase*/**
               - scripts/terrabase/**
+              # The vendored Turso .NET driver TerraBase builds on, its tests and its update script.
+              - src/vendor/**
+              - tests/Turso.Data.Sqlite.Tests/**
+              - scripts/vendor/**
 
   libs:
     needs: changes

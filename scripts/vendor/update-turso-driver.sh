@@ -36,7 +36,8 @@ if [[ $mode == --commit ]]; then
 fi
 
 shopt -s nullglob
-for patch in "$vendor"/patches/*.patch; do
+patches=("$vendor"/patches/*.patch)
+for patch in "${patches[@]}"; do
   if ! git apply --3way --whitespace=nowarn --directory="$vendor" "$patch"; then
     echo "$patch does not apply to $tag: resolve the conflicts, then regenerate it (see UPSTREAM.md)" >&2
     exit 1
@@ -48,4 +49,4 @@ if [[ $mode == --commit ]]; then
   git diff --cached --quiet || git commit --quiet -m "vendor: TerraScale patches on Turso .NET driver $tag"
 fi
 git status --short -- "$vendor"
-echo "Turso .NET driver $tag ($commit) imported into $vendor with $(ls "$vendor"/patches/*.patch 2>/dev/null | wc -l) patches"
+echo "Turso .NET driver $tag ($commit) imported into $vendor with ${#patches[@]} patches"

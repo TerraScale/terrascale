@@ -1,0 +1,11 @@
+<Project>
+  <PropertyGroup>
+    <!-- Upstream packs Turso.Raw as Turso.Data.Native: a project of that id could not reference the package below. -->
+    <PackageId>$(MSBuildProjectName)</PackageId>
+  </PropertyGroup>
+
+  <!-- The prebuilt Rust core (libturso_sdk_kit) of the same release; it is not built here (UPSTREAM.md). -->
+  <ItemGroup Condition="'$(MSBuildProjectName)' == 'Turso.Raw'">
+    <PackageReference Include="Turso.Data.Native" />
+  </ItemGroup>
+</Project>
