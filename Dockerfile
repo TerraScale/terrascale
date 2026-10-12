@@ -81,6 +81,8 @@ FROM mcr.microsoft.com/dotnet/sdk:11.0 AS publish-terrabase
 ENV CI=true DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 NUGET_SCRATCH=/nuget-scratch
 WORKDIR /src/terrascale
 COPY . .
+# Shown by TerraBase's /healthz as revision.
+ARG TERRABASE_REVISION
 RUN --mount=type=cache,target=/root/.nuget/packages --mount=type=cache,target=/nuget-scratch,id=nuget-scratch \
     dotnet publish src/TerraBase --configuration Release --runtime linux-x64 --self-contained --output /out
 
