@@ -62,8 +62,11 @@ ts-dashboard is held by the user and is in neither phase.
 - **Finding in item 4:** T1's `8915e6d2` adds three path filters to the change-detection job (`src/vendor/**`,
   `tests/Turso.Data.Sqlite.Tests/**`, `scripts/vendor/**`). Without them, a change only under those paths does not run
   the terrabase jobs.
-- **Resolution in the combine:** main's version, so the filters are dropped. They are handed to the CI optimizer, who
-  owns CI files, as a known gap.
+- **Resolution in the combine (COS decision):** take main's `ci.yml` exactly, so `8915e6d2`'s three filters are
+  dropped.
+- **Required before the phase-1 merge:** the CI optimizer, who owns CI files, adds `src/vendor/**`,
+  `tests/Turso.Data.Sqlite.Tests/**` and `scripts/vendor/**` to the terrabase filter in its own PR based on main.
+  Until that lands, a vendor-only change could skip the terrabase tests, so phase 1 does not merge before it.
 - **Pre-push check:** every pushed head still runs the COS check (both `if: false && …` gates kept, no new workflow
   file).
 
