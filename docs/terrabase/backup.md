@@ -232,8 +232,19 @@ file at its own offset, so no part is held in memory. Every part uses the signin
 upload: a signed SHA-256 payload hash without `aws-chunked` encoding, and checksums only where S3 requires them. The
 multipart path has not yet run against Tigris itself, only against the in-memory S3 fake. Each request has the
 fifteen-minute request timeout. A failed or timed-out part is retried alone, up to
-three attempts (each attempt includes the SDK's own retries of transient errors); the parts already stored stay. After
-a part's last attempt fails, a failed completion or a cancellation, TerraBase aborts the upload (best effort, with its
+three attempts (each attempt includes the SDK's own retries of transient errors); the parts already stored stay.
+
+A completion answer alone does not count. Some S3-compatible services answer a failed completion with 200 and an error
+body (the AWS SDK in use turns that body into an error; a success answer that stored nothing would pass it), and an
+older object of the same length may already sit at the key. Each upload therefore starts with its own ULID as user
+metadata (`x-amz-meta-terrabase-upload`), which S3 copies to the completed object, and the upload counts only when a
+HEAD of the key then reports both that ULID and exactly the uploaded length. Missing or other evidence fails the upload,
+so the shipper never records an object the bucket does not hold. Tigris support for this evidence (user metadata kept
+through a multipart completion and returned by HEAD) is unverified until G1; if Tigris lacked it, large uploads would
+fail visibly, never succeed falsely.
+
+After a part's last attempt fails, a failed or unproven completion or a cancellation, TerraBase aborts the upload (best
+effort, with its
 own five-second deadline, logged when it fails) and the file's normal backoff applies. An upload whose abort fails is
 never visible as an object, but its parts hold bucket storage until the bucket's lifecycle rule removes them. Platform
 uploads have no deadline for the whole object; customer uploads keep the one in [Customer buckets](#customer-buckets-ts-635).

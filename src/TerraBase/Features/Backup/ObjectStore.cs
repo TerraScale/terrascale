@@ -62,6 +62,8 @@ internal sealed class S3ObjectStore : IObjectStore, IDisposable
     // Each attempt is one request under RequestTimeout, including the SDK's own retries of transient errors.
     private const int PartAttempts = 3;
     private static readonly TimeSpan AbortTimeout = TimeSpan.FromSeconds(5);
+    // User metadata naming the upload that created an object (x-amz-meta-terrabase-upload).
+    private const string UploadMetadata = "terrabase-upload";
 
     private readonly AmazonS3Client _s3;
     // Requests that read their response headers, with the reader. The client reads its response event twice per response
@@ -135,8 +137,11 @@ internal sealed class S3ObjectStore : IObjectStore, IDisposable
 
     private async Task PutPartsAsync(string key, SafeFileHandle file, long start, long length, int parts, CancellationToken cancellationToken)
     {
-        var upload = (await SafeAsync(_s3.InitiateMultipartUploadAsync(new InitiateMultipartUploadRequest { BucketName = _bucket, Key = key }, cancellationToken))
-            .ConfigureAwait(false)).UploadId;
+        // The completed object carries this upload's own id in its metadata, so it cannot be mistaken for an older object at the key.
+        var id = Ulid.NewUlid().ToString();
+        var initiate = new InitiateMultipartUploadRequest { BucketName = _bucket, Key = key };
+        initiate.Metadata.Add(UploadMetadata, id);
+        var upload = (await SafeAsync(_s3.InitiateMultipartUploadAsync(initiate, cancellationToken)).ConfigureAwait(false)).UploadId;
         if (string.IsNullOrEmpty(upload))
         {
             throw new InvalidDataException("backup bucket returned no multipart upload id");
@@ -159,6 +164,14 @@ internal sealed class S3ObjectStore : IObjectStore, IDisposable
                 UploadId = upload,
                 PartETags = [.. etags],
             }, cancellationToken)).ConfigureAwait(false);
+            // S3-compatible services may answer a failed completion with 200 and an error body, and an older object of the same
+            // length may sit at the key: only this upload's id and whole length on the stored object prove the upload. Missing or
+            // other evidence fails it (and aborts the upload if it still exists).
+            var stored = await SafeAsync(_s3.GetObjectMetadataAsync(_bucket, key, cancellationToken)).ConfigureAwait(false);
+            if (stored.ContentLength != length || stored.Metadata[UploadMetadata] != id)
+            {
+                throw new IOException("backup object does not hold this multipart upload");
+            }
         }
         catch
         {

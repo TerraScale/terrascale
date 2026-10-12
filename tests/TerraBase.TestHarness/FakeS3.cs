@@ -36,6 +36,8 @@ public sealed class FakeS3
     private readonly List<(string Version, DateTimeOffset At)> _snapshots = [];
     private readonly ConcurrentDictionary<string, Upload> _uploads = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<int, int> _partRequests = new();
+    // User metadata of completed multipart objects, valid only while the key still holds that exact content.
+    private readonly ConcurrentDictionary<(bool Customer, string Key), (byte[] Content, KeyValuePair<string, string>[] Metadata)> _uploadedMetadata = new();
     private int _startedUploads;
     private int _completedUploads;
     private int _abortedUploads;
@@ -114,6 +116,16 @@ public sealed class FakeS3
 
     /// <summary>Runs after a part is stored; receives the key and part number.</summary>
     public Action<string, int>? PartStored { get; set; }
+
+    /// <summary>
+    /// Answers a multipart completion with 200 and the returned XML body instead of completing it, such as an
+    /// <c>&lt;Error&gt;</c> body (how some S3-compatible services report a failed completion) or a success result that stored
+    /// nothing; the upload stays pending. Receives the key; null completes normally.
+    /// </summary>
+    public Func<string, string?>? CompleteAnswer { get; set; }
+
+    /// <summary>Replaces the <c>Content-Length</c> an object HEAD reports for an existing key; null reports its stored length.</summary>
+    public Func<string, long?>? HeadLengthOverride { get; set; }
 
     /// <summary>Part upload requests by part number, failed ones included.</summary>
     public IReadOnlyDictionary<int, int> PartRequests => _partRequests;
@@ -371,7 +383,7 @@ public sealed class FakeS3
 
         if (System.Web.HttpUtility.ParseQueryString(uri.Query) is var multipart && (multipart["uploadId"] is not null || request.Method == HttpMethod.Post))
         {
-            return await MultipartResponseAsync(request.Method, customer, bucket, key, multipart, body, cancellationToken);
+            return await MultipartResponseAsync(request, customer, bucket, key, multipart, body, cancellationToken);
         }
 
         if (request.Method == HttpMethod.Put)
@@ -431,7 +443,22 @@ public sealed class FakeS3
 
         if (request.Method == HttpMethod.Head)
         {
-            return new HttpResponseMessage(key.Length == 0 || objects.ContainsKey(key) ? HttpStatusCode.OK : HttpStatusCode.NotFound);
+            var head = new HttpResponseMessage(key.Length == 0 || objects.ContainsKey(key) ? HttpStatusCode.OK : HttpStatusCode.NotFound);
+            if (objects.TryGetValue(key, out var headed))
+            {
+                // Like S3, a HEAD of an object reports its length, and the user metadata it was uploaded with.
+                head.Content = new ByteArrayContent([]);
+                head.Content.Headers.ContentLength = HeadLengthOverride?.Invoke(key) ?? headed.Length;
+                if (_uploadedMetadata.TryGetValue((customer, key), out var uploaded) && ReferenceEquals(uploaded.Content, headed))
+                {
+                    foreach (var (name, value) in uploaded.Metadata)
+                    {
+                        head.Headers.Add(name, value);
+                    }
+                }
+            }
+
+            return head;
         }
 
         if (customer && request.Method == HttpMethod.Delete && BeforeCustomerDelete is { } beforeDelete)
@@ -457,12 +484,15 @@ public sealed class FakeS3
     // S3 multipart uploads. Parts may arrive in any order and be replaced; Complete must list every part from 1 with the ETag it
     // was stored under, and every part but the last must hold at least 5 MiB, as S3 requires.
     private async Task<HttpResponseMessage> MultipartResponseAsync(
-        HttpMethod method, bool customer, string bucket, string key, NameValueCollection query, byte[] body, CancellationToken cancellationToken)
+        HttpRequestMessage request, bool customer, string bucket, string key, NameValueCollection query, byte[] body, CancellationToken cancellationToken)
     {
+        var method = request.Method;
         if (query["uploadId"] is not { } id)
         {
             id = Guid.NewGuid().ToString("N");
-            _uploads[id] = new Upload(customer, key);
+            _uploads[id] = new Upload(customer, key, [.. request.Headers
+                .Where(header => header.Key.StartsWith("x-amz-meta-", StringComparison.OrdinalIgnoreCase))
+                .Select(header => KeyValuePair.Create(header.Key.ToLowerInvariant(), string.Join(",", header.Value)))]);
             Interlocked.Increment(ref _startedUploads);
             return Xml(HttpStatusCode.OK, new XElement(S3 + "InitiateMultipartUploadResult",
                 new XElement(S3 + "Bucket", bucket), new XElement(S3 + "Key", key), new XElement(S3 + "UploadId", id)));
@@ -504,6 +534,11 @@ public sealed class FakeS3
             return new HttpResponseMessage(HttpStatusCode.NoContent) { Content = new ByteArrayContent([]) };
         }
 
+        if (CompleteAnswer?.Invoke(key) is { } answer)
+        {
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(answer, Encoding.UTF8, "application/xml") };
+        }
+
         var listed = XElement.Parse(Encoding.UTF8.GetString(body)).Elements().Where(item => item.Name.LocalName == "Part")
             .Select(item => (Number: int.Parse(Child(item, "PartNumber"), CultureInfo.InvariantCulture), ETag: Child(item, "ETag"))).ToList();
         if (listed.Count == 0 || listed.Where((item, index) => item.Number != index + 1
@@ -531,6 +566,7 @@ public sealed class FakeS3
             offset += part.Length;
         }
 
+        _uploadedMetadata[(customer, key)] = (content, upload.Metadata);
         (customer ? _customerObjects : _objects)[key] = content;
         Interlocked.Increment(ref _completedUploads);
         return Xml(HttpStatusCode.OK, new XElement(S3 + "CompleteMultipartUploadResult",
@@ -702,7 +738,7 @@ public sealed class FakeS3
         }
     }
 
-    private sealed record Upload(bool Customer, string Key)
+    private sealed record Upload(bool Customer, string Key, KeyValuePair<string, string>[] Metadata)
     {
         public ConcurrentDictionary<int, byte[]> Parts { get; } = new();
     }
