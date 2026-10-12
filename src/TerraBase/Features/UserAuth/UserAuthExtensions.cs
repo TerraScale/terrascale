@@ -41,6 +41,7 @@ public static class UserAuthExtensions
             .ConfigurePrimaryHttpMessageHandler((handler, _) => ((SocketsHttpHandler)handler).AllowAutoRedirect = false)
             .RemoveAllLoggers();
         services.AddSingleton<TsAuthKeys>();
+        services.AddSingleton<ValidatedTokens>();
         services.AddSingleton<IIssuerKeys>(provider => provider.GetRequiredService<TsAuthKeys>());
         services.AddSingleton<IProjectAuthorityVerifier, TsAuthProjectAuthorityVerifier>();
         services.AddHostedService(provider => provider.GetRequiredService<TsAuthKeys>());

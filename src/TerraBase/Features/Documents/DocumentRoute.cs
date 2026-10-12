@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Diagnostics;
 using System.Globalization;
 using System.Text;
@@ -306,21 +307,51 @@ internal static class DocumentRoute
             limit.MaxRequestBodySize = maxBytes;
         }
 
-        using var body = new MemoryStream();
-        var chunk = new byte[16 * 1024];
-        int read;
-        while ((read = await context.Request.Body.ReadAsync(chunk, cancellationToken).ConfigureAwait(false)) > 0)
-        {
-            if (body.Length + read > maxBytes)
-            {
-                return TooLarge(maxBytes);
-            }
+        var json = context.Request.ContentLength is { } length
+            ? await ReadExactlyAsync(context.Request.Body, (int)length, cancellationToken).ConfigureAwait(false)
+            : await ReadChunkedAsync(context.Request.Body, maxBytes, cancellationToken).ConfigureAwait(false);
+        return json is null ? TooLarge(maxBytes) : RequestJson.IsText(json) ? json : new Validation(RequestJson.TextRule, code);
+    }
 
-            body.Write(chunk, 0, read);
+    // With Content-Length (checked against the limit above) the body goes straight into one array of that size: no
+    // staging buffer and no copy. Kestrel fails a body that ends early; a shorter read keeps what arrived.
+    private static async ValueTask<byte[]> ReadExactlyAsync(Stream body, int length, CancellationToken cancellationToken)
+    {
+        var json = new byte[length];
+        var filled = 0;
+        int read;
+        while (filled < length && (read = await body.ReadAsync(json.AsMemory(filled), cancellationToken).ConfigureAwait(false)) > 0)
+        {
+            filled += read;
         }
 
-        var json = body.ToArray();
-        return RequestJson.IsText(json) ? json : new Validation(RequestJson.TextRule, code);
+        return filled == length ? json : json[..filled];
+    }
+
+    // Without Content-Length (chunked or HTTP/2 without the header): pooled reads, refused past maxBytes (null).
+    private static async ValueTask<byte[]?> ReadChunkedAsync(Stream body, int maxBytes, CancellationToken cancellationToken)
+    {
+        using var buffer = new MemoryStream();
+        var chunk = ArrayPool<byte>.Shared.Rent(16 * 1024);
+        try
+        {
+            int read;
+            while ((read = await body.ReadAsync(chunk, cancellationToken).ConfigureAwait(false)) > 0)
+            {
+                if (buffer.Length + read > maxBytes)
+                {
+                    return null;
+                }
+
+                buffer.Write(chunk, 0, read);
+            }
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(chunk);
+        }
+
+        return buffer.ToArray();
     }
 
     private static PayloadTooLarge TooLarge(int maxBytes) => new(maxBytes >= 1024 * 1024

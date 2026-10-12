@@ -22,7 +22,8 @@ internal sealed class UserAuthenticationHandler(
     ILoggerFactory logger,
     UrlEncoder encoder,
     TerraBaseOptions terraBase,
-    IIssuerKeys issuerKeys) : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
+    IIssuerKeys issuerKeys,
+    ValidatedTokens validated) : AuthenticationHandler<AuthenticationSchemeOptions>(options, logger, encoder)
 {
     public const string SchemeName = UserAuthExtensions.TokenScheme;
 
@@ -61,6 +62,13 @@ internal sealed class UserAuthenticationHandler(
         }
 
         var token = header["Bearer ".Length..].Trim();
+        var cacheKey = ValidatedTokens.KeyOf(token);
+        if (validated.TryGet(cacheKey, keys, out var accepted))
+        {
+            return Success(accepted);
+        }
+
+        var checkedWith = keys;
         var result = await Tokens.ValidateTokenAsync(token, Parameters(keys)).ConfigureAwait(false);
         if (result.Exception is SecurityTokenSignatureKeyNotFoundException)
         {
@@ -68,6 +76,7 @@ internal sealed class UserAuthenticationHandler(
             var refreshed = await issuerKeys.RefreshAsync(Context.RequestAborted).ConfigureAwait(false);
             if (refreshed is IReadOnlyList<SecurityKey> refreshedKeys && !ReferenceEquals(refreshedKeys, keys))
             {
+                checkedWith = refreshedKeys;
                 result = await Tokens.ValidateTokenAsync(token, Parameters(refreshedKeys)).ConfigureAwait(false);
             }
         }
@@ -143,10 +152,17 @@ internal sealed class UserAuthenticationHandler(
             claims.Add(new Claim(ClaimTypes.Email, email));
         }
 
-        var principal = new ClaimsPrincipal(new ClaimsIdentity(claims, SchemeName));
-        Context.Features.Set(new ProjectToken(
-            project, database, scope,
-            new DateTimeOffset(jwt.ValidTo, TimeSpan.Zero)));
+        // Exactly the list the signature was checked against: a later refresh replaces it and so retires the entry.
+        accepted = new ValidatedTokens.Accepted(
+            checkedWith, jwt.ValidTo, [.. claims.Select(claim => (claim.Type, claim.Value))], project, database, scope);
+        validated.Add(cacheKey, accepted);
+        return Success(accepted);
+    }
+
+    private AuthenticateResult Success(ValidatedTokens.Accepted accepted)
+    {
+        var principal = new ClaimsPrincipal(new ClaimsIdentity(accepted.Claims.Select(claim => new Claim(claim.Type, claim.Value)), SchemeName));
+        Context.Features.Set(new ProjectToken(accepted.Project, accepted.Database, accepted.Scope, new DateTimeOffset(accepted.ValidTo, TimeSpan.Zero)));
         return AuthenticateResult.Success(new AuthenticationTicket(principal, SchemeName));
     }
 
