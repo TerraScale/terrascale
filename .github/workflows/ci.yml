@@ -184,9 +184,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           sha256sum terrabase-linux-amd64 > terrabase-linux-amd64.sha256
-          gh release create "terrabase-${GITHUB_SHA::12}" terrabase-linux-amd64 terrabase-linux-amd64.sha256 \
-            -R "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --latest --title "TerraBase ${GITHUB_SHA::12}" \
-            --notes "TerraBase linux-amd64 executable built from $GITHUB_SHA on main."
+          tag="terrabase-${GITHUB_SHA::12}"
+          # A re-run of the same commit replaces the assets instead of failing on the existing tag.
+          if gh release view "$tag" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$tag" terrabase-linux-amd64 terrabase-linux-amd64.sha256 -R "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$tag" terrabase-linux-amd64 terrabase-linux-amd64.sha256 \
+              -R "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --latest --title "TerraBase ${GITHUB_SHA::12}" \
+              --notes "TerraBase linux-amd64 executable built from $GITHUB_SHA on main."
+          fi
 
   slow:
     needs: test
