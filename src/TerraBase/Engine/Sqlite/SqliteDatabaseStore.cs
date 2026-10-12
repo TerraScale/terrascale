@@ -433,8 +433,8 @@ internal sealed partial class SqliteDatabaseStore(
             await io.RunAsync(() =>
             {
                 using var command = session.Connection.CreateCommand();
-                command.CommandText = "VACUUM INTO $path;";
-                command.Parameters.AddWithValue("$path", path);
+                // turso-spike: Turso takes VACUUM INTO's target only as a string literal.
+                command.CommandText = $"VACUUM INTO '{path.Replace("'", "''", StringComparison.Ordinal)}';";
                 command.ExecuteNonQuery();
             }, cancellationToken).ConfigureAwait(false);
         }
