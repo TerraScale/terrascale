@@ -10,7 +10,7 @@ FROM mcr.microsoft.com/dotnet/sdk:11.0 AS base
 # DOTNET_ROOT lets the framework-dependent `terrabase` apphost that ts-auth's tests start find the runtime.
 ENV CI=true DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 ASPNETCORE_HTTP_PORTS= DOTNET_ROOT=/usr/share/dotnet
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends make nodejs npm \
+    && apt-get install -y --no-install-recommends make nodejs npm jq \
     && rm -rf /var/lib/apt/lists/*
 # Chromium for the ts-auth browser tests: the npm playwright matching Microsoft.Playwright in Directory.Packages.props
 # installs the same browser revision. Redocly (auth-openapi-check) is fetched once here too.

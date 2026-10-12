@@ -39,7 +39,7 @@ BENCHMARK_DOTNET_PROJECTS := benchmark/dotnet/TerraScale.Endpoints.Benchmarks/Te
 	benchmark/dotnet/TerraScale.Logging.Benchmarks/TerraScale.Logging.Benchmarks.csproj
 
 .PHONY: restore build fmt fmt-check lint test-fast test-slow test check docker-test clean \
-	libs-build libs-test libs-check libs-pack libs-nativeaot-check \
+	libs-build libs-test handoff-test libs-check libs-pack libs-nativeaot-check \
 	auth-build auth-audit auth-openapi-check auth-test-fast auth-test-slow auth-check auth-publish auth-dev \
 	terrabase-build terrabase-analyzer-check terrabase-test-fast terrabase-test-slow terrabase-e2e terrabase-e2e-fly-outage terrabase-check terrabase-run terrabase-publish \
 	benchmark-build benchmark-fmt-check benchmark-check benchmark-smoke benchmark-repl-local
@@ -87,8 +87,12 @@ libs-build: restore
 libs-test: libs-build
 	set -e; for p in $(LIBS_TEST_PROJECTS); do dotnet run --project $$p --configuration $(CONFIGURATION) --no-build -- --minimum-expected-tests 1 $(TEST_ARGS); done
 
-libs-check: libs-build
+libs-check: libs-build handoff-test
 	set -e; for p in $(LIBS_PROJECTS); do dotnet format style $$p --verify-no-changes --no-restore; done
+
+# The user-run credential entry point (scripts/handoff) and the e2e credential script, against fake flyctl, gh and curl.
+handoff-test:
+	bash scripts/handoff/morning-credentials-test.sh
 
 libs-pack: restore
 	bash scripts/libs/package-version-test.sh
@@ -162,7 +166,7 @@ terrabase-test-slow: terrabase-build
 # partitions, restarts, a region down, backlog and clock skew. Local by default (in-process nodes); tests/TerraBase.E2E/Gaps.cs
 # records which scenarios wait on which replication slice. With TERRABASE_E2E_FLY_URL, TERRABASE_E2E_FLY_API_KEY,
 # TERRABASE_E2E_FLY_PROJECT and TERRABASE_E2E_FLY_DATABASE set, the same scenarios run against Fly; the key is a TerraBase
-# API key of the e2e project (documents:read/write, 90-day expiry), installed by a human: scripts/e2e/install-ci-credential.sh.
+# API key of the e2e project (documents:read/write, 90-day expiry), installed by a human: scripts/handoff/morning-credentials.sh install e2e.
 # Not part of check: CI's e2e job runs it after the deploys.
 terrabase-e2e: terrabase-build
 	env -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_RESULTS_URL dotnet run --project tests/TerraBase.E2E --configuration $(CONFIGURATION) --no-build $(TEST_ARGS)

@@ -74,6 +74,10 @@ jobs:
               - libs.slnf
               - src/TerraScale.CLI/**
               - benchmark/dotnet/**
+              # The credential entry point and the scripts it runs (make handoff-test).
+              - scripts/handoff/**
+              - scripts/e2e/**
+              - benchmark/scripts/repl-fly-tenant.sh
             auth:
               - *shared
               - auth.slnf
