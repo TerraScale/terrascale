@@ -19,7 +19,7 @@ Set these variables, then run the same target:
 | Variable | Meaning |
 |---|---|
 | `TERRABASE_E2E_FLY_URL` | Public base URL, for example `https://ts-terrabase.fly.dev`. Its presence selects Fly. |
-| `TERRABASE_E2E_FLY_API_KEY` | A TerraBase API key of the dedicated e2e project (`documents:read`, `documents:write`, 90-day expiry), issued inside the Fly org by TerraBase's operator listener. A human installs, rotates and revokes it with `scripts/e2e/install-ci-credential.sh` (`--dry-run`, `--revoke`); agents never run it. E12 and E13 create databases, which needs `databases:write` (ts-auth project tokens only), so they fail on Fly until the OIDC-federated token replaces the key. |
+| `TERRABASE_E2E_FLY_API_KEY` | A TerraBase API key of the dedicated e2e project (`documents:read`, `documents:write`, 90-day expiry), issued inside the Fly org by TerraBase's operator listener. A human installs, rotates and revokes it with `scripts/handoff/morning-credentials.sh install e2e` (`dry-run`, `status`, `revoke e2e`); agents never run it. E12 and E13 create databases, which needs `databases:write` (ts-auth project tokens only), so they fail on Fly until the OIDC-federated token replaces the key. |
 | `TERRABASE_E2E_FLY_PROJECT` | The project id. |
 | `TERRABASE_E2E_FLY_DATABASE` | The database name. |
 

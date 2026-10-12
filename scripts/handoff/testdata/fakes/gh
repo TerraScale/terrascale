@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Fake gh: Actions secrets as files in $FAKE_DIR/secrets (the only place a key may land), variables in $FAKE_DIR/vars.
+echo "gh $*" >> "$FAKE_LOG"
+mkdir -p "$FAKE_DIR/secrets" "$FAKE_DIR/vars"
+case "$1 $2" in
+  "auth status") exit 0 ;;
+  "secret set")
+    name=$3; shift 3; body=""
+    while [[ $# -gt 0 ]]; do [[ $1 == --body ]] && body=$2; shift; done
+    if [[ -n $body ]]; then printf '%s' "$body" > "$FAKE_DIR/secrets/$name"; else cat > "$FAKE_DIR/secrets/$name"; fi ;;
+  "secret delete") [[ -f "$FAKE_DIR/secrets/$3" ]] && rm "$FAKE_DIR/secrets/$3" || exit 1 ;;
+  "secret list") for f in "$FAKE_DIR"/secrets/TERRABASE_E2E_FLY* "$FAKE_DIR"/secrets/TS_BENCH*; do [[ -e $f ]] && basename "$f"; done; true ;;
+  "variable list") for f in "$FAKE_DIR"/vars/TS_BENCH_FLY*; do [[ -e $f ]] && basename "$f"; done; true ;;
+  *) echo "fake gh: unexpected $*" >&2; exit 2 ;;
+esac
