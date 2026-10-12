@@ -156,17 +156,18 @@ terrabase-test-fast: restore
 terrabase-test-slow: terrabase-build
 	dotnet run --project tests/TerraBase.Slow --configuration $(CONFIGURATION) --no-build $(TEST_ARGS)
 
-# End-to-end replication (tests/TerraBase.E2E): leaderless writes in both directions between gru and sjc. Local by default
-# (two in-process nodes). With TERRABASE_E2E_FLY_URL, TERRABASE_E2E_FLY_API_KEY, TERRABASE_E2E_FLY_PROJECT and
-# TERRABASE_E2E_FLY_DATABASE set, the same scenarios run against Fly; the key is a ts-auth project token with databases:read,
-# databases:write, documents:read and documents:write (E12 and E13 create databases). Not part of check: CI's e2e job runs it
-# after the gru and sjc deploys.
+# End-to-end replication (tests/TerraBase.E2E): leaderless writes between gru, sjc and fra, every pair and three-way, with
+# partitions, restarts, a region down, backlog and clock skew. Local by default (in-process nodes); tests/TerraBase.E2E/Gaps.cs
+# records which scenarios wait on which replication slice. With TERRABASE_E2E_FLY_URL, TERRABASE_E2E_FLY_API_KEY,
+# TERRABASE_E2E_FLY_PROJECT and TERRABASE_E2E_FLY_DATABASE set, the same scenarios run against Fly; the key is a ts-auth
+# project token with databases:read, databases:write, documents:read and documents:write (E12 and E13 create databases).
+# Not part of check: CI's e2e job runs it after the deploys.
 terrabase-e2e: terrabase-build
 	env -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_RESULTS_URL dotnet run --project tests/TerraBase.E2E --configuration $(CONFIGURATION) --no-build $(TEST_ARGS)
 
-# Stops the sjc machine of the Fly app: run alone, never with terrabase-e2e and never on every deploy.
+# Stops machines of the Fly app (the fly-outage category): run alone, never with terrabase-e2e and never on every deploy.
 terrabase-e2e-fly-outage: terrabase-build
-	env -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_RESULTS_URL TERRABASE_E2E_FLY_OUTAGE=1 dotnet run --project tests/TerraBase.E2E --configuration $(CONFIGURATION) --no-build --treenode-filter '/TerraBase.E2E/TerraBase.E2E/FlyOutageE2ETests/*' $(TEST_ARGS)
+	env -u ACTIONS_RUNTIME_TOKEN -u ACTIONS_RESULTS_URL TERRABASE_E2E_FLY_OUTAGE=1 dotnet run --project tests/TerraBase.E2E --configuration $(CONFIGURATION) --no-build --treenode-filter '/*/*/*/*[Category=fly-outage]' $(TEST_ARGS)
 
 terrabase-check: terrabase-build terrabase-analyzer-check
 

@@ -14,7 +14,7 @@ name: CI
 # After it:
 # - release (main): the TerraBase linux-amd64 executable as GitHub release terrabase-<sha12>.
 # - slow (main): the slow suites; never blocks.
-# - e2e (main, after deploy): tests/TerraBase.E2E against the Fly app, gru and sjc pinned with fly-prefer-region; never
+# - e2e (main, after deploy): tests/TerraBase.E2E against the Fly app, gru, sjc and fra pinned with fly-prefer-region; never
 #   blocks. Between replication slices R2a and R10a nothing replicates on Fly, so E1 to E7 fail there
 #   (docs/terrabase/multi-region-replication.md, section 21).
 
