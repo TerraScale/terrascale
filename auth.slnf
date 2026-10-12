@@ -1,0 +1,13 @@
+{
+  "solution": {
+    "path": "TerraScale.slnx",
+    "projects": [
+      "src/TerraScale.Authentication.Contracts/TerraScale.Authentication.Contracts.csproj",
+      "src/TerraScale.Authentication.Security/TerraScale.Authentication.Security.csproj",
+      "src/TerraScale.Authentication.Store/TerraScale.Authentication.Store.csproj",
+      "src/TerraScale.Authentication/TerraScale.Authentication.csproj",
+      "tests/TerraScale.Authentication.Fast/TerraScale.Authentication.Fast.csproj",
+      "tests/TerraScale.Authentication.Slow/TerraScale.Authentication.Slow.csproj"
+    ]
+  }
+}

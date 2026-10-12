@@ -1,7 +1,9 @@
 name: CI
 
-# One required check: "test". It builds the Dockerfile's `test` stage on Blacksmith: format, Release build with
-# analyzers as errors, libs/auth/TerraBase checks and the Fast suites. `make docker-test` runs the same build locally.
+# One required check: "test". It passes when every area job that ran passed. The area jobs run in parallel, each
+# building one Dockerfile stage on Blacksmith (format, Release build with analyzers as errors, the area's checks and Fast
+# suite): test-libs, test-auth, test-terrabase. On pull requests an area runs only when its files or the shared files
+# changed (`changes`); libs changes run every area. Pushes to main run every area. `make docker-test` runs all three.
 # Next to it, without waiting for it:
 # - preview (pull requests): TerraBase + ts-auth on one machine at https://ts-pr-<n>.fly.dev (scripts/fly/preview.sh);
 #   previews.yml deletes it when the PR closes or after 24 hours.
@@ -10,6 +12,7 @@ name: CI
 #   scripts/fly/fast-gate.sh requires a passed `test` for this exact tree: the merged pull request's head when the merge
 #   kept its tree (rebased before merging), else main's own `test`.
 # After it:
+# - release (main): the TerraBase linux-amd64 executable as GitHub release terrabase-<sha12>.
 # - slow (main): the slow suites; never blocks.
 # - e2e (main, after deploy): tests/TerraBase.E2E against the Fly app, gru and sjc pinned with fly-prefer-region; never
 #   blocks. Between replication slices R2a and R10a nothing replicates on Fly, so E1 to E7 fail there
@@ -35,9 +38,61 @@ env:
   TS_DOTNET_REV: 619fa979673635663cba98be5e25713806d11cd5
 
 jobs:
-  test:
+  # Runs on every event: a skipped job would skip everything downstream of "test" (deploy, release, slow).
+  changes:
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+    outputs:
+      libs: ${{ steps.filter.outputs.libs }}
+      auth: ${{ steps.filter.outputs.auth }}
+      terrabase: ${{ steps.filter.outputs.terrabase }}
+    steps:
+      - id: filter
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            shared: &shared
+              - .github/workflows/ci.yml
+              - Dockerfile
+              - .dockerignore
+              - Makefile
+              - Directory.*
+              - global.json
+              - NuGet.config
+              - .editorconfig
+              - BannedSymbols.txt
+              - TerraScale.slnx
+              - src/TerraScale.Endpoints*/**
+              - src/TerraScale.Logging/**
+              - tests/TerraScale.Endpoints.Tests/**
+              - tests/TerraScale.Logging.Tests/**
+            libs:
+              - *shared
+              - libs.slnf
+              - src/TerraScale.CLI/**
+              - benchmark/dotnet/**
+            auth:
+              - *shared
+              - auth.slnf
+              - src/TerraScale.Authentication*/**
+              - tests/TerraScale.Authentication*/**
+              - docs/auth/**
+              - scripts/auth/**
+            terrabase:
+              - *shared
+              - terrabase.slnf
+              - src/TerraBase*/**
+              - tests/TerraBase*/**
+              - scripts/terrabase/**
+
+  libs:
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.libs == 'true'
     runs-on: blacksmith-4vcpu-ubuntu-2404
-    timeout-minutes: 40
+    timeout-minutes: 30
     steps:
       - &checkout
         uses: actions/checkout@v5
@@ -57,19 +112,87 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release download auth-test-terrabase -R "$GITHUB_REPOSITORY" -p terrabase-linux-amd64 -D terrabase-pinned
+      # One layer cache per job: concurrent jobs sharing a key would overwrite each other's cache.
       - &setup-builder
         uses: useblacksmith/setup-docker-builder@v2
         with:
-          cache-key: terrascale-ci
-      - uses: useblacksmith/build-push-action@v2
+          cache-key: terrascale-${{ github.job }}
+      - &build-area
+        uses: useblacksmith/build-push-action@v2
         with:
           context: terrascale
           file: terrascale/Dockerfile
           build-contexts: |
             ts-dotnet=ts-dotnet
             terrabase-pinned=terrabase-pinned
-          target: test
+          target: test-${{ github.job }}
           push: false
+
+  auth:
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.auth == 'true'
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 30
+    steps:
+      - *checkout
+      - *checkout-ts-dotnet
+      - *download-terrabase
+      - *setup-builder
+      - *build-area
+
+  terrabase:
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.terrabase == 'true'
+    runs-on: blacksmith-16vcpu-ubuntu-2404
+    timeout-minutes: 30
+    steps:
+      - *checkout
+      - *checkout-ts-dotnet
+      - *download-terrabase
+      - *setup-builder
+      - *build-area
+
+  test:
+    needs: [changes, libs, auth, terrabase]
+    if: ${{ !cancelled() }}
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 5
+    steps:
+      - name: Every area that ran passed
+        run: '! grep -qE "failure|cancelled" <<< "${{ join(needs.*.result, '' '') }}"'
+
+  release:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - *checkout
+      - *setup-builder
+      - uses: useblacksmith/build-push-action@v2
+        with:
+          context: terrascale
+          file: terrascale/Dockerfile
+          target: terrabase-binary
+          outputs: type=local,dest=release
+      # Consumers (ts-go terrabasetest, ts-status) pin a tag and the SHA256 of the asset.
+      - name: Publish terrabase-<sha12>
+        working-directory: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha256sum terrabase-linux-amd64 > terrabase-linux-amd64.sha256
+          tag="terrabase-${GITHUB_SHA::12}"
+          # A re-run of the same commit replaces the assets instead of failing on the existing tag.
+          if gh release view "$tag" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$tag" terrabase-linux-amd64 terrabase-linux-amd64.sha256 -R "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$tag" terrabase-linux-amd64 terrabase-linux-amd64.sha256 \
+              -R "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --latest --title "TerraBase ${GITHUB_SHA::12}" \
+              --notes "TerraBase linux-amd64 executable built from $GITHUB_SHA on main."
+          fi
 
   slow:
     needs: test

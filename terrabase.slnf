@@ -1,0 +1,12 @@
+{
+  "solution": {
+    "path": "TerraScale.slnx",
+    "projects": [
+      "src/TerraBase.Analyzers/TerraBase.Analyzers.csproj",
+      "src/TerraBase/TerraBase.csproj",
+      "tests/TerraBase.Fast/TerraBase.Fast.csproj",
+      "tests/TerraBase.Slow/TerraBase.Slow.csproj",
+      "tests/TerraBase.E2E/TerraBase.E2E.csproj"
+    ]
+  }
+}
