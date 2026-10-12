@@ -48,6 +48,12 @@ public interface IChangeGroupSource
 
     /// <summary>Completes once a group may have committed after the call (or when the source cannot tell): a wake-up, not a guarantee.</summary>
     Task ChangedAsync(CancellationToken cancellationToken);
+
+    /// <summary>Whether every group after <paramref name="after"/> is still held; false once retention cut some, so the peer refills.</summary>
+    ValueTask<bool> RetainsAsync(TenantContext database, long after, CancellationToken cancellationToken);
+
+    /// <summary>The database's newest change id, or 0: where a refilled peer's stream goes on.</summary>
+    ValueTask<long> HeadAsync(TenantContext database, CancellationToken cancellationToken);
 }
 
 /// <summary>Where a receiver joins the groups an origin streams to it.</summary>
@@ -59,6 +65,12 @@ public interface IChangeGroupSink
     /// nothing a join already holds. Null, with nothing applied, when this machine does not hold the database.
     /// </summary>
     ValueTask<Hlc?> ApplyAsync(TenantContext database, ReplicaId origin, IReadOnlyList<OriginGroup> groups, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Joins whole states anti-entropy read from a peer, as repairs (origin 0: never shipped again, and no origin's applied
+    /// stamp moves), durably. Returns how many documents changed, or null when this machine does not hold the database.
+    /// </summary>
+    ValueTask<int?> RepairAsync(TenantContext database, IReadOnlyList<RepairState> states, CancellationToken cancellationToken);
 }
 
 /// <summary>The wire form of change groups and its bounds; decoding is a trust boundary.</summary>

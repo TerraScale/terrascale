@@ -22,6 +22,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus
     private static readonly TimeSpan Idle = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan Retry = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan MaxBackoff = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan RefillTimeout = TimeSpan.FromMinutes(10);
     private const int MaxDetail = 128;
 
     private readonly IMembership _membership;
@@ -164,7 +165,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus
         using var call = new V1.Replication.ReplicationClient(channel).Push(cancellationToken: cancellationToken);
         await call.RequestStream.WriteAsync(new PushFrame
         {
-            Hello = new Hello { Node = _self.Id.Value, Hlc = _self.Clock.Tick().Value, Region = _options.Region },
+            Hello = new Hello { Node = _self.Id.Value, Hlc = _self.Clock.Tick().Value, Region = _options.Region, Machine = _membership.Self.Name },
         }, cancellationToken).ConfigureAwait(false);
         using (var welcome = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
         {
@@ -205,7 +206,8 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus
 
             lock (link.Gate)
             {
-                if (link.Cursors.Values.Any(cursor => cursor.InFlight is not null && _time.GetElapsedTime(cursor.SentAt) > ReplicationProtocol.ProgressTimeout))
+                // A refill joins whole buckets on the peer: it may take longer than a batch.
+                if (link.Cursors.Values.Any(cursor => cursor.InFlight is not null && _time.GetElapsedTime(cursor.SentAt) > (cursor.Refilling ? RefillTimeout : ReplicationProtocol.ProgressTimeout)))
                 {
                     throw new TimeoutException("the peer did not acknowledge a batch in time");
                 }
@@ -258,6 +260,23 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus
                 continue;
             }
 
+            if (!await _source.RetainsAsync(database, acked, cancellationToken).ConfigureAwait(false))
+            {
+                // Retention cut groups after the peer's ack (it was silent or far behind, or it is new): it refills from this
+                // machine, then the stream goes on from the newest change.
+                var head = await _source.HeadAsync(database, cancellationToken).ConfigureAwait(false);
+                await stream.WriteAsync(new PushFrame { Refill = new Refill { Database = ChangeGroups.Wire(database), ChangeId = checked((ulong)head) } }, cancellationToken)
+                    .ConfigureAwait(false);
+                lock (link.Gate)
+                {
+                    cursor.BehindSince ??= _time.GetTimestamp();
+                    (cursor.InFlight, cursor.InFlightGroups, cursor.SentAt, cursor.Head, cursor.Refilling) = (head, 0, _time.GetTimestamp(), Math.Max(cursor.Head, head), true);
+                }
+
+                sent = true;
+                continue;
+            }
+
             var groups = await _source.ReadAsync(database, acked, ChangeGroups.MaxGroups, ChangeGroups.MaxBatchBytes, cancellationToken).ConfigureAwait(false);
             if (groups.Count == 0)
             {
@@ -299,7 +318,7 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus
                 throw new InvalidDataException("the peer acknowledged a batch that is not in flight");
             }
 
-            (cursor.InFlight, cursor.InFlightGroups) = (null, 0);
+            (cursor.InFlight, cursor.InFlightGroups, cursor.Refilling) = (null, 0, false);
             if (ack.Refused)
             {
                 // The peer does not hold the database yet (its catalog lags): try again later.
@@ -377,6 +396,9 @@ internal sealed class PeerStreams : BackgroundService, IReplicationStatus
         public long? Acked { get; set; }
 
         public long? InFlight { get; set; }
+
+        // Whether the batch in flight is a refill.
+        public bool Refilling { get; set; }
 
         public int InFlightGroups { get; set; }
 

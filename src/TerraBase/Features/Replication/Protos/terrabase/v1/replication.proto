@@ -11,6 +11,11 @@ service Replication {
   // One stream per (sender, receiver) machine pair, for every database they share. The sender opens it with a Hello,
   // the receiver answers with a Welcome, then acks every batch after its durable commit.
   rpc Push(stream PushFrame) returns (stream AckFrame);
+
+  // Anti-entropy (section 10): the digests of a database's 4096 buckets, and the states of chosen buckets, paged. A machine
+  // compares a peer's digests with its own and joins the states of every bucket that differs, as repairs (origin 0).
+  rpc Digest(DigestRequest) returns (DigestReply);
+  rpc ReadBucket(BucketRequest) returns (stream StatePage);
 }
 
 message PushFrame {
@@ -18,14 +23,25 @@ message PushFrame {
     Hello hello = 1;
     Batch batch = 2;
     Heartbeat heartbeat = 3;
+    Refill refill = 4;
   }
 }
 
-// The first frame: the sending machine's replica id (the origin of every group on this stream), its clock and region.
+// The first frame: the sending machine's replica id (the origin of every group on this stream), its clock and region, and
+// its name in the machine list, where the receiver reaches it for a refill.
 message Hello {
   fixed64 node = 1;
   fixed64 hlc = 2;
   string region = 3;
+  string machine = 4;
+}
+
+// The sender no longer holds the change groups after the receiver's last ack (retention cut a silent or far-behind peer,
+// or the receiver is new): the receiver joins every bucket that differs from the sender's, then acks change_id, the
+// sender's newest change, from which the stream goes on.
+message Refill {
+  Database database = 1;
+  uint64 change_id = 2;
 }
 
 // A client database: its organization, project and database ULIDs.
@@ -85,4 +101,37 @@ message Ack {
   uint64 change_id = 2;
   fixed64 applied = 3;
   bool refused = 4;
+}
+
+message DigestRequest {
+  Database database = 1;
+}
+
+// Held: the machine holds the database. Buckets: a TBLZ4E01 envelope of 4096 x (h1, h2), each a little-endian 64-bit
+// integer: the XOR of the digests of the bucket's document states.
+message DigestReply {
+  bool held = 1;
+  bytes buckets = 2;
+}
+
+// At most 4096 distinct buckets, each 0 to 4095.
+message BucketRequest {
+  Database database = 1;
+  repeated uint32 buckets = 2;
+}
+
+// A TBLZ4E01 envelope of a StateList: at most 1024 states and 2 MiB of encoded states.
+message StatePage {
+  bytes states = 1;
+}
+
+message StateList {
+  repeated StateEntry states = 1;
+}
+
+// A document's whole state, in DocumentStateEncoding's full form.
+message StateEntry {
+  string collection = 1;
+  string id = 2;
+  bytes state = 3;
 }

@@ -727,6 +727,26 @@ ts-dotnet until R12 makes ts-auth lattice-native.
     created only where they were defined;
   - a replicated collection drop also deletes concurrent newer documents of that collection on the receiver (R6/R7).
 
+**R6 as built** (2026-10-12; no storage format change):
+
+- **Digests.** `Digest` returns a database's 4096 bucket digests: each the XOR of its documents' `_tb_state.h1/h2`, read
+  in one pass when asked (`_tb_merkle` stays unused; fold it per commit once databases hold millions of documents). There
+  is nothing to rebuild after an unclean start.
+- **Rounds.** `AntiEntropy` runs every 60 s. For each database and each other machine whose region holds it, it compares
+  digests and pulls (`ReadBucket`, pages of at most 1024 states and 2 MiB in an LZ4 envelope) the peer's states of every
+  bucket that differed in two consecutive rounds. It joins them with origin 0: never shipped, no origin's `applied` moves.
+  Both sides run rounds, so each pulls what it lacks. Metric `terrabase.replication.repairs` (documents changed, by peer
+  region).
+- **Retention cut and refill.** Retention also runs every 5 s without acks. A peer silent for 24 h stops holding rows,
+  as before. A peer whose unacknowledged CDC rows pass 1 GiB (measured once it is 65,536 rows behind) gets `seen = 0` and
+  stops holding rows until it is heard from again. A sender whose CDC no longer holds every row after a peer's ack
+  (retention deletes a prefix, so that is `min(change_id) > acked + 1`; a new peer at 0 counts too) sends `Refill(head)`
+  instead of groups. The receiver finds the sender by the machine name in its `Hello`, joins every bucket that differs at
+  once, then acks `head`, and the stream goes on from there.
+- **Not copy-refill.** Without garbage collection (R7) merging old state is safe, so a refill merges. Once R7 collects
+  tombstones, a machine away past the horizon must delete its file and copy from a peer (section 10), or it would bring
+  collected deletions back. Per-database readiness during a refill is not built either.
+
 **Contract for R3** (`Features/Replication/ChangeGroups.cs`). R4a registers `NoChangeGroupSource`. R3 replaces that
 registration with its tailer and implements `IChangeGroupSource`:
 
