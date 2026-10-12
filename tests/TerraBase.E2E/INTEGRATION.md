@@ -137,6 +137,17 @@ workflow re-verified `disabled_manually` by the helper):
 - **#127 is red:** auth Fast `Readiness_treats_a_hung_authority_as_not_ready` (run 38276106422). Back to its owner.
 - **#125 needs a fresh run** now that #130 has merged. Its owner merges main in.
 
+**Main after these merges:**
+- **#130's run** (`2ca15d6c`): test and Slow success.
+- **#133's run** (`d271c079`): `test` **failed**. Auth Fast's shared TerraBase child failed to bind `127.0.0.1:37391`
+  ("address already in use"), so 277 auth tests failed at 0 ms. That is a free-port race in the auth test harness,
+  intermittent: later runs passed auth. Dogfood is diagnosing.
+- **#88's, #106's and #79's runs** (`bd1c4efc`, `0acfee13`, `c379cc3b`): `test` success, but **Slow failure**,
+  #135/#136 `Public_count_excludes_the_overflow_row_whether_or_not_it_matches(False|True)`.
+  - Cause: #88 removed `collections.generation`, and #110's Slow `CountBoundTests` inserted the old 4-value row.
+  - **Fix: #137** (test only, one line), 4/4 CountBoundTests on mariogk-dev.
+  - No further product merges until Slow is green on main again.
+
 **Not merged until fixed and verified:**
 - **R10a's stack**, until the no-peer fail-open and the unprotected override are fixed and R3 verifies in writing;
 - **#125**, until its metrics race is fixed (#130) and a fresh `test` run on its exact head is green;
