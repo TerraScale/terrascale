@@ -1,5 +1,5 @@
 {
-  "description": "Every TerraBase route this SDK calls. tests/TerraScale.DotNet.Tests checks the clients send exactly these; the monorepo (ts-auth Fast, TerraBaseSdkContractTests) checks the TerraBase built from the same commit serves each one. documents routes are served on the client listener, management routes on the administrative listener (management service credential) and the client listener (ts-auth access token).",
+  "description": "Every TerraBase route this SDK calls. tests/TerraScale.DotNet.Tests checks the clients send exactly these; the monorepo (ts-auth Fast, TerraBaseSdkContractTests) checks the TerraBase built from the same commit serves each one. documents and platform routes are served on the public listener, management routes on the administrative listener (management service credential) and the client listener (ts-auth access token).",
   "operations": [
     {
       "client": "documents",
@@ -300,6 +300,30 @@
       "operation": "listAuditEvents",
       "method": "GET",
       "path": "/v1/management/organizations/{organization}/audit-events"
+    },
+    {
+      "client": "platform",
+      "operation": "listPlatformDatabases",
+      "method": "GET",
+      "path": "/v1/platform/databases"
+    },
+    {
+      "client": "platform",
+      "operation": "listPlatformCollections",
+      "method": "GET",
+      "path": "/v1/platform/databases/{database}/collections"
+    },
+    {
+      "client": "platform",
+      "operation": "listPlatformDocuments",
+      "method": "GET",
+      "path": "/v1/platform/databases/{database}/collections/{collection}/documents"
+    },
+    {
+      "client": "platform",
+      "operation": "getPlatformDocument",
+      "method": "GET",
+      "path": "/v1/platform/databases/{database}/collections/{collection}/documents/by-key"
     }
   ]
 }

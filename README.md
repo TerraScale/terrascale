@@ -183,6 +183,10 @@ these clients end to end against that same TerraBase.
 nice -n 19 dotnet run --project tests/TerraScale.DotNet.Tests/TerraScale.DotNet.Tests.csproj --framework net10.0 --configuration Release
 ```
 
+`TerraBasePlatformClient` reads TerraBase's explore API over TerraScale's own databases (`platform-auth`,
+`platform-dashboard`) for the dashboard's platform-admin pages: pass the signed-in admin's ts-auth access token through
+`AccessTokenProvider` (it must carry `platform_role: admin`). It is read-only, and TerraBase redacts secret-looking fields.
+
 See [TerraBase consumers](docs/terrabase-consumers.md).
 
 ## Native database client (legacy)

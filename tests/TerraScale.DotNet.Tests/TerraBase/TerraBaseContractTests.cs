@@ -36,6 +36,14 @@ public sealed class TerraBaseContractTests
     }
 
     [Test]
+    public async Task ThePlatformClientNeedsAnAccessTokenProvider()
+    {
+        using var http = new HttpClient();
+        await Assert.That(() => new TerraBasePlatformClient(http, new TerraBasePlatformClientOptions { BaseAddress = new Uri("https://terrabase.example.test/") }))
+            .Throws<ArgumentException>();
+    }
+
+    [Test]
     public async Task DocumentKeysTravelInTheQueryAndAreEscapedOnce()
     {
         var sent = await RecordAsync("documents", client => ((TerraBaseDocumentsClient)client).Database(Project, "app").GetDocumentAsync("users", "a/b c?d"));
@@ -65,6 +73,12 @@ public sealed class TerraBaseContractTests
         yield return ("documents", "deleteDocument", client => Db(client).DeleteDocumentAsync("users", "id"));
         yield return ("documents", "queryDocuments", client => Db(client).QueryAsync("users", new TerraBaseQuery()));
         yield return ("documents", "runTransaction", client => Db(client).TransactAsync([TerraBaseTransactionOperation.Delete("users", "id")]));
+
+        static TerraBasePlatformClient P(object client) => (TerraBasePlatformClient)client;
+        yield return ("platform", "listPlatformDatabases", client => P(client).ListDatabasesAsync());
+        yield return ("platform", "listPlatformCollections", client => P(client).ListCollectionsAsync("platform-auth"));
+        yield return ("platform", "listPlatformDocuments", client => P(client).ListDocumentsAsync("platform-auth", "users", limit: 10));
+        yield return ("platform", "getPlatformDocument", client => P(client).GetDocumentAsync("platform-auth", "users", "id"));
 
         yield return ("management", "createOrganization", client => M(client).CreateOrganizationAsync(User, "Acme"));
         yield return ("management", "listOrganizations", client => M(client).ListOrganizationsAsync(User));
@@ -114,9 +128,12 @@ public sealed class TerraBaseContractTests
         using var http = new HttpClient(handler);
         var origin = new Uri("https://terrabase.example.test/");
         // Management here goes to the private listener (the platform operator, no credential), so it also proves HTTP/2.
-        object sdk = client == "documents"
-            ? new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions { BaseAddress = origin, ApiKey = "tb_test_key" })
-            : new TerraBaseManagementClient(http, new TerraBaseManagementClientOptions { BaseAddress = Private });
+        object sdk = client switch
+        {
+            "documents" => new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions { BaseAddress = origin, ApiKey = "tb_test_key" }),
+            "platform" => new TerraBasePlatformClient(http, new TerraBasePlatformClientOptions { BaseAddress = origin, AccessTokenProvider = _ => ValueTask.FromResult("user-token") }),
+            _ => new TerraBaseManagementClient(http, new TerraBaseManagementClientOptions { BaseAddress = Private }),
+        };
         try
         {
             await call(sdk);
