@@ -1,17 +1,18 @@
 // Generates the dotted world map used as the dashboard's region-map visual.
 //
-//   cd tools && npm ci && node generate-region-map.mjs
+//   npm run build:region-map   (from src/TerraScale.Dashboard/web)
 //
-// Run by hand when the map artwork changes. The output is committed, so the
-// dashboard build does not need dotted-map or npm.
+// Run by hand when the map artwork changes; the output, web/static/brand/region-map.svg,
+// is committed and the project build never runs this. The SVG records its projection,
+// grid, title and description; region selection stays on labeled form controls.
 import DottedMapModule from "dotted-map";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const DottedMap = DottedMapModule.default ?? DottedMapModule;
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const BRAND = join(ROOT, "src", "TerraScale.Dashboard", "web", "static", "brand");
+const WEB = join(dirname(fileURLToPath(import.meta.url)), "..");
+const BRAND = join(WEB, "static", "brand");
 
 const map = new DottedMap({
   height: 80,

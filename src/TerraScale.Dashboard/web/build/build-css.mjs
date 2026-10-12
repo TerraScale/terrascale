@@ -1,13 +1,13 @@
 // Bundles the dashboard's shared and feature styles into the one stylesheet
 // served from web/static/css/terrascale.css.
 //
-//   node scripts/build-css.mjs [output]   minified, default web/static/css/terrascale.css
-//   node scripts/build-css.mjs --dev      readable development bundle
-//   node scripts/build-css.mjs --watch    readable, rebuilt on every source CSS change
-//   node scripts/build-css.mjs --watch --minify  minified output with CSS watching
-//   node scripts/build-css.mjs --release  minified, plus a maximum-quality .br
+//   node build/build-css.mjs [output]   minified, default web/static/css/terrascale.css
+//   node build/build-css.mjs --dev      readable development bundle
+//   node build/build-css.mjs --watch    readable, rebuilt on every source CSS change
+//   node build/build-css.mjs --watch --minify  minified output with CSS watching
+//   node build/build-css.mjs --release  minified, plus a maximum-quality .br
 //                                         sibling served in place of the file
-//   node scripts/build-css.mjs --check    exit 1 when the output differs from a fresh bundle
+//   node build/build-css.mjs --check    exit 1 when the output differs from a fresh bundle
 import { createHash } from 'node:crypto';
 import { readFileSync, watch } from 'node:fs';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
@@ -18,9 +18,9 @@ import { brotliCompress, constants } from 'node:zlib';
 import browserslist from 'browserslist';
 import { browserslistToTargets, bundleAsync } from 'lightningcss';
 
-const repository = fileURLToPath(new URL('../', import.meta.url));
-const source = resolve(repository, 'src/TerraScale.Dashboard/web/assets');
-const publicRoot = resolve(repository, 'src/TerraScale.Dashboard/web/static');
+const web = fileURLToPath(new URL('../', import.meta.url));
+const source = resolve(web, 'assets');
+const publicRoot = resolve(web, 'static');
 const entry = resolve(source, 'css/terrascale.css');
 const args = process.argv.slice(2);
 const watchMode = args.includes('--watch');
@@ -28,11 +28,11 @@ const release = args.includes('--release');
 const checkMode = args.includes('--check');
 const devMode = watchMode || args.includes('--dev');
 const minify = args.includes('--minify') || !devMode;
-const output = resolve(args.find(arg => !arg.startsWith('--')) ?? resolve(repository, 'src/TerraScale.Dashboard/web/static/css/terrascale.css'));
+const output = resolve(args.find(arg => !arg.startsWith('--')) ?? resolve(publicRoot, 'css/terrascale.css'));
 
-// Resolve the checked-in Browserslist query through the locked caniuse-lite
-// database, then convert its browser/version pairs for lightningcss.
-const targets = browserslistToTargets(browserslist(undefined, { path: repository }));
+// Resolve the checked-in Browserslist query (web/.browserslistrc) through the
+// locked caniuse-lite database, then convert its browser/version pairs for lightningcss.
+const targets = browserslistToTargets(browserslist(undefined, { path: web }));
 
 async function build() {
   // bundle() caches file contents inside the process, so a watcher would keep

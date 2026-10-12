@@ -1,22 +1,14 @@
 {
-  "name": "terrascale-dashboard",
+  "name": "terrascale-dashboard-e2e-node",
+  "description": "Temporary: node packages for the tests/TerraScale.Dashboard.E2E/browser/*.mjs flows. Delete this file and its lock once those flows are ported to C#. The asset build lives in src/TerraScale.Dashboard/web.",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": "24.21.0"
+  },
   "devDependencies": {
-    "@shikijs/engine-javascript": "4.4.3",
     "@terrascale/sdk": "0.0.3",
     "axe-core": "4.13.0",
-    "browserslist": "^4.29.0",
-    "esbuild": "0.28.2",
-    "lightningcss": "1.33.0",
-    "modern-monaco": "0.4.2",
-    "playwright-core": "1.63.0",
-    "tm-grammars": "1.31.15"
-  },
-  "scripts": {
-    "build:css": "node scripts/build-css.mjs",
-    "build:js": "node scripts/build-js.mjs",
-    "watch:css": "node scripts/build-css.mjs --watch --dev",
-    "watch:js": "node scripts/build-js.mjs --watch"
+    "playwright-core": "1.63.0"
   }
 }

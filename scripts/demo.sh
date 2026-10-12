@@ -37,9 +37,9 @@ await app.RunAsync();
 config = (root / 'NuGet.Config').read_text().replace('value="vendor/dotnet"', 'value=' + quoteattr(str(root / 'vendor/dotnet')))
 (target / 'NuGet.Config').write_text(config)
 PY
-node scripts/build-css.mjs --watch --minify &
+node src/TerraScale.Dashboard/web/build/build-css.mjs --watch --minify &
 dashboard_demo_css_pid=$!
-node scripts/build-js.mjs --watch --minify &
+node src/TerraScale.Dashboard/web/build/build-js.mjs --watch --minify &
 dashboard_demo_js_pid=$!
 setsid dotnet watch --project "$dashboard_demo_dir/DemoHost.csproj" --non-interactive --no-launch-profile -- "$PWD" "$dashboard_demo_host" &
 dashboard_demo_host_pid=$!

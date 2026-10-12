@@ -3,9 +3,9 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 # Stable per-worktree port; binding all interfaces also admits the Tailscale network.
 dashboard_dev_port=$(python3 -c 'import hashlib,os; print(5500 + int(hashlib.sha256(os.getcwd().encode()).hexdigest()[:8],16) % 1000)')
-node scripts/build-css.mjs --watch --minify &
+node src/TerraScale.Dashboard/web/build/build-css.mjs --watch --minify &
 dashboard_css_pid=$!
-node scripts/build-js.mjs --watch --minify &
+node src/TerraScale.Dashboard/web/build/build-js.mjs --watch --minify &
 dashboard_js_pid=$!
 # Own the watch process group, including CLI/compiler/app children, so stopping
 # the launcher also stops the server rather than leaving an idle watcher behind.

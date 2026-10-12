@@ -1,9 +1,0 @@
-{
-  "name": "terrascale-dashboard-tools",
-  "private": true,
-  "type": "module",
-  "description": "Offline codegen for the dotted region map; never installed by CI.",
-  "dependencies": {
-    "dotted-map": "^2.2.0"
-  }
-}
