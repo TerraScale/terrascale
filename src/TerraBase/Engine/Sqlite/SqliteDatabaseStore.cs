@@ -936,9 +936,9 @@ internal sealed partial class SqliteDatabaseStore(
             using (var connection = new SqliteConnection(connectionString))
             {
                 connection.Open();
-                // A copy made by VACUUM INTO may already be current, so set WAL here and not only during bootstrap.
-                // The creating connection uses the same settings as every pooled one, except that it does not sync.
-                Scalar(connection, null, pragmas + "PRAGMA synchronous = OFF; PRAGMA journal_mode = WAL;");
+                // The creating connection uses the same settings as every pooled one, except that it does not sync: the
+                // file is private until it is published, and synced once then. Turso's journal is WAL by default.
+                Scalar(connection, null, pragmas + "PRAGMA synchronous = OFF;");
                 Bootstrap(name, connection, cancellationToken);
                 // Publish a fresh identity, on this file only.
                 using var transaction = connection.BeginTransaction(deferred: false);
@@ -989,7 +989,6 @@ internal sealed partial class SqliteDatabaseStore(
             return;
         }
 
-        Scalar(connection, null, "PRAGMA journal_mode = WAL;");
         using var transaction = connection.BeginTransaction(deferred: false);
         // A concurrent initializer can finish while this connection waits for the writer lock.
         version = Version(name, connection, transaction);

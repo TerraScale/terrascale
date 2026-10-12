@@ -107,24 +107,20 @@ internal sealed class SqliteSession(SqliteConnection connection) : IDisposable
 
     /// <summary>
     /// Per-connection settings, applied once when a connection opens (pooled sessions and the connection that
-    /// creates a database). The reasons, and how the page cache and the memory map are sized from
-    /// <c>memory-budget</c>, are in <c>docs/sqlite-query-plans.md</c>; <c>synchronous = NORMAL</c> is decision 0003.
+    /// creates a database). Everything else is Turso's default (WAL, 4 KiB pages, its own checkpoints, no busy timeout);
+    /// the two exceptions and their reasons are in <c>docs/terrabase/sqlite-query-plans.md</c>.
     /// </summary>
     public static string Pragmas(long memoryBudget, int threads)
     {
-        // A quarter of the budget for page caches, split across the connections that run at once. Turso has no
-        // process-wide heap limit, so these caches are the bound.
+        // A quarter of the budget for page caches, split across the connections that run at once: Turso has no
+        // process-wide heap limit, so these caches are the memory bound (docs/terrabase/memory.md).
         var pageCacheBytes = memoryBudget / 4;
         var cacheKib = Math.Max(2048, pageCacheBytes / threads / 1024);
-        // Address space backed by the OS page cache, not the heap; SQLite caps it at its compile-time maximum.
-        var mmapBytes = Math.Max(256L * 1024 * 1024, memoryBudget);
+        // NORMAL, not Turso's FULL: a local write is acknowledged after one machine's commit (decision 0003,
+        // multi-region-replication.md section 6); durable writes and replicated applies switch to FULL per transaction.
         return string.Create(System.Globalization.CultureInfo.InvariantCulture, $"""
             PRAGMA synchronous = NORMAL;
-            PRAGMA temp_store = FILE;
-            PRAGMA temp.cache_size = -1024;
-            PRAGMA mmap_size = {mmapBytes};
             PRAGMA cache_size = -{cacheKib};
-            PRAGMA busy_timeout = 100;
             """);
     }
 
@@ -191,8 +187,9 @@ internal sealed class SqliteSession(SqliteConnection connection) : IDisposable
         }
     }
 
-    // The provider has no true async I/O, so each attempt runs on a pool worker. Each attempt waits on lock contention
-    // for at most the session's 100 ms busy timeout; between attempts the worker is free and cancellation is checked,
+    // The provider has no true async I/O, so each attempt runs on a pool worker. An attempt fails at once on lock
+    // contention (Turso's default busy timeout is 0, and one writer per file makes contention rare); between attempts the
+    // worker is free and cancellation is checked,
     // within the original overall timeout. Turso cannot interrupt a running statement, so cancellation is checked only
     // between attempts. Retried operations must be reads or atomic work that rolls back before propagating a busy error.
     public async Task<T> ExecuteAsync<T>(SqliteRunner io, Func<T> execute, CancellationToken cancellationToken)
