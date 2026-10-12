@@ -23,9 +23,9 @@ namespace TerraBase.Fast.Replication;
 /// of <c>turso_cdc</c> that are cut, empty, of an unknown change type or re-encoded with garbage (one fixture per case in
 /// <c>Fixtures/CorruptCdc</c>): it refuses the transaction with an <see cref="InvalidDataException"/> or ships it exactly as
 /// written, never as something else and never by leaving it out. One database's damaged row does not hold back another
-/// database on the same stream. A peer's batch with one bad group applies nothing. A torn WAL tail (what a power loss
-/// leaves with <c>synchronous = NORMAL</c>) loses whole transactions after the tear, their CDC rows with them, and nothing
-/// before it.
+/// database on the same stream. A peer's batch with one bad group applies nothing and is refused for its database alone.
+/// A torn WAL tail (what a power loss leaves with <c>synchronous = NORMAL</c>) loses whole transactions after the tear,
+/// their CDC rows with them, and nothing before it.
 /// </summary>
 public sealed class CorruptChangeLogTests
 {
@@ -122,13 +122,18 @@ public sealed class CorruptChangeLogTests
         }
     }
 
-    // A batch whose second group holds bytes that are no DocumentState: the stream ends with InvalidArgument and the first,
-    // valid group is not applied either. Control: the same valid group alone, on a new stream, applies.
+    // A batch whose second group holds bytes that are no DocumentState is refused for its database: its first, valid group
+    // is not applied either, and the stream goes on. On the same stream, a batch of the other database applies, then the
+    // valid group alone; the receiver counts the refused batch.
     [Test]
-    public async Task A_batch_with_one_undecodable_group_applies_none_of_its_groups()
+    public async Task A_batch_with_one_undecodable_group_is_refused_for_its_database_alone_and_applies_none_of_its_groups()
     {
         await using var node = await Node.StartAsync("gru");
-        await node.WriteAsync(node.Database, async transaction => _ = await transaction.CreateCollectionAsync(new CollectionInfo(Items, 1), CancellationToken.None));
+        foreach (var database in new[] { node.Database, node.Second })
+        {
+            await node.WriteAsync(database, async transaction => _ = await transaction.CreateCollectionAsync(new CollectionInfo(Items, 1), CancellationToken.None));
+        }
+
         var origin = ReplicaId.Of(1, 7, 0);
         var at = new EntryVersion(new Hlc((ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() << 16), origin);
         using var body = JsonDocument.Parse("""{"n":1}""");
@@ -143,23 +148,23 @@ public sealed class CorruptChangeLogTests
 
         using var channel = PeerChannel.Create(node.Api.Server.BaseAddress);
         var client = new Features.Replication.V1.Replication.ReplicationClient(channel);
-        using (var call = await HelloAsync(client, origin))
-        {
-            await call.RequestStream.WriteAsync(new PushFrame { Batch = Batch(node.Database, (1, good), (2, garbage)) });
-            var error = await Assert.ThrowsAsync<RpcException>(() => call.ResponseStream.MoveNext(CancellationToken.None));
-            await Assert.That(error!.StatusCode).IsEqualTo(StatusCode.InvalidArgument);
-        }
-
+        using var call = await HelloAsync(client, origin);
+        await call.RequestStream.WriteAsync(new PushFrame { Batch = Batch(node.Database, (1, good), (2, garbage)) });
+        var refused = await AckAsync(call);
+        await Assert.That(refused.Refused).IsTrue();
+        await Assert.That(refused.Database).IsEqualTo(ChangeGroups.Wire(node.Database));
         await Assert.That(await node.ReadAsync(node.Database, "x")).IsNull().Because("no group of a refused batch is applied");
-        using (var call = await HelloAsync(client, origin))
-        {
-            await call.RequestStream.WriteAsync(new PushFrame { Batch = Batch(node.Database, (1, good)) });
-            await Assert.That(await call.ResponseStream.MoveNext(CancellationToken.None)).IsTrue();
-            await Assert.That(call.ResponseStream.Current.Ack.Refused).IsFalse();
-            await Assert.That(call.ResponseStream.Current.Ack.ChangeId).IsEqualTo(1UL);
-        }
 
+        await call.RequestStream.WriteAsync(new PushFrame { Batch = Batch(node.Second, (1, good)) });
+        var other = await AckAsync(call);
+        await Assert.That((other.Refused, other.ChangeId, other.Database)).IsEqualTo((false, 1UL, ChangeGroups.Wire(node.Second)));
+        await call.RequestStream.WriteAsync(new PushFrame { Batch = Batch(node.Database, (1, good)) });
+        var again = await AckAsync(call);
+        await Assert.That((again.Refused, again.ChangeId, again.Database)).IsEqualTo((false, 1UL, ChangeGroups.Wire(node.Database)));
+
+        await Assert.That(await node.ReadAsync(node.Second, "x")).IsEqualTo("""{"n":1}""");
         await Assert.That(await node.ReadAsync(node.Database, "x")).IsEqualTo("""{"n":1}""");
+        await Assert.That(await node.UntilMetricAsync("terrabase_replication_undecodable_batches_total", value => value == 1, "sjc")).IsTrue();
     }
 
     // Transaction 1 (document kept) commits; the WAL's size is taken; transaction 2 (documents torn-1..3) commits. A copy of
@@ -248,6 +253,12 @@ public sealed class CorruptChangeLogTests
         await Assert.That(await call.ResponseStream.MoveNext(CancellationToken.None)).IsTrue();
         await Assert.That(call.ResponseStream.Current.Welcome).IsNotNull();
         return call;
+    }
+
+    private static async Task<Ack> AckAsync(AsyncDuplexStreamingCall<PushFrame, AckFrame> call)
+    {
+        await Assert.That(await call.ResponseStream.MoveNext(CancellationToken.None)).IsTrue();
+        return call.ResponseStream.Current.Ack;
     }
 
     private static Batch Batch(TenantContext database, params (ulong ChangeId, Delta Delta)[] groups)
