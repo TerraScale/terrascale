@@ -31,18 +31,17 @@ to. `shape_history (id, floor)` records the history baseline; `change_log` retai
 generation, document id, local history offset (`version`), document version (`document_version`) and sequence. Its
 `change_log_by_offset` index supports the feed seeks described below.
 
-`_system` keeps its catalog journal until TS-647 step 5: `documents (collection, id, version, body)` with `version` the
-commit offset of the last write, the same `collections`, `commit_offset` and `documents_live`, its journal in
-`changes (sequence, ordinal, collection, id, version, body)` with the partial `changes_deleted (collection, id, version)
-WHERE body IS NULL` index and prefix digests in `journal_prefixes`, and `applied`, `replication_state` and the shape
-tables unused. It retains no shape history. Both shapes include the uniqueness tables `_tb_unique_keys`, `_tb_unique_invalid` and
+`_system` is a lattice database too (R10a, docs/terrabase/multi-region-replication.md section 15): its live documents of
+every collection share one `documents (collection, id, body)` table (`UNIQUE (collection, id)`), beside the same
+`_tb_state`, `_tb_peers`, `collections`, `commit_offset` and shape tables, which hold nothing for `_system`: it retains no
+shape history. Both shapes include the uniqueness tables `_tb_unique_keys`, `_tb_unique_invalid` and
 `_tb_unique_conflicts`.
 
 | Statement | Hot path | Plan before | Plan after |
 | --- | --- | --- | --- |
-| `Get`: `SELECT … WHERE collection = ? AND id = ?` | system document reads, every API-key check | `SEARCH documents USING PRIMARY KEY (collection=? AND id=?)` | unchanged |
+| `Get`: version from `_tb_state`, body from `documents` | system document reads, every API-key check | `SEARCH documents USING PRIMARY KEY (collection=? AND id=?)` | `SEARCH documents USING INDEX sqlite_autoindex_documents_1 (collection=? AND id=?)` and a scalar `_tb_state` seek for the version |
 | `UniqueRawDocument` | client document reads, query row materialization and uniqueness reconciliation; source body, version and conflict flag in one statement | — | `SEARCH d USING PRIMARY KEY (collection=? AND id=?)`; `SEARCH c USING PRIMARY KEY (collection=? AND id=?) LEFT-JOIN` |
-| `Version`: `SELECT version, typeof(body) = 'null' …` | write preconditions, delete, assert-absent | — | `SEARCH documents USING PRIMARY KEY (collection=? AND id=?)`; `typeof` reads the record header, not the body |
+| `Version`: `_tb_state` stamp and whether `documents` holds the row | `_system` write preconditions, delete, assert-absent | — | a scalar `_tb_state` seek and a covering `NOT EXISTS` seek of `sqlite_autoindex_documents_1`; no body is read |
 | `DocumentBytes`: retained current JSON length | quota net-change accounting without JSON allocation | — | a primary-key seek of `documents` and a `UNIQUE`-key seek of `_tb_unique_conflicts`; `octet_length` reads visible or hidden current JSON length without materializing JSON |
 | `StoredDocumentBytes` | trusted storage-quota total, one scalar result | — | `SCAN collections`, then `CORRELATED SCALAR SUBQUERY 1` with `SEARCH d USING PRIMARY KEY (collection=?)` and a `UNIQUE`-key join of `_tb_unique_conflicts`; reads visible or hidden current sizes without JSON or collection-statistics allocation |
 | `GetState`: `_tb_state` row with its materialized document | every client document write | — | `SEARCH s USING INDEX sqlite_autoindex__tb_state_1 (collection=? AND id=?)`; `LEFT-JOIN`s on the collection table's id key and on `_tb_unique_conflicts` |
@@ -51,24 +50,21 @@ tables unused. It retains no shape history. Both shapes include the uniqueness t
 | `UpdateRow`, `InsertRow`, `DeleteRow` | every client document write | — | id-key seek of the collection table; the insert has no plan rows |
 | `UpdateState`, `InsertState`: one `_tb_state` row per document per request | the end of every client write | — | `SEARCH _tb_state USING INDEX sqlite_autoindex__tb_state_1 (collection=? AND id=?)`; the insert has no plan rows |
 | `DropStates` | client collection drop | — | `SEARCH _tb_state USING INDEX sqlite_autoindex__tb_state_1 (collection=?)` |
-| `Put`: `INSERT … ON CONFLICT (collection, id) DO UPDATE SET version = excluded.version, body = …` | every `_system` write | no plan rows (conflict check is a primary-key probe) | unchanged |
-| `Tombstone`: `UPDATE … SET body = NULL …` | `_system` tombstone | — | `SEARCH documents USING PRIMARY KEY (collection=? AND id=?)` |
+| `SystemGetState`, `SystemUpdateRow`, `SystemInsertRow`, `SystemDeleteRow` | every `_system` write and replicated join | — | `SEARCH s USING INDEX sqlite_autoindex__tb_state_1 (collection=? AND id=?)` with a `LEFT-JOIN` on `sqlite_autoindex_documents_1`; updates and deletes seek `sqlite_autoindex_documents_1 (collection=? AND id=?)`; the insert has no plan rows |
 | `NextOffset`, `CurrentOffset` on `commit_offset WHERE id = 1` | first write of a transaction, commit without writes | — | `SEARCH commit_offset USING INTEGER PRIMARY KEY (rowid=?)` |
 | `Incarnation`, `RenewIncarnation` on `commit_offset WHERE id = 1` | store open, new database/copy publication | — | `SEARCH commit_offset USING INTEGER PRIMARY KEY (rowid=?)` |
-| `HasCollectionState` | fresh management catalog initialization (`_system`) | — | four `EXISTS` range seeks: `SEARCH documents USING PRIMARY KEY (collection>? AND collection<?)`, `SEARCH collections USING PRIMARY KEY (name>? AND name<?)`, `SEARCH changes USING INDEX changes_deleted (collection>? AND collection<?)` and `SEARCH change_log USING COVERING INDEX change_log_by_offset (collection>? AND collection<?)`; includes tombstones, retained replication deletions and shape history without reading bodies |
-| `HasCollectionStateFrom` | collection prefixes with no Unicode successor | — | the same four indexed `EXISTS` seeks using only `collection>?` or `name>?`; a prefix composed entirely of maximum Unicode scalars has no upper bound |
+| `HasCollectionState` | fresh management catalog initialization (`_system`), collection state checks of either kind of database | — | three `EXISTS` range seeks: `SEARCH _tb_state USING COVERING INDEX sqlite_autoindex__tb_state_1 (collection>=? AND collection<?)`, `SEARCH collections …` and `SEARCH change_log USING COVERING INDEX change_log_by_offset …`; tombstones are `_tb_state` rows, so a deletion counts as state |
+| `HasCollectionStateFrom` | collection prefixes with no Unicode successor | — | the same three indexed `EXISTS` seeks using only `collection>=?` or `name>=?`; a prefix composed entirely of maximum Unicode scalars has no upper bound |
 | `CreateCollection`, `GetCollection`, `DropCollection` | collection routes, every document request (existence check) | — | insert: no plan rows; others `SEARCH collections USING PRIMARY KEY (name=?)` |
 | `ListCollectionsFirst`, `ListCollectionsAfter` | collection listing | — | `SCAN collections` (primary-key order, stops at the limit); `SEARCH collections USING PRIMARY KEY (name>?)` |
 | `DropDocuments`: `DELETE … WHERE collection = ?` | collection drop | — | `SEARCH documents USING PRIMARY KEY (collection=?)` |
-| `Delete`: `DELETE … WHERE collection = ? AND id = ?` | every `_system` delete | `SEARCH documents USING PRIMARY KEY (collection=? AND id=?)` | unchanged |
 | List, first page: `… WHERE collection = ? ORDER BY id LIMIT ?` | list without cursor | `SEARCH documents USING PRIMARY KEY (collection=?)` | `SEARCH documents USING INDEX documents_live (collection=?)` (`ListFirst`), skipping tombstones |
 | List, next page: `… WHERE collection = ? AND id > ? ORDER BY id LIMIT ?` | list with cursor | `SEARCH documents USING PRIMARY KEY (collection=?)` — one statement used `($after IS NULL OR id > $after)`, which kept SQLite from seeking to the cursor: every page walked the collection from its first id | `SEARCH documents USING INDEX documents_live (collection=? AND id>?)` (`ListAfter`) |
-| `ClientHasCollectionState`, `ClientHasCollectionStateFrom` | collection state checks on a client database | — | three `EXISTS` range seeks of `documents`, `collections` and `change_log_by_offset`: a client database keeps a drop's tombstones as registers, so it has no journal deletions to look at |
 | `PRAGMA user_version`, `PRAGMA journal_mode = WAL`, `CREATE TABLE` | once per database per process (bootstrap) | DDL, no plan | unchanged |
 | `VACUUM INTO $path` | database copy (Management API), rare | maintenance, `EXPLAIN QUERY PLAN` returns no rows | unchanged; runs on a pooled connection |
-| `CountDocuments`: `SELECT count(*) … WHERE collection = ? AND body IS NOT NULL` | schema inference, query-field records in `_system` (Management API) | — | `SEARCH documents USING PRIMARY KEY (collection=?)`; tests each record header's body type, never loads a body. `documents_live` would not cover the `body` test and would add a lookup per row |
+| `CountDocuments`: `SELECT count(*) … WHERE collection = ?` | schema inference, query-field records in `_system` (Management API) | — | `SEARCH documents USING COVERING INDEX sqlite_autoindex_documents_1 (collection=?)`; every row is a live document |
 | `ListCollectionStats` | usage, collection list (Management API) | — | `SCAN collections` in key order, then per collection `SEARCH documents USING PRIMARY KEY (collection=?)` (a `LEFT-JOIN` summing `octet_length(body)`, which reads the size from the record header) |
-| `DeleteCollectionDocuments`, `DeleteCollectionNames`: `DELETE … WHERE name >= ? AND name < ?` | database or project deletion in `_system` (Management API) | — | `SEARCH documents USING PRIMARY KEY (collection>? AND collection<?)`; `SEARCH collections USING PRIMARY KEY (name>? AND name<?)` |
+| `PrefixDocuments`, `DeleteCollectionNames` | deletion of a deleted database's or project's `_system` state (Management API), which tombstones each live document | — | covering range seeks of `sqlite_autoindex_documents_1` and `sqlite_autoindex_collections_1` |
 | `ListIndexes`, `IndexExists` on `sqlite_schema` | index list, create and drop (Management API) | — | `SCAN sqlite_schema` (a handful of rows); the list is sorted in memory, not in a temporary B-tree |
 
 No fixed statement sorts in a temporary B-tree. The first collections, baseline and anti-entropy pages scan in key order

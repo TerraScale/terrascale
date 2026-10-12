@@ -138,7 +138,7 @@ internal sealed class PeerStreamReceiver : V1.Replication.ReplicationBase
                         throw new InvalidDataException("a stream's batches of one database have growing change ids");
                     }
 
-                    groups = ChangeGroups.Decode(batch.Groups, batch.LastChangeId);
+                    groups = ChangeGroups.Decode(database, batch.Groups, batch.LastChangeId);
                     if (groups[0].ChangeId <= (long)previous)
                     {
                         throw new InvalidDataException("a stream's groups of one database have growing change ids");
