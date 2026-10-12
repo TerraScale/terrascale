@@ -10,6 +10,9 @@ namespace TerraScale.Authentication.Fast.Platform;
 
 public sealed partial class OpenApiTests
 {
+    [ClassDataSource<BrowserFixture>(Shared = SharedType.PerTestSession)]
+    public required BrowserFixture Chromium { get; init; }
+
     private static readonly string[] ExpectedSchemes = ["ManagementBearer", "OAuthAccessBearer", "OperatorBearer", "SessionCookie", "bearerAuth", "clientBasic", "platformUser"];
     private static readonly string[] Methods = ["get", "put", "post", "delete", "patch", "head", "options", "trace"];
 
@@ -255,10 +258,9 @@ public sealed partial class OpenApiTests
     public async Task Scalar_renders_the_contract_without_browser_errors()
     {
         await using var server = await AuthTestServer.StartAsync();
-        var (playwright, browser) = await Browser.LaunchAsync();
-        using var _ = playwright;
-        await using var __ = browser;
-        var page = await browser.NewPageAsync();
+        var browser = await Chromium.BrowserAsync();
+        await using var context = await browser.NewContextAsync();
+        var page = await context.NewPageAsync();
         var errors = new List<string>();
         page.Console += (_, message) =>
         {

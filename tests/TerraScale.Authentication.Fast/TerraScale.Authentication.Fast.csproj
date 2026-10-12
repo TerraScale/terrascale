@@ -10,6 +10,8 @@
          underscores as sentence separators. CA2007: tests have no synchronization
          context to capture. -->
     <NoWarn>$(NoWarn);CA1515;CA1707;CA2007</NoWarn>
+    <!-- Tiered PGO instrumentation costs the suite about 36% of its CPU: 4m43s to 3m02s of user time on the same binary. -->
+    <TieredPGO>false</TieredPGO>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/TerraScale.Authentication/TerraScale.Authentication.csproj" />
@@ -20,6 +22,12 @@
     <PackageReference Include="Microsoft.Playwright" />
     <PackageReference Include="Bogus" />
     <PackageReference Include="ZLogger" />
+    <!-- FakeTimeProvider: drives the readiness loop's five-second passes and two-second deadline. -->
+    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Tests start many short-lived hosts: no IL-compiled DI resolvers per host (see Directory.Build.targets). -->
+    <RuntimeHostConfigurationOption Include="Microsoft.Extensions.DependencyInjection.DisableDynamicEngine" Value="true" />
   </ItemGroup>
   <ItemGroup>
     <!-- Shared harness source; deliberately not a third test project. -->

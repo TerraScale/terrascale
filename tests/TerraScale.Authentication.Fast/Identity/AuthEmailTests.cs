@@ -16,6 +16,9 @@ namespace TerraScale.Authentication.Fast.Identity;
 [ClassDataSource<TerraBaseFixture>(Shared = SharedType.PerTestSession)]
 public sealed partial class AuthEmailTests(TerraBaseFixture fixture)
 {
+    [ClassDataSource<BrowserFixture>(Shared = SharedType.PerTestSession)]
+    public required BrowserFixture Chromium { get; init; }
+
     [Test]
     [Arguments(null, "en", "{0} is your TerraScale sign-in code")]
     [Arguments("pt-BR,pt;q=0.9,en;q=0.8", "pt-BR", "{0} é o seu código de acesso para TerraScale")]
@@ -48,9 +51,7 @@ public sealed partial class AuthEmailTests(TerraBaseFixture fixture)
         await using var oidc = await OidcHarness.StartAsync(fixture);
         await oidc.CreateUserAsync();
         var message = await RequestCodeAsync(oidc, acceptLanguage: null);
-        var (playwright, browser) = await Browser.LaunchAsync();
-        using var _ = playwright;
-        await using var __ = browser;
+        var browser = await Chromium.BrowserAsync();
 
         foreach (var (scheme, visibleLogo, hiddenLogo) in new[] { (ColorScheme.Light, ".logo-light", ".logo-dark"), (ColorScheme.Dark, ".logo-dark", ".logo-light") })
         {

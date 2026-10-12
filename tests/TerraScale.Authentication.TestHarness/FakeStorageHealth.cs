@@ -11,9 +11,13 @@ namespace TerraScale.Authentication.Tests;
 public sealed class FakeStorageHealth(bool healthy, string? region = "gru", TimeSpan? delay = null, bool ignoreCancellation = false, bool blockBeforeReturning = false) : IStorageHealth
 {
     private int calls;
+    private int completed;
 
     /// <summary>How many probes reached the fake authority.</summary>
     public int Calls => Volatile.Read(ref this.calls);
+
+    /// <summary>How many delayed probes have finished, by answering or by being cancelled.</summary>
+    public int Completed => Volatile.Read(ref this.completed);
 
     /// <inheritdoc />
     public Task<StorageHealthResult> CheckAsync(CancellationToken cancellationToken)
@@ -30,11 +34,18 @@ public sealed class FakeStorageHealth(bool healthy, string? region = "gru", Time
 
     private async Task<StorageHealthResult> CheckAfterDelayAsync(CancellationToken cancellationToken)
     {
-        if (delay is { } wait)
+        try
         {
-            await Task.Delay(wait, ignoreCancellation ? CancellationToken.None : cancellationToken);
-        }
+            if (delay is { } wait)
+            {
+                await Task.Delay(wait, ignoreCancellation ? CancellationToken.None : cancellationToken);
+            }
 
-        return new StorageHealthResult(healthy, healthy ? region : null);
+            return new StorageHealthResult(healthy, healthy ? region : null);
+        }
+        finally
+        {
+            Interlocked.Increment(ref this.completed);
+        }
     }
 }

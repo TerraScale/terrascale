@@ -29,3 +29,24 @@ public static class Browser
         }
     }
 }
+
+/// <summary>
+/// One headless Chromium per test session, launched by the first browser test. Each test opens its own
+/// context, so cookies and storage stay isolated while the launch cost is paid once.
+/// </summary>
+public sealed class BrowserFixture : IAsyncDisposable
+{
+    private readonly Lazy<Task<(IPlaywright Playwright, IBrowser Browser)>> launch = new(Browser.LaunchAsync);
+
+    public async Task<IBrowser> BrowserAsync() => (await this.launch.Value).Browser;
+
+    public async ValueTask DisposeAsync()
+    {
+        if (this.launch.IsValueCreated && this.launch.Value.IsCompletedSuccessfully)
+        {
+            var (playwright, browser) = this.launch.Value.Result;
+            await browser.DisposeAsync();
+            playwright.Dispose();
+        }
+    }
+}

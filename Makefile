@@ -8,7 +8,8 @@ PUBLISH_DIR ?= artifacts/publish
 # Extra arguments for every TUnit runner, e.g. TEST_ARGS="--treenode-filter /*/*/Name/*".
 TEST_ARGS ?=
 # Parallel cap of each Fast runner, overridable for a shared machine (for example AUTH_TEST_PARALLEL=16).
-AUTH_TEST_PARALLEL ?= 2
+# Matches the 4-vCPU runners. At 2 the auth suite averaged under one busy core.
+AUTH_TEST_PARALLEL ?= 4
 TERRABASE_TEST_PARALLEL ?= 16
 # Build revision shown by ts-auth /healthz (CI passes the commit SHA).
 TS_AUTH_REVISION ?=
@@ -124,8 +125,10 @@ auth-openapi-check: auth-build
 	scripts/auth/export-openapi.sh $(AUTH_HOST_DLL) artifacts/openapi.json
 	$(REDOCLY) lint artifacts/openapi.json docs/auth/platform-api.openapi.yaml
 
+# Builds only the Fast suite and its references; the Slow suite has its own target.
 # Cases share one TerraBase process; individual concurrency tests still run their own request races.
-auth-test-fast: auth-build
+auth-test-fast: restore
+	dotnet build tests/TerraScale.Authentication.Fast/TerraScale.Authentication.Fast.csproj --configuration $(CONFIGURATION) --no-restore --nologo
 	dotnet run --project tests/TerraScale.Authentication.Fast --configuration $(CONFIGURATION) --no-build -- --maximum-parallel-tests $(AUTH_TEST_PARALLEL) $(TEST_ARGS)
 
 auth-test-slow: auth-build
@@ -156,7 +159,9 @@ terrabase-analyzer-check: restore
 	for line in 8 10 12 14 16; do grep -q "ExpectedFailures.cs($$line," "$$log"; done; \
 	if grep -vE 'error (TB0001|RS0030)' "$$log" | grep -q ': error '; then echo 'unexpected compiler error in analyzer build check' >&2; exit 1; fi
 
-terrabase-test-fast: terrabase-build
+# Builds only the Fast suite: TerraBase and its analyzer build as its references; the Slow suite has its own target.
+terrabase-test-fast: restore
+	dotnet build tests/TerraBase.Fast/TerraBase.Fast.csproj --configuration $(CONFIGURATION) --no-restore
 	dotnet run --project tests/TerraBase.Fast --configuration $(CONFIGURATION) --no-build -- --maximum-parallel-tests $(TERRABASE_TEST_PARALLEL) $(TEST_ARGS)
 
 terrabase-test-slow: terrabase-build

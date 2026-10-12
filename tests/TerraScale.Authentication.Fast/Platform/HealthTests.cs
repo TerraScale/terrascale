@@ -4,6 +4,7 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Time.Testing;
 using TerraScale.Authentication.Features.Observability;
 using TerraScale.Authentication.Store;
 using TerraScale.Authentication.Tests;
@@ -72,18 +73,24 @@ public sealed class HealthTests
         await Assert.That(body.GetProperty("region").GetString()).IsEqualTo("gru");
     }
 
-    // A wall-clock bound: run alone so CPU-heavy tests (Argon2id hashing) cannot starve the
-    // shared thread pool and delay the probe's deadline.
     [Test]
-    [NotInParallel]
     public async Task Readiness_treats_a_hung_authority_as_not_ready()
     {
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
         var health = new FakeStorageHealth(healthy: true, delay: TimeSpan.FromSeconds(30));
+        var logs = new ReadinessLogs();
         await using var server = await AuthTestServer.StartAsync(services: services =>
-            services.AddSingleton<IStorageHealth>(health));
+        {
+            services.AddSingleton<TimeProvider>(clock);
+            services.AddSingleton<ILoggerProvider>(logs);
+            services.AddSingleton<IStorageHealth>(health);
+        });
 
         // The first pass gives up at its two-second deadline and records not ready.
-        await Task.Delay(TimeSpan.FromSeconds(2.5));
+        await Assert.That(await ReadinessWait.UntilAsync(() => Task.FromResult(health.Calls == 1), TimeSpan.FromSeconds(15))).IsTrue();
+        clock.Advance(TimeSpan.FromSeconds(2));
+        await Assert.That(await ReadinessWait.UntilAsync(() => Task.FromResult(logs.Entries.Length == 1), TimeSpan.FromSeconds(15))).IsTrue();
+        await Assert.That(logs.Entries[0].Message).IsEqualTo("Readiness check failed: timed out");
         using var response = await server.Client.GetAsync("/readyz");
         var body = await response.Content.ReadFromJsonAsync<JsonElement>();
 
@@ -94,10 +101,14 @@ public sealed class HealthTests
     [Test]
     public async Task Readiness_answers_from_the_background_loop_not_one_storage_check_per_request()
     {
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
         var health = new FakeStorageHealth(healthy: false);
         await using var server = await AuthTestServer.StartAsync(services: services =>
-            services.AddSingleton<IStorageHealth>(health));
-        await Task.Delay(TimeSpan.FromSeconds(1));
+        {
+            services.AddSingleton<TimeProvider>(clock);
+            services.AddSingleton<IStorageHealth>(health);
+        });
+        await Assert.That(await ReadinessWait.UntilAsync(() => Task.FromResult(health.Calls > 0), TimeSpan.FromSeconds(15))).IsTrue();
         var before = health.Calls;
 
         for (var request = 0; request < 50; request++)
@@ -105,41 +116,58 @@ public sealed class HealthTests
             using var response = await server.Client.GetAsync("/readyz");
         }
 
-        // At most one pass can land in the burst; a check per request would add fifty.
-        await Assert.That(health.Calls - before).IsLessThanOrEqualTo(1);
-        await Task.Delay(ReadinessWait.NextPass);
-        await Assert.That(health.Calls).IsGreaterThan(before);
+        // The clock stands still, so no pass can land in the burst; a check per request would add fifty.
+        await Assert.That(health.Calls).IsEqualTo(before);
+        clock.Advance(TimeSpan.FromSeconds(5));
+        await Assert.That(await ReadinessWait.UntilAsync(() => Task.FromResult(health.Calls > before), TimeSpan.FromSeconds(15))).IsTrue();
     }
 
     [Test]
-    [NotInParallel]
     public async Task A_probe_that_times_out_warns_once_without_a_stack_trace()
     {
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var health = new FakeStorageHealth(healthy: true, delay: TimeSpan.FromSeconds(30));
         var logs = new ReadinessLogs();
         await using var server = await AuthTestServer.StartAsync(services: services =>
         {
+            services.AddSingleton<TimeProvider>(clock);
             // The global Information rule outranks MinLevel, so this provider rule keeps Debug records.
             services.PostConfigure<LoggerFilterOptions>(options => options.Rules.Add(new LoggerFilterRule(typeof(ReadinessLogs).FullName, null, LogLevel.Debug, null)));
             services.AddSingleton<ILoggerProvider>(logs);
-            services.AddSingleton<IStorageHealth>(new FakeStorageHealth(healthy: true, delay: TimeSpan.FromSeconds(30)));
+            services.AddSingleton<IStorageHealth>(health);
         });
 
         // Two passes: one at startup, one five seconds later; each ends at its two-second deadline.
-        await Task.Delay(TimeSpan.FromSeconds(8));
+        await TimedOutPassAsync(1);
+        clock.Advance(TimeSpan.FromSeconds(3));
+        await TimedOutPassAsync(2);
+
         using var response = await server.Client.GetAsync("/readyz");
 
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
         await Assert.That(logs.Levels).IsEqualTo("Warning,Debug");
         await Assert.That(logs.Entries.Any(entry => entry.Exception is not null)).IsFalse();
+
+        // Waits for the pass to reach the authority, then moves the clock to its deadline and waits for its log line.
+        async Task TimedOutPassAsync(int pass)
+        {
+            await Assert.That(await ReadinessWait.UntilAsync(() => Task.FromResult(health.Calls == pass), TimeSpan.FromSeconds(15))).IsTrue();
+            clock.Advance(TimeSpan.FromSeconds(2));
+            await Assert.That(await ReadinessWait.UntilAsync(() => Task.FromResult(logs.Entries.Length == pass), TimeSpan.FromSeconds(15))).IsTrue();
+            // The deadline cancelled the check; once it has finished, the next pass is not stacked on it.
+            await Assert.That(await ReadinessWait.UntilAsync(() => Task.FromResult(health.Completed == pass), TimeSpan.FromSeconds(15))).IsTrue();
+        }
     }
 
     [Test]
     public async Task A_readiness_failure_warns_once_and_its_recovery_is_reported_once()
     {
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
         var health = new ToggledStorageHealth();
         var logs = new ReadinessLogs();
         await using var server = await AuthTestServer.StartAsync(services: services =>
         {
+            services.AddSingleton<TimeProvider>(clock);
             // The global Information rule outranks MinLevel, so this provider rule keeps Debug records.
             services.PostConfigure<LoggerFilterOptions>(options => options.Rules.Add(new LoggerFilterRule(typeof(ReadinessLogs).FullName, null, LogLevel.Debug, null)));
             services.AddSingleton<ILoggerProvider>(logs);
@@ -148,12 +176,12 @@ public sealed class HealthTests
 
         await Assert.That(await ReadinessWait.ReadyWithinAsync(server.Client, TimeSpan.FromSeconds(10))).IsTrue();
         health.Healthy = false;
-        await Task.Delay(ReadinessWait.NextPass);
+        await NextPassAsync(1);
         using var failing = await server.Client.GetAsync("/readyz");
-        await Task.Delay(ReadinessWait.NextPass);
+        await NextPassAsync(2);
         using var stillFailing = await server.Client.GetAsync("/readyz");
         health.Healthy = true;
-        await Task.Delay(ReadinessWait.NextPass);
+        await NextPassAsync(3);
         using var recovered = await server.Client.GetAsync("/readyz");
 
         await Assert.That(failing.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
@@ -161,6 +189,13 @@ public sealed class HealthTests
         await Assert.That(recovered.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(logs.Levels).IsEqualTo("Warning,Debug,Information");
         await Assert.That(logs.Entries.First().Message).IsEqualTo("Readiness check failed: storage reported unhealthy");
+
+        // Moves the clock to the next pass and waits until that pass has logged.
+        async Task NextPassAsync(int entries)
+        {
+            clock.Advance(TimeSpan.FromSeconds(5));
+            await Assert.That(await ReadinessWait.UntilAsync(() => Task.FromResult(logs.Entries.Length == entries), TimeSpan.FromSeconds(15))).IsTrue();
+        }
     }
 
     [Test]
@@ -188,7 +223,7 @@ public sealed class HealthTests
     {
         private readonly ConcurrentQueue<ReadinessEntry> entries = new();
 
-        public IReadOnlyCollection<ReadinessEntry> Entries => this.entries.ToArray();
+        public ReadinessEntry[] Entries => this.entries.ToArray();
 
         // Levels of the readiness probe's own log lines, in the order they were written.
         public string Levels => string.Join(',', this.entries.Select(entry => entry.Level));
@@ -230,13 +265,8 @@ public sealed class HealthTests
                 new HttpRequestException($"connect https://user:{secret}@db.example/?key={secret}", new IOException($"password={secret}"))));
         });
 
-        // The first pass runs at startup and logs its failure; on a loaded machine that takes more than a second.
-        var deadline = DateTimeOffset.UtcNow + ReadinessWait.NextPass;
-        while (!logs.Text.Contains("Readiness check failed", StringComparison.Ordinal) && DateTimeOffset.UtcNow < deadline)
-        {
-            await Task.Delay(TimeSpan.FromMilliseconds(100));
-        }
-
+        // The first pass runs at startup and logs its failure.
+        await Assert.That(await ReadinessWait.UntilAsync(() => Task.FromResult(logs.Text.Contains("Readiness check failed", StringComparison.Ordinal)), TimeSpan.FromSeconds(15))).IsTrue();
         using var response = await server.Client.GetAsync("/readyz");
 
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
@@ -247,20 +277,38 @@ public sealed class HealthTests
 
     private sealed class ThrowingStorageHealth(Exception exception) : IStorageHealth
     {
-        public Task<StorageHealthResult> CheckAsync(CancellationToken cancellationToken) => Task.FromException<StorageHealthResult>(exception);
+        private int calls;
+
+        public int Calls => Volatile.Read(ref this.calls);
+
+        public Task<StorageHealthResult> CheckAsync(CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref this.calls);
+            return Task.FromException<StorageHealthResult>(exception);
+        }
     }
 
     [Test]
     public async Task A_log_provider_that_throws_never_breaks_readiness()
     {
+        var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var health = new ThrowingStorageHealth(new IOException("storage down"));
         await using var server = await AuthTestServer.StartAsync(services: services =>
         {
+            services.AddSingleton<TimeProvider>(clock);
             services.AddSingleton<ILoggerProvider>(new ThrowingWarningLogs());
-            services.AddSingleton<IStorageHealth>(new ThrowingStorageHealth(new IOException("storage down")));
+            services.AddSingleton<IStorageHealth>(health);
         });
 
         using var first = await server.Client.GetAsync("/readyz");
-        await Task.Delay(ReadinessWait.NextPass);
+        // Two more passes after the first failed log write (a warning, then a debug line).
+        foreach (var pass in new[] { 2, 3 })
+        {
+            await Assert.That(await ReadinessWait.UntilAsync(() => Task.FromResult(health.Calls == pass - 1), TimeSpan.FromSeconds(15))).IsTrue();
+            clock.Advance(TimeSpan.FromSeconds(5));
+        }
+
+        await Assert.That(await ReadinessWait.UntilAsync(() => Task.FromResult(health.Calls == 3), TimeSpan.FromSeconds(15))).IsTrue();
         using var second = await server.Client.GetAsync("/readyz");
 
         // Not ready, and still answering: the failed log write did not fault the background loop.
