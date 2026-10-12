@@ -72,16 +72,28 @@ public sealed class CrashAndStallE2ETests
         Console.WriteLine($"SIGKILL after {acked.Length} acknowledged writes ({unacknowledged.Length} in flight): all acknowledged writes survived");
     }
 
-    // The replicated half: gru, a separate OS process, is killed right after its acknowledgements, before it can have
-    // shipped them all, and every region must still end with every acknowledged write once gru is back.
+    // The replicated half: gru, a separate OS process, is killed right after its acknowledgements, and every region must
+    // still end with every acknowledged write once gru is back. With the peers killed first, none of those writes can have
+    // been shipped before gru's SIGKILL; otherwise gru races its own streams.
     [Test]
+    [Arguments(false)]
+    [Arguments(true)]
     [Scenario(Nodes.Processes, Faults.ProcessKill)]
-    public async Task Writes_acknowledged_before_a_SIGKILL_reach_every_region_once_the_node_is_back()
+    public async Task Writes_acknowledged_before_a_SIGKILL_reach_every_region_once_the_node_is_back(bool peersKilledFirst)
     {
         Skip.When(Cluster.FlyRequested, "kills a local node process");
         await Gaps.RunAsync("crash-replicated", async () =>
         {
             await using var regions = await RegionProcesses.StartAsync(All);
+            var peers = All.Where(region => region != Cluster.Gru).ToArray();
+            if (peersKilledFirst)
+            {
+                foreach (var peer in peers)
+                {
+                    await regions.KillAsync(peer);
+                }
+            }
+
             var gru = regions[Cluster.Gru];
             var faker = new Faker();
             var acknowledged = new ConcurrentDictionary<string, string>();
@@ -111,6 +123,13 @@ public sealed class CrashAndStallE2ETests
             await Task.WhenAll(writers);
             var acked = acknowledged.ToArray();
             await regions.StartAgainAsync(Cluster.Gru);
+            if (peersKilledFirst)
+            {
+                foreach (var peer in peers)
+                {
+                    await regions.StartAgainAsync(peer);
+                }
+            }
 
             var started = Stopwatch.GetTimestamp();
             foreach (var region in regions.Regions)
@@ -133,7 +152,7 @@ public sealed class CrashAndStallE2ETests
                 }
             }
 
-            Console.WriteLine($"replicated SIGKILL after {acked.Length} acknowledged writes ({unacknowledged.Length} in flight): every region holds every acknowledged write");
+            Console.WriteLine($"replicated SIGKILL (peers killed first: {peersKilledFirst}) after {acked.Length} acknowledged writes ({unacknowledged.Length} in flight): every region holds every acknowledged write");
         });
     }
 
