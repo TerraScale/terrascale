@@ -53,7 +53,10 @@ internal sealed class StorageChangeGroupSink(IStorageEngine engine, ITenantDirec
 
     public async ValueTask RecordFrontierAsync(TenantContext database, ReplicaId origin, Hlc frontier, CancellationToken cancellationToken)
     {
-        if (await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false) is not { } store)
+        var store = database == ChangeGroups.System
+            ? await engine.OpenSystemDatabaseAsync(cancellationToken).ConfigureAwait(false)
+            : await engine.OpenDatabaseAsync(database, cancellationToken).ConfigureAwait(false);
+        if (store is null)
         {
             return;
         }
