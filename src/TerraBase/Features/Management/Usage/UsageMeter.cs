@@ -110,6 +110,14 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
     // The id of the last flush that added to a database's counts, saved in the same write.
     private const string LastFlush = "flush";
 
+    // Every machine flushes the requests it served into documents of its own (lifetime totals, buckets, last flush), whose ids
+    // end with @ and its machine id: the catalog replicates to every region (docs/terrabase/multi-region-replication.md
+    // section 15), and only one writer per document keeps a read-add-write flush exact. Reads sum every machine's documents.
+    private string Own(string id) => $"{id}@{options.MachineId}";
+
+    // The bucket or name part of a per-machine id.
+    private static string Shared(string id) => id.IndexOf('@', StringComparison.Ordinal) is var at and >= 0 ? id[..at] : id;
+
     // Bucket documents are a few dozen bytes; this only bounds a page if one ever is not.
     private const long MaxPageBytes = 1024 * 1024;
 
@@ -232,7 +240,7 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
 
             var read = await catalog.ReadAsync<UsageCountsResult>(
                 async transaction => new UsageCounts(
-                    await transaction.GetAsync(UsageCollection(owner.DatabaseId), Ops, cancellationToken).ConfigureAwait(false) is { } document ? Parse(document) : OpCounts.Zero,
+                    await ReadLifetimeAsync(transaction, owner.DatabaseId, Parse, cancellationToken).ConfigureAwait(false),
                     await ReadSeriesAsync(transaction, owner.DatabaseId, window, Parse, proceed, cancellationToken).ConfigureAwait(false)),
                 static error => error, cancellationToken).ConfigureAwait(false);
             if (read is not UsageCounts saved)
@@ -349,7 +357,7 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
         {
             foreach (var database in doubt.Batch.Select(entry => entry.Key.Database.DatabaseId).Distinct())
             {
-                if (await SystemCatalog.GetAsync(transaction, UsageCollection(database), LastFlush, TerraBaseJsonContext.Default.String, cancellationToken)
+                if (await SystemCatalog.GetAsync(transaction, UsageCollection(database), Own(LastFlush), TerraBaseJsonContext.Default.String, cancellationToken)
                     .ConfigureAwait(false) == doubt.Id)
                 {
                     return true;
@@ -401,8 +409,8 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
                 }
 
                 var usage = UsageCollection(database.DatabaseId);
-                await AddAsync(transaction, usage, Ops, entries.Aggregate(OpCounts.Zero, (sum, entry) => sum + entry.Value), cancellationToken).ConfigureAwait(false);
-                await PutAsync(transaction, usage, LastFlush, id, TerraBaseJsonContext.Default.String, cancellationToken).ConfigureAwait(false);
+                await AddAsync(transaction, usage, Own(Ops), entries.Aggregate(OpCounts.Zero, (sum, entry) => sum + entry.Value), cancellationToken).ConfigureAwait(false);
+                await PutAsync(transaction, usage, Own(LastFlush), id, TerraBaseJsonContext.Default.String, cancellationToken).ConfigureAwait(false);
                 foreach (var granularity in UsageWindow.Granularities)
                 {
                     var buckets = Collection(database.DatabaseId, granularity);
@@ -414,7 +422,7 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
                         .Where(bucket => bucket.Key >= oldestKept))
                     {
                         var counts = bucket.Aggregate(OpCounts.Zero, (sum, entry) => sum + entry.Value);
-                        await AddAsync(transaction, buckets, granularity.Id(bucket.Key), counts, cancellationToken).ConfigureAwait(false);
+                        await AddAsync(transaction, buckets, Own(granularity.Id(bucket.Key)), counts, cancellationToken).ConfigureAwait(false);
                     }
 
                     await PruneAsync(transaction, buckets, granularity.Id(oldestKept), cancellationToken).ConfigureAwait(false);
@@ -519,6 +527,28 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
         return counts with { Meters = kept.Count == 0 ? null : kept };
     }
 
+    // The lifetime totals: the sum of every machine's.
+    private static async ValueTask<OpCounts> ReadLifetimeAsync(
+        IStorageTransaction transaction, string databaseId, Func<StoredDocument, OpCounts> parse, CancellationToken cancellationToken)
+    {
+        var lifetime = OpCounts.Zero;
+        string? after = null;
+        DocumentPage page;
+        do
+        {
+            page = await transaction.ListAsync(UsageCollection(databaseId), after, limit: 100, MaxPageBytes, cancellationToken).ConfigureAwait(false);
+            foreach (var document in page.Documents.Where(document => Shared(document.Id) == Ops))
+            {
+                lifetime += parse(document);
+            }
+
+            after = page.Documents.Count > 0 ? page.Documents[^1].Id : after;
+        }
+        while (page.HasMore);
+
+        return lifetime;
+    }
+
     private static async ValueTask<OpCounts[]> ReadSeriesAsync(
         IStorageTransaction transaction, string databaseId, UsageWindow window, Func<StoredDocument, OpCounts> parse, Action? proceed,
         CancellationToken cancellationToken)
@@ -538,7 +568,7 @@ internal sealed partial class UsageMeter(SystemCatalog catalog, TimeProvider tim
                     return series;
                 }
 
-                var index = window.Granularity.Parse(document.Id) - window.First;
+                var index = window.Granularity.Parse(Shared(document.Id)) - window.First;
                 // Coarser analytics buckets read finer persisted buckets after the preceding boundary.
                 if (index >= 0 && index < series.Length)
                 {
