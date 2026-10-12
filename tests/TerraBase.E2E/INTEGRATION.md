@@ -70,6 +70,15 @@ apps.
 #129, #128, #126 and #124 also ran `previews.yml` on close (38267208978, 38267258398, 38267296565, 38267640482); they
 had no preview app. PRs that still have a preview app: #79, #88, #106, #108, #111–#121. Since the workflow is disabled, merging them no longer destroys their apps.
 
+**Train order after main is green:**
+1. **#115 first.** It carries T1's vendored chain `8dc69d14` with main merged in. COS hypothesis: main's five flaky Fast
+   tests are the Turso abandoned-statement finalizer race, and main has #109 but not the driver fix, so #115 is the
+   likely fix.
+2. Then the other PRs, in manifest order.
+
+**Every PR needs a fresh green `test` run on its exact head after main is green.** A rerun of a failed job while main is
+known flaky proves nothing. #79's 15:30Z rerun request (run 38268608663) does not count.
+
 **Not merged until fixed and verified:**
 - **R10a's stack**, until the no-peer fail-open and the unprotected override are fixed and R3 verifies in writing;
 - **#125**, until its metrics race is fixed (#130) and a fresh `test` run on its exact head is green;
@@ -101,8 +110,8 @@ the SHA listed. A newer head means a new manifest entry, never a silent swap.
 | 14 | R8 e2e scenarios | #119 | `90847616` (local; pushed head `56b9ffea`) | none (tests) | ready | Only `ChangesFeedE2ETests.cs`. Its two `[Scenario]` declarations come from the assertion side (item 19). |
 | 15 | R6: anti-entropy and refill | #114 | `594b052a` (pushed) | 3 | ready | |
 | 16 | Register once (harness for R10a) | #117 | `256d5442` (pushed) | none (tests) | ready | |
-| 17 | **R7: garbage collection**, copying refill | #120 | `76cb23ff` (local `feat/r7-gc`; pushed head `811dbf6e`) | 3 (R7 changes no format, #120) | ready | `811dbf6e` → `e8b458e5` stale writes → `7d83cfbf` refill refused → `80c67345` PeerLink abort fix → `baa2e236` harness: nodes register as the first region's user → `76cb23ff` acknowledgement past CDC rows with nothing to ship. |
-| 18 | **R10a: catalog as a lattice database** | #116, #121 | R10a's own stack on R7: `a54beab4` (local; `49ec3496` R10a-1, `cdcd019d` R10a-2, `21d05c9c` R10a-3, `a54beab4` e2e) on `baa2e236` | **4** | **WAITING: R10a reports done** (R3's blocking findings resolved, bounded deletion, restore gate) | Not `de0a022f` (#121's pushed head): its registration 500 is known bad. Not R3's withdrawn `e9841c75`/`f82690b6`. Sibling of `76cb23ff` on `baa2e236`, so it merges with item 17. Catalog tombstones stay out of GC (COS decision). Brings `CatalogProcessesTests.cs`; its Gaps flips are the strict owner's. |
+| 17 | **R7: garbage collection**, copying refill | #120 | **`24e138c0`** (R3's local R7 tip; supersedes `76cb23ff`, which it contains) | 3 (R7 changes no format, #120) | ready; merges after its base PRs | Contains `e8b458e5` (stale writes), `7d83cfbf` (refill refused), `80c67345` (the PeerLink abort fix), `baa2e236` (register as the first region's user), `76cb23ff` (ack past CDC rows with nothing to ship) and the Fast restarted-machine wait. R10a's stack sits on it. |
+| 18 | **R10a: catalog as a lattice database** | #116, #121 | **`60eae912`** (local branch `r10a-on-r7gc`, on R7 `24e138c0`; supersedes `a54beab4`/`r10a-on-r7`): `305890b3` R10a-1, `2334a941` R10a-2 (format 4), `a0b86d7d` R10a-3, `959904dc` e2e, `f03c62e7` invariants, `db573c42` bounded delete, `84dff445` fail-closed restore gate, `a9c56e8f` QuietAsync routing, `60eae912` restore-gate blockers (no opening on an empty peer list; explicit genesis bootstrap; no unauthenticated override) | **4** (`4-44d5cdc5b81c` alone, per R10a) | **WAITING: R3's written verification of `60eae912`** | R10a's results at `60eae912`: Fast 1392/1392; E2E 34 passed + 25 landed, 3 skipped, 1 failed. The failure is the single-region storage stall, whose harness now needs a catalog bootstrap; that harness change is asked of R3. #116 and #121 are retargeted to main only after their base PRs merge (#120 → #117 → #114 → … → #106). R10a then brings both to the current head and runs the `.github` check before pushing. |
 | 19 | Assertion side and recorder | #105 + the candidate stack | #105 `4069da9f` (pushed) + local `94086cd6`/`4b85b32c`; the candidate-9 assertion commits on `dea6b364` + R3's `1b68b852` (writer outcomes) | none (tests) | ready | The final `Gaps.cs` follows the candidate stack: it keeps only gaps that still fail their own way. #105's main-only setup-blocked classification is kept only if a scenario still needs it. |
 | 19a | **Tester A: multi-writer convergence matrix** (`tests/TerraBase.E2E/MultiWriterMatrixTests.cs`, test only) | none | **`3ade7009`** (local, on `cfda0499`); the combine takes the file only | none (test only; no product or harness change) | ready; **needs #111 (`RegionProcesses`) on main first** | 1 test × 6 write orders over region processes (SIGKILL windows, all-regions restart): same and different field, delete vs edit both orders, counters, add-wins sets, delete → re-create, counts and **exact per-region digests**. **Ack-based barrier:** `/replication` Head advanced past the pre-sentinel snapshot, and Acknowledged ≥ Head per receiver. Tester A: 5 quiet repeats 30/30 pass, mutants M1 and M2 fail 6/6. Declared `[Scenario(Nodes.Processes, Faults.ProcessKill)]` by the strict owner. **Caveat to state with its result:** no route exposes the true CDC head, so "anti-entropy out of order and a stale Head at the same moment" is not formally excluded. Hook request to R3: expose the CDC head per database. It joins the test-only PR with Tester C's files only once #111 is on main; it uses `RegionProcesses`, which main does not have. |
 
@@ -200,7 +209,7 @@ ts-dashboard is held by the user and is in neither phase.
 1. **T1:** done (`1c800e32`).
 1a. **CI optimizer:** #129 at `165295e0`, hosted run 38262406479 green. Required before the phase-1 merge, not before the combine.
 1b. **T1:** the dependency and security audit of the vendored driver. Required before acceptance counts.
-2. **R10a:** the stack on R7 reported done, after its gate-blocker fix and R3's verification, with:
+2. **R10a:** the gate-blocker fix is done at `60eae912`. It waits on R3's written verification of that exact SHA, with:
    - R3's blocking findings resolved;
    - bounded deletion;
    - the restore gate;
