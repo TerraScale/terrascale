@@ -21,6 +21,7 @@ public sealed class ApiReferenceTests
         DELETE /v1/projects/{project}/databases/{database}/indexes/{index} TsAuth(databases:write) dropIndex Indexes
         DELETE /v1/projects/{project}/saved-queries/{query} TsAuth(databases:write) deleteSavedQuery Queries
         GET /backupz anonymous backupz Health
+        GET /health/replication anonymous replicationHealth Health
         GET /healthz anonymous healthz Health
         GET /readyz anonymous readyz Health
         GET /v1/projects/{project}/analytics TsAuth(databases:read) getProjectAnalytics Analytics

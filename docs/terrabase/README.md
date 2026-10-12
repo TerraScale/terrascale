@@ -67,6 +67,8 @@ Both probes are unauthenticated, return no tenant data, and are served on the in
 the public listener, where Fly's health checks read them.
 
 - `GET /healthz`: liveness, `200 {"status":"ok","version":"<version>","region":"<region>"}`.
+- `GET /health/replication`: the public replication summary for status pages (region codes, `ok`/`degraded`, lag
+  seconds; see [api.md](api.md#health)).
 - `GET /readyz`: readiness. `200 {"status":"ready","version":"<version>","region":"<region>"}` only when the storage
   engine is open, the data directory is writable, ts-auth's signing keys have been fetched once (only when
   `auth-issuer` is set), a catalog follower has applied its primary's head once and is not behind a head its primary

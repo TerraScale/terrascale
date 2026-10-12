@@ -15,6 +15,9 @@ and the administrative listener is loopback-only by construction.
 serves without authentication. They carry `ListenerMetadata.Probe`, so they answer on the
 administrative and client listeners and on no other.
 
+Amended 2026-10-12: `GET /health/replication` joins them, so status pages can check replication per region
+without a key. Its body is region codes, `ok`/`degraded` and lag seconds only (api.md, Health).
+
 ## Consequences
 
 - Their bodies are exactly `status`, `version` and the node's `region` (the TS-499 contract):
