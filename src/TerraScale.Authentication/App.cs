@@ -35,7 +35,7 @@ public static class App
     // region its own signing keys and users. Switch back to top1.nearest.of.ts-terrabase.internal once R4a replicates.
     public static readonly Uri TerraBaseOrigin = new(Environment.GetEnvironmentVariable("FLY_APP_NAME") switch
     {
-        null or "" => "http://localhost:8081",
+        null or "" => "http://127.0.0.1:8081",
         var app when app.StartsWith("ts-pr-", StringComparison.Ordinal) => $"http://top1.nearest.of.{app}.internal:8081",
         _ => "http://gru.ts-terrabase.internal:8081",
     });

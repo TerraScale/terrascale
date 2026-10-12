@@ -35,7 +35,8 @@ Run them from the repository root. Locally, prefix each with `nice -n 19`.
 here deploys or touches Fly.io.
 
 - Needs Node.js 20.19+ and ts-dotnet at the revision pinned in `.github/workflows/ci.yml` (`TS_DOTNET_REV`). The Aspire
-  CLI is a local dotnet tool (`dotnet-tools.json`), run as `dotnet aspire`.
+  CLI is a local dotnet tool (`dotnet-tools.json`), run as `dotnet aspire` after `dotnet tool restore` (`make dev` runs
+  it). The dashboard is HTTPS: trust the development certificate once with `dotnet aspire certs trust`.
 - From a worktree, or when `../ts-dotnet` is on another revision, clone the pinned revision on its own instead of moving
   that checkout, and point `TS_DOTNET_DIR` at it:
 
@@ -49,8 +50,9 @@ here deploys or touches Fly.io.
   environment variable).
 - Every listener stays on loopback: TerraBase binds `127.0.0.1` in Development off Fly (8080 public, 8081 internal,
   9091 metrics) and ts-auth listens on `127.0.0.1:8090` (metrics 9092). Off Fly, ts-auth stores in the TerraBase at
-  `localhost:8081`.
-- Each run is disposable: a new temporary TerraBase data directory and a new ts-auth master key held only in memory.
+  `127.0.0.1:8081`.
+- Each run is disposable: TerraBase starts from an empty data directory (`$TMPDIR/terrascale-aspire-terrabase`, emptied
+  at the start of every run), and ts-auth gets a new master key that is never written to disk.
 - ts-auth answers `/readyz` 503 ("no signing keys") until the platform issuer has a signing key. The `auth-signing-key`
   resource runs `ts-auth provision-signing-key` against that run's local TerraBase only; it never starts by itself
   (start it from the dashboard). See [docs/auth/signing-keys.md](docs/auth/signing-keys.md).
