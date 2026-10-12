@@ -104,7 +104,7 @@ internal sealed partial class SqliteStorageTransaction
     // A local write that collides throws; a replicated join never fails a constraint, its loser is hidden instead.
     private IEnumerable<string> ReplaceUniqueKeys(string collection, string id, string? body, CancellationToken cancellationToken, bool local = true)
     {
-        if (!Shaped)
+        if (!IsClient)
         {
             return [];
         }
@@ -130,7 +130,7 @@ internal sealed partial class SqliteStorageTransaction
         return UniqueProjectionIds(cancellationToken);
     }
 
-    private void ReconcileUnique(string collection, IEnumerable<string> ids, string? writtenId, CancellationToken cancellationToken)
+    private void ReconcileUnique(string collection, IEnumerable<string> ids, CancellationToken cancellationToken)
     {
         foreach (var id in ids)
         {
@@ -160,19 +160,7 @@ internal sealed partial class SqliteStorageTransaction
                     ClearUniqueConflict(collection, id);
                 }
             }
-
-            if (hidden != raw.UniqueConflict && id != writtenId)
-            {
-                UniqueHistory(new DocumentChange(collection, id, raw.Version, hidden ? (ReadOnlyMemory<byte>?)null : raw.Json), cancellationToken);
-            }
         }
-    }
-
-    private void UniqueHistory(DocumentChange change, CancellationToken cancellationToken)
-    {
-        Reserve(change.Id, change.Json?.Length ?? 0);
-        AppendChange(change.Collection, change.Id, Offset(), change.Version,
-            change.Json is { } json ? StrictUtf8.GetString(json.Span) : null, cancellationToken);
     }
 
     private void ClearUniqueConflict(string collection, string id)

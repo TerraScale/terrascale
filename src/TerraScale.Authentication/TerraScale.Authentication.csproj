@@ -48,6 +48,7 @@
          validation HTTP stacks, whose Microsoft.Extensions.Telemetry dependency reorders log state, which
          SafeLogging renders positionally. -->
     <PackageReference Include="OpenIddict.Core" />
+    <PackageReference Include="Microsoft.IdentityModel.Protocols.OpenIdConnect" />
     <PackageReference Include="OpenIddict.Server.AspNetCore" />
     <PackageReference Include="Otp.NET" />
   </ItemGroup>

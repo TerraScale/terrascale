@@ -100,7 +100,16 @@ public sealed class StorageHistoryTests
             }
         }
 
-        await Assert.That(await transaction.GetOffsetAsync(token)).IsEqualTo(offset);
+        if (ending == "cancel")
+        {
+            // Turso ended the transaction with the cancelled read: it refuses to read outside its snapshot.
+            await Assert.ThrowsAsync<InvalidOperationException>(() => transaction.GetOffsetAsync(token).AsTask());
+        }
+        else
+        {
+            await Assert.That(await transaction.GetOffsetAsync(token)).IsEqualTo(offset);
+        }
+
         await transaction.DisposeAsync();
         await using var reused = await store.BeginTransactionAsync(write: false, token);
         await Assert.That(await reused.GetAsync(DocumentApi.Collection, id, token)).IsNotNull();
@@ -189,45 +198,6 @@ public sealed class StorageHistoryTests
 
         await using var reader = await system.BeginTransactionAsync(write: false, CancellationToken.None);
         await Assert.That(await reader.GetAsync("bulk", "1099", CancellationToken.None)).IsNotNull();
-    }
-
-    [Test]
-    public async Task Restart_keeps_system_records_out_of_shape_history()
-    {
-        var directory = Directory.CreateTempSubdirectory("terrabase-system-history-").FullName;
-        var id = EntityIds.New().ToString();
-        try
-        {
-            await using (var api = await DocumentApi.StartAsync(settings => settings["data-directory"] = directory))
-            {
-                var system = await api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
-                await using var writer = await system.BeginTransactionAsync(write: true, CancellationToken.None);
-                await writer.PutAsync("invitations", id, "{\"email\":\"someone@example.com\"}"u8.ToArray(), CancellationToken.None);
-                await writer.CommitAsync(CancellationToken.None);
-            }
-
-            await using (var api = await DocumentApi.StartAsync(settings => settings["data-directory"] = directory))
-            {
-                var system = await api.Server.Services.GetRequiredService<IStorageEngine>().OpenSystemDatabaseAsync(CancellationToken.None);
-                await using var reader = await system.BeginTransactionAsync(write: false, CancellationToken.None);
-                await Assert.That(await reader.GetAsync("invitations", id, CancellationToken.None)).IsNotNull();
-            }
-
-            await Assert.That(await HistoryRowsAsync(Path.Combine(directory, "_system.db"), CancellationToken.None)).IsEqualTo(0);
-        }
-        finally
-        {
-            Directory.Delete(directory, recursive: true);
-        }
-    }
-
-    private static async Task<long> HistoryRowsAsync(string path, CancellationToken cancellationToken)
-    {
-        await using var connection = new Turso.Data.Sqlite.SqliteConnection($"Data Source={path};Pooling=False;Mode=ReadOnly");
-        await connection.OpenAsync(cancellationToken);
-        await using var command = connection.CreateCommand();
-        command.CommandText = "SELECT count(*) FROM change_log;";
-        return (long)(await command.ExecuteScalarAsync(cancellationToken))!;
     }
 
     [Test]

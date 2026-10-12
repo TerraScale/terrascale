@@ -14,6 +14,7 @@ namespace TerraBase.E2E;
 public sealed class BenchmarkClusterHost
 {
     [Test]
+    [Scenario(Nodes.InProcess)]
     [Timeout(6 * 3600 * 1000)]
     public async Task Hosts_three_local_regions_until_the_benchmark_deletes_its_targets_file(CancellationToken cancellationToken)
     {

@@ -109,6 +109,8 @@ public static class OidcIssuer
                     // The headless grants (TS-582) are permitted only to ts-dashboard; see ClientRegistration.
                     .AllowCustomFlow(HeadlessGrants.Password)
                     .AllowCustomFlow(HeadlessGrants.EmailCode)
+                    // The bound GitHub Actions workload only (GitHubActionsBinding creates its client).
+                    .AllowCustomFlow(GitHubActionsGrant.GrantType)
                     .RequireProofKeyForCodeExchange()
                     .RegisterScopes(Scopes.Email, Scopes.Profile, Scopes.OfflineAccess)
                     // Each client's scope permissions still bound what it may request; there is no scope store.

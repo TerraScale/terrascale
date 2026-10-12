@@ -67,7 +67,7 @@ internal sealed partial class SqliteStorageTransaction
                 createdAt = reader.GetInt64(1);
             }
 
-            if (!Shaped)
+            if (!IsClient)
             {
                 throw new InvalidOperationException("collection schemas belong to client databases");
             }

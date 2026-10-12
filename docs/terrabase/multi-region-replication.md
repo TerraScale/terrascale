@@ -499,6 +499,8 @@ contract:
   goes).
 - **Management commits** ([0008](decisions/0008-management-commits.md)) stay atomic (one stamp) and idempotent by id.
   `fence` and `assert` ops are evaluated locally, with no global serializability.
+- **Durability:** every `_system` commit syncs its write-ahead log ([0012](decisions/0012-system-database-synchronous-full.md)),
+  so an acknowledged key, revocation or registration survives a power loss of its machine.
 
 Deleted: `CatalogFeed`, `CatalogFollower`, `CatalogForwarder`, `CatalogPrimaryClient`, `ForwardedRequests`,
 `catalog.proto`, `ISystemReplication`, `SqliteStorageTransaction.System*`, `SqliteStorageEngine.System`,
@@ -548,7 +550,8 @@ in the primary region" shortcut. Decision 0009 is superseded.
 | Failure | Effect | Handling |
 | --- | --- | --- |
 | Process crash mid-batch | uncommitted operations lost, not acknowledged | committed ones are in CDC and ship after restart |
-| OS crash or power loss (`NORMAL`) | the last acknowledged local commits may be lost | ones already shipped come back through anti-entropy. The epoch rises, so no version is reused |
+| OS crash or power loss, tenant database (`NORMAL`, [0003](decisions/0003-sqlite-synchronous-normal.md)) | the commits acknowledged since the database's WAL last synced (at the latest its next checkpoint) may be lost: documents, collections, indexes and schemas written there | ones already shipped come back through anti-entropy; unshipped ones are lost. The epoch rises, so no version is reused |
+| OS crash or power loss, `_system` (`FULL`, [0012](decisions/0012-system-database-synchronous-full.md)) | none: every acknowledged catalog write, API key and revocation was synced before its answer | `SystemDatabasePowerLossTests` |
 | Volume lost | the machine's databases are gone | new member number, refill from peers. Unshipped writes (< ~100 ms) are lost: "ack after one node" |
 | Region offline (partition or `machine stop`) | both sides keep accepting writes | streams resume from `acked`. Anti-entropy covers gaps. More than 24 h: evicted, refill on return |
 | Duplicate, reordered or replayed groups | none | joins are idempotent and commutative |
@@ -685,6 +688,13 @@ dashboards and alerts already query those names.
    (`SnapshotAsync`, `ChangesAsync`, `CompileSnapshot`, `CompileChanges`), and `shape-reads.md` and
    `subscriptions.md`. It leaves the on-disk format unchanged. ts-auth stopped issuing `shapes:read` afterwards; TerraBase
    ignores scopes it does not know.
+2. R2c-2 deletes the per-collection polling feed: `GET …/collections/{c}/changes`, `IChangeFeedService`,
+   `CollectionChangePage` and `ReadCollectionChangesAsync`, and the storage that only served the feed and shapes:
+   `change_log` (with every write's history append and the drop's history rewrite), `shape_history`,
+   the collections' `generation` column (T1 had already removed `change_log_births`, `change_log_high`, their trigger
+   and `change_log_by_document`) and `change-feeds.md`. This is an on-disk format change. `collections` and `commit_offset`
+   stay: collection metadata and the commit offset of write responses still read them, so both stay reserved
+   collection names.
 
 Kept: `StampingStorageEngine`, which still drives the document read cache's invalidation (`IWriteStamps`), and the
 preconditions (`If-Match`, `If-None-Match: *`, transaction `assert`), which ts-auth's stores depend on through
@@ -755,7 +765,7 @@ reference behaviour, and `tests/TerraBase.Fast/Replication/PeerStreamTests.cs` p
 R2a was built on the Microsoft.Data.Sqlite engine and writes only SQL that Turso accepts (rowid tables for every new
 table, plain `INSERT`/`UPDATE`/`DELETE` on captured tables).
 
-**T1 as built** (2026-10-12, storage format 3): the engine is Turso (`Turso.Data.Sqlite.Provider` 0.8.2). Each database
+**T1 as built** (2026-10-12, storage format 3): the engine is Turso (`Turso.Data.Sqlite.Provider` 0.8.2; since vendored with fixes, `src/vendor/Turso.Data.Sqlite`). Each database
 file has one writer connection (`SqliteDatabaseStore`, opened by the first writer under the writer gate, kept until the
 store closes), with `PRAGMA capture_data_changes_conn('after')` on from its open. Continuous backup reads `turso_cdc`
 (`backup.md`); Turso's quirks are in `turso-spike.md` ("Found while swapping the engine"). Notes for R3:
@@ -767,6 +777,12 @@ store closes), with `PRAGMA capture_data_changes_conn('after')` on from its open
 - **Reading.** Read on a `TursoConnection` of your own, as `TursoChangeTap` does, never on the writer. Every visible row
   is committed. Read up to the last COMMIT row, so a page never ends inside a transaction. Bound every statement with a
   `LIMIT`: the provider steps a statement to its end when its reader closes.
+- **Decoding.** Two ways, both tested on 0.8.2. In SQL, `bin_record_json_object(table_columns_json_array(table_name),
+  after)` must sit behind `CASE WHEN change_type IN (0, 1) THEN … END`: a COMMIT row (`table_name` NULL) makes
+  `table_columns_json_array(NULL)` throw for the whole page, and it cannot format BLOB values (`_tb_state` and the
+  collection tables have none). Or read `after` raw and decode it in C# (`SqliteRecord.Decode`, used by the backup tap; it
+  handles every serial type, BLOBs included). For a rowid alias (`INTEGER PRIMARY KEY`) the record may hold NULL or the
+  value; take the rowid from `id`.
 - **Change-group bounds.** The R1/R2a 2 MiB per-group capture limit is gone: a group is a whole Turso transaction, as
   large as the batch that committed it (up to 256 writes of up to 1 MiB each, `MaxBatch`). Re-bound groups when reading:
   page by rows and bytes as the tap does (1024 rows, 4 MiB), and split a large transaction into several deltas batches

@@ -34,7 +34,6 @@ public sealed class StorageMutationTests
         var database = await api.TenantOfAsync(cancellationToken: deadline.Token);
         var store = (await engine.OpenDatabaseAsync(database, deadline.Token))!;
         var sequence = store.CommitSequence;
-        var history = await HistoryRowsAsync(api);
         // Write transactions run their calls on the database's write thread: blocking it queues the calls below.
         var lane = ((SqliteDatabaseStore)(await native.OpenDatabaseAsync(database, deadline.Token))!).WriteLane;
         using var release = new ManualResetEventSlim();
@@ -115,7 +114,6 @@ public sealed class StorageMutationTests
             .IsEqualTo(mutation == "read" ? HttpStatusCode.OK : HttpStatusCode.NotFound);
         await Assert.That((await api.GetAsync(secondId, cancellationToken: deadline.Token)).Status).IsEqualTo(HttpStatusCode.NotFound);
         await Assert.That(store.CommitSequence).IsEqualTo(sequence + (mutation == "read" ? 1 : 0));
-        await Assert.That(await HistoryRowsAsync(api)).IsEqualTo(history + (mutation == "read" ? 1 : 0));
 
         async Task UntilAsync(Func<bool> condition)
         {
@@ -138,7 +136,6 @@ public sealed class StorageMutationTests
         var original = await api.PutAsync(id, new { n = 1 });
         var store = await StoreAsync(api);
         var sequence = store.CommitSequence;
-        var rows = await HistoryRowsAsync(api);
         await using (var reader = await store.BeginTransactionAsync(write: false, CancellationToken.None))
         {
             await Assert.ThrowsAsync<InvalidOperationException>(() => MutateAsync(reader, mutation, id));
@@ -151,7 +148,6 @@ public sealed class StorageMutationTests
         await Assert.That(read.Version).IsEqualTo(original.Version);
         await Assert.That(read.Json.GetProperty("document").GetProperty("n").GetInt32()).IsEqualTo(1);
         await Assert.That(store.CommitSequence).IsEqualTo(sequence);
-        await Assert.That(await HistoryRowsAsync(api)).IsEqualTo(rows);
         await Assert.That((await api.SendAsync(HttpMethod.Get, $"{api.Collections}/extra")).Status)
             .IsEqualTo(HttpStatusCode.NotFound);
     }
@@ -170,7 +166,6 @@ public sealed class StorageMutationTests
         var original = await api.PutAsync(id, new { n = 1 });
         var store = await StoreAsync(api);
         var sequence = store.CommitSequence;
-        var rows = await HistoryRowsAsync(api);
         var trigger = failure == "offset"
             ? "CREATE TRIGGER reject_offset BEFORE UPDATE ON commit_offset BEGIN SELECT RAISE(FAIL, 'injected offset failure'); END;"
             // The row is already gone when an AFTER DELETE trigger fails: the transaction must still refuse to commit.
@@ -192,41 +187,33 @@ public sealed class StorageMutationTests
         await Assert.That(read.Version).IsEqualTo(original.Version);
         await Assert.That(read.Json.GetProperty("document").GetProperty("n").GetInt32()).IsEqualTo(1);
         await Assert.That(store.CommitSequence).IsEqualTo(sequence);
-        await Assert.That(await HistoryRowsAsync(api)).IsEqualTo(rows);
         await Assert.That((await api.SendAsync(HttpMethod.Get, $"{api.Collections}/extra")).Status)
             .IsEqualTo(HttpStatusCode.NotFound);
     }
 
     [Test]
-    public async Task Dropping_a_collection_removes_its_history_atomically()
+    public async Task Dropping_a_collection_rolls_back_atomically_and_recreation_starts_empty()
     {
         await using var api = await DocumentApi.StartAsync();
         var id = DocumentApi.NewId();
         await api.PutAsync(id, new { n = 1 });
         await api.PutAsync(id, new { n = 2 });
         var store = await StoreAsync(api);
-        var rows = await HistoryRowsAsync(api);
-        await Assert.That(rows).IsEqualTo(2);
 
         await using (var rolledBack = await store.BeginTransactionAsync(write: true, CancellationToken.None))
         {
             await Assert.That(await rolledBack.DropCollectionAsync(DocumentApi.Collection, CancellationToken.None)).IsTrue();
         }
 
-        await Assert.That(await HistoryRowsAsync(api)).IsEqualTo(rows);
         await Assert.That((await api.GetAsync(id)).Json.GetProperty("document").GetProperty("n").GetInt32()).IsEqualTo(2);
 
         var collections = api.Collections;
         await Assert.That((await api.SendAsync(HttpMethod.Delete, $"{collections}/{DocumentApi.Collection}")).Status)
             .IsEqualTo(HttpStatusCode.OK);
-        // The drop keeps the dropped generation's history as tombstones only: no body outlives it.
-        await Assert.That(await HistoryRowsAsync(api)).IsEqualTo(rows);
-        await Assert.That((long)(await SqlAsync(api, "SELECT count(*) FROM change_log WHERE collection = $collection AND body IS NOT NULL;"))!)
-            .IsEqualTo(0);
         await api.SendAsync(HttpMethod.Post, collections, new { name = DocumentApi.Collection });
+        await Assert.That((await api.GetAsync(id)).Status).IsEqualTo(HttpStatusCode.NotFound);
         await api.PutAsync(id, new { n = 3 });
         await Assert.That((await api.GetAsync(id)).Json.GetProperty("document").GetProperty("n").GetInt32()).IsEqualTo(3);
-        await Assert.That(await HistoryRowsAsync(api)).IsEqualTo(rows + 1);
     }
 
     [Test]
@@ -277,22 +264,5 @@ public sealed class StorageMutationTests
     {
         var engine = api.Server.Services.GetRequiredService<IStorageEngine>();
         return (await engine.OpenDatabaseAsync(await api.TenantOfAsync(), CancellationToken.None))!;
-    }
-
-    private static async Task<long> HistoryRowsAsync(DocumentApi api) =>
-        (long)(await SqlAsync(api, "SELECT count(*) FROM change_log WHERE collection = $collection;"))!;
-
-    private static async Task<object?> SqlAsync(DocumentApi api, string sql)
-    {
-        await using var connection = new SqliteConnection(new SqliteConnectionStringBuilder
-        {
-            DataSource = await api.DatabaseFileAsync(),
-            Pooling = false,
-        }.ToString());
-        await connection.OpenAsync();
-        await using var command = connection.CreateCommand();
-        command.CommandText = sql;
-        command.Parameters.AddWithValue("$collection", DocumentApi.Collection);
-        return await command.ExecuteScalarAsync();
     }
 }

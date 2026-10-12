@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Regression tests for TerraScale's fixes to the vendored Turso .NET driver (src/vendor/Turso.Data.Sqlite/UPSTREAM.md). -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsTestProject>true</IsTestProject>
+    <IsTestingPlatformApplication>true</IsTestingPlatformApplication>
+    <IsPackable>false</IsPackable>
+    <!-- Required for IDE0005 (unused usings) in the build, as in TerraBase. -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="TUnit" />
+    <ProjectReference Include="../../src/vendor/Turso.Data.Sqlite/src/Turso.Data.Sqlite/Turso.Data.Sqlite.csproj" />
+  </ItemGroup>
+</Project>

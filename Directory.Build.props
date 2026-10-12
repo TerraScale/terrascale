@@ -44,7 +44,7 @@
     <RestoreLockedMode Condition="'$(CI)' == 'true'">true</RestoreLockedMode>
     <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
     <!-- ts-dotnet (the TerraScale .NET SDK) is a separate repository, consumed as source by ts-auth.
-         It is checked out next to this repository; override with -p:TsDotnetRoot=<dir containing ts-dotnet>
+         It is checked out next to this repository; override with -p:TsDotnetRoot=<the ts-dotnet checkout>
          (or the TsDotnetRoot environment variable) when it lives elsewhere. -->
     <TsDotnetRoot Condition="'$(TsDotnetRoot)' == ''">$(MSBuildThisFileDirectory)../ts-dotnet</TsDotnetRoot>
   </PropertyGroup>
