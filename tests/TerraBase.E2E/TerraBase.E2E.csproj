@@ -7,4 +7,8 @@
     <OutputType>Exe</OutputType>
     <IsTestProject>true</IsTestProject>
   </PropertyGroup>
+  <ItemGroup>
+    <!-- Built at test time by WalFaults/WalSyncFaults.cs with the host's C compiler. -->
+    <None Include="WalFaults/walfaults.c" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

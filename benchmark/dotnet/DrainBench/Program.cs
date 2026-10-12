@@ -1,5 +1,6 @@
 // Measures what releasing abandoned Turso statements costs (#115): write throughput and latency, concurrent read latency,
-// the server's CPU, memory and GC, with 0 % to 50 % of writes failing. Runs one real terrabase process (the binary given)
+// the server's CPU, memory and GC, with 0 % to 50 % of writes failing. --mode system instead measures system database
+// writes (API keys, management commits) and a tenant write control (2026-10-12-system-synchronous-full.md). Runs one real terrabase process (the binary given)
 // under the --wrap command (default: taskset to CPUs 0,1), records the limits that process actually has, and drives the
 // load from this process, which should run on other CPUs. See benchmark/bench/2026-10-12-statement-drain.md.
 using System.Diagnostics;
@@ -17,6 +18,7 @@ var wrap = options.GetValueOrDefault("wrap", "taskset -c 0,1").Split(' ', String
 var seconds = int.Parse(options.GetValueOrDefault("seconds", "20"), CultureInfo.InvariantCulture);
 var writers = int.Parse(options.GetValueOrDefault("writers", "16"), CultureInfo.InvariantCulture);
 var readers = int.Parse(options.GetValueOrDefault("readers", "4"), CultureInfo.InvariantCulture);
+var mode = options.GetValueOrDefault("mode", "drain");
 
 var data = Directory.CreateTempSubdirectory("drain-bench-").FullName;
 var (port, internalPort, metricsPort) = (FreePort(), FreePort(), FreePort());
@@ -55,6 +57,20 @@ try
     server = await StartAsync();
     pid = ServerPid();
     allowed = await LimitsAsync(pid);
+    if (mode == "system")
+    {
+        Console.WriteLine($"# {label}: system database writes, {seconds} s per phase, wrap: {string.Join(' ', wrap)}");
+        Console.WriteLine("| variant | write | writers | writes/s | p50 / p95 / p99 ms | CPU % of allowed | unexpected |");
+        Console.WriteLine("| --- | --- | ---: | ---: | ---: | ---: | ---: |");
+        foreach (var (kind, count) in new[] { ("api key", 1), ("api key", 16), ("management commit", 1), ("management commit", 16), ("tenant put", 1), ("tenant put", 16) })
+        {
+            await SystemPhaseAsync(kind, count, owner, organization, project, TimeSpan.FromSeconds(3), record: false);
+            await SystemPhaseAsync(kind, count, owner, organization, project, TimeSpan.FromSeconds(seconds), record: true);
+        }
+
+        return;
+    }
+
     Console.WriteLine($"# {label}: {writers} writers, {readers} readers, {seconds} s per phase, wrap: {string.Join(' ', wrap)}");
     Console.WriteLine("| variant | failing writes | kind | valid writes/s | write p50 / p95 / p99 ms | failing p50 / p99 ms | read p50 / p95 / p99 ms | reads/s | CPU s (user+sys) | % of allowed CPU | peak RSS MB | max GC heap / committed MB | GC/s (gen2/s) | GC pause ms/s | unexpected |");
     Console.WriteLine("| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |");
@@ -160,6 +176,50 @@ async Task PhaseAsync(double rate, string kind, TimeSpan duration, bool record)
         $"{(allAfter - allBefore) / elapsed:F1} ({(gen2After - gen2Before) / elapsed:F2}) | {(pauseAfter - pauseBefore) * 1000 / elapsed:F1} | {unexpected} |"));
 }
 
+// One kind of write from count writers, each as fast as it gets answers: an API key or a management commit (a new
+// organization) commits to the system database; a tenant put to the tenant database, the control.
+async Task SystemPhaseAsync(string kind, int count, string owner, string organization, string project, TimeSpan duration, bool record)
+{
+    var cpuBefore = CpuSeconds(pid);
+    var latencies = new List<double>();
+    var unexpected = 0;
+    using var stop = new CancellationTokenSource(duration);
+    var clock = Stopwatch.StartNew();
+    await Task.WhenAll(Enumerable.Range(0, count).Select(_ => Task.Run(async () =>
+    {
+        var mine = new List<double>();
+        while (!stop.IsCancellationRequested)
+        {
+            var started = Stopwatch.GetTimestamp();
+            var status = kind switch
+            {
+                "api key" => await StatusAsync(HttpMethod.Post, "/admin/api-keys",
+                    new { name = "bench", scopes = new[] { "documents:read" }, organizationId = organization, projectId = project }),
+                "management commit" => await StatusAsync(HttpMethod.Post, "/v1/management/commits",
+                    new { id = Ulid(), ops = new object[] { new { op = "create_organization", id = Ulid(), name = $"bench-{Ulid()}" } } }, user: owner),
+                _ => await StatusAsync(HttpMethod.Put, Document(Guid.NewGuid().ToString("N")), new { n = 1 }),
+            };
+            mine.Add(Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+            if ((int)status is < 200 or > 299)
+            {
+                Interlocked.Increment(ref unexpected);
+            }
+        }
+
+        lock (latencies)
+        {
+            latencies.AddRange(mine);
+        }
+    })));
+    var elapsed = clock.Elapsed.TotalSeconds;
+    var cpu = CpuSeconds(pid) - cpuBefore;
+    if (record)
+    {
+        Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
+            $"| {label} | {kind} | {count} | {latencies.Count / elapsed:F0} | {P(latencies, 50):F1} / {P(latencies, 95):F1} / {P(latencies, 99):F1} | {cpu / (elapsed * allowed) * 100:F0} % | {unexpected} |"));
+    }
+}
+
 static double P(List<double> values, int percentile)
 {
     if (values.Count == 0)
@@ -251,9 +311,14 @@ static string Run(string file, params string[] arguments)
     return output;
 }
 
-async Task<HttpStatusCode> StatusAsync(HttpMethod method, string path, object? body, bool conditional = false)
+async Task<HttpStatusCode> StatusAsync(HttpMethod method, string path, object? body, bool conditional = false, string? user = null)
 {
     using var request = new HttpRequestMessage(method, new Uri(path, UriKind.Relative)) { Version = HttpVersion.Version20, VersionPolicy = HttpVersionPolicy.RequestVersionExact };
+    if (user is not null)
+    {
+        request.Headers.Add("X-TerraBase-User-Id", user);
+    }
+
     if (conditional)
     {
         request.Headers.TryAddWithoutValidation("If-None-Match", "*");
