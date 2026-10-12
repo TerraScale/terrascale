@@ -8,9 +8,10 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Nothing deploys from here, so superseded runs are cancelled everywhere, main included.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -26,6 +27,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: stable
+          cache-dependency-path: go.sum
       - run: test -z "$(gofmt -l .)"
       - run: go vet ./...
       - run: go test -race ./...
