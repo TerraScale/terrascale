@@ -61,6 +61,8 @@ FROM mcr.microsoft.com/dotnet/sdk:11.0 AS publish-terrabase
 ENV CI=true DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
 WORKDIR /src/terrascale
 COPY . .
+# Shown by TerraBase's /healthz as revision.
+ARG TERRABASE_REVISION
 RUN --mount=type=cache,target=/root/.nuget/packages \
     dotnet publish src/TerraBase --configuration Release --runtime linux-x64 --self-contained --output /out
 

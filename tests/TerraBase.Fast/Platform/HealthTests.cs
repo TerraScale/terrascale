@@ -7,6 +7,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Time.Testing;
 using TerraBase.Engine;
 using TerraBase.Engine.Sqlite;
+using TerraBase.Hosting;
 using TerraBase.Testing;
 using TUnit.Core.Enums;
 
@@ -496,7 +497,11 @@ public sealed class HealthTests
         using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
 
         await Assert.That(response.StatusCode).IsEqualTo(status);
-        await Assert.That(body.RootElement.EnumerateObject().Select(property => property.Name).ToList()).IsEquivalentTo(["status", "version", "region", "storageFormat"]);
+        await Assert.That(body.RootElement.EnumerateObject().Select(property => property.Name).ToList()).IsEquivalentTo(["status", "version", "region", "storageFormat", "revision", "machine"]);
+        // The source commit the build was made from: the checkout's HEAD here, TERRABASE_REVISION in a CI image.
+        await Assert.That(body.RootElement.GetProperty("revision").GetString()).IsEqualTo(ServiceVersion.Revision);
+        await Assert.That(ServiceVersion.Revision).Matches("^[0-9a-f]{40}$");
+        await Assert.That(body.RootElement.GetProperty("machine").GetString()).IsEqualTo("local");
         await Assert.That(body.RootElement.GetProperty("status").GetString()).IsEqualTo(state);
         await Assert.That(body.RootElement.GetProperty("version").GetString()).IsEqualTo("0.1.0");
         await Assert.That(body.RootElement.GetProperty("region").GetString()).IsEqualTo("test-region");

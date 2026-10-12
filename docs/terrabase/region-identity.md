@@ -23,7 +23,7 @@ TerraBase does not proxy or forward the rejected request; behind Fly Proxy a
 mismatched pin naming a single well-formed region also answers
 `fly-replay: region=<pin>`, so Fly replays it there ([fly.md](fly.md#fly-replay)).
 
-The `/healthz` JSON body includes `status`, `version`, and `region`.
+The `/healthz` JSON body includes `status`, `version`, `region`, `storageFormat`, `revision`: the source commit the build was made from (`TERRABASE_REVISION` in CI images, null when a build recorded none), and `machine` (`FLY_MACHINE_ID`, `local` off Fly), so each answer names the exact machine and commit (`/readyz` and `/backupz` carry the same fields).
 Management API database JSON includes `region` on create, branch, get, and list
 responses. This value is the responding node's region at response time, including
 for existing database records; it is not persisted placement metadata and
