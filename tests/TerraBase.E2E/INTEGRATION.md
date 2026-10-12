@@ -18,6 +18,34 @@ The integration keeps `.github/workflows/ci.yml` exactly as it is at `c691f947`:
 
 A conflict in those lines is resolved to main's version.
 
+## Merge train (user order 2026-10-12 14:58Z: the merge hold is lifted; deploy pause #122 and previews off #123 stay)
+
+Phase 1 is now merged to main in manifest order, and acceptance runs on main's head. Each row is recorded at merge time:
+- the PR's exact head, with its `test` run and conclusion on that head;
+- the review and finding state;
+- the main SHA after the merge, with its push run;
+- the push run must show `deploy` and `preview` **skipped**, with both `if: false &&` lines present in main's `ci.yml`.
+
+**Merge method** (the integration owner's call):
+- squash (repo convention) for standalone PRs;
+- a merge commit for #109, #110 and the #115 vendored chain, because their commits are ancestors of T1's chain and the
+  pristine upstream import must stay an identifiable commit.
+
+| PR | Head | `test` on that head | Reviews / findings | Method | Main after | Main push run | deploy / preview | Gates in ci.yml | Main run `test` |
+| --- | --- | --- | --- | --- | --- | --- | --- | ---: | --- |
+| #129 | `165295e0` | 38262406479 success | none open (0 threads; 0 reviews) | squash | `986d8f75` | 38267208680 | skipped / skipped | 2 | pending |
+| #128 | `a71c8f4b` | 38262350977 success | none open | squash | `84f85db5` | 38267257956 | skipped / skipped | 2 | pending |
+| #126 | `27fa4fff` | 38255314938 success | none open | squash | `f51024c1` | 38267295524 | skipped / skipped | 2 | pending |
+| #109 | `c4b15068` | 38212020311 success | none open | merge | `5713364d` | 38267358851 | skipped / skipped | 2 | pending |
+| #110 | `3cf9f3a5` | 38212037240 success | none open | merge | `daaa20f5` | 38267398256 | skipped / skipped | 2 | pending |
+
+**Not merged until fixed and verified:**
+- **R10a's stack**, until the no-peer fail-open and the unprotected override are fixed and R3 verifies in writing;
+- **#125**, until its metrics race is fixed (#130) and a fresh `test` run on its exact head is green;
+- anything whose Slow or metrics fix is still open.
+
+**No PR is closed.** Closing destroys its preview app, which is the user's pending cleanup decision.
+
 ## Integration phase 1: items, in combine order
 
 Commits marked "local" exist only on delta, in the shared object store, under the push freeze. The combine uses exactly
