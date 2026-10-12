@@ -131,7 +131,7 @@ public sealed class PlatformRoleJourneyTests(DashboardE2EFixture fixture)
             Check(admin.StatusCode == HttpStatusCode.SeeOther && admin.Headers.Location?.OriginalString == "/login?returnTo=%2Fadmin%2Fusers",
                 "The descendant issuer grants no native platform authority");
         var observed = await Observe(producer);
-        Check(observed.GetProperty("publishedIssuer").GetString() == "https://gru.auth.terrascale.tech/terrascale/descendant" &&
+        Check(observed.GetProperty("publishedIssuer").GetString() == "https://auth.terrascale.tech/terrascale/descendant" &&
             observed.GetProperty("descendantIssuerGrants").GetInt32() == 1 && observed.GetProperty("issuedAdminRoleGrants").GetInt32() == 1,
             "Discovery, signed identity/access claims and the producer's UserInfo verifier consistently use the same descendant issuer and actual private admin role");
         Check(observed.GetProperty("refreshes").GetInt32() == 0 && observed.GetProperty("managementRequests").GetInt32() == 0,

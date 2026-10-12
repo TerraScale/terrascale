@@ -37,7 +37,7 @@ public sealed class AccountIdentityJourneyTests(DashboardE2EFixture fixture)
         using var sso = scenario.CreateClient();
         using (var started = await sso.GetAsync("/login/sso?returnTo=%2Fapi%2Fv1%2Fauth%2Fme"))
         {
-            Check(started.StatusCode == HttpStatusCode.SeeOther && started.Headers.Location is { Scheme: "https", Host: "gru.auth.terrascale.tech" },
+            Check(started.StatusCode == HttpStatusCode.SeeOther && started.Headers.Location is { Scheme: "https", Host: "auth.terrascale.tech" },
                 "Native SSO discovers the trusted producer");
             using var authorization = new HttpRequestMessage(HttpMethod.Get, started.Headers.Location!.PathAndQuery);
             authorization.Headers.Host = started.Headers.Location.Authority;
