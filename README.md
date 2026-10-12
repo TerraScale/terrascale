@@ -26,6 +26,8 @@ The existing C# consumer's receipt is checked against its unchanged source hashe
 ## Cloudflare Pages deployment
 
 CI and upload jobs use `blacksmith-2vcpu-ubuntu-2404` with Blacksmith's Node cache.
+Same-repository PRs run the read-only Pages preflight without uploading. Both
+the documentation checks and Pages preflight must pass before merging.
 The upload receives the exact built site that passed tests and the public audit;
 it does not rebuild the site. Cloudflare credentials come from the GitHub
 platform secret store. No credentials or account IDs belong in this repository.

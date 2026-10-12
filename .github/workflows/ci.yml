@@ -1,6 +1,6 @@
 name: CI
 
-# One required check: "ci". Build runs before test: the test suite asserts the built docs exist.
+# Build/tests and Pages preflight must pass before merge. Tests require the built docs.
 
 on:
   pull_request:
@@ -42,8 +42,8 @@ jobs:
 
   deploy:
     needs: ci
-    # Manual feature-branch runs verify a preview; main publishes only after merge.
-    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main')
+    # Same-repository PRs check access only; uploads run on main or manual previews.
+    if: (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main')
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 15
     concurrency:
@@ -69,18 +69,22 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
       - uses: actions/download-artifact@v5
+        if: github.event_name != 'pull_request'
         with:
           name: docs-site
           path: ${{ runner.temp }}
       - name: Restore the tested public site
+        if: github.event_name != 'pull_request'
         run: |
           mkdir -p docs/.vitepress/dist
           tar -C docs/.vitepress/dist -xf "$RUNNER_TEMP/docs-site.tar"
       - name: Deploy to Cloudflare Pages
+        if: github.event_name != 'pull_request'
         run: npm run deploy:site -- --branch "$GITHUB_REF_NAME" --commit-hash "$GITHUB_SHA"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           WRANGLER_OUTPUT_FILE_PATH: ${{ runner.temp }}/pages-deployment.jsonl
       - name: Check the deployed commit and hosted output
+        if: github.event_name != 'pull_request'
         run: node scripts/check-pages.mjs deployment "$RUNNER_TEMP/pages-project.json" "$RUNNER_TEMP/pages-deployment.jsonl" "$GITHUB_REF_NAME" "$GITHUB_SHA"

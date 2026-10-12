@@ -1,7 +1,8 @@
 # Refactor validation
 
-Validated on October 12, 2026 (UTC). This report describes local documentation
-checks. The draft change does not authorize merging or publishing the site.
+Validated on October 12, 2026 (UTC). This report distinguishes local checks
+from hosted verification. Merge/publication is authorized once current checks
+and reviews pass with no unresolved valid findings.
 
 ## Passing checks
 
@@ -53,7 +54,8 @@ pattern scanning is not proof against every possible secret.
 
 Protected human-owned instructions and Git history remain untouched and are
 not site inputs. Dashboard and SDK source, live production routing, DNS, access
-and credentials remain unchanged. Publication approval is still required.
+and credentials remain unchanged. Publication remains blocked by the Pages
+verification failure below.
 
 ## Pages deployment follow-up
 
@@ -74,12 +76,22 @@ message after hydration. Actionlint passes with the known Blacksmith label
 allowlisted; its shellcheck integration is unavailable on this host.
 
 The local `cf` Pages project read failed with HTTP 403, code 10000,
-Authentication error. No credentials were printed or changed. The installed
+Authentication error. The actual Blacksmith preview workflow also failed at
+that preflight (run `38188765936`, commit
+`dd6b7099eab00a432c485d88c4117cc1b97b0984`): the existing GitHub deployment token
+received the same HTTP 403. Its documentation build, 28 tests, privacy/link audit
+and artifact upload passed; no site upload ran. Both jobs used
+`blacksmith-2vcpu-ubuntu-2404`. PR checks now run this read-only preflight so a
+successful build with skipped upload cannot hide the access failure. Synthetic
+deployment tests no longer print a hosted-success message.
+
+No credentials were printed or changed. The installed
 `cf` CLI reports that existing Pages asset uploads require Wrangler; it does
 not upload that format itself. CI uses `cf` for the project preflight and
 Wrangler for the upload. Hosted Pages verification and the production custom
-domain cutover remain unverified until the CI preview succeeds and the hosting
-change is approved. No Cloudflare object has been changed by this follow-up.
+domain cutover remain unverified. Merge authorization does not grant new
+hosting/access changes; the existing approved CI cannot publish through the
+denied Pages API. No Cloudflare object has been changed by this follow-up.
 
 ## Complete changed-file manifest
 

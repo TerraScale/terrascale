@@ -57,7 +57,6 @@ export async function checkHosted(dist, origin) {
   const missing = await fetch(new URL('/__docs_deployment_missing__', origin), { signal: AbortSignal.timeout(20_000) })
   assert.equal(missing.status, 404, 'Missing routes must return HTTP 404')
   assert.equal(digest(Buffer.from(await missing.arrayBuffer())), digest(readFileSync(resolve(dist, '404.html'))), 'Missing route did not serve the VitePress 404 shell')
-  console.log(`Hosted Pages check passed: ${routes.length} pages/assets match the tested build; custom HTTP 404 works.`)
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
@@ -72,6 +71,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
     const deployment = checkDeployment(project, records, branch, commit)
     console.log(JSON.stringify(deployment))
     await checkHosted(resolve('docs/.vitepress/dist'), deployment.url)
+    console.log('Hosted Pages check passed: 8 pages/assets match the tested build; custom HTTP 404 works.')
     if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY,
       `Cloudflare Pages ${deployment.environment}: [${deployment.id}](${deployment.url})\n\nCommit: \`${deployment.commit}\`\n\nEight hosted pages/assets match the audited build; custom HTTP 404 passes.\n`)
   }
