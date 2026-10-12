@@ -25,6 +25,7 @@ public sealed class RepairAndContractE2ETests
     // A document the streams delivered and acknowledged disappears from sjc's file while sjc is down, as a lost apply would
     // leave it. Streams never send it again (it was acknowledged), so only anti-entropy can bring it back.
     [Test]
+    [Scenario(Nodes.InProcess, Faults.NodeStop | Faults.FileTampering)]
     public async Task Anti_entropy_repairs_a_document_a_region_lost_after_its_stream_acknowledged_it()
     {
         Skip.When(Cluster.FlyRequested, "edits a local node's database file");
@@ -48,6 +49,7 @@ public sealed class RepairAndContractE2ETests
     // sjc comes back on a copy of its data from before 100 later writes, as after a volume restored from an older snapshot.
     // It must end with every write, by refill or repair, and must not hand its older state back to the other regions.
     [Test]
+    [Scenario(Nodes.InProcess, Faults.NodeStop | Faults.FileTampering)]
     public async Task A_region_restored_to_an_older_copy_of_its_data_catches_up_without_undoing_later_writes()
     {
         Skip.When(Cluster.FlyRequested, "restores a local node's data directory");
@@ -84,6 +86,7 @@ public sealed class RepairAndContractE2ETests
     // Two regions take the same unique email while partitioned. After the heal both hold the same answer: the document with
     // the smaller id keeps the key and the other leaves the collection (design section 9, unique constraints).
     [Test]
+    [Scenario(Nodes.InProcess, Faults.SimulatedPartition)]
     public async Task Unique_writes_made_on_both_sides_of_a_partition_converge_to_the_smaller_id()
     {
         Skip.When(Cluster.FlyRequested, "Fly has no partition switch");
@@ -110,6 +113,7 @@ public sealed class RepairAndContractE2ETests
     // A database deleted in gru while fra is away stays deleted: fra drops its copy when it returns, and nothing brings the
     // database or its documents back anywhere.
     [Test]
+    [Scenario(Nodes.InProcess, Faults.NodeStop)]
     [Category("fly-outage")]
     public async Task A_database_deleted_while_a_region_is_down_does_not_come_back()
     {
@@ -149,6 +153,7 @@ public sealed class RepairAndContractE2ETests
     // 5 s once a write converged, and the Prometheus listener exposes the stream lags R4a-2 publishes and the CDC tail lag
     // (design section 18).
     [Test]
+    [Scenario(Nodes.InProcess)]
     public async Task Every_region_reports_its_peers_and_replication_lag_on_health_and_metrics()
     {
         await Gaps.RunAsync("replication-metrics", async () =>
@@ -181,6 +186,7 @@ public sealed class RepairAndContractE2ETests
     // in another database reaches sjc within 5 s (the deleted suite's "a database written without pause does not hold
     // back the others").
     [Test]
+    [Scenario(Nodes.InProcess)]
     public async Task A_hot_database_does_not_hold_back_replication_of_another()
     {
         await Gaps.RunAsync("flow-control", async () =>
@@ -208,6 +214,7 @@ public sealed class RepairAndContractE2ETests
     // Collection DDL replicates: an index created in gru is listed in sjc, a schema attached in gru makes sjc refuse an
     // invalid document, and a collection dropped in gru is gone from sjc.
     [Test]
+    [Scenario(Nodes.InProcess)]
     public async Task Indexes_schemas_and_collection_drops_made_in_one_region_take_effect_in_another()
     {
         await Gaps.RunAsync("ddl-replication", async () =>
