@@ -92,15 +92,18 @@ public sealed class CrashAndStallE2ETests
     public async Task Writes_through_a_storage_stall_are_either_refused_or_kept_and_writing_resumes_after_it()
     {
         Skip.When(Cluster.FlyRequested, "locks a local node's database file");
-        await using var cluster = await Cluster.StartAsync(Cluster.Gru);
-        var outcome = await StallAsync(cluster, Cluster.Gru, [Cluster.Gru], TimeSpan.FromSeconds(5));
-        foreach (var (id, canonical) in outcome.Acknowledged)
+        await Gaps.RunAsync("storage-stall-single", async () =>
         {
-            await Assert.That(Docs.Canonical(await Docs.ReadAsync(cluster[Cluster.Gru], cluster.Document(id)))).IsEqualTo(canonical);
-        }
+            await using var cluster = await Cluster.StartAsync(Cluster.Gru);
+            var outcome = await StallAsync(cluster, Cluster.Gru, [Cluster.Gru], TimeSpan.FromSeconds(5));
+            foreach (var (id, canonical) in outcome.Acknowledged)
+            {
+                Expected.Check(Docs.Canonical(await Docs.ReadAsync(cluster[Cluster.Gru], cluster.Document(id))) == canonical, $"acknowledged write {id} after the stall");
+            }
 
-        await Assert.That(outcome.AfterStall).IsGreaterThan(0).Because("writes resume once the stall ends");
-        Console.WriteLine($"storage stall: {outcome.Acknowledged.Count} acknowledged, {outcome.Refused} refused, {outcome.AfterStall} acknowledged after the stall");
+            Expected.Check(outcome.AfterStall > 0, "writes resume once the stall ends");
+            Console.WriteLine($"storage stall: {outcome.Acknowledged.Count} acknowledged, {outcome.Refused} refused, {outcome.AfterStall} acknowledged after the stall");
+        });
     }
 
     // The replicated half: sjc stalls for ten seconds while every region writes; afterwards every region holds exactly the
@@ -197,8 +200,9 @@ public sealed class CrashAndStallE2ETests
             }
         })).ToArray();
         await Task.Delay(TimeSpan.FromSeconds(1));
-        await using (var locker = new SqliteConnection($"Data Source={cluster.DatabaseFile(region)};Pooling=False"))
+        try
         {
+            await using var locker = new SqliteConnection($"Data Source={cluster.DatabaseFile(region)};Pooling=False");
             await locker.OpenAsync();
             await using var transaction = (SqliteTransaction)await locker.BeginTransactionAsync();
             using (var exclusive = locker.CreateCommand())
@@ -211,6 +215,14 @@ public sealed class CrashAndStallE2ETests
 
             await Task.Delay(stall);
             await transaction.RollbackAsync();
+        }
+        catch (SqliteException error) when (error.Message.Contains("database is locked", StringComparison.Ordinal))
+        {
+            // Since the Turso engine (#98) the node's single writer keeps the file's write lock, so an outside writer can no
+            // longer stall it: the scenario needs an IO-delay hook in the engine's storage path.
+            await stop.CancelAsync();
+            await Task.WhenAll(writers);
+            throw new NotSupportedException("no storage stall hook: the engine holds the database file's write lock, so the test cannot stall it from outside", error);
         }
 
         Volatile.Write(ref released, true);

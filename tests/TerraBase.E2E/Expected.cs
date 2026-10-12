@@ -7,7 +7,8 @@ namespace TerraBase.E2E;
 /// </summary>
 internal static class Expected
 {
-    public static async Task FailureAsync(string gap, Func<Task> scenario)
+    // Answers how the scenario failed.
+    public static async Task<Exception> FailureAsync(string gap, Func<Task> scenario)
     {
         try
         {
@@ -16,7 +17,7 @@ internal static class Expected
         catch (Exception error) when (error is not TUnit.Core.Exceptions.SkipTestException)
         {
             Console.WriteLine($"expected failure until {gap}: {error.GetType().Name}: {error.Message}");
-            return;
+            return error;
         }
 
         throw new InvalidOperationException($"{gap} has landed: the scenario passes, so remove Expected.FailureAsync and run it directly");
