@@ -330,6 +330,7 @@ public class SqliteCommand : DbCommand
         }
         catch (TursoException ex)
         {
+            Connection?.CheckTransactionAfterFailure();
             throw ToSqliteException(ex);
         }
 

@@ -787,6 +787,7 @@ public class SqliteDataReader : DbDataReader
             _statement = null;
             _hasPrefetchedRow = false;
             _remainingSql.Clear();
+            _command.Connection?.CheckTransactionAfterFailure();
             throw SqliteCommand.ToSqliteException(ex);
         }
 
@@ -828,6 +829,7 @@ public class SqliteDataReader : DbDataReader
         }
         catch (TursoException ex)
         {
+            _command.Connection?.CheckTransactionAfterFailure();
             throw SqliteCommand.ToSqliteException(ex);
         }
     }
@@ -901,6 +903,7 @@ public class SqliteDataReader : DbDataReader
             _statement = null;
             _remainingSql.Clear();
             FinishClose();
+            _command.Connection?.CheckTransactionAfterFailure();
             if (throwOnError)
                 throw SqliteCommand.ToSqliteException(ex);
             return;

@@ -646,6 +646,40 @@ public partial class SqliteConnection : DbConnection
         failure?.Throw();
     }
 
+    // TerraScale: unlike SQLite, Turso rolls the whole transaction back when a statement fails while it steps (a read
+    // whose function throws, for one). After a failed statement, find out whether the transaction is still open; if
+    // not, mark it rolled back, so its later commands fail instead of committing on their own and disposing it does
+    // not try a ROLLBACK. The probe statements are disposed even when they fail.
+    internal void CheckTransactionAfterFailure()
+    {
+        if (IsManagedConnection || Transaction is not { IsCompleted: false, WasRolledBackExternally: false } transaction)
+            return;
+
+        using (var begin = TursoBindings.PrepareStatement(DatabaseHandle, "BEGIN;"))
+        {
+            try
+            {
+                while (TursoBindings.Read(begin))
+                {
+                }
+            }
+            catch (TursoException)
+            {
+                // Still inside the transaction ("cannot start a transaction within a transaction").
+                return;
+            }
+        }
+
+        using (var rollback = TursoBindings.PrepareStatement(DatabaseHandle, "ROLLBACK;"))
+        {
+            while (TursoBindings.Read(rollback))
+            {
+            }
+        }
+
+        transaction.MarkCompletedExternally(rolledBack: true);
+    }
+
     internal TursoDatabaseHandle DatabaseHandle
     {
         get
