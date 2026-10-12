@@ -1,7 +1,7 @@
 # Security and dependency audit of the vendored Turso .NET driver
 
-Audited 2026-10-12 on the phase-1 head `1c800e32` (this file's commit is on top of it), on delta, locally; nothing live
-changed. Scope: the vendored C# driver (`src/`, `LICENSE.md`, `NOTICE.md`), the native package it builds on, and the
+Audited 2026-10-12 on the phase-1 head `1c800e32`, then patch 0004 and the Rust-side audit (section 6) on top; on
+delta, locally; nothing live changed. Scope: the vendored C# driver (`src/`, `LICENSE.md`, `NOTICE.md`), the native package it builds on, and the
 TerraScale patches (`patches/`). Conclusion: provenance and the package are verified as far as upstream's unsigned
 release allows, no known vulnerable or deprecated package, MIT obligations met, and the patches contain nothing beyond
 their stated fixes. Open items are listed at the end.
@@ -102,8 +102,7 @@ The following sources were used:
 The given project `TerraBase` has no deprecated packages given the current sources.
 ```
 
-These checks cover NuGet packages only. The Rust crates compiled into `libturso_sdk_kit` are not covered: upstream's
-`Cargo.lock` at `v0.8.2` was not audited (no `cargo audit` here).
+These checks cover NuGet packages only; the Rust crates compiled into `libturso_sdk_kit` are in section 6.
 
 ## 4. Licenses
 
@@ -123,9 +122,9 @@ These checks cover NuGet packages only. The Rust crates compiled into `libturso_
 
 ## 5. Review of the patches
 
-`patches/0001` to `0003` (the commits `39f687aa`, `17e02b3d`, `f4dcaa3a`) change only `src/Turso.Data.Sqlite/`
-`SqliteCommand.cs`, `SqliteDataReader.cs` and `SqliteConnection.cs`: +69/-13 lines, no new dependency, I/O,
-configuration, reflection or public API.
+`patches/0001` to `0004` (the commits `39f687aa`, `17e02b3d`, `f4dcaa3a`, `22528c09`) change only
+`src/Turso.Data.Sqlite/` `SqliteCommand.cs`, `SqliteDataReader.cs` and `SqliteConnection.cs`, with no new dependency,
+I/O, configuration, reflection or public API.
 
 - 0001 (`SqliteCommand.Execute`): wraps the existing statement handling in a `try`, whose `catch` disposes the statement
   and rethrows; the success path, including handing the statement to a reader, is unchanged.
@@ -133,19 +132,55 @@ configuration, reflection or public API.
   statement (previously disposed on success only).
 - 0003 (`SqliteConnection.CheckTransactionAfterFailure`, called from four catch blocks): after a failed statement in an
   open, non-remote transaction, prepares and steps `BEGIN;` (disposed; its failure means still inside the transaction)
-  and, when it succeeds, `ROLLBACK;` (disposed), then calls the provider's existing
-  `MarkCompletedExternally(rolledBack: true)`. It runs on the failing call's thread, and only after a failure.
-  Residual risk: it runs before the original error is rethrown, so if the probe itself failed (preparing `BEGIN`, or the
-  `ROLLBACK` after a successful probe), its exception would replace the original one. Not observed in any test.
-  Follow-up: let the probe swallow its own failures, with a test.
+  and, when it succeeds, `ROLLBACK;` (disposed), and calls the provider's existing `MarkCompletedExternally(rolledBack:
+  true)`. It runs on the failing call's thread, and only after a failure.
+- 0004 (the residual risk this audit first found in 0003, fixed): the probe runs before the caller's error is rethrown,
+  so a probe that failed itself (preparing its `BEGIN`, or its `ROLLBACK` after a successful `BEGIN`) replaced the
+  caller's exception. The probe now swallows its own failures and marks the transaction ended before its `ROLLBACK`.
+  Its statements are prepared through an internal per-connection hook, `ProbeStatements`, unset in production; the
+  driver's tests see it through `InternalsVisibleTo` in our vendor build targets. Test:
+  `TransactionTests.AFailingProbeNeverReplacesTheOriginalError` (probe failing at `BEGIN` and at `ROLLBACK`), which failed
+  both ways before the fix ("the test breaks the probe" instead of the read's error) and passes after.
 
 Our build files (`Directory.Build.props`, `Directory.Build.targets`; not patches) set net11.0, warnings as errors, lock
 files under `locks/`, not packable, `NU1507;NU1801` as in the root props, Turso.Raw's package id to its project name,
 and the `Turso.Data.Native` reference.
 
+## 6. Rust crates in `libturso_sdk_kit`
+
+Read-only, against upstream's workspace at `5c168be5ef6a32ac966daf5983502a4f694b37ad` (a fresh clone), with tools from
+the nix store and nothing installed system-wide: `nix shell nixpkgs#cargo nixpkgs#rustc nixpkgs#cargo-audit
+nixpkgs#cargo-deny` (cargo 1.95.0, cargo-audit 0.22.1, cargo-deny 0.19.6), `CARGO_HOME` in a scratch directory.
+
+- Scope: the native library is the `turso_sdk_kit` crate (`crate-type = ["lib", "cdylib", "staticlib"]`). Its normal
+  (shipped) dependency graph, `cargo tree --locked -p turso_sdk_kit -e normal`, has 219 crates for all targets and 158
+  for `x86_64-unknown-linux-gnu` (six of them upstream's own: turso_core, turso_ext, turso_macros, turso_parser,
+  turso_sdk_kit, turso_sdk_kit_macros). The workspace `Cargo.lock` has 849 packages (bindings, tests, tools).
+- Advisories: `cargo-audit audit --file Cargo.lock` against the RustSec database (1,299 advisories, commit `25a288f6`,
+  2026-10-12) reports 6 vulnerabilities and 13 warnings for the whole workspace. Only one is in the native library's
+  graph:
+  - **RUSTSEC-2026-0204, `crossbeam-epoch` 0.9.18** (pulled in by `turso_core`), "Invalid pointer dereference in
+    `fmt::Pointer` impl for `Atomic` and `Shared`": formatting a null `Atomic`/`Shared` with `{:p}` dereferences it.
+    Fixed in 0.9.20; no CVSS. Upstream code never formats these with `{:p}` (none of the six files using
+    `crossbeam_epoch`, the MVCC checkpoint and the skip list, has a `:p}` format), so the flawed code path is not
+    reached. Only an upstream release with crossbeam-epoch >= 0.9.20 removes it from the binary.
+  - Not in the native library: h2 0.4.12 (RUSTSEC-2026-0258), quick-xml 0.26.0 (RUSTSEC-2026-0194, -0195), rkyv 0.7.46
+    (RUSTSEC-2026-0235), rustls 0.23.35 (RUSTSEC-2026-0285), and the unmaintained, unsound and yanked warnings (bincode,
+    bitmaps, number_prefix, paste, proc-macro-error2, unsafe-libyaml, yaml-rust, anyhow, lru, memmap2, scc, chacha20).
+- Licenses: `cargo-deny --manifest-path sdk-kit/Cargo.toml list` resolved every crate of the linux-x64 graph: MIT (129),
+  Apache-2.0 (105), Unicode-3.0 (22), Apache-2.0 WITH LLVM-exception (4), Unlicense (3), Zlib (3), BSD-3-Clause (2),
+  ISC, BSL-1.0, BSD-2-Clause; all permissive, no copyleft, none unknown or missing. Across all targets the only copyleft
+  option is `r-efi` (UEFI targets only, `MIT OR Apache-2.0 OR LGPL-2.1-or-later`), and `zerocopy-derive` 0.8.26 (a
+  compile-time proc-macro, other targets) is the one crate cargo-deny did not list.
+- Obligations: Apache-2.0, BSD, Zlib and Unicode-3.0 ask for attribution when the binary is distributed. TerraBase is
+  not distributed (it runs as TerraScale's service; no published binaries), so none applies today; distributing a
+  TerraBase binary would need these notices.
+
 ## Open items
 
 - The upstream release is unsigned (tag and commit): nothing to verify beyond the fetch from GitHub over HTTPS.
 - The prebuilt native library is trusted as upstream built it (repository-signed by nuget.org, not author-signed, not
-  rebuilt here); its Rust dependencies have not been audited for vulnerabilities or enumerated for licenses.
-- Patch 0003's probe can mask the original error if the probe itself fails (section 5).
+  rebuilt here); its graph is audited from the source lock file (section 6), not from the binary itself.
+- RUSTSEC-2026-0204 (`crossbeam-epoch` 0.9.18) is in the native library: not reachable through upstream's code (no
+  `{:p}` formatting of crossbeam pointers); it goes with an upstream release on crossbeam-epoch >= 0.9.20.
+- Distributing a TerraBase binary would bring attribution duties for the Rust crates (section 6).
