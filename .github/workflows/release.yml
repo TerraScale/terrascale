@@ -32,7 +32,7 @@ env:
 jobs:
   package:
     if: github.event_name == 'push'
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: alpha
     timeout-minutes: 20
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -42,6 +42,8 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+      # alpha keeps a NuGet cache shared across jobs; release bytes build only from packages restored for this job.
+      - run: echo "NUGET_PACKAGES=$RUNNER_TEMP/nuget-packages" >> "$GITHUB_ENV"
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: |
@@ -77,7 +79,7 @@ jobs:
 
   github-packages:
     needs: package
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: alpha
     timeout-minutes: 10
     permissions:
       contents: read
@@ -103,7 +105,7 @@ jobs:
   restore:
     needs: [package, github-packages]
     if: ${{ !cancelled() && !failure() }}
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: alpha
     timeout-minutes: 15
     permissions:
       contents: read
@@ -172,7 +174,7 @@ jobs:
     needs: restore
     # Spelled out: the implicit success() would skip this job, as package and github-packages are skipped on dispatch.
     if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && needs.restore.result == 'success' }}
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: alpha
     timeout-minutes: 10
     permissions:
       contents: read
