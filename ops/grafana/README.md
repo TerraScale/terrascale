@@ -112,6 +112,6 @@ Backup shipping (phase 3b) keeps `terrabase_backup_lag_seconds` and `terrabase_b
 
 ## Verified
 
-2026-10-11, `grafana.py check` against the live org: all 98 queries parse and run. Fly machine series return data.
+2026-10-11, `grafana.py check` against the live org: all 102 queries (panels + alerts) parse and run. Fly machine series return data.
 TerraBase and ts-auth app series are empty: the gru TerraBase machine (old image) serves `/metrics` on loopback only, so
 `up{app="ts-terrabase",region="gru"}` is 0, which is exactly what the scrape alert reports. ts-auth has no machine yet.
