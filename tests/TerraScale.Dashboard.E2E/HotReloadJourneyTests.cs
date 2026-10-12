@@ -3,6 +3,7 @@ using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Microsoft.Playwright;
 
 namespace TerraScale.Dashboard.E2E;
 
@@ -44,7 +45,7 @@ public sealed class HotReloadJourneyTests(DashboardE2EFixture fixture)
                 catch (OperationCanceledException) when (!deadline.IsCancellationRequested) { }
                 await Task.Delay(250, deadline.Token);
             }
-            await BrowserJourneys.RunAsync(fixture.Root, "hot-reload.mjs", origin);
+            await AssertHotReloadAsync(origin.ToString().TrimEnd('/'));
         }
         finally
         {
@@ -60,6 +61,53 @@ public sealed class HotReloadJourneyTests(DashboardE2EFixture fixture)
                 catch (OperationCanceledException) { host.Kill(entireProcessTree: true); await host.WaitForExitAsync(); }
             }
             Console.WriteLine(await output + await errors);
+        }
+    }
+
+    private async Task AssertHotReloadAsync(string origin)
+    {
+        var source = Path.Combine(fixture.Root, "src/TerraScale.Dashboard/Features/Auth/AuthPage.cs");
+        var css = Path.Combine(fixture.Root, "src/TerraScale.Dashboard/web/assets/Features/Auth/auth.css");
+        var originalSource = await File.ReadAllTextAsync(source);
+        var originalCss = await File.ReadAllTextAsync(css);
+        const string originalCopy = "Access your databases and cloud operations.";
+        const string changedCopy = originalCopy + " Hot reload check.";
+        await Assert.That(originalSource).Contains(originalCopy);
+        var changedSource = originalSource.Replace(originalCopy, changedCopy);
+        var changedCss = originalCss + "\n.ts-login-logo { opacity: 0.99; }\n";
+        var sourceChanged = false;
+        var cssChanged = false;
+        using var playwright = await Playwright.CreateAsync();
+        await using var browser = await playwright.Chromium.LaunchAsync(new() { Headless = true });
+        try
+        {
+            var page = await browser.NewPageAsync();
+            page.SetDefaultTimeout(45000);
+            var ready = page.Locator("#ts-dev-updates[data-dev-ready=\"true\"]");
+            await page.GotoAsync(origin + "/login");
+            await ready.WaitForAsync(new() { State = WaitForSelectorState.Attached });
+            await File.WriteAllTextAsync(source, changedSource);
+            sourceChanged = true;
+            await page.GetByText(changedCopy, new() { Exact = true }).WaitForAsync();
+            await Assert.That(await File.ReadAllTextAsync(source)).IsEqualTo(changedSource).Because("No concurrent edit to the source fixture");
+            await File.WriteAllTextAsync(source, originalSource);
+            sourceChanged = false;
+            await page.GetByText(originalCopy, new() { Exact = true }).WaitForAsync();
+            await ready.WaitForAsync(new() { State = WaitForSelectorState.Attached });
+            var opacity = await page.Locator(".ts-login-logo").EvaluateAsync<string>("element => getComputedStyle(element).opacity");
+            await File.WriteAllTextAsync(css, changedCss);
+            cssChanged = true;
+            await page.WaitForFunctionAsync("() => getComputedStyle(document.querySelector('.ts-login-logo')).opacity === '0.99'");
+            await Assert.That(await File.ReadAllTextAsync(css)).IsEqualTo(changedCss).Because("No concurrent edit to the CSS fixture");
+            await File.WriteAllTextAsync(css, originalCss);
+            cssChanged = false;
+            await page.WaitForFunctionAsync("value => getComputedStyle(document.querySelector('.ts-login-logo')).opacity === value", opacity);
+            Console.WriteLine("PASS: C# hot reload and CSS updates reached the open browser over the Tailscale origin; source fixtures restored");
+        }
+        finally
+        {
+            if (sourceChanged && await File.ReadAllTextAsync(source) == changedSource) await File.WriteAllTextAsync(source, originalSource);
+            if (cssChanged && await File.ReadAllTextAsync(css) == changedCss) await File.WriteAllTextAsync(css, originalCss);
         }
     }
 
