@@ -7,7 +7,6 @@ public static class EmbeddedAssets
 {
     private static readonly Dictionary<string, (string Resource, string ContentType)> Admin = new(StringComparer.Ordinal)
     {
-        ["admin.css"] = ("assets/admin/admin.css", "text/css; charset=utf-8"),
         ["datastar.js"] = ("assets/admin/datastar.js", "text/javascript; charset=utf-8"),
         // ts-resources' horizontal TerraScale logo (blue, and blue with a light wordmark for dark backgrounds) and cube mark,
         // with inline fills in place of the source files' <style> blocks, which the asset CSP (style-src 'none') covers.
@@ -22,7 +21,8 @@ public static class EmbeddedAssets
     private static readonly Dictionary<string, (string Resource, string ContentType)> Fonts = new(StringComparer.Ordinal)
     {
         ["oxanium-latin-wght-normal.woff2"] = ("assets/fonts/oxanium-latin-wght-normal.woff2", "font/woff2"),
-        ["jetbrains-mono-latin-wght-normal.woff2"] = ("assets/fonts/jetbrains-mono-latin-wght-normal.woff2", "font/woff2"),
+        ["Geist-Variable.woff2"] = ("assets/fonts/Geist-Variable.woff2", "font/woff2"),
+        ["GeistMono-Variable.woff2"] = ("assets/fonts/GeistMono-Variable.woff2", "font/woff2"),
     };
 
     /// <summary>Serves an admin asset by exact name.</summary>

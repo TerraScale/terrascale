@@ -1,57 +1,74 @@
 @inherits RazorSlice<SignInPageModel>
 @implements IUsesLayout<HostedLayout, HostedLayoutModel>
-<div class="badge">@WriteHtml(Model.Icon)</div>
+<div>
 <h1>@Model.Title</h1>
+@switch (Model.Step)
+{
+case SignInStep.Email:
+<p class="ts-auth-sub">We'll email you a six-digit sign-in code.</p>
+break;
+case SignInStep.Code:
+<p class="ts-auth-sub">If an account exists for <strong>@Model.Email</strong>, we emailed it a six-digit code. It expires in 10 minutes.</p>
+break;
+case SignInStep.Continue:
+<p class="ts-auth-sub">Returning to the application…</p>
+break;
+case SignInStep.Rejected:
+<p class="ts-auth-sub">Start again from the application you were signing in to.</p>
+break;
+}
+</div>
 @if (Model.Error is { } error)
 {
-<p class="error" role="alert">@WriteHtml(HostedIcons.CircleAlert)<span>@error</span></p>
+<p class="ts-alert" role="alert">@WriteHtml(HostedIcons.CircleAlert)<span>@error</span></p>
 }
 @switch (Model.Step)
 {
 case SignInStep.Email:
-<p class="muted">We'll email you a six-digit sign-in code.</p>
 <form method="post" action="/ui/@Model.Slug/sign-in">
 <input type="hidden" name="next" value="@Model.Next">
-<label for="sign-in-email">Email</label>
-<input id="sign-in-email" name="email" type="email" autocomplete="username" required autofocus value="@Model.Email">
-<button type="submit">Email me a sign-in code</button>
+<div class="ts-field"><label for="sign-in-email">Email</label>
+<input id="sign-in-email" class="ts-input" name="email" type="email" autocomplete="username" required autofocus value="@Model.Email"></div>
+<button type="submit" class="ts-btn ts-btn-primary ts-btn-lg ts-btn-block">Email me a sign-in code</button>
 </form>
 break;
 case SignInStep.Code:
-<p class="muted">If an account exists for <strong>@Model.Email</strong>, we emailed it a six-digit code. It expires in 10 minutes.</p>
 <form method="post" action="/ui/@Model.Slug/sign-in/verify">
 <input type="hidden" name="next" value="@Model.Next">
 <input type="hidden" name="email" value="@Model.Email">
-<label for="sign-in-code">Code</label>
-<input id="sign-in-code" class="code" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required autofocus>
-<button type="submit">Sign in</button>
+<div class="ts-field"><label for="sign-in-code">Sign-in code</label>
+<input id="sign-in-code" class="ts-input ts-input-code" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required autofocus></div>
+<button type="submit" class="ts-btn ts-btn-primary ts-btn-lg ts-btn-block">Sign in</button>
 </form>
-<div class="actions">
-<a class="back" href="/ui/@Model.Slug/sign-in@(Model.Next is { Length: > 0 } next ? "?next=" + Uri.EscapeDataString(next) : null)">@WriteHtml(HostedIcons.ArrowLeft)<span>Use a different email</span></a>
+<div class="ts-divider">or</div>
+<div class="ts-auth-links">
+<a href="/ui/@Model.Slug/sign-in@(Model.Next is { Length: > 0 } next ? "?next=" + Uri.EscapeDataString(next) : null)">@WriteHtml(HostedIcons.ArrowLeft)Use a different email</a>
 <form method="post" action="/ui/@Model.Slug/sign-in">
 <input type="hidden" name="next" value="@Model.Next">
 <input type="hidden" name="email" value="@Model.Email">
-<button type="submit" class="link">Send a new code</button>
+<button type="submit" class="ts-link-btn">Send a new code</button>
 </form>
 </div>
 break;
 case SignInStep.Continue:
-<p class="muted">Returning to the application…</p>
-<p><a href="@Model.Next">Continue</a></p>
+<a class="ts-btn ts-btn-primary ts-btn-lg ts-btn-block" href="@Model.Next">Continue</a>
 break;
 case SignInStep.SignedIn:
-<p class="success" role="status">You are signed in. You can close this page.</p>
+<p class="ts-alert" role="status">@WriteHtml(HostedIcons.CircleCheck)<span>You are signed in. You can close this page.</span></p>
 break;
 case SignInStep.SignedOut:
-<p class="success" role="status">You are signed out. You can close this page.</p>
+<p class="ts-alert" role="status">@WriteHtml(HostedIcons.CircleCheck)<span>You are signed out. You can close this page.</span></p>
 break;
 case SignInStep.Rejected:
-<p class="muted">Start again from the application you were signing in to.</p>
-@if (Model.Detail is { } detail)
+if (Model.Detail is { } detail)
 {
-<p class="detail">Error code: @detail</p>
+<p class="ts-detail">Error code: @detail</p>
 }
 break;
+}
+@if (Model.App is { } app && Model.Step is SignInStep.Email or SignInStep.Code)
+{
+<p class="ts-auth-app">@WriteHtml(HostedIcons.ShieldCheck)Signing in to @app</p>
 }
 @functions {
     /// <inheritdoc />

@@ -30,7 +30,7 @@ public sealed class OidcRequestTests(TerraBaseFixture fixture)
             using var refused = await oidc.AuthorizeAsync(path, session);
             await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
             await Assert.That(refused.Headers.Location).IsNull();
-            await Assert.That(await refused.Content.ReadAsStringAsync()).Contains("<p class=\"detail\">Error code: invalid_request</p>");
+            await Assert.That(await refused.Content.ReadAsStringAsync()).Contains("<p class=\"ts-detail\">Error code: invalid_request</p>");
         }
 
         var code = await oidc.CodeAsync(session, challenge);

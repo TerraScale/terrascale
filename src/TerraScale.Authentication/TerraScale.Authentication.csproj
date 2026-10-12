@@ -54,7 +54,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <EmbeddedResource Include="Assets/admin/admin.css" LogicalName="assets/admin/admin.css" />
     <EmbeddedResource Include="Assets/admin/datastar.js" LogicalName="assets/admin/datastar.js" />
     <EmbeddedResource Include="Assets/admin/logo.svg" LogicalName="assets/admin/logo.svg" />
     <EmbeddedResource Include="Assets/admin/icon.svg" LogicalName="assets/admin/icon.svg" />
@@ -62,6 +61,8 @@
     <EmbeddedResource Include="Assets/email/logo.png" LogicalName="assets/email/logo.png" />
     <EmbeddedResource Include="Assets/email/logo-dark.png" LogicalName="assets/email/logo-dark.png" />
     <EmbeddedResource Include="Assets/fonts/oxanium-latin-wght-normal.woff2" LogicalName="assets/fonts/oxanium-latin-wght-normal.woff2" />
-    <EmbeddedResource Include="Assets/fonts/jetbrains-mono-latin-wght-normal.woff2" LogicalName="assets/fonts/jetbrains-mono-latin-wght-normal.woff2" />
+    <EmbeddedResource Include="Assets/fonts/Geist-Variable.woff2" LogicalName="assets/fonts/Geist-Variable.woff2" />
+    <EmbeddedResource Include="Assets/fonts/GeistMono-Variable.woff2" LogicalName="assets/fonts/GeistMono-Variable.woff2" />
+    <EmbeddedResource Include="Assets/ui/tokens.css" LogicalName="assets/ui/tokens.css" />
   </ItemGroup>
 </Project>

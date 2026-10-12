@@ -1,6 +1,7 @@
 @inherits RazorLayoutSlice<HostedLayoutModel>
 <!doctype html>
-<html lang="en">
+@* No toggle without JavaScript or a cookie: the pages follow the reader's system light or dark mode. *@
+<html lang="en" data-theme="system">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -9,20 +10,22 @@
 <style nonce="@Model.Nonce">@WriteHtml(HostedLayoutModel.PageCss)</style>
 @if (Model.AccentColor is { } accent)
 {
-<style nonce="@Model.Nonce">:root{--ts-accent:@accent;--ts-accent-fill:@accent}</style>
+<style nonce="@Model.Nonce">:root{--ts-primary:@accent;--ts-primary-hover:@accent;--ts-on-primary:#ffffff;--ts-accent:@accent}</style>
 }
 @await RenderSectionAsync("head")
 </head>
 <body>
-<div class="shell">
-<header class="brand">@if (Model.LogoUrl is { } logo)
-{<img src="@logo" alt="" class="logo-img">}
+<main class="ts-auth">
+@if (Model.LogoUrl is { } logo)
+{
+<img src="@logo" alt="" class="ts-auth-logo">
+}
 else
-{<picture><source srcset="/admin/logo-dark.svg" media="(prefers-color-scheme: dark)"><img src="/admin/logo.svg" alt="TerraScale" width="149" height="36" class="logo"></picture>}</header>
-<main class="card">
+{
+<picture><source srcset="/admin/logo-dark.svg" media="(prefers-color-scheme: dark)"><img src="/admin/logo.svg" alt="TerraScale" width="116" height="28" class="ts-auth-logo"></picture>
+}
 @await RenderBodyAsync()
+<footer class="ts-auth-foot"><a href="https://status.terrascale.tech">Status</a><a href="https://terrascale.tech">terrascale.tech</a></footer>
 </main>
-<footer class="foot">TerraScale · <a href="https://terrascale.tech">terrascale.tech</a></footer>
-</div>
 </body>
 </html>

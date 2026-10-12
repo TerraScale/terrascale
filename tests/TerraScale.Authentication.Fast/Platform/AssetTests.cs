@@ -6,11 +6,13 @@ namespace TerraScale.Authentication.Fast.Platform;
 public sealed class AssetTests
 {
     [Test]
-    [Arguments("/admin/admin.css", "text/css")]
     [Arguments("/admin/datastar.js", "text/javascript")]
     [Arguments("/admin/logo.svg", "image/svg+xml")]
+    [Arguments("/admin/logo-dark.svg", "image/svg+xml")]
+    [Arguments("/admin/icon.svg", "image/svg+xml")]
     [Arguments("/fonts/oxanium-latin-wght-normal.woff2", "font/woff2")]
-    [Arguments("/fonts/jetbrains-mono-latin-wght-normal.woff2", "font/woff2")]
+    [Arguments("/fonts/Geist-Variable.woff2", "font/woff2")]
+    [Arguments("/fonts/GeistMono-Variable.woff2", "font/woff2")]
     public async Task Bundled_assets_are_served_with_locked_down_headers(string path, string contentType)
     {
         await using var server = await AuthTestServer.StartAsync();
@@ -27,6 +29,7 @@ public sealed class AssetTests
 
     [Test]
     [Arguments("/admin/missing.css")]
+    [Arguments("/admin/admin.css")]
     [Arguments("/admin/..%2FTerraScale.Authentication.dll")]
     [Arguments("/fonts/admin.css")]
     public async Task Unknown_assets_are_not_found(string path)

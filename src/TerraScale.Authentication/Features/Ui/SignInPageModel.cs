@@ -1,3 +1,6 @@
+using Microsoft.AspNetCore.WebUtilities;
+using TerraScale.Authentication.Features.Oidc;
+
 namespace TerraScale.Authentication.Features.Ui;
 
 /// <summary>What the hosted sign-in page shows.</summary>
@@ -44,14 +47,12 @@ public sealed record SignInPageModel(SignInStep Step, string Slug = "", string? 
         _ => "Sign in",
     };
 
-    /// <summary>The step's icon, shown above the title.</summary>
-    public string Icon => this.Step switch
-    {
-        SignInStep.Code => HostedIcons.Mail,
-        SignInStep.Continue or SignInStep.SignedIn or SignInStep.SignedOut => HostedIcons.CircleCheck,
-        SignInStep.Rejected => HostedIcons.CircleAlert,
-        _ => HostedIcons.KeyRound,
-    };
+    /// <summary>The application being signed in to, when the authorization request names a known client.</summary>
+    public string? App =>
+        this.Next is { } next && next.IndexOf('?', StringComparison.Ordinal) is var start and >= 0
+        && QueryHelpers.ParseQuery(next[start..]).TryGetValue("client_id", out var client) && client == OidcIssuer.DashboardClientId
+            ? "TerraScale Dashboard"
+            : null;
 
     /// <summary>Renders the page with the hosted-page security headers and a fresh nonce.</summary>
     public static IResult Render(HttpContext context, SignInPageModel model, int statusCode = StatusCodes.Status200OK)
