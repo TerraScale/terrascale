@@ -11,17 +11,14 @@ namespace TerraBase.E2E;
 /// </summary>
 public sealed class CatalogE2ETests
 {
-    private const string Catalog = "the catalog as a lattice database (R10a)";
-    private const string Move = "home region and live move (R11)";
-
     [Test]
     public async Task E12_database_created_in_sjc_is_usable_from_gru_and_one_same_name_database_survives_expected_to_fail()
     {
-        await using var cluster = await Cluster.StartAsync();
-        var created = new List<(string Region, string Name)>();
-        try
+        await Gaps.RunAsync("E12", async () =>
         {
-            await Expected.FailureAsync(Catalog, async () =>
+            await using var cluster = await Cluster.StartAsync();
+            var created = new List<(string Region, string Name)>();
+            try
             {
                 var name = NewName();
                 created.Add((Cluster.Sjc, name));
@@ -40,26 +37,27 @@ public sealed class CatalogE2ETests
                 _ = await Converge.UntilAsync(
                     async () => (Gru: await IdAsync(cluster[Cluster.Gru], twinPath), Sjc: await IdAsync(cluster[Cluster.Sjc], twinPath)),
                     pair => pair.Gru is not null && pair.Gru == pair.Sjc, "both regions serve one database of the twin name");
-            });
-        }
-        finally
-        {
-            await DeleteAsync(cluster, created);
-        }
+
+            }
+            finally
+            {
+                await DeleteAsync(cluster, created);
+            }
+        });
     }
 
     [Test]
     public async Task E13_move_from_gru_to_sjc_under_write_load_loses_no_write_and_succeeds_expected_to_fail()
     {
-        await using var cluster = await Cluster.StartAsync();
-        var name = NewName();
-        var path = $"{cluster.ProjectPath}/databases/{name}";
-        _ = await CreateAsync(cluster, Cluster.Gru, name);
-        try
+        await Gaps.RunAsync("E13", async () =>
         {
-            _ = await Docs.PostAsync(cluster[Cluster.Gru], Relative($"{path}/collections"), new JsonObject { ["name"] = "items" });
-            await Expected.FailureAsync(Move, async () =>
+            await using var cluster = await Cluster.StartAsync();
+            var name = NewName();
+            var path = $"{cluster.ProjectPath}/databases/{name}";
+            _ = await CreateAsync(cluster, Cluster.Gru, name);
+            try
             {
+                _ = await Docs.PostAsync(cluster[Cluster.Gru], Relative($"{path}/collections"), new JsonObject { ["name"] = "items" });
                 // Writes keep going through gru; only acknowledged ones must survive the move.
                 var acknowledged = new ConcurrentBag<string>();
                 using var stop = new CancellationTokenSource();
@@ -98,12 +96,13 @@ public sealed class CatalogE2ETests
                 {
                     Expected.Check(await Docs.ReadAsync(cluster[Cluster.Sjc], Item(path, id)) is not null, $"acknowledged write {id} is in sjc");
                 }
-            });
-        }
-        finally
-        {
-            await DeleteAsync(cluster, [(Cluster.Gru, name)]);
-        }
+
+            }
+            finally
+            {
+                await DeleteAsync(cluster, [(Cluster.Gru, name)]);
+            }
+        });
     }
 
     // A lowercase letter first, at most 63 characters (the database name rule).

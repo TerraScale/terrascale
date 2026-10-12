@@ -23,9 +23,9 @@ public sealed class ThreeRegionE2ETests
     [Arguments(Cluster.Fra, Cluster.Gru)]
     public async Task Write_in_one_region_is_readable_in_the_other_two(string from, string to)
     {
-        await using var cluster = await Cluster.StartAsync(All);
         await Gaps.RunAsync("pair", async () =>
         {
+            await using var cluster = await Cluster.StartAsync(All);
             var body = Synthetic(new Faker());
             var uri = cluster.Document(EntityIds.New().ToString());
             await Docs.PutAsync(cluster[from], uri, body);
@@ -40,11 +40,11 @@ public sealed class ThreeRegionE2ETests
     [Test]
     public async Task Concurrent_writes_to_the_same_field_in_three_regions_converge_to_one_written_value()
     {
-        await using var cluster = await Cluster.StartAsync(All);
-        var uri = cluster.Document(EntityIds.New().ToString());
-        await Converge.SeedAllAsync(cluster, uri, new JsonObject { ["value"] = "seed" });
         await Gaps.RunAsync("three-way-same-field", async () =>
         {
+            await using var cluster = await Cluster.StartAsync(All);
+            var uri = cluster.Document(EntityIds.New().ToString());
+            await Converge.SeedAllAsync(cluster, uri, new JsonObject { ["value"] = "seed" });
             var written = All.ToDictionary(region => $"{region}-{EntityIds.New()}", region => region, StringComparer.Ordinal);
             var acknowledged = Stopwatch.GetTimestamp();
             await Task.WhenAll(written.Select(write => Docs.PutAsync(cluster[write.Value], uri, new JsonObject { ["value"] = write.Key })));
@@ -59,11 +59,11 @@ public sealed class ThreeRegionE2ETests
     [Test]
     public async Task Concurrent_writes_to_different_fields_in_three_regions_all_survive()
     {
-        await using var cluster = await Cluster.StartAsync(All);
-        var uri = cluster.Document(EntityIds.New().ToString());
-        await Converge.SeedAllAsync(cluster, uri, new JsonObject { ["gru"] = "base", ["sjc"] = "base", ["fra"] = "base" });
         await Gaps.RunAsync("three-way-different-fields", async () =>
         {
+            await using var cluster = await Cluster.StartAsync(All);
+            var uri = cluster.Document(EntityIds.New().ToString());
+            await Converge.SeedAllAsync(cluster, uri, new JsonObject { ["gru"] = "base", ["sjc"] = "base", ["fra"] = "base" });
             var written = All.ToDictionary(region => region, region => $"{region}-{EntityIds.New()}", StringComparer.Ordinal);
             await Task.WhenAll(All.Select(region => Docs.PatchAsync(cluster[region], uri, new JsonObject { [region] = written[region] })));
             var settled = await Converge.SettledAsync(cluster, uri, "three-way different-field writes");
@@ -76,11 +76,11 @@ public sealed class ThreeRegionE2ETests
     [Test]
     public async Task Delete_in_one_region_and_edits_in_the_other_two_converge_and_stay_converged()
     {
-        await using var cluster = await Cluster.StartAsync(All);
-        var uri = cluster.Document(EntityIds.New().ToString());
-        await Converge.SeedAllAsync(cluster, uri, new JsonObject { ["value"] = "seed" });
         await Gaps.RunAsync("three-way-delete-versus-edit", async () =>
         {
+            await using var cluster = await Cluster.StartAsync(All);
+            var uri = cluster.Document(EntityIds.New().ToString());
+            await Converge.SeedAllAsync(cluster, uri, new JsonObject { ["value"] = "seed" });
             var edits = new[] { Cluster.Sjc, Cluster.Fra }.ToDictionary(region => region, region => $"{region}-{EntityIds.New()}", StringComparer.Ordinal);
             await Task.WhenAll([
                 Docs.DeleteAsync(cluster[Cluster.Gru], uri),
@@ -100,10 +100,10 @@ public sealed class ThreeRegionE2ETests
     [Test]
     public async Task Bulk_3000_documents_written_across_three_regions_have_matching_counts_and_digests()
     {
-        const int count = 3000;
-        await using var cluster = await Cluster.StartAsync(All);
         await Gaps.RunAsync("three-way-bulk", async () =>
         {
+            const int count = 3000;
+            await using var cluster = await Cluster.StartAsync(All);
             var faker = new Faker();
             var documents = Enumerable.Range(0, count).Select(_ => (Id: EntityIds.New().ToString(), Body: Synthetic(faker))).ToArray();
             var expected = Docs.Digest(documents.Select(document => (document.Id, Docs.Canonical(document.Body))));
@@ -124,12 +124,12 @@ public sealed class ThreeRegionE2ETests
     [Test]
     public async Task Burst_of_overwrites_from_three_regions_converges_to_a_last_write()
     {
-        const int writes = 40;
-        await using var cluster = await Cluster.StartAsync(All);
-        var uri = cluster.Document(EntityIds.New().ToString());
-        await Converge.SeedAllAsync(cluster, uri, new JsonObject { ["value"] = "seed" });
         await Gaps.RunAsync("three-way-burst", async () =>
         {
+            const int writes = 40;
+            await using var cluster = await Cluster.StartAsync(All);
+            var uri = cluster.Document(EntityIds.New().ToString());
+            await Converge.SeedAllAsync(cluster, uri, new JsonObject { ["value"] = "seed" });
             var acknowledged = Stopwatch.GetTimestamp();
             await Task.WhenAll(All.Select(async region =>
             {
@@ -148,9 +148,9 @@ public sealed class ThreeRegionE2ETests
     [Test]
     public async Task Documents_near_the_size_limit_and_with_many_fields_replicate_intact()
     {
-        await using var cluster = await Cluster.StartAsync(All);
         await Gaps.RunAsync("large-documents", async () =>
         {
+            await using var cluster = await Cluster.StartAsync(All);
             var faker = new Faker();
             // 900 KiB of text, under the 1 MiB document limit with room for the JSON around it.
             var large = new JsonObject { ["blob"] = faker.Random.String2(900 * 1024), ["n"] = 1 };
@@ -173,12 +173,12 @@ public sealed class ThreeRegionE2ETests
     [Test]
     public async Task Concurrent_inc_in_three_regions_sums()
     {
-        const int times = 7;
-        await using var cluster = await Cluster.StartAsync(All);
-        var uri = cluster.Document(EntityIds.New().ToString());
-        await Converge.SeedAllAsync(cluster, uri, new JsonObject { ["name"] = "counter" });
         await Gaps.RunAsync("three-way-counters", async () =>
         {
+            const int times = 7;
+            await using var cluster = await Cluster.StartAsync(All);
+            var uri = cluster.Document(EntityIds.New().ToString());
+            await Converge.SeedAllAsync(cluster, uri, new JsonObject { ["name"] = "counter" });
             await Task.WhenAll(All.Select(async region =>
             {
                 for (var i = 0; i < times; i++)
@@ -194,11 +194,11 @@ public sealed class ThreeRegionE2ETests
     [Test]
     public async Task Concurrent_set_adds_in_three_regions_union_and_a_concurrent_add_beats_a_remove()
     {
-        await using var cluster = await Cluster.StartAsync(All);
-        var uri = cluster.Document(EntityIds.New().ToString());
-        await Converge.SeedAllAsync(cluster, uri, new JsonObject { ["tags"] = new JsonArray("x") });
         await Gaps.RunAsync("three-way-sets", async () =>
         {
+            await using var cluster = await Cluster.StartAsync(All);
+            var uri = cluster.Document(EntityIds.New().ToString());
+            await Converge.SeedAllAsync(cluster, uri, new JsonObject { ["tags"] = new JsonArray("x") });
             await Task.WhenAll(
                 Docs.OpsAsync(cluster[Cluster.Gru], uri, Op("add", "tags", "gru"), Op("remove", "tags", "x")),
                 Docs.OpsAsync(cluster[Cluster.Sjc], uri, Op("add", "tags", "sjc"), Op("add", "tags", "x")),

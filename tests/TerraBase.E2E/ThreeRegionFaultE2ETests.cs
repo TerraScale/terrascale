@@ -20,14 +20,14 @@ public sealed class ThreeRegionFaultE2ETests
     public async Task Partitioned_region_keeps_accepting_writes_and_converges_after_the_partition_heals()
     {
         Skip.When(Cluster.FlyRequested, "Fly has no way to cut 6PN between two machines; the partition runs on the local nodes only");
-        const int each = 200;
-        await using var cluster = await Cluster.StartAsync(All);
-        var faker = new Faker();
-        var sharedId = EntityIds.New().ToString();
-        var shared = cluster.Document(sharedId);
-        await Converge.SeedAllAsync(cluster, shared, new JsonObject { ["value"] = "seed" });
         await Gaps.RunAsync("partition-heal", async () =>
         {
+            const int each = 200;
+            await using var cluster = await Cluster.StartAsync(All);
+            var faker = new Faker();
+            var sharedId = EntityIds.New().ToString();
+            var shared = cluster.Document(sharedId);
+            await Converge.SeedAllAsync(cluster, shared, new JsonObject { ["value"] = "seed" });
             cluster.Partition(Cluster.Fra, Cluster.Gru);
             cluster.Partition(Cluster.Fra, Cluster.Sjc);
             var documents = new List<(string Id, JsonObject Body)>();
@@ -66,10 +66,10 @@ public sealed class ThreeRegionFaultE2ETests
     public async Task Region_down_then_back_catches_up_on_every_write_made_while_it_was_down()
     {
         SkipOnFlyUnlessOutageRun();
-        const int count = 300;
-        await using var cluster = await Cluster.StartAsync(All);
         await Gaps.RunAsync("region-down-rejoin", async () =>
         {
+            const int count = 300;
+            await using var cluster = await Cluster.StartAsync(All);
             var faker = new Faker();
             await cluster.StopAsync(Cluster.Fra);
             var started = false;
@@ -98,10 +98,10 @@ public sealed class ThreeRegionFaultE2ETests
     public async Task Restart_in_the_middle_of_replication_loses_no_write()
     {
         SkipOnFlyUnlessOutageRun();
-        const int count = 800;
-        await using var cluster = await Cluster.StartAsync(All);
         await Gaps.RunAsync("restart-mid-replication", async () =>
         {
+            const int count = 800;
+            await using var cluster = await Cluster.StartAsync(All);
             var faker = new Faker();
             var documents = Enumerable.Range(0, count).Select(_ => (Id: EntityIds.New().ToString(), Body: ThreeRegionE2ETests.Synthetic(faker))).ToArray();
             var written = 0;
@@ -127,10 +127,10 @@ public sealed class ThreeRegionFaultE2ETests
     public async Task Replication_backlog_of_3000_writes_drains_after_the_region_returns()
     {
         Skip.When(Cluster.FlyRequested, "the backlog builds behind a partition, which runs on the local nodes only");
-        const int count = 3000;
-        await using var cluster = await Cluster.StartAsync(All);
         await Gaps.RunAsync("backlog", async () =>
         {
+            const int count = 3000;
+            await using var cluster = await Cluster.StartAsync(All);
             var faker = new Faker();
             var documents = Enumerable.Range(0, count).Select(_ => (Id: EntityIds.New().ToString(), Body: ThreeRegionE2ETests.Synthetic(faker))).ToArray();
             cluster.Partition(Cluster.Fra, Cluster.Gru);
@@ -153,9 +153,9 @@ public sealed class ThreeRegionFaultE2ETests
     public async Task Causally_later_write_wins_everywhere_despite_clock_skew(string skewed, int skewMilliseconds)
     {
         Skip.When(Cluster.FlyRequested, "clock skew is set on the local nodes only");
-        await using var cluster = await Cluster.StartAsync(All, new Dictionary<string, TimeSpan> { [skewed] = TimeSpan.FromMilliseconds(skewMilliseconds) });
         await Gaps.RunAsync("skew-causal", async () =>
         {
+            await using var cluster = await Cluster.StartAsync(All, new Dictionary<string, TimeSpan> { [skewed] = TimeSpan.FromMilliseconds(skewMilliseconds) });
             // The skewed region writes first and a normal one overwrites, then the reverse.
             foreach (var (first, second) in new[] { (skewed, Cluster.Gru), (Cluster.Gru, skewed) })
             {
@@ -177,11 +177,11 @@ public sealed class ThreeRegionFaultE2ETests
     public async Task Concurrent_writes_with_a_clock_2_s_ahead_converge_and_the_writer_ahead_wins()
     {
         Skip.When(Cluster.FlyRequested, "clock skew and partitions are set on the local nodes only");
-        await using var cluster = await Cluster.StartAsync(All, new Dictionary<string, TimeSpan> { [Cluster.Sjc] = TimeSpan.FromSeconds(2) });
-        var uri = cluster.Document(EntityIds.New().ToString());
-        await Converge.SeedAllAsync(cluster, uri, new JsonObject { ["value"] = "seed" });
         await Gaps.RunAsync("skew-concurrent", async () =>
         {
+            await using var cluster = await Cluster.StartAsync(All, new Dictionary<string, TimeSpan> { [Cluster.Sjc] = TimeSpan.FromSeconds(2) });
+            var uri = cluster.Document(EntityIds.New().ToString());
+            await Converge.SeedAllAsync(cluster, uri, new JsonObject { ["value"] = "seed" });
             cluster.Partition(Cluster.Gru, Cluster.Sjc);
             cluster.Partition(Cluster.Gru, Cluster.Fra);
             cluster.Partition(Cluster.Sjc, Cluster.Fra);

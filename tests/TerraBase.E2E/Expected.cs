@@ -13,7 +13,7 @@ internal static class Expected
         {
             await scenario();
         }
-        catch (Exception error)
+        catch (Exception error) when (error is not TUnit.Core.Exceptions.SkipTestException)
         {
             Console.WriteLine($"expected failure until {gap}: {error.GetType().Name}: {error.Message}");
             return;
