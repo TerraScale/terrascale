@@ -104,10 +104,14 @@ version said a document a machine held is never missing; that holds only without
     restored M then never opens by pulling (its peers may be restored copies too); only the operator open does.
   - **Anchored before acknowledged.** Every Management request a restore could undo to a tenant's harm (every DELETE
     under `/v1/management`: API keys, members, invitations, databases, projects, organizations, transfers; a role change;
-    leaving; confirming a transfer; a commit, which may carry any of them) writes the anchor before its response starts
-    (`Response.OnStarting`); when the anchor cannot be written it answers 500 instead of acknowledging (the change is
-    committed here and replicates; a retry is idempotent). So no acknowledged revocation, removal or deletion is newer than
-    its machine's anchor. Creations do not wait for the bucket: one lost to a restore grants nothing.
+    leaving; confirming a transfer) writes the anchor before its response starts (`Response.OnStarting`), and a management
+    commit (`POST /v1/management/commits`) does so when it carries such an operation (`delete_organization`,
+    `delete_project`, `delete_database`, `change_role`, `remove_member`, `leave`, `revoke_invitation`,
+    `decline_invitation`, `confirm_transfer`, `cancel_transfer`). When the anchor cannot be written it answers 500 instead
+    of acknowledging (the change is committed here and replicates; a retry is idempotent). So no acknowledged revocation,
+    removal or deletion is newer than its machine's anchor. Creations, other commits (the dashboard's document writes among
+    them) and **every tenant route** (`/v1/projects/…`: documents, transactions) never wait for the bucket: tenant writes
+    change client databases, not `_system`, and a creation lost to a restore grants nothing.
   - **Only trusted peers verify.** A pull counts only when the peer reports itself trusted (`GET /catalog-gate` on its
     internal listener, anonymous like the probes: `open`, or its anchor read and not ahead of its catalog). A restored,
     closed machine verifies nobody, so a peer whose own anchor had not caught a change it received by stream cannot open by
@@ -169,7 +173,7 @@ version said a document a machine held is never missing; that holds only without
   | A machine restarts while a recorded machine is stopped or unreachable | closed until that machine is back | wait, or the operator open |
   | A machine (or its region) is destroyed, replaced or retired for good | every later restart elsewhere stays closed: it stays recorded | the operator open at every restart (machine retirement: proposal below) |
   | A machine's catalog is put back to an older copy (behind its anchor), alone or with every other machine | closed even after its pulls; it verifies nobody | the operator open (a whole-cluster restore is a decision) |
-  | The backup bucket cannot be written | revocations, removals, deletions and commits answer 500 instead of being acknowledged (creations still work) | fix the bucket |
+  | The backup bucket cannot be written | revocations, removals and deletions (and commits carrying them) answer 500 instead of being acknowledged; creations, other commits and all tenant writes still work | fix the bucket |
   | The backup bucket cannot be read at start (or none is attached on Fly) | closed | fix or attach the bucket, or the operator open |
   | A new cluster's first machine | closed | the bootstrap request |
   | A cluster of one machine (single region, before a second region) restarts | closed: nothing to pull from is unknown | the operator open |
@@ -208,7 +212,10 @@ version said a document a machine held is never missing; that holds only without
   ignoring recorded machines opens gru after pulling only sjc); `Machines_all_restored_from_stale_copies_stay_closed_behind_their_anchors_until_an_operator_decides`
   (ignoring the anchor opens both on their stale copies);
   `A_revocation_is_anchored_before_its_acknowledgement_so_copies_from_just_before_it_stay_closed` (without the anchor at
-  the acknowledgement, the anchor is not past the revocation when it is acknowledged).
+  the acknowledgement, the anchor is not past the revocation when it is acknowledged; ignoring peer trust opens sjc);
+  `A_revocation_the_bucket_cannot_anchor_is_not_acknowledged_while_creations_and_tenant_writes_still_are` (swallowing the
+  anchor failure acknowledges the revocation; anchoring every commit refuses a creation commit; anchoring tenant writes
+  refuses a document write).
 - **Stale groups are joined (decision, this version):** a stale group (committed 24 h or more before it is read, whole
   states) from a peer can carry an entry M minted after T. R7's rule for client databases drops a stale state of a
   document missing locally that the machine held before (`HeldBefore`), because there it means a collected deletion; on M
