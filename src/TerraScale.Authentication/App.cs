@@ -93,6 +93,8 @@ public static class App
         builder.Services.AddSingleton<PlatformAuthentication>();
         builder.Services.AddSingleton<ApiKeys>();
         builder.Services.AddSingleton<PlatformGrants>();
+        builder.Services.AddHttpClient(GitHubActionsGrant.HttpClientName, client => client.Timeout = TimeSpan.FromSeconds(10));
+        builder.Services.AddSingleton<GitHubActionsKeys>();
         builder.Services.AddSingleton<Invitations>();
         builder.Services.AddHostedService<SessionPruner>();
         builder.Services.AddSingleton<TerraBaseStorageHealth>();

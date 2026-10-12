@@ -34,7 +34,6 @@
     <PackageReference Include="Grpc.Tools" PrivateAssets="all" />
     <PackageReference Include="AWSSDK.S3" />
     <PackageReference Include="Cronos" />
-    <PackageReference Include="Turso.Data.Sqlite.Provider" />
     <PackageReference Include="JsonSchema.Net" />
     <PackageReference Include="Microsoft.IdentityModel.Protocols.OpenIdConnect" />
     <PackageReference Include="NativeCompressions" />
@@ -63,5 +62,9 @@
   <ItemGroup>
     <!-- Checked-in, versioned inter-node contract (wire-compatible with terrabase-rust/proto). -->
     <Protobuf Include="Features/Replication/Protos/**/*.proto" ProtoRoot="Features/Replication/Protos" GrpcServices="Both" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Vendored, with TerraScale's fixes (src/vendor/Turso.Data.Sqlite/UPSTREAM.md). -->
+    <ProjectReference Include="../vendor/Turso.Data.Sqlite/src/Turso.Data.Sqlite/Turso.Data.Sqlite.csproj" />
   </ItemGroup>
 </Project>

@@ -184,7 +184,6 @@ internal static class ApiExamples
         "413" => "payload_too_large",
         "415" => "unsupported_media_type",
         "421" => "misdirected_request, wrong_region",
-        "429" when id == "getCollectionChanges" => "change_feed_busy",
         "429" => "tenant_busy, tenant_memory",
         "503" when id is "dropCollection" or "runTransaction" => "capacity, storage_busy, unavailable",
         "503" when id == "planPointInTime" => "pitr_plan_limit, pitr_plan_timeout, pitr_plan_unavailable, storage_busy, catalog_primary_unavailable",

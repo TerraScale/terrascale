@@ -283,8 +283,10 @@ None of these needs Turso changes except item 4. Items 1–3 are design changes 
 
 ## Found while swapping the engine (T1, 2026-10-12)
 
-TerraBase now runs on `Turso.Data.Sqlite.Provider` 0.8.2 (storage format 3). Behaviour the swap had to work around, each
-reproduced with the provider alone; the workaround is in the code next to it:
+TerraBase now runs on the Turso .NET driver 0.8.2 (storage format 3), vendored with TerraScale's fixes in
+`src/vendor/Turso.Data.Sqlite` (`UPSTREAM.md` there; the native core still comes from the `Turso.Data.Native` package).
+Behaviour the swap had to work around, each reproduced with the provider alone; the workaround is in the code next to it,
+or a patch of the vendored driver:
 
 | Behaviour | Workaround |
 | --- | --- |
@@ -295,8 +297,9 @@ reproduced with the provider alone; the workaround is in the code next to it:
 | `wal_checkpoint(TRUNCATE)` waits for every reader on older frames; a read transaction stops Turso from checkpointing into the file (the log grows instead) | Neither is relied on for snapshots |
 | A runtime error while a SELECT steps (a function that throws) rolls the whole transaction back; later statements then run in autocommit. Constraint, parse and `RAISE(FAIL)` errors do not | A failed statement in a write transaction checks `BEGIN` (`SqliteSession.InTransaction`); if the transaction is gone it can only be disposed |
 | A write on a connection while one of its own SELECT readers is open fails with "database is locked" | Read the ids first, then write (`CaptureSystemDeletions`) |
+| A failed statement without result columns (a write, `BEGIN`, `ROLLBACK`, a savepoint) is never finalized by the provider (Turso.Data.Sqlite 0.8.2 `SqliteCommand.Execute`, and `SqliteDataReader.NextResult` for a statement after a result set): the garbage collector's finalizer thread finalizes it later, a second user of the connection that Turso refuses with "concurrent use forbidden" when the owner steps another statement then. And a statement that fails while it steps ends the whole transaction (Turso), yet the provider kept running the transaction's later commands, which then committed on their own, and its `Dispose` threw "no transaction is active" | Patches 0001-0003 of the vendored driver: both paths dispose a failed statement; after a failed statement in a transaction the connection probes whether Turso ended it and marks it rolled back, so its later commands are refused and disposing it rolls nothing back. TerraBase marks such a transaction aborted, reads included. Tests: `tests/Turso.Data.Sqlite.Tests`, Slow `AbandonedStatementTests`. No collections, no cost (benchmark/bench/2026-10-12-statement-drain.md); #115's first fix, a forced collection after each failure, cost up to 61 % of write throughput |
 | Closing a reader steps the statement to its end | Every early-closed statement has a `LIMIT`, and the per-row `tb_qos_scan` stops a cancelled one |
-| No interrupt, progress handler or VM instruction count | `tb_qos_scan(octet_length(doc))` in every scan: it accounts candidates, checks the deadline every 32 rows and cancellation every row, and throws to stop the statement. The plan's instruction limit is gone |
+| No interrupt, progress handler or VM instruction count | `tb_qos_scan(octet_length(doc))` in every scan: it accounts candidates, checks the deadline every 32 rows and cancellation every row, and throws to stop the statement. It also charges the plan's work budget per candidate row (8, plus 4 per JSON read), in place of SQLite's instruction count |
 | A function without arguments is evaluated once per statement | `tb_query_scan(id)` takes the row's id |
 | A subquery in FROM is not flattened (it is materialized, then sorted) | Document queries and the history reads are single flat statements |
 | A row-value comparison `(a, b) > (?, ?)`, or the same as an `OR`, scans the whole index; `max(x)` scans | Two bounded seeks joined by `UNION ALL`; `ORDER BY x DESC LIMIT 1` |
