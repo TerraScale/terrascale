@@ -7,6 +7,7 @@ namespace TerraBase.E2E;
 public sealed class RegionProcessesTests
 {
     [Test]
+    [Scenario(Nodes.Processes, Faults.ProcessKill)]
     public async Task Region_processes_replicate_and_a_killed_region_catches_up_after_its_restart()
     {
         Skip.When(Cluster.FlyRequested, "runs local node processes");
@@ -29,6 +30,7 @@ public sealed class RegionProcessesTests
     // its turso_cdc), then is killed with SIGKILL. Once every region is back, each holds exactly the acknowledged writes:
     // the change groups survived the kill on disk and shipped from gru's restarted process.
     [Test]
+    [Scenario(Nodes.Processes, Faults.ProcessKill)]
     public async Task Writes_a_region_acknowledged_before_it_could_ship_them_reach_every_region_after_a_SIGKILL()
     {
         Skip.When(Cluster.FlyRequested, "runs local node processes");
