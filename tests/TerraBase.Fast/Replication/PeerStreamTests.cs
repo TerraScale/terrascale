@@ -354,6 +354,32 @@ public sealed class PeerStreamTests
         await Assert.That(await sjc.ReadAsync(smaller)).IsEqualTo("""{"email":"same@example.test","from":"sjc"}""");
     }
 
+    [Test]
+    public async Task Tail_send_and_ack_lag_are_separate_series_and_only_tail_lag_tracks_a_peer_that_is_gone()
+    {
+        await using var cluster = await Cluster.StartAsync(cdc: true, "gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var id = EntityIds.New().ToString();
+        await gru.WriteAsync(async transaction =>
+        {
+            _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
+            _ = await transaction.PutAsync("items", id, Json("""{"n":1}"""), CancellationToken.None);
+        });
+        await Assert.That(await sjc.UntilAsync(id, """{"n":1}""")).IsTrue();
+
+        // Caught up: each of the three is its own series, at 0; send and ack lag per peer region.
+        const string Sjc = "peer_region=\"sjc\"";
+        await Assert.That(await gru.UntilMetricAsync("terrabase_replication_send_lag_seconds", value => value == 0, Sjc)).IsTrue();
+        await Assert.That(await gru.UntilMetricAsync("terrabase_replication_ack_lag_seconds", value => value == 0, Sjc)).IsTrue();
+        await Assert.That(await gru.UntilMetricAsync("terrabase_replication_tail_lag_seconds", value => value == 0)).IsTrue();
+
+        // sjc gone: its stream and with it its send and ack lag series go, while tail lag keeps the age of what it lacks.
+        await sjc.StopAsync();
+        await gru.WriteAsync(async transaction => await transaction.PutAsync("items", id, Json("""{"n":2}"""), CancellationToken.None));
+        await Assert.That(await gru.UntilMetricAsync("terrabase_replication_tail_lag_seconds", value => value >= 1)).IsTrue();
+        await Assert.That(await gru.UntilMetricAsync("terrabase_replication_send_lag_seconds", _ => false, Sjc, absent: true)).IsTrue();
+    }
+
     // The first stamp of a test: now, so convergence lags stay meaningful; later operations add logical ticks.
     private static ulong Stamp() => (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() << 16;
 
@@ -614,16 +640,21 @@ public sealed class PeerStreamTests
             return false;
         }
 
-        // Whether the scraped gauge `name` satisfies `holds` within the deadline.
-        public async Task<bool> UntilMetricAsync(string name, Func<double, bool> holds)
+        // Whether the scraped gauge `name` (its series with `label`, when given) satisfies `holds` within the deadline; with
+        // `absent`, whether that series is gone.
+        public async Task<bool> UntilMetricAsync(string name, Func<double, bool> holds, string? label = null, bool absent = false)
         {
             using var metrics = new HttpClient { BaseAddress = Api.Server.MetricsAddress };
             var deadline = DateTime.UtcNow + Deadline;
             while (DateTime.UtcNow < deadline)
             {
                 var line = (await metrics.GetStringAsync(new Uri("/metrics", UriKind.Relative))).Split('\n')
-                    .FirstOrDefault(line => line.StartsWith(name, StringComparison.Ordinal) && !line.StartsWith(name + "_", StringComparison.Ordinal));
-                if (line is not null && double.TryParse(line[(line.LastIndexOf(' ') + 1)..], System.Globalization.CultureInfo.InvariantCulture, out var value) && holds(value))
+                    .FirstOrDefault(line => line.StartsWith(name, StringComparison.Ordinal) && !line.StartsWith(name + "_", StringComparison.Ordinal)
+                        && (label is null || line.Contains(label, StringComparison.Ordinal)));
+                // name{labels} value [timestamp]
+                var sample = line?[(Math.Max(line.LastIndexOf('}'), name.Length - 1) + 1)..].Trim().Split(' ')[0];
+                if (absent ? line is null
+                    : double.TryParse(sample, System.Globalization.CultureInfo.InvariantCulture, out var value) && holds(value))
                 {
                     return true;
                 }
