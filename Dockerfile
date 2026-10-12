@@ -23,19 +23,30 @@ WORKDIR /src/terrascale
 FROM base AS source
 COPY . .
 
-# One stage per area; CI runs them as parallel jobs. Each checks whitespace format, builds its projects in Release with
-# analyzers as errors (libs.slnf, auth.slnf, terrabase.slnf), runs its checks and its Fast suite.
-FROM source AS test-libs
+# Preparation can be reused for unchanged inputs; CI always reruns the test-* stages with no-cache-filters.
+FROM source AS check-libs
 RUN --mount=type=cache,target=/root/.nuget/packages \
-    make fmt-check libs-check libs-test CONFIGURATION=Release && touch /passed
+    make fmt-check libs-check CONFIGURATION=Release
 
-FROM source AS test-auth
+FROM check-libs AS test-libs
 RUN --mount=type=cache,target=/root/.nuget/packages \
-    make fmt-check auth-check auth-test-fast CONFIGURATION=Release && touch /passed
+    make libs-test CONFIGURATION=Release && touch /passed
 
-FROM source AS test-terrabase
+FROM source AS check-auth
 RUN --mount=type=cache,target=/root/.nuget/packages \
-    make fmt-check terrabase-check terrabase-test-fast CONFIGURATION=Release && touch /passed
+    make fmt-check auth-openapi-check CONFIGURATION=Release
+
+FROM check-auth AS test-auth
+RUN --mount=type=cache,target=/root/.nuget/packages \
+    make auth-audit auth-test-fast CONFIGURATION=Release && touch /passed
+
+FROM source AS check-terrabase
+RUN --mount=type=cache,target=/root/.nuget/packages \
+    make fmt-check terrabase-check CONFIGURATION=Release
+
+FROM check-terrabase AS test-terrabase
+RUN --mount=type=cache,target=/root/.nuget/packages \
+    make terrabase-test-fast CONFIGURATION=Release && touch /passed
 
 # All three areas (BuildKit runs them in parallel): `make docker-test`.
 FROM scratch AS test
