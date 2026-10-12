@@ -394,6 +394,10 @@ journeys passed again in the focused follow-up.
 - **ts-auth.** The deployed `0.1.0-alpha+55979ea3` answers `/readyz` 503 and
   `/.well-known/jwks.json` 500. Its current source requires an operator to
   provision the first signing key. `auth.terrascale.tech` is NXDOMAIN.
+  The dashboard still finds ts-auth through Atlas and accepts only regional
+  `<region>.auth.terrascale.tech` origins, while current ts-auth serves one
+  global issuer `https://auth.terrascale.tech/{tenant}`; the dashboard must
+  move to the global issuer.
 - **Identity delivery.** The Fly app `ts-dashboard` has no secrets and no
   machines. ts-auth already receives its production secrets as Fly secrets
   (its zero-configuration contract). The smallest compatible delivery is one
@@ -404,6 +408,8 @@ journeys passed again in the focused follow-up.
   session key and the vendor Stripe keys. No `[[files]]` entry is committed
   until the secret exists, because Fly would refuse to start a machine
   without it.
+  The field list, client registration and proposed delivery are in
+  [identity-descriptor.md](identity-descriptor.md).
 
 `c379cc3b2cf724d2c10c753397479b5cf2b4f44d` and SDK main
 `bcd20603f11f3aa54dc54cec6e410b4fe9e24151`. Producer CDC R3 has since
