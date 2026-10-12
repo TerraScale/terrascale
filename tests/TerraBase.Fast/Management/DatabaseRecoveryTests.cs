@@ -1139,8 +1139,10 @@ public sealed class DatabaseRecoveryTests
     }
 
     [Test]
-    public async Task An_intent_conflicting_with_a_registered_database_refuses_startup_without_deleting_data()
+    public async Task An_intent_naming_a_registered_database_keeps_its_data_and_is_cleared_at_startup()
     {
+        // Another region may register the same chosen id while this machine's own creation of it failed: the database
+        // exists, so its file here is its local copy.
         await using var state = new RecoveryData();
         await using (var api = await state.StartAsync())
         {
@@ -1155,12 +1157,13 @@ public sealed class DatabaseRecoveryTests
 
         var source = await File.ReadAllBytesAsync(state.Path(state.Source));
         var neighbor = await File.ReadAllBytesAsync(state.Path(state.Neighbor));
-        var catalog = await DocumentFiles.ReadAsync(System.IO.Path.Combine(state.Directory, "_system.db"));
-        await Assert.That(async () =>
+        var catalog = (await DocumentFiles.ReadAsync(System.IO.Path.Combine(state.Directory, "_system.db")))
+            .Where(line => !line.StartsWith(Pending + "|", StringComparison.Ordinal)).ToList();
+        await using (var restarted = await state.StartAsync())
         {
-            await using var failed = await state.StartAsync();
-        }).Throws<InvalidOperationException>();
-        await Assert.That(TerraBaseTestServer.IsDataDirectoryOwned(state.Directory)).IsFalse();
+            await Assert.That((await PendingAsync(restarted)).Documents).IsEmpty();
+        }
+
         await Assert.That((await File.ReadAllBytesAsync(state.Path(state.Source))).SequenceEqual(source)).IsTrue();
         await Assert.That((await File.ReadAllBytesAsync(state.Path(state.Neighbor))).SequenceEqual(neighbor)).IsTrue();
         await Assert.That(await DocumentFiles.ReadAsync(System.IO.Path.Combine(state.Directory, "_system.db"))).IsEquivalentTo(catalog);

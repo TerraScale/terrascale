@@ -24,7 +24,7 @@ internal sealed partial class SqliteStorageTransaction
     // stay within a group's bounds (the bytes are counted in _changeBytes, which only the system database uses otherwise).
     private int _captured;
 
-    private LocalReplica Member => store.Member ?? throw new InvalidOperationException("a client database writes with this member's replica id");
+    private LocalReplica Member => store.Member ?? throw new InvalidOperationException("a database writes with this member's replica id");
 
     // A stamp's 48 bits of milliseconds keep it below 2^63.
     private static long Version(Hlc stamp) => checked((long)stamp.Value);
@@ -75,7 +75,7 @@ internal sealed partial class SqliteStorageTransaction
             return DocumentState.Bottom;
         }
 
-        using var reader = TableCommand(SqliteStatements.GetState, collection, id).ExecuteReader();
+        using var reader = TableCommand(store.IsSystem ? SqliteStatements.SystemGetState : SqliteStatements.GetState, collection, id).ExecuteReader();
         if (!reader.Read())
         {
             return DocumentState.Bottom;
@@ -111,15 +111,15 @@ internal sealed partial class SqliteStorageTransaction
     {
         if (body is null)
         {
-            TableCommand(SqliteStatements.DeleteRow, collection, id).ExecuteNonQuery();
+            TableCommand(store.IsSystem ? SqliteStatements.SystemDeleteRow : SqliteStatements.DeleteRow, collection, id).ExecuteNonQuery();
             return;
         }
 
-        var update = TableCommand(SqliteStatements.UpdateRow, collection, id);
+        var update = TableCommand(store.IsSystem ? SqliteStatements.SystemUpdateRow : SqliteStatements.UpdateRow, collection, id);
         update.Parameters.AddWithValue("$body", body);
         if (update.ExecuteNonQuery() == 0)
         {
-            var insert = TableCommand(SqliteStatements.InsertRow, collection, id);
+            var insert = TableCommand(store.IsSystem ? SqliteStatements.SystemInsertRow : SqliteStatements.InsertRow, collection, id);
             insert.Parameters.AddWithValue("$body", body);
             insert.ExecuteNonQuery();
         }
@@ -177,16 +177,19 @@ internal sealed partial class SqliteStorageTransaction
     }
 
     // Worker-only: admits one local state row into this transaction's change group: at most 1024 of them, and 2 MiB of
-    // collections, ids, stored states and documents, which bounds the group's encoded deltas. A transaction holding
+    // collections, ids, stored states and documents (16,384 and 3 MiB in the system database), which bounds the group's encoded deltas. A transaction holding
     // others is refused with LimitsReached, so group commit moves the write to the next batch.
     private void Capture(string collection, string id, int storedBytes, int bodyBytes)
     {
         var bytes = StrictUtf8.GetByteCount(collection) + StrictUtf8.GetByteCount(id) + (long)storedBytes + bodyBytes;
-        if (_captured == IStorageTransaction.MaxChangeGroupChanges || (_captured > 0 && _changeBytes + bytes > IStorageTransaction.MaxChangeGroupBytes))
+        var (changes, limit) = store.IsSystem
+            ? (IStorageTransaction.MaxSystemGroupChanges, IStorageTransaction.MaxSystemGroupBytes)
+            : (IStorageTransaction.MaxChangeGroupChanges, IStorageTransaction.MaxChangeGroupBytes);
+        if (_captured == changes || (_captured > 0 && _changeBytes + bytes > limit))
         {
             LimitsReached = true;
             throw new ChangeGroupCapacityException(
-                $"a transaction changes at most {IStorageTransaction.MaxChangeGroupChanges} documents and {IStorageTransaction.MaxChangeGroupBytes} bytes of documents and their states");
+                $"a transaction changes at most {changes} documents and {limit} bytes of documents and their states");
         }
 
         _captured++;
