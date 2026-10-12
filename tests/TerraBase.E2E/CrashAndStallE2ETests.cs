@@ -83,7 +83,7 @@ public sealed class CrashAndStallE2ETests
         {
             await using var gru = await NodeProcess.StartAsync();
             // Region identities and peer addresses for node processes come with peer streams (R4a).
-            throw new NotSupportedException($"node processes cannot form a three-region cluster before peer streams (R4a); {gru.DataDirectory} serves alone");
+            throw new NotSupportedException($"node processes cannot form a three-region cluster before peer streams (R4a); a single node process serves alone");
         });
     }
 
@@ -97,7 +97,7 @@ public sealed class CrashAndStallE2ETests
         await Gaps.RunAsync("storage-stall-single", async () =>
         {
             await using var cluster = await Cluster.StartAsync(Cluster.Gru);
-            var outcome = await StallAsync(cluster, Cluster.Gru, [Cluster.Gru], TimeSpan.FromSeconds(5));
+            var outcome = await StallAsync(Cluster.Gru, [Cluster.Gru], TimeSpan.FromSeconds(5));
             foreach (var (id, canonical) in outcome.Acknowledged)
             {
                 Expected.Check(Docs.Canonical(await Docs.ReadAsync(cluster[Cluster.Gru], cluster.Document(id))) == canonical, $"acknowledged write {id} after the stall");
@@ -118,7 +118,7 @@ public sealed class CrashAndStallE2ETests
         await Gaps.RunAsync("storage-stall", async () =>
         {
             await using var cluster = await Cluster.StartAsync(All);
-            var outcome = await StallAsync(cluster, Cluster.Sjc, All, TimeSpan.FromSeconds(10));
+            var outcome = await StallAsync(Cluster.Sjc, All, TimeSpan.FromSeconds(10));
             var expected = Docs.Digest(outcome.Acknowledged.Select(pair => (pair.Key, pair.Value)));
             _ = await Converge.ListedAsync(cluster, expected, "every region after sjc's storage stall");
         });
@@ -177,9 +177,9 @@ public sealed class CrashAndStallE2ETests
     // The Turso engine (#98) holds the database file's write lock for its single writer, so no outside writer can stall it
     // (it used to, or got "database is locked", depending on timing). The stall needs the harness's in-process hook
     // (Cluster.StallStorageAsync, R3's #106), so until then the scenario reports itself not supported, every run.
-    private static Task<StallOutcome> StallAsync(Cluster cluster, string region, string[] writing, TimeSpan stall) =>
+    private static Task<StallOutcome> StallAsync(string region, string[] writing, TimeSpan stall) =>
         throw new NotSupportedException(
-            $"no storage stall hook: cannot stall {cluster.DatabaseFile(region)} for {stall.TotalSeconds:F0} s while {string.Join(", ", writing)} write; it needs Cluster.StallStorageAsync (#106)");
+            $"no storage stall hook: cannot stall {region}'s database file for {stall.TotalSeconds:F0} s while {string.Join(", ", writing)} write; it needs Cluster.StallStorageAsync (#106)");
 
     private static Uri Document(string database, string id) =>
         new($"{database}/collections/crash/documents/by-key?id={Uri.EscapeDataString(id)}", UriKind.Relative);
