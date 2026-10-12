@@ -115,6 +115,28 @@ commit from main; no force push), after its push check passed and the preview wo
 6. #134;
 7. #79.
 
+**Merges 16:20–16:27Z** (each with a fresh green `test` on its exact head over `df790dbb`, 0 open threads, and the preview
+workflow re-verified `disabled_manually` by the helper):
+
+| PR | Head | `test` run | Method | Main after | Push run | deploy / preview | Main run `test` |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| #130 | `03115e4c` | 38276120332 success | squash | `2ca15d6c` | 38276914039 | skipped / skipped | pending |
+| #133 | `2719d3d8` | 38276112293 success | squash | `d271c079` | 38276954117 | skipped / skipped | pending |
+| #88 | `8122d5d3` | 38276092544 success | squash | `bd1c4efc` | 38277036473 | skipped / skipped | pending |
+| #106 | `36de93da` | 38276100821 success | squash (**error: should have been a merge commit**, as the base of R3's stack) | `0acfee13` | 38277073606 | skipped / skipped | pending |
+| #79 | `a18c40e9` | 38276207869 success | squash | `c379cc3b` | 38277117579 | skipped / skipped | pending |
+
+- **#132 closed** as superseded by #133. Proof: two files are byte-identical on main, and the third is #132's version
+  plus 197 lines with 0 deletions.
+- **#106 squash, impact:** merging main into #111 is clean (merge-tree reports no conflict), and so is
+  `rebase --onto main 4c32da5e`. The rest of the R3 stack gets merge commits.
+- **#111 is retargeted to main.** R3 merges main in, or gives a written OK for update-branch.
+- **Main's storage format is now 4**, after #88 (R2c-2). R10a-2 also bumps to 4; the combined Id comes from
+  `--storage-format`.
+- **#134 conflicts with main** after #133. Back to Dogfood, since it is product code.
+- **#127 is red:** auth Fast `Readiness_treats_a_hung_authority_as_not_ready` (run 38276106422). Back to its owner.
+- **#125 needs a fresh run** now that #130 has merged. Its owner merges main in.
+
 **Not merged until fixed and verified:**
 - **R10a's stack**, until the no-peer fail-open and the unprotected override are fixed and R3 verifies in writing;
 - **#125**, until its metrics race is fixed (#130) and a fresh `test` run on its exact head is green;
@@ -128,8 +150,8 @@ commit from main; no force push), after its push check passed and the preview wo
 
 | Count since the baseline | Value |
 | --- | ---: |
-| merged | 1 (#115) |
-| closed (proven superseded) | 0 |
+| merged | 6 (#115, #130, #133, #88, #106, #79) |
+| closed (proven superseded) | 1 (#132, by #133; 16:23:01Z, preview workflow `disabled_manually`) |
 
 The 9 merges before the baseline are in the merge-train table.
 
