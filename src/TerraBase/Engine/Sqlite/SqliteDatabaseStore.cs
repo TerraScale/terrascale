@@ -400,9 +400,10 @@ internal sealed partial class SqliteDatabaseStore(
                     // stops it (CleanupAsync then deletes the empty log).
                     Scalar(session.Connection, null, "PRAGMA wal_checkpoint(TRUNCATE);");
                 }
-                catch (SqliteException)
+                catch (SqliteException error)
                 {
                     // Best effort: the log stays and replays at the next open.
+                    SqliteSession.ReleaseAbandonedStatements(error);
                 }
 
                 pool.Discard(session);

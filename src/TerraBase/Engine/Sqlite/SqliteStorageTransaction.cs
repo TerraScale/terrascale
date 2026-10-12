@@ -1174,10 +1174,16 @@ internal sealed partial class SqliteStorageTransaction(
         {
             return call();
         }
-        // Any failure: a stopped read surfaces as a QueryCapacityException, not the SqliteException it started as.
-        catch (Exception) when (write && !session.InTransaction())
+        // A failed statement, also one that surfaces as another exception (a stopped read as a QueryCapacityException).
+        catch (Exception error) when (SqliteSession.FailedStatement(error))
         {
-            Aborted = _faulted = true;
+            // Before the probe, which is the connection's next statement.
+            SqliteSession.ReleaseAbandonedStatements(error);
+            if (write && !session.InTransaction())
+            {
+                Aborted = _faulted = true;
+            }
+
             throw;
         }
     }
@@ -1292,6 +1298,7 @@ internal sealed partial class SqliteStorageTransaction(
                         catch (SqliteException error) when (SqliteSession.NoTransaction(error))
                         {
                             // A failed statement already ended it (SqliteSession.InTransaction).
+                            SqliteSession.ReleaseAbandonedStatements(error);
                         }
                     }
 
@@ -1319,8 +1326,9 @@ internal sealed partial class SqliteStorageTransaction(
                         normal.ExecuteNonQuery();
                     }
                 }
-                catch
+                catch (Exception error)
                 {
+                    SqliteSession.ReleaseAbandonedStatements(error);
                     store.Discard(session);
                     throw;
                 }

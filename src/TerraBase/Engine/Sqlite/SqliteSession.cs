@@ -65,6 +65,42 @@ internal sealed class SqliteSession(SqliteConnection connection) : IDisposable
         }
     }
 
+    /// <summary>
+    /// Finalizes, on the calling thread, the native statements Turso's provider abandoned when <paramref name="error"/>'s
+    /// statement failed. Turso.Data.Sqlite 0.8.2 (SqliteCommand.Execute) leaves a failed statement without result columns
+    /// (a write, a BEGIN, a ROLLBACK) to the garbage collector, and its finalizer thread would finalize it later: a second
+    /// user of the connection, which Turso refuses with "concurrent use forbidden" while the owner steps another statement.
+    /// Call on the connection's thread, after the failure and before the connection runs anything else. A blocking full
+    /// collection, but statements fail rarely: a stopped read, an aborted transaction, a failing trigger.
+    /// </summary>
+    public static void ReleaseAbandonedStatements(Exception error)
+    {
+        if (!FailedStatement(error) || error.Data.Contains(Released))
+        {
+            return;
+        }
+
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        error.Data[Released] = true;
+    }
+
+    private const string Released = "terrabase.abandoned-statements-released";
+
+    /// <summary>Whether <paramref name="error"/> is, or was caused by, a failed statement.</summary>
+    public static bool FailedStatement(Exception? error)
+    {
+        for (; error is not null; error = error.InnerException)
+        {
+            if (error is SqliteException)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     /// <summary>Whether <paramref name="error"/> is a statement <see cref="ThrowIfStopped"/> failed.</summary>
     public static bool Stopped(SqliteException error) => error.Message.Contains(StoppedMessage, StringComparison.Ordinal);
 
@@ -83,6 +119,7 @@ internal sealed class SqliteSession(SqliteConnection connection) : IDisposable
         }
         catch (SqliteException error) when (error.Message.Contains("within a transaction", StringComparison.Ordinal))
         {
+            ReleaseAbandonedStatements(error);
             return true;
         }
 
