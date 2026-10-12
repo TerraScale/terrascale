@@ -12,8 +12,8 @@ namespace TerraBase.E2E;
 /// The lattice's outcome (docs/terrabase/multi-region-replication.md, section 4) is therefore known exactly, and every
 /// region must hold it: bodies, field values, deletes, counter sums, set elements, counts and digests. Every scenario runs
 /// twice, once as single requests and once inside one mixed transaction per window. A barrier is one sentinel write per
-/// running region: a region that reads every sentinel has every earlier write of each origin, whose stream ships in commit
-/// order. Two controls run in every test: with the last writer kept down, the scenarios it wrote must not yet hold
+/// running region, read by every region and acknowledged on each origin's outbound streams (Matrix.BarrierAsync).
+/// Two controls run in every test: with the last writer kept down, the scenarios it wrote must not yet hold
 /// (the checks see a blocked origin), and each scenario's wrong outcome (the earlier writer winning, a ghost field, a
 /// resurrected or lost document, a lost increment, remove beating a concurrent add) must differ from what every region holds.
 /// </summary>
@@ -213,6 +213,12 @@ public sealed class MultiWriterMatrixTests
         public bool ThreeWriters => Writes[2] is not null;
     }
 
+    /// <summary>An origin's stream to one region: the highest change id it read, and the highest the region acknowledged.</summary>
+    private readonly record struct Outbound(long Head, long Acknowledged)
+    {
+        public override string ToString() => $"{Head}/{Acknowledged}";
+    }
+
     private sealed record Case(string Mode, Scenario Scenario, string Id)
     {
         public string Label => $"{Scenario.Name}/{Mode}";
@@ -267,9 +273,19 @@ public sealed class MultiWriterMatrixTests
             }
         }
 
-        // One sentinel per region; returns once every region in up reads all of them.
+        // A barrier that does not depend on the order rows are applied in (a stream ships in commit order, but anti-entropy
+        // and refills do not): each region in up commits a sentinel, every region reads every sentinel, and each origin's
+        // GET /replication shows, for every other region in up, a head read after the sentinel was committed (above the head
+        // before it) that the region has acknowledged. The change-log head itself is not served, so "read after" is
+        // "advanced past the head seen before the sentinel"; the sentinel read covers a read already in flight then.
         public async Task BarrierAsync(string phase, string[] up)
         {
+            Dictionary<string, Dictionary<string, Outbound>> before = [with(StringComparer.Ordinal)];
+            foreach (var origin in up)
+            {
+                before[origin] = await StreamsAsync(origin);
+            }
+
             var marks = up.ToDictionary(region => region, _ => EntityIds.New().ToString(), StringComparer.Ordinal);
             foreach (var (region, id) in marks)
             {
@@ -286,7 +302,17 @@ public sealed class MultiWriterMatrixTests
                 }
             }
 
-            Mark($"barrier '{phase}' on {string.Join(',', up)}");
+            var acknowledged = new List<string>();
+            foreach (var origin in up)
+            {
+                var receivers = up.Where(region => region != origin).ToList();
+                var streams = await Converge.UntilAsync(() => StreamsAsync(origin), now => receivers.All(receiver =>
+                    now.TryGetValue(receiver, out var stream) && stream.Head > before[origin].GetValueOrDefault(receiver).Head && stream.Acknowledged >= stream.Head),
+                    $"{Name} {phase}: {origin}'s sentinel acknowledged by {string.Join(',', receivers)}; before {string.Join(' ', before[origin])}");
+                acknowledged.AddRange(receivers.Select(receiver => $"{origin}->{receiver} {before[origin].GetValueOrDefault(receiver).Head}..{streams[receiver].Head} acked {streams[receiver].Acknowledged}"));
+            }
+
+            Mark($"barrier '{phase}' on {string.Join(',', up)}: {string.Join("; ", acknowledged)}");
         }
 
         // One read per document and region, after a barrier: no polling, the state must already be exact.
@@ -384,7 +410,26 @@ public sealed class MultiWriterMatrixTests
         // The harness's collection, read off its document address (.../collections/{collection}/documents/by-key?id=).
         private string Collection => DocumentsPath.Split('/')[^2];
 
+        // The test's project, read off /v1/projects/{project}/databases/canary.
+        private string Project => regions.DatabasePath.Split('/')[3];
+
         private string DocumentsPath => regions.Document("x").OriginalString.Split("/by-key", 2)[0];
+
+        // The origin's outbound stream of this test's database to each region it is connected to (GET /replication).
+        private async Task<Dictionary<string, Outbound>> StreamsAsync(string origin)
+        {
+            var status = await Docs.GetJsonAsync(regions[origin], new Uri("/replication", UriKind.Relative)) ?? throw new InvalidOperationException($"{origin} does not serve /replication");
+            Dictionary<string, Outbound> streams = [with(StringComparer.Ordinal)];
+            foreach (var peer in status["peers"]!.AsArray())
+            {
+                foreach (var database in peer!["databases"]!.AsArray().Where(database => database!["projectId"]?.GetValue<string>() == Project))
+                {
+                    streams[peer["region"]!.GetValue<string>()] = new(database!["head"]!.GetValue<long>(), database["acknowledged"]!.GetValue<long>());
+                }
+            }
+
+            return streams;
+        }
 
         private async Task<Listing> ListAsync(HttpClient client)
         {
