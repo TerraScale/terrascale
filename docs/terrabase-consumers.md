@@ -1,81 +1,27 @@
 # TerraBase consumers
 
-ts-auth's store (`src/TerraScale.Auth.Store` in TerraScale/ts-auth) is meant to
-persist through the TerraBase client from this repository (TS-489), consumed as
-a source dependency, not a package. Today it references the SDK project but
-does not call the TerraBase client yet.
+ts-auth (in the monorepo, TerraScale/terrascale) persists all its state through the TerraBase Documents client
+from this repository, consumed as source (`$(TsDotnetRoot)/src/TerraScale.DotNet`), not a package. The dashboard's
+C# rewrite will use the same clients.
 
-The current consumption details below were checked against ts-auth revision
-`3c00fa7e85cde1f72626f5fe624b9144d7804f8d`.
+## How the monorepo pins this SDK
 
-## How ts-auth pins this SDK
-
-- ts-auth CI pins `TS_DOTNET_REV` and `TS_LIBS_REV` to full 40-hex commit SHAs
-  in both `.forgejo/workflows/ci.yml` and `.forgejo/workflows/slow.yml`.
-  Both currently pin ts-dotnet to `20862d391a8c0e746af010b289a1a6dc7ae7867b`
-  and ts-libs to `55b260872f8d4fb1cfa0975576632b4e022e4c91`.
-- `scripts/ci/checkout-dotnet-deps.sh` fetches those exact revisions with the
-  `ORG_READ_TOKEN` org secret into a job-owned directory and sets
-  `TerraScaleRoot`.
-- `TerraScale.Auth.Store.csproj` references the SDK project. Neither
-  `TerraScale.Auth.Fast.csproj` nor `TerraScale.Auth.Slow.csproj` currently
-  references the test helper; add the second reference when adopting it:
-
-```xml
-<ProjectReference Include="$(TsDotnetRoot)/src/TerraScale.DotNet/TerraScale.DotNet.csproj"
-                  SetTargetFramework="TargetFramework=net10.0" />
-<!-- proposed addition in each test project -->
-<ProjectReference Include="$(TsDotnetRoot)/src/TerraScale.DotNet.Testing/TerraScale.DotNet.Testing.csproj"
-                  SetTargetFramework="TargetFramework=net10.0" />
-```
+- `.github/workflows/ci.yml` pins `TS_DOTNET_REV` to a full commit SHA of this repository and checks it out next to
+  the monorepo (deploy key `TS_DOTNET_DEPLOY_KEY`); the Dockerfile takes it as the `ts-dotnet` build context.
+- Locally, clone ts-dotnet next to the monorepo or set `TsDotnetRoot`.
 
 ## Adopting a new revision
 
 1. Merge the ts-dotnet change to `main`.
-2. Set `TS_DOTNET_REV` in both ts-auth workflows (`ci.yml` and `slow.yml`) to
-   the full 40-hex SHA of that merge commit, so they never test different
-   revisions.
-3. ts-auth's tests run against the TerraBase built from the same monorepo commit
-   (`TERRABASE_BINARY`), so an SDK/TerraBase contract mismatch fails there.
-4. Locally, clone ts-dotnet next to ts-auth, or pass
-   `-p:TerraScaleRoot=<dir containing ts-dotnet and ts-libs>` to `dotnet build`.
+2. Set `TS_DOTNET_REV` in the monorepo's `ci.yml` to that merge commit.
+3. The monorepo's ts-auth suites run against the TerraBase built from the same monorepo commit, and
+   `TerraBaseSdkContractTests` checks that TerraBase serves every route in `contracts/terrabase/routes.json`.
 
-When TerraBase's contract changes, update the client in this repository, then
-`TS_DOTNET_REV` in the monorepo.
+## Testing
 
-## Testing against the real TerraBase
-
-This SDK's TerraBase tests run a real TerraBase binary (`TERRABASE_BINARY`),
-never a fake server. ts-auth has not adopted this harness yet: its store only exposes a
-readiness probe that currently fails closed (`UnavailableStorageHealth`), and
-its tests use `FakeStorageHealth` for readiness behavior. Updating the SDK pin
-alone does not implement persistence or verify ts-auth against TerraBase.
-`TerraBaseTestServer` is test-framework neutral; share one per test session:
-
-```csharp
-using TerraScale.DotNet.Testing;
-using TerraScale.DotNet.TerraBase;
-
-var (server, unavailable) = await TerraBaseTestServer.StartAsync(cancellationToken: cancellationToken);
-if (server is null)
-{
-    // Skip locally; fail when CI=true. unavailable says why (TERRABASE_BINARY unset).
-}
-
-await using (server)
-{
-    TerraBaseTestTenant tenant = await server.CreateTenantAsync(cancellationToken);
-    TerraBaseDatabase database = server.Documents(tenant.ApiKey).Database(tenant.Project.Id, "auth");
-    await database.CreateAsync(cancellationToken);
-    // server.Management() acts with the generated service credential on the admin listener;
-    // server.Http trusts only the server's generated certificate.
-}
-```
-
-If startup and cleanup both fail, the original exception keeps its type and
-contains the server in `Data[nameof(TerraBaseTestServer)]`. Retain that owner and
-retry `DisposeAsync` after resolving the cleanup problem. The secondary error is
-available in `Data["TerraBaseCleanupException"]`.
+No TerraBase runs in this repository. Change a route in the clients and in `contracts/terrabase/routes.json`
+together: `TerraBaseContractTests` fails when they disagree, and the monorepo fails when TerraBase does not serve
+the manifest.
 
 ## Store usage
 

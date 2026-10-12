@@ -180,35 +180,19 @@ Both clients resolve their endpoint per request through `ITerraBaseEndpointResol
 and cancellation token, and every returned origin is validated before credentials
 are sent. Atlas discovery is deferred to TS-507; no production origin is hardcoded.
 
-Tests never use a fake TerraBase. `TerraScale.DotNet.Testing`
-(`src/TerraScale.DotNet.Testing`) starts the real TerraBase binary named by
-`TERRABASE_BINARY`, a build of the TerraBase commit under test (in the monorepo:
-`make terrabase-publish`, then `artifacts/publish/terrabase`), with a fresh data
-directory, a generated self-signed localhost certificate and a generated management
-service credential. TerraBase binds both listeners to OS-assigned ports; the helper
-discovers their addresses from TerraBase's JSON startup log. The Management client
-of the helper uses the loopback administrative listener, the only one that accepts
-the service credential. Without `TERRABASE_BINARY` the tests are skipped locally and
-fail under `CI=true`.
-If removal also fails, the primary exception retains the secondary error in
-`Data["TerraBaseCleanupException"]` for diagnosis and manual cleanup.
-Disposal waits up to five seconds for process exit and redirected output completion
-before releasing resources and deleting data. A failed termination or timeout retains
-those resources so a later disposal call can retry.
-Failed directory deletion can also be retried, without reusing disposed resources.
-If startup cleanup fails, the original exception retains the server in
-`Data[nameof(TerraBaseTestServer)]` so its cleanup can be retried.
+No TerraBase runs in this repository (user rule, 2026-10-11: no repository other
+than the monorepo depends on TerraBase). The clients are tested over HTTP fakes.
+`contracts/terrabase/routes.json` records every TerraBase route the clients call;
+`TerraBaseContractTests` checks the clients send exactly those, and the monorepo's
+ts-auth Fast suite checks that the TerraBase built from the same commit serves each
+one, so the SDK and TerraBase cannot drift apart silently. ts-auth's suites exercise
+these clients end to end against that same TerraBase.
 
 ```bash
-ORG_READ_TOKEN=<forgejo read token> nice -n 19 dotnet run \
-  --project tests/TerraScale.DotNet.Tests/TerraScale.DotNet.Tests.csproj \
-  --framework net10.0 --configuration Release
+nice -n 19 dotnet run --project tests/TerraScale.DotNet.Tests/TerraScale.DotNet.Tests.csproj --framework net10.0 --configuration Release
 ```
 
-When the binary is neither cached nor downloadable, the TerraBase tests are
-skipped, except under `CI=true`, where they fail. Other services, such as
-ts-auth, start the same binary through the same helper:
-[TerraBase consumers](docs/terrabase-consumers.md).
+See [TerraBase consumers](docs/terrabase-consumers.md).
 
 ## Native database client (legacy)
 

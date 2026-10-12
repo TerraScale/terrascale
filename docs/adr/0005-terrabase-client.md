@@ -27,13 +27,13 @@ publishes them.
 
 Tests never use a fake TerraBase (human decision, 2026-10-04): every TerraScale
 service persists in the same production TerraBase release end users use.
-`TerraScale.DotNet.Testing` starts the real TerraBase binary the consumer built
-from the commit under test (`TERRABASE_BINARY`), and is shared with other
-services' tests. (2026-10-11: the release pin was dropped; it hid contract drift
-between the SDK and the TerraBase that production runs.)
+Superseded 2026-10-11 (user rule: no repository other than the monorepo depends on
+TerraBase): this repository tests the clients over HTTP fakes against the route
+manifest `contracts/terrabase/routes.json`; the monorepo runs ts-auth's suites
+against the TerraBase built from the same commit and checks it serves every route
+in the manifest. `TerraScale.DotNet.Testing` and the pinned release are deleted.
 
 ## Exit evidence
 
-Integration tests run against a TerraBase binary built from the commit under
-test. Consumers pin the ts-dotnet revision and build TerraBase from their own
-commit.
+The monorepo's ts-auth Fast suite (TerraBaseSdkContractTests and the store tests)
+runs against the TerraBase built from its own commit at the pinned ts-dotnet revision.

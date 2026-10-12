@@ -1,3 +1,4 @@
+using TerraScale.DotNet.Tests.Native;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text;
@@ -224,32 +225,24 @@ public sealed class TerraBaseResponseTests
     }
 }
 
-[ClassDataSource<TerraBaseServer>(Shared = SharedType.PerTestSession)]
-public sealed class TerraBaseResponseIntegrationTests(TerraBaseServer server)
+/// <summary>Response bounds, deadlines and resolution over a fake transport; no TerraBase runs in this repository.</summary>
+public sealed class TerraBaseResponseIntegrationTests
 {
+    private static readonly Uri Origin = new("https://terrabase.example.test/");
+    private const string DocumentPath = "/v1/projects/01JA0000000000000000000001/databases/bounds/collections/items/documents/by-key?id=01JA0000000000000000000009";
+
     [Test]
     [Arguments(false)]
     [Arguments(true)]
-    public async Task RealSuccessResponseHonorsTheExactByteLimit(bool oneByteOver)
+    public async Task SuccessResponseHonorsTheExactByteLimit(bool oneByteOver)
     {
-        server.Require();
-        var tenant = await server.CreateTenantAsync();
-        var database = server.Documents(tenant.ApiKey).Database(tenant.Project.Id, "bounds");
-        await database.CreateAsync();
-        await database.CreateCollectionAsync("items");
-        using var document = JsonDocument.Parse("{\"text\":\"" + new string('x', 64 * 1024) + "\"}");
-        var created = await database.CreateDocumentAsync("items", document.RootElement);
-        var path = $"/v1/projects/{tenant.Project.Id}/databases/bounds/collections/items/documents/by-key?id={created.Id}";
-        using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(server.Running.ClientAddress, path));
-        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", tenant.ApiKey);
-        using var measured = await server.Running.Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
-        measured.EnsureSuccessStatusCode();
-        var bytes = await measured.Content.ReadAsByteArrayAsync();
-        var connection = new TerraBaseConnection(server.Running.Http, server.Running.ClientAddress, null,
-            tenant.ApiKey, "ApiKey", TimeSpan.FromSeconds(30), bytes.Length - (oneByteOver ? 1 : 0));
+        var body = "{\"id\":\"01JA0000000000000000000009\",\"version\":\"v1\",\"state\":\"live\",\"document\":{\"text\":\"" + new string('x', 64 * 1024) + "\"}}";
+        var bytes = System.Text.Encoding.UTF8.GetByteCount(body);
+        using var handler = Answer(() => new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json") });
+        using var http = new HttpClient(handler);
+        var connection = new TerraBaseConnection(http, Origin, null, "tb_test_key", "ApiKey", TimeSpan.FromSeconds(30), bytes - (oneByteOver ? 1 : 0));
 
-        var call = () => connection.SendAsync(HttpMethod.Get, path, null,
-            TerraBaseJsonContext.Wire.TerraBaseDocument, null, CancellationToken.None);
+        var call = () => connection.SendAsync(HttpMethod.Get, DocumentPath, null, TerraBaseJsonContext.Wire.TerraBaseDocument, null, CancellationToken.None);
         if (oneByteOver)
         {
             var error = await Assert.ThrowsAsync<TerraBaseException>(call);
@@ -261,8 +254,8 @@ public sealed class TerraBaseResponseIntegrationTests(TerraBaseServer server)
         {
             var (result, status) = await call();
             await Assert.That(status).IsEqualTo(HttpStatusCode.OK);
-            await Assert.That(result.Id).IsEqualTo(created.Id);
-            await Assert.That(JsonElement.DeepEquals(result.Document, document.RootElement)).IsTrue();
+            await Assert.That(result.Id).IsEqualTo("01JA0000000000000000000009");
+            await Assert.That(result.Document.GetProperty("text").GetString()!.Length).IsEqualTo(64 * 1024);
         }
     }
 
@@ -271,16 +264,13 @@ public sealed class TerraBaseResponseIntegrationTests(TerraBaseServer server)
     [Arguments(true)]
     public async Task EarlierHttpClientTimeoutIsDistinctFromCallerCancellation(bool callerCancels)
     {
-        server.Require();
-        using var handler = TerraBaseHttp.CreateHandler();
-        var trusted = server.Running.Certificate.RawData;
-        handler.SslOptions.RemoteCertificateValidationCallback = (_, presented, _, _) =>
-            presented is not null && presented.GetRawCertData().AsSpan().SequenceEqual(trusted);
-        using var http = new HttpClient(new DelayedHandler(handler)) { Timeout = TimeSpan.FromMilliseconds(200) };
-        var management = new TerraBaseManagementClient(http, new TerraBaseManagementClientOptions
+        using var handler = new NativeClientTests.Handler(async (_, cancellationToken) =>
         {
-            BaseAddress = server.Running.ClientAddress, ServiceCredential = server.Running.ServiceCredential,
+            await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken);
+            return new HttpResponseMessage(HttpStatusCode.OK);
         });
+        using var http = new HttpClient(handler) { Timeout = TimeSpan.FromMilliseconds(200) };
+        var management = new TerraBaseManagementClient(http, new TerraBaseManagementClientOptions { BaseAddress = Origin, ServiceCredential = new string('c', 40) });
         using var caller = new CancellationTokenSource();
         if (callerCancels)
         {
@@ -294,36 +284,20 @@ public sealed class TerraBaseResponseIntegrationTests(TerraBaseServer server)
         }
     }
 
-    private sealed class DelayedHandler(HttpMessageHandler inner) : DelegatingHandler(inner)
-    {
-        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
-        {
-            // Delay dispatch; the underlying transport is real and no HTTP response is fabricated.
-            await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken);
-            return await base.SendAsync(request, cancellationToken);
-        }
-    }
-
     [Test]
     public async Task BothClientsResolveTheConfiguredEndpointPerRequest()
     {
-        server.Require();
-        var tenant = await server.CreateTenantAsync();
-        var resolver = new TerraBaseClientOptionsTests.CountingResolver(server.Running.ClientAddress);
-        // The service credential works on the administrative listener only, so management resolves that one.
-        var adminResolver = new TerraBaseClientOptionsTests.CountingResolver(server.Running.AdminAddress);
-        var management = new TerraBaseManagementClient(server.Running.Http, new TerraBaseManagementClientOptions
-        {
-            EndpointResolver = adminResolver, ServiceCredential = server.Running.ServiceCredential,
-        });
-        await management.GetOrganizationAsync(tenant.UserId, tenant.Organization.Id);
-        var documents = new TerraBaseDocumentsClient(server.Running.Http, new TerraBaseDocumentsClientOptions
-        {
-            EndpointResolver = resolver, ApiKey = tenant.ApiKey,
-        });
-        var database = documents.Database(tenant.Project.Id, "resolver");
-        await database.CreateAsync();
-        await database.CreateCollectionAsync("items");
+        using var handler = new NativeClientTests.Handler((_, _) => throw new HttpRequestException("no TerraBase here"));
+        using var http = new HttpClient(handler);
+        var resolver = new TerraBaseClientOptionsTests.CountingResolver(Origin);
+        var adminResolver = new TerraBaseClientOptionsTests.CountingResolver(Origin);
+        var management = new TerraBaseManagementClient(http, new TerraBaseManagementClientOptions { EndpointResolver = adminResolver, ServiceCredential = new string('c', 40) });
+        var database = new TerraBaseDocumentsClient(http, new TerraBaseDocumentsClientOptions { EndpointResolver = resolver, ApiKey = "tb_test_key" })
+            .Database("01JA0000000000000000000001", "resolver");
+
+        await Assert.ThrowsAsync<HttpRequestException>(() => management.GetOrganizationAsync("user", "01JA0000000000000000000002"));
+        await Assert.ThrowsAsync<HttpRequestException>(() => database.CreateAsync());
+        await Assert.ThrowsAsync<HttpRequestException>(() => database.CreateCollectionAsync("items"));
         await Assert.That(adminResolver.Calls).IsEqualTo(1);
         await Assert.That(resolver.Calls).IsEqualTo(2);
     }
@@ -335,11 +309,12 @@ public sealed class TerraBaseResponseIntegrationTests(TerraBaseServer server)
     [Arguments(true, true)]
     public async Task CancellationDuringResponseProcessingCannotReturnSuccess(bool deadlineExpires, bool parsingFails)
     {
-        server.Require();
-        var tenant = await server.CreateTenantAsync();
-        var database = server.Documents(tenant.ApiKey).Database(tenant.Project.Id, "cancellation");
-        await database.CreateAsync();
-        await database.CreateCollectionAsync("items");
+        using var handler = Answer(() => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(
+                JsonSerializer.Serialize(new TerraBaseCollection("items", DateTimeOffset.UnixEpoch), TerraBaseJsonContext.Wire.TerraBaseCollection), Encoding.UTF8, "application/json"),
+        });
+        using var http = new HttpClient(handler);
         using var canceled = new CancellationTokenSource();
         var parsed = false;
         var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
@@ -362,10 +337,8 @@ public sealed class TerraBaseResponseIntegrationTests(TerraBaseServer server)
             }
         }));
         var typeInfo = new TerraBaseJsonContext(options).TerraBaseCollection;
-        var connection = new TerraBaseConnection(server.Running.Http, server.Running.ClientAddress, null, tenant.ApiKey,
-            "ApiKey", TimeSpan.FromSeconds(1), TerraBaseConnection.DefaultMaxResponseBytes);
-        var path = $"/v1/projects/{tenant.Project.Id}/databases/cancellation/collections/items";
-        var call = () => connection.SendAsync(HttpMethod.Get, path, null, typeInfo, null, canceled.Token);
+        var connection = new TerraBaseConnection(http, Origin, null, "tb_test_key", "ApiKey", TimeSpan.FromSeconds(1), TerraBaseConnection.DefaultMaxResponseBytes);
+        var call = () => connection.SendAsync(HttpMethod.Get, "/v1/projects/01JA0000000000000000000001/databases/cancellation/collections/items", null, typeInfo, null, canceled.Token);
         if (deadlineExpires)
         {
             await Assert.That(call).Throws<TimeoutException>();
@@ -377,6 +350,8 @@ public sealed class TerraBaseResponseIntegrationTests(TerraBaseServer server)
 
         await Assert.That(parsed).IsTrue();
     }
+
+    private static NativeClientTests.Handler Answer(Func<HttpResponseMessage> response) => new((_, _) => Task.FromResult(response()));
 
     private sealed class ProcessingConverter(Action processed) : JsonConverter<TerraBaseCollection>
     {
