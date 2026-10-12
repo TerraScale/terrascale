@@ -1,9 +1,8 @@
 package v1_test
 
 // Checks that need no server: configuration and inputs the client rejects
-// before sending anything, and the requests of routes the pinned release does
-// not serve yet. Everything that talks to TerraBase is in
-// integration_test.go, against the real executable.
+// before sending anything, and the requests of routes the server does not
+// serve yet.
 
 import (
 	"context"
@@ -198,7 +197,7 @@ func (c *captureTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 }
 
 // TestDatabasePlacementRequests checks the region placement requests
-// (TS-643), which the pinned release does not serve yet.
+// (TS-643), which the server does not serve yet.
 func TestDatabasePlacementRequests(t *testing.T) {
 	capture := &captureTransport{}
 	m, err := v1.NewManagement(v1.Config{BaseURL: "https://tb.example", HTTPClient: &http.Client{Transport: capture}})

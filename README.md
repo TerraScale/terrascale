@@ -247,57 +247,12 @@ errors and safe-read retries.
 
 ### Tests
 
-TerraBase storage and management journeys run against the real release.
-Focused HTTP boundary tests also check generated IDs and malformed response
+Tests use `httptest` fakes and fixtures. No test downloads or starts a
+TerraBase binary, and no other repo may depend on TerraBase from this module.
+Focused HTTP boundary tests check generated IDs and malformed response
 envelopes without simulating persistence. TS-762's `v1/metrics_test.go` uses
 `httptest` for the provisional replication and analytics contract while the
-server endpoints are being added in parallel. The importable
-`terrascale.tech/sdk/terrabasetest` package is the
-shared harness for SDK and downstream tests: it pins the release
-by version and SHA-256, downloads it once with `TERRABASE_TOKEN` (read access
-to TerraScale/terrabase) into the user cache directory (or `TERRABASE_CACHE`),
-and starts it per test with a generated TLS certificate, management credential
-file and local ts-auth issuer, whose access tokens `Server.Token` mints.
-TerraBase assigns both listener ports. Startup is bounded to
-30 seconds; admin requests, including their response bodies, are bounded to
-10 seconds.
-
-```sh
-TERRABASE_TOKEN=… TERRABASE_REQUIRE=1 nice -n 19 go test ./v1/ ./terrabasetest/
-```
-
-`v1/integration_test.go` exercises the pinned release's SDK calls. Its recording
-transport checks the real traffic: each request matches
-`v1/testdata/openapi.json` (the executable's own `/openapi/v1.json` on the
-client listener; `TERRABASE_REPIN=1` rewrites it) or an explicit management/admin
-route manifest. The producer omits management-user routes and database PUT
-from public OpenAPI. Each journey route is called unless explicitly excluded;
-project-token tooling and metrics routes are outside this journey.
-No request carries `Idempotency-Key`, and no access token goes with
-`X-TerraBase-User-Id`. Retry tests inject
-faults into that transport in front of the real server. Tests skip only on an
-unsupported platform or when neither a cached executable nor a token is
-available; CI sets `TERRABASE_REQUIRE=1` to fail instead. Checksum, download
-and filesystem errors always fail, including in local runs.
-
-Downstream tests call `terrabasetest.Start(t)` to get a fresh real server.
-Use its `URL` and trusted `Client` with `v1.NewManagement` and
-`WithToken(Server.Token(t, user, email))` to create an organization and
-project, then `Server.APIKey` to issue a project-scoped document credential.
-The management service `Credential` works with `As` on `AdminURL` only. Pass `Server.Client` as `Config.HTTPClient`
-so SDK clients trust the generated TLS certificate. The process and temporary
-data, TLS, and credential files are cleaned up automatically when the test ends.
-
-[`terrabasetest/example_test.go`](terrabasetest/example_test.go) is a runnable
-downstream restart example: it writes through one store, creates a fresh store
-against the same running database, and checks the persisted document and version.
-Keep `Start(t)` outside the app/store restart; calling it again creates a new,
-empty database server. Copy the test into a downstream package and replace the
-SDK database handle with the application's store constructor.
-
-Consume this package from the SDK module's merged Go pseudo-version; this repo
-has no tag or release-on-merge workflow. The TerraBase executable version and
-SHA-256 remain pinned by the helper, independently of the SDK module version.
+server endpoints are being added in parallel.
 
 ## TSAuth and builders
 
@@ -465,8 +420,7 @@ nice -n 19 go test -race ./...
 
 The module requires Go 1.25 and has no CGO dependency. CI selects the patched
 Go 1.27.2 toolchain and runs the pinned vulnerability scanner alongside
-formatting, vet, build and race tests,
-including the v1 integration tests against the pinned TerraBase.
+formatting, vet, build and race tests.
 
 PostgreSQL connections require plain ULIDs for both `PostgresConfig.Database`
 and `PostgresConfig.KeyID`; the key ID is also the PostgreSQL username.

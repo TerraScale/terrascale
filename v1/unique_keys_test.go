@@ -1,8 +1,7 @@
 package v1_test
 
 // Unique keys against httptest servers: the requests the SDK sends, the
-// inputs it rejects before sending, and the codes it maps. The real server
-// declares and enforces them in integration_test.go.
+// inputs it rejects before sending, and the codes it maps.
 
 import (
 	"encoding/json"
