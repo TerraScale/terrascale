@@ -19,7 +19,7 @@ Set these variables, then run the same target:
 | Variable | Meaning |
 |---|---|
 | `TERRABASE_E2E_FLY_URL` | Public base URL, for example `https://ts-terrabase.fly.dev`. Its presence selects Fly. |
-| `TERRABASE_E2E_FLY_API_KEY` | A ts-auth API key with `documents:read` and `documents:write` on the database. |
+| `TERRABASE_E2E_FLY_API_KEY` | A ts-auth project API key (`databases:read/write`, `documents:read/write`); the suite exchanges it at ts-auth for 15-minute project tokens. A human installs it with `scripts/e2e/install-ci-credential.sh` (never printed or stored on disk); `--revoke` revokes it. |
 | `TERRABASE_E2E_FLY_PROJECT` | The project id. |
 | `TERRABASE_E2E_FLY_DATABASE` | The database name. |
 
