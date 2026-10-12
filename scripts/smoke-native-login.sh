@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
-# Post-deploy smoke for the dashboard's own sign-in (TS-582, see "Sign-in
-# design (do not revert)" in docs/development.md): GET /login must render the
+# Post-deploy smoke for the dashboard's own sign-in (TS-582): GET /login must render the
 # dashboard's form, not redirect to ts-auth's hosted page, and a password
 # sign-in for an unknown email must reach ts-auth and be refused as wrong
 # credentials, not throttled.
 #
-# Usage: scripts/smoke-native-login.sh https://dash.terrascale.tech
+# Usage: scripts/smoke-native-login.sh https://dashboard.terrascale.tech
 set -euo pipefail
 
 base=${1:?usage: smoke-native-login.sh BASE_URL}

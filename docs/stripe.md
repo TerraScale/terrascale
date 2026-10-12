@@ -20,7 +20,7 @@ Run the app's audit command in an environment where OCI Vault has delivered the
 Dashboard machine identity:
 
 ```sh
-nice -n 19 dotnet run --project TerraScale.Dashboard.csproj -- audit-stripe
+nice -n 19 dotnet run --project src/TerraScale.Dashboard -- audit-stripe
 ```
 
 The fixed identity path is a consumer contract. Automatic Vault delivery and

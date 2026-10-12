@@ -19,8 +19,8 @@ import browserslist from 'browserslist';
 import { browserslistToTargets, bundleAsync } from 'lightningcss';
 
 const repository = fileURLToPath(new URL('../', import.meta.url));
-const source = resolve(repository, 'web/assets');
-const publicRoot = resolve(repository, 'web/static');
+const source = resolve(repository, 'src/TerraScale.Dashboard/web/assets');
+const publicRoot = resolve(repository, 'src/TerraScale.Dashboard/web/static');
 const entry = resolve(source, 'css/terrascale.css');
 const args = process.argv.slice(2);
 const watchMode = args.includes('--watch');
@@ -28,7 +28,7 @@ const release = args.includes('--release');
 const checkMode = args.includes('--check');
 const devMode = watchMode || args.includes('--dev');
 const minify = args.includes('--minify') || !devMode;
-const output = resolve(args.find(arg => !arg.startsWith('--')) ?? resolve(repository, 'web/static/css/terrascale.css'));
+const output = resolve(args.find(arg => !arg.startsWith('--')) ?? resolve(repository, 'src/TerraScale.Dashboard/web/static/css/terrascale.css'));
 
 // Resolve the checked-in Browserslist query through the locked caniuse-lite
 // database, then convert its browser/version pairs for lightningcss.
@@ -72,7 +72,7 @@ async function build() {
 }
 
 // Root-relative url()s name files served from web/static. They get the
-// content hash static.URL appends in Go, so the asset handler caches them as
+// content hash AssetUrls (Platform/Assets) appends, so the asset handler caches them as
 // immutable and a changed file is fetched under a new URL.
 function fingerprint(url) {
   if (!url.url.startsWith('/') || url.url.startsWith('//')) {

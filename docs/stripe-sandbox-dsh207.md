@@ -12,7 +12,7 @@ Run this from the dashboard checkout in an environment where OCI Vault has
 delivered the dashboard identity:
 
 ```sh
-nice -n 19 dotnet run --project TerraScale.Dashboard.csproj -- audit-stripe
+nice -n 19 dotnet run --project src/TerraScale.Dashboard -- audit-stripe
 ```
 
 Automatic delivery of the fixed identity and deployment of the C# application

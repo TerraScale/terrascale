@@ -9,21 +9,25 @@ work. Preparation alone does not authorize charges, refunds or destructive reset
 
 ## Verify the serving target
 
-The production Fly app is `ts-dashboard` (`fly.toml`). The public origin is
-`https://dash.terrascale.tech`; the webhook is
-`https://dash.terrascale.tech/api/v1/billing/stripe/webhook`. Verify the app, serving
-Machine, release, secret names/digests, readiness and native login immediately
-before any change:
+The production Fly app is `ts-dashboard` (`fly.toml`). The C# application's
+fixed public origin is `https://dashboard.terrascale.tech` (`StripeBilling.Origin`);
+the webhook is `https://dashboard.terrascale.tech/api/v1/billing/stripe/webhook`.
+Verify the app, serving Machine, release, secret names/digests, readiness and
+native login immediately before any change:
 
 ```sh
 fly status -a ts-dashboard
 fly releases -a ts-dashboard
 fly secrets list -a ts-dashboard
-curl -fsS https://dash.terrascale.tech/health/ready
-scripts/smoke-native-login.sh https://dash.terrascale.tech
+curl -fsS https://dashboard.terrascale.tech/readyz
+scripts/smoke-native-login.sh https://dashboard.terrascale.tech
 ```
 
-Read-only inspection on 2026-10-09 at 07:10 UTC found Machine
+On 2026-10-12 at 18:09 UTC the app had no Machines and no releases; the C#
+application is not deployed.
+
+Historical (Go application on `https://dash.terrascale.tech`): read-only
+inspection on 2026-10-09 at 07:10 UTC found Machine
 `d8d96000b74e78` started in `gru` on completed release `v135`, with its check
 passing. Readiness, native password login and email-code pages returned `200`;
 the login pages retain CSRF controls. Actual authentication was not exercised.
@@ -73,16 +77,17 @@ Verified Stripe sandbox deliveries remain required before live approval.
 1. Complete [`stripe-sandbox-dsh207.md`](stripe-sandbox-dsh207.md), including
    signed deliveries, duplicate/out-of-order events, failed-payment recovery,
    checkout returns and invoice reconciliation. Local regression checks:
-   `nice -n 19 dotnet run --configuration Release --project tests/dotnet/e2e/TerraScale.Dashboard.E2E.csproj -- --treenode-filter '/*/*/(BillingBrowserJourneyTests|BillingPlanJourneyTests|BillingPlanMcpJourneyTests)/*' --report-trx`.
+   `nice -n 19 dotnet run --configuration Release --project tests/TerraScale.Dashboard.E2E -- --treenode-filter '/*/*/(BillingBrowserJourneyTests|BillingPlanJourneyTests|BillingPlanMcpJourneyTests)/*' --report-trx`.
    These TUnit journeys exercise native HTTP/browser and MCP payment flows;
    protocol fixtures do not replace the required actual sandbox deliveries.
-2. Inventory dashboard billing through ts-go/public APIs, without publishing
+2. Inventory dashboard billing through the official ts-dotnet SDK
+   (`TerraScale.DotNet`) or public APIs, without publishing
    customer details. Test Stripe customers, subscriptions, invoices, checkout
    sessions and prices cannot be reused in live mode. Check both
    `stripe_customers`/`stripe_organizations` and organization billing projections.
    Unconfigured billing today does not prove older test references are absent.
 3. If test bindings or pre-revision Stripe snapshots/projections exist, delete
-   obsolete billing data through ts-go and
+   obsolete billing data through the ts-dotnet SDK and
    re-bootstrap the application with the current schemas in the existing
    provisioned database. The closed beta permits resetting users, organizations
    and sessions; do not retain old records through migrations, backfills or
@@ -90,7 +95,8 @@ Verified Stripe sandbox deliveries remain required before live approval.
    records and organization entitlements contain no test references. Dashboard
    entity IDs must be plain ULIDs, and uniqueness must use TerraBase native
    constraints rather than claim documents. These bootstrap prerequisites are
-   not yet satisfied on dashboard main `24c44cf3`, which still uses
+   not yet satisfied on dashboard main `24c44cf3` (Go application, not
+   re-checked against the C# state schema), which still uses
    `DocumentIDFor` and `unique_claim`; complete the separate TS-754/TS-755
    rollout before resetting and re-bootstrapping production data.
 4. Require the live audit to pass and verify credentials can read/write the

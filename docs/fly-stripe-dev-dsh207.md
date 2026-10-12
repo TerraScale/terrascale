@@ -35,7 +35,7 @@ Execute o comando no ambiente que contém o checkout do dashboard e a identidade
 entregue:
 
 ```sh
-nice -n 19 dotnet run --project TerraScale.Dashboard.csproj -- audit-stripe
+nice -n 19 dotnet run --project src/TerraScale.Dashboard -- audit-stripe
 ```
 
 A auditoria usa a origem canônica fixa compartilhada pelo fluxo de Checkout,
@@ -48,14 +48,17 @@ runbook.
 ## 3. Deploy e readiness
 
 Faça deploy apenas depois de revisar as alterações e confirmar que o app dev
-existente está usando a identidade entregue e o backend persistente esperado:
+existente está usando a identidade entregue e o backend persistente esperado.
+Este repositório não contém `fly.dev.toml`; o primeiro comando depende de um
+arquivo de configuração do app dev que ainda não existe. A aplicação C# expõe
+readiness em `/readyz`:
 
 ```sh
-nice -n 19 fly deploy -c fly.dev.toml -a terrascale-dashboard-dev --ha=false
+nice -n 19 fly deploy -c fly.dev.toml -a terrascale-dashboard-dev --ha=false --build-arg SOURCE_REVISION=$(git rev-parse HEAD)
 fly status -a terrascale-dashboard-dev
 fly machine list -a terrascale-dashboard-dev
 fly logs -a terrascale-dashboard-dev
-curl -fsS https://terrascale-dashboard-dev.fly.dev/health/ready
+curl -fsS https://terrascale-dashboard-dev.fly.dev/readyz
 scripts/smoke-native-login.sh https://terrascale-dashboard-dev.fly.dev
 ```
 

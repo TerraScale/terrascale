@@ -14,16 +14,24 @@ assertions in TUnit does not satisfy this requirement. Demo providers belong
 only in the test host. Live provider and TypeScript SDK qualification remains
 a separate required E2E journey and must not be reported as passed by a demo.
 
-**The migration is incomplete.** The C# host now implements authenticated
-feature slices as well as authentication pages. The Go deployment remains
-the production implementation. C# must not replace it until feature parity,
-persistence migration and live producer qualification are complete.
+## Status (2026-10-12)
 
-On 2026-10-12 the user accepted merging the current implementation into
-GitHub `main` when it is good enough, without requiring perfect parity.
-That acceptance permits the additive migration PR; it does not qualify a
-production cutover. The existing Go deployment and strict visual/readiness
-assertions remain in place, with their known failures documented below.
+The Go source, its reference host and the strict visual parity journey were
+removed. The C# application in `src/TerraScale.Dashboard` is the only
+implementation. The seed fixture captured once from the Go application is
+`tests/TerraScale.Dashboard.E2E/Fixtures/reference-workspace.json`.
+
+Production is not deployed. Read-only checks at 18:09 UTC found: the Fly app
+`ts-dashboard` has no machines and no releases; ts-auth `/readyz` returned
+503; `atlas.terrascale.tech` and `auth.terrascale.tech` are NXDOMAIN; and
+ts-terrabase was started only in `sjc`. The C# image exits at startup because
+the identity descriptor `/run/secrets/terrascale/dashboard.json` is not
+delivered. Persistence migration and live producer qualification remain open.
+
+On 2026-10-12 the user accepted merging the implementation into GitHub
+`main` without perfect parity. That acceptance does not qualify a production
+cutover. The sections below are a dated log: run reports that mention the Go
+application or strict visual parity describe the state at that time.
 
 ## Implemented behavior
 
@@ -103,15 +111,12 @@ remains separate and failed as recorded under the runtime integration gates.
 Run every local build, test, lint and watcher with low CPU priority:
 
 ```sh
-nice -n 19 make dotnet-build
-nice -n 19 make dotnet-lint
-nice -n 19 make dotnet-test-e2e
-nice -n 19 make dotnet-demo
-nice -n 19 make dotnet-test-browser
-nice -n 19 make dotnet-parity-reference
-nice -n 19 make dotnet-parity
-nice -n 19 make dotnet-test-hot-reload
-nice -n 19 make dotnet-test-live-readiness
+nice -n 19 make build
+nice -n 19 make lint
+nice -n 19 make test-e2e
+nice -n 19 make demo
+nice -n 19 make test-hot-reload
+nice -n 19 make test-live-readiness
 nice -n 19 make perf
 ```
 
@@ -119,13 +124,15 @@ Use the demo URL printed by its launcher, including its worktree-specific
 port. It binds all interfaces and supports the same Tailscale refresh path.
 Demo login is `user@example.com` / `test-password`; email codes are `123456`.
 The launcher loads demo-only provider fixtures into a temporary test host and
-runs it with the production route/service graph. All identity, state, provider
-and Stripe protocol fixtures remain under `tests/dotnet/`, excluded from
-application compilation. Its Stripe transport refuses unknown external hosts;
+runs it with the production route/service graph. All identity, state,
+provider and Stripe protocol fixtures remain under
+`tests/TerraScale.Dashboard.E2E/Demo`, excluded from application compilation.
+Its Stripe transport refuses unknown external hosts;
 checkout and portal are test-only local vendor pages.
 
-The E2E runner is a separate test executable under `tests/dotnet/e2e`; the
-solution still contains one production application. TUnit owns discovery,
+The E2E runner is a separate test executable under
+`tests/TerraScale.Dashboard.E2E`; the solution contains the one production
+application and this test project. TUnit owns discovery,
 execution, assertions, lifecycle and TRX reporting. Its shared fixture starts
 two real Kestrel servers on operating-system-assigned ports with common demo-provider
 state. Existing browser journeys run as E2E children of TUnit while native
@@ -136,10 +143,11 @@ harness versions and other test runners. Dependencies are pinned and locked;
 see [TUnit installation](https://tunit.dev/docs/getting-started/installation/)
 and [running tests](https://tunit.dev/docs/getting-started/running-your-tests/).
 
-All dashboard test targets run TUnit E2E journeys; `test-fast`, `test-slow`,
-`test-browser`, `dotnet-test-fast` and `dotnet-test-browser` are compatibility
-aliases for `dotnet-test-e2e`. There is no unit-test target. Visual parity and
-hot reload are TUnit E2E journeys too, with dedicated targets for focused runs.
+All dashboard test targets run TUnit E2E journeys. `test-fast` runs the
+non-browser journeys, `test-slow` the browser journeys and internal-billing
+policy suites (`[Category("Slow")]`), and `test-e2e` both. There is no
+unit-test target. Hot reload is an explicit TUnit E2E journey that needs a
+tailnet dev machine; it runs only through `make test-hot-reload`.
 The journeys exercise desktop/mobile rendering, accessibility, native
 forms, document updates, schema/SQL, credential issuance, MCP visibility and
 revocation, and organization checkout. The hot-reload check temporarily changes
@@ -150,15 +158,14 @@ checks the original appearance.
 actual cold/warm samples across login, overview, databases, SQL and usage,
 using five runs on desktop and a throttled mobile browser. It writes measured
 values and p75 summaries under `test-results/dotnet/performance.json`;
-these measurements are not a live deployment benchmark. The compatibility
-`check-e2e-shards` target discovers the single TUnit inventory without
-invoking the Go test runner. The unused Go shard-discovery scripts are retired;
-the source guard checks repository-wide C# test projects and attributed tests.
+these measurements are not a live deployment benchmark. The
+`check-e2e-shards` target lists the single TUnit inventory.
+The source guard checks repository-wide C# test projects and attributed tests.
 It is a lint boundary, not proof that a test exercises the whole application.
 The latest explicit performance journey passed in 1 minute 54 seconds with
 all one hundred measured samples, with no skipped cases.
 
-`dotnet-test-live-readiness` explicitly launches the previously built production
+`test-live-readiness` explicitly launches the previously built production
 program without a demo host, identity injection or provider transport override.
 It requires real startup and HTTP `/readyz` success, with bounded startup,
 response streaming and process cleanup. Child logs and provider bodies are
@@ -171,8 +178,9 @@ skips, 906 milliseconds). The descriptor was separately observed absent and
 service DNS still returned NXDOMAIN. This qualifies no live state operation,
 auth operation, Stripe delivery or account-to-TypeScript-SDK flow.
 
-The strict visual comparison exports 110 screenshots and DOM snapshots from
-the actual Go test application, then compares C# status, structure, forms,
+(Historical: this journey and its Go reference capture were removed on
+2026-10-12.) The strict visual comparison exported 110 screenshots and DOM
+snapshots from the actual Go test application, then compared C# status, structure, forms,
 links, styles and every pixel. It does not ignore unported routes or loosen
 pixel tolerance. Font/image loading and animation capture are synchronized.
 The capture exports actual authenticated workspace identities, scoped invitations
@@ -318,8 +326,9 @@ visual comparison. Build completed with zero warnings and errors, and lint
 found 47 journey classes. Strict comparison remains 58/110 (38 unbound-auth
 503 states and 14 producer/copy feature states); the baseline was not relaxed.
 
-Fifty-two strict visual differences involve unsupported producer operations
-and original demo-only copy/samples; they remain visible failures. The settled
+(Historical, before the visual journey was removed.) Fifty-two strict visual
+differences involved unsupported producer operations and original demo-only
+copy/samples; they remained visible failures. The settled
 captures above eliminated the small login raster discrepancy in their observed
 comparisons. Final
 organization and owner-inbox writes are separate conditional writes: a change
@@ -370,7 +379,38 @@ journeys passed again in the focused follow-up.
 
 ## Runtime integration gates
 
-The final merge review inspected immutable producer main
+### Current blockers and direction (2026-10-12, 19:11 UTC, read-only)
+
+- **Discovery.** `atlas.terrascale.tech` is NXDOMAIN, and the producer
+  answers `/v1/discovery` with 404 `unknown_route`. The dashboard's
+  `Platform/Persistence/TerraBaseDiscovery.cs` therefore cannot resolve an
+  origin. The direction is the SDK's regional contract from ts-dotnet PR #5
+  (`Region` on the client options, `TerraBaseWrongRegionException` on 421),
+  adopted once a reviewed public `TerraScale.DotNet` 0.0.2 exists. The
+  dead endpoint is not revived. The app compiles unchanged against PR #5
+  `4827b03e` and ts-dotnet main `2d23b1be`; runtime behaviour against them is
+  untested. Exact producer region semantics are for the SDK and TerraBase
+  owners.
+- **ts-auth.** The deployed `0.1.0-alpha+55979ea3` answers `/readyz` 503 and
+  `/.well-known/jwks.json` 500. Its current source requires an operator to
+  provision the first signing key. `auth.terrascale.tech` is NXDOMAIN.
+  The dashboard still finds ts-auth through Atlas and accepts only regional
+  `<region>.auth.terrascale.tech` origins, while current ts-auth serves one
+  global issuer `https://auth.terrascale.tech/{tenant}`; the dashboard must
+  move to the global issuer.
+- **Identity delivery.** The Fly app `ts-dashboard` has no secrets and no
+  machines. ts-auth already receives its production secrets as Fly secrets
+  (its zero-configuration contract). The smallest compatible delivery is one
+  Fly secret holding the base64 descriptor, materialized by a `fly.toml`
+  `[[files]]` entry at `/run/secrets/terrascale/dashboard.json`, readable by
+  the image's uid 1654. Its values need a ready ts-auth: a dashboard OIDC
+  client and instance, a TerraBase state project and API key, a generated
+  session key and the vendor Stripe keys. No `[[files]]` entry is committed
+  until the secret exists, because Fly would refuse to start a machine
+  without it.
+  The field list, client registration and proposed delivery are in
+  [identity-descriptor.md](identity-descriptor.md).
+
 `c379cc3b2cf724d2c10c753397479b5cf2b4f44d` and SDK main
 `bcd20603f11f3aa54dc54cec6e410b4fe9e24151`. Producer CDC R3 has since
 landed as an internal replication tailer. It is not a public document-history
@@ -515,25 +555,50 @@ test is reported as passing.
 
 ## Remaining parity and qualification
 
-The Go source/browser journeys remain the authoritative inventory. Outstanding
-work includes platform-admin claims, complete Go MCP tools/resources,
+The removed Go source and browser journeys (git history up to `447056dd`)
+were the authoritative inventory. Outstanding work includes platform-admin
+claims and the Go `admin_*` MCP tools, complete Go MCP tools/resources,
 subscription-change qualification and any remaining producer-backed lifecycle
 behavior. Analytics, usage, spending controls, settings, invoices and denied
 admin routes are implemented; their test-host E2E journeys are separate from
 live producer qualification.
 Backups, imports, document history and customer-auth provisioning require real
-producer contracts; current Go paths also contain unavailable operations.
+producer contracts; the removed Go paths also contained unavailable operations.
 The SDK does not support viewer membership or invitee-side upstream decline.
 Nonempty project/organization deletion needs real orchestration rather than
 a simulated deletion worker.
+The Platform REST API (`https://platform.terrascale.tech`, `GET /openapi.json`,
+described in [platform-api.md](platform-api.md)) is not ported. The C#
+application has no host routing for it, no `/v1/organizations/...` routes and
+no OpenAPI document.
 
-Before deployment, finish matched-fixture desktop/mobile visual comparisons,
-native browser journeys, official SDK distribution and live Vault/ts-auth/
-TerraBase checks, auth-budget contention qualification, persistent restart/
-cross-instance checks, and the whole account-creation-to-ts-typescript-SDK
-flow. Then migrate the Fly image, release/CI and health/readiness contracts and
-remove superseded Go runtime/tooling. Keep `AGENTS.md` and `CLAUDE.md` untouched;
-the user's C# request supersedes their older Go stack instructions.
+### Go-only interfaces: compatibility disposition (2026-10-12)
+
+A consumer search cloned the default branches of twelve TerraScale repositories
+(terrascale `4cfbf85d`, ts-status `d1d2ce8c`, ts-go `9637a299`, ts-js
+`8c8ded2c`, ts-dotnet `2d23b1be`, ts-docs `61eb6dfb`, ts-landing `bb3e6ccd`,
+ts-cos `20674fe9`, ku `a0f4b8a6`, ts-reviewer `e7e74ab7`, ts-resources
+`f3b54ea3`, ts-rust `8a5d9836`) and grepped them for each interface. "No
+consumer" means no code, CI or test call was found; it is not proof that no
+external client exists.
+
+| Interface | Consumers found | Disposition |
+| --- | --- | --- |
+| `GET /health/ready`, `GET /health/live` | ts-status `src/probe/deployments.ts:9` probes `https://ts-dashboard.fly.dev/health/ready` and reads the commit after `+` in `version` | Ported for GET. Both return `{"status":"ok","version":"<version>+<commit>"}`; ready runs the same check as `/readyz`, and a failure is a 503 HTML page rather than Go's JSON `unavailable` body. HEAD and the `backend` field are not ported. The image build requires the commit as `--build-arg SOURCE_REVISION`. |
+| `GET /api/v1/status/live`, `/api/v1/status/ready` | none | Not ported. |
+| `GET /access` (redirect to members) | docs only (terrascale `docs/terrabase/management-api.md:862`) | Not ported. |
+| Platform REST API | docs only (terrascale `docs/auth/platform-contract.md:313`) | Not ported. Whether the contract is still required is a decision for its owner (ts-auth platform contract). |
+| MCP `admin_*` tools | none | Not ported. They need producer administration APIs that do not exist yet (see the administrator audit below). |
+| Sentry/GlitchTip errors and CSP `report-uri` | not an interface; the Go app read `SENTRY_DSN` and `DASHBOARD_CSP_REPORT_URL` | Not ported. The C# app sends no error reports. |
+
+Before deployment, finish native browser journeys, official SDK distribution
+and live Vault/ts-auth/TerraBase checks, auth-budget contention qualification,
+persistent restart/cross-instance checks, and the whole
+account-creation-to-ts-typescript-SDK flow. The Fly image (`Dockerfile`) and
+the `fly.toml` health check (`/readyz`) now target the C# application, and the
+Go runtime/tooling was removed. This repository has no CI or release
+workflow yet. Keep `AGENTS.md` and `CLAUDE.md` untouched; the user's C# request supersedes
+their older Go stack instructions.
 
 ## Identity, administrator and TypeScript qualification audit
 
@@ -607,7 +672,7 @@ native dashboard forms, obtain a provider-admitted project access token, then
 use the official TypeScript package to write/read/query/delete data and verify
 the same data in the dashboard. Cross-account denial, credential revocation,
 issuer/audience and project binding, and persistence across a cold dashboard
-restart are qualification requirements. Existing Go `sdk_test.go` covers
+restart are qualification requirements. The removed Go `sdk_test.go` covered
 ts-go; the passing C# demo browser journey uses test-only providers. Neither
 establishes this live TypeScript lane, which remains unverified.
 
@@ -659,6 +724,7 @@ malformed identity, discovery/Vault outage and credential rotation against
 real services before production cutover.
 
 The Go state format needs a versioned adapter rather than collection copying.
+In the removed Go source (git history up to `447056dd`),
 `internal/adapters/terrabase/schema.go` provisions nineteen collections;
 `records.go` stores one domain record inside a `kind: record` envelope and
 separate uniqueness claims. Its document key carries identity, while references
