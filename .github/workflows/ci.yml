@@ -1,7 +1,6 @@
 name: CI
 
-# One required check: "test". Integration tests that need the pinned TerraBase release skip here: the binary is not
-# downloadable since the Forgejo releases went away.
+# One required check: "test".
 
 on:
   pull_request:

@@ -1,7 +1,7 @@
 package v1_test
 
 // Database.Delete against an httptest server: the request it sends and the
-// codes it maps. The real server is exercised in integration_test.go.
+// codes it maps.
 
 import (
 	"errors"

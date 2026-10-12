@@ -1,7 +1,7 @@
 package v1_test
 
 // Version tokens are opaque and newer response members decode: checked with a
-// scripted transport, since the pinned TerraBase only issues tbv1 versions.
+// scripted transport, since the server only issues tbv1 versions.
 
 import (
 	"errors"
