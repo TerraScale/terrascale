@@ -19,6 +19,9 @@ TS_DOTNET_DIR ?= ../ts-dotnet
 TERRABASE_BINARY ?= $(CURDIR)/src/TerraBase/bin/$(CONFIGURATION)/net11.0/terrabase
 REDOCLY := npx --yes @redocly/cli@2.57.0
 
+# Upstream's source of the vendored Turso driver keeps upstream's formatting: reformatting it would break the pristine
+# import and the patch replay (src/vendor/Turso.Data.Sqlite/UPSTREAM.md).
+VENDORED_UPSTREAM := src/vendor/Turso.Data.Sqlite/src
 ANALYZER_CHECK_PROJECT := src/TerraBase.Analyzers.BuildCheck/TerraBase.Analyzers.BuildCheck.csproj
 
 LIBS_PROJECTS := src/TerraScale.Endpoints/TerraScale.Endpoints.csproj \
@@ -53,11 +56,11 @@ build: restore
 	dotnet build $(SOLUTION) --configuration $(CONFIGURATION) --no-restore
 
 fmt:
-	dotnet format $(SOLUTION)
+	dotnet format $(SOLUTION) --exclude $(VENDORED_UPSTREAM)
 
 fmt-check: restore
 	# Style and analyzer diagnostics are enforced by build; check whitespace once here.
-	dotnet format whitespace $(SOLUTION) --verify-no-changes --no-restore
+	dotnet format whitespace $(SOLUTION) --verify-no-changes --no-restore --exclude $(VENDORED_UPSTREAM)
 
 # Analyzers and code style run in the build with warnings as errors.
 lint: fmt-check build
