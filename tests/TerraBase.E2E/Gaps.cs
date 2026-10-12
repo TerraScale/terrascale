@@ -3,20 +3,21 @@ namespace TerraBase.E2E;
 /// <summary>
 /// The record of which e2e scenarios pass today and which wait on a replication slice
 /// (docs/terrabase/multi-region-replication.md, section 21). A listed scenario is a strict expected failure: it passes
-/// while the scenario fails and fails once it passes, so the slice that lands removes its rows here. A scenario that is
+/// while the scenario fails the way its signature names (<see cref="Expected"/>) and fails once it passes, so the slice
+/// that lands removes its rows here. A listed scenario failing any other way fails. A scenario that is
 /// not listed must pass.
 /// </summary>
 internal static class Gaps
 {
-    private static readonly Dictionary<string, string> Waiting = new(StringComparer.Ordinal)
+    private static readonly Dictionary<string, Gap> Waiting = new(StringComparer.Ordinal)
     {
         // ReplicationE2ETests, LatticeE2ETests, CatalogE2ETests (design section 20).
-        ["E11"] = "SQL writes (R9) over peer streams (R4a)",
-        ["E12"] = "the catalog as a lattice database (R10a)",
-        ["E13"] = "home region and live move (R11)",
+        ["E11"] = new("SQL writes (R9) over peer streams (R4a)", "only SELECT statements are supported"),
+        ["E12"] = new("the catalog as a lattice database (R10a)", "sjc's database on gru did not converge"),
+        ["E13"] = new("home region and live move (R11)", "/move answered 404"),
 
         // RepairAndContractE2ETests.
-        ["deleted-database-stays-deleted"] = "the catalog as a lattice database (R10a) and garbage collection (R7)",
+        ["deleted-database-stays-deleted"] = new("the catalog as a lattice database (R10a) and garbage collection (R7)", "the new database on sjc did not converge"),
     };
 
     // BLOCKED on Fly, not an expected failure there: the Fly suite's TerraBase API key holds documents:read/write on the e2e
@@ -49,14 +50,14 @@ internal static class Gaps
         }
 
         // A scenario that stopped at a test hook nobody has wired yet is reported apart: it proves less than one that ran.
-        var failure = await Expected.FailureAsync(gap, scenario);
+        var failure = await Expected.FailureAsync(gap.Waits, gap.Fails, scenario);
         if (Unsupported(failure) is { } unsupported)
         {
-            Outcomes.Mark("not-supported", $"{gap}; {unsupported.Message}");
+            Outcomes.Mark("not-supported", $"{gap.Waits}; {unsupported.Message}");
         }
         else
         {
-            Outcomes.Mark("expected-failure", gap);
+            Outcomes.Mark("expected-failure", $"{gap.Waits}; failed as named: {Head(failure)}");
         }
     }
 
@@ -67,4 +68,10 @@ internal static class Gaps
         AggregateException aggregate => aggregate.InnerExceptions.Select(Unsupported).FirstOrDefault(found => found is not null),
         _ => Unsupported(error.InnerException),
     };
+
+    private static string Head(Exception failure) => $"{failure.GetType().Name}: {failure.Message.Split('\n')[0]}";
 }
+
+/// <summary>A gap: the slice the scenario waits on, and the text its own failure carries today (<see cref="Expected"/>).</summary>
+internal sealed record Gap(string Waits, string Fails);
+
