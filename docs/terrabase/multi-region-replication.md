@@ -901,6 +901,10 @@ table, plain `INSERT`/`UPDATE`/`DELETE` on captured tables). The engine swap (1b
      of the range, so the deletion replicates and anti-entropy cannot repair the state back (an earlier purge could). The
      state has no bound, so it goes after the record's deletion, at most 1,024 tombstones per transaction, resumed after a
      restart through a per-machine intent (`machines/<machine>/pending_prefix_deletes`).
+   - **Restore gate** (`CatalogGate`): every start serves nothing that authorizes from the catalog until it pulled
+     `_system` from every started machine and from a machine of every other recorded region (`cluster_members`); nothing
+     to pull from stays closed, except a single machine by configuration or an operator's new-cluster bootstrap of a
+     genesis catalog. See the invariants doc, section 2a.
    - **Stale catalog groups join** like any other: nothing is collected, so a catalog document a machine lacks was never a
      collected deletion (a restored `_system` lacks its later entries until a repair, see the invariants doc, section 2a).
    - **No garbage collection (R7) of the catalog:** its tombstones keep deleted ids taken and drive file deletion in every
