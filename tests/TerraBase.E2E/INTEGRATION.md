@@ -148,7 +148,14 @@ workflow re-verified `disabled_manually` by the helper):
   - **Fix: #137** (test only, one line), 4/4 CountBoundTests on mariogk-dev.
   - No further product merges until Slow is green on main again.
 
-- **#137 MERGED** at its exact head `4187637d`: `test` 38281182568 success (terrabase). Squash → main `dab85174`; push run 38281713863, deploy and preview skipped. Main's Slow on `dab85174`: pending. It decides whether product merges resume.
+- **#137 MERGED** at its exact head `4187637d`: `test` 38281182568 success (terrabase). Squash → main `dab85174`; push run 38281713863, deploy and preview skipped. **Main's run on `dab85174`: auth, terrabase, test and Slow all success.** Main is fully green, and product merges resume.
+
+- **#111 MERGED** at its exact head `9d32cf1e` (the pin `07f8d81f` plus a merge of main): `test` 38281114070
+  success, 0 threads. **Merge commit** → main `c59bfcc5`; push run 38282841575, deploy and preview skipped.
+  - #112 and #118 are retargeted to main.
+  - #112 merges cleanly; R3 brings it up to date.
+  - #118 conflicts with main in `api.md`, `DocumentsExtensions.cs` and `TerraBaseJsonContext.cs` (#88's feed deletion
+    against R8's database feed). R8 resolves it, and T1 reviews the resolution in writing.
 
 **Not merged until fixed and verified:**
 - **R10a's stack**, until the no-peer fail-open and the unprotected override are fixed and R3 verifies in writing;
@@ -163,7 +170,7 @@ workflow re-verified `disabled_manually` by the helper):
 
 | Count since the baseline | Value |
 | --- | ---: |
-| merged | 6 (#115, #130, #133, #88, #106, #79) |
+| merged | 7 baseline PRs (#115, #130, #133, #88, #106, #79, #111) + #137 (the new Slow fix) |
 | closed (proven superseded) | 1 (#132, by #133; 16:23:01Z, preview workflow `disabled_manually`) |
 
 The 9 merges before the baseline are in the merge-train table.
