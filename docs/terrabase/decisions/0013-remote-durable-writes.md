@@ -352,20 +352,74 @@ A retry never executes a key that any acceptor has reserved.
 - At 100 writes/s, 24 h of records is 8.64 million rows plus tombstones. Their bytes, disk and quota cost are measured
   before the contract is announced.
 
-## 11. Latency: measured, not promised
+## 11. Write latency and availability budget: measured, not promised
 
-The 10 s bound is a ceiling for one write's wait, not a latency promise. Before any latency is stated, the following
-are measured and recorded in `benchmark/bench/`, before and after:
-- p50, p95, p99 and p99.9 latency;
-- throughput;
-- the local and remote sync time;
-- the reservation round and the wait;
-- memory;
-- WAL and checkpoint stalls;
-- disk growth.
+A success answer is released only after every barrier below. No optimization may answer earlier. The ones that keep the
+barriers, such as one reservation round shared by a group-commit batch, or the local and remote reservation syncs
+running in parallel, are possible later work, not part of this design.
 
-They are measured for realistic document and transaction sizes, with both remotes healthy, and with one slow or
-unavailable. The first eligible ack sets the latency: there is no fixed-peer or all-peer wait.
+**Components of one keyed write, in order on the success path:**
+
+| # | Component | What it costs | Measured today |
+| --- | --- | --- | --- |
+| 1 | Client to the accepting machine (Fly edge to the nearest region) and back, at the end | One client round trip | No |
+| 2 | Validation, authorization, key latch, fingerprint | Local CPU | No |
+| 3 | **Majority reservation round** (section 6): `Reserve` to every placed region's acceptor at once. Each acceptor syncs its reservation (FULL) before it answers. The round ends at the first majority. | One **cross-region round trip** to the nearest other placed region's acceptor, plus that acceptor's sync. Plus the own region's acceptor sync: local, or one in-region round trip if another machine is the acceptor. **This is an extra round trip that unkeyed writes and design C do not have.** | No |
+| 4 | Local execution and **B1**: apply, record, `COMMIT` with FULL. The group-commit batch shares one log sync. | One local log sync, plus the apply | No (B1 correctness proven; no timing) |
+| 5 | Shipping: the sender wakes on the commit signal, reads and encodes the batch, and sends it on the live stream | Local CPU, plus one-way network | No |
+| 6 | **B2**: the receiver joins with FULL, syncs its log, then acks | One remote log sync, plus the apply, plus the ack's way back. Steps 5 and 6 together are one **cross-region round trip** to the nearest eligible placed region | No (B2 correctness proven; no timing) |
+| 7 | Confirmation and answer | The waiter wakes; the response is written. Writing `confirmed_by` happens off the path. | No |
+
+**Expected shape, not a promise:**
+- latency ≈ client round trip + **2 × the round trip to the nearest other placed region** + 3 log syncs (own-region
+  acceptor, local commit, remote apply) + 1 remote acceptor sync + processing;
+- with three placed regions the first majority and the first eligible ack both come from the nearest other region, so
+  the farthest region adds nothing while healthy;
+- the 10 s bound covers steps 3 to 7, and expiry answers `write_outcome_unknown`.
+
+**Availability budget:**
+- **Step 3** needs a majority of placed regions.
+- **Step 6** needs one placed region other than the accepting one.
+- **Three placed regions** tolerate one region down or partitioned, at the cost of a slower round trip if the nearest
+  one is down.
+- **Two placed regions** tolerate none: writes answer `503`, never a false success.
+
+**Measured today:** no latency, throughput or sync-time component of the new path. The B1 and B2 power-loss tests
+prove correctness only. Timings from a development host or local processes are never presented as WAN figures.
+
+**Measurement plan (before the contract or any latency is announced; results in `benchmark/bench/<date>-remote-durable-writes.md`):**
+- **Where.**
+  - On the existing three-region acceptance app `ts-terrabase-e2e` (gru, sjc, fra), placed in all three regions. One
+    load client runs in each region, against its own region.
+  - Fly cannot shape 6PN traffic, so the degraded-link cases run separately on the local three-process topology
+    (`RegionProcesses`), with its link proxy adding fixed delays. Those are labelled local, never WAN.
+- **Before and after.**
+  - *Before:* the current release path (local commit only, NORMAL), same app, same workload.
+  - *After:* each delivery step separately (B1 FULL only; then the wait; then the reservation round), so each component's
+    cost is attributed.
+- **Workload.**
+  - Document `PUT` of 1 KiB, 16 KiB and 256 KiB.
+  - `PATCH inc`.
+  - Transactions of 10 and 1,024 documents.
+  - Concurrency 1, 16 and 64.
+  - 10 minutes per cell, after a warm-up.
+- **Scenarios.**
+  - All regions healthy.
+  - One remote region's machine stopped: writes go on through the majority.
+  - The nearest remote stopped: latency moves to the next region.
+  - Two regions stopped: every write fails clearly.
+  - Local topology only: one remote link delayed by 50, 150 and 300 ms.
+- **Recorded:**
+  - p50, p95, p99 and p99.9 end to end;
+  - each component's histogram: the reservation round, the local commit including its sync, the remote confirmation
+    wait, and the receiver's apply and sync. These are instruments added with the implementation, on the
+    `TerraScale.TerraBase` meter, labelled only by peer region;
+  - throughput;
+  - errors by code;
+  - RSS and managed heap;
+  - log and checkpoint stall time;
+  - disk growth, including `_operations` bytes and rows.
+- **Machine sizes and commit SHAs** are recorded with every table.
 
 ## 12. API contract for the SDKs (ts-dotnet first, separate repository)
 
