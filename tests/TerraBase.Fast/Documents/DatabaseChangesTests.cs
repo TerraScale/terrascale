@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text;
 using System.Text.Json;
 using System.Threading.Channels;
 using Bogus;
@@ -289,9 +290,17 @@ public sealed class DatabaseChangesTests
         // A canonical cursor names each origin once, in ascending order.
         var canonical = ChangeCursor.Encode(new FeedCursor(new Dictionary<ReplicaId, Hlc> { [new ReplicaId(1)] = new Hlc(5), [new ReplicaId(2)] = new Hlc(5) }, FeedCursor.At(DateTimeOffset.UtcNow)));
         var bytes = System.Buffers.Text.Base64Url.DecodeFromChars(canonical);
-        var unordered = System.Buffers.Text.Base64Url.EncodeToString([.. bytes[..17], .. bytes[73..], .. bytes[17..73]]);
+        var unordered = System.Buffers.Text.Base64Url.EncodeToString([.. bytes[..18], .. bytes[74..], .. bytes[18..74]]);
         await ErrorAssert.ErrorAsync(api.Client.GetAsync(new Uri($"{changes}?cursor={unordered}", UriKind.Relative)),
             HttpStatusCode.Gone, "cursor_expired", "the cursor cannot be resumed; start again with cursor=now and re-read");
+        foreach (var machine in new[] { "invalid/name", new string('a', 64), "é" })
+        {
+            var machineBytes = Encoding.UTF8.GetBytes(machine);
+            var invalidMachine = System.Buffers.Text.Base64Url.EncodeToString([.. bytes[..17], (byte)machineBytes.Length, .. machineBytes, .. bytes[18..]]);
+            await ErrorAssert.ErrorAsync(api.Client.GetAsync(new Uri($"{changes}?cursor={invalidMachine}", UriKind.Relative)),
+                HttpStatusCode.Gone, "cursor_expired", "the cursor cannot be resumed; start again with cursor=now and re-read");
+        }
+
         using var lastEventId = new HttpRequestMessage(HttpMethod.Get, new Uri(changes, UriKind.Relative));
         lastEventId.Headers.Add("Last-Event-ID", "garbage");
         await ErrorAssert.ErrorAsync(api.Client.SendAsync(lastEventId), HttpStatusCode.Gone, "cursor_expired", "the cursor cannot be resumed; start again with cursor=now and re-read");

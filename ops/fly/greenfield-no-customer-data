@@ -1,0 +1,2 @@
+# Greenfield dogfood only: authorize the format-6 volume reset and automatic startup reseeding.
+# Delete this marker before go-public; customer data must never enter this reset path.

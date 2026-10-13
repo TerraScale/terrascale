@@ -46,6 +46,9 @@ public sealed record FeedPage(IReadOnlyList<FeedEvent> Events, IReadOnlyDictiona
 /// <param name="Issued">When the cursor was issued, as a stamp of that instant.</param>
 public sealed record FeedCursor(IReadOnlyDictionary<ReplicaId, Hlc> Stamps, Hlc Issued)
 {
+    /// <summary>The issuing Fly machine, so the proxy can resume the stream on its original history.</summary>
+    public string? Machine { get; init; }
+
     /// <summary>The machine whose local prefix hashes this cursor carries.</summary>
     public ReplicaId Issuer { get; init; }
 

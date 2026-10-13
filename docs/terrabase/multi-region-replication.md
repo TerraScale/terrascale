@@ -1041,9 +1041,9 @@ store closes), with `PRAGMA capture_data_changes_conn('after')` on from its open
   the last event of an (origin, stamp) carries an `id:` (a stamp holds one document today, as stamps are minted per
   document, but a reader that leaves inside one never skips the rest of it). These rules assume a machine receives an
   origin's events within the retention (otherwise it refills, R6).
-- **Opaque cursor.** base64url of a marker, the issue instant and issuing node, then per origin in
+- **Opaque cursor.** base64url of a marker, the issue instant, issuing node and Fly machine ID, then per origin in
   ascending order its node, stamp, retention floor and SHA-256 prefix hash. Integers are 8-byte big-endian; the header
-  is 17 bytes and each origin 56 bytes. The hash chains event identities (stamp, deletion bit, length-prefixed UTF-8
+  is 18 bytes plus the issuing machine ID (length-prefixed ASCII, at most 63 bytes), and each origin 56 bytes. The hash chains event identities (stamp, deletion bit, length-prefixed UTF-8
   collection and document id), including filtered events. Each `_tb_feed` row persists the running hash through it,
   written in the same transaction as the state and event. The retention floor preserves the last deleted row's hash,
   so the chain continues without rescanning or rewriting retained history. A cross-machine resume compares its
@@ -1055,16 +1055,35 @@ store closes), with `PRAGMA capture_data_changes_conn('after')` on from its open
   layout returns 410 `cursor_expired`; there are no alternate layouts or compatibility branches. No public API or
   schema version changes (`PRAGMA user_version` remains 1), nor changes to replication, authentication or lattice
   conflict semantics. Persisted prefix columns change the internal storage format; greenfield storage must be recreated
-  at the reviewed storage cutover, with no migration.
+  at the reviewed storage cutover, with no migration. The internal format-6 rollout uses
+  `ops/fly/greenfield-no-customer-data` to authorize the existing gru → sjc → fra volume-reset path while only dogfood
+  data exists. **Delete that marker before go-public.** After reset, verify all three regions serve format 6 and that
+  the empty platform-auth/platform-dashboard databases, organization, projects, owner and signing keys are seeded
+  again by startup. The rollout must wait for the first deploy to be proven live.
   An issued cursor with no origin is not
   "no cursor": it is expired by the retention rules above.
+- **Issuer routing.** A resume on another machine answers 421 `cursor_elsewhere`, with
+  `fly-replay: instance=<issuer>;timeout=2s;fallback=force_self`, before any SSE bytes. Fly Proxy replays the original
+  URL, headers and credential to the issuer, which resumes on its own history. If that machine is unavailable, the
+  documented proxy fallback returns the request to the initial serving machine with `fly-replay-failed`; that machine
+  verifies the prefix and answers 200 or 410. Requests already carrying `Fly-Replay-Src` or `fly-replay-failed` never
+  issue another replay, preventing loops and respecting Fly's prohibition on replaying a fallback. Outside Fly Proxy,
+  the client receives the 421 and header directly. A network timeout or a prior regional replay can therefore still
+  invoke conservative prefix validation, even when the issuer has not permanently disappeared.
+  Off Fly, the derived machine identity is `local`, so ordinary local resumes do not require a proxy.
+  The replay/fallback contract is documented at
+  <https://docs.fly.io/networking/dynamic-request-routing#replay-timeout-and-fallback>.
+  Fast exercises the routing headers and SSE outcome over real listeners with a test proxy and unchanged database
+  identity and credential. This is not a deployed Fly Proxy measurement; pairwise replay latency remains to be
+  measured after the deployment hold is lifted.
 - **410 frequency and recovery impact.** Matching retained prefixes resume with 200 in all six directed gru/sjc/fra
   pairs in Fast, including collection-filtered events sharing a stamp. This is controlled integration coverage, not a
   measured production error rate. Prefix verification is conservative: a destination behind the consumed prefix,
   different events omitted by dominated joins, or different within-stamp ordering can produce 410 without a repair.
   A newer destination retention floor also expires the proof even if only already-consumed events were trimmed;
   hourly feed retention can therefore invalidate cross-machine resumes of an ongoing consumer's older proof.
-  Same-machine resumes bypass prefix comparison and keep the existing retention checks.
+  Healthy-issuer replays keep clients on that machine's history; same-machine resumes bypass prefix comparison and
+  keep the existing retention checks. The cases below apply when replay cannot reach the issuer or was already used.
   A repair whose join changes no state adds no feed event. A repair that changes a document adds a machine-specific
   event: once a cursor passes it (even via a collection filter or a later local write), another machine normally lacks
   that event and rejects the proof. A cursor issued before repair may also differ from a machine holding the original
