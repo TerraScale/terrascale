@@ -55,3 +55,77 @@ copySavedQuery(source, target, dialog);
 assert.equal(target.value, source.value);
 assert.equal(mirrored, 2);
 console.log('Saved query draft copies current SQL on activation and preserves subsequent modal edits.');
+
+// Exercise the browser receiver with deterministic DOM/network boundaries, without reconnect sleeps.
+globalThis.HTMLElement = class {};
+globalThis.customElements = { get() { return true; } };
+const { DocumentChanges } = await import('../src/TerraScale.Dashboard/web/assets/js/document-changes.js');
+const originalFetch = globalThis.fetch;
+const originalDocument = globalThis.document;
+const originalTimeout = globalThis.setTimeout;
+globalThis.setTimeout = callback => { queueMicrotask(callback); return 0; };
+globalThis.document = { createElement() { return { textContent: '' }; } };
+function event(state, cursor, change) {
+  return `event: ${state}\n${cursor == null ? '' : `id: ${cursor}\n`}data: ${JSON.stringify({ state, cursor, change })}\n\n`;
+}
+function panel(append) {
+  const statuses = [];
+  const status = { set textContent(value) { statuses.push(value); } };
+  const items = { children: [], append(row) { append?.(row); this.children.push(row); } };
+  return { statuses, items, dataset: { databaseId: 'db', collection: 'items' },
+    querySelector(id) { return id === '#document-changes-status' ? status : items; } };
+}
+const change = id => ({ collection: 'items', id, op: 'upsert', origin: 'origin', version: 'version', document: null });
+const stream = text => new Response(body(text), { headers: { 'content-type': 'text/event-stream' } });
+try {
+  let calls = 0, applications = 0;
+  const controller = new AbortController();
+  const failedApply = panel(() => { if (++applications === 1) throw new Error('Synthetic apply failure'); });
+  globalThis.fetch = async (url, options) => {
+    assert.match(url, /\/v1\/dashboard\/databases\/db\/changes/);
+    calls++;
+    if (calls === 1) return stream(event('cursor', 'prior') + event('change', 'next', change('retry')));
+    if (calls === 2) {
+      assert.equal(options.headers['Last-Event-ID'], 'prior', 'Failed application must retain the prior checkpoint.');
+      return stream(event('change', 'next', change('retry')));
+    }
+    assert.equal(options.headers['Last-Event-ID'], 'next');
+    controller.abort();
+    return stream('');
+  };
+  await new DocumentChanges().run(failedApply, controller.signal);
+  assert.equal(applications, 2, 'A failed append must not enter the dedup set.');
+  assert.equal(failedApply.items.children.length, 1);
+
+  calls = 0;
+  let snapshots = 0;
+  const resyncController = new AbortController();
+  const resyncPanel = panel();
+  globalThis.fetch = async (url, options) => {
+    if (url.startsWith('/api/v1/dashboard/data/documents')) {
+      snapshots++;
+      assert.equal(resyncPanel.items.children.length, 2, 'Apply both transaction changes before accepting its final checkpoint.');
+      assert.match(resyncPanel.statuses.at(-1), /Establishing a new checkpoint/);
+      assert.equal(resyncPanel.statuses.some(value => value.startsWith('Resynced')), false);
+      return Response.json([{ id: 'current', value: {} }]);
+    }
+    calls++;
+    if (calls === 1) return stream(event('resync_required', null));
+    if (calls === 2) {
+      assert.equal(new URL(url, 'https://dashboard.test').searchParams.get('cursor'), 'now');
+      assert.equal(options.headers['Last-Event-ID'], undefined);
+      return stream(event('change', null, change('first')) + event('change', 'final', change('last')));
+    }
+    assert.equal(options.headers['Last-Event-ID'], 'final');
+    resyncController.abort();
+    return stream('');
+  };
+  await new DocumentChanges().run(resyncPanel, resyncController.signal);
+  assert.equal(snapshots, 1, 'The first checkpoint on a change must trigger the document snapshot.');
+  assert.equal(resyncPanel.statuses.includes('Resynced; retained changes unavailable'), true);
+} finally {
+  globalThis.fetch = originalFetch;
+  globalThis.document = originalDocument;
+  globalThis.setTimeout = originalTimeout;
+}
+console.log('Browser feed: failed application retains its checkpoint; checkpointless resync waits for an applied final change.');
