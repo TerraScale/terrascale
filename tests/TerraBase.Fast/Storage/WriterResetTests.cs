@@ -44,7 +44,7 @@ public sealed class WriterResetTests
 
         // A first write opens the writer session.
         await Assert.That(await PutAsync(data, managed, EntityIds.New().ToString(), 0)).IsEqualTo(HttpStatusCode.Created);
-        var session = store.WriterSession ?? throw new InvalidOperationException("no writer session after a write");
+        var session = store.CurrentWriter() ?? throw new InvalidOperationException("no writer session after a write");
         var incarnation = store.Incarnation;
         var head = await source.HeadAsync(tenant, CancellationToken.None);
 
@@ -56,7 +56,7 @@ public sealed class WriterResetTests
 
         // The session is discarded (closed, and not the writer any more); the store keeps its incarnation.
         await Assert.That(session.Connection.State).IsEqualTo(System.Data.ConnectionState.Closed);
-        await Assert.That(store.WriterSession).IsNotSameReferenceAs(session);
+        await Assert.That(store.CurrentWriter()).IsNotSameReferenceAs(session);
         await Assert.That(store.Incarnation).IsEqualTo(incarnation);
 
         // The commit is visible to reads and reached the change capture the peer streams ship from.
@@ -68,15 +68,15 @@ public sealed class WriterResetTests
         // The next write opens a fresh session, with capture on.
         var next = EntityIds.New().ToString();
         await Assert.That(await PutAsync(data, managed, next, 2)).IsEqualTo(HttpStatusCode.Created);
-        await Assert.That(store.WriterSession).IsNotNull();
-        await Assert.That(store.WriterSession).IsNotSameReferenceAs(session);
+        await Assert.That(store.CurrentWriter()).IsNotNull();
+        await Assert.That(store.CurrentWriter()).IsNotSameReferenceAs(session);
         await Assert.That(await ShippedAsync(source, tenant, after, next)).IsTrue();
 
         // A transaction that did not commit still fails when its reset fails, and leaves nothing.
         var rolledBack = EntityIds.New().ToString();
         var transaction = await store.BeginTransactionAsync(write: true, CancellationToken.None);
         _ = await transaction.PutAsync("items", rolledBack, Encoding.UTF8.GetBytes("""{"n":3}"""), CancellationToken.None);
-        var discarded = store.WriterSession;
+        var discarded = store.CurrentWriter();
         Volatile.Write(ref failing, 1);
         await Assert.That(async () => await transaction.DisposeAsync()).ThrowsException();
         Volatile.Write(ref failing, 0);

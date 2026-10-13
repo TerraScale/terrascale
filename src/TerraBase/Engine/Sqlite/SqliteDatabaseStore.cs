@@ -409,7 +409,7 @@ internal sealed partial class SqliteDatabaseStore(
     private SqliteSession? _writerSession;
 
     /// <summary>The writer connection while one is open: which session the next write transaction uses.</summary>
-    internal SqliteSession? WriterSession => _writerSession;
+    internal SqliteSession? CurrentWriter() => _writerSession;
 
     /// <summary>The host's fault injection point (a no-op in production), for a tenant database's lifecycle steps.</summary>
     internal DatabaseLifecycleCheckpoint? Checkpoint { get; init; }
