@@ -11,7 +11,11 @@ namespace TerraBase.Engine;
 /// <param name="Remaining">
 /// <see langword="true"/> when the read stopped at its byte budget and later commits wait for the next call.
 /// </param>
-public readonly record struct WalRead(long Bytes, bool Continuous, bool Remaining);
+/// <param name="Mark">
+/// The read mark it appended last: when a read that reached the newest commit started (every transaction committed before
+/// then is in the log up to the mark); null when it appended none.
+/// </param>
+public readonly record struct WalRead(long Bytes, bool Continuous, bool Remaining, DateTimeOffset? Mark);
 
 /// <summary>A consistent snapshot and the log read before it was pinned.</summary>
 /// <param name="Read">Committed changes appended before the snapshot, including whether they remain continuous.</param>

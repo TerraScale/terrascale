@@ -613,6 +613,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
                     // A daily snapshot stored beside shipping; a failed one fails this pass, and the generation goes on.
                     await side.Stored.Task.ConfigureAwait(false);
                     file.LastSnapshot = side.Snapshot.At;
+                    Prove(file, side.Snapshot.At);
                 }
             }
 
@@ -677,6 +678,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
             {
                 file.Position += read.Bytes;
                 file.PendingAt = now;
+                (file.PendingMark, file.PendingEndsMarked) = (read.Mark ?? file.PendingMark, read.Mark is not null);
                 file.BehindSince ??= now;
             }
 
@@ -819,7 +821,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
             // What committed after the pin waits for the next read; until then lag counts from the pin.
             (file.Generation, file.Position, file.PendingStart, file.LastSnapshot, file.LastShipped, file.BehindSince, file.Behind) =
                 (generation, 0, 0, at, at, at, false);
-            AcknowledgePlatform(file, at);
+            Prove(file, at);
             _generations.Add(1);
             // The generation is stored: an earlier failure no longer stands (lag still shows what waits).
             (file.LastError, file.Failures) = (null, 0);
@@ -878,6 +880,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
             if (read.Bytes > 0)
             {
                 file.PendingAt = at;
+                (file.PendingMark, file.PendingEndsMarked) = (read.Mark ?? file.PendingMark, read.Mark is not null);
             }
 
             if (file.Buffered > 0)
@@ -885,11 +888,11 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
                 await UploadPendingAsync(file, cancellationToken).ConfigureAwait(false);
             }
 
-            // Everything committed by the pin is in the bucket now (that segment, or nothing new), so `at` restores already.
+            // Everything committed by the pin is in the bucket now (that segment, or nothing new), as lag and status show. The
+            // restore window moves to `at` only once the snapshot is stored: until then nothing in the bucket proves it.
             if (file.LastShipped is not { } shipped || shipped < at)
             {
                 file.LastShipped = at;
-                AcknowledgePlatform(file, at);
             }
 
             var generation = file.Generation!.Value;
@@ -994,7 +997,8 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         }
 
         // Nothing was sent under this key yet, so a failure up to here leaves the log to the next pass's segment.
-        file.Unstored = new(key, sealedObject, file.PendingAt);
+        file.Unstored = new(key, sealedObject, file.PendingAt, file.PendingMark, file.PendingEndsMarked);
+        (file.PendingMark, file.PendingEndsMarked) = (null, false);
         file.Pending.SetLength(0);
         file.PendingStart = file.Position;
         await PutUnstoredAsync(file, cancellationToken).ConfigureAwait(false);
@@ -1011,7 +1015,14 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         file.Unstored = null;
         await segment.Sealed.DisposeAsync().ConfigureAwait(false);
         file.LastShipped = segment.At;
-        AcknowledgePlatform(file, segment.At);
+        if (segment.Mark is { } mark)
+        {
+            // A read mark proves the whole second at or before it, or its own time when it ends a segment read in that
+            // millisecond: restores there place every transaction (PointInTimeRestore).
+            Prove(file, segment.EndsMarked && segment.At.ToUnixTimeMilliseconds() == mark.ToUnixTimeMilliseconds()
+                ? mark
+                : DateTimeOffset.FromUnixTimeSeconds(mark.ToUnixTimeSeconds()));
+        }
     }
 
     // Reads what this member does not store, only to trim the change log: the whole backlog, not one read's budget.
@@ -1091,9 +1102,20 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         file.Clear();
     }
 
-    // Publish generation and time together only after the fixed target acknowledges all its destinations.
-    private static void AcknowledgePlatform(ShippedFile file, DateTimeOffset at) =>
-        file.PlatformProgress = file.Target.IncludesPlatform ? new(file.Generation!.Value, at) : null;
+    // The restore window's latest time on this member (IContinuousBackup.LastShipped): one the platform bucket proves
+    // restorable, published with its generation only after the fixed target acknowledges all its destinations. It moves
+    // forward only, to a stored snapshot's time or the time a stored read mark proves.
+    private static void Prove(ShippedFile file, DateTimeOffset at)
+    {
+        if (!file.Target.IncludesPlatform)
+        {
+            file.PlatformProgress = null;
+        }
+        else if (file.PlatformProgress is not { } progress || progress.Generation != file.Generation || progress.At < at)
+        {
+            file.PlatformProgress = new(file.Generation!.Value, at);
+        }
+    }
 
     private static double Lag(ShippedFile file, DateTimeOffset now) => file.BehindSince is { } since ? Math.Max(0, (now - since).TotalSeconds) : 0;
 
@@ -1152,8 +1174,11 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         public Task Completion { get; set; } = Task.CompletedTask;
     }
 
-    /// <summary>A sealed segment not yet acknowledged: its key, its sealed bytes (a scratch file) and its time.</summary>
-    private sealed record Segment(string Key, FileStream Sealed, DateTimeOffset At);
+    /// <summary>
+    /// A sealed segment not yet acknowledged: its key, its sealed bytes (a scratch file), its time, its newest read mark and
+    /// whether that mark ends it.
+    /// </summary>
+    private sealed record Segment(string Key, FileStream Sealed, DateTimeOffset At, DateTimeOffset? Mark, bool EndsMarked);
 
     /// <summary>One shipped file. The scheduler owns admission fields; its single job owns shipping state.</summary>
     private sealed class ShippedFile(TenantContext? database, string prefix, string scope, IWalTap tap, FileStream pending, DateTimeOffset opened, BackupTarget target)
@@ -1197,6 +1222,11 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         public long Position { get; set; }
         public long PendingStart { get; set; }
         public DateTimeOffset PendingAt { get; set; }
+
+        /// <summary>The newest read mark in <see cref="Pending"/>, or null, and whether the last read there ended with it.</summary>
+        public DateTimeOffset? PendingMark { get; set; }
+
+        public bool PendingEndsMarked { get; set; }
         public DateTimeOffset LastSnapshot { get; set; }
         public DateTimeOffset? LastShipped { get; set; }
         public ShippingProgress? PlatformProgress { get; set; }
@@ -1244,6 +1274,7 @@ internal sealed partial class ContinuousBackup : BackgroundService, IContinuousB
         {
             Unstored?.Sealed.Dispose();
             Unstored = null;
+            (PendingMark, PendingEndsMarked) = (null, false);
             Pending.SetLength(0);
         }
 

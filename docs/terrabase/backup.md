@@ -360,8 +360,10 @@ it (user decision, 2026-10-07). Production backup starts right after that cutove
 but no earlier than the plan's retention window (a bucket rule may keep older objects), to the newest time the backup
 proves (see [Proven history](#proven-history)): read from the bucket, the second at or before the newest read mark in
 the newest generation's last three segments (at most three object reads), or its newest snapshot's time. While this
-node ships the database to the platform bucket, `latest` is instead the shipper's acknowledged progress, the end of its
-newest stored read, which a restore can refuse with `409` until a later write or read mark proves it. It returns 404
+node ships the database to the platform bucket, the shipper gives `latest` by the same rule without reading the bucket:
+the later of its generation's newest stored snapshot's time and, for the newest stored segment ending in a read mark,
+the second at or before the mark (the mark's own time when that read ended in the mark's millisecond). A daily snapshot
+moves it only once stored, and a read stopped by its budget, which writes no mark, does not move it. It returns 404
 when no stored data falls within the plan's window, including when retained objects have all expired under the plan.
 `POST /v1/projects/{project}/databases/{database}/point-in-time/restore` with `{"pointInTime": "…", "name": "…"}`
 restores into a new database of the same project (`branchedFrom` set, like a backup restore). The restore:
@@ -376,8 +378,8 @@ restores into a new database of the same project (`branchedFrom` set, like a bac
    proven to reach `pointInTime`, replaying the transactions of later segments that ran before it;
 4. runs `PRAGMA integrity_check`, then imports the file as a copy, so its replication starts over from a baseline.
 
-`pointInTime` must fall between `earliest` and the newest backed-up data (the shipper's acknowledged progress, or the
-newest segment's time), inclusive; requests outside those bounds return 400. That bound is at or after the window's
+`pointInTime` must fall between `earliest` and the newest backed-up data (on the node that ships the database, the
+window's `latest`; otherwise the newest segment's time), inclusive; requests outside those bounds return 400. That bound is at or after the window's
 `latest`: between them a restore succeeds only when it proves the time, and answers `409` otherwise. A time after the
 newest data is refused even when it is before now, so a delayed shipper cannot silently restore older data for that time.
 The shared restore service validates these bounds once before downloading or importing a database. It captures the
