@@ -65,7 +65,7 @@
     line-height: 16px;
     color: var(--ts-ink-3);
   }
-  .ts-eyebrow { display: inline-flex; align-items: center; gap: var(--ts-s2); color: var(--ts-ink-2); }
+  .ts-eyebrow { display: inline-flex; align-items: center; gap: var(--ts-s2); color: var(--ts-eyebrow); }
   .ts-eyebrow .ts-dot { --state: var(--ts-accent); }
 
   /* ---------- Top nav (frosted, sticky; floating variant) ---------- */

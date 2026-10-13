@@ -71,9 +71,9 @@ svg {
   }
 }
 
-/* Two-tone headings: the second phrase is muted, never coloured. */
+/* Two-tone headings: the second phrase takes the direction's heading-muted colour. */
 .ts-h-muted {
-  color: var(--ts-ink-3);
+  color: var(--ts-heading-muted);
 }
 
 /* Landing's own highlighter classes (src/lib/highlight.ts). */
