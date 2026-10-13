@@ -2,7 +2,6 @@ using System.ComponentModel;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using ModelContextProtocol.Server;
-using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Platform.Mcp;
 using TerraScale.DotNet.TerraBase;
 
@@ -172,8 +171,6 @@ public sealed class DataMcpTools(IHttpContextAccessor http, DataService data, Sa
 
     private static void ValidateCollection(AccountContext context, string databaseId, string collection)
     { DatabaseService.Database(context, databaseId); DataService.ValidCollection(collection); }
-
-    private static string RequiredVersion(string version) => string.IsNullOrWhiteSpace(version) ? throw new AccountAccessException("A document version is required.", 422) : version;
 
     private AccountContext Scope(string? organizationId, string? projectId) => McpScope.Scope(http.HttpContext, organizationId, projectId);
     private CancellationToken Cancellation => http.HttpContext?.RequestAborted ?? default;

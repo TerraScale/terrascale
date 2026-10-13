@@ -5,7 +5,7 @@ using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.DotNet.TerraBase;
 using TerraScale.DotNet;
 
-namespace TerraScale.Dashboard.Features.Accounts;
+namespace TerraScale.Dashboard.Shared.Accounts;
 
 public sealed class AccountService(IDashboardState state, TimeProvider time, IWorkspaceGateway workspaces)
 {

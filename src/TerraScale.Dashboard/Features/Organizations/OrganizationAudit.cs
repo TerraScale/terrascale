@@ -1,6 +1,5 @@
 using System.Text;
 using System.Text.Json;
-using TerraScale.Dashboard.Features.Accounts;
 
 namespace TerraScale.Dashboard.Features.Organizations;
 
@@ -11,8 +10,8 @@ public static class OrganizationAudit
         endpoints.MapGet("/audit", (HttpContext http) => HttpRedirects.SeeOther("/organization?tab=audit" + (http.Request.QueryString.HasValue ? "&" + http.Request.QueryString.Value![1..] : "")));
         endpoints.MapGet("/audit/export", async (HttpContext http, DashboardSessions sessions, AccountService accounts, IOrganizationAccess access, TimeProvider time) =>
         {
-            var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
-            if (context is null) return AccountEndpoints.LoginRedirect(http);
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
+            if (context is null) return AccountRequest.LoginRedirect(http);
             if (!context.CanManage) return Results.StatusCode(403);
             var filter = OrganizationFilters.For(http);
             var snapshot = await access.ReadAsync(context, http.RequestAborted);

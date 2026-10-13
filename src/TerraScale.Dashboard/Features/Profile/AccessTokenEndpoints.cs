@@ -1,4 +1,3 @@
-using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.UI;
 
@@ -10,7 +9,7 @@ public static class AccessTokenEndpoints
     {
         endpoints.MapPost("/api/v1/dashboard/profile/access-tokens", async (HttpContext http, DashboardSessions sessions, AccountService accounts, IProfileTokens tokens, IAuthAttemptBudget budgets) =>
         {
-            var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null) return Results.Unauthorized();
             var form = await http.Request.ReadFormAsync(http.RequestAborted);
             if (!Csrf.Validate(http, form)) return Results.StatusCode(403);
@@ -36,7 +35,7 @@ public static class AccessTokenEndpoints
         });
         endpoints.MapPost("/api/v1/dashboard/profile/access-tokens/{id}/revoke", async (HttpContext http, string id, DashboardSessions sessions, AccountService accounts, IProfileTokens tokens) =>
         {
-            var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null) return Results.Unauthorized();
             var form = await http.Request.ReadFormAsync(http.RequestAborted);
             if (!Csrf.Validate(http, form)) return Results.StatusCode(403);

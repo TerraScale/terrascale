@@ -29,7 +29,7 @@ sealed class TestBillingPlanTransport(HttpMessageHandler underlying) : HttpMessa
     {
         app.MapPost("/__test/billing/plans/scenario", async (HttpContext http, DashboardSessions sessions, AccountService accounts, StripeBilling billing) =>
         {
-            var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null) return Results.Unauthorized();
             var form = await http.Request.ReadFormAsync(http.RequestAborted);
             if (!Csrf.Validate(http, form)) return Results.BadRequest();
@@ -81,7 +81,7 @@ sealed class TestBillingPlanTransport(HttpMessageHandler underlying) : HttpMessa
         });
         app.MapGet("/__test/billing/plans/probe", async (HttpContext http, DashboardSessions sessions, AccountService accounts, StripeBilling billing) =>
         {
-            var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null) return Results.Unauthorized();
             var binding = await billing.ReadBindingAsync(context, http.RequestAborted);
             return binding is null ? Results.NotFound() : Results.Json(new

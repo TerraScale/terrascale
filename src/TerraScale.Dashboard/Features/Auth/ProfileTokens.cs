@@ -1,4 +1,3 @@
-using TerraScale.Dashboard.Features.Accounts;
 namespace TerraScale.Dashboard.Features.Auth;
 
 public interface IProfileTokens

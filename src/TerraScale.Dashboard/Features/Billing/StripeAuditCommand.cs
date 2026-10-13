@@ -1,7 +1,6 @@
 using System.Text.Json;
 using Stripe;
 using TerraScale.Dashboard.Platform.Persistence;
-using TerraScale.Dashboard.Features.Accounts;
 
 namespace TerraScale.Dashboard.Features.Billing;
 

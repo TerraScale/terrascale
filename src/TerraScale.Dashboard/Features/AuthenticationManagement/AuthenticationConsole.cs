@@ -1,4 +1,3 @@
-using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.UI;
 
 namespace TerraScale.Dashboard.Features.AuthenticationManagement;
@@ -22,7 +21,7 @@ public static class AuthenticationConsole
         {
             var key = path.Split('/')[0];
             if (key is not ("instance" or "settings" or "emails") && AuthenticationSection.Find(key)?.Fields is null) return Results.NotFound();
-            var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null) return Results.Unauthorized();
             var form = await http.Request.ReadFormAsync(http.RequestAborted);
             if (!Csrf.Validate(http, form)) return Results.StatusCode(403);
@@ -36,8 +35,8 @@ public static class AuthenticationConsole
     {
         var section = AuthenticationSection.Find(key);
         if (section is null) return Results.NotFound();
-        var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
-        if (context is null) return AccountEndpoints.LoginRedirect(http);
+        var context = await AccountRequest.RequireAsync(http, sessions, accounts);
+        if (context is null) return AccountRequest.LoginRedirect(http);
         if (context.Project is null) return HttpRedirects.SeeOther("/");
         var page = AuthenticationView.Create(new(ShellModel.For(http, context, key == "overview" ? "Authentication" : "Authentication · " + section.Title), section, http.Request.Query["q"].ToString()));
         page.StatusCode = 503;

@@ -9,7 +9,7 @@ public static class AccountEndpoints
     {
         endpoints.MapGet("/api/v1/auth/me", async (HttpContext http, DashboardSessions sessions, AccountService accounts) =>
         {
-            var context = await RequireAsync(http, sessions, accounts);
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null) return Results.Unauthorized();
             return Results.Json(new
             {
@@ -47,13 +47,4 @@ public static class AccountEndpoints
         });
         return endpoints;
     }
-
-    public static async Task<AccountContext?> RequireAsync(HttpContext http, DashboardSessions sessions, AccountService accounts)
-    {
-        var session = await sessions.ReadAsync(http);
-        if (session is null) return null;
-        return await accounts.GetContextAsync(session, http.RequestAborted);
-    }
-
-    public static IResult LoginRedirect(HttpContext http) => Results.Redirect("/login?returnTo=" + Uri.EscapeDataString(http.Request.Path + http.Request.QueryString));
 }

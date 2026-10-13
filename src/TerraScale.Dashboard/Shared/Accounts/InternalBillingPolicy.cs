@@ -1,6 +1,6 @@
 using TerraScale.DotNet;
 
-namespace TerraScale.Dashboard.Features.Accounts;
+namespace TerraScale.Dashboard.Shared.Accounts;
 
 // A copied paid-plan contract, committed with the organization's cap. This
 // hidden plan is domain state; it never changes the public plan catalog.

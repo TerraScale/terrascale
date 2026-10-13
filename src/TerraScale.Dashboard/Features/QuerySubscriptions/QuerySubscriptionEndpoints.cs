@@ -1,5 +1,4 @@
 using Microsoft.AspNetCore.Http.Features;
-using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.UI;
 
 namespace TerraScale.Dashboard.Features.QuerySubscriptions;
@@ -14,8 +13,8 @@ public static class QuerySubscriptionEndpoints
     {
         endpoints.MapMethods("/subscriptions", ["GET", "HEAD"], async (HttpContext http, DashboardSessions sessions, AccountService accounts, QuerySubscriptionService service) =>
         {
-            var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
-            if (context is null) return AccountEndpoints.LoginRedirect(http);
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
+            if (context is null) return AccountRequest.LoginRedirect(http);
             try
             {
                 var configurations = await service.ListAsync(context, http.RequestAborted);
@@ -30,7 +29,7 @@ public static class QuerySubscriptionEndpoints
 
     private static async Task<IResult> RefuseAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, QuerySubscriptionService service)
     {
-        var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
+        var context = await AccountRequest.RequireAsync(http, sessions, accounts);
         if (context is null) return Results.Unauthorized();
         if (http.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } body) body.MaxRequestBodySize = 16 * 1024;
         var form = await http.Request.ReadFormAsync(http.RequestAborted);

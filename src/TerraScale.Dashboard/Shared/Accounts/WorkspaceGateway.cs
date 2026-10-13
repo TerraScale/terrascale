@@ -1,7 +1,7 @@
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.DotNet.TerraBase;
 
-namespace TerraScale.Dashboard.Features.Accounts;
+namespace TerraScale.Dashboard.Shared.Accounts;
 
 public interface IWorkspaceGateway
 {

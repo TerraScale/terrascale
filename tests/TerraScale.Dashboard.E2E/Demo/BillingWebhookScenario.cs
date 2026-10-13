@@ -5,7 +5,7 @@ using Stripe;
 using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Features.Billing;
-using AccountService = TerraScale.Dashboard.Features.Accounts.AccountService;
+using AccountService = TerraScale.Dashboard.Shared.Accounts.AccountService;
 
 namespace TerraScale.Dashboard.E2E;
 
@@ -17,7 +17,7 @@ internal static class BillingWebhookScenario
         app.MapPost("/__test/billing/webhook/event", async (HttpContext http, DashboardSessions sessions,
             AccountService accounts, StripeBilling billing) =>
         {
-            var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null) return Results.Unauthorized();
             var form = await http.Request.ReadFormAsync(http.RequestAborted);
             if (!Csrf.Validate(http, form)) return Results.BadRequest();

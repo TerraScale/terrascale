@@ -1,4 +1,4 @@
-namespace TerraScale.Dashboard.Features.Accounts;
+namespace TerraScale.Dashboard.Shared.Accounts;
 
 // Explicit tool scopes do not change the browser selection. Re-read provider
 // membership before resolving the requested organization and project.

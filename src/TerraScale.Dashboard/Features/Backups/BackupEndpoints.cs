@@ -1,6 +1,5 @@
 using System.Globalization;
 using System.Text.Json;
-using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.UI;
 
 namespace TerraScale.Dashboard.Features.Backups;
@@ -12,7 +11,7 @@ public static class BackupEndpoints
     {
         endpoints.MapGet("/api/v1/dashboard/backups", async (HttpContext http, DashboardSessions sessions, AccountService accounts, BackupService backups) =>
         {
-            var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null) return Results.Unauthorized();
             try { return Results.Json(await backups.ListAsync(context, http.Request.Query["databaseId"].ToString(), http.RequestAborted)); }
             catch (Exception error) when (KnownFailure(error) &&
@@ -25,7 +24,7 @@ public static class BackupEndpoints
             endpoints.MapPost(action == "create" ? "/api/v1/dashboard/backups" : "/api/v1/dashboard/backups/" + action,
                 async (HttpContext http, DashboardSessions sessions, AccountService accounts, BackupService backups) =>
                 {
-                    var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
+                    var context = await AccountRequest.RequireAsync(http, sessions, accounts);
                     if (context is null) return Results.Unauthorized();
                     var form = await http.Request.ReadFormAsync(http.RequestAborted);
                     if (!Csrf.Validate(http, form)) return Results.BadRequest("Invalid form token.");

@@ -20,7 +20,7 @@ sealed class TestBillingCheckoutPersistence(IDashboardState underlying) : IDashb
     {
         app.MapPost("/__test/billing/checkouts/scenario", async (HttpContext http, DashboardSessions sessions, AccountService accounts, StripeBilling billing) =>
         {
-            var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null) return Results.Unauthorized();
             var form = await http.Request.ReadFormAsync(http.RequestAborted);
             if (!Csrf.Validate(http, form)) return Results.BadRequest();
@@ -41,7 +41,7 @@ sealed class TestBillingCheckoutPersistence(IDashboardState underlying) : IDashb
         });
         app.MapGet("/__test/billing/checkouts/probe", async (HttpContext http, DashboardSessions sessions, AccountService accounts, StripeBilling billing) =>
         {
-            var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null) return Results.Unauthorized();
             if (context.Role != "owner" || context.Organization is null) return Results.StatusCode(403);
             var binding = await billing.ReadBindingAsync(context, http.RequestAborted);

@@ -1,6 +1,5 @@
 using System.Net.Mail;
 using System.Text;
-using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.UI;
 using TerraScale.Dashboard.Shared.Validation;

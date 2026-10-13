@@ -1,6 +1,5 @@
 using Stripe;
-using TerraScale.Dashboard.Features.Accounts;
-using AccountService = TerraScale.Dashboard.Features.Accounts.AccountService;
+using AccountService = TerraScale.Dashboard.Shared.Accounts.AccountService;
 using TerraScale.Dashboard.Shared.Validation;
 
 namespace TerraScale.Dashboard.Features.Billing;
@@ -19,8 +18,8 @@ public static class BillingPlanEndpoints
             MutateAsync(http, sessions, accounts, billing, "cancel"));
         endpoints.MapGet("/billing/checkout/return", async (HttpContext http, DashboardSessions sessions, AccountService accounts, StripeBilling billing) =>
         {
-            var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
-            if (context is null) return AccountEndpoints.LoginRedirect(http);
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
+            if (context is null) return AccountRequest.LoginRedirect(http);
             try { return HttpRedirects.SeeOther(await billing.CheckoutReturnAsync(context, http.Request.Query["session_id"].ToString(), http.RequestAborted)); }
             catch (Exception error) when (BillingFailure(error, http)) { return Failure(error); }
         });
@@ -28,8 +27,8 @@ public static class BillingPlanEndpoints
     }
     private static async Task<IResult> MutateAsync(HttpContext http, DashboardSessions sessions, AccountService accounts, StripeBilling billing, string operation)
     {
-        var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
-        if (context is null) return AccountEndpoints.LoginRedirect(http);
+        var context = await AccountRequest.RequireAsync(http, sessions, accounts);
+        if (context is null) return AccountRequest.LoginRedirect(http);
         var form = await http.Request.ReadFormAsync(http.RequestAborted);
         if (!Csrf.Validate(http, form)) return Results.Text("Invalid CSRF token.", statusCode: 403);
         try

@@ -1,4 +1,3 @@
-using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.UI;
 
 namespace TerraScale.Dashboard.Features.Analytics;
@@ -12,8 +11,8 @@ public static class AnalyticsEndpoints
     {
         endpoints.MapGet("/analytics", async (HttpContext http, DashboardSessions sessions, AccountService accounts, AnalyticsService analytics) =>
         {
-            var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
-            if (context is null) return AccountEndpoints.LoginRedirect(http);
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
+            if (context is null) return AccountRequest.LoginRedirect(http);
             try
             {
                 var selection = AnalyticsSelection.For(context, http.Request.Query["project"].ToString(), http.Request.Query["database"].ToString(),

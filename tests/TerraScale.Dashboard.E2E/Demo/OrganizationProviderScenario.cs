@@ -12,7 +12,7 @@ public static class OrganizationProviderScenario
     public static void MapRoutes(WebApplication app) => app.MapPost("/__test/organization/members/role",
         async (HttpContext http, DashboardSessions sessions, AccountService accounts) =>
         {
-            var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null) return Results.Unauthorized();
             var form = await http.Request.ReadFormAsync(http.RequestAborted);
             if (!Csrf.Validate(http, form)) return Results.StatusCode(403);

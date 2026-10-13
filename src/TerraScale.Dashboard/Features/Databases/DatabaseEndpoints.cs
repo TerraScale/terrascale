@@ -1,5 +1,4 @@
 using RazorSlices;
-using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Data;
 using TerraScale.Dashboard.Features.ApiKeys;
 using TerraScale.Dashboard.Features.Onboarding;
@@ -25,12 +24,12 @@ public static class DatabaseEndpoints
     {
         endpoints.MapGet("/databases", async (HttpContext http, DashboardSessions sessions, AccountService accounts, IDatabaseBackend backend, DatabaseService databases) =>
         {
-            var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
-            return context is null ? AccountEndpoints.LoginRedirect(http) : await ListPageAsync(http, context, backend, databases);
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
+            return context is null ? AccountRequest.LoginRedirect(http) : await ListPageAsync(http, context, backend, databases);
         });
         endpoints.MapGet("/api/v1/dashboard/databases", async (HttpContext http, DashboardSessions sessions, AccountService accounts) =>
         {
-            var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             return context is null ? Results.Unauthorized() : Results.Json(context.Project?.Databases.Values.OrderBy(database => database.Name).ToArray() ?? []);
         });
         foreach (var tab in new[] { "overview", "backups", "branches", "import" })
@@ -39,13 +38,13 @@ public static class DatabaseEndpoints
             endpoints.MapGet(tab == "overview" ? "/databases/{databaseId}" : "/databases/{databaseId}/" + tab,
                 async (HttpContext http, string databaseId, DashboardSessions sessions, AccountService accounts, IDatabaseBackend backend, DatabaseService databases) =>
                 {
-                    var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
-                    return context is null ? AccountEndpoints.LoginRedirect(http) : await DetailPageAsync(http, context, databaseId, section, backend, databases);
+                    var context = await AccountRequest.RequireAsync(http, sessions, accounts);
+                    return context is null ? AccountRequest.LoginRedirect(http) : await DetailPageAsync(http, context, databaseId, section, backend, databases);
                 });
         }
         endpoints.MapPost("/api/v1/dashboard/databases", async (HttpContext http, DashboardSessions sessions, AccountService accounts, DatabaseService databases, IDatabaseBackend backend) =>
         {
-            var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null) return Results.Unauthorized();
             var form = await http.Request.ReadFormAsync(http.RequestAborted);
             if (!Csrf.Validate(http, form)) return Results.BadRequest("Invalid form token.");
@@ -65,7 +64,7 @@ public static class DatabaseEndpoints
             endpoints.MapPost("/api/v1/dashboard/databases/" + operation,
                 async (HttpContext http, DashboardSessions sessions, AccountService accounts, DatabaseService databases, IDatabaseBackend backend) =>
                 {
-                    var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
+                    var context = await AccountRequest.RequireAsync(http, sessions, accounts);
                     if (context is null) return Results.Unauthorized();
                     var form = await http.Request.ReadFormAsync(http.RequestAborted);
                     if (!Csrf.Validate(http, form)) return Results.BadRequest("Invalid form token.");

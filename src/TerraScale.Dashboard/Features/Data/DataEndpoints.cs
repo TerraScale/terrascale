@@ -1,6 +1,5 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Http.Features;
-using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.UI;
 using TerraScale.DotNet.TerraBase;
 
@@ -15,18 +14,18 @@ public static class DataEndpoints
             var tab = section;
             endpoints.MapGet("/databases/{databaseId}/" + section, async (HttpContext http, string databaseId, DashboardSessions sessions, AccountService accounts, DataService data, SavedQueryService saved) =>
             {
-                var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
-                return context is null ? AccountEndpoints.LoginRedirect(http) : await PageAsync(http, context, databaseId, tab, data, saved);
+                var context = await AccountRequest.RequireAsync(http, sessions, accounts);
+                return context is null ? AccountRequest.LoginRedirect(http) : await PageAsync(http, context, databaseId, tab, data, saved);
             });
         }
         endpoints.MapGet("/databases/{databaseId}/documents/{collection}", async (HttpContext http, string databaseId, string collection, DashboardSessions sessions, AccountService accounts, DataService data, SavedQueryService saved) =>
         {
-            var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
-            return context is null ? AccountEndpoints.LoginRedirect(http) : await PageAsync(http, context, databaseId, "documents", data, saved, collection);
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
+            return context is null ? AccountRequest.LoginRedirect(http) : await PageAsync(http, context, databaseId, "documents", data, saved, collection);
         });
         endpoints.MapGet("/api/v1/dashboard/data/documents", async (HttpContext http, DashboardSessions sessions, AccountService accounts, DataService data) =>
         {
-            var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null) return Results.Unauthorized();
             try
             {
@@ -37,21 +36,21 @@ public static class DataEndpoints
         });
         endpoints.MapGet("/api/v1/dashboard/schema", async (HttpContext http, DashboardSessions sessions, AccountService accounts, DataService data) =>
         {
-            var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null) return Results.Unauthorized();
             try { return Results.Json(await data.SchemaAsync(context, http.Request.Query["databaseId"].ToString(), http.Request.Query["collection"].ToString(), http.RequestAborted)); }
             catch (Exception error) when (DatabaseResults.KnownFailure(error)) { return DatabaseResults.Failure(error); }
         });
         endpoints.MapGet("/api/v1/dashboard/data/saved-queries", async (HttpContext http, DashboardSessions sessions, AccountService accounts, SavedQueryService saved) =>
         {
-            var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null) return Results.Unauthorized();
             try { return Results.Json((await saved.ListAsync(context, http.RequestAborted)).Select(PublicSavedQuery)); }
             catch (Exception error) when (DatabaseResults.KnownFailure(error)) { return DatabaseResults.Failure(error); }
         });
         endpoints.MapGet("/api/v1/dashboard/indexes", async (HttpContext http, DashboardSessions sessions, AccountService accounts, DataService data) =>
         {
-            var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null) return Results.Unauthorized();
             try
             {
@@ -70,7 +69,7 @@ public static class DataEndpoints
             {
                 if (action == "documents" && http.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } bodyLimit) bodyLimit.MaxRequestBodySize = 1024 * 1024 + 4096;
                 if ((action.StartsWith("sql", StringComparison.Ordinal) || action == "saved-queries") && http.Features.Get<IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } sqlBodyLimit) sqlBodyLimit.MaxRequestBodySize = 16 * 1024 + 3 * 4 * 1024 + 4096;
-                var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
+                var context = await AccountRequest.RequireAsync(http, sessions, accounts);
                 if (context is null) return Results.Unauthorized();
                 var form = await http.Request.ReadFormAsync(http.RequestAborted);
                 if (!Csrf.Validate(http, form)) return Results.BadRequest("Invalid form token.");

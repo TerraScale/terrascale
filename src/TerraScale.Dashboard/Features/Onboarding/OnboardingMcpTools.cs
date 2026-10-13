@@ -1,7 +1,6 @@
 using System.ComponentModel;
 using Microsoft.Extensions.Primitives;
 using ModelContextProtocol.Server;
-using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Platform.Mcp;
 using TerraScale.Dashboard.Shared.Validation;
 

@@ -1,5 +1,3 @@
-using TerraScale.Dashboard.Features.Accounts;
-
 namespace TerraScale.Dashboard.Shared.Usage;
 
 public sealed record UsageSelection(AccountContext Context, string Range, string DatabaseId, bool ExplicitProjectFilter)

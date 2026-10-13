@@ -1,4 +1,3 @@
-using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.UI;
 
 namespace TerraScale.Dashboard.Features.Home;
@@ -18,8 +17,8 @@ public static class HomeEndpoints
     {
         endpoints.MapGet("/", async (HttpContext http, DashboardSessions sessions, AccountService accounts, IHomeMeasurements measurements) =>
         {
-            var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
-            if (context is null) return AccountEndpoints.LoginRedirect(http);
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
+            if (context is null) return AccountRequest.LoginRedirect(http);
             if (!context.Account.OnboardingCompleted) return Results.Redirect("/onboarding");
             if (context.Organization is null) return Results.Problem("Selected organization is unavailable.", statusCode: 403);
             if (context.Project is null) return Results.Redirect(context.Organization.Kind == "business" && !context.Organization.CanProvision(context.UserId) ? "/organization?newOrganization=payment" : "/organization?tab=projects&newProject=1");

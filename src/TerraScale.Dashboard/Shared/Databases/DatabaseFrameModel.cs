@@ -1,5 +1,3 @@
-using TerraScale.Dashboard.Features.Accounts;
-
 namespace TerraScale.Dashboard.Shared.Databases;
 
 public sealed record DatabaseFrameModel(DatabaseRecord Database, string Tab, string Collection = "")

@@ -1,5 +1,5 @@
 
-namespace TerraScale.Dashboard.Features.Accounts;
+namespace TerraScale.Dashboard.Shared.Accounts;
 
 public sealed class AccountRecord
 {

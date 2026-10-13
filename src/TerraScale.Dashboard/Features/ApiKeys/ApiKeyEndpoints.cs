@@ -1,4 +1,3 @@
-using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.UI;
 
 namespace TerraScale.Dashboard.Features.ApiKeys;
@@ -9,19 +8,19 @@ public static class ApiKeyEndpoints
     {
         endpoints.MapGet("/api-keys", async (HttpContext http, DashboardSessions sessions, AccountService accounts, ApiKeyService keys) =>
         {
-            var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
-            return context is null ? AccountEndpoints.LoginRedirect(http) : await PageAsync(http, context, keys);
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
+            return context is null ? AccountRequest.LoginRedirect(http) : await PageAsync(http, context, keys);
         });
         endpoints.MapGet("/api/v1/dashboard/credentials", async (HttpContext http, DashboardSessions sessions, AccountService accounts, ApiKeyService keys) =>
         {
-            var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null) return Results.Unauthorized();
             try { return Results.Json((await keys.ListAsync(context, http.RequestAborted)).Select(ApiKeyService.CredentialMetadata)); }
             catch (Exception error) when (DatabaseResults.KnownFailure(error)) { return DatabaseResults.Failure(error); }
         });
         endpoints.MapPost("/api/v1/dashboard/credentials/{kind}", async (HttpContext http, string kind, DashboardSessions sessions, AccountService accounts, ApiKeyService keys) =>
         {
-            var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null) return Results.Unauthorized();
             var form = await http.Request.ReadFormAsync(http.RequestAborted);
             if (!Csrf.Validate(http, form)) return Results.BadRequest("Invalid form token.");
@@ -37,7 +36,7 @@ public static class ApiKeyEndpoints
         });
         endpoints.MapPost("/api/v1/dashboard/credentials/{keyId}/revoke", async (HttpContext http, string keyId, DashboardSessions sessions, AccountService accounts, ApiKeyService keys) =>
         {
-            var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null) return Results.Unauthorized();
             var form = await http.Request.ReadFormAsync(http.RequestAborted);
             if (!Csrf.Validate(http, form)) return Results.BadRequest("Invalid form token.");
@@ -47,7 +46,7 @@ public static class ApiKeyEndpoints
         });
         endpoints.MapPost("/api/v1/dashboard/credentials/revoke", async (HttpContext http, DashboardSessions sessions, AccountService accounts, ApiKeyService keys) =>
         {
-            var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null) return Results.Unauthorized();
             var form = await http.Request.ReadFormAsync(http.RequestAborted);
             if (!Csrf.Validate(http, form)) return Results.BadRequest("Invalid form token.");
@@ -57,7 +56,7 @@ public static class ApiKeyEndpoints
         });
         endpoints.MapPost("/api/v1/dashboard/credentials/rotate", async (HttpContext http, DashboardSessions sessions, AccountService accounts, ApiKeyService keys) =>
         {
-            var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null) return Results.Unauthorized();
             var form = await http.Request.ReadFormAsync(http.RequestAborted);
             if (!Csrf.Validate(http, form)) return Results.BadRequest("Invalid form token.");

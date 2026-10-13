@@ -1,5 +1,4 @@
 using System.Globalization;
-using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Platform.Persistence;
 
 namespace TerraScale.Dashboard.Features.Billing;

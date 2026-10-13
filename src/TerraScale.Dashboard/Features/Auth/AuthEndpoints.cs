@@ -1,5 +1,4 @@
 using System.Net.Mail;
-using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.UI;
 
 namespace TerraScale.Dashboard.Features.Auth;

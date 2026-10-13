@@ -1,7 +1,6 @@
 using System.Net;
 using System.Security.Cryptography;
 using Microsoft.AspNetCore.WebUtilities;
-using TerraScale.Dashboard.Features.Accounts;
 
 namespace TerraScale.Dashboard.Features.Auth;
 

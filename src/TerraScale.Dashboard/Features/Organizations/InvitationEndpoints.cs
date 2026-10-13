@@ -27,7 +27,7 @@ public static class InvitationEndpoints
                 await invitations.RespondAsync(session, token, action, http.RequestAborted);
                 return HttpRedirects.SeeOther(action == "accept" ? "/organization?tab=members&invitation=accepted" : "/organization?invitation=declined");
             }
-            catch (TerraScale.Dashboard.Features.Accounts.AccountAccessException error)
+            catch (TerraScale.Dashboard.Shared.Accounts.AccountAccessException error)
             { return await PageAsync(http, sessions, invitations, token, error.Message, error.StatusCode); }
         });
         endpoints.MapPost("/invitations/{token}/switch-account", async (HttpContext http, DashboardSessions sessions, string token) =>

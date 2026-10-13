@@ -1,7 +1,7 @@
 using System.Globalization;
 using TerraScale.Dashboard.Shared.Validation;
 
-namespace TerraScale.Dashboard.Features.Accounts;
+namespace TerraScale.Dashboard.Shared.Accounts;
 
 public sealed record BillingPlan(string Id, string Key, string Name, long PriceCents, long AnnualPriceCents, int TrialDays,
     string DatabaseAllowance, string StorageAllowance, string MemberAllowance, string ReadsAllowance, string WritesAllowance)

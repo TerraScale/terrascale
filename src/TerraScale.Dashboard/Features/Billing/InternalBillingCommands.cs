@@ -2,7 +2,6 @@ using System.Net;
 using System.Numerics;
 using System.Text.Json;
 using Microsoft.AspNetCore.WebUtilities;
-using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Auth;
 using TerraScale.Dashboard.Platform.Persistence;
 using TerraScale.DotNet.TerraBase;

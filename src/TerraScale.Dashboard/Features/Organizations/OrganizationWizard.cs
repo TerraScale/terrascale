@@ -1,4 +1,3 @@
-using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Shared.Validation;
 
@@ -11,7 +10,7 @@ public static class OrganizationWizard
         endpoints.MapPost("/api/v1/dashboard/organization/new-organization", async (HttpContext http, DashboardSessions sessions,
             AccountService accounts, IWorkspaceGateway gateway, IWorkspacePlacement placement, StripeBilling payments) =>
         {
-            var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null) return Results.Unauthorized();
             var form = await http.Request.ReadFormAsync(http.RequestAborted);
             if (!Csrf.Validate(http, form)) return Results.StatusCode(403);

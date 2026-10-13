@@ -1,6 +1,5 @@
 using System.ComponentModel;
 using ModelContextProtocol.Server;
-using TerraScale.Dashboard.Features.Accounts;
 
 namespace TerraScale.Dashboard.Platform.Mcp;
 

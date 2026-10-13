@@ -1,8 +1,7 @@
 using System.Text;
 using Microsoft.AspNetCore.Http.Features;
 using Stripe;
-using AccountService = TerraScale.Dashboard.Features.Accounts.AccountService;
-using TerraScale.Dashboard.Features.Accounts;
+using AccountService = TerraScale.Dashboard.Shared.Accounts.AccountService;
 using TerraScale.Dashboard.UI;
 using TerraScale.Dashboard.Shared.Validation;
 
@@ -63,7 +62,7 @@ public static class BillingEndpoints
         endpoints.MapGet("/billing", () => Results.Redirect("/organization?tab=billing"));
         endpoints.MapPost("/billing/checkout", async (HttpContext http, DashboardSessions sessions, AccountService accounts, StripeBilling billing) =>
         {
-            var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
             if (context is null) return Results.Unauthorized();
             var form = await http.Request.ReadFormAsync(http.RequestAborted);
             if (!Csrf.Validate(http, form)) return Results.StatusCode(403);
@@ -73,8 +72,8 @@ public static class BillingEndpoints
         });
         endpoints.MapGet("/billing/portal", async (HttpContext http, DashboardSessions sessions, AccountService accounts, StripeBilling billing) =>
         {
-            var context = await AccountEndpoints.RequireAsync(http, sessions, accounts);
-            if (context is null) return AccountEndpoints.LoginRedirect(http);
+            var context = await AccountRequest.RequireAsync(http, sessions, accounts);
+            if (context is null) return AccountRequest.LoginRedirect(http);
             try { return HttpRedirects.SeeOther(await billing.PortalAsync(context, http.RequestAborted)); }
             catch (AccountAccessException error) { return Results.Problem(error.Message, statusCode: error.StatusCode); }
         });

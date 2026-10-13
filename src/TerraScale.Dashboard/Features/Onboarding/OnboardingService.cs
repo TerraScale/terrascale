@@ -1,5 +1,4 @@
 using TerraScale.Dashboard.Features.Billing;
-using TerraScale.Dashboard.Features.Accounts;
 using TerraScale.Dashboard.Shared.Validation;
 
 namespace TerraScale.Dashboard.Features.Onboarding;
