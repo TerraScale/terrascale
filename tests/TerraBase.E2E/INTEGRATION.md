@@ -337,6 +337,19 @@ items after it that do not depend on it. Each skip is recorded.
   #179 → `89988752`.
 - They merge one at a time in queue order, each after a green fresh run and with main green in between.
 
+**#164 MERGED** at its exact head `416cd5ed` (= approved `01ed6eba` plus a clean merge of main `5043c1de`; COS delta
+check 6137226769) → main **`bc752b23`**, merge commit. `test` run 38366248630 succeeded. Push run 38368949806: deploy and
+preview skipped; Fast green; Slow 41/42 (#147 again). Slow unverifiable for the freeze. #178 owes the one-line merge
+over #164.
+
+**Fresh-run results on `5043c1de`:**
+- **#152 and #176 fail the "Storage train" check.** Both change storage files (`SqliteStorageTransaction.Tail.cs` and
+  `TursoChangeGroupSource.cs`; `SqliteStorageTransaction.Join.cs`) and carry no storage label. R3/T1 must bump the
+  format or label `storage-format-unchanged`; asked on both PRs.
+- **#163 fails** Fast `A_running_server_refuses_a_second_owner_without_changing_data_and_disposal_allows_restart`. R3 is
+  asked for the cause.
+- **#179** is updated to `45b30a77` on `bc752b23`; its fresh run is in progress.
+
 **Not in this release:** **#120**. Tombstones are retained, and R7-FIX continues in isolation.
 
 **Outside the queue (COS, 03:30Z):** **#167** (`feat/postgres-turso-import-core`, `62f251f6`, one-time PostgreSQL and
