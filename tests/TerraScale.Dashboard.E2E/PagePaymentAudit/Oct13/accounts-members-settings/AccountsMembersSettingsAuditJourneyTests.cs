@@ -72,7 +72,7 @@ public sealed class AccountsMembersSettingsAuditJourneyTests(AccountsAuditScenar
         var noMatch = await client.GetStringAsync("/organization?tab=members&q=not-a-real-member&role=member&page=99");
         await Assert.That(noMatch.Contains("No members match", StringComparison.Ordinal)).IsTrue();
         await Assert.That(noMatch.Contains("Clear filters", StringComparison.Ordinal)).IsTrue();
-        var filtered = await client.GetStringAsync("/organization?tab=members&q=Page%20Member&role=member&page=99");
+        var filtered = await client.GetStringAsync("/organization?tab=members&q=page-member&role=member&page=99");
         await Assert.That(TableRows(filtered, "team-members")).IsEqualTo(10);
         var filteredMembers = Regex.Match(filtered, "id=\"team-members\".*?<tbody>(.*?)</tbody>", RegexOptions.Singleline).Groups[1].Value;
         await Assert.That(filteredMembers.Contains(AccountsAuditScenario.OwnerId, StringComparison.Ordinal)).IsFalse();
@@ -145,6 +145,9 @@ public sealed class AccountsMembersSettingsAuditJourneyTests(AccountsAuditScenar
     private static string InputValue(string html, string name) => WebUtility.HtmlDecode(
         Regex.Match(html, "<input[^>]+name=\"" + name + "\"[^>]+value=\"([^\"]*)\"").Groups[1].Value);
 
-    private static int TableRows(string html, string section) => Regex.Matches(
-        Regex.Match(html, "id=\"" + section + "\".*?<tbody>(.*?)</tbody>", RegexOptions.Singleline).Groups[1].Value, "<tr>").Count;
+    private static int TableRows(string html, string section)
+    {
+        var content = Regex.Match(html, "id=\"" + section + "\"(.*?)</section>", RegexOptions.Singleline).Groups[1].Value;
+        return Regex.Matches(Regex.Match(content, "<tbody>(.*?)</tbody>", RegexOptions.Singleline).Groups[1].Value, "<tr>").Count;
+    }
 }

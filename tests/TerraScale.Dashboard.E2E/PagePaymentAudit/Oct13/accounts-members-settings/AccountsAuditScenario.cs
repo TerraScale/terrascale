@@ -76,7 +76,7 @@ public sealed class AccountsAuditScenario : IAsyncInitializer, IAsyncDisposable
         for (var index = 0; index < 10; index++)
         {
             var id = "01J" + new string('0', 20) + (200 + index).ToString("D3");
-            org.Members[id] = new() { UserId = id, Name = "Page Member " + index.ToString("D2"), Email = id + "@example.test", Role = "member" };
+            org.Members[id] = new() { UserId = id, Name = "Page Member " + index.ToString("D2"), Email = "page-member-" + index.ToString("D2") + "@example.test", Role = "member" };
         }
         for (var index = 0; index < 12; index++)
         {
