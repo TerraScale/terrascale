@@ -324,6 +324,43 @@ public sealed class CustomerBackupListingBoundaryTests
         await Assert.That(await LatestAsync(api.Client, database.Path, cancellationToken)).IsEqualTo(snapshotAt);
     }
 
+    [Test]
+    public async Task A_window_read_from_the_bucket_falls_back_past_an_unreadable_newest_segment(CancellationToken cancellationToken)
+    {
+        var s3 = new FakeS3();
+        var time = Clock();
+        await using var api = await StartAsync(s3, time);
+        var (database, text) = await SeedAsync(api, cancellationToken);
+        using var data = await api.CreateClientAsync(database.Organization, "documents:read", "documents:write");
+        await ShipAsync(api, time, cancellationToken);
+        var snapshotAt = time.GetUtcNow();
+        await PutAsync(data, database, "first", text, cancellationToken);
+        await ShipAsync(api, time, cancellationToken);
+        var first = time.GetUtcNow();
+        await PutAsync(data, database, "second", text, cancellationToken);
+        await ShipAsync(api, time, cancellationToken);
+        // The newest segment, which holds second and the newest read mark, fails authentication.
+        var newest = s3.CustomerObjects.Keys.Where(key => key.Contains("/wal/", StringComparison.Ordinal)).Order(StringComparer.Ordinal).Last();
+        var corrupted = s3.CustomerObjects[newest].ToArray();
+        corrupted[^20] ^= 0xff;
+        s3.SeedObject(customer: true, newest, corrupted);
+
+        // Like a missing segment: the window ends at the previous segment's read mark.
+        await Assert.That(await LatestAsync(api.Client, database.Path, cancellationToken)).IsEqualTo(first);
+        using (var plan = await api.Client.PostAsJsonAsync(ManagementApi.Uri(database.Path + "/point-in-time/plan"),
+            new { pointInTime = snapshotAt, destination = "customer" }, cancellationToken))
+        {
+            plan.EnsureSuccessStatusCode();
+            await Assert.That((await plan.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cancellationToken))
+                .GetProperty("window").GetProperty("latest").GetDateTimeOffset()).IsEqualTo(first);
+        }
+
+        var restored = await RestoreAsync(api.Client, database, database.Path, first, "previous-latest", cancellationToken);
+        await AssertDocumentAsync(data, restored, "first", text, cancellationToken);
+        using var second = await data.GetAsync(ManagementApi.Uri(ManagementApi.DocumentPath(restored, "people", "second")), cancellationToken);
+        await Assert.That(second.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+    }
+
     private static async Task<ManagementApi> StartAsync(FakeS3 s3, FakeTimeProvider time)
     {
         var api = await ManagementApi.StartAsync(s3.Configure, services =>

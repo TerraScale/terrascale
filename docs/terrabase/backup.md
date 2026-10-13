@@ -359,11 +359,12 @@ it (user decision, 2026-10-07). Production backup starts right after that cutove
 `GET /v1/projects/{project}/databases/{database}/point-in-time` returns the restore window: from the oldest snapshot,
 but no earlier than the plan's retention window (a bucket rule may keep older objects), to the newest time the backup
 proves (see [Proven history](#proven-history)): read from the bucket, the second at or before the newest read mark in
-the newest generation's last three segments (at most three object reads), or its newest snapshot's time. While this
-node ships the database to the platform bucket, the shipper gives `latest` by the same rule without reading the bucket:
-the later of its generation's newest stored snapshot's time and, for the newest stored segment ending in a read mark,
-the second at or before the mark (the mark's own time when that read ended in the mark's millisecond). A daily snapshot
-moves it only once stored, and a read stopped by its budget, which writes no mark, does not move it. It returns 404
+the newest generation's last three segments (at most three object reads; a segment that is gone, fails authentication
+or is cut short counts as holding none), or its newest snapshot's time. While this node ships the database to the
+platform bucket, the shipper gives `latest` by the same rule without reading the bucket: the later of its generation's
+newest stored snapshot's time and, for the newest stored segment ending in a read mark, the second at or before the mark
+(the mark's own time when that read ended in the mark's millisecond). A daily snapshot moves it only once stored, and a
+read stopped by its budget, which writes no mark, does not move it. It returns 404
 when no stored data falls within the plan's window, including when retained objects have all expired under the plan.
 `POST /v1/projects/{project}/databases/{database}/point-in-time/restore` with `{"pointInTime": "…", "name": "…"}`
 restores into a new database of the same project (`branchedFrom` set, like a backup restore). The restore:
