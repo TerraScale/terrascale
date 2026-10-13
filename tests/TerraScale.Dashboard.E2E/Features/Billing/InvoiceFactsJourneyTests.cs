@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net;
 using System.Text;
 using System.Text.Json;
@@ -29,6 +30,7 @@ public sealed class InvoiceFactsJourneyTests
         { BaseAddress = new(app.Urls.Single().Replace("0.0.0.0", "127.0.0.1", StringComparison.Ordinal)) };
         var suffix = Guid.NewGuid().ToString("N");
         await BillingPlanJourneyTests.SignUpPaidAsync(client, "invoice-" + suffix + "@example.test", "E2E-invoice-" + suffix, suffix);
+        await Assert.That(wire.ReturnHosts).IsEquivalentTo(new[] { "dash.terrascale.tech", "dash.terrascale.tech" });
         using var response = await client.GetAsync("/organization?tab=billing");
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
         var html = await response.Content.ReadAsStringAsync();
@@ -43,21 +45,35 @@ public sealed class InvoiceFactsJourneyTests
     {
         private int calls;
         public int Calls => Volatile.Read(ref calls);
+        public ConcurrentQueue<string> ReturnHosts { get; } = new();
         public HttpClient CreateClient(string name) => new(this, false);
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
+            if (request.RequestUri is { Host: "api.stripe.com", AbsolutePath: "/v1/checkout/sessions" } && request.Method == HttpMethod.Post)
+            {
+                var form = QueryHelpers.ParseQuery(await request.Content!.ReadAsStringAsync(cancellationToken));
+                foreach (var field in new[] { "success_url", "cancel_url" }) ReturnHosts.Enqueue(new Uri(form[field].ToString()).Host);
+            }
             if (request.RequestUri is not { Host: "api.stripe.com", AbsolutePath: "/v1/invoices" } uri || request.Method != HttpMethod.Get)
-                return original.CreateClient("platform").SendAsync(request, cancellationToken);
+            {
+                using var client = original.CreateClient("platform");
+                return await client.SendAsync(request, cancellationToken);
+            }
             var customer = QueryHelpers.ParseQuery(uri.Query)["customer"].ToString();
             if (customer.Length == 0) throw new InvalidOperationException("Invoice request lost customer scope.");
             Interlocked.Increment(ref calls);
             var now = DateTimeOffset.UtcNow;
-            var body = JsonSerializer.Serialize(new { @object = "list", has_more = false, data = new[] {
+            var body = JsonSerializer.Serialize(new
+            {
+                @object = "list",
+                has_more = false,
+                data = new[] {
                 new { id = "in_synthetic", @object = "invoice", customer, number = "SYNTHETIC-1", status = "open", currency,
                     amount_due = amount, amount_paid = amount - remaining, amount_remaining = remaining,
                     created = now.AddDays(-1).ToUnixTimeSeconds(), period_start = now.AddDays(-10).ToUnixTimeSeconds(), period_end = now.AddDays(20).ToUnixTimeSeconds() }
-            }});
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body, Encoding.UTF8, "application/json") });
+            }
+            });
+            return new(HttpStatusCode.OK) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
         }
     }
 }
