@@ -4,6 +4,7 @@ TerraBase targets a 20-second shutdown. `src/TerraBase/fly.toml` sends SIGTERM a
 SIGKILL. These are code constants, not operator settings. CI deploys that file through `scripts/fly/deploy.sh`.
 
 1. `ApplicationStopping` makes readiness fail and rejects new work, including requests on existing connections.
+   Health probes retain their normal JSON responses; rejected API work receives the standard 503 error body.
    Kestrel stops its listeners first. SSE and established gRPC streams observe application stopping; any connection
    still alive after two seconds is aborted, including a peer that never finishes its initial hello frame.
 2. The host stops hosted services in reverse registration order, within an eight-second cooperative deadline.

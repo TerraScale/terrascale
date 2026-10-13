@@ -1,5 +1,5 @@
 import concurrent.futures, json, os, pathlib, signal, socket, subprocess, threading, time, uuid
-root=pathlib.Path.cwd(); case=root/'artifacts/f8'/os.environ.get('F8_LABEL','before'); case.mkdir(exist_ok=True)
+root=pathlib.Path.cwd(); case=root/'artifacts/f8'/os.environ.get('F8_LABEL','before'); case.mkdir(parents=True,exist_ok=True)
 def port():
     with socket.socket() as s: s.bind(('127.0.0.1',0)); return s.getsockname()[1]
 def uid(): return '01'+uuid.uuid4().hex[:24].upper().replace('I','A').replace('L','B').replace('O','C').replace('U','D')

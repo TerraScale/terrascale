@@ -21,6 +21,31 @@ namespace TerraBase.Fast.Platform;
 public sealed class BoundedShutdownTests
 {
     [Test]
+    public async Task Shutdown_rejects_new_work_while_health_probes_keep_their_response()
+    {
+        var token = TestContext.Current!.Execution.CancellationToken;
+        var held = new HeldShutdown();
+        await using var server = await TerraBaseTestServer.StartAsync(services: services => services.AddHostedService(_ => held));
+        using var healthy = await server.Client.GetAsync(new Uri("/healthz", UriKind.Relative), token);
+        await Assert.That(healthy.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        server.Services.GetRequiredService<IHostApplicationLifetime>().StopApplication();
+        await held.Stopping.Task.WaitAsync(token);
+        try
+        {
+            using var refused = await server.Client.GetAsync(new Uri("/v1/databases", UriKind.Relative), token);
+            await Assert.That(refused.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
+            using var probe = await server.Client.GetAsync(new Uri("/healthz", UriKind.Relative), token);
+            await Assert.That(probe.StatusCode).IsEqualTo(HttpStatusCode.OK);
+            using var body = JsonDocument.Parse(await probe.Content.ReadAsStringAsync(token));
+            await Assert.That(body.RootElement.GetProperty("status").GetString()).IsEqualTo("ok");
+        }
+        finally
+        {
+            held.Release.TrySetResult();
+        }
+    }
+
+    [Test]
     public async Task A_peer_that_never_sends_hello_cannot_consume_the_hosted_service_budget()
     {
         var token = TestContext.Current!.Execution.CancellationToken;
@@ -190,6 +215,20 @@ public sealed class BoundedShutdownTests
         }
 
         throw new EndOfStreamException("changes stream ended before its event");
+    }
+
+    private sealed class HeldShutdown : IHostedService
+    {
+        public TaskCompletionSource Stopping { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task StartAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+        public async Task StopAsync(CancellationToken cancellationToken)
+        {
+            Stopping.TrySetResult();
+            await Release.Task.WaitAsync(cancellationToken);
+        }
     }
 
     private sealed class HandshakeProbe : Interceptor

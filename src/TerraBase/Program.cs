@@ -123,17 +123,6 @@ try
     }
 
     var lifetime = app.Services.GetRequiredService<IHostApplicationLifetime>();
-    // Refuse new work on existing connections as soon as SIGTERM arrives; Kestrel closes the listeners first.
-    app.Use((context, next) =>
-    {
-        if (lifetime.ApplicationStopping.IsCancellationRequested)
-        {
-            context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
-            return Task.CompletedTask;
-        }
-
-        return next(context);
-    });
     // Forwarded requests run through everything after it. Error bodies first, so they also cover the listener check's 404.
     app.UseTerraBaseForwardedRequests();
     app.UseTerraBasePressure();
@@ -141,6 +130,18 @@ try
     app.UseTerraBaseBadRequests();
     app.UseTerraBaseLegacyRoutes();
     app.UseRouting();
+    // Refuse new work on existing connections while preserving the probes' shutdown responses.
+    app.Use((context, next) =>
+    {
+        if (lifetime.ApplicationStopping.IsCancellationRequested
+            && !ReferenceEquals(context.GetEndpoint()?.Metadata.GetMetadata<ListenerMetadata>(), ListenerMetadata.Probe))
+        {
+            context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+            return Task.CompletedTask;
+        }
+
+        return next(context);
+    });
     app.UseTerraBaseListeners();
     app.UseTerraBaseQosMemory();
     app.UseTerraBaseQueryShapeAdmission();
