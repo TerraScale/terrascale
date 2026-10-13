@@ -9,7 +9,8 @@ public sealed partial class DatabaseService(AccountService accounts, IDatabaseBa
 {
     public static DatabaseScope Scope(AccountContext context) => new(context.UserId, context.Session.AccessToken,
         context.Organization?.Id ?? throw new AccountAccessException("Select an organization.", 404), context.Organization.Name,
-        context.Project?.Id ?? throw new AccountAccessException("Select a project.", 404), context.Project.Name) { Session = context.Session };
+        context.Project?.Id ?? throw new AccountAccessException("Select a project.", 404), context.Project.Name)
+    { Session = context.Session };
 
     public static DatabaseRecord Database(AccountContext context, string id) =>
         context.Project?.Databases.GetValueOrDefault(id) is { } database && database.ProjectId == context.Project.Id

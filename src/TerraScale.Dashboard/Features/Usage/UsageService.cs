@@ -31,7 +31,9 @@ public sealed record UsagePage(ShellModel Shell, UsageSelection Selection, strin
     public int ActiveDatabases => Selection.Context.Project?.Databases.Count ?? 0;
     public int RegionCount => Selection.Context.Project?.Databases.Values.Select(database => database.Region).Where(region => region.Length > 0).Distinct().Count() ?? 0;
     public string HistoryDescription => "The selected " + (Selection.DatabaseId.Length > 0 ? "database" : "project") + ", " + char.ToLowerInvariant(Selection.RangeLabel[0]) + Selection.RangeLabel[1..];
-    public string ProjectHref(string projectId, string tab = "overview") => "/usage?tab=" + tab + "&project=" + Uri.EscapeDataString(projectId);
+    public string ProjectHref(string projectId, string tab = "overview") => "/usage?tab=" + tab + "&project=" + Uri.EscapeDataString(projectId) +
+        "&range=" + Uri.EscapeDataString(Selection.Range) +
+        (projectId == Selection.Context.Project?.Id && Selection.DatabaseId.Length > 0 ? "&database=" + Uri.EscapeDataString(Selection.DatabaseId) : "");
 }
 
 public sealed class UsageService(IUsageMeasurements measurements, SpendingService spending, IUsageReplication replication, IUsageStorage storage, TimeProvider time)

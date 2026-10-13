@@ -26,7 +26,10 @@ public sealed class FreeBillingJourneyTests
         var csrf = await HttpJourney.CsrfAsync(client, "/organization?tab=billing");
         using var checkout = await HttpJourney.PostFormAsync(client, "/billing/checkout", new()
         {
-            ["_csrf"] = csrf, ["plan"] = "free", ["interval"] = "monthly", ["return"] = "/organization?tab=billing"
+            ["_csrf"] = csrf,
+            ["plan"] = "free",
+            ["interval"] = "monthly",
+            ["return"] = "/organization?tab=billing"
         });
         await Assert.That(checkout.StatusCode).IsEqualTo(HttpStatusCode.UnprocessableEntity);
         await Assert.That(vendor.Calls).IsEqualTo(0);

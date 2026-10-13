@@ -25,6 +25,7 @@ public sealed class InvoiceFactsJourneyTests
             wire = new(original, currency, amount, remaining);
             builder.Services.Replace(ServiceDescriptor.Singleton<IHttpClientFactory>(wire));
         });
+        using var wireLifetime = wire;
         await app.StartAsync();
         using var client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, CookieContainer = new() })
         { BaseAddress = new(app.Urls.Single().Replace("0.0.0.0", "127.0.0.1", StringComparison.Ordinal)) };
@@ -52,7 +53,6 @@ public sealed class InvoiceFactsJourneyTests
         await Assert.That(html).Contains(balanceLabel);
         await Assert.That(wire.Calls).IsGreaterThan(0);
         await app.StopAsync();
-        wire.Dispose();
     }
 
     private sealed class InvoiceWire(IHttpClientFactory original, string currency, long amount, long remaining) : HttpMessageHandler, IHttpClientFactory
@@ -90,8 +90,20 @@ public sealed class InvoiceFactsJourneyTests
             }
             if (request.RequestUri is not { Host: "api.stripe.com", AbsolutePath: "/v1/invoices" } uri || request.Method != HttpMethod.Get)
             {
+                // A second HttpClient requires a fresh message; the SDK owns the original.
+                using var forwarded = new HttpRequestMessage(request.Method, request.RequestUri)
+                { Version = request.Version, VersionPolicy = request.VersionPolicy };
+                foreach (var header in request.Headers) forwarded.Headers.TryAddWithoutValidation(header.Key, header.Value);
+                foreach (var option in request.Options) forwarded.Options.Set(new HttpRequestOptionsKey<object?>(option.Key), option.Value);
+                if (request.Content is { } content)
+                {
+                    forwarded.Content = new ByteArrayContent(await content.ReadAsByteArrayAsync(cancellationToken));
+                    foreach (var header in content.Headers) forwarded.Content.Headers.TryAddWithoutValidation(header.Key, header.Value);
+                }
                 using var client = original.CreateClient("platform");
-                return await client.SendAsync(request, cancellationToken);
+                var response = await client.SendAsync(forwarded, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+                response.RequestMessage = request;
+                return response;
             }
             var customer = QueryHelpers.ParseQuery(uri.Query)["customer"].ToString();
             if (customer.Length == 0) throw new InvalidOperationException("Invoice request lost customer scope.");

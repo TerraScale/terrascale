@@ -50,7 +50,8 @@ public sealed class UsageBackend(IHttpClientFactory factory, TimeProvider time, 
                 var token = await tokens.GetAsync(context.Session, context.Organization.Id, project.Id, ["databases:read"], deadline.Token);
                 var sdk = new TerraBaseDocumentsClient(client, new TerraBaseDocumentsClientOptions
                 {
-                    BaseAddress = origin, AccessTokenProvider = _ => ValueTask.FromResult(token)
+                    BaseAddress = origin,
+                    AccessTokenProvider = _ => ValueTask.FromResult(token)
                 });
                 if (databaseId.Length > 0)
                 {
