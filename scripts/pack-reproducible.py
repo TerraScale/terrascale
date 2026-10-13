@@ -31,6 +31,7 @@ def main(destination):
         raise SystemExit("Choose an artifact output directory outside the source worktree.")
     revision = run("git", "rev-parse", "HEAD", capture=True).decode().strip()
     tree = run("git", "rev-parse", "HEAD^{tree}", capture=True).decode().strip()
+    timestamp = run("git", "show", "-s", "--format=%ct", revision, capture=True).decode().strip()
     archive = run("git", "archive", "--format=tar", revision, capture=True)
     version = ET.parse(ROOT / "src/TerraScale.DotNet/TerraScale.DotNet.csproj").findtext(".//Version")
     name = f"TerraScale.DotNet.{version}.nupkg"
@@ -42,7 +43,7 @@ def main(destination):
             source.mkdir()
             run("tar", "-xf", "-", "-C", str(source), data=archive)
             env = dict(os.environ, NUGET_PACKAGES=str(temporary / f"nuget-{index}"),
-                       NUGET_HTTP_CACHE_PATH=str(temporary / f"http-{index}"))
+                       NUGET_HTTP_CACHE_PATH=str(temporary / f"http-{index}"), SOURCE_DATE_EPOCH=timestamp)
             project = "src/TerraScale.DotNet/TerraScale.DotNet.csproj"
             run("dotnet", "restore", project, "--locked-mode", cwd=source, env=env)
             run("dotnet", "pack", project, "--configuration", "Release", "--no-restore",
@@ -91,6 +92,7 @@ def main(destination):
             "package": "TerraScale.DotNet", "version": version,
             "repository": "https://github.com/TerraScale/ts-dotnet", "sourceRevision": revision,
             "sourceTree": tree, "sourceArchiveSha256": digest(archive), "file": name,
+            "sourceDateEpoch": int(timestamp),
             "sha256": digest(first), "assemblySha256ByFramework": assemblies,
             "sdk": json.loads((ROOT / "global.json").read_text())["sdk"]["version"],
             "qualification": "Two clean locked builds produced identical package bytes; installed-package HTTP fake consumer passed on net10.0 and net11.0. Locally built, not published or live-service qualified."
