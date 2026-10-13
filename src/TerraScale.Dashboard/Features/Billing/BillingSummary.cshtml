@@ -4,12 +4,13 @@
 @{
     var org = Model.Shell.Context.Organization!;
     var binding = Model.Binding;
-    var plan = PlanCatalog.For(org) ?? PlanCatalog.For("free");
+    var plan = PlanCatalog.For(org);
     var interval = HttpContext!.Request.Query["interval"] == "annual" ? "annual" : "monthly";
     var owner = Model.CanManage;
     var subscribed = binding?.SubscriptionId is { Length: > 0 } && binding.Status is not ("canceled" or "incomplete_expired");
     var awaiting = org.BillingStatus == "billing_required" && !subscribed;
-    var planName = awaiting ? "No plan" : plan.Name;
+    var free = plan?.Key == "free" && !subscribed;
+    var planName = awaiting || plan is null ? "No plan" : plan.Name;
     var status = org.BillingStatus == "billing_required" ? "Payment required" : binding?.Status == "trialing" ? "Trialing" : org.BillingStatus == "active" ? "Active" : org.BillingStatus;
     var effectiveInterval = binding?.EffectiveInterval is { Length: > 0 } currentInterval ? currentInterval : binding?.Interval;
     var statusTone = binding?.Status == "trialing" ? "sky" : awaiting ? "amber" : org.BillingStatus is "" or "active" ? "emerald" : "slate";
@@ -19,7 +20,7 @@
 <section class="ts-billing ts-stack">
     <header class="ts-row-header"><h2 class="ts-card-title">Plans and billing</h2></header>
     @if (Model.Error.Length > 0) { <div class="ts-alert ts-alert-danger" role="alert"><p class="ts-alert-body">@Model.Error</p></div> }
-    <section class="ts-card" id="billing-summary" aria-labelledby="billing-summary-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="billing-summary-title">Current plan</h2><p class="ts-card-description">@(Model.InternalBill is not null ? "Internal reporting only. No Stripe charges; spending caps never suspend services." : awaiting ? org.Name + " has no active plan." : org.Name + " is billed on this plan.")</p></div></header><div class="ts-card-body">
+    <section class="ts-card" id="billing-summary" aria-labelledby="billing-summary-title"><header class="ts-card-head"><div class="ts-card-heading"><h2 class="ts-card-title" id="billing-summary-title">Current plan</h2><p class="ts-card-description">@(Model.InternalBill is not null ? "Internal reporting only. No Stripe charges; spending caps never suspend services." : awaiting || plan is null ? org.Name + " has no active plan." : free ? "Free plan. No subscription or payment method is required; no Stripe charges." : org.Name + " is billed on this plan.")</p></div></header><div class="ts-card-body">
         <div class="ts-billing-current"><div class="ts-billing-plan"><span class="ts-billing-plan-icon" aria-hidden="true">@Icons.Render("CreditCard", 20)</span><span class="ts-billing-plan-name">@planName</span><span class="ts-badge ts-badge-tone" data-tone="@statusTone"><span class="ts-dot" aria-hidden="true"></span>@status</span></div><dl class="ts-billing-facts"><div><dt>Billing interval</dt><dd>@(effectiveInterval is "monthly" ? "Monthly" : effectiveInterval is "annual" ? "Annual" : "Not applicable")</dd></div><div><dt>Renewal</dt><dd>@(binding?.RenewalAt?.UtcDateTime.ToString("MMMM d, yyyy", CultureInfo.InvariantCulture) ?? "Not scheduled")</dd></div><div><dt>Payment method</dt><dd>@(Model.PaymentMethodUnavailable ? "Not reported" : Model.PaymentMethod?.Label ?? (org.PaymentMethodValidated ? "On file" : "Not set"))</dd></div></dl></div>
         @if (Model.PaymentMethodUnavailable) { <div class="ts-alert ts-alert-warning" role="status"><p class="ts-alert-body">Payment method could not be loaded. Reload billing to retry.</p></div> }
         @if (awaiting) { <div class="ts-alert ts-alert-warning" role="status"><p class="ts-alert-title">Choose a plan</p><p class="ts-alert-body">Projects and databases can’t be created in @org.Name until a plan is active.</p></div> }
@@ -31,7 +32,7 @@
         {
             var current = candidate.Id == org.PlanId && effectiveInterval == interval;
             var cents = interval == "annual" ? (candidate.AnnualPriceCents + 6) / 12 : candidate.PriceCents;
-            var action = current ? "Current plan" : awaiting ? "Choose " + candidate.Name : candidate.PriceCents > plan.PriceCents ? "Upgrade to " + candidate.Name : "Switch to " + candidate.Name;
+            var action = current ? "Current plan" : awaiting ? "Choose " + candidate.Name : candidate.PriceCents > (plan?.PriceCents ?? 0) ? "Upgrade to " + candidate.Name : "Switch to " + candidate.Name;
             <article class="ts-plan @(current ? "ts-plan-current" : "")" data-tone="@(new[] { "cyan", "violet", "amber" }[index % 3])" aria-labelledby="plan-@candidate.Key"><header class="ts-plan-head"><h3 id="plan-@candidate.Key" class="ts-plan-name">@candidate.Name</h3>@if (current) { <span class="ts-badge ts-badge-tone" data-tone="emerald"><span class="ts-dot" aria-hidden="true"></span>Current</span> }</header><div><p class="ts-plan-price">@Money(cents)<small>/ month</small></p><p class="ts-meta">@(interval == "annual" ? Money(candidate.AnnualPriceCents) + " billed annually" : "Billed monthly")</p></div><ul class="ts-plan-features">@foreach (var feature in new[] { candidate.StorageAllowance, candidate.ReadsAllowance, candidate.WritesAllowance, candidate.DatabaseAllowance, candidate.MemberAllowance }.Where(value => value != "Limit not published")) { <li>@Icons.Render("Check", 15)<span>@feature</span></li> }@if (!subscribed && binding?.TrialUsed != true && candidate.TrialDays > 0) { <li>@Icons.Render("Check", 15)<span>@candidate.TrialDays-day free trial</span></li> }</ul>
                 @if (owner && subscribed) { <form method="get" action="/organization"><input type="hidden" name="tab" value="billing" /><input type="hidden" name="review" value="1" /><input type="hidden" name="plan" value="@candidate.Key" /><input type="hidden" name="interval" value="@interval" /><button class="ts-btn ts-btn-block @(current ? "ts-btn-secondary" : "ts-btn-primary")" type="submit" disabled="@current">@action</button></form> }
                 else if (owner) { <form method="post" action="/billing/checkout"><input type="hidden" name="_csrf" value="@Model.Shell.CsrfToken" /><input type="hidden" name="plan" value="@candidate.Key" /><input type="hidden" name="interval" value="@interval" /><input type="hidden" name="return" value="/organization?tab=billing" /><button class="ts-btn ts-btn-block ts-btn-primary" type="submit">@action</button></form> }
