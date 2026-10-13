@@ -289,10 +289,10 @@ public sealed class TsAuthPlatformJourneyTests
         await Assert.That(platform.Producer.Failures).IsEmpty();
     }
 
-    // A project identity the dashboard cannot confirm refuses the resend before anything changes at ts-auth:
-    // the old invitation stays pending and no organization-scoped invitation is created in its place.
+    // A project identity or role the dashboard cannot confirm refuses the resend before anything changes at
+    // ts-auth: the old invitation stays pending and nothing is created from defaults in its place.
     [Test]
-    public async Task ResendRefusesAProjectInvitationWithoutAKnownProject()
+    public async Task ResendRefusesAProjectInvitationWithoutAKnownProjectOrRole()
     {
         await using var platform = await PlatformScenario.StartAsync();
         var owner = platform.Principal("project-identity-owner");
@@ -302,11 +302,17 @@ public sealed class TsAuthPlatformJourneyTests
         var business = platform.Producer.AddOrganization("Project identity", owner.Subject, owner.Email);
         var csrf = await SwitchAsync(client, business);
         var deleted = new TerraScaleIdGenerator().NewId();
-        foreach (var (email, project) in new[] { ("empty@example.test", ""), ("malformed@example.test", "../projects/other"), ("deleted@example.test", deleted) })
+        var project = platform.Producer.AddProject(business, "Known project", owner.Subject);
+        foreach (var (email, scope, role, status) in new[]
         {
-            var invitation = platform.Producer.InvitationId(business, platform.Producer.AddInvitation(business, email, "admin", owner.Subject, project));
+            ("empty@example.test", "", "admin", HttpStatusCode.Conflict), ("malformed@example.test", "../projects/other", "admin", HttpStatusCode.Conflict),
+            ("deleted@example.test", deleted, "admin", HttpStatusCode.Conflict), ("blank-role@example.test", project, "", HttpStatusCode.UnprocessableEntity),
+            ("unknown-role@example.test", project, "superadmin", HttpStatusCode.UnprocessableEntity),
+        })
+        {
+            var invitation = platform.Producer.InvitationId(business, platform.Producer.AddInvitation(business, email, role, owner.Subject, scope));
             using var resent = await HttpJourney.PostFormAsync(client, "/api/v1/access/invitations/" + invitation + "/resend?tab=invitations", new() { ["_csrf"] = csrf });
-            await Assert.That(resent.StatusCode).IsEqualTo(HttpStatusCode.Conflict).Because(email);
+            await Assert.That(resent.StatusCode).IsEqualTo(status).Because(email);
             await Assert.That(platform.Producer.InvitationStatus(business, invitation)).IsEqualTo("pending").Because(email);
             await Assert.That(platform.Producer.Count("DELETE", "/v1/terrascale/organizations/" + business + "/invitations/" + invitation, owner.Subject)).IsEqualTo(0).Because(email);
         }
