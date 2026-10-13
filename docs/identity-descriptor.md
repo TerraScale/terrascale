@@ -1,129 +1,82 @@
-# Dashboard identity descriptor and delivery
+# Dashboard secrets and state identity
 
-This is the consumer contract the application already implements
-(`src/TerraScale.Dashboard/Platform/Persistence/DashboardIdentity.cs`). It
-lists field names, formats and owners only. It contains no credential values,
-and none may be added here, to an issue, a chat or a command line.
+This is the consumer contract the application implements
+(`src/TerraScale.Dashboard/Platform/Persistence/DashboardIdentity.cs` and
+`TerraBaseDashboardState.cs`). It lists names, formats and owners only. It
+contains no credential values, and none may be added here, to an issue, a chat
+or a command line.
 
-Status (2026-10-12): nothing is delivered. The Fly app `ts-dashboard` has no
-secrets and no machines, and the image exits at startup without the file.
+Status (2026-10-13): nothing is delivered. The Fly app `ts-dashboard` has no
+secrets; the real application refuses to start until they exist.
 
-## File
+## Fly secrets
 
-- Path: `/run/secrets/terrascale/dashboard.json`. The path is fixed in code;
-  there is no environment variable or fallback.
-- JSON, at most 64 KiB, readable by the image's non-root user (uid 1654).
-- Read at startup and again on each use, so a replaced file takes effect
-  without a restart. Startup and readiness fail closed when it is missing or
-  invalid.
+Fly secrets are the only secret store. `fly secrets set` delivers them to the
+machine as environment variables; there is no file, default or fallback. The
+app reads them at startup (startup fails closed when one is missing or
+invalid) and on each use, and never logs them.
 
-## Fields
-
-| Field | Format checked by the app | Used for | Issued by |
+| Environment variable | Format checked by the app | Used for | Issued by |
 | --- | --- | --- | --- |
-| `StateProjectId` | TerraScale ID | Project of the state database `dashboard`; the app creates it and its 20 collections at startup | TerraBase (project owned by the dashboard service) |
-| `StateApiKey` | non-empty | Documents API key for that project: database PUT, collection create/read, document get/put/delete | TerraBase |
-| `AuthInstanceSlug` | non-empty | ts-auth tenant: issuer and endpoint paths `/{slug}/...`. Must be `terrascale`: other slugs answer 404 or lack the dashboard client, so sign-in fails | fixed value |
-| `AuthClientId` | non-empty | ts-auth OAuth client of the dashboard (see below) | ts-auth |
-| `AuthClientSecret` | non-empty | `client_secret_basic` for that client | ts-auth |
-| `AuthManagementKey` | starts with `sk_` | ts-auth management API key for the `terrascale` tenant; the app uses it to update a signed-in user's password and revoke that user's sessions | ts-auth |
-| `ManagementCredential` | non-empty | Required by validation; no call uses it today | none yet (owner decision) |
-| `SessionEncryptionKey` | base64 of exactly 32 bytes | Encrypts browser sessions, refresh credentials, pending OIDC and sign-up flows, and stored per-project document credentials. Replacing it makes all of those unreadable | generated once, randomly |
-| `Stripe.SecretKey` | starts with `sk_` | Stripe API (Stripe.net) | Stripe (vendor) |
-| `Stripe.WebhookSecret` | starts with `whsec_` | Verifies `POST /api/v1/billing/stripe/webhook` (also `/api/auth/stripe/webhook`) on `https://dashboard.terrascale.tech` | Stripe (vendor) |
+| `TS_AUTH_DASHBOARD_CLIENT_SECRET` | 32-512 characters, no whitespace, control character or `;` | `client_secret_basic` for the ts-auth dashboard client. ts-auth reads the same-named secret on its own app to seed that client, so both apps hold the same value | generated once |
+| `TS_DASHBOARD_SESSION_ENCRYPTION_KEY` | base64 of exactly 32 bytes | AES-GCM for browser sessions, refresh credentials and pending OIDC and sign-up flows. Replacing it makes all of those unreadable | generated once |
+| `STRIPE_SECRET_KEY` | starts with `sk_` | Stripe API (Stripe.net) | Stripe (vendor) |
+| `STRIPE_WEBHOOK_SECRET` | starts with `whsec_` | Verifies the Stripe webhook routes | Stripe (vendor) |
 
-## ts-auth client registration (nonsecret values)
+Fixed in code, not delivered: the ts-auth tenant `terrascale`, its issuer
+`https://auth.terrascale.tech/terrascale` and the dashboard client id
+`01M4EQ2FRJ8S8B29E8TQVWNW4J` (terrascale `OidcServer.cs:38`). There is no
+state project, state API key, management credential or ts-auth management key:
+ts-auth serves no `/v1/{slug}/users` management routes, and a signed-in
+password change uses its password-reset code flow.
 
-Checked against ts-auth source at terrascale `6bb896bb` (current `main`,
-includes #96). The deployed build is `55979ea3`, an ancestor with the same
-issuer and paths (other differences are listed below).
+## ts-auth client registration (nonsecret values, ts-auth's own secrets)
 
-- Issuer: `https://auth.terrascale.tech/terrascale`, with no trailing slash.
-  Every endpoint sits under it: `/oauth/authorize`, `/oauth/token`,
-  `/oauth/userinfo`, `/oauth/revoke`, `/oauth/logout`, and
-  `/.well-known/jwks.json`.
-- The dashboard client is seeded by ts-auth at every start from its own
-  environment, not through an API. Its client_id is fixed in ts-auth code:
-  `01M4EQ2FRJ8S8B29E8TQVWNW4J`. ts-auth reads three settings:
-  - `TS_AUTH_DASHBOARD_CLIENT_SECRET`: 32-512 characters, no whitespace or `;`.
-    It must equal the dashboard's `AuthClientSecret`.
-  - `TS_AUTH_DASHBOARD_REDIRECT_URIS`: `;`-separated, matched exactly.
-  - `TS_AUTH_DASHBOARD_POST_LOGOUT_REDIRECT_URIS`: optional; an unregistered
-    URI gets 400.
-- Values the dashboard needs registered:
-  - Redirect URIs: `https://dashboard.terrascale.tech/login/callback`, plus
-    `https://ts-dashboard.fly.dev/login/callback` while DNS is missing (the
-    app builds the URI from the request host).
-  - Post-logout URIs: `https://dashboard.terrascale.tech/login`, plus
-    `https://ts-dashboard.fly.dev/login` while DNS is missing.
-- Grants the client holds: `authorization_code` with PKCE `S256`,
-  `refresh_token`, `urn:terrascale:params:oauth:grant-type:password`,
-  `urn:terrascale:params:oauth:grant-type:email-code` (with `email`, `password`
-  or `code`, and `ip_address`), and `urn:ietf:params:oauth:grant-type:token-exchange`
-  (`organization` required, `project`, scope `databases:read`).
-- Scopes: `openid email profile offline_access`.
-- Headless `/terrascale/headless/v1/{sign-up, email-code/start,
-  password-reset/start, password-reset/complete}` use HTTP Basic and JSON.
-- The CLI device flow (`urn:ietf:params:oauth:grant-type:device_code`) is
-  served by the dashboard itself, not by ts-auth.
+ts-auth seeds the dashboard client at every start from its environment
+(terrascale `AuthOptions.cs:76,208,309-333`):
 
-Settled against ts-auth source at terrascale `e30ffdc2` (fail-first tests
-use these producer shapes):
+- `TS_AUTH_DASHBOARD_CLIENT_SECRET`: the value above.
+- `TS_AUTH_DASHBOARD_REDIRECT_URIS`: `;`-separated, matched exactly. The
+  dashboard needs `https://dash.terrascale.tech/login/callback` (the app builds
+  the URI from the request host).
+- `TS_AUTH_DASHBOARD_POST_LOGOUT_REDIRECT_URIS`: `https://dash.terrascale.tech/login`.
+
+Grants the client holds: `authorization_code` with PKCE `S256`,
+`refresh_token`, `urn:terrascale:params:oauth:grant-type:password`,
+`urn:terrascale:params:oauth:grant-type:email-code` and
+`urn:ietf:params:oauth:grant-type:token-exchange`. The dashboard requests the
+exact project scopes an action needs (`databases:read|write`,
+`documents:read|write`); ts-auth grants them only within the user's role.
+Headless `/terrascale/headless/v1/{sign-up, email-code/start,
+password-reset/start, password-reset/complete}` use HTTP Basic and JSON.
+
+Settled against ts-auth source at terrascale `e30ffdc2`:
 
 1. ts-auth answers `prompt=login`, `consent` and `select_account` with
-   `login_required`, `consent_required` and `account_selection_required`
-   (`OidcEndpoints.cs`, `AuthorizeEndpoint`). The dashboard sends no `prompt`;
-   sign-out ends the ts-auth session through its end-session endpoint.
-   "Switch account" on an invitation signs out of the dashboard only, so a
-   live ts-auth session can sign the same account back in through single
-   sign-on; password and email-code sign-in are unaffected.
-2. Sign-in access tokens carry `aud = [issuer, https://api.terrascale.tech]`
-   (`OidcIssuer.SignInAudiences`). Organization and project tokens carry
-   `aud = https://api.terrascale.tech` in every region
-   (`AuthOptions.TerraBaseAudience`, `PlatformGrants.Identity`), `client_id`,
-   `org_id`, `project_id`, `scope`, and live at most 15 minutes. The
-   dashboard checks that audience; it no longer expects a regional origin.
+   `login_required`, `consent_required` and `account_selection_required`. The
+   dashboard sends no `prompt`; sign-out ends the ts-auth session through its
+   end-session endpoint.
+2. Sign-in access tokens carry `aud = [issuer, https://api.terrascale.tech]`.
+   Project tokens carry `aud = https://api.terrascale.tech` in every region,
+   `client_id`, `org_id`, `project_id`, `scope`, and live at most 15 minutes.
 3. The token-exchange response has no `scope` when the granted scopes equal
-   the requested ones (OpenIddict 7.7.1, `OpenIddictServerHandlers.cs`
-   lines 5670-5678). The dashboard reads the token's `scope` claim and
-   checks the response `scope` only when present.
-4. Every token request comes from the dashboard's own IP, which shares
-   ts-auth's per-peer token budget (1000/min by default).
-5. The deployed `55979ea3` predates #96 and `platform_role` in sign-in
-   access tokens. Platform administrators are not recognized until ts-auth
-   is redeployed from `6bb896bb` or later.
-6. Signed-in password change calls the ts-auth management API
-   (`PATCH /v1/terrascale/users/{id}` and revoke-all-sessions with
-   `AuthManagementKey`). ts-auth at `6bb896bb` serves no `/v1/{slug}/users`
-   routes, so live password change fails with a 503 page until ts-auth
-   serves them or the dashboard moves to the headless password reset.
+   the requested ones; the dashboard checks the token's `scope` claim.
+4. Organizations, projects, members, invitations, ownership transfer and audit
+   events are ts-auth's `/v1/terrascale` platform API, called with the user's
+   own sign-in token. ts-auth creates no Personal organization; the dashboard
+   creates one named "Personal" on first sign-in under a lease in its state.
 
-## Delivery path (proposal, needs approval)
+## State database
 
-ts-auth already receives its production secrets as Fly secrets (its
-zero-configuration contract). This repository's `AGENTS.md` requires OCI Vault
-to create and deliver every first-party secret with no hand copying. The path
-below therefore needs either Vault automation as the producer of the Fly
-secret, or an explicit owner exception to that rule. It uses no new service:
-
-1. One Fly secret on app `ts-dashboard`, proposed name `DASHBOARD_IDENTITY`,
-   holding the base64-encoded JSON above.
-2. A `fly.toml` entry that materializes it at the fixed path:
-
-   ```toml
-   [[files]]
-     guest_path = "/run/secrets/terrascale/dashboard.json"
-     secret_name = "DASHBOARD_IDENTITY"
-   ```
-
-   It is not committed yet: Fly would refuse to start a machine while the
-   secret is absent. On the first machine, check that uid 1654 can read the
-   file.
-
-The values exist only after ts-auth is ready: its first signing key, the
-`terrascale` client above and a management key. TerraBase must also be able to
-issue the dashboard's state project and API key. Producing and setting the
-secret happens outside this repository.
+The dashboard keeps its own state in the `platform-dashboard` database of the
+platform project `00000000000000000000000002`, which TerraBase seeds on every
+start (terrascale `PlatformDatabases.cs`). It reaches TerraBase's private
+listener with no credential: `http://gru.ts-terrabase.internal:8081` on Fly,
+`http://127.0.0.1:8081` only in Development off Fly; Production off Fly refuses
+to start. gru stays the single home until cross-region conditional writes are
+proven. Startup creates missing collections (`409 name_taken` counts as
+created) and never creates or replaces the database. The platform project has
+no customer members or keys; no customer token reaches this database.
 
 ## TerraBase origin and regions
 
