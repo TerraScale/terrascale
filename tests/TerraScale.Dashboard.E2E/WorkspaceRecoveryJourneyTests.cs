@@ -3,6 +3,8 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using TerraScale.Dashboard.Features.Auth;
+using TerraScale.Dashboard.Features.Accounts;
+using TerraScale.Dashboard.Platform.Persistence;
 using TUnit.Core;
 
 namespace TerraScale.Dashboard.E2E;
@@ -11,27 +13,29 @@ namespace TerraScale.Dashboard.E2E;
 public sealed class WorkspaceRecoveryJourneyTests(DashboardE2EFixture fixture)
 {
     [Test]
-    public async Task NativeProjectRetryReusesTheOfficialSdkResourceAfterAnInterruptedCanonicalWrite()
+    public async Task CanonicalProjectIdentitySurvivesInterruptedSettingsWithoutDuplicateCreationOrRevokedMutation()
     {
         Func<string, (string UserId, string Email)?> resolveAccessToken = null!;
-        var failurePath = "";
+        var failureProjectId = "";
         var failureOrganizationId = "";
         var failureOwnerId = "";
         var unavailableDelete = 0;
         var unavailableDeleteRequests = 0;
+        IDashboardState state = null!;
         await using var scenario = await DatabaseSdkScenario.StartAsync(fixture.Root,
-            builder => resolveAccessToken = ((TestAuth)builder.Services.Last(item => item.ServiceType == typeof(IAuthGateway)).ImplementationInstance!).ResolveAccessToken,
-            http =>
+            builder =>
             {
-                if (!HttpMethods.IsDelete(http.Request.Method) || http.Request.Path.Value != failurePath || Volatile.Read(ref unavailableDelete) == 0)
-                    return Task.FromResult<IResult?>(null);
-                var bearer = http.Request.Headers.Authorization.ToString();
-                var subject = bearer.StartsWith("Bearer ", StringComparison.Ordinal) ? resolveAccessToken(bearer[7..]) : null;
-                if (http.Request.Host.Host is not ("api.terrascale.tech" or "gru.api.terrascale.tech" or "sfo.api.terrascale.tech") || subject?.UserId != failureOwnerId ||
-                    http.Request.Headers["X-TerraBase-Organization-Id"] != failureOrganizationId || http.Request.Headers["X-TerraBase-User-Id"] != failureOwnerId)
-                    throw new InvalidOperationException("The delete dependency failure must target the exact admitted owner scope.");
-                Interlocked.Increment(ref unavailableDeleteRequests);
-                return Task.FromResult<IResult?>(Results.Json(new { error = new { code = "unavailable", message = "Test-only scoped delete dependency interruption" } }, statusCode: 503));
+                resolveAccessToken = ((TestAuth)builder.Services.Last(item => item.ServiceType == typeof(IAuthGateway)).ImplementationInstance!).ResolveAccessToken;
+                state = (IDashboardState)builder.Services.Last(item => item.ServiceType == typeof(IDashboardState)).ImplementationInstance!;
+                var workspace = (TestWorkspace)builder.Services.Last(item => item.ServiceType == typeof(TestWorkspace)).ImplementationInstance!;
+                workspace.ProjectDeleteFailure = (session, organization, project) =>
+                {
+                    if (project != failureProjectId || Volatile.Read(ref unavailableDelete) == 0) return null;
+                    if (resolveAccessToken(session.AccessToken)?.UserId != failureOwnerId || organization != failureOrganizationId)
+                        throw new InvalidOperationException("The ts-auth dependency failure requires the exact current actor and tenant.");
+                    Interlocked.Increment(ref unavailableDeleteRequests);
+                    return new HttpRequestException("Test-only ts-auth project deletion interruption.", null, HttpStatusCode.ServiceUnavailable);
+                };
             });
         using var owner = scenario.CreateClient();
         using var replica = scenario.CreateClient(replica: true);
@@ -63,7 +67,9 @@ public sealed class WorkspaceRecoveryJourneyTests(DashboardE2EFixture fixture)
             .Single(project => project.GetProperty("organizationId").GetString() == organizationId && project.GetProperty("name").GetString() == name);
         var remoteId = remoteProject.GetProperty("id").GetString()!;
         var interruptedContext = await ContextAsync(replica);
-        await Assert.That(Organization(interruptedContext, organizationId).GetProperty("projects").TryGetProperty(remoteId, out _)).IsFalse();
+        await Assert.That(Organization(interruptedContext, organizationId).GetProperty("projects").GetProperty(remoteId).GetProperty("name").GetString()).IsEqualTo(name);
+        await Assert.That((await state.GetAsync(AccountService.OrganizationsCollection, organizationId, default))!.Document.GetProperty("Projects").TryGetProperty(remoteId, out _)).IsFalse()
+            .Because("ts-auth identity remains visible while the interrupted dashboard settings write is absent.");
         var replicaCsrf = await HttpJourney.CsrfAsync(replica, "/organization?tab=projects");
         form["_csrf"] = replicaCsrf;
         await ControlAsync(producer, new { command = "role", value = "" });
@@ -75,9 +81,11 @@ public sealed class WorkspaceRecoveryJourneyTests(DashboardE2EFixture fixture)
         await ControlAsync(producer, new { command = "role", value = "owner" });
         using (var retried = await HttpJourney.PostFormAsync(replica, "/api/v1/dashboard/organization/projects", form))
         {
-            await Assert.That(retried.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
-            await Assert.That(retried.Headers.Location?.OriginalString).IsEqualTo("/organization?tab=projects");
+            await Assert.That(retried.StatusCode).IsEqualTo(HttpStatusCode.Conflict)
+                .Because("The canonical name already exists; replay never creates or claims a second project.");
         }
+        using (var completedSettings = await HttpJourney.PostFormAsync(replica, "/api/v1/dashboard/organization/projects/" + remoteId + "/rename", form))
+            await Assert.That(completedSettings.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
         var saved = await ContextAsync(owner);
         var project = Organization(saved, organizationId).GetProperty("projects").GetProperty(remoteId);
         await Assert.That(project.GetProperty("name").GetString()).IsEqualTo(name);
@@ -86,7 +94,8 @@ public sealed class WorkspaceRecoveryJourneyTests(DashboardE2EFixture fixture)
         await Assert.That(saved.GetProperty("selection").GetProperty("projectId").GetString()).IsEqualTo(selectedProjectId);
         var recovered = await ObservationsAsync(producer);
         await Assert.That(recovered.GetProperty("projectCreates").GetInt32()).IsEqualTo(remote.GetProperty("projectCreates").GetInt32());
-        await Assert.That(recovered.GetProperty("projectConflicts").GetInt32()).IsEqualTo(remote.GetProperty("projectConflicts").GetInt32() + 1);
+        await Assert.That(recovered.GetProperty("projectConflicts").GetInt32()).IsEqualTo(remote.GetProperty("projectConflicts").GetInt32());
+        await Assert.That((await state.GetAsync(AccountService.OrganizationsCollection, organizationId, default))!.Document.GetProperty("Projects").TryGetProperty(remoteId, out _)).IsTrue();
         using (var duplicate = await HttpJourney.PostFormAsync(replica, "/api/v1/dashboard/organization/projects", form))
             await Assert.That(duplicate.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
         using (var stillDefault = await HttpJourney.PostFormAsync(replica, "/api/v1/dashboard/organization/projects/" + selectedProjectId + "/delete", new()
@@ -119,7 +128,7 @@ public sealed class WorkspaceRecoveryJourneyTests(DashboardE2EFixture fixture)
             await Assert.That(wrongConfirmation.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
         failureOrganizationId = organizationId;
         failureOwnerId = initial.GetProperty("user").GetProperty("id").GetString()!;
-        failurePath = "/v1/management/organizations/" + organizationId + "/projects/" + remoteId;
+        failureProjectId = remoteId;
         Volatile.Write(ref unavailableDelete, 1);
         using (var unavailableProvider = await HttpJourney.PostFormAsync(replica, "/api/v1/dashboard/settings/delete-project", new()
         { ["_csrf"] = replicaCsrf, ["projectId"] = remoteId, ["confirmName"] = name }))
@@ -143,8 +152,10 @@ public sealed class WorkspaceRecoveryJourneyTests(DashboardE2EFixture fixture)
         await Assert.That(interruptedDeletion.GetProperty("failedProjectDeletionMetadataWrites").GetInt32()).IsEqualTo(1);
         await Assert.That(interruptedDeletion.GetProperty("workspaceProjects").EnumerateArray().Any(project => project.GetProperty("id").GetString() == remoteId)).IsFalse();
         var pendingCleanup = await ContextAsync(owner);
-        await Assert.That(Organization(pendingCleanup, organizationId).GetProperty("projects").TryGetProperty(remoteId, out _)).IsTrue();
-        await Assert.That(pendingCleanup.GetProperty("selection").GetProperty("projectId").GetString()).IsEqualTo(remoteId);
+        await Assert.That(Organization(pendingCleanup, organizationId).GetProperty("projects").TryGetProperty(remoteId, out _)).IsFalse();
+        await Assert.That(pendingCleanup.GetProperty("selection").GetProperty("projectId").ValueKind).IsEqualTo(JsonValueKind.Null);
+        await Assert.That((await state.GetAsync(AccountService.OrganizationsCollection, organizationId, default))!.Document.GetProperty("Projects").TryGetProperty(remoteId, out _)).IsTrue()
+            .Because("The interrupted settings removal cannot reintroduce a deleted canonical project.");
         await ControlAsync(producer, new { command = "role", value = "" });
         using (var revokedCleanup = await HttpJourney.PostFormAsync(owner, "/api/v1/dashboard/settings/delete-project", new()
         { ["_csrf"] = csrf, ["projectId"] = remoteId, ["confirmName"] = name }))
@@ -155,7 +166,14 @@ public sealed class WorkspaceRecoveryJourneyTests(DashboardE2EFixture fixture)
         await ControlAsync(producer, new { command = "role", value = "owner" });
         using (var deleted = await HttpJourney.PostFormAsync(owner, "/api/v1/dashboard/settings/delete-project", new()
         { ["_csrf"] = csrf, ["projectId"] = remoteId, ["confirmName"] = name }))
-            await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+            await Assert.That(deleted.StatusCode).IsEqualTo(HttpStatusCode.NotFound);
+        using (var updatedSettings = await HttpJourney.PostFormAsync(owner, "/api/v1/dashboard/organization/projects/" + selectedProjectId + "/rename", new()
+        { ["_csrf"] = csrf, ["name"] = selectedProject.GetProperty("name").GetString()!, ["region"] = "GRU", ["regions"] = "GRU" }))
+            await Assert.That(updatedSettings.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
+        await Assert.That((await state.GetAsync(AccountService.OrganizationsCollection, organizationId, default))!.Document.GetProperty("Projects").TryGetProperty(remoteId, out _)).IsFalse();
+        using (var selectedDefault = await HttpJourney.PostFormAsync(owner, "/api/v1/dashboard/switch-project", new()
+        { ["_csrf"] = csrf, ["projectId"] = selectedProjectId, ["returnUrl"] = "/organization?tab=projects" }))
+            await Assert.That(selectedDefault.StatusCode).IsEqualTo(HttpStatusCode.SeeOther);
         var cleaned = await ContextAsync(owner);
         await Assert.That(Organization(cleaned, organizationId).GetProperty("projects").TryGetProperty(remoteId, out _)).IsFalse();
         await Assert.That(cleaned.GetProperty("selection").GetProperty("projectId").GetString()).IsEqualTo(selectedProjectId);
@@ -165,7 +183,7 @@ public sealed class WorkspaceRecoveryJourneyTests(DashboardE2EFixture fixture)
         var removedRemote = await ObservationsAsync(producer);
         await Assert.That(removedRemote.GetProperty("workspaceProjects").EnumerateArray().Any(project => project.GetProperty("id").GetString() == remoteId)).IsFalse();
         await Assert.That(removedRemote.GetProperty("projectDeletes").GetInt32()).IsEqualTo(interruptedDeletion.GetProperty("projectDeletes").GetInt32());
-        await Assert.That(removedRemote.GetProperty("projectDeleteNotFound").GetInt32()).IsEqualTo(interruptedDeletion.GetProperty("projectDeleteNotFound").GetInt32() + 1);
+        await Assert.That(removedRemote.GetProperty("projectDeleteNotFound").GetInt32()).IsEqualTo(interruptedDeletion.GetProperty("projectDeleteNotFound").GetInt32());
         using (var alreadyRemoved = await HttpJourney.PostFormAsync(replica, "/api/v1/dashboard/settings/delete-project", new()
         { ["_csrf"] = replicaCsrf, ["projectId"] = remoteId, ["confirmName"] = name }))
         {

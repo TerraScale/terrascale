@@ -23,10 +23,11 @@ public sealed class BackupPolicyJourneyTests(DashboardE2EFixture fixture)
     {
         var failedPolicy = "";
         var cancelledPolicyRequests = 0;
+        var policyArrived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var host = await DatabaseSdkScenario.StartAsync(fixture.Root, configureScenario: builder =>
         {
             var original = (IHttpClientFactory)builder.Services.Last(descriptor => descriptor.ServiceType == typeof(IHttpClientFactory)).ImplementationInstance!;
-            builder.Services.Replace(ServiceDescriptor.Singleton<IHttpClientFactory>(new PolicyDeadlineFactory(original, () => Volatile.Read(ref failedPolicy) == "deadline")));
+            builder.Services.Replace(ServiceDescriptor.Singleton<IHttpClientFactory>(new PolicyDeadlineFactory(original, () => Volatile.Read(ref failedPolicy) == "deadline", policyArrived.Task)));
         }, producerExtension: async http =>
         {
             if (http.Request.Method != "GET" || !http.Request.Path.Value!.StartsWith("/v1/management/", StringComparison.Ordinal) ||
@@ -34,10 +35,11 @@ public sealed class BackupPolicyJourneyTests(DashboardE2EFixture fixture)
                 return null;
             if (Volatile.Read(ref failedPolicy) == "deadline")
             {
-                try { await Task.Delay(TimeSpan.FromSeconds(5), http.RequestAborted); }
+                policyArrived.TrySetResult();
+                try { await Task.Delay(Timeout.InfiniteTimeSpan, http.RequestAborted); }
                 catch (OperationCanceledException) when (http.RequestAborted.IsCancellationRequested)
                 { Interlocked.Increment(ref cancelledPolicyRequests); return Results.StatusCode(499); }
-                return Results.Json(new { error = "unavailable" }, statusCode: 503);
+                throw new InvalidOperationException("The stalled policy request must be cancelled.");
             }
             return Volatile.Read(ref failedPolicy) switch
             {
@@ -120,13 +122,33 @@ public sealed class BackupPolicyJourneyTests(DashboardE2EFixture fixture)
     }
 
     private static System.Net.Http.Json.JsonContent JsonContent(object value) => System.Net.Http.Json.JsonContent.Create(value);
-    private sealed class PolicyDeadlineFactory(IHttpClientFactory inner, Func<bool> deadline) : IHttpClientFactory
+    private sealed class PolicyDeadlineFactory(IHttpClientFactory inner, Func<bool> deadline, Task arrived) : IHttpClientFactory
     {
         public HttpClient CreateClient(string name)
         {
-            var client = inner.CreateClient(name);
-            if (deadline()) client.Timeout = TimeSpan.FromMilliseconds(250);
-            return client;
+            return new(new PolicyDeadlineHandler(inner.CreateClient(name), deadline, arrived));
+        }
+    }
+    private sealed class PolicyDeadlineHandler(HttpClient inner, Func<bool> deadline, Task arrived) : HttpMessageHandler
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            using var forwarded = new HttpRequestMessage(request.Method, request.RequestUri)
+            { Version = request.Version, VersionPolicy = request.VersionPolicy, Content = request.Content };
+            foreach (var header in request.Headers) forwarded.Headers.TryAddWithoutValidation(header.Key, header.Value);
+            if (!deadline() || request.Method != HttpMethod.Get || !request.RequestUri!.AbsolutePath.EndsWith("/backup-policy", StringComparison.Ordinal))
+                return await inner.SendAsync(forwarded, HttpCompletionOption.ResponseHeadersRead, ct);
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            var pending = inner.SendAsync(forwarded, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
+            await arrived.WaitAsync(ct);
+            // Expire only the stalled dependency after it reached the producer, independent of CPU load.
+            timeout.Cancel();
+            return await pending;
+        }
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) inner.Dispose();
+            base.Dispose(disposing);
         }
     }
     private static async Task<JsonElement> BodyAsync(HttpResponseMessage response)

@@ -355,6 +355,7 @@ sealed class TestWorkspace : ITsAuthPlatform
     private readonly Dictionary<string, string> projectCreators = [];
     private readonly TerraScale.DotNet.TerraScaleIdGenerator ids = new();
     private string globalRole = "owner";
+    public Func<SessionRecord, string, string, Exception?>? ProjectDeleteFailure { get; set; }
     // Root authorization tests deliberately override every role. Default owner
     // means use the scoped provider registry, never grant an arbitrary caller.
     public string Role { get => globalRole; set => globalRole = value; }
@@ -506,7 +507,7 @@ sealed class TestWorkspace : ITsAuthPlatform
         }
     }
     public Task DeleteProjectAsync(SessionRecord session, string organizationId, string projectId, CancellationToken cancellationToken)
-    { lock (Gate) { var org = Manage(session.UserId, organizationId); if (!org.Projects.Remove(projectId)) throw new AccountAccessException("Project is unavailable.", 404, "not_found"); return Task.CompletedTask; } }
+    { lock (Gate) { var org = Manage(session.UserId, organizationId); if (ProjectDeleteFailure?.Invoke(session, organizationId, projectId) is { } error) throw error; if (!org.Projects.Remove(projectId)) throw new AccountAccessException("Project is unavailable.", 404, "not_found"); return Task.CompletedTask; } }
     public Task<IReadOnlyList<TerraScaleAuthPlatformInvitation>> ListInvitationsAsync(SessionRecord session, string organizationId, CancellationToken cancellationToken)
     { lock (Gate) { var org = Manage(session.UserId, organizationId); return Task.FromResult<IReadOnlyList<TerraScaleAuthPlatformInvitation>>(invitations.Values.Where(value => value.OrganizationId == org.Id).Select(value => Wire(value.Invitation, org.OwnerUserId)).Concat(capturedInvitations.GetValueOrDefault(org.Id) ?? []).ToArray()); } }
     public void SeedInvitationMetadata(OrganizationRecord organization)
