@@ -670,6 +670,243 @@ public sealed class PeerStreamTests
         await Assert.That(await sjc.UntilAsync(stuck, second, """{"n":2}""")).IsTrue();
     }
 
+    // ---- review-120 probes (local only, not part of the PR) ----
+
+    // P1: gru and sjc both keep running through a cut longer than a day, and each writes a document meanwhile. Each evicts the
+    // other, trims its CDC and refills the other on heal. Both writes are acknowledged writes and must survive.
+    [Test]
+    public async Task Probe_P1_writes_made_on_both_sides_of_a_cut_longer_than_a_day_survive_the_two_refills()
+    {
+        var clock = new ShiftedTime();
+        await using var cluster = await Cluster.StartAsync(cdc: true, clock, "gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var (onGru, onSjc, before) = (EntityIds.New().ToString(), EntityIds.New().ToString(), EntityIds.New().ToString());
+        await gru.WriteAsync(async transaction =>
+        {
+            _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
+            _ = await transaction.PutAsync("items", before, Json("""{"n":0}"""), CancellationToken.None);
+        });
+        await Assert.That(await sjc.UntilAsync(before, """{"n":0}""")).IsTrue();
+        await Assert.That(await gru.UntilAckedByAsync(cluster.Database, sjc.Node)).IsTrue();
+        await Assert.That(await sjc.UntilAckedByAsync(cluster.Database, gru.Node)).IsTrue();
+
+        cluster.Cut("gru", "sjc");
+        await Assert.That(await gru.UntilStreamsAsync([])).IsTrue();
+        await Assert.That(await sjc.UntilStreamsAsync([])).IsTrue();
+        var gruAcked = await gru.Groups.AckedAsync(cluster.Database, sjc.Node, CancellationToken.None);
+        var sjcAcked = await sjc.Groups.AckedAsync(cluster.Database, gru.Node, CancellationToken.None);
+        await gru.WriteAsync(async transaction => _ = await transaction.PutAsync("items", onGru, Json("""{"n":1}"""), CancellationToken.None));
+        await sjc.WriteAsync(async transaction => _ = await transaction.PutAsync("items", onSjc, Json("""{"n":2}"""), CancellationToken.None));
+
+        clock.Offset = TimeSpan.FromHours(25);
+        var deadline = DateTime.UtcNow + Deadline;
+        while ((await gru.Groups.RetainsAsync(cluster.Database, gruAcked, CancellationToken.None)
+            || await sjc.Groups.RetainsAsync(cluster.Database, sjcAcked, CancellationToken.None)) && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(200);
+        }
+
+        await Assert.That(await gru.Groups.RetainsAsync(cluster.Database, gruAcked, CancellationToken.None)).IsFalse();
+        await Assert.That(await sjc.Groups.RetainsAsync(cluster.Database, sjcAcked, CancellationToken.None)).IsFalse();
+
+        cluster.Heal();
+        await Assert.That(await gru.UntilAckedByAsync(cluster.Database, sjc.Node)).IsTrue();
+        await Assert.That(await sjc.UntilAckedByAsync(cluster.Database, gru.Node)).IsTrue();
+        for (var round = 0; round < 3; round++)
+        {
+            await gru.AntiEntropy.RunRoundAsync(CancellationToken.None);
+            await sjc.AntiEntropy.RunRoundAsync(CancellationToken.None);
+        }
+
+        var seen = $"gru: onGru={await gru.ReadAsync(onGru) ?? "missing"} onSjc={await gru.ReadAsync(onSjc) ?? "missing"}; sjc: onGru={await sjc.ReadAsync(onGru) ?? "missing"} onSjc={await sjc.ReadAsync(onSjc) ?? "missing"}";
+        await Assert.That(seen).IsEqualTo("""gru: onGru={"n":1} onSjc={"n":2}; sjc: onGru={"n":1} onSjc={"n":2}""");
+        await Assert.That(await gru.ReadAsync(onGru)).IsEqualTo("""{"n":1}""").Because("gru's own write made during the cut");
+        await Assert.That(await gru.ReadAsync(onSjc)).IsEqualTo("""{"n":2}""").Because("sjc's write made during the cut, on gru");
+        await Assert.That(await sjc.ReadAsync(onSjc)).IsEqualTo("""{"n":2}""").Because("sjc's own write made during the cut");
+        await Assert.That(await sjc.ReadAsync(onGru)).IsEqualTo("""{"n":1}""").Because("gru's write made during the cut, on sjc");
+    }
+
+    // P2: as the stale-edit test, but sjc keeps running through the cut (a partition, not an outage), so it too evicts gru and
+    // refills it on heal. The deletion is newer than the edit and must win everywhere.
+    [Test]
+    public async Task Probe_P2_a_deletion_collected_during_a_cut_longer_than_a_day_stays_deleted_when_both_sides_kept_running()
+    {
+        var clock = new ShiftedTime();
+        await using var cluster = await Cluster.StartAsync(cdc: true, clock, "gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var deleted = EntityIds.New().ToString();
+        await gru.WriteAsync(async transaction =>
+        {
+            _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
+            _ = await transaction.PutAsync("items", deleted, Json("""{"a":"base"}"""), CancellationToken.None);
+        });
+        await Assert.That(await sjc.UntilAsync(deleted, """{"a":"base"}""")).IsTrue();
+
+        cluster.Cut("gru", "sjc");
+        await Assert.That(await gru.UntilStreamsAsync([])).IsTrue();
+        await Assert.That(await sjc.UntilStreamsAsync([])).IsTrue();
+        using var value = JsonDocument.Parse("\"stale\"");
+        var stale = value.RootElement.Clone();
+        await sjc.WriteAsync(async transaction =>
+            _ = await transaction.PatchAsync("items", deleted, Json("{}"), [new FieldOperation(FieldOperationKind.Set, "a", stale)], CancellationToken.None));
+        clock.Offset = TimeSpan.FromHours(1);
+        await gru.WriteAsync(async transaction => await transaction.TombstoneAsync("items", deleted, CancellationToken.None));
+        clock.Offset = TimeSpan.FromHours(26);
+        await Assert.That(await gru.UntilNoStateAsync("items", deleted)).IsTrue();
+
+        cluster.Heal();
+        await Assert.That(await gru.UntilAckedByAsync(cluster.Database, sjc.Node)).IsTrue();
+        await Assert.That(await sjc.UntilAckedByAsync(cluster.Database, gru.Node)).IsTrue();
+        for (var round = 0; round < 3; round++)
+        {
+            await gru.AntiEntropy.RunRoundAsync(CancellationToken.None);
+            await sjc.AntiEntropy.RunRoundAsync(CancellationToken.None);
+        }
+
+        await Assert.That(await gru.ReadAsync(deleted)).IsNull().Because("gru deleted it after sjc's edit");
+        await Assert.That(await sjc.ReadAsync(deleted)).IsNull().Because("gru deleted it after sjc's edit");
+    }
+
+    // P2b: the stale-edit test with an edit younger than 24 h when it ships (so not marked stale) but older than gru's
+    // deletion, which gru collected after evicting sjc. The deletion is newer and must win everywhere.
+    [Test]
+    public async Task Probe_P2b_a_queued_edit_younger_than_a_day_loses_to_a_newer_collected_deletion()
+    {
+        var clock = new ShiftedTime { Offset = TimeSpan.FromHours(-30) };
+        await using var cluster = await Cluster.StartAsync(cdc: true, clock, "gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var deleted = EntityIds.New().ToString();
+        await gru.WriteAsync(async transaction =>
+        {
+            _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
+            _ = await transaction.PutAsync("items", deleted, Json("""{"a":"base"}"""), CancellationToken.None);
+        });
+        await Assert.That(await sjc.UntilAsync(deleted, """{"a":"base"}""")).IsTrue();
+        await Assert.That(await gru.UntilAckedByAsync(cluster.Database, sjc.Node)).IsTrue();
+
+        // sjc away from -30 h; at -10 h it runs cut off, edits, and stops again.
+        await sjc.StopAsync();
+        cluster.Cut("gru", "sjc");
+        clock.Offset = TimeSpan.FromHours(-10);
+        await sjc.StartAsync();
+        using var value = JsonDocument.Parse("\"stale\"");
+        var stale = value.RootElement.Clone();
+        await sjc.WriteAsync(async transaction =>
+            _ = await transaction.PatchAsync("items", deleted, Json("{}"), [new FieldOperation(FieldOperationKind.Set, "a", stale)], CancellationToken.None));
+        await sjc.StopAsync();
+
+        // gru deletes at -8 h, newer than the edit; at +1 h sjc has been silent 31 h, so gru collects the tombstone.
+        clock.Offset = TimeSpan.FromHours(-8);
+        await gru.WriteAsync(async transaction => await transaction.TombstoneAsync("items", deleted, CancellationToken.None));
+        clock.Offset = TimeSpan.FromHours(1);
+        await Assert.That(await gru.UntilNoStateAsync("items", deleted)).IsTrue();
+
+        cluster.Heal();
+        await sjc.StartAsync();
+        await Assert.That(await sjc.UntilAckedByAsync(cluster.Database, gru.Node)).IsTrue();
+        for (var round = 0; round < 3; round++)
+        {
+            await gru.AntiEntropy.RunRoundAsync(CancellationToken.None);
+            await sjc.AntiEntropy.RunRoundAsync(CancellationToken.None);
+        }
+
+        await Assert.That(await gru.ReadAsync(deleted)).IsNull().Because("gru deleted it 2 h after sjc's edit");
+        await Assert.That(await sjc.ReadAsync(deleted)).IsNull().Because("gru deleted it 2 h after sjc's edit");
+    }
+
+    // P4: three regions; only the gru-fra link is cut for more than a day (gru-sjc and sjc-fra stay up). gru and fra evict each
+    // other. gru then deletes a document fra holds live; sjc gets the deletion. fra's reported stable no longer covers gru's
+    // events, yet sjc's horizon uses it, collects the tombstone, and must not pull the document back from fra.
+    [Test]
+    public async Task Probe_P4_a_tombstone_one_region_never_received_is_not_collected_by_a_third()
+    {
+        var clock = new ShiftedTime();
+        await using var cluster = await Cluster.StartAsync(cdc: true, clock, "gru", "sjc", "fra");
+        var (gru, sjc, fra) = (cluster["gru"], cluster["sjc"], cluster["fra"]);
+        var deleted = EntityIds.New().ToString();
+        await gru.WriteAsync(async transaction =>
+        {
+            _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
+            _ = await transaction.PutAsync("items", deleted, Json("""{"n":1}"""), CancellationToken.None);
+        });
+        await Assert.That(await sjc.UntilAsync(deleted, """{"n":1}""")).IsTrue();
+        await Assert.That(await fra.UntilAsync(deleted, """{"n":1}""")).IsTrue();
+
+        cluster.Cut("gru", "fra");
+        await Assert.That(await gru.UntilStreamsAsync(["sjc"])).IsTrue();
+        await Assert.That(await fra.UntilStreamsAsync(["sjc"])).IsTrue();
+        clock.Offset = TimeSpan.FromHours(25);
+        await Task.Delay(TimeSpan.FromSeconds(12));
+
+        await gru.WriteAsync(async transaction => await transaction.TombstoneAsync("items", deleted, CancellationToken.None));
+        await Assert.That(await sjc.UntilAbsentAsync(deleted)).IsTrue();
+        clock.Offset = TimeSpan.FromHours(25) + TimeSpan.FromMinutes(3);
+        var collected = await sjc.UntilNoStateAsync("items", deleted);
+        var fraStillLive = await fra.ReadAsync(deleted) is not null;
+        var before = $"collected={collected} fraLive={fraStillLive} fraState={await fra.HasStateAsync("items", deleted)}";
+        for (var round = 0; round < 3; round++)
+        {
+            await sjc.AntiEntropy.RunRoundAsync(CancellationToken.None);
+        }
+
+        var after = $"sjc read={await sjc.ReadAsync(deleted) ?? "missing"} state={await sjc.HasStateAsync("items", deleted)}; fra read={await fra.ReadAsync(deleted) ?? "missing"} state={await fra.HasStateAsync("items", deleted)}; gru state={await gru.HasStateAsync("items", deleted)}";
+        await Assert.That(await sjc.ReadAsync(deleted)).IsNull().Because(before + " | " + after);
+    }
+
+    // P5: R6's restore of an older copy, with garbage collection in between: sjc is restored to a copy taken before gru's
+    // deletion, after both collected its tombstone (a minute past the deletion, no absence needed). The deletion must hold.
+    [Test]
+    public async Task Probe_P5_a_region_restored_to_a_copy_from_before_a_collected_deletion_does_not_bring_the_document_back()
+    {
+        var clock = new ShiftedTime();
+        await using var cluster = await Cluster.StartAsync(cdc: true, clock, "gru", "sjc");
+        var (gru, sjc) = (cluster["gru"], cluster["sjc"]);
+        var deleted = EntityIds.New().ToString();
+        await gru.WriteAsync(async transaction =>
+        {
+            _ = await transaction.CreateCollectionAsync(new CollectionInfo("items", 1), CancellationToken.None);
+            _ = await transaction.PutAsync("items", deleted, Json("""{"n":1}"""), CancellationToken.None);
+        });
+        await Assert.That(await sjc.UntilAsync(deleted, """{"n":1}""")).IsTrue();
+        await Assert.That(await gru.UntilAckedByAsync(cluster.Database, sjc.Node)).IsTrue();
+
+        await sjc.StopAsync();
+        var copy = Directory.CreateTempSubdirectory("terrabase-probe-copy-").FullName;
+        CopyDirectory(sjc.DataDirectory, copy);
+        await sjc.StartAsync();
+
+        await gru.WriteAsync(async transaction => await transaction.TombstoneAsync("items", deleted, CancellationToken.None));
+        await Assert.That(await sjc.UntilAbsentAsync(deleted)).IsTrue();
+        clock.Offset = TimeSpan.FromMinutes(5);
+        await Assert.That(await gru.UntilNoStateAsync("items", deleted)).IsTrue();
+        await Assert.That(await sjc.UntilNoStateAsync("items", deleted)).IsTrue();
+
+        await sjc.StopAsync();
+        Directory.Delete(sjc.DataDirectory, recursive: true);
+        CopyDirectory(copy, sjc.DataDirectory);
+        Directory.Delete(copy, recursive: true);
+        await sjc.StartAsync();
+        await Assert.That(await sjc.UntilAckedByAsync(cluster.Database, gru.Node)).IsTrue();
+        for (var round = 0; round < 3; round++)
+        {
+            await gru.AntiEntropy.RunRoundAsync(CancellationToken.None);
+            await sjc.AntiEntropy.RunRoundAsync(CancellationToken.None);
+        }
+
+        await Assert.That($"gru={await gru.ReadAsync(deleted) ?? "missing"} sjc={await sjc.ReadAsync(deleted) ?? "missing"}").IsEqualTo("gru=missing sjc=missing");
+    }
+
+    private static void CopyDirectory(string from, string to)
+    {
+        Directory.CreateDirectory(to);
+        foreach (var file in Directory.EnumerateFiles(from, "*", SearchOption.AllDirectories))
+        {
+            var target = Path.Combine(to, Path.GetRelativePath(from, file));
+            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+            File.Copy(file, target, overwrite: true);
+        }
+    }
+
     // Anti-entropy's view of the replicas, failing to read one database's digests while asked to.
     private sealed class FailingDigests(IReplicaStates inner, Func<TenantContext?> failing) : IReplicaStates
     {
@@ -724,8 +961,42 @@ public sealed class PeerStreamTests
 
         public FakeMemberStore Members { get; } = new();
 
+        // review-120 probes: region pairs that cannot reach each other (both directions), as a cut link between them.
+        public HashSet<(string, string)> Cuts { get; } = [];
+
+        public void Cut(string a, string b)
+        {
+            lock (Cuts)
+            {
+                Cuts.Add((a, b));
+                Cuts.Add((b, a));
+            }
+        }
+
+        public void Heal()
+        {
+            lock (Cuts)
+            {
+                Cuts.Clear();
+            }
+        }
+
+        public bool IsCut(string viewer, string region)
+        {
+            lock (Cuts)
+            {
+                return Cuts.Contains((viewer, region));
+            }
+        }
+
         public Cluster()
         {
+            // review-120 probes: a cut pair sees each other without a peer address, so neither streams nor repairs reach across.
+            Members.Map = (viewer, member) =>
+                _machines.Values.FirstOrDefault(machine => machine.Name == viewer) is { } seer && IsCut(seer.Region, member.Region)
+                    ? member with { PeerAddress = string.Empty }
+                    : member;
+
             Database = new(EntityIds.New().ToString(), PlanTier.Hobby, EntityIds.New().ToString(), EntityIds.New().ToString());
             Second = Database with { DatabaseId = EntityIds.New().ToString() };
         }
@@ -784,8 +1055,9 @@ public sealed class PeerStreamTests
 
     private sealed class Machine(Cluster cluster, string region, string[] replicas) : IAsyncDisposable
     {
-        private readonly string _name = Convert.ToHexStringLower(Guid.NewGuid().ToByteArray())[..14];
-        private readonly string _directory = Directory.CreateTempSubdirectory("terrabase-peer-streams-").FullName;
+        public string Name { get; } = Convert.ToHexStringLower(Guid.NewGuid().ToByteArray())[..14];
+
+        public string DataDirectory { get; } = Directory.CreateTempSubdirectory("terrabase-peer-streams-").FullName;
         private ManagementApi? _api;
 
         public string Region { get; } = region;
@@ -800,12 +1072,12 @@ public sealed class PeerStreamTests
 
         public async Task StartAsync()
         {
-            var first = !File.Exists(Path.Combine(_directory, "_system.db"));
+            var first = !File.Exists(Path.Combine(DataDirectory, "_system.db"));
             _api = await ManagementApi.StartAsync(settings =>
             {
                 settings["region"] = Region;
-                settings["node-name"] = _name;
-                settings["data-directory"] = _directory;
+                settings["node-name"] = Name;
+                settings["data-directory"] = DataDirectory;
             }, services =>
             {
                 services.AddSingleton<IMemberDirectory>(cluster.Members);
@@ -1118,7 +1390,7 @@ public sealed class PeerStreamTests
                 await StopAsync();
             }
 
-            Directory.Delete(_directory, recursive: true);
+            Directory.Delete(DataDirectory, recursive: true);
         }
 
         public Task<string?> ReadAsync(string id) => ReadAsync(cluster.Database, id);
