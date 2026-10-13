@@ -121,7 +121,11 @@ Previews remain paused. The preview organization has 18 apps and 18 machines aga
 
 ## Validation
 
-Pending remote `~/.local/bin/ts-heavy make check` on mariogk-dev in isolated server and SDK worktrees. `bash -n scripts/fly/deploy.sh scripts/fly/preview.sh` and `git diff --check` passed. `nice -n 19 bash scripts/fly/deploy-test.sh` returned `deploy: all checks passed`; `nice -n 19 bash scripts/fly/volume-reset-test.sh` returned `volume-reset: all checks passed`. The full check has already passed whitespace verification and its solution build (0 warnings, 0 errors); remaining stages are pending.
+Focused platform proof on mariogk-dev at `7153c0ea` (tree `0ee126555af6eb8fbc3893fe031e78a939474d24`): `~/.local/bin/ts-heavy dotnet run --project tests/TerraBase.Fast -- --treenode-filter '/*/*/Platform*Tests/*'` returned exit 0, 13 succeeded, 0 failed, 0 skipped. This covers startup/restart/concurrent seed, fixed placement, project separation, scoped global-issuer access and refusal of conflicting bindings. The prior 9-pass/4-fail run compared submitted JSON bytes to storage-canonicalized bytes; the correction compares persisted bytes before and after the refused seed. Both raw logs are retained in `.cos/t2-greenfield-evidence/` outside the repository.
+
+T3 owns the single full `~/.local/bin/ts-heavy make check`, using isolated server and SDK (`78e311f`) worktrees on mariogk-dev. The v3 run on the same tree passed formatting, solution build (0 warnings/errors), library checks, auth audit/OpenAPI, TerraBase analyzer checks, benchmark race tests, Endpoints 88/88 and Logging 46/46. Auth Fast finished 667/668: the signup-concurrency test counted the new synthetic bootstrap owner as a second signup account. Its exact redemption-response assertions passed. Test-only correction `92d6a305` requires one signup account, one synthetic owner and no plaintext password on the signup account. V3 failed and did not reach TerraBase Fast; earlier stopped runs are superseded/incomplete, with no full-gate credit. Final full validation after this correction remains pending.
+
+`bash -n scripts/fly/deploy.sh scripts/fly/preview.sh` and `git diff --check` passed. `nice -n 19 bash scripts/fly/deploy-test.sh` returned `deploy: all checks passed`; `nice -n 19 bash scripts/fly/volume-reset-test.sh` returned `volume-reset: all checks passed`. Workflow actionlint passed with shellcheck disabled because the local shellcheck shim is unconfigured.
 
 ## Resume after T0
 
