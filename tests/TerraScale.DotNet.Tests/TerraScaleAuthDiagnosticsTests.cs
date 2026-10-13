@@ -116,7 +116,9 @@ public sealed class TerraScaleAuthDiagnosticsTests
 
     private static TerraScaleAuthClient Client(HttpClient http) => new(http, new TerraScaleAuthClientOptions
     {
-        BaseAddress = new Uri("https://auth.customer.example"), InstanceSlug = "acme", ApiKey = Secret
+        BaseAddress = new Uri("https://auth.customer.example"),
+        InstanceSlug = "acme",
+        ApiKey = Secret
     });
 
     private static HttpClient Http(string body, HttpStatusCode status) => new(new Handler(body, status));
