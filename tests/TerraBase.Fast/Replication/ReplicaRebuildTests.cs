@@ -1,9 +1,11 @@
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using TerraBase.Engine;
 using TerraBase.Engine.Cluster;
 using TerraBase.Engine.Sqlite;
+using TerraBase.Features.Memory;
 using TerraBase.Features.Replication;
 using TerraBase.Primitives;
 using TerraBase.Tenancy;
@@ -41,6 +43,7 @@ public sealed class ReplicaRebuildTests
         await Assert.That(pair.Sjc.SideExists(faulted)).IsFalse();
         await Assert.That(adapter.Ledger.Get(pair.Database)).IsNull();
         await Assert.That(adapter.Certified).IsTrue().Because("only the completion barrier may end a rebuild");
+        await Assert.That(File.Exists(pair.Sjc.SidePath(faulted) + ".salvage")).IsFalse();
     }
 
     [Test]
@@ -184,6 +187,88 @@ public sealed class ReplicaRebuildTests
         await Assert.That(await pair.Sjc.IntegrityAsync()).IsEqualTo("ok");
     }
 
+    [Test]
+    public async Task A_rebuilt_copy_removed_after_certification_refuses_and_keeps_the_side_copy()
+    {
+        await using var pair = await Pair.StartAsync();
+        _ = await pair.SeedAsync();
+        var faulted = await pair.Sjc.IncarnationAsync();
+        var adapter = new StandIn(pair) { FailAfterCertifying = true };
+        _ = await pair.Sjc.Rebuild(adapter).RebuildAsync(pair.Database, faulted, CancellationToken.None);
+        await Assert.That(adapter.Ledger.Get(pair.Database)?.Phase).IsEqualTo(RebuildPhase.Certified);
+
+        // The certified file goes before the side copy was deleted: the side copy is the only copy left, and it stays.
+        _ = await pair.Sjc.DeleteDatabaseAsync();
+        adapter.FailAfterCertifying = false;
+        var outcome = await pair.Sjc.Rebuild(adapter).RebuildAsync(pair.Database, faulted, CancellationToken.None);
+
+        await Assert.That(outcome is RebuildOutcome.Refused).IsTrue().Because(outcome.ToString());
+        await Assert.That(pair.Sjc.SideExists(faulted)).IsTrue();
+        await Assert.That(adapter.Ledger.Get(pair.Database)?.Phase).IsEqualTo(RebuildPhase.Certified);
+    }
+
+    [Test]
+    public async Task Finalization_deletes_the_side_copy_only_while_the_rebuilt_incarnation_is_in_place()
+    {
+        await using var pair = await Pair.StartAsync();
+        _ = await pair.SeedAsync();
+        var faulted = await pair.Sjc.IncarnationAsync();
+        var adapter = new StandIn(pair) { FailAfterCertifying = true };
+        _ = await pair.Sjc.Rebuild(adapter).RebuildAsync(pair.Database, faulted, CancellationToken.None);
+        var certified = adapter.Ledger.Get(pair.Database)!;
+
+        await Assert.That(await pair.Sjc.FinalizeAsync(Ulid.NewUlid(), certified.SidePath)).IsFalse();
+        await Assert.That(pair.Sjc.SideExists(faulted)).IsTrue();
+        await Assert.That(await pair.Sjc.FinalizeAsync(certified.NewIncarnation!.Value, certified.SidePath)).IsTrue();
+        await Assert.That(pair.Sjc.SideExists(faulted)).IsFalse();
+    }
+
+    [Test]
+    public async Task Salvage_reads_a_private_copy_and_never_writes_the_retained_side_copy()
+    {
+        await using var pair = await Pair.StartAsync();
+        _ = await pair.SeedAsync();
+        var faulted = await pair.Sjc.IncarnationAsync();
+        var adapter = new StandIn(pair) { RefuseCompletion = true };
+
+        var outcome = await pair.Sjc.Rebuild(adapter).RebuildAsync(pair.Database, faulted, CancellationToken.None);
+
+        await Assert.That(outcome is RebuildOutcome.Refused).IsTrue().Because(outcome.ToString());
+        await Assert.That(adapter.Ledger.Get(pair.Database)?.Phase).IsEqualTo(RebuildPhase.Salvaged);
+        await Assert.That(adapter.SideBeforeSalvage).IsNotNull();
+        await Assert.That(Hash(pair.Sjc.SidePath(faulted))).IsEqualTo(adapter.SideBeforeSalvage).Because("the side copy's file and log, byte for byte");
+        await Assert.That(File.Exists(pair.Sjc.SidePath(faulted) + ".salvage")).IsFalse();
+    }
+
+    [Test]
+    public async Task Salvage_refuses_when_its_page_cannot_be_reserved_and_keeps_the_side_copy()
+    {
+        await using var pair = await Pair.StartAsync();
+        _ = await pair.SeedAsync();
+        var faulted = await pair.Sjc.IncarnationAsync();
+        var adapter = new StandIn(pair);
+
+        var outcome = await pair.Sjc.Rebuild(adapter, new NoMemory()).RebuildAsync(pair.Database, faulted, CancellationToken.None);
+
+        await Assert.That(outcome is RebuildOutcome.Refused).IsTrue().Because(outcome.ToString());
+        await Assert.That(adapter.Ledger.Get(pair.Database)?.Phase).IsEqualTo(RebuildPhase.Swapped);
+        await Assert.That(pair.Sjc.SideExists(faulted)).IsTrue();
+        await Assert.That(adapter.Certified).IsFalse();
+    }
+
+    // SHA-256 of a file and each of its sidecars, by exact path.
+    private static string Hash(string path) =>
+        string.Join(",", new[] { string.Empty, "-wal", "-shm", "-journal" }.Where(sidecar => File.Exists(path + sidecar))
+            .Select(sidecar => sidecar + ":" + Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path + sidecar)))));
+
+    // A memory budget with nothing left.
+    private sealed class NoMemory : IMemoryBudget
+    {
+        public IMemoryReservation? TryReserve(MemoryLane lane, long bytes) => null;
+
+        public IMemoryReservation? TryReserve(MemoryLane lane, long bytes, TenantContext? tenant) => null;
+    }
+
     // Test-only boundary adapter for R6-FIX's seams: the record in memory (it outlives a machine's restart because the test
     // holds it), today's merge refill from gru as the stand-in for certified refill, and a certificate written into the
     // record as the stand-in for the completion barrier.
@@ -192,6 +277,11 @@ public sealed class ReplicaRebuildTests
         public MemoryLedger Ledger { get; } = new();
 
         public bool RefuseRefill { get; set; }
+
+        public bool RefuseCompletion { get; set; }
+
+        // The side copy's hashes as the refill began, after the swap and before the salvage.
+        public string? SideBeforeSalvage { get; private set; }
 
         public bool FailAfterCertifying { get; set; }
 
@@ -204,6 +294,7 @@ public sealed class ReplicaRebuildTests
         public async ValueTask<bool> RefillAsync(TenantContext database, Ulid newIncarnation, CancellationToken cancellationToken)
         {
             Entered.TrySetResult();
+            SideBeforeSalvage = Ledger.Get(database) is { } record ? Hash(record.SidePath) : null;
             if (Hold is { } hold)
             {
                 await hold.Task.WaitAsync(cancellationToken);
@@ -214,7 +305,8 @@ public sealed class ReplicaRebuildTests
 
         public ValueTask<bool> CompleteAsync(TenantContext database, Ulid oldIncarnation, Ulid newIncarnation, CancellationToken cancellationToken)
         {
-            if (Ledger.Get(database) is not { Phase: RebuildPhase.Salvaged } record || record.OldIncarnation != oldIncarnation || record.NewIncarnation != newIncarnation)
+            if (RefuseCompletion || Ledger.Get(database) is not { Phase: RebuildPhase.Salvaged } record || record.OldIncarnation != oldIncarnation
+                || record.NewIncarnation != newIncarnation)
             {
                 return ValueTask.FromResult(false);
             }
@@ -360,8 +452,15 @@ public sealed class ReplicaRebuildTests
         }
 
         // The rebuild of this machine's copy, with the stand-in's seams.
-        public ReplicaRebuild Rebuild(StandIn adapter) =>
-            new(Engine, adapter.Ledger, adapter, Api.Server.Services.GetRequiredService<IChangeGroupSink>());
+        public ReplicaRebuild Rebuild(StandIn adapter, IMemoryBudget? memory = null) =>
+            new(Engine, adapter.Ledger, adapter, Api.Server.Services.GetRequiredService<IChangeGroupSink>(),
+                memory ?? Api.Server.Services.GetRequiredService<IMemoryBudget>());
+
+        public string SidePath(Ulid incarnation) => Engine.SidePath(pair.Database, incarnation);
+
+        public async Task<bool> FinalizeAsync(Ulid rebuilt, string sidePath) => await Engine.FinalizeAsync(pair.Database, rebuilt, sidePath, CancellationToken.None);
+
+        public async Task<bool> DeleteDatabaseAsync() => await Engine.DeleteDatabaseAsync(pair.Database, CancellationToken.None);
 
         public async Task<Ulid> IncarnationAsync() =>
             await Engine.IncarnationAsync(pair.Database, CancellationToken.None) ?? throw new InvalidOperationException("the database is missing");

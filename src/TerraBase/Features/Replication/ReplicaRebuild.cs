@@ -1,3 +1,4 @@
+using TerraBase.Features.Memory;
 using TerraBase.Tenancy;
 
 namespace TerraBase.Features.Replication;
@@ -94,14 +95,36 @@ internal interface IRebuildStorage
     ValueTask<Ulid?> PublishFreshAsync(TenantContext database, string sidePath, CancellationToken cancellationToken);
 
     /// <summary>
-    /// The side copy's states after (<paramref name="afterCollection"/>, <paramref name="afterId"/>), in that order, at most
-    /// <paramref name="max"/>; each one checked against its stored digest, read without writing the side copy. Throws
-    /// <see cref="InvalidDataException"/> for a state that does not verify.
+    /// A private working copy of the side copy (its file and log, copied; the side copy itself is never opened), for the
+    /// salvage to read; any older working copy at that path goes first. Returns its path.
     /// </summary>
-    ValueTask<IReadOnlyList<RepairState>> ReadSideAsync(string sidePath, string afterCollection, string afterId, int max, CancellationToken cancellationToken);
+    ValueTask<string> CopyForSalvageAsync(string sidePath, CancellationToken cancellationToken);
 
-    ValueTask DeleteSideAsync(string sidePath, CancellationToken cancellationToken);
+    /// <summary>
+    /// The next page of the working copy's states after (<paramref name="afterCollection"/>, <paramref name="afterId"/>), in
+    /// that order, measured without reading them: at most <paramref name="maxRows"/>, and <paramref name="maxBytes"/> of
+    /// stored states and documents unless the first alone is larger.
+    /// </summary>
+    ValueTask<IReadOnlyList<SideRow>> MeasureSideAsync(
+        string workingPath, string afterCollection, string afterId, int maxRows, long maxBytes, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// The states of <paramref name="rows"/> in the working copy, each checked against its stored digest. Throws
+    /// <see cref="InvalidDataException"/> for one that does not verify or no longer measures as it did.
+    /// </summary>
+    ValueTask<IReadOnlyList<RepairState>> ReadSideAsync(string workingPath, IReadOnlyList<SideRow> rows, CancellationToken cancellationToken);
+
+    ValueTask DiscardWorkingCopyAsync(string workingPath, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Deletes the side copy, under the engine's creation lock, only while the file in place is exactly
+    /// <paramref name="rebuiltIncarnation"/>; false, keeping it, otherwise.
+    /// </summary>
+    ValueTask<bool> FinalizeAsync(TenantContext database, Ulid rebuiltIncarnation, string sidePath, CancellationToken cancellationToken);
 }
+
+/// <summary>A state row of a side copy and the bytes its stored state and document take.</summary>
+internal sealed record SideRow(string Collection, string Id, long Bytes);
 
 /// <summary>Rebuilds a faulted copy of a database into a new incarnation; one at a time per host.</summary>
 internal interface IReplicaRebuild
@@ -118,10 +141,14 @@ internal interface IReplicaRebuild
 /// certifies; only then does the side copy go. Any step that cannot finish refuses, keeping the record and the side copy;
 /// a later run resumes from the record. Production wiring (who calls it, where records live) is R6-FIX's and R10a's.
 /// </summary>
-internal sealed class ReplicaRebuild(IRebuildStorage storage, IRebuildLedger ledger, IRebuildCertification certification, IChangeGroupSink sink)
-    : IReplicaRebuild
+internal sealed class ReplicaRebuild(
+    IRebuildStorage storage, IRebuildLedger ledger, IRebuildCertification certification, IChangeGroupSink sink, IMemoryBudget memory) : IReplicaRebuild
 {
-    private const int SalvagePage = ChangeGroups.MaxDeltas;
+    private const int SalvageRows = ChangeGroups.MaxDeltas;
+    private const long SalvageBytes = ChangeGroups.MaxBatchBytes;
+
+    // Reserved per stored byte of a page: its text as read, its decoded bytes and the decoded state and document.
+    private const long ReservedPerByte = 4;
 
     // 1 while a rebuild runs on this host: a second one answers busy, nothing queues in memory.
     private int _active;
@@ -184,8 +211,7 @@ internal sealed class ReplicaRebuild(IRebuildStorage storage, IRebuildLedger led
         }
 
         var rebuilt = record.NewIncarnation ?? throw new InvalidDataException("a swapped rebuild record has no new incarnation");
-        if (record.Phase is RebuildPhase.Swapped or RebuildPhase.Salvaged
-            && await storage.IncarnationAsync(database, cancellationToken).ConfigureAwait(false) != rebuilt)
+        if (await storage.IncarnationAsync(database, cancellationToken).ConfigureAwait(false) != rebuilt)
         {
             return new RebuildOutcome.Refused("the rebuilt copy was replaced");
         }
@@ -218,39 +244,60 @@ internal sealed class ReplicaRebuild(IRebuildStorage storage, IRebuildLedger led
             record = certified;
         }
 
-        // Certified: the new incarnation durably contains or dominates the side copy, which may go now.
-        await storage.DeleteSideAsync(record.SidePath, cancellationToken).ConfigureAwait(false);
+        // Certified: the new incarnation durably contains or dominates the side copy, which may go now, but only while that
+        // incarnation is still the file in place.
+        if (!await storage.FinalizeAsync(database, rebuilt, record.SidePath, cancellationToken).ConfigureAwait(false))
+        {
+            return new RebuildOutcome.Refused("the rebuilt copy is no longer in place; the side copy stays");
+        }
+
         await ledger.RetireAsync(database, faulted, cancellationToken).ConfigureAwait(false);
         return new RebuildOutcome.Completed(rebuilt);
     }
 
-    // Joins every state of the side copy into the new incarnation as repairs, page by page; the reason it could not, or null.
+    // Joins every state of the side copy into the new incarnation as repairs, page by page, read from a private working copy
+    // and with each page's memory reserved before it is read; the reason it could not, or null.
     private async ValueTask<string?> SalvageAsync(TenantContext database, string sidePath, CancellationToken cancellationToken)
     {
-        var (collection, id) = (string.Empty, string.Empty);
-        while (true)
+        var working = await storage.CopyForSalvageAsync(sidePath, cancellationToken).ConfigureAwait(false);
+        try
         {
-            IReadOnlyList<RepairState> page;
-            try
+            var (collection, id) = (string.Empty, string.Empty);
+            while (true)
             {
-                page = await storage.ReadSideAsync(sidePath, collection, id, SalvagePage, cancellationToken).ConfigureAwait(false);
-            }
-            catch (InvalidDataException)
-            {
-                return "a state of the side copy does not verify against its digest";
-            }
+                var rows = await storage.MeasureSideAsync(working, collection, id, SalvageRows, SalvageBytes, cancellationToken).ConfigureAwait(false);
+                if (rows.Count == 0)
+                {
+                    return null;
+                }
 
-            if (page.Count == 0)
-            {
-                return null;
-            }
+                using var reservation = memory.TryReserve(MemoryLane.Bulk, rows.Sum(row => row.Bytes) * ReservedPerByte, database);
+                if (reservation is null)
+                {
+                    return "no memory to read the side copy's next page";
+                }
 
-            if (await sink.RepairAsync(database, page, cancellationToken).ConfigureAwait(false) is null)
-            {
-                return "the rebuilt copy is not held";
-            }
+                IReadOnlyList<RepairState> page;
+                try
+                {
+                    page = await storage.ReadSideAsync(working, rows, cancellationToken).ConfigureAwait(false);
+                }
+                catch (InvalidDataException)
+                {
+                    return "a state of the side copy does not verify against its digest";
+                }
 
-            (collection, id) = (page[^1].Collection, page[^1].Id);
+                if (await sink.RepairAsync(database, page, cancellationToken).ConfigureAwait(false) is null)
+                {
+                    return "the rebuilt copy is not held";
+                }
+
+                (collection, id) = (rows[^1].Collection, rows[^1].Id);
+            }
+        }
+        finally
+        {
+            await storage.DiscardWorkingCopyAsync(working, CancellationToken.None).ConfigureAwait(false);
         }
     }
 }
