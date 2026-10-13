@@ -119,6 +119,32 @@ public sealed class InvitationCapacityJourneyTests
         await Assert.That(occupied).IsEqualTo(5);
     }
 
+    // Round-5 review probe, verbatim.
+    // Conditional provider boundary: a later list can omit the expired entry. Absence must not prove a
+    // stored terminal decision. This tests conservative local admission, not deployed list consistency.
+    [Test]
+    public async Task AnExpiredReservationSurvivesALaterAbsentList()
+    {
+        await using var scenario = await CapacityScenario.StartAsync();
+        await scenario.RevokeAsync("existing-0@example.test");
+        const string email = "expired-then-absent@example.test";
+        using (var original = await scenario.InviteAsync(0, email))
+            await Assert.That(original.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        scenario.Platform.ReportedExpiredEmail = email;
+        // This successful decision persists reconciliation. A refused decision would discard its edits.
+        using (var last = await scenario.InviteAsync(1, "after-expired-list@example.test"))
+            await Assert.That(last.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        scenario.Platform.SuppressedEmail = email;
+        using var overflow = await scenario.InviteAsync(0, "after-absent-list@example.test");
+        await scenario.Platform.AcceptAsync(scenario.Platform.Tokens[email]);
+        scenario.Platform.SuppressedEmail = "";
+        scenario.Platform.ReportedExpiredEmail = "";
+        var occupied = await scenario.OccupiedAsync();
+        Console.WriteLine($"EXPIRED-THEN-ABSENT overflow={(int)overflow.StatusCode}, occupied={occupied}, limit=5");
+        await Assert.That(overflow.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+        await Assert.That(occupied).IsEqualTo(5);
+    }
+
     // An invitation ts-auth lists as expired is still stored pending and can be accepted, so it keeps its slot;
     // the owner frees it with a revoke, which ts-auth stores, and the revoked invitation can no longer be accepted.
     [Test]
@@ -444,6 +470,8 @@ public sealed class InvitationCapacityJourneyTests
         public string PauseAfterCreateEmail { get; set; } = "";
         // ts-auth's Status() lists a stored pending invitation past its expiry as expired without storing anything.
         public string ReportedExpiredEmail { get; set; } = "";
+        // A list that omits an email's invitations, as a stale or partial provider read would.
+        public string SuppressedEmail { get; set; } = "";
         public TaskCompletionSource CreatedPaused { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource ContinueCreate { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -468,6 +496,7 @@ public sealed class InvitationCapacityJourneyTests
             var result = await inner.ListInvitationsAsync(session, organizationId, cancellationToken);
             Interlocked.CompareExchange(ref pauseMembers, 2, 1);
             result = [.. result.Select(invitation => invitation.Email == ReportedExpiredEmail && invitation.Status == "pending" ? invitation with { Status = "expired", ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(-1) } : invitation)];
+            result = [.. result.Where(invitation => invitation.Email != SuppressedEmail)];
             var index = Interlocked.Increment(ref reads) - 1;
             if (index < Arrived.Length) { Arrived[index].TrySetResult(); await Release[index].Task.WaitAsync(cancellationToken); }
             return ListedExpiry is { } expiry ? [.. result.Select(invitation => invitation with { ExpiresAt = DateTimeOffset.UtcNow + expiry })] : result;

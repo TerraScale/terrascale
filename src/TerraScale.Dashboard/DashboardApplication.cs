@@ -7,6 +7,7 @@ using TerraScale.Dashboard.Features.Billing;
 using TerraScale.Dashboard.Features.Databases;
 using TerraScale.Dashboard.Features.Onboarding;
 using TerraScale.Dashboard.Features.Home;
+using TerraScale.Dashboard.Features.Imports;
 using TerraScale.Dashboard.Features.Notifications;
 using TerraScale.Dashboard.Features.Profile;
 using TerraScale.Dashboard.Features.Organizations;
@@ -51,6 +52,7 @@ public static class DashboardApplication
         builder.Services.AddAccountFeatures();
         builder.Services.AddEnrollmentAuth();
         builder.Services.AddDatabaseFeatures();
+        builder.Services.AddImportFeatures();
         builder.Services.AddOnboarding();
         builder.Services.AddBillingFeatures();
         builder.Services.AddHomeFeatures();
@@ -148,6 +150,7 @@ public static class DashboardApplication
         app.MapAccountFeatures();
         app.MapOnboarding();
         app.MapDatabaseFeatures();
+        app.MapImports();
         app.MapAuthenticationManagement();
         app.MapAdmin();
         app.MapHome();
