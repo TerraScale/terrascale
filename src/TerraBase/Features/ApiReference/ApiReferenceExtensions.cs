@@ -37,7 +37,7 @@ public static class ApiReferenceExtensions
                 document.Components ??= new OpenApiComponents();
                 document.Extensions ??= new Dictionary<string, IOpenApiExtension>(StringComparer.Ordinal);
                 document.Extensions["x-tagGroups"] = new JsonNodeExtension(JsonNode.Parse("""
-                    [{"name":"Management","tags":["Databases","Backups","Indexes","Schema","Usage","Platform"]},
+                    [{"name":"Management","tags":["Databases","Imports","Backups","Indexes","Schema","Usage","Platform"]},
                      {"name":"Data","tags":["Collections","Documents","Queries","Transactions","Live"]},
                      {"name":"System","tags":["Health"]}]
                     """)!);

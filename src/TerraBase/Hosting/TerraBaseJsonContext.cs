@@ -6,6 +6,7 @@ using TerraBase.Features.ApiKeys;
 using TerraBase.Features.Backup;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Health;
+using TerraBase.Features.Import;
 using TerraBase.Features.Management;
 using TerraBase.Features.Management.Backups;
 using TerraBase.Features.Management.Credentials;
@@ -25,6 +26,14 @@ namespace TerraBase.Hosting;
 [JsonSerializable(typeof(Ulid))]
 [JsonSourceGenerationOptions(JsonSerializerDefaults.Web, MaxDepth = RequestJson.StoredDocumentMaxDepth + 8)]
 [JsonSerializable(typeof(AcceptInvitationRequest))]
+[JsonSerializable(typeof(CreateImportRequest))]
+[JsonSerializable(typeof(UpdateImportRequest))]
+[JsonSerializable(typeof(StartImportRequest))]
+[JsonSerializable(typeof(ImportJobBody))]
+[JsonSerializable(typeof(ImportJobRecord))]
+[JsonSerializable(typeof(ImportStateRecord))]
+[JsonSerializable(typeof(ImportManifest))]
+[JsonSerializable(typeof(ImportPreview))]
 [JsonSerializable(typeof(AddMemberRequest))]
 [JsonSerializable(typeof(ApiKey))]
 [JsonSerializable(typeof(AppliedIndexRecommendation))]

@@ -8,6 +8,7 @@ using TerraBase.Features.ApiReference;
 using TerraBase.Features.Backup;
 using TerraBase.Features.Documents;
 using TerraBase.Features.Health;
+using TerraBase.Features.Import;
 using TerraBase.Features.Management;
 using TerraBase.Features.Management.Queries;
 using TerraBase.Features.Management.Usage;
@@ -104,6 +105,7 @@ builder.Services.AddTerraBaseBackup(options);
 builder.Services.AddTerraBaseHealth();
 builder.Services.AddTerraBasePressure();
 builder.Services.AddTerraBaseStats();
+builder.Services.AddTerraBaseImport();
 builder.AddTerraBaseReplication();
 
 try

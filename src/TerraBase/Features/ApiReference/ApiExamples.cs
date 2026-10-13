@@ -20,6 +20,9 @@ internal static class ApiExamples
     private const string Saved = """{"id":"01ARZ3NDEKTSV4RRFFQ69G5FA5","name":"People","sql":"SELECT * FROM people LIMIT 50","createdAt":"2026-10-07T12:00:00Z","updatedAt":null}""";
     private const string Period = """{"from":"2026-10-07T00:00:00Z","to":"2026-10-08T00:00:00Z","granularity":"day","reads":0,"writes":0}""";
     private const string Series = """[{"start":"2026-10-07T00:00:00Z","reads":0,"writes":0}]""";
+    private const string ImportJob = """
+        {"id":"01ARZ3NDEKTSV4RRFFQ69G5FA8","project":"01ARZ3NDEKTSV4RRFFQ69G5FA2","database":"import-01arz3ndektsv4rrffq69g5fa9","region":"gru-1","state":"ready","cancelRequested":false,"options":{"missingPrimaryKey":"reject","exclude":[]},"source":{"format":"postgres_plain","bytes":8165,"sha256":"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08","receivedBytes":8165,"staged":true,"retainedUntil":null},"preview":{"id":"01ARZ3NDEKTSV4RRFFQ69G5FAA","tables":[{"source":"public.orgs","collection":"orgs","excluded":false,"rows":3,"idPolicy":"primary_key","primaryKey":["id"],"columns":[{"name":"id","sourceType":"bigint","mapping":"integer","nullable":false,"excluded":false},{"name":"name","sourceType":"text","mapping":"string","nullable":false,"excluded":false}],"constraints":[{"kind":"primary_key","name":"orgs_pkey","columns":["id"],"references":null,"enforced":false}],"issues":[]}],"skipped":[{"kind":"index","name":"public.users_org_idx"}],"skippedTruncated":false,"blocking":0,"warnings":0},"confirmedPreviewId":null,"progress":null,"validation":null,"error":null,"createdAt":"2026-10-12T12:00:00+00:00","updatedAt":"2026-10-12T12:00:05+00:00","startedAt":null,"finishedAt":null}
+        """;
     private const string Usage = """{"databaseId":"01ARZ3NDEKTSV4RRFFQ69G5FA1","storageBytes":40960,"logicalBytes":0,"collections":0,"documents":0,"reads":0,"writes":0,"period":PERIOD,"series":SERIES}""";
 
     public static void Apply(OpenApiOperation operation)
@@ -102,6 +105,10 @@ internal static class ApiExamples
         "runSql" or "checkSql" => """{"sql":"SELECT * FROM people LIMIT 50"}""",
         "createSavedQuery" or "updateSavedQuery" => """{"name":"People","sql":"SELECT * FROM people LIMIT 50"}""",
         "runTransaction" => """{"ops":[{"op":"create","collection":"people","document":{"name":"Ada"}}]}""",
+        "createImport" => """{"format":"postgres_plain","sourceBytes":8165,"sourceSha256":"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08","options":{"missingPrimaryKey":"reject","exclude":["public.audit_log"]}}""",
+        "updateImport" => """{"options":{"missingPrimaryKey":"generate","exclude":["public.tagged.tags"]}}""",
+        "startImport" => """{"previewId":"01ARZ3NDEKTSV4RRFFQ69G5FAA"}""",
+        "uploadImportSource" => """"<up to 4 MiB of the source file, starting at offset>"""",
         _ => "{}",
     };
 
@@ -147,6 +154,7 @@ internal static class ApiExamples
         "updateSavedQuery" => Saved.Replace("\"updatedAt\":null", "\"updatedAt\":\"2026-10-07T12:00:00Z\"", StringComparison.Ordinal),
         "listSavedQueries" => Page(Saved),
         "runTransaction" => """{"offset":"1","durability":"local_durable","results":[{"id":"01ARZ3NDEKTSV4RRFFQ69G5FA3","version":"opaque-version-from-server"}]}""",
+        "createImport" or "getImport" or "uploadImportSource" or "updateImport" or "startImport" or "cancelImport" or "resumeImport" => ImportJob,
         _ => "{}",
     };
 
@@ -171,6 +179,8 @@ internal static class ApiExamples
         "404" when id is "getDeclaredCollectionSchema" or "putDeclaredCollectionSchema" or "deleteDeclaredCollectionSchema" => "unknown_database, unknown_collection",
         "404" when id is "getCollection" or "dropCollection" or "listDocuments" or "createDocument" or "putDocument" or "queryDocuments" => "unknown_database, unknown_collection",
         "404" when id is "createDatabase" or "getDatabase" or "listDatabases" or "updateDatabase" or "deleteDatabase" or "branchDatabase" or "getDatabaseUsage" or "getProjectUsage" => "unknown_database, unknown_route",
+        "404" when id == "createImport" => "unknown_database",
+        "404" when id is "getImport" or "uploadImportSource" or "updateImport" or "startImport" or "cancelImport" or "resumeImport" => "unknown_database, unknown_import",
         "404" => "unknown_database, unknown_route, not_found",
         "408" => "request_timeout",
         "409" when id is "patchDocument" or "runTransaction" => "patch_conflict, unique_violation",
@@ -179,6 +189,11 @@ internal static class ApiExamples
         "409" when id == "deleteDatabase" => "database_replicated, wrong_region",
         "409" when id == "createIndex" => "index_exists",
         "409" when id is "createDatabase" or "branchDatabase" or "restoreBackup" or "restorePointInTime" or "createCollection" or "applyIndexRecommendation" => "name_taken",
+        "409" when id == "createImport" => "destination_not_empty, import_exists",
+        "409" when id == "uploadImportSource" => "invalid_state, offset_mismatch",
+        "409" when id == "startImport" => "invalid_state, preview_changed, preview_blocked",
+        "409" when id == "resumeImport" => "invalid_state, source_required",
+        "409" when id is "updateImport" or "cancelImport" => "invalid_state",
         "409" => "conflict",
         "412" => "precondition_failed",
         "413" => "payload_too_large",
@@ -189,6 +204,8 @@ internal static class ApiExamples
         "503" when id == "planPointInTime" => "pitr_plan_limit, pitr_plan_timeout, pitr_plan_unavailable, storage_busy, catalog_primary_unavailable",
         "503" when id is "createDocument" or "putDocument" or "patchDocument" or "deleteDocument" => "capacity, storage_busy, unavailable",
         "503" when id is "queryDocuments" or "getDocument" or "listDocuments" or "createCollection" or "getCollection" or "listCollections" => "storage_busy, unavailable",
+        "503" when id is "createImport" or "getImport" or "uploadImportSource" or "updateImport" or "startImport" or "cancelImport" or "resumeImport" =>
+            "capacity, unavailable, destination_modified",
         "503" => "storage_busy, capacity, catalog_primary_unavailable, not_primary, unavailable",
         _ => "internal_error",
     };
