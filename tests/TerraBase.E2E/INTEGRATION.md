@@ -222,6 +222,30 @@ Fast tests fail out of 1433:
 Not merged. The owner is asked to name the cause: this change, or pre-existing failures that main's runs could not show
 while Healthz failed first. Main stays red.
 
+## MAIN RED HAS TWO CAUSES (02:00Z)
+
+1. **#149** (Healthz/Readyz, revision missing in the Docker test stage). Fixed by **#166**, which an independent review
+   **APPROVED** (comment 6134828628, at `48429edc`). Every HealthTest passes on #166's run 38323041647.
+2. **An intermittent HTTP 400 from the SQL and usage APIs in terrabase Fast.** It still fails #166's run:
+   - on #166's run: `SqlApiTests.Output_budget_includes_escaped_ids_row_wrappers_and_envelope(_id, padding)`,
+     `SqlApiTests.Deleted_documents_are_not_selected_counted_or_indexed` and
+     `UsageApiTests.A_catalog_change_between_flush_admission_and_write_keeps_the_batch_for_retry(fields)`;
+   - on main: `Sql_equality_range_order_in_and_prefix_like_use_the_index_and_m…`.
+
+**When it started, by main push run:**
+
+| Main | Run | Result | SQL/usage 400s |
+| --- | --- | --- | --- |
+| `1e421848` through `90cf9046` (#144, #113, #134, #114, #146, #150) | (see above) | success | none |
+| `2a3eeb14` (#149) | 38314879993 | failure | **none** (Healthz only) |
+| **`71585005` (#118, R8)** | 38317764064 | failure | **first appearance** |
+| `e30ffdc2` (#151) | 38317822337 | failure | present |
+
+- **#118 is the likely source.** It is also the PR merged against CHANGES REQUESTED (B1).
+- **The evidence is thin:** one run per commit, for an intermittent failure. It is routed to R8 and T1 to confirm.
+- **#166 alone will not turn main green.** The SQL/usage 400 needs its own fix, possibly inside #165 (R8's follow-up),
+  before any train merge.
+
 ## ORDER CHANGE (COS, ~01:30Z): R7 out of the critical path
 
 **Why:** #120 (R7 GC)'s independent review requested changes, with **data-loss must-fixes** (comment 6135823941). R7
