@@ -50,14 +50,30 @@ public sealed class TerraBaseFixture : IAsyncInitializer, IAsyncDisposable
     }
 
     /// <summary>
-    /// Points storage at the tenant's database as ts-auth reaches it on Fly (the internal listener, no credential), through
-    /// ts-auth's own transport: <paramref name="ownRegion"/> first, <paramref name="otherRegion"/> when it does not answer.
+    /// Points storage at the tenant's databases as ts-auth reaches them on Fly (internal listeners, no credential), through
+    /// ts-auth's own transports: reads of GET and HEAD requests at <paramref name="ownRegion"/> (database
+    /// <paramref name="localDatabase"/>), at <paramref name="otherRegion"/> when it does not answer; everything else at
+    /// <paramref name="designatedRegion"/> (database <paramref name="designatedDatabase"/>), with no fallback. Two database
+    /// names stand for two regions' copies that have not replicated.
     /// </summary>
-    public static void UseRegionalStorage(IServiceCollection services, TerraBaseTestTenant tenant, Uri ownRegion, TcpRelay otherRegion)
+    public static void UseRegionalStorage(IServiceCollection services, TerraBaseTestTenant tenant, Uri ownRegion, TcpRelay otherRegion, Uri designatedRegion,
+        string localDatabase = "auth", string designatedDatabase = "auth")
     {
         services.AddSingleton(new HttpClient(TerraBaseTransport.CreateHandler([new DnsEndPoint("127.0.0.1", otherRegion.Port)], NullLogger.Instance)));
         services.AddSingleton(provider => new TerraBaseDocumentsClient(provider.GetRequiredService<HttpClient>(),
-            new TerraBaseDocumentsClientOptions { BaseAddress = ownRegion }).Database(tenant.Project.Id, "auth"));
+            new TerraBaseDocumentsClientOptions { BaseAddress = ownRegion }).Database(tenant.Project.Id, localDatabase));
+        services.AddKeyedSingleton(App.StorageAuthority, new HttpClient(TerraBaseTransport.CreateHandler([], NullLogger.Instance)));
+        services.AddKeyedSingleton(App.StorageAuthority, (provider, _) => new TerraBaseDocumentsClient(provider.GetRequiredKeyedService<HttpClient>(App.StorageAuthority),
+            new TerraBaseDocumentsClientOptions { BaseAddress = designatedRegion }).Database(tenant.Project.Id, designatedDatabase));
+    }
+
+    /// <summary>Creates and provisions another copy of the tenant's storage, <paramref name="name"/>: another region's.</summary>
+    public async Task<TerraBaseDatabase> CreateCopyAsync(TerraBaseTestTenant tenant, string name)
+    {
+        var copy = this.Server.Documents(tenant.ApiKey).Database(tenant.Project.Id, name);
+        await copy.CreateAsync();
+        await new AuthStore(copy, TimeProvider.System).ProvisionAsync();
+        return copy;
     }
 
     public static HttpClient NewHttpClient() => new(NewHandler());

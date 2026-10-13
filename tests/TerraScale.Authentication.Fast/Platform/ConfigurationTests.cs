@@ -85,25 +85,33 @@ public sealed class ConfigurationTests
     }
 
     [Test]
-    [Arguments("ts-auth", "sjc", "http://sjc.ts-terrabase.internal:8081")]
-    [Arguments("ts-auth", "fra", "http://fra.ts-terrabase.internal:8081")]
-    [Arguments("ts-auth", "gru", "http://gru.ts-terrabase.internal:8081")]
-    [Arguments("ts-pr-42", "sjc", "http://sjc.ts-pr-42.internal:8081")]
-    public async Task On_fly_storage_is_the_terrabase_of_its_own_region(string app, string region, string origin)
+    [Arguments("ts-auth", "sjc", "http://sjc.ts-terrabase.internal:8081", "http://gru.ts-terrabase.internal:8081")]
+    [Arguments("ts-auth", "fra", "http://fra.ts-terrabase.internal:8081", "http://gru.ts-terrabase.internal:8081")]
+    [Arguments("ts-auth", "gru", "http://gru.ts-terrabase.internal:8081", "http://gru.ts-terrabase.internal:8081")]
+    [Arguments("ts-pr-42", "sjc", "http://sjc.ts-pr-42.internal:8081", "http://sjc.ts-pr-42.internal:8081")]
+    public async Task On_fly_get_reads_use_the_terrabase_of_its_own_region_and_the_rest_the_designated_one(string app, string region, string local, string designated)
     {
-        // Fly's machine environment, per server; RegionalStorageTests covers the move to another region.
-        var sent = new System.Collections.Concurrent.ConcurrentQueue<Uri>();
+        // Fly's machine environment, per server; RegionalStorageTests covers what goes where and the move to another region.
+        var reads = new System.Collections.Concurrent.ConcurrentQueue<Uri>();
+        var rest = new System.Collections.Concurrent.ConcurrentQueue<Uri>();
         await using var server = await AuthTestServer.StartAsync(
             settings: values => values.Remove("environment"),
-            services: services => services.AddSingleton(new HttpClient(new RecordingTransport(sent))),
+            services: services =>
+            {
+                services.AddSingleton(new HttpClient(new RecordingTransport(reads)));
+                services.AddKeyedSingleton(App.StorageAuthority, new HttpClient(new RecordingTransport(rest)));
+            },
             configure: builder =>
             {
                 builder.Configuration["FLY_APP_NAME"] = app;
                 builder.Configuration["FLY_REGION"] = region;
             });
 
-        await Assert.That(await ReadinessWait.UntilAsync(() => Task.FromResult(!sent.IsEmpty), TimeSpan.FromSeconds(15))).IsTrue();
-        await Assert.That(sent.Select(uri => uri.GetLeftPart(UriPartial.Authority)).Distinct()).IsEquivalentTo([origin]);
+        // The JWKS reads signing keys (a GET); startup provisioning writes.
+        using var jwks = await server.Client.GetAsync($"/{OidcIssuer.Slug}/.well-known/jwks.json");
+        await Assert.That(await ReadinessWait.UntilAsync(() => Task.FromResult(!reads.IsEmpty && !rest.IsEmpty), TimeSpan.FromSeconds(15))).IsTrue();
+        await Assert.That(reads.Select(uri => uri.GetLeftPart(UriPartial.Authority)).Distinct()).IsEquivalentTo([local]);
+        await Assert.That(rest.Select(uri => uri.GetLeftPart(UriPartial.Authority)).Distinct()).IsEquivalentTo([designated]);
     }
 
     [Test]

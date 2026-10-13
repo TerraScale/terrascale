@@ -38,7 +38,7 @@ public sealed class TerraBaseDocumentStore(AuthStore store) : IDocumentStore
 {
     /// <inheritdoc />
     public async Task<Versioned<T>?> GetAsync<T>(string collection, string instanceId, string key, CancellationToken cancellationToken) =>
-        await store.GetAsync(collection, instanceId, key, cancellationToken).ConfigureAwait(false) is { } found
+        await store.GetForWriteAsync(collection, instanceId, key, cancellationToken).ConfigureAwait(false) is { } found
             ? new Versioned<T>(found.Document.Deserialize<T>() ?? throw new JsonException($"A {collection} document is empty."), found.Version)
             : null;
 

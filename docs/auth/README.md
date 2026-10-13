@@ -393,7 +393,7 @@ seconds is not ready. Unknown `region` is omitted.
 
 Zero-config: TerraBase seeds the platform project `00000000000000000000000002` with database `platform-auth` on every
 start, and ts-auth stores everything there through TerraBase's internal listener
-(`http://<FLY_REGION>.ts-terrabase.internal:8081` in its own region, another region's when that one does not answer; no credential; see [csharp-port.md](csharp-port.md), "Storage endpoint"). At startup every replica creates
+(every write, and every read a write depends on, at gru's `http://gru.ts-terrabase.internal:8081`, failing closed when it does not answer; reads of GET requests at its own region's; no credential; see [csharp-port.md](csharp-port.md), "Storage endpoints"). At startup every replica creates
 `AuthStore.RequiredCollections` (idempotent) and then checks the issuer's signing keys, retrying after five seconds and
 backing off; it never creates the first key ([signing-keys.md](signing-keys.md)). `/readyz` answers 503 until both
 succeed, with `error` naming missing keys. The readiness probe itself never repairs state, so a collection lost later fails closed until

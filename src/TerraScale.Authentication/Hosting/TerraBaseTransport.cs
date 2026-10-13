@@ -1,14 +1,16 @@
 using System.Net;
 using System.Net.Sockets;
+using TerraScale.Authentication.Contracts;
 using TerraScale.DotNet.TerraBase;
 using ZLogger;
 
 namespace TerraScale.Authentication.Hosting;
 
 /// <summary>
-/// The connections to TerraBase's internal listener. Each new connection goes to a machine of the request's host (this
-/// region's TerraBase); when none answers, to a machine of <c>otherRegions</c>, in order. Only where a connection goes
-/// changes: a request is never resent, so a write is never applied twice.
+/// The connections to TerraBase's internal listener. Each new connection goes to a machine of the request's host; when none
+/// answers, to a machine of <c>otherRegions</c>, in order (none for the authority, which takes every write). Only where a
+/// connection goes changes: a request is never resent, so a write is never applied twice. A TerraBase that cannot be
+/// reached fails the operation closed: <see cref="ApiException.Unavailable"/> (503 <c>temporarily_unavailable</c>).
 /// </summary>
 public static class TerraBaseTransport
 {
@@ -22,7 +24,7 @@ public static class TerraBaseTransport
     /// A handler that connects to the request's host, then to <paramref name="otherRegions"/>; each machine is tried once
     /// per connection.
     /// </summary>
-    public static SocketsHttpHandler CreateHandler(IReadOnlyList<DnsEndPoint> otherRegions, ILogger logger)
+    public static HttpMessageHandler CreateHandler(IReadOnlyList<DnsEndPoint> otherRegions, ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(otherRegions);
         ArgumentNullException.ThrowIfNull(logger);
@@ -50,9 +52,26 @@ public static class TerraBaseTransport
                 }
             }
 
-            throw new HttpRequestException(HttpRequestError.ConnectionError, $"No TerraBase machine answered at {context.DnsEndPoint.Host} or in another region");
+            logger.ZLogWarning($"No TerraBase machine answered at {context.DnsEndPoint.Host:@Region} or at any of {otherRegions.Count:@Fallbacks} fallbacks; storage fails closed");
+            throw new HttpRequestException(HttpRequestError.ConnectionError, $"No TerraBase machine answered at {context.DnsEndPoint.Host}");
         };
-        return handler;
+        return new FailClosed(handler);
+    }
+
+    // Transport failures (no connection, a dropped one) answer 503 everywhere, never a 500 or a retry elsewhere.
+    private sealed class FailClosed(HttpMessageHandler inner) : DelegatingHandler(inner)
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            try
+            {
+                return await base.SendAsync(request, cancellationToken).ConfigureAwait(false);
+            }
+            catch (HttpRequestException error)
+            {
+                throw ApiException.Unavailable(error);
+            }
+        }
     }
 
     // Fly lists started machines only: a region without one does not resolve.
