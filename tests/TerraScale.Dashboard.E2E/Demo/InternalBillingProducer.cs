@@ -234,7 +234,7 @@ sealed class InternalBillingProducer(TestState state, TestWorkspace workspace, F
                 reads,
                 writes,
                 period = new { period.from, period.to, period.granularity, reads, writes },
-                series = reads + writes > 0 ? new[] { new { start = from, reads, writes } } : []
+                series = reads > 0 || writes > 0 ? new[] { new { start = from, reads, writes } } : []
             };
         }).ToArray();
         long totalReads = items.Sum(item => item.reads), totalWrites = items.Sum(item => item.writes), totalBytes = items.Sum(item => item.logicalBytes);
@@ -248,7 +248,7 @@ sealed class InternalBillingProducer(TestState state, TestWorkspace workspace, F
             reads = totalReads,
             writes = totalWrites,
             period = new { period.from, period.to, period.granularity, reads = totalReads, writes = totalWrites },
-            series = totalReads + totalWrites > 0 ? new[] { new { start = from, reads = totalReads, writes = totalWrites } } : [],
+            series = totalReads > 0 || totalWrites > 0 ? new[] { new { start = from, reads = totalReads, writes = totalWrites } } : [],
             items
         });
     }
