@@ -15,7 +15,7 @@ public sealed partial class StripeBilling(IDashboardIdentity identity, IDashboar
 {
     public const string Collection = "dashboard_billing";
     public const string CustomersCollection = "dashboard_stripe_customers";
-    internal const string Origin = "https://dashboard.terrascale.tech";
+    internal const string Origin = "https://dash.terrascale.tech";
     internal static IReadOnlySet<string> WebhookEvents { get; } = new HashSet<string>(StringComparer.Ordinal)
     {
         "checkout.session.completed", "checkout.session.async_payment_succeeded", "checkout.session.async_payment_failed",
