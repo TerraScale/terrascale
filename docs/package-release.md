@@ -81,3 +81,28 @@ Locally, `GITHUB_PACKAGES_TOKEN` is your own classic token with
 `read:packages`. Another repository's workflow can use its `GITHUB_TOKEN`
 (`permissions: packages: read`) only after a package admin adds that
 repository under the package's **Manage Actions access**.
+
+## Reproducible local qualification
+
+The SDK toolchain is pinned in `global.json`; source/test lock files pin the
+restored graph. CI and release builds restore in locked mode. A dependency change
+must regenerate and review the affected lock files before advancing the artifact.
+
+From a clean committed worktree, run:
+
+```sh
+nice -n 19 python3 scripts/pack-reproducible.py /tmp/ts-dotnet-qualified-package
+```
+
+The script exports that exact commit twice, restores into independent NuGet
+caches, builds both package targets with normalized source paths, and requires
+identical package bytes. It then restores the exact package into the existing
+installed-package consumer with another fresh cache and runs its HTTP-fake
+checks on .NET 10 and .NET 11. The output contains the package and source,
+toolchain, package/assembly hashes and qualification in `provenance.json`.
+
+These local bytes are neither a published release nor live-service qualification.
+Select a new `0.0.X` version only after the owning producer contracts and SDK
+changes are accepted. Consumers advance their package, provenance and locks
+atomically to the same qualified artifact. A frozen monorepo SDK source pin is a
+handoff request to its owner, never an excuse to mix consumer revisions.

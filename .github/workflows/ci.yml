@@ -27,13 +27,12 @@ jobs:
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
-      # net10.0 and net11.0, as the test project targets both; global.json rolls forward to the newest SDK.
+      # The pinned .NET 11 SDK builds both targets; .NET 10 installs its matching runtime.
       - uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: |
-            10.0.x
-            11.0.x
+          global-json-file: global.json
+          dotnet-version: 10.0.401
           dotnet-quality: preview
-      - run: dotnet build TerraScale.DotNet.slnx --configuration Release
+      - run: dotnet build TerraScale.DotNet.slnx --configuration Release -p:RestoreLockedMode=true
       - run: dotnet run --project tests/TerraScale.DotNet.Tests --configuration Release --no-build --framework net10.0
       - run: dotnet run --project tests/TerraScale.DotNet.Tests --configuration Release --no-build --framework net11.0
