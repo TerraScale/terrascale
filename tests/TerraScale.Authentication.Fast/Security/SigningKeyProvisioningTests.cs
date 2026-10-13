@@ -11,36 +11,26 @@ using TerraScale.Authentication.Tests;
 namespace TerraScale.Authentication.Fast.Security;
 
 /// <summary>
-/// Fail closed: ts-auth never creates the platform issuer's signing key itself. Without keys it stays not ready with a
-/// clear error until the operator command provisions one; existing keys survive restarts untouched; unusable keys are
+/// Startup provisions the first encrypted key; existing keys survive restarts untouched and unusable keys are
 /// never replaced. Synthetic master keys and an isolated database per test.
 /// </summary>
 [ClassDataSource<TerraBaseFixture>(Shared = SharedType.PerTestSession)]
 public sealed class SigningKeyProvisioningTests(TerraBaseFixture fixture)
 {
-    private const string NoKeys = "no signing keys: operator provisioning required";
     private static readonly TimeSpan Recovery = TimeSpan.FromSeconds(20);
 
     [Test]
-    public async Task Without_keys_ts_auth_stays_not_ready_with_a_clear_error_until_the_operator_provisions_them()
+    public async Task Empty_storage_becomes_ready_with_a_signing_key_without_an_operator_step()
     {
         var target = await SharedStateTarget.CreateAsync(fixture);
         var masterKey = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
         await using var server = await StartAsync(target, masterKey);
 
-        await Assert.That(await ReadinessWait.UntilAsync(async () => await ErrorAsync(server) == NoKeys + " (docs/auth/signing-keys.md)", Recovery)).IsTrue();
-        using (var jwks = await server.Client.GetAsync($"/{OidcIssuer.Slug}/.well-known/jwks.json"))
-        {
-            await Assert.That(jwks.StatusCode).IsEqualTo(HttpStatusCode.ServiceUnavailable);
-        }
-
-        // Neither the bootstrap's retries, the readiness passes nor the JWKS request created a key.
-        await Task.Delay(ReadinessWait.NextPass);
-        await Assert.That(await StoredAsync(target)).IsEmpty();
-
-        await Assert.That(await SigningKeyProvisioning.RunAsync(server.App.Services, CancellationToken.None)).IsEqualTo(0);
         await Assert.That(await ReadinessWait.ReadyWithinAsync(server.Client, Recovery)).IsTrue();
+        using var jwks = await server.Client.GetAsync($"/{OidcIssuer.Slug}/.well-known/jwks.json");
+        await Assert.That(jwks.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That((await StoredAsync(target)).Count).IsEqualTo(1);
+        await Assert.That(await SigningKeyProvisioning.ProvisionAsync(server.App.Services, CancellationToken.None)).IsFalse();
         await Assert.That(await ErrorAsync(server)).IsNull();
     }
 

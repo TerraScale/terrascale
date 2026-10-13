@@ -6,7 +6,7 @@ using ZLogger;
 namespace TerraScale.Authentication.Features.SigningKeys;
 
 /// <summary>
-/// The operator command <c>ts-auth provision-signing-key</c>, the only way the platform issuer gets its first signing key.
+/// The idempotent operator command <c>ts-auth provision-signing-key</c>, also used to diagnose startup provisioning.
 /// It runs as a separate process on a machine (<c>fly ssh console -C</c>, so only someone with Fly SSH access to the app),
 /// with the same secrets as the server and without starting it: it creates ts-auth's collections (idempotent), then the
 /// first key if there is none (<see cref="KeyRing.ProvisionAsync"/>), and logs the outcome as an audit line. Existing

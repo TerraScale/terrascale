@@ -5,7 +5,10 @@ using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.Extensions.DependencyInjection;
 using TerraScale.Authentication.Configuration;
+using TerraScale.Authentication.Features.Identity;
+using TerraScale.Authentication.Features.Platform;
 using TerraScale.Authentication.Features.SigningKeys;
+using TerraScale.Authentication.Store;
 
 namespace TerraScale.Authentication.Tests;
 
@@ -15,6 +18,9 @@ namespace TerraScale.Authentication.Tests;
 /// </summary>
 public sealed class AuthTestServer : IAsyncDisposable
 {
+    /// <summary>Each test database seeds a synthetic mailbox; tests never use a real owner address.</summary>
+    public const string BootstrapOwnerEmail = "platform-owner@example.invalid";
+
     private AuthTestServer(WebApplication app, Uri baseAddress, Uri metricsAddress)
     {
         this.App = app;
@@ -65,6 +71,8 @@ public sealed class AuthTestServer : IAsyncDisposable
         {
             // Tests change keys behind the server's back; every lookup reads TerraBase unless a test opts in.
             builder.Services.AddSingleton(new KeyRingRefresh(TimeSpan.Zero));
+            builder.Services.AddSingleton(provider => new PlatformBootstrap(provider.GetRequiredService<AuthStore>(),
+                provider.GetRequiredService<Users>(), provider.GetRequiredService<PlatformDirectory>(), provider.GetRequiredService<TimeProvider>(), BootstrapOwnerEmail));
             services?.Invoke(builder.Services);
             configure?.Invoke(builder);
         });

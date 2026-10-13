@@ -391,12 +391,13 @@ seconds is not ready. Unknown `region` is omitted.
 
 ## The global auth dataset
 
-Zero-config: TerraBase seeds the platform project `00000000000000000000000002` with database `platform-auth` on every
+Zero-config: TerraBase seeds the platform project `00000000000000000000000002` with database `ts-auth` on every
 start, and ts-auth stores everything there through TerraBase's internal listener
 (every write and every read but discovery's and the JWKS's at gru's `http://gru.ts-terrabase.internal:8081`, failing closed when it does not answer; discovery and the JWKS at its own region's; no credential; see [csharp-port.md](csharp-port.md), "Storage endpoints"). At startup every replica creates
-`AuthStore.RequiredCollections` (idempotent) and then checks the issuer's signing keys, retrying after five seconds and
-backing off; it never creates the first key ([signing-keys.md](signing-keys.md)). `/readyz` answers 503 until both
-succeed, with `error` naming missing keys. The readiness probe itself never repairs state, so a collection lost later fails closed until
+`AuthStore.RequiredCollections`, seeds the TerraScale owner and both projects, and provisions the first encrypted
+signing key when absent (all idempotent), retrying after five seconds and backing off
+([signing-keys.md](signing-keys.md), [platform-bootstrap.md](platform-bootstrap.md)). `/readyz` answers 503 until startup
+bootstrap and key verification succeed. The readiness probe itself never repairs state, so a collection lost later fails closed until
 the next start.
 
 **Live production activation remains gated.** The pinned server uses SQLite
@@ -513,6 +514,6 @@ A user of the `terrascale` instance whose stored user document has `"platformRol
 TerraBase's explore API over the platform databases requires it (`docs/terrabase/platform-databases.md`). Any other value,
 or another instance, grants nothing.
 
-No API grants the role. An operator sets or clears the field on the user's document in `platform-auth`
+No API grants the role. An operator sets or clears the field on the user's document in `ts-auth`
 (collection `users`) through TerraBase's internal listener, which only Fly's private network reaches. Clearing it takes
 effect at the user's next refresh; access tokens already issued keep it until they expire.
