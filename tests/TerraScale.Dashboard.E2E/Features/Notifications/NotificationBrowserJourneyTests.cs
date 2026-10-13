@@ -21,6 +21,10 @@ public sealed class NotificationBrowserJourneyTests(DashboardE2EFixture fixture)
         await using var browser = await playwright.Chromium.LaunchAsync(new() { Headless = true });
         await using var context = await browser.NewContextAsync(new() { ViewportSize = new() { Width = width, Height = height } });
         var page = await context.NewPageAsync();
+        // Datastar aborts each finished SSE fetch and Chromium can drop that body, so assert the body Playwright fetched for the browser.
+        var bodies = new ConcurrentDictionary<IRequest, string>();
+        await page.RouteAsync("**/notifications/dialog**", FulfillFromServerAsync);
+        await page.RouteAsync("**/api/v1/notifications/read-all", FulfillFromServerAsync);
         page.SetDefaultTimeout(15000);
         var errors = new ConcurrentQueue<string>();
         page.PageError += (_, error) => errors.Enqueue(error);
@@ -177,11 +181,17 @@ public sealed class NotificationBrowserJourneyTests(DashboardE2EFixture fixture)
                 if (unread > 0) await Assert.That(await button.Locator(".ts-nav-count").TextContentAsync()).IsEqualTo(unread.ToString());
             }
         }
+        async Task FulfillFromServerAsync(IRoute route)
+        {
+            var upstream = await route.FetchAsync();
+            bodies[route.Request] = await upstream.TextAsync();
+            await route.FulfillAsync(new() { Response = upstream });
+        }
         async Task AssertPatchAsync(IResponse response)
         {
             await Assert.That(response.Status).IsEqualTo(200);
             await Assert.That((await response.HeaderValueAsync("content-type"))!).Contains("text/event-stream");
-            await Assert.That(await response.TextAsync()).Contains("event: datastar-patch-elements");
+            await Assert.That(bodies[response.Request]).Contains("event: datastar-patch-elements");
             await Assert.That(response.Request.IsNavigationRequest).IsFalse();
         }
         async Task<JsonElement> InboxAsync() => await CallAsync("list_notifications", new { organizationId, projectId });
