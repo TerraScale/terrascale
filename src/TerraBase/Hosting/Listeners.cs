@@ -182,6 +182,7 @@ public static class Listeners
         listen.Use(next => async connection =>
         {
             connection.Items[ListenerKey] = listener;
+            using var drain = listen.ApplicationServices.GetRequiredService<Shutdown>().Drain(connection);
             var pressure = listener == TerraBaseListener.Client ? listen.ApplicationServices.GetRequiredService<IPressureSignals>() : null;
             pressure?.ConnectionOpened();
             try
