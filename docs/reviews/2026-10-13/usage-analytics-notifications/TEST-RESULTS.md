@@ -1,5 +1,15 @@
 # Focused local results
 
+## Current publication verification
+
+Rebased main/source base: **7d0420ef1979b128fe212a23eb6c4227a2588859**. Focused current-source verification: **9 passed / 5 retained contract-policy failures, 14 total**. HTTP: **6 passed / 5 failed**; browser: **3 passed / 0 failed**. AnalyticsPageAuditJourneyTests remains 1 passed / 5 failed. InboxAuditUsageJourneyTests is now **4 passed / 0 failed**, because main includes the audit-severity and Usage-navigation fixes. Existing AnalyticsContractJourneyTests and Reporting browser case each pass; both synthetic notification viewport cases pass. All five policy assertions and both defect regression assertions remain strict.
+
+The three new test classes now use per-test fixtures to match current main's lint boundary. No session sharing/parallel limiter remains; Analytics fixture evidence writes to a database-specific directory. Current local checks pass: locked Release build (0 warnings/errors), scoped full format, CSS (95,800 bytes), SDK provenance, E2E boundary (76 classes), Slow-report self-check and document-change checks. Suites ran one at a time. Raw current reports are under obj/publication-checks; the exact final PR head/results are supplied in the handoff. Aggregate Fast/Slow and live services remain unrun; the five known-red policy cases are included in Fast and will keep its gate red. No CI configuration or test exclusion was introduced.
+
+The historical presentation patch no longer applies to current main (the fixes already landed). Both conditional Analytics patch files still pass git apply --check; no patch was applied/compiled. Native GitHub auto-merge is disabled (allow_auto_merge=false); publication is draft-only while the five policy cases are red. The user's publication request supersedes the earlier Mongo-slot hold; repository settings and merge requirements remain intact.
+
+## Historical pre-rebase verification
+
 Audited production source: b719878083dffd9441e063bbfaccfa0dffa95abd.
 
 Final focused coverage: **7 passed / 7 expected failures, 14 total**. HTTP: **4 passed / 7 expected failures, 11 total**. Browser: **3 passed / 0 failed**, covering an existing Reporting case and two new synthetic notification viewport cases. New journeys contribute 5 passes / 7 expected failures; existing journeys contribute 2 passes. The two failing HTTP class commands exit 2; passing class commands exit 0. No established failing defect/contract assertion was disabled or weakened.

@@ -1,20 +1,32 @@
 # Usage, Analytics, Home, Audit and Notifications audit
 
-Two concrete presentation defects are ready for deduplicated bug filing: missing audit severity is classified as informational, and Usage tab navigation discards the selected period/database. Duplicate observations, absent chart buckets and historical-region acceptance are reproducible **contract/policy questions**, not verified producer defects.
+## Publication refresh after current main integration
 
-Focused verification: **7 passed / 7 expected failures, 14 total**. New journeys contribute 5 passes and 7 retained failures; existing Analytics wire-contract and Reporting browser journeys contribute 2 passes. Two failures cover the concrete presentation findings; five express stricter analytics contract proposals. Build and scoped formatting passed. Existing source was not modified. Publication remains held; no push or PR occurred.
+The user authorized PR publication and requested auto-merge. This branch was rebased cleanly onto **7d0420ef1979b128fe212a23eb6c4227a2588859** (current origin/main). The PR still introduces only the 36 authorized new test/report/evidence files; no production, shared fixture, project, CI or configuration changes.
+
+Both historical P2 findings are fixed upstream: **eb849adc** makes missing/unrecognized audit severity unknown, and **e1e98711** preserves Usage period/database navigation. Both strict regressions now pass. Current focused results are **9 passed / 5 retained contract-policy failures, 14 total**: HTTP 6 passed / 5 failed; browser 3 passed / 0 failed. The remaining five cases concern duplicate-row grain, omitted-minute gaps and current-versus-historical region placement. They remain questions, with unchanged strict assertions; they are not newly labeled producer bugs.
+
+Current lint requires independent fixtures. The three new journey classes now use per-test ClassDataSource instances, without session sharing or parallel limiters. Each running scenario already owns its provider state; synthetic Analytics evidence is additionally separated by database ID to avoid parallel file collisions. No assertion was disabled, deleted, skipped or weakened. Build and full make lint pass, including formatting, CSS, SDK provenance, E2E boundary, Slow-report self-check and document-change checks. Aggregate Fast/Slow remain unrun; five included Fast assertions are known red. GitHub reports allow_auto_merge=false. The audit is prepared for draft publication; no repository setting or merge gate is changed to make it mergeable.
+
+The presentation patch is a **historical artifact against b719** and no longer applies to current main because the fixes landed upstream. The two conditional Analytics/placement patches still pass git apply --check on the rebased source; neither was applied or compiled. All committed PNGs and compact fixtures below retain their original b719 capture provenance and hashes. Current browser verification is separate and local-only. Exact PR head and remote-head verification are supplied in the PR/handoff.
+
+## Historical audit at the pinned source
+
+Two concrete presentation defects were verified at b719: missing audit severity was classified as informational, and Usage tab navigation discarded the selected period/database. Duplicate observations, absent chart buckets and historical-region acceptance were reproducible **contract/policy questions**, not verified producer defects. The defect evidence below is historical; both presentation fixes are now present in main.
+
+Historical focused verification before rebase: **7 passed / 7 expected failures, 14 total**. New journeys contributed 5 passes and 7 retained failures; existing Analytics wire-contract and Reporting browser journeys contributed 2 passes. Two failures covered the concrete presentation findings; five expressed stricter analytics contract proposals. Build and scoped formatting passed. Existing source was not modified. Publication was held at that time.
 
 ## Source and scope
 
 - Audited/captured production source and base SHA: **b719878083dffd9441e063bbfaccfa0dffa95abd**.
 - Bound branch: **audit/usage-analytics-notifications-20261013**. Initial test/report commit: afb0f3375a2800bc10fcdd5b942c3cd77fb077e9; PNG evidence commit: 30d4e6665681be00e7c6130b1ba5beca0caf948f. The final test/report commit and its post-commit checks are supplied in the handoff. None is claimed as the original committed PNG capture head.
-- Fetched origin/main: **015b42c4825866131a00d48469650bcba04b2364**, two commits ahead. Its only changed path relative to the audited base is tests/TerraScale.Dashboard.E2E/Features/Notifications/NotificationBrowserJourneyTests.cs (existing SSE-flake work). That file was neither edited nor rerun by this workstream.
+- Original fetched origin/main: **015b42c4825866131a00d48469650bcba04b2364**, two commits ahead at the historical audit. Its only changed path relative to the audited base was tests/TerraScale.Dashboard.E2E/Features/Notifications/NotificationBrowserJourneyTests.cs (existing SSE-flake work). That file was neither edited nor rerun by this workstream. Publication now uses the newer base in the refresh above.
 - Actual checkout: .NET 10, RazorSlices, Datastar, TUnit. See docs/development.md:3. No Go changes or new dependency were needed.
 - Routes exercised: /, /analytics, /usage, /notifications, /notifications/dialog, /organization?tab=audit, /audit and /audit/export. Audit is an Organization tab, not a separate rendered page.
 
 All records and producer payloads are local synthetic fixtures. HTTP journeys use real Kestrel application endpoints and the existing test-only provider environment. Analytics uses the existing signed-project-token scenario and real AnalyticsBackend. No real payments, credentials retrieval, production deployment, account/security changes or new paid services occurred.
 
-## Concrete findings
+## Historical concrete findings — now fixed upstream
 
 ### UAN-01 — Null audit severity becomes “info” in the page, filter and CSV (P2)
 
