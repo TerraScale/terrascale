@@ -88,4 +88,4 @@ Raw TRX/logs and generated HTML may contain synthetic CSRF values and remain unc
 
 Not run: aggregate fast/slow, CI, live services/payments, exhaustive accessibility and delayed/stale browser responses. Draft publication is held while Mongo has the active serial CI slot; explicit authorization for this workstream's slot is still pending.
 
-Final test executable SHA-256: 7ae8ead66fce5dccf5592bd2d475dcd17f48010dafe9a80b0e39e5efcd2f6ff9. Historical executable before the synthetic browser file: 0d2115fff1c0bc6ac7745f707c04332c8b7d1daf6cb9be98716d5cee63a794f4.
+Expanded test executable SHA-256 before the final report commit: 7ae8ead66fce5dccf5592bd2d475dcd17f48010dafe9a80b0e39e5efcd2f6ff9. Historical executable before the synthetic browser file: 0d2115fff1c0bc6ac7745f707c04332c8b7d1daf6cb9be98716d5cee63a794f4. Builds include commit metadata, so post-commit executable hashes differ even when source/test content is unchanged. The exact final-head executable/capture hashes are retained locally in obj/final-head-checks/verification-manifest.json and are not substituted for older provenance.
